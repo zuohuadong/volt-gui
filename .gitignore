@@ -1,0 +1,40 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+coverage.out
+coverage.html
+go.work
+go.work.sum
+
+# Dependencies (uncomment if vendoring)
+# /vendor/
+
+# Desktop build artifacts
+/desktop/build/
+/desktop/dist/
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Reasonix runtime
+.reasonix/
+
+# Editors / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

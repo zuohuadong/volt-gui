@@ -381,14 +381,18 @@ var writableScopes = []memory.Scope{memory.ScopeUser, memory.ScopeProject, memor
 // saved auto-memories, and the writable scopes. Read-only; mutations go through
 // Remember / SaveDoc.
 func (a *App) Memory() MemoryView {
+	// Always return non-nil slices: a nil Go slice marshals to JSON `null`, which
+	// would crash the panel's `view.facts.length` / `.map`.
+	view := MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Scopes: []MemoryScope{}}
 	if a.ctrl == nil {
-		return MemoryView{}
+		return view
 	}
 	set := a.ctrl.Memory()
 	if set == nil {
-		return MemoryView{}
+		return view
 	}
-	view := MemoryView{StoreDir: set.Store.Dir, Available: true}
+	view.StoreDir = set.Store.Dir
+	view.Available = true
 	for _, d := range set.Docs {
 		view.Docs = append(view.Docs, MemoryDoc{Path: d.Path, Scope: string(d.Scope), Body: d.Body})
 	}

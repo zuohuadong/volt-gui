@@ -16,12 +16,11 @@ func newTestChatTUI() chatTUI {
 	ti := textarea.New()
 	ti.SetWidth(80)
 	return chatTUI{
-		input:           ti,
-		reasoning:       &strings.Builder{},
-		pending:         &strings.Builder{},
-		pendingCommit:   &commit,
-		turnAccumulator: &strings.Builder{},
-		renderer:        newMarkdownRenderer(80),
+		input:         ti,
+		reasoning:     &strings.Builder{},
+		pending:       &strings.Builder{},
+		pendingCommit: &commit,
+		renderer:      newMarkdownRenderer(80),
 	}
 }
 

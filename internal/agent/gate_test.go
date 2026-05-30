@@ -40,7 +40,7 @@ func TestGateBlocksDeniedCall(t *testing.T) {
 	if !strings.HasPrefix(blocked.output, "blocked:") {
 		t.Errorf("denied call result = %q, want a 'blocked:' result", blocked.output)
 	}
-	if !blocked.blocked || blocked.blockMsg == "" {
+	if !blocked.blocked || blocked.errMsg == "" {
 		t.Errorf("denied call should surface a user-facing block notice, got %+v", blocked)
 	}
 

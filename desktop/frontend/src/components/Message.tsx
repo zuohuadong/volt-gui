@@ -32,8 +32,17 @@ export function AssistantMessage({ item }: { item: AssistantItem }) {
         </div>
       )}
       <div className="msg__body">
-        <Markdown text={item.text} />
-        {item.streaming && <span className="cursor" />}
+        {item.streaming ? (
+          // While streaming, render raw text (stable, monospace-free) instead of
+          // re-parsing markdown on every token — partial markdown reflows the
+          // layout and makes the view jitter. Markdown renders once, on completion.
+          <div className="msg__stream">
+            {item.text}
+            <span className="cursor" />
+          </div>
+        ) : (
+          <Markdown text={item.text} />
+        )}
       </div>
       {!item.streaming && item.text && (
         <div className="msg__actions">

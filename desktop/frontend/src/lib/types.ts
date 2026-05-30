@@ -12,6 +12,7 @@ export type EventKind =
   | "notice"
   | "phase"
   | "approval_request"
+  | "ask_request"
   | "turn_done";
 
 export interface WireTool {
@@ -22,6 +23,8 @@ export interface WireTool {
   err?: string;
   readOnly: boolean;
   truncated?: boolean;
+  partial?: boolean; // an early dispatch (name only) — a full one with args follows
+  parentId?: string; // set on a sub-agent's calls — the parent `task` call's id
 }
 
 export interface WireUsage {
@@ -40,6 +43,30 @@ export interface WireApproval {
   subject: string;
 }
 
+export interface WireAskOption {
+  label: string;
+  description?: string;
+}
+
+export interface WireAskQuestion {
+  id: string;
+  header?: string;
+  prompt: string;
+  options: WireAskOption[];
+  multi?: boolean;
+}
+
+export interface WireAsk {
+  id: string;
+  questions: WireAskQuestion[];
+}
+
+// QuestionAnswer is the reply for one question, sent back via AnswerQuestion.
+export interface QuestionAnswer {
+  questionId: string;
+  selected: string[];
+}
+
 export interface WireEvent {
   kind: EventKind;
   text?: string;
@@ -48,6 +75,7 @@ export interface WireEvent {
   tool?: WireTool;
   usage?: WireUsage;
   approval?: WireApproval;
+  ask?: WireAsk;
   err?: string;
 }
 

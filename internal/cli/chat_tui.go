@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image/color"
 	"strings"
@@ -48,18 +49,19 @@ type chatTUI struct {
 	state    tuiState
 	runStart time.Time
 	elapsed  int
+	// turnTokens accumulates this turn's output tokens (summed from per-step Usage
+	// events) for the live "↓N" readout in the running status line.
+	turnTokens int
+
+	// todoArgs is the latest todo_write call's raw args; it drives the task list
+	// pinned just above the input (see renderTodoPanel). "" when there's no list.
+	// Persists across turns until the work completes or a new session starts.
+	todoArgs string
 
 	// planMode mirrors the agent's read-only gate (Tab toggles it). The marker
 	// rides in outgoing user messages so the cache-stable prompt prefix is left
 	// untouched.
 	planMode bool
-
-	// turnAccumulator collects this turn's assistant free text so the plan-mode
-	// path can tell whether the turn produced a substantive proposal.
-	turnAccumulator *strings.Builder
-
-	// pendingPlan is non-empty while a plan-mode proposal awaits Enter-approval.
-	pendingPlan string
 
 	// history is a resumed session's messages, committed to scrollback once on
 	// the first WindowSizeMsg so a reopened chat shows its prior transcript.
@@ -82,6 +84,10 @@ type chatTUI struct {
 	// (nil when none). While set, the controller's run goroutine is blocked
 	// awaiting ctrl.Approve and key input is captured to answer it.
 	pendingApproval *event.Approval
+
+	// chooser holds the `ask` tool's question card (nil when none). While set, the
+	// run goroutine is blocked awaiting ctrl.AnswerQuestion and keys drive the card.
+	chooser *chooser
 
 	// host is the running MCP servers (nil when no plugins). The TUI reads
 	// prompts (slash commands), resources (@-references), and server status
@@ -151,20 +157,19 @@ func newChatTUI(ctrl *control.Controller, missing string, eventCh chan event.Eve
 
 	commitBuf := []string{}
 	return chatTUI{
-		ctrl:            ctrl,
-		label:           ctrl.Label(),
-		missing:         missing,
-		input:           ti,
-		spinner:         sp,
-		reasoning:       &strings.Builder{},
-		pending:         &strings.Builder{},
-		pendingCommit:   &commitBuf,
-		turnAccumulator: &strings.Builder{},
-		renderer:        newMarkdownRenderer(termW),
-		eventCh:         eventCh,
-		history:         ctrl.History(),
-		host:            ctrl.Host(),
-		commands:        ctrl.Commands(),
+		ctrl:          ctrl,
+		label:         ctrl.Label(),
+		missing:       missing,
+		input:         ti,
+		spinner:       sp,
+		reasoning:     &strings.Builder{},
+		pending:       &strings.Builder{},
+		pendingCommit: &commitBuf,
+		renderer:      newMarkdownRenderer(termW),
+		eventCh:       eventCh,
+		history:       ctrl.History(),
+		host:          ctrl.Host(),
+		commands:      ctrl.Commands(),
 	}
 }
 
@@ -209,6 +214,37 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		// A question card is modal: keys drive it. In its free-text ("Type
+		// something") mode, the keystroke goes to the textarea — Enter confirms the
+		// custom answer, Esc backs out of typing — so input/IME work as usual.
+		if m.chooser != nil {
+			if m.chooser.typing {
+				switch msg.String() {
+				case "enter":
+					val := strings.TrimSpace(m.input.Value())
+					m.input.Reset()
+					m.input.SetHeight(1)
+					m.chooser.typing = false
+					if val == "" {
+						return m, finalize(m, cmds)
+					}
+					m.chooser.custom[m.chooser.tab] = val
+					m.chooser.sel[m.chooser.tab] = map[int]bool{}
+					return m.chooserAdvance()
+				case "esc":
+					m.chooser.typing = false
+					m.input.Reset()
+					m.input.SetHeight(1)
+					return m, finalize(m, cmds)
+				}
+				var ic tea.Cmd
+				m.input, ic = m.input.Update(msg)
+				cmds = append(cmds, ic)
+				m.growInputToFit()
+				return m, finalize(m, cmds)
+			}
+			return m.handleChooserKey(msg)
+		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
 		if m.pendingApproval != nil {
@@ -241,8 +277,6 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch {
 			case m.state == tuiRunning:
 				m.ctrl.Cancel()
-			case m.pendingPlan != "":
-				m.pendingPlan = ""
 			case m.planMode:
 				m.planMode = false
 				m.ctrl.SetPlanMode(false)
@@ -270,16 +304,6 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil // ignore Enter while a turn is in flight
 			}
 			line := strings.TrimSpace(m.input.Value())
-
-			// Empty Enter while a plan is pending approves it and auto-sends a
-			// brief "proceed" message.
-			if line == "" && m.pendingPlan != "" {
-				m.pendingPlan = ""
-				m.planMode = false
-				m.ctrl.SetPlanMode(false)
-				cmds = append(cmds, m.startTurn("Plan approved — proceed with the steps you laid out, executing as needed.", "(plan approved — executing)"))
-				return m, finalize(m, cmds)
-			}
 
 			if line == "" {
 				return m, nil
@@ -312,8 +336,6 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 
-			// A non-empty submission while a plan is pending counts as feedback.
-			m.pendingPlan = ""
 			m.input.Reset()
 			m.input.SetHeight(1)
 
@@ -514,11 +536,22 @@ func (m *chatTUI) commitPending() {
 	m.pending.Reset()
 }
 
-// handleApprovalKey resolves a pending tool-call approval from a keystroke and
-// re-arms the approval listener. y/Enter allows once, a allows for the rest of
-// the session, n/Esc denies. Ctrl-C cancels the whole turn via the run context.
+// planApprovalTool is the Tool name the controller puts on the ApprovalRequest it
+// emits to gate a plan (mirrors control's constant). The banner, status line, and
+// approval handler key on it to render the plan-specific prompt and to keep the
+// [plan] tag in sync when the plan is approved.
+const planApprovalTool = "exit_plan_mode"
+
+// handleApprovalKey resolves a pending approval from a keystroke and re-arms the
+// listener. y/Enter allows once, a allows for the rest of the session, n/Esc
+// denies. Ctrl-C cancels the whole turn via the run context. For a plan approval
+// (planApprovalTool), allowing also drops the local [plan] tag — the controller
+// turns plan mode off on its side.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	answer := func(allow, session bool) (tea.Model, tea.Cmd) {
+		if allow && m.pendingApproval.Tool == planApprovalTool {
+			m.planMode = false
+		}
 		m.ctrl.Approve(m.pendingApproval.ID, allow, session)
 		m.pendingApproval = nil
 		return m, nil // the next ApprovalRequest / event arrives on eventCh
@@ -558,6 +591,12 @@ var (
 				Bold(true).
 				PaddingLeft(1)
 
+	// Task panel: a top-bordered block pinned above the input.
+	todoPanelStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), true, false, false, false).
+			BorderForeground(lipgloss.Color("240")).
+			PaddingLeft(1)
+
 	statusStyle = lipgloss.NewStyle().Faint(true)
 )
 
@@ -578,12 +617,17 @@ func (m chatTUI) View() tea.View {
 	ctxTag := m.contextTag()
 	var status string
 	switch {
+	case m.chooser != nil:
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
+	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
+		status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
 	case m.pendingApproval != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusToolApproval
 	case m.state == tuiRunning:
 		status = fmt.Sprintf("  %s · "+i18n.M.ChatStatusThinkingFmt, modeTag, m.spinner.View(), m.elapsed)
-	case m.pendingPlan != "":
-		status = "  " + modeTag + " · " + i18n.M.ChatStatusPlanApproval
+		if m.turnTokens > 0 {
+			status += " · ↓" + shortTokens(m.turnTokens)
+		}
 	default:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusIdle
 	}
@@ -600,10 +644,22 @@ func (m chatTUI) View() tea.View {
 	// rendered answer commit at their edges). The menu/banner change height only
 	// on discrete user actions, never mid-stream.
 	var parts []string
-	rowsAboveBox := 0 // terminal rows occupied by banner/menu before the input box
+	rowsAboveBox := 0 // terminal rows occupied by todo/banner/menu before the input box
+	// The task list is pinned above the input, updating in place. Its height
+	// changes only on a todo_write event (a handful per turn),
+	// not per streamed token, so it doesn't thrash the scrollback the way a live
+	// text preview would.
+	if todo := m.renderTodoPanel(); todo != "" {
+		parts = append(parts, todo)
+		rowsAboveBox += strings.Count(todo, "\n") + 1
+	}
 	if banner := m.renderApprovalBanner(); banner != "" {
 		parts = append(parts, banner)
 		rowsAboveBox += strings.Count(banner, "\n") + 1
+	}
+	if card := m.renderChooser(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
 	if menu := m.renderCompletion(); menu != "" {
 		parts = append(parts, menu)
@@ -661,18 +717,75 @@ func (m chatTUI) renderApprovalBanner() string {
 	if w < 10 {
 		w = 10
 	}
-	if m.pendingApproval != nil {
-		subj := strings.TrimSpace(m.pendingApproval.Subject)
-		if subj != "" {
-			subj = " " + truncateSubject(subj, w)
-		}
-		text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, m.pendingApproval.Tool, subj)
-		return approvalBannerStyle.Width(w).Render("⏸ " + text)
-	}
-	if m.pendingPlan == "" {
+	if m.pendingApproval == nil {
 		return ""
 	}
-	return approvalBannerStyle.Width(w).Render("⏸ " + i18n.M.PlanApprovalPrompt)
+	// A plan approval shows the gate prompt (the plan itself is already printed as
+	// the assistant's reply); a tool approval names the tool + subject.
+	if m.pendingApproval.Tool == planApprovalTool {
+		return approvalBannerStyle.Width(w).Render("⏸ " + i18n.M.PlanApprovalPrompt)
+	}
+	subj := strings.TrimSpace(m.pendingApproval.Subject)
+	if subj != "" {
+		subj = " " + truncateSubject(subj, w)
+	}
+	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, m.pendingApproval.Tool, subj)
+	return approvalBannerStyle.Width(w).Render("⏸ " + text)
+}
+
+// todoPanelMaxRows caps how many task lines the pinned panel shows; a long list
+// is truncated with a "+N more" footer so the bottom region stays compact.
+const todoPanelMaxRows = 8
+
+// renderTodoPanel renders the task list pinned above the input from the latest
+// todo_write call (m.todoArgs): a "Tasks done/total" header, completed items
+// dimmed/checked, the in-progress one highlighted (its activeForm if given),
+// pending ones muted. It returns "" when there's no list or every item is done,
+// so the panel appears while work is outstanding and clears itself when finished.
+func (m chatTUI) renderTodoPanel() string {
+	var p struct {
+		Todos []struct {
+			Content    string `json:"content"`
+			Status     string `json:"status"`
+			ActiveForm string `json:"activeForm"`
+		} `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(m.todoArgs), &p); err != nil || len(p.Todos) == 0 {
+		return ""
+	}
+	done := 0
+	for _, t := range p.Todos {
+		if t.Status == "completed" {
+			done++
+		}
+	}
+	if done == len(p.Todos) {
+		return "" // all finished — clear the panel
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s\n", accent("To-dos"), dim(fmt.Sprintf("%d/%d", done, len(p.Todos))))
+	shown := 0
+	for _, t := range p.Todos {
+		if shown >= todoPanelMaxRows {
+			b.WriteString(dim(fmt.Sprintf("  +%d more", len(p.Todos)-shown)) + "\n")
+			break
+		}
+		shown++
+		switch t.Status {
+		case "completed":
+			b.WriteString("  " + green("✔") + " " + dim(t.Content) + "\n")
+		case "in_progress":
+			label := t.Content
+			if t.ActiveForm != "" {
+				label = t.ActiveForm
+			}
+			b.WriteString("  " + yellow("▶ "+label) + "\n")
+		default:
+			b.WriteString("  " + dim("○ "+t.Content) + "\n")
+		}
+	}
+	return todoPanelStyle.Width(max(m.width, 10)).Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // truncateSubject trims a tool subject so the approval banner fits one line.
@@ -712,13 +825,13 @@ func (m *chatTUI) startTurn(sent, displayed string) tea.Cmd {
 	// Flush any half-streamed leftover before the new turn (defensive).
 	m.commitReasoning()
 	m.commitPending()
-	m.turnAccumulator.Reset()
 	m.commitLine("") // blank line separating turns
 	m.commitLine(renderUserBubble(displayed, m.width, m.planMode))
 
 	m.state = tuiRunning
 	m.runStart = time.Now()
 	m.elapsed = 0
+	m.turnTokens = 0
 	// The controller owns the run goroutine, its context, and cancellation; it
 	// streams events to eventCh and emits TurnDone when the turn settles.
 	m.ctrl.Send(sent)
@@ -741,7 +854,6 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 	case event.Text:
 		m.commitReasoning() // reasoning ends as the answer begins
 		m.pending.WriteString(e.Text)
-		m.turnAccumulator.WriteString(e.Text)
 
 	case event.Message:
 		// The answer stream is complete — freeze reasoning + the markdown answer.
@@ -749,8 +861,22 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.commitPending()
 
 	case event.ToolDispatch:
+		// The early (partial) dispatch only carries the name — the full dispatch
+		// with args prints the line. The running spinner covers the gap meanwhile.
+		if e.Tool.Partial {
+			break
+		}
 		m.finalizeStreamed()
-		m.commitLine(fmt.Sprintf("  -> %s %s", e.Tool.Name, compactArgs(e.Tool.Args)))
+		switch e.Tool.Name {
+		case "todo_write":
+			// Drive the pinned task list above the input (renderTodoPanel) rather
+			// than printing a tool line; it updates in place as the list evolves.
+			m.todoArgs = e.Tool.Args
+		case planApprovalTool:
+			// No longer a tool, but guard anyway: the plan is the assistant's reply.
+		default:
+			m.commitLine(fmt.Sprintf("  -> %s %s", e.Tool.Name, compactArgs(e.Tool.Args)))
+		}
 
 	case event.ToolResult:
 		// A successful result is silent (it only feeds the model); a blocked call
@@ -761,6 +887,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		}
 
 	case event.Usage:
+		if e.Usage != nil {
+			m.turnTokens += e.Usage.CompletionTokens
+		}
 		if line := agent.FormatUsageLine(e.Usage, e.Pricing); line != "" {
 			m.finalizeStreamed()
 			m.commitLine(line)
@@ -786,6 +915,12 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		a := e.Approval
 		m.pendingApproval = &a
 
+	case event.AskRequest:
+		// The `ask` tool raised a question card; the run goroutine blocks until
+		// ctrl.AnswerQuestion resolves it. Keys drive the card while it's set.
+		m.finalizeStreamed()
+		m.chooser = newChooser(e.Ask)
+
 	case event.TurnDone:
 		// The turn settled — freeze anything still streaming, autosave, surface a
 		// real error, and gate a plan-mode proposal on the user's approval.
@@ -796,9 +931,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
 			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, lipgloss.Color("3")))
 		}
-		if e.Err == nil && m.planMode && strings.TrimSpace(m.turnAccumulator.String()) != "" {
-			m.pendingPlan = "pending"
-		}
+		// Plan-mode approval is now driven by the controller (it emits an
+		// ApprovalRequest when a plan-mode turn produces a proposal), so there's
+		// nothing to detect here.
 	}
 }
 
@@ -843,11 +978,15 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// banner and reset live state.
 		m.pending.Reset()
 		m.reasoning.Reset()
-		m.turnAccumulator.Reset()
-		m.pendingPlan = ""
+		m.todoArgs = ""
+		m.chooser = nil
 		m.commitLine("")
 		m.commitLine(strings.TrimRight(renderTUIBanner(m.label, "", m.width), "\n"))
 		m.notice(i18n.M.SlashNewDone)
+	case "/todo":
+		// Dismiss the pinned task list; a later todo_write brings it back.
+		m.todoArgs = ""
+		m.notice(i18n.M.SlashTodoCleared)
 	case "/mcp":
 		m.showMCPStatus()
 	case "/help":

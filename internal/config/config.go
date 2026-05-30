@@ -86,7 +86,7 @@ func (c *Config) BashMode() string {
 type AgentConfig struct {
 	SystemPrompt     string  `toml:"system_prompt"`
 	SystemPromptFile string  `toml:"system_prompt_file"`
-	MaxSteps         int     `toml:"max_steps"`
+	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
 	Temperature      float64 `toml:"temperature"`
 	PlannerModel     string  `toml:"planner_model"`
 }
@@ -178,7 +178,17 @@ type PluginEntry struct {
 const DefaultSystemPrompt = `You are Reasonix, a coding agent focused on executing code tasks.
 Use the provided tools to read and write files and run shell commands.
 Principles: understand the request before acting; verify with tools instead of
-guessing; keep changes minimal and correct; briefly summarize what you did.`
+guessing; keep changes minimal and correct; briefly summarize what you did.
+When the request leaves a real choice to the user — which approach or library,
+the scope, or a consequential or ambiguous decision — call the ask tool to offer
+2-4 concrete options rather than guessing or burying the question in prose. Skip
+it when there's an obvious default; don't ask just to confirm.
+For multi-step work, track progress with the todo_write tool: lay out the steps,
+keep exactly one in_progress, and flip each to completed as you finish it — update
+the list as you go, not just at the end.
+In plan mode the harness blocks writer tools: do read-only research, then write a
+concise plan as your reply and stop. The user is asked to approve before anything
+is changed; once approved, work through the steps, updating the task list as you go.`
 
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
@@ -186,7 +196,11 @@ func Default() *Config {
 		DefaultModel: "deepseek-flash",
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
-			MaxSteps:     25,
+			// 0 = no step cap: the agent loops until the model gives a final answer,
+			// the user cancels, or the provider errors. Context stays bounded by
+			// compaction, not by a round count. Set a positive agent.max_steps only
+			// if you want a hard guard against runaway.
+			MaxSteps: 0,
 		},
 		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
 		// resolves to allow) while `reasonix chat` prompts before writers. Users add

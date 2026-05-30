@@ -81,6 +81,22 @@ func TestReadFile(t *testing.T) {
 	}
 }
 
+func TestReadFileDirectory(t *testing.T) {
+	dir := t.TempDir()
+	_, err := readFile{}.Execute(context.Background(), argsJSON(t, map[string]any{"path": dir}))
+	if err == nil {
+		t.Fatal("read_file on a directory should error, not return contents")
+	}
+	// The message must be actionable (point at ls) and not the doubled
+	// "read X: read X:" the raw scanner error produced.
+	if !strings.Contains(err.Error(), "directory") || !strings.Contains(err.Error(), "ls") {
+		t.Errorf("error should tell the model to use ls, got: %v", err)
+	}
+	if strings.Count(err.Error(), "read "+dir) > 1 {
+		t.Errorf("error is doubled: %v", err)
+	}
+}
+
 func TestReadFileOffsetLimit(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "many.txt")

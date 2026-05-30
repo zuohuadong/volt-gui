@@ -128,6 +128,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// auto-memory store; the saved index loads into the prefix on the next session.
 	reg.Add(memory.NewRememberTool(mem.Store))
 
+	// The `ask` tool puts structured multiple-choice questions to the user. It
+	// reaches them through the Asker on the call context, which interactive
+	// frontends wire to the controller (EnableInteractiveApproval); a headless run
+	// has none, so ask resolves to "decide for yourself".
+	reg.Add(agent.NewAskTool())
+
 	execSess := agent.NewSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:      maxSteps,

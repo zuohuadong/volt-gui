@@ -59,11 +59,18 @@ type Messages struct {
 	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval
 	ToolApprovalPromptFmt  string // "Allow %s%s?" banner — %s = tool name, %s = subject (leading space, or empty)
 
+	// `ask` tool question card.
+	AskTypeSomething   string // the "type your own answer" option label
+	AskTypingHint      string // shown on that row while entering free text
+	AskChatInstead     string // the "don't pick, just chat" option label
+	ChatStatusQuestion string // shortcuts hint while a question card is open
+
 	// chat TUI slash commands.
 	SlashCompactDone   string // "/compact" succeeded
 	SlashCompactFailed string // "/compact" errored, prefixed before the underlying error
 	SlashNewDone       string // "/new" succeeded
 	SlashNewFailed     string // "/new" errored
+	SlashTodoCleared   string // "/todo" dismissed the pinned task list
 	SlashUnavailable   string // the command is configured off (no callback wired)
 	SlashUnknown       string // shown when the user types an unrecognised "/cmd"
 	SlashHelp          string // listed commands

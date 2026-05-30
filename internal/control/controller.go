@@ -57,8 +57,15 @@ type Controller struct {
 	planMode    bool
 	sessionPath string
 	approvals   map[string]chan approvalReply
+	asks        map[string]chan []event.AskAnswer
 	granted     map[string]bool
 	nextID      int
+	// autoApprove auto-allows writer tool calls without prompting. Set only while
+	// executing a just-approved plan: approving the plan is the go-ahead, so the
+	// model shouldn't re-prompt for every write of the work it just got cleared to
+	// do. Deny rules still bite (those never reach the approver). Reset when the
+	// execution turn returns.
+	autoApprove bool
 
 	// pendingMemory holds memory notes added mid-session (via "#" quick-add or a
 	// memory edit) that haven't yet been folded into a turn. Compose drains it
@@ -111,6 +118,7 @@ func New(opts Options) *Controller {
 		mem:          opts.Memory,
 		cleanup:      opts.Cleanup,
 		approvals:    map[string]chan approvalReply{},
+		asks:         map[string]chan []event.AskAnswer{},
 		granted:      map[string]bool{},
 	}
 }
@@ -146,7 +154,74 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 // plan-mode marker and @-ref expansion). Used by the chat TUI, which resolves
 // those itself for live UI feedback.
 func (c *Controller) Send(input string) {
-	c.runGuarded(func(ctx context.Context) error { return c.runner.Run(ctx, input) })
+	c.runGuarded(func(ctx context.Context) error { return c.runTurn(ctx, input) })
+}
+
+// planApprovalTool is the Tool name on the ApprovalRequest the controller emits
+// to gate a proposed plan. Frontends key their plan-approval UI on it (the
+// desktop renders a plan card; the chat TUI a plan banner).
+const planApprovalTool = "exit_plan_mode"
+
+// planApprovedMessage is the follow-up turn sent once the user approves a plan —
+// the in-context nudge to execute and keep the (already-seeded) task list honest.
+const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now, and keep the task list current with todo_write: mark the step you start as in_progress and flip it to completed the moment it's done (one in_progress at a time)."
+
+// runTurn runs one model turn, then applies the plan-approval gate. This is the
+// single, frontend-agnostic plan flow: in plan mode the model just researches
+// (writers are blocked) and writes its plan as a normal answer — no special tool.
+// When the turn ends with a text proposal, the controller asks the user to
+// approve (reusing the ApprovalRequest channel both frontends already render);
+// on approval it exits plan mode, seeds the task list from the plan, and
+// continues straight into execution; on rejection it stays in plan mode so the
+// next turn can revise. Plan mode is only ever set interactively, so the headless
+// `Run` path (which doesn't call this) never blocks on a prompt.
+func (c *Controller) runTurn(ctx context.Context, input string) error {
+	if err := c.runner.Run(ctx, input); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	plan := c.planMode
+	c.mu.Unlock()
+	if !plan {
+		return nil
+	}
+	proposal := lastAssistantText(c.History())
+	if proposal == "" {
+		return nil // no substantive proposal to gate
+	}
+	// The plan is already visible as the assistant's answer, so the request
+	// carries no subject — it's purely the gate.
+	allow, _, err := c.requestApproval(ctx, planApprovalTool, "")
+	if err != nil {
+		return err
+	}
+	if !allow {
+		return nil // keep planning; plan mode stays on
+	}
+	c.SetPlanMode(false)
+	c.seedPlanTodos(proposal)
+	// The plan is the go-ahead: don't re-prompt for each write of the approved
+	// work. Auto-approve writers for the duration of this execution turn only.
+	c.mu.Lock()
+	c.autoApprove = true
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.autoApprove = false
+		c.mu.Unlock()
+	}()
+	return c.runner.Run(ctx, planApprovedMessage)
+}
+
+// lastAssistantText returns the content of the most recent assistant message with
+// non-empty text — the model's final answer for the turn (its plan, in plan mode).
+func lastAssistantText(msgs []provider.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == provider.RoleAssistant && strings.TrimSpace(msgs[i].Content) != "" {
+			return msgs[i].Content
+		}
+	}
+	return ""
 }
 
 // Submit is the one-call entry for a simple frontend: it takes raw user input
@@ -222,7 +297,7 @@ func (c *Controller) Submit(input string) {
 			if block != "" {
 				sent = "Referenced context:\n\n" + block + "\n\n" + input
 			}
-			return c.runner.Run(ctx, c.Compose(sent))
+			return c.runTurn(ctx, c.Compose(sent))
 		})
 	}
 }
@@ -271,11 +346,53 @@ func (c *Controller) Approve(id string, allow, session bool) {
 }
 
 // EnableInteractiveApproval swaps the executor's gate for one that routes "ask"
-// decisions to the frontend via ApprovalRequest events. Interactive frontends
-// (chat, desktop) call this; the headless run keeps the silent gate from setup.
+// decisions to the frontend via ApprovalRequest events, and wires the controller
+// in as the executor's Asker so the `ask` tool can question the user. Interactive
+// frontends (chat, desktop) call this; the headless run keeps the silent gate and
+// a nil asker from setup.
 func (c *Controller) EnableInteractiveApproval() {
 	if c.executor != nil {
 		c.executor.SetGate(permission.NewGate(c.policy, gateApprover{c}))
+		c.executor.SetAsker(c)
+	}
+}
+
+// Ask implements agent.Asker: it emits an AskRequest and blocks until
+// AnswerQuestion(ID, …) answers or ctx is cancelled. promptMu serialises it
+// against tool-approval prompts so at most one user prompt is outstanding.
+func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
+	c.promptMu.Lock()
+	defer c.promptMu.Unlock()
+
+	c.mu.Lock()
+	c.nextID++
+	id := strconv.Itoa(c.nextID)
+	reply := make(chan []event.AskAnswer, 1)
+	c.asks[id] = reply
+	c.mu.Unlock()
+
+	c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: event.Ask{ID: id, Questions: questions}})
+
+	select {
+	case ans := <-reply:
+		return ans, nil
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.asks, id)
+		c.mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+// AnswerQuestion resolves a pending AskRequest by ID with the user's selections.
+// Unknown/expired IDs are ignored.
+func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
+	c.mu.Lock()
+	reply := c.asks[id]
+	delete(c.asks, id)
+	c.mu.Unlock()
+	if reply != nil {
+		reply <- answers // buffered, never blocks
 	}
 }
 
@@ -468,7 +585,110 @@ func (c *Controller) refreshMemoryLocked() {
 type gateApprover struct{ c *Controller }
 
 func (g gateApprover) Approve(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, error) {
+	// While executing a just-approved plan, writers are pre-cleared — the plan was
+	// the approval — so don't prompt again.
+	g.c.mu.Lock()
+	auto := g.c.autoApprove
+	g.c.mu.Unlock()
+	if auto {
+		return true, false, nil
+	}
 	return g.c.requestApproval(ctx, tool, subject)
+}
+
+type seedTodo struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
+
+// seedPlanTodos turns an approved plan into a starter task list and emits it as a
+// synthetic todo_write event, so the live task panel populates the instant the
+// user approves — a structural guarantee, not a prompt the model might ignore.
+// The model still flips item status as it works (only it knows its own
+// progress); this just makes the list exist. No-op when the plan has no list.
+func (c *Controller) seedPlanTodos(plan string) {
+	args := PlanTodosJSON(plan)
+	if args == "" {
+		return
+	}
+	t := event.Tool{ID: "plan-seed", Name: "todo_write", Args: args, ReadOnly: true}
+	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
+	t.Output = "task list seeded from the approved plan"
+	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
+}
+
+// PlanTodosJSON parses an approved plan's markdown into todo_write-shaped args
+// JSON ({"todos":[...]}), or "" when the plan has no list items. The exit_plan_mode
+// path seeds via seedPlanTodos (an event); a frontend whose own approval flow
+// bypasses exit_plan_mode (the chat TUI's text-plan approval) calls this directly
+// to render the same starter checklist. Shared parsing keeps the two consistent.
+func PlanTodosJSON(plan string) string {
+	items := parsePlanTodos(plan)
+	if len(items) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(map[string]any{"todos": items})
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// parsePlanTodos extracts a starter task list from an approved plan's markdown
+// list items (bulleted or numbered): the first is in_progress, the rest pending,
+// capped so a long plan can't flood the panel. It understands ONLY markdown lists
+// — an unambiguous, standard structure — and deliberately does not guess at prose,
+// tables, or arrow sequences (those need brittle, language-specific heuristics).
+// The plan-mode marker steers the model to present its plan as a list, so this
+// catches the normal case; anything it misses is covered by the model's own
+// todo_write calls as it executes.
+func parsePlanTodos(plan string) []seedTodo {
+	var todos []seedTodo
+	for _, raw := range strings.Split(plan, "\n") {
+		item := listItemContent(raw)
+		if item == "" {
+			continue
+		}
+		status := "pending"
+		if len(todos) == 0 {
+			status = "in_progress"
+		}
+		todos = append(todos, seedTodo{Content: item, Status: status})
+		if len(todos) >= 20 {
+			break
+		}
+	}
+	return todos
+}
+
+// listItemContent returns the task text of a markdown list line ("- x", "* x",
+// "1. x", "2) x"), or "" if the line isn't a list item. Light inline-markdown
+// stripping keeps the checklist readable.
+func listItemContent(line string) string {
+	s := strings.TrimSpace(line)
+	if s == "" {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(s, "- "), strings.HasPrefix(s, "* "), strings.HasPrefix(s, "+ "):
+		s = s[2:]
+	default:
+		// numbered: leading digits, then "." or ")", then a space
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == 0 || i+1 >= len(s) || (s[i] != '.' && s[i] != ')') || s[i+1] != ' ' {
+			return ""
+		}
+		s = s[i+2:]
+	}
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "[ ] ")
+	s = strings.TrimPrefix(s, "[x] ")
+	s = strings.ReplaceAll(s, "`", "")
+	s = strings.ReplaceAll(s, "**", "")
+	return strings.TrimSpace(s)
 }
 
 // requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)
@@ -504,7 +724,9 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 
 	select {
 	case r := <-reply:
-		if r.allow && r.session {
+		// Plan approvals are one-shot — never persist a session grant for them, or
+		// every future plan would auto-approve.
+		if r.allow && r.session && tool != planApprovalTool {
 			c.mu.Lock()
 			c.granted[key] = true
 			c.mu.Unlock()

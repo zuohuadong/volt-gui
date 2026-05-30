@@ -318,6 +318,11 @@ body {
   white-space: pre-wrap;
 }
 
+/* raw answer text while it streams (markdown takes over once complete) */
+.msg__stream {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .cursor {
   display: inline-block;
   width: 7px;
@@ -534,6 +539,31 @@ body {
 .tool--running {
   border-color: var(--accent-soft);
 }
+/* read-only "research" calls: a slim, borderless, muted row instead of a boxed
+   card, so a long run of reads/greps reads as a quiet log. */
+.tool--quiet {
+  margin: 1px auto;
+  background: none;
+  border-color: transparent;
+}
+.tool--quiet .tool__row {
+  padding: 2px 11px;
+}
+.tool--quiet .tool__name {
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+.tool--quiet .tool__icon {
+  color: var(--fg-faint);
+}
+.tool--quiet .tool__row--clickable:hover {
+  background: var(--bg-soft);
+  border-radius: 6px;
+}
+.tool--quiet .tool__summary {
+  padding-top: 0;
+  padding-bottom: 3px;
+}
 .tool__row {
   display: flex;
   align-items: center;
@@ -626,6 +656,9 @@ body {
 }
 .ico--err {
   color: var(--err);
+}
+.ico--stopped {
+  color: var(--fg-faint);
 }
 .ico.spin {
   color: var(--accent);
@@ -832,6 +865,9 @@ body {
 .statusbar__sep {
   opacity: 0.5;
 }
+.statusbar__activity {
+  color: var(--accent);
+}
 .statusbar__cwd {
   display: inline-flex;
   align-items: center;
@@ -985,6 +1021,99 @@ body {
   border-color: var(--accent);
   color: var(--accent-fg);
   font-weight: 600;
+}
+
+/* plan-approval variant of the modal (exit_plan_mode) */
+.modal--plan {
+  max-width: 560px;
+}
+
+/* ── ask tool: question card ──────────────────────────────────────────────── */
+.modal--ask {
+  max-width: 560px;
+}
+.ask-q {
+  margin-bottom: 18px;
+}
+.ask-q__header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint);
+  margin-bottom: 4px;
+}
+.ask-q__prompt {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.ask-q__options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ask-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ask-opt:hover {
+  border-color: var(--fg-faint);
+}
+.ask-opt--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ask-opt__mark {
+  flex-shrink: 0;
+  color: var(--fg-faint);
+  line-height: 1.5;
+}
+.ask-opt--on .ask-opt__mark {
+  color: var(--accent);
+}
+.ask-opt__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ask-opt__label {
+  font-size: 13.5px;
+}
+.ask-opt__desc {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+.ask-q__custom {
+  margin-top: 8px;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 9px;
+  box-sizing: border-box;
+}
+.ask-q__custom::placeholder {
+  color: var(--fg-faint);
+}
+.modal__plannote {
+  margin: 0 0 16px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 /* ── highlight.js token theme (mapped to palette) ────────────────────────── */
@@ -1261,4 +1390,196 @@ body {
 .badge--reference {
   color: var(--accent);
   border-color: var(--accent-soft);
+}
+
+/* ── tool card extras: outcome line, nested sub-agent, multi-edit labels ───── */
+.tool__summary {
+  padding: 1px 11px 8px 30px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+.tool__summary::before {
+  content: "⎿ ";
+  opacity: 0.6;
+}
+.tool__difflabel {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+  margin: 6px 0 2px;
+}
+.tool__body + .tool__body .tool__difflabel {
+  margin-top: 2px;
+}
+/* sub-agent calls render indented under their parent task card */
+.tool__nested {
+  margin: 0 11px 8px 22px;
+  padding-left: 11px;
+  border-left: 1px solid var(--border);
+}
+.tool__nested .tool {
+  margin: 6px 0;
+  background: var(--bg);
+}
+
+/* ── live task list, pinned above the composer ─────────────────────────────── */
+.todobar {
+  max-width: var(--maxw);
+  margin: 0 auto 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.todobar__head {
+  display: flex;
+  align-items: center;
+  padding: 0 7px 0 11px;
+}
+.todobar__toggle {
+  --wails-draggable: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.todobar__toggle > svg {
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
+.todobar__close {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4px;
+  background: none;
+  border: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+  border-radius: 5px;
+}
+.todobar__close:hover {
+  color: var(--fg);
+  background: var(--bg-elev);
+}
+.todobar__title {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+.todobar__count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+  flex-shrink: 0;
+}
+.todobar__current {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.todobar__list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 11px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.todobar__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.todobar__ico {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--fg-faint);
+}
+.todobar__ico--done {
+  color: var(--ok);
+}
+.todobar__ico--active {
+  color: var(--accent);
+}
+.todobar__text {
+  min-width: 0;
+}
+.todobar__item--completed .todobar__text {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+.todobar__item--in_progress .todobar__text {
+  color: var(--fg);
+  font-weight: 500;
+}
+.todobar__item--pending .todobar__text {
+  color: var(--fg-dim);
+}
+
+/* ── composer mode indicator (pinned above the input) ─────────────────────── */
+.composer__mode {
+  --wails-draggable: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--fg-faint);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.composer__mode:hover {
+  color: var(--fg-dim);
+  border-color: var(--fg-faint);
+}
+/* engaged state — the prominent accent pill */
+.composer__mode--on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+.composer__mode--on:hover {
+  color: var(--accent);
+  border-color: transparent;
+}
+.composer__mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  flex-shrink: 0;
+}
+.composer__mode--on .composer__mode-dot {
+  background: var(--accent);
+}
+.composer__mode-hint {
+  color: var(--fg-faint);
+  font-size: 11px;
 }

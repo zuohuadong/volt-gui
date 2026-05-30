@@ -4,16 +4,45 @@ import { AssistantMessage, UserMessage } from "./Message";
 import { ToolCard } from "./ToolCard";
 import { Welcome } from "./Welcome";
 
-export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text: string) => void }) {
-  const endRef = useRef<HTMLDivElement>(null);
+type ToolItem = Extract<Item, { kind: "tool" }>;
 
-  // Keep the newest content in view as the turn streams.
+export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text: string) => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // stick tracks whether the view is pinned to the bottom; once the user scrolls
+  // up to read, we stop yanking them back down.
+  const stick = useRef(true);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+
+  // Follow new content by setting scrollTop directly (no scrollIntoView fighting
+  // the browser's scroll anchoring), and inside rAF so layout has settled first —
+  // together with plain-text streaming this keeps the view from jittering.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    if (!stick.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
   }, [items]);
 
+  // Sub-agent calls carry a parentId; collect them under their parent `task`
+  // call so the parent card can render them nested, and skip them at top level.
+  const subcallsByParent = new Map<string, ToolItem[]>();
+  for (const it of items) {
+    if (it.kind === "tool" && it.parentId) {
+      const arr = subcallsByParent.get(it.parentId) ?? [];
+      arr.push(it);
+      subcallsByParent.set(it.parentId, arr);
+    }
+  }
+
   return (
-    <div className="transcript">
+    <div className="transcript" ref={scrollRef} onScroll={onScroll}>
       {items.length === 0 && <Welcome onPrompt={onPrompt} />}
 
       {items.map((it) => {
@@ -23,7 +52,10 @@ export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text
           case "assistant":
             return <AssistantMessage key={it.id} item={it} />;
           case "tool":
-            return <ToolCard key={it.id} item={it} />;
+            if (it.parentId) return null; // rendered nested under its parent
+            if (it.name === "todo_write") return null; // shown live in the pinned TodoPanel
+            if (it.name === "exit_plan_mode") return null; // the plan was shown in the approval card
+            return <ToolCard key={it.id} item={it} subcalls={subcallsByParent.get(it.id)} />;
           case "phase":
             return (
               <div key={it.id} className="phase">
@@ -38,8 +70,6 @@ export function Transcript({ items, onPrompt }: { items: Item[]; onPrompt: (text
             );
         }
       })}
-
-      <div ref={endRef} />
     </div>
   );
 }

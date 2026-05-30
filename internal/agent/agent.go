@@ -28,6 +28,45 @@ type Renderer interface {
 	Render(text string) string
 }
 
+// Asker puts structured multiple-choice questions to the user and blocks for the
+// answers. The agent consults it for the `ask` tool. It is interface-shaped so
+// the agent stays independent of the frontend; a nil asker means no interactive
+// user (headless runs), where `ask` returns a "decide for yourself" result. The
+// interactive frontends wire the controller in as the Asker.
+type Asker interface {
+	Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error)
+}
+
+// callContextKey carries the executing tool call's identity into Execute.
+type callContextKey struct{}
+
+// callContext is the per-call context a tool can read. parentID is the call being
+// executed and sink is the agent's event sink (the `task` tool uses both to nest
+// a sub-agent's events under this call); asker lets the `ask` tool reach the user.
+type callContext struct {
+	parentID string
+	sink     event.Sink
+	asker    Asker
+}
+
+// withCallContext stamps ctx with the executing call's ID, the agent's sink, and
+// the asker. executeOne sets this before every Execute; `task` reads it (via
+// CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
+func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker) context.Context {
+	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker})
+}
+
+// CallContext returns the executing call's ID, the agent's sink, and the asker,
+// if the context was set by an agent's executeOne. ok is false for a plain
+// context (headless tool tests, calls made outside the run loop).
+func CallContext(ctx context.Context) (parentID string, sink event.Sink, asker Asker, ok bool) {
+	cc, ok := ctx.Value(callContextKey{}).(callContext)
+	if !ok {
+		return "", nil, nil, false
+	}
+	return cc.parentID, cc.sink, cc.asker, true
+}
+
 // Gate decides, per tool call, whether it may run. The agent consults it at
 // execute time (after the plan-mode gate). It is interface-shaped so the agent
 // stays independent of the permission package and of how "ask" is resolved
@@ -71,6 +110,10 @@ type Agent struct {
 	// plan-mode check. nil disables gating entirely.
 	gate Gate
 
+	// asker, when non-nil, lets the `ask` tool put questions to the user. nil in
+	// headless runs (no interactive user). Set via SetAsker.
+	asker Asker
+
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping recentKeep messages
 	// verbatim and archiving the originals under archiveDir.
@@ -90,6 +133,10 @@ func (a *Agent) SetPlanMode(v bool) { a.planMode = v }
 // headless gate built in setup for an interactive one that prompts the user;
 // nil disables gating. Safe to call before the run loop starts.
 func (a *Agent) SetGate(g Gate) { a.gate = g }
+
+// SetAsker installs the asker the `ask` tool uses to question the user.
+// Interactive frontends wire one in; headless runs leave it nil.
+func (a *Agent) SetAsker(as Asker) { a.asker = as }
 
 // Session returns the agent's current conversation, useful for persistence
 // hooks that need to read the message log between turns.
@@ -133,12 +180,11 @@ type Options struct {
 	ArchiveDir    string
 }
 
-// New constructs an Agent. MaxSteps <= 0 defaults to 25. A nil sink is replaced
+// New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
+// until the model gives a final answer, the context is cancelled, or the
+// provider errors (compaction keeps the context bounded). A nil sink is replaced
 // with event.Discard so the agent can always emit unconditionally.
 func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Options, sink event.Sink) *Agent {
-	if opts.MaxSteps <= 0 {
-		opts.MaxSteps = 25
-	}
 	if opts.CompactRatio <= 0 {
 		opts.CompactRatio = defaultCompactRatio
 	}
@@ -164,13 +210,17 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	}
 }
 
-// Run appends the user input and runs the loop until the model stops requesting
-// tools or maxSteps is reached.
+// Run appends the user input and drives the tool loop until the model returns a
+// final answer (no tool calls), the context is cancelled, or the provider errors.
+// With maxSteps <= 0 the loop is unbounded — the natural termination is the model
+// finishing, and the real safety bounds are user cancellation and compaction, not
+// a round count. A positive maxSteps imposes an optional hard guard, surfaced as
+// a resumable notice when hit.
 func (a *Agent) Run(ctx context.Context, input string) error {
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
-	for step := 0; step < a.maxSteps; step++ {
+	for step := 0; a.maxSteps <= 0 || step < a.maxSteps; step++ {
 		text, reasoning, calls, usage, err := a.stream(ctx)
 		if err != nil {
 			return err
@@ -209,7 +259,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		// stays within the model's window.
 		a.maybeCompact(ctx, usage)
 	}
-	return fmt.Errorf("reached max steps (%d) without completing", a.maxSteps)
+	// Only reached when a positive maxSteps guard is configured. The work so far
+	// is already in the session, so the user can just send another message to pick
+	// up where it left off.
+	return fmt.Errorf("paused after %d tool-call rounds (agent.max_steps) — the work so far is saved; send another message to continue, or set max_steps higher or to 0 for no limit", a.maxSteps)
 }
 
 // stream runs one completion, emitting reasoning and text deltas as typed
@@ -238,6 +291,16 @@ func (a *Agent) stream(ctx context.Context) (string, string, []provider.ToolCall
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
 			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
+		case provider.ChunkToolCallStart:
+			// Surface the tool card as soon as the call begins — before its
+			// (possibly large) arguments finish streaming — so the user sees it
+			// working instead of a stall. executeBatch emits the full dispatch
+			// (with args) once the call completes; the frontend merges by ID.
+			if tc := chunk.ToolCall; tc != nil {
+				a.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
+					ID: tc.ID, Name: tc.Name, ReadOnly: a.toolReadOnly(tc.Name), Partial: true,
+				}})
+			}
 		case provider.ChunkToolCall:
 			calls = append(calls, *chunk.ToolCall)
 		case provider.ChunkUsage:
@@ -310,7 +373,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 			Name:      c.Name,
 			Args:      c.Arguments,
 			Output:    o.output,
-			Err:       o.blockMsg,
+			Err:       o.errMsg,
 			ReadOnly:  ok && t.ReadOnly(),
 			Truncated: o.truncated,
 		}})
@@ -322,13 +385,15 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 }
 
 // toolOutcome is one tool call's result, split into the model-facing output and
-// the display-facing notice bits. blockMsg is set (without the "name " prefix)
-// when the call was blocked, so a sink can render "⊘ name <blockMsg>"; truncMsg
-// is set (without the "· " prefix) when the output was head+tailed.
+// the display-facing notice bits. errMsg is the short failure reason (empty on
+// success) — a refused call, an unknown tool, or an execution error — so a sink
+// renders the result as failed ("⊘ name <errMsg>" / a red card) instead of OK;
+// blocked narrows that to a refusal (plan mode / permission). truncMsg is set
+// (without the "· " prefix) when the output was head+tailed.
 type toolOutcome struct {
 	output    string
 	blocked   bool
-	blockMsg  string
+	errMsg    string
 	truncated bool
 	truncMsg  string
 }
@@ -339,35 +404,58 @@ type toolOutcome struct {
 func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutcome {
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
-		return toolOutcome{output: fmt.Sprintf("error: unknown tool %q", call.Name)}
+		return toolOutcome{
+			output: fmt.Sprintf("error: unknown tool %q", call.Name),
+			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
+		}
 	}
 	if a.planMode && !t.ReadOnly() {
-		return toolOutcome{output: fmt.Sprintf("blocked: %q is a writer tool and plan mode is read-only — propose the change in your final answer instead. The user will toggle plan mode off (Tab) to execute.", call.Name)}
+		return toolOutcome{
+			output:  fmt.Sprintf("blocked: %q is a writer tool and plan mode is read-only. Keep exploring with read-only tools, then write your plan as your reply — the user will be asked to approve it before any changes are made.", call.Name),
+			blocked: true,
+			errMsg:  "blocked: plan mode is read-only",
+		}
 	}
 	if a.gate != nil {
 		allow, reason, err := a.gate.Check(ctx, call.Name, json.RawMessage(call.Arguments), t.ReadOnly())
 		if err != nil {
 			return toolOutcome{
-				output:   fmt.Sprintf("blocked: %s (%v)", reason, err),
-				blocked:  true,
-				blockMsg: fmt.Sprintf("blocked: %v", err),
+				output:  fmt.Sprintf("blocked: %s (%v)", reason, err),
+				blocked: true,
+				errMsg:  fmt.Sprintf("blocked: %v", err),
 			}
 		}
 		if !allow {
 			return toolOutcome{
-				output:   "blocked: " + reason,
-				blocked:  true,
-				blockMsg: "blocked by permission policy",
+				output:  "blocked: " + reason,
+				blocked: true,
+				errMsg:  "blocked by permission policy",
 			}
 		}
 	}
-	result, err := t.Execute(ctx, json.RawMessage(call.Arguments))
+	result, err := t.Execute(withCallContext(ctx, call.ID, a.sink, a.asker), json.RawMessage(call.Arguments))
 	if err != nil {
 		body, truncMsg := truncateToolOutput(fmt.Sprintf("error: %v\n%s", err, result))
-		return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
+		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}
 	}
 	body, truncMsg := truncateToolOutput(result)
 	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
+}
+
+// toolReadOnly reports a tool's ReadOnly classification by name (false for an
+// unknown tool), for stamping early ToolDispatch events.
+func (a *Agent) toolReadOnly(name string) bool {
+	t, ok := a.tools.Get(name)
+	return ok && t.ReadOnly()
+}
+
+// firstLine returns s up to its first newline — a one-line failure summary for
+// the display Err, while the full error stays in the model-facing output.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // canParallelise returns true iff every call targets a known, ReadOnly tool.

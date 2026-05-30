@@ -8,12 +8,16 @@ import { FileMenu } from "./FileMenu";
 
 export function Composer({
   running,
+  plan,
   onSend,
   onCancel,
+  onTogglePlan,
 }: {
   running: boolean;
+  plan: boolean;
   onSend: (text: string) => void;
   onCancel: () => void;
+  onTogglePlan: () => void;
 }) {
   const [text, setText] = useState("");
   const [active, setActive] = useState(0);
@@ -128,6 +132,14 @@ export function Composer({
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const composing = e.nativeEvent.isComposing;
 
+    // Shift+Tab cycles the input mode. Only plan/normal exist today, so it's a
+    // toggle. Handled before the menus so it works even while one is open.
+    if (e.key === "Tab" && e.shiftKey && !composing) {
+      e.preventDefault();
+      onTogglePlan();
+      return;
+    }
+
     if (mode && !composing) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -169,6 +181,19 @@ export function Composer({
         <SlashMenu items={slashMatches} activeIndex={active} onPick={pickCommand} onHover={setActive} />
       )}
       {mode === "at" && <FileMenu items={atMatches} activeIndex={active} onPick={pickEntry} onHover={setActive} />}
+      <button
+        className={`composer__mode ${plan ? "composer__mode--on" : ""}`}
+        onClick={onTogglePlan}
+        title={
+          plan
+            ? "Exit plan mode (shift+tab)"
+            : "Enter plan mode (shift+tab) — read-only; propose a plan before writing"
+        }
+      >
+        <span className="composer__mode-dot" />
+        {plan ? "plan mode on" : "plan mode"}
+        <span className="composer__mode-hint">{plan ? "shift+tab to exit" : "shift+tab"}</span>
+      </button>
       <div className="composer">
         <span className="composer__caret">›</span>
         <textarea

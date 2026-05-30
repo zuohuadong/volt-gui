@@ -123,6 +123,25 @@ func (a *App) SetPlanMode(on bool) {
 	}
 }
 
+// QuestionAnswer is the frontend's reply to one question in an ask_request.
+type QuestionAnswer struct {
+	QuestionID string   `json:"questionId"`
+	Selected   []string `json:"selected"`
+}
+
+// AnswerQuestion resolves a pending ask_request (the `ask` tool) by ID with the
+// user's selections per question.
+func (a *App) AnswerQuestion(id string, answers []QuestionAnswer) {
+	if a.ctrl == nil {
+		return
+	}
+	out := make([]event.AskAnswer, len(answers))
+	for i, an := range answers {
+		out[i] = event.AskAnswer{QuestionID: an.QuestionID, Selected: an.Selected}
+	}
+	a.ctrl.AnswerQuestion(id, out)
+}
+
 // Compact runs one compaction pass on demand.
 func (a *App) Compact() error {
 	if a.ctrl == nil {

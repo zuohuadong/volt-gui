@@ -8,7 +8,7 @@ import (
 // PlanModeMarker is prepended to every user turn while plan mode is on. It rides
 // in the user message (not the system prompt or tools), so the cache-stable
 // prompt prefix is left untouched and the toggle costs nothing in cache hits.
-const PlanModeMarker = "[Plan mode — read-only. Explore and propose; do not write files, edit, or run side-effecting bash. Read-only tools (read_file, ls, grep, glob, web_fetch, task) are available; writers are refused by the harness. End with a concrete plan the user can approve.]"
+const PlanModeMarker = "[Plan mode — read-only. Explore and propose; do not write files, edit, or run side-effecting bash. Read-only tools (read_file, ls, grep, glob, web_fetch, task) are available; writers are refused by the harness. When you have a concrete plan, present it as your reply and stop — write the steps as a markdown numbered list (one concrete step per item) so they become the task list. The user will be asked to approve before any changes are made.]"
 
 // Compose applies the plan-mode marker to a turn's text when plan mode is on,
 // returning the message to actually send to the model. The frontend keeps

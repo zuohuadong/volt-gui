@@ -188,12 +188,15 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 }
 
 // readStream parses the SSE stream, emits text deltas live, accumulates tool-call
-// fragments internally, and emits complete ToolCalls (by index) when done.
+// fragments internally, and emits complete ToolCalls (by index) when done. Each
+// call also gets a ChunkToolCallStart the moment its name is known, so a frontend
+// can show the tool card while the arguments are still streaming.
 func (c *client) readStream(resp *http.Response, out chan<- provider.Chunk) {
 	defer resp.Body.Close()
 	defer close(out)
 
 	acc := map[int]*provider.ToolCall{}
+	started := map[int]bool{}
 	var order []int
 	var lastFinishReason string
 
@@ -252,6 +255,13 @@ func (c *client) readStream(resp *http.Response, out chan<- provider.Chunk) {
 				cur.Name = tc.Function.Name
 			}
 			cur.Arguments += tc.Function.Arguments
+			// Signal the call's start the moment its name is known, so a frontend
+			// can show the tool card immediately rather than only after its
+			// (possibly large) arguments finish streaming.
+			if !started[tc.Index] && cur.Name != "" {
+				started[tc.Index] = true
+				out <- provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: cur.ID, Name: cur.Name}}
+			}
 		}
 	}
 

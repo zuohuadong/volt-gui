@@ -19,12 +19,13 @@ and self-contained — the parent will see only that answer, not your tool calls
 If you need to ask for clarification, fail with a precise question instead of guessing.`
 
 // TaskTool spawns a sub-agent in its own session for a focused sub-task. The
-// sub-agent runs with a filtered tool whitelist, a lower default step cap,
-// and a discard-output writer — only its final assistant message is returned
-// to the parent. Use cases: keep noisy tool sequences (multi-file exploration,
-// repeated grep / read_file) out of the parent's context budget, or parallel
-// research across independent areas (the parallel-dispatch path picks these up
-// only when readOnly, which task is not).
+// sub-agent runs with a filtered tool whitelist and the same step budget shape
+// as the parent (see Execute); its tool calls are forwarded to the parent's
+// event stream nested under this call, while only its final assistant message is
+// returned to the parent model. Use cases: keep noisy tool sequences (multi-file
+// exploration, repeated grep / read_file) out of the parent's context budget, or
+// parallel research across independent areas (the parallel-dispatch path picks
+// these up only when readOnly, which task is not).
 type TaskTool struct {
 	prov          provider.Provider
 	pricing       *provider.Pricing
@@ -101,9 +102,16 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 
 	maxSteps := p.MaxSteps
 	if maxSteps <= 0 {
-		maxSteps = t.maxSteps / 2
-		if maxSteps < 5 {
-			maxSteps = 5
+		// No explicit cap from the caller: mirror the parent. A finite parent caps
+		// the sub-agent at half its budget (min 5) so a delegated sub-task stays
+		// shorter than the whole turn; an unbounded parent yields an unbounded
+		// sub-agent. The sub-agent shares the parent's ctx, so cancelling the turn
+		// stops it, and it compacts its own context — the same bounds the parent has.
+		if t.maxSteps > 0 {
+			maxSteps = t.maxSteps / 2
+			if maxSteps < 5 {
+				maxSteps = 5
+			}
 		}
 	}
 
@@ -128,9 +136,10 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		}
 	}
 
-	// Sub-agent runs silently — its noise (tool dispatch lines, per-turn
-	// usage, reasoning) would clutter the parent UI without buying anything,
-	// since only the final answer surfaces to the caller anyway.
+	// The sub-agent's tool calls are forwarded to the parent stream, nested under
+	// this task call (see subSink), so the UI can show the sub-agent's work live.
+	// Its text/reasoning/usage stay hidden — only the final answer, returned
+	// below, surfaces to the parent model.
 	subSession := NewSession(t.sysPrompt)
 	subAgent := New(t.prov, subReg, subSession, Options{
 		MaxSteps:      maxSteps,
@@ -139,7 +148,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		Gate:          t.gate,
 		ContextWindow: t.contextWindow,
 		ArchiveDir:    t.archiveDir,
-	}, event.Discard)
+	}, subSink(ctx))
 
 	if err := subAgent.Run(ctx, p.Prompt); err != nil {
 		return "", fmt.Errorf("sub-agent: %w", err)
@@ -155,4 +164,27 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		}
 	}
 	return "", fmt.Errorf("sub-agent finished without producing a final answer")
+}
+
+// subSink forwards a sub-agent's tool dispatch/result events to the parent's
+// event stream, tagged with the parent task call's ID so a frontend nests them
+// under it. The sub-agent's own turn/usage/text/reasoning events are dropped —
+// only its tool activity (the part worth seeing live) and its final answer
+// (returned by Execute) reach the parent. The forwarded call IDs are namespaced
+// with the parent ID so a sub-agent call can never collide with a parent call in
+// the frontend's dispatch→result matching. Falls back to Discard when there's no
+// parent stream (the headless run loop, or a direct Execute in tests).
+func subSink(ctx context.Context) event.Sink {
+	parentID, parent, _, ok := CallContext(ctx)
+	if !ok || parent == nil {
+		return event.Discard
+	}
+	return event.FuncSink(func(e event.Event) {
+		switch e.Kind {
+		case event.ToolDispatch, event.ToolResult:
+			e.Tool.ParentID = parentID
+			e.Tool.ID = parentID + "/" + e.Tool.ID
+			parent.Emit(e)
+		}
+	})
 }

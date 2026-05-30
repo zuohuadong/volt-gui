@@ -12,12 +12,14 @@ import type {
   HistoryMessage,
   MemoryView,
   Meta,
+  QuestionAnswer,
   WireApproval,
+  WireAsk,
   WireEvent,
   WireUsage,
 } from "./types";
 
-export type ToolStatus = "running" | "done" | "error";
+export type ToolStatus = "running" | "done" | "error" | "stopped";
 
 export type Item =
   | { kind: "user"; id: string; text: string }
@@ -34,18 +36,26 @@ export type Item =
       output?: string;
       error?: string;
       truncated?: boolean;
+      parentId?: string; // a sub-agent call nests under the `task` call with this id
     };
 
 interface State {
   items: Item[];
   running: boolean;
   approval?: WireApproval;
+  ask?: WireAsk;
   usage?: WireUsage;
   context: ContextInfo;
   meta?: Meta;
   // currentAssistant tracks the in-flight assistant item that text/reasoning
   // deltas accumulate into; cleared at turn boundaries.
   currentAssistant?: string;
+  // turnStartAt is the wall-clock ms the current turn began (0 when idle), and
+  // turnTokens accumulates the output tokens reported this turn — together they
+  // drive the live "thinking… (12s · ↓3.6k tokens)" activity readout. Pure
+  // frontend-observed harness state; no model cooperation needed.
+  turnStartAt: number;
+  turnTokens: number;
   // seq is a monotonic id source so React keys stay stable across re-renders.
   seq: number;
 }
@@ -54,6 +64,8 @@ const initialState: State = {
   items: [],
   running: false,
   context: { used: 0, window: 0 },
+  turnStartAt: 0,
+  turnTokens: 0,
   seq: 0,
 };
 
@@ -64,6 +76,7 @@ type Action =
   | { type: "context"; context: ContextInfo }
   | { type: "history"; messages: HistoryMessage[] }
   | { type: "clearApproval" }
+  | { type: "clearAsk" }
   | { type: "reset" };
 
 // ensureAssistant returns the items array containing the active assistant item
@@ -81,7 +94,7 @@ function ensureAssistant(s: State): { items: Item[]; id: string; seq: number } {
 function applyEvent(s: State, e: WireEvent): State {
   switch (e.kind) {
     case "turn_started":
-      return { ...s, running: true, currentAssistant: undefined };
+      return { ...s, running: true, currentAssistant: undefined, turnStartAt: Date.now(), turnTokens: 0 };
 
     case "text":
     case "reasoning": {
@@ -111,6 +124,18 @@ function applyEvent(s: State, e: WireEvent): State {
       const t = e.tool;
       if (!t) return s;
       const id = t.id || `tool${s.seq}`;
+      // A call streams two dispatches: an early partial one (name only, so the
+      // card shows at once) and a full one (with args) when it completes. Merge
+      // by id — update the existing card rather than appending a duplicate.
+      const idx = s.items.findIndex((it) => it.kind === "tool" && it.id === id);
+      if (idx >= 0) {
+        const next = [...s.items];
+        const it = next[idx];
+        if (it.kind === "tool") {
+          next[idx] = { ...it, name: t.name, args: t.args ? t.args : it.args, readOnly: t.readOnly };
+        }
+        return { ...s, items: next };
+      }
       const item: Item = {
         kind: "tool",
         id,
@@ -118,6 +143,7 @@ function applyEvent(s: State, e: WireEvent): State {
         args: t.args ?? "",
         readOnly: t.readOnly,
         status: "running",
+        parentId: t.parentId,
       };
       return { ...s, seq: s.seq + 1, items: [...s.items, item] };
     }
@@ -155,7 +181,10 @@ function applyEvent(s: State, e: WireEvent): State {
 
     case "usage": {
       const used = e.usage && s.context.window ? e.usage.promptTokens : s.context.used;
-      return { ...s, usage: e.usage, context: { ...s.context, used } };
+      // Usage arrives once per model step; sum the output across steps for the
+      // turn's running token tally.
+      const turnTokens = s.turnTokens + (e.usage?.completionTokens ?? 0);
+      return { ...s, usage: e.usage, context: { ...s.context, used }, turnTokens };
     }
 
     case "notice":
@@ -175,14 +204,22 @@ function applyEvent(s: State, e: WireEvent): State {
     case "approval_request":
       return { ...s, approval: e.approval };
 
+    case "ask_request":
+      return { ...s, ask: e.ask };
+
     case "turn_done": {
-      const finalized = s.items.map((it) =>
-        it.kind === "assistant" && it.streaming ? { ...it, streaming: false } : it,
-      );
+      // The turn is over, so nothing more will arrive: freeze a streaming
+      // assistant, and settle any tool still "running" (e.g. a call interrupted
+      // by cancel, which never gets a result) to "stopped" so it stops spinning.
+      const finalized = s.items.map((it) => {
+        if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
+        if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
+        return it;
+      });
       const items: Item[] = e.err
         ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }]
         : finalized;
-      return { ...s, items, running: false, currentAssistant: undefined, approval: undefined, seq: s.seq + 1 };
+      return { ...s, items, running: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
   }
 }
@@ -194,6 +231,8 @@ function reducer(s: State, a: Action): State {
         ...s,
         seq: s.seq + 1,
         running: true,
+        turnStartAt: Date.now(),
+        turnTokens: 0,
         items: [...s.items, { kind: "user", id: `u${s.seq}`, text: a.text }],
       };
     case "meta":
@@ -215,6 +254,8 @@ function reducer(s: State, a: Action): State {
     }
     case "clearApproval":
       return { ...s, approval: undefined };
+    case "clearAsk":
+      return { ...s, ask: undefined };
     case "reset":
       return { ...initialState, meta: s.meta, context: { ...s.context, used: 0 } };
     case "event":
@@ -267,6 +308,12 @@ export function useController() {
     app.Approve(id, allow, session).catch(() => {});
   }, []);
 
+  // answerQuestion resolves an ask_request with the user's per-question picks.
+  const answerQuestion = useCallback((id: string, answers: QuestionAnswer[]) => {
+    dispatch({ type: "clearAsk" });
+    app.AnswerQuestion(id, answers).catch(() => {});
+  }, []);
+
   const setPlan = useCallback((on: boolean) => {
     app.SetPlanMode(on).catch(() => {});
   }, []);
@@ -313,6 +360,7 @@ export function useController() {
     send,
     cancel,
     approve,
+    answerQuestion,
     setPlan,
     newSession,
     compact,

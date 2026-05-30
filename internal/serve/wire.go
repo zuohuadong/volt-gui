@@ -15,7 +15,26 @@ type wireEvent struct {
 	Tool      *wireTool     `json:"tool,omitempty"`
 	Usage     *wireUsage    `json:"usage,omitempty"`
 	Approval  *wireApproval `json:"approval,omitempty"`
+	Ask       *wireAsk      `json:"ask,omitempty"`
 	Err       string        `json:"err,omitempty"`
+}
+
+type wireAskOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+type wireAskQuestion struct {
+	ID      string          `json:"id"`
+	Header  string          `json:"header,omitempty"`
+	Prompt  string          `json:"prompt"`
+	Options []wireAskOption `json:"options"`
+	Multi   bool            `json:"multi,omitempty"`
+}
+
+type wireAsk struct {
+	ID        string            `json:"id"`
+	Questions []wireAskQuestion `json:"questions"`
 }
 
 type wireTool struct {
@@ -26,6 +45,8 @@ type wireTool struct {
 	Err       string `json:"err,omitempty"`
 	ReadOnly  bool   `json:"readOnly"`
 	Truncated bool   `json:"truncated,omitempty"`
+	Partial   bool   `json:"partial,omitempty"`
+	ParentID  string `json:"parentId,omitempty"`
 }
 
 type wireUsage struct {
@@ -56,7 +77,21 @@ var kindNames = map[event.Kind]string{
 	event.Notice:          "notice",
 	event.Phase:           "phase",
 	event.ApprovalRequest: "approval_request",
+	event.AskRequest:      "ask_request",
 	event.TurnDone:        "turn_done",
+}
+
+// toWireAsk converts an event.Ask into its JSON wire form.
+func toWireAsk(a event.Ask) *wireAsk {
+	qs := make([]wireAskQuestion, len(a.Questions))
+	for i, q := range a.Questions {
+		opts := make([]wireAskOption, len(q.Options))
+		for j, o := range q.Options {
+			opts[j] = wireAskOption{Label: o.Label, Description: o.Description}
+		}
+		qs[i] = wireAskQuestion{ID: q.ID, Header: q.Header, Prompt: q.Prompt, Options: opts, Multi: q.Multi}
+	}
+	return &wireAsk{ID: a.ID, Questions: qs}
 }
 
 // toWire converts an event.Event into its JSON wire form.
@@ -74,6 +109,7 @@ func toWire(e event.Event) wireEvent {
 			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
 			Output: e.Tool.Output, Err: e.Tool.Err,
 			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
+			Partial: e.Tool.Partial, ParentID: e.Tool.ParentID,
 		}
 	case event.Usage:
 		if u := e.Usage; u != nil {
@@ -88,6 +124,8 @@ func toWire(e event.Event) wireEvent {
 		}
 	case event.ApprovalRequest:
 		w.Approval = &wireApproval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject}
+	case event.AskRequest:
+		w.Ask = toWireAsk(e.Ask)
 	case event.TurnDone:
 		if e.Err != nil {
 			w.Err = e.Err.Error()

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { FolderGit2 } from "lucide-react";
 import { ModelSwitcher } from "./ModelSwitcher";
 import type { ContextInfo, Meta } from "../lib/types";
@@ -10,29 +11,99 @@ function shortCwd(cwd: string): string {
   return "…/" + parts.slice(-2).join("/");
 }
 
+// Whimsical present-participles for the live activity word, cycled by elapsed
+// time so it reads as alive.
+const SPINNER_WORDS = [
+  "Frolicking",
+  "Pondering",
+  "Noodling",
+  "Brewing",
+  "Conjuring",
+  "Cogitating",
+  "Percolating",
+  "Ruminating",
+  "Simmering",
+  "Synthesizing",
+  "Tinkering",
+  "Marinating",
+  "Crunching",
+  "Hatching",
+  "Mulling",
+  "Whirring",
+  "Forging",
+  "Spelunking",
+  "Puttering",
+  "Vibing",
+];
+
+function fmtTokens(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(n);
+}
+
+function fmtElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// useTick re-renders once a second while `on`, so the elapsed clock advances.
+function useTick(on: boolean): number {
+  const [, setN] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    const id = setInterval(() => setN((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [on]);
+  return Date.now();
+}
+
 export function StatusBar({
   meta,
   context,
   running,
   plan,
+  turnStartAt,
+  turnTokens,
   onSwitchModel,
 }: {
   meta?: Meta;
   context: ContextInfo;
   running: boolean;
   plan: boolean;
+  turnStartAt: number;
+  turnTokens: number;
   onSwitchModel: (name: string) => void;
 }) {
+  const now = useTick(running);
   const pct = context.window ? Math.min(100, Math.round((context.used / context.window) * 100)) : null;
+
+  // While a turn runs, the status line shows live activity (word · elapsed ·
+  // tokens) in place of the static context gauge.
+  let activity: string | null = null;
+  if (running && turnStartAt) {
+    const elapsedMs = Math.max(0, now - turnStartAt);
+    const word = SPINNER_WORDS[Math.floor(elapsedMs / 3000) % SPINNER_WORDS.length];
+    const tok = turnTokens > 0 ? ` · ↓ ${fmtTokens(turnTokens)} tokens` : "";
+    activity = `${word}… ${fmtElapsed(elapsedMs)}${tok}`;
+  }
+
   return (
     <div className="statusbar">
       <span className={`statusbar__dot ${running ? "statusbar__dot--busy" : ""}`} />
       <ModelSwitcher label={meta?.label ?? "connecting…"} onPick={onSwitchModel} />
-      {pct !== null && (
+      {activity ? (
         <>
           <span className="statusbar__sep">·</span>
-          <span className="statusbar__ctx">{pct}% ctx</span>
+          <span className="statusbar__activity">{activity}</span>
         </>
+      ) : (
+        pct !== null && (
+          <>
+            <span className="statusbar__sep">·</span>
+            <span className="statusbar__ctx">{pct}% ctx</span>
+          </>
+        )
       )}
       {meta?.cwd && (
         <>

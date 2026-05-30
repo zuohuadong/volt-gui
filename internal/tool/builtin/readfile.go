@@ -67,6 +67,13 @@ func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		p.Limit = readFileDefaultLimit
 	}
 
+	// A directory can be os.Open'd but not read as text — catch it up front with
+	// an actionable message (and avoid the doubled "read X: read X:" the scanner's
+	// error would otherwise produce) so the model switches to the ls tool.
+	if info, err := os.Stat(p.Path); err == nil && info.IsDir() {
+		return "", fmt.Errorf("%s is a directory, not a file — use the ls tool to list it, or read a specific file inside it", p.Path)
+	}
+
 	f, err := os.Open(p.Path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)

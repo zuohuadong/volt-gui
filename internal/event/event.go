@@ -46,6 +46,10 @@ const (
 	// (Approval: ID/Tool/Subject). The run blocks until the controller's
 	// Approve(ID, …) resolves it; a frontend shows a prompt and answers.
 	ApprovalRequest
+	// AskRequest asks the frontend to put one or more structured multiple-choice
+	// questions to the user (Ask: ID + Questions). The run blocks until the
+	// controller's AnswerQuestion(ID, …) resolves it. Powers the `ask` tool.
+	AskRequest
 	// TurnDone marks the end of one top-level Run (Err non-nil on failure;
 	// nil also for a user cancellation, which is not an error). Always the
 	// last event of a turn.
@@ -71,6 +75,14 @@ type Tool struct {
 	Err       string // ToolResult: non-empty when the call failed or was blocked
 	ReadOnly  bool
 	Truncated bool // ToolResult: Output was head+tailed before display/model
+	// Partial marks an early ToolDispatch emitted when a call begins (ID/Name set,
+	// Args still streaming) so a frontend can show the card immediately; a second,
+	// full ToolDispatch (Partial false, Args set) follows when the call completes.
+	Partial bool
+	// ParentID, when set, is the ID of the tool call that spawned this one — a
+	// sub-agent's calls carry the parent `task` call's ID so a frontend can nest
+	// them under it. Empty for top-level calls.
+	ParentID string
 }
 
 // Approval identifies a pending tool-call approval for an ApprovalRequest
@@ -79,6 +91,35 @@ type Approval struct {
 	ID      string
 	Tool    string
 	Subject string
+}
+
+// AskOption is one choice the user can pick for an AskQuestion.
+type AskOption struct {
+	Label       string
+	Description string // optional one-line explanation shown under the label
+}
+
+// AskQuestion is one structured question the `ask` tool puts to the user.
+type AskQuestion struct {
+	ID      string // stable per-question id, so answers correlate back
+	Header  string // short label (the tab title)
+	Prompt  string // the question text
+	Options []AskOption
+	Multi   bool // allow selecting more than one option
+}
+
+// Ask carries an AskRequest: a batch of questions and the ID that correlates the
+// controller's AnswerQuestion(ID, …) reply.
+type Ask struct {
+	ID        string
+	Questions []AskQuestion
+}
+
+// AskAnswer is the user's reply to one AskQuestion: the chosen option label(s)
+// (a free-typed answer is carried as a single Selected entry).
+type AskAnswer struct {
+	QuestionID string
+	Selected   []string
 }
 
 // Event is one increment in a turn's event stream. Read the field(s) documented
@@ -92,6 +133,7 @@ type Event struct {
 	Pricing   *provider.Pricing // Usage: for cost display (nil = omit cost)
 	Level     Level             // Notice
 	Approval  Approval          // ApprovalRequest
+	Ask       Ask               // AskRequest
 	Err       error             // TurnDone: non-nil on failure
 }
 

@@ -1,0 +1,84 @@
+package builtin
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"reasonix/internal/tool"
+)
+
+func init() { tool.RegisterBuiltin(todoWrite{}) }
+
+// todoWrite records the agent's running task list. It has no host side effects —
+// the full list lives in the call's args (the model re-sends it whole on every
+// update), which a frontend renders as a checklist. Execute just validates the
+// shape and acks with a count, so the model gets a stable confirmation. The agent
+// keeps one item in_progress at a time and flips each to completed as it finishes.
+type todoWrite struct{}
+
+type todoItem struct {
+	Content    string `json:"content"`
+	Status     string `json:"status"`
+	ActiveForm string `json:"activeForm,omitempty"`
+}
+
+func (todoWrite) Name() string { return "todo_write" }
+
+func (todoWrite) Description() string {
+	return "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: keep exactly one item in_progress at a time, and flip an item to completed the moment it's done (don't batch completions). Skip it for trivial single-step tasks. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), and `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\")."
+}
+
+func (todoWrite) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "todos":{
+    "type":"array",
+    "description":"The complete task list, in order. Replaces any previous list.",
+    "items":{
+      "type":"object",
+      "properties":{
+        "content":{"type":"string","description":"Imperative description of the task."},
+        "status":{"type":"string","enum":["pending","in_progress","completed"],"description":"Task state. Keep at most one in_progress."},
+        "activeForm":{"type":"string","description":"Present-continuous form shown while the task is in progress (e.g. \"Running tests\")."}
+      },
+      "required":["content","status"]
+    }
+  }
+},
+"required":["todos"]
+}`)
+}
+
+// ReadOnly is true: todo_write only records a list (no filesystem or process
+// effect), so it never needs approval and stays available in plan mode — where
+// laying out a plan as todos is exactly the point.
+func (todoWrite) ReadOnly() bool { return true }
+
+func (todoWrite) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Todos []todoItem `json:"todos"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	var done, active, pending int
+	for i, t := range p.Todos {
+		if t.Content == "" {
+			return "", fmt.Errorf("todo %d: content is required", i+1)
+		}
+		switch t.Status {
+		case "completed":
+			done++
+		case "in_progress":
+			active++
+		case "pending", "":
+			pending++
+		default:
+			return "", fmt.Errorf("todo %d: invalid status %q (want pending|in_progress|completed)", i+1, t.Status)
+		}
+	}
+	return fmt.Sprintf("Todos updated: %d total — %d completed, %d in progress, %d pending.",
+		len(p.Todos), done, active, pending), nil
+}

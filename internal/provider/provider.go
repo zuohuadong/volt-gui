@@ -57,12 +57,13 @@ type Request struct {
 type ChunkType int
 
 const (
-	ChunkText      ChunkType = iota // text delta
-	ChunkReasoning                  // thinking-mode reasoning delta (before the visible answer)
-	ChunkToolCall                   // one complete tool call
-	ChunkUsage                      // token usage for the completion
-	ChunkDone                       // completion finished normally
-	ChunkError                      // an error occurred
+	ChunkText          ChunkType = iota // text delta
+	ChunkReasoning                      // thinking-mode reasoning delta (before the visible answer)
+	ChunkToolCallStart                  // a tool call has begun (ToolCall: ID+Name; args still streaming)
+	ChunkToolCall                       // one complete tool call
+	ChunkUsage                          // token usage for the completion
+	ChunkDone                           // completion finished normally
+	ChunkError                          // an error occurred
 )
 
 // Usage reports token accounting for a completion. Cache hit/miss come from
@@ -113,7 +114,7 @@ func (p *Pricing) Symbol() string {
 type Chunk struct {
 	Type     ChunkType
 	Text     string    // ChunkText, ChunkReasoning
-	ToolCall *ToolCall // ChunkToolCall
+	ToolCall *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCall (complete)
 	Usage    *Usage    // ChunkUsage
 	Err      error     // ChunkError
 }

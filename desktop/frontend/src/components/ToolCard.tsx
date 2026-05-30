@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Ban,
   Check,
   ChevronRight,
   FilePen,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { CodeViewer } from "./CodeViewer";
 import { DiffView } from "./DiffView";
-import { extToLang } from "../lib/lang";
+import { diffsFor, subjectOf, summarize } from "../lib/tools";
 import type { Item } from "../lib/useController";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
@@ -34,33 +35,6 @@ const ICONS: Record<string, LucideIcon> = {
   task: ListTree,
 };
 
-// subjectOf pulls the most informative one-liner out of a call's args — the
-// command for bash, the pattern for search, the path for file tools — so the
-// collapsed row reads at a glance (a compact "tool · subject" line).
-function subjectOf(name: string, args: string): string {
-  try {
-    const a = JSON.parse(args) as Record<string, unknown>;
-    if (name === "bash") return String(a.command ?? "");
-    if (name === "grep" || name === "glob") return String(a.pattern ?? a.path ?? "");
-    return String(a.path ?? a.file_path ?? "");
-  } catch {
-    return "";
-  }
-}
-
-function editDiff(name: string, args: string): { original: string; modified: string; lang: string } | null {
-  if (name !== "edit_file") return null;
-  try {
-    const a = JSON.parse(args) as { path?: string; old_string?: string; new_string?: string };
-    if (typeof a.old_string === "string" && typeof a.new_string === "string") {
-      return { original: a.old_string, modified: a.new_string, lang: extToLang(a.path ?? "") };
-    }
-  } catch {
-    /* args not valid JSON yet */
-  }
-  return null;
-}
-
 function pretty(json: string): string {
   try {
     return JSON.stringify(JSON.parse(json), null, 2);
@@ -72,26 +46,48 @@ function pretty(json: string): string {
 function StatusGlyph({ status }: { status: ToolItem["status"] }) {
   if (status === "running") return <Loader2 className="ico spin" size={13} />;
   if (status === "error") return <X className="ico ico--err" size={13} />;
+  if (status === "stopped") return <Ban className="ico ico--stopped" size={13} />;
   return <Check className="ico ico--ok" size={13} />;
 }
 
-export function ToolCard({ item }: { item: ToolItem }) {
-  const diff = editDiff(item.name, item.args);
+// ToolCard renders one tool call. `subcalls` are sub-agent calls nested under a
+// `task` card (their ParentID points at this call); they render inline, live, so
+// the sub-agent's work is visible as it happens.
+export function ToolCard({ item, subcalls }: { item: ToolItem; subcalls?: ToolItem[] }) {
+  const diffs = diffsFor(item.name, item.args);
   const subject = subjectOf(item.name, item.args);
   const Icon = ICONS[item.name] ?? Wrench;
+  const nested = subcalls ?? [];
+  const hasNested = nested.length > 0;
+
+  // A task's summary is its step count; everything else derives from the result.
+  const summary =
+    item.status === "running"
+      ? ""
+      : hasNested
+        ? `${nested.length} step${nested.length === 1 ? "" : "s"}`
+        : summarize(item.name, item.args, item.output, item.error);
 
   // edit diffs are the point of the card, so they're shown inline; everything
-  // else folds its args/output away by default.
-  const hasBody = !diff && (!!item.args || !!item.output);
+  // else folds its args/output away by default. Nested children always show.
+  const hasBody = diffs.length === 0 && (!!item.args || !!item.output);
   const [open, setOpen] = useState(false);
+  const expandable = hasBody;
+
+  // Read-only "research" calls (read/grep/ls/glob/web_fetch) are quieted to a
+  // slim, borderless, dim row so a long run of them doesn't bury the few calls
+  // that matter — writers, bash, sub-agents, and anything that failed keep the
+  // full card. Uses the readOnly flag, not a tool-name list.
+  const quiet =
+    item.readOnly && !hasNested && item.status !== "error" && item.status !== "stopped";
 
   return (
-    <div className={`tool tool--${item.status}`}>
+    <div className={`tool tool--${item.status} ${quiet ? "tool--quiet" : ""}`}>
       <div
-        className={`tool__row ${hasBody ? "tool__row--clickable" : ""}`}
-        onClick={hasBody ? () => setOpen((v) => !v) : undefined}
+        className={`tool__row ${expandable ? "tool__row--clickable" : ""}`}
+        onClick={expandable ? () => setOpen((v) => !v) : undefined}
       >
-        {hasBody ? (
+        {expandable ? (
           <ChevronRight className={`tool__chevron ${open ? "tool__chevron--open" : ""}`} size={13} />
         ) : (
           <span className="tool__chevron tool__chevron--placeholder" />
@@ -100,14 +96,24 @@ export function ToolCard({ item }: { item: ToolItem }) {
         <span className="tool__name">{item.name}</span>
         {subject && <span className="tool__subject">{subject}</span>}
         <span className="tool__meta">
-          {item.readOnly && <span className="tag">ro</span>}
           <StatusGlyph status={item.status} />
         </span>
       </div>
 
-      {diff && (
-        <div className="tool__body">
-          <DiffView original={diff.original} modified={diff.modified} language={diff.lang} maxHeight={260} />
+      {summary && <div className="tool__summary">{summary}</div>}
+
+      {diffs.map((d, i) => (
+        <div className="tool__body" key={i}>
+          {d.label && <div className="tool__difflabel">{d.label}</div>}
+          <DiffView original={d.original} modified={d.modified} language={d.lang} maxHeight={260} />
+        </div>
+      ))}
+
+      {hasNested && (
+        <div className="tool__nested">
+          {nested.map((c) => (
+            <ToolCard key={c.id} item={c} />
+          ))}
         </div>
       )}
 

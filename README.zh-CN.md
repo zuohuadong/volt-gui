@@ -1,9 +1,46 @@
-# Reasonix
+<p align="center">
+  <img src="docs/logo.svg" alt="Reasonix" width="640"/>
+</p>
 
-[English](README.md) | 简体中文
+<p align="center">
+  <a href="./README.md">English</a>
+  &nbsp;·&nbsp;
+  <strong>简体中文</strong>
+  &nbsp;·&nbsp;
+  <a href="./docs/SPEC.md">规格</a>
+  &nbsp;·&nbsp;
+  <a href="https://esengine.github.io/DeepSeek-Reasonix/">官方网站</a>
+  &nbsp;·&nbsp;
+  <strong><a href="https://discord.gg/XF78rEME2D">Discord</a></strong>
+</p>
 
-一个**由配置和插件驱动**的 coding agent：极薄的 harness 驱动多个模型。内核只认
-接口——具体的模型与工具由配置解析或由插件注入。以单一静态二进制分发。
+<p align="center">
+  <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/v/reasonix.svg?style=flat-square&color=cb3837&labelColor=161b22&logo=npm&logoColor=white" alt="npm version"/></a>
+  <a href="https://github.com/esengine/reasonix/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/esengine/reasonix/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/reasonix.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
+  <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/dm/reasonix.svg?style=flat-square&color=3fb950&labelColor=161b22&label=downloads" alt="downloads"/></a>
+  <a href="https://github.com/esengine/reasonix/stargazers"><img src="https://img.shields.io/github/stars/esengine/reasonix.svg?style=flat-square&color=dbab09&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
+  <a href="https://atomgit.com/esengine/DeepSeek-Reasonix"><img src="https://atomgit.com/esengine/DeepSeek-Reasonix/star/badge.svg" alt="AtomGit stars"/></a>
+  <a href="https://github.com/esengine/reasonix/graphs/contributors"><img src="https://img.shields.io/github/contributors/esengine/reasonix.svg?style=flat-square&color=bc8cff&labelColor=161b22&logo=github&logoColor=white" alt="contributors"/></a>
+  <a href="https://github.com/esengine/reasonix/discussions"><img src="https://img.shields.io/github/discussions/esengine/reasonix.svg?style=flat-square&color=58a6ff&labelColor=161b22&logo=github&logoColor=white" alt="Discussions"/></a>
+  <a href="https://discord.gg/XF78rEME2D"><img src="https://img.shields.io/badge/discord-join-5865F2.svg?style=flat-square&labelColor=161b22&logo=discord&logoColor=white" alt="Discord"/></a>
+</p>
+
+<p align="center">
+  <a href="https://oosmetrics.com/repo/esengine/reasonix"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/9e931d80-2050-4b10-902e-44970cc133ad.svg" alt="oosmetrics — Top 2 in Agents by velocity"/></a>
+  <a href="https://oosmetrics.com/repo/esengine/reasonix"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/556d94b3-61b7-486b-baf2-888b9327deab.svg" alt="oosmetrics — Top 3 in LLMs by velocity"/></a>
+  <a href="https://oosmetrics.com/repo/esengine/reasonix"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/0f457d4c-efca-4d15-ad2b-139691ff342c.svg" alt="oosmetrics — Top 3 in CLI by velocity"/></a>
+</p>
+
+<br/>
+
+<h3 align="center">面向终端的 DeepSeek 原生 AI coding agent。</h3>
+<p align="center">由配置与插件驱动的极薄 harness——单一静态 Go 二进制，围绕 DeepSeek 的前缀缓存调优，长会话也能把 token 成本压低。</p>
+
+<br/>
+
+> [!IMPORTANT]
+> **加入社区 · Community** — 双语 Discord，提供安装答疑（`#help` / `#求助`）、工作流展示与功能想法。→ **<https://discord.gg/XF78rEME2D>**
 
 ## 特性
 
@@ -182,3 +219,65 @@ MCP 客户端——**stdio + Streamable HTTP** 传输、工具（`mcp__server__t
 scrollback)并带 `/` 与 `@` 输入补全。后续:给 `bash` 套 OS 级沙盒（macOS Seatbelt /
 Linux bubblewrap，"盒子里放行、边界上询问"）、Anthropic 原生 provider、MCP OAuth +
 legacy SSE。见 `docs/SPEC.md` §9。
+
+<br/>
+
+## Star 趋势
+
+<a href="https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
+ </picture>
+</a>
+
+<br/>
+
+## 支持本项目
+
+如果 Reasonix 帮你省了时间或 token，欢迎请杯咖啡。捐助不会换来 feature 优先级，也不会影响 issue 的处理顺序——就是「谢谢」。
+
+- **国内** — 微信支付（扫下方二维码）
+- **海外** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
+
+<p align="center">
+  <img src=".github/sponsor/wechat-pay.jpg" alt="微信支付收款码" width="240"/>
+</p>
+
+<br/>
+
+## 致谢
+
+下面这些朋友的工作塑造了 Reasonix 今天的样子 —— 综合 commit 数和代码量两个维度。
+**按字母顺序排列，排名不分先后。** 完整贡献者列表在
+[GitHub](https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors)。
+
+- [**ctharvey**](https://github.com/ctharvey)
+- [**dimasd-angga**](https://github.com/dimasd-angga)（Dimas D. Angga）
+- [**Evan-Pycraft**](https://github.com/Evan-Pycraft)
+- [**ForeverYoungPp**](https://github.com/ForeverYoungPp)
+- [**GTC2080**](https://github.com/GTC2080)（TaoMu）
+- [**kabaka9527**](https://github.com/kabaka9527)
+- [**lisniuse**](https://github.com/lisniuse)（Richie）
+- [**wade19990814-hue**](https://github.com/wade19990814-hue)
+- [**wviana**](https://github.com/wviana)（Wesley Viana）
+
+另外特别感谢 [**Bernardxu123**](https://github.com/Bernardxu123) 设计的项目 logo，
+以及 [AIGC Link](https://xhslink.com/m/80ngts127cA) 在小红书上的推广。
+
+<p align="center">
+  <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=esengine/DeepSeek-Reasonix&max=100&columns=12" alt="esengine/DeepSeek-Reasonix 贡献者" width="860"/>
+  </a>
+</p>
+
+<br/>
+
+---
+
+<p align="center">
+  <sub>MIT —— 见 <a href="./LICENSE">LICENSE</a></sub>
+  <br/>
+  <sub>由 <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a> 社区共建</sub>
+</p>

@@ -83,6 +83,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Append the language policy so the model answers in the user's own language
+	// (the UI `language` setting governs only the interface). Static text, so it
+	// stays in the cache-stable prefix and costs nothing per turn.
+	sysPrompt += "\n\n" + config.LanguagePolicy
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the

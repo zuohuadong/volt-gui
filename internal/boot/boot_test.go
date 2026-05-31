@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/config"
 	"reasonix/internal/provider"
 
 	// Blank imports register the provider kind and built-in tools the same way
@@ -147,7 +148,10 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if i := strings.Index(sys, "\n\n# Skills"); i >= 0 {
 		base = sys[:i]
 	}
-	if strings.TrimSpace(base) != "JUST THE BASE" {
+	// The language policy is always appended at boot; strip it so this assertion
+	// is purely about whether project/ancestor memory leaked into the base.
+	base = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(base), config.LanguagePolicy))
+	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
 	}
 }

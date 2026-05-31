@@ -213,6 +213,16 @@ In plan mode the harness blocks writer tools: do read-only research, then write 
 concise plan as your reply and stop. The user is asked to approve before anything
 is changed; once approved, work through the steps, updating the task list as you go.`
 
+// LanguagePolicy is appended to every system prompt (in boot assembly) so the
+// model mirrors the user's language per message instead of the harness pinning
+// one — the UI `language` setting governs only the interface, never the model.
+// It is static English text, so it stays part of the cache-stable prefix and
+// keeps model behaviour language-stable while still adapting the reply language.
+const LanguagePolicy = `Reply in the same language the user is using in their most recent message: ` +
+	`if they write in Chinese answer in Chinese, in English answer in English, and switch ` +
+	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
+	`identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
+
 // Default returns the built-in default configuration (DeepSeek + MiMo presets).
 func Default() *Config {
 	return &Config{

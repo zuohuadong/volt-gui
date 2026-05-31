@@ -45,6 +45,12 @@ export type Item =
 interface State {
   items: Item[];
   running: boolean;
+  // turnActive is true only while a real model turn is in flight (between
+  // turn_started and turn_done). `running` may be set optimistically on send for
+  // immediate feedback; turnActive distinguishes that from an actual turn, so a
+  // local command that only emits a Notice (e.g. /skill, /compact) clears the
+  // optimistic spinner instead of leaving it stuck forever.
+  turnActive: boolean;
   approval?: WireApproval;
   ask?: WireAsk;
   usage?: WireUsage;
@@ -80,6 +86,7 @@ interface State {
 const initialState: State = {
   items: [],
   running: false,
+  turnActive: false,
   context: { used: 0, window: 0 },
   jobs: [],
   turnStartAt: 0,
@@ -130,7 +137,7 @@ function applyEvent(s: State, e: WireEvent): State {
   // After an un-send, swallow the cancelled turn's still-buffered events so no
   // orphan assistant/tool bubble appears; its turn_done clears the discard.
   if (s.discardTurn) {
-    if (e.kind === "turn_done") return { ...s, discardTurn: false, running: false, currentAssistant: undefined };
+    if (e.kind === "turn_done") return { ...s, discardTurn: false, running: false, turnActive: false, currentAssistant: undefined };
     return s;
   }
   // The first real packet means the server replied — commit the deferred user
@@ -141,7 +148,7 @@ function applyEvent(s: State, e: WireEvent): State {
   }
   switch (e.kind) {
     case "turn_started":
-      return { ...s, running: true, currentAssistant: undefined, turnStartAt: Date.now(), turnTokens: 0 };
+      return { ...s, running: true, turnActive: true, currentAssistant: undefined, turnStartAt: Date.now(), turnTokens: 0 };
 
     case "text":
     case "reasoning": {
@@ -235,8 +242,12 @@ function applyEvent(s: State, e: WireEvent): State {
     }
 
     case "notice":
+      // A Notice with no real turn in flight means a local command (e.g. /skill,
+      // /compact) produced output without starting a turn — clear the optimistic
+      // spinner so it doesn't read seconds forever. Mid-turn notices keep running.
       return {
         ...s,
+        running: s.turnActive ? s.running : false,
         seq: s.seq + 1,
         items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: e.level ?? "info", text: e.text ?? "" }],
       };
@@ -270,7 +281,7 @@ function applyEvent(s: State, e: WireEvent): State {
       const items: Item[] = e.err
         ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }]
         : finalized;
-      return { ...s, items, running: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
+      return { ...s, items, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
   }
 }

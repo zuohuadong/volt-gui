@@ -19,6 +19,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
+	"reasonix/internal/provider"
 	"reasonix/internal/serve"
 
 	tea "charm.land/bubbletea/v2"
@@ -223,12 +224,12 @@ func chatREPL(args []string) int {
 	// agent goroutine.
 	eventCh := make(chan event.Event, 1024)
 
-	ctrl, err := setup(ctx, *model, *maxSteps, false, &eventSink{ch: eventCh})
+	sink := &eventSink{ch: eventCh}
+	ctrl, err := setup(ctx, *model, *maxSteps, false, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	defer ctrl.Close()
 
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
@@ -274,20 +275,64 @@ func chatREPL(args []string) int {
 	}
 
 	m := newChatTUI(ctrl, missing, eventCh, termW)
+
+	// /model support: a pure builder the TUI calls to rebuild on a different
+	// model (carrying the conversation). It must NOT touch the running model —
+	// runModelSubcommand performs the swap on the live copy. The same stable sink
+	// feeds the new controller, so events keep flowing to this TUI.
+	m.buildController = func(ref string, carry []provider.Message) (*control.Controller, error) {
+		c, err := setup(ctx, ref, *maxSteps, false, sink)
+		if err != nil {
+			return nil, err
+		}
+		path := ""
+		if dir := c.SessionDir(); dir != "" {
+			path = agent.NewSessionPath(dir, c.Label())
+		}
+		if len(carry) > 0 {
+			c.Resume(&agent.Session{Messages: carry}, path)
+		} else if path != "" {
+			c.SetSessionPath(path)
+		}
+		c.EnableInteractiveApproval()
+		if *yolo {
+			c.SetBypass(true)
+		}
+		return c, nil
+	}
+	if cfg, e := config.Load(); e == nil {
+		name := *model
+		if name == "" {
+			name = cfg.DefaultModel
+		}
+		if entry, ok := cfg.ResolveModel(name); ok {
+			m.modelRef = entry.Name + "/" + entry.Model
+		}
+	}
+
 	// No alt-screen: finalized transcript lines are committed to the terminal's
 	// normal buffer (via tea.Println) so native scrollback, the wheel, and copy
 	// all work — the bubbletea-managed region is just the bottom input/status.
 	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+	final, runErr := p.Run()
+	// Close the controller that's active at exit — /model may have swapped it
+	// (each prior controller was already closed at switch time), so close the
+	// final one here rather than the initial handle.
+	if fm, ok := final.(chatTUI); ok && fm.ctrl != nil {
+		fm.ctrl.Close()
+	} else {
+		ctrl.Close()
+	}
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, runErr)
 		return 1
 	}
 	return 0
 }
 
 // setupConfig runs the configuration wizard (the `reasonix setup` command),
-// writing reasonix.toml (+ .env). Project memory is a separate concern — see
-// initMemory (`reasonix init`).
+// writing reasonix.toml (+ .env). Project memory is a separate concern — the
+// in-session `/init` skill generates AGENTS.md (see initHint).
 func setupConfig(args []string) int {
 	path := "reasonix.toml"
 	if len(args) > 0 {

@@ -48,7 +48,7 @@ var English = Messages{
 	SlashUnavailable:   "command unavailable in this build",
 	SlashUnknown:       "unknown command",
 	SlashTodoCleared:   "task list dismissed",
-	SlashHelp:          "commands: /compact (manual context compaction) · /new (fork a fresh session) · /todo (dismiss the task list) · /mcp (MCP servers) · /memory · /help",
+	SlashHelp:          "commands: /compact · /new · /todo · /model (switch model) · /mcp · /skill · /hooks · /memory · /help · plus skills (/init, /explore, …)",
 	SlashPromptEmpty:   "the MCP prompt returned no content to send",
 	SlashMCPNone:       "no MCP servers configured — add a [[plugins]] entry in reasonix.toml",
 	CompHintSlash:      "↑/↓ move · Tab/Enter select · Esc close",

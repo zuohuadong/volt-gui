@@ -351,6 +351,12 @@ func (c *Controller) Submit(input string) {
 			return c.runner.Run(ctx, c.Compose(sent))
 		})
 	case strings.HasPrefix(trimmed, "/"):
+		// Read-only management verbs (/model /memory /skill /hooks /mcp) emit a
+		// listing Notice, so Submit-based frontends (desktop, HTTP) get them with
+		// no extra wiring. (The chat TUI handles these itself with richer output.)
+		if c.managementNotice(trimmed) {
+			return
+		}
 		// A custom command wins over a skill of the same name; both resolve to a
 		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {

@@ -97,6 +97,29 @@ export default function App() {
 
   const closeMemory = useCallback(() => setMemView(null), []);
 
+  // handleSend intercepts the slash commands that need a desktop-native action
+  // before they reach the backend: "/model <ref>" rebuilds on that model, and
+  // "/memory" opens the memory drawer. Everything else — skills (/init, …),
+  // custom commands, bare /model and the other read-only management verbs
+  // (/skill, /hooks, /mcp) — goes straight to Submit, which the controller
+  // resolves (a turn, or a listing Notice).
+  const handleSend = useCallback(
+    (text: string) => {
+      const t = text.trim();
+      const model = /^\/model\s+(\S+)$/.exec(t);
+      if (model) {
+        void switchModel(model[1]);
+        return;
+      }
+      if (t === "/memory") {
+        void openMemory();
+        return;
+      }
+      send(t);
+    },
+    [switchModel, openMemory, send],
+  );
+
   // History drawer: opening fetches the saved-session list; picking one resumes it
   // (the transcript swaps in; the model/folder are unchanged).
   const openHistory = useCallback(async () => {
@@ -188,7 +211,7 @@ export default function App() {
 
       <footer className="footer">
         {showTodos && <TodoPanel todos={todos} onDismiss={() => setDismissedTodo(todoItem!.id)} />}
-        <Composer running={state.running} mode={mode} onSend={send} onCancel={cancel} onCycleMode={cycleMode} />
+        <Composer running={state.running} mode={mode} onSend={handleSend} onCancel={cancel} onCycleMode={cycleMode} />
         <StatusBar
           meta={state.meta}
           context={state.context}

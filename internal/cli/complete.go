@@ -58,6 +58,7 @@ func (m *chatTUI) slashItems() []compItem {
 		{label: "/compact", insert: "/compact ", hint: "compact context"},
 		{label: "/new", insert: "/new ", hint: "fork a fresh session"},
 		{label: "/mcp", insert: "/mcp ", hint: "MCP servers", descend: true},
+		{label: "/model", insert: "/model ", hint: "switch model", descend: true},
 		{label: "/skill", insert: "/skill ", hint: "manage skills", descend: true},
 		{label: "/hooks", insert: "/hooks ", hint: "manage hooks", descend: true},
 		{label: "/help", insert: "/help ", hint: "list commands"},
@@ -127,12 +128,31 @@ func (m *chatTUI) slashArgItems(val string) ([]compItem, int, bool) {
 	switch val[:cmdEnd] {
 	case "/mcp":
 		return m.mcpArgItems(val, cur, from)
+	case "/model":
+		return m.modelArgItems(val, cur, from)
 	case "/skill", "/skills":
 		return m.skillArgItems(val, cur, from)
 	case "/hooks":
 		return m.hooksArgItems(val, cur, from)
 	}
 	return nil, 0, false
+}
+
+// modelArgItems completes "/model <ref>" with the configured provider/model refs.
+func (m *chatTUI) modelArgItems(val, cur string, from int) ([]compItem, int, bool) {
+	prior := strings.Fields(val[:from]) // committed tokens, including "/model"
+	if len(prior) != 1 {                // the single ref arg is already placed
+		return nil, 0, false
+	}
+	var items []compItem
+	for _, ref := range modelRefs() {
+		hint := ""
+		if ref == m.modelRef {
+			hint = "current"
+		}
+		items = append(items, compItem{label: ref, insert: ref, hint: hint})
+	}
+	return filterByPrefix(items, cur), from, true
 }
 
 // skillArgItems completes /skill arguments: the subcommand, then skill names for

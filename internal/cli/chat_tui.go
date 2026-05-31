@@ -120,6 +120,13 @@ type chatTUI struct {
 	// in the slash menu as "/<name>" and managed via /skill.
 	skills []skill.Skill
 
+	// buildController builds a fresh controller on a model ref, carrying prior
+	// history across (set by chatREPL; it must NOT touch this model — the swap
+	// happens in runModelSubcommand on the running copy). nil disables /model.
+	// modelRef is the active "provider/model" ref, marked current in the picker.
+	buildController func(ref string, carry []provider.Message) (*control.Controller, error)
+	modelRef        string
+
 	// completion is the live autocomplete menu (slash commands; @-refs later).
 	completion completion
 }
@@ -1162,6 +1169,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashTodoCleared)
 	case "/mcp":
 		m.runMCPSubcommand(input)
+	case "/model":
+		m.runModelSubcommand(input)
 	case "/skill", "/skills":
 		m.runSkillSubcommand(input)
 	case "/hooks":

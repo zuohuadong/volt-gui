@@ -418,9 +418,21 @@ func (a *App) Commands() []CommandInfo {
 	out := []CommandInfo{
 		{Name: "new", Description: "Start a new session", Kind: "builtin"},
 		{Name: "compact", Description: "Summarize older history to free up context", Kind: "builtin"},
+		{Name: "model", Description: "Switch model", Kind: "builtin"},
+		{Name: "memory", Description: "Show project memory files", Kind: "builtin"},
+		{Name: "mcp", Description: "List MCP servers", Kind: "builtin"},
+		{Name: "hooks", Description: "List hooks", Kind: "builtin"},
+		{Name: "skill", Description: "List skills", Kind: "builtin"},
 	}
 	if a.ctrl == nil {
 		return out
+	}
+	// Skills are invocable as /<name> (the model runs inline ones; subagent ones
+	// run isolated). Listing them here is what surfaces /init, /explore, … in the
+	// composer's slash menu; selecting one submits "/<name>", which the controller
+	// resolves via RunSkill.
+	for _, s := range a.ctrl.Skills() {
+		out = append(out, CommandInfo{Name: s.Name, Description: s.Description, Kind: "skill"})
 	}
 	for _, c := range a.ctrl.Commands() {
 		out = append(out, CommandInfo{Name: c.Name, Description: c.Description, Hint: c.ArgHint, Kind: "custom"})

@@ -480,7 +480,9 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 		data.ServerNames = h.ServerNames()
 	}
 	items, from := control.SlashArgItems(input, data)
-	out := SlashArgsResult{From: from}
+	// Non-nil so it serializes as a JSON array, never null — the frontend filters
+	// over it directly.
+	out := SlashArgsResult{Items: []SlashArgItem{}, From: from}
 	for _, it := range items {
 		out.Items = append(out.Items, SlashArgItem{Label: it.Label, Insert: it.Insert, Hint: it.Hint, Descend: it.Descend})
 	}

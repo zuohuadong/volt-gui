@@ -62,7 +62,10 @@ export function Composer({
         // fully typed (e.g. "/skill list" offering "list"). Otherwise the menu
         // lingers on a complete command and Enter keeps "accepting" a no-op
         // instead of sending. (Defense-in-depth: the backend filters these too.)
-        const useful = r.items.filter((it) => text.slice(0, r.from) + it.insert !== text);
+        // r.items can arrive as null (an empty Go slice serializes to JSON null),
+        // so guard before filtering — otherwise the throw is swallowed and the
+        // stale menu from the previous keystroke lingers (the /skill list bug).
+        const useful = (r.items ?? []).filter((it) => text.slice(0, r.from) + it.insert !== text);
         setArgRes(useful.length > 0 ? { items: useful, from: r.from } : null);
         setActive(0);
       })

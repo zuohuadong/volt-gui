@@ -58,6 +58,7 @@ func (m *chatTUI) slashItems() []compItem {
 	items := []compItem{
 		{label: "/compact", insert: "/compact ", hint: i18n.M.CmdCompact},
 		{label: "/new", insert: "/new ", hint: i18n.M.CmdNew},
+		{label: "/rewind", insert: "/rewind", hint: i18n.M.CmdRewind},
 		{label: "/mcp", insert: "/mcp ", hint: i18n.M.CmdMcp, descend: true},
 		{label: "/model", insert: "/model ", hint: i18n.M.CmdModel, descend: true},
 		{label: "/skill", insert: "/skill ", hint: i18n.M.CmdSkill, descend: true},

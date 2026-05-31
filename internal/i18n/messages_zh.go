@@ -57,6 +57,7 @@ var Chinese = Messages{
 
 	CmdNew:          "开启新会话",
 	CmdCompact:      "压缩上下文",
+	CmdRewind:       "回滚到更早的一轮",
 	CmdModel:        "切换模型",
 	CmdMemory:       "查看记忆文件",
 	CmdMcp:          "MCP 服务器",

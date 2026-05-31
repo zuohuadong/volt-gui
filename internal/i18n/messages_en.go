@@ -56,6 +56,7 @@ var English = Messages{
 
 	CmdNew:          "fork a fresh session",
 	CmdCompact:      "compact context",
+	CmdRewind:       "rewind to an earlier turn",
 	CmdModel:        "switch model",
 	CmdMemory:       "show memory files",
 	CmdMcp:          "MCP servers",

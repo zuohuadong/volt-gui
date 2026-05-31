@@ -1,7 +1,9 @@
 # Design: Checkpoints & Rewind
 
-Status: **proposed** (snapshot-based, aligned with Claude Code). Tracks the most
-requested missing capability from v1 — an edit safety net / undo.
+Status: **Phase 1 implemented (CLI)** — snapshot store, capture seam, and the
+Esc-Esc / `/rewind` picker are in; the desktop UI and an optional git mode are
+Phase 2. Snapshot-based and aligned with Claude Code. Tracks the most requested
+missing capability from v1 — an edit safety net / undo.
 
 ## Goal
 

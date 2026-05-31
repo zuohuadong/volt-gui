@@ -113,6 +113,12 @@ type chatTUI struct {
 	// run goroutine is blocked awaiting ctrl.AnswerQuestion and keys drive the card.
 	chooser *chooser
 
+	// rewind holds the Esc-Esc / "/rewind" picker (nil when closed); while set,
+	// keys drive it and it renders as an overlay. lastEsc times the double-Esc
+	// gesture that opens it on an empty composer.
+	rewind  *rewindPicker
+	lastEsc time.Time
+
 	// host is the running MCP servers (nil when no plugins). The TUI reads
 	// prompts (slash commands), resources (@-references), and server status
 	// (/mcp) from it.
@@ -321,6 +327,10 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.handleChooserKey(msg)
 		}
+		// The rewind picker is modal while open: keys navigate it.
+		if m.rewind != nil {
+			return m.handleRewindKey(msg)
+		}
 		// A pending tool approval is modal: keystrokes answer it (y/a/n, Enter,
 		// Esc) rather than reaching the input.
 		if m.pendingApproval != nil {
@@ -362,7 +372,19 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.planMode = false
 				m.ctrl.SetPlanMode(false)
 			default:
-				m.input.Reset()
+				// Idle with nothing to back out: a double-Esc on an empty composer
+				// opens the rewind picker (Claude Code's gesture); a first Esc just
+				// arms it. Non-empty input clears as before.
+				if strings.TrimSpace(m.input.Value()) == "" {
+					if !m.lastEsc.IsZero() && time.Since(m.lastEsc) < 600*time.Millisecond {
+						m.lastEsc = time.Time{}
+						m.openRewind()
+					} else {
+						m.lastEsc = time.Now()
+					}
+				} else {
+					m.input.Reset()
+				}
 			}
 			return m, nil
 		case "ctrl+c":
@@ -703,6 +725,8 @@ func (m chatTUI) View() tea.View {
 	ctxTag := m.contextTag()
 	var status string
 	switch {
+	case m.rewind != nil:
+		status = "  " + modeTag + " · ⟲ rewind"
 	case m.chooser != nil:
 		status = "  " + modeTag + " · " + i18n.M.ChatStatusQuestion
 	case m.pendingApproval != nil && m.pendingApproval.Tool == planApprovalTool:
@@ -760,6 +784,10 @@ func (m chatTUI) View() tea.View {
 		rowsAboveBox += strings.Count(banner, "\n") + 1
 	}
 	if card := m.renderChooser(); card != "" {
+		parts = append(parts, card)
+		rowsAboveBox += strings.Count(card, "\n") + 1
+	}
+	if card := m.renderRewind(); card != "" {
 		parts = append(parts, card)
 		rowsAboveBox += strings.Count(card, "\n") + 1
 	}
@@ -1228,6 +1256,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		// Dismiss the pinned task list; a later todo_write brings it back.
 		m.todoArgs = ""
 		m.notice(i18n.M.SlashTodoCleared)
+	case "/rewind":
+		m.openRewind()
 	case "/mcp":
 		m.runMCPSubcommand(input)
 	case "/model":

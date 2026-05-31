@@ -55,6 +55,11 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sink.ctx = ctx
 
+	// A GUI launch starts in "/" (read-only); move into a real, writable working
+	// folder (the remembered one, else home) before anything reads/writes config,
+	// .env, memory, or skills relative to cwd.
+	ensureWorkspace()
+
 	// Resolve the active model to its canonical "provider/model" ref up front so
 	// the switcher can mark it current.
 	if cfg, err := config.Load(); err == nil {
@@ -258,6 +263,7 @@ func (a *App) PickWorkspace() (string, error) {
 	if err := os.Chdir(dir); err != nil {
 		return "", err
 	}
+	saveWorkspace(dir) // remember it so the next launch reopens here
 	// Resolve the new folder's default model from its own config.
 	model := ""
 	if cfg, cerr := config.Load(); cerr == nil {

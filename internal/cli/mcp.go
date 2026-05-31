@@ -188,7 +188,7 @@ func mcpList() int {
 		if bin, ok := codegraph.Resolve(cfg.Codegraph.Path); ok {
 			fmt.Printf("%-16s (stdio, built-in)  %s serve --mcp\n", "codegraph", bin)
 		} else {
-			fmt.Printf("%-16s (built-in, unavailable)  binary not found — ship it beside reasonix, install on PATH, or set [codegraph].path\n", "codegraph")
+			fmt.Printf("%-16s (built-in, not installed)  run `reasonix codegraph install` (or it auto-installs on first use)\n", "codegraph")
 		}
 		listed++
 	}

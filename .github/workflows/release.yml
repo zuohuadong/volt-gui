@@ -13,9 +13,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ github.ref_name }}
-      # CodeGraph release bundled into the darwin/linux archives. Keep in sync
-      # with CODEGRAPH_VERSION in the Makefile and internal/codegraph.
-      CODEGRAPH_VERSION: v0.9.7
     steps:
       - uses: actions/checkout@v4
 

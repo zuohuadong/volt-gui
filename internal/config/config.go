@@ -32,12 +32,15 @@ type Config struct {
 // CodegraphConfig governs the built-in CodeGraph MCP server — symbol/call-graph
 // code intelligence (tree-sitter + SQLite) that gives the agent codegraph_*
 // search / context / explore / trace / node tools. Enabled defaults to true; set
-// enabled = false to drop those tools and fall back to grep/glob. Path overrides
-// binary resolution; empty means the bundle shipped next to the reasonix
-// executable, then a `codegraph` on PATH.
+// enabled = false to drop those tools and fall back to grep/glob. AutoInstall
+// (default true) lets reasonix fetch the CodeGraph runtime into its cache on first
+// use; set false to require an explicit `reasonix codegraph install` (e.g. for
+// air-gapped or headless runs). Path overrides binary resolution; empty resolves
+// the cache, then a `codegraph` on PATH, then a bundle beside the executable.
 type CodegraphConfig struct {
-	Enabled bool   `toml:"enabled"`
-	Path    string `toml:"path"`
+	Enabled     bool   `toml:"enabled"`
+	AutoInstall bool   `toml:"auto_install"`
+	Path        string `toml:"path"`
 }
 
 // SkillsConfig configures skill discovery. Paths adds extra "custom"-scope skill
@@ -256,11 +259,11 @@ func Default() *Config {
 		// so an absent [sandbox] in a user's file keeps egress (zero value would
 		// wrongly deny it).
 		Sandbox: SandboxConfig{Bash: "enforce", Network: true},
-		// CodeGraph code-intelligence on by default: when its bundle resolves it is
-		// injected as a built-in MCP server. A missing bundle is a silent no-op, so
-		// the default is safe even before the binary ships. Set enabled = false to
-		// opt out entirely.
-		Codegraph: CodegraphConfig{Enabled: true},
+		// CodeGraph code-intelligence on by default: when it resolves it is injected
+		// as a built-in MCP server, and AutoInstall fetches it into the cache on
+		// first use. Set enabled = false to opt out, or auto_install = false to
+		// require an explicit `reasonix codegraph install`.
+		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
 		Providers: []ProviderEntry{
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},

@@ -59,6 +59,8 @@ func Run(args []string, version string) int {
 		return acpCommand(rest, version)
 	case "mcp":
 		return mcpCommand(rest)
+	case "codegraph":
+		return codegraphCommand(rest)
 	case "version", "--version", "-v":
 		fmt.Println("reasonix", version)
 		return 0

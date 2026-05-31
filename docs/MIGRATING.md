@@ -29,8 +29,7 @@ reasonix chat
 ```
 
 Prebuilt archives (`reasonix-<os>-<arch>.tar.gz` / `.zip`) are also attached to
-each GitHub release — on macOS/Linux they bundle the CodeGraph runtime beside the
-binary, so code-intelligence works out of the box. Or build from source:
+each GitHub release. Or build from source:
 
 ```sh
 git clone https://github.com/esengine/DeepSeek-Reasonix   # default: main-v2 (Go)
@@ -59,7 +58,8 @@ and DeepSeek prefix-cache–oriented design.
 
 - **Code intelligence**: embedding semantic search is replaced by **CodeGraph**
   (`codegraph_*` tools) — a tree-sitter symbol/call graph, no embedding service or
-  API cost. Shipped built-in.
+  API cost. Fetched into a local cache on first use (or `reasonix codegraph
+  install`); set `[codegraph].enabled = false` to opt out.
 - **Plan mode** + `complete_step` (evidence-backed step sign-off).
 - **No web dashboard** — the v2 line is terminal + desktop (Wails), by design.
 - Some granular v1 tools are intentionally consolidated (e.g. file-management ops

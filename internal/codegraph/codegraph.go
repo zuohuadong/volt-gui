@@ -5,10 +5,11 @@
 // callee, and change-impact tools without the per-language setup an LSP fleet
 // would need.
 //
-// Reasonix ships the CodeGraph bundle alongside its own executable, so Resolve
-// finds it next to the binary; an explicit config path and a system-installed
-// `codegraph` on PATH are honored as an override / fallback. boot injects the
-// resolved launcher as one more stdio plugin, pinned to the project root via
+// CodeGraph is fetched on first use into a per-version cache (see Install) rather
+// than shipped in the reasonix binary, which keeps installs small. Resolve finds
+// the cached launcher; an explicit config path, a system-installed `codegraph` on
+// PATH, and a bundle placed beside the executable are also honored. boot injects
+// the resolved launcher as one more stdio plugin, pinned to the project root via
 // plugin.Spec.Dir (CodeGraph detects the project from its working directory).
 package codegraph
 
@@ -30,21 +31,25 @@ const BundleDirName = "codegraph"
 
 // Resolve returns the absolute path to the CodeGraph launcher. Search order:
 //  1. override — an explicit [codegraph].path from config (~ and ${VAR} expanded);
-//  2. the bundle shipped beside the reasonix executable (the distribution case);
-//  3. a system-installed `codegraph` on PATH.
+//  2. the per-version cache populated by Install (the normal case);
+//  3. a system-installed `codegraph` on PATH;
+//  4. a bundle placed beside the reasonix executable (fallback for manual setups).
 //
-// ok is false when none resolves, in which case the caller skips the feature
-// silently — a missing bundle just means the codegraph_* tools are unavailable.
+// ok is false when none resolves — the caller then triggers Install (or skips the
+// feature), so the codegraph_* tools come online once the cache is populated.
 func Resolve(override string) (string, bool) {
 	if override != "" {
 		if p := expand(override); isExec(p) {
 			return p, true
 		}
 	}
-	if p, ok := bundled(); ok {
+	if p, ok := cached(); ok {
 		return p, true
 	}
 	if p, err := exec.LookPath("codegraph"); err == nil {
+		return p, true
+	}
+	if p, ok := bundled(); ok {
 		return p, true
 	}
 	return "", false

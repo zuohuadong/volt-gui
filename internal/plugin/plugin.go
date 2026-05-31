@@ -361,11 +361,11 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 			name:     toolName(c.name, t.Name),
 			rawName:  t.Name,
 			desc:     t.Description,
-			schema:   t.InputSchema,
+			schema:   canonicalizeSchema(t.InputSchema),
 			readOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint,
 		})
 	}
-	return tools, nil
+	return sortToolsByName(tools), nil
 }
 
 // toolName builds the model-visible namespaced name "mcp__<server>__<tool>",
@@ -424,7 +424,7 @@ func (t *remoteTool) Schema() json.RawMessage {
 	if len(t.schema) == 0 {
 		return json.RawMessage(`{"type":"object"}`)
 	}
-	return t.schema
+	return canonicalizeSchema(t.schema)
 }
 
 func (t *remoteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {

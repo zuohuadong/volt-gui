@@ -57,10 +57,14 @@ export function Composer({
     app
       .SlashArgs(text)
       .then((r) => {
-        if (live) {
-          setArgRes(r.items.length > 0 ? r : null);
-          setActive(0);
-        }
+        if (!live) return;
+        // Drop suggestions that wouldn't change the input — the token is already
+        // fully typed (e.g. "/skill list" offering "list"). Otherwise the menu
+        // lingers on a complete command and Enter keeps "accepting" a no-op
+        // instead of sending. (Defense-in-depth: the backend filters these too.)
+        const useful = r.items.filter((it) => text.slice(0, r.from) + it.insert !== text);
+        setArgRes(useful.length > 0 ? { items: useful, from: r.from } : null);
+        setActive(0);
       })
       .catch(() => {});
     return () => {

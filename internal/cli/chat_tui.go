@@ -740,7 +740,7 @@ func (m chatTUI) View() tea.View {
 		parts = append(parts, menu)
 		rowsAboveBox += strings.Count(menu, "\n") + 1
 	}
-	parts = append(parts, box, statusStyle.Render(status))
+	parts = append(parts, box, statusStyle.Render(clampStatusLine(status, boxW)))
 
 	v := tea.NewView(strings.Join(parts, "\n"))
 	// Anchor the real terminal cursor at the textarea's insertion point so IME
@@ -916,6 +916,23 @@ func truncateSubject(s string, width int) string {
 		return string(r[:max]) + "…"
 	}
 	return s
+}
+
+// clampStatusLine truncates a status line to `width` visible columns, ANSI-aware,
+// appending an ellipsis and a reset. The bottom region must stay a fixed height —
+// the non-alt-screen renderer commits scrollback by clearing the prior frame's
+// lines, so a status that wraps to a second row strands input-box borders in
+// history. Truncating (not wrapping) keeps it one row regardless of how many tags
+// (ctx · cache · avg · jobs · balance) it carries on a narrow terminal.
+func clampStatusLine(s string, width int) string {
+	if width <= 1 || visibleWidth(s) <= width {
+		return s
+	}
+	head := chunkByWidth(s, width-1)
+	if len(head) == 0 {
+		return s
+	}
+	return head[0] + "…\x1b[0m"
 }
 
 // growInputToFit resizes the textarea to the number of lines its value spans,

@@ -216,8 +216,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Its tool activity nests under the invoking call, like `task`.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string) (string, error) {
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
-		if sk.Model != "" {
-			if me, ok := cfg.ResolveModel(sk.Model); ok {
+		if modelRef := subagentModelRef(cfg, sk); modelRef != "" {
+			if me, ok := cfg.ResolveModel(modelRef); ok {
 				if p, err := NewProvider(me); err == nil {
 					prov, price, ctxWin = p, me.Price, me.ContextWindow
 				}
@@ -303,6 +303,50 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		PluginCtx:     ctx,
 		WorkspaceRoot: cwd,
 	}), nil
+}
+
+func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
+	if cfg != nil {
+		for _, key := range subagentModelKeys(sk.Name) {
+			if m := strings.TrimSpace(cfg.Agent.SubagentModels[key]); m != "" {
+				return m
+			}
+		}
+	}
+	if m := strings.TrimSpace(sk.Model); m != "" {
+		return m
+	}
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Agent.SubagentModel)
+}
+
+func subagentModelKeys(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	keys := []string{name}
+	for _, alias := range []string{
+		strings.ReplaceAll(name, "-", "_"),
+		strings.ReplaceAll(name, "_", "-"),
+	} {
+		if alias == "" {
+			continue
+		}
+		seen := false
+		for _, key := range keys {
+			if key == alias {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			keys = append(keys, alias)
+		}
+	}
+	return keys
 }
 
 // NewProvider builds a provider.Provider from a configured entry. Exported so

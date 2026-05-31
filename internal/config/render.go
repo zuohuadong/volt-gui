@@ -41,6 +41,16 @@ func RenderTOML(c *Config) string {
 	} else {
 		b.WriteString("# planner_model = \"mimo\"   # optional: enable two-model collaboration\n")
 	}
+	if c.Agent.SubagentModel != "" {
+		fmt.Fprintf(&b, "subagent_model = %q   # default model for runAs=subagent skills\n", c.Agent.SubagentModel)
+	} else {
+		b.WriteString("# subagent_model = \"deepseek-pro\"   # optional default for runAs=subagent skills\n")
+	}
+	if len(c.Agent.SubagentModels) > 0 {
+		fmt.Fprintf(&b, "subagent_models = %s   # per-skill overrides\n", renderStringMap(c.Agent.SubagentModels))
+	} else {
+		b.WriteString("# subagent_models = { review = \"deepseek-pro\", security_review = \"deepseek-pro\" }   # per-skill overrides\n")
+	}
 	b.WriteString("\n")
 
 	for _, p := range c.Providers {

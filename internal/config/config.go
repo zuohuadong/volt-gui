@@ -120,13 +120,16 @@ func (c *Config) BashMode() string {
 // AgentConfig configures the harness loop. PlannerModel is optional: when set
 // to another provider's name it enables two-model collaboration, where the
 // planner handles low-frequency planning in its own session (kept separate so
-// each model's prompt prefix stays cache-stable).
+// each model's prompt prefix stays cache-stable). SubagentModel is the optional
+// default for runAs=subagent skills; SubagentModels overrides it per skill name.
 type AgentConfig struct {
-	SystemPrompt     string  `toml:"system_prompt"`
-	SystemPromptFile string  `toml:"system_prompt_file"`
-	MaxSteps         int     `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
-	Temperature      float64 `toml:"temperature"`
-	PlannerModel     string  `toml:"planner_model"`
+	SystemPrompt     string            `toml:"system_prompt"`
+	SystemPromptFile string            `toml:"system_prompt_file"`
+	MaxSteps         int               `toml:"max_steps"` // tool-call rounds per turn; 0 = unlimited
+	Temperature      float64           `toml:"temperature"`
+	PlannerModel     string            `toml:"planner_model"`
+	SubagentModel    string            `toml:"subagent_model"`
+	SubagentModels   map[string]string `toml:"subagent_models"`
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

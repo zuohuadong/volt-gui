@@ -25,10 +25,12 @@ type SlashItem struct {
 // chat TUI (controller-free, from its cached lists) and the desktop (from the
 // controller). This keeps the CLI and desktop sub-command hints identical.
 type ArgData struct {
-	Skills       []skill.Skill
-	ServerNames  []string
-	ModelRefs    []string
-	CurrentModel string
+	Skills          []skill.Skill
+	ServerNames     []string
+	ConfiguredMCP   []string
+	DisconnectedMCP []string
+	ModelRefs       []string
+	CurrentModel    string
 }
 
 // SlashArgItems completes the arguments of a management slash command
@@ -64,6 +66,7 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
 			{Label: "add", Insert: "add ", Hint: i18n.M.ArgMcpAdd, Descend: true},
+			{Label: "connect", Insert: "connect ", Hint: "connect a configured MCP server", Descend: true},
 			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
 			{Label: "list", Insert: "list", Hint: i18n.M.ArgMcpList},
 		}
@@ -76,6 +79,15 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 		var items []SlashItem
 		for _, name := range d.ServerNames {
 			items = append(items, SlashItem{Label: name, Insert: name, Hint: i18n.M.ArgMcpConnected})
+		}
+		return items
+	case "connect":
+		if len(prior) != 2 {
+			return nil
+		}
+		var items []SlashItem
+		for _, name := range d.DisconnectedMCP {
+			items = append(items, SlashItem{Label: name, Insert: name, Hint: "configured"})
 		}
 		return items
 	case "add":
@@ -176,6 +188,15 @@ func (c *Controller) managementNotice(trimmed string) bool {
 	case "/hooks":
 		c.notice(c.hookListText())
 	case "/mcp":
+		if len(fields) >= 3 && fields[1] == "connect" {
+			n, err := c.ConnectConfiguredMCPServer(fields[2])
+			if err != nil {
+				c.notice("mcp connect: " + err.Error())
+			} else {
+				c.notice(fmt.Sprintf("connected %s — %d tools", fields[2], n))
+			}
+			return true
+		}
 		c.notice(c.mcpListText())
 	default:
 		return false

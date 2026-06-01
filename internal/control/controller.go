@@ -1095,6 +1095,24 @@ func (c *Controller) HookRunner() *hook.Runner { return c.hooks }
 // of tools the server exposed. A save failure after a successful connect is
 // reported but non-fatal: the server still works this session.
 func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
+	n, err := c.connectMCPServer(e)
+	if err != nil {
+		return 0, err
+	}
+	cfg, lerr := config.Load()
+	if lerr != nil {
+		return n, fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
+	}
+	if err := cfg.UpsertPlugin(e); err != nil {
+		return n, fmt.Errorf("connected, but config rejected the entry: %w", err)
+	}
+	if err := cfg.Save(); err != nil {
+		return n, fmt.Errorf("connected, but saving config failed: %w", err)
+	}
+	return n, nil
+}
+
+func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	if c.host == nil {
 		c.host = plugin.NewHost()
 	}
@@ -1116,17 +1134,52 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 			c.reg.Add(t)
 		}
 	}
-	cfg, lerr := config.Load()
-	if lerr != nil {
-		return len(tools), fmt.Errorf("connected, but reloading config to save failed: %w", lerr)
-	}
-	if err := cfg.UpsertPlugin(e); err != nil {
-		return len(tools), fmt.Errorf("connected, but config rejected the entry: %w", err)
-	}
-	if err := cfg.Save(); err != nil {
-		return len(tools), fmt.Errorf("connected, but saving config failed: %w", err)
-	}
 	return len(tools), nil
+}
+
+func (c *Controller) ConfiguredMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Plugins))
+	for _, p := range cfg.Plugins {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+func (c *Controller) DisconnectedMCPNames() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	connected := map[string]bool{}
+	if c.host != nil {
+		for _, name := range c.host.ServerNames() {
+			connected[name] = true
+		}
+	}
+	var names []string
+	for _, p := range cfg.Plugins {
+		if !connected[p.Name] {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			return c.connectMCPServer(p)
+		}
+	}
+	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }
 
 // RemoveMCPServer disconnects a live MCP server — its tools vanish from the next

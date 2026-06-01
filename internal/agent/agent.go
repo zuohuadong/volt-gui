@@ -139,7 +139,7 @@ type Agent struct {
 	// prompt-cache prefix stays valid; the gating happens at execute time
 	// and the model sees a "blocked" result it can adapt to. Toggled from
 	// the outside via SetPlanMode.
-	planMode bool
+	planMode atomic.Bool
 
 	// gate, when non-nil, is the per-call permission gate consulted after the
 	// plan-mode check. nil disables gating entirely.
@@ -200,7 +200,7 @@ type Agent struct {
 // non-ReadOnly tool the model calls and returns a "blocked" result instead of
 // running it. The cache-friendly bits — system prompt, tools schema, message
 // history — are left untouched, so the toggle costs nothing in cache hits.
-func (a *Agent) SetPlanMode(v bool) { a.planMode = v }
+func (a *Agent) SetPlanMode(v bool) { a.planMode.Store(v) }
 
 // SetGate installs the per-call permission gate. Used by `reasonix chat` to swap the
 // headless gate built in setup for an interactive one that prompts the user;
@@ -665,7 +665,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
-	if a.planMode && !t.ReadOnly() {
+	if a.planMode.Load() && !t.ReadOnly() {
 		return toolOutcome{
 			output:  fmt.Sprintf("blocked: %q is a writer tool and plan mode is read-only. Keep exploring with read-only tools, then write your plan as your reply — the user will be asked to approve it before any changes are made.", call.Name),
 			blocked: true,

@@ -105,10 +105,10 @@ func globRecursive(pattern string) (string, error) {
 		if err != nil {
 			return nil // skip unreadable entries
 		}
-		if d.Name() == ".git" && d.IsDir() {
-			return filepath.SkipDir
-		}
 		if d.IsDir() {
+			if skipWalkDir(root, path, d.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		// If there's no suffix, every file matches.

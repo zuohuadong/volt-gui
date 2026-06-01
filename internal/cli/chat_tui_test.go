@@ -10,8 +10,6 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 // TestTranscriptMirrorsCommits proves the alt-screen migration's foundation:

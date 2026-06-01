@@ -43,6 +43,7 @@ func (g globTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("pattern is required")
 	}
 	p.Pattern = resolveIn(g.workDir, p.Pattern)
+	p.Pattern = filepath.FromSlash(p.Pattern) // models emit "/" (see Description); WalkDir/Match compare OS-native paths
 
 	// If the pattern contains **, use recursive matching via filepath.WalkDir.
 	if strings.Contains(p.Pattern, "**") {

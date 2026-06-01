@@ -339,6 +339,19 @@ func TestGlobRecursive(t *testing.T) {
 	}
 }
 
+func TestGlobForwardSlashPattern(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755)
+	os.WriteFile(filepath.Join(dir, "top.txt"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "sub", "deep", "nested.txt"), []byte("y"), 0o644)
+	t.Chdir(dir)
+
+	out := runTool(t, globTool{}, map[string]any{"pattern": "**/*.txt"})
+	if !strings.Contains(out, "top.txt") || !strings.Contains(out, "nested.txt") {
+		t.Errorf("forward-slash recursive pattern should match every .txt:\n%s", out)
+	}
+}
+
 func TestGlobRecursiveNoMatches(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)

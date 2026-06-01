@@ -157,6 +157,12 @@ type chatTUI struct {
 	modelSwitchPending bool
 	// pendingModelSwitch holds the tea.Cmd that triggers the async build.
 	pendingModelSwitch tea.Cmd
+	// oldControllers accumulates controllers retired by /model switches.
+	// They cannot be closed during the switch (Close runs SessionEnd hooks
+	// and kills plugin subprocesses, both of which corrupt the terminal's
+	// raw mode). Instead they are closed at process exit when the terminal
+	// is already being restored.
+	oldControllers []*control.Controller
 
 	// completion is the live autocomplete menu (slash commands; @-refs later).
 	completion completion
@@ -231,10 +237,15 @@ func runStatuslineCmd(cmd, stdinPayload string) string {
 
 // modelSwitchMsg carries the result of an async /model switch. A nil err means
 // the new controller is ready in ctrl; label/commands/skills/host mirror the
-// fields that runModelSubcommand used to set synchronously.
+// fields that runModelSubcommand used to set synchronously. oldCtrl is the
+// previous controller that must be closed after the switch — its cleanup
+// (SessionEnd hooks, plugin subprocess kill) is deferred to a tea.Cmd so it
+// runs after the render completes, avoiding corruption of the terminal's raw
+// mode that would occur if Close() were called from the build goroutine.
 type modelSwitchMsg struct {
 	ref      string
 	ctrl     *control.Controller
+	oldCtrl  *control.Controller
 	label    string
 	commands []command.Command
 	skills   []skill.Skill
@@ -566,6 +577,7 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingModelSwitch = nil
 		if msg.err != nil {
 			m.notice("model: " + msg.err.Error())
+			// Build failed — no old controller to retire.
 		} else {
 			m.ctrl = msg.ctrl
 			m.label = msg.label
@@ -573,10 +585,20 @@ func (m chatTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.skills = msg.skills
 			m.host = msg.host
 			m.modelRef = msg.ref
+			// Stash the old controller for cleanup at exit. It cannot be
+			// closed here or in the build goroutine — Close() runs
+			// SessionEnd hooks and kills plugin subprocesses, both of
+			// which corrupt bubbletea's terminal raw mode.
+			if msg.oldCtrl != nil {
+				m.oldControllers = append(m.oldControllers, msg.oldCtrl)
+			}
 			m.notice(fmt.Sprintf("switched to %s (conversation carried over; prompt cache resets)", m.label))
 			cmds = append(cmds, fetchBalance(m.ctrl))
-			// Re-issue waitForAgentEvent to keep the event loop alive.
-			cmds = append(cmds, waitForAgentEvent(m.eventCh))
+			// Do NOT re-issue waitForAgentEvent here — the goroutine from the
+			// last agentEventMsg handler is still blocked on the same channel.
+			// Starting a second one creates a race: two goroutines compete on
+			// p.Send (unbuffered), and the receiver may read them out of order,
+			// garbling the streamed text (words appear reordered).
 		}
 
 	case promptResolvedMsg:

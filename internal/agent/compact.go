@@ -145,7 +145,7 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string) error
 		Content: "Summary of earlier conversation (older messages were compacted to save context):\n" + summary,
 	})
 	compacted = append(compacted, msgs[start:]...)
-	a.session.Messages = compacted
+	a.session.Replace(compacted)
 
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
 		Trigger: trigger, Messages: len(region), Summary: summary, Archive: archived,
@@ -184,7 +184,7 @@ func (a *Agent) SummarizeFrom(ctx context.Context, fromIdx int) error {
 		Role:    provider.RoleUser,
 		Content: "Summary of the later conversation (compacted from here on):\n" + summary,
 	})
-	a.session.Messages = next
+	a.session.Replace(next)
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("summarized %d later messages → summary", len(region))})
 	return nil
@@ -217,7 +217,7 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 		Content: "Summary of earlier conversation (compacted up to here):\n" + summary,
 	})
 	next = append(next, msgs[toIdx:]...)
-	a.session.Messages = next
+	a.session.Replace(next)
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("summarized %d earlier messages → summary", len(region))})
 	return nil

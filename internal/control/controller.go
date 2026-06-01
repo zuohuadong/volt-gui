@@ -783,7 +783,7 @@ func (c *Controller) ForkNamed(turn int, name string) (string, error) {
 	_ = c.Snapshot()
 	parentPath := c.SessionPath()
 	parentID := agent.BranchID(parentPath)
-	src := c.executor.Session().Messages
+	src := c.executor.Session().Snapshot()
 	if boundary > len(src) {
 		boundary = len(src)
 	}
@@ -836,7 +836,7 @@ func (c *Controller) Branch(name string) (string, error) {
 	}
 	parentPath := c.SessionPath()
 	parentID := agent.BranchID(parentPath)
-	src := c.executor.Session().Messages
+	src := c.executor.Session().Snapshot()
 	branched := append([]provider.Message(nil), src...)
 	sess := agent.NewSession("")
 	sess.Messages = branched
@@ -1048,7 +1048,7 @@ func (c *Controller) History() []provider.Message {
 	if c.executor == nil {
 		return nil
 	}
-	return c.executor.Session().Messages
+	return c.executor.Session().Snapshot() // copy — a turn may be appending concurrently
 }
 
 // ContextSnapshot returns (promptTokens, contextWindow) from the most recent

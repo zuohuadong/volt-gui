@@ -108,3 +108,35 @@ func TestPostLLMCallConfiguredButNoReasoning(t *testing.T) {
 		t.Fatalf("hook should not fire on empty reasoning, saw %v", h.postLLMSeen)
 	}
 }
+
+// TestPostLLMCallKeepsSignedReasoningOriginal proves that when the reasoning is
+// pinned by a provider signature (Anthropic extended thinking), a transform hook
+// changes only the live display — the stored reasoning_content stays the original
+// so the signed thinking block can be replayed verbatim on the next tool-call
+// turn. Storing the transformed text under the original signature is a 400.
+func TestPostLLMCallKeepsSignedReasoningOriginal(t *testing.T) {
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{{
+		{Type: provider.ChunkReasoning, Text: "think A "},
+		{Type: provider.ChunkReasoning, Text: "think B", Signature: "sig-xyz"},
+		{Type: provider.ChunkText, Text: "answer"},
+		{Type: provider.ChunkDone},
+	}}}
+	var reasoningEvents []string
+	h := &stubHooks{hasPostLLM: true, postLLMOut: "TRANSLATED"}
+	a := New(prov, tool.NewRegistry(), NewSession(""), Options{Hooks: h}, recordReasoning(&reasoningEvents))
+
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(reasoningEvents) != 1 || reasoningEvents[0] != "TRANSLATED" {
+		t.Fatalf("want the transformed reasoning shown live, got %v", reasoningEvents)
+	}
+	if got := assistantReasoning(a.session.Messages); got != "think A think B" {
+		t.Fatalf("stored reasoning = %q, want the original (signature pins it)", got)
+	}
+	for _, m := range a.session.Messages {
+		if m.Role == provider.RoleAssistant && m.ReasoningSignature != "sig-xyz" {
+			t.Fatalf("stored signature = %q, want sig-xyz alongside its original text", m.ReasoningSignature)
+		}
+	}
+}

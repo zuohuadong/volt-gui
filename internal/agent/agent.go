@@ -430,20 +430,30 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	// With a PostLLMCall hook, the live stream was suppressed above; transform the
 	// full reasoning now and emit it once so the sink never sees the untranslated
 	// text. Without a hook this is skipped — the chunk-by-chunk events already fired.
-	reasoningStr := reasoning.String()
-	if transformReasoning && reasoningStr != "" {
-		reasoningStr = a.hooks.PostLLMCall(ctx, reasoningStr, turn)
-		if reasoningStr != "" {
-			a.sink.Emit(event.Event{Kind: event.Reasoning, Text: reasoningStr})
+	original := reasoning.String()
+	display := original
+	if transformReasoning && original != "" {
+		display = a.hooks.PostLLMCall(ctx, original, turn)
+		if display != "" {
+			a.sink.Emit(event.Event{Kind: event.Reasoning, Text: display})
 		}
+	}
+	// Store the transformed reasoning — except when a provider signature pins it to
+	// the original text (Anthropic extended thinking). That signed thinking block is
+	// replayed verbatim on the next tool-call turn; re-uploading transformed text
+	// under the original signature is rejected, so keep the original for storage
+	// while the user still sees the transformed version live.
+	stored := display
+	if signature != "" {
+		stored = original
 	}
 	// Close the text stream: a sink may re-render the streamed raw text as
 	// styled markdown now that it is complete. Reasoning rides along so the sink
 	// has the full chain if it wants it.
-	if text.Len() > 0 || reasoningStr != "" {
-		a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: reasoningStr})
+	if text.Len() > 0 || display != "" {
+		a.sink.Emit(event.Event{Kind: event.Message, Text: text.String(), Reasoning: display})
 	}
-	return text.String(), reasoningStr, signature, calls, usage, nil
+	return text.String(), stored, signature, calls, usage, nil
 }
 
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is

@@ -506,6 +506,12 @@ func (e *ProviderEntry) APIKey() string {
 	return os.Getenv(e.APIKeyEnv)
 }
 
+// Configured reports whether the provider's api_key_env is set — the same check
+// Validate enforces, so pickers can filter on it.
+func (e *ProviderEntry) Configured() bool {
+	return e.APIKey() != ""
+}
+
 // ResolveSystemPrompt returns the system prompt, reading system_prompt_file if set.
 func (c *Config) ResolveSystemPrompt() (string, error) {
 	if c.Agent.SystemPromptFile != "" {

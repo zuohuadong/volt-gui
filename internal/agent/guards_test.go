@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
+	_ "reasonix/internal/tool/builtin"
 )
 
 // TestTruncateToolOutputUnderCap leaves small payloads alone — the cap should
@@ -90,6 +92,7 @@ type fakeTool struct {
 	name     string
 	readOnly bool
 	delay    time.Duration
+	err      error
 	calls    *int32 // shared counter to assert all dispatched
 }
 
@@ -105,6 +108,9 @@ func (f fakeTool) Execute(ctx context.Context, _ json.RawMessage) (string, error
 	case <-time.After(f.delay):
 	case <-ctx.Done():
 		return "", ctx.Err()
+	}
+	if f.err != nil {
+		return "", f.err
 	}
 	return f.name + " done", nil
 }
@@ -150,6 +156,25 @@ func TestPartitionToolCallsUnknownToolSerial(t *testing.T) {
 		{start: 0, end: 1, parallel: true},
 		{start: 1, end: 2},
 		{start: 2, end: 3, parallel: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
+	}
+}
+
+// TestPartitionToolCallsCompleteStepSerial verifies complete_step never joins a
+// parallel read-only run: it reads the turn's receipts, so the prior reads must
+// finish (and record) in an earlier batch before it runs in its own serial one.
+func TestPartitionToolCallsCompleteStepSerial(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	reg.Add(fakeTool{name: "complete_step", readOnly: true})
+
+	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "complete_step"}}
+	got := partitionToolCalls(reg, calls)
+	want := []toolCallBatch{
+		{start: 0, end: 1, parallel: true},
+		{start: 1, end: 2},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
@@ -224,5 +249,65 @@ func TestExecuteBatchSegmentsAroundWrites(t *testing.T) {
 	}
 	if elapsed < 2*delay {
 		t.Errorf("mixed batch took only %v — write call appears to have overlapped a read-only segment", elapsed)
+	}
+}
+
+func TestExecuteBatchFeedsReceiptsToCompleteStep(t *testing.T) {
+	completeStep, ok := tool.LookupBuiltin("complete_step")
+	if !ok {
+		t.Fatal("complete_step builtin not registered")
+	}
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "bash", readOnly: false})
+	reg.Add(completeStep)
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+
+	results := a.executeBatch(context.Background(), []provider.ToolCall{
+		{Name: "bash", Arguments: `{"command":"go test ./internal/..."}`},
+		{Name: "complete_step", Arguments: `{
+			"step":"Run checks",
+			"result":"checks passed",
+			"evidence":[{"kind":"verification","summary":"tests passed","command":"go test ./internal/..."}]
+		}`},
+	})
+
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if !strings.Contains(results[1], "host-verified 1") {
+		t.Fatalf("complete_step did not see bash receipt: %q", results[1])
+	}
+}
+
+func TestExecuteOneFailedReceiptDoesNotVerify(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "bash", readOnly: false, err: errors.New("boom")})
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "bash", Arguments: `{"command":"go test ./..."}`})
+	if out.errMsg == "" {
+		t.Fatal("failing fake tool should return an error outcome")
+	}
+	if a.evidence.HasSuccessfulCommand("go test ./...") {
+		t.Fatal("failed bash receipt must not verify")
+	}
+}
+
+func TestRunResetsEvidenceLedger(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "bash", readOnly: false})
+	prov := &mockProvider{name: "p", chunks: []provider.Chunk{{Type: provider.ChunkText, Text: "done"}}}
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+
+	a.executeOne(context.Background(), provider.ToolCall{Name: "bash", Arguments: `{"command":"go test ./..."}`})
+	if !a.evidence.HasSuccessfulCommand("go test ./...") {
+		t.Fatal("setup failed to record evidence")
+	}
+
+	if err := a.Run(context.Background(), "next turn"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if a.evidence.HasSuccessfulCommand("go test ./...") {
+		t.Fatal("new user turn should not inherit previous receipts")
 	}
 }

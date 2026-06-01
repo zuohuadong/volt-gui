@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -156,6 +157,10 @@ type Agent struct {
 	// reach it. nil leaves those tools to degrade gracefully.
 	jobs *jobs.Manager
 
+	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
+	// complete_step validate that cited evidence happened before the claim.
+	evidence *evidence.Ledger
+
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping recentKeep messages
 	// verbatim and archiving the originals under archiveDir.
@@ -280,6 +285,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		gate:          opts.Gate,
 		hooks:         opts.Hooks,
 		jobs:          opts.Jobs,
+		evidence:      evidence.NewLedger(),
 		contextWindow: opts.ContextWindow,
 		compactRatio:  opts.CompactRatio,
 		recentKeep:    opts.RecentKeep,
@@ -294,6 +300,9 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // a round count. A positive maxSteps imposes an optional hard guard, surfaced as
 // a resumable notice when hit.
 func (a *Agent) Run(ctx context.Context, input string) error {
+	if a.evidence != nil {
+		a.evidence.Reset()
+	}
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
@@ -472,17 +481,15 @@ type toolCallBatch struct {
 // partitionToolCalls keeps provider order while letting contiguous known
 // read-only tools run together. Unknown and writer tools are single-call serial
 // batches so they cannot reorder around reads or produce surprising errors.
+// complete_step is read-only but never joins a parallel run: it reads the turn's
+// evidence ledger, so every prior call's receipt must be recorded before it runs.
 func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallBatch {
 	var batches []toolCallBatch
 	for i := 0; i < len(calls); {
-		if t, ok := r.Get(calls[i].Name); ok && t.ReadOnly() {
+		if parallelisable(r, calls[i].Name) {
 			start := i
 			i++
-			for i < len(calls) {
-				next, ok := r.Get(calls[i].Name)
-				if !ok || !next.ReadOnly() {
-					break
-				}
+			for i < len(calls) && parallelisable(r, calls[i].Name) {
 				i++
 			}
 			batches = append(batches, toolCallBatch{start: start, end: i, parallel: true})
@@ -492,6 +499,14 @@ func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallB
 		i++
 	}
 	return batches
+}
+
+func parallelisable(r *tool.Registry, name string) bool {
+	if name == "complete_step" {
+		return false
+	}
+	t, ok := r.Get(name)
+	return ok && t.ReadOnly()
 }
 
 func runParallel(start, end int, run func(int)) {
@@ -626,10 +641,16 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker)
+	if a.evidence != nil {
+		cctx = evidence.WithLedger(cctx, a.evidence)
+	}
 	if a.jobs != nil {
 		cctx = jobs.WithManager(cctx, a.jobs)
 	}
 	result, err := t.Execute(cctx, json.RawMessage(call.Arguments))
+	if a.evidence != nil && call.Name != "complete_step" {
+		a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly()))
+	}
 	// PostToolUse hooks observe the result (they can't block); fired whether the
 	// call succeeded or errored, since the tool did run.
 	if a.hooks != nil {

@@ -19,7 +19,10 @@ const LONG_PASTE_MIN_LINES = 20;
 const COMPOSER_MIN_HEIGHT = 86;
 const COMPOSER_MAX_HEIGHT = 360;
 const COMPOSER_MAX_VIEWPORT_RATIO = 0.4;
-const IME_CONFIRM_GRACE_MS = 250;
+// Grace after compositionend to swallow a confirm-Enter that lands just after
+// it; the real gap is a few ms, so keep it short or a deliberate quick second
+// Enter (submit) gets eaten too.
+const IME_CONFIRM_GRACE_MS = 100;
 
 type PastedBlock = {
   label: string;

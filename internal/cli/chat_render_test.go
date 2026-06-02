@@ -201,3 +201,18 @@ func TestToolProgressTailCap(t *testing.T) {
 		t.Fatalf("oldest line should have scrolled out of the tail:\n%s", block)
 	}
 }
+
+// TestReasoningViewBounded proves the live thinking view stays bounded under a
+// long stream — the fix for the O(n²)/multi-GB re-render of the full thought.
+func TestReasoningViewBounded(t *testing.T) {
+	m := newTestChatTUI()
+	for i := 0; i < 5000; i++ {
+		m.ingestEvent(event.Event{Kind: event.Reasoning, Text: "some thinking text token "})
+	}
+	if len(m.reasoningView) > reasoningViewMax {
+		t.Fatalf("reasoningView unbounded: %d > %d", len(m.reasoningView), reasoningViewMax)
+	}
+	if c := strings.Count(m.transcript[m.reasoningTextIdx], "\n") + 1; c > reasoningTailLines {
+		t.Fatalf("live reasoning block kept %d lines, want <= %d", c, reasoningTailLines)
+	}
+}

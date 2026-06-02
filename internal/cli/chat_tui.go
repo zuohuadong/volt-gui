@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -108,7 +109,10 @@ type chatTUI struct {
 	// (the block right after the marker), streamed in as the model thinks and
 	// removed when the block collapses (kept only in verbose mode). -1 when none.
 	reasoningTextIdx int
-	thinkStart       time.Time
+	// reasoningView is a bounded trailing window (≤ reasoningViewMax bytes) of the
+	// streaming thought, rendered live; the full text stays in reasoning for verbose.
+	reasoningView []byte
+	thinkStart    time.Time
 	// answerIdx is the transcript index of the streaming answer block (rewritten in
 	// place as completed paragraphs arrive); -1 when none is open. answerFlushed is
 	// how many bytes of pending have already been rendered into it, so a Text packet
@@ -964,20 +968,40 @@ func (m chatTUI) transcriptHeight() int {
 	return 1
 }
 
-// streamReasoning rewrites the live reasoning text block in place as thinking
-// streams in (mirrors streamAnswer), so the chain of thought is visible while the
-// model works; commitReasoning collapses it when the block closes.
-func (m *chatTUI) streamReasoning() {
+// reasoningViewMax bounds the live thinking buffer the streamed block renders
+// from. Re-rendering the full chain of thought on every delta was O(n²) (a 2k-
+// token thought churned ~4.7GB); rendering only the trailing window keeps each
+// delta O(1). The full text still lives in m.reasoning for verbose mode.
+const reasoningViewMax = 4096
+
+// reasoningTailLines caps how many trailing visual lines the live block shows.
+const reasoningTailLines = 12
+
+// streamReasoning appends a chunk and rewrites the live reasoning block from a
+// bounded trailing view (mirrors streamToolOutput), so the chain of thought is
+// visible while the model works without re-rendering the whole thing per token.
+func (m *chatTUI) streamReasoning(chunk string) {
 	if m.reasoningTextIdx < 0 {
 		return
 	}
-	m.transcript[m.reasoningTextIdx] = reasoningBlock(m.reasoning.String(), m.width)
+	m.reasoning.WriteString(chunk) // full text retained for verbose mode
+	m.reasoningView = append(m.reasoningView, chunk...)
+	if len(m.reasoningView) > reasoningViewMax {
+		drop := len(m.reasoningView) - reasoningViewMax
+		for drop < len(m.reasoningView) && !utf8.RuneStart(m.reasoningView[drop]) {
+			drop++
+		}
+		m.reasoningView = m.reasoningView[:copy(m.reasoningView, m.reasoningView[drop:])]
+	}
+	m.transcript[m.reasoningTextIdx] = reasoningBlock(string(m.reasoningView), m.width, reasoningTailLines)
 	m.transcriptDirty = true
 }
 
 // reasoningBlock renders raw thinking text as dim, width-wrapped lines under a
-// "⎿" connector that ties the block to the "▎ thinking…" marker above it.
-func reasoningBlock(raw string, width int) string {
+// "⎿" connector that ties the block to the "▎ thinking…" marker above it. A
+// positive maxLines keeps only the trailing visual lines (the live view); 0
+// renders all (verbose collapse).
+func reasoningBlock(raw string, width, maxLines int) string {
 	w := width - len([]rune(connector))
 	if w < 8 {
 		w = 8
@@ -987,6 +1011,9 @@ func reasoningBlock(raw string, width int) string {
 		for _, wl := range strings.Split(ansi.Wrap(ln, w, ""), "\n") {
 			lines = append(lines, dim(wl))
 		}
+	}
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
 	}
 	return connectorBlock(lines)
 }
@@ -1078,13 +1105,14 @@ func (m *chatTUI) commitReasoning() {
 	m.transcript[m.reasoningLineIdx] = dim(fmt.Sprintf("  ▎ "+i18n.M.ChatThoughtForFmt, secs))
 	if m.reasoningTextIdx >= 0 {
 		if m.showReasoning && strings.TrimSpace(m.reasoning.String()) != "" {
-			m.transcript[m.reasoningTextIdx] = reasoningBlock(m.reasoning.String(), m.width)
+			m.transcript[m.reasoningTextIdx] = reasoningBlock(m.reasoning.String(), m.width, 0)
 		} else {
 			m.transcript = append(m.transcript[:m.reasoningTextIdx], m.transcript[m.reasoningTextIdx+1:]...)
 		}
 	}
 	m.transcriptDirty = true
 	m.reasoning.Reset()
+	m.reasoningView = m.reasoningView[:0]
 	m.reasoningLineIdx = -1
 	m.reasoningTextIdx = -1
 }
@@ -2006,9 +2034,9 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 			m.commitLine(dim("  ▎ " + i18n.M.ChatThinking))
 			m.reasoningTextIdx = len(m.transcript)
 			m.commitLine("")
+			m.reasoningView = m.reasoningView[:0]
 		}
-		m.reasoning.WriteString(e.Text)
-		m.streamReasoning()
+		m.streamReasoning(e.Text)
 
 	case event.Text:
 		m.commitReasoning() // reasoning ends as the answer begins

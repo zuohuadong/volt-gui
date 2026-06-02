@@ -963,23 +963,20 @@ func (m *chatTUI) streamReasoning() {
 	m.transcriptDirty = true
 }
 
-// reasoningBlock renders raw thinking text as dim, width-wrapped lines indented
-// under the "▎" marker.
+// reasoningBlock renders raw thinking text as dim, width-wrapped lines under a
+// "⎿" connector that ties the block to the "▎ thinking…" marker above it.
 func reasoningBlock(raw string, width int) string {
-	w := width - 4
+	w := width - len([]rune(connector))
 	if w < 8 {
 		w = 8
 	}
-	var b strings.Builder
-	for i, ln := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
-		for j, wl := range strings.Split(ansi.Wrap(ln, w, ""), "\n") {
-			if i > 0 || j > 0 {
-				b.WriteByte('\n')
-			}
-			b.WriteString("    " + dim(wl))
+	var lines []string
+	for _, ln := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		for _, wl := range strings.Split(ansi.Wrap(ln, w, ""), "\n") {
+			lines = append(lines, dim(wl))
 		}
 	}
-	return b.String()
+	return connectorBlock(lines)
 }
 
 // commitReasoning closes the live thinking block: the "▎ thinking…" marker is

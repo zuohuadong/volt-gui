@@ -1,5 +1,5 @@
-// Formats a tool call as a Claude-style card line: a "⏺ Verb(primary arg)"
-// header instead of the raw "-> name {json}".
+// Formats a tool call as a Claude-style card line: a "● Verb(primary arg)"
+// header instead of the raw "-> name {json}", plus the "⎿" continuation gutter.
 package cli
 
 import (
@@ -9,6 +9,24 @@ import (
 
 	"reasonix/internal/tool"
 )
+
+// connector is the Claude-style "⎿" gutter that ties a continuation block (tool
+// output, streamed thinking) to the header line above it.
+const connector = "  ⎿  "
+
+// connectorBlock renders lines under the connector: the first carries the "⎿"
+// gutter, the rest align beneath it. Returns "" for no lines.
+func connectorBlock(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	indent := strings.Repeat(" ", len([]rune(connector)))
+	out := dim(connector) + lines[0]
+	for _, ln := range lines[1:] {
+		out += "\n" + indent + ln
+	}
+	return out
+}
 
 // toolVerb maps a tool's snake_case id to the verb shown in its card.
 var toolVerb = map[string]string{

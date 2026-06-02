@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/event"
 	"reasonix/internal/tool"
 )
 
@@ -223,7 +224,7 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 
 			// Transport on the parent ctx, startup RPCs on the timed callCtx: the
 			// per-plugin timeout caps initialize+listTools, but the long-lived
-			// stdio child must outlive the startup scope.
+			// stdio child must outlive the startup scope and later phase-B calls.
 			c, err := start(ctx, callCtx, spec)
 			if err != nil {
 				cancelStartup()
@@ -240,21 +241,11 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 			}
 			c.toolCount = len(ts)
 
-			// Prompts and resources are auxiliary: only fetched when the server
-			// advertised the capability, and a listing error is tolerated rather
-			// than failing the whole session over a non-essential surface.
-			if c.hasPrompts {
-				if ps, perr := c.listPrompts(callCtx); perr == nil {
-					c.prompts = ps
-				}
-			}
-			if c.hasResources {
-				if rs, rerr := c.listResources(callCtx); rerr == nil {
-					c.resources = rs
-				}
-			}
 			cancelStartup()
 
+			// Prompts and resources are deferred to StartPhaseB so the boot path
+			// can return as soon as tools are ready — the slow-to-list surfaces
+			// stream in later and fan out an MCPSurfaceReady event each.
 			ch <- result{idx: idx, spec: spec, client: c, tools: ts}
 		}(i, s)
 	}
@@ -283,8 +274,7 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 		}
 		h.clients = append(h.clients, r.client)
 		tools = append(tools, r.tools...)
-		h.prompts = append(h.prompts, r.client.prompts...)
-		h.resources = append(h.resources, r.client.resources...)
+		// prompts/resources are filled in later by StartPhaseB.
 	}
 	if firstErr != nil {
 		h.Close()
@@ -303,12 +293,90 @@ func (h *Host) Close() {
 	}
 }
 
+// StartPhaseB asynchronously fetches the auxiliary surfaces (prompts and
+// resources) for every connected client. Boot calls it right after Start
+// returns, on a session-scoped ctx, so the agent becomes responsive as soon as
+// tools are ready and the slower list calls stream in afterwards. Each finished
+// surface fires an MCPSurfaceReady event on sink so UIs (e.g. /mcp status) can
+// refresh without polling. A nil sink is tolerated — the merge still happens.
+// Errors are logged and swallowed: prompts/resources are non-essential and must
+// not break the session over one slow server.
+func (h *Host) StartPhaseB(ctx context.Context, sink event.Sink) {
+	h.mu.RLock()
+	clients := append([]*Client(nil), h.clients...)
+	h.mu.RUnlock()
+	for _, c := range clients {
+		if c.hasPrompts {
+			go h.fetchPrompts(ctx, c, sink)
+		}
+		if c.hasResources {
+			go h.fetchResources(ctx, c, sink)
+		}
+	}
+}
+
+func (h *Host) fetchPrompts(ctx context.Context, c *Client, sink event.Sink) {
+	aux, auxCtx, cancel, err := c.auxiliaryClient(ctx)
+	if err != nil {
+		slog.Warn("plugin: start auxiliary prompt client failed", "server", c.name, "err", err)
+		return
+	}
+	defer cancel()
+	defer aux.close()
+
+	ps, err := aux.listPrompts(auxCtx)
+	if err != nil {
+		slog.Warn("plugin: listPrompts failed", "server", c.name, "err", err)
+		return
+	}
+	for i := range ps {
+		ps[i].client = c
+	}
+	h.mu.Lock()
+	c.prompts = ps
+	h.prompts = append(h.prompts, ps...)
+	h.mu.Unlock()
+	if sink != nil {
+		sink.Emit(event.Event{
+			Kind: event.MCPSurfaceReady,
+			Text: fmt.Sprintf("%s: prompts ready (%d items)", c.name, len(ps)),
+		})
+	}
+}
+
+func (h *Host) fetchResources(ctx context.Context, c *Client, sink event.Sink) {
+	aux, auxCtx, cancel, err := c.auxiliaryClient(ctx)
+	if err != nil {
+		slog.Warn("plugin: start auxiliary resource client failed", "server", c.name, "err", err)
+		return
+	}
+	defer cancel()
+	defer aux.close()
+
+	rs, err := aux.listResources(auxCtx)
+	if err != nil {
+		slog.Warn("plugin: listResources failed", "server", c.name, "err", err)
+		return
+	}
+	h.mu.Lock()
+	c.resources = rs
+	h.resources = append(h.resources, rs...)
+	h.mu.Unlock()
+	if sink != nil {
+		sink.Emit(event.Event{
+			Kind: event.MCPSurfaceReady,
+			Text: fmt.Sprintf("%s: resources ready (%d items)", c.name, len(rs)),
+		})
+	}
+}
+
 // Client is one MCP server connection: a name plus the transport carrying its
 // JSON-RPC. The MCP-level methods (initialize, listTools, …) are transport-
 // agnostic — they go through t.
 type Client struct {
 	name string
 	t    transport
+	spec Spec
 
 	// Capabilities advertised by the server at initialize. prompts/list and
 	// resources/list are only called when advertised, so we never provoke a
@@ -324,6 +392,16 @@ type Client struct {
 	prompts   []Prompt
 	resources []Resource
 	tools     []ToolInfo
+}
+
+func (c *Client) auxiliaryClient(ctx context.Context) (*Client, context.Context, context.CancelFunc, error) {
+	auxCtx, cancel := context.WithTimeout(ctx, defaultStartTimeout)
+	aux, err := start(auxCtx, auxCtx, c.spec)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, err
+	}
+	return aux, auxCtx, cancel, nil
 }
 
 // ToolInfo is the human-facing metadata returned by MCP tools/list for one tool.
@@ -455,30 +533,20 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 		return nil, fmt.Errorf("list tools: %w", err)
 	}
 	c.toolCount = len(ts)
-	// Do the remaining network calls before taking the lock, so a hot-add never
-	// blocks status reads for the duration of a listPrompts/listResources round-trip.
-	var prompts []Prompt
-	if c.hasPrompts {
-		if ps, perr := c.listPrompts(ctx); perr == nil {
-			prompts = ps
-		} else {
-			slog.Warn("plugin: listPrompts failed", "server", s.Name, "err", perr)
-		}
-	}
-	var resources []Resource
-	if c.hasResources {
-		if rs, rerr := c.listResources(ctx); rerr == nil {
-			resources = rs
-		} else {
-			slog.Warn("plugin: listResources failed", "server", s.Name, "err", rerr)
-		}
-	}
 	h.mu.Lock()
 	h.clients = append(h.clients, c)
-	h.prompts = append(h.prompts, prompts...)
-	h.resources = append(h.resources, resources...)
 	h.clearFailure(s.Name)
 	h.mu.Unlock()
+	// Prompts and resources stream in on the long ctx the caller passed (Host.Add
+	// uses the session-scoped PluginCtx, not a per-turn ctx), so the slow list
+	// calls cannot starve a /mcp add of its return value. nil sink keeps hot-add
+	// quiet — the chat UI re-queries Host.Prompts()/Resources() on demand.
+	if c.hasPrompts {
+		go h.fetchPrompts(ctx, c, nil)
+	}
+	if c.hasResources {
+		go h.fetchResources(ctx, c, nil)
+	}
 	return ts, nil
 }
 
@@ -528,7 +596,9 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 // subprocess) and uses callCtx for the initialize round-trip (whose cancellation
 // only bounds startup RPCs). Splitting the two lets a per-plugin timeout cap
 // handshake latency without making the timeout context own a successfully
-// registered stdio server. Callers that don't care pass the same ctx for both.
+// registered stdio server; the child also has to outlive phase A so phase B
+// (prompts + resources) can still call it later. Callers that don't care pass
+// the same ctx for both.
 func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	t, err := newTransport(lifeCtx, s)
 	if err != nil {
@@ -538,7 +608,7 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	if tt == "" {
 		tt = "stdio"
 	}
-	c := &Client{name: s.Name, t: t, transport: tt}
+	c := &Client{name: s.Name, t: t, spec: s, transport: tt}
 	if err := c.initialize(callCtx); err != nil {
 		c.close()
 		return nil, err

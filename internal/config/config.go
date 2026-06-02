@@ -230,9 +230,10 @@ type ProviderEntry struct {
 	Name          string            `toml:"name"`
 	Kind          string            `toml:"kind"`
 	BaseURL       string            `toml:"base_url"`
-	Model         string            `toml:"model"`   // a single model (back-compat)
-	Models        []string          `toml:"models"`  // a vendor's model list (one base_url/key, many models)
-	Default       string            `toml:"default"` // default model when Models is set (else Models[0])
+	Model         string            `toml:"model"`      // a single model (back-compat)
+	Models        []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models)
+	ModelsURL     string            `toml:"models_url"` // auto-fetch models from this URL on startup
+	Default       string            `toml:"default"`    // default model when Models is set (else Models[0])
 	APIKeyEnv     string            `toml:"api_key_env"`
 	BalanceURL    string            `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
 	ContextWindow int               `toml:"context_window"`

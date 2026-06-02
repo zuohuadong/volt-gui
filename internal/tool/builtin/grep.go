@@ -157,6 +157,9 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if info.IsDir() {
 		ig := newWalkIgnorer(p.Path)
 		_ = filepath.WalkDir(p.Path, func(path string, d os.DirEntry, err error) error {
+			if ctx.Err() != nil {
+				return ctx.Err() // abort promptly on cancel — a huge tree is interruptible
+			}
 			if err != nil {
 				return nil
 			}

@@ -943,6 +943,13 @@ export default function App() {
                 }}
               />
             )}
+            {state.ask && (
+              <AskCard
+                ask={state.ask}
+                onAnswer={answerQuestion}
+                onDismiss={() => answerQuestion(state.ask!.id, [])}
+              />
+            )}
             <Composer
               running={state.running}
               mode={mode}
@@ -952,7 +959,7 @@ export default function App() {
               onCycleMode={cycleMode}
               onPickFolder={switchFolder}
               insertRequest={composerInsertRequest}
-              disabled={state.meta?.ready === false || state.approval != null}
+              disabled={state.meta?.ready === false || state.approval != null || state.ask != null}
             />
             <StatusBar
               meta={state.meta}
@@ -1005,14 +1012,6 @@ export default function App() {
           changesRefreshKey={workspaceChangesRefreshKey}
         />
       </div>
-
-      {state.ask && (
-        <AskCard
-          ask={state.ask}
-          onAnswer={answerQuestion}
-          onDismiss={() => answerQuestion(state.ask!.id, [])}
-        />
-      )}
 
       {memView !== null && (
         <MemoryPanel

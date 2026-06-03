@@ -259,6 +259,7 @@ export const en = {
   "approval.deny": "Deny",
   "approval.allowOnce": "Allow once",
   "approval.allowSession": "Allow for session",
+  "approval.allowPersistent": "Always allow (save)",
 
   // ask card
   "ask.title": "Need your decision",

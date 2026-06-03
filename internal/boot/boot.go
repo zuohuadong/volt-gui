@@ -509,9 +509,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				path = "reasonix.toml" // match Config.Save() fallback
 			}
 			edit := config.LoadForEdit(path)
-			if edit == nil {
-				return
-			}
 			if err := edit.AddPermissionRule("allow", rule); err != nil {
 				slog.Warn("persist permission rule", "rule", rule, "err", err)
 				return

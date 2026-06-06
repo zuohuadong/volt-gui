@@ -275,9 +275,59 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 	}
 }
 
+// i18nTranslations returns translation maps for the serve UI.
+// Keys match those in the JS __T object (index.html).
+func i18nTranslations() map[string]map[string]string {
+	return map[string]map[string]string{
+		"en": {
+			"new_session": "New Session",
+			"compact":     "Compact",
+			"rewind":      "Rewind",
+			"branches":    "Branches",
+			"sessions":    "Sessions",
+			"loading":     "Loading...",
+			"status":      "Status",
+			"cache":       "Cache",
+			"cost":        "Cost",
+			"balance":     "Balance",
+			"ready":       "Ready",
+			"thinking":    "Thinking...",
+		},
+		"zh": {
+			"new_session": "新会话",
+			"compact":     "压缩",
+			"rewind":      "回退",
+			"branches":    "分支",
+			"sessions":    "会话",
+			"loading":     "加载中...",
+			"status":      "状态",
+			"cache":       "缓存",
+			"cost":        "费用",
+			"balance":     "余额",
+			"ready":       "就绪",
+			"thinking":    "思考中...",
+		},
+	}
+}
+
 func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(indexHTML)
+	lang := "en"
+	if cfg, err := config.Load(); err == nil {
+		if dl := cfg.DesktopLanguage(); dl != "" {
+			lang = dl
+		}
+	}
+	html := string(indexHTML)
+	html = strings.ReplaceAll(html, "__LANG__", lang)
+	// Server-side i18n: replace __('key') in static HTML text nodes.
+	// JS __() handles dynamic content; this handles the initial render.
+	if trans, ok := i18nTranslations()[lang]; ok {
+		for key, val := range trans {
+			html = strings.ReplaceAll(html, "__('"+key+"')", val)
+		}
+	}
+	_, _ = w.Write([]byte(html))
 }
 
 // sseKeepaliveInterval is how often the /events handler emits a `: ping`

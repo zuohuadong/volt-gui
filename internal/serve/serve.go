@@ -362,6 +362,8 @@ func i18nTranslations() map[string]map[string]string {
 
 func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Ensure legacy config is migrated before reading language setting
+	config.MigrateLegacyIfNeeded()
 	lang := "en"
 	if cfg, err := config.Load(); err == nil {
 		if dl := cfg.DesktopLanguage(); dl != "" {

@@ -332,6 +332,7 @@ export function Composer({
   const lastCompositionEndAt = useRef(0);
   const lastSelectionRef = useRef({ start: 0, end: 0 });
   const consumedInsertIdRef = useRef(0);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (wasRunning.current && !running && text.trim() === "") {
@@ -574,9 +575,10 @@ export function Composer({
   };
 
   const submit = async () => {
-    if (disabled || submitting) return;
+    if (disabled || submittingRef.current) return;
     const t = text.trim();
     if ((!t && attachments.length === 0 && workspaceRefs.length === 0) || pendingPaste > 0) return;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
     const refs = [
@@ -597,6 +599,7 @@ export function Composer({
     setWorkspaceRefs([]);
     setSessionRefs([]);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

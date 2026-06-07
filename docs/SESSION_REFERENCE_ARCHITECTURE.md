@@ -68,7 +68,7 @@ const menuMode: "slash" | "slasharg" | "at" | null = ...;
 interface AppBindings {
   // 会话列表
   ListSessions(): Promise<SessionMeta[]>;
-  
+
   // 会话操作（可复用读取历史）
   PreviewSession(path: string): Promise<HistoryMessage[]>;
 }
@@ -141,7 +141,7 @@ export interface SessionReference {
 interface AppBindings {
   // 新增：搜索会话
   SearchSessions(query: string): Promise<SessionMeta[]>;
-  
+
   // 已有：读取会话历史（复用）
   PreviewSession(path: string): Promise<HistoryMessage[]>;
 }
@@ -161,16 +161,16 @@ const [sessionRefs, setSessionRefs] = useState<SessionReference[]>([]);
 {menuMode === "at" && (
   showPastChats ? (
     // 显示会话列表
-    <SessionMenu 
-      items={pastChats} 
-      activeIndex={active} 
+    <SessionMenu
+      items={pastChats}
+      activeIndex={active}
       onPick={pickSession}
       onHover={setActive}
     />
   ) : (
     // 显示文件列表（原有逻辑）
     <>
-      <button 
+      <button
         className="slashmenu__item slashmenu__item--special"
         onMouseDown={() => {
           setShowPastChats(true);
@@ -197,7 +197,7 @@ const pickSession = (session: SessionMeta) => {
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
   }]);
-  
+
   // 重置状态
   setShowPastChats(false);
   setText(""); // 清空输入框
@@ -206,7 +206,7 @@ const pickSession = (session: SessionMeta) => {
 // 4. 发送时附加会话上下文
 const handleSubmit = async () => {
   let context = "";
-  
+
   if (sessionRefs.length > 0) {
     context = "以下是用户引用的历史会话上下文：\n\n";
     for (const ref of sessionRefs) {
@@ -216,7 +216,7 @@ const handleSubmit = async () => {
     }
     context += "\n\n当前用户问题：\n";
   }
-  
+
   onSubmit(context + text);
 };
 ```

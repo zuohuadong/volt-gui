@@ -7232,7 +7232,7 @@ a[href] {
   padding-right: 16px;
   color: var(--fg-dim);
   font-size: 15px;
-  line-height: 1;
+  line-height: 1.35;
   white-space: nowrap;
 }
 
@@ -7280,6 +7280,7 @@ a[href] {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.35;
 }
 
 .app-chrome__spacer {

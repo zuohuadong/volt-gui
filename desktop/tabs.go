@@ -540,6 +540,7 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 		return
 	}
 
+	a.bindControllerDisplayRecorder(ctrl)
 	ctrl.EnableInteractiveApproval()
 	applyTabModeToController(ctrl, tab.mode)
 

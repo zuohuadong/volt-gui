@@ -1080,6 +1080,15 @@ export function Composer({
     setText((prev) => removeAtToken(prev));
     setPastChatQuery("");
     setShowPastChats(false);
+    setActive(0);
+    // Return focus to textarea so the user can keep typing immediately.
+    requestAnimationFrame(() => {
+      taRef.current?.focus();
+      taRef.current?.setSelectionRange(
+        taRef.current.value.length,
+        taRef.current.value.length,
+      );
+    });
   };
 
   const removeSessionRef = (path: string) => {

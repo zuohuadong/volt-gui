@@ -2329,6 +2329,7 @@ a[href] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  align-self: flex-end;
   width: 32px;
   height: 32px;
   border: none;

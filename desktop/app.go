@@ -69,9 +69,10 @@ type App struct {
 	activeTabID string
 	readyHook   func()
 
-	forceQuit atomic.Bool
-	trayReady bool
-	tray      *desktopTray
+	forceQuit           atomic.Bool
+	backgroundMaximised atomic.Bool
+	trayReady           bool
+	tray                *desktopTray
 
 	mediaTokens *mediaTokenStore
 }
@@ -278,6 +279,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		cfg = config.LoadForEdit(config.UserConfigPath())
 	}
 	if cfg.DesktopCloseBehavior() == "background" {
+		a.backgroundMaximised.Store(runtime.WindowIsMaximised(ctx))
 		a.saveWindowStateSync()
 		a.snapshotAllTabs()
 		hideForBackground(ctx)
@@ -288,7 +290,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 
 func (a *App) showMainWindow() {
 	if a.ctx != nil {
-		showFromBackground(a.ctx)
+		showFromBackground(a.ctx, a.backgroundMaximised.Swap(false))
 	}
 }
 
@@ -312,16 +314,38 @@ func hideForBackground(ctx context.Context) {
 	runtime.WindowHide(ctx)
 }
 
-func showFromBackground(ctx context.Context) {
+func showFromBackground(ctx context.Context, wasMaximised bool) {
 	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
 		runtime.Show(ctx)
 	}
+	plan := backgroundRestorePlanFor(goruntime.GOOS, wasMaximised)
+	if plan.maximiseBeforeShow {
+		runtime.WindowMaximise(ctx)
+	}
 	runtime.WindowShow(ctx)
-	runtime.WindowUnminimise(ctx)
+	if plan.unminimiseAfterShow {
+		runtime.WindowUnminimise(ctx)
+	}
 }
 
 func backgroundCloseUsesApplicationHide(goos string) bool {
 	return goos == "darwin"
+}
+
+type backgroundRestorePlan struct {
+	maximiseBeforeShow  bool
+	unminimiseAfterShow bool
+}
+
+func backgroundRestorePlanFor(goos string, wasMaximised bool) backgroundRestorePlan {
+	if backgroundRestoreShouldMaximise(goos, wasMaximised) {
+		return backgroundRestorePlan{maximiseBeforeShow: true}
+	}
+	return backgroundRestorePlan{unminimiseAfterShow: true}
+}
+
+func backgroundRestoreShouldMaximise(goos string, wasMaximised bool) bool {
+	return wasMaximised && !backgroundCloseUsesApplicationHide(goos)
 }
 
 // restoreOrBuildTabs restores the tabs from the last session, or creates a

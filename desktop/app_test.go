@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,6 +127,54 @@ func TestBackgroundCloseHideStrategyByPlatform(t *testing.T) {
 		if got := backgroundCloseUsesApplicationHide(tt.goos); got != tt.want {
 			t.Fatalf("backgroundCloseUsesApplicationHide(%q) = %v, want %v", tt.goos, got, tt.want)
 		}
+	}
+}
+
+func TestBackgroundRestoreMaximiseStrategy(t *testing.T) {
+	tests := []struct {
+		goos      string
+		maximised bool
+		want      bool
+	}{
+		{goos: "windows", maximised: true, want: true},
+		{goos: "linux", maximised: true, want: true},
+		{goos: "darwin", maximised: true, want: false},
+		{goos: "windows", maximised: false, want: false},
+	}
+	for _, tt := range tests {
+		if got := backgroundRestoreShouldMaximise(tt.goos, tt.maximised); got != tt.want {
+			t.Fatalf("backgroundRestoreShouldMaximise(%q, %v) = %v, want %v", tt.goos, tt.maximised, got, tt.want)
+		}
+	}
+}
+
+func TestBackgroundRestorePlanAvoidsNormalWindowFlash(t *testing.T) {
+	tests := []struct {
+		name      string
+		goos      string
+		maximised bool
+		want      backgroundRestorePlan
+	}{
+		{
+			name:      "maximised Windows window",
+			goos:      "windows",
+			maximised: true,
+			want:      backgroundRestorePlan{maximiseBeforeShow: true},
+		},
+		{
+			name:      "normal Windows window",
+			goos:      "windows",
+			maximised: false,
+			want:      backgroundRestorePlan{unminimiseAfterShow: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := backgroundRestorePlanFor(tt.goos, tt.maximised)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("backgroundRestorePlanFor(%q, %v) = %v, want %v", tt.goos, tt.maximised, got, tt.want)
+			}
+		})
 	}
 }
 

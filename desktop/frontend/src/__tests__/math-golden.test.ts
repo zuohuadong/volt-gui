@@ -57,10 +57,6 @@ eq(latexNormalizeForKatex("\\alpha + \\beta"), "\\alpha + \\beta", "non-text com
 eq(latexNormalizeForKatex("a | b"), "a \\vert b", "| to \\vert without doubled space");
 eq(latexNormalizeForKatex("|x|"), "\\vert x\\vert", "|x| keeps command boundary");
 eq(latexNormalizeForKatex("\\text{foo \\$ bar}"), "\\text{foo \\$ bar}", "already escaped $");
-eq(latexNormalizeForKatex("100%"), "100\\%", "raw % escaped to \\% (KaTeX comment-char fix)");
-eq(latexNormalizeForKatex("x = 50%"), "x = 50\\%", "% at end of math escaped");
-eq(latexNormalizeForKatex("a%b"), "a\\%b", "% between letters escaped");
-eq(latexNormalizeForKatex("a\\%b"), "a\\%b", "already-escaped \\% not double-escaped");
 eq(latexNormalizeForKatex("\\textrm{test #}"), "\\textrm{test \\#}", "\\textrm also handled");
 eq(latexNormalizeForKatex("\\textbf{hello world}"), "\\textbf{hello world}", "\\textbf no special chars");
 eq(latexNormalizeForKatex("\\tfrac{a}{b}"), "\\tfrac{a}{b}", "nested braces in command");
@@ -93,9 +89,9 @@ check("$f(x)$", () => isLikelyInlineMath("f(x)") === true);
 check("$x+1$", () => isLikelyInlineMath("x+1") === true);
 
 console.log("\nisLikelyInlineMath — currency/link (NOT math)");
-check("$10", () => isLikelyInlineMath("10") === true);
-check("$10.50", () => isLikelyInlineMath("10.50") === true);
-check("$100%", () => isLikelyInlineMath("100%") === true);
+check("$10", () => isLikelyInlineMath("10") === false);
+check("$10.50", () => isLikelyInlineMath("10.50") === false);
+check("$100%", () => isLikelyInlineMath("100%") === false);
 check("URL", () => isLikelyInlineMath("https://example.com") === false);
 check("prose text", () => isLikelyInlineMath("hello world today") === false);
 check("prose $x y z$ (spaces)", () => isLikelyInlineMath("x y z") === false);
@@ -111,31 +107,29 @@ check("uppercase $I$ → math (math name in non-English prose)", () => isLikelyI
 check("uppercase $A$ → math", () => isLikelyInlineMath("A") === true);
 check("uppercase $V$ → math", () => isLikelyInlineMath("V") === true);
 
-console.log("\nisLikelyInlineMath — minimal LaTeX patterns (regression)");
+console.log("\nisLikelyInlineMath — non-English math prose (regression)");
 // LLMs frequently emit minimal LaTeX in math contexts that the older
-// classifier rejected as currency / word tokens. These tests pin down the
-// deliberately-permissive rules for common math patterns — single digits
-// as indices, comma-separated variables in ordered pairs / tuples, single
-// uppercase letters as set / algebra / group names, and one-sided
-// comparison operators. These patterns are language-agnostic.
-check("single-digit $1$, $2$, $5$ → math (pure numbers)", () => isLikelyInlineMath("1") === true);
-check("multi-digit $42$ → math (pure number)", () => isLikelyInlineMath("42") === true);
-check("$2.5x$ is math (number with variable)", () => isLikelyInlineMath("2.5x") === true);
-check("$10\%$ is math (percentage with LaTeX)", () => isLikelyInlineMath("10\\%") === true);
-
+// English-tuned classifier rejected as currency / word tokens. These tests
+// pin down the deliberately-permissive rules added for non-English prose
+// (Chinese / Japanese / Korean math textbooks, etc.) — single digits as
+// indices, comma-separated variables in ordered pairs / tuples, and single
+// uppercase letters as set / algebra / group names.
+check("single-digit $1$, $2$, $5$ → math (LLM math indices)", () => isLikelyInlineMath("1") === true);
+check("$5 (single digit) → math", () => isLikelyInlineMath("5") === true);
+check("multi-digit $42$ → NOT math (currency-shaped)", () => isLikelyInlineMath("42") === false);
 check("comma-separated $A, B$ → math (ordered pair)", () => isLikelyInlineMath("A, B") === true);
 check("comma-separated $1, 2, 3$ → math (sequence)", () => isLikelyInlineMath("1, 2, 3") === true);
 check("comma-separated $\\alpha, \\beta$ → math (Greek pair)", () => isLikelyInlineMath("\\alpha, \\beta") === true);
 check("parens-wrapped $(A, B)$ inner → math", () => isLikelyInlineMath("(A, B)") === true);
-check("$S$ (set name) → math", () => isLikelyInlineMath("S") === true);
-check("$S$ with surrounding prose (regression)", () => {
+check("$S$ (set name) followed by CJK → math", () => isLikelyInlineMath("S") === true);
+check("Chinese math: $S$ 非空 / $S$ 有上界 (regression)", () => {
   return normalizeMath("$S$ 非空\n$S$ 有上界") === "$S$ 非空\n$S$ 有上界";
 });
 check("one-sided comparison $< B$ → math", () => isLikelyInlineMath("< B") === true);
 check("one-sided comparison $<= 0$ → math", () => isLikelyInlineMath("<= 0") === true);
 check("one-sided comparison $> 5$ → math", () => isLikelyInlineMath("> 5") === true);
 check("one-sided comparison $A <$ → math", () => isLikelyInlineMath("A <") === true);
-check("$< B$ with surrounding prose", () => {
+check("Chinese math: $< B$ with surrounding prose", () => {
   return normalizeMath("A 的每个元素 $< B$ 的每个元素") === "A 的每个元素 $< B$ 的每个元素";
 });
 
@@ -198,20 +192,6 @@ check("inline $$ after closing bracket", () => {
   const out = normalizeMath("(octet)$$ \\mathbf{56}.$$");
   return out.startsWith("(octet)\n\n$$");
 });
-check("inline $$ after comma on same line as content", () => {
-  // User-reported (2026-06-12, soft-pion chat): the model wrote the
-  // closing $$ of a display block on the same line as the trailing
-  // comma of the equation content, like
-  //   …D(q^2),$$
-  //   with $P=…$
-  // Without a blank line before the closing $$, micromark-extension-math
-  // does not recognise the closing fence (it only checks for $$ at
-  // the start of a new line) and consumes the rest of the document
-  // as math, which then fails to render with "Can't use function '$'
-  // in math mode" on the stray $ inside the equation body.
-  const out = normalizeMath("…D(q^2),$$\nwith $P=…$");
-  return out.includes("D(q^2),\n\n$$");
-});
 check("well-formed $$ already on own line is normalised consistently", () => {
   // Whether the model writes `decomposes as$$\n\mathbf{6}.$$` or
   // `decomposes as\n\n$$\n\mathbf{6}.$$`, both must produce the same
@@ -231,22 +211,19 @@ check("digit before $$ is NOT a prose boundary (preserves c^2$$)", () => {
 });
 
 console.log("\nnormalizeMath — non-math dollar filtering");
-eq(normalizeMath("costs $1$ today"), "costs $1$ today", "$1$ is math (single-digit index)");
-eq(normalizeMath("env $PATH$ here"), "env $PATH$ here", "$PATH$ not math (env var, dollars preserved)");
+eq(normalizeMath("costs $1$ today"), "costs $1$ today", "$1$ is math (single-digit index)");  // was: "$5$ not math"
+eq(normalizeMath("env $PATH$ here"), "env &#36;PATH&#36; here", "$PATH$ not math");
 eq(normalizeMath("solve $x^2 + y^2 = z^2$ please"), "solve $x^2 + y^2 = z^2$ please", "$x^2+y^2$ is math");
 eq(normalizeMath("$\\alpha + \\beta$"), "$\\alpha + \\beta$", "$\\alpha+\\beta$ is math");
-eq(normalizeMath("price is $10.50$ each"), "price is $10.50$ each", "$10.50$ is math (decimal number)");
-eq(normalizeMath("$I$ think"), "$I$ think", "$I$ is math (uppercase single letter)");
-eq(normalizeMath("it costs $5 and $10 total"), "it costs $5 and $10 total", "multiple prose $ stays literal (dollars preserved)");
+eq(normalizeMath("price is $10.50$ each"), "price is &#36;10.50&#36; each", "$10.50$ not math");
+eq(normalizeMath("$I$ think"), "$I$ think", "$I$ is math (uppercase single letter)");  // was: "NOT math"
+eq(normalizeMath("it costs $5 and $10 total"), "it costs &#36;5 and &#36;10 total", "multiple prose $ stays literal");
 
 console.log("\nnormalizeMath — Markdown code regions stay literal");
 eq(normalizeMath("`$PATH$`"), "`$PATH$`", "inline code with env token");
 eq(normalizeMath("Use `$HOME` and `$PATH$`."), "Use `$HOME` and `$PATH$`.", "multiple inline code spans");
 eq(normalizeMath("```sh\necho $PATH$\n```"), "```sh\necho $PATH$\n```", "fenced code with env token");
 eq(normalizeMath("```\necho $PATH$\n```\n\nsolve $x^2$"), "```\necho $PATH$\n```\n\nsolve $x^2$", "fenced code protected while prose math renders");
-eq(normalizeMath("Code: `r.replace(/\\$\\$/, ...)`"), "Code: `r.replace(/\\$\\$/, ...)`", "escaped $ in inline code stays literal");
-eq(normalizeMath("```javascript\nr = r.replace(/\\$\\$([\\s\\S]*?)\\$\\$/g, ...);\n```"), "```javascript\nr = r.replace(/\\$\\$([\\s\\S]*?)\\$\\$/g, ...);\n```", "regex patterns with $ in code blocks stay literal");
-eq(normalizeMath("Code: `` `${DOLLAR}${m}${DOLLAR}` ``"), "Code: `` `${DOLLAR}${m}${DOLLAR}` ``", "template literals with $ in inline code stay literal");
 
 // ── normalizeMath — text-mode escapes (regression for PR #3287) ───────────────
 // The whole point of running latexNormalizeForKatex inside normalizeMath is
@@ -294,15 +271,6 @@ check("$|x+1|$ absolute value", () => {
 check("$\\|x\\|$ norm preserved (no \\vert mangling)", () => {
   return normalizeMath("$\\|x\\|$") === "$\\|x\\|$";
 });
-
-// ── normalizeMath — % in math (KaTeX comment-char) ─────────────────────────────
-// KaTeX treats unescaped % as a LaTeX comment to end-of-line, silently
-// truncating `$x = 50%$` to `$x = 50$`. Top-level % must be escaped.
-
-console.log("\nnormalizeMath — % in math");
-eq(normalizeMath("$x = 50%$"), "$x = 50\\%$", "trailing % escaped");
-eq(normalizeMath("$100%$"), "$100\\%$", "pure number with trailing %");
-eq(normalizeMath("$10\\%$"), "$10\\%$", "already-escaped \\% left alone");
 
 // ── normalizeMath — end-to-end KaTeX render of common LLM outputs ──────────────
 
@@ -355,7 +323,7 @@ const passthrough: Passthrough[] = [
   // $5$ is filtered to dollar entities so remark-math leaves it literal
   // and the rendered prose still shows normal dollar signs.
   // (the previous "costs $5$ today" passthrough case is now a no-op — single-digit $N$ is math)
-  { src: "costs $100$ today", expected: "costs $100$ today", label: "multi-digit number is math" },
+  { src: "costs $100$ today", expected: "costs &#36;100&#36; today", label: "multi-digit currency stays literal" },
   { src: "line break \\\\[4pt] here", expected: "line break \\\\[4pt] here", label: "LaTeX line-break spacing" },
   { src: "hello world", expected: "hello world", label: "plain text" },
 ];

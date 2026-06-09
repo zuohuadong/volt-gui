@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const desktopTinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
 func TestWorkspaceRelative(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)
@@ -35,6 +37,34 @@ func TestIsImageExt(t *testing.T) {
 		if isImageExt(p) {
 			t.Errorf("%q should not be an image extension", p)
 		}
+	}
+}
+
+func TestSavePastedImageUsesActiveWorkspaceRoot(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+
+	got, err := app.SavePastedImage("data:image/png;base64," + desktopTinyPNG)
+	if err != nil {
+		t.Fatalf("SavePastedImage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(got))); err != nil {
+		t.Fatalf("pasted image should be saved under active workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(got))); !os.IsNotExist(err) {
+		t.Fatalf("pasted image should not be saved under launch root, stat err=%v", err)
 	}
 }
 

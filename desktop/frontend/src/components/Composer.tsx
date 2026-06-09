@@ -6,6 +6,7 @@ import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
 import { SPINNER_WORDS, useI18n } from "../lib/i18n";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
+import { useToast } from "../lib/toast";
 import type { CommandInfo, ComposerInsertRequest, DirEntry, EffortInfo, HistoryMessage, Mode, SessionMeta, SessionReference, SlashArgItem, SlashArgsResult, WorkspaceView } from "../lib/types";
 import {
   formatWorkspaceReference,
@@ -76,6 +77,46 @@ function baseName(path: string): string {
 
 function workspaceReferenceKey(ref: WorkspaceReference): string {
   return `${ref.isDir ? "dir" : "file"}:${ref.path}`;
+}
+
+function fileKey(file: File): string {
+  return `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
+}
+
+function clipboardFiles(data: DataTransfer): File[] {
+  const files = Array.from(data.files);
+  const seen = new Set(files.map(fileKey));
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    const key = fileKey(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(file);
+  }
+  return files;
+}
+
+function clipboardHasImageHint(data: DataTransfer): boolean {
+  const imageType = (value: string) => {
+    const type = value.toLowerCase();
+    return type.startsWith("image/") || type.includes("png") || type.includes("jpeg") || type.includes("jpg") || type.includes("tiff");
+  };
+  return Array.from(data.items).some((item) => imageType(item.type)) || Array.from(data.types).some(imageType);
+}
+
+function isPasteShortcut(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  return e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey) && !e.altKey;
+}
+
+async function dataURLHash(dataUrl: string): Promise<string> {
+  try {
+    const res = await fetch(dataUrl);
+    return sha256(await res.blob());
+  } catch {
+    return "";
+  }
 }
 
 function composerMaxHeight(): number {
@@ -300,6 +341,7 @@ export function Composer({
   workspaceRefreshSignal?: number;
 }) {
   const { t, locale } = useI18n();
+  const { showToast } = useToast();
   const now = useTick(running);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -341,12 +383,21 @@ export function Composer({
   const lastSelectionRef = useRef({ start: 0, end: 0 });
   const consumedInsertIdRef = useRef(0);
   const submittingRef = useRef(false);
+  const nativeClipboardPasteTimerRef = useRef<number | null>(null);
   // Snapshot of the current cwd so async callbacks (openPastChats) can detect
   // workspace switches and discard stale responses (issue #3601).
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
   const attachmentDedupRef = useRef(new DedupIndex());
   const attachmentDedupKeysRef = useRef<Record<string, AttachmentDedupKey>>({});
+
+  const clearNativeClipboardPasteTimer = () => {
+    if (nativeClipboardPasteTimerRef.current === null) return;
+    window.clearTimeout(nativeClipboardPasteTimerRef.current);
+    nativeClipboardPasteTimerRef.current = null;
+  };
+
+  useEffect(() => () => clearNativeClipboardPasteTimer(), []);
 
   useEffect(() => {
     if (wasRunning.current && !running && text.trim() === "") {
@@ -718,7 +769,9 @@ export function Composer({
         const previewUrl = await app.AttachmentDataURL(path);
         rememberAttachment(path, key);
         setAttachments((prev) => [...prev, { path, previewUrl }]);
-      } catch {
+      } catch (error) {
+        console.warn("[composer] failed to attach pasted image", error);
+        showToast(t("composer.attachImageFailed"), "warn");
         // non-fatal: a failed image attach must not block normal text input
       } finally {
         setPendingPaste((n) => Math.max(0, n - 1));
@@ -753,6 +806,23 @@ export function Composer({
     void attachOtherFiles(files);
   };
 
+  const attachNativeClipboardImage = async (notifyOnError: boolean) => {
+    setPendingPaste((n) => n + 1);
+    try {
+      const path = await app.SaveClipboardImage();
+      const previewUrl = await app.AttachmentDataURL(path);
+      const key = { hash: await dataURLHash(previewUrl), source: `native-clipboard:${path}` };
+      if (attachmentDedupRef.current.seen(key.hash, key.source)) return;
+      rememberAttachment(path, key);
+      setAttachments((prev) => [...prev, { path, previewUrl }]);
+    } catch (error) {
+      console.warn("[composer] failed to read native clipboard image", error);
+      if (notifyOnError) showToast(t("composer.pasteImageFailed"), "warn");
+    } finally {
+      setPendingPaste((n) => Math.max(0, n - 1));
+    }
+  };
+
   // OS file drops arrive as absolute paths through the native bridge (the webview
   // withholds them from the HTML drop event); the kernel resolves each into a
   // workspace @reference or a stored attachment.
@@ -781,7 +851,8 @@ export function Composer({
   useEffect(() => onFilesDropped((paths) => void attachDroppedPaths(paths)), []);
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.files);
+    clearNativeClipboardPasteTimer();
+    const files = clipboardFiles(e.clipboardData);
     if (files.length > 0) {
       e.preventDefault();
       attachFiles(files);
@@ -789,6 +860,12 @@ export function Composer({
     }
 
     const pasted = e.clipboardData.getData("text");
+    const hasImageHint = clipboardHasImageHint(e.clipboardData);
+    if (hasImageHint || pasted === "") {
+      e.preventDefault();
+      void attachNativeClipboardImage(hasImageHint);
+      return;
+    }
     if (!shouldFoldPaste(pasted)) return;
 
     e.preventDefault();
@@ -1212,6 +1289,14 @@ export function Composer({
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const composing = isImeKeyEvent(e, composingRef.current, lastCompositionEndAt.current);
     if (e.key === "Enter" && composing) return;
+
+    if (isPasteShortcut(e) && !composing) {
+      clearNativeClipboardPasteTimer();
+      nativeClipboardPasteTimerRef.current = window.setTimeout(() => {
+        nativeClipboardPasteTimerRef.current = null;
+        void attachNativeClipboardImage(false);
+      }, 160);
+    }
 
     // Shift+Tab cycles the input mode (normal → plan → YOLO → normal). Handled
     // before the menus so it works even while one is open.

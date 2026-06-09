@@ -3468,33 +3468,42 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	return entry, nil
 }
 
+func (a *App) withActiveWorkspace(fn func() (string, error)) (string, error) {
+	root := a.activeWorkspaceRoot()
+	if root != "" && root != "." {
+		prev, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		if err := os.Chdir(root); err != nil {
+			return "", err
+		}
+		defer func() { _ = os.Chdir(prev) }()
+	}
+	return fn()
+}
+
 // SavePastedImage stores a browser clipboard image data URL under the active
 // tab's workspace .reasonix/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
-	root := a.activeWorkspaceRoot()
-	if root != "" && root != "." {
-		if prev, err := os.Getwd(); err == nil {
-			if err := os.Chdir(root); err == nil {
-				defer func() { _ = os.Chdir(prev) }()
-			}
-		}
-	}
-	return control.SaveImageDataURL(dataURL)
+	return a.withActiveWorkspace(func() (string, error) {
+		return control.SaveImageDataURL(dataURL)
+	})
+}
+
+// SaveClipboardImage reads the native OS clipboard image under the active tab's
+// workspace .reasonix/attachments and returns the relative @-reference path.
+func (a *App) SaveClipboardImage() (string, error) {
+	return a.withActiveWorkspace(control.SaveClipboardImage)
 }
 
 // SavePastedFile stores a dropped non-image file (the browser exposes its bytes
 // as a data URL but not a real path) under the active tab's workspace
 // .reasonix/attachments and returns the relative @-reference path.
 func (a *App) SavePastedFile(name, dataURL string) (string, error) {
-	root := a.activeWorkspaceRoot()
-	if root != "" && root != "." {
-		if prev, err := os.Getwd(); err == nil {
-			if err := os.Chdir(root); err == nil {
-				defer func() { _ = os.Chdir(prev) }()
-			}
-		}
-	}
-	return control.SaveAttachmentDataURL(name, dataURL)
+	return a.withActiveWorkspace(func() (string, error) {
+		return control.SaveAttachmentDataURL(name, dataURL)
+	})
 }
 
 // AttachmentDataURL returns a safe data URL for a stored image attachment.

@@ -188,6 +188,7 @@ func TestReadStream(t *testing.T) {
 	}
 	if usage == nil {
 		t.Fatal("expected a usage chunk")
+		return
 	}
 	if usage.PromptTokens != 150 || usage.CompletionTokens != 25 || usage.TotalTokens != 175 {
 		t.Fatalf("usage tokens = %+v", usage)

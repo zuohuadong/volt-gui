@@ -174,6 +174,12 @@ check("\\slashed{\\partial} is converted to \\not{\\partial}", () => {
 check("\\slashed in prose context", () => {
   return normalizeMath("The momentum $\\slashed{p}$ is conserved") === "The momentum $\\not{p}$ is conserved";
 });
+check("\\slashed\\epsilon(0) → \\not{\\epsilon(0)} (Greek + function)", () => {
+  return normalizeMath("$\\slashed\\epsilon(0)$") === "$\\not{\\epsilon(0)}$";
+});
+check("\\slashed a → \\not a (single letter)", () => {
+  return normalizeMath("$\\slashed a$") === "$\\not a$";
+});
 
 console.log("\nnormalizeMath — inline $$ glued to prose (regression)");
 // User-reported: "…decomposes as$$\n\mathbf{6}…" — block math glued to prose.

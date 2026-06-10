@@ -171,6 +171,7 @@ export interface AppBindings {
   RevealWorkspacePath(rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
   SavePastedImage(dataUrl: string): Promise<string>;
+  SaveClipboardImage(): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
@@ -230,6 +231,7 @@ export interface AppBindings {
   ListTabs(): Promise<TabMeta[]>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
+  EnsureBlankTab(scope: string, workspaceRoot: string): Promise<TabMeta>;
   SetActiveTab(tabID: string): Promise<void>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
@@ -1771,6 +1773,9 @@ function makeMockApp(): AppBindings {
     async SavePastedImage(_dataUrl: string) {
       return ".reasonix/attachments/mock.png";
     },
+    async SaveClipboardImage() {
+      return ".reasonix/attachments/mock-clipboard.png";
+    },
     async SavePastedFile(name: string, _dataUrl: string) {
       return `.reasonix/attachments/mock-${name}`;
     },
@@ -2125,6 +2130,21 @@ function makeMockApp(): AppBindings {
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };
+    },
+    async EnsureBlankTab(scope: string, workspaceRoot: string) {
+      const targetScope = scope === "project" && workspaceRoot ? "project" : "global";
+      const targetRoot = targetScope === "project" ? workspaceRoot : "";
+      const existing = mockTabs.find((tab) =>
+        tab.scope === targetScope &&
+        (targetScope === "global" || tab.workspaceRoot === targetRoot) &&
+        !tab.running
+      );
+      if (existing) {
+        setMockActiveTab(existing.id);
+        return { ...existing, active: true };
+      }
+      const topic = await this.CreateTopic(targetScope, targetRoot, "");
+      return targetScope === "global" ? this.OpenGlobalTab(topic.id) : this.OpenProjectTab(targetRoot, topic.id);
     },
     async SetActiveTab(_tabID: string) {
       setMockActiveTab(_tabID);

@@ -161,6 +161,20 @@ eq(normalizeMath("\\(x^2\\)"), "$x^2$", "\\(…\\) → $…$");
 eq(normalizeMath("\\[E=mc^2\\]"), "$$E=mc^2$$", "\\[…\\] → $$…$$");
 eq(normalizeMath("\\\\[4pt]"), "\\\\[4pt]", "\\\\[ line-break spacing protected");
 
+console.log("\nnormalizeMath — unsupported LaTeX commands (regression)");
+// KaTeX doesn't support \slashed, but it's common in physics (Feynman slash
+// notation like \slashed{p}). Convert to \not which has a similar visual
+// effect (a slash through the character).
+check("\\slashed{p} is converted to \\not{p}", () => {
+  return normalizeMath("$\\slashed{p}$") === "$\\not{p}$";
+});
+check("\\slashed{\\partial} is converted to \\not{\\partial}", () => {
+  return normalizeMath("$\\slashed{\\partial}$") === "$\\not{\\partial}$";
+});
+check("\\slashed in prose context", () => {
+  return normalizeMath("The momentum $\\slashed{p}$ is conserved") === "The momentum $\\not{p}$ is conserved";
+});
+
 console.log("\nnormalizeMath — inline $$ glued to prose (regression)");
 // User-reported: "…decomposes as$$\n\mathbf{6}…" — block math glued to prose.
 // Without a blank line, remark-math parses the opening $$ as an empty math node

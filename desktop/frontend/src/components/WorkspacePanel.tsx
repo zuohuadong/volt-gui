@@ -5,12 +5,14 @@ import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
+  ReactElement,
 } from "react";
 import {
   ChevronDown,
   ChevronRight,
   FileText,
   Folder,
+  FolderOpen,
   FolderTree,
   FolderX,
   GitBranch,
@@ -34,15 +36,16 @@ import { Markdown } from "./Markdown";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
 
-const WORKSPACE_TREE_MIN_WIDTH = 208;
-const WORKSPACE_TREE_DEFAULT_WIDTH = 240;
+const WORKSPACE_TREE_MIN_WIDTH = 300;
+const WORKSPACE_TREE_DEFAULT_WIDTH = 300;
 const WORKSPACE_TREE_MAX_WIDTH = 340;
 const WORKSPACE_PREVIEW_MIN_WIDTH = 360;
-const WORKSPACE_PREVIEW_TARGET_WIDTH = 480;
+const WORKSPACE_PREVIEW_TARGET_WIDTH = 360;
 const WORKSPACE_DUAL_PANEL_MIN_WIDTH = WORKSPACE_TREE_MIN_WIDTH + WORKSPACE_PREVIEW_MIN_WIDTH;
 const WORKSPACE_DUAL_PANEL_TARGET_WIDTH = WORKSPACE_TREE_DEFAULT_WIDTH + WORKSPACE_PREVIEW_TARGET_WIDTH;
-const WORKSPACE_CONTEXT_MENU_FILE_HEIGHT = 92;
-const WORKSPACE_CONTEXT_MENU_REF_HEIGHT = 48;
+const WORKSPACE_CONTEXT_MENU_FILE_HEIGHT = 136;
+const WORKSPACE_CONTEXT_MENU_REF_HEIGHT = 92;
+const WORKSPACE_CONTEXT_MENU_SELECTION_HEIGHT = 48;
 const WORKSPACE_MAX_PREVIEW_TABS = 5;
 
 function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
@@ -112,7 +115,7 @@ function languageFor(path: string): string | undefined {
   return byExt[ext];
 }
 
-function renderMediaPreview(preview: FilePreview): JSX.Element | null {
+function renderMediaPreview(preview: FilePreview): ReactElement | null {
   if (!preview.url) return null;
   if (preview.kind === "image") {
     return (
@@ -224,6 +227,7 @@ export function WorkspacePanel({
   const [treeWidth, setTreeWidth] = useState(loadWorkspaceTreeWidth);
   const [treeResizing, setTreeResizing] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
+  const lastPreviewModeActiveRef = useRef<boolean | null>(null);
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
 
@@ -249,8 +253,12 @@ export function WorkspacePanel({
   }, [selectedPath]);
 
   const toggleCommit = useCallback((hash: string) => {
-    setExpandedCommit((prev) => (prev === hash ? null : hash));
-  }, []);
+    setExpandedCommit((prev) => {
+      const next = prev === hash ? null : hash;
+      if (next) onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
+      return next;
+    });
+  }, [onRequestPanelWidth]);
 
   useEffect(() => {
     if (!open) return;
@@ -311,10 +319,19 @@ export function WorkspacePanel({
   useEffect(() => {
     if (!open) return;
     setViewMode(initialViewMode);
+    setExpandedCommit(null);
+    setCommitDetail(null);
+    setSelectionMenu(null);
+    setTreeMenu(null);
+    setRecentOpen(false);
     if (initialViewMode === "changed") {
-      void loadGitHistory();
+      setSelectedPath(null);
+      setOpenTabs([]);
+      setPreview(null);
+      return;
     }
-  }, [initialViewMode, loadGitHistory, open]);
+    setTreeVisible(true);
+  }, [initialViewMode, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -433,8 +450,11 @@ export function WorkspacePanel({
 
   const breadcrumbDirs = selectedPath ? parentDirs(selectedPath) : [""];
   const pathParts = selectedPath?.split("/").filter(Boolean) ?? [];
+  const changedMode = viewMode === "changed";
   const currentFileName = selectedPath ? basename(selectedPath) : t("workspace.noFile");
   const currentFileDir = selectedPath ? parentPath(selectedPath) : "";
+  const previewTitle = changedMode && !selectedPath ? t("workspace.changedTab") : currentFileName;
+  const previewSubtitle = changedMode && !selectedPath ? shortCwd(cwd) || t("workspace.title") : currentFileDir;
   const recentFiles = useMemo(() => [...openTabs].reverse(), [openTabs]);
   const flattened = useMemo(() => {
     const rows: { path: string; entry: DirEntry }[] = [];
@@ -453,14 +473,17 @@ export function WorkspacePanel({
   const searchPlaceholder = t("workspace.filter");
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
-  const previewVisible = viewMode === "changed" || openTabs.length > 0 || selectedPath !== null;
+  const filePreviewActive = openTabs.length > 0 || selectedPath !== null;
+  const changeDetailActive = changedMode && expandedCommit !== null;
+  const previewVisible = changedMode || filePreviewActive;
   const selectedFileVisible = selectedPath !== null;
   const compactTreeSplit =
     treeVisible && selectedFileVisible && panelWidth !== undefined && panelWidth < WORKSPACE_DUAL_PANEL_MIN_WIDTH;
-  const actualTreeVisible = treeVisible;
-  const previewModeActive = open && previewVisible;
+  const actualTreeVisible = changedMode ? false : treeVisible;
+  const showTreeRail = previewVisible && !actualTreeVisible && !changedMode;
+  const previewModeActive = open && (filePreviewActive || changeDetailActive);
   const embeddedDockMode = !showViewTabs;
-  const showFileTools = showViewTabs || previewVisible;
+  const showFileTools = showViewTabs || filePreviewActive;
 
   const panelStyle = useMemo(
     () =>
@@ -472,6 +495,8 @@ export function WorkspacePanel({
   );
 
   useEffect(() => {
+    if (lastPreviewModeActiveRef.current === previewModeActive) return;
+    lastPreviewModeActiveRef.current = previewModeActive;
     onPreviewModeChange?.(previewModeActive);
   }, [onPreviewModeChange, previewModeActive]);
 
@@ -619,7 +644,13 @@ export function WorkspacePanel({
     }
   };
 
-  const renderRows = (dir: string, depth: number): JSX.Element[] => {
+  const revealInFileManager = () => {
+    if (!treeMenu) return;
+    setTreeMenu(null);
+    void app.RevealWorkspacePath(treeMenu.path);
+  };
+
+  const renderRows = (dir: string, depth: number): ReactElement[] => {
     const entries = entriesByDir[dir] ?? [];
     return entries.flatMap((entry) => {
       const path = entryPath(dir, entry);
@@ -680,19 +711,23 @@ export function WorkspacePanel({
   return (
     <aside
       ref={panelRef}
-      className={`workspace-panel${embeddedDockMode ? " workspace-panel--embedded" : ""}${previewVisible && actualTreeVisible ? " workspace-panel--split-preview" : ""}${compactTreeSplit ? " workspace-panel--compact-split" : ""}${actualTreeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
+      className={`workspace-panel${embeddedDockMode ? " workspace-panel--embedded" : ""}${changedMode ? " workspace-panel--detail-only" : ""}${previewVisible && actualTreeVisible ? " workspace-panel--split-preview" : ""}${compactTreeSplit ? " workspace-panel--compact-split" : ""}${actualTreeVisible ? "" : " workspace-panel--tree-hidden"}${previewVisible ? "" : " workspace-panel--preview-hidden"}${treeResizing ? " workspace-panel--tree-resizing" : ""}`}
       aria-label={t("workspace.title")}
       style={panelStyle}
     >
       {previewVisible && <section className="workspace-preview">
         <header className="workspace-preview__head">
           <div className="workspace-current-file" aria-label={t("workspace.currentFile")}>
-            <FileText size={15} className="workspace-current-file__icon" />
+            {changedMode && !selectedPath ? (
+              <GitBranch size={15} className="workspace-current-file__icon" />
+            ) : (
+              <FileText size={15} className="workspace-current-file__icon" />
+            )}
             <div className="workspace-current-file__text">
               <Tooltip label={selectedPath ?? undefined}>
-                <span className="workspace-current-file__name">{currentFileName}</span>
+                <span className="workspace-current-file__name">{previewTitle}</span>
               </Tooltip>
-              {currentFileDir && <span className="workspace-current-file__path">{currentFileDir}</span>}
+              {previewSubtitle && <span className="workspace-current-file__path">{previewSubtitle}</span>}
             </div>
             <Tooltip label={t("workspace.recentFiles")}>
               <button
@@ -911,7 +946,7 @@ export function WorkspacePanel({
             </>
           ) : null}
           {selectionMenu && (
-            <FloatingMenu x={selectionMenu.x} y={selectionMenu.y} estimatedHeight={WORKSPACE_CONTEXT_MENU_REF_HEIGHT}>
+            <FloatingMenu x={selectionMenu.x} y={selectionMenu.y} estimatedHeight={WORKSPACE_CONTEXT_MENU_SELECTION_HEIGHT}>
               <FloatingMenuItems
                 items={[
                   {
@@ -926,7 +961,7 @@ export function WorkspacePanel({
         </div>
       </section>}
 
-      {previewVisible && !actualTreeVisible && (
+      {showTreeRail && (
         <section className="workspace-tree-rail" aria-label={t("workspace.showTree")}>
           <Tooltip label={t("workspace.showTree")} side="right">
             <button
@@ -1068,6 +1103,11 @@ export function WorkspacePanel({
                       onSelect: () => void addTreeFileToChat(),
                     },
                   ]),
+              {
+                icon: <FolderOpen size={14} />,
+                label: t("workspace.revealInFileManager"),
+                onSelect: revealInFileManager,
+              },
             ]}
           />
         </FloatingMenu>

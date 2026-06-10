@@ -37,7 +37,7 @@ export function latexNormalizeForKatex(source: string): string {
   // Match a backslash command (optionally followed by (...) for function calls)
   // or a single ASCII letter. Use a function so we can add braces around
   // function-call forms.
-  source = source.replace(/\\slashed\s*(\\[A-Za-z]+(?:\([^)]*\))?|[A-Za-z])/g, (match, inner) => {
+  source = source.replace(/\\slashed\s*(\\[A-Za-z]+(?:\([^)]*\))?|[A-Za-z])/g, (_match, inner) => {
     return inner.includes("(") ? `\\not{${inner}}` : `\\not ${inner}`;
   });
 

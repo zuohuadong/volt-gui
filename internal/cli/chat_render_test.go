@@ -37,6 +37,7 @@ func newTestChatTUI() chatTUI {
 		shellOutputs:         shellOut,
 		shellExpanded:        shellExp,
 		shellTranscriptIdx:   shellIdx,
+		toolLineCountByID:    map[string]int{},
 	}
 }
 
@@ -307,6 +308,27 @@ func TestConsecutiveToolCallsKeepMarkersUnderOwnCard(t *testing.T) {
 	marker1 := transcript[idx1+1]
 	if !strings.Contains(marker1, "On branch main-v2") || !strings.Contains(marker1, "nothing to commit") {
 		t.Fatalf("first card's marker should preview the full output of shell-1, got %q", marker1)
+	}
+}
+
+// TestRepeatedShellCommandDoesNotAccumulateOutput is the regression test for a
+// re-run of the same "!" command (e.g. !pwd three times). RunShell derives a
+// stable id from the command text ("shell-pwd"), so streamToolOutput kept
+// appending each run's output onto the previous run's in m.shellOutputs[id];
+// beginToolRunning now clears the entry so each run starts from a clean slate.
+func TestRepeatedShellCommandDoesNotAccumulateOutput(t *testing.T) {
+	m := newTestChatTUI()
+	const id = "shell-pwd"
+	const out = "/home/user/project\n"
+
+	for range 3 {
+		m.ingestEvent(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: id, Name: "bash", Args: `{"command":"pwd"}`}})
+		m.ingestEvent(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: id, Output: out}})
+		m.ingestEvent(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: id, Name: "bash", Output: out}})
+	}
+
+	if got := m.shellOutputs[id]; got != out {
+		t.Fatalf("a re-run must not accumulate prior output: shellOutputs[%q] = %q, want %q", id, got, out)
 	}
 }
 

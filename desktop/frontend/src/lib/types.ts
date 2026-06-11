@@ -651,6 +651,8 @@ export interface BotConnectionCredentialView {
 export interface BotConnectionSessionMappingView {
   remoteId: string;
   sessionId: string;
+  scope: "global" | "project" | string;
+  workspaceRoot: string;
   updatedAt: string;
 }
 
@@ -661,6 +663,8 @@ export interface BotConnectionView {
   label: string;
   enabled: boolean;
   status: "disconnected" | "pending" | "connected" | "error" | string;
+  model: string;
+  workspaceRoot: string;
   credential: BotConnectionCredentialView;
   sessionMappings: BotConnectionSessionMappingView[];
   lastError: string;

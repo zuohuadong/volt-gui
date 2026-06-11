@@ -357,8 +357,14 @@ func (a *App) restoreOrBuildTabs() {
 	ensureWorkspace()
 
 	// Load i18n from the first available config.
+	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),
+	// so the user's language choice in desktop settings takes effect.
 	if cfg, err := config.Load(); err == nil {
-		i18n.DetectLanguage(cfg.Language)
+		lang := cfg.DesktopLanguage()
+		if lang == "" {
+			lang = cfg.Language
+		}
+		i18n.DetectLanguage(lang)
 	}
 
 	f := loadTabsFile()

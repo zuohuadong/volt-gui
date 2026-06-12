@@ -698,6 +698,17 @@ export default function App() {
   const [sidebarImExpanded, setSidebarImExpanded] = useState(false);
   const [isDevBuild, setIsDevBuild] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
+  type TimeFilter = "all" | "10" | "20" | "1h" | "3h" | "5h" | "1d";
+  const [topicTimeFilter, setTopicTimeFilter] = useState<TimeFilter>(() => {
+    try {
+      const saved = localStorage.getItem("projectTree:timeFilter");
+      if (saved === "all" || saved === "10" || saved === "20" || saved === "1h" || saved === "3h" || saved === "5h" || saved === "1d") return saved;
+    } catch { /* localStorage unavailable */ }
+    return "all";
+  });
+  useEffect(() => {
+    try { localStorage.setItem("projectTree:timeFilter", topicTimeFilter); } catch { /* ignore */ }
+  }, [topicTimeFilter]);
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
@@ -2201,6 +2212,8 @@ export default function App() {
               onAddProject={async () => {
                 await switchFolder();
               }}
+              timeFilter={topicTimeFilter}
+              onTimeFilterChange={setTopicTimeFilter}
             />
           </section>
 

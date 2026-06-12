@@ -531,6 +531,16 @@ export const en = {
   "projectTree.addProjectTooltip": "Add new project",
   "projectTree.collapseAllTooltip": "Collapse all projects",
   "projectTree.restoreCollapsedTooltip": "Restore previous view",
+  "projectTree.timeFilter": "Filter by time",
+  "projectTree.timeFilterAll": "All",
+  "projectTree.timeFilter10": "Latest 10",
+  "projectTree.timeFilter20": "Latest 20",
+  "projectTree.timeFilter1h": "Last hour",
+  "projectTree.timeFilter3h": "Last 3 hours",
+  "projectTree.timeFilter5h": "Last 5 hours",
+  "projectTree.timeFilter1d": "Last 24 hours",
+  "projectTree.emptyNoTimeFilterMatch": "No topics match the time filter",
+  "projectTree.clearTimeFilter": "Clear filter",
 
   // memory drawer
   "memory.title": "Memory",

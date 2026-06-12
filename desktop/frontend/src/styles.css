@@ -15246,6 +15246,7 @@ a[href] {
 
 .project-tree__add-project,
 .project-tree__collapse-all,
+.project-tree__header-action-btn,
 .project-tree__new-topic {
   --wails-draggable: no-drag;
   width: 24px;
@@ -15262,7 +15263,8 @@ a[href] {
 }
 
 .project-tree__header-actions .project-tree__add-project,
-.project-tree__header-actions .project-tree__collapse-all {
+.project-tree__header-actions .project-tree__collapse-all,
+.project-tree__header-actions .project-tree__header-action-btn {
   width: 22px;
   height: 22px;
   border-radius: 7px;
@@ -15271,7 +15273,8 @@ a[href] {
 }
 
 .project-tree__add-project:hover:not(:disabled),
-.project-tree__collapse-all:hover:not(:disabled) {
+.project-tree__collapse-all:hover:not(:disabled),
+.project-tree__header-action-btn:hover {
   background: var(--button-bg);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border-soft));
   color: var(--fg);
@@ -15279,7 +15282,8 @@ a[href] {
 }
 
 .project-tree__add-project:disabled,
-.project-tree__collapse-all:disabled {
+.project-tree__collapse-all:disabled,
+.project-tree__header-action-btn:disabled {
   cursor: default;
   opacity: 0.34;
 }
@@ -15291,8 +15295,89 @@ a[href] {
   opacity: 0.96;
 }
 
+/* Header-action-btn in the header-actions row uses min-width so it can
+   expand when a time-filter label is shown alongside the clock icon. */
+.project-tree__header-actions .project-tree__header-action-btn {
+  width: auto;
+  min-width: 22px;
+  padding: 0 4px;
+}
+
+/* Time-filter action slot: no fixed width so the button can grow when label shown. */
+.project-tree__header-action-slot--filter {
+  flex-basis: auto !important;
+  width: auto !important;
+}
+
+.project-tree__header-action-btn--active {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-soft));
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-elev));
+  color: var(--accent);
+  opacity: 0.96;
+}
+
+.project-tree__time-filter {
+  display: inline-flex;
+  position: relative;
+}
+
+.project-tree__time-filter-label {
+  font-size: 9px;
+  line-height: 1;
+  margin-left: 3px;
+  font-weight: 500;
+}
+
+.project-tree__time-filter-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: var(--z-menu);
+  min-width: 84px;
+  padding: 4px;
+  border: none;
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.project-tree__time-filter-opt {
+  --wails-draggable: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.project-tree__time-filter-opt:hover {
+  background: var(--sidebar-hover);
+  color: var(--fg);
+}
+
+.project-tree__time-filter-opt--on {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.project-tree__time-filter-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-soft);
+}
+
 .project-tree__header-actions .project-tree__add-project:focus-visible,
-.project-tree__header-actions .project-tree__collapse-all:focus-visible {
+.project-tree__header-actions .project-tree__collapse-all:focus-visible,
+.project-tree__header-actions .project-tree__header-action-btn:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }

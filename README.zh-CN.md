@@ -222,18 +222,17 @@ allow = ["bash(go test*)"]                   # 从不询问
 
 ## 浏览器（默认启用）
 
-内置 `browser_navigate` 工具，在无头 Chromium 中渲染 JS 重度页面 —— 浏览内网文档站、
-管理后台、SPA 应用时，`web_fetch`（纯 HTTP）做不到的事它能做。
+内置 `browser_navigate` 工具，通过 CDP（Chrome DevTools Protocol）驱动无头
+Chromium 系浏览器。浏览内网文档站、管理后台、SPA 应用时，它会先执行页面
+JavaScript 再提取可见文本，覆盖 `web_fetch`（纯 HTTP）做不到的场景。
 
 - **Windows 10：**系统自带 Edge（Chromium 内核），零配置开箱即用。
 - **macOS / Linux：**自动检测 Chrome/Chromium/Edge。
 - **内网：**运行时无需联网。如自动检测不到，设置 `VOLTUI_BROWSER_PATH` 即可。
 
-```toml
-[browser]
-# path = "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"  # Windows
-# path = "/usr/bin/chromium"                                              # Linux
-# path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"  # macOS
+```sh
+# 自动检测不到浏览器时，可手动指定：
+export VOLTUI_BROWSER_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 ```
 
 ## 插件（MCP）

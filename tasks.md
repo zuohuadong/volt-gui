@@ -53,7 +53,18 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| VOLTGUI-003 | local | aizhuliren/xgic/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
+
+### VOLTGUI-003 Task Contract
+
+- 目标：在最新 `origin/main` 基础上重新同步通用 `references/skills/` 与 XGIC 私有 `.voltui/skills/`，新增共享/私有 manifest 和 `scripts/check-skills-sync.mjs`，补回行业深度优化建议。
+- 非目标：不修改 VoltUI 技能运行时代码、不引入客户原始数据、不写入 secrets、不部署、不调整 CI 分支策略。
+- 验收标准：通用 skills manifest 与 `references/skills/*/SKILL.md` 一致；私有 manifest 与 29 个 `.voltui/skills/*/SKILL.md` 一致；`references/private-skills/INDEX.md` 与 `DEEP_OPTIMIZATION.md` 存在；项目 overlay 优先加载私有技能。
+- 相关 skill：`skill-creator`、`agent-team-automation`、`semiconductor-ate-test-plan`、`semiconductor-test-program-review`、`semiconductor-yield-spc`、`semiconductor-failure-analysis`。
+- 风险：远端 `main` 曾 forced update，必须基于最新 `origin/main` 重新提交，避免推回旧历史；`.voltui/*` 默认忽略，需显式放行 `.voltui/skills/**`。
+- 回滚方案：删除 `.voltui/skills/`、`references/private-skills/`、`references/skills/agent-team-skills-manifest.json`、`references/skills/SYNC.md`、`scripts/check-skills-sync.mjs`，还原 `.agents/AGENTS.local.md`、`.gitignore`、`tasks.md`、`progress.md`。
+- 验证计划：`node scripts/check-skills-sync.mjs`、`git diff --check`、`agent-team automation diff-check`、`go test ./...`、`cd desktop && go test ./...`、`cd site && npm ci && npm run build`。
 
 ### VOLTGUI-001 Task Contract
 

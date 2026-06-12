@@ -1,0 +1,298 @@
+{
+  "edition": "xgic-private-industry",
+  "generatedFrom": "xgic-ai-chat/skills/custom",
+  "skillRoot": ".voltui/skills",
+  "count": 29,
+  "skills": [
+    {
+      "id": "api-design",
+      "frontmatterName": "api-design",
+      "path": ".voltui/skills/api-design/SKILL.md",
+      "description": "Design and review REST, OpenAPI, GraphQL, webhook, and internal service APIs. Use for contracts, versioning, idempotency, pagination, errors, auth, and SDK ergonomics.",
+      "name": "API Design",
+      "category": "planning-design",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "architecture-design",
+      "frontmatterName": "architecture-design",
+      "path": ".voltui/skills/architecture-design/SKILL.md",
+      "description": "Design and review system architecture, module boundaries, data flow, scalability, reliability, and migration plans.",
+      "name": "Architecture Design",
+      "category": "planning-design",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "bunjs-development",
+      "frontmatterName": "bunjs-development",
+      "path": ".voltui/skills/bunjs-development/SKILL.md",
+      "description": "Build and review Bun.js applications, APIs, scripts, and tooling. Use for Bun runtime behavior, package management, tests, bundling, native APIs, and Node compatibility.",
+      "name": "Bunjs Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "c-systems-development",
+      "frontmatterName": "c-systems-development",
+      "path": ".voltui/skills/c-systems-development/SKILL.md",
+      "description": "Develop, review, debug, and optimize C/C++ systems code. Use for embedded software, Linux services, native libraries, memory safety, concurrency, performance, build systems, and hardware-facing code.",
+      "name": "C Systems Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "cicd-release-management",
+      "frontmatterName": "cicd-release-management",
+      "path": ".voltui/skills/cicd-release-management/SKILL.md",
+      "description": "Design, review, and debug CI/CD pipelines, release plans, versioning, rollback, container builds, and deployment verification.",
+      "name": "CI/CD Release Management",
+      "category": "operations",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "code-review",
+      "frontmatterName": "code-review",
+      "path": ".voltui/skills/code-review/SKILL.md",
+      "description": "Review code changes for bugs, regressions, missing tests, security issues, maintainability, and production risks. Use for pull requests, diffs, commits, or release review.",
+      "name": "Code Review",
+      "category": "general",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "data-reporting-analytics",
+      "frontmatterName": "data-reporting-analytics",
+      "path": ".voltui/skills/data-reporting-analytics/SKILL.md",
+      "description": "Analyze business, operations, product, and usage data. Use for SQL/CSV/Excel analysis, KPIs, dashboards, trend reports, variance analysis, and executive summaries.",
+      "name": "Data Reporting Analytics",
+      "category": "analytics",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "devops-observability",
+      "frontmatterName": "devops-observability",
+      "path": ".voltui/skills/devops-observability/SKILL.md",
+      "description": "Diagnose production incidents, logs, metrics, traces, alerts, SLOs, capacity, Docker/Kubernetes issues, and service reliability problems.",
+      "name": "Devops Observability",
+      "category": "operations",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "frontend-ux-review",
+      "frontmatterName": "frontend-ux-review",
+      "path": ".voltui/skills/frontend-ux-review/SKILL.md",
+      "description": "Review web UI for usability, accessibility, responsive behavior, layout quality, information architecture, and workflow efficiency.",
+      "name": "Frontend UX Review",
+      "category": "ux",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "go-service-development",
+      "frontmatterName": "go-service-development",
+      "path": ".voltui/skills/go-service-development/SKILL.md",
+      "description": "Build and review Go services, CLIs, and infrastructure tools. Use for HTTP/gRPC APIs, concurrency, context cancellation, database access, observability, and deployment.",
+      "name": "Go Service Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "java-backend-development",
+      "frontmatterName": "java-backend-development",
+      "path": ".voltui/skills/java-backend-development/SKILL.md",
+      "description": "Build and review Java backend services. Use for Spring Boot, JVM tuning, REST APIs, persistence, concurrency, testing, packaging, and production reliability.",
+      "name": "Java Backend Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "mcp-tool-builder",
+      "frontmatterName": "mcp-tool-builder",
+      "path": ".voltui/skills/mcp-tool-builder/SKILL.md",
+      "description": "Design, build, and review MCP servers and tools for internal systems such as email, calendar, OA, document stores, CRM, issue trackers, and databases.",
+      "name": "MCP Tool Builder",
+      "category": "integration",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "nodejs-backend-development",
+      "frontmatterName": "nodejs-backend-development",
+      "path": ".voltui/skills/nodejs-backend-development/SKILL.md",
+      "description": "Build and review Node.js backend services. Use for Express/Fastify/NestJS APIs, async behavior, package management, streams, workers, observability, and production hardening.",
+      "name": "Nodejs Backend Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "office-workflow-assistant",
+      "frontmatterName": "office-workflow-assistant",
+      "path": ".voltui/skills/office-workflow-assistant/SKILL.md",
+      "description": "Help office users complete everyday work: summarize documents, draft emails, prepare meeting notes, create task lists, query internal policy, and turn rough notes into structured deliverables.",
+      "name": "Office Workflow Assistant",
+      "category": "office",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "product-requirements",
+      "frontmatterName": "product-requirements",
+      "path": ".voltui/skills/product-requirements/SKILL.md",
+      "description": "Create and refine PRDs, user stories, acceptance criteria, roadmap items, release notes, and stakeholder summaries.",
+      "name": "Product Requirements",
+      "category": "planning-design",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "prompt-evaluation",
+      "frontmatterName": "prompt-evaluation",
+      "path": ".voltui/skills/prompt-evaluation/SKILL.md",
+      "description": "Design, test, and improve prompts, agents, tool-use policies, model routing rules, and evaluation suites for internal AI products.",
+      "name": "Prompt Evaluation",
+      "category": "ai-evaluation",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "python-development",
+      "frontmatterName": "python-development",
+      "path": ".voltui/skills/python-development/SKILL.md",
+      "description": "Build and review Python services, scripts, data tools, and automation. Use for FastAPI, data processing, packaging, typing, tests, notebooks, and production scripts.",
+      "name": "Python Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "rag-knowledge-management",
+      "frontmatterName": "rag-knowledge-management",
+      "path": ".voltui/skills/rag-knowledge-management/SKILL.md",
+      "description": "Build and maintain RAG knowledge bases. Use for document ingestion, chunking, metadata, retrieval quality, citations, permissions, freshness, and evaluation.",
+      "name": "RAG Knowledge Management",
+      "category": "data-platform",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "rust-development",
+      "frontmatterName": "rust-development",
+      "path": ".voltui/skills/rust-development/SKILL.md",
+      "description": "Build and review Rust applications, libraries, CLIs, and systems code. Use for ownership, lifetimes, async, error handling, unsafe review, performance, and FFI.",
+      "name": "Rust Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "security-review",
+      "frontmatterName": "security-review",
+      "path": ".voltui/skills/security-review/SKILL.md",
+      "description": "Review applications, APIs, configurations, dependencies, and workflows for security risks. Use for threat modeling, auth, secrets, injection, SSRF, file upload, supply chain, and permission design.",
+      "name": "Security Review",
+      "category": "security",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "semiconductor-ate-test-plan",
+      "frontmatterName": "semiconductor-ate-test-plan",
+      "path": ".voltui/skills/semiconductor-ate-test-plan/SKILL.md",
+      "description": "Create and review semiconductor ATE test plans for wafer sort, final test, characterization, guardbands, coverage, and production release readiness. Use for test strategy, coverage matrix, limit definition, test time reduction, multisite planning, and release checklists.",
+      "name": "Semiconductor ATE Test Plan",
+      "category": "inspection-industry",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "semiconductor-failure-analysis",
+      "frontmatterName": "semiconductor-failure-analysis",
+      "path": ".voltui/skills/semiconductor-failure-analysis/SKILL.md",
+      "description": "Structure semiconductor failure analysis from test symptoms, bin signatures, lab measurements, curve traces, scan/DFT evidence, and reliability data. Use for FA plans, root cause hypotheses, and debug report drafting.",
+      "name": "Semiconductor Failure Analysis",
+      "category": "inspection-industry",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "semiconductor-test-program-review",
+      "frontmatterName": "semiconductor-test-program-review",
+      "path": ".voltui/skills/semiconductor-test-program-review/SKILL.md",
+      "description": "Review semiconductor test program logic, limits, binning, datalog output, multisite behavior, correlation hooks, and production readiness. Use for ATE program changes, release reviews, and debug of suspicious yield shifts.",
+      "name": "Semiconductor Test Program Review",
+      "category": "inspection-industry",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "semiconductor-yield-spc",
+      "frontmatterName": "semiconductor-yield-spc",
+      "path": ".voltui/skills/semiconductor-yield-spc/SKILL.md",
+      "description": "Analyze semiconductor yield, binning, wafer map, SPC, Cpk/Ppk, lot drift, tester correlation, and production excursion data. Use for CSV/Excel test data review, yield pareto, wafer-level patterns, and excursion triage.",
+      "name": "Semiconductor Yield SPC",
+      "category": "inspection-industry",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "sql-database-development",
+      "frontmatterName": "sql-database-development",
+      "path": ".voltui/skills/sql-database-development/SKILL.md",
+      "description": "Design, review, and optimize SQL database schemas and queries. Use for PostgreSQL/MySQL, migrations, indexes, transactions, analytics queries, and data integrity.",
+      "name": "SQL Database Development",
+      "category": "data-platform",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "svelte-development",
+      "frontmatterName": "svelte-development",
+      "path": ".voltui/skills/svelte-development/SKILL.md",
+      "description": "Build and review Svelte and SvelteKit applications. Use for Svelte 5 runes, components, stores, load functions, form actions, routing, SSR, and TypeScript.",
+      "name": "Svelte Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "test-plan-and-qa",
+      "frontmatterName": "test-plan-and-qa",
+      "path": ".voltui/skills/test-plan-and-qa/SKILL.md",
+      "description": "Create test plans, acceptance criteria, regression matrices, QA checklists, and release verification plans for software or product changes.",
+      "name": "Test Plan And QA",
+      "category": "quality",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "typescript-development",
+      "frontmatterName": "typescript-development",
+      "path": ".voltui/skills/typescript-development/SKILL.md",
+      "description": "Develop and review TypeScript code across frontend, backend, libraries, and tooling. Use for type safety, API contracts, refactors, tsconfig, package boundaries, and tests.",
+      "name": "Typescript Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "vue-development",
+      "frontmatterName": "vue-development",
+      "path": ".voltui/skills/vue-development/SKILL.md",
+      "description": "Build and review Vue 3 applications and components. Use for Composition API, reactivity, routing, Pinia, Vite, TypeScript, UI state, forms, and performance.",
+      "name": "Vue Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    }
+  ]
+}

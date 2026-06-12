@@ -11,7 +11,8 @@
 
 ## Required Skills
 
-- 默认先读 `references/skills/INDEX.md`。
+- 默认先读 `references/private-skills/INDEX.md`，判断是否存在 XGIC 私有行业 skill；若任务不属于私有技能覆盖范围，再读 `references/skills/INDEX.md`。
+- 项目私有技能安装在 `.voltui/skills/`，VoltUI 可直接发现；`references/private-skills/skills-manifest.json` 是全量清单。
 - Go/CLI/TUI 任务按仓库现有 Go 代码规范执行：`gofmt`、`go vet`、`go test` 是基础门禁。
 - Desktop/Wails 任务需要同时关注 `desktop/go.mod`、嵌入的 `desktop/frontend/dist`、平台差异和 CGO/WebKit 依赖。
 - Site/Astro 任务需要加载 `typescript`；如涉及部署，再加载 `deployment-target-selector`。
@@ -19,6 +20,7 @@
 - **暗涌品牌相关**：加载 `anyong-brand-config` — 禁止在源码中硬编码品牌名，使用 BrandConfig 机制。
 - **CNB CI/CD 相关**：加载 `cnb-ci-cd` — 涉及 .cnb.yml、自动发版、CNB API。
 - **西谷AI 内部决策**：加载 `xigu-ai-ops` — 涉及产品策略、上游同步、中国市场背景。
+- 半导体 ATE、测试程序、良率/SPC、失效分析、LIMS/OCR 数据组织等行业任务，优先加载 `.voltui/skills/semiconductor-*` 和相关工程/数据技能。
 
 ## Verification Profile
 
@@ -29,6 +31,7 @@
 - Desktop module hygiene: `cd desktop && go mod tidy && git diff --quiet -- go.mod go.sum`
 - Site: `cd site && npm ci && npm run build`
 - Agent-team config: `agent-team automation smoke .`，`agent-team automation diff-check`
+- Skills sync: `node scripts/check-skills-sync.mjs`
 
 跨模块修改完成前必须运行 `git diff --check`。
 

@@ -64,7 +64,7 @@ main:
         GIT_COMMITTER_NAME: "暗涌 Bot"
         GIT_COMMITTER_EMAIL: "bot@xigu.ai"
         XIGU_BRAND_NAME: "暗涌"
-        VOLTUI_BRAND_NAME: "暗涌"
+        VOLTUI_BRAND_NAME: "anyong"
       stages:
         - name: resolve-release
           script: |

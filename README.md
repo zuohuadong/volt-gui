@@ -214,17 +214,18 @@ allow = ["bash(go test*)"]                   # never prompted
 
 ## Browser (enabled by default)
 
-Built-in `browser_navigate` tool renders JavaScript-heavy pages in a headless Chromium — essential for browsing internal docs sites, dashboards, and SPAs that `web_fetch` (plain HTTP) cannot handle.
+Built-in `browser_navigate` drives a headless Chromium-family browser through
+CDP (Chrome DevTools Protocol), so JavaScript-heavy internal docs, dashboards,
+and SPAs render before text extraction. It covers pages that `web_fetch` (plain
+HTTP) cannot handle.
 
 - **Windows 10:** Edge is pre-installed — works out of the box, zero setup.
 - **macOS / Linux:** auto-detects Chrome/Chromium/Edge from well-known paths.
 - **Intranet:** no network access needed at runtime. Set `VOLTUI_BROWSER_PATH` to the browser binary if auto-detection doesn't find it.
 
-```toml
-[browser]
-# path = "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"  # Windows
-# path = "/usr/bin/chromium"                                              # Linux
-# path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"  # macOS
+```sh
+# Optional override when auto-detection cannot find the browser:
+export VOLTUI_BROWSER_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 ```
 
 ## Plugins (MCP)

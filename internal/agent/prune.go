@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 // Pruning is the free half of context maintenance: stale tool results are

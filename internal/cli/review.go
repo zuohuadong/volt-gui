@@ -1,3 +1,5 @@
+//go:build bot
+
 package cli
 
 import (
@@ -7,12 +9,12 @@ import (
 	"os"
 	"strings"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/event"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 func reviewCommand(args []string) int {

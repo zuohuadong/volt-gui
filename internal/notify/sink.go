@@ -1,8 +1,10 @@
+//go:build bot
+
 package notify
 
 import (
-	"reasonix/internal/config"
-	"reasonix/internal/event"
+	"voltui/internal/config"
+	"voltui/internal/event"
 )
 
 // Message is the user-visible payload sent to the platform notifier.

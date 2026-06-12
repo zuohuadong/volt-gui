@@ -1,11 +1,13 @@
+//go:build bot
+
 package cli
 
 import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/i18n"
+	"voltui/internal/config"
+	"voltui/internal/i18n"
 )
 
 // runProviderCommand handles "/provider": with no argument it lists the configured

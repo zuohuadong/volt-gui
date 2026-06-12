@@ -1,3 +1,5 @@
+//go:build bot
+
 // Package weixin 实现微信 iLink Bot 适配器。
 // 参考 Hermes Agent 的 weixin adapter：
 // - getupdates 长轮询
@@ -23,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/bot"
-	"reasonix/internal/config"
+	"voltui/internal/bot"
+	"voltui/internal/config"
 )
 
 const (

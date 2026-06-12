@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/acp"
-	"reasonix/internal/config"
-	"reasonix/internal/event"
-	"reasonix/internal/netclient"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/acp"
+	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/netclient"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 
-	_ "reasonix/internal/tool/builtin"
+	_ "voltui/internal/tool/builtin"
 )
 
 const acpTestProviderKind = "acp-test-provider"

@@ -56,6 +56,7 @@ type Config struct {
 	Codegraph     CodegraphConfig   `toml:"codegraph"`
 	Statusline    StatuslineConfig  `toml:"statusline"`
 	LSP           LSPConfig         `toml:"lsp"`
+	Bot           BotConfig         `toml:"bot"`
 }
 
 // BrandConfig controls the white-label / OEM identity of the desktop app. An
@@ -1190,4 +1191,74 @@ func (c *Config) providerNames() string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// Bot config types — used by internal/bot (Feishu/QQ/Weixin adapters).
+// These are declared in the [bot] TOML section.
+
+// BotConfig is the top-level bot/IM integration configuration.
+type BotConfig struct {
+	Enabled     bool               `toml:"enabled"`
+	Model       string             `toml:"model"`
+	MaxSteps    int                `toml:"max_steps"`
+	DebounceMs  int                `toml:"debounce_ms"`
+	Connections []BotConnectionConfig `toml:"connections"`
+	Allowlist   BotAllowlist       `toml:"allowlist"`
+	QQ          QQBotConfig        `toml:"qq"`
+	Feishu      FeishuBotConfig    `toml:"feishu"`
+	Weixin      WeixinBotConfig    `toml:"weixin"`
+}
+
+// BotConnectionConfig is a single bot channel connection entry.
+type BotConnectionConfig struct {
+	Enabled       bool   `toml:"enabled"`
+	Provider      string `toml:"provider"` // "qq", "feishu", "weixin"
+	Model         string `toml:"model"`
+	WorkspaceRoot string `toml:"workspace_root"`
+	TokenEnv      string `toml:"token_env"`
+	ChatID        string `toml:"chat_id"`
+	GroupID       string `toml:"group_id"`
+	Name          string `toml:"name"`
+}
+
+// BotAllowlist controls which users/groups can interact with the bot.
+type BotAllowlist struct {
+	Enabled      bool     `toml:"enabled"`
+	AllowAll     bool     `toml:"allow_all"`
+	QQUsers      []string `toml:"qq_users"`
+	QQGroups     []string `toml:"qq_groups"`
+	FeishuUsers  []string `toml:"feishu_users"`
+	FeishuGroups []string `toml:"feishu_groups"`
+	WeixinUsers  []string `toml:"weixin_users"`
+	WeixinGroups []string `toml:"weixin_groups"`
+}
+
+// FeishuBotConfig is the Feishu (Lark) bot adapter configuration.
+type FeishuBotConfig struct {
+	Enabled            bool   `toml:"enabled"`
+	AppID              string `toml:"app_id"`
+	AppSecretEnv       string `toml:"app_secret_env"`
+	Mode               string `toml:"mode"` // "websocket" (default) | "webhook"
+	VerificationToken  string `toml:"verification_token"` // webhook mode
+	EncryptKeyEnv      string `toml:"encrypt_key_env"`
+	Domain             string `toml:"domain"` // "open.feishu.cn" (default) or custom
+	RequireMention     bool   `toml:"require_mention"` // only respond when @mentioned
+	WebhookPort        int    `toml:"webhook_port"` // webhook listen port
+}
+
+// QQBotConfig is the QQ Official Bot API v2 adapter configuration.
+type QQBotConfig struct {
+	Enabled      bool   `toml:"enabled"`
+	AppID        string `toml:"app_id"`
+	AppSecretEnv string `toml:"app_secret_env"`
+	TokenEnv     string `toml:"token_env"`
+	APIBase      string `toml:"api_base"`
+}
+
+// WeixinBotConfig is the WeChat iLink bot adapter configuration.
+type WeixinBotConfig struct {
+	Enabled   bool   `toml:"enabled"`
+	AccountID string `toml:"account_id"`
+	TokenEnv  string `toml:"token_env"`
+	APIBase   string `toml:"api_base"`
 }

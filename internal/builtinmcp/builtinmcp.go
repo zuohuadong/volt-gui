@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 const (

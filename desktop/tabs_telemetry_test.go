@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 type usageProvider struct {

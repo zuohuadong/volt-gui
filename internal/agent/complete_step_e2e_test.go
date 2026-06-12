@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent/testutil"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent/testutil"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 
-	_ "reasonix/internal/tool/builtin"
+	_ "voltui/internal/tool/builtin"
 )
 
 type stubBash struct{}

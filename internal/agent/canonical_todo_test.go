@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/evidence"
+	"voltui/internal/provider"
 )
 
 func TestFinalReadinessFallsBackToCanonicalTodos(t *testing.T) {

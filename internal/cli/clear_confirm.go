@@ -1,3 +1,5 @@
+//go:build bot
+
 package cli
 
 import (
@@ -6,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"reasonix/internal/i18n"
+	"voltui/internal/i18n"
 )
 
 type clearConfirm struct {

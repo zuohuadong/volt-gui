@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="VoltUI" width="640"/>
+  <img src="docs/logo.svg" alt="暗涌" width="640"/>
 </p>
 
 <p align="center">
@@ -18,18 +18,23 @@
 
 <br/>
 
+> **西谷AI 暗涌系统** — 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails) 的本土化编码 Agent fork。
+> 源码与上游保持同步，品牌通过 `BrandConfig` 机制定制，不硬编码替换。
+
+<br/>
+
 <h3 align="center">AI coding agent for enterprise intranet.</h3>
 <p align="center">Offline-first, multi-model, pre-packaged for Windows 10 — deploy once, every developer on your intranet is productive.</p>
 
 <br/>
 
-## Why VoltUI?
+## Why 暗涌 (VoltUI)?
 
-VoltUI is built for **enterprises that have LLMs on their intranet** — companies
+暗涌 is built for **enterprises that have LLMs on their intranet** — companies
 running Qwen, DeepSeek, GLM, or private models behind a firewall, where
 developers need an AI coding agent that just works without internet access.
 
-| Problem | VoltUI's answer |
+| Problem | 暗涌's answer |
 |---------|-----------------|
 | Public agents need internet | **Offline-first** — zero runtime network dependencies |
 | Only supports one model | **Any OpenAI-compatible API** — one config entry per model |
@@ -180,34 +185,28 @@ mode  = "ask"   # or "allow" for trusted internal teams
 
 Then distribute `voltui.exe` + `voltui.toml` + `.env` as a ZIP package.
 
-### White-label / OEM branding
+### 暗涌品牌定制
 
-Replace the product name and logos for your organization — no rebuild required:
+暗涌使用 VoltUI 内置的 BrandConfig 机制定制品牌，**无需重新编译**：
 
 ```toml
 # voltui.toml
 [brand]
-name        = "Acme Copilot"                         # window title, tray, onboarding
-short_name  = "Copilot"                              # compact form (menu bar)
-logo_path   = "C:\\Program Files\\Acme\\logo.png"    # icon-only (PNG/SVG/JPG/ICO)
-wordmark_path = "C:\\Program Files\\Acme\\logo-text.png"   # logo + text
+name        = "暗涌"                         # window title, tray, onboarding
+short_name  = "暗涌"                          # compact form (menu bar)
 ```
 
-Or use environment variables (ideal for packaged deploys / containers):
+或通过环境变量（适合打包部署 / 容器场景）：
 
 ```bash
-VOLTUI_BRAND_NAME="Acme Copilot"
-VOLTUI_BRAND_SHORT_NAME="Copilot"
-VOLTUI_BRAND_LOGO="C:\Program Files\Acme\logo.png"
-VOLTUI_BRAND_WORDMARK="C:\Program Files\Acme\logo-text.png"
-VOLTUI_BRAND_ICON="C:\Program Files\Acme\tray-icon.ico"
+VOLTUI_BRAND_NAME="暗涌"
+VOLTUI_BRAND_SHORT_NAME="暗涌"
 ```
 
-Env vars take precedence over config. When `logo_path` / `wordmark_path` /
-`icon_path` are empty, the built-in VoltUI SVG/icon assets are used. The
-agent's system prompt automatically replaces "VoltUI" with the configured
-brand name. The tray/taskbar icon can also be replaced via `icon_path`
-(.ico on Windows, .png on macOS/Linux).
+环境变量优先于配置文件。Logo/icon 如未配置，则使用内置 VoltUI 资源。
+AI 系统提示词会自动将 "VoltUI" 替换为配置的品牌名称。
+
+> **核心原则**：品牌定制通过 `[brand]` 配置段 + 环境变量实现，**禁止硬编码品牌名到源码中**。
 
 ### Two-model collaboration
 
@@ -251,7 +250,7 @@ that `web_fetch` (plain HTTP) cannot handle.
 
 ## Plugins (MCP)
 
-VoltUI is an MCP client. Add internal tool servers via `[[plugins]]`:
+暗涌 is an MCP client. Add internal tool servers via `[[plugins]]`:
 
 ```toml
 [[plugins]]                       # local stdio server (e.g. internal knowledge base)
@@ -266,7 +265,7 @@ url     = "http://search.internal.company.com/mcp"
 headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 ```
 
-Drop an `.mcp.json` in the project root and VoltUI reads it as-is.
+Drop an `.mcp.json` in the project root and 暗涌 reads it as-is.
 
 ## Architecture
 
@@ -278,19 +277,30 @@ Three tiers of extensibility, all behind registries:
 
 ## Documentation
 
-- **[Checkpoints & rewind](./docs/CHECKPOINTS.md)** — snapshot-based edit safety net (Esc-Esc / `/rewind`).
-- **[Spec](./docs/SPEC.md)** — engineering contract: architecture, registries, data types, and roadmap.
-- **[Migrating from 0.x](./docs/MIGRATING.md)** — moving from the legacy TypeScript releases to the 1.0 Go rewrite.
+- **[检查点与回退](./docs/CHECKPOINTS.md)** — 基于快照的编辑安全网。
+- **[规格](./docs/SPEC.md)** — 工程契约：架构、注册表、数据类型与路线图。
+- **[从 0.x 迁移](./docs/MIGRATING.md)** — 从旧版 TypeScript 迁移到 1.0 Go 重写版。
+- **[暗涌产品策略](./暗涌.md)** — fork 定位、品牌原则、发布管道。
+
+## Fork 信息
+
+暗涌 是 [西谷AI](https://cnb.cool/aizhuliren) 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下原则：
+
+- **源码与上游保持一致** — 同步只需 `git merge`，零冲突
+- **品牌通过 BrandConfig 定制** — 不硬编码替换源码
+- **行业 skill 保留在本仓库** — 不贡献上游
+- **通用功能先提 PR 上游** — 然后在 fork 享受
 
 ## Acknowledgments
 
-VoltUI is a derivative work of [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix),
-originally licensed under the MIT License. See [NOTICE](./NOTICE) for details.
+暗涌 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，
+VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
+的衍生作品，原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE)。
 
 <br/>
 
 ---
 
 <p align="center">
-  <sub>MIT — see <a href="./LICENSE">LICENSE</a></sub>
+  <sub>MIT — 见 <a href="./LICENSE">LICENSE</a></sub>
 </p>

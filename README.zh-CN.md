@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="VoltUI" width="640"/>
+  <img src="docs/logo.svg" alt="暗涌" width="640"/>
 </p>
 
 <p align="center">
@@ -18,18 +18,23 @@
 
 <br/>
 
+> **西谷AI 暗涌系统** — 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails) 的本土化编码 Agent fork。
+> 源码与上游保持同步，品牌通过 `BrandConfig` 机制定制，不硬编码替换。
+
+<br/>
+
 <h3 align="center">面向企业内网的 AI coding agent。</h3>
 <p align="center">离线优先、多模型、Windows 10 开箱即用 —— 打包一次，内网全员上手。</p>
 
 <br/>
 
-## VoltUI 解决什么问题？
+## 暗涌解决什么问题？
 
-VoltUI 专为**内网部署大模型的企业**打造 —— 在防火墙内运行 Qwen、DeepSeek、GLM 或私有模型的团队，
+暗涌专为**内网部署大模型的企业**打造 —— 在防火墙内运行 Qwen、DeepSeek、GLM 或私有模型的团队，
 需要的是一个无需联网、开箱即用的 AI 编程助手。
 
-| 痛点 | VoltUI 的方案 |
-|------|---------------|
+| 痛点 | 暗涌的方案 |
+|------|------------|
 | 公网 Agent 必须联网 | **离线优先** —— 运行时零网络依赖 |
 | 只支持单一模型 | **任意 OpenAI 兼容 API** —— 每个模型一行配置 |
 | 大规模部署困难 | **单二进制** —— 打包时内置 API 地址和 Key，下发即用 |
@@ -170,33 +175,28 @@ mode  = "ask"   # 内网可信团队可设为 "allow"
 
 然后将 `voltui.exe` + `voltui.toml` + `.env` 打成 ZIP 下发。
 
-### 白标 / OEM 品牌定制
+### 暗涌品牌定制
 
-替换产品名称和 Logo，无需重新编译：
+暗涌使用 VoltUI 内置的 BrandConfig 机制定制品牌，**无需重新编译**：
 
 ```toml
 # voltui.toml
 [brand]
-name        = "银河助手"                             # 窗口标题、托盘、引导页
-short_name  = "助手"                                 # 紧凑形式（菜单栏）
-logo_path   = "C:\\Program Files\\Acme\\logo.png"    # 图标（PNG/SVG/JPG/ICO）
-wordmark_path = "C:\\Program Files\\Acme\\logo-text.png"   # 图标 + 文字
+name        = "暗涌"                             # 窗口标题、托盘、引导页
+short_name  = "暗涌"                              # 紧凑形式（菜单栏）
 ```
 
 也可以用环境变量（适合打包部署 / 容器场景）：
 
 ```bash
-VOLTUI_BRAND_NAME="银河助手"
-VOLTUI_BRAND_SHORT_NAME="助手"
-VOLTUI_BRAND_LOGO="C:\Program Files\Acme\logo.png"
-VOLTUI_BRAND_WORDMARK="C:\Program Files\Acme\logo-text.png"
-VOLTUI_BRAND_ICON="C:\Program Files\Acme\tray-icon.ico"
+VOLTUI_BRAND_NAME="暗涌"
+VOLTUI_BRAND_SHORT_NAME="暗涌"
 ```
 
-环境变量优先于配置文件。`logo_path` / `wordmark_path` / `icon_path` 留空
-则使用内置 VoltUI SVG/图标资源。AI 系统提示词会自动将 "VoltUI" 替换为
-配置的品牌名称。托盘/任务栏图标也可以通过 `icon_path` 替换（Windows 用
-.ico，macOS/Linux 用 .png）。
+环境变量优先于配置文件。Logo/icon 如未配置，则使用内置 VoltUI 资源。
+AI 系统提示词会自动将 "VoltUI" 替换为配置的品牌名称。
+
+> **核心原则**：品牌定制通过 `[brand]` 配置段 + 环境变量实现，**禁止硬编码品牌名到源码中**。
 
 ### 双模型协同
 
@@ -238,7 +238,7 @@ allow = ["bash(go test*)"]                   # 从不询问
 
 ## 插件（MCP）
 
-VoltUI 是 MCP 客户端。通过 `[[plugins]]` 接入内网工具服务：
+暗涌是 MCP 客户端。通过 `[[plugins]]` 接入内网工具服务：
 
 ```toml
 [[plugins]]                       # 本地 stdio 服务器（如内部知识库）
@@ -253,7 +253,7 @@ url     = "http://search.internal.company.com/mcp"
 headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 ```
 
-在项目根目录放一个 `.mcp.json`，VoltUI 会原样读取。
+在项目根目录放一个 `.mcp.json`，暗涌会原样读取。
 
 ## 架构
 
@@ -268,9 +268,20 @@ headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 - **[检查点与回退](./docs/CHECKPOINTS.md)** — 基于快照的编辑安全网（Esc-Esc / `/rewind`）。
 - **[规格](./docs/SPEC.md)** — 工程契约：架构、注册表、数据类型与路线图。
 - **[从 0.x 迁移](./docs/MIGRATING.md)** — 从旧版 TypeScript 发布版迁移到 1.0 Go 重写版。
+- **[暗涌产品策略](./暗涌.md)** — fork 定位、品牌原则、发布管道。
+
+## Fork 信息
+
+暗涌是 [西谷AI](https://cnb.cool/aizhuliren) 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下原则：
+
+- **源码与上游保持一致** — 同步只需 `git merge`，零冲突
+- **品牌通过 BrandConfig 定制** — 不硬编码替换源码
+- **行业 skill 保留在本仓库** — 不贡献上游
+- **通用功能先提 PR 上游** — 然后在 fork 享受
 
 ## 致谢
 
+暗涌基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，
 VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的衍生作品，
 原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE)；
 第三方依赖及其许可证见 [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES)。

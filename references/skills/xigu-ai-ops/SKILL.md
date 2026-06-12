@@ -1,15 +1,15 @@
 ---
 name: xigu-ai-ops
-description: Use when tasks involve 西谷AI (Xigu AI) internal operations, 暗涌 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers upstream sync strategy, release workflow, internal tooling, and product-market-fit decisions for the 暗涌 coding agent.
+description: Use when tasks involve 西谷AI (Xigu AI) internal operations, 西谷智灯暗涌系统 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers upstream sync strategy, release workflow, internal tooling, and product-market-fit decisions for the 西谷智灯暗涌系统 coding agent.
 ---
 
-# 西谷AI / 暗涌运营技能
+# 西谷AI / 西谷智灯暗涌系统运营技能
 
-此技能覆盖西谷AI (Xigu AI) 的内部运营决策、暗涌产品策略和中国AI市场背景。
+此技能覆盖西谷AI (Xigu AI) 的内部运营决策、西谷智灯暗涌系统产品策略和中国AI市场背景。
 
 ## 产品定位
 
-暗涌是 VoltUI 的中国本土化 fork，定位为：
+西谷智灯暗涌系统是 VoltUI 的中国本土化 fork，定位为：
 
 - **目标用户**: 中国开发者团队和企业内网部署
 - **核心差异**: 本土化品牌、CNB 云构建支持、中文交互优先、合规适配
@@ -59,9 +59,9 @@ feat: 新功能 → CNB CI → desktop-v* tag → GitHub Actions → macOS/Windo
 
 ### 品牌名在产物中的体现
 
-- 环境变量 `VOLTUI_BRAND_NAME=暗涌` → 产物命名 `暗涌-darwin-universal.zip`
-- Release title: `暗涌 desktop-v1.6.0`
-- 安装包内应用名: `暗涌.app` / `暗涌.exe`
+- 环境变量 `VOLTUI_BRAND_NAME=西谷智灯暗涌系统` → 产物命名 `西谷智灯暗涌系统-darwin-universal.zip`
+- Release title: `西谷智灯暗涌系统 desktop-v1.6.0`
+- 安装包内应用名: `西谷智灯暗涌系统.app` / `西谷智灯暗涌系统.exe`
 
 ## 中国AI市场背景
 
@@ -75,7 +75,7 @@ feat: 新功能 → CNB CI → desktop-v* tag → GitHub Actions → macOS/Windo
 
 | 产品 | 框架 | 定位 |
 |---|---|---|
-| 暗涌 (VoltUI fork) | Go + Wails | 本土化编码 Agent |
+| 西谷智灯暗涌系统 (VoltUI fork) | Go + Wails | 本土化编码 Agent |
 | Cursor | Electron | 国际化 AI 编码 IDE |
 | CodeBuddy | 云 IDE | 中国 AI 编码助手 |
 | Claude Code | CLI | Anthropic 编码 Agent |
@@ -92,7 +92,7 @@ feat: 新功能 → CNB CI → desktop-v* tag → GitHub Actions → macOS/Windo
 | 工具 | 用途 | 位置 |
 |---|---|---|
 | `.agents/` | Agent team 配置、角色、工作流 | 项目根目录 |
-| `references/skills/` | 技能知识库（含上游 + 暗涌专属） | 项目根目录 |
+| `references/skills/` | 技能知识库（含上游 + 西谷智灯暗涌系统专属） | 项目根目录 |
 | `.cnb.yml` | CNB CI/CD 管道配置 | 项目根目录 |
 | `scripts/sync-upstream.sh` | 上游同步脚本 | `scripts/` |
 
@@ -106,7 +106,7 @@ feat: 新功能 → CNB CI → desktop-v* tag → GitHub Actions → macOS/Windo
 
 ## Directive
 
-暗涌 fork 的所有改动必须遵循「配置优先」原则：
+西谷智灯暗涌系统 fork 的所有改动必须遵循「配置优先」原则：
 - 品牌定制 → BrandConfig 环境变量/配置段
 - CI 定制 → `.cnb.yml`
 - 功能改动 → 先贡献上游 PR

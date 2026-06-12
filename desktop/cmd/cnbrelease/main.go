@@ -43,7 +43,7 @@ func main() {
 	tag := flag.String("tag", "", "desktop release tag, for example desktop-v1.2.3")
 	version := flag.String("version", "", "desktop version, for example v1.2.3")
 	dist := flag.String("dist", "../dist", "artifact directory")
-	brand := flag.String("brand", "暗涌", "release display name")
+	brand := flag.String("brand", "西谷智灯暗涌系统", "release display name")
 	body := flag.String("body", "", "release body")
 	prerelease := flag.Bool("prerelease", false, "mark release as prerelease")
 	dryRun := flag.Bool("dry-run", false, "validate files and print actions without network calls")

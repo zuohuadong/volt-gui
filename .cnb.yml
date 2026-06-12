@@ -1,4 +1,4 @@
-# CNB 云原生构建配置 — 暗涌 (西谷 AI fork of VoltUI)
+# CNB 云原生构建配置 — 西谷智灯暗涌系统 (西谷 AI fork of VoltUI)
 # 参考: https://docs.cnb.cool/zh/build/configuration.md
 #
 # 本项目只构建桌面版本 (Wails)，CLI 模块不发版。
@@ -23,7 +23,7 @@ main:
     - docker:
         image: golang:1.26
       env:
-        XIGU_BRAND_NAME: "暗涌"
+        XIGU_BRAND_NAME: "西谷智灯暗涌系统"
       stages:
         - name: desktop-build
           script: |
@@ -59,12 +59,12 @@ main:
     - docker:
         image: golang:1.26
       env:
-        GIT_AUTHOR_NAME: "暗涌 Bot"
+        GIT_AUTHOR_NAME: "西谷智灯暗涌系统 Bot"
         GIT_AUTHOR_EMAIL: "bot@xigu.ai"
-        GIT_COMMITTER_NAME: "暗涌 Bot"
+        GIT_COMMITTER_NAME: "西谷智灯暗涌系统 Bot"
         GIT_COMMITTER_EMAIL: "bot@xigu.ai"
-        XIGU_BRAND_NAME: "暗涌"
-        VOLTUI_BRAND_NAME: "anyong"
+        XIGU_BRAND_NAME: "西谷智灯暗涌系统"
+        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
       stages:
         - name: resolve-release
           script: |
@@ -187,7 +187,7 @@ main:
             fi
             . ./.release_env
 
-            BRAND="${XIGU_BRAND_NAME:-暗涌}"
+            BRAND="${XIGU_BRAND_NAME:-西谷智灯暗涌系统}"
 
             if [ -n "$LATEST_TAG" ]; then
               CHANGELOG=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
@@ -247,9 +247,9 @@ main:
       docker:
         image: golang:1.26
       env:
-        GIT_AUTHOR_NAME: "暗涌 Bot"
+        GIT_AUTHOR_NAME: "西谷智灯暗涌系统 Bot"
         GIT_AUTHOR_EMAIL: "bot@xigu.ai"
-        GIT_COMMITTER_NAME: "暗涌 Bot"
+        GIT_COMMITTER_NAME: "西谷智灯暗涌系统 Bot"
         GIT_COMMITTER_EMAIL: "bot@xigu.ai"
       stages:
         - name: configure-git

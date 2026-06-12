@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="暗涌 Anyong" width="640"/>
+  <img src="docs/logo.svg" alt="西谷智灯暗涌系统 Anyong" width="640"/>
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 <br/>
 
-> **暗涌 (Anyong)** — [西谷AI](https://cnb.cool/aizhuliren) 出品的本土化 AI 编码 Agent。
+> **西谷智灯暗涌系统 (Anyong)** — [西谷AI](https://cnb.cool/aizhuliren) 出品的本土化 AI 编码 Agent。
 > 离线优先、多模型、内网就绪 —— 打包一次，全员上手。
 
 <br/>
@@ -30,11 +30,11 @@
 
 <br/>
 
-## 暗涌解决什么问题？
+## 西谷智灯暗涌系统解决什么问题？
 
 企业已经在内网部署了通义千问、DeepSeek、智谱 GLM 或私有模型 —— 但开发者仍然没有 AI 编程助手，因为所有公开 Agent 都**必须联网**。
 
-| 痛点 | 暗涌的方案 |
+| 痛点 | 西谷智灯暗涌系统的方案 |
 |------|------------|
 | 公网 Agent 必须联网 | **离线优先** —— 运行时零网络调用、零遥测 |
 | 只支持单一模型 | **任意 OpenAI 兼容 API** —— 一行配置切换模型 |
@@ -168,22 +168,22 @@ mode  = "ask"   # 内网可信团队可设为 "allow"
 
 然后将 `voltui.exe` + `voltui.toml` + `.env` 打成 ZIP 下发。
 
-### 暗涌品牌定制
+### 西谷智灯暗涌系统品牌定制
 
-暗涌使用 VoltUI 内置的 BrandConfig 机制定制品牌，**无需重新编译**：
+西谷智灯暗涌系统使用 VoltUI 内置的 BrandConfig 机制定制品牌，**无需重新编译**：
 
 ```toml
 # voltui.toml
 [brand]
-name        = "暗涌"                             # 窗口标题、托盘、引导页
-short_name  = "暗涌"                              # 紧凑形式（菜单栏）
+name        = "西谷智灯暗涌系统"                             # 窗口标题、托盘、引导页
+short_name  = "西谷智灯暗涌系统"                              # 紧凑形式（菜单栏）
 ```
 
 也可以用环境变量（适合打包部署 / 容器场景）：
 
 ```bash
-VOLTUI_BRAND_NAME="暗涌"
-VOLTUI_BRAND_SHORT_NAME="暗涌"
+VOLTUI_BRAND_NAME="西谷智灯暗涌系统"
+VOLTUI_BRAND_SHORT_NAME="西谷智灯暗涌系统"
 ```
 
 环境变量优先于配置文件。Logo/icon 如未配置，则使用内置 VoltUI 资源。
@@ -230,7 +230,7 @@ export VOLTUI_BROWSER_PATH="/Applications/Google Chrome.app/Contents/MacOS/Googl
 
 ## 插件（MCP）
 
-暗涌是 MCP 客户端。通过 `[[plugins]]` 接入内网工具服务：
+西谷智灯暗涌系统是 MCP 客户端。通过 `[[plugins]]` 接入内网工具服务：
 
 ```toml
 [[plugins]]                       # 本地 stdio 服务器（如内部知识库）
@@ -245,7 +245,7 @@ url     = "http://search.internal.company.com/mcp"
 headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 ```
 
-在项目根目录放一个 `.mcp.json`，暗涌会原样读取。
+在项目根目录放一个 `.mcp.json`，西谷智灯暗涌系统会原样读取。
 
 ## 架构
 
@@ -260,11 +260,11 @@ headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 - **[检查点与回退](./docs/CHECKPOINTS.md)** — 基于快照的编辑安全网（Esc-Esc / `/rewind`）。
 - **[规格](./docs/SPEC.md)** — 工程契约：架构、注册表、数据类型与路线图。
 - **[从 0.x 迁移](./docs/MIGRATING.md)** — 从旧版 TypeScript 发布版迁移到 1.0 Go 重写版。
-- **[暗涌产品策略](./暗涌.md)** — fork 定位、品牌原则、发布管道。
+- **[西谷智灯暗涌系统产品策略](./暗涌.md)** — fork 定位、品牌原则、发布管道。
 
 ## Fork 信息
 
-暗涌是 [西谷AI](https://cnb.cool/aizhuliren) 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下原则：
+西谷智灯暗涌系统是 [西谷AI](https://cnb.cool/aizhuliren) 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下原则：
 
 - **源码与上游保持一致** — 同步只需 `git merge`，零冲突
 - **品牌通过 BrandConfig 定制** — 不硬编码替换源码
@@ -273,7 +273,7 @@ headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 
 ## 致谢
 
-暗涌基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的衍生作品，原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE) 和 [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES)。
+西谷智灯暗涌系统基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的衍生作品，原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE) 和 [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES)。
 
 <br/>
 

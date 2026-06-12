@@ -19,7 +19,7 @@
       "id": "anyong-brand-config",
       "frontmatterName": "anyong-brand-config",
       "path": "references/skills/anyong-brand-config/SKILL.md",
-      "description": "Use when configuring, verifying, or debugging the 暗涌 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers BrandConfig env vars, voltui.toml [brand] section, desktop-build.sh VOLTUI_BRAND_NAME, and GitHub Actions/CNB release naming."
+      "description": "Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers BrandConfig env vars, voltui.toml [brand] section, desktop-build.sh VOLTUI_BRAND_NAME, and GitHub Actions/CNB release naming."
     },
     {
       "id": "bun-cli-cross-platform",
@@ -43,7 +43,7 @@
       "id": "cnb-ci-cd",
       "frontmatterName": "cnb-ci-cd",
       "path": "references/skills/cnb-ci-cd/SKILL.md",
-      "description": "Use when configuring, debugging, or modifying CNB (Cloud Native Build) CI/CD pipelines for VoltUI/暗涌. Covers .cnb.yml structure, auto-release conventional commit workflow, merge-request CI checks, cross-repo PR creation, and CNB Release API."
+      "description": "Use when configuring, debugging, or modifying CNB (Cloud Native Build) CI/CD pipelines for VoltUI/西谷智灯暗涌系统. Covers .cnb.yml structure, auto-release conventional commit workflow, merge-request CI checks, cross-repo PR creation, and CNB Release API."
     },
     {
       "id": "database-profile-selector",
@@ -205,7 +205,7 @@
       "id": "xigu-ai-ops",
       "frontmatterName": "xigu-ai-ops",
       "path": "references/skills/xigu-ai-ops/SKILL.md",
-      "description": "Use when tasks involve 西谷AI (Xigu AI) internal operations, 暗涌 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers upstream sync strategy, release workflow, internal tooling, and product-market-fit decisions for the 暗涌 coding agent."
+      "description": "Use when tasks involve 西谷AI (Xigu AI) internal operations, 西谷智灯暗涌系统 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers upstream sync strategy, release workflow, internal tooling, and product-market-fit decisions for the 西谷智灯暗涌系统 coding agent."
     }
   ]
 }

@@ -1,17 +1,17 @@
 ---
 name: anyong-brand-config
-description: Use when configuring, verifying, or debugging the 暗涌 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers BrandConfig env vars, voltui.toml [brand] section, desktop-build.sh VOLTUI_BRAND_NAME, and GitHub Actions/CNB release naming.
+description: Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers BrandConfig env vars, voltui.toml [brand] section, desktop-build.sh VOLTUI_BRAND_NAME, and GitHub Actions/CNB release naming.
 ---
 
-# 暗涌 Brand Configuration
+# 西谷智灯暗涌系统 Brand Configuration
 
-This skill ensures agents use the **configuration-driven** branding system instead of hardcoding brand names in source code. The upstream VoltUI project provides a complete BrandConfig mechanism — 暗涌 is a downstream fork that uses it rather than modifying source files.
+This skill ensures agents use the **configuration-driven** branding system instead of hardcoding brand names in source code. The upstream VoltUI project provides a complete BrandConfig mechanism — 西谷智灯暗涌系统 is a downstream fork that uses it rather than modifying source files.
 
 ## Core Rule: Never Hardcode Brand Names in Source Code
 
-**Forbidden**: Replacing `VoltUI` with `暗涌` in `.go`, `.ts`, `.tsx`, `.json`, `.html`, `.css`, `.md` (except CI config files).
+**Forbidden**: Replacing `VoltUI` with `西谷智灯暗涌系统` in `.go`, `.ts`, `.tsx`, `.json`, `.html`, `.css`, `.md` (except CI config files).
 
-**Required**: Use the BrandConfig system to apply 暗涌 branding without touching source code.
+**Required**: Use the BrandConfig system to apply 西谷智灯暗涌系统 branding without touching source code.
 
 ## BrandConfig Mechanism (3 Layers)
 
@@ -27,17 +27,17 @@ Priority order: env var > config file > compiled default.
 | `VOLTUI_BRAND_WORDMARK` | `brand.wordmark_path` | (built-in SVG) |
 | `VOLTUI_BRAND_ICON` | `brand.icon_path` | (built-in PNG/ICO) |
 
-For 暗涌, set in runtime:
+For 西谷智灯暗涌系统, set in runtime:
 ```bash
-export VOLTUI_BRAND_NAME="暗涌"
+export VOLTUI_BRAND_NAME="西谷智灯暗涌系统"
 ```
 
 ### Layer 2: voltui.toml `[brand]` Section
 
 ```toml
 [brand]
-name = "暗涌"
-short_name = "暗涌"
+name = "西谷智灯暗涌系统"
+short_name = "西谷智灯暗涌系统"
 # logo_path and wordmark_path can point to custom SVG/PNG files
 # icon_path can point to custom ICO/PNG for tray/taskbar
 ```
@@ -62,13 +62,13 @@ if brandName != "VoltUI" {
 `scripts/desktop-build.sh` uses `VOLTUI_BRAND_NAME` for artifact naming:
 ```bash
 BRAND="${VOLTUI_BRAND_NAME:-VoltUI}"
-# Output: 暗涌-darwin-universal.zip, 暗涌-windows-amd64-installer.exe, etc.
+# Output: 西谷智灯暗涌系统-darwin-universal.zip, 西谷智灯暗涌系统-windows-amd64-installer.exe, etc.
 ```
 
 For CNB CI (`\.cnb.yml`), set `XIGU_BRAND_NAME` env var:
 ```yaml
 env:
-  XIGU_BRAND_NAME: "暗涌"
+  XIGU_BRAND_NAME: "西谷智灯暗涌系统"
 ```
 
 ## Frontend Branding
@@ -83,16 +83,16 @@ env:
 When checking if branding is correctly configured:
 
 1. ✅ Source code still says `"VoltUI"` as default — correct
-2. ✅ `.cnb.yml` sets `XIGU_BRAND_NAME: "暗涌"` — correct
+2. ✅ `.cnb.yml` sets `XIGU_BRAND_NAME: "西谷智灯暗涌系统"` — correct
 3. ✅ `desktop-build.sh` uses `VOLTUI_BRAND_NAME` env var — correct
-4. ✅ No `暗涌` appears in `.go`, `.ts`, `.tsx` source files — correct
+4. ✅ No `西谷智灯暗涌系统` appears in `.go`, `.ts`, `.tsx` source files — correct
 5. ✅ `BrandConfig.Name` default in `config.go` is `"VoltUI"` — correct
 
 ## Anti-patterns
 
 | Anti-pattern | Why it's wrong | Correct approach |
 |---|---|---|
-| `sed -i 's/VoltUI/暗涌/g' *.go` | Breaks upstream sync, makes 65+ file diffs | Set `VOLTUI_BRAND_NAME=暗涌` |
+| `sed -i 's/VoltUI/西谷智灯暗涌系统/g' *.go` | Breaks upstream sync, makes 65+ file diffs | Set `VOLTUI_BRAND_NAME=西谷智灯暗涌系统` |
 | Changing `BrandConfig{Name: "VoltUI"}` default | Breaks the whole BrandConfig fallback chain | Use env vars or voltui.toml |
 | Editing `brand.tsx` defaultBrand.name | Breaks runtime brand resolution | Go kernel serves brand info at runtime |
 

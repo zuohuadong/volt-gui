@@ -4,11 +4,11 @@ All notable changes to the Go line (VoltUI 1.0+) are recorded here. The legacy
 `0.x` TypeScript history lives on the [`v1`](https://github.com/esengine/DeepSeek-Reasonix/tree/v1)
 branch.
 
-## 暗涌 Fork 版本记录
+## 西谷智灯暗涌系统 Fork 版本记录
 
 ### [1.0.0-anyong] — 2026-06-12
 
-西谷AI 暗涌系统 fork 初始化，基于 VoltUI 1.0.0 (commit 4e5b14b8)。
+西谷AI 西谷智灯暗涌系统 fork 初始化，基于 VoltUI 1.0.0 (commit 4e5b14b8)。
 
 #### Fork 专属改动
 
@@ -16,7 +16,7 @@ branch.
   和 merge-request CI 门禁
 - **`scripts/sync-upstream.sh`**: 上游改为 CNB volt-gui，不再需要品牌替换逻辑
 - **品牌策略**: 从硬编码品牌替换 (65 文件) 改为 BrandConfig 配置化方案
-  (`VOLTUI_BRAND_NAME=暗涌` 环境变量 / `[brand]` 配置段)
+  (`VOLTUI_BRAND_NAME=西谷智灯暗涌系统` 环境变量 / `[brand]` 配置段)
 - **行业 skill**: 新增 `anyong-brand-config`、`cnb-ci-cd`、`xigu-ai-ops` 三个 fork 专属 skill
 - **产品文档**: 新增 `暗涌.md` 产品策略文档
 - **向上游 PR**: 已提交 [PR #1](https://cnb.cool/aizhuliren/volt-gui/-/pulls/1) 

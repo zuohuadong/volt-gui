@@ -3,16 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,21 +19,20 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/billing"
-	"reasonix/internal/boot"
-	"reasonix/internal/builtinmcp"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/fileref"
-	fileenc "reasonix/internal/fileutil/encoding"
-	"reasonix/internal/i18n"
-	"reasonix/internal/mcpdiag"
-	"reasonix/internal/memory"
-	"reasonix/internal/plugin"
-	"reasonix/internal/provider"
-	"reasonix/internal/skill"
+	"voltui/internal/agent"
+	"voltui/internal/billing"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/fileref"
+	fileenc "voltui/internal/fileutil/encoding"
+	"voltui/internal/i18n"
+	"voltui/internal/mcpdiag"
+	"voltui/internal/memory"
+	"voltui/internal/plugin"
+	"voltui/internal/provider"
+	"voltui/internal/skill"
 )
 
 // eventChannel is the Wails runtime event name the frontend subscribes to for the
@@ -52,7 +44,7 @@ const eventChannel = "agent:event"
 // singleInstanceID is used by Wails to route a second desktop launch back to the
 // running instance. Keep it stable across releases so launcher/Dock/taskbar
 // reopen behavior remains predictable on every platform.
-const singleInstanceID = "com.reasonix.desktop"
+const singleInstanceID = "com.voltui.desktop"
 
 // App is the Wails-bound application object: the desktop frontend's command
 // surface. Its exported methods (Submit/Cancel/Approve/…) are generated into JS
@@ -71,184 +63,15 @@ type App struct {
 	activeTabID string
 	readyHook   func()
 
-	forceQuit           atomic.Bool
-	backgroundMaximised atomic.Bool
-	trayReady           bool
-	tray                *desktopTray
-
-	mediaTokens *mediaTokenStore
-	botInstalls map[string]*botInstallSession
-
-	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
-}
-
-// mediaTokenEntry holds metadata for a workspace media file served via temporary URL.
-type mediaTokenEntry struct {
-	absPath   string
-	filename  string
-	mime      string
-	kind      string
-	size      int64
-	modTime   time.Time
-	createdAt time.Time
-	expiresAt time.Time
-}
-
-// mediaTokenStore manages temporary tokens that grant access to workspace files
-// through the AssetServer middleware. Tokens expire after a fixed TTL and are
-// capped at a maximum count; creating a new token evicts the oldest entry when
-// the store is full.
-type mediaTokenStore struct {
-	mu    sync.Mutex
-	byTok map[string]*mediaTokenEntry
-	order []string // oldest first
-	maxN  int
-	ttl   time.Duration
-}
-
-const mediaTokenMax = 256
-
-func newMediaTokenStore() *mediaTokenStore {
-	return &mediaTokenStore{
-		byTok: map[string]*mediaTokenEntry{},
-		maxN:  mediaTokenMax,
-		ttl:   10 * time.Minute,
-	}
-}
-
-func (s *mediaTokenStore) cleanupLocked() {
-	now := time.Now()
-	for len(s.order) > 0 {
-		tok := s.order[0]
-		e := s.byTok[tok]
-		if e == nil {
-			s.order = s.order[1:]
-			continue
-		}
-		if !now.Before(e.expiresAt) {
-			delete(s.byTok, tok)
-			s.order = s.order[1:]
-			continue
-		}
-		break
-	}
-	for len(s.order) > s.maxN {
-		oldest := s.order[0]
-		delete(s.byTok, oldest)
-		s.order = s.order[1:]
-	}
-}
-
-func (s *mediaTokenStore) create(absPath, filename, mime, kind string, size int64, modTime time.Time) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.cleanupLocked()
-
-	tok := make([]byte, 16)
-	if _, err := rand.Read(tok); err != nil {
-		panic("crypto/rand.Read failed: " + err.Error())
-	}
-	token := hex.EncodeToString(tok)
-
-	now := time.Now()
-	s.byTok[token] = &mediaTokenEntry{
-		absPath:   absPath,
-		filename:  filename,
-		mime:      mime,
-		kind:      kind,
-		size:      size,
-		modTime:   modTime,
-		createdAt: now,
-		expiresAt: now.Add(s.ttl),
-	}
-	s.order = append(s.order, token)
-
-	// Trim oldest if the new token pushed us over the limit.
-	for len(s.order) > s.maxN {
-		oldest := s.order[0]
-		delete(s.byTok, oldest)
-		s.order = s.order[1:]
-	}
-
-	return token
-}
-
-func (s *mediaTokenStore) get(token string) *mediaTokenEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e := s.byTok[token]
-	if e == nil {
-		return nil
-	}
-	if time.Now().After(e.expiresAt) {
-		delete(s.byTok, token)
-		return nil
-	}
-	return e
-}
-
-func (a *App) ensureMediaTokenStore() *mediaTokenStore {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.mediaTokens == nil {
-		a.mediaTokens = newMediaTokenStore()
-	}
-	return a.mediaTokens
-}
-
-// workspaceMediaMiddleware returns an HTTP middleware that intercepts
-// /__reasonix_workspace_media/{token}/{filename} requests and serves the
-// corresponding workspace file. All other paths pass through to the Wails
-// default asset handler unchanged.
-func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			prefix := "/__reasonix_workspace_media/"
-			if !strings.HasPrefix(r.URL.Path, prefix) {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			rest := strings.TrimPrefix(r.URL.Path, prefix)
-			parts := strings.SplitN(rest, "/", 2)
-			if len(parts) == 0 || parts[0] == "" {
-				http.NotFound(w, r)
-				return
-			}
-			token := parts[0]
-
-			entry := a.ensureMediaTokenStore().get(token)
-			if entry == nil {
-				http.NotFound(w, r)
-				return
-			}
-
-			f, err := os.Open(entry.absPath)
-			if err != nil {
-				http.NotFound(w, r)
-				return
-			}
-			defer f.Close()
-
-			w.Header().Set("Content-Type", entry.mime)
-			w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": entry.filename}))
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("Cache-Control", "private, max-age=600")
-			http.ServeContent(w, r, entry.filename, entry.modTime, f)
-		})
-	}
+	forceQuit atomic.Bool
+	trayReady bool
+	tray      *desktopTray
 }
 
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
-	return &App{tabs: map[string]*WorkspaceTab{}, mediaTokens: newMediaTokenStore(), botInstalls: map[string]*botInstallSession{}}
+	return &App{tabs: map[string]*WorkspaceTab{}}
 }
 
 func (a *App) bootContext() context.Context {
@@ -264,6 +87,94 @@ func (a *App) Platform() string {
 	return goruntime.GOOS
 }
 
+// BrandInfo carries the white-label identity the frontend should display. The
+// default is the compiled-in VoltUI branding; enterprises override it via the
+// [brand] config section or VOLTUI_BRAND_* environment variables.
+type BrandInfo struct {
+	// Name is the full product name (window title, tray, onboarding).
+	Name string `json:"name"`
+	// ShortName is used where space is tight (e.g. macOS menu bar).
+	ShortName string `json:"shortName"`
+	// LogoURL is the data: URL or runtime-served URL for the custom logo image,
+	// or "" to use the built-in SVG asset.
+	LogoURL string `json:"logoUrl,omitempty"`
+	// WordmarkURL is the data: URL or runtime-served URL for the custom wordmark
+	// image, or "" to use the built-in SVG asset.
+	WordmarkURL string `json:"wordmarkUrl,omitempty"`
+	// IconURL is the data: URL for the custom icon (tray/taskbar/sidebar),
+	// or "" to use the built-in icon assets.
+	IconURL string `json:"iconUrl,omitempty"`
+}
+
+// Brand returns the resolved white-label branding. The frontend calls this on
+// mount to decide which name/logo/wordmark to render.
+func (a *App) Brand() BrandInfo {
+	cfg, err := config.Load()
+	if err != nil {
+		return BrandInfo{Name: "VoltUI", ShortName: "VoltUI"}
+	}
+	name := cfg.BrandName()
+	shortName := cfg.BrandShortName()
+	info := BrandInfo{
+		Name:      name,
+		ShortName: shortName,
+	}
+	if p := cfg.BrandLogoPath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			info.LogoURL = dataURLFromBytes(b, p)
+		}
+	}
+	if p := cfg.BrandWordmarkPath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			info.WordmarkURL = dataURLFromBytes(b, p)
+		}
+	}
+	if p := cfg.BrandIconPath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			info.IconURL = dataURLFromBytes(b, p)
+		}
+	}
+	return info
+}
+
+// brandIconBytes returns custom tray/taskbar icon bytes from brand.icon_path,
+// or nil if no custom icon is configured (caller falls back to compiled-in
+// trayIconBytes). On Windows the file must be .ico; macOS/Linux .png.
+func (a *App) brandIconBytes() []byte {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	if p := cfg.BrandIconPath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			return b
+		}
+	}
+	return nil
+}
+
+// dataURLFromBytes converts a file's bytes into a data: URL with a MIME type
+// guessed from the file extension. This lets the webview render custom logos
+// without an HTTP round-trip or a separate asset server.
+func dataURLFromBytes(b []byte, path string) string {
+	mime := "image/png"
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".svg":
+		mime = "image/svg+xml"
+	case ".jpg", ".jpeg":
+		mime = "image/jpeg"
+	case ".gif":
+		mime = "image/gif"
+	case ".webp":
+		mime = "image/webp"
+	case ".ico":
+		mime = "image/x-icon"
+	case ".bmp":
+		mime = "image/bmp"
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(b))
+}
+
 // startup runs once the webview process is up, before the frontend can issue any
 // bound call. It captures the Wails context (needed for EventsEmit), then kicks
 // off the initialization in a background goroutine so the webview loads immediately.
@@ -272,13 +183,7 @@ func (a *App) startup(ctx context.Context) {
 	installSystemQuitHook()
 	a.startTray()
 
-	if cfg, err := config.Load(); err == nil && cfg.DesktopMetrics() && version != "dev" {
-		a.metrics.Store(newMetricsAggregator(filepath.Dir(config.UserConfigPath())))
-	}
-
 	go a.restoreOrBuildTabs()
-	go a.sendStartupPing()
-	go a.flushMetrics()
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
@@ -290,10 +195,12 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		cfg = config.LoadForEdit(config.UserConfigPath())
 	}
 	if cfg.DesktopCloseBehavior() == "background" {
-		a.backgroundMaximised.Store(runtime.WindowIsMaximised(ctx))
 		a.saveWindowStateSync()
 		a.snapshotAllTabs()
-		hideForBackground(ctx)
+		// Hide the application, not just the window, so macOS can restore it
+		// from the Dock/menu using the normal app activation path. On tray-capable
+		// platforms, the tray menu provides an additional Open/Quit entry point.
+		runtime.Hide(ctx)
 		return true
 	}
 	return false
@@ -301,7 +208,8 @@ func (a *App) beforeClose(ctx context.Context) bool {
 
 func (a *App) showMainWindow() {
 	if a.ctx != nil {
-		showFromBackground(a.ctx, a.backgroundMaximised.Swap(false))
+		runtime.Show(a.ctx)
+		runtime.WindowShow(a.ctx)
 	}
 }
 
@@ -317,48 +225,6 @@ func (a *App) quitApp() {
 	runtime.Quit(a.ctx)
 }
 
-func hideForBackground(ctx context.Context) {
-	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
-		runtime.Hide(ctx)
-		return
-	}
-	runtime.WindowHide(ctx)
-}
-
-func showFromBackground(ctx context.Context, wasMaximised bool) {
-	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
-		runtime.Show(ctx)
-	}
-	plan := backgroundRestorePlanFor(goruntime.GOOS, wasMaximised)
-	if plan.maximiseBeforeShow {
-		runtime.WindowMaximise(ctx)
-	}
-	runtime.WindowShow(ctx)
-	if plan.unminimiseAfterShow {
-		runtime.WindowUnminimise(ctx)
-	}
-}
-
-func backgroundCloseUsesApplicationHide(goos string) bool {
-	return goos == "darwin"
-}
-
-type backgroundRestorePlan struct {
-	maximiseBeforeShow  bool
-	unminimiseAfterShow bool
-}
-
-func backgroundRestorePlanFor(goos string, wasMaximised bool) backgroundRestorePlan {
-	if backgroundRestoreShouldMaximise(goos, wasMaximised) {
-		return backgroundRestorePlan{maximiseBeforeShow: true}
-	}
-	return backgroundRestorePlan{unminimiseAfterShow: true}
-}
-
-func backgroundRestoreShouldMaximise(goos string, wasMaximised bool) bool {
-	return wasMaximised && !backgroundCloseUsesApplicationHide(goos)
-}
-
 // restoreOrBuildTabs restores the tabs from the last session, or creates a
 // default Global tab on first launch.
 func (a *App) restoreOrBuildTabs() {
@@ -366,19 +232,12 @@ func (a *App) restoreOrBuildTabs() {
 	ensureWorkspace()
 
 	// Load i18n from the first available config.
-	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),
-	// so the user's language choice in desktop settings takes effect.
 	if cfg, err := config.Load(); err == nil {
-		lang := cfg.DesktopLanguage()
-		if lang == "" {
-			lang = cfg.Language
-		}
-		i18n.DetectLanguage(lang)
+		i18n.DetectLanguage(cfg.Language)
 	}
 
 	f := loadTabsFile()
 	if len(f.Tabs) > 0 {
-		toBuild := make([]*WorkspaceTab, 0, len(f.Tabs))
 		for _, entry := range f.Tabs {
 			a.mu.Lock()
 			id := a.restoredTabIDLocked(entry.ID)
@@ -393,18 +252,12 @@ func (a *App) restoreOrBuildTabs() {
 			tab.model = entry.Model
 			tab.effort = cloneStringPtr(entry.Effort)
 			tab.mode = persistedTabMode(entry.Mode)
-			tab.goal = strings.TrimSpace(entry.Goal)
-			tab.toolApprovalMode = normalizeToolApprovalMode(entry.ToolApprovalMode)
-			if tab.toolApprovalMode == control.ToolApprovalAsk && tabModeHasAutoApproveTools(entry.Mode) {
-				tab.toolApprovalMode = control.ToolApprovalYolo
-			}
-			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.mu.Lock()
 			a.tabs[tab.ID] = tab
 			a.tabOrder = append(a.tabOrder, tab.ID)
 			a.mu.Unlock()
-			toBuild = append(toBuild, tab)
+			go a.buildTabController(tab)
 		}
 		a.mu.Lock()
 		if _, ok := a.tabs[f.ActiveTab]; ok {
@@ -416,9 +269,6 @@ func (a *App) restoreOrBuildTabs() {
 			}
 		}
 		a.mu.Unlock()
-		for _, tab := range toBuild {
-			a.startTabControllerBuild(tab)
-		}
 		return
 	}
 
@@ -431,7 +281,7 @@ func (a *App) restoreOrBuildTabs() {
 	a.tabOrder = append(a.tabOrder, tab.ID)
 	a.activeTabID = tab.ID
 	a.mu.Unlock()
-	a.startTabControllerBuild(tab)
+	go a.buildTabController(tab)
 }
 
 func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab {
@@ -440,14 +290,13 @@ func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab
 
 func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *WorkspaceTab {
 	return &WorkspaceTab{
-		ID:               id,
-		Scope:            scope,
-		WorkspaceRoot:    workspaceRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
-		mode:             "normal",
-		toolApprovalMode: control.ToolApprovalAsk,
-		disabledMCP:      map[string]ServerView{},
+		ID:            id,
+		Scope:         scope,
+		WorkspaceRoot: workspaceRoot,
+		TopicID:       topicID,
+		TopicTitle:    topicTitleForTab(scope, workspaceRoot, topicID),
+		mode:          "normal",
+		disabledMCP:   map[string]ServerView{},
 	}
 }
 
@@ -549,18 +398,14 @@ func (a *App) SubmitToTab(tabID, input string) {
 		return
 	}
 	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
-		ctrl.SubmitDisplay(input, input)
+		ctrl.Submit(input)
 	}
 }
 
 // RunShell executes a shell command directly (bypassing the model) and streams
 // output as events on eventChannel.
 func (a *App) RunShell(command string) {
-	a.RunShellForTab("", command)
-}
-
-func (a *App) RunShellForTab(tabID, command string) {
-	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+	if ctrl := a.activeCtrl(); ctrl != nil {
 		ctrl.RunShell(command)
 	}
 }
@@ -576,20 +421,8 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) {
 	if ctrl == nil {
 		return
 	}
-	ctrl.SubmitDisplay(display, input)
-}
-
-func (a *App) bindControllerDisplayRecorder(ctrl *control.Controller) {
-	if ctrl == nil {
-		return
-	}
-	ctrl.SetDisplayRecorder(func(content, display string) {
-		dir := ctrl.SessionDir()
-		if dir == "" {
-			dir = config.SessionDir()
-		}
-		_ = recordSessionDisplay(dir, ctrl.SessionPath(), content, display)
-	})
+	_ = recordSessionDisplay(config.SessionDir(), ctrl.SessionPath(), input, display)
+	ctrl.Submit(input)
 }
 
 // Cancel aborts the in-flight turn.
@@ -603,28 +436,12 @@ func (a *App) CancelTab(tabID string) {
 	}
 }
 
-// Steer sends mid-turn guidance to the agent without interrupting the in-flight request.
-func (a *App) Steer(text string) {
-	a.SteerForTab("", text)
-}
-
-// SteerForTab sends mid-turn guidance to a specific tab's agent.
-func (a *App) SteerForTab(tabID, text string) {
-	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
-		ctrl.Steer(text)
-	}
-}
-
 // Approve answers a pending approval_request by ID: allow runs the call, session
 // also remembers the grant for the rest of the session.
 func (a *App) Approve(id string, allow, session, persist bool) {
-	ctrl := a.ctrlByTabID("")
-	if ctrl != nil {
-		ctrl.Approve(id, allow, session, persist)
-	}
+	a.ApproveTab("", id, allow, session, persist)
 }
 
-// ApproveTab is like Approve but scoped to a specific tab.
 func (a *App) ApproveTab(tabID, id string, allow, session, persist bool) {
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl != nil {
@@ -632,40 +449,18 @@ func (a *App) ApproveTab(tabID, id string, allow, session, persist bool) {
 	}
 }
 
-// ReplayPendingPrompts asks every tab's controller to re-emit any approval/ask
-// prompt that is currently blocking its run loop. The frontend calls this once
-// its event subscription is live (on load/reconnect) so a session that was
-// already awaiting confirmation rebuilds its modal instead of showing a
-// "waiting" status with no way to answer — and no way to stop.
-func (a *App) ReplayPendingPrompts() {
-	a.mu.RLock()
-	tabs := make([]*WorkspaceTab, 0, len(a.tabs))
-	for _, t := range a.tabs {
-		tabs = append(tabs, t)
-	}
-	a.mu.RUnlock()
-	for _, t := range tabs {
-		if t.Ctrl != nil {
-			t.Ctrl.ReplayPendingPrompts()
-		}
-	}
-}
-
-// SetPlanMode toggles the read-only plan axis while preserving the current
-// tool-auto-approval axis.
+// SetPlanMode toggles read-only plan mode.
 func (a *App) SetPlanMode(on bool) {
-	a.setPlanModeForTab("", on)
+	if on {
+		a.SetModeForTab("", "plan")
+		return
+	}
+	a.SetModeForTab("", "normal")
 }
 
-func (a *App) setPlanModeForTab(tabID string, on bool) {
-	current := a.currentModeForTab(tabID)
-	a.SetModeForTab(tabID, tabModeFromAxes(on, tabModeHasAutoApproveTools(current)))
-}
-
-// SetMode applies a composer gating mode ("plan" | "yolo" | "plan-yolo" |
-// anything else =
+// SetMode applies a composer gating mode ("plan" | "yolo" | anything else =
 // normal) in one call, so a turn submitted right after the switch can't race a
-// half-applied plan/tool-auto-approval pair.
+// half-applied SetPlanMode/SetBypass pair.
 func (a *App) SetMode(mode string) {
 	a.SetModeForTab("", mode)
 }
@@ -679,18 +474,10 @@ func (a *App) SetModeForTab(tabID, mode string) {
 		return
 	}
 	tab.mode = normalized
-	tab.toolApprovalMode = normalizeToolApprovalMode(tab.toolApprovalMode)
-	if tabModeHasAutoApproveTools(normalized) {
-		tab.toolApprovalMode = control.ToolApprovalYolo
-	} else if tab.toolApprovalMode == control.ToolApprovalYolo {
-		tab.toolApprovalMode = control.ToolApprovalAsk
-	}
 	ctrl := tab.Ctrl
-	approvalMode := tab.toolApprovalMode
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
 	applyTabModeToController(ctrl, normalized)
-	applyTabToolApprovalModeToController(ctrl, approvalMode)
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
 		a.saveTabsLocked()
@@ -707,79 +494,9 @@ func applyTabModeToController(ctrl *control.Controller, mode string) {
 		ctrl.SetMode(true, false)
 	case "yolo":
 		ctrl.SetMode(false, true)
-	case "plan-yolo":
-		ctrl.SetMode(true, true)
 	default:
 		ctrl.SetMode(false, false)
 	}
-}
-
-func applyTabToolApprovalModeToController(ctrl *control.Controller, mode string) {
-	if ctrl == nil {
-		return
-	}
-	ctrl.SetToolApprovalMode(normalizeToolApprovalMode(mode))
-}
-
-func (a *App) currentModeForTab(tabID string) string {
-	a.mu.RLock()
-	tab := a.tabByIDLocked(tabID)
-	mode := "normal"
-	if tab != nil {
-		mode = currentTabMode(tab)
-	}
-	a.mu.RUnlock()
-	return mode
-}
-
-func normalizeCollaborationMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "plan":
-		return "plan"
-	case "goal":
-		return "goal"
-	default:
-		return "normal"
-	}
-}
-
-func (a *App) SetCollaborationMode(mode string) {
-	a.SetCollaborationModeForTab("", mode)
-}
-
-func (a *App) SetCollaborationModeForTab(tabID, mode string) {
-	mode = normalizeCollaborationMode(mode)
-	a.mu.Lock()
-	tab := a.tabByIDLocked(tabID)
-	if tab == nil {
-		a.mu.Unlock()
-		return
-	}
-	approvalMode := currentTabToolApprovalMode(tab)
-	switch mode {
-	case "plan":
-		tab.mode = tabModeFromAxes(true, approvalMode == control.ToolApprovalYolo)
-		tab.goal = ""
-	case "goal":
-		tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
-	default:
-		tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
-		tab.goal = ""
-	}
-	ctrl := tab.Ctrl
-	goal := tab.goal
-	plan := tabModeHasPlan(tab.mode)
-	tabIDForSave := tab.ID
-	a.mu.Unlock()
-	if ctrl != nil {
-		ctrl.SetPlanMode(plan)
-		ctrl.SetGoal(goal)
-	}
-	a.mu.Lock()
-	if a.tabs[tabIDForSave] == tab {
-		a.saveTabsLocked()
-	}
-	a.mu.Unlock()
 }
 
 // QuestionAnswer is the frontend's reply to one question in an ask_request.
@@ -819,61 +536,15 @@ func (a *App) Compact() error {
 	return ctrl.Compact(a.ctx, "")
 }
 
-// workspaceNotReadyErr names why a session action arrived before the tab's
-// controller existed: still starting, or failed to start. Silently returning
-// nil here swallowed the click with no feedback (#3938).
-func workspaceNotReadyErr(tab *WorkspaceTab) error {
-	if tab != nil && strings.TrimSpace(tab.StartupErr) != "" {
-		return fmt.Errorf("workspace failed to start: %s", tab.StartupErr)
-	}
-	return fmt.Errorf("workspace is still starting")
-}
-
 // NewSession snapshots the current conversation and rotates to a fresh one.
 func (a *App) NewSession() error {
 	a.mu.RLock()
-	tab := a.activeTabLocked()
 	ctrl := a.activeCtrlLocked()
 	a.mu.RUnlock()
 	if ctrl == nil {
-		return workspaceNotReadyErr(tab)
-	}
-	// Tab is already blank — just persist and skip the new-session dance.
-	if !ctrl.Running() && !messagesHaveConversationContent(ctrl.History()) {
-		a.persistTabSessionPath(tab, ctrl.SessionPath())
 		return nil
 	}
-
-	if err := ctrl.NewSession(); err != nil {
-		return err
-	}
-	a.persistTabSessionPath(tab, ctrl.SessionPath())
-	return nil
-}
-
-func messagesHaveConversationContent(messages []provider.Message) bool {
-	for _, msg := range messages {
-		if msg.Role != provider.RoleSystem {
-			return true
-		}
-	}
-	return false
-}
-
-// ClearSession discards the current conversation and rotates to a fresh unsaved one.
-func (a *App) ClearSession() error {
-	a.mu.RLock()
-	tab := a.activeTabLocked()
-	ctrl := a.activeCtrlLocked()
-	a.mu.RUnlock()
-	if ctrl == nil {
-		return workspaceNotReadyErr(tab)
-	}
-	if err := ctrl.ClearSession(); err != nil {
-		return err
-	}
-	a.persistTabSessionPath(tab, ctrl.SessionPath())
-	return nil
+	return ctrl.NewSession()
 }
 
 // CheckpointMeta summarises one rewind point (a user turn) for the desktop.
@@ -912,16 +583,6 @@ func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 			CanCode:         len(m.Paths) > 0,
 			CanConversation: ctrl.CheckpointHasBoundary(m.Turn),
 		})
-	}
-	// RestoreCode(turn) reverts every file touched in this turn or any later one, so
-	// a turn can rewind code even when it changed no files itself — as long as a
-	// later turn did. Propagate CanCode backwards over the oldest-first list.
-	hasCodeAfter := false
-	for i := len(out) - 1; i >= 0; i-- {
-		if len(out[i].Files) > 0 {
-			hasCodeAfter = true
-		}
-		out[i].CanCode = hasCodeAfter
 	}
 	return out
 }
@@ -962,7 +623,6 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	model := sourceTab.model
 	effort := cloneStringPtr(sourceTab.effort)
 	mode := currentTabMode(sourceTab)
-	toolApprovalMode := currentTabToolApprovalMode(sourceTab)
 	disabledMCP := cloneServerViewMap(sourceTab.disabledMCP)
 	mcpOrder := append([]string(nil), sourceTab.mcpOrder...)
 	a.mu.RUnlock()
@@ -992,18 +652,16 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	a.mu.Lock()
 	tabID := a.newUniqueTabIDLocked()
 	tab := &WorkspaceTab{
-		ID:               tabID,
-		Scope:            scope,
-		WorkspaceRoot:    workspaceRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitle,
-		SessionPath:      newPath,
-		model:            model,
-		effort:           effort,
-		mode:             mode,
-		toolApprovalMode: toolApprovalMode,
-		disabledMCP:      disabledMCP,
-		mcpOrder:         mcpOrder,
+		ID:            tabID,
+		Scope:         scope,
+		WorkspaceRoot: workspaceRoot,
+		TopicID:       topicID,
+		TopicTitle:    topicTitle,
+		model:         model,
+		effort:        effort,
+		mode:          mode,
+		disabledMCP:   disabledMCP,
+		mcpOrder:      mcpOrder,
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 	a.tabs[tabID] = tab
@@ -1014,7 +672,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	a.mu.Unlock()
 
 	a.emitProjectTreeChanged()
-	a.startTabControllerBuild(tab)
+	go a.buildTabController(tab)
 	return meta, nil
 }
 
@@ -1065,42 +723,11 @@ type WorkspaceMeta struct {
 	Current bool   `json:"current"`
 }
 
-func controllerSessionDir(ctrl *control.Controller) string {
-	if ctrl != nil {
-		if dir := ctrl.SessionDir(); dir != "" {
-			return dir
-		}
-	}
-	return desktopSessionDir("")
-}
-
-func tabSessionDir(tab *WorkspaceTab) string {
-	if tab != nil {
-		if tab.Ctrl != nil {
-			if dir := tab.Ctrl.SessionDir(); dir != "" {
-				return dir
-			}
-		}
-		if tab.WorkspaceRoot != "" {
-			return desktopSessionDir(tab.WorkspaceRoot)
-		}
-	}
-	return desktopSessionDir("")
-}
-
-func (a *App) activeSessionDir() string {
-	a.mu.RLock()
-	tab := a.activeTabLocked()
-	dir := tabSessionDir(tab)
-	a.mu.RUnlock()
-	return dir
-}
-
 // ListSessions returns the saved sessions newest-first for the history panel,
 // marking the one the current conversation is writing to and attaching any
 // user-chosen titles.
 func (a *App) ListSessions() []SessionMeta {
-	dir := a.activeSessionDir()
+	dir := config.SessionDir()
 	infos, err := agent.ListSessions(dir)
 	if err != nil {
 		return []SessionMeta{}
@@ -1119,21 +746,20 @@ func (a *App) ListSessions() []SessionMeta {
 // ListTrashedSessions returns sessions that were moved to the local trash,
 // newest-deleted first. These can be previewed, restored, or permanently purged.
 func (a *App) ListTrashedSessions() []SessionMeta {
-	out := []SessionMeta{}
-	for _, dir := range a.knownSessionDirs() {
-		paths, err := listTrashedSessionFiles(dir)
-		if err != nil {
+	dir := config.SessionDir()
+	paths, err := listTrashedSessionFiles(dir)
+	if err != nil {
+		return []SessionMeta{}
+	}
+	titles := loadSessionTitles(dir)
+	out := make([]SessionMeta, 0, len(paths))
+	for _, path := range paths {
+		infos, err := agent.ListSessions(filepath.Dir(path))
+		if err != nil || len(infos) == 0 {
 			continue
 		}
-		titles := loadSessionTitles(dir)
-		for _, path := range paths {
-			infos, err := agent.ListSessions(filepath.Dir(path))
-			if err != nil || len(infos) == 0 {
-				continue
-			}
-			deletedAt := trashedSessionDeletedAt(path)
-			out = append(out, sessionMetaFromInfo(infos[0], titles[filepath.Base(path)], false, false, deletedAt))
-		}
+		deletedAt := trashedSessionDeletedAt(path)
+		out = append(out, sessionMetaFromInfo(infos[0], titles[filepath.Base(path)], false, false, deletedAt))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].DeletedAt == out[j].DeletedAt {
@@ -1142,25 +768,6 @@ func (a *App) ListTrashedSessions() []SessionMeta {
 		return out[i].DeletedAt > out[j].DeletedAt
 	})
 	return out
-}
-
-func (a *App) trashedSessionDir(path string) (string, error) {
-	for _, dir := range a.knownSessionDirs() {
-		if _, _, _, err := validateTrashedSessionPath(dir, path); err == nil {
-			return dir, nil
-		}
-	}
-	return "", fmt.Errorf("trashed session path outside known session dirs: %s", path)
-}
-
-func (a *App) sessionDirForPath(path string) (string, string, error) {
-	for _, dir := range a.knownSessionDirs() {
-		sessionPath, _, err := validateSessionPath(dir, path)
-		if err == nil {
-			return dir, sessionPath, nil
-		}
-	}
-	return "", "", fmt.Errorf("session path outside known session dirs: %s", path)
 }
 
 func sessionMetaFromInfo(s agent.SessionInfo, title string, current, open bool, deletedAt int64) SessionMeta {
@@ -1185,7 +792,7 @@ func sessionMetaFromInfo(s agent.SessionInfo, title string, current, open bool, 
 // DeleteSession moves a saved session to the local trash. It refuses any open
 // session because tab auto-save would recreate or append to the file later.
 func (a *App) DeleteSession(path string) error {
-	dir := a.activeSessionDir()
+	dir := config.SessionDir()
 	sessionPath, key, err := validateSessionPath(dir, path)
 	if err != nil {
 		return err
@@ -1204,8 +811,8 @@ func (a *App) openSessionPaths(dir string) map[string]struct{} {
 	a.mu.RLock()
 	paths := make([]string, 0, len(a.tabs))
 	for _, tab := range a.tabs {
-		if tab != nil {
-			paths = append(paths, tab.currentSessionPath())
+		if tab != nil && tab.Ctrl != nil {
+			paths = append(paths, tab.Ctrl.SessionPath())
 		}
 	}
 	a.mu.RUnlock()
@@ -1223,8 +830,8 @@ func (a *App) openSessionPaths(dir string) map[string]struct{} {
 func (a *App) activeSessionPath(dir string) string {
 	a.mu.RLock()
 	var path string
-	if tab := a.tabs[a.activeTabID]; tab != nil {
-		path = tab.currentSessionPath()
+	if tab := a.tabs[a.activeTabID]; tab != nil && tab.Ctrl != nil {
+		path = tab.Ctrl.SessionPath()
 	}
 	a.mu.RUnlock()
 	currentPath, _, err := validateSessionPath(dir, path)
@@ -1236,10 +843,7 @@ func (a *App) activeSessionPath(dir string) string {
 
 // RestoreSession moves a trashed session back into the saved-session list.
 func (a *App) RestoreSession(path string) error {
-	dir, err := a.trashedSessionDir(path)
-	if err != nil {
-		return err
-	}
+	dir := config.SessionDir()
 	_, key, _, err := validateTrashedSessionPath(dir, path)
 	if err != nil {
 		return err
@@ -1257,17 +861,13 @@ func (a *App) RestoreSession(path string) error {
 // PurgeTrashedSession permanently removes a trashed session and its title/display
 // sidecars.
 func (a *App) PurgeTrashedSession(path string) error {
-	dir, err := a.trashedSessionDir(path)
-	if err != nil {
-		return err
-	}
-	return purgeTrashedSessionFile(dir, path)
+	return purgeTrashedSessionFile(config.SessionDir(), path)
 }
 
 // RenameSession sets a custom display name for a session (empty clears it back to
 // the preview). It only affects the history panel; the file on disk is unchanged.
 func (a *App) RenameSession(path, title string) error {
-	return setSessionTitle(a.activeSessionDir(), path, title)
+	return setSessionTitle(config.SessionDir(), path, title)
 }
 
 // ResumeSession snapshots the current conversation, then loads the session at
@@ -1283,33 +883,23 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 // matching tab should resume on that exact controller instead of whichever tab is
 // active by the time the async call reaches the backend.
 func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) {
-	tab := a.tabByID(tabID)
-	if tab == nil || tab.Ctrl == nil {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
 	}
-	ctrl := tab.Ctrl
-	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
-	if err != nil {
-		return nil, err
-	}
-	loaded, err := agent.LoadSession(sessionPath)
+	loaded, err := agent.LoadSession(path)
 	if err != nil {
 		return nil, err
 	}
 	_ = ctrl.Snapshot() // persist the current session before switching away
-	ctrl.Resume(loaded, sessionPath)
-	a.rememberTabSessionPath(tab, sessionPath)
+	ctrl.Resume(loaded, path)
 	return a.HistoryForTab(tabID), nil
 }
 
 // PreviewSession reads a saved session for display only. It does not snapshot or
 // swap the active controller, so the history drawer can call it while a turn runs.
 func (a *App) PreviewSession(path string) ([]HistoryMessage, error) {
-	sessionDir, sessionPath, err := a.sessionDirForPath(path)
-	if err != nil {
-		return nil, err
-	}
-	return previewSessionMessages(sessionDir, sessionPath)
+	return previewSessionMessages(config.SessionDir(), path)
 }
 
 // PickWorkspace opens a folder chooser and, on a pick, opens a new project tab
@@ -1326,54 +916,12 @@ func (a *App) PickWorkspace() (string, error) {
 	a.mu.RUnlock()
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:            "Choose working folder",
-		DefaultDirectory: dialogDefaultDirectory(cur),
+		DefaultDirectory: cur,
 	})
 	if err != nil || dir == "" {
 		return "", err
 	}
 	return a.SwitchWorkspace(dir)
-}
-
-func dialogDefaultDirectory(preferred string) string {
-	if dir := nearestExistingDirectory(preferred); dir != "" {
-		return dir
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		if dir := nearestExistingDirectory(cwd); dir != "" {
-			return dir
-		}
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if dir := nearestExistingDirectory(home); dir != "" {
-			return dir
-		}
-	}
-	return ""
-}
-
-func nearestExistingDirectory(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
-	for {
-		info, err := os.Stat(path)
-		if err == nil {
-			if info.IsDir() {
-				return path
-			}
-			path = filepath.Dir(path)
-			continue
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return ""
-		}
-		path = parent
-	}
 }
 
 func (a *App) ListWorkspaces() []WorkspaceMeta {
@@ -1408,17 +956,6 @@ func (a *App) RemoveWorkspace(dir string) error {
 	forgetWorkspace(dir)
 	if err := removeProject(dir); err != nil {
 		return err
-	}
-	// If the removed workspace was the active one, clear the pointer
-	// so we don't leave a stale reference to a deleted project.
-	if loadWorkspace() == dir {
-		if remaining := loadProjectsFile(); len(remaining.Projects) > 0 {
-			// Fall back to the first remaining project
-			saveWorkspace(remaining.Projects[0].Root)
-		} else {
-			// No projects left; clear the active pointer entirely
-			clearWorkspace()
-		}
 	}
 	a.emitProjectTreeChanged()
 	return nil
@@ -1493,24 +1030,9 @@ func (a *App) SwitchWorkspace(dir string) (string, error) {
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
 // after a reload.
 type HistoryMessage struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content"`
-	Reasoning  string            `json:"reasoning,omitempty"`
-	Level      string            `json:"level,omitempty"`
-	ToolCalls  []HistoryToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string            `json:"toolCallId,omitempty"`
-	ToolName   string            `json:"toolName,omitempty"`
-	Pending    bool              `json:"pending,omitempty"`
-	Trigger    string            `json:"trigger,omitempty"`
-	Messages   int               `json:"messages,omitempty"`
-	Summary    string            `json:"summary,omitempty"`
-	Archive    string            `json:"archive,omitempty"`
-}
-
-type HistoryToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // History returns the session's message log.
@@ -1524,7 +1046,7 @@ func (a *App) HistoryForTab(tabID string) []HistoryMessage {
 		return []HistoryMessage{}
 	}
 	msgs := ctrl.History()
-	return historyMessages(msgs, sessionDisplayResolver(controllerSessionDir(ctrl), ctrl.SessionPath()))
+	return historyMessages(msgs, sessionDisplayResolver(config.SessionDir(), ctrl.SessionPath()))
 }
 
 func historyMessages(msgs []provider.Message, resolveUserContent func(string) string) []HistoryMessage {
@@ -1532,198 +1054,30 @@ func historyMessages(msgs []provider.Message, resolveUserContent func(string) st
 	for _, m := range msgs {
 		content := m.Content
 		if m.Role == provider.RoleUser {
-			// Mid-turn steer messages are persisted in the session so they
-			// survive tab switches. They are surfaced as a notice (↪ text)
-			// — matching the live Steer event look — rather than as a
-			// regular user bubble or being filtered as synthetic (#4044).
-			// Check against the raw m.Content: resolveUserContent applies
-			// StripComposePrefixes which trims trailing whitespace.
-			if steerText, isSteer := agent.SteerText(m.Content); isSteer {
-				out = append(out, HistoryMessage{Role: "notice", Content: "↪ " + steerText})
-				continue
-			}
 			content = resolveUserContent(m.Content)
-			if control.IsSyntheticUserMessage(content) {
-				continue
-			}
 		}
 		reasoning := ""
 		if m.Role == provider.RoleAssistant {
 			reasoning = m.ReasoningContent
 		}
-		hm := HistoryMessage{Role: string(m.Role), Content: content, Reasoning: reasoning}
-		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
-			hm.ToolCalls = make([]HistoryToolCall, len(m.ToolCalls))
-			for i, tc := range m.ToolCalls {
-				hm.ToolCalls[i] = HistoryToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
-			}
-		}
-		if m.Role == provider.RoleTool {
-			hm.ToolCallID = m.ToolCallID
-			hm.ToolName = m.Name
-		}
-		out = append(out, hm)
+		out = append(out, HistoryMessage{Role: string(m.Role), Content: content, Reasoning: reasoning})
 	}
 	return out
 }
 
 func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
-	sessionPath, _, err := validateSessionPath(sessionDir, path)
+	loaded, err := agent.LoadSession(path)
 	if err != nil {
 		return nil, err
 	}
-	if out, ok, err := previewEventSessionMessages(sessionPath); ok || err != nil {
-		return out, err
-	}
-	loaded, err := agent.LoadSession(sessionPath)
-	if err != nil {
-		return nil, err
-	}
-	return historyMessages(loaded.Snapshot(), sessionDisplayResolver(sessionDir, sessionPath)), nil
+	return historyMessages(loaded.Snapshot(), sessionDisplayResolver(sessionDir, path)), nil
 }
 
-type previewEventRecord struct {
-	Kind             string             `json:"kind"`
-	Type             string             `json:"type"`
-	Role             string             `json:"role"`
-	Text             string             `json:"text"`
-	Content          string             `json:"content"`
-	Reasoning        string             `json:"reasoning"`
-	ReasoningContent string             `json:"reasoningContent"`
-	Level            string             `json:"level"`
-	ToolCalls        []previewToolCall  `json:"toolCalls"`
-	CallID           string             `json:"callId"`
-	ToolCallID       string             `json:"toolCallId"`
-	ToolName         string             `json:"toolName"`
-	Name             string             `json:"name"`
-	Output           string             `json:"output"`
-	Compaction       *previewCompaction `json:"compaction"`
-	Trigger          string             `json:"trigger"`
-	Messages         int                `json:"messages"`
-	Summary          string             `json:"summary"`
-	Archive          string             `json:"archive"`
-}
-
-type previewToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-	Function  struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-type previewCompaction struct {
-	Trigger  string `json:"trigger"`
-	Messages int    `json:"messages"`
-	Summary  string `json:"summary"`
-	Archive  string `json:"archive"`
-}
-
-func previewEventSessionMessages(path string) ([]HistoryMessage, bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, false, err
-	}
-	defer f.Close()
-
-	dec := json.NewDecoder(f)
-	out := []HistoryMessage{}
-	toolName := map[string]string{}
-	sawEvent := false
-	for {
-		var rec previewEventRecord
-		if err := dec.Decode(&rec); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if sawEvent {
-				return out, true, nil
-			}
-			return nil, false, nil
-		}
-		eventName := strings.TrimSpace(rec.Kind)
-		if eventName == "" {
-			eventName = strings.TrimSpace(rec.Type)
-		}
-		if eventName == "" {
-			continue
-		}
-		sawEvent = true
-		switch eventName {
-		case "user.message":
-			if rec.Text != "" {
-				out = append(out, HistoryMessage{Role: "user", Content: rec.Text})
-			}
-		case "model.final":
-			hm := HistoryMessage{Role: "assistant", Content: rec.Content, Reasoning: firstNonEmpty(rec.Reasoning, rec.ReasoningContent)}
-			for _, tc := range rec.ToolCalls {
-				id := tc.ID
-				name := firstNonEmpty(tc.Name, tc.Function.Name)
-				args := firstNonEmpty(tc.Arguments, tc.Function.Arguments)
-				hm.ToolCalls = append(hm.ToolCalls, HistoryToolCall{ID: id, Name: name, Arguments: args})
-				if id != "" {
-					toolName[id] = name
-				}
-			}
-			out = append(out, hm)
-		case "tool.result":
-			callID := firstNonEmpty(rec.CallID, rec.ToolCallID)
-			out = append(out, HistoryMessage{
-				Role:       "tool",
-				ToolCallID: callID,
-				ToolName:   firstNonEmpty(rec.ToolName, rec.Name, toolName[callID]),
-				Content:    firstNonEmpty(rec.Output, rec.Content),
-			})
-		case "phase":
-			out = append(out, HistoryMessage{Role: "phase", Content: firstNonEmpty(rec.Text, rec.Content)})
-		case "notice":
-			level := rec.Level
-			if level != "warn" {
-				level = "info"
-			}
-			out = append(out, HistoryMessage{Role: "notice", Level: level, Content: firstNonEmpty(rec.Text, rec.Content)})
-		case "compaction_started":
-			c := rec.compactionPayload()
-			out = append(out, HistoryMessage{Role: "compaction", Pending: true, Trigger: c.Trigger})
-		case "compaction_done":
-			c := rec.compactionPayload()
-			out = append(out, HistoryMessage{
-				Role:     "compaction",
-				Trigger:  c.Trigger,
-				Messages: c.Messages,
-				Summary:  c.Summary,
-				Archive:  c.Archive,
-			})
-		}
-	}
-	return out, sawEvent, nil
-}
-
-func (r previewEventRecord) compactionPayload() previewCompaction {
-	if r.Compaction != nil {
-		return *r.Compaction
-	}
-	return previewCompaction{Trigger: r.Trigger, Messages: r.Messages, Summary: r.Summary, Archive: r.Archive}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-// ContextInfo is the prompt-vs-window gauge payload plus session totals. Used
-// and Window both zero means no context-window data yet.
+// ContextInfo is the prompt-vs-window gauge payload. Both zero means no data yet.
 type ContextInfo struct {
-	Used          int     `json:"used"`
-	Window        int     `json:"window"`
-	SessionTokens int     `json:"sessionTokens"`
-	CompactRatio  float64 `json:"compactRatio,omitempty"`
+	Used         int     `json:"used"`
+	Window       int     `json:"window"`
+	CompactRatio float64 `json:"compactRatio,omitempty"`
 }
 
 // ContextUsage returns the latest context-window gauge numbers.
@@ -1732,23 +1086,12 @@ func (a *App) ContextUsage() ContextInfo {
 }
 
 func (a *App) ContextUsageForTab(tabID string) ContextInfo {
-	a.mu.RLock()
-	tab := a.tabByIDLocked(tabID)
-	var ctrl *control.Controller
-	if tab != nil {
-		ctrl = tab.Ctrl
-	}
-	a.mu.RUnlock()
-
-	var sessionTokens int
-	if tab != nil {
-		sessionTokens = tab.telemetrySnapshot().Usage.TotalTokens
-	}
+	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
-		return ContextInfo{SessionTokens: sessionTokens}
+		return ContextInfo{}
 	}
 	used, window := ctrl.ContextSnapshot()
-	return ContextInfo{Used: used, Window: window, SessionTokens: sessionTokens, CompactRatio: ctrl.CompactRatio()}
+	return ContextInfo{Used: used, Window: window, CompactRatio: ctrl.CompactRatio()}
 }
 
 // BalanceInfo is the wallet-balance readout for the status bar. Available is true
@@ -1820,16 +1163,12 @@ func (a *App) jobsForCtrl(ctrl *control.Controller, out []JobView) []JobView {
 
 // Meta describes the session for the frontend's header and status line.
 type Meta struct {
-	Label            string `json:"label"`
-	Ready            bool   `json:"ready"`
-	StartupErr       string `json:"startupErr,omitempty"`
-	EventChannel     string `json:"eventChannel"`
-	Cwd              string `json:"cwd"`
-	AutoApproveTools bool   `json:"autoApproveTools"`
-	Bypass           bool   `json:"bypass"` // legacy JSON key for YOLO/full-access tool auto-approval
-	ToolApprovalMode string `json:"toolApprovalMode"`
-	Goal             string `json:"goal,omitempty"`
-	GoalStatus       string `json:"goalStatus,omitempty"`
+	Label        string `json:"label"`
+	Ready        bool   `json:"ready"`
+	StartupErr   string `json:"startupErr,omitempty"`
+	EventChannel string `json:"eventChannel"`
+	Cwd          string `json:"cwd"`
+	Bypass       bool   `json:"bypass"` // YOLO mode on (auto-approve every tool call)
 }
 
 // Meta reports the model label, readiness, any startup error, the working
@@ -1848,110 +1187,25 @@ func (a *App) MetaForTab(tabID string) Meta {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	autoApproveTools := tab.Ctrl != nil && tab.Ctrl.AutoApproveTools()
-	toolApprovalMode := currentTabToolApprovalMode(tab)
-	goal := currentTabGoal(tab)
-	goalStatus := currentTabGoalStatus(tab)
 	return Meta{
-		Label:            tab.Label,
-		Ready:            tab.Ready,
-		StartupErr:       tab.StartupErr,
-		EventChannel:     eventChannel,
-		Cwd:              cwd,
-		AutoApproveTools: autoApproveTools,
-		Bypass:           autoApproveTools,
-		ToolApprovalMode: toolApprovalMode,
-		Goal:             goal,
-		GoalStatus:       goalStatus,
+		Label:        tab.Label,
+		Ready:        tab.Ready,
+		StartupErr:   tab.StartupErr,
+		EventChannel: eventChannel,
+		Cwd:          cwd,
+		Bypass:       tab.Ctrl != nil && tab.Ctrl.Bypass(),
 	}
 }
 
-func (a *App) SetGoal(goal string) {
-	a.SetGoalForTab("", goal)
-}
-
-func (a *App) SetGoalForTab(tabID, goal string) {
-	goal = strings.TrimSpace(goal)
-	a.mu.Lock()
-	tab := a.tabByIDLocked(tabID)
-	if tab == nil {
-		a.mu.Unlock()
-		return
-	}
-	tab.goal = goal
-	if goal != "" {
-		tab.mode = tabModeFromAxes(false, currentTabToolApprovalMode(tab) == control.ToolApprovalYolo)
-	}
-	ctrl := tab.Ctrl
-	plan := tabModeHasPlan(tab.mode)
-	tabIDForSave := tab.ID
-	a.mu.Unlock()
-	if ctrl != nil {
-		ctrl.SetPlanMode(plan)
-		ctrl.SetGoal(goal)
-	}
-	a.mu.Lock()
-	if a.tabs[tabIDForSave] == tab {
-		a.saveTabsLocked()
-	}
-	a.mu.Unlock()
-}
-
-func (a *App) ClearGoal() {
-	a.SetGoal("")
-}
-
-func (a *App) ClearGoalForTab(tabID string) {
-	a.SetGoalForTab(tabID, "")
-}
-
-// SetAutoApproveTools toggles YOLO/full-access tool auto-approval:
-// approval-gated tool calls run without asking, while ask questions and plan
-// approvals still wait for the user. Runtime-only — not written to config.
-func (a *App) SetAutoApproveTools(on bool) {
-	if on {
-		a.SetToolApprovalModeForTab("", control.ToolApprovalYolo)
-		return
-	}
-	a.SetToolApprovalModeForTab("", control.ToolApprovalAsk)
-}
-
-func (a *App) setAutoApproveToolsForTab(tabID string, on bool) {
-	if on {
-		a.SetToolApprovalModeForTab(tabID, control.ToolApprovalYolo)
-		return
-	}
-	a.SetToolApprovalModeForTab(tabID, control.ToolApprovalAsk)
-}
-
-// SetBypass is the legacy Wails binding for SetAutoApproveTools.
+// SetBypass toggles YOLO mode for the session: auto-approve every tool call
+// (writers and bash run without asking). Deny rules still apply. Runtime-only —
+// not written to config, so it resets on relaunch.
 func (a *App) SetBypass(on bool) {
-	a.SetAutoApproveTools(on)
-}
-
-func (a *App) SetToolApprovalMode(mode string) {
-	a.SetToolApprovalModeForTab("", mode)
-}
-
-func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
-	mode = normalizeToolApprovalMode(mode)
-	a.mu.Lock()
-	tab := a.tabByIDLocked(tabID)
-	if tab == nil {
-		a.mu.Unlock()
+	if on {
+		a.SetModeForTab("", "yolo")
 		return
 	}
-	tab.toolApprovalMode = mode
-	tab.mode = tabModeFromAxes(tabModeHasPlan(currentTabMode(tab)), mode == control.ToolApprovalYolo)
-	ctrl := tab.Ctrl
-	tabIDForSave := tab.ID
-	a.mu.Unlock()
-	applyTabToolApprovalModeToController(ctrl, mode)
-	a.mu.Lock()
-	if a.tabs[tabIDForSave] == tab {
-		a.saveTabsLocked()
-	}
-	a.mu.Unlock()
+	a.SetModeForTab("", "normal")
 }
 
 // CommandInfo describes one available slash command for the composer's "/" menu.
@@ -1963,18 +1217,15 @@ type CommandInfo struct {
 }
 
 // Commands lists the slash commands available this session — built-in actions,
-// custom commands (.reasonix/commands), and MCP prompts — for the composer's "/"
+// custom commands (.voltui/commands), and MCP prompts — for the composer's "/"
 // autocomplete menu.
 func (a *App) Commands() []CommandInfo {
 	out := []CommandInfo{
 		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin"},
-		{Name: "clear", Description: i18n.M.CmdClear, Kind: "builtin"},
 		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin"},
 		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin"},
-		{Name: "provider", Description: i18n.M.CmdProvider, Kind: "builtin"},
 		{Name: "effort", Description: i18n.M.CmdEffort, Kind: "builtin"},
 		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin"},
-		{Name: "goal", Description: i18n.M.CmdGoal, Kind: "builtin"},
 		{Name: "remember", Description: i18n.M.CmdRemember, Kind: "builtin"},
 		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin"},
 		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin"},
@@ -2043,16 +1294,8 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 		DisconnectedMCP: ctrl.DisconnectedMCPNames(),
 		CurrentModel:    model,
 	}
-	seen := map[string]bool{}
 	for _, m := range a.Models() {
 		data.ModelRefs = append(data.ModelRefs, m.Ref)
-		if m.Provider != "" && !seen[m.Provider] {
-			seen[m.Provider] = true
-			data.ProviderNames = append(data.ProviderNames, m.Provider)
-		}
-		if m.Current {
-			data.CurrentProvider = m.Provider
-		}
 	}
 	if h := ctrl.Host(); h != nil {
 		data.ServerNames = h.ServerNames()
@@ -2129,7 +1372,6 @@ type SkillRootView struct {
 	Priority   int                  `json:"priority"`
 	Status     string               `json:"status"`
 	Configured bool                 `json:"configured"`
-	Removable  bool                 `json:"removable"`
 	Skills     int                  `json:"skills"`
 	SkillItems []SkillRootSkillView `json:"skillItems,omitempty"`
 	Warning    string               `json:"warning,omitempty"`
@@ -2173,29 +1415,26 @@ func (a *App) Capabilities() CapabilitiesView {
 			connected[s.Name] = true
 			view := ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
-				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
+				BuiltIn: s.Name == "codegraph",
+				Tools:   s.Tools, Prompts: s.Prompts, Resources: s.Resources,
 				ToolList: pluginToolsToView(s.ToolList),
 			}
 			if p, ok := configured[s.Name]; ok {
 				view = withPluginConfig(view, p)
 			} else if s.Name == "codegraph" && loadedCfg != nil {
 				view = withCodegraphConfig(view, loadedCfg.Codegraph)
-			} else if p, ok := builtinmcp.Entry(s.Name); ok {
-				view = withBuiltInMCPConfig(view, p, builtInMCPEnabled(loadedCfg, p.Name))
 			}
 			out.Servers = append(out.Servers, view)
 		}
 		for _, f := range h.Failures() {
 			seen[f.Name] = true
 			view := ServerView{
-				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error,
+				Name: f.Name, Transport: f.Transport, Status: "failed", BuiltIn: f.Name == "codegraph", Error: f.Error,
 			}
 			if p, ok := configured[f.Name]; ok {
 				view = withPluginConfig(view, p)
 			} else if f.Name == "codegraph" && loadedCfg != nil {
 				view = withCodegraphConfig(view, loadedCfg.Codegraph)
-			} else if p, ok := builtinmcp.Entry(f.Name); ok {
-				view = withBuiltInMCPConfig(view, p, builtInMCPEnabled(loadedCfg, p.Name))
 			}
 			out.Servers = append(out.Servers, view)
 		}
@@ -2232,7 +1471,12 @@ func (a *App) Capabilities() CapabilitiesView {
 		if loadedCfg != nil && !seen["codegraph"] {
 			status := "disabled"
 			if loadedCfg.Codegraph.Enabled {
-				status = "initializing"
+				switch loadedCfg.Codegraph.ResolvedTier() {
+				case "background", "eager":
+					status = "initializing"
+				default:
+					status = "deferred"
+				}
 			}
 			if s, ok := disabled["codegraph"]; ok {
 				s.Status = "disabled"
@@ -2247,25 +1491,6 @@ func (a *App) Capabilities() CapabilitiesView {
 				out.Servers = append(out.Servers, withCodegraphConfig(ServerView{Name: "codegraph", Status: status}, loadedCfg.Codegraph))
 			}
 			seen["codegraph"] = true
-		}
-		for _, p := range builtinmcp.Entries() {
-			if configured[p.Name].Name != "" || seen[p.Name] {
-				continue
-			}
-			enabled := builtInMCPEnabled(loadedCfg, p.Name)
-			if s, ok := disabled[p.Name]; ok {
-				s.Status = "disabled"
-				s = withBuiltInMCPConfig(s, p, enabled)
-				s.Error = ""
-				out.Servers = append(out.Servers, s)
-				retainedDisabled[p.Name] = s
-				delete(disabled, p.Name)
-			} else if enabled {
-				out.Servers = append(out.Servers, withBuiltInMCPConfig(ServerView{Name: p.Name, Status: "deferred"}, p, true))
-			} else {
-				out.Servers = append(out.Servers, withBuiltInMCPConfig(ServerView{Name: p.Name, Status: "disabled"}, p, false))
-			}
-			seen[p.Name] = true
 		}
 	}
 	out.Servers = orderServerViews(out.Servers, order)
@@ -2326,39 +1551,19 @@ func withCodegraphConfig(v ServerView, c config.CodegraphConfig) ServerView {
 	return v
 }
 
-func withBuiltInMCPConfig(v ServerView, p config.PluginEntry, enabled bool) ServerView {
-	v = withPluginConfig(v, p)
-	v.Name = p.Name
-	v.BuiltIn = true
-	v.Configured = true
-	v.AutoStart = enabled
-	v.AuthStatus = mcpdiag.AuthNone
-	v.AuthURL = ""
-	return v
-}
-
-func builtInMCPEnabled(cfg *config.Config, name string) bool {
-	return cfg != nil && cfg.BuiltInMCP.Enabled(name)
-}
-
 func skillRootsView() []SkillRootView {
 	cwd, _ := os.Getwd()
 	cfg, _ := config.Load()
 	userCfg := config.LoadForEdit(config.UserConfigPath())
 	var custom []string
-	var excluded []string
-	maxDepth := 3
 	if cfg != nil {
 		custom = cfg.SkillCustomPaths()
-		excluded = cfg.SkillExcludedPaths()
-		maxDepth = cfg.SkillMaxDepth()
 	}
-	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth, DisableBuiltins: true, Stderr: io.Discard})
+	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, DisableBuiltins: true, Stderr: io.Discard})
 	counts := map[string]int{}
 	skillItems := map[string][]SkillRootSkillView{}
-	roots := st.Roots()
 	for _, sk := range st.List() {
-		root := skillDisplayRoot(sk, roots)
+		root := config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
 			Name:        sk.Name,
@@ -2379,7 +1584,7 @@ func skillRootsView() []SkillRootView {
 		}
 	}
 	out := []SkillRootView{}
-	for _, r := range roots {
+	for _, r := range st.Roots() {
 		dir := config.CanonicalSkillPath(r.Dir)
 		view := SkillRootView{
 			Dir:        r.Dir,
@@ -2387,7 +1592,6 @@ func skillRootsView() []SkillRootView {
 			Priority:   r.Priority + 1,
 			Status:     string(r.Status),
 			Configured: r.Scope == skill.ScopeCustom && userConfigured[dir],
-			Removable:  true,
 			Skills:     counts[dir],
 			SkillItems: skillItems[dir],
 		}
@@ -2403,7 +1607,6 @@ func skillRootsView() []SkillRootView {
 				Scope:      string(skill.ScopeCustom),
 				Status:     "inactive",
 				Configured: true,
-				Removable:  true,
 				Warning:    "configured in user config but not active in this workspace; project [skills].paths may override it",
 			})
 		}
@@ -2430,7 +1633,7 @@ func (a *App) PickSkillFolder() (string, error) {
 	cur, _ := os.Getwd()
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:            "Choose skills folder",
-		DefaultDirectory: dialogDefaultDirectory(cur),
+		DefaultDirectory: cur,
 	})
 	if err != nil || dir == "" {
 		return "", err
@@ -2442,25 +1645,17 @@ func (a *App) PickSkillFolder() (string, error) {
 // controller so the skills index and slash menu reflect it immediately.
 func (a *App) AddSkillPath(path string) error {
 	path = normalizeSkillPath(path)
-	workspaceRoot := a.activeWorkspaceRoot()
 	return a.applyConfigChange(func(c *config.Config) error {
-		if isConventionSkillRoot(path, workspaceRoot) {
-			return c.RestoreSkillPath(path)
-		}
 		return c.AddSkillPath(path)
 	})
 }
 
-// RemoveSkillPath removes a skill source from the user config and rebuilds. For
-// convention roots, it records a pseudo-delete in excluded_paths.
+// RemoveSkillPath removes a custom skill root from the user config and rebuilds.
 func (a *App) RemoveSkillPath(path string) error {
 	path = normalizeSkillPath(path)
 	return a.applyConfigChange(func(c *config.Config) error {
-		removed, err := c.RemoveSkillPath(path)
-		if err != nil || removed {
-			return err
-		}
-		return c.ExcludeSkillPath(path)
+		_, err := c.RemoveSkillPath(path)
+		return err
 	})
 }
 
@@ -2513,49 +1708,11 @@ func normalizeSkillPath(path string) string {
 	return filepath.Clean(path)
 }
 
-func isConventionSkillRoot(path, workspaceRoot string) bool {
-	want := config.CanonicalSkillPath(path)
-	if want == "" {
-		return false
-	}
-	bases := []string{workspaceRoot}
-	if home, err := os.UserHomeDir(); err == nil {
-		bases = append(bases, home)
-	}
-	for _, base := range bases {
-		base = strings.TrimSpace(base)
-		if base == "" {
-			continue
-		}
-		for _, dir := range config.ConventionDirs {
-			if want == config.CanonicalSkillPath(filepath.Join(base, dir, skill.SkillsDirname)) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func skillRootPath(path string) string {
 	if filepath.Base(path) == skill.SkillFile {
 		return filepath.Dir(path)
 	}
 	return path
-}
-
-func skillDisplayRoot(sk skill.Skill, roots []skill.Root) string {
-	cleanPath := filepath.Clean(sk.Path)
-	for _, r := range roots {
-		if r.Scope != sk.Scope {
-			continue
-		}
-		cleanRoot := filepath.Clean(r.Dir)
-		prefix := cleanRoot + string(filepath.Separator)
-		if cleanPath == cleanRoot || strings.HasPrefix(cleanPath, prefix) {
-			return config.CanonicalSkillPath(r.Dir)
-		}
-	}
-	return config.CanonicalSkillPath(filepath.Dir(skillRootPath(sk.Path)))
 }
 
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command
@@ -2567,6 +1724,7 @@ type MCPServerInput struct {
 	Args      []string          `json:"args"`
 	URL       string            `json:"url"`
 	Env       map[string]string `json:"env"`
+	Tier      string            `json:"tier"`
 }
 
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
@@ -2576,9 +1734,6 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 	if ctrl == nil {
 		return 0, fmt.Errorf("no active session")
 	}
-	if builtinmcp.IsBuiltIn(strings.TrimSpace(in.Name)) {
-		return 0, fmt.Errorf("%s is built in; no configuration is required", strings.TrimSpace(in.Name))
-	}
 	entry := config.PluginEntry{
 		Name:    in.Name,
 		Type:    normalizeMCPTransport(in.Transport),
@@ -2586,8 +1741,8 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		Args:    in.Args,
 		URL:     in.URL,
 		Env:     in.Env,
+		Tier:    normalizeMCPTier(in.Tier),
 	}
-	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
 		return 0, err
 	}
@@ -2612,20 +1767,16 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 		return err
 	}
 	if !found {
-		if builtinmcp.IsBuiltIn(name) {
-			return fmt.Errorf("%s is built in; it cannot be edited", name)
-		}
 		return fmt.Errorf("no configured MCP server named %q", name)
 	}
 	updated.Type = normalizeMCPTransport(in.Transport)
 	updated.Command = strings.TrimSpace(in.Command)
 	updated.Args = append([]string(nil), in.Args...)
 	updated.URL = strings.TrimSpace(in.URL)
-	updated.Tier = ""
+	updated.Tier = normalizeMCPTier(in.Tier)
 	if in.Env != nil {
 		updated.Env = in.Env
 	}
-	updated, _ = config.NormalizePluginCommandLine(updated)
 	if updated.Type == "stdio" {
 		updated.URL = ""
 	} else {
@@ -2662,13 +1813,6 @@ func (a *App) RemoveMCPServer(name string) error {
 	if name == "codegraph" {
 		return fmt.Errorf("codegraph is built in; it cannot be removed")
 	}
-	if builtinmcp.IsBuiltIn(name) {
-		if _, found, err := a.desktopMCPServerForEdit(name); err != nil {
-			return err
-		} else if !found {
-			return fmt.Errorf("%s is built in; it cannot be removed", name)
-		}
-	}
 	tab := a.activeTab()
 	if tab == nil || tab.Ctrl == nil {
 		return fmt.Errorf("no active session")
@@ -2688,32 +1832,15 @@ func (a *App) RemoveMCPServer(name string) error {
 	return fmt.Errorf("no MCP server named %q", name)
 }
 
-// ReconnectMCPServer disconnects the server if it is already connected (to force
-// a fresh handshake and tool re-registration), then reconnects.  Failures are
-// recorded on the Host so the UI can render them.
-func (a *App) ReconnectMCPServer(name string) error {
+// RetryMCPServer reconnects a configured server that failed or was disconnected,
+// without touching config (the failed row's retry button).
+func (a *App) RetryMCPServer(name string) error {
 	tab := a.activeTab()
 	if tab == nil || tab.Ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
-	if mcpConnected(tab.Ctrl, name) {
-		tab.Ctrl.DisconnectMCPServer(name)
-	}
 	_, err := a.connectConfiguredMCPServerForTab(tab, name)
-	if err != nil {
-		entry := config.PluginEntry{Name: name}
-		if p, found, cfgErr := a.desktopMCPServerForEdit(name); cfgErr == nil && found {
-			entry = p
-		} else if p, ok := builtinmcp.Entry(name); ok {
-			entry = p
-		}
-		recordMCPFailure(tab.Ctrl, entry, err)
-		return err
-	}
-	a.mu.Lock()
-	delete(tab.disabledMCP, name)
-	a.mu.Unlock()
-	return nil
+	return err
 }
 
 // ClearMCPServerAuthentication removes local auth-like config for one MCP and
@@ -2722,13 +1849,6 @@ func (a *App) ReconnectMCPServer(name string) error {
 func (a *App) ClearMCPServerAuthentication(name string) error {
 	if name == "codegraph" {
 		return fmt.Errorf("codegraph is built in; it has no stored MCP authentication")
-	}
-	if builtinmcp.IsBuiltIn(name) {
-		if _, found, err := a.desktopMCPServerForEdit(name); err != nil {
-			return err
-		} else if !found {
-			return fmt.Errorf("%s is built in; it has no stored MCP authentication", name)
-		}
 	}
 	ctrl := a.activeCtrl()
 	if ctrl == nil {
@@ -2755,13 +1875,6 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	if name == "codegraph" {
 		return a.setCodegraphEnabled(enabled)
 	}
-	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(name)
-	if err != nil {
-		return err
-	}
-	if builtinmcp.IsBuiltIn(name) && !hasConfiguredEntry {
-		return a.setBuiltInMCPEnabled(name, enabled)
-	}
 	if enabled {
 		_, err := a.connectConfiguredMCPServerForTab(tab, name)
 		if err == nil {
@@ -2774,15 +1887,6 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 	if s, ok := findMCPServerView(tab.Ctrl, name); ok {
 		s.Status = "disabled"
 		s.Error = ""
-		a.mu.Lock()
-		if tab.disabledMCP == nil {
-			tab.disabledMCP = map[string]ServerView{}
-		}
-		tab.disabledMCP[name] = s
-		tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
-		a.mu.Unlock()
-	} else if hasConfiguredEntry {
-		s := withPluginConfig(ServerView{Name: name, Status: "disabled"}, configuredEntry)
 		a.mu.Lock()
 		if tab.disabledMCP == nil {
 			tab.disabledMCP = map[string]ServerView{}
@@ -2811,15 +1915,12 @@ func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (
 	if name == "codegraph" {
 		return tab.Ctrl.ConnectCodegraphMCPServer(cfg)
 	}
-	if p, ok := builtinmcp.Entry(name); ok {
-		return tab.Ctrl.ConnectMCPServer(p)
-	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }
 
-// SetMCPServerTier is kept for old desktop bindings. New config writes drop the
-// retired tier field; for CodeGraph this now means "enable and start in the
-// background".
+// SetMCPServerTier persists how a configured MCP server should start on future
+// sessions. It does not tear down a connected server; the per-session toggle and
+// "connect now" remain separate controls.
 func (a *App) SetMCPServerTier(name, tier string) error {
 	if name == "codegraph" {
 		return a.setCodegraphTier(tier)
@@ -2830,9 +1931,6 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 		return err
 	}
 	if !found {
-		if builtinmcp.IsBuiltIn(name) {
-			return fmt.Errorf("%s is built in; it always uses lazy startup", name)
-		}
 		return fmt.Errorf("no configured MCP server named %q", name)
 	}
 	updated.Tier = tier
@@ -2853,54 +1951,6 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 		delete(tab.disabledMCP, name)
 		a.mu.Unlock()
 	}
-	return nil
-}
-
-func (a *App) setBuiltInMCPEnabled(name string, enabled bool) error {
-	entry, ok := builtinmcp.Entry(name)
-	if !ok {
-		return fmt.Errorf("no built-in MCP server named %q", name)
-	}
-	cfg, path, err := a.loadDesktopUserConfigForEdit()
-	if err != nil {
-		return err
-	}
-	if !cfg.BuiltInMCP.SetEnabled(name, enabled) {
-		return fmt.Errorf("no built-in MCP server named %q", name)
-	}
-	tab := a.activeTab()
-	if tab == nil || tab.Ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if err := cfg.SaveTo(path); err != nil {
-		return err
-	}
-	if err := a.syncProjectBuiltInMCPOverride(cfg.BuiltInMCP); err != nil {
-		return err
-	}
-	if enabled {
-		a.mu.Lock()
-		delete(tab.disabledMCP, name)
-		a.mu.Unlock()
-		_, err := tab.Ctrl.ConnectMCPServer(entry)
-		if err != nil {
-			recordMCPFailure(tab.Ctrl, entry, err)
-			return nil
-		}
-		return nil
-	}
-	if h := tab.Ctrl.Host(); h != nil {
-		h.ClearFailure(name)
-	}
-	tab.Ctrl.DisconnectMCPServer(name)
-	s := withBuiltInMCPConfig(ServerView{Name: name, Status: "disabled"}, entry, false)
-	a.mu.Lock()
-	if tab.disabledMCP == nil {
-		tab.disabledMCP = map[string]ServerView{}
-	}
-	tab.disabledMCP[name] = s
-	tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
-	a.mu.Unlock()
 	return nil
 }
 
@@ -2945,13 +1995,14 @@ func (a *App) setCodegraphEnabled(enabled bool) error {
 	return nil
 }
 
-func (a *App) setCodegraphTier(_ string) error {
+func (a *App) setCodegraphTier(tier string) error {
+	tier = normalizeMCPTier(tier)
 	cfg, path, err := a.loadDesktopUserConfigForEdit()
 	if err != nil {
 		return err
 	}
 	cfg.Codegraph.Enabled = true
-	cfg.Codegraph.Tier = ""
+	cfg.Codegraph.Tier = tier
 	if err := cfg.SaveTo(path); err != nil {
 		return err
 	}
@@ -2965,7 +2016,7 @@ func (a *App) setCodegraphTier(_ string) error {
 	a.mu.Lock()
 	delete(tab.disabledMCP, "codegraph")
 	a.mu.Unlock()
-	if !mcpConnected(tab.Ctrl, "codegraph") {
+	if tier != "lazy" && !mcpConnected(tab.Ctrl, "codegraph") {
 		if _, err := tab.Ctrl.ConnectCodegraphMCPServer(cfg); err != nil {
 			recordCodegraphFailure(tab.Ctrl, cfg.Codegraph, err)
 			return nil
@@ -3063,23 +2114,6 @@ func (a *App) syncProjectCodegraphOverride(c config.CodegraphConfig) error {
 	return cfg.SaveTo(path)
 }
 
-func (a *App) syncProjectBuiltInMCPOverride(c config.BuiltInMCPConfig) error {
-	path := projectConfigPathForRoot(a.activeWorkspaceRoot())
-	userPath := config.UserConfigPath()
-	if path == "" || sameConfigPath(path, userPath) {
-		return nil
-	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	cfg := config.LoadForEdit(path)
-	cfg.BuiltInMCP = c
-	return cfg.SaveTo(path)
-}
-
 func findPluginEntry(entries []config.PluginEntry, name string) (config.PluginEntry, bool) {
 	for _, p := range entries {
 		if p.Name == name {
@@ -3094,8 +2128,6 @@ func normalizeMCPTier(tier string) string {
 	case "eager":
 		return "eager"
 	case "background":
-		return "background"
-	case "":
 		return "background"
 	default:
 		return "lazy"
@@ -3294,29 +2326,18 @@ func (a *App) ModelsForTab(tabID string) []ModelInfo {
 	if err != nil {
 		return []ModelInfo{}
 	}
-	if entry, ok := cfg.ResolveModel(curModel); ok {
-		curModel = entry.Name + "/" + entry.Model
-	}
-	access := providerAccessSet(cfg.Desktop.ProviderAccess)
 	out := []ModelInfo{}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
-		if !modelProviderAccessAllowed(access, p.Name) || !p.Configured() {
+		if !p.Configured() {
 			continue
 		}
-		for _, m := range p.ChatModelList() {
+		for _, m := range p.ModelList() {
 			ref := p.Name + "/" + m
 			out = append(out, ModelInfo{Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel})
 		}
 	}
 	return out
-}
-
-func modelProviderAccessAllowed(access map[string]bool, name string) bool {
-	if len(access) == 0 {
-		return true
-	}
-	return access[strings.TrimSpace(name)]
 }
 
 // SetModel switches the active model and carries the current conversation into the
@@ -3348,13 +2369,10 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown model %q", name)
 	}
-	if !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
-		return fmt.Errorf("model %q is not available because provider %q is not added", name, entry.Name)
-	}
 	name = entry.Name + "/" + entry.Model
 	effortOverride := cloneStringPtr(tab.effort)
 	if effortOverride != nil {
-		normalized, err := config.NormalizeEffort(entry, config.EffortDisplay(&config.ProviderEntry{Effort: *effortOverride}))
+		normalized, err := config.NormalizeEffort(entry, config.EffortDisplay(&config.ProviderEntry{Effort: *effortOverride, Name: entry.Name, Kind: entry.Kind, BaseURL: entry.BaseURL}))
 		if err != nil {
 			effortOverride = nil
 		} else {
@@ -3376,13 +2394,11 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		RequireKey:     false,
 		Sink:           tab.sink,
 		WorkspaceRoot:  tab.WorkspaceRoot,
-		SessionDir:     tabSessionDir(tab),
 		EffortOverride: cloneStringPtr(effortOverride),
 	})
 	if err != nil {
 		return err
 	}
-	a.bindControllerDisplayRecorder(newCtrl)
 	a.mu.Lock()
 	tab.Ctrl = newCtrl
 	tab.model = name
@@ -3392,8 +2408,6 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	a.mu.Unlock()
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, tab.mode)
-	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
-	newCtrl.SetGoal(tab.goal)
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if len(carried) > 0 {
@@ -3401,7 +2415,6 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	} else if path != "" {
 		newCtrl.SetSessionPath(path)
 	}
-	a.persistTabSessionPath(tab, path)
 	return nil
 }
 
@@ -3470,13 +2483,11 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		RequireKey:     false,
 		Sink:           tab.sink,
 		WorkspaceRoot:  tab.WorkspaceRoot,
-		SessionDir:     tabSessionDir(tab),
 		EffortOverride: &effort,
 	})
 	if err != nil {
 		return err
 	}
-	a.bindControllerDisplayRecorder(newCtrl)
 	a.mu.Lock()
 	tab.Ctrl = newCtrl
 	tab.effort = &effort
@@ -3487,15 +2498,12 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	a.mu.Unlock()
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, tab.mode)
-	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
-	newCtrl.SetGoal(tab.goal)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if len(carried) > 0 {
 		newCtrl.Resume(&agent.Session{Messages: carried}, path)
 	} else if path != "" {
 		newCtrl.SetSessionPath(path)
 	}
-	a.persistTabSessionPath(tab, path)
 	return nil
 }
 
@@ -3511,46 +2519,8 @@ func (a *App) applyProviderEffortConfig(entry *config.ProviderEntry, effort stri
 				return err
 			}
 		}
-		for _, name := range providerEffortTargetNames(cfg, entry) {
-			if err := cfg.SetProviderEffort(name, effort); err != nil {
-				return err
-			}
-		}
-		return nil
+		return cfg.SetProviderEffort(entry.Name, effort)
 	})
-}
-
-func providerEffortTargetNames(cfg *config.Config, entry *config.ProviderEntry) []string {
-	if cfg == nil || entry == nil {
-		return nil
-	}
-	out := []string{entry.Name}
-	seen := map[string]bool{entry.Name: true}
-	kind := officialProviderKindFromEntry(*entry)
-	if kind == "" {
-		return out
-	}
-	var family []string
-	switch kind {
-	case "deepseek":
-		family = []string{"deepseek", "deepseek-flash", "deepseek-pro"}
-	case "mimo-token-plan":
-		family = []string{"mimo-token-plan", "mimo-pro", "mimo-flash"}
-	case "mimo-api":
-		family = []string{"mimo-api"}
-	}
-	for _, name := range family {
-		if seen[name] {
-			continue
-		}
-		p, ok := cfg.Provider(name)
-		if !ok || officialProviderKindFromEntry(*p) != kind {
-			continue
-		}
-		seen[name] = true
-		out = append(out, name)
-	}
-	return out
 }
 
 // DirEntry is one entry in the "@" file-reference menu.
@@ -3566,9 +2536,6 @@ type FilePreview struct {
 	Size      int64  `json:"size"`
 	Truncated bool   `json:"truncated"`
 	Binary    bool   `json:"binary"`
-	Kind      string `json:"kind,omitempty"`
-	Mime      string `json:"mime,omitempty"`
-	URL       string `json:"url,omitempty"`
 	Err       string `json:"err,omitempty"`
 }
 
@@ -3586,48 +2553,13 @@ type WorkspaceChangesView struct {
 	Files        []WorkspaceChangeView `json:"files"`
 	GitAvailable bool                  `json:"gitAvailable"`
 	GitErr       string                `json:"gitErr,omitempty"`
-	GitBranch    string                `json:"gitBranch,omitempty"`
 }
 
-// workspaceNoiseNames are local cache/vendor entries hidden from the file tree
-// and "@" menu regardless of where they appear.
-var workspaceNoiseNames = map[string]bool{
-	".codex":       true,
-	".codegraph":   true,
-	".DS_Store":    true,
-	".git":         true,
-	".npm":         true,
-	".pnpm-store":  true,
-	"node_modules": true,
-	"Thumbs.db":    true,
-}
-
-var workspaceNoiseDirs = map[string]bool{
-	"bin":                      true,
-	"desktop/build":            true,
-	"desktop/frontend/dist":    true,
-	"desktop/frontend/wailsjs": true,
-	"dist":                     true,
-	"npm/.stage":               true,
-	"site/.astro":              true,
-	"site/dist":                true,
-	"stage":                    true,
-	"tmp":                      true,
-}
+// atSkip are entries the "@" menu hides as noise.
+var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": true}
 
 const filePreviewLimit = 256 * 1024
 const fileRefSearchLimit = 20
-
-var previewMediaMIMEs = map[string]string{
-	".bmp":  "image/bmp",
-	".gif":  "image/gif",
-	".jpeg": "image/jpeg",
-	".jpg":  "image/jpeg",
-	".pdf":  "application/pdf",
-	".png":  "image/png",
-	".svg":  "image/svg+xml",
-	".webp": "image/webp",
-}
 
 func trimUTF8PartialSuffix(data []byte) []byte {
 	if utf8.Valid(data) {
@@ -3643,35 +2575,6 @@ func trimUTF8PartialSuffix(data []byte) []byte {
 		return data[:i]
 	}
 	return data
-}
-
-func previewMediaKind(path string) (kind string, mime string) {
-	mime = previewMediaMIMEs[strings.ToLower(filepath.Ext(path))]
-	if mime == "" {
-		return "", ""
-	}
-	if strings.HasPrefix(mime, "image/") {
-		return "image", mime
-	}
-	if mime == "application/pdf" {
-		return "pdf", mime
-	}
-	return "", ""
-}
-
-func workspaceEntryRel(rel, name string) string {
-	rel = strings.Trim(filepath.ToSlash(rel), "/")
-	if rel == "" || rel == "." {
-		return name
-	}
-	return rel + "/" + name
-}
-
-func skipWorkspaceEntry(rel, name string, isDir bool) bool {
-	if workspaceNoiseNames[name] {
-		return true
-	}
-	return isDir && workspaceNoiseDirs[workspaceEntryRel(rel, name)]
 }
 
 func (a *App) activeWorkspaceBase() (string, error) {
@@ -3745,7 +2648,7 @@ func (a *App) ListDir(rel string) []DirEntry {
 	dirs, files := []DirEntry{}, []DirEntry{}
 	for _, e := range es {
 		name := e.Name()
-		if skipWorkspaceEntry(rel, name, e.IsDir()) {
+		if atSkip[name] {
 			continue
 		}
 		if e.IsDir() {
@@ -3769,10 +2672,10 @@ func (a *App) SearchFileRefs(query string) []DirEntry {
 	if err != nil {
 		return nil
 	}
-	results := fileref.Search(base, query, fileRefSearchLimit)
-	out := make([]DirEntry, 0, len(results))
-	for _, r := range results {
-		out = append(out, DirEntry{Name: r.Path, IsDir: r.IsDir})
+	paths := fileref.Search(base, query, fileRefSearchLimit)
+	out := make([]DirEntry, 0, len(paths))
+	for _, path := range paths {
+		out = append(out, DirEntry{Name: path, IsDir: false})
 	}
 	return out
 }
@@ -3799,13 +2702,6 @@ func (a *App) ReadFile(rel string) FilePreview {
 		return out
 	}
 	out.Size = info.Size()
-	if kind, mime := previewMediaKind(path); kind != "" {
-		token := a.ensureMediaTokenStore().create(path, info.Name(), mime, kind, info.Size(), info.ModTime())
-		out.Kind = kind
-		out.Mime = mime
-		out.URL = "/__reasonix_workspace_media/" + token + "/" + url.PathEscape(info.Name())
-		return out
-	}
 	f, err := os.Open(path)
 	if err != nil {
 		out.Err = err.Error()
@@ -3897,18 +2793,7 @@ func revealPath(path string) error {
 	case "darwin":
 		return exec.Command("open", "-R", path).Start()
 	case "windows":
-		// explorer.exe lives in %SystemRoot%, which isn't always on PATH (the
-		// launch environment can strip it), so resolve it directly rather than
-		// relying on a PATH lookup.
-		explorer := "explorer.exe"
-		root := os.Getenv("SystemRoot")
-		if root == "" {
-			root = os.Getenv("windir")
-		}
-		if root != "" {
-			explorer = filepath.Join(root, "explorer.exe")
-		}
-		return exec.Command(explorer, "/select,", path).Start()
+		return exec.Command("explorer", "/select,", path).Start()
 	default:
 		dir := path
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
@@ -3991,13 +2876,9 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	if strings.TrimSpace(ref) == "" {
 		ref = cfg.DefaultModel
 	}
-	resolved, _, ok := cfg.ResolveModelWithFallback(ref)
+	entry, ok := cfg.ResolveModel(ref)
 	if !ok {
 		return nil, fmt.Errorf("unknown model %q", ref)
-	}
-	entry, ok := cfg.ResolveModel(resolved)
-	if !ok {
-		return nil, fmt.Errorf("unknown model %q", resolved)
 	}
 	if effortOverride != nil {
 		entry.Effort = *effortOverride
@@ -4005,135 +2886,27 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	return entry, nil
 }
 
-func (a *App) withActiveWorkspace(fn func() (string, error)) (string, error) {
-	var result string
-	err := a.withActiveWorkspaceDo(func() error {
-		var err error
-		result, err = fn()
-		return err
-	})
-	return result, err
-}
-
-func (a *App) withActiveWorkspaceDo(fn func() error) error {
-	root := a.activeWorkspaceRoot()
-	if root != "" && root != "." {
-		prev, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		if err := os.Chdir(root); err != nil {
-			return err
-		}
-		defer func() { _ = os.Chdir(prev) }()
-	}
-	return fn()
-}
-
-// SavePastedImage stores a browser clipboard image data URL under the active
-// tab's workspace .reasonix/attachments and returns the relative @-reference path.
+// SavePastedImage stores a browser clipboard image data URL under
+// .voltui/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.SaveImageDataURL(dataURL)
-	})
-}
-
-// SaveClipboardImage reads the native OS clipboard image under the active tab's
-// workspace .reasonix/attachments and returns the relative @-reference path.
-func (a *App) SaveClipboardImage() (string, error) {
-	return a.withActiveWorkspace(control.SaveClipboardImage)
+	return control.SaveImageDataURL(dataURL)
 }
 
 // SavePastedFile stores a dropped non-image file (the browser exposes its bytes
-// as a data URL but not a real path) under the active tab's workspace
-// .reasonix/attachments and returns the relative @-reference path.
+// as a data URL but not a real path) under .voltui/attachments and returns the
+// relative @-reference path.
 func (a *App) SavePastedFile(name, dataURL string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.SaveAttachmentDataURL(name, dataURL)
-	})
-}
-
-// PickExportFile opens the native save dialog and returns the selected path. It
-// returns "" when the user cancels.
-func (a *App) PickExportFile(defaultFilename, mimeType string) (string, error) {
-	if a.ctx == nil {
-		return "", nil
-	}
-	defaultFilename = safeExportFilename(defaultFilename)
-	ext := strings.ToLower(filepath.Ext(defaultFilename))
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:                "Export session",
-		DefaultDirectory:     dialogDefaultDirectory(a.activeWorkspaceRoot()),
-		DefaultFilename:      defaultFilename,
-		CanCreateDirectories: true,
-		Filters:              exportFileFilters(mimeType, ext),
-	})
-	if err != nil || path == "" {
-		return "", err
-	}
-	if ext != "" && filepath.Ext(path) == "" {
-		path += ext
-	}
-	return path, nil
-}
-
-// SaveExportFile writes an exported session payload to a path previously picked
-// by PickExportFile. An empty path is treated as a cancelled export.
-func (a *App) SaveExportFile(path, payload string, base64Encoded bool) error {
-	if strings.TrimSpace(path) == "" {
-		return nil
-	}
-	var data []byte
-	var err error
-	if base64Encoded {
-		data, err = base64.StdEncoding.DecodeString(payload)
-		if err != nil {
-			return fmt.Errorf("decode export payload: %w", err)
-		}
-	} else {
-		data = []byte(payload)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return err
-	}
-	return nil
-}
-
-func safeExportFilename(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "reasonix-session.md"
-	}
-	return filepath.Base(name)
-}
-
-func exportFileFilters(mimeType, ext string) []runtime.FileFilter {
-	switch mimeType {
-	case "text/markdown":
-		return []runtime.FileFilter{{DisplayName: "Markdown (*.md)", Pattern: "*.md"}}
-	case "application/json":
-		return []runtime.FileFilter{{DisplayName: "JSON (*.json)", Pattern: "*.json"}}
-	case "application/pdf":
-		return []runtime.FileFilter{{DisplayName: "PDF (*.pdf)", Pattern: "*.pdf"}}
-	case "image/png":
-		return []runtime.FileFilter{{DisplayName: "PNG image (*.png)", Pattern: "*.png"}}
-	}
-	if ext != "" {
-		return []runtime.FileFilter{{DisplayName: strings.ToUpper(strings.TrimPrefix(ext, ".")) + " files (*" + ext + ")", Pattern: "*" + ext}}
-	}
-	return []runtime.FileFilter{{DisplayName: "All files (*.*)", Pattern: "*.*"}}
+	return control.SaveAttachmentDataURL(name, dataURL)
 }
 
 // AttachmentDataURL returns a safe data URL for a stored image attachment.
 func (a *App) AttachmentDataURL(path string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.ImageDataURL(path)
-	})
+	return control.ImageDataURL(path)
 }
 
 // DroppedItem is one OS-dropped file resolved into a composer context entry: an
 // in-tree file becomes a workspace @reference (read in place, no copy), while an
-// image or out-of-tree file is copied into .reasonix/attachments.
+// image or out-of-tree file is copied into .voltui/attachments.
 type DroppedItem struct {
 	Kind       string `json:"kind"` // "workspace" | "attachment"
 	Path       string `json:"path"`
@@ -4144,39 +2917,29 @@ type DroppedItem struct {
 // AttachDropped turns an absolute path from the native file-drop bridge into a
 // composer context entry. Images are stored as attachments so the chip shows a
 // thumbnail; other in-workspace files are referenced relatively (no copy); files
-// outside the workspace are copied into .reasonix/attachments.
+// outside the workspace are copied into .voltui/attachments.
 func (a *App) AttachDropped(path string) (DroppedItem, error) {
-	var item DroppedItem
-	err := a.withActiveWorkspaceDo(func() error {
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if isImageExt(path) {
-			if rel, err := control.SaveImageFile(path); err == nil {
-				preview, _ := control.ImageDataURL(rel)
-				item = DroppedItem{Kind: "attachment", Path: rel, PreviewURL: preview}
-				return nil
-			}
-		}
-		if rel, ok := workspaceRelativeIn(path, a.activeWorkspaceRoot()); ok {
-			item = DroppedItem{Kind: "workspace", Path: rel, IsDir: info.IsDir()}
-			return nil
-		}
-		if info.IsDir() {
-			return fmt.Errorf("can only attach files from outside the workspace")
-		}
-		rel, err := control.SaveAttachmentFile(path)
-		if err != nil {
-			return err
-		}
-		item = DroppedItem{Kind: "attachment", Path: rel}
-		return nil
-	})
+	info, err := os.Lstat(path)
 	if err != nil {
 		return DroppedItem{}, err
 	}
-	return item, nil
+	if isImageExt(path) {
+		if rel, err := control.SaveImageFile(path); err == nil {
+			preview, _ := control.ImageDataURL(rel)
+			return DroppedItem{Kind: "attachment", Path: rel, PreviewURL: preview}, nil
+		}
+	}
+	if rel, ok := workspaceRelative(path); ok {
+		return DroppedItem{Kind: "workspace", Path: rel, IsDir: info.IsDir()}, nil
+	}
+	if info.IsDir() {
+		return DroppedItem{}, fmt.Errorf("can only attach files from outside the workspace")
+	}
+	rel, err := control.SaveAttachmentFile(path)
+	if err != nil {
+		return DroppedItem{}, err
+	}
+	return DroppedItem{Kind: "attachment", Path: rel}, nil
 }
 
 func isImageExt(path string) bool {
@@ -4187,16 +2950,12 @@ func isImageExt(path string) bool {
 	return false
 }
 
-func workspaceRelativeIn(path, workspaceRoot string) (string, bool) {
-	root := workspaceRoot
-	if !filepath.IsAbs(root) {
-		abs, err := filepath.Abs(root)
-		if err != nil {
-			return "", false
-		}
-		root = abs
+func workspaceRelative(path string) (string, bool) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false
 	}
-	rel, err := filepath.Rel(root, path)
+	rel, err := filepath.Rel(cwd, path)
 	if err != nil {
 		return "", false
 	}
@@ -4243,7 +3002,7 @@ type MemoryView struct {
 // writableScopes are the quick-add targets the panel offers, broad → specific.
 var writableScopes = []memory.Scope{memory.ScopeUser, memory.ScopeProject, memory.ScopeLocal}
 
-// Memory returns the loaded memory for the panel: the REASONIX.md hierarchy, the
+// Memory returns the loaded memory for the panel: the VOLTUI.md hierarchy, the
 // saved auto-memories, and the writable scopes. Read-only; mutations go through
 // Remember / SaveDoc.
 func (a *App) Memory() MemoryView {

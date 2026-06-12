@@ -12,10 +12,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/mcpdiag"
-	"reasonix/internal/plugin"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/mcpdiag"
+	"voltui/internal/plugin"
 )
 
 func (m chatTUI) applyMCPAction(v mcpServerView, action mcpAction) (tea.Model, tea.Cmd) {
@@ -171,7 +171,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	}
 	if v.BuiltIn && v.Name == "codegraph" {
 		cfg.Codegraph.Enabled = true
-		cfg.Codegraph.Tier = ""
+		cfg.Codegraph.Tier = normalizeMCPTierForCLI(tier)
 		if err := cfg.Save(); err != nil {
 			m.notice("mcp mode: " + err.Error())
 			return m, nil
@@ -179,7 +179,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 		if m.mcpDisabled != nil {
 			delete(m.mcpDisabled, v.Name)
 		}
-		if m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
+		if tier != "lazy" && m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
 			if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
 				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
 				m.notice("saved connection mode, but connect failed: " + err.Error())
@@ -349,8 +349,8 @@ func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 
 func mcpModeIndex(tier string) int {
 	tier = normalizeMCPTierForCLI(tier)
-	for i, choice := range mcpTierChoices {
-		if choice == tier {
+	for i, choice := range mcpModeChoices {
+		if choice.tier == tier {
 			return i
 		}
 	}
@@ -362,8 +362,6 @@ func normalizeMCPTierForCLI(tier string) string {
 	case "eager":
 		return "eager"
 	case "background":
-		return "background"
-	case "":
 		return "background"
 	default:
 		return "lazy"
@@ -380,7 +378,7 @@ func mcpConfigLocation() string {
 	if path := config.UserConfigPath(); path != "" {
 		return path
 	}
-	return "reasonix.toml"
+	return "voltui.toml"
 }
 
 type mcpEditConfigLaunch struct {

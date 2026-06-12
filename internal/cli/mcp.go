@@ -5,11 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"reasonix/internal/codegraph"
-	"reasonix/internal/config"
+	"voltui/internal/codegraph"
+	"voltui/internal/config"
 )
 
-// mcp.go holds the MCP server-management surface shared by the `reasonix mcp`
+// mcp.go holds the MCP server-management surface shared by the `voltui mcp`
 // subcommand (config-only; takes effect next session) and the in-chat `/mcp add`
 // / `/mcp remove` slash commands (which hot-connect via the controller). Both
 // parse arguments through parseMCPAdd so the grammar is identical everywhere.
@@ -148,7 +148,7 @@ func tokenizeArgs(s string) []string {
 	return out
 }
 
-// mcpCommand implements `reasonix mcp <add|remove|list>`. It edits config only
+// mcpCommand implements `voltui mcp <add|remove|list>`. It edits config only
 // (validate → UpsertPlugin/RemovePlugin → Save); the server connects on the next
 // session start. For a live connect inside an open chat, use `/mcp add`.
 func mcpCommand(args []string) int {
@@ -163,8 +163,6 @@ func mcpCommand(args []string) int {
 		return mcpAddCLI(args[1:])
 	case "remove", "rm":
 		return mcpRemoveCLI(args[1:])
-	case "import":
-		return mcpImportCLI()
 	case "help", "-h", "--help":
 		mcpUsage()
 		return 0
@@ -173,16 +171,6 @@ func mcpCommand(args []string) int {
 		mcpUsage()
 		return 2
 	}
-}
-
-func mcpImportCLI() int {
-	total, added, updated, err := config.ImportCCSwitchMCP()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	fmt.Printf("imported %d MCP servers from cc-switch (%d added, %d updated) — servers load on the next session\n", total, added, updated)
-	return 0
 }
 
 func mcpList() int {
@@ -194,12 +182,12 @@ func mcpList() int {
 	listed := 0
 	// CodeGraph is a built-in server injected by boot, not a [[plugins]] entry, so
 	// report its resolved status here too. It is listed even when disabled, matching
-	// the MCP manager where the user can enable it.
-	codegraphMeta := fmt.Sprintf(" [enabled=%v auto_install=%v]", cfg.Codegraph.Enabled, cfg.Codegraph.AutoInstall)
+	// the MCP manager where the user can enable it and choose a startup tier.
+	codegraphMeta := fmt.Sprintf(" [auto_start=%v tier=%s]", cfg.Codegraph.Enabled, cfg.Codegraph.ResolvedTier())
 	if bin, ok := codegraph.Resolve(cfg.Codegraph.Path); ok {
 		fmt.Printf("%-16s (stdio, built-in)%s  %s serve --mcp\n", "codegraph", codegraphMeta, bin)
 	} else {
-		fmt.Printf("%-16s (built-in, not installed)%s  run `reasonix codegraph install`", "codegraph", codegraphMeta)
+		fmt.Printf("%-16s (built-in, not installed)%s  run `voltui codegraph install`", "codegraph", codegraphMeta)
 		if cfg.Codegraph.Enabled && cfg.Codegraph.AutoInstall {
 			fmt.Print(" (or let auto_install fetch it on next startup)")
 		}
@@ -254,7 +242,7 @@ func mcpAddCLI(args []string) int {
 
 func mcpRemoveCLI(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: reasonix mcp remove <name>")
+		fmt.Fprintln(os.Stderr, "usage: voltui mcp remove <name>")
 		return 2
 	}
 	name := args[0]
@@ -276,15 +264,14 @@ func mcpRemoveCLI(args []string) int {
 }
 
 func mcpUsage() {
-	fmt.Println(`Manage MCP servers (persisted to reasonix.toml).
+	fmt.Println(`Manage MCP servers (persisted to voltui.toml).
 
 Usage:
-  reasonix mcp list
-  reasonix mcp add <name> <command> [args...]        stdio server
-  reasonix mcp add <name> --http <url> [--header K=V] remote (Streamable HTTP)
-  reasonix mcp add <name> --sse  <url>               remote (legacy SSE)
-  reasonix mcp import                                import Codex-enabled servers from cc-switch
-  reasonix mcp remove <name>
+  voltui mcp list
+  voltui mcp add <name> <command> [args...]        stdio server
+  voltui mcp add <name> --http <url> [--header K=V] remote (Streamable HTTP)
+  voltui mcp add <name> --sse  <url>               remote (legacy SSE)
+  voltui mcp remove <name>
 
 Flags for add:
   --http <url> | --sse <url>   remote transport (omit for a stdio command)
@@ -292,8 +279,8 @@ Flags for add:
   --header K=V                 set an HTTP header (repeatable, remote)
 
 Examples:
-  reasonix mcp add fs npx -y @modelcontextprotocol/server-filesystem .
-  reasonix mcp add stripe --http https://mcp.stripe.com --header "Authorization=Bearer $STRIPE_KEY"
+  voltui mcp add fs npx -y @modelcontextprotocol/server-filesystem .
+  voltui mcp add stripe --http https://mcp.stripe.com --header "Authorization=Bearer $STRIPE_KEY"
 
 Changes take effect on the next session; inside a running chat, use /mcp add to
 connect a server live.`)

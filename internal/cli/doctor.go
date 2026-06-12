@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"reasonix/internal/doctor"
+	"voltui/internal/doctor"
 )
 
 func doctorCommand(args []string, version string) int {

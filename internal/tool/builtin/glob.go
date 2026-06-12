@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/tool"
+	"voltui/internal/tool"
 )
 
 func init() { tool.RegisterBuiltin(globTool{}) }

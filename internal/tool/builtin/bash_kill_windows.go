@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"strconv"
 
-	"reasonix/internal/proc"
+	"voltui/internal/proc"
 )
 
 // setKillTree hides the child's console and makes a cancelled command kill its
@@ -23,10 +23,3 @@ func setKillTree(cmd *exec.Cmd) {
 		return cmd.Process.Kill()
 	}
 }
-
-// reapTree is the post-completion process-group cleanup the POSIX build does for
-// #3702. On Windows it's a no-op: once the shell leader exits there's no live
-// parent for taskkill /T to walk, and spawning taskkill on every bash call would
-// tax the hot path for little gain — proper after-exit tree cleanup needs a Job
-// Object, which is out of scope here.
-func reapTree(*exec.Cmd) {}

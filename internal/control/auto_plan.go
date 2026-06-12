@@ -41,10 +41,12 @@ func (c *Controller) shouldAutoPlan(ctx context.Context, input string) bool {
 	c.mu.Lock()
 	mode := c.autoPlan
 	plan := c.planMode
-	goalActive := strings.TrimSpace(c.goal) != "" && c.goalStatus == GoalStatusRunning
 	classifier := c.classifier
+	bypass := c.bypass
 	c.mu.Unlock()
-	if mode == autoPlanOff || plan || goalActive {
+	// YOLO/bypass means "don't stop to ask" — entering plan mode would draft a
+	// plan and gate on approval, the opposite of what the user opted into.
+	if mode == autoPlanOff || plan || bypass {
 		return false
 	}
 	score := autoPlanScore(input)

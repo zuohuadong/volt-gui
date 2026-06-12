@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 func TestBranchMetaRoundTripAndList(t *testing.T) {
@@ -37,19 +37,10 @@ func TestBranchMetaRoundTripAndList(t *testing.T) {
 	if len(branches) != 2 {
 		t.Fatalf("branches = %d, want 2", len(branches))
 	}
-	var rootFound, childFound bool
-	for _, b := range branches {
-		if b.ID == "root" {
-			rootFound = true
-		}
-		if b.ParentID == "root" && b.Name == "experiment" {
-			childFound = true
-		}
+	if branches[0].ID != "root" {
+		t.Fatalf("first branch = %q, want root", branches[0].ID)
 	}
-	if !rootFound {
-		t.Fatal("root branch not found")
-	}
-	if !childFound {
-		t.Fatalf("child with parent root and name experiment not found among %+v", branches)
+	if branches[1].ParentID != "root" || branches[1].Name != "experiment" {
+		t.Fatalf("child meta = %+v, want parent root and name experiment", branches[1].BranchMeta)
 	}
 }

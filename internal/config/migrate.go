@@ -10,15 +10,14 @@ import (
 	"strings"
 )
 
-// legacyConfig is the subset of the v0.x (~/.reasonix/config.json) schema this
+// legacyConfig is the subset of the v0.x (~/.voltui/config.json) schema this
 // import carries forward. Fields absent here are dropped on purpose: desktop tab
-// state is frontend-owned, and skills already live in the shared ~/.reasonix/skills
+// state is frontend-owned, and skills already live in the shared ~/.voltui/skills
 // root that v1+ also scans, so they need no migration.
 type legacyConfig struct {
 	APIKey      string                       `json:"apiKey"`
 	BaseURL     string                       `json:"baseUrl"`
 	Lang        string                       `json:"lang"`
-	MCP         []string                     `json:"mcp"` // pre-mcpServers `--mcp`-format strings
 	MCPServers  map[string]legacyMCPServer   `json:"mcpServers"`
 	MCPEnv      map[string]map[string]string `json:"mcpEnv"`
 	MCPDisabled []string                     `json:"mcpDisabled"`
@@ -51,7 +50,7 @@ func (r *MigrationResult) Notice() string {
 		fmt.Fprintf(&b, " (%d MCP server(s))", r.Plugins)
 	}
 	if r.KeyToEnv {
-		b.WriteString("; API key saved to reasonix's credentials store")
+		b.WriteString("; API key saved to voltui's credentials store")
 	}
 	b.WriteString(". The old files were left untouched.")
 	for _, w := range r.Warnings {
@@ -62,7 +61,7 @@ func (r *MigrationResult) Notice() string {
 
 // MigrateLegacyIfNeeded performs a one-time, non-destructive import of older
 // installs into the current user config when the latter does not exist yet. It
-// checks v1-era TOML first, then v0.5/v0.x ~/.reasonix/config.json, and never
+// checks v1-era TOML first, then v0.5/v0.x ~/.voltui/config.json, and never
 // modifies or deletes the legacy files. Returns nil when there is nothing to
 // migrate, or when the current user config already exists.
 func MigrateLegacyIfNeeded() (*MigrationResult, error) {
@@ -80,7 +79,7 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 	if res, err := migrateLegacyTOMLIfNeeded(dest, home); res != nil || err != nil {
 		return res, err
 	}
-	src := filepath.Join(home, ".reasonix", "config.json")
+	src := filepath.Join(home, ".voltui", "config.json")
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return nil, nil
@@ -153,9 +152,9 @@ func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
 }
 
 func legacyTOMLPaths(dest, home string) []string {
-	paths := []string{filepath.Join(filepath.Dir(dest), "reasonix.toml")}
+	paths := []string{filepath.Join(filepath.Dir(dest), "voltui.toml")}
 	if home != "" {
-		paths = append(paths, filepath.Join(home, ".reasonix", "reasonix.toml"))
+		paths = append(paths, filepath.Join(home, ".voltui", "voltui.toml"))
 	}
 	return paths
 }
@@ -173,42 +172,19 @@ func migrateLegacyBaseURL(cfg *Config, baseURL string) {
 }
 
 func legacyPlugins(legacy legacyConfig) []PluginEntry {
+	if len(legacy.MCPServers) == 0 {
+		return nil
+	}
 	disabled := make(map[string]bool, len(legacy.MCPDisabled))
 	for _, n := range legacy.MCPDisabled {
 		disabled[n] = true
-	}
-	var out []PluginEntry
-	index := make(map[string]int)
-	add := func(pe PluginEntry, off bool) {
-		if off {
-			v := false
-			pe.AutoStart = &v
-		}
-		pe, _ = NormalizePluginCommandLine(pe)
-		if j, dup := index[pe.Name]; dup {
-			out[j] = pe // mcpServers overrides the `mcp` list on a name collision, matching v0.x
-			return
-		}
-		index[pe.Name] = len(out)
-		out = append(out, pe)
-	}
-	for i, raw := range legacy.MCP {
-		pe, ok := parseLegacyMCPSpec(raw)
-		if !ok {
-			continue
-		}
-		if pe.Name == "" {
-			pe.Name = anonymousMCPName(i)
-		} else if pe.Command != "" {
-			pe.Env = mergeEnv(nil, legacy.MCPEnv[pe.Name])
-		}
-		add(pe, disabled[pe.Name])
 	}
 	names := make([]string, 0, len(legacy.MCPServers))
 	for n := range legacy.MCPServers {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	out := make([]PluginEntry, 0, len(names))
 	for _, name := range names {
 		s := legacy.MCPServers[name]
 		pe := PluginEntry{
@@ -220,7 +196,11 @@ func legacyPlugins(legacy legacyConfig) []PluginEntry {
 			URL:     s.URL,
 			Headers: s.Headers,
 		}
-		add(pe, s.Disabled || disabled[name])
+		if s.Disabled || disabled[name] {
+			off := false
+			pe.AutoStart = &off
+		}
+		out = append(out, pe)
 	}
 	return out
 }
@@ -261,8 +241,8 @@ func mergeEnv(base, overlay map[string]string) map[string]string {
 	return out
 }
 
-// writeCredentialsEnv merges lines into the reasonix-owned global credentials
-// file (UserCredentialsPath, e.g. %AppData%\reasonix\credentials), replacing any
+// writeCredentialsEnv merges lines into the voltui-owned global credentials
+// file (UserCredentialsPath, e.g. %AppData%\voltui\credentials), replacing any
 // existing assignment of the same key, and pins them into the current process env
 // so the just-built session resolves the key without a restart. Falls back to
 // ~/.env only when the user config dir can't be resolved — never a project .env,

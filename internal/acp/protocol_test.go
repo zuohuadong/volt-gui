@@ -1,8 +1,6 @@
 package acp
 
 import (
-	"context"
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,22 +128,19 @@ func TestNewSessionIDUnique(t *testing.T) {
 // --- mcpSpecs ---
 
 func TestMcpSpecsNil(t *testing.T) {
-	if got, err := mcpSpecs(nil, ""); err != nil || got != nil {
+	if got := mcpSpecs(nil); got != nil {
 		t.Errorf("mcpSpecs(nil) = %v, want nil", got)
 	}
-	if got, err := mcpSpecs([]MCPServerSpec{}, ""); err != nil || got != nil {
+	if got := mcpSpecs([]MCPServerSpec{}); got != nil {
 		t.Errorf("mcpSpecs([]) = %v, want nil", got)
 	}
 }
 
 func TestMcpSpecsConversion(t *testing.T) {
 	in := []MCPServerSpec{
-		{Name: "codegraph", Command: "codegraph", Args: []string{"--stdio"}, Env: MCPEnv{"HOME": "/tmp"}},
+		{Name: "codegraph", Command: "codegraph", Args: []string{"--stdio"}, Env: map[string]string{"HOME": "/tmp"}},
 	}
-	got, err := mcpSpecs(in, "/workspace")
-	if err != nil {
-		t.Fatalf("mcpSpecs: %v", err)
-	}
+	got := mcpSpecs(in)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
@@ -157,39 +152,6 @@ func TestMcpSpecsConversion(t *testing.T) {
 	}
 	if got[0].Env["HOME"] != "/tmp" {
 		t.Errorf("env = %v", got[0].Env)
-	}
-	if got[0].Dir != "/workspace" {
-		t.Errorf("dir = %q, want /workspace", got[0].Dir)
-	}
-}
-
-func TestMCPEnvAcceptsOfficialArrayShape(t *testing.T) {
-	var p SessionNewParams
-	raw := []byte(`{
-		"cwd":"/tmp",
-		"mcpServers":[{
-			"name":"fs",
-			"command":"mcp-fs",
-			"args":["--stdio"],
-			"env":[{"name":"HOME","value":"/tmp"},{"name":"EMPTY","value":""}]
-		}]
-	}`)
-	if err := json.Unmarshal(raw, &p); err != nil {
-		t.Fatalf("unmarshal official env array: %v", err)
-	}
-	got, err := mcpSpecs(p.MCPServers, p.Cwd)
-	if err != nil {
-		t.Fatalf("mcpSpecs: %v", err)
-	}
-	if got[0].Env["HOME"] != "/tmp" || got[0].Env["EMPTY"] != "" {
-		t.Fatalf("env = %v, want HOME and EMPTY from official array", got[0].Env)
-	}
-}
-
-func TestMcpSpecsRejectsUnsupportedTransport(t *testing.T) {
-	_, err := mcpSpecs([]MCPServerSpec{{Name: "remote", Type: "http", Command: "ignored"}}, "/tmp")
-	if err == nil || !strings.Contains(err.Error(), "unsupported transport") {
-		t.Fatalf("mcpSpecs unsupported transport err = %v", err)
 	}
 }
 
@@ -234,16 +196,7 @@ func TestErrorCodes(t *testing.T) {
 func TestAcpSessionSetCancelAbort(t *testing.T) {
 	sess := &acpSession{id: "test"}
 	aborted := false
-	_, cancel, ok := sess.begin(context.Background())
-	if !ok {
-		t.Fatal("begin should succeed")
-	}
-	sess.mu.Lock()
-	sess.cancel = func() {
-		aborted = true
-		cancel()
-	}
-	sess.mu.Unlock()
+	sess.setCancel(func() { aborted = true })
 	sess.abort()
 	if !aborted {
 		t.Error("abort should call the cancel func")
@@ -257,6 +210,6 @@ func TestAcpSessionAbortNil(t *testing.T) {
 
 func TestAcpSessionSetCancelNil(t *testing.T) {
 	sess := &acpSession{id: "test"}
-	sess.finish()
+	sess.setCancel(nil)
 	sess.abort() // should not panic
 }

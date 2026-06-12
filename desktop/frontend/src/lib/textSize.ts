@@ -4,16 +4,10 @@ export type TextSize = (typeof TEXT_SIZES)[number];
 
 export const DEFAULT_TEXT_SIZE: TextSize = "default";
 
-const TEXT_SIZE_KEY = "reasonix-text-size";
+const TEXT_SIZE_KEY = "voltui-text-size";
 
 export function isTextSize(value: unknown): value is TextSize {
   return typeof value === "string" && (TEXT_SIZES as readonly string[]).includes(value);
-}
-
-export function nextTextSize(current: TextSize, delta: -1 | 1): TextSize {
-  const index = TEXT_SIZES.indexOf(current);
-  const nextIndex = Math.min(TEXT_SIZES.length - 1, Math.max(0, index + delta));
-  return TEXT_SIZES[nextIndex];
 }
 
 export function getTextSize(): TextSize {

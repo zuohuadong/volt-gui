@@ -11,10 +11,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
-	_ "reasonix/internal/tool/builtin"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
+	_ "voltui/internal/tool/builtin"
 )
 
 // TestTruncateToolOutputUnderCap leaves small payloads alone — the cap should
@@ -80,21 +80,6 @@ func TestFinishReasonMessage(t *testing.T) {
 		if !ok || !strings.Contains(msg, fragment) {
 			t.Errorf("finish_reason=%q: got (%q, %v), want fragment %q", reason, msg, ok, fragment)
 		}
-	}
-}
-
-// TestEmptyFinalNotice carries the diagnostics that tell the three empty-answer
-// causes apart in reports: which provider, how it stopped, and whether the model
-// produced reasoning-only output.
-func TestEmptyFinalNotice(t *testing.T) {
-	msg := emptyFinalNotice("deepseek-flash", &provider.Usage{FinishReason: "stop"}, 512)
-	for _, want := range []string{"deepseek-flash", "finish=stop", "reasoning=512"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("notice %q missing %q", msg, want)
-		}
-	}
-	if got := emptyFinalNotice("p", nil, 0); !strings.Contains(got, "finish=unknown") {
-		t.Errorf("nil usage should report finish=unknown, got %q", got)
 	}
 }
 

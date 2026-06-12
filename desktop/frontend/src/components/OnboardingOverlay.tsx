@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import logo from "../assets/logo.svg";
+import { useBrand } from "../lib/brand";
 import { useT } from "../lib/i18n";
 import { app, openExternal } from "../lib/bridge";
 
@@ -7,6 +8,7 @@ import { app, openExternal } from "../lib/bridge";
 // unmounts us so the rebuilt controller's main UI takes over.
 export function OnboardingOverlay({ onComplete }: { onComplete: () => void }) {
   const t = useT();
+  const brand = useBrand();
   const [value, setValue] = useState("");
   const [state, setState] = useState<"idle" | "validating" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -43,8 +45,8 @@ export function OnboardingOverlay({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="onboarding">
       <div className="onboarding__card">
-        <img src={logo} className="onboarding__logo" alt="Reasonix" draggable={false} />
-        <div className="onboarding__title">{t("onboarding.title")}</div>
+        <img src={brand.logoUrl || logo} className="onboarding__logo" alt={brand.name} />
+        <div className="onboarding__title">{t("onboarding.title", { name: brand.name })}</div>
         <div className="onboarding__tag">{t("onboarding.tagline")}</div>
 
         <label className="onboarding__label" htmlFor="onboarding-key">

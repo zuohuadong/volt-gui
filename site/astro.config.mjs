@@ -1,9 +1,8 @@
 import { defineConfig } from 'astro/config';
-import sitemap from '@astrojs/sitemap';
 
-// Served from the custom domain reasonix.io at the site root.
+// Served from GitHub Pages under the repo subpath.
 export default defineConfig({
-  site: 'https://reasonix.io',
+  site: 'https://esengine.github.io',
+  base: '/voltui',
   build: { assets: 'static' },
-  integrations: [sitemap()],
 });

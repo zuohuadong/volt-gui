@@ -37,15 +37,15 @@ type Messages struct {
 	NoKey           string // status dot — no API key set
 	Ready           string // status dot — provider ready
 	GetStarted      string // section title above numbered steps
-	StepScaffold    string // step 1 desc — reasonix setup
+	StepScaffold    string // step 1 desc — voltui setup
 	StepSetKey      string // step 2 command label
 
-	// `reasonix init` — points to the in-session /init skill + setup
+	// `voltui init` — points to the in-session /init skill + setup
 	InitHint       string
 	StepSetKeyHint string // step 2 desc — env var hint
-	StepChatDesc   string // reasonix chat step desc
-	StepRunDesc    string // reasonix run step desc
-	HelpFooter     string // dim footer linking to reasonix help
+	StepChatDesc   string // voltui chat step desc
+	StepRunDesc    string // voltui run step desc
+	HelpFooter     string // dim footer linking to voltui help
 
 	// chat REPL
 	ChatTip           string // tip line under the chat banner
@@ -60,39 +60,28 @@ type Messages struct {
 	ResumeBadIndexFmt   string // shown when /resume gets an out-of-range index (one %d)
 	ResumeAlreadyActive string // shown when /resume targets the current session
 	ResumedTitle        string // banner title after a /resume switch
-
-	RenameUsage     string // /rename with no args
-	RenameNoSession string // /rename with no active session
-	RenameDoneFmt   string // /rename succeeded (one %s = new title)
-	ResumePickTitle string // header in the interactive resume picker
-	ResumePickHint  string // keyboard hint in the interactive resume picker
+	ResumePickTitle     string // header in the interactive resume picker
+	ResumePickHint      string // keyboard hint in the interactive resume picker
 
 	// chat TUI status line / approval banner.
-	ChatThinking                string // live reasoning marker label, e.g. "thinking…"
-	ChatThoughtForFmt           string // collapsed reasoning summary, "%d" = elapsed s
-	ChatStatusThinkingFmt       string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
-	ChatToolWorkingFmt          string // "%s working · %ds" under a running tool — %s = spinner, %d = elapsed s
-	ChatStatusRetryingFmt       string // "%s retrying (%d/%d)…" — %s = spinner, %d/%d = attempt/max
-	ChatStatusIdle              string // shortcuts hint when idle
-	ChatStatusYoloIdle          string // shortcuts hint when idle in YOLO/bypass mode
-	ChatStatusCycleHint         string // plan-toggle shortcut hint shown when no modal prompt owns the status row
-	ChatStatusCacheNowFmt       string // cache status tag, "%s" = latest-turn hit rate with percent sign
-	ChatStatusCacheAvgFmt       string // cache status tag, "%s" = session-average hit rate with percent sign
-	ChatStatusPlanApproval      string // shortcuts hint while a plan is pending
-	PlanApprovalPrompt          string // one-line "plan above is ready" banner shown above the input
-	ChatStatusToolApproval      string // shortcuts hint while a tool call awaits approval
-	ToolApprovalPromptFmt       string // approval banner — tool, subject suffix, source/intent detail, choices
-	ToolApprovalChoices         string // standard approval choice list
-	BashPrefixChoices           string // approval choice list when a bash prefix can be granted
-	ToolApprovalSourceFmt       string // "Source: %s" / "来源: %s"
-	ToolApprovalBuiltIn         string // built-in tool source label
-	ToolApprovalImageUse        string // image-understanding detail for understand_image-style tools
-	PermissionSavedFmt          string // permission rule saved notice: path, rule
-	PermissionAlreadyAllowedFmt string // permission rule already covered notice: path, rule
-	PermissionSaveFailedFmt     string // permission rule save failure notice: rule, error
-	DiffFoldedFmt               string // "… +%d more lines" footer when a writer diff is folded
-	DiffFoldEnabledFmt          string // notice when /diff-fold enables folding, %d = line limit
-	DiffFoldDisabled            string // notice when /diff-fold disables folding (shows all lines)
+	ChatThinking           string // live reasoning marker label, e.g. "thinking…"
+	ChatThoughtForFmt      string // collapsed reasoning summary, "%d" = elapsed s
+	ChatStatusThinkingFmt  string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
+	ChatToolWorkingFmt     string // "%s working · %ds" under a running tool — %s = spinner, %d = elapsed s
+	ChatStatusRetryingFmt  string // "%s retrying (%d/%d)…" — %s = spinner, %d/%d = attempt/max
+	ChatStatusIdle         string // shortcuts hint when idle
+	ChatStatusYoloIdle     string // shortcuts hint when idle in YOLO/bypass mode
+	ChatStatusCycleHint    string // mode-cycle shortcut hint shown when no modal prompt owns the status row
+	ChatStatusCacheNowFmt  string // cache status tag, "%s" = latest-turn hit rate with percent sign
+	ChatStatusCacheAvgFmt  string // cache status tag, "%s" = session-average hit rate with percent sign
+	ChatStatusPlanApproval string // shortcuts hint while a plan is pending
+	PlanApprovalPrompt     string // one-line "plan above is ready" banner shown above the input
+	ChatStatusToolApproval string // shortcuts hint while a tool call awaits approval
+	ToolApprovalPromptFmt  string // approval banner — tool, subject suffix, and source/intent detail
+	ToolApprovalSourceFmt  string // "Source: %s" / "来源: %s"
+	ToolApprovalBuiltIn    string // built-in tool source label
+	ToolApprovalImageUse   string // image-understanding detail for understand_image-style tools
+	DiffFoldedFmt          string // "… +%d more lines" footer when a writer diff is folded
 
 	// `ask` tool question card.
 	AskTypeSomething   string // the "type your own answer" option label
@@ -128,9 +117,6 @@ type Messages struct {
 	SlashCompactFailed string // "/compact" errored, prefixed before the underlying error
 	SlashNewDone       string // "/new" succeeded
 	SlashNewFailed     string // "/new" errored
-	SlashClearPrompt   string // "/clear" destructive confirmation prompt
-	SlashClearDone     string // "/clear" succeeded
-	SlashClearFailed   string // "/clear" errored
 	SlashTodoCleared   string // "/todo" dismissed the pinned task list
 	SlashUnavailable   string // the command is configured off (no callback wired)
 	SlashUnknown       string // shown when the user types an unrecognised "/cmd"
@@ -150,17 +136,14 @@ type Messages struct {
 	// slash command + sub-command descriptions shown in the menu (CLI and desktop
 	// share these via i18n.M, so both frontends localize identically).
 	CmdNew          string // /new
-	CmdClear        string // /clear
 	CmdCompact      string // /compact
 	CmdRewind       string // /rewind
 	CmdTree         string // /tree
 	CmdBranch       string // /branch
 	CmdSwitchBranch string // /switch
 	CmdResume       string // /resume
-	CmdRename       string // /rename
 	CmdModel        string // /model
 	CmdMemory       string // /memory
-	CmdGoal         string // /goal
 	CmdRemember     string // /remember
 	CmdForget       string // /forget
 	CmdMcp          string // /mcp
@@ -171,8 +154,6 @@ type Messages struct {
 	CmdLanguage     string // /language
 	CmdSkill        string // /skills
 	CmdVerbose      string // /verbose
-	CmdDiffFold     string // /diff-fold
-	CmdSandbox      string // /sandbox
 	CmdEffort       string // /effort
 	CmdAutoPlan     string // /auto-plan
 	CmdHelp         string // /help
@@ -222,10 +203,6 @@ type Messages struct {
 	ForgetDoneFmt          string
 	QuickRememberEmpty     string
 	QuickRememberDoneFmt   string
-	GoalEmpty              string
-	GoalCurrentFmt         string
-	GoalSetFmt             string
-	GoalCleared            string
 	ModelSwitchUnavailable string
 	ModelSwitchBusy        string
 	ModelAlreadyOnFmt      string
@@ -295,7 +272,7 @@ type Messages struct {
 	SelectProvidersLabel  string // multi-select label
 	EnterAPIKeysHeader    string // header before the per-env-var prompts
 	MissingKeyIntro       string // shown when re-running the key step on a configured setup
-	WroteFileFmt          string // "Wrote %s" — used for reasonix.toml and .env both
+	WroteFileFmt          string // "Wrote %s" — used for voltui.toml and .env both
 	SetupComplete         string // success line at end of init
 	SetupCancelled        string // shown when the user aborts the wizard
 	TryHintFmt            string // "Try: %s" — %s = command to try (styled)
@@ -314,9 +291,8 @@ type Messages struct {
 	NoModelsAvailableFmt       string // "%s: no models available, skipping"
 	CustomFetchEmpty           string // "/models returned an empty list — falling back to manual entry"
 	AnthropicFetchEmpty        string // "/models returned an empty list — Anthropic-compatible providers usually don't expose one, falling back to manual entry"
-	SkipStaleCustomEntryFmt    string // "skipping stale %q entry from reasonix.toml (pointing at %s) — please remove it"
+	SkipStaleCustomEntryFmt    string // "skipping stale %q entry from voltui.toml (pointing at %s) — please remove it"
 	APIKeyAlreadySetFmt        string // "reusing existing value for %s"
-	APIKeyResetPromptFmt       string // "Re-enter %s?"
 
 	// custom provider
 	CustomProviderLabel  string // "Custom Model"
@@ -348,7 +324,7 @@ type Messages struct {
 
 	// top-level / runAgent
 	UnknownCommandFmt         string // "unknown command %q"
-	UsageRunHint              string // "usage: reasonix run [--model NAME] <task>"
+	UsageRunHint              string // "usage: voltui run [--model NAME] <task>"
 	ErrorPrefix               string // "error:" — prefix for fatal-error output
 	ReconfigureOnUnknownModel string // shown when the configured model no longer resolves and setup is re-run
 	WriteConfigErr            string // "write config:" — prefix for write failure
@@ -356,8 +332,7 @@ type Messages struct {
 
 	// provider HTTP error explanations — actionable, reason + fix per status code
 	ProviderErrBadRequest          string // 400
-	ProviderErrAuth                string // 401 — no key configured / sent
-	ProviderErrAuthRejected        string // 401 — a key was sent but the server rejected it
+	ProviderErrAuth                string // 401
 	ProviderErrInsufficientBalance string // 402
 	ProviderErrUnprocessable       string // 422
 	ProviderErrRateLimited         string // 429
@@ -365,39 +340,8 @@ type Messages struct {
 	ProviderErrServerBusy          string // 503
 
 	// selection menus
-	SelectOneHint      string // "(↑/↓ · Enter · q to cancel)"
-	SelectManyHint     string // "(↑/↓ · Space · Enter · q)"
-	SelectMoreAboveFmt string // "↑ %d more above"
-	SelectMoreBelowFmt string // "↓ %d more below"
-	SelectSearchHint   string // "/ to search · Esc to cancel"
-
-	// /provider command
-	CmdProvider          string // /provider
-	ProviderListHeader   string // header for /provider list
-	ProviderAlreadyOnFmt string // already on provider
-	ProviderUnknownFmt   string // unknown provider
-	ProviderPickLabel    string // label for provider model picker
-	ProviderNoModelsFmt  string // provider has no models
-
-	// `reasonix upgrade` / `reasonix update` — self-update
-	UpgradeChecking            string // "Checking for updates…"
-	UpgradeDevBuild            string // dev builds cannot self-update
-	UpgradeFetchFailed         string // "failed to check for updates: %v"
-	UpgradeInvalidVersion      string // remote version not valid semver
-	UpgradeAlreadyLatest       string // already on the latest version
-	UpgradeForcing             string // "Reinstalling the same version…"
-	UpgradeAvailableFmt        string // "Current: %s → Latest: %s"
-	UpgradeNoAssetFmt          string // "no binary found for %s"
-	UpgradeDownloadingFmt      string // "Downloading %s (%s)…"
-	UpgradeDownloadFailed      string // "download failed: %v"
-	UpgradeVerifying           string // "Verifying checksum…"
-	UpgradeChecksumFailed      string // "could not fetch checksum file: %v"
-	UpgradeChecksumMismatchFmt string // SHA256 mismatch detail
-	UpgradeChecksumNotFoundFmt string // asset not listed in SHA256SUMS
-	UpgradeExtractFailed       string // "failed to extract binary: %v"
-	UpgradeApplying            string // "Replacing binary…"
-	UpgradeApplyFailed         string // "failed to apply update: %v"
-	UpgradeSuccessFmt          string // "Updated %s → %s"
+	SelectOneHint  string // "(↑/↓ · Enter · q to cancel)"
+	SelectManyHint string // "(↑/↓ · Space · Enter · q)"
 
 	// usage / help
 	UsageBody string // full multi-line help text
@@ -433,7 +377,7 @@ var M = English
 // environment and installs it as M. Returns the resolved tag ("en", "zh") so
 // callers can log or expose it.
 //
-// Priority: override > REASONIX_LANG > LC_ALL > LC_MESSAGES > LANG > "en".
+// Priority: override > VOLTUI_LANG > LC_ALL > LC_MESSAGES > LANG > "en".
 func DetectLanguage(override string) string {
 	for _, c := range append([]string{override}, envCandidates()...) {
 		if tag := normalize(c); tag != "" {
@@ -444,7 +388,7 @@ func DetectLanguage(override string) string {
 }
 
 func envCandidates() []string {
-	keys := []string{"REASONIX_LANG", "LC_ALL", "LC_MESSAGES", "LANG"}
+	keys := []string{"VOLTUI_LANG", "LC_ALL", "LC_MESSAGES", "LANG"}
 	out := make([]string, len(keys))
 	for i, k := range keys {
 		out[i] = os.Getenv(k)

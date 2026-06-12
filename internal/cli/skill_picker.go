@@ -9,8 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"reasonix/internal/i18n"
-	"reasonix/internal/skill"
+	"voltui/internal/i18n"
+	"voltui/internal/skill"
 )
 
 var scopePriority = map[skill.Scope]int{
@@ -336,7 +336,7 @@ func (m chatTUI) deleteSkillPick(sk skill.Skill) (tea.Model, tea.Cmd) {
 	m.notice(fmt.Sprintf(i18n.M.SkillPickerDeletedFmt, sk.Name))
 	m.refreshSkillPickerData()
 	m.scheduleSkillSessionRefresh("skill delete", "deleted skill "+sk.Name+" — refreshing session")
-	return m, m.pendingModelSwitch
+	return m, nil
 }
 
 func (m *chatTUI) rescanSkills() {

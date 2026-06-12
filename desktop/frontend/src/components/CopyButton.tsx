@@ -1,28 +1,25 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { useT } from "../lib/i18n";
+import { Tooltip } from "./Tooltip";
 
-// CopyButton copies text to the clipboard on click and briefly flips to a check.
+// CopyButton copies `text` to the clipboard on click and briefly flips to a check.
 // navigator.clipboard works in the webview under the click's user gesture; a
 // failure is swallowed (nothing to copy to).
 export function CopyButton({
   text,
-  getText,
   className,
   label,
 }: {
-  text?: string;
-  getText?: () => string | Promise<string>;
+  text: string;
   className?: string;
   label?: string;
 }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
-  const actionLabel = label ?? t("msg.copy");
   const copy = async () => {
     try {
-      const value = getText ? await getText() : text ?? "";
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {
@@ -30,14 +27,16 @@ export function CopyButton({
     }
   };
   return (
-    <button
-      className={`copybtn ${className ?? ""}`}
-      onClick={copy}
-      aria-label={actionLabel}
-      type="button"
-    >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-      <span className="copybtn__label-inline">{copied ? t("msg.copied") : actionLabel}</span>
-    </button>
+    <Tooltip label={t("msg.copy")}>
+      <button
+        className={`copybtn ${className ?? ""}`}
+        onClick={copy}
+        aria-label={t("msg.copy")}
+        type="button"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+        {label && <span className="copybtn__label">{copied ? t("msg.copied") : label}</span>}
+      </button>
+    </Tooltip>
   );
 }

@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"reasonix/internal/event"
-	"reasonix/internal/i18n"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
 )
 
 // chooser is the in-chat multiple-choice prompt the `ask` tool raises — the CLI's
@@ -157,10 +157,10 @@ func (m chatTUI) chooserActivate(row int) (tea.Model, tea.Cmd) {
 	switch {
 	case row < len(q.Options):
 		if q.Multi {
-			// Space toggles; Enter confirms current selections and advances.
-			// (Toggling is handled in handleChooserKey; we only arrive here
-			// via Enter or number keys, both of which should commit.)
-			return m.chooserAdvance()
+			c.sel[c.tab][row] = !c.sel[c.tab][row]
+			c.custom[c.tab] = ""
+			c.cursor = row
+			return m, nil
 		}
 		c.sel[c.tab] = map[int]bool{row: true}
 		c.custom[c.tab] = ""

@@ -34,11 +34,10 @@ type walkIgnorer struct {
 	repoRoot string
 	disabled bool
 	frames   []ignoreFrame // shallow→deep; the deepest is the active matcher
-	compiled map[string]*ignore.GitIgnore
 }
 
 func newWalkIgnorer(root string) *walkIgnorer {
-	ig := &walkIgnorer{root: absClean(root), compiled: map[string]*ignore.GitIgnore{}}
+	ig := &walkIgnorer{root: absClean(root)}
 	rr := findRepoRoot(ig.root)
 	if rr == "" {
 		return ig
@@ -133,13 +132,7 @@ func (ig *walkIgnorer) push(dir string, parent, add []string) {
 	pat := append(append([]string{}, parent...), add...)
 	var gi *ignore.GitIgnore
 	if len(pat) > 0 {
-		key := strings.Join(pat, "\n")
-		if c, ok := ig.compiled[key]; ok {
-			gi = c
-		} else {
-			gi = ignore.CompileIgnoreLines(pat...)
-			ig.compiled[key] = gi
-		}
+		gi = ignore.CompileIgnoreLines(pat...)
 	}
 	ig.frames = append(ig.frames, ignoreFrame{dir: dir, patterns: pat, gi: gi})
 }

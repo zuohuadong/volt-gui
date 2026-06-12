@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useT } from "../lib/i18n";
 import { loadLayoutSize, saveLayoutSize, type LayoutSizeKey } from "../lib/layoutPreferences";
-import { useDeferredClose } from "../lib/useMountTransition";
 
 const DRAWER_DEFAULT_WIDTH = 440;
 const DRAWER_MIN_WIDTH = 360;
@@ -56,8 +55,6 @@ export function ResizableDrawer({
     loadLayoutSize(config.key, config.defaultWidth, (value) => clampDrawerWidth(value, wide)),
   );
   const [resizing, setResizing] = useState(false);
-  // Slide the drawer back out before the parent unmounts it.
-  const { status, requestClose } = useDeferredClose(onClose, 240);
   const effectiveWidth = useMemo(() => clampDrawerWidth(width, wide, viewportWidth), [viewportWidth, wide, width]);
   const style = useMemo(() => ({ "--drawer-width": `${effectiveWidth}px` }) as CSSProperties, [effectiveWidth]);
 
@@ -122,10 +119,9 @@ export function ResizableDrawer({
   );
 
   return (
-    <div className={`drawer-backdrop${subtle ? " drawer-backdrop--subtle" : ""}`} data-state={status} onClick={requestClose}>
+    <div className={`drawer-backdrop${subtle ? " drawer-backdrop--subtle" : ""}`} onClick={onClose}>
       <aside
         className={`drawer${wide ? " drawer--wide" : ""}${resizing ? " drawer--resizing" : ""}`}
-        data-state={status}
         onClick={(e) => e.stopPropagation()}
         style={style}
       >

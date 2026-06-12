@@ -4,6 +4,9 @@ import (
 	"sync"
 
 	"fyne.io/systray"
+	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"voltui/internal/config"
 )
 
 type desktopTray struct {
@@ -27,16 +30,19 @@ func (a *App) startTray() {
 	a.mu.Unlock()
 
 	t.end = startDesktopTray(func() {
-		systray.SetIcon(trayIconBytes)
-		systray.SetTitle("Reasonix")
-		systray.SetTooltip("Reasonix")
-		// Run off the systray Win32 message loop: SetOnTapped fires inside wndProc,
-		// so a blocking showFromTray (a wedged webview after sleep freezes
-		// runtime.WindowShow) would stall the whole tray's message pump (#3834). The
-		// menu items below are already decoupled via goroutines for the same reason.
-		systray.SetOnTapped(func() { go a.showFromTray() })
-		// Keep secondary/right-click on systray's native menu path.
-		systray.SetOnSecondaryTapped(nil)
+		brandIcon := a.brandIconBytes()
+		if brandIcon != nil {
+			systray.SetIcon(brandIcon)
+		} else {
+			systray.SetIcon(trayIconBytes)
+		}
+		brandName := "VoltUI"
+		if cfg, err := config.Load(); err == nil {
+			brandName = cfg.BrandName()
+		}
+		systray.SetTitle(brandName)
+		systray.SetTooltip(brandName)
+		systray.SetOnTapped(func() { a.showFromTray() })
 
 		labels := trayMenuLabels(a.trayLocale())
 		t.openItem = systray.AddMenuItem(labels.openTitle, labels.openTooltip)
@@ -96,7 +102,13 @@ func (a *App) trayLocale() string {
 }
 
 func (a *App) showFromTray() {
-	a.showMainWindow()
+	ctx := a.ctx
+	if ctx == nil {
+		return
+	}
+	wruntime.Show(ctx)
+	wruntime.WindowShow(ctx)
+	wruntime.WindowUnminimise(ctx)
 }
 
 func (a *App) quitFromTray() {
@@ -111,18 +123,22 @@ type trayLabels struct {
 }
 
 func trayMenuLabels(locale string) trayLabels {
+	brandName := "VoltUI"
+	if cfg, err := config.Load(); err == nil {
+		brandName = cfg.BrandName()
+	}
 	if locale == "zh" {
 		return trayLabels{
 			openTitle:   "打开",
-			openTooltip: "打开 Reasonix 窗口",
+			openTooltip: "打开 " + brandName + " 窗口",
 			quitTitle:   "退出",
-			quitTooltip: "退出 Reasonix",
+			quitTooltip: "退出 " + brandName,
 		}
 	}
 	return trayLabels{
 		openTitle:   "Open",
-		openTooltip: "Open the Reasonix window",
+		openTooltip: "Open the " + brandName + " window",
 		quitTitle:   "Quit",
-		quitTooltip: "Quit Reasonix",
+		quitTooltip: "Quit " + brandName,
 	}
 }

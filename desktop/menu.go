@@ -6,6 +6,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"voltui/internal/config"
 )
 
 // createAppMenu builds the native application menu bar. macOS only: it's the
@@ -15,6 +17,11 @@ import (
 func (a *App) createAppMenu() *menu.Menu {
 	if goruntime.GOOS != "darwin" {
 		return nil
+	}
+
+	brandName := "VoltUI"
+	if cfg, err := config.Load(); err == nil {
+		brandName = cfg.BrandName()
 	}
 
 	m := menu.NewMenu()
@@ -27,15 +34,10 @@ func (a *App) createAppMenu() *menu.Menu {
 			runtime.EventsEmit(a.ctx, "app:open-settings")
 		}
 	})
-	fileMenu.AddText("Toggle Developer Tools", keys.CmdOrCtrl("i"), func(_ *menu.CallbackData) {
-		if a.ctx != nil {
-			runtime.WindowExecJS(a.ctx, `window.webkit.messageHandlers.external.postMessage("wails:openInspector");`)
-		}
-	})
-	fileMenu.AddText("Show Reasonix", nil, func(_ *menu.CallbackData) {
+	fileMenu.AddText("Show " + brandName, nil, func(_ *menu.CallbackData) {
 		a.showMainWindow()
 	})
-	fileMenu.AddText("Quit Reasonix", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+	fileMenu.AddText("Quit " + brandName, keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		a.quitApp()
 	})
 	m.Append(menu.EditMenu())

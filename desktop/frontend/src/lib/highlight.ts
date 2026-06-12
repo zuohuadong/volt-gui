@@ -6,7 +6,6 @@
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
 import go from "highlight.js/lib/languages/go";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
@@ -21,7 +20,6 @@ import { ALIASES } from "./lang";
 
 hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("css", css);
-hljs.registerLanguage("diff", diff);
 hljs.registerLanguage("go", go);
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("json", json);

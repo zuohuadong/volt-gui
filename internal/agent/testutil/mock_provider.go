@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sync"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 // Turn describes one expected Stream call: the text, optional reasoning,
@@ -20,16 +20,10 @@ type Turn struct {
 	Reasoning string
 	ToolCalls []provider.ToolCall
 	Usage     *provider.Usage
-	// Chunks, when non-empty, is emitted exactly as provided. It is useful for
-	// edge cases such as partial tool-call starts followed by an error.
-	Chunks []provider.Chunk
 
 	// StreamError, when set, causes Stream to return this error before any
 	// chunks, simulating a network or auth failure for that turn.
 	StreamError error
-	// ChunkError, when set, is emitted after the scripted chunks, simulating a
-	// mid-stream provider failure after partial output has reached the agent.
-	ChunkError error
 }
 
 // MockProvider is a provider.Provider whose Stream returns scripted
@@ -88,28 +82,20 @@ func (p *MockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 	}
 
 	var chunks []provider.Chunk
-	if len(t.Chunks) > 0 {
-		chunks = append(chunks, t.Chunks...)
-	} else {
-		if t.Reasoning != "" {
-			chunks = append(chunks, provider.Chunk{Type: provider.ChunkReasoning, Text: t.Reasoning})
-		}
-		if t.Text != "" {
-			chunks = append(chunks, provider.Chunk{Type: provider.ChunkText, Text: t.Text})
-		}
-		for i := range t.ToolCalls {
-			tc := t.ToolCalls[i]
-			chunks = append(chunks, provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &tc})
-		}
-		if t.Usage != nil {
-			chunks = append(chunks, provider.Chunk{Type: provider.ChunkUsage, Usage: t.Usage})
-		}
-		if t.ChunkError != nil {
-			chunks = append(chunks, provider.Chunk{Type: provider.ChunkError, Err: t.ChunkError})
-		} else {
-			chunks = append(chunks, provider.Chunk{Type: provider.ChunkDone})
-		}
+	if t.Reasoning != "" {
+		chunks = append(chunks, provider.Chunk{Type: provider.ChunkReasoning, Text: t.Reasoning})
 	}
+	if t.Text != "" {
+		chunks = append(chunks, provider.Chunk{Type: provider.ChunkText, Text: t.Text})
+	}
+	for i := range t.ToolCalls {
+		tc := t.ToolCalls[i]
+		chunks = append(chunks, provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &tc})
+	}
+	if t.Usage != nil {
+		chunks = append(chunks, provider.Chunk{Type: provider.ChunkUsage, Usage: t.Usage})
+	}
+	chunks = append(chunks, provider.Chunk{Type: provider.ChunkDone})
 
 	ch := make(chan provider.Chunk)
 	go func() {

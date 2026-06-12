@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 type classifierProvider struct {

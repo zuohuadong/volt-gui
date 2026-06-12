@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "reasonix-desktop",
-  "outputfilename": "reasonix-desktop",
+  "name": "voltui-desktop",
+  "outputfilename": "voltui-desktop",
   "frontend:install": "pnpm install",
   "frontend:build": "pnpm build",
   "frontend:dev:watcher": "pnpm dev",
@@ -10,10 +10,10 @@
     "name": "esengine"
   },
   "info": {
-    "companyName": "Reasonix",
-    "productName": "Reasonix",
+    "companyName": "VoltUI",
+    "productName": "VoltUI",
     "productVersion": "0.0.0",
-    "copyright": "Copyright © 2026 Reasonix Contributors",
-    "comments": "Reasonix desktop — a Wails shell around the Go kernel."
+    "copyright": "Copyright © 2026 VoltUI Contributors",
+    "comments": "VoltUI desktop — a Wails shell around the Go kernel. Brand identity is configurable via [brand] in voltui.toml or VOLTUI_BRAND_* env vars."
   }
 }

@@ -4,14 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/checkpoint"
-	"reasonix/internal/i18n"
+	"voltui/internal/checkpoint"
 )
 
 func TestOneLine(t *testing.T) {
-	i18n.DetectLanguage("en")
-	t.Cleanup(func() { i18n.DetectLanguage("en") })
-
 	if got := oneLine("", 10); got != "(empty)" {
 		t.Fatalf("empty -> %q", got)
 	}
@@ -24,9 +20,6 @@ func TestOneLine(t *testing.T) {
 }
 
 func TestRenderRewindSmoke(t *testing.T) {
-	i18n.DetectLanguage("en")
-	t.Cleanup(func() { i18n.DetectLanguage("en") })
-
 	metas := []checkpoint.Meta{
 		{Turn: 0, Prompt: "add the parser", Paths: []string{"a.go"}},
 		{Turn: 1, Prompt: "fix the bug", Paths: []string{"b.go", "c.go"}},

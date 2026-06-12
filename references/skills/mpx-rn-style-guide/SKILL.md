@@ -1,0 +1,125 @@
+---
+name: mpx-rn-style-guide
+description: Mpx 跨端输出 RN （Mpx2RN or Mpx2DRN）的样式兼容适配开发指南，当用户询问 Mpx 跨端输出 RN 样式相关问题时强制调用，包括：Mpx2RN 样式适配、Mpx2RN 样式兼容改造、Mpx2RN 样式能力支持、Mpx2RN 样式不生效、Mpx2RN 样式报错、Mpx2RN 样式开发最佳实践、Mpx2RN 中如何实现某样式效果等。
+---
+
+# Mpx 跨端输出 RN 样式开发指南
+
+## 背景介绍
+
+Mpx 是一个以微信小程序语法为基础、进行了类 Vue 语法拓展支持的跨端开发框架，支持将同一套代码输出到小程序（微信、支付宝、百度等）、Web 和 React Native 平台。尽管 Mpx 在编译时和运行时对样式能力进行了一定程度的跨平台抹平，但在输出 RN 时在样式能力支持上仍与小程序和 Web 平台存在较大差异，本文档详细描述了 Mpx 输出 RN 时的样式能力支持情况，以及跨平台开发时样式兼容的最佳实践。
+
+Mpx 采用类 Vue 的单文件组件（SFC）格式 `.mpx` 进行组件与页面定义。组件结构以目标项目现有 `.mpx` 文件和项目文档为准。
+
+## 知识库指引
+
+根据具体场景读取以下参考文件：
+
+- **样式能力参考**：当用户询问 Mpx2RN 样式能力支持详情，遇到样式不生效、样式报错等问题，或进行跨端样式适配开发时，读取 [RN 平台样式能力详情](./others/rn-style-detail.md)
+- **平台差异参考**：当用户查询不支持的样式能力是否存在兼容方案时，读取 [RN 与小程序平台的样式能力差异](./others/rn-style-diff.md)
+
+## 跨端输出 RN 样式适配改造
+
+当用户要求对已有 Mpx 组件进行跨端输出 RN 样式适配改造时，遵循以下流程与约束。
+
+### 输入
+
+基于小程序技术规范编写的 `{name}.mpx` 组件。
+
+### 输出
+
+以用户指示为准，若无特殊指示则默认在原文件 `{name}.mpx` 中进行修改。在输出修改后的代码时，应输出完整的组件代码，避免使用省略号，确保用户可以直接复制或应用修改。
+
+### 约束指引
+
+进行样式适配改造时需严格遵循以下约束指引：
+
+1. **选择器单类化（示例）**：禁止使用复合选择器（如 `.list .item`），必须转换为单类名等效实现（如 `.list-item`），并确保同步修改 `<template>` 结构和 `<script>`（如 `createSelectorQuery`）中的对应引用。
+  * **Bad Example**: `<style> .list .item { color: red; } </style>`
+  * **Good Example**: `<style> .list-item { color: red; } </style>`
+2. 模板样式类名动态绑定尽可能使用 `wx:style` 和 `wx:class` 模版指令，尽量避免在 `style` 和 `class` 属性中使用 `{{}}` 插值表达式进行动态绑定。
+  * **Bad Example**: `<view class="item {{isActive ? 'active' : ''}}">`
+  * **Good Example**: `<view class="item" wx:class="{{ {active: isActive} }}">`
+3. 非必要尽可能减少条件编译的使用，优先使用跨平台兼容的实现方式，**避免出现大面积连续的条件编译**，因为这会严重破坏代码的可读性和后期维护性。
+4. **保留原始样式定义中的 `/*use rpx*/` 和 `/*use px*/` 注释**，此类注释用于编译期间批量切换样式单位
+
+### 任务流程
+
+1. **选择器适配改造**：
+  - 分析组件的 `<style>` 部分，对于 `sass`、`less`、`stylus` 等支持嵌套选择器写法的预处理语言，先将原代码中所有的嵌套选择器写法展开铺平为传统的选择器写法，便于后续进行选择器的兼容性判断及适配改造。
+    * **Bad Example (嵌套选择器未展开)**:
+      ```less
+      .list {
+        .item {
+          color: red;
+          &.active {
+            color: blue;
+          }
+        }
+      }
+      ```
+    * **Good Example (嵌套选择器已展开铺平)**:
+      ```less
+      .list .item { color: red; }
+      .list .item.active { color: blue; }
+      ```
+  - 分析组件的 `<style>` 部分，参考 [RN 与小程序平台的样式能力差异](./others/rn-style-diff.md)，将 RN 平台不支持的选择器替换为单类选择器等效实现，并同步更新 `<template>` 和 `<script>` 中对应的类名引用。
+    * **Good Example (单类选择器等效实现)**:
+      ```html
+      <!-- 推荐：直接使用等效的单类名并使用 wx:class 进行动态绑定 -->
+      <view class="list-item" wx:class="{{ { 'list-item-active': isActive } }}">
+        <text class="title">标题</text>
+      </view>
+      ```
+      ```css
+      /* 推荐使用单类选择器，避免使用后代选择器和交集选择器 */
+      .list-item { padding: 20rpx; }
+      .list-item-active { color: red; }
+      ```
+  - 对于无法替换为单类选择器等效实现的选择器，使用原平台条件编译对该选择器样式片段进行局部包裹，保留在原平台输出产物中，并添加 `todo` 注释记录不兼容 RN 平台的详情。
+    * **Good Example (局部条件编译)**:
+      ```css
+      /* @mpx-if (__mpx_mode__ === 'wx' || __mpx_mode__ === 'ali' || __mpx_mode__ === 'web') */
+      /* todo: RN 不支持同级相邻选择器，仅在原平台保留 */
+      .item + .item { margin-top: 10rpx; }
+      /* @mpx-endif */
+      ```
+  
+  
+2. **样式属性适配改造**：
+  - 参考 [RN 平台样式能力详情](./others/rn-style-detail.md) 和 [RN 与小程序平台的样式能力差异](./others/rn-style-diff.md)，对 `<style>`、`<template>` 和 `<script>` 中定义的样式属性进行分析，对于 RN 平台不支持的样式属性，将其替换为跨端兼容的等效实现。
+    * **Good Example (display: none 跨端等效实现)**:
+        ```css
+        .mask {
+          /* @mpx-if (__mpx_mode__ === 'ios' || __mpx_mode__ === 'android' || __mpx_mode__ === 'harmony') */
+          flex: 0;
+          height: 0;
+          width: 0;
+          padding: 0;
+          margin: 0;
+          overflow: hidden;
+          /* @mpx-else */
+          display: none;
+          /* @mpx-endif */
+        }
+        ```
+  - 对于无法进行跨端兼容等效实现的样式属性，使用原平台条件编译对该样式属性进行局部包裹，保留在原平台输出产物中，并添加 `todo` 注释记录不兼容 RN 平台的详情。
+    * **Good Example (局部条件编译)**:
+      ```css
+      .animation-box {
+        /* @mpx-if (__mpx_mode__ === 'wx' || __mpx_mode__ === 'ali' || __mpx_mode__ === 'web') */
+        /* todo: RN 不支持 keyframes 动画，仅在原平台保留 */
+        animation: slideIn 0.5s ease-in-out;
+        /* @mpx-endif */
+      }
+      ```
+  
+3. **检查与确认**：
+  - 检查确保 `<style>` 中不存在任何嵌套选择器写法。
+  - 检查确保 `<style>` 中所有 RN 平台不支持的选择器都已被替换为单类选择器等效实现，或被原平台条件编译所包裹，输出到 RN 的部分不包含复合选择器。
+  - 检查确保 `<style>`、`<template>` 和 `<script>` 中所有 RN 平台不支持的样式属性都已被替换为跨端兼容的等效实现，或被原平台条件编译所包裹，输出到 RN 的部分不包含不支持的样式属性。
+  - 检查确保 `<style>`、`<template>` 和 `<script>` 中不存在大面积的条件编译，所有添加的条件编译仅最小包裹不兼容的样式片段。
+
+
+
+

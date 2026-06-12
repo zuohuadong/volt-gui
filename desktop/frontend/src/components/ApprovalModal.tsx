@@ -24,7 +24,6 @@ export function ApprovalModal({
   const subject = approval.subject.trim();
   const subjectSummary = subject.split("\n").find((line) => line.trim())?.trim() ?? "";
 
-
   const choosePlanAction = (key: string) => {
     if (key === "1") setRevisionOpen((open) => !open);
     else if (key === "2") onAnswer(true, false, false);
@@ -143,8 +142,8 @@ export function ApprovalModal({
             />
           )}
           <PromptAction keyLabel="1" label={t("approval.allowOnce")} onClick={() => onAnswer(true, false, false)} selected />
-          <PromptAction keyLabel="2" label={t("approval.allowRuleSession")} onClick={() => onAnswer(true, true, false)} />
-          <PromptAction keyLabel="3" label={t("approval.allowRulePersistent")} onClick={() => onAnswer(true, true, true)} />
+          <PromptAction keyLabel="2" label={t("approval.allowSession")} onClick={() => onAnswer(true, true, false)} />
+          <PromptAction keyLabel="3" label={t("approval.allowPersistent")} onClick={() => onAnswer(true, true, true)} />
           <PromptAction keyLabel="4" label={t("approval.deny")} onClick={() => onAnswer(false, false, false)} />
         </>
       }
@@ -154,5 +153,4 @@ export function ApprovalModal({
       )}
     </PromptShelf>
   );
-
 }

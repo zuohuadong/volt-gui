@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/event"
+	"voltui/internal/event"
 
-	_ "reasonix/internal/provider/openai"
-	_ "reasonix/internal/tool/builtin"
+	_ "voltui/internal/provider/openai"
+	_ "voltui/internal/tool/builtin"
 )
 
 // TestBuildUnknownModelErrorIsActionable: a default_model that doesn't resolve
@@ -16,9 +16,9 @@ import (
 // fail with a message that names the model, lists what IS configured, and hints
 // at the [[providers]] trap — not a silent empty model.
 func TestBuildUnknownModelErrorIsActionable(t *testing.T) {
-	dir := robustTempDir(t)
+	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, dir, "voltui.toml", `
 default_model = "mimo"
 
 [codegraph]
@@ -29,7 +29,7 @@ name = "deepseek-flash"
 kind = "openai"
 base_url = "https://example.invalid"
 model = "deepseek-v4-flash"
-api_key_env = "REASONIX_TEST_KEY_UNSET"
+api_key_env = "VOLTUI_TEST_KEY_UNSET"
 `)
 
 	_, err := Build(context.Background(), Options{Sink: event.Discard})
@@ -48,10 +48,10 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 // builds fine (RequireKey is false so the UI stays reachable) but must emit a
 // notice naming the env var, instead of silently showing a dead/empty model.
 func TestBuildNoticesMissingAPIKey(t *testing.T) {
-	const keyEnv = "REASONIX_MISSING_KEY_FOR_TEST"
-	dir := robustTempDir(t)
+	const keyEnv = "VOLTUI_MISSING_KEY_FOR_TEST"
+	dir := t.TempDir()
 	t.Chdir(dir)
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, dir, "voltui.toml", `
 default_model = "x"
 
 [codegraph]

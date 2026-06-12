@@ -14,16 +14,14 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/x/ansi"
 
-	"reasonix/internal/event"
-	"reasonix/internal/i18n"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
 )
 
 const tabWidth = 4
 
 const (
-	// diffFoldLimit is the max lines to show in a diff when folding is enabled
-	// (/diff-fold toggle). 0 means show all lines.
-	diffFoldLimit = 40
+	diffScrollbackMaxLines = 40
 
 	bgDiffAdd = "\033[48;5;22m"
 	bgDiffDel = "\033[48;5;52m"

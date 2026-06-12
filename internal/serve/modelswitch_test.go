@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"reasonix/internal/control"
+	"voltui/internal/control"
 )
 
 // TestControllerAccessorIsRaceSafe guards the switchModel concurrency contract:

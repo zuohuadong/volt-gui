@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 // TestEarlyToolDispatch proves a ChunkToolCallStart surfaces a ToolDispatch

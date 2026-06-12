@@ -5,12 +5,12 @@ import (
 	"io"
 	"strings"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 // TextSink renders a turn's event stream to ANSI text on an io.Writer. It is
-// the reference terminal frontend: a headless `reasonix run` writes to stdout,
+// the reference terminal frontend: a headless `voltui run` writes to stdout,
 // and during the cache-first migration the chat TUI is fed through it too. The
 // output is byte-for-byte what the agent used to print directly, now driven by
 // typed events instead of inline Fprint calls.
@@ -96,8 +96,8 @@ func (s *TextSink) Emit(e event.Event) {
 		}
 
 	case event.Usage:
-		// Close a still-open raw text block before the usage line, matching the
-		// old Fprintln path for streams that do not emit a Message redraw.
+		// Close a still-open raw text block (the planner path streams text with
+		// no Message redraw) before the usage line, matching the old Fprintln.
 		if s.textWritten {
 			fmt.Fprintln(s.out)
 			s.textWritten = false

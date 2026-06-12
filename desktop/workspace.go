@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 // The desktop is a GUI app: launched from Finder or `open`, it starts with the
@@ -17,9 +17,9 @@ import (
 // cwd isn't writable.
 
 // workspaceStatePath is where the last working folder is remembered (under the
-// user config dir, shared with the rest of Reasonix's state).
+// user config dir, shared with the rest of VoltUI's state).
 func workspaceStatePath() string {
-	dir := config.MemoryUserDir() // …/reasonix
+	dir := config.MemoryUserDir() // …/voltui
 	if dir == "" {
 		return ""
 	}
@@ -44,16 +44,6 @@ func saveWorkspace(dir string) {
 		return
 	}
 	_ = os.WriteFile(p, []byte(dir), 0o644)
-}
-
-// clearWorkspace removes the active workspace pointer file so that no stale
-// reference remains after the current workspace is deleted.
-func clearWorkspace() {
-	p := workspaceStatePath()
-	if p == "" {
-		return
-	}
-	_ = os.Remove(p)
 }
 
 // loadWorkspace returns the remembered working folder, or "" if none.
@@ -175,7 +165,7 @@ func cwdWritable() bool {
 	if err != nil {
 		return false
 	}
-	f, err := os.CreateTemp(cwd, ".reasonix-wtest-*")
+	f, err := os.CreateTemp(cwd, ".voltui-wtest-*")
 	if err != nil {
 		return false
 	}

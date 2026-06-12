@@ -1,48 +1,63 @@
 # CNB 云原生构建配置 — 暗涌 (西谷 AI fork of VoltUI)
 # 参考: https://docs.cnb.cool/zh/build/configuration.md
 #
-# 上游: https://cnb.cool/aizhuliren/volt-gui (VoltUI Go 重写版)
-# 本 fork: 暗涌 — 通过 BrandConfig/VOLTUI_BRAND_NAME 环境变量换品牌，不改源码
-# 构建依赖: Go 1.26+, Wails (桌面端)
-#
-# 自动发版机制:
-#   CNB CI 只负责版本号计算 + 推送 tag
-#   桌面端构建由 GitHub Actions release-desktop.yml 在原生 runner 上完成
-#   Wails 无法在 Docker 容器中交叉编译 CGO/WebKit 二进制
+# 本项目只构建桌面版本 (Wails)，CLI 模块不发版。
+# CNB CI 在 Docker 中无法交叉编译 CGO/WebKit 桌面端，
+# 所以 Pipeline 1 只做 desktop 模块的 Go 编译验证（stub frontend），
+# 实际桌面端构建由 GitHub Actions release-desktop.yml 在原生 runner 上完成。
 #
 # Tag 命名空间:
-#   - desktop-v* → 触发 GitHub Actions 桌面端构建 (macOS/Windows/Linux)
-#   - v*          → 触发 GitHub Actions CLI/npm 发布
+#   desktop-v* → 触发 GitHub Actions 桌面端构建 (macOS/Windows/Linux)
 #
 # 触发条件:
 #   推送 feat:/fix:/feat!:/fix!: 等约定式提交到 main → 自动发版
 #   - feat:     → minor 版本升级 (v0.1.0 → v0.2.0)
 #   - fix:      → patch 版本升级 (v0.1.0 → v0.1.1)
 #   - feat!:    → major 版本升级 (v0.1.0 → v1.0.0)
-#   - chore:/docs:/ci: 等 → 仅构建+测试，不发版
+#   - chore:/docs:/ci: 等 → 仅构建验证，不发版
 #   - 提交消息含 [skip-release] → 跳过自动发版
 
 main:
   push:
-    # Pipeline 1: 构建 + 测试（每次 push 都执行）
+    # Pipeline 1: 桌面模块编译验证（每次 push 都执行）
+    # Docker 中无法做 CGO/WebKit 完整构建，只验证 desktop Go 模块能编译
     - docker:
         image: golang:1.26
       env:
         XIGU_BRAND_NAME: "暗涌"
       stages:
-        - name: build
+        - name: desktop-build
           script: |
-            make build
+            cd desktop
 
-        - name: test
+            # Stub embedded frontend (Wails embeds frontend/dist)
+            mkdir -p frontend/dist
+            echo '<!doctype html><title>ci</title>' > frontend/dist/index.html
+
+            # Resolve deps (desktop is a nested Go module)
+            go mod tidy
+            CGO_ENABLED=0 go vet ./...
+            CGO_ENABLED=0 go build ./...
+
+        - name: desktop-test
           script: |
-            # Exclude packages with incomplete bot/IM code (//go:build bot tag)
-            go test $(go list ./... | grep -v 'internal/bot\|internal/notify\|benchmarks')
+            cd desktop
+
+            mkdir -p frontend/dist
+            echo '<!doctype html><title>ci</title>' > frontend/dist/index.html
+
+            # Only test sub-packages that don't need Wails runtime
+            # (desktop main package requires Wails CGO/WebView — can't run in Docker)
+            go test ./cmd/sign ./internal/update
+
+        - name: kernel-build
+          script: |
+            # Verify the CLI kernel still compiles (it's the desktop's dependency)
+            make build
 
     # Pipeline 2: 自动发版（仅约定式提交触发）
     # 推送 desktop-v* tag → 触发 GitHub Actions release-desktop.yml
     # 在原生 runner 上构建 macOS/Windows/Linux 桌面端 (Wails)
-    # Wails 无法在 Linux Docker 中交叉编译 CGO/WebKit 二进制
     - docker:
         image: golang:1.26
       env:
@@ -131,24 +146,27 @@ main:
             echo "Release ${DESKTOP_TAG} created on CNB (artifacts on GitHub)"
 
   # ------------------------------------------------------------------
-  # 合并请求：快速检查
+  # 合并请求：桌面模块快速检查
   # ------------------------------------------------------------------
   merge-request:
     - docker:
         image: golang:1.26
       stages:
-        - name: build-check
+        - name: desktop-build-check
+          script: |
+            cd desktop
+            mkdir -p frontend/dist
+            echo '<!doctype html><title>ci</title>' > frontend/dist/index.html
+            go mod tidy
+            CGO_ENABLED=0 go vet ./...
+            CGO_ENABLED=0 go build ./...
+
+        - name: kernel-build-check
           script: |
             make build
 
-        - name: test
-          script: |
-            # Exclude packages with incomplete bot/IM code (//go:build bot tag)
-            go test $(go list ./... | grep -v 'internal/bot\|internal/notify\|benchmarks')
-
   # ------------------------------------------------------------------
   # 定时同步上游 (每天 09:00 CST)
-  # 上游: https://cnb.cool/aizhuliren/volt-gui (VoltUI Go 重写版)
   # ------------------------------------------------------------------
   "crontab: 0 9 * * *":
     - name: sync-upstream

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,26 +19,24 @@ import (
 )
 
 type client struct {
-	api    string
-	repo   string
-	token  string
-	http   *http.Client
-	tag    string
-	dryRun bool
+	api       string
+	repo      string
+	token     string
+	http      *http.Client
+	tag       string
+	releaseID string
+	dryRun    bool
 }
 
 type uploadTicket struct {
 	UploadURL string `json:"upload_url"`
 	VerifyURL string `json:"verify_url"`
-	URL       string `json:"url"`
 	Token     string `json:"token"`
 	Path      string `json:"path"`
 }
 
-type releaseAsset struct {
-	URL         string `json:"url"`
-	DownloadURL string `json:"download_url"`
-	BrowserURL  string `json:"browser_download_url"`
+type releaseResponse struct {
+	ID string `json:"id"`
 }
 
 func main() {
@@ -89,6 +86,9 @@ func main() {
 	if err := c.createRelease(*brand, *body, *prerelease); err != nil {
 		fail(err.Error())
 	}
+	if c.releaseID == "" {
+		fail("CNB release %s has no id", c.tag)
+	}
 
 	for _, f := range files {
 		if err := c.uploadFile(f); err != nil {
@@ -120,7 +120,7 @@ func releaseFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func (c client) createRelease(brand, body string, prerelease bool) error {
+func (c *client) createRelease(brand, body string, prerelease bool) error {
 	payload := map[string]any{
 		"tag_name":   c.tag,
 		"name":       fmt.Sprintf("%s %s", brand, c.tag),
@@ -140,18 +140,44 @@ func (c client) createRelease(brand, body string, prerelease bool) error {
 	}
 	if status == http.StatusConflict {
 		fmt.Printf("CNB release %s already exists, continuing asset upload\n", c.tag)
-		return nil
+		return c.loadReleaseByTag()
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("create CNB release: HTTP %d: %s", status, string(resBody))
 	}
-	fmt.Printf("created CNB release %s\n", c.tag)
+	var release releaseResponse
+	if err := json.Unmarshal(resBody, &release); err != nil {
+		return fmt.Errorf("decode created CNB release: %w", err)
+	}
+	c.releaseID = release.ID
+	fmt.Printf("created CNB release %s (%s)\n", c.tag, c.releaseID)
+	return nil
+}
+
+func (c *client) loadReleaseByTag() error {
+	req, err := c.newRequest(http.MethodGet, c.endpoint("/-/releases/tags/"+url.PathEscape(c.tag)), nil)
+	if err != nil {
+		return err
+	}
+	resBody, status, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("load CNB release by tag %s: HTTP %d: %s", c.tag, status, string(resBody))
+	}
+	var release releaseResponse
+	if err := json.Unmarshal(resBody, &release); err != nil {
+		return fmt.Errorf("decode CNB release by tag %s: %w", c.tag, err)
+	}
+	c.releaseID = release.ID
+	fmt.Printf("loaded CNB release %s (%s)\n", c.tag, c.releaseID)
 	return nil
 }
 
 func (c client) uploadFile(file string) error {
 	name := filepath.Base(file)
-	ticket, err := c.requestUploadTicket(name)
+	ticket, err := c.requestUploadTicket(file)
 	if err != nil {
 		return err
 	}
@@ -175,18 +201,22 @@ func (c client) uploadFile(file string) error {
 	return nil
 }
 
-func (c client) requestUploadTicket(name string) (uploadTicket, error) {
-	payload := map[string]string{
-		"tag_name": c.tag,
-		"path":     name,
-		"name":     name,
+func (c client) requestUploadTicket(file string) (uploadTicket, error) {
+	name := filepath.Base(file)
+	info, err := os.Stat(file)
+	if err != nil {
+		return uploadTicket{}, err
+	}
+	payload := map[string]any{
+		"asset_name": name,
+		"overwrite":  true,
+		"size":       info.Size(),
+		"ttl":        0,
 	}
 	body, _ := json.Marshal(payload)
 
 	endpoints := []string{
-		c.endpoint("/-/releases/" + url.PathEscape(c.tag) + "/asset-upload-url"),
-		c.endpoint("/-/releases/asset-upload-url"),
-		c.endpoint("/-/asset-upload-url"),
+		c.endpoint("/-/releases/" + url.PathEscape(c.releaseID) + "/asset-upload-url"),
 	}
 	var lastErr error
 	for _, endpoint := range endpoints {
@@ -228,7 +258,7 @@ func (c client) confirmationURL(ticket uploadTicket, name string) string {
 	if token == "" {
 		return ""
 	}
-	return c.endpoint("/-/releases/asset-upload-confirmation/" + url.PathEscape(token) + "/" + path.Clean(assetPath) + "?ttl=0")
+	return c.endpoint("/-/releases/" + url.PathEscape(c.releaseID) + "/asset-upload-confirmation/" + url.PathEscape(token) + "/" + url.PathEscape(assetPath) + "?ttl=0")
 }
 
 func putFile(hc *http.Client, uploadURL, file string) error {
@@ -268,8 +298,6 @@ func (c client) confirmUpload(verifyURL string) error {
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("confirm upload: HTTP %d: %s", status, string(raw))
 	}
-	var asset releaseAsset
-	_ = json.Unmarshal(raw, &asset)
 	return nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"runtime"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 // telemetry_app.go is the anonymous launch ping: one POST per app start carrying a

@@ -193,7 +193,7 @@ func TestRunTurnAutoPlanComplexTask(t *testing.T) {
 	})
 
 	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	if err := c.runTurn(context.Background(), input); err != nil {
+	if err := c.RunTurn(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -211,7 +211,7 @@ func TestRunTurnAutoPlanSkipsSimpleQuestion(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Runner: runner})
 
-	if err := c.runTurn(context.Background(), "解释一下这个函数做什么？"); err != nil {
+	if err := c.RunTurn(context.Background(), "解释一下这个函数做什么？"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -227,7 +227,7 @@ func TestRunTurnAutoPlanOff(t *testing.T) {
 	c := New(Options{AutoPlan: "off", Runner: runner})
 
 	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	if err := c.runTurn(context.Background(), input); err != nil {
+	if err := c.RunTurn(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || runner.inputs[0] != input {
@@ -244,7 +244,7 @@ func TestSetAutoPlanAffectsNextTurn(t *testing.T) {
 	c.SetAutoPlan("on")
 
 	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
-	if err := c.runTurn(context.Background(), input); err != nil {
+	if err := c.RunTurn(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -257,7 +257,7 @@ func TestRunTurnAutoPlanClassifierBorderlineTrue(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
 
-	if err := c.runTurn(context.Background(), "实现一个小的配置入口"); err != nil {
+	if err := c.RunTurn(context.Background(), "实现一个小的配置入口"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -273,7 +273,7 @@ func TestRunTurnAutoPlanClassifierBorderlineFalse(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
 
-	if err := c.runTurn(context.Background(), "实现一个小的配置入口"); err != nil {
+	if err := c.RunTurn(context.Background(), "实现一个小的配置入口"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -292,7 +292,7 @@ func TestRunTurnAutoPlanClassifierFallback(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
 
-	if err := c.runTurn(context.Background(), "实现 README 文档更新"); err != nil {
+	if err := c.RunTurn(context.Background(), "实现 README 文档更新"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -308,7 +308,7 @@ func TestRunTurnAutoPlanTypedNilClassifierFallsBack(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{AutoPlan: "on", Classifier: classifier, Runner: runner})
 
-	if err := c.runTurn(context.Background(), "实现 README 文档更新"); err != nil {
+	if err := c.RunTurn(context.Background(), "实现 README 文档更新"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 || !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
@@ -323,7 +323,7 @@ func TestRunTurnAutoPlanScoresRawPromptNotResolvedRefs(t *testing.T) {
 	resolved := "Referenced context:\n\n" +
 		strings.Repeat("实现 重构 配置 测试 文档 多个文件\n", 20) +
 		"\n\n解释 @foo.go"
-	if err := c.runTurnWithRaw(context.Background(), resolved, "解释 @foo.go"); err != nil {
+	if err := c.RunTurnWithRaw(context.Background(), resolved, "解释 @foo.go"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.inputs) != 1 {

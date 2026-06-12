@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestNormalizeBotInstallTarget(t *testing.T) {

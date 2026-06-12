@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 func TestSubagentStoreContinueLoadsSavedTranscript(t *testing.T) {

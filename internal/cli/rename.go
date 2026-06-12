@@ -1,3 +1,5 @@
+//go:build bot
+
 package cli
 
 import (
@@ -5,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/i18n"
+	"voltui/internal/agent"
+	"voltui/internal/i18n"
 )
 
 // runRenameCommand handles "/rename": with no argument it shows usage;

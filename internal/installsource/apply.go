@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/skill"
+	"voltui/internal/config"
+	"voltui/internal/skill"
 )
 
 // apply dispatches to the per-action implementation. Each branch is

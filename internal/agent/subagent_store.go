@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/fileutil"
-	"reasonix/internal/tool"
+	"voltui/internal/fileutil"
+	"voltui/internal/tool"
 )
 
 type SubagentStatus string

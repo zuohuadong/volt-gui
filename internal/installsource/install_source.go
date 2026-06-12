@@ -17,9 +17,9 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/config"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 // MCPConnectResult is what the ConnectMCP callback returns. Disconnect is
@@ -397,9 +397,9 @@ func (t *installSourceTool) resolveSkillPath(name, scope string) (string, bool) 
 		if t.home == "" {
 			return "", false
 		}
-		root = filepath.Join(t.home, ".reasonix", skill.SkillsDirname)
+		root = filepath.Join(t.home, ".voltui", skill.SkillsDirname)
 	} else {
-		root = filepath.Join(t.root, ".reasonix", skill.SkillsDirname)
+		root = filepath.Join(t.root, ".voltui", skill.SkillsDirname)
 	}
 	flat := filepath.Join(root, name+".md")
 	if _, err := lstat(flat); err == nil {
@@ -458,7 +458,7 @@ func (t *installSourceTool) configPath(scope string) string {
 			return p
 		}
 	}
-	return filepath.Join(t.root, "reasonix.toml")
+	return filepath.Join(t.root, "voltui.toml")
 }
 
 func (t *installSourceTool) normalizeScope(scope string) string {

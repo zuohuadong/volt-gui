@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/control"
+	"voltui/internal/control"
 )
 
 func TestEnsureBlankTabInheritsActiveTabSettings(t *testing.T) {

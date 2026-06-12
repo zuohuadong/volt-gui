@@ -1,3 +1,5 @@
+//go:build bot
+
 package cli
 
 import (
@@ -18,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/i18n"
-	"reasonix/internal/netclient"
+	"voltui/internal/config"
+	"voltui/internal/i18n"
+	"voltui/internal/netclient"
 
 	"golang.org/x/mod/semver"
 )
@@ -323,7 +325,7 @@ func extractFromZip(data []byte, name string) ([]byte, error) {
 //
 // On Unix this is a simple temp-file + rename. On Windows the running
 // executable is memory-mapped and cannot be overwritten directly, so we
-// rename it aside to .reasonix.old first, then place the new binary.
+// rename it aside to .voltui.old first, then place the new binary.
 // The .old file is cleaned up best-effort (Windows may still hold a lock
 // on it; we hide it in that case).
 func replaceBinary(newBin []byte) error {

@@ -57,7 +57,7 @@ func TestRunTurnSnapshotsActivityWhenTranscriptChanges(t *testing.T) {
 	path := filepath.Join(dir, "session.jsonl")
 	c := New(Options{Runner: appendingRunner{session: sess}, Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
 
-	if err := c.runTurn(context.Background(), "hello"); err != nil {
+	if err := c.RunTurn(context.Background(), "hello"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/config"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 // --- shared helpers ---------------------------------------------------------

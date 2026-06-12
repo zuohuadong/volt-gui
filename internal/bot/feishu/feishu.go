@@ -1,3 +1,5 @@
+//go:build bot
+
 // Package feishu 实现飞书自建应用 Bot 适配器。
 // 参考 Hermes Agent 的 feishu adapter：
 // - 长连接 WebSocket（默认）或 Webhook 模式
@@ -19,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/bot"
-	"reasonix/internal/config"
+	"voltui/internal/bot"
+	"voltui/internal/config"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larknormalize "github.com/larksuite/oapi-sdk-go/v3/channel/normalize"

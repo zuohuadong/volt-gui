@@ -338,7 +338,7 @@ const planApprovalTool = "exit_plan_mode"
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
 const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now. Keep the task list current with todo_write, preserving its two-level shape (phases at level 0, their sub-steps at level 1): mark the sub-step you start as in_progress, one in_progress at a time. Sign off each finished sub-step with complete_step, attaching the evidence it's done — the verification you ran, the diff/files you changed, or a manual check. Don't claim a step is done without evidence."
 
-// runTurn runs one model turn, then applies the plan-approval gate. This is the
+// RunTurn runs one model turn, then applies the plan-approval gate. This is the
 // single, frontend-agnostic plan flow: in plan mode the model just researches
 // (writers are blocked) and writes its plan as a normal answer — no special tool.
 // When the turn ends with a text proposal, the controller asks the user to
@@ -347,7 +347,7 @@ const planApprovedMessage = "Plan approved — plan mode is off; you're cleared 
 // continues straight into execution; on rejection it stays in plan mode so the
 // next turn can revise. Plan mode is only ever set interactively, so the headless
 // `Run` path (which doesn't call this) never blocks on a prompt.
-func (c *Controller) runTurn(ctx context.Context, input string) error {
+func (c *Controller) RunTurn(ctx context.Context, input string) error {
 	return c.runTurnWithRaw(ctx, input, input)
 }
 

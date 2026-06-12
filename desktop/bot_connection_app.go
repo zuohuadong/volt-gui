@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/bot"
-	"reasonix/internal/bot/feishu"
-	"reasonix/internal/bot/weixin"
-	"reasonix/internal/config"
+	"voltui/internal/bot"
+	"voltui/internal/bot/feishu"
+	"voltui/internal/bot/weixin"
+	"voltui/internal/config"
 )
 
 type BotConnectionCredentialView struct {

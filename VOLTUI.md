@@ -1,8 +1,16 @@
-# VoltUI project memory
+# 暗涌 project memory
 
 This file is loaded into every session's system prompt (the cache-stable prefix),
 so keep it concise and durable — it is the project's standing instructions to the
 agent. It is the VoltUI analog of Claude Code's CLAUDE.md.
+
+## Fork Identity
+
+- **Project**: 西谷AI 暗涌系统 (Xigu AI Anyong System)
+- **Upstream**: [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails)
+- **Brand mechanism**: `[brand]` config section + `VOLTUI_BRAND_NAME` env var
+- **Constraint**: NEVER hard-code brand name into source code. Use BrandConfig only.
+- **Fork-only files**: `.cnb.yml`, `scripts/sync-upstream.sh`, `暗涌.md`, `references/skills/{anyong-brand-config,cnb-ci-cd,xigu-ai-ops}/`
 
 ## Conventions
 

@@ -513,14 +513,49 @@ export interface MemoryFact {
   body: string;
 }
 
+export interface MemoryArchive extends MemoryFact {
+  path: string;
+  archivedAt?: string;
+}
+
 export interface MemoryScope {
   scope: string; // "user" | "project" | "local"
   path: string;
 }
 
+export interface MemorySuggestion {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  type: string;
+  body: string;
+  reason: string;
+  evidence: string[];
+}
+
+export interface SkillSuggestion {
+  id: string;
+  name: string;
+  description: string;
+  scope: string;
+  body: string;
+  reason: string;
+  evidence: string[];
+}
+
+export interface MemorySuggestionsView {
+  memories: MemorySuggestion[];
+  skills: SkillSuggestion[];
+  generatedAt: string;
+  available: boolean;
+  source: string;
+}
+
 export interface MemoryView {
   docs: MemoryDoc[];
   facts: MemoryFact[];
+  archives: MemoryArchive[];
   scopes: MemoryScope[];
   storeDir: string;
   available: boolean;

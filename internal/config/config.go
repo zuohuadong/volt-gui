@@ -56,6 +56,8 @@ type Config struct {
 	Codegraph     CodegraphConfig   `toml:"codegraph"`
 	Statusline    StatuslineConfig  `toml:"statusline"`
 	LSP           LSPConfig         `toml:"lsp"`
+	Metrics       MetricsConfig     `toml:"metrics"`
+	Telemetry    TelemetryConfig   `toml:"telemetry"`
 	Bot           BotConfig         `toml:"bot"`
 }
 
@@ -1191,6 +1193,28 @@ func (c *Config) providerNames() string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// DesktopMetrics returns whether desktop metrics collection is enabled.
+// Defaults to false (opt-in).
+func (c *Config) DesktopMetrics() bool {
+	return c.Metrics.Enabled
+}
+
+// DesktopTelemetry returns whether desktop telemetry is enabled.
+// Defaults to false (opt-in).
+func (c *Config) DesktopTelemetry() bool {
+	return c.Telemetry.Enabled
+}
+
+// MetricsConfig controls metrics collection.
+type MetricsConfig struct {
+	Enabled bool `toml:"enabled"`
+}
+
+// TelemetryConfig controls telemetry reporting.
+type TelemetryConfig struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // Bot config types — used by internal/bot (Feishu/QQ/Weixin adapters).

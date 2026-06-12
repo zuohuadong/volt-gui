@@ -6,7 +6,7 @@
 # Otherwise, read the last-synced commit from .upstream-sync-marker.
 #
 # 上游已经是 VoltUI 品牌 (cnb.cool/aizhuliren/volt-gui)，无需品牌替换。
-# 暗涌的品牌定制通过 VOLTUI_BRAND_NAME 环境变量和 .cnb.yml 实现，不改源码。
+# 西谷智灯暗涌系统的品牌定制通过 VOLTUI_BRAND_NAME 环境变量和 .cnb.yml 实现，不改源码。
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ else
   fi
 fi
 
-echo "=== 暗涌 Upstream Sync (VoltUI Go rewrite) ==="
+echo "=== 西谷智灯暗涌系统 Upstream Sync (VoltUI Go rewrite) ==="
 echo "Base commit: $BASE_COMMIT"
 
 # Add upstream remote if not present

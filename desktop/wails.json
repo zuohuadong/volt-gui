@@ -1,6 +1,6 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "暗涌",
+  "name": "西谷智灯暗涌系统",
   "outputfilename": "voltui-desktop",
   "frontend:install": "pnpm install",
   "frontend:build": "pnpm build:release",
@@ -11,9 +11,9 @@
   },
   "info": {
     "companyName": "西谷AI",
-    "productName": "暗涌",
+    "productName": "西谷智灯暗涌系统",
     "productVersion": "0.0.0",
     "copyright": "Copyright © 2026 西谷AI",
-    "comments": "暗涌桌面 — Wails shell around the Go kernel. Brand identity is configurable via [brand] in voltui.toml or VOLTUI_BRAND_* env vars."
+    "comments": "西谷智灯暗涌系统桌面 — Wails shell around the Go kernel. Brand identity is configurable via [brand] in voltui.toml or VOLTUI_BRAND_* env vars."
   }
 }

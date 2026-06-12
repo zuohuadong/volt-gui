@@ -1,10 +1,10 @@
-# Contributing to 暗涌 (VoltUI fork)
+# Contributing to 西谷智灯暗涌系统 (VoltUI fork)
 
-感谢你对暗涌项目的关注！本指南涵盖如何为暗涌 fork 贡献代码。
+感谢你对西谷智灯暗涌系统项目的关注！本指南涵盖如何为西谷智灯暗涌系统 fork 贡献代码。
 
 ## Fork 贡献原则
 
-暗涌是 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下贡献原则：
+西谷智灯暗涌系统是 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下贡献原则：
 
 1. **通用功能先提 PR 到上游** — 然后在 fork 中享受
 2. **fork 专属改动仅限配置文件** — `.cnb.yml`、skill 文件、产品文档
@@ -107,11 +107,11 @@ ci: add golangci-lint and govulncheck
 如果你要添加的是**所有 VoltUI 用户都能受益**的功能：
 
 1. 在 [volt-gui](https://cnb.cool/aizhuliren/volt-gui) 上提交 Issue / PR
-2. 上游合并后，暗涌通过 `git merge upstream/main` 自动获得
+2. 上游合并后，西谷智灯暗涌系统通过 `git merge upstream/main` 自动获得
 
-### 向暗涌 fork 贡献 (本土化/行业专属)
+### 向西谷智灯暗涌系统 fork 贡献 (本土化/行业专属)
 
-如果你要添加的是**只有暗涌用户需要**的功能：
+如果你要添加的是**只有西谷智灯暗涌系统用户需要**的功能：
 
 1. Fork 本仓库
 2. 创建 feature branch from `main`

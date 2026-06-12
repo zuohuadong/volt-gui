@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="暗涌 Anyong" width="640"/>
+  <img src="docs/logo.svg" alt="西谷智灯暗涌系统 Anyong" width="640"/>
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 <br/>
 
-> **暗涌 (Anyong)** by [西谷AI](https://cnb.cool/aizhuliren) — an offline-first, multi-model AI coding agent built for enterprise intranets.
+> **西谷智灯暗涌系统 (Anyong)** by [西谷AI](https://cnb.cool/aizhuliren) — an offline-first, multi-model AI coding agent built for enterprise intranets.
 > Based on [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails), brand-customized via `BrandConfig` without forking source code.
 
 <br/>
@@ -30,11 +30,11 @@
 
 <br/>
 
-## The Problem 暗涌 Solves
+## The Problem 西谷智灯暗涌系统 Solves
 
 Your company deployed Qwen, DeepSeek, GLM, or a private model on the intranet — but your developers are still coding without AI assistance because every public agent *needs the internet*.
 
-| Pain point | 暗涌's answer |
+| Pain point | 西谷智灯暗涌系统's answer |
 |------------|---------------|
 | Public agents phone home | **Offline-first** — zero runtime network calls, no telemetry |
 | Only one model provider | **Any OpenAI-compatible API** — switch models with one config line |
@@ -168,22 +168,22 @@ mode  = "ask"   # or "allow" for trusted internal teams
 
 Then distribute `voltui.exe` + `voltui.toml` + `.env` as a ZIP package.
 
-### Brand customization (暗涌)
+### Brand customization (西谷智灯暗涌系统)
 
-暗涌 uses VoltUI's built-in BrandConfig mechanism — **no recompilation needed**:
+西谷智灯暗涌系统 uses VoltUI's built-in BrandConfig mechanism — **no recompilation needed**:
 
 ```toml
 # voltui.toml
 [brand]
-name        = "暗涌"                         # window title, tray, onboarding
-short_name  = "暗涌"                          # compact form (menu bar)
+name        = "西谷智灯暗涌系统"                         # window title, tray, onboarding
+short_name  = "西谷智灯暗涌系统"                          # compact form (menu bar)
 ```
 
 Or via environment variables (ideal for packaged deployment / containers):
 
 ```bash
-VOLTUI_BRAND_NAME="暗涌"
-VOLTUI_BRAND_SHORT_NAME="暗涌"
+VOLTUI_BRAND_NAME="西谷智灯暗涌系统"
+VOLTUI_BRAND_SHORT_NAME="西谷智灯暗涌系统"
 ```
 
 Environment variables take precedence over config files. If logo/icon is not configured, the built-in VoltUI assets are used. The AI system prompt automatically replaces "VoltUI" with the configured brand name.
@@ -230,7 +230,7 @@ export VOLTUI_BROWSER_PATH="/Applications/Google Chrome.app/Contents/MacOS/Googl
 
 ## Plugins (MCP)
 
-暗涌 is an MCP client. Add internal tool servers via `[[plugins]]`:
+西谷智灯暗涌系统 is an MCP client. Add internal tool servers via `[[plugins]]`:
 
 ```toml
 [[plugins]]                       # local stdio server (e.g. internal knowledge base)
@@ -245,7 +245,7 @@ url     = "http://search.internal.company.com/mcp"
 headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 ```
 
-Drop an `.mcp.json` in the project root and 暗涌 reads it as-is.
+Drop an `.mcp.json` in the project root and 西谷智灯暗涌系统 reads it as-is.
 
 ## Architecture
 
@@ -260,11 +260,11 @@ Three tiers of extensibility, all behind registries:
 - **[Checkpoints & Rewind](./docs/CHECKPOINTS.md)** — snapshot-based edit safety net.
 - **[Spec](./docs/SPEC.md)** — engineering contract: architecture, registries, data types & roadmap.
 - **[Migrating from 0.x](./docs/MIGRATING.md)** — from the legacy TypeScript release to the 1.0 Go rewrite.
-- **[暗涌 Product Strategy](./暗涌.md)** — fork positioning, brand principles, release pipeline.
+- **[西谷智灯暗涌系统 Product Strategy](./暗涌.md)** — fork positioning, brand principles, release pipeline.
 
 ## Fork Information
 
-暗涌 is a [西谷AI](https://cnb.cool/aizhuliren) fork of [VoltUI](https://cnb.cool/aizhuliren/volt-gui), following these principles:
+西谷智灯暗涌系统 is a [西谷AI](https://cnb.cool/aizhuliren) fork of [VoltUI](https://cnb.cool/aizhuliren/volt-gui), following these principles:
 
 - **Source stays in sync with upstream** — sync with a simple `git merge`, zero conflicts
 - **Brand via BrandConfig** — no source code replacement
@@ -273,7 +273,7 @@ Three tiers of extensibility, all behind registries:
 
 ## Acknowledgments
 
-暗涌 is built on [VoltUI](https://cnb.cool/aizhuliren/volt-gui), which is derived from [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix), originally released under the MIT License. See [NOTICE](./NOTICE) and [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES).
+西谷智灯暗涌系统 is built on [VoltUI](https://cnb.cool/aizhuliren/volt-gui), which is derived from [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix), originally released under the MIT License. See [NOTICE](./NOTICE) and [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES).
 
 <br/>
 

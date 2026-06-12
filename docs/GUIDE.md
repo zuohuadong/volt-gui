@@ -1,4 +1,4 @@
-# 暗涌 Guide
+# 西谷智灯暗涌系统 Guide
 
 <a href="../README.md">README</a>
 &nbsp;·&nbsp;
@@ -140,7 +140,7 @@ Linux support still to come).
 
 ## Plugins (MCP)
 
-暗涌 is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
+西谷智灯暗涌系统 is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
@@ -172,7 +172,7 @@ session begins, so chat stays usable while tools come online. Use `/mcp` or the
 desktop MCP panel to refresh status, reconnect a server, inspect failures, or
 disable a server for the current session.
 
-**Already have an `.mcp.json`?** Drop it in the project root and 暗涌
+**Already have an `.mcp.json`?** Drop it in the project root and 西谷智灯暗涌系统
 reads it as-is — the `mcpServers` spec (`command`/`args`/`env`, `type`/`url`/
 `headers`, `${VAR}` expansion) maps field-for-field onto `[[plugins]]`. Both
 sources are merged; on a name collision `voltui.toml` wins.
@@ -219,7 +219,7 @@ MCP prompts also appear here as `/mcp__<server>__<prompt>`.
 
 ## @ references
 
-Embed `@` references in a message and 暗涌 resolves them before sending, as
+Embed `@` references in a message and 西谷智灯暗涌系统 resolves them before sending, as
 tagged context blocks: `@path/to/file` (or `@dir`) injects a local file's
 contents (or a directory listing), and `@<server>:<uri>` injects an MCP
 resource. A local path is only treated as a reference when it actually exists,
@@ -256,7 +256,7 @@ specific skills such as `review` or `security_review`.
 
 For interactive frontends, plan mode is manual by default. Set
 `agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: 暗涌 first drafts a read-only plan, then waits for approval
+automatically: 西谷智灯暗涌系统 first drafts a read-only plan, then waits for approval
 before editing or running side-effecting commands. `auto_plan_classifier` can
 name a cheap provider such as `deepseek-flash`; it is only called for borderline
 inputs and falls back to the heuristic if classification fails. Use

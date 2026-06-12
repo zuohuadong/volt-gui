@@ -1,11 +1,11 @@
 ---
 name: cnb-ci-cd
-description: Use when configuring, debugging, or modifying CNB (Cloud Native Build) CI/CD pipelines for VoltUI/暗涌. Covers .cnb.yml structure, auto-release conventional commit workflow, merge-request CI checks, cross-repo PR creation, and CNB Release API.
+description: Use when configuring, debugging, or modifying CNB (Cloud Native Build) CI/CD pipelines for VoltUI/西谷智灯暗涌系统. Covers .cnb.yml structure, auto-release conventional commit workflow, merge-request CI checks, cross-repo PR creation, and CNB Release API.
 ---
 
 # CNB CI/CD Pipeline Configuration
 
-This skill covers the CNB (cnb.cool) CI/CD system used for the 暗涌 fork of VoltUI.
+This skill covers the CNB (cnb.cool) CI/CD system used for the 西谷智灯暗涌系统 fork of VoltUI.
 
 ## Architecture Overview
 
@@ -103,7 +103,7 @@ For cross-repo: push branch to upstream first, then create PR.
 | `CNB_API_ENDPOINT` | CNB CI runtime | API base URL (default: https://api.cnb.cool) |
 | `MINISIGN_PRIVATE_KEY` | CNB secret | Desktop artifact signing key |
 | `MINISIGN_PASSWORD` | CNB secret | Desktop artifact signing password |
-| `volt_BRAND_NAME` | `.cnb.yml` env | Brand name for releases (default: 暗涌) |
+| `volt_BRAND_NAME: "西谷智灯暗涌系统") |
 | `VOLTUI_BRAND_NAME` | Runtime | Desktop build artifact naming |
 
 ## Common Issues

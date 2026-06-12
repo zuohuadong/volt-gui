@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="170" viewBox="0 0 760 170" role="img" aria-label="暗涌 Anyong — 西谷AI 本土化编码 Agent">
-  <title>暗涌 Anyong</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="170" viewBox="0 0 760 170" role="img" aria-label="西谷智灯暗涌系统 Anyong — 西谷AI 本土化编码 Agent">
+  <title>西谷智灯暗涌系统 Anyong</title>
   <defs>
     <!-- 深海暗涌渐变：深蓝 → 青蓝 → 亮青，象征暗流涌动 -->
     <linearGradient id="ay-grad" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -79,13 +79,13 @@
     </path>
   </g>
 
-  <!-- 暗涌中文品牌名 -->
+  <!-- 西谷智灯暗涌系统中文品牌名 -->
   <text x="160" y="88"
         font-family="'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Source Han Sans CN', sans-serif"
         font-size="56"
         font-weight="800"
         fill="url(#ay-grad)"
-        letter-spacing="12">暗涌
+        letter-spacing="12">西谷智灯暗涌系统
     <animate attributeName="opacity" values="0.92;1;0.92" dur="3.2s" repeatCount="indefinite"/>
   </text>
 

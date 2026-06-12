@@ -189,7 +189,13 @@ func genManifest(dir, version, tag string) error {
 			return err
 		}
 		assetURL := assetBase + "/" + name
-		m.Platforms[key] = update.Asset{URL: assetURL, Sig: assetURL + ".minisig", Size: size, SHA256: sum}
+		asset := update.Asset{URL: assetURL, Size: size, SHA256: sum}
+		if _, err := os.Stat(filepath.Join(dir, name+".minisig")); err == nil {
+			asset.Sig = assetURL + ".minisig"
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		m.Platforms[key] = asset
 		fmt.Printf("manifest: %s -> %s (%d bytes)\n", key, name, size)
 	}
 	if len(m.Platforms) == 0 {

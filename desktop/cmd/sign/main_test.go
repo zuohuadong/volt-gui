@@ -98,3 +98,33 @@ func TestGenManifest(t *testing.T) {
 		t.Fatalf("windows asset missing digest/size: %+v", win)
 	}
 }
+
+func TestGenManifestUsesReleaseURLOverrides(t *testing.T) {
+	dir := t.TempDir()
+	name := "VoltUI-windows-amd64-installer.exe"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RELEASE_DOWNLOAD_PAGE", "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0")
+	t.Setenv("RELEASE_ASSET_BASE_URL", "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0/downloads")
+
+	if err := genManifest(dir, "v1.2.0", "desktop-v1.2.0"); err != nil {
+		t.Fatalf("genManifest: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m update.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("latest.json is not valid: %v", err)
+	}
+	windows := m.Platforms["windows-amd64"]
+	wantURL := "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0/downloads/" + name
+	if windows.URL != wantURL {
+		t.Fatalf("windows url = %q, want %q", windows.URL, wantURL)
+	}
+	if m.DownloadPage != "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0" {
+		t.Fatalf("download page = %q", m.DownloadPage)
+	}
+}

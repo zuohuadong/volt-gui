@@ -86,24 +86,28 @@ checkout). A bare `go build` without a prior `pnpm build` produces a blank windo
 ## Releases & auto-update
 
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`
-tags are the CLI release). Pushing one triggers `.github/workflows/release-desktop.yml`,
-which builds on a native runner per platform (Wails can't cross-compile a
-CGO/WebKit binary), packages each artifact, signs it with minisign, generates a
-`latest.json` manifest, publishes a GitHub release, and mirrors everything to R2.
-The Linux artifact links against WebKitGTK 4.1 (`-tags webkit2_41`), so it needs
-`libwebkit2gtk-4.1-0` at runtime — present by default on Ubuntu 22.04+, Fedora 40+.
+tags are the CLI release). Conventional `feat:` / `fix:` commits to `main`
+trigger CNB `.cnb.yml`, which calculates the next `desktop-v*` tag, builds the
+Windows amd64 Wails installer, signs it with minisign, generates `latest.json`,
+and uploads everything to CNB Releases.
+
+The CNB runner is currently Linux Docker. Windows is produced by Wails
+cross-compilation (`windows/amd64`) plus Linux `nsis`/`makensis` for the installer.
+macOS and Linux artifacts are intentionally disabled until their CNB build
+strategy is confirmed.
 
 ```sh
-git tag desktop-v1.1.0 && git push origin desktop-v1.1.0
+git commit -m "feat: release desktop update"
+git push origin main
 ```
 
-The app checks `latest.json` on startup (R2 first, GitHub as fallback) and shows
+The app checks `latest.json` on startup (R2 first, release host fallback) and shows
 an update banner when a newer version is published; **Settings → Software update**
 has a manual check. Self-update behavior by platform:
 
-- **Linux / Windows** — download, verify the minisign signature, then update in
-  place: Linux replaces the binary and relaunches; Windows runs the per-user NSIS
-  installer (no admin rights needed).
+- **Windows** — download, verify the minisign signature, then run the per-user
+  NSIS installer (no admin rights needed).
+- **Linux** — not published by the CNB release pipeline yet.
 - **macOS** — *not* self-updating yet. The build is unsigned/un-notarized, so an
   in-place swap would be blocked by Gatekeeper; the banner links to the download
   page for a manual update instead.

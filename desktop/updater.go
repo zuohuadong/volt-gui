@@ -30,12 +30,12 @@ import (
 // has no Wails dependency so the logic is unit-tested directly; updater_app.go is
 // the thin Wails binding that wires these into App methods and progress events.
 
-// Manifest endpoints — R2 CDN first (fast, especially in CN), GitHub releases as
-// fallback. Mirrors the v1 desktop's two-endpoint scheme.
+// Manifest endpoints. CNB Releases is the source of truth for the 暗涌 fork; keep
+// the fallback on the same host so the desktop updater never depends on GitHub.
 const (
-	manifestPrimary     = "https://pub-147fb53b9c1e4bbf891a257968619ea7.r2.dev/latest/latest.json"
-	manifestFallback    = "https://github.com/esengine/voltui/releases/latest/download/latest.json"
-	defaultDownloadPage = "https://github.com/esengine/voltui/releases/latest"
+	manifestPrimary     = "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/latest/downloads/latest.json"
+	manifestFallback    = "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/latest/downloads/latest.json"
+	defaultDownloadPage = "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases"
 	httpTimeout         = 15 * time.Second
 )
 
@@ -130,12 +130,14 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 		info.Err = "manifest has no valid version"
 		return info
 	}
+	if a, ok := m.Asset(); ok {
+		info.AssetSize = a.Size
+	} else {
+		return info
+	}
 	// A dev/invalid running version never auto-prompts.
 	if okCur && semver.Compare(latest, cur) > 0 {
 		info.Available = true
-	}
-	if a, ok := m.Asset(); ok {
-		info.AssetSize = a.Size
 	}
 	return info
 }

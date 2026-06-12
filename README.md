@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="暗涌" width="640"/>
+  <img src="docs/logo.svg" alt="暗涌 Anyong" width="640"/>
 </p>
 
 <p align="center">
@@ -13,66 +13,51 @@
 </p>
 
 <p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/voltui.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-0c2d48?style=flat-square&labelColor=145374" alt="license"/></a>
+  <img src="https://img.shields.io/badge/platform-Win%20%7C%20macOS%20%7C%20Linux-1b6ca8?style=flat-square&labelColor=0c2d48" alt="platform"/>
+  <img src="https://img.shields.io/badge/runtime-offline%20first-5bc0eb?style=flat-square&labelColor=0c2d48" alt="offline"/>
 </p>
 
 <br/>
 
-> **西谷AI 暗涌系统** — 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails) 的本土化编码 Agent fork。
-> 源码与上游保持同步，品牌通过 `BrandConfig` 机制定制，不硬编码替换。
+> **暗涌 (Anyong)** by [西谷AI](https://cnb.cool/aizhuliren) — an offline-first, multi-model AI coding agent built for enterprise intranets.
+> Based on [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails), brand-customized via `BrandConfig` without forking source code.
 
 <br/>
 
-<h3 align="center">AI coding agent for enterprise intranet.</h3>
-<p align="center">Offline-first, multi-model, pre-packaged for Windows 10 — deploy once, every developer on your intranet is productive.</p>
+<h3 align="center">Deploy once behind the firewall. Every developer gets an AI pair programmer.</h3>
+<p align="center">No internet. No telemetry. No setup wizard. Just a single binary and your internal LLM endpoint.</p>
 
 <br/>
 
-## Why 暗涌 (VoltUI)?
+## The Problem 暗涌 Solves
 
-暗涌 is built for **enterprises that have LLMs on their intranet** — companies
-running Qwen, DeepSeek, GLM, or private models behind a firewall, where
-developers need an AI coding agent that just works without internet access.
+Your company deployed Qwen, DeepSeek, GLM, or a private model on the intranet — but your developers are still coding without AI assistance because every public agent *needs the internet*.
 
-| Problem | 暗涌's answer |
-|---------|-----------------|
-| Public agents need internet | **Offline-first** — zero runtime network dependencies |
-| Only supports one model | **Any OpenAI-compatible API** — one config entry per model |
-| Hard to deploy at scale | **Single binary** — pre-bake API endpoint & key into the package |
-| Linux-only tools | **Windows 10 first**, then macOS — Edge works out of the box |
-| Can't browse internal docs | **Built-in headless browser** renders JS-heavy internal pages |
+| Pain point | 暗涌's answer |
+|------------|---------------|
+| Public agents phone home | **Offline-first** — zero runtime network calls, no telemetry |
+| Only one model provider | **Any OpenAI-compatible API** — switch models with one config line |
+| IT hates npm/node setups | **Single static binary** — download and run, no dependencies |
+| "Our devs use Windows 10" | **Windows 10 first** — Edge is pre-installed, browser tool works out of the box |
+| Can't browse internal wikis | **Built-in headless browser** renders JS-heavy intranet pages |
+| Hard to roll out at scale | **Pre-package API key + endpoint** into the binary — double-click to start |
 
 ## Features
 
-- **Multi-model.** DeepSeek, Qwen, GLM, Claude, MiMo, Ollama, vLLM — any
-  OpenAI-compatible or Anthropic endpoint. One `[[providers]]` entry per model,
-  no code changes. Two-model collaboration (executor + planner) in one config line.
-- **Offline / intranet ready.** No npm, no auto-downloads, no telemetry calls.
-  Works entirely behind corporate firewalls. Browser automation uses the
-  pre-installed Edge on Windows 10.
-- **Pre-packaged deployment.** Bake the API endpoint and key into the binary or
-  config at build time — distribute a ready-to-run package to every developer,
-  no setup wizard needed.
-- **Windows 10 first.** Microsoft Edge (Chromium) is pre-installed on Win10 —
-  `browser_navigate` works out of the box. Windows path detection and RDP/VDI
-  friendly. macOS and Linux also supported.
-- **Config-driven.** Providers, tools, permissions, and plugins are declared in
-  `voltui.toml`. No hardcoded models. One file per team, checked into the repo.
-- **Plugin-driven (MCP).** External tools run over stdio JSON-RPC or HTTP.
-  Compatible with the MCP ecosystem — drop in an `.mcp.json` and go.
-- **Code intelligence (CodeGraph).** Tree-sitter symbol/call-graph search
-  (`codegraph_*` tools) — no embedding service or API cost. Auto-fetched on
-  first use, indexed in the background.
-- **Checkpoints & rewind.** Snapshot-based edit safety net — press Esc-Esc or
-  `/rewind` to undo any change. See [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md).
-- **Skills & hooks.** Claude-Code-style skills (`.voltui/skills/`) and hooks
-  (`PreToolUse`/`PostToolUse`/`Stop`) for workflow automation.
-- **Plan mode.** Evidence-backed step sign-off (`complete_step`) — the agent
-  proposes, you approve.
-- **Memory.** `VOLTUI.md` hierarchy + auto-memory store, folded into the
-  cache-stable prefix so context carries across sessions.
-- **Single static binary.** `CGO_ENABLED=0` — one file, no runtime dependencies,
-  cross-compile for 6 platforms.
+- **Multi-model.** Qwen, DeepSeek, GLM, Claude, MiMo, Ollama, vLLM — any OpenAI-compatible or Anthropic endpoint. One `[[providers]]` entry per model, zero code changes. Two-model collaboration (executor + planner) in one config line.
+- **Offline / intranet ready.** No npm, no auto-downloads, no telemetry. Works entirely behind corporate firewalls. Browser automation uses the pre-installed Edge on Windows 10.
+- **Pre-packaged deployment.** Bake the API endpoint and key into the binary or config at build time — distribute a ready-to-run package to every developer, no setup wizard needed.
+- **Windows 10 first.** Microsoft Edge (Chromium) is pre-installed on Win10 — `browser_navigate` works out of the box. Windows path detection and RDP/VDI friendly. macOS and Linux also supported.
+- **Config-driven.** Providers, tools, permissions, and plugins are declared in `voltui.toml`. No hardcoded models. One file per team, checked into the repo.
+- **Plugin-driven (MCP).** External tools run over stdio JSON-RPC or HTTP. Compatible with the MCP ecosystem — drop in an `.mcp.json` and go.
+- **Code intelligence (CodeGraph).** Tree-sitter symbol/call-graph search (`codegraph_*` tools) — no embedding service or API cost. Auto-fetched on first use, indexed in the background.
+- **Checkpoints & rewind.** Snapshot-based edit safety net — press Esc-Esc or `/rewind` to undo any change. See [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md).
+- **Skills & hooks.** Claude-Code-style skills (`.voltui/skills/`) and hooks (`PreToolUse`/`PostToolUse`/`Stop`) for workflow automation.
+- **Plan mode.** Evidence-backed step sign-off (`complete_step`) — the agent proposes, you approve.
+- **Memory.** `VOLTUI.md` hierarchy + auto-memory store, folded into the cache-stable prefix so context carries across sessions.
+- **Single static binary.** `CGO_ENABLED=0` — one file, no runtime dependencies, cross-compile for 6 platforms.
+- **Industry skills.** Semiconductor ATE, yield/SPC, failure analysis, LIMS/OCR data org — fork-specific skills that stay local.
 
 ## Install
 
@@ -89,13 +74,13 @@ make build      # -> bin/voltui(.exe)
 make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
 ```
 
-## Quick start
+## Quick Start
 
 ### Online (with external API)
 
 ```sh
-voltui setup                      # config wizard → ./voltui.toml
-export DEEPSEEK_API_KEY=sk-...  # or put it in .env
+voltui setup                      # config wizard -> ./voltui.toml
+export DEEPSEEK_API_KEY=sk-...    # or put it in .env
 voltui chat
 ```
 
@@ -118,8 +103,7 @@ make build
 
 ## Configuration
 
-Resolution order: **flag > `./voltui.toml` > `~/.config/voltui/config.toml` >
-built-in defaults**.
+Resolution order: **flag > `./voltui.toml` > `~/.config/voltui/config.toml` > built-in defaults**.
 
 ### Multi-model setup
 
@@ -165,8 +149,7 @@ context_window = 1000000
 
 ### Pre-packaged deployment (embedded key)
 
-For enterprise rollout, embed the API endpoint and key directly so developers
-don't need any setup:
+For enterprise rollout, embed the API endpoint and key directly so developers don't need any setup:
 
 ```toml
 # voltui.toml — baked into the distribution package
@@ -185,9 +168,9 @@ mode  = "ask"   # or "allow" for trusted internal teams
 
 Then distribute `voltui.exe` + `voltui.toml` + `.env` as a ZIP package.
 
-### 暗涌品牌定制
+### Brand customization (暗涌)
 
-暗涌使用 VoltUI 内置的 BrandConfig 机制定制品牌，**无需重新编译**：
+暗涌 uses VoltUI's built-in BrandConfig mechanism — **no recompilation needed**:
 
 ```toml
 # voltui.toml
@@ -196,17 +179,16 @@ name        = "暗涌"                         # window title, tray, onboarding
 short_name  = "暗涌"                          # compact form (menu bar)
 ```
 
-或通过环境变量（适合打包部署 / 容器场景）：
+Or via environment variables (ideal for packaged deployment / containers):
 
 ```bash
 VOLTUI_BRAND_NAME="暗涌"
 VOLTUI_BRAND_SHORT_NAME="暗涌"
 ```
 
-环境变量优先于配置文件。Logo/icon 如未配置，则使用内置 VoltUI 资源。
-AI 系统提示词会自动将 "VoltUI" 替换为配置的品牌名称。
+Environment variables take precedence over config files. If logo/icon is not configured, the built-in VoltUI assets are used. The AI system prompt automatically replaces "VoltUI" with the configured brand name.
 
-> **核心原则**：品牌定制通过 `[brand]` 配置段 + 环境变量实现，**禁止硬编码品牌名到源码中**。
+> **Core principle**: brand customization is done through the `[brand]` config section and environment variables. **Never hard-code brand names into source code.**
 
 ### Two-model collaboration
 
@@ -232,14 +214,11 @@ allow = ["bash(go test*)"]                   # never prompted
 
 ## Browser (enabled by default)
 
-Built-in `browser_navigate` tool renders JavaScript-heavy pages in a headless
-Chromium — essential for browsing internal docs sites, dashboards, and SPAs
-that `web_fetch` (plain HTTP) cannot handle.
+Built-in `browser_navigate` tool renders JavaScript-heavy pages in a headless Chromium — essential for browsing internal docs sites, dashboards, and SPAs that `web_fetch` (plain HTTP) cannot handle.
 
 - **Windows 10:** Edge is pre-installed — works out of the box, zero setup.
 - **macOS / Linux:** auto-detects Chrome/Chromium/Edge from well-known paths.
-- **Intranet:** no network access needed at runtime. Set `VOLTUI_BROWSER_PATH`
-  to the browser binary if auto-detection doesn't find it.
+- **Intranet:** no network access needed at runtime. Set `VOLTUI_BROWSER_PATH` to the browser binary if auto-detection doesn't find it.
 
 ```toml
 [browser]
@@ -277,30 +256,28 @@ Three tiers of extensibility, all behind registries:
 
 ## Documentation
 
-- **[检查点与回退](./docs/CHECKPOINTS.md)** — 基于快照的编辑安全网。
-- **[规格](./docs/SPEC.md)** — 工程契约：架构、注册表、数据类型与路线图。
-- **[从 0.x 迁移](./docs/MIGRATING.md)** — 从旧版 TypeScript 迁移到 1.0 Go 重写版。
-- **[暗涌产品策略](./暗涌.md)** — fork 定位、品牌原则、发布管道。
+- **[Checkpoints & Rewind](./docs/CHECKPOINTS.md)** — snapshot-based edit safety net.
+- **[Spec](./docs/SPEC.md)** — engineering contract: architecture, registries, data types & roadmap.
+- **[Migrating from 0.x](./docs/MIGRATING.md)** — from the legacy TypeScript release to the 1.0 Go rewrite.
+- **[暗涌 Product Strategy](./暗涌.md)** — fork positioning, brand principles, release pipeline.
 
-## Fork 信息
+## Fork Information
 
-暗涌 是 [西谷AI](https://cnb.cool/aizhuliren) 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 的 fork，遵循以下原则：
+暗涌 is a [西谷AI](https://cnb.cool/aizhuliren) fork of [VoltUI](https://cnb.cool/aizhuliren/volt-gui), following these principles:
 
-- **源码与上游保持一致** — 同步只需 `git merge`，零冲突
-- **品牌通过 BrandConfig 定制** — 不硬编码替换源码
-- **行业 skill 保留在本仓库** — 不贡献上游
-- **通用功能先提 PR 上游** — 然后在 fork 享受
+- **Source stays in sync with upstream** — sync with a simple `git merge`, zero conflicts
+- **Brand via BrandConfig** — no source code replacement
+- **Industry skills stay local** — not contributed upstream
+- **Generic features go upstream first** — then everyone benefits
 
 ## Acknowledgments
 
-暗涌 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，
-VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
-的衍生作品，原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE)。
+暗涌 is built on [VoltUI](https://cnb.cool/aizhuliren/volt-gui), which is derived from [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix), originally released under the MIT License. See [NOTICE](./NOTICE) and [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES).
 
 <br/>
 
 ---
 
 <p align="center">
-  <sub>MIT — 见 <a href="./LICENSE">LICENSE</a></sub>
+  <sub>MIT — see <a href="./LICENSE">LICENSE</a></sub>
 </p>

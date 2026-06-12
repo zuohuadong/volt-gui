@@ -7,7 +7,7 @@
 - Root module: Go CLI/TUI, `go.mod`, entrypoints in `cmd/`, reusable code in `internal/`.
 - Desktop module: Wails v2 nested module in `desktop/`, with independent `desktop/go.mod` and `desktop/frontend/`.
 - Site: Astro documentation site in `site/`, using npm and Node 22 in CI.
-- Release: GitHub Actions currently targets `main-v2`; CNB 镜像仓库同步时不要改动该分支策略，除非任务明确要求。
+- Release: CNB `.cnb.yml` owns desktop auto-release on `main`; current CNB Linux Docker runner cross-compiles Windows amd64 Wails artifacts, builds the NSIS installer with Linux `makensis`, and uploads CNB Release assets. macOS/Linux desktop artifacts are intentionally disabled until their CNB build strategy is confirmed.
 
 ## Required Skills
 

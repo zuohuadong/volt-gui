@@ -53,8 +53,20 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| VOLTGUI-004 | local | aizhuliren/xgic/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-003 | local | aizhuliren/xgic/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
+
+### VOLTGUI-004 Task Contract
+
+- 目标：将桌面自动发布链路从“CNB 打 tag + GitHub Actions 构建”迁移为 CNB 直接构建并上传 Windows amd64 桌面安装包。
+- 非目标：不发布 macOS/Linux 产物、不恢复 CLI/npm 发布、不引入 GitHub tag 同步、不提交 secrets、不实际触发远端发布。
+- 验收标准：`.cnb.yml` 在 `feat:/fix:` 提交时计算 `desktop-v*` 版本，安装 Windows 交叉构建依赖，运行 `scripts/desktop-build.sh windows/amd64`，签名并生成 CNB 下载地址 manifest，上传 CNB Release 资产；macOS/Linux 目标仅注释保留；旧 GitHub desktop release workflow 移除。
+- 相关 skill：`cnb-ci-cd`、`cicd-release-management`、`typescript`；Desktop/Wails 按项目本地覆盖规则执行。
+- 代码规范：遵循现有 Wails nested module 和发布脚本结构；发布工具不输出 secrets；manifest URL 通过环境变量注入，保留 GitHub fallback 兼容测试。
+- 风险：CNB Release 上传 API 若字段漂移会导致资产上传失败；Windows 安装器是交叉编译产物，需要远端 CNB 首次运行验证；macOS/Linux 暂不发布可能影响非 Windows 用户更新提示。
+- 回滚方案：还原 `.cnb.yml`、`.github/workflows/release-desktop.yml`、`desktop/cmd/sign`、`desktop/updater*`、`desktop/frontend/src/lib/bridge.ts`、`scripts/desktop-build.sh`、相关文档与 skill 说明。
+- 验证计划：`go test ./cmd/cnbrelease ./cmd/sign ./internal/update`、`go test . -run TestEvaluate`、`go run ./cmd/cnbrelease --dry-run ...`、`.cnb.yml` YAML 解析、`git diff --check`。
 
 ### VOLTGUI-003 Task Contract
 

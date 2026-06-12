@@ -11,11 +11,10 @@ This skill covers the CNB (cnb.cool) CI/CD system used for the 暗涌 fork of Vo
 
 | Component | Responsibility | Trigger |
 |---|---|---|
-| **CNB CI** (`.cnb.yml`) | Version calculation + push tag + CNB Release info | `feat:/fix:` commit to main |
-| **GitHub Actions** (`release-desktop.yml`) | Desktop build on native runners | `desktop-v*` tag push |
-| **GitHub Actions** (`release.yml`) | CLI + npm publish | `v*` tag push |
+| **CNB CI** (`.cnb.yml`) | Version calculation + Windows desktop build + minisign + CNB Release assets | `feat:/fix:` commit to main |
+| **GitHub Actions** (`release.yml`) | Legacy upstream CLI/npm release path | `v*` tag push |
 
-**Why desktop builds are NOT in CNB CI**: Wails requires CGO + platform-native WebView (macOS Cocoa, Windows WebView2, Linux WebKitGTK). Cannot cross-compile in Docker container.
+**Current CNB desktop scope**: CNB Linux Docker runners cross-compile Windows amd64 Wails artifacts and use Linux `nsis`/`makensis` to produce the installer. macOS and Linux desktop artifacts are intentionally disabled until their CNB build strategy is confirmed.
 
 ## .cnb.yml Structure
 
@@ -43,8 +42,10 @@ SemVer logic:
 The auto-release pipeline:
 1. Detects conventional commit message
 2. Calculates new version from latest `desktop-v*` tag
-3. Creates and pushes `desktop-v*` tag → triggers GitHub Actions
-4. Creates CNB Release with changelog (artifacts come from GitHub Actions)
+3. Installs Wails, Node/pnpm, and Linux `nsis`
+4. Cross-compiles `windows/amd64`, builds the NSIS installer, signs artifacts, and generates `latest.json`
+5. Creates and pushes `desktop-v*` tag
+6. Creates CNB Release and uploads assets
 
 ### Pipeline 3: Merge-request CI
 ```yaml
@@ -87,8 +88,8 @@ For cross-repo: push branch to upstream first, then create PR.
 
 | Tag pattern | What it triggers | Example |
 |---|---|---|
-| `desktop-v*` | GitHub Actions `release-desktop.yml` | `desktop-v1.6.0` |
-| `v*` | GitHub Actions `release.yml` (CLI/npm) | `v1.6.0` |
+| `desktop-v*` | CNB desktop release record and artifact upload | `desktop-v1.6.0` |
+| `v*` | Legacy upstream GitHub `release.yml` (CLI/npm) | `v1.6.0` |
 
 **Never mix namespaces** — desktop releases use `desktop-v*`, CLI releases use `v*`.
 
@@ -100,6 +101,8 @@ For cross-repo: push branch to upstream first, then create PR.
 | `CNB_REPO_SLUG` | CNB CI runtime | API calls |
 | `CNB_TOKEN` | CNB CI runtime | API authentication |
 | `CNB_API_ENDPOINT` | CNB CI runtime | API base URL (default: https://api.cnb.cool) |
+| `MINISIGN_PRIVATE_KEY` | CNB secret | Desktop artifact signing key |
+| `MINISIGN_PASSWORD` | CNB secret | Desktop artifact signing password |
 | `XIGU_BRAND_NAME` | `.cnb.yml` env | Brand name for releases (default: 暗涌) |
 | `VOLTUI_BRAND_NAME` | Runtime | Desktop build artifact naming |
 
@@ -107,7 +110,8 @@ For cross-repo: push branch to upstream first, then create PR.
 
 | Problem | Cause | Fix |
 |---|---|---|
-| Release created but no artifacts | CNB CI only pushes tags; GitHub Actions builds | Wait for GitHub Actions to complete |
-| `desktop-v*` tag not triggering GitHub Actions | Tag format mismatch | Ensure `release-desktop.yml` trigger matches |
+| Release created but no artifacts | CNB asset upload failed after release creation | Check `publish-cnb-release` logs and `CNB_TOKEN` permissions |
+| Signing fails | Missing minisign secrets | Configure `MINISIGN_PRIVATE_KEY` and `MINISIGN_PASSWORD` in CNB |
+| macOS/Linux artifacts missing | They are intentionally disabled in `.cnb.yml` | Enable them only after confirming the CNB build strategy |
 | Cross-repo PR fails: branch not found | Branch not pushed to upstream repo | `git push upstream <branch>` first |
 | Build/test stage fails | Go version mismatch | Update docker image to `golang:1.26` |

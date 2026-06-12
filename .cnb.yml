@@ -1,15 +1,144 @@
-# CNB 云原生构建配置 — VoltUI (Go)
+# CNB 云原生构建配置 — 暗涌 (西谷 AI fork of VoltUI)
 # 参考: https://docs.cnb.cool/zh/build/configuration.md
 #
-# VoltUI 1.x: Go 重写版 (upstream main-v2)
-# 构建依赖: Go 1.25+, Wails (桌面端)
+# 上游: https://cnb.cool/aizhuliren/volt-gui (VoltUI Go 重写版)
+# 本 fork: 暗涌 — 通过 BrandConfig/VOLTUI_BRAND_NAME 环境变量换品牌，不改源码
+# 构建依赖: Go 1.26+, Wails (桌面端)
+#
+# 自动发版机制:
+#   CNB CI 只负责版本号计算 + 推送 tag
+#   桌面端构建由 GitHub Actions release-desktop.yml 在原生 runner 上完成
+#   Wails 无法在 Docker 容器中交叉编译 CGO/WebKit 二进制
+#
+# Tag 命名空间:
+#   - desktop-v* → 触发 GitHub Actions 桌面端构建 (macOS/Windows/Linux)
+#   - v*          → 触发 GitHub Actions CLI/npm 发布
+#
+# 触发条件:
+#   推送 feat:/fix:/feat!:/fix!: 等约定式提交到 main → 自动发版
+#   - feat:     → minor 版本升级 (v0.1.0 → v0.2.0)
+#   - fix:      → patch 版本升级 (v0.1.0 → v0.1.1)
+#   - feat!:    → major 版本升级 (v0.1.0 → v1.0.0)
+#   - chore:/docs:/ci: 等 → 仅构建+测试，不发版
+#   - 提交消息含 [skip-release] → 跳过自动发版
 
 main:
   push:
+    # Pipeline 1: 构建 + 测试（每次 push 都执行）
     - docker:
-        image: golang:1.25
+        image: golang:1.26
+      env:
+        XIGU_BRAND_NAME: "暗涌"
       stages:
-        - name: build-cli
+        - name: build
+          script: |
+            make build
+
+        - name: test
+          script: |
+            go test ./...
+
+    # Pipeline 2: 自动发版（仅约定式提交触发）
+    # 推送 desktop-v* tag → 触发 GitHub Actions release-desktop.yml
+    # 在原生 runner 上构建 macOS/Windows/Linux 桌面端 (Wails)
+    # Wails 无法在 Linux Docker 中交叉编译 CGO/WebKit 二进制
+    - docker:
+        image: golang:1.26
+      env:
+        GIT_AUTHOR_NAME: "暗涌 Bot"
+        GIT_AUTHOR_EMAIL: "bot@xigu.ai"
+        GIT_COMMITTER_NAME: "暗涌 Bot"
+        GIT_COMMITTER_EMAIL: "bot@xigu.ai"
+        XIGU_BRAND_NAME: "暗涌"
+      stages:
+        - name: auto-release
+          script: |
+            MSG="${CNB_COMMIT_MESSAGE}"
+
+            # 跳过标记
+            if echo "$MSG" | grep -q '\[skip-release\]'; then
+              echo "[skip-release] detected, skipping"
+              exit 0
+            fi
+
+            # 判断是否为约定式提交的 feat/fix/feat!/fix!
+            if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!?:'; then
+              echo "Conventional commit detected: $MSG"
+            else
+              echo "Not a release commit (need feat:/fix:), skipping"
+              exit 0
+            fi
+
+            # 获取最新 desktop-v* tag 并计算新版本号
+            git fetch --tags origin 2>/dev/null || true
+            LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^desktop-v[0-9]' | head -1 || true)
+
+            if [ -z "$LATEST_TAG" ]; then
+              MAJOR=0; MINOR=1; PATCH=0
+            else
+              VERSION_BASE=$(echo "$LATEST_TAG" | sed 's/^desktop-v//')
+              MAJOR=$(echo "$VERSION_BASE" | cut -d. -f1)
+              MINOR=$(echo "$VERSION_BASE" | cut -d. -f2)
+              PATCH=$(echo "$VERSION_BASE" | cut -d. -f3 | cut -d- -f1)
+            fi
+
+            # 根据提交类型决定版本号升级
+            if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!:'; then
+              NEW_MAJOR=$((MAJOR + 1))
+              DESKTOP_TAG="desktop-v${NEW_MAJOR}.0.0"
+            elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
+              NEW_MINOR=$((MINOR + 1))
+              DESKTOP_TAG="desktop-v${MAJOR}.${NEW_MINOR}.0"
+            else
+              NEW_PATCH=$((PATCH + 1))
+              DESKTOP_TAG="desktop-v${MAJOR}.${MINOR}.${NEW_PATCH}"
+            fi
+
+            echo "Latest tag: ${LATEST_TAG:-none} → New: $DESKTOP_TAG"
+
+            # 创建 desktop-v* tag → 触发 GitHub Actions release-desktop.yml
+            git config user.name "$GIT_COMMITTER_NAME"
+            git config user.email "$GIT_COMMITTER_EMAIL"
+            git tag "$DESKTOP_TAG"
+            git push origin "$DESKTOP_TAG"
+            echo "Tag $DESKTOP_TAG pushed → GitHub Actions will build desktop"
+
+            # 创建 CNB Release (仅含说明，产物由 GitHub Actions 生成)
+            REPO="${CNB_REPO_SLUG}"
+            API="${CNB_API_ENDPOINT:-https://api.cnb.cool}"
+            BRAND="${XIGU_BRAND_NAME:-暗涌}"
+
+            if [ -n "$LATEST_TAG" ]; then
+              CHANGELOG=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
+            else
+              CHANGELOG=$(git log --pretty=format:"- %s" -10 2>/dev/null || echo "- 参见提交记录")
+            fi
+
+            BODY=$(echo "${BRAND} ${DESKTOP_TAG} 发布\n\n## 变更记录\n${CHANGELOG}\n\n---\n\n桌面端产物将在 GitHub Actions 构建完成后自动发布。\n请访问 GitHub Releases 页面下载 macOS/Windows/Linux 安装包。" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+
+            curl -s -X POST \
+              "${API}/${REPO}/-/releases" \
+              -H "Accept: application/vnd.cnb.api+json" \
+              -H "Authorization: Bearer ${CNB_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"tag_name\": \"${DESKTOP_TAG}\",
+                \"name\": \"${BRAND} ${DESKTOP_TAG}\",
+                \"body\": \"${BODY}\",
+                \"draft\": false,
+                \"prerelease\": false
+              }" || true
+
+            echo "Release ${DESKTOP_TAG} created on CNB (artifacts on GitHub)"
+
+  # ------------------------------------------------------------------
+  # 合并请求：快速检查
+  # ------------------------------------------------------------------
+  merge-request:
+    - docker:
+        image: golang:1.26
+      stages:
+        - name: build-check
           script: |
             make build
 
@@ -18,18 +147,18 @@ main:
             go test ./...
 
   # ------------------------------------------------------------------
-  # 定时同步上游 GitHub 仓库 (每天 09:00 CST)
-  # 上游已从 main 切换到 main-v2 (Go 重写分支)
+  # 定时同步上游 (每天 09:00 CST)
+  # 上游: https://cnb.cool/aizhuliren/volt-gui (VoltUI Go 重写版)
   # ------------------------------------------------------------------
   "crontab: 0 9 * * *":
     - name: sync-upstream
       docker:
-        image: golang:1.25
+        image: golang:1.26
       env:
-        GIT_AUTHOR_NAME: "VoltUI Bot"
-        GIT_AUTHOR_EMAIL: "bot@voltui.dev"
-        GIT_COMMITTER_NAME: "VoltUI Bot"
-        GIT_COMMITTER_EMAIL: "bot@voltui.dev"
+        GIT_AUTHOR_NAME: "暗涌 Bot"
+        GIT_AUTHOR_EMAIL: "bot@xigu.ai"
+        GIT_COMMITTER_NAME: "暗涌 Bot"
+        GIT_COMMITTER_EMAIL: "bot@xigu.ai"
       stages:
         - name: configure-git
           script: |
@@ -47,21 +176,18 @@ main:
 
         - name: create-pull-request
           script: |
-            # Check if a PR already exists for this branch
             DATE_STAMP=$(date +%Y-%m-%d)
             SYNC_BRANCH="sync/upstream-${DATE_STAMP}"
 
-            # Push the sync branch
             git push origin "$SYNC_BRANCH" --force-with-lease 2>/dev/null || true
 
-            # Create PR via CNB API
             RESPONSE=$(curl -s -X POST \
-              "https://api.cnb.cool/repos/${CNB_REPO_SLUG}/pulls" \
+              "${CNB_API_ENDPOINT:-https://api.cnb.cool}/${CNB_REPO_SLUG}/-/pulls" \
               -H "Authorization: Bearer ${CNB_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{
-                \"title\": \"sync: upstream GitHub commits (${DATE_STAMP}) — Go rewrite (main-v2)\",
-                \"body\": \"Automated upstream sync from [esengine/voltui](https://github.com/esengine/voltui) (main-v2 branch).\\n\\nThis PR merges new commits from the upstream Go rewrite with VoltUI branding replacements applied.\\n\\n---\\n_Auto-generated by CNB CI crontab workflow._\",
+                \"title\": \"sync: 上游 volt-gui 更新 (${DATE_STAMP})\",
+                \"body\": \"自动同步上游 [volt-gui](https://cnb.cool/aizhuliren/volt-gui) 的最新提交。\\n\\n---\\n_由 CNB CI 定时任务自动生成._\",
                 \"head\": \"${SYNC_BRANCH}\",
                 \"base\": \"main\"
               }" 2>/dev/null || echo "failed")

@@ -73,25 +73,23 @@ main:
             git fetch --tags origin 2>/dev/null || true
             LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^desktop-v[0-9]' | head -1 || true)
 
+            # 首次发版: 直接用 0.1.0，不递增
             if [ -z "$LATEST_TAG" ]; then
-              MAJOR=0; MINOR=1; PATCH=0
+              DESKTOP_TAG="desktop-v0.1.0"
             else
               VERSION_BASE=$(echo "$LATEST_TAG" | sed 's/^desktop-v//')
               MAJOR=$(echo "$VERSION_BASE" | cut -d. -f1)
               MINOR=$(echo "$VERSION_BASE" | cut -d. -f2)
               PATCH=$(echo "$VERSION_BASE" | cut -d. -f3 | cut -d- -f1)
-            fi
 
-            # 根据提交类型决定版本号升级
-            if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!:'; then
-              NEW_MAJOR=$((MAJOR + 1))
-              DESKTOP_TAG="desktop-v${NEW_MAJOR}.0.0"
-            elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
-              NEW_MINOR=$((MINOR + 1))
-              DESKTOP_TAG="desktop-v${MAJOR}.${NEW_MINOR}.0"
-            else
-              NEW_PATCH=$((PATCH + 1))
-              DESKTOP_TAG="desktop-v${MAJOR}.${MINOR}.${NEW_PATCH}"
+              # 根据提交类型决定版本号升级
+              if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!:'; then
+                DESKTOP_TAG="desktop-v$((MAJOR + 1)).0.0"
+              elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
+                DESKTOP_TAG="desktop-v${MAJOR}.$((MINOR + 1)).0"
+              else
+                DESKTOP_TAG="desktop-v${MAJOR}.${MINOR}.$((PATCH + 1))"
+              fi
             fi
 
             echo "Latest tag: ${LATEST_TAG:-none} → New: $DESKTOP_TAG"

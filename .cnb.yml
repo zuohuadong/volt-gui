@@ -163,11 +163,12 @@ main:
             fi
             . ./.release_env
 
-            test -n "${MINISIGN_PRIVATE_KEY:-}" || { echo "MINISIGN_PRIVATE_KEY is required"; exit 1; }
-            test -n "${MINISIGN_PASSWORD:-}" || { echo "MINISIGN_PASSWORD is required"; exit 1; }
-
             cd desktop
-            go run ./cmd/sign sign ../dist/*
+            if [ -n "${MINISIGN_PRIVATE_KEY:-}" ] && [ -n "${MINISIGN_PASSWORD:-}" ]; then
+              go run ./cmd/sign sign ../dist/*
+            else
+              echo "MINISIGN_PRIVATE_KEY/MINISIGN_PASSWORD not configured; publishing unsigned installer"
+            fi
 
             RELEASE_PAGE="${CNB_REPO_URL_HTTPS:-https://cnb.cool/${CNB_REPO_SLUG}}/-/releases/${DESKTOP_TAG}"
             ASSET_BASE="${RELEASE_PAGE}/downloads"

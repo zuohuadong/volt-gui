@@ -10,10 +10,12 @@
 //   5. $$…$$ → display placeholders, $…$ → inline placeholders, gated by
 //      isLikelyInlineMath; currency / env-var tokens become &#36; entities.
 //   6. Each recognised math source is run through latexNormalizeForKatex
-//      (text-mode escapes, |→\vert, %→\%).
+//      (text-mode escapes, |→\vert, %→\%) after expanding \yng/\young
+//      to KaTeX-compatible \boxed{array} forms.
 
 import { isLikelyInlineMath } from "./mathClassify";
 import { latexNormalizeForKatex } from "./latexNormalize";
+import { expandYoungDiagrams } from "./youngDiagrams";
 
 // Matches $\cmd{...}...$ where the body may contain $ and one level of nested
 // braces. Group 1 captures the full \cmd{...} including the outer }. After
@@ -59,8 +61,12 @@ function normalizeMathText(s: string): string {
   // the trailing content) is repaired: micromark-extension-math only
   // recognises a closing $$ fence at the start of a new line, so
   // without this repair it consumes the rest of the document as math
-  // and katex fails on the stray $ in the next paragraph.
-  r = r.replace(/([A-Za-z\)\]\>\.。！？,])\$\$/g, (_m, prev) => prev + "\n\n$$");
+  // and katex fails on the stray $ in the next paragraph. Closing
+  // braces } and { are included too — a model that writes
+  // `\end{array}$$` or `\frac{a}{b}$$` on one line has the same
+  // micromark-fence problem, and these are the most common ends of
+  // LaTeX math content.
+  r = r.replace(/([A-Za-z\)\]\>\.。！？,{}])\$\$/g, (_m, prev) => prev + "\n\n$$");
 
   // Orphan opening $$ (model forgot the closing $$) is left alone:
   // converting it to a lone $ would interact badly with the $…$
@@ -69,8 +75,9 @@ function normalizeMathText(s: string): string {
 
   // Step 4: $$…$$ → display placeholders. KaTeX-specific normalisation
   // runs here so |→\vert (with \| protected) and \text{} escapes both
-  // apply to display math.
-  r = r.replace(/\$\$([\s\S]*?)\$\$/g, (_m, m) => `${DM}${latexNormalizeForKatex(m)}${DM}`);
+  // apply to display math. \yng/\young are expanded to \boxed{array}
+  // first so the macro expansion happens inside the math body.
+  r = r.replace(/\$\$([\s\S]*?)\$\$/g, (_m, m) => `${DM}${latexNormalizeForKatex(expandYoungDiagrams(m))}${DM}`);
 
   // Step 5: $\cmd{...}$ pairs where the body may contain a stray $
   // (e.g. $\text{price is $5}$). Recognised first so the inner $ doesn't
@@ -78,7 +85,7 @@ function normalizeMathText(s: string): string {
   // the inner $ to \textdollar{}.
   r = r.replace(TEXT_MODE_PAIR, (_match, m) => {
     if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
-    return `${IM}${latexNormalizeForKatex(m)}${IM}`;
+    return `${IM}${latexNormalizeForKatex(expandYoungDiagrams(m))}${IM}`;
   });
 
   // Step 6: remaining $…$ → classifier-gated inline math. remark-math
@@ -87,7 +94,7 @@ function normalizeMathText(s: string): string {
   // sees a $, and the decoded entity still renders as a literal dollar.
   r = r.replace(/\$([^$\n]+)\$/g, (_m, m) => {
     if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
-    return `${IM}${latexNormalizeForKatex(m)}${IM}`;
+    return `${IM}${latexNormalizeForKatex(expandYoungDiagrams(m))}${IM}`;
   });
 
   // Step 7: restore standard $/$$ delimiters for remark-math to parse.

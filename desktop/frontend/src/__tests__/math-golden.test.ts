@@ -16,6 +16,7 @@ import katex from "katex";
 import { latexNormalizeForKatex, stripMathDelimiters } from "../components/latexNormalize";
 import { isLikelyInlineMath } from "../components/mathClassify";
 import { normalizeMath } from "../components/mathNormalize";
+import { expandYoungDiagrams } from "../components/youngDiagrams";
 
 let passed = 0;
 let failed = 0;
@@ -203,6 +204,14 @@ check("inline $$ after prose", () => {
 check("inline $$ after closing bracket", () => {
   const out = normalizeMath("(octet)$$ \\mathbf{56}.$$");
   return out.startsWith("(octet)\n\n$$");
+});
+check("inline $$ after closing brace (\\end{...}$$)", () => {
+  // A model that writes `\end{array}$$` or `\frac{a}{b}$$` on one line
+  // has the same micromark-fence problem as the comma case. The
+  // closing brace is the most common end-of-content marker in LaTeX
+  // math, so the repair-regex character class includes it.
+  const out = normalizeMath("$$\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}$$");
+  return out.includes("\\end{pmatrix},\n\n$$") || out.includes("\\end{pmatrix}\n\n$$");
 });
 check("inline $$ after comma on same line as content", () => {
   // User-reported (2026-06-12, soft-pion chat): the model wrote the
@@ -396,6 +405,52 @@ check("env var $PATH$ renders as literal, not math", () => {
 check("real inline math $x^2$ still renders as KaTeX", () => {
   const html = renderHtml("the value $x^2$ here");
   return html.includes("katex");
+});
+
+// ── Young diagram / tableau macros ─────────────────────────────────────────────
+// `\yng` (ytableau) and `\young` (youngtab) are common in physics —
+// SU(N) irreps, tensor decompositions, character tables — but KaTeX
+// doesn't bundle either macro package. The pre-pass translates them
+// to KaTeX-compatible `\boxed{array}` forms inside the math body so
+// the diagram renders as a grid of boxes.
+
+console.log("\nnormalizeMath — Young diagram macros");
+
+check("\\yng(2,1) renders as (2,1) Young diagram", () => {
+  const html = renderHtml("$$\\yng(2,1)$$");
+  return html.includes("katex-display") && !html.includes("katex-error");
+});
+check("\\yng(3,2,1) renders as (3,2,1) Young diagram", () => {
+  const html = renderHtml("$$\\yng(3,2,1)$$");
+  return html.includes("katex-display") && !html.includes("katex-error");
+});
+check("\\yng(2,1){a&b\\\\c\\\\d&e} renders filled Young tableau", () => {
+  const html = renderHtml("$$\\yng(2,1){a&b\\\\c\\\\d&e}$$");
+  return html.includes("katex-display") && !html.includes("katex-error");
+});
+check("\\young(2 1) (youngtab syntax) renders as (2,1) diagram", () => {
+  const html = renderHtml("$$\\young(2 1)$$");
+  return html.includes("katex-display") && !html.includes("katex-error");
+});
+check("\\yng(4,3,2,1) renders as (4,3,2,1) Young diagram", () => {
+  const html = renderHtml("$$\\yng(4,3,2,1)$$");
+  return html.includes("katex-display") && !html.includes("katex-error");
+});
+check("expandYoungDiagrams substitutes correct array form", () => {
+  // Direct unit test on the translator — no need to go through the
+  // full pipeline for this assertion.
+  const out = expandYoungDiagrams("\\yng(2,1)");
+  return out.includes("\\begin{array}{c}")
+    && out.includes("\\hphantom{x}")
+    && out.includes(" \\\\ ");
+});
+check("expandYoungDiagrams handles \\yng with content", () => {
+  const out = expandYoungDiagrams("\\yng(2,1){a&b\\\\c}");
+  return out === "\\begin{array}{c}a \\, b \\\\ c\\end{array}";
+});
+check("expandYoungDiagrams leaves non-Young macros alone", () => {
+  const out = expandYoungDiagrams("\\frac{a}{b}");
+  return out === "\\frac{a}{b}";
 });
 
 // ── Summary ───────────────────────────────────────────────────────────────────

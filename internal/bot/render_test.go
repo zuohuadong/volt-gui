@@ -1,9 +1,11 @@
+//go:build bot
+
 package bot
 
 import (
 	"testing"
 
-	"reasonix/internal/event"
+	"voltui/internal/event"
 )
 
 func TestApprovalCardCarriesChatType(t *testing.T) {

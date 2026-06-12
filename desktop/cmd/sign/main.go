@@ -11,9 +11,9 @@
 //	                             (decrypted with $MINISIGN_PASSWORD).
 //
 //	manifest <dir> <ver> <tag>   Scan <dir> for the per-platform artifacts, compute
-//	                             size + sha256, and write <dir>/latest.json with GitHub
-//	                             release download URLs. The R2 mirror step rewrites those
-//	                             URLs to the CDN afterwards (url + sig fields together).
+//	                             size + sha256, and write <dir>/latest.json with release
+//	                             download URLs. RELEASE_ASSET_BASE_URL overrides GitHub
+//	                             URLs for CNB or mirror-hosted releases.
 package main
 
 import (
@@ -162,16 +162,13 @@ func signFiles(files []string) error {
 }
 
 // genManifest scans dir for the per-platform artifacts and writes dir/latest.json.
-// version is the semver compared by the updater (e.g. "v1.1.0"); tag is the GitHub
+// version is the semver compared by the updater (e.g. "v1.1.0"); tag is the
 // release tag used in download URLs (e.g. "desktop-v1.1.0").
 func genManifest(dir, version, tag string) error {
-	repo := os.Getenv("GITHUB_REPOSITORY")
-	if repo == "" {
-		repo = "aizhuliren/volt-gui"
-	}
+	downloadPage, assetBase := releaseURLs(tag)
 	m := update.Manifest{
 		Version:      version,
-		DownloadPage: fmt.Sprintf("https://github.com/%s/releases/latest", repo),
+		DownloadPage: downloadPage,
 		Platforms:    map[string]update.Asset{},
 	}
 	entries, err := os.ReadDir(dir)
@@ -191,8 +188,14 @@ func genManifest(dir, version, tag string) error {
 		if err != nil {
 			return err
 		}
-		url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, tag, name)
-		m.Platforms[key] = update.Asset{URL: url, Sig: url + ".minisig", Size: size, SHA256: sum}
+		assetURL := assetBase + "/" + name
+		asset := update.Asset{URL: assetURL, Size: size, SHA256: sum}
+		if _, err := os.Stat(filepath.Join(dir, name+".minisig")); err == nil {
+			asset.Sig = assetURL + ".minisig"
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		m.Platforms[key] = asset
 		fmt.Printf("manifest: %s -> %s (%d bytes)\n", key, name, size)
 	}
 	if len(m.Platforms) == 0 {
@@ -203,6 +206,30 @@ func genManifest(dir, version, tag string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "latest.json"), append(b, '\n'), 0o644)
+}
+
+func releaseURLs(tag string) (downloadPage, assetBase string) {
+	if page := strings.TrimRight(os.Getenv("RELEASE_DOWNLOAD_PAGE"), "/"); page != "" {
+		downloadPage = page
+	}
+	if base := strings.TrimRight(os.Getenv("RELEASE_ASSET_BASE_URL"), "/"); base != "" {
+		assetBase = base
+	}
+	if downloadPage != "" && assetBase != "" {
+		return downloadPage, assetBase
+	}
+
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if repo == "" {
+		repo = "aizhuliren/volt-gui"
+	}
+	if downloadPage == "" {
+		downloadPage = fmt.Sprintf("https://github.com/%s/releases/latest", repo)
+	}
+	if assetBase == "" {
+		assetBase = fmt.Sprintf("https://github.com/%s/releases/download/%s", repo, tag)
+	}
+	return downloadPage, assetBase
 }
 
 // matchPlatform returns the platform key embedded in a file name, or "" if none.

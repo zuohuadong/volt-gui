@@ -45,6 +45,8 @@ node_modules/
 /.voltui/*
 !/.voltui/commands/
 !/.voltui/commands/review.md
+!/.voltui/skills/
+!/.voltui/skills/**
 
 # CodeGraph per-project index (rebuilt locally; never committed)
 .codegraph/

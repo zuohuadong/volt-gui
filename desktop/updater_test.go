@@ -64,6 +64,16 @@ func TestEvaluate(t *testing.T) {
 	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.AssetSize != 999 {
 		t.Errorf("metadata not carried: %+v", full)
 	}
+	noAsset := mk("v1.1.0")
+	noAsset.Platforms = map[string]update.Asset{"missing-platform": {Size: 999}}
+	if got := evaluate("v1.0.0", noAsset); got.Available || got.AssetSize != 0 {
+		t.Errorf("missing current-platform asset should not prompt: %+v", got)
+	}
+	unsigned := mk("v1.1.0")
+	unsigned.Platforms[update.CurrentPlatform()] = update.Asset{Size: 999}
+	if got := evaluate("v1.0.0", unsigned); !got.Available || got.CanSelfUpdate {
+		t.Errorf("unsigned artifact should prompt manual download only: %+v", got)
+	}
 	if full.CanSelfUpdate != (runtime.GOOS != "darwin") {
 		t.Errorf("CanSelfUpdate = %v on %s", full.CanSelfUpdate, runtime.GOOS)
 	}

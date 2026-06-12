@@ -30,6 +30,8 @@ import type {
   HooksSettingsView,
   JobView,
   MCPServerInput,
+  MemorySuggestion,
+  MemorySuggestionsView,
   MemoryView,
   Meta,
   ModelInfo,
@@ -41,6 +43,7 @@ import type {
   SessionMeta,
   SettingsView,
   SkillRootView,
+  SkillSuggestion,
   SkillView,
   SlashArgsResult,
   TabMeta,
@@ -189,6 +192,9 @@ export interface AppBindings {
   EffortForTab(tabID: string): Promise<EffortInfo>;
   SetEffortForTab(tabID: string, level: string): Promise<void>;
   Memory(): Promise<MemoryView>;
+  MemorySuggestions(): Promise<MemorySuggestionsView>;
+  AcceptMemorySuggestion(suggestion: MemorySuggestion): Promise<string>;
+  AcceptSkillSuggestion(suggestion: SkillSuggestion): Promise<string>;
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
   SaveDoc(path: string, body: string): Promise<string>;
@@ -2045,12 +2051,60 @@ function makeMockApp(): AppBindings {
             body: "Indent with tabs.",
           },
         ],
+        archives: [
+          {
+            name: "old-plan",
+            description: "Superseded planning note",
+            type: "project",
+            body: "This plan was archived after the implementation changed.",
+            path: "~/.config/reasonix/projects/-mock/memory/.archive/20260612-021500.000-old-plan.md",
+            archivedAt: "2026-06-12T02:15:00Z",
+          },
+        ],
         scopes: [
           { scope: "user", path: "~/.config/reasonix/REASONIX.md" },
           { scope: "project", path: "REASONIX.md" },
           { scope: "local", path: "REASONIX.local.md" },
         ],
       };
+    },
+    async MemorySuggestions() {
+      return {
+        memories: [
+          {
+            id: "memory-prefers-concise-replies",
+            name: "prefers-concise-replies",
+            title: "Prefers concise replies",
+            description: "User prefers concise replies unless detail is requested.",
+            type: "user",
+            body: "User prefers concise replies unless detail is requested.\n\n**Why:** Suggested from recent local history.\n**How to apply:** Keep answers brief by default.",
+            reason: "future-facing preference",
+            evidence: ["mock-session: always keep replies concise"],
+          },
+        ],
+        skills: [
+          {
+            id: "skill-reasonix-pr-followup",
+            name: "reasonix-pr-followup",
+            description: "Review or update a Reasonix GitHub PR, address feedback, verify, and publish safely.",
+            scope: "project",
+            body: "# Reasonix PR Followup\n\nUse this skill for repeated Reasonix PR work.\n\n## Workflow\n\n1. Confirm branch and PR state.\n2. Inspect the diff.\n3. Fix actionable feedback.\n4. Verify and update the PR.\n",
+            reason: "recent history repeatedly touched PR workflows",
+            evidence: ["mock-pr-session: 提交到pr，并更新内容", "mock-review-session: 解决该pr下机器人提出来的问题"],
+          },
+        ],
+        generatedAt: new Date().toISOString(),
+        available: true,
+        source: "mock",
+      };
+    },
+    async AcceptMemorySuggestion(suggestion: MemorySuggestion) {
+      emit({ kind: "notice", level: "info", text: `saved suggested memory → ${suggestion.name}` });
+      return `${suggestion.name}.md`;
+    },
+    async AcceptSkillSuggestion(suggestion: SkillSuggestion) {
+      emit({ kind: "notice", level: "info", text: `created suggested skill → ${suggestion.name}` });
+      return `.reasonix/skills/${suggestion.name}/SKILL.md`;
     },
     async Remember(scope: string, note: string) {
       emit({ kind: "notice", level: "info", text: `remembered → ${scope}` });

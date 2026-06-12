@@ -100,12 +100,16 @@ main:
               PATCH=$(echo "$VERSION_BASE" | cut -d. -f3 | cut -d- -f1)
 
               # 根据提交类型决定版本号升级
+              # feat!:/fix!: → major, feat: → minor, fix: → patch
               if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!:'; then
-                DESKTOP_TAG="desktop-v$((MAJOR + 1)).0.0"
+                NEW_MAJOR=$((MAJOR + 1))
+                DESKTOP_TAG="desktop-v${NEW_MAJOR}.0.0"
               elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
-                DESKTOP_TAG="desktop-v${MAJOR}.$((MINOR + 1)).0"
+                NEW_MINOR=$((MINOR + 1))
+                DESKTOP_TAG="desktop-v${MAJOR}.${NEW_MINOR}.0"
               else
-                DESKTOP_TAG="desktop-v${MAJOR}.${MINOR}.$((PATCH + 1))"
+                NEW_PATCH=$((PATCH + 1))
+                DESKTOP_TAG="desktop-v${MAJOR}.${MINOR}.${NEW_PATCH}"
               fi
             fi
 

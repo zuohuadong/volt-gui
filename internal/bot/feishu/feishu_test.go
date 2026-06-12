@@ -1,3 +1,5 @@
+//go:build bot
+
 package feishu
 
 import (
@@ -8,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"reasonix/internal/bot"
-	"reasonix/internal/config"
+	"voltui/internal/bot"
+	"voltui/internal/config"
 )
 
 func TestVerificationTokenValidRequiresConfiguredToken(t *testing.T) {

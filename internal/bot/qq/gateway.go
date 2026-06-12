@@ -1,3 +1,5 @@
+//go:build bot
+
 package qq
 
 import (
@@ -12,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/bot"
+	"voltui/internal/bot"
 
 	"golang.org/x/net/websocket"
 )

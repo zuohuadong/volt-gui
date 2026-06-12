@@ -53,7 +53,18 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| VOLTGUI-003 | local | aizhuliren/volt-gui | - | 远端重写后重新提交通用 skills 与同步校验 | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
+
+### VOLTGUI-003 Task Contract
+
+- 目标：在最新 `origin/main` 基础上重新同步通用 `references/skills/`，新增通用 skills manifest 和 `scripts/check-skills-sync.mjs`，防止远端重写后技能资产再次漂移。
+- 非目标：不引入 XGIC 私有行业 skill、不修改 VoltUI 运行时代码、不部署、不调整 CI 分支策略。
+- 验收标准：`references/skills/agent-team-skills-manifest.json` 与 `references/skills/*/SKILL.md` 一致；`node scripts/check-skills-sync.mjs` 通过；项目 overlay 记录该验证命令。
+- 相关 skill：`skill-creator`、`agent-team-automation`、`provider-adapter`、`stack-profile-selector`。
+- 风险：远端 `main` 曾 forced update，必须基于最新 `origin/main` 重新提交，避免推回旧历史。
+- 回滚方案：删除 `references/skills/agent-team-skills-manifest.json`、`references/skills/SYNC.md`、`scripts/check-skills-sync.mjs`，还原 `.agents/AGENTS.local.md`、`tasks.md`、`progress.md`。
+- 验证计划：`node scripts/check-skills-sync.mjs`、`git diff --check`、`agent-team automation diff-check`、`go test ./...`、`cd desktop && go test ./...`、`cd site && npm ci && npm run build`。
 
 ### VOLTGUI-001 Task Contract
 

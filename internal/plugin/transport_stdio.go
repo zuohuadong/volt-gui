@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/proc"
+	"voltui/internal/proc"
 )
 
 const closeWaitBudget = 5 * time.Second
@@ -56,9 +56,6 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	}
 	cmd := exec.CommandContext(ctx, exe, s.Args...)
 	proc.HideWindow(cmd)
-	if s.LowPriority {
-		proc.LowPriority(cmd)
-	}
 	cmd.Env = env
 	if s.Dir != "" {
 		cmd.Dir = s.Dir // pin cwd-aware servers (e.g. CodeGraph) to the project root
@@ -77,17 +74,13 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	if err != nil {
 		return nil, err
 	}
-	job, err := proc.StartTracked(cmd)
-	if err != nil {
+	if err := cmd.Start(); err != nil {
 		return nil, err
-	}
-	if s.LowPriority {
-		proc.LowPriorityStarted(cmd)
 	}
 	t := &stdioTransport{
 		name:    s.Name,
 		cmd:     cmd,
-		job:     job,
+		job:     proc.TrackTree(cmd),
 		stdin:   stdin,
 		stdout:  bufio.NewReader(stdout),
 		stderr:  stderr,
@@ -110,17 +103,6 @@ func resolveStdioExecutable(ctx context.Context, s Spec, env []string) (string, 
 	currentPath, _ := envValue(env, "PATH")
 	if shellPath := strings.TrimSpace(stdioShellPATH(ctx)); shellPath != "" {
 		fallbackPath := mergePathLists(shellPath, currentPath)
-		if fallbackPath != currentPath {
-			fallbackEnv := setEnvValue(env, "PATH", fallbackPath)
-			if exe, ok := lookPathInEnv(s.Command, fallbackEnv); ok {
-				return exe, fallbackEnv, nil
-			}
-			env = fallbackEnv
-			currentPath = fallbackPath
-		}
-	}
-	if runtime.GOOS == "windows" {
-		fallbackPath := mergePathLists(windowsStdioFallbackPATH(env), currentPath)
 		if fallbackPath != currentPath {
 			fallbackEnv := setEnvValue(env, "PATH", fallbackPath)
 			if exe, ok := lookPathInEnv(s.Command, fallbackEnv); ok {
@@ -194,53 +176,6 @@ func isExecutableFile(path string) bool {
 	return info.Mode().Perm()&0o111 != 0
 }
 
-func windowsStdioFallbackPATH(env []string) string {
-	if runtime.GOOS != "windows" {
-		return ""
-	}
-	programFiles, _ := envValue(env, "ProgramFiles")
-	programFilesX86, _ := envValue(env, "ProgramFiles(x86)")
-	localAppData, _ := envValue(env, "LOCALAPPDATA")
-	appData, _ := envValue(env, "APPDATA")
-	userProfile, _ := envValue(env, "USERPROFILE")
-	chocolatey, _ := envValue(env, "ChocolateyInstall")
-	if localAppData == "" && userProfile != "" {
-		localAppData = filepath.Join(userProfile, "AppData", "Local")
-	}
-	if appData == "" && userProfile != "" {
-		appData = filepath.Join(userProfile, "AppData", "Roaming")
-	}
-	candidates := []string{
-		filepath.Join(programFiles, "nodejs"),
-		filepath.Join(programFilesX86, "nodejs"),
-		filepath.Join(localAppData, "Programs", "nodejs"),
-		filepath.Join(appData, "npm"),
-		filepath.Join(localAppData, "Microsoft", "WindowsApps"),
-		filepath.Join(userProfile, "scoop", "shims"),
-		filepath.Join(userProfile, ".bun", "bin"),
-		filepath.Join(userProfile, ".cargo", "bin"),
-		filepath.Join(chocolatey, "bin"),
-	}
-	var existing []string
-	for _, dir := range candidates {
-		if isDir(dir) {
-			existing = append(existing, dir)
-		}
-	}
-	return strings.Join(existing, string(os.PathListSeparator))
-}
-
-func isDir(path string) bool {
-	if path == "" {
-		return false
-	}
-	if !filepath.IsAbs(path) {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
 func defaultStdioShellPATH(ctx context.Context) string {
 	if runtime.GOOS == "windows" {
 		return ""
@@ -249,7 +184,7 @@ func defaultStdioShellPATH(ctx context.Context) string {
 	if shell == "" {
 		return ""
 	}
-	const marker = "__REASONIX_PATH__="
+	const marker = "__VOLTUI_PATH__="
 	script := "printf '\\n" + marker + "%s\\n' \"$PATH\""
 	for _, args := range [][]string{
 		{"-l", "-i", "-c", script},
@@ -286,14 +221,10 @@ func runShellPATHCommand(parent context.Context, shell string, args []string) []
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shell, args...)
-	prepareStdioShellPATHProbe(cmd)
+	proc.HideWindow(cmd)
 	cmd.Stdin = strings.NewReader("")
 	out, _ := cmd.CombinedOutput()
 	return out
-}
-
-func prepareStdioShellPATHProbe(cmd *exec.Cmd) {
-	proc.PrepareShellPATHProbe(cmd)
 }
 
 func parseShellPATH(out []byte, marker string) string {

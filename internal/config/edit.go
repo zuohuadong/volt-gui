@@ -7,16 +7,16 @@ import (
 	"runtime"
 	"strings"
 
-	"reasonix/internal/fileutil"
-	"reasonix/internal/mcpdiag"
-	"reasonix/internal/netclient"
-	"reasonix/internal/permission"
+	"voltui/internal/fileutil"
+	"voltui/internal/mcpdiag"
+	"voltui/internal/netclient"
+	"voltui/internal/permission"
 )
 
 // edit.go is the programmatic mutation surface a settings UI drives: change the
 // default model, add/remove a provider, set the planner, edit permission rules,
 // add/remove an MCP server — each validated, then persisted with SaveTo. It is
-// separate from the `reasonix setup` wizard (cli) so a GUI can apply one setting at a
+// separate from the `voltui setup` wizard (cli) so a GUI can apply one setting at a
 // time without replaying the whole interactive flow. Every mutator works on the
 // in-memory *Config; nothing writes to disk until SaveTo/Save is called, so a UI
 // can stage several changes and commit once. Mutations round-trip through
@@ -29,20 +29,12 @@ const (
 	listDeny  = "deny"
 )
 
-// SetDefaultModel points default_model at an existing model. It accepts both
-// forms used by the runtime resolver:
-//   - "provider"          — the provider's own default model;
-//   - "provider/model"    — that specific model under that provider.
-//
-// Either is rejected when the target does not exist, so a UI can't strand
-// the config on a model that doesn't exist.
+// SetDefaultModel points default_model at an existing provider. It errors if no
+// provider by that name is configured, so a UI can't strand the config on a
+// model that doesn't exist.
 func (c *Config) SetDefaultModel(name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("set default: empty name")
-	}
-	if _, ok := c.ResolveModel(name); !ok {
-		return fmt.Errorf("set default: no such model %q (configured: %s)", name, c.providerNames())
+	if _, ok := c.Provider(name); !ok {
+		return fmt.Errorf("set default: no provider %q (configured: %s)", name, c.providerNames())
 	}
 	c.DefaultModel = name
 	return nil
@@ -77,23 +69,9 @@ func (c *Config) SetAutoPlan(mode string) error {
 	return nil
 }
 
-// SetUIShortcutLayout selects the CLI keyboard shortcut layout. "classic" keeps
-// historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
-func (c *Config) SetUIShortcutLayout(layout string) error {
-	switch strings.ToLower(strings.TrimSpace(layout)) {
-	case "", "classic", "default", "legacy", "off":
-		c.UI.ShortcutLayout = "classic"
-	case "desktop", "dual", "dual-axis", "dual_axis":
-		c.UI.ShortcutLayout = "desktop"
-	default:
-		return fmt.Errorf("shortcut_layout %q: must be classic|desktop", layout)
-	}
-	return nil
-}
-
 // UpsertProvider adds e, or replaces an existing provider with the same name
-// (preserving its position). Required fields (name, kind, base_url, model/models)
-// are validated; whether the kind is actually registered and the key resolves is
+// (preserving its position). Required fields (name, kind, base_url, model) are
+// validated; whether the kind is actually registered and the key resolves is
 // checked later by provider.New / Validate, which give actionable errors.
 func (c *Config) UpsertProvider(e ProviderEntry) error {
 	normalizeProviderEffortFields(&e)
@@ -114,14 +92,14 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 func (c *Config) SetProviderEffort(name, effort string) error {
 	for i := range c.Providers {
 		if c.Providers[i].Name == name {
-			c.Providers[i].Effort = normalizeStoredEffort(effort)
+			c.Providers[i].Effort = strings.ToLower(strings.TrimSpace(effort))
 			return nil
 		}
 	}
 	return fmt.Errorf("set provider effort: no provider %q", name)
 }
 
-// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to REASONIX_LANG / locale.
+// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to VOLTUI_LANG / locale.
 func (c *Config) SetLanguage(lang string) error {
 	switch strings.ToLower(strings.TrimSpace(lang)) {
 	case "", "auto":
@@ -171,7 +149,7 @@ func (c *Config) SetDesktopAppearance(theme, style string) error {
 	}
 	normalized := normalizeThemeStyle(style)
 	if normalized == "" {
-		return fmt.Errorf("desktop theme style %q: must be graphite|aurora|slate|carbon|nocturne|amber", style)
+		return fmt.Errorf("desktop theme style %q: must be graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier", style)
 	}
 	c.Desktop.ThemeStyle = normalized
 	return nil
@@ -192,60 +170,9 @@ func (c *Config) SetDesktopCloseBehavior(mode string) error {
 	return nil
 }
 
-// SetDesktopDisplayMode sets the transcript display mode. UI-only.
-func (c *Config) SetDesktopDisplayMode(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "compact":
-		c.Desktop.DisplayMode = "compact"
-	case "minimal":
-		c.Desktop.DisplayMode = "minimal"
-	case "", "standard":
-		c.Desktop.DisplayMode = "standard"
-	default:
-		return fmt.Errorf("display mode %q: must be standard|compact|minimal", mode)
-	}
-	return nil
-}
-
-// SetDesktopCheckUpdates sets whether the desktop app checks for updates on
-// startup. Manual checks remain available in Settings regardless of this value.
-func (c *Config) SetDesktopCheckUpdates(enabled bool) error {
-	c.Desktop.CheckUpdates = &enabled
-	return nil
-}
-
-// SetDesktopTelemetry sets whether the desktop sends the anonymous launch ping.
-func (c *Config) SetDesktopTelemetry(enabled bool) error {
-	c.Desktop.Telemetry = &enabled
-	return nil
-}
-
-// SetDesktopMetrics sets whether the desktop sends opt-in aggregate agent metrics.
-func (c *Config) SetDesktopMetrics(enabled bool) error {
-	c.Desktop.Metrics = &enabled
-	return nil
-}
-
 // SetUICloseBehavior is kept for callers compiled against the old edit API.
 func (c *Config) SetUICloseBehavior(mode string) error {
 	return c.SetDesktopCloseBehavior(mode)
-}
-
-// SetExpandThinking sets whether the desktop reasoning/thinking section is
-// expanded by default. It is desktop-only and must not affect CLI output or
-// provider-visible request data.
-func (c *Config) SetExpandThinking(on bool) error {
-	c.Desktop.ExpandThinking = on
-	return nil
-}
-
-// SetShowReasoning sets the CLI's default verbose-reasoning preference. When
-// true, thinking text is shown in the chat TUI on startup; when false (the
-// default), it stays collapsed until the user toggles it with Ctrl+O or
-// /verbose.
-func (c *Config) SetShowReasoning(on bool) error {
-	c.UI.ShowReasoning = on
-	return nil
 }
 
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
@@ -273,37 +200,11 @@ func (c *Config) SetNetwork(n NetworkConfig) error {
 	return netclient.Validate(c.NetworkProxySpec())
 }
 
-// ModelRefsProvider reports whether ref targets the named provider. It matches
-// both bare provider names ("deepseek") and "provider/model" refs.
-func ModelRefsProvider(ref, name string) bool {
-	ref = strings.TrimSpace(ref)
-	name = strings.TrimSpace(name)
-	if ref == "" || name == "" {
-		return false
-	}
-	if ref == name {
-		return true
-	}
-	prov, _, ok := strings.Cut(ref, "/")
-	return ok && prov == name
-}
-
-func (c *Config) modelRefTargetsProvider(ref, name string) bool {
-	if ModelRefsProvider(ref, name) {
-		return true
-	}
-	if e, ok := c.ResolveModel(ref); ok {
-		return e.Name == name
-	}
-	return false
-}
-
-// RemoveProvider deletes the named provider. References to the removed provider
-// are migrated to the first remaining configured provider when possible. The
-// default model is required, so removal is refused when no fallback exists;
-// optional planner/subagent refs are cleared instead of being left dangling.
+// RemoveProvider deletes the named provider. It refuses to remove the current
+// default_model (reassign it first, so the config never points at a missing
+// model); if the removed provider was the planner, planner_model is cleared as
+// a side effect since it is optional. Errors when the name isn't configured.
 func (c *Config) RemoveProvider(name string) error {
-	name = strings.TrimSpace(name)
 	idx := -1
 	for i := range c.Providers {
 		if c.Providers[i].Name == name {
@@ -314,55 +215,14 @@ func (c *Config) RemoveProvider(name string) error {
 	if idx < 0 {
 		return fmt.Errorf("remove provider: no provider %q", name)
 	}
-
-	defaultRefsProvider := c.modelRefTargetsProvider(c.DefaultModel, name)
-	plannerRefsProvider := c.modelRefTargetsProvider(c.Agent.PlannerModel, name)
-	subagentRefsProvider := c.modelRefTargetsProvider(c.Agent.SubagentModel, name)
-	subagentModelRefsProvider := map[string]bool{}
-	for skill, ref := range c.Agent.SubagentModels {
-		if c.modelRefTargetsProvider(ref, name) {
-			subagentModelRefsProvider[skill] = true
-		}
+	if c.DefaultModel == name {
+		return fmt.Errorf("remove provider: %q is the default model — set a different default_model first", name)
 	}
-
-	fallback := ""
-	if defaultRefsProvider || plannerRefsProvider || subagentRefsProvider || len(subagentModelRefsProvider) > 0 {
-		fallback = c.providerRemovalFallback(name)
-	}
-	if defaultRefsProvider && fallback == "" {
-		return fmt.Errorf("remove provider: %q is referenced by default_model and no other configured provider exists", name)
-	}
-
 	c.Providers = append(c.Providers[:idx], c.Providers[idx+1:]...)
-
-	if defaultRefsProvider {
-		c.DefaultModel = fallback
-	}
-	if plannerRefsProvider {
-		c.Agent.PlannerModel = fallback
-	}
-	if subagentRefsProvider {
-		c.Agent.SubagentModel = fallback
-	}
-	for skill := range subagentModelRefsProvider {
-		if fallback != "" {
-			c.Agent.SubagentModels[skill] = fallback
-		} else {
-			delete(c.Agent.SubagentModels, skill)
-		}
+	if c.Agent.PlannerModel == name {
+		c.Agent.PlannerModel = ""
 	}
 	return nil
-}
-
-func (c *Config) providerRemovalFallback(name string) string {
-	for i := range c.Providers {
-		p := &c.Providers[i]
-		if p.Name == name || !p.Configured() || len(p.ModelList()) == 0 {
-			continue
-		}
-		return p.Name
-	}
-	return ""
 }
 
 // validateProvider checks the fields a provider can't function without.
@@ -374,22 +234,10 @@ func validateProvider(e ProviderEntry) error {
 		return fmt.Errorf("provider %q: kind is required", e.Name)
 	case strings.TrimSpace(e.BaseURL) == "":
 		return fmt.Errorf("provider %q: base_url is required", e.Name)
-	case !providerHasAnyModel(e):
+	case strings.TrimSpace(e.Model) == "":
 		return fmt.Errorf("provider %q: model is required", e.Name)
 	}
 	return nil
-}
-
-func providerHasAnyModel(e ProviderEntry) bool {
-	if strings.TrimSpace(e.Model) != "" {
-		return true
-	}
-	for _, m := range e.Models {
-		if strings.TrimSpace(m) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // SetPermissionMode sets the writer-fallback mode. Accepts "ask", "allow", or
@@ -466,7 +314,6 @@ func (c *Config) AddSkillPath(path string) error {
 		return fmt.Errorf("skill path: empty path")
 	}
 	want := CanonicalSkillPath(path)
-	c.removeExcludedSkillPath(want)
 	for _, existing := range c.Skills.Paths {
 		if CanonicalSkillPath(existing) == want {
 			return nil
@@ -491,50 +338,6 @@ func (c *Config) RemoveSkillPath(path string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// RestoreSkillPath removes a pseudo-deleted skill source from excluded_paths.
-func (c *Config) RestoreSkillPath(path string) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return fmt.Errorf("skill path: empty path")
-	}
-	want := CanonicalSkillPath(path)
-	if want == "" {
-		return fmt.Errorf("skill path: empty path")
-	}
-	c.removeExcludedSkillPath(want)
-	return nil
-}
-
-// ExcludeSkillPath hides any skill discovery root matching path. This is used by
-// UI "remove source" actions for convention roots that are not stored in paths.
-func (c *Config) ExcludeSkillPath(path string) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return fmt.Errorf("skill path: empty path")
-	}
-	want := CanonicalSkillPath(path)
-	if want == "" {
-		return fmt.Errorf("skill path: empty path")
-	}
-	for _, existing := range c.Skills.ExcludedPaths {
-		if CanonicalSkillPath(existing) == want {
-			return nil
-		}
-	}
-	c.Skills.ExcludedPaths = append(c.Skills.ExcludedPaths, path)
-	return nil
-}
-
-func (c *Config) removeExcludedSkillPath(want string) {
-	next := c.Skills.ExcludedPaths[:0]
-	for _, existing := range c.Skills.ExcludedPaths {
-		if CanonicalSkillPath(existing) != want {
-			next = append(next, existing)
-		}
-	}
-	c.Skills.ExcludedPaths = next
 }
 
 // SetSkillEnabled persists a per-skill enable/disable preference. Skills are
@@ -595,7 +398,6 @@ func CanonicalSkillPath(path string) string {
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.
 func (c *Config) UpsertPlugin(e PluginEntry) error {
-	e, _ = NormalizePluginCommandLine(e)
 	if err := validatePlugin(e); err != nil {
 		return err
 	}
@@ -640,7 +442,7 @@ func (c *Config) ClearPluginAuthentication(name string) (PluginEntry, bool, erro
 // ClearPluginAuthenticationInSource clears auth material in the file that actually
 // owns the MCP server. Load() merges user/project TOML and project .mcp.json into
 // one Config, so callers must not mutate that merged view and Save() it back: a
-// .mcp.json-only server would otherwise be serialized into reasonix.toml or the
+// .mcp.json-only server would otherwise be serialized into voltui.toml or the
 // user config. Source priority mirrors Load(): project TOML, user TOML, then the
 // project .mcp.json entry if TOML did not define that server.
 func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, error) {
@@ -665,7 +467,7 @@ func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, 
 }
 
 func pluginTOMLSourcePath(name string) string {
-	for _, path := range []string{"reasonix.toml", userConfigPath()} {
+	for _, path := range []string{"voltui.toml", userConfigPath()} {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
@@ -701,7 +503,7 @@ func validatePlugin(e PluginEntry) error {
 
 // SaveTo writes the configuration to path as annotated TOML, atomically: it
 // writes a sibling temp file then renames, so a crash mid-write can't leave a
-// half-written reasonix.toml that fails to parse on next load. Parent directories
+// half-written voltui.toml that fails to parse on next load. Parent directories
 // are created as needed.
 func (c *Config) SaveTo(path string) error {
 	return c.SaveToScope(path, renderScopeForPath(path))
@@ -723,7 +525,7 @@ func SaveMinimalProjectAutoPlan(path, mode string) (string, error) {
 	if err := cfg.SetAutoPlan(mode); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf(`# Reasonix project configuration.
+	body := fmt.Sprintf(`# VoltUI project configuration.
 # Project-local overrides are merged over the user config.
 
 [agent]
@@ -740,7 +542,7 @@ func writeConfigFile(path, body string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("save: create dir: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".reasonix.*.toml.tmp")
+	tmp, err := os.CreateTemp(dir, ".voltui.*.toml.tmp")
 	if err != nil {
 		return fmt.Errorf("save: create temp: %w", err)
 	}
@@ -779,23 +581,23 @@ func isUserConfigPath(path string) bool {
 }
 
 // Save writes the configuration back to the file it was loaded from
-// (SourcePath), or to ./reasonix.toml when none exists yet — the conventional
+// (SourcePath), or to ./voltui.toml when none exists yet — the conventional
 // project-local target a fresh GUI session would create.
 func (c *Config) Save() error {
 	path := SourcePath()
 	if path == "" {
-		path = "reasonix.toml"
+		path = "voltui.toml"
 	}
 	return c.SaveTo(path)
 }
 
-// SaveForRoot saves the config to root's reasonix.toml, falling back to the
-// user's global config when root has no existing reasonix.toml.
+// SaveForRoot saves the config to root's voltui.toml, falling back to the
+// user's global config when root has no existing voltui.toml.
 func (c *Config) SaveForRoot(root string) error {
 	root = resolveRoot(root)
-	projectTOML := "reasonix.toml"
+	projectTOML := "voltui.toml"
 	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
+		projectTOML = filepath.Join(root, "voltui.toml")
 	}
 	if _, err := os.Stat(projectTOML); err == nil {
 		return c.SaveTo(projectTOML)

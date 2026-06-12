@@ -9,10 +9,10 @@ import (
 	"sync"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/provider/openai"
-	"reasonix/internal/tool"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/provider/openai"
+	"voltui/internal/tool"
 )
 
 type recordSink struct {

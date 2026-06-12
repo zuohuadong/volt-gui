@@ -2,12 +2,12 @@ package agent
 
 import (
 	"context"
-	"reasonix/internal/event"
+	"voltui/internal/event"
 	"strings"
 	"testing"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 // TestPlanModeBlocksWriters proves the read-only gate refuses non-ReadOnly

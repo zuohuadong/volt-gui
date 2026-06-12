@@ -3,8 +3,7 @@ package control
 import (
 	"testing"
 
-	"reasonix/internal/hook"
-	"reasonix/internal/skill"
+	"voltui/internal/skill"
 )
 
 func labelsOf(items []SlashItem) []string {
@@ -33,8 +32,6 @@ func TestSlashArgItems(t *testing.T) {
 		DisconnectedMCP: []string{"optional"},
 		ModelRefs:       []string{"deepseek-flash/deepseek-v4-flash", "deepseek-pro/deepseek-v4-pro"},
 		CurrentModel:    "deepseek-flash/deepseek-v4-flash",
-		ProviderNames:   []string{"deepseek-flash", "deepseek-pro", "custom"},
-		CurrentProvider: "deepseek-flash",
 	}
 
 	// /skills subcommands
@@ -109,21 +106,6 @@ func TestSlashArgItems(t *testing.T) {
 			t.Errorf("active model should be hinted 'current', got %q", it.Hint)
 		}
 	}
-	// /provider → provider names, current marked
-	items, _ = SlashArgItems("/provider ", data)
-	if !has(items, "deepseek-pro") || !has(items, "custom") {
-		t.Errorf("/provider should list provider names; got %v", labelsOf(items))
-	}
-	for _, it := range items {
-		if it.Label == data.CurrentProvider && it.Hint != "current" {
-			t.Errorf("active provider should be hinted 'current', got %q", it.Hint)
-		}
-	}
-	// /provider de → filter to deepseek-*
-	items, _ = SlashArgItems("/provider de", data)
-	if len(items) != 2 {
-		t.Errorf("/provider de should filter to 2 deepseek providers; got %v", labelsOf(items))
-	}
 	// /hooks
 	items, _ = SlashArgItems("/hooks ", data)
 	if !has(items, "list") || !has(items, "trust") {
@@ -157,20 +139,5 @@ func TestSlashArgItems(t *testing.T) {
 	// handled by runSkillSubcommand.
 	if items, _ := SlashArgItems("/skills li", data); len(items) != 0 {
 		t.Errorf("/skills li should not offer hidden list suggestion; got %v", labelsOf(items))
-	}
-}
-
-func TestManagementHooksTrustUsesWorkspaceRoot(t *testing.T) {
-	home := t.TempDir()
-	project := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	c := New(Options{WorkspaceRoot: project})
-	if !c.managementNotice("/hooks trust") {
-		t.Fatal("/hooks trust was not handled")
-	}
-	if !hook.IsTrusted(project, home) {
-		t.Fatal("/hooks trust did not trust the controller workspace root")
 	}
 }

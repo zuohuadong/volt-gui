@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"reasonix/internal/diff"
-	"reasonix/internal/tool"
+	"voltui/internal/diff"
+	"voltui/internal/tool"
 )
 
 func init() { tool.RegisterBuiltin(notebookEdit{}) }

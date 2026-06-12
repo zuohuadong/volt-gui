@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { CopyButton } from "./CopyButton";
 
 export interface EditorProps {
   value: string;
@@ -23,6 +24,7 @@ const Impl = lazy(() => import("./editors/HljsCode"));
 export function CodeViewer(props: EditorProps) {
   return (
     <div className="code-block">
+      <CopyButton text={props.value} className="code-block__copy" />
       <Suspense
         fallback={
           <pre className="code code--loading">

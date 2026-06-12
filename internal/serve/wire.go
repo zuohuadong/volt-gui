@@ -1,6 +1,6 @@
 package serve
 
-import "reasonix/internal/event"
+import "voltui/internal/event"
 
 // wireEvent is the JSON shape an event.Event takes on the SSE stream. It uses
 // explicit lowercase tags (a clean contract for a JS client) and flattens the
@@ -48,23 +48,16 @@ type wireAsk struct {
 	Questions []wireAskQuestion `json:"questions"`
 }
 
-type wireProfile struct {
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
-}
-
 type wireTool struct {
-	ID         string       `json:"id,omitempty"`
-	Name       string       `json:"name"`
-	Args       string       `json:"args,omitempty"`
-	Output     string       `json:"output,omitempty"`
-	Err        string       `json:"err,omitempty"`
-	ReadOnly   bool         `json:"readOnly"`
-	Truncated  bool         `json:"truncated,omitempty"`
-	DurationMs int64        `json:"durationMs,omitempty"`
-	Partial    bool         `json:"partial,omitempty"`
-	ParentID   string       `json:"parentId,omitempty"`
-	Profile    *wireProfile `json:"profile,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Args      string `json:"args,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Err       string `json:"err,omitempty"`
+	ReadOnly  bool   `json:"readOnly"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Partial   bool   `json:"partial,omitempty"`
+	ParentID  string `json:"parentId,omitempty"`
 }
 
 type wireUsage struct {
@@ -121,8 +114,6 @@ var kindNames = map[event.Kind]string{
 	event.CompactionStarted: "compaction_started",
 	event.CompactionDone:    "compaction_done",
 	event.ToolProgress:      "tool_progress",
-	event.MCPSurfaceReady:   "mcp_surface_ready",
-	event.Steer:             "steer",
 }
 
 // toWireAsk converts an event.Ask into its JSON wire form.
@@ -149,17 +140,12 @@ func toWire(e event.Event) wireEvent {
 			w.Level = "info"
 		}
 	case event.ToolDispatch, event.ToolResult, event.ToolProgress:
-		wt := &wireTool{
+		w.Tool = &wireTool{
 			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
 			Output: e.Tool.Output, Err: e.Tool.Err,
 			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
-			DurationMs: e.Tool.DurationMs, Partial: e.Tool.Partial,
-			ParentID: e.Tool.ParentID,
+			Partial: e.Tool.Partial, ParentID: e.Tool.ParentID,
 		}
-		if e.Tool.Profile != nil {
-			wt.Profile = &wireProfile{Model: e.Tool.Profile.Model, Effort: e.Tool.Profile.Effort}
-		}
-		w.Tool = wt
 	case event.Usage:
 		if u := e.Usage; u != nil {
 			w.Usage = &wireUsage{

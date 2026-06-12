@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/fileutil"
-	"reasonix/internal/provider"
+	"voltui/internal/fileutil"
+	"voltui/internal/provider"
 )
 
 // Save writes the session's messages to path in JSONL — one provider.Message
@@ -183,7 +183,7 @@ func previewSession(path string) (string, int) {
 		if m.Role == provider.RoleUser {
 			turns++
 			if first == "" {
-				s := strings.TrimSpace(HandoffTask(m.Content))
+				s := strings.TrimSpace(m.Content)
 				if r := []rune(s); len(r) > 80 {
 					s = string(r[:77]) + "…"
 				}

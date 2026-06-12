@@ -16,7 +16,7 @@ const (
 	RenderScopeProject RenderScope = "project"
 )
 
-// RenderTOML renders the config as annotated TOML in the `reasonix setup` house style:
+// RenderTOML renders the config as annotated TOML in the `voltui setup` house style:
 // comments preserved, system_prompt as a multi-line string, helpful hints. The
 // output round-trips back through Load (see render_test.go).
 func RenderTOML(c *Config) string {
@@ -25,7 +25,7 @@ func RenderTOML(c *Config) string {
 
 // RenderTOMLForScope renders an annotated TOML file for a specific persistence
 // target. User configs can carry desktop and account-level preferences; project
-// reasonix.toml stays focused on project behavior and intentionally excludes
+// voltui.toml stays focused on project behavior and intentionally excludes
 // desktop-only preferences.
 func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if c == nil {
@@ -39,39 +39,29 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	defaults := Default()
 	var b strings.Builder
 
-	b.WriteString("# Reasonix configuration.\n")
-	b.WriteString("# Resolution order: flag > ./reasonix.toml > ~/.config/reasonix/config.toml > built-in defaults.\n")
+	b.WriteString("# VoltUI configuration.\n")
+	b.WriteString("# Resolution order: flag > ./voltui.toml > ~/.config/voltui/config.toml > built-in defaults.\n")
 	b.WriteString("# Secrets come from the environment via api_key_env; never put keys here.\n\n")
 
 	fmt.Fprintf(&b, "config_version = %d   # schema marker for diagnostics; old versions may ignore it\n", configVersion(c))
 	fmt.Fprintf(&b, "default_model = %q\n", c.DefaultModel)
 	if c.Language != "" {
-		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
+		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $VOLTUI_LANG\n", c.Language)
 	} else {
-		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
+		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $VOLTUI_LANG\n")
 	}
 	b.WriteString("\n")
 
 	if shouldRenderUI(c, defaults, scope) {
 		b.WriteString("[ui]\n")
-		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; REASONIX_THEME can override per run\n", c.UITheme())
+		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; VOLTUI_THEME can override per run\n", c.UITheme())
 		if style := c.UIThemeStyle(); style != "" {
-			fmt.Fprintf(&b, "theme_style = %q   # CLI accent palette; REASONIX_THEME_STYLE can override per run\n", style)
+			fmt.Fprintf(&b, "theme_style = %q   # CLI accent palette; VOLTUI_THEME_STYLE can override per run\n", style)
 		} else {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
 		}
-		if layout := c.UIShortcutLayout(); layout != "classic" {
-			fmt.Fprintf(&b, "shortcut_layout = %q   # classic|desktop; compatibility setting; Shift+Tab toggles Plan, Ctrl+Y toggles YOLO\n", layout)
-		} else {
-			b.WriteString("# shortcut_layout = \"desktop\"   # classic|desktop; compatibility setting; Shift+Tab toggles Plan, Ctrl+Y toggles YOLO\n")
-		}
 		if strings.TrimSpace(c.UI.CloseBehavior) != "" && scope == RenderScopeProject {
 			fmt.Fprintf(&b, "close_behavior = %q   # legacy desktop close behavior; prefer [desktop].close_behavior in user config\n", c.DesktopCloseBehavior())
-		}
-		if c.UI.ShowReasoning {
-			b.WriteString("show_reasoning = true   # CLI: show thinking text by default; false = collapsed (toggle with Ctrl+O)\n")
-		} else {
-			b.WriteString("# show_reasoning = true   # CLI: show thinking text by default; false = collapsed (toggle with Ctrl+O)\n")
 		}
 		b.WriteString("\n")
 	}
@@ -90,20 +80,27 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
 		}
 		fmt.Fprintf(&b, "close_behavior = %q   # desktop: quit|background when the window close button is clicked\n", c.DesktopCloseBehavior())
-		fmt.Fprintf(&b, "check_updates = %v   # desktop: check for new versions on startup\n", c.DesktopCheckUpdates())
-		fmt.Fprintf(&b, "telemetry = %v   # desktop: anonymous launch ping (install id + version + OS); never content\n", c.DesktopTelemetry())
-		fmt.Fprintf(&b, "metrics = %v   # desktop: opt-in aggregate agent metrics (anonymous signal/bucket counts); never content\n", c.DesktopMetrics())
-		if len(c.Desktop.ProviderAccess) > 0 {
-			fmt.Fprintf(&b, "provider_access = %s   # desktop settings: providers shown on Settings > Model > Access\n", renderStringArray(c.Desktop.ProviderAccess))
-		}
-		fmt.Fprintf(&b, "expand_thinking = %v   # desktop: show reasoning text expanded by default; false = collapsed\n", c.Desktop.ExpandThinking)
 		b.WriteString("\n")
+	}
 
-		b.WriteString("[notifications]\n")
-		fmt.Fprintf(&b, "enabled = %v   # system notifications for CLI chat/run; default off\n", c.Notifications.Enabled)
-		fmt.Fprintf(&b, "turn_done = %v   # notify when a turn finishes\n", c.Notifications.TurnDone)
-		fmt.Fprintf(&b, "approval_request = %v   # notify when a tool approval is waiting\n", c.Notifications.ApprovalRequest)
-		fmt.Fprintf(&b, "ask_request = %v   # notify when a question is waiting\n", c.Notifications.AskRequest)
+	// Brand section — only render when explicitly configured (non-default).
+	if c.Brand.Name != "" || c.Brand.ShortName != "" || c.Brand.LogoPath != "" || c.Brand.WordmarkPath != "" || c.Brand.IconPath != "" {
+		b.WriteString("[brand]\n")
+		if c.Brand.Name != "" {
+			fmt.Fprintf(&b, "name = %q   # product name (window title, tray, onboarding)\n", c.Brand.Name)
+		}
+		if c.Brand.ShortName != "" {
+			fmt.Fprintf(&b, "short_name = %q   # compact form (menu bar, Linux app name)\n", c.Brand.ShortName)
+		}
+		if c.Brand.LogoPath != "" {
+			fmt.Fprintf(&b, "logo_path = %q   # custom icon-only logo (PNG/SVG/JPG/ICO)\n", c.Brand.LogoPath)
+		}
+		if c.Brand.WordmarkPath != "" {
+			fmt.Fprintf(&b, "wordmark_path = %q   # custom logo + text image\n", c.Brand.WordmarkPath)
+		}
+		if c.Brand.IconPath != "" {
+			fmt.Fprintf(&b, "icon_path = %q   # custom tray/taskbar icon (PNG on macOS/Linux, ICO on Windows)\n", c.Brand.IconPath)
+		}
 		b.WriteString("\n")
 	}
 
@@ -144,7 +141,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		if c.Network.Proxy.Password != "" {
 			fmt.Fprintf(&b, "password = %q   # supports ${VAR} expansion\n", c.Network.Proxy.Password)
 		} else {
-			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
+			b.WriteString("# password = \"${VOLTUI_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}
 		b.WriteString("\n")
 	}
@@ -162,9 +159,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# system_prompt_file = \"prompts/system.md\"   # overrides system_prompt when set\n")
 	}
-	fmt.Fprintf(&b, "max_steps         = %d   # executor tool-call rounds; 0 = no limit\n", c.Agent.MaxSteps)
-	fmt.Fprintf(&b, "planner_max_steps = %d   # planner read-only tool-call rounds; 0 = no limit\n", c.Agent.PlannerMaxSteps)
-	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
+	fmt.Fprintf(&b, "max_steps   = %d\n", c.Agent.MaxSteps)
+	fmt.Fprintf(&b, "temperature = %s\n", formatFloat(c.Agent.Temperature))
 	autoPlan := c.Agent.AutoPlan
 	switch strings.ToLower(strings.TrimSpace(autoPlan)) {
 	case "on", "ask":
@@ -195,16 +191,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "subagent_models = %s   # per-skill overrides\n", renderStringMap(c.Agent.SubagentModels))
 	} else {
 		b.WriteString("# subagent_models = { review = \"deepseek-pro\", security_review = \"deepseek-pro\" }   # per-skill overrides\n")
-	}
-	if c.Agent.SubagentEffort != "" {
-		fmt.Fprintf(&b, "subagent_effort = %q   # default effort for subagent entry points\n", c.Agent.SubagentEffort)
-	} else {
-		b.WriteString("# subagent_effort = \"high\"   # optional default effort for subagents\n")
-	}
-	if len(c.Agent.SubagentEfforts) > 0 {
-		fmt.Fprintf(&b, "subagent_efforts = %s   # per-tool/skill effort overrides\n", renderStringMap(c.Agent.SubagentEfforts))
-	} else {
-		b.WriteString("# subagent_efforts = { review = \"max\", task = \"high\" }   # per-tool/skill effort overrides\n")
 	}
 	if c.Agent.OutputStyle != "" {
 		fmt.Fprintf(&b, "output_style = %q   # persona/tone folded into the prompt\n", c.Agent.OutputStyle)
@@ -247,9 +233,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			if p.Effort != "" {
 				fmt.Fprintf(&b, "effort      = %q\n", p.Effort)
 			}
-			if p.ReasoningProtocol != "" {
-				fmt.Fprintf(&b, "reasoning_protocol = %q   # auto|deepseek|openai|none; overrides model/endpoint reasoning detection\n", p.ReasoningProtocol)
-			}
 			if len(p.SupportedEfforts) > 0 {
 				fmt.Fprintf(&b, "supported_efforts = %s   # custom /effort levels exposed by this provider; overrides the built-in Kind/BaseURL default\n", renderStringArray(p.SupportedEfforts))
 			}
@@ -265,7 +248,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 
 	b.WriteString("[tools]\n")
 	if len(c.Tools.Enabled) == 0 {
-		b.WriteString("enabled = []   # empty = all built-in tools\n")
+		b.WriteString("enabled = []   # empty = all built-in tools\n\n")
 	} else {
 		b.WriteString("enabled = [")
 		for i, t := range c.Tools.Enabled {
@@ -274,9 +257,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 			fmt.Fprintf(&b, "%q", t)
 		}
-		b.WriteString("]\n")
+		b.WriteString("]\n\n")
 	}
-	fmt.Fprintf(&b, "bash_timeout_seconds = %d   # foreground safety cap; set 0 for no tool-local cap\n\n", c.BashTimeoutSeconds())
 
 	b.WriteString("[codegraph]\n")
 	fmt.Fprintf(&b, "enabled      = %v   # built-in MCP server; off by default for first-run sessions\n", c.Codegraph.Enabled)
@@ -284,32 +266,20 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if c.Codegraph.Path != "" {
 		fmt.Fprintf(&b, "path         = %q   # optional launcher override\n", c.Codegraph.Path)
 	} else {
-		b.WriteString("# path       = \"\"   # empty = cache, then PATH, then a bundle beside reasonix\n")
+		b.WriteString("# path       = \"\"   # empty = cache, then PATH, then a bundle beside voltui\n")
+	}
+	if strings.TrimSpace(c.Codegraph.Tier) != "" {
+		fmt.Fprintf(&b, "tier         = %q   # lazy|background|eager\n", c.Codegraph.ResolvedTier())
+	} else {
+		b.WriteString("# tier       = \"lazy\"   # lazy|background|eager\n")
 	}
 	b.WriteString("\n")
-
-	b.WriteString("[builtin_mcp]\n")
-	fmt.Fprintf(&b, "time_enabled = %v   # built-in Time MCP; off until manually enabled\n", c.BuiltInMCP.TimeEnabled)
-	fmt.Fprintf(&b, "context7_enabled = %v   # built-in Context7 MCP; off until manually enabled\n", c.BuiltInMCP.Context7Enabled)
-	b.WriteString("\n")
-
-	renderLSPConfig(&b, c.LSP)
 
 	b.WriteString("[skills]\n")
 	if len(c.Skills.Paths) > 0 {
 		fmt.Fprintf(&b, "paths = %s   # extra custom skill roots\n", renderStringArray(c.Skills.Paths))
 	} else {
 		b.WriteString("# paths = [\"~/my-skills\", \"../shared/skills\"]   # extra custom skill roots\n")
-	}
-	if len(c.Skills.ExcludedPaths) > 0 {
-		fmt.Fprintf(&b, "excluded_paths = %s   # skill roots hidden from discovery\n", renderStringArray(c.Skills.ExcludedPaths))
-	} else {
-		b.WriteString("# excluded_paths = [\"~/.agents/skills\"]   # hide convention roots without deleting folders\n")
-	}
-	if c.Skills.MaxDepth != 0 {
-		fmt.Fprintf(&b, "max_depth = %d   # nested scan depth; default 3, set 1 for legacy root-only discovery\n", c.SkillMaxDepth())
-	} else {
-		b.WriteString("# max_depth = 3   # nested scan depth; set 1 for legacy root-only discovery\n")
 	}
 	if disabled := c.DisabledSkillNames(); len(disabled) > 0 {
 		fmt.Fprintf(&b, "disabled_skills = %s   # hidden from the prompt, slash invocation, and skill tools\n\n", renderStringArray(disabled))
@@ -320,15 +290,15 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("[permissions]\n")
 	b.WriteString("# Per-call gating. mode = writer fallback when no rule matches: ask|allow|deny.\n")
 	b.WriteString("# Readers always default to allow. Precedence: deny > ask > allow > fallback.\n")
-	b.WriteString("# Rules are \"Tool\" or \"Tool(specifier)\"; e.g. Bash(go test:*), Edit(src/**).\n")
+	b.WriteString("# Rules are \"ToolName\" or \"ToolName(glob)\"; '*' matches any run, '?' one char.\n")
 	mode := c.Permissions.Mode
 	if mode == "" {
 		mode = "ask"
 	}
 	fmt.Fprintf(&b, "mode  = %q\n", mode)
-	b.WriteString(renderRuleList("deny", c.Permissions.Deny, `["Bash(rm -rf*)", "Bash(git push*)"]   # hard-blocked in every mode`))
-	b.WriteString(renderRuleList("allow", c.Permissions.Allow, `["Bash(go test:*)", "Bash(git status:*)"]   # never prompted`))
-	b.WriteString(renderRuleList("ask", c.Permissions.Ask, `["Edit(src/**)"]   # force a prompt even if otherwise allowed`))
+	b.WriteString(renderRuleList("deny", c.Permissions.Deny, `["bash(rm -rf*)", "bash(git push*)"]   # hard-blocked in every mode`))
+	b.WriteString(renderRuleList("allow", c.Permissions.Allow, `["bash(go test*)", "bash(git status*)"]   # never prompted`))
+	b.WriteString(renderRuleList("ask", c.Permissions.Ask, `["write_file"]   # force a prompt even if otherwise allowed`))
 	b.WriteString("\n")
 
 	b.WriteString("[sandbox]\n")
@@ -360,83 +330,12 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	b.WriteString("\n")
 
-	if shouldRenderBot(c, defaults, scope) {
-		b.WriteString("# Bot gateway: multi-channel IM bot for QQ, Feishu/Lark, and WeChat.\n")
-		b.WriteString("[bot]\n")
-		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.Enabled)
-		if c.Bot.Model != "" {
-			fmt.Fprintf(&b, "model = %q\n", c.Bot.Model)
-		} else {
-			b.WriteString("# model = \"\"   # empty = default_model\n")
-		}
-		fmt.Fprintf(&b, "max_steps = %d\n", c.Bot.MaxSteps)
-		fmt.Fprintf(&b, "debounce_ms = %d\n", c.Bot.DebounceMs)
-		b.WriteString("\n[bot.allowlist]\n")
-		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.Allowlist.Enabled)
-		fmt.Fprintf(&b, "allow_all = %v\n", c.Bot.Allowlist.AllowAll)
-		fmt.Fprintf(&b, "qq_users = %s\n", renderStringArray(c.Bot.Allowlist.QQUsers))
-		fmt.Fprintf(&b, "feishu_users = %s\n", renderStringArray(c.Bot.Allowlist.FeishuUsers))
-		fmt.Fprintf(&b, "weixin_users = %s\n", renderStringArray(c.Bot.Allowlist.WeixinUsers))
-		fmt.Fprintf(&b, "qq_groups = %s\n", renderStringArray(c.Bot.Allowlist.QQGroups))
-		fmt.Fprintf(&b, "feishu_groups = %s\n", renderStringArray(c.Bot.Allowlist.FeishuGroups))
-		fmt.Fprintf(&b, "weixin_groups = %s\n", renderStringArray(c.Bot.Allowlist.WeixinGroups))
-		b.WriteString("\n[bot.qq]\n")
-		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.QQ.Enabled)
-		fmt.Fprintf(&b, "app_id = %q\n", c.Bot.QQ.AppID)
-		fmt.Fprintf(&b, "app_secret_env = %q\n", c.Bot.QQ.AppSecretEnv)
-		b.WriteString("\n[bot.feishu]\n")
-		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.Feishu.Enabled)
-		fmt.Fprintf(&b, "app_id = %q\n", c.Bot.Feishu.AppID)
-		fmt.Fprintf(&b, "domain = %q\n", c.Bot.Feishu.Domain)
-		fmt.Fprintf(&b, "app_secret_env = %q\n", c.Bot.Feishu.AppSecretEnv)
-		fmt.Fprintf(&b, "verification_token = %q\n", c.Bot.Feishu.VerificationToken)
-		fmt.Fprintf(&b, "mode = %q\n", c.Bot.Feishu.Mode)
-		fmt.Fprintf(&b, "webhook_port = %d\n", c.Bot.Feishu.WebhookPort)
-		fmt.Fprintf(&b, "require_mention = %v\n", c.Bot.Feishu.RequireMention)
-		b.WriteString("\n[bot.weixin]\n")
-		fmt.Fprintf(&b, "enabled = %v\n", c.Bot.Weixin.Enabled)
-		fmt.Fprintf(&b, "account_id = %q\n", c.Bot.Weixin.AccountID)
-		fmt.Fprintf(&b, "token_env = %q\n", c.Bot.Weixin.TokenEnv)
-		fmt.Fprintf(&b, "api_base = %q\n", c.Bot.Weixin.APIBase)
-		for _, conn := range c.Bot.Connections {
-			b.WriteString("\n[[bot.connections]]\n")
-			fmt.Fprintf(&b, "id = %q\n", conn.ID)
-			fmt.Fprintf(&b, "provider = %q\n", conn.Provider)
-			fmt.Fprintf(&b, "domain = %q\n", conn.Domain)
-			fmt.Fprintf(&b, "label = %q\n", conn.Label)
-			fmt.Fprintf(&b, "enabled = %v\n", conn.Enabled)
-			fmt.Fprintf(&b, "status = %q\n", conn.Status)
-			if conn.Model != "" {
-				fmt.Fprintf(&b, "model = %q\n", conn.Model)
-			}
-			if conn.WorkspaceRoot != "" {
-				fmt.Fprintf(&b, "workspace_root = %q\n", conn.WorkspaceRoot)
-			}
-			if conn.LastError != "" {
-				fmt.Fprintf(&b, "last_error = %q\n", conn.LastError)
-			}
-			if conn.CreatedAt != "" {
-				fmt.Fprintf(&b, "created_at = %q\n", conn.CreatedAt)
-			}
-			if conn.UpdatedAt != "" {
-				fmt.Fprintf(&b, "updated_at = %q\n", conn.UpdatedAt)
-			}
-			if parts := renderBotCredential(conn.Credential); parts != "" {
-				fmt.Fprintf(&b, "credential = %s\n", parts)
-			}
-			if len(conn.SessionMappings) > 0 {
-				fmt.Fprintf(&b, "session_mappings = %s\n", renderBotSessionMappings(conn.SessionMappings))
-			}
-		}
-		b.WriteString("\n")
-	}
-
 	b.WriteString("# External MCP servers. type: \"stdio\" (default, a subprocess) | \"http\" | \"sse\".\n")
 	b.WriteString("# ${VAR} / ${VAR:-default} are expanded from the environment in command/args/env/url/headers.\n")
 	if len(c.Plugins) == 0 {
 		b.WriteString("# [[plugins]]\n")
 		b.WriteString("# name    = \"example\"\n")
-		b.WriteString("# command = \"reasonix-plugin-example\"\n")
+		b.WriteString("# command = \"voltui-plugin-example\"\n")
 		b.WriteString("# [[plugins]]                                  # a remote server over Streamable HTTP\n")
 		b.WriteString("# name    = \"stripe\"\n")
 		b.WriteString("# type    = \"http\"\n")
@@ -466,6 +365,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 			if pl.AutoStart != nil {
 				fmt.Fprintf(&b, "auto_start = %v\n", *pl.AutoStart)
+			}
+			if strings.TrimSpace(pl.Tier) != "" {
+				fmt.Fprintf(&b, "tier    = %q\n", pl.Tier)
 			}
 		}
 	}
@@ -501,80 +403,11 @@ func shouldRenderProviders(c, defaults *Config, scope RenderScope) bool {
 	return !reflect.DeepEqual(c.Providers, defaults.Providers)
 }
 
-func shouldRenderBot(c, defaults *Config, scope RenderScope) bool {
-	if scope != RenderScopeProject {
-		return true
-	}
-	return !reflect.DeepEqual(c.Bot, defaults.Bot)
-}
-
 func shouldRenderSystemPrompt(c, defaults *Config, scope RenderScope) bool {
 	if scope == RenderScopeFull {
 		return true
 	}
 	return strings.TrimSpace(c.Agent.SystemPrompt) != "" && c.Agent.SystemPrompt != defaults.Agent.SystemPrompt
-}
-
-func renderLSPConfig(b *strings.Builder, cfg LSPConfig) {
-	b.WriteString("[lsp]\n")
-	fmt.Fprintf(b, "enabled = %v   # language server tools; servers launch lazily when used\n", cfg.Enabled)
-	if len(cfg.Servers) == 0 {
-		b.WriteString("# [lsp.servers.go]\n")
-		b.WriteString("# command = \"gopls\"\n")
-		b.WriteString("# args = []\n")
-		b.WriteString("# extensions = [\".go\"]\n\n")
-		return
-	}
-	b.WriteString("\n")
-
-	langs := make([]string, 0, len(cfg.Servers))
-	for lang := range cfg.Servers {
-		langs = append(langs, lang)
-	}
-	sort.Strings(langs)
-	for _, lang := range langs {
-		srv := cfg.Servers[lang]
-		fmt.Fprintf(b, "[lsp.servers.%s]\n", renderTOMLKeyPart(lang))
-		if srv.Command != "" {
-			fmt.Fprintf(b, "command = %q\n", srv.Command)
-		}
-		if len(srv.Args) > 0 {
-			fmt.Fprintf(b, "args = %s\n", renderStringArray(srv.Args))
-		}
-		if len(srv.Env) > 0 {
-			fmt.Fprintf(b, "env = %s\n", renderStringMap(srv.Env))
-		}
-		if srv.LanguageID != "" {
-			fmt.Fprintf(b, "language_id = %q\n", srv.LanguageID)
-		}
-		if len(srv.Extensions) > 0 {
-			fmt.Fprintf(b, "extensions = %s\n", renderStringArray(srv.Extensions))
-		}
-		if srv.InstallHint != "" {
-			fmt.Fprintf(b, "install_hint = %q\n", srv.InstallHint)
-		}
-		b.WriteString("\n")
-	}
-}
-
-func renderTOMLKeyPart(key string) string {
-	if isBareTOMLKey(key) {
-		return key
-	}
-	return strconv.Quote(key)
-}
-
-func isBareTOMLKey(key string) bool {
-	if key == "" {
-		return false
-	}
-	for _, r := range key {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 // renderStringArray renders a []string as a TOML inline array.
@@ -611,54 +444,8 @@ func renderStringMap(m map[string]string) string {
 	return b.String()
 }
 
-func renderBotCredential(cred BotConnectionCredential) string {
-	parts := make(map[string]string)
-	if cred.AppID != "" {
-		parts["app_id"] = cred.AppID
-	}
-	if cred.AppSecretEnv != "" {
-		parts["app_secret_env"] = cred.AppSecretEnv
-	}
-	if cred.AccountID != "" {
-		parts["account_id"] = cred.AccountID
-	}
-	if cred.TokenEnv != "" {
-		parts["token_env"] = cred.TokenEnv
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return renderStringMap(parts)
-}
-
-func renderBotSessionMappings(mappings []BotConnectionSessionMapping) string {
-	var b strings.Builder
-	b.WriteByte('[')
-	for i, mapping := range mappings {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		parts := map[string]string{
-			"remote_id":  mapping.RemoteID,
-			"session_id": mapping.SessionID,
-		}
-		if mapping.Scope != "" {
-			parts["scope"] = mapping.Scope
-		}
-		if mapping.WorkspaceRoot != "" {
-			parts["workspace_root"] = mapping.WorkspaceRoot
-		}
-		if mapping.UpdatedAt != "" {
-			parts["updated_at"] = mapping.UpdatedAt
-		}
-		b.WriteString(renderStringMap(parts))
-	}
-	b.WriteByte(']')
-	return b.String()
-}
-
 // renderRuleList emits a permission rule list. A populated list renders as an
-// active TOML array; an empty one renders as a commented example so `reasonix setup`
+// active TOML array; an empty one renders as a commented example so `voltui setup`
 // scaffolds discoverable guidance without imposing surprising rules.
 func renderRuleList(key string, rules []string, example string) string {
 	if len(rules) == 0 {

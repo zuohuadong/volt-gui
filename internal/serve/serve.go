@@ -19,13 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/nilutil"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/nilutil"
+	"voltui/internal/provider"
 )
 
 //go:embed index.html
@@ -204,8 +204,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /rewind", s.rewind)
 	mux.HandleFunc("POST /fork", s.fork)
 	mux.HandleFunc("POST /summarize", s.summarize)
-	mux.HandleFunc("POST /tool-approval-mode", s.toolApprovalMode)
-	mux.HandleFunc("POST /auto-approve-tools", s.autoApproveTools)
 	mux.HandleFunc("POST /bypass", s.bypass)
 	mux.HandleFunc("POST /answer", s.answer)
 	mux.HandleFunc("POST /resume", s.resume)
@@ -215,7 +213,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /status", s.status)
 	mux.HandleFunc("GET /sessions", s.sessions)
 	mux.HandleFunc("GET /skills", s.skills)
-	mux.HandleFunc("POST /delete-session", s.deleteSession)
 	return logMiddleware(csrfGuard(mux))
 }
 
@@ -280,16 +277,15 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 
 func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = config.MigrateLegacyIfNeeded()
-	lang := "auto"
+	// Replace static "VoltUI" in the embedded index.html with the configured
+	// brand name, so the web UI reflects white-label customisation.
+	page := string(indexHTML)
 	if cfg, err := config.Load(); err == nil {
-		if dl := cfg.DesktopLanguage(); dl != "" {
-			lang = dl
+		if name := cfg.BrandName(); name != "VoltUI" {
+			page = strings.ReplaceAll(page, "VoltUI", name)
 		}
 	}
-	html := string(indexHTML)
-	html = strings.ReplaceAll(html, "__LANG__", lang)
-	_, _ = w.Write([]byte(html))
+	_, _ = w.Write([]byte(page))
 }
 
 // sseKeepaliveInterval is how often the /events handler emits a `: ping`
@@ -437,56 +433,20 @@ func (s *Server) newSession(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type historyToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type historyMessage struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content"`
-	Reasoning  string            `json:"reasoning,omitempty"`
-	ToolCalls  []historyToolCall `json:"toolCalls,omitempty"`
-	ToolCallID string            `json:"toolCallId,omitempty"`
-	ToolName   string            `json:"toolName,omitempty"`
-}
-
-func historyMessages(msgs []provider.Message) []historyMessage {
-	out := make([]historyMessage, 0, len(msgs))
-	for _, m := range msgs {
-		// Steer messages are surfaced as a notice, not a user message.
-		if m.Role == provider.RoleUser {
-			if steerText, isSteer := agent.SteerText(m.Content); isSteer {
-				out = append(out, historyMessage{Role: "notice", Content: "↪ " + steerText})
-				continue
-			}
-		}
-		hm := historyMessage{Role: string(m.Role), Content: m.Content}
-		if m.Role == provider.RoleAssistant {
-			hm.Reasoning = m.ReasoningContent
-			if len(m.ToolCalls) > 0 {
-				hm.ToolCalls = make([]historyToolCall, len(m.ToolCalls))
-				for i, tc := range m.ToolCalls {
-					hm.ToolCalls[i] = historyToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
-				}
-			}
-		}
-		if m.Role == provider.RoleTool {
-			hm.ToolCallID = m.ToolCallID
-			hm.ToolName = m.Name
-		}
-		out = append(out, hm)
-	}
-	return out
-}
-
-// history returns the session's message log so a reconnecting client can
-// repopulate its transcript, including historical tool cards. Supports ETag caching:
+// history returns the session's message log as {role, content} pairs so a
+// reconnecting client can repopulate its transcript. Supports ETag caching:
 // if the client sends If-None-Match with the current ETag, the server returns
 // 304 Not Modified with no body, saving bandwidth on reconnects.
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
-	writeJSONCached(w, r, historyMessages(s.ctl().History()))
+	type msg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var out []msg
+	for _, m := range s.ctl().History() {
+		out = append(out, msg{Role: string(m.Role), Content: m.Content})
+	}
+	writeJSONCached(w, r, out)
 }
 
 // context returns the prompt-vs-window gauge numbers. Supports ETag caching
@@ -648,8 +608,8 @@ func (s *Server) summarize(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// autoApproveTools toggles YOLO/full-access tool auto-approval.
-func (s *Server) autoApproveTools(w http.ResponseWriter, r *http.Request) {
+// bypass toggles YOLO/bypass mode.
+func (s *Server) bypass(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		On bool `json:"on"`
 	}
@@ -657,33 +617,8 @@ func (s *Server) autoApproveTools(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
-	s.ctl().SetAutoApproveTools(body.On)
+	s.ctl().SetBypass(body.On)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// toolApprovalMode selects ask, auto, or yolo approval behavior for interactive
-// frontends. Plan remains a separate read-only gate.
-func (s *Server) toolApprovalMode(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-	switch strings.ToLower(strings.TrimSpace(body.Mode)) {
-	case control.ToolApprovalAsk, control.ToolApprovalAuto, control.ToolApprovalYolo:
-		s.ctl().SetToolApprovalMode(body.Mode)
-	default:
-		http.Error(w, "mode must be ask, auto, or yolo", http.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// bypass is the legacy HTTP endpoint for YOLO/full-access tool auto-approval.
-func (s *Server) bypass(w http.ResponseWriter, r *http.Request) {
-	s.autoApproveTools(w, r)
 }
 
 // answer responds to an ask_request.
@@ -769,19 +704,15 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	used, window := s.ctl().ContextSnapshot()
 	hit, miss := s.ctl().SessionCache()
 	sess := map[string]any{
-		"label":            s.ctl().Label(),
-		"running":          s.ctl().Running(),
-		"plan":             s.ctl().PlanMode(),
-		"autoApproveTools": s.ctl().AutoApproveTools(),
-		"bypass":           s.ctl().AutoApproveTools(),
-		"toolApprovalMode": s.ctl().ToolApprovalMode(),
-		"goal":             s.ctl().Goal(),
-		"goalStatus":       s.ctl().GoalStatus(),
-		"cwd":              s.ctl().SessionDir(),
-		"used":             used,
-		"window":           window,
-		"cacheHit":         hit,
-		"cacheMiss":        miss,
+		"label":     s.ctl().Label(),
+		"running":   s.ctl().Running(),
+		"plan":      s.ctl().PlanMode(),
+		"bypass":    s.ctl().Bypass(),
+		"cwd":       s.ctl().SessionDir(),
+		"used":      used,
+		"window":    window,
+		"cacheHit":  hit,
+		"cacheMiss": miss,
 	}
 	if u := s.ctl().LastUsage(); u != nil {
 		sess["lastUsage"] = u
@@ -878,60 +809,6 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// deleteSession removes a saved session by the session name returned from /sessions.
-func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
-		return
-	}
-	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		http.Error(w, "invalid session name", http.StatusBadRequest)
-		return
-	}
-	dir := s.ctl().SessionDir()
-	if dir == "" {
-		http.Error(w, "sessions disabled", http.StatusBadRequest)
-		return
-	}
-	target := filepath.Join(dir, name+".jsonl")
-	abs, err := filepath.Abs(target)
-	if err != nil {
-		http.Error(w, "invalid session path", http.StatusBadRequest)
-		return
-	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		http.Error(w, "invalid session dir", http.StatusBadRequest)
-		return
-	}
-	rel, err := filepath.Rel(absDir, abs)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		http.Error(w, "path outside session dir", http.StatusForbidden)
-		return
-	}
-	if filepath.Clean(abs) == filepath.Clean(s.ctl().SessionPath()) {
-		http.Error(w, "cannot delete active session", http.StatusConflict)
-		return
-	}
-	if err := os.Remove(abs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := agent.DeleteSubagentsByParent(dir, agent.BranchID(abs)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // sessionTitle returns a title for a session: the cached flash-generated title
 // when it matches the file's mtime, otherwise a freshly generated one (cached
 // for next time), falling back to a truncated preview when generation is off.
@@ -982,7 +859,7 @@ func previewSessionFile(path string) (string, int) {
 		if m.Role == "user" {
 			turns++
 			if first == "" {
-				first = strings.TrimSpace(agent.HandoffTask(m.Content))
+				first = strings.TrimSpace(m.Content)
 			}
 		}
 	}

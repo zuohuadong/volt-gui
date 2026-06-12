@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"reasonix/internal/i18n"
-	"reasonix/internal/provider"
+	"voltui/internal/i18n"
+	"voltui/internal/provider"
 )
 
 // explainError maps a provider HTTP failure to an actionable, localized message
@@ -29,9 +29,9 @@ func explainError(err error) error {
 	}
 	var authErr *provider.AuthError
 	if errors.As(err, &authErr) {
-		msg := i18n.M.ProviderErrAuth
-		if authErr.HasKey {
-			msg = i18n.M.ProviderErrAuthRejected
+		msg := i18n.M.ProviderStatusMessage(authErr.Status)
+		if msg == "" {
+			return err
 		}
 		if authErr.KeyEnv != "" {
 			return fmt.Errorf("%s (%s)", msg, authErr.KeyEnv)

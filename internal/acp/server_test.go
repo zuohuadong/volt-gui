@@ -4,16 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
+	"voltui/internal/control"
+	"voltui/internal/event"
 )
 
 // --- fakes: a Factory wrapping a behavior-driven runner in a real Controller ---
@@ -141,7 +137,7 @@ func startServer(t *testing.T, factory Factory) (*rpcClient, func()) {
 	outR, outW := io.Pipe()
 	done := make(chan struct{})
 	go func() {
-		_ = Serve(context.Background(), inR, outW, factory, AgentInfo{Name: "reasonix-test", Version: "0"})
+		_ = Serve(context.Background(), inR, outW, factory, AgentInfo{Name: "voltui-test", Version: "0"})
 		close(done)
 	}()
 	client := newRPCClient(inW, outR)
@@ -213,17 +209,11 @@ func TestServeLifecycle(t *testing.T) {
 	if !ir.AgentCapabilities.PromptCapabilities.EmbeddedContext {
 		t.Errorf("embeddedContext should be advertised")
 	}
-	if ir.AgentCapabilities.SessionCapabilities.List == nil ||
-		ir.AgentCapabilities.SessionCapabilities.Resume == nil ||
-		ir.AgentCapabilities.SessionCapabilities.Close == nil ||
-		ir.AgentCapabilities.SessionCapabilities.Delete == nil {
-		t.Errorf("sessionCapabilities = %+v, want list/resume/close/delete", ir.AgentCapabilities.SessionCapabilities)
-	}
 	if ir.AgentCapabilities.PromptCapabilities.Image {
 		t.Errorf("image must not be advertised")
 	}
 
-	newResp := client.call(t, "session/new", SessionNewParams{Cwd: t.TempDir()})
+	newResp := client.call(t, "session/new", SessionNewParams{Cwd: "/tmp"})
 	var nr SessionNewResult
 	if err := json.Unmarshal(newResp.Result, &nr); err != nil || nr.SessionID == "" {
 		t.Fatalf("session/new result: %v (%q)", err, nr.SessionID)
@@ -289,137 +279,6 @@ func TestServeCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancel did not end the prompt")
-	}
-}
-
-func TestServeRejectsConcurrentPromptForSameSession(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	factory := &fakeFactory{behavior: func(_ context.Context, _ event.Sink, _ string) error {
-		once.Do(func() { close(started) })
-		<-release
-		return nil
-	}}
-	client, stop := startServer(t, factory)
-	defer stop()
-
-	client.call(t, "initialize", InitializeParams{ProtocolVersion: 1})
-	newResp := client.call(t, "session/new", SessionNewParams{})
-	var nr SessionNewResult
-	json.Unmarshal(newResp.Result, &nr)
-
-	first := client.callAsync("session/prompt", SessionPromptParams{
-		SessionID: nr.SessionID,
-		Prompt:    []ContentBlock{{Type: "text", Text: "first"}},
-	})
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first prompt never started")
-	}
-
-	second := client.call(t, "session/prompt", SessionPromptParams{
-		SessionID: nr.SessionID,
-		Prompt:    []ContentBlock{{Type: "text", Text: "second"}},
-	})
-	if second.Error == nil {
-		t.Fatal("second concurrent prompt should return an error")
-	}
-	if second.Error.Code != ErrInvalidRequest || !strings.Contains(second.Error.Message, "active prompt") {
-		t.Fatalf("second prompt error = %+v, want active-prompt invalid request", second.Error)
-	}
-
-	close(release)
-	select {
-	case resp := <-first:
-		if resp.Error != nil {
-			t.Fatalf("first prompt errored: %+v", resp.Error)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first prompt did not finish")
-	}
-}
-
-func TestServeSessionClose(t *testing.T) {
-	factory := &fakeFactory{behavior: func(context.Context, event.Sink, string) error { return nil }}
-	client, stop := startServer(t, factory)
-	defer stop()
-
-	client.call(t, "initialize", InitializeParams{ProtocolVersion: 1})
-	newResp := client.call(t, "session/new", SessionNewParams{})
-	var nr SessionNewResult
-	json.Unmarshal(newResp.Result, &nr)
-
-	closeResp := client.call(t, "session/close", SessionCloseParams(nr))
-	if closeResp.Error != nil {
-		t.Fatalf("session/close errored: %+v", closeResp.Error)
-	}
-
-	promptResp := client.call(t, "session/prompt", SessionPromptParams{
-		SessionID: nr.SessionID,
-		Prompt:    []ContentBlock{{Type: "text", Text: "after close"}},
-	})
-	if promptResp.Error == nil || !strings.Contains(promptResp.Error.Message, "unknown session") {
-		t.Fatalf("prompt after close error = %+v, want unknown session", promptResp.Error)
-	}
-}
-
-func TestServeRejectsPathLikeSessionID(t *testing.T) {
-	factory := &fakeFactory{behavior: func(context.Context, event.Sink, string) error { return nil }}
-	client, stop := startServer(t, factory)
-	defer stop()
-
-	resp := client.call(t, "session/delete", SessionDeleteParams{SessionID: "../outside"})
-	if resp.Error == nil {
-		t.Fatal("session/delete with path-like sessionId should fail")
-	}
-	if resp.Error.Code != ErrInvalidParams || !strings.Contains(resp.Error.Message, "invalid sessionId") {
-		t.Fatalf("session/delete error = %+v, want invalid sessionId", resp.Error)
-	}
-}
-
-func TestDeleteSessionFilesDeletesOwnedSubagents(t *testing.T) {
-	dir := t.TempDir()
-	sessionPath := filepath.Join(dir, "session.jsonl")
-	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"hi"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	ref := "sa_20260102_030405_000000000_aabbccddeeff"
-	writeACPSubagentArtifact(t, dir, ref, agent.BranchID(sessionPath))
-
-	if err := deleteSessionFiles(sessionPath); err != nil {
-		t.Fatalf("deleteSessionFiles: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "subagents", ref+".jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("subagent jsonl should be deleted, stat err = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "subagents", ref+".meta.json")); !os.IsNotExist(err) {
-		t.Fatalf("subagent meta should be deleted, stat err = %v", err)
-	}
-}
-
-func writeACPSubagentArtifact(t *testing.T, dir, ref, parentSession string) {
-	t.Helper()
-	subagentDir := filepath.Join(dir, "subagents")
-	if err := os.MkdirAll(subagentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(subagentDir, ref+".jsonl"), []byte(`{"role":"user","content":"sub"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(agent.SubagentMeta{
-		Ref:           ref,
-		Status:        agent.SubagentCompleted,
-		Kind:          "task",
-		Name:          "task",
-		ParentSession: parentSession,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(subagentDir, ref+".meta.json"), data, 0o644); err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/nilutil"
+	"voltui/internal/event"
+	"voltui/internal/nilutil"
 )
 
 // Status is a job's lifecycle state.
@@ -76,7 +76,6 @@ type Manager struct {
 	sink   event.Sink
 	root   context.Context
 	cancel context.CancelFunc
-	wg     sync.WaitGroup
 
 	mu        sync.Mutex
 	seq       int
@@ -123,37 +122,27 @@ func (m *Manager) Start(kind, label string, run func(ctx context.Context, out io
 
 	m.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
 
-	m.wg.Add(1)
 	go func() {
-		defer m.wg.Done()
 		result, err := run(ctx, jobWriter{j})
-
-		var st Status
-		switch {
-		case ctx.Err() != nil:
-			st = Killed
-		case err != nil:
-			st = Failed
-			if result == "" {
-				result = err.Error()
-			}
-		default:
-			st = Done
-		}
-		// Queue the drain note (and emit the closing Notice) BEFORE publishing the
-		// terminal status. Wait(nil)/resolve only block on Running jobs, so if the
-		// status flipped to terminal before the note was queued, a Wait could observe
-		// completion, skip j.done, and DrainCompletedNote would race ahead of the
-		// bookkeeping (the TestDrainMultiple -race flake). Recording first makes an
-		// observed terminal status imply the note is already queued.
-		m.recordCompletion(id, kind, label, st, err)
-
 		j.mu.Lock()
 		j.result = result
-		if j.status != Killed { // a concurrent Kill already published Killed — keep it
-			j.status = st
+		switch {
+		case ctx.Err() != nil:
+			j.status = Killed
+		case err != nil:
+			j.status = Failed
+			if result == "" {
+				j.result = err.Error()
+			}
+		default:
+			j.status = Done
 		}
+		st := j.status
 		j.mu.Unlock()
+		// Record completion (queue the drain note + emit the closing Notice) BEFORE
+		// signalling done, so a Wait that unblocks on j.done sees the note already
+		// queued — otherwise DrainCompletedNote can race ahead of the bookkeeping.
+		m.recordCompletion(id, kind, label, st, err)
 		close(j.done)
 	}()
 	return j
@@ -331,15 +320,9 @@ func (m *Manager) DrainCompletedNote() string {
 		". Read their output with bash_output or wait if you still need it."
 }
 
-// Close cancels the session context and waits for every background job goroutine
-// to return before unblocking. Jobs observe the cancel through their run context
-// (exec.CommandContext kills a bash job's process), so the wait is bounded. This
-// matters for callers tearing down a t.TempDir: without the wait, RemoveAll can
-// race a job goroutine that still holds a file under that dir.
-func (m *Manager) Close() {
-	m.cancel()
-	m.wg.Wait()
-}
+// Close cancels the session context, terminating every running job. Safe to call
+// once at controller shutdown.
+func (m *Manager) Close() { m.cancel() }
 
 func nowMs() int64 { return time.Now().UnixMilli() }
 

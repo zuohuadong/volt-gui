@@ -18,7 +18,6 @@ func TestHideWindowSetsCreateNoWindow(t *testing.T) {
 	if cmd.SysProcAttr.CreationFlags&createNoWindow == 0 {
 		t.Fatalf("CREATE_NO_WINDOW not set; CreationFlags=%#x", cmd.SysProcAttr.CreationFlags)
 	}
-	const detachedProcess = 0x00000008
 	if cmd.SysProcAttr.CreationFlags&detachedProcess != 0 {
 		t.Fatalf("DETACHED_PROCESS should not be set by HideWindow; CreationFlags=%#x", cmd.SysProcAttr.CreationFlags)
 	}
@@ -37,14 +36,31 @@ func TestHideWindowPreservesExistingFlags(t *testing.T) {
 	}
 }
 
+func TestHideWindowDetachedSetsDetachedProcess(t *testing.T) {
+	cmd := exec.Command("git", "status")
+	HideWindowDetached(cmd)
+	if cmd.SysProcAttr == nil {
+		t.Fatal("SysProcAttr is nil; HideWindowDetached did not set it")
+	}
+	if !cmd.SysProcAttr.HideWindow {
+		t.Fatal("HideWindowDetached did not set HideWindow")
+	}
+	if cmd.SysProcAttr.CreationFlags&createNoWindow != 0 {
+		t.Fatalf("CREATE_NO_WINDOW should not be combined with DETACHED_PROCESS; CreationFlags=%#x", cmd.SysProcAttr.CreationFlags)
+	}
+	if cmd.SysProcAttr.CreationFlags&detachedProcess == 0 {
+		t.Fatalf("DETACHED_PROCESS not set; CreationFlags=%#x", cmd.SysProcAttr.CreationFlags)
+	}
+}
+
 func TestHideWindowPreservesStdoutCapture(t *testing.T) {
-	cmd := exec.Command("cmd", "/c", "echo", "reasonix-ok")
+	cmd := exec.Command("cmd", "/c", "echo", "voltui-ok")
 	HideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("command failed: %v", err)
 	}
-	if !strings.Contains(string(out), "reasonix-ok") {
-		t.Fatalf("output = %q, want it to contain reasonix-ok", out)
+	if !strings.Contains(string(out), "voltui-ok") {
+		t.Fatalf("output = %q, want it to contain voltui-ok", out)
 	}
 }

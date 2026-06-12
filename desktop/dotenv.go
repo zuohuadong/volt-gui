@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
 )
 
-// credentialsPath is the reasonix-owned global secrets file the settings panel
-// writes API keys to — the same file `reasonix setup` writes and config.loadDotEnv
+// credentialsPath is the voltui-owned global secrets file the settings panel
+// writes API keys to — the same file `voltui setup` writes and config.loadDotEnv
 // reads, so a key set in the desktop app resolves for the CLI from any directory.
 // Never a project .env: keys stay out of the user's project tree. Falls back to
 // ~/.env only when the user config dir can't be resolved.
@@ -29,10 +29,6 @@ func credentialsPath() string {
 // rebuild picks it up without a restart.
 func upsertDotEnv(key, value string) error {
 	return upsertEnvFile(credentialsPath(), key, value)
-}
-
-func removeDotEnv(key string) error {
-	return removeEnvFile(credentialsPath(), key)
 }
 
 // upsertEnvFile merges KEY=value into a KEY=value file at path, preserving
@@ -88,63 +84,6 @@ func upsertEnvFile(path, key, value string) error {
 		return err
 	}
 	return os.Setenv(key, value)
-}
-
-func removeEnvFile(path, key string) error {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return os.Unsetenv(key)
-		}
-		return err
-	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	outLines := make([]string, 0, len(lines))
-	for _, ln := range lines {
-		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "export "))
-		if t == "" || strings.HasPrefix(t, "#") {
-			outLines = append(outLines, ln)
-			continue
-		}
-		if k, _, ok := strings.Cut(t, "="); ok && strings.TrimSpace(k) == key {
-			continue
-		}
-		outLines = append(outLines, ln)
-	}
-	out := ""
-	if len(outLines) > 0 {
-		out = strings.Join(outLines, "\n") + "\n"
-	}
-
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	tmp, err := os.CreateTemp(dir, "credentials.*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.WriteString(out); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := fileutil.ReplaceFile(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	return os.Unsetenv(key)
 }
 
 // envFileKeys returns the set of KEY names assigned in a KEY=value file, empty

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 // --- NewSession ---

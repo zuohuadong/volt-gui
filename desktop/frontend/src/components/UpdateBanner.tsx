@@ -9,19 +9,16 @@ const mb = (n: number) => (n / MB).toFixed(1);
 // a dismissible top banner that drives the download → verify → install flow (or, on
 // macOS, links out to the download page). It renders nothing while idle, checking,
 // or already current — a quiet auto-check that only surfaces when actionable. A
-// failed check can be dismissed here (network blips shouldn't pin the UI); the
-// Settings panel is where a manual check shows errors inline.
-export function UpdateBanner({ enabled = true }: { enabled?: boolean }) {
+// failed check is silent here too (network blips shouldn't nag); the Settings panel
+// is where a manual check shows errors.
+export function UpdateBanner() {
   const t = useT();
-  const { status, check, apply, reset } = useUpdater();
+  const { status, check, apply } = useUpdater();
   const [dismissed, setDismissed] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!enabled) return;
     void check();
-  }, [check, enabled]);
-
-  if (!enabled) return null;
+  }, [check]);
 
   switch (status.kind) {
     case "available": {
@@ -60,18 +57,12 @@ export function UpdateBanner({ enabled = true }: { enabled?: boolean }) {
     case "done":
       return <div className="banner banner--update">{t("updater.done")}</div>;
     case "error":
-      const failedMessage = t("updater.failed", { msg: status.message });
       return (
-        <div className="banner banner--update banner--error banner--actionable">
-          <span className="banner__msg" title={failedMessage}>
-            {failedMessage}
-          </span>
+        <div className="banner banner--error">
+          <span className="banner__msg">{t("updater.failed", { msg: status.message })}</span>
           <span className="banner__spacer" />
-          <button className="btn btn--small btn--primary" onClick={() => void check()}>
+          <button className="btn btn--small" onClick={() => void check()}>
             {t("updater.retry")}
-          </button>
-          <button className="btn btn--small" onClick={reset}>
-            {t("updater.dismiss")}
           </button>
         </div>
       );

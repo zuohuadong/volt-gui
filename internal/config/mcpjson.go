@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strings"
 
-	"reasonix/internal/fileutil"
-	"reasonix/internal/mcpdiag"
+	"voltui/internal/fileutil"
+	"voltui/internal/mcpdiag"
 )
 
-// mcpJSONFile is the project-root file Claude Code calls .mcp.json. Reasonix reads
+// mcpJSONFile is the project-root file Claude Code calls .mcp.json. VoltUI reads
 // it so an MCP server already configured for Claude works here unchanged — the
 // server specs map field-for-field onto PluginEntry.
 const mcpJSONFile = ".mcp.json"
@@ -70,23 +68,21 @@ func specsToEntries(specs map[string]mcpServerSpec, skip map[string]bool) []Plug
 	return entries
 }
 
-// legacyConfigPath is the v0.x (TypeScript line) config file, ~/.reasonix/config.json.
+// legacyConfigPath is the v0.x (TypeScript line) config file, ~/.voltui/config.json.
 func legacyConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".reasonix", "config.json")
+	return filepath.Join(home, ".voltui", "config.json")
 }
 
-// loadLegacyMCP reads the v0.x ~/.reasonix/config.json and returns its enabled
-// MCP servers as PluginEntry values — both the canonical mcpServers map and the
-// older `mcp` string list (mcpServers wins on a name collision, matching v0.x;
-// servers listed in mcpDisabled are skipped) — so upgrading from v0.x keeps MCP
-// servers working without rewriting them as [[plugins]]. Absent or malformed →
-// nil: a stale legacy file must never block startup, and it is the
-// lowest-priority source anyway (the v2 config and .mcp.json win on a name
-// collision — see Load).
+// loadLegacyMCP reads the v0.x ~/.voltui/config.json and returns its enabled
+// mcpServers as PluginEntry values (servers listed in its mcpDisabled are
+// skipped), so upgrading from v0.x keeps MCP servers working without rewriting
+// them as [[plugins]]. Absent or malformed → nil: a stale legacy file must never
+// block startup, and it is the lowest-priority source anyway (the v2 config and
+// .mcp.json win on a name collision — see Load).
 func loadLegacyMCP(path string) []PluginEntry {
 	if path == "" {
 		return nil
@@ -96,10 +92,8 @@ func loadLegacyMCP(path string) []PluginEntry {
 		return nil
 	}
 	var doc struct {
-		MCP         []string                     `json:"mcp"`
-		MCPServers  map[string]mcpServerSpec     `json:"mcpServers"`
-		MCPEnv      map[string]map[string]string `json:"mcpEnv"`
-		MCPDisabled []string                     `json:"mcpDisabled"`
+		MCPServers  map[string]mcpServerSpec `json:"mcpServers"`
+		MCPDisabled []string                 `json:"mcpDisabled"`
 	}
 	if err := json.Unmarshal(b, &doc); err != nil {
 		return nil
@@ -108,67 +102,11 @@ func loadLegacyMCP(path string) []PluginEntry {
 	for _, n := range doc.MCPDisabled {
 		disabled[n] = true
 	}
-	entries := specsToEntries(doc.MCPServers, disabled)
-	have := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		have[e.Name] = true
-	}
-	for i, raw := range doc.MCP {
-		pe, ok := parseLegacyMCPSpec(raw)
-		if !ok || disabled[pe.Name] {
-			continue
-		}
-		if pe.Name == "" {
-			pe.Name = anonymousMCPName(i)
-		} else if pe.Command != "" {
-			pe.Env = doc.MCPEnv[pe.Name]
-		}
-		if have[pe.Name] {
-			continue
-		}
-		have[pe.Name] = true
-		pe, _ = NormalizePluginCommandLine(pe)
-		entries = append(entries, pe)
-	}
-	return entries
-}
-
-var legacyMCPSpecName = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$`)
-
-// parseLegacyMCPSpec parses one v0.x `--mcp`-format string: "name=cmd args...",
-// "name=https://url" (SSE), or "name=streamable+https://url" (streamable HTTP);
-// the name= prefix is optional.
-func parseLegacyMCPSpec(raw string) (PluginEntry, bool) {
-	body := strings.TrimSpace(raw)
-	var name string
-	if m := legacyMCPSpecName.FindStringSubmatch(body); m != nil {
-		name, body = m[1], strings.TrimSpace(m[2])
-	}
-	if body == "" {
-		return PluginEntry{}, false
-	}
-	lower := strings.ToLower(body)
-	if strings.HasPrefix(lower, "streamable+http://") || strings.HasPrefix(lower, "streamable+https://") {
-		return PluginEntry{Name: name, Type: "http", URL: body[len("streamable+"):]}, true
-	}
-	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		return PluginEntry{Name: name, Type: "sse", URL: body}, true
-	}
-	parts, ok := splitPluginCommandLine(body)
-	if !ok || len(parts) == 0 {
-		return PluginEntry{}, false
-	}
-	return PluginEntry{Name: name, Command: parts[0], Args: parts[1:]}, true
-}
-
-// anonymousMCPName names a v0.x spec that carried no name= prefix (its tools
-// registered unprefixed in v0.x; v1+ plugins require a name).
-func anonymousMCPName(i int) string {
-	return fmt.Sprintf("mcp-%d", i+1)
+	return specsToEntries(doc.MCPServers, disabled)
 }
 
 func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
-	e := PluginEntry{
+	return PluginEntry{
 		Name:      name,
 		Type:      s.Type,
 		Command:   s.Command,
@@ -178,13 +116,11 @@ func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
 		Headers:   s.Headers,
 		AutoStart: s.AutoStart,
 	}
-	e, _ = NormalizePluginCommandLine(e)
-	return e
 }
 
 // mergeMCPJSON appends servers from .mcp.json that the TOML config did not
-// already declare. reasonix.toml's [[plugins]] win on a name collision: it is the
-// Reasonix-specific, more explicit of the two, so it overrides the shared,
+// already declare. voltui.toml's [[plugins]] win on a name collision: it is the
+// VoltUI-specific, more explicit of the two, so it overrides the shared,
 // checked-in .mcp.json rather than the other way round.
 func (c *Config) mergeMCPJSON(entries []PluginEntry) {
 	have := make(map[string]bool, len(c.Plugins))

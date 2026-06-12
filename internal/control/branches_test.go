@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 func TestBranchAndSwitch(t *testing.T) {

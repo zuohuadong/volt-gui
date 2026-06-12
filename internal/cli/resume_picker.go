@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/i18n"
+	"voltui/internal/agent"
+	"voltui/internal/i18n"
 )
 
 // resumePicker is an in-chat overlay for "/resume" that lets the user pick a
@@ -112,13 +112,9 @@ func (m chatTUI) renderResumePicker() string {
 	return choicePanelStyle.Width(w).Render(b.String())
 }
 
-// sessionPickerLabel is the "N turns · topicTitle/first message" line, truncated to fit.
-// When a TopicTitle is set (via /rename or desktop), it is shown instead of the raw preview.
+// sessionPickerLabel is the "N turns · first message" line, truncated to fit.
 func sessionPickerLabel(s agent.SessionInfo) string {
 	preview := s.Preview
-	if s.TopicTitle != "" {
-		preview = s.TopicTitle
-	}
 	if preview == "" {
 		preview = "(no user message yet)"
 	}

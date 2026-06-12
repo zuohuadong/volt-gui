@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/tool"
+	"voltui/internal/event"
+	"voltui/internal/tool"
 )
 
 // TestStdioEndToEnd drives a real subprocess (this test binary re-invoked in
@@ -105,7 +105,7 @@ func TestStartAvailableKeepsGoodServers(t *testing.T) {
 		Args:    []string{"-test.run=TestHelperProcess", "--"},
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 	}
-	bad := Spec{Name: "bad", Command: "reasonix-missing-mcp-binary"}
+	bad := Spec{Name: "bad", Command: "voltui-missing-mcp-binary"}
 
 	host, tools := StartAvailable(ctx, []Spec{bad, good})
 	defer host.Close()
@@ -138,7 +138,7 @@ func TestStartAllAllOrNothingOnFailure(t *testing.T) {
 		Args:    []string{"-test.run=TestHelperProcess", "--"},
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 	}
-	bad := Spec{Name: "bad", Command: "reasonix-missing-mcp-binary"}
+	bad := Spec{Name: "bad", Command: "voltui-missing-mcp-binary"}
 
 	for _, tc := range []struct {
 		name  string
@@ -242,7 +242,7 @@ func TestStdioCommandNotFoundSuggestsPATHFix(t *testing.T) {
 	stdioShellPATH = func(context.Context) string { return "" }
 	t.Cleanup(func() { stdioShellPATH = old })
 
-	host, _ := StartAvailable(ctx, []Spec{{Name: "missing", Command: "reasonix-missing-mcp-binary"}})
+	host, _ := StartAvailable(ctx, []Spec{{Name: "missing", Command: "voltui-missing-mcp-binary"}})
 	defer host.Close()
 
 	failures := host.Failures()
@@ -251,7 +251,7 @@ func TestStdioCommandNotFoundSuggestsPATHFix(t *testing.T) {
 	}
 	msg := failures[0].Error
 	for _, want := range []string{
-		`command "reasonix-missing-mcp-binary" not found on PATH`,
+		`command "voltui-missing-mcp-binary" not found on PATH`,
 		"absolute command path",
 		"MCP server env",
 	} {
@@ -431,7 +431,7 @@ func TestStartRecordsTimeoutStats(t *testing.T) {
 
 // TestStartPhaseAReturnsBeforePhaseB pins the two-phase handshake contract.
 // The helper advertises prompts and stalls prompts/list by 200ms; StartAvailable
-// must return with tools ready while the prompts surface is still empty, and the
+// must return as soon as tools are ready (well before that 200ms), and the
 // prompts must only materialise on Host after StartPhaseB has been called and
 // drained — proving prompts ride the background phase, not the boot critical path.
 func TestStartPhaseAReturnsBeforePhaseB(t *testing.T) {
@@ -449,17 +449,17 @@ func TestStartPhaseAReturnsBeforePhaseB(t *testing.T) {
 		},
 	}
 
+	t0 := time.Now()
 	host, tools := StartAvailable(ctx, []Spec{spec})
+	startDur := time.Since(t0)
 	defer host.Close()
 
 	if len(tools) == 0 {
 		t.Fatalf("want tools from helper, got 0")
 	}
-	// Phase A returns with tools but the prompts surface must still be empty:
-	// StartAvailable never issues prompts/list (the helper stalls it 200ms), so
-	// prompts can only appear after StartPhaseB drains them below. We assert this
-	// deferral directly instead of timing StartAvailable — subprocess spawn plus
-	// the MCP handshake make a wall-clock threshold flaky on slow CI runners.
+	if startDur >= 150*time.Millisecond {
+		t.Fatalf("StartAvailable took %v — phase B (200ms prompts) leaked onto the critical path", startDur)
+	}
 	if got := host.Prompts(); len(got) != 0 {
 		t.Fatalf("phase A must not surface prompts yet, got %d", len(got))
 	}

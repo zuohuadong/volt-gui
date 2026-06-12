@@ -15,11 +15,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
-	"reasonix/internal/tool"
+	"voltui/internal/tool"
 )
 
 // DefaultStartupBudget is the per-plugin latency budget used by boot when
@@ -73,16 +72,8 @@ func (s *lazySpawn) kick() {
 	if s.state != spawnIdle {
 		return
 	}
-	if !s.host.beginDeferredSpawn() {
-		s.state = spawnFailed
-		s.spawnErr = fmt.Errorf("plugin host is closed")
-		return
-	}
 	s.state = spawnInFlight
-	go func() {
-		defer s.host.endDeferredSpawn()
-		s.run()
-	}()
+	go s.run()
 }
 
 // run does the handshake without holding mu (host.Add can take seconds), then
@@ -180,17 +171,8 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 			// drive the handshake async and ask the model to retry. By the
 			// next turn the swap will have installed the real tools with
 			// real schemas under different names.
-			if !sp.host.beginDeferredSpawn() {
-				sp.state = spawnFailed
-				sp.spawnErr = fmt.Errorf("plugin host is closed")
-				sp.mu.Unlock()
-				return "", fmt.Errorf("MCP server %q failed to start: %w", sp.spec.Name, sp.spawnErr)
-			}
 			sp.state = spawnInFlight
-			go func() {
-				defer sp.host.endDeferredSpawn()
-				sp.run()
-			}()
+			go sp.run()
 			sp.mu.Unlock()
 			return "", fmt.Errorf("MCP server %q is initializing on first use — call again on the next turn for its real tools", sp.spec.Name)
 		}
@@ -240,13 +222,11 @@ func (lt *lazyTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 // single Execute (use the controller's PluginCtx) — a turn-scoped ctx would
 // kill the stdio child between turns.
 func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, sessionCtx context.Context, kick bool) []tool.Tool {
-	spawnCtx, cancel := context.WithCancel(sessionCtx)
-	host.registerDeferredCancel(cancel)
 	shared := &lazySpawn{
 		spec: spec,
 		host: host,
 		reg:  reg,
-		ctx:  spawnCtx,
+		ctx:  sessionCtx,
 	}
 
 	var out []tool.Tool
@@ -261,13 +241,9 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 	} else {
 		out = make([]tool.Tool, 0, len(cs.Tools))
 		for _, ct := range cs.Tools {
-			visibleName := ct.Name
-			if spec.StripRawPrefix != "" {
-				visibleName = strings.TrimPrefix(visibleName, spec.StripRawPrefix)
-			}
 			out = append(out, &lazyTool{
 				shared:   shared,
-				name:     toolName(spec.Name, visibleName),
+				name:     toolName(spec.Name, ct.Name),
 				desc:     ct.Description,
 				schema:   ct.Schema,
 				readOnly: spec.toolReadOnly(ct.Name, ct.ReadOnly),

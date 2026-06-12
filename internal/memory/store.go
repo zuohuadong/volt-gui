@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/frontmatter"
+	"voltui/internal/frontmatter"
 )
 
 // Store is the per-project auto-memory: a directory of one-fact-per-file
@@ -18,7 +18,7 @@ import (
 // saved, and reads individual facts on demand with read_file. The whole thing is
 // plain files the user can edit by hand.
 type Store struct {
-	Dir string // ...reasonix/projects/<slug>/memory
+	Dir string // ...voltui/projects/<slug>/memory
 }
 
 // Type classifies a memory, mirroring the auto-memory taxonomy.
@@ -55,7 +55,7 @@ type Memory struct {
 }
 
 // StoreFor resolves the auto-memory directory for a project working dir under
-// the user config root, e.g. ~/.config/reasonix/projects/-Users-me-proj/memory.
+// the user config root, e.g. ~/.config/voltui/projects/-Users-me-proj/memory.
 // A "" userDir (config dir unresolvable) yields a zero Store, which all methods
 // treat as a disabled no-op.
 func StoreFor(userDir, cwd string) Store {
@@ -130,39 +130,10 @@ func (s Store) Delete(name string) error {
 	if name == "" {
 		return fmt.Errorf("memory needs a name")
 	}
-	if err := removeMemoryFile(filepath.Join(s.Dir, name+".md")); err != nil {
+	if err := os.Remove(filepath.Join(s.Dir, name+".md")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return s.flushIndex(s.indexLinesExcept(name))
-}
-
-func removeMemoryFile(path string) error {
-	err := os.Remove(path)
-	if err == nil || os.IsNotExist(err) {
-		return nil
-	}
-	if !os.IsPermission(err) {
-		return err
-	}
-	repairOwnerWrite(path, false)
-	repairOwnerWrite(filepath.Dir(path), true)
-	err = os.Remove(path)
-	if err == nil || os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-func repairOwnerWrite(path string, dir bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return
-	}
-	need := os.FileMode(0o600)
-	if dir {
-		need = 0o700
-	}
-	_ = os.Chmod(path, info.Mode().Perm()|need)
 }
 
 // render serializes a memory to frontmatter + body. The frontmatter mirrors the

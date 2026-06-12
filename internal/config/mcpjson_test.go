@@ -47,77 +47,6 @@ func TestLoadMCPJSON(t *testing.T) {
 	}
 }
 
-func TestNormalizePluginCommandLine(t *testing.T) {
-	cases := []struct {
-		name        string
-		in          PluginEntry
-		wantCommand string
-		wantArgs    []string
-		wantChanged bool
-	}{
-		{
-			name:        "npx pasted with args",
-			in:          PluginEntry{Name: "playwright", Command: "npx -y @playwright/mcp"},
-			wantCommand: "npx",
-			wantArgs:    []string{"-y", "@playwright/mcp"},
-			wantChanged: true,
-		},
-		{
-			name:        "quoted command path",
-			in:          PluginEntry{Name: "quoted", Command: `"C:\Program Files\nodejs\npx.cmd" -y @example/mcp`},
-			wantCommand: `C:\Program Files\nodejs\npx.cmd`,
-			wantArgs:    []string{"-y", "@example/mcp"},
-			wantChanged: true,
-		},
-		{
-			name:        "empty quoted arg preserved",
-			in:          PluginEntry{Name: "empty", Command: `npx --token "" @example/mcp`},
-			wantCommand: "npx",
-			wantArgs:    []string{"--token", "", "@example/mcp"},
-			wantChanged: true,
-		},
-		{
-			name:        "unquoted command path with spaces stays literal",
-			in:          PluginEntry{Name: "literal", Command: `C:\Program Files\nodejs\npx.cmd`},
-			wantCommand: `C:\Program Files\nodejs\npx.cmd`,
-			wantChanged: false,
-		},
-		{
-			name:        "remote entry untouched",
-			in:          PluginEntry{Name: "remote", Type: "http", URL: "https://mcp.example.com/mcp", Command: "npx -y nope"},
-			wantCommand: "npx -y nope",
-			wantChanged: false,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, changed := NormalizePluginCommandLine(tc.in)
-			if changed != tc.wantChanged {
-				t.Fatalf("changed = %v, want %v", changed, tc.wantChanged)
-			}
-			if got.Command != tc.wantCommand {
-				t.Fatalf("command = %q, want %q", got.Command, tc.wantCommand)
-			}
-			if strings.Join(got.Args, "\x00") != strings.Join(tc.wantArgs, "\x00") {
-				t.Fatalf("args = %v, want %v", got.Args, tc.wantArgs)
-			}
-		})
-	}
-}
-
-func TestUpsertPluginNormalizesPastedCommandLine(t *testing.T) {
-	cfg := &Config{}
-	if err := cfg.UpsertPlugin(PluginEntry{Name: "playwright", Command: "npx -y @playwright/mcp"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg.Plugins[0].Command; got != "npx" {
-		t.Fatalf("command = %q, want npx", got)
-	}
-	if got := cfg.Plugins[0].Args; len(got) != 2 || got[0] != "-y" || got[1] != "@playwright/mcp" {
-		t.Fatalf("args = %v, want [-y @playwright/mcp]", got)
-	}
-}
-
 func TestLoadMCPJSONAbsentAndMalformed(t *testing.T) {
 	dir := t.TempDir()
 
@@ -149,7 +78,7 @@ func TestLoadMergesMCPJSON(t *testing.T) {
 name = "shared"
 command = "local-bin"
 `
-	if err := os.WriteFile("reasonix.toml", []byte(toml), 0o644); err != nil {
+	if err := os.WriteFile("voltui.toml", []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mcp := `{ "mcpServers": {
@@ -172,7 +101,7 @@ command = "local-bin"
 		t.Fatalf("plugins = %+v, want shared + extra", cfg.Plugins)
 	}
 	if byName["shared"].Command != "local-bin" || byName["shared"].URL != "" {
-		t.Errorf("reasonix.toml should win the collision, got %+v", byName["shared"])
+		t.Errorf("voltui.toml should win the collision, got %+v", byName["shared"])
 	}
 	if byName["extra"].Command != "extra-bin" {
 		t.Errorf("extra not merged from .mcp.json, got %+v", byName["extra"])
@@ -199,7 +128,7 @@ func TestLoadMergesPluginsAcrossTOMLSources(t *testing.T) {
 	if err := os.WriteFile(gpath, []byte("[[plugins]]\nname = \"globalmcp\"\ncommand = \"global-bin\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("reasonix.toml", []byte("[[plugins]]\nname = \"projectmcp\"\ncommand = \"project-bin\"\n"), 0o644); err != nil {
+	if err := os.WriteFile("voltui.toml", []byte("[[plugins]]\nname = \"projectmcp\"\ncommand = \"project-bin\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,38 +141,13 @@ func TestLoadMergesPluginsAcrossTOMLSources(t *testing.T) {
 		names[p.Name] = true
 	}
 	if !names["globalmcp"] || !names["projectmcp"] {
-		t.Fatalf("a project reasonix.toml [[plugins]] dropped the global config's server; got %+v", cfg.Plugins)
-	}
-}
-
-func TestLoadNormalizesTOMLPastedCommandLine(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
-	t.Setenv("AppData", filepath.Join(home, "AppData"))
-	t.Chdir(t.TempDir())
-
-	if err := os.WriteFile("reasonix.toml", []byte("[[plugins]]\nname = \"playwright\"\ncommand = \"npx -y @playwright/mcp\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Plugins) != 1 {
-		t.Fatalf("plugins = %+v", cfg.Plugins)
-	}
-	if cfg.Plugins[0].Command != "npx" {
-		t.Fatalf("command = %q, want npx", cfg.Plugins[0].Command)
-	}
-	if got := cfg.Plugins[0].Args; len(got) != 2 || got[0] != "-y" || got[1] != "@playwright/mcp" {
-		t.Fatalf("args = %v, want [-y @playwright/mcp]", got)
+		t.Fatalf("a project voltui.toml [[plugins]] dropped the global config's server; got %+v", cfg.Plugins)
 	}
 }
 
 func TestMergeMCPJSONPrecedence(t *testing.T) {
-	// reasonix.toml already declares "shared" (stdio); .mcp.json offers a colliding
-	// "shared" (http) plus a fresh "extra". reasonix.toml must win on the collision;
+	// voltui.toml already declares "shared" (stdio); .mcp.json offers a colliding
+	// "shared" (http) plus a fresh "extra". voltui.toml must win on the collision;
 	// "extra" gets appended.
 	cfg := &Config{Plugins: []PluginEntry{
 		{Name: "shared", Command: "local-bin"},
@@ -257,7 +161,7 @@ func TestMergeMCPJSONPrecedence(t *testing.T) {
 		t.Fatalf("plugins = %+v, want 2 (shared kept, extra added)", cfg.Plugins)
 	}
 	if cfg.Plugins[0].Name != "shared" || cfg.Plugins[0].Command != "local-bin" || cfg.Plugins[0].URL != "" {
-		t.Errorf("collision not won by reasonix.toml: %+v", cfg.Plugins[0])
+		t.Errorf("collision not won by voltui.toml: %+v", cfg.Plugins[0])
 	}
 	if cfg.Plugins[1].Name != "extra" || cfg.Plugins[1].Command != "extra-bin" {
 		t.Errorf("non-colliding entry not appended: %+v", cfg.Plugins[1])
@@ -345,10 +249,10 @@ func TestClearPluginAuthenticationInSourcePrefersTOML(t *testing.T) {
 	t.Setenv("AppData", filepath.Join(root, "AppData"))
 	t.Chdir(t.TempDir())
 
-	if err := os.WriteFile("reasonix.toml", []byte(`[[plugins]]
+	if err := os.WriteFile("voltui.toml", []byte(`[[plugins]]
 name = "dida"
 type = "http"
-url = "https://reasonix.example/mcp?access_token=toml"
+url = "https://voltui.example/mcp?access_token=toml"
 [plugins.headers]
 Authorization = "Bearer ${TOML_TOKEN}"
 `), 0o644); err != nil {
@@ -372,19 +276,19 @@ Authorization = "Bearer ${TOML_TOKEN}"
 	if !changed {
 		t.Fatal("ClearPluginAuthenticationInSource should report changed")
 	}
-	if source != "reasonix.toml" {
-		t.Fatalf("source = %q, want reasonix.toml", source)
+	if source != "voltui.toml" {
+		t.Fatalf("source = %q, want voltui.toml", source)
 	}
-	if updated.URL != "https://reasonix.example/mcp" {
+	if updated.URL != "https://voltui.example/mcp" {
 		t.Fatalf("updated URL = %q", updated.URL)
 	}
 
-	projectRaw, err := os.ReadFile("reasonix.toml")
+	projectRaw, err := os.ReadFile("voltui.toml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(projectRaw), "access_token=toml") || strings.Contains(string(projectRaw), "Authorization") {
-		t.Fatalf("reasonix.toml auth material should be removed:\n%s", projectRaw)
+		t.Fatalf("voltui.toml auth material should be removed:\n%s", projectRaw)
 	}
 	mcpRaw, err := os.ReadFile(mcpJSONFile)
 	if err != nil {
@@ -424,46 +328,6 @@ func TestLoadLegacyMCP(t *testing.T) {
 	}
 	if got[1].Type != "sse" || got[1].URL != "https://x/sse" || got[1].Headers["Authorization"] != "Bearer y" {
 		t.Errorf("remote mapped wrong: %+v", got[1])
-	}
-
-	doc = `{
-  "mcp": [
-    "memory=npx -y @modelcontextprotocol/server-memory",
-    "remote=https://x/sse",
-    "stream=streamable+https://x/http",
-    "github=node dupe.js",
-    "off=npx server-off",
-    "uvx run anonymous-server"
-  ],
-  "mcpServers": { "github": { "command": "npx" } },
-  "mcpEnv": { "memory": { "MEMORY_PATH": "/tmp/mem" } },
-  "mcpDisabled": ["off"]
-}`
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got = loadLegacyMCP(path)
-	byName := map[string]PluginEntry{}
-	for _, e := range got {
-		byName[e.Name] = e
-	}
-	if m := byName["memory"]; m.Command != "npx" || m.Env["MEMORY_PATH"] != "/tmp/mem" {
-		t.Errorf("legacy mcp string entry mapped wrong: %+v", m)
-	}
-	if r := byName["remote"]; r.Type != "sse" || r.URL != "https://x/sse" {
-		t.Errorf("plain URL should map to SSE: %+v", r)
-	}
-	if s := byName["stream"]; s.Type != "http" || s.URL != "https://x/http" {
-		t.Errorf("streamable+ URL should map to http: %+v", s)
-	}
-	if g := byName["github"]; g.Command != "npx" || len(g.Args) != 0 {
-		t.Errorf("mcpServers should win the github name collision: %+v", g)
-	}
-	if a := byName["mcp-6"]; a.Command != "uvx" || len(a.Args) != 2 {
-		t.Errorf("anonymous spec should get a synthesized name: %+v", a)
-	}
-	if _, hasOff := byName["off"]; hasOff || len(got) != 5 {
-		t.Errorf("disabled entry should be skipped, got %d: %+v", len(got), got)
 	}
 
 	// Absent, malformed, and empty paths must not error — just yield nil, so a

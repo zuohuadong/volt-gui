@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/provider"
-	_ "reasonix/internal/provider/openai" // registers the "openai" provider kind
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/control"
+	"voltui/internal/provider"
+	_ "voltui/internal/provider/openai" // registers the "openai" provider kind
+	"voltui/internal/tool"
 )
 
 type liveFactory struct{ prov provider.Provider }

@@ -1,6 +1,5 @@
 export type LayoutSizeKey =
   | "sidebarWidth"
-  | "sidebarWidthGraphite"
   | "rightDockWidth"
   | "rightDockTreeWidth"
   | "rightDockPreviewWidth"
@@ -14,19 +13,18 @@ type LayoutPreferences = {
   sizes?: Partial<Record<LayoutSizeKey, number>>;
 };
 
-const STORAGE_KEY = "reasonix.layoutPreferences.v1";
+const STORAGE_KEY = "voltui.layoutPreferences.v1";
 
 const LEGACY_SIZE_KEYS: Record<LayoutSizeKey, string[]> = {
-  sidebarWidth: ["reasonix.sidebar.width"],
-  sidebarWidthGraphite: [],
+  sidebarWidth: ["voltui.sidebar.width"],
   rightDockWidth: [],
   rightDockTreeWidth: [],
   rightDockPreviewWidth: [],
   workspaceFileTreePanelWidth: [],
-  workspaceTreeWidth: ["reasonix.workspaceTree.width"],
-  composerHeight: ["reasonix.composerHeight"],
-  drawerWidth: ["reasonix.drawer.width"],
-  settingsDrawerWidth: ["reasonix.settingsDrawer.width"],
+  workspaceTreeWidth: ["voltui.workspaceTree.width"],
+  composerHeight: ["voltui.composerHeight"],
+  drawerWidth: ["voltui.drawer.width"],
+  settingsDrawerWidth: ["voltui.settingsDrawer.width"],
 };
 
 type ClampSize = (value: number) => number;

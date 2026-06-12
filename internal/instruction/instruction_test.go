@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/memory"
+	"voltui/internal/memory"
 )
 
 func TestExtractHostChecksFromStructuredSection(t *testing.T) {
@@ -13,7 +13,7 @@ func TestExtractHostChecksFromStructuredSection(t *testing.T) {
 		Scope: memory.ScopeProject,
 		Body: strings.Join([]string{
 			"# Project rules",
-			"## Reasonix host checks",
+			"## VoltUI host checks",
 			"- verify: go test ./internal/...",
 			"* verify: git diff --check",
 			"- verify: go test ./internal/...",
@@ -37,7 +37,7 @@ func TestExtractHostChecksFromStructuredSection(t *testing.T) {
 
 func TestExtractHostChecksIgnoresOrdinaryGuidance(t *testing.T) {
 	docs := []memory.Source{{
-		Path: "REASONIX.md",
+		Path: "VOLTUI.md",
 		Body: "Always run go test before committing.\n\n- verify: go test ./...",
 	}}
 
@@ -48,8 +48,8 @@ func TestExtractHostChecksIgnoresOrdinaryGuidance(t *testing.T) {
 
 func TestExtractHostChecksIsCaseInsensitive(t *testing.T) {
 	docs := []memory.Source{{
-		Path: "REASONIX.md",
-		Body: "## reasonix HOST checks\n- verify: go test ./...",
+		Path: "VOLTUI.md",
+		Body: "## voltui HOST checks\n- verify: go test ./...",
 	}}
 
 	checks := ExtractHostChecks(docs)

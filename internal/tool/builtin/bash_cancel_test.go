@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/sandbox"
-	"reasonix/internal/tool"
+	"voltui/internal/sandbox"
+	"voltui/internal/tool"
 )
 
 // TestBashCancelReturnsPromptly proves a cancelled bash run stops fast instead of
@@ -18,7 +18,7 @@ func TestBashCancelReturnsPromptly(t *testing.T) {
 		t.Fatal("bash not registered")
 	}
 	cmd := "sleep 120"
-	if sandbox.ResolveShell("", "", nil).Kind == sandbox.ShellPowerShell {
+	if sandbox.ResolveShell().Kind == sandbox.ShellPowerShell {
 		cmd = "Start-Sleep -Seconds 120"
 	}
 	args, _ := json.Marshal(map[string]any{"command": cmd})

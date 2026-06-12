@@ -2,13 +2,11 @@ package control
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/hook"
-	"reasonix/internal/i18n"
-	"reasonix/internal/skill"
+	"voltui/internal/config"
+	"voltui/internal/i18n"
+	"voltui/internal/skill"
 )
 
 // SlashItem is one slash-completion suggestion. Insert is the token text placed
@@ -34,8 +32,6 @@ type ArgData struct {
 	DisconnectedMCP []string
 	ModelRefs       []string
 	CurrentModel    string
-	ProviderNames   []string
-	CurrentProvider string
 }
 
 // SlashArgItems completes the arguments of a management slash command
@@ -58,8 +54,6 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = mcpArgItems(prior, cur, d)
 	case "/model":
 		raw = modelArgItems(prior, d)
-	case "/provider":
-		raw = providerArgItems(prior, d)
 	case "/skill", "/skills":
 		raw = skillArgItems(prior, d)
 	case "/hooks":
@@ -175,7 +169,6 @@ func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {
 			{Label: "show", Insert: "show ", Hint: "show MCP server details", Descend: true},
 			{Label: "tools", Insert: "tools ", Hint: "show MCP server tools", Descend: true},
 			{Label: "remove", Insert: "remove ", Hint: i18n.M.ArgMcpRemove, Descend: true},
-			{Label: "import", Insert: "import", Hint: "import Codex-enabled servers from cc-switch"},
 		}
 	}
 	switch prior[1] {
@@ -245,21 +238,6 @@ func modelArgItems(prior []string, d ArgData) []SlashItem {
 			hint = i18n.M.ArgModelCurrent
 		}
 		items = append(items, SlashItem{Label: ref, Insert: ref, Hint: hint})
-	}
-	return items
-}
-
-func providerArgItems(prior []string, d ArgData) []SlashItem {
-	if len(prior) != 1 { // the single name arg is already placed
-		return nil
-	}
-	var items []SlashItem
-	for _, name := range d.ProviderNames {
-		hint := ""
-		if name == d.CurrentProvider {
-			hint = i18n.M.ArgModelCurrent
-		}
-		items = append(items, SlashItem{Label: name, Insert: name, Hint: hint})
 	}
 	return items
 }
@@ -342,12 +320,6 @@ func (c *Controller) managementNotice(trimmed string) bool {
 	switch fields[0] {
 	case "/model":
 		c.notice(c.modelListText())
-	case "/provider":
-		if len(fields) >= 2 {
-			c.notice(c.providerSwitchText(fields[1]))
-		} else {
-			c.notice(c.providerListText())
-		}
 	case "/memory":
 		c.notice(c.memoryListText())
 	case "/skill", "/skills":
@@ -368,26 +340,7 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		}
 		c.notice(c.skillListText())
 	case "/hooks":
-		sub := ""
-		if len(fields) >= 2 {
-			sub = strings.ToLower(fields[1])
-		}
-		switch sub {
-		case "", "list", "ls":
-			c.notice(c.hookListText())
-		case "trust":
-			root := c.cpRoot
-			if root == "" {
-				root, _ = os.Getwd()
-			}
-			if err := hook.Trust(root, ""); err != nil {
-				c.notice("hooks trust: " + err.Error())
-			} else {
-				c.notice("trusted this project's hooks — they load on the next /new or restart")
-			}
-		default:
-			c.notice("unknown /hooks subcommand " + fields[1] + " — try: /hooks, /hooks trust")
-		}
+		c.notice(c.hookListText())
 	case "/mcp":
 		if len(fields) >= 3 && fields[1] == "connect" {
 			n, err := c.ConnectConfiguredMCPServer(fields[2])
@@ -417,72 +370,12 @@ func (c *Controller) modelListText() string {
 		if !p.Configured() {
 			continue
 		}
-		for _, m := range p.ChatModelList() {
+		for _, m := range p.ModelList() {
 			fmt.Fprintf(&b, "  %s/%s\n", p.Name, m)
 		}
 	}
 	b.WriteString(i18n.M.ListModelsHint)
 	return strings.TrimRight(b.String(), "\n")
-}
-
-func (c *Controller) providerListText() string {
-	cfg, err := config.Load()
-	if err != nil {
-		return "provider: " + err.Error()
-	}
-	curProvider := ""
-	if parts := strings.Fields(c.label); len(parts) > 0 {
-		curProvider = parts[0]
-	}
-	var b strings.Builder
-	b.WriteString(i18n.M.ProviderListHeader + "\n")
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if !p.Configured() {
-			continue
-		}
-		models := p.ChatModelList()
-		if len(models) == 0 {
-			models = p.ModelList()
-		}
-		suffix := ""
-		if p.Name == curProvider {
-			suffix = " (active)"
-		}
-		fmt.Fprintf(&b, "  %s — %d models%s\n", p.Name, len(models), suffix)
-	}
-	b.WriteString("switch with /provider <name>")
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func (c *Controller) providerSwitchText(name string) string {
-	cfg, err := config.Load()
-	if err != nil {
-		return "provider: " + err.Error()
-	}
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if p.Name == name && p.Configured() {
-			models := p.ChatModelList()
-			if len(models) == 0 {
-				models = p.ModelList()
-			}
-			if len(models) == 0 {
-				return fmt.Sprintf(i18n.M.ProviderNoModelsFmt, name)
-			}
-			if len(models) == 1 {
-				return fmt.Sprintf("provider %s — model: %s (switch with /model %s/%s)", name, models[0], name, models[0])
-			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "provider %s — %d models:\n", name, len(models))
-			for _, m := range models {
-				fmt.Fprintf(&b, "  %s/%s\n", name, m)
-			}
-			fmt.Fprintf(&b, "switch with /model %s/<model>", name)
-			return strings.TrimRight(b.String(), "\n")
-		}
-	}
-	return fmt.Sprintf(i18n.M.ProviderUnknownFmt, name)
 }
 
 func (c *Controller) memoryListText() string {

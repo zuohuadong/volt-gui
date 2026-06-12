@@ -3,8 +3,7 @@ package event
 import (
 	"sync"
 
-	"reasonix/internal/evidence"
-	"reasonix/internal/nilutil"
+	"voltui/internal/nilutil"
 )
 
 // Sync wraps a Sink so concurrent Emit calls are serialized. The base Sink
@@ -30,12 +29,4 @@ func (s *syncSink) Emit(e Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.inner.Emit(e)
-}
-
-func (s *syncSink) RecordReadinessAudit(a evidence.ReadinessAudit) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if rs, ok := s.inner.(ReadinessAuditSink); ok {
-		rs.RecordReadinessAudit(a)
-	}
 }

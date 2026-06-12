@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/evidence"
-	"reasonix/internal/instruction"
+	"voltui/internal/evidence"
+	"voltui/internal/instruction"
 )
 
 func readinessLedger(receipts ...evidence.Receipt) *evidence.Ledger {
@@ -38,7 +38,7 @@ func TestFinalReadinessFailureBranches(t *testing.T) {
 		{"writer without checks or todo never gates", nil, readinessLedger(writer), true, ""},
 		{"missing project check after writer is reported", []instruction.VerifyCheck{check}, readinessLedger(checkAfter, writer), false, "go test ./..."},
 		{"project check run after writer satisfies", []instruction.VerifyCheck{check}, readinessLedger(writer, checkAfter), true, ""},
-		{"todo writer without complete_step is reported", nil, readinessLedger(writer, todo), false, "incomplete items"},
+		{"todo writer without complete_step is reported", nil, readinessLedger(writer, todo), false, "complete_step"},
 		{"complete_step without final todo update is reported", nil, readinessLedger(writer, todo, completeAfter), false, "latest successful todo_write"},
 		{"todo writer with complete_step and completed todo satisfies", nil, readinessLedger(writer, todo, completeAfter, doneTodo), true, ""},
 	}
@@ -69,28 +69,5 @@ func TestFinalReadinessAllowsIncompleteTodosInPlanMode(t *testing.T) {
 
 	if got := a.finalReadinessFailure(); got != "" {
 		t.Fatalf("finalReadinessFailure() = %q, want empty in plan mode", got)
-	}
-	if got := a.finalReadinessCheck(); got.applies {
-		t.Fatalf("finalReadinessCheck() applies in plan mode: %+v", got)
-	}
-}
-
-func TestFinalReadinessCheckAuditsIncompleteTodos(t *testing.T) {
-	todo := evidence.Receipt{ToolName: "todo_write", Success: true, Todos: []evidence.TodoItem{{Content: "edit", Status: "in_progress"}}}
-	a := &Agent{evidence: readinessLedger(todo)}
-
-	got := a.finalReadinessCheck()
-	if !got.applies {
-		t.Fatalf("finalReadinessCheck() applies = false, want true")
-	}
-	if got.incompleteTodos != 1 {
-		t.Fatalf("incompleteTodos = %d, want 1", got.incompleteTodos)
-	}
-	if !strings.Contains(got.reason, "latest successful todo_write") {
-		t.Fatalf("reason = %q, want incomplete todo message", got.reason)
-	}
-	audit := got.audit(evidence.ReadinessBlocked, false)
-	if audit.IncompleteTodos != 1 {
-		t.Fatalf("audit.IncompleteTodos = %d, want 1", audit.IncompleteTodos)
 	}
 }

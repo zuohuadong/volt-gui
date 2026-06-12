@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Reasonix" width="640"/>
+  <img src="docs/logo.svg" alt="VoltUI" width="640"/>
 </p>
 
 <p align="center">
@@ -7,171 +7,273 @@
   &nbsp;·&nbsp;
   <strong>简体中文</strong>
   &nbsp;·&nbsp;
-  <a href="./docs/GUIDE.zh-CN.md">指南</a>
+  <a href="./docs/CHECKPOINTS.md">检查点</a>
   &nbsp;·&nbsp;
   <a href="./docs/SPEC.md">规格</a>
-  &nbsp;·&nbsp;
-  <a href="https://esengine.github.io/DeepSeek-Reasonix/">官方网站</a>
-  &nbsp;·&nbsp;
-  <strong><a href="https://discord.gg/XF78rEME2D">Discord</a></strong>
-</p>
-
-> [!IMPORTANT]
-> **Reasonix 1.0 是用 Go 从零重写的版本** —— 本分支(`main-v2`)已是新的默认分支,后续开发都在这里。
-> 早期的 `0.x` TypeScript 版本转为 **legacy**,保留在 [`v1`](https://github.com/esengine/DeepSeek-Reasonix/tree/v1) 分支(仅维护)。
-> 详见**[迁移指南](./docs/MIGRATING.md)**。`npm i -g reasonix` 仍是安装命令——`1.0.0`+ 装的是 Go 二进制,`0.x` 是 legacy TS 版。
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/v/reasonix.svg?style=flat-square&color=cb3837&labelColor=161b22&logo=npm&logoColor=white" alt="npm version"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/esengine/DeepSeek-Reasonix/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/reasonix.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
-  <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/dm/reasonix.svg?style=flat-square&color=3fb950&labelColor=161b22&label=downloads" alt="downloads"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/stargazers"><img src="https://img.shields.io/github/stars/esengine/DeepSeek-Reasonix.svg?style=flat-square&color=dbab09&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
-  <a href="https://atomgit.com/esengine/DeepSeek-Reasonix"><img src="https://atomgit.com/esengine/DeepSeek-Reasonix/star/badge.svg" alt="AtomGit stars"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors"><img src="https://img.shields.io/github/contributors/esengine/DeepSeek-Reasonix.svg?style=flat-square&color=bc8cff&labelColor=161b22&logo=github&logoColor=white" alt="contributors"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/discussions"><img src="https://img.shields.io/github/discussions/esengine/DeepSeek-Reasonix.svg?style=flat-square&color=58a6ff&labelColor=161b22&logo=github&logoColor=white" alt="Discussions"/></a>
-  <a href="https://discord.gg/XF78rEME2D"><img src="https://img.shields.io/badge/discord-join-5865F2.svg?style=flat-square&labelColor=161b22&logo=discord&logoColor=white" alt="Discord"/></a>
 </p>
 
 <p align="center">
-  <a href="https://oosmetrics.com/repo/esengine/reasonix"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/9e931d80-2050-4b10-902e-44970cc133ad.svg" alt="oosmetrics — Top 2 in Agents by velocity"/></a>
-  <a href="https://oosmetrics.com/repo/esengine/reasonix"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/556d94b3-61b7-486b-baf2-888b9327deab.svg" alt="oosmetrics — Top 3 in LLMs by velocity"/></a>
-  <a href="https://oosmetrics.com/repo/esengine/reasonix"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/0f457d4c-efca-4d15-ad2b-139691ff342c.svg" alt="oosmetrics — Top 3 in CLI by velocity"/></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/voltui.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
 </p>
 
 <br/>
 
-<h3 align="center">面向终端的 DeepSeek 原生 AI coding agent。</h3>
-<p align="center">由配置与插件驱动的极薄 harness——单一静态 Go 二进制，围绕 DeepSeek 的前缀缓存调优，长会话也能把 token 成本压低。</p>
+<h3 align="center">面向企业内网的 AI coding agent。</h3>
+<p align="center">离线优先、多模型、Windows 10 开箱即用 —— 打包一次，内网全员上手。</p>
 
 <br/>
 
-> [!IMPORTANT]
-> **加入社区 · Community** — 双语 Discord，提供安装答疑（`#help` / `#求助`）、工作流展示与功能想法。→ **<https://discord.gg/XF78rEME2D>**
+## VoltUI 解决什么问题？
 
-## 特性
+VoltUI 专为**内网部署大模型的企业**打造 —— 在防火墙内运行 Qwen、DeepSeek、GLM 或私有模型的团队，
+需要的是一个无需联网、开箱即用的 AI 编程助手。
 
-- **配置驱动**：provider、agent、启用的工具、插件全部在 `reasonix.toml` 中声明，
-  内核无硬编码模型。
-- **多模型 · 可组合**：DeepSeek（flash/pro）与 MiMo 作为预设内置；任何 OpenAI 兼容
-  端点都只是一条配置。可选让两个模型协同（执行器 + 规划器），各自独立、缓存稳定的 session。
-- **插件驱动**：外部工具以子进程形式运行，通过 stdio JSON-RPC 通信（MCP 兼容）；
-  内置工具在编译期自注册。
-- **零摩擦分发**：`CGO_ENABLED=0` 单二进制；一条命令交叉编译到六个目标平台。
-  唯一依赖是一个 TOML 解析库。
+| 痛点 | VoltUI 的方案 |
+|------|---------------|
+| 公网 Agent 必须联网 | **离线优先** —— 运行时零网络依赖 |
+| 只支持单一模型 | **任意 OpenAI 兼容 API** —— 每个模型一行配置 |
+| 大规模部署困难 | **单二进制** —— 打包时内置 API 地址和 Key，下发即用 |
+| 工具只支持 Linux | **Windows 10 优先**，其次 macOS —— Edge 开箱即用 |
+| 无法浏览内部文档站 | **内置无头浏览器**，JS 重度页面也能渲染提取 |
+
+## 核心特性
+
+- **多模型支持。** DeepSeek、通义千问、智谱 GLM、Claude、MiMo、Ollama、vLLM —— 任何
+  OpenAI 兼容或 Anthropic 端点，一个 `[[providers]]` 配置项即可，无需改代码。双模型协同
+  （执行器 + 规划器）一行配置开启。
+- **离线 / 内网就绪。** 无 npm、无自动下载、无遥测回传，完全在防火墙内运行。浏览器自动化
+  直接用 Windows 10 自带的 Edge。
+- **打包即部署。** 构建时将 API 地址和 Key 嵌入二进制或配置文件 —— 分发一个开箱即用的包给
+  每位开发者，无需配置向导。
+- **Windows 10 优先。** Microsoft Edge（Chromium 内核）是 Win10 自带 —— `browser_navigate`
+  零配置可用。Windows 路径检测、RDP/VDI 友好。macOS 和 Linux 同样支持。
+- **配置驱动。** Provider、工具、权限、插件全部在 `voltui.toml` 中声明，无硬编码模型。
+  一个文件管一个团队，直接提交到仓库。
+- **插件驱动 (MCP)。** 外部工具通过 stdio JSON-RPC 或 HTTP 运行。兼容 MCP 生态 ——
+  放一个 `.mcp.json` 即可。
+- **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索
+  (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
+- **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。
+  详见 [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md)。
+- **技能与钩子。** Claude-Code 风格的技能 (`.voltui/skills/`) 和钩子
+  (`PreToolUse`/`PostToolUse`/`Stop`)，用于工作流自动化。
+- **规划模式。** 基于证据的步骤签署 (`complete_step`) —— 智能体提议，你审批。
+- **记忆。** `VOLTUI.md` 层级 + 自动记忆存储，折叠进缓存稳定前缀，跨会话保持上下文。
+- **单一静态二进制。** `CGO_ENABLED=0` —— 一个文件、无运行时依赖、交叉编译 6 个平台。
 
 ## 安装
 
+### 预构建（推荐企业统一下发）
+
 ```sh
-npm i -g reasonix                  # 任意系统;自动拉取对应平台的原生二进制
-brew install esengine/reasonix/reasonix   # macOS
+npm i -g voltui                  # 任意系统;自动拉取对应平台的原生二进制
 ```
-
-预编译归档(`darwin|linux|windows × amd64|arm64`)和 `SHA256SUMS` 见每个
-[GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases)。
-
-### 代码签名
-
-Windows 构建使用 [SignPath 基金会](https://signpath.org/) 提供的免费代码签名证书,
-通过 [SignPath.io](https://signpath.io/) 完成签名。
 
 ### 从源码构建
 
 ```sh
-make build      # -> bin/reasonix(.exe)
+make build      # -> bin/voltui(.exe)
 make cross      # -> dist/（darwin|linux|windows × amd64|arm64）
 ```
 
 ## 快速开始
 
+### 公网（使用外部 API）
+
 ```sh
-reasonix setup                      # 配置向导 → ./reasonix.toml
-export DEEPSEEK_API_KEY=sk-...  # 或写入 .env（见 .env.example）
-reasonix chat                       # 然后在会话里运行 /init 生成 AGENTS.md（项目记忆）
-reasonix run "把 main.go 里的 TODO 实现掉"
-reasonix run --model mimo-pro "给这个函数补单元测试"
-echo "解释这段代码" | reasonix run
+voltui setup                      # 配置向导 → ./voltui.toml
+export DEEPSEEK_API_KEY=sk-...  # 或写入 .env
+voltui chat
+```
+
+### 内网（使用私有模型端点）
+
+```sh
+# 编辑 voltui.toml，指向内网模型服务
+voltui chat                       # 无需联网，直接使用
+```
+
+### 打包部署（终端用户零配置）
+
+```sh
+# 管理员：构建时嵌入配置
+cp voltui.example.toml voltui.toml
+# 编辑 voltui.toml：设置 base_url 为内网端点、api_key 为内置 Key
+make build
+# 将 bin/voltui.exe 分发给每位开发者 —— 双击即用
 ```
 
 ## 配置
 
-一个最小的 `reasonix.toml`——一个 provider 加一个默认模型——就够跑起来:
+优先级：**flag > `./voltui.toml` > `~/.config/voltui/config.toml` > 内置默认值**。
+
+### 多模型配置
 
 ```toml
-default_model = "deepseek-flash"
+default_model = "qwen"   # 默认使用内网模型
+# language    = "zh"     # 界面语言；为空则自动检测
 
+# 内网通义千问 (DashScope / vLLM / Ollama)
 [[providers]]
-name        = "deepseek-flash"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-model       = "deepseek-v4-flash"
-api_key_env = "DEEPSEEK_API_KEY"
+name           = "qwen"
+kind           = "openai"
+base_url       = "http://10.0.1.100:8000/v1"   # 内网地址
+model          = "qwen3-235b-a22b"
+api_key_env    = "QWEN_API_KEY"
+context_window = 131072
+
+# 内网 DeepSeek
+[[providers]]
+name           = "deepseek"
+kind           = "openai"
+base_url       = "http://10.0.1.100:8001/v1"
+models         = ["deepseek-v4-flash", "deepseek-v4-pro"]
+api_key_env    = "DEEPSEEK_API_KEY"
+context_window = 1000000
+
+# 内网智谱 GLM
+[[providers]]
+name           = "glm"
+kind           = "openai"
+base_url       = "http://10.0.1.100:8002/v1"
+model          = "glm-4-plus"
+api_key_env    = "GLM_API_KEY"
+context_window = 128000
+
+# Claude（如有 Anthropic 访问权限）
+[[providers]]
+name           = "claude"
+kind           = "anthropic"
+model          = "claude-opus-4-8"
+api_key_env    = "ANTHROPIC_API_KEY"
+context_window = 1000000
 ```
 
-优先级为 **flag > `./reasonix.toml` > `~/.config/reasonix/config.toml` > 内置默认值**;
-密钥经环境变量通过 `api_key_env` 注入,绝不写入配置文件。权限、沙盒、插件(MCP)、
-斜杠命令、`@` 引用与双模型设置,全部在 **[指南](./docs/GUIDE.zh-CN.md)** 里。
+### 打包部署（内置 Key）
+
+企业统一下发时，将 API 地址和 Key 直接嵌入配置，开发者无需任何设置：
+
+```toml
+# voltui.toml — 打包进分发 ZIP
+default_model  = "company-llm"
+
+[[providers]]
+name        = "company-llm"
+kind        = "openai"
+base_url    = "http://llm.internal.company.com/v1"
+model       = "qwen3-235b-a22b"
+api_key_env = "COMPANY_LLM_KEY"   # 或在 .env 中设默认值
+
+[permissions]
+mode  = "ask"   # 内网可信团队可设为 "allow"
+```
+
+然后将 `voltui.exe` + `voltui.toml` + `.env` 打成 ZIP 下发。
+
+### 白标 / OEM 品牌定制
+
+替换产品名称和 Logo，无需重新编译：
+
+```toml
+# voltui.toml
+[brand]
+name        = "银河助手"                             # 窗口标题、托盘、引导页
+short_name  = "助手"                                 # 紧凑形式（菜单栏）
+logo_path   = "C:\\Program Files\\Acme\\logo.png"    # 图标（PNG/SVG/JPG/ICO）
+wordmark_path = "C:\\Program Files\\Acme\\logo-text.png"   # 图标 + 文字
+```
+
+也可以用环境变量（适合打包部署 / 容器场景）：
+
+```bash
+VOLTUI_BRAND_NAME="银河助手"
+VOLTUI_BRAND_SHORT_NAME="助手"
+VOLTUI_BRAND_LOGO="C:\Program Files\Acme\logo.png"
+VOLTUI_BRAND_WORDMARK="C:\Program Files\Acme\logo-text.png"
+VOLTUI_BRAND_ICON="C:\Program Files\Acme\tray-icon.ico"
+```
+
+环境变量优先于配置文件。`logo_path` / `wordmark_path` / `icon_path` 留空
+则使用内置 VoltUI SVG/图标资源。AI 系统提示词会自动将 "VoltUI" 替换为
+配置的品牌名称。托盘/任务栏图标也可以通过 `icon_path` 替换（Windows 用
+.ico，macOS/Linux 用 .png）。
+
+### 双模型协同
+
+加一个规划器模型处理复杂任务 —— 配置加一行：
+
+```toml
+[agent]
+planner_model = "deepseek-pro"   # 便宜模型规划，强模型执行
+```
+
+### 权限与沙盒
+
+```toml
+[permissions]
+mode  = "ask"                                # ask | allow | deny
+deny  = ["bash(rm -rf*)", "bash(git push*)"] # 任何模式下都硬阻断
+allow = ["bash(go test*)"]                   # 从不询问
+
+[sandbox]
+# workspace_root = ""          # 文件写工具被限制在此目录；留空 = 当前目录
+# allow_write    = ["/tmp"]    # write_file/edit_file/multi_edit 额外可写的目录
+```
+
+## 浏览器（默认启用）
+
+内置 `browser_navigate` 工具，在无头 Chromium 中渲染 JS 重度页面 —— 浏览内网文档站、
+管理后台、SPA 应用时，`web_fetch`（纯 HTTP）做不到的事它能做。
+
+- **Windows 10：**系统自带 Edge（Chromium 内核），零配置开箱即用。
+- **macOS / Linux：**自动检测 Chrome/Chromium/Edge。
+- **内网：**运行时无需联网。如自动检测不到，设置 `VOLTUI_BROWSER_PATH` 即可。
+
+```toml
+[browser]
+# path = "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"  # Windows
+# path = "/usr/bin/chromium"                                              # Linux
+# path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"  # macOS
+```
+
+## 插件（MCP）
+
+VoltUI 是 MCP 客户端。通过 `[[plugins]]` 接入内网工具服务：
+
+```toml
+[[plugins]]                       # 本地 stdio 服务器（如内部知识库）
+name    = "knowledge-base"
+command = "my-mcp-knowledge-base"
+args    = ["--db", "http://docs.internal.company.com"]
+
+[[plugins]]                       # 远程 Streamable HTTP 服务器
+name    = "internal-search"
+type    = "http"
+url     = "http://search.internal.company.com/mcp"
+headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
+```
+
+在项目根目录放一个 `.mcp.json`，VoltUI 会原样读取。
+
+## 架构
+
+三层可扩展性，全部藏在内核按名解析的 registry 之后：
+
+1. **Registry**：`Provider` 与 `Tool` 是接口；内核无硬编码模型。
+2. **编译期内置**：provider 和 tool 通过 `init()` 自注册，新增 = 一个文件 + 一行 import。
+3. **运行时插件**：配置里声明的 MCP stdio/HTTP 服务器，每个远程 tool 适配成 `Tool` 接口。
 
 ## 文档
 
-- **[指南](./docs/GUIDE.zh-CN.md)** —— 配置、权限与沙盒、插件(MCP)、斜杠命令、
-  `@` 引用、双模型协同。
-- **[规格](./docs/SPEC.md)** —— 工程契约:架构、registry、数据类型与路线图。
-- **[从 0.x 迁移](./docs/MIGRATING.md)** —— 从 legacy TypeScript 版本迁到 1.0 Go 重写版。
-- **[Checkpoints 与 rewind](./docs/CHECKPOINTS.md)** —— 基于快照的编辑安全网
-  (Esc-Esc / `/rewind`)。
-
-<br/>
-
-## Star 趋势
-
-<a href="https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=esengine/DeepSeek-Reasonix&type=date&legend=top-left" />
- </picture>
-</a>
-
-<br/>
-
-## 支持本项目
-
-如果 Reasonix 帮你省了时间或 token，欢迎请杯咖啡。捐助不会换来 feature 优先级，也不会影响 issue 的处理顺序——就是「谢谢」。
-
-- **国内** — 微信支付（扫下方二维码）
-- **海外** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
-
-<p align="center">
-  <img src=".github/sponsor/wechat-pay.jpg" alt="微信支付收款码" width="240"/>
-</p>
-
-<br/>
+- **[检查点与回退](./docs/CHECKPOINTS.md)** — 基于快照的编辑安全网（Esc-Esc / `/rewind`）。
+- **[规格](./docs/SPEC.md)** — 工程契约：架构、注册表、数据类型与路线图。
+- **[从 0.x 迁移](./docs/MIGRATING.md)** — 从旧版 TypeScript 发布版迁移到 1.0 Go 重写版。
 
 ## 致谢
 
-下面这些朋友的工作塑造了 Reasonix 今天的样子 —— 综合 commit 数和代码量两个维度。
-**按字母顺序排列，排名不分先后。** 完整贡献者列表在
-[GitHub](https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors)。
-
-- [**ctharvey**](https://github.com/ctharvey)
-- [**dimasd-angga**](https://github.com/dimasd-angga)（Dimas D. Angga）
-- [**Evan-Pycraft**](https://github.com/Evan-Pycraft)
-- [**ForeverYoungPp**](https://github.com/ForeverYoungPp)
-- [**GTC2080**](https://github.com/GTC2080)（TaoMu）
-- [**kabaka9527**](https://github.com/kabaka9527)
-- [**lisniuse**](https://github.com/lisniuse)（Richie）
-- [**wade19990814-hue**](https://github.com/wade19990814-hue)
-- [**wviana**](https://github.com/wviana)（Wesley Viana）
-
-另外特别感谢 [**Bernardxu123**](https://github.com/Bernardxu123) 设计的项目 logo，
-以及 [AIGC Link](https://xhslink.com/m/80ngts127cA) 在小红书上的推广。
-
-<p align="center">
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=esengine/DeepSeek-Reasonix&max=100&columns=12" alt="esengine/DeepSeek-Reasonix 贡献者" width="860"/>
-  </a>
-</p>
+VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的衍生作品，
+原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE)；
+第三方依赖及其许可证见 [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES)。
 
 <br/>
 
@@ -179,6 +281,4 @@ api_key_env = "DEEPSEEK_API_KEY"
 
 <p align="center">
   <sub>MIT —— 见 <a href="./LICENSE">LICENSE</a></sub>
-  <br/>
-  <sub>由 <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a> 社区共建</sub>
 </p>

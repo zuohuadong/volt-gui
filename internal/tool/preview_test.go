@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"reasonix/internal/diff"
+	"voltui/internal/diff"
 )
 
 type fakeWriter struct {

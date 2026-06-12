@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/mcpdiag"
+	"voltui/internal/mcpdiag"
 )
 
 func (m chatTUI) renderMCPManager() string {
@@ -25,6 +25,8 @@ func (p *mcpManager) render(width int) string {
 		return managerContentPanelStyle(w).Render(p.renderTools(w))
 	case mcpStageLogs:
 		return managerContentPanelStyle(w).Render(p.renderLogs(w))
+	case mcpStageMode:
+		return managerContentPanelStyle(w).Render(p.renderMode(w))
 	case mcpStageConfirmRemove:
 		return managerContentPanelStyle(w).Render(p.renderConfirmRemove(w))
 	case mcpStageConfirmClearAuth:
@@ -37,16 +39,18 @@ func (p *mcpManager) render(width int) string {
 func (p *mcpManager) footerHint() string {
 	switch p.stage {
 	case mcpStageDetail:
-		return "↑/↓ navigate · r refresh · Enter to select · Esc to back"
+		return "↑/↓ navigate · Enter to select · Esc to back"
 	case mcpStageTools, mcpStageLogs:
 		return "Esc to back"
+	case mcpStageMode:
+		return "Enter to apply · Esc to back"
 	case mcpStageConfirmRemove, mcpStageConfirmClearAuth:
 		return "Enter to select · y confirm · n cancel · Esc to back"
 	default:
 		if len(p.snapshot.servers) == 0 {
 			return "↑/↓ navigate · Enter to confirm · Esc to cancel"
 		}
-		return "↑/↓ navigate · r refresh · Enter for details · Esc to close"
+		return "↑/↓ navigate · Enter for details · Esc to close"
 	}
 }
 
@@ -139,9 +143,12 @@ func (p *mcpManager) renderDetail(width int) string {
 	} else {
 		loc := fallbackText(p.snapshot.configPath, "not saved")
 		if loc != "not saved" {
-			loc = viewCompactPath(loc, viewBudget(width, 18))
+			loc = viewCompactPath(loc, min(viewBudget(width, 18), 48))
 		}
 		writeMCPDetailField(&b, "Config location", loc)
+	}
+	if v.Configured {
+		writeMCPDetailField(&b, "Connection mode", mcpModeLabel(v.Tier))
 	}
 	writeMCPDetailField(&b, "Capabilities", mcpCapabilitiesText(v))
 	writeMCPDetailField(&b, "Tools", countText(v.Tools, "tool"))
@@ -205,6 +212,22 @@ func (p *mcpManager) renderLogs(width int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+func (p *mcpManager) renderMode(width int) string {
+	v, ok := p.selectedServer()
+	if !ok {
+		return "MCP server not found\n\n" + dim("Esc to back")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Connection mode for %s\n\n", bold(v.Name))
+	for i, choice := range mcpModeChoices {
+		active := choice.tier == v.Tier
+		line := rowLine(i == p.mode, i+1, "", choice.label, active)
+		b.WriteString(line + "\n")
+		b.WriteString(dim("       "+viewCompactText(choice.desc, viewBudget(width, 7))) + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (p *mcpManager) renderConfirmRemove(width int) string {
 	v, ok := p.selectedServer()
 	if !ok {
@@ -212,7 +235,7 @@ func (p *mcpManager) renderConfirmRemove(width int) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Remove MCP server %q?\n", v.Name)
-	b.WriteString(viewMeta("This removes it from Reasonix config. It cannot be undone from this panel.") + "\n\n")
+	b.WriteString(viewMeta("This removes it from VoltUI config. It cannot be undone from this panel.") + "\n\n")
 	b.WriteString(rowLine(p.confirm == 0, 1, "", "Confirm remove", false) + "\n")
 	b.WriteString(rowLine(p.confirm == 1, 2, "", "Cancel", false) + "\n")
 	return strings.TrimRight(b.String(), "\n")
@@ -294,6 +317,7 @@ func appendMCPFailureSecondaryActions(out []mcpActionItem, v mcpServerView, conf
 
 func appendMCPConfigActions(out []mcpActionItem, v mcpServerView, configPath string) []mcpActionItem {
 	if v.Configured {
+		out = append(out, mcpActionItem{mcpActionMode, "Change connection mode"})
 		if !v.BuiltIn && configPath != "" {
 			out = append(out, mcpActionItem{mcpActionEdit, "Edit config"})
 		}
@@ -369,4 +393,13 @@ func mcpCommandLine(v mcpServerView) string {
 		return strings.TrimSpace(v.URL)
 	}
 	return strings.TrimSpace(v.Command + " " + strings.Join(v.Args, " "))
+}
+
+func mcpModeLabel(tier string) string {
+	for _, choice := range mcpModeChoices {
+		if choice.tier == normalizeMCPTierForCLI(tier) {
+			return choice.label
+		}
+	}
+	return mcpModeChoices[0].label
 }

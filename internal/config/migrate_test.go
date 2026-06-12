@@ -16,7 +16,7 @@ func legacyHome(t *testing.T) (src, dest, home string) {
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
 	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows
-	return filepath.Join(home, ".reasonix", "config.json"), userConfigPath(), home
+	return filepath.Join(home, ".voltui", "config.json"), userConfigPath(), home
 }
 
 func writeLegacy(t *testing.T, src, body string) {
@@ -47,7 +47,8 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 	}
 	if res == nil {
 		t.Fatal("expected a migration result")
-	} else if !res.KeyToEnv || res.Plugins != 2 {
+	}
+	if !res.KeyToEnv || res.Plugins != 2 {
 		t.Errorf("result = %+v, want KeyToEnv=true Plugins=2", res)
 	}
 
@@ -75,59 +76,6 @@ func TestMigrateImportsKeyPluginsAndLang(t *testing.T) {
 
 	if _, err := os.Stat(src); err != nil {
 		t.Errorf("legacy file must be left untouched: %v", err)
-	}
-}
-
-// TestMigrateImportsLegacyMCPStringList covers the pre-mcpServers `mcp` format
-// (#3949): `--mcp`-style strings, with mcpEnv/mcpDisabled keyed by name and
-// mcpServers winning a name collision.
-func TestMigrateImportsLegacyMCPStringList(t *testing.T) {
-	src, _, _ := legacyHome(t)
-	writeLegacy(t, src, `{
-		"mcp": [
-			"memory=npx -y @modelcontextprotocol/server-memory",
-			"search=https://mcp.example.com/sse",
-			"stream=streamable+https://mcp.example.com/http",
-			"fs=node old-fs.js",
-			"off=npx -y server-off"
-		],
-		"mcpServers": {"fs": {"command": "npx", "args": ["-y", "server-fs"]}},
-		"mcpEnv": {"memory": {"MEMORY_PATH": "/tmp/mem"}},
-		"mcpDisabled": ["off"]
-	}`)
-
-	if _, err := MigrateLegacyIfNeeded(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	byName := map[string]PluginEntry{}
-	for _, p := range cfg.Plugins {
-		byName[p.Name] = p
-	}
-	mem := byName["memory"]
-	if mem.Command != "npx" || len(mem.Args) != 2 || mem.Args[1] != "@modelcontextprotocol/server-memory" {
-		t.Errorf("memory spec not parsed: %+v", mem)
-	}
-	if mem.Env["MEMORY_PATH"] != "/tmp/mem" {
-		t.Errorf("mcpEnv not applied to memory: %+v", mem.Env)
-	}
-	if s := byName["search"]; s.Type != "sse" || s.URL != "https://mcp.example.com/sse" {
-		t.Errorf("plain URL should migrate as SSE: %+v", s)
-	}
-	if s := byName["stream"]; s.Type != "http" || s.URL != "https://mcp.example.com/http" {
-		t.Errorf("streamable+ URL should migrate as http: %+v", s)
-	}
-	if fs := byName["fs"]; len(fs.Args) != 2 || fs.Args[1] != "server-fs" {
-		t.Errorf("mcpServers should win the fs name collision: %+v", fs)
-	}
-	if off := byName["off"]; off.AutoStart == nil || *off.AutoStart {
-		t.Errorf("mcpDisabled entry should migrate with auto_start=false: %+v", off)
-	}
-	if len(cfg.Plugins) != 5 {
-		t.Errorf("got %d plugins, want 5: %+v", len(cfg.Plugins), cfg.Plugins)
 	}
 }
 
@@ -171,7 +119,7 @@ func TestMigrateSkipsWhenDestExists(t *testing.T) {
 
 func TestMigrateImportsLegacyV1TOMLBeforeJSON(t *testing.T) {
 	srcJSON, dest, _ := legacyHome(t)
-	legacyTOML := filepath.Join(filepath.Dir(dest), "reasonix.toml")
+	legacyTOML := filepath.Join(filepath.Dir(dest), "voltui.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +165,7 @@ command = "legacy-bin"
 
 func TestMigrateImportsLegacyV1HomeTOMLBeforeJSON(t *testing.T) {
 	srcJSON, dest, home := legacyHome(t)
-	legacyTOML := filepath.Join(home, ".reasonix", "reasonix.toml")
+	legacyTOML := filepath.Join(home, ".voltui", "voltui.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
 		t.Fatal(err)
 	}

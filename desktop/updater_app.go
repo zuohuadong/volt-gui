@@ -8,7 +8,7 @@ import (
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"reasonix/desktop/internal/update"
+	"voltui/desktop/internal/update"
 )
 
 // updater_app.go is the auto-updater's bound command surface — the App methods the
@@ -30,7 +30,7 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 		return &UpdateInfo{
 			Current:       version,
 			CanSelfUpdate: canSelfUpdate(),
-			DownloadURL:   downloadPage(),
+			DownloadURL:   defaultDownloadPage,
 			Err:           err.Error(),
 		}, nil
 	}
@@ -41,7 +41,7 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 		return &UpdateInfo{
 			Current:       version,
 			CanSelfUpdate: canSelfUpdate(),
-			DownloadURL:   downloadPage(),
+			DownloadURL:   defaultDownloadPage,
 			Err:           err.Error(),
 		}, nil
 	}
@@ -52,7 +52,7 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 // OpenDownloadPage opens the releases page in the browser — the macOS manual-update
 // path and a fallback link elsewhere.
 func (a *App) OpenDownloadPage() {
-	page := downloadPage()
+	page := defaultDownloadPage
 	if c, err := httpClient(); err == nil {
 		ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 		defer cancel()
@@ -127,8 +127,7 @@ func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	v4, _ := httpClientIPv4() // best-effort IPv4 fallback; nil just means retries reuse c
-	data, err := download(a.reqCtx(), c, v4, asset.URL, asset.Size, func(rcv, total int64) {
+	data, err := download(a.reqCtx(), c, asset.URL, asset.Size, func(rcv, total int64) {
 		a.emitProgress("downloading", rcv, total, "")
 	})
 	if err != nil {

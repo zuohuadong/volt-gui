@@ -40,3 +40,13 @@ Use this index when filling `Required Skills and Conventions` in a Task Contract
 Candidate for a later split:
 
 - `git-pr-review-ops`: safe commit/push/PR review/merge operations. For now, use `provider-adapter` plus project workflow `pr-review-merge.md`.
+
+## 暗涌 Fork 专属 Skills
+
+以下 skill 是西谷AI (Xigu AI) 暗涌 fork 的行业定制，不贡献到上游：
+
+| Task area | Skill |
+| --- | --- |
+| 暗涌品牌配置、BrandConfig 环境变量、白标定制验证 | `anyong-brand-config` |
+| CNB CI/CD 管道配置、.cnb.yml、自动发版、跨仓库 PR | `cnb-ci-cd` |
+| 西谷AI 内部运营、产品策略、中国市场、上游同步策略 | `xigu-ai-ops` |

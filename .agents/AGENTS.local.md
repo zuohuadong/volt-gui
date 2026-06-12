@@ -16,6 +16,9 @@
 - Desktop/Wails 任务需要同时关注 `desktop/go.mod`、嵌入的 `desktop/frontend/dist`、平台差异和 CGO/WebKit 依赖。
 - Site/Astro 任务需要加载 `typescript`；如涉及部署，再加载 `deployment-target-selector`。
 - 涉及 agent-team 自动化、Task Ledger、mailbox、provider adapter 时加载 `agent-team-automation` 和 `provider-adapter`。
+- **暗涌品牌相关**：加载 `anyong-brand-config` — 禁止在源码中硬编码品牌名，使用 BrandConfig 机制。
+- **CNB CI/CD 相关**：加载 `cnb-ci-cd` — 涉及 .cnb.yml、自动发版、CNB API。
+- **西谷AI 内部决策**：加载 `xigu-ai-ops` — 涉及产品策略、上游同步、中国市场背景。
 
 ## Verification Profile
 

@@ -136,6 +136,11 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 	}
 	if a, ok := m.Asset(); ok {
 		info.AssetSize = a.Size
+		if strings.TrimSpace(a.Sig) == "" {
+			info.CanSelfUpdate = false
+		}
+	} else {
+		return info
 	}
 	return info
 }

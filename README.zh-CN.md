@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="暗涌" width="640"/>
+  <img src="docs/logo.svg" alt="暗涌 Anyong" width="640"/>
 </p>
 
 <p align="center">
@@ -13,58 +13,51 @@
 </p>
 
 <p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/voltui.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-0c2d48?style=flat-square&labelColor=145374" alt="license"/></a>
+  <img src="https://img.shields.io/badge/platform-Win%20%7C%20macOS%20%7C%20Linux-1b6ca8?style=flat-square&labelColor=0c2d48" alt="platform"/>
+  <img src="https://img.shields.io/badge/runtime-%E7%A6%BB%E7%BA%BF%E4%BC%98%E5%85%88-5bc0eb?style=flat-square&labelColor=0c2d48" alt="offline"/>
 </p>
 
 <br/>
 
-> **西谷AI 暗涌系统** — 基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails) 的本土化编码 Agent fork。
-> 源码与上游保持同步，品牌通过 `BrandConfig` 机制定制，不硬编码替换。
+> **暗涌 (Anyong)** — [西谷AI](https://cnb.cool/aizhuliren) 出品的本土化 AI 编码 Agent。
+> 离线优先、多模型、内网就绪 —— 打包一次，全员上手。
 
 <br/>
 
-<h3 align="center">面向企业内网的 AI coding agent。</h3>
-<p align="center">离线优先、多模型、Windows 10 开箱即用 —— 打包一次，内网全员上手。</p>
+<h3 align="center">防火墙内部署一次，全员获得 AI 编程搭档。</h3>
+<p align="center">无需联网 · 无遥测回传 · 无配置向导 · 一个二进制 + 内网模型端点，开箱即用。</p>
 
 <br/>
 
 ## 暗涌解决什么问题？
 
-暗涌专为**内网部署大模型的企业**打造 —— 在防火墙内运行 Qwen、DeepSeek、GLM 或私有模型的团队，
-需要的是一个无需联网、开箱即用的 AI 编程助手。
+企业已经在内网部署了通义千问、DeepSeek、智谱 GLM 或私有模型 —— 但开发者仍然没有 AI 编程助手，因为所有公开 Agent 都**必须联网**。
 
 | 痛点 | 暗涌的方案 |
 |------|------------|
-| 公网 Agent 必须联网 | **离线优先** —— 运行时零网络依赖 |
-| 只支持单一模型 | **任意 OpenAI 兼容 API** —— 每个模型一行配置 |
-| 大规模部署困难 | **单二进制** —— 打包时内置 API 地址和 Key，下发即用 |
-| 工具只支持 Linux | **Windows 10 优先**，其次 macOS —— Edge 开箱即用 |
+| 公网 Agent 必须联网 | **离线优先** —— 运行时零网络调用、零遥测 |
+| 只支持单一模型 | **任意 OpenAI 兼容 API** —— 一行配置切换模型 |
+| IT 不喜欢 npm/node 安装 | **单一静态二进制** —— 下载即用，零依赖 |
+| "我们开发者用 Windows 10" | **Windows 10 优先** —— Edge 自带，浏览器工具零配置可用 |
 | 无法浏览内部文档站 | **内置无头浏览器**，JS 重度页面也能渲染提取 |
+| 大规模部署困难 | **打包时内置 API 地址和 Key** —— 双击即用 |
 
 ## 核心特性
 
-- **多模型支持。** DeepSeek、通义千问、智谱 GLM、Claude、MiMo、Ollama、vLLM —— 任何
-  OpenAI 兼容或 Anthropic 端点，一个 `[[providers]]` 配置项即可，无需改代码。双模型协同
-  （执行器 + 规划器）一行配置开启。
-- **离线 / 内网就绪。** 无 npm、无自动下载、无遥测回传，完全在防火墙内运行。浏览器自动化
-  直接用 Windows 10 自带的 Edge。
-- **打包即部署。** 构建时将 API 地址和 Key 嵌入二进制或配置文件 —— 分发一个开箱即用的包给
-  每位开发者，无需配置向导。
-- **Windows 10 优先。** Microsoft Edge（Chromium 内核）是 Win10 自带 —— `browser_navigate`
-  零配置可用。Windows 路径检测、RDP/VDI 友好。macOS 和 Linux 同样支持。
-- **配置驱动。** Provider、工具、权限、插件全部在 `voltui.toml` 中声明，无硬编码模型。
-  一个文件管一个团队，直接提交到仓库。
-- **插件驱动 (MCP)。** 外部工具通过 stdio JSON-RPC 或 HTTP 运行。兼容 MCP 生态 ——
-  放一个 `.mcp.json` 即可。
-- **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索
-  (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
-- **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。
-  详见 [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md)。
-- **技能与钩子。** Claude-Code 风格的技能 (`.voltui/skills/`) 和钩子
-  (`PreToolUse`/`PostToolUse`/`Stop`)，用于工作流自动化。
+- **多模型支持。** 通义千问、DeepSeek、智谱 GLM、Claude、MiMo、Ollama、vLLM —— 任何 OpenAI 兼容或 Anthropic 端点，一个 `[[providers]]` 配置项即可，无需改代码。双模型协同（执行器 + 规划器）一行配置开启。
+- **离线 / 内网就绪。** 无 npm、无自动下载、无遥测回传，完全在防火墙内运行。浏览器自动化直接用 Windows 10 自带的 Edge。
+- **打包即部署。** 构建时将 API 地址和 Key 嵌入二进制或配置文件 —— 分发一个开箱即用的包给每位开发者，无需配置向导。
+- **Windows 10 优先。** Microsoft Edge（Chromium 内核）是 Win10 自带 —— `browser_navigate` 零配置可用。Windows 路径检测、RDP/VDI 友好。macOS 和 Linux 同样支持。
+- **配置驱动。** Provider、工具、权限、插件全部在 `voltui.toml` 中声明，无硬编码模型。一个文件管一个团队，直接提交到仓库。
+- **插件驱动 (MCP)。** 外部工具通过 stdio JSON-RPC 或 HTTP 运行。兼容 MCP 生态 —— 放一个 `.mcp.json` 即可。
+- **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索 (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
+- **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。详见 [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md)。
+- **技能与钩子。** Claude-Code 风格的技能 (`.voltui/skills/`) 和钩子 (`PreToolUse`/`PostToolUse`/`Stop`)，用于工作流自动化。
 - **规划模式。** 基于证据的步骤签署 (`complete_step`) —— 智能体提议，你审批。
 - **记忆。** `VOLTUI.md` 层级 + 自动记忆存储，折叠进缓存稳定前缀，跨会话保持上下文。
 - **单一静态二进制。** `CGO_ENABLED=0` —— 一个文件、无运行时依赖、交叉编译 6 个平台。
+- **行业技能。** 半导体 ATE、良率/SPC、失效分析、LIMS/OCR 数据组织 —— fork 专属技能，留在本地。
 
 ## 安装
 
@@ -86,8 +79,8 @@ make cross      # -> dist/（darwin|linux|windows × amd64|arm64）
 ### 公网（使用外部 API）
 
 ```sh
-voltui setup                      # 配置向导 → ./voltui.toml
-export DEEPSEEK_API_KEY=sk-...  # 或写入 .env
+voltui setup                      # 配置向导 -> ./voltui.toml
+export DEEPSEEK_API_KEY=sk-...    # 或写入 .env
 voltui chat
 ```
 
@@ -222,8 +215,7 @@ allow = ["bash(go test*)"]                   # 从不询问
 
 ## 浏览器（默认启用）
 
-内置 `browser_navigate` 工具，在无头 Chromium 中渲染 JS 重度页面 —— 浏览内网文档站、
-管理后台、SPA 应用时，`web_fetch`（纯 HTTP）做不到的事它能做。
+内置 `browser_navigate` 工具，在无头 Chromium 中渲染 JS 重度页面 —— 浏览内网文档站、管理后台、SPA 应用时，`web_fetch`（纯 HTTP）做不到的事它能做。
 
 - **Windows 10：**系统自带 Edge（Chromium 内核），零配置开箱即用。
 - **macOS / Linux：**自动检测 Chrome/Chromium/Edge。
@@ -281,10 +273,7 @@ headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 
 ## 致谢
 
-暗涌基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，
-VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的衍生作品，
-原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE)；
-第三方依赖及其许可证见 [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES)。
+暗涌基于 [VoltUI](https://cnb.cool/aizhuliren/volt-gui) 开发，VoltUI 是 [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的衍生作品，原始项目以 MIT 许可证发布。详见 [NOTICE](./NOTICE) 和 [THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES)。
 
 <br/>
 

@@ -21,7 +21,7 @@ import (
 // frontend displays it; CheckUpdate compares against it.
 func (a *App) Version() string { return version }
 
-// CheckUpdate fetches the manifest (R2, then GitHub) and reports whether a newer
+// CheckUpdate fetches the CNB release manifest and reports whether a newer
 // build is available for this platform. Safe to call on startup: a network error
 // surfaces in UpdateInfo.Err rather than failing, so the UI can stay quiet.
 func (a *App) CheckUpdate() (*UpdateInfo, error) {

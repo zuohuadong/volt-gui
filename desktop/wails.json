@@ -3,7 +3,7 @@
   "name": "暗涌",
   "outputfilename": "voltui-desktop",
   "frontend:install": "pnpm install",
-  "frontend:build": "pnpm build",
+  "frontend:build": "pnpm build:release",
   "frontend:dev:watcher": "pnpm dev",
   "frontend:dev:serverUrl": "auto",
   "author": {

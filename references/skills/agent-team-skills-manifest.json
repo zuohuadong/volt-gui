@@ -1,0 +1,193 @@
+{
+  "source": "agent-team-config/references/skills",
+  "skillRoot": "references/skills",
+  "count": 31,
+  "skills": [
+    {
+      "id": "agent-team-automation",
+      "frontmatterName": "agent-team-automation",
+      "path": "references/skills/agent-team-automation/SKILL.md",
+      "description": "Use when creating, editing, reviewing, or operating agent-team task automation, including Task Ledger, Task Contract, Codex scheduled tasks, executor/reviewer/health/smoke flows, blocked/follow-up rules, and project-level mailbox/progress coordination."
+    },
+    {
+      "id": "alpine-frontend",
+      "frontmatterName": "alpine-frontend",
+      "path": "references/skills/alpine-frontend/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining Alpine.js frontends for lightweight HTML-first interactions, static reports, server-rendered pages, simple toggles, filters, disclosure UI, or no-build enhancements."
+    },
+    {
+      "id": "bun-cli-cross-platform",
+      "frontmatterName": "bun-cli-cross-platform",
+      "path": "references/skills/bun-cli-cross-platform/SKILL.md",
+      "description": "Use when editing Bun-based CLI scripts, setup/install commands, filesystem sync, symlink/copy behavior, shell hooks, zsh or PowerShell snippets, temp sandboxes, and cross-platform path handling in agent-team setup.ts."
+    },
+    {
+      "id": "cloudflare-d1-database",
+      "frontmatterName": "cloudflare-d1-database",
+      "path": "references/skills/cloudflare-d1-database/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining Cloudflare D1 persistence for Workers, Pages Functions, edge apps, Wrangler migrations, bindings, and edge-compatible relational storage."
+    },
+    {
+      "id": "cloudflare-edge-hosting",
+      "frontmatterName": "cloudflare-edge-hosting",
+      "path": "references/skills/cloudflare-edge-hosting/SKILL.md",
+      "description": "Use when deploying or reviewing Cloudflare Pages, Pages Functions, Workers, D1, R2, KV, Queues, or other Cloudflare edge hosting choices."
+    },
+    {
+      "id": "database-profile-selector",
+      "frontmatterName": "database-profile-selector",
+      "path": "references/skills/database-profile-selector/SKILL.md",
+      "description": "Use when choosing, validating, or recording database/storage decisions, especially SQLite, Cloudflare D1, PostgreSQL, migrations, data residency, edge/runtime constraints, or Task Contract database_profile fields."
+    },
+    {
+      "id": "deployment-target-selector",
+      "frontmatterName": "deployment-target-selector",
+      "path": "references/skills/deployment-target-selector/SKILL.md",
+      "description": "Use when choosing or reviewing a hosting/deployment target such as SupaCloud, svadmin, Tencent EdgeOne, Cloudflare Pages/Workers, self-hosting, static hosting, edge functions, or admin backoffice surfaces."
+    },
+    {
+      "id": "edgeone-deploy",
+      "frontmatterName": "edgeone-deploy",
+      "path": "references/skills/edgeone-deploy/SKILL.md",
+      "description": "Use when deploying or reviewing Tencent Cloud EdgeOne Pages or Edge Functions, especially for China/mainland latency, Tencent Cloud ecosystem, CDN/DNS edge hosting, static sites, or serverless edge code."
+    },
+    {
+      "id": "electrobun-best-practices",
+      "frontmatterName": "electrobun-best-practices",
+      "path": "references/skills/electrobun-best-practices/SKILL.md",
+      "description": "Use when building or maintaining Electrobun desktop apps in TypeScript, including electrobun.config.ts, electrobun/bun or electrobun/view imports, BrowserWindow/BrowserView usage, updater flows, and distribution artifacts."
+    },
+    {
+      "id": "electron-desktop",
+      "frontmatterName": "electron-desktop",
+      "path": "references/skills/electron-desktop/SKILL.md",
+      "description": "Use when building or maintaining Electron desktop apps, including BrowserWindow, preload scripts, IPC, packaging, auto-update, signing/notarization, or Electron security reviews."
+    },
+    {
+      "id": "elysia",
+      "frontmatterName": "elysiajs",
+      "path": "references/skills/elysia/SKILL.md",
+      "description": "Create backend with ElysiaJS, a type-safe, high-performance framework."
+    },
+    {
+      "id": "hono-backend",
+      "frontmatterName": "hono-backend",
+      "path": "references/skills/hono-backend/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining Hono APIs or middleware, especially lightweight TypeScript backends, Web Standards handlers, Cloudflare Workers/Pages, Bun, Deno, Node.js, edge functions, webhooks, or portable runtime APIs."
+    },
+    {
+      "id": "mobile-app",
+      "frontmatterName": "mobile-app",
+      "path": "references/skills/mobile-app/SKILL.md",
+      "description": "Use when building or maintaining mobile apps, choosing Expo React Native/Capacitor/Flutter/native profiles, packaging Web/PWA as an app, or defining mobile build and native capability verification."
+    },
+    {
+      "id": "mpx-development-guides",
+      "frontmatterName": "mpx-development-guides",
+      "path": "references/skills/mpx-development-guides/SKILL.md",
+      "description": "Mpx 框架开发指南集合，包含项目结构、开发语法、跨端输出、分包配置等，当用户询问 Mpx 开发相关问题时强制调用。"
+    },
+    {
+      "id": "mpx-rn-style-guide",
+      "frontmatterName": "mpx-rn-style-guide",
+      "path": "references/skills/mpx-rn-style-guide/SKILL.md",
+      "description": "Mpx 跨端输出 RN （Mpx2RN or Mpx2DRN）的样式兼容适配开发指南，当用户询问 Mpx 跨端输出 RN 样式相关问题时强制调用，包括：Mpx2RN 样式适配、Mpx2RN 样式兼容改造、Mpx2RN 样式能力支持、Mpx2RN 样式不生效、Mpx2RN 样式报错、Mpx2RN 样式开发最佳实践、Mpx2RN 中如何实现某样式效果等。"
+    },
+    {
+      "id": "nestjs-backend",
+      "frontmatterName": "nestjs-backend",
+      "path": "references/skills/nestjs-backend/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining NestJS backends, especially enterprise Node.js APIs, modular architecture, dependency injection, decorators, guards, pipes, interceptors, OpenAPI, microservices, or Java/Spring-like team conventions."
+    },
+    {
+      "id": "nuxt-fullstack",
+      "frontmatterName": "nuxt-fullstack",
+      "path": "references/skills/nuxt-fullstack/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining Nuxt applications, including Vue file-based routing, SSR/SSG/hybrid rendering, Nitro server routes, modules, composables, and deployment target fit."
+    },
+    {
+      "id": "postgres-database",
+      "frontmatterName": "postgres-database",
+      "path": "references/skills/postgres-database/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining PostgreSQL-backed persistence, including schema migrations, transactional multi-user services, JSONB, extensions, LISTEN/NOTIFY, queues, Supabase/SupaCloud-style platforms, or production data operations."
+    },
+    {
+      "id": "provider-adapter",
+      "frontmatterName": "provider-adapter",
+      "path": "references/skills/provider-adapter/SKILL.md",
+      "description": "Use when implementing or reviewing provider adapters and diagnostics for GitHub, CNB, GitLab, or local task ledgers, including remote detection, issue/PR/MR state mapping, CI visibility, auth checks, and consistency with Task Ledger review state."
+    },
+    {
+      "id": "shadcn-ui",
+      "frontmatterName": "shadcn",
+      "path": "references/skills/shadcn-ui/SKILL.md",
+      "description": "Manages shadcn components and projects — adding, searching, fixing, debugging, styling, and composing UI. Provides project context, component docs, and usage examples. Applies when working with shadcn/ui, component registries, presets, --preset codes, or any project with a components.json file. Also triggers for \"shadcn init\", \"create an app with --preset\", or \"switch to --preset\"."
+    },
+    {
+      "id": "sqlite-database",
+      "frontmatterName": "sqlite-database",
+      "path": "references/skills/sqlite-database/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining SQLite-backed persistence for local-first apps, desktop apps, CLI tools, prototypes, tests, embedded databases, or small single-user deployments."
+    },
+    {
+      "id": "stack-profile-selector",
+      "frontmatterName": "stack-profile-selector",
+      "path": "references/skills/stack-profile-selector/SKILL.md",
+      "description": "Use when a task requires choosing, validating, or recording a project stack profile, especially for greenfield defaults, ambiguous app targets, desktop/mobile/miniapp boundaries, or Task Contract stack fields."
+    },
+    {
+      "id": "supacloud-platform",
+      "frontmatterName": "supacloud-platform",
+      "path": "references/skills/supacloud-platform/SKILL.md",
+      "description": "Use when building, deploying, or reviewing SupaCloud-hosted projects, including Supabase-style backend needs, frontend hosting, Edge Functions, project lifecycle, Caddy gateway, auth/storage/database, or self-hosted multi-tenant operations."
+    },
+    {
+      "id": "svadmin-admin-ui",
+      "frontmatterName": "svadmin-admin-ui",
+      "path": "references/skills/svadmin-admin-ui/SKILL.md",
+      "description": "Use when building or reviewing admin/backoffice CRUD interfaces with svadmin, including Svelte 5 admin panels, DataProvider/AuthProvider/LiveProvider, resource definitions, RBAC, audit logging, and backend adapters."
+    },
+    {
+      "id": "svelte-code-writer",
+      "frontmatterName": "svelte-code-writer",
+      "path": "references/skills/svelte-code-writer/SKILL.md",
+      "description": "CLI tools for Svelte 5 documentation lookup and code analysis. MUST be used whenever creating, editing or analyzing any Svelte component (.svelte) or Svelte module (.svelte.ts/.svelte.js). If possible, this skill should be executed within the svelte-file-editor agent for optimal results."
+    },
+    {
+      "id": "svelte-core-bestpractices",
+      "frontmatterName": "svelte-core-bestpractices",
+      "path": "references/skills/svelte-core-bestpractices/SKILL.md",
+      "description": "Guidance on writing fast, robust, modern Svelte code. Load this skill whenever in a Svelte project and asked to write/edit or analyze a Svelte component or module. Covers reactivity, event handling, styling, integration with libraries and more."
+    },
+    {
+      "id": "sveltekit-fullstack",
+      "frontmatterName": "sveltekit-fullstack",
+      "path": "references/skills/sveltekit-fullstack/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining SvelteKit applications, including file-based routing, SSR/SSG/SPA modes, server load functions, form actions, endpoints, adapters, and deployment target fit."
+    },
+    {
+      "id": "tailwind-v4",
+      "frontmatterName": "tailwind-v4",
+      "path": "references/skills/tailwind-v4/SKILL.md",
+      "description": "Tailwind CSS v4 最佳实践。使用 CSS-first 配置、@theme 指令、@utility 自定义工具类。适用于所有前端项目。参考来源：Lombiq/Tailwind-Agent-Skills + 官方文档。"
+    },
+    {
+      "id": "tauri-desktop",
+      "frontmatterName": "tauri-desktop",
+      "path": "references/skills/tauri-desktop/SKILL.md",
+      "description": "Use when building or maintaining Tauri desktop apps, including src-tauri, tauri.conf, commands, permissions/capabilities, Rust-side integration, packaging, signing, or updater flows."
+    },
+    {
+      "id": "typescript",
+      "frontmatterName": "typescript",
+      "path": "references/skills/typescript/SKILL.md",
+      "description": "Use when writing, reviewing, or refactoring TypeScript, especially Bun-based CLI scripts, strict typing, Result-style error handling, module imports, and type-safe configuration."
+    },
+    {
+      "id": "vue-frontend",
+      "frontmatterName": "vue-frontend",
+      "path": "references/skills/vue-frontend/SKILL.md",
+      "description": "Use when building, reviewing, or maintaining Vue frontends, including Vue Single-File Components, Composition API, TypeScript, Vite integration, component state, and Vue ecosystem alignment."
+    }
+  ]
+}

@@ -26,6 +26,7 @@
 - Desktop module hygiene: `cd desktop && go mod tidy && git diff --quiet -- go.mod go.sum`
 - Site: `cd site && npm ci && npm run build`
 - Agent-team config: `agent-team automation smoke .`，`agent-team automation diff-check`
+- Skills sync: `node scripts/check-skills-sync.mjs`
 
 跨模块修改完成前必须运行 `git diff --check`。
 

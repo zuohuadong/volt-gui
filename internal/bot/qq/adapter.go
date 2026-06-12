@@ -1,3 +1,5 @@
+//go:build bot
+
 // Package qq 实现 QQ 官方 Bot API v2 适配器。
 // 参考 Hermes Agent 的 qqbot adapter 实现：
 // - app token 获取与刷新
@@ -13,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/bot"
-	"reasonix/internal/config"
+	"voltui/internal/bot"
+	"voltui/internal/config"
 )
 
 // New 创建 QQ Bot 适配器。

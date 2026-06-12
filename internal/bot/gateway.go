@@ -1,3 +1,5 @@
+//go:build bot
+
 package bot
 
 import (
@@ -9,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
+	"voltui/internal/boot"
+	"voltui/internal/control"
+	"voltui/internal/event"
 )
 
 // GatewayConfig 是 BotGateway 的配置。

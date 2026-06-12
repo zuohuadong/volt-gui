@@ -1,3 +1,5 @@
+//go:build bot
+
 package weixin
 
 import (
@@ -7,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestSendTextPostsIlinkMessage(t *testing.T) {

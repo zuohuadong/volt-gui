@@ -1,3 +1,5 @@
+//go:build bot
+
 package weixin
 
 import (
@@ -10,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 type savedAccount struct {

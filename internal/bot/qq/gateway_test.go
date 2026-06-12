@@ -1,3 +1,5 @@
+//go:build bot
+
 package qq
 
 import (
@@ -7,7 +9,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"reasonix/internal/bot"
+	"voltui/internal/bot"
 )
 
 func TestHandleDispatchDirectMessageUsesDirectChatType(t *testing.T) {

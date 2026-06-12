@@ -1,3 +1,5 @@
+//go:build bot
+
 package bot
 
 import (
@@ -7,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/control"
-	"reasonix/internal/event"
+	"voltui/internal/control"
+	"voltui/internal/event"
 )
 
 // renderSink 将 Reasonix 事件流渲染为平台消息。

@@ -25,7 +25,8 @@ import { useToast } from "./lib/toast";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
 import { useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged } from "./lib/bridge";
+import { app, onEvent, onProjectTreeChanged, onTurnDone } from "./lib/bridge";
+import { playSuccessChime } from "./lib/sound";
 import { Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
@@ -709,6 +710,14 @@ export default function App() {
       if (e.kind === "turn_done") {
         setDockRefreshKey((v) => v + 1);
       }
+    });
+    return unsub;
+  }, []);
+
+  // Play a success chime when any turn finishes.
+  useEffect(() => {
+    const unsub = onTurnDone(() => {
+      playSuccessChime();
     });
     return unsub;
   }, []);

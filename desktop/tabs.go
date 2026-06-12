@@ -226,6 +226,9 @@ func (s *tabEventSink) Emit(e event.Event) {
 	}
 	if s.ctx != nil {
 		runtime.EventsEmit(s.ctx, eventChannel, toWireTab(e, s.tabID))
+		if e.Kind == event.TurnDone {
+			runtime.EventsEmit(s.ctx, "agent:turn-done")
+		}
 	}
 	if s.app != nil {
 		if status, update := topicActivityStatusFromEvent(e); update && s.app.setTabActivityStatus(s.tabID, status) {

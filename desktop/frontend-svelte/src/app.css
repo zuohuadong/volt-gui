@@ -821,10 +821,6 @@ select,
   color: #1d4ed8;
 }
 
-.math {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
 .math--inline {
   padding: 1px 5px;
   color: #075985;
@@ -833,6 +829,7 @@ select,
 }
 
 .math--block {
+  display: block;
   margin: 0;
   padding: 10px;
   overflow: auto;
@@ -840,6 +837,12 @@ select,
   background: #f0f9ff;
   border: 1px solid #bae6fd;
   border-radius: 8px;
+}
+
+.math--error {
+  color: #be123c;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
 }
 
 .code-viewer {

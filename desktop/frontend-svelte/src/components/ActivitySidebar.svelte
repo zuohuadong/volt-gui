@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Activity, Bot, Code2, Database, FolderGit2, X } from "@lucide/svelte";
+  import { Activity, ArrowDown, ArrowUp, Bot, Code2, Database, FolderGit2, Plus, X } from "@lucide/svelte";
   import type { ActivityMode, TabMeta } from "../lib/types";
 
   let {
@@ -10,6 +10,8 @@
     onActivity,
     onTab,
     onCloseTab,
+    onNewTab,
+    onMoveTab,
   }: {
     activityMode: ActivityMode;
     tabs: TabMeta[];
@@ -18,6 +20,8 @@
     onActivity: (mode: ActivityMode) => void;
     onTab: (tab: TabMeta) => void;
     onCloseTab: (tab: TabMeta) => void;
+    onNewTab: () => void;
+    onMoveTab: (tab: TabMeta, direction: "up" | "down") => void;
   } = $props();
 </script>
 
@@ -42,13 +46,31 @@
   </div>
 
   <section>
-    <h2>Sessions</h2>
+    <div class="section-heading">
+      <h2>Sessions</h2>
+      <button class="icon-button" type="button" aria-label="New session" title="New session" onclick={onNewTab}>
+        <Plus size={14} />
+      </button>
+    </div>
     <div class="nav-list">
-      {#each tabs as tab (tab.id)}
+      {#each tabs as tab, index (tab.id)}
         <div class={tab.id === activeTab?.id ? "nav-row is-active" : "nav-row"}>
           <button type="button" onclick={() => onTab(tab)}>
             <FolderGit2 size={15} />
             <span>{tab.topicTitle || tab.workspaceName || "Untitled"}</span>
+          </button>
+          <button class="icon-button" type="button" aria-label="Move tab up" title="Move tab up" disabled={index === 0} onclick={() => onMoveTab(tab, "up")}>
+            <ArrowUp size={14} />
+          </button>
+          <button
+            class="icon-button"
+            type="button"
+            aria-label="Move tab down"
+            title="Move tab down"
+            disabled={index === tabs.length - 1}
+            onclick={() => onMoveTab(tab, "down")}
+          >
+            <ArrowDown size={14} />
           </button>
           <button class="icon-button" type="button" aria-label="Close tab" onclick={() => onCloseTab(tab)}>
             <X size={14} />

@@ -11,6 +11,7 @@ import type {
   ModelInfo,
   QuestionAnswer,
   TabMeta,
+  TopicMeta,
   WireEvent,
   WorkspaceDiffView,
   WorkspaceChangesView,
@@ -23,7 +24,9 @@ interface AppBindings {
   ListTabs(): Promise<TabMeta[]>;
   SetActiveTab(tabID: string): Promise<void>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
+  ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
+  CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
@@ -275,12 +278,49 @@ const mockApp: AppBindings = {
   async SetActiveTab(tabID: string) {
     mockActiveTabId = tabID;
   },
-  async OpenGlobalTab(_topicID: string) {
-    return mockTabs()[0];
+  async OpenGlobalTab(topicID: string) {
+    const existing = mockTabsState.find((tab) => tab.scope === "global" && tab.topicId === topicID);
+    if (existing) {
+      mockActiveTabId = existing.id;
+      return { ...existing, active: true };
+    }
+    const id = `mock-global-${Date.now()}`;
+    const tab: TabMeta = {
+      id,
+      scope: "global",
+      workspaceRoot: "",
+      workspaceName: "Global",
+      topicId: topicID,
+      topicTitle: "New session",
+      label: mockSelectedModel,
+      active: true,
+      running: false,
+      mode: "normal",
+      ready: true,
+      cwd: "~/projects/voltui",
+    };
+    mockTabsState = [...mockTabsState.map((item) => ({ ...item, active: false })), tab];
+    mockActiveTabId = id;
+    mockHistory[id] = [];
+    mockGoals[id] = { objective: "", status: "idle" };
+    return { ...tab };
+  },
+  async ReorderTabs(tabIDs: string[]) {
+    const byID = new Map(mockTabsState.map((tab) => [tab.id, tab]));
+    const ordered = tabIDs.map((id) => byID.get(id)).filter((tab): tab is TabMeta => Boolean(tab));
+    if (ordered.length === mockTabsState.length) mockTabsState = ordered;
   },
   async CloseTab(tabID: string) {
+    if (mockTabsState.length <= 1) return;
     mockTabsState = mockTabsState.filter((tab) => tab.id !== tabID);
     mockActiveTabId = mockTabsState[0]?.id ?? "mock-global";
+  },
+  async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
+    return {
+      id: `topic-${Date.now()}`,
+      title: title.trim() || "New session",
+      createdAt: Date.now(),
+    };
   },
   async HistoryForTab(tabID: string) {
     return mockHistory[tabID] ?? [];

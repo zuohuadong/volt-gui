@@ -18,6 +18,7 @@
 - [Slash commands](#slash-commands)
 - [@ references](#-references)
 - [Two-model collaboration](#two-model-collaboration)
+- [Desktop workbench](#desktop-workbench)
 
 ## Configuration
 
@@ -266,3 +267,12 @@ shell command only when you intentionally want a project-local override.
 
 The why behind separate sessions (keeping each model's prefix cache-stable) is in
 [`SPEC.md` §3.5](./SPEC.md#35-two-model-collaboration-coordinator).
+
+## Desktop workbench
+
+The next desktop GUI is specified as a Svelte workbench, not a chat-only shell.
+It keeps Work and Code as top-level activity modes while preserving the existing
+run modes (`Ask`, `Auto`, `YOLO`, `Plan`, `Goal`). See
+[`WORKBENCH.md`](./WORKBENCH.md) for the full interaction contract, svadmin-
+compatible resource layer, parity checklist, migration plan, and verification
+gates.

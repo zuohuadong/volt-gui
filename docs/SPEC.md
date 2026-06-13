@@ -18,6 +18,10 @@
    and runtime external plugins (stdio JSON-RPC subprocesses, MCP-compatible).
 5. **Interface-first & registry-based.** `Provider` and `Tool` are interfaces.
 6. **Evolve, don't over-engineer.**
+7. **Workbench UI stays kernel-driven.** The desktop GUI may evolve independently,
+   but it must keep the Go/Wails kernel as the source of truth and expose Work
+   and Code as activity modes orthogonal to run modes. The current desktop
+   workbench contract lives in [`docs/WORKBENCH.md`](./WORKBENCH.md).
 
 Language: **English is the primary language for all code** — comments,
 user-facing strings, tool descriptions, system prompts, and this spec. The
@@ -32,6 +36,7 @@ voltui/
 ├── README.md / README.zh-CN.md
 ├── voltui.example.toml         # sample config
 ├── docs/SPEC.md             # this file
+├── docs/WORKBENCH.md        # desktop GUI workbench contract
 ├── cmd/voltui/main.go          # entry; blank-imports built-in providers/tools
 ├── cmd/voltui-plugin-example/  # reference MCP stdio plugin (a runnable example)
 └── internal/

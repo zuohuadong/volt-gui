@@ -13,9 +13,11 @@ import (
 )
 
 type gitStatusEntry struct {
-	Path    string
-	OldPath string
-	Status  string
+	Path           string
+	OldPath        string
+	Status         string
+	IndexStatus    string
+	WorktreeStatus string
 }
 
 type workspaceChangeAccumulator struct {
@@ -79,6 +81,8 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 		}
 		acc.hasGit = true
 		acc.view.GitStatus = entry.Status
+		acc.view.IndexStatus = entry.IndexStatus
+		acc.view.WorktreeStatus = entry.WorktreeStatus
 		acc.view.OldPath = normalizeWorkspaceRelPath(base, entry.OldPath)
 	}
 
@@ -173,6 +177,8 @@ func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
 		}
 	}
 	out.Status = entry.Status
+	out.IndexStatus = entry.IndexStatus
+	out.WorktreeStatus = entry.WorktreeStatus
 	out.OldPath = entry.OldPath
 
 	kind := codediff.Modify
@@ -260,7 +266,12 @@ func parseGitStatusPorcelainZ(raw []byte) []gitStatusEntry {
 		}
 		status := string(part[:2])
 		path := string(part[3:])
-		entry := gitStatusEntry{Path: path, Status: strings.TrimSpace(status)}
+		entry := gitStatusEntry{
+			Path:           path,
+			Status:         strings.TrimSpace(status),
+			IndexStatus:    strings.TrimSpace(status[:1]),
+			WorktreeStatus: strings.TrimSpace(status[1:2]),
+		}
 		if strings.ContainsAny(status, "RC") && i+1 < len(parts) {
 			i++
 			entry.OldPath = string(parts[i])

@@ -2603,13 +2603,15 @@ type FilePreview struct {
 }
 
 type WorkspaceChangeView struct {
-	Path         string   `json:"path"`
-	OldPath      string   `json:"oldPath,omitempty"`
-	Sources      []string `json:"sources"`
-	GitStatus    string   `json:"gitStatus,omitempty"`
-	Turns        []int    `json:"turns,omitempty"`
-	LatestPrompt string   `json:"latestPrompt,omitempty"`
-	LatestTime   int64    `json:"latestTime,omitempty"`
+	Path           string   `json:"path"`
+	OldPath        string   `json:"oldPath,omitempty"`
+	Sources        []string `json:"sources"`
+	GitStatus      string   `json:"gitStatus,omitempty"`
+	IndexStatus    string   `json:"indexStatus,omitempty"`
+	WorktreeStatus string   `json:"worktreeStatus,omitempty"`
+	Turns          []int    `json:"turns,omitempty"`
+	LatestPrompt   string   `json:"latestPrompt,omitempty"`
+	LatestTime     int64    `json:"latestTime,omitempty"`
 }
 
 type WorkspaceChangesView struct {
@@ -2619,16 +2621,18 @@ type WorkspaceChangesView struct {
 }
 
 type WorkspaceDiffView struct {
-	Path      string `json:"path"`
-	OldPath   string `json:"oldPath,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Kind      string `json:"kind"`
-	Diff      string `json:"diff"`
-	Added     int    `json:"added"`
-	Removed   int    `json:"removed"`
-	Binary    bool   `json:"binary"`
-	Truncated bool   `json:"truncated"`
-	Err       string `json:"err,omitempty"`
+	Path           string `json:"path"`
+	OldPath        string `json:"oldPath,omitempty"`
+	Status         string `json:"status,omitempty"`
+	IndexStatus    string `json:"indexStatus,omitempty"`
+	WorktreeStatus string `json:"worktreeStatus,omitempty"`
+	Kind           string `json:"kind"`
+	Diff           string `json:"diff"`
+	Added          int    `json:"added"`
+	Removed        int    `json:"removed"`
+	Binary         bool   `json:"binary"`
+	Truncated      bool   `json:"truncated"`
+	Err            string `json:"err,omitempty"`
 }
 
 // atSkip are entries the "@" menu hides as noise.

@@ -782,6 +782,25 @@ select {
   border-color: #bfdbfe;
 }
 
+.change-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.change-row em,
+.change-row small {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.change-row small {
+  padding: 1px 5px;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
 .code-dock__status {
   color: #64748b;
 }
@@ -1389,7 +1408,14 @@ select {
   gap: 6px;
 }
 
-.diff-viewer__summary span {
+.diff-viewer__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diff-viewer__summary span,
+.diff-viewer__badges span {
   display: inline-flex;
   align-items: center;
   min-height: 24px;

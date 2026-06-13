@@ -343,6 +343,8 @@ export interface WorkspaceChangeView {
   oldPath?: string;
   sources: string[];
   gitStatus?: string;
+  indexStatus?: string;
+  worktreeStatus?: string;
   turns?: number[];
   latestPrompt?: string;
   latestTime?: number;
@@ -358,6 +360,8 @@ export interface WorkspaceDiffView {
   path: string;
   oldPath?: string;
   status?: string;
+  indexStatus?: string;
+  worktreeStatus?: string;
   kind: "create" | "modify" | "delete" | string;
   diff: string;
   added: number;

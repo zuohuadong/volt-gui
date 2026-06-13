@@ -194,17 +194,21 @@
       effort = active ? await app().EffortForTab(active.id) : { current: "auto", supported: ["auto"] };
       goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
-      resources = await Promise.all(
-        workbenchResources.slice(0, 8).map(async (name) => {
-          const result = await wailsDataProvider.list(name);
-          return { name, total: result.total };
-        }),
-      );
+      await refreshResources();
       await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
     } finally {
       loading = false;
     }
+  }
+
+  async function refreshResources() {
+    resources = await Promise.all(
+      workbenchResources.slice(0, 8).map(async (name) => {
+        const result = await wailsDataProvider.list(name);
+        return { name, total: result.total };
+      }),
+    );
   }
 
   async function refreshCodeDock(tab = activeTab) {
@@ -455,7 +459,7 @@
       <CodeDashboard {context} {changes} {checkpoints} {filePreview} {diffPreview} onPreviewFile={previewFile} onPreviewChange={previewChange} onRewind={rewind} />
     {/if}
 
-    <ResourcePanel {activityMode} {resources} />
+    <ResourcePanel {activityMode} {resources} onChanged={refreshResources} />
 
     <Transcript
       items={transcript}

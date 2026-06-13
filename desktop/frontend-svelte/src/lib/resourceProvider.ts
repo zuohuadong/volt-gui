@@ -1,5 +1,5 @@
 import { app } from "./bridge";
-import type { ListParams, ListResult, ResourceRecord } from "./types";
+import type { ListParams, ListResult, MCPServerInput, ProviderView, ResourceRecord, SettingsView } from "./types";
 
 export const workbenchResources = [
   "providers",
@@ -37,19 +37,97 @@ function asRecords(value: unknown, idPrefix: string): ResourceRecord[] {
   });
 }
 
+function asRecordData(data: unknown): Record<string, unknown> {
+  return typeof data === "object" && data !== null ? data as Record<string, unknown> : {};
+}
+
+function parseList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  if (typeof value === "string") return value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+function providerFromData(data: unknown, previous?: ResourceRecord): ProviderView {
+  const record = { ...(previous ?? {}), ...asRecordData(data) };
+  const name = String(record.name ?? record.id ?? "").trim();
+  return {
+    name,
+    kind: String(record.kind ?? "openai").trim() || "openai",
+    baseUrl: String(record.baseUrl ?? record.baseURL ?? ""),
+    models: parseList(record.models).length > 0 ? parseList(record.models) : [String(record.default ?? "model").trim()].filter(Boolean),
+    default: String(record.default ?? ""),
+    apiKeyEnv: String(record.apiKeyEnv ?? ""),
+    keySet: Boolean(record.keySet),
+    balanceUrl: String(record.balanceUrl ?? ""),
+    contextWindow: Number(record.contextWindow ?? 0),
+    supportedEfforts: parseList(record.supportedEfforts),
+    defaultEffort: String(record.defaultEffort ?? ""),
+  };
+}
+
+function mcpInputFromData(data: unknown, previous?: ResourceRecord): MCPServerInput {
+  const record = { ...(previous ?? {}), ...asRecordData(data) };
+  const transport = String(record.transport ?? "stdio");
+  return {
+    name: String(record.name ?? record.id ?? "").trim(),
+    transport,
+    command: String(record.command ?? ""),
+    args: parseList(record.args),
+    url: String(record.url ?? ""),
+    env: null,
+    tier: String(record.tier ?? "lazy"),
+  };
+}
+
+function modelRefs(settings: SettingsView): ResourceRecord[] {
+  return settings.providers.flatMap((provider) =>
+    provider.models.map((model) => {
+      const ref = `${provider.name}/${model}`;
+      return {
+        id: ref,
+        ref,
+        provider: provider.name,
+        model,
+        default: settings.defaultModel === ref,
+        planner: settings.plannerModel === ref,
+      };
+    }),
+  );
+}
+
 export const wailsDataProvider: WorkbenchDataProvider = {
   async list(resource) {
     switch (resource) {
       case "models": {
-        const tabs = await app().ListTabs();
-        const active = tabs.find((tab) => tab.active) ?? tabs[0];
-        const models = active ? await app().ModelsForTab(active.id) : [];
-        return { data: asRecords(models, "model"), total: models.length };
+        const settings = await app().Settings();
+        const models = modelRefs(settings);
+        return { data: models, total: models.length };
+      }
+      case "providers": {
+        const settings = await app().Settings();
+        const providers = asRecords(settings.providers, "provider");
+        return { data: providers, total: providers.length };
+      }
+      case "mcpServers": {
+        const capabilities = await app().Capabilities();
+        const servers = asRecords(capabilities.servers, "mcp");
+        return { data: servers, total: servers.length };
       }
       case "skills": {
         const capabilities = await app().Capabilities();
-        const skills = (capabilities as { skills?: unknown[] }).skills ?? [];
+        const skills = capabilities.skills ?? [];
         return { data: asRecords(skills, "skill"), total: skills.length };
+      }
+      case "permissions": {
+        const settings = await app().Settings();
+        const records = [
+          { id: "mode", name: "mode", value: settings.permissions.mode },
+          { id: "allow", name: "allow", rules: settings.permissions.allow },
+          { id: "ask", name: "ask", rules: settings.permissions.ask },
+          { id: "deny", name: "deny", rules: settings.permissions.deny },
+          { id: "sandbox", name: "sandbox", ...settings.sandbox },
+        ];
+        return { data: records, total: records.length };
       }
       case "memory": {
         const memory = await app().Memory();
@@ -69,11 +147,78 @@ export const wailsDataProvider: WorkbenchDataProvider = {
     const result = await this.list(resource);
     return result.data.find((record) => record.id === id) ?? { id };
   },
-  async create(_resource, data) {
+  async create(resource, data) {
+    if (resource === "providers") {
+      const provider = providerFromData(data);
+      await app().SaveProvider(provider);
+      const record = asRecordData(data);
+      if (typeof record.apiKeyValue === "string") await app().SetProviderKey(provider.apiKeyEnv, record.apiKeyValue);
+      return { id: provider.name, ...provider };
+    }
+    if (resource === "mcpServers") {
+      const input = mcpInputFromData(data);
+      const tools = await app().AddMCPServer(input);
+      return { id: input.name, ...input, tools };
+    }
+    if (resource === "permissions") {
+      const record = asRecordData(data);
+      const list = String(record.list ?? "ask");
+      const rule = String(record.rule ?? "");
+      await app().AddPermissionRule(list, rule);
+      return { id: `${list}:${rule}`, list, rule };
+    }
     return { id: crypto.randomUUID(), ...(typeof data === "object" && data ? data : { value: data }) };
   },
-  async update(_resource, id, data) {
+  async update(resource, id, data) {
+    const previous = await this.getOne(resource, id);
+    if (resource === "models") {
+      const record = asRecordData(data);
+      if (record.planner === true) await app().SetPlannerModel(id);
+      if (record.planner === false) await app().SetPlannerModel("");
+      if (record.default === true) await app().SetDefaultModel(id);
+      return { ...previous, ...record, id };
+    }
+    if (resource === "providers") {
+      const provider = providerFromData(data, previous);
+      await app().SaveProvider(provider);
+      if (typeof asRecordData(data).apiKeyValue === "string") await app().SetProviderKey(provider.apiKeyEnv, String(asRecordData(data).apiKeyValue));
+      return { id: provider.name, ...provider };
+    }
+    if (resource === "mcpServers") {
+      const record = asRecordData(data);
+      if (typeof record.enabled === "boolean") await app().SetMCPServerEnabled(id, record.enabled);
+      if (record.retry === true) await app().RetryMCPServer(id);
+      if (record.transport || record.command || record.url || record.tier || record.args) await app().UpdateMCPServer(id, mcpInputFromData(data, previous));
+      return { ...previous, ...record, id };
+    }
+    if (resource === "skills") {
+      const record = asRecordData(data);
+      if (typeof record.enabled === "boolean") await app().SetSkillEnabled(id, record.enabled);
+      if (record.refresh === true) await app().RefreshSkills();
+      return { ...previous, ...record, id };
+    }
+    if (resource === "permissions") {
+      const record = asRecordData(data);
+      if (id === "mode" && typeof record.value === "string") await app().SetPermissionMode(record.value);
+      if (id === "sandbox") {
+        await app().SetSandbox(
+          String(record.bash ?? previous.bash ?? "enforce"),
+          Boolean(record.network ?? previous.network),
+          String(record.workspaceRoot ?? previous.workspaceRoot ?? ""),
+          parseList(record.allowWrite ?? previous.allowWrite),
+        );
+      }
+      return { ...previous, ...record, id };
+    }
     return { id, ...(typeof data === "object" && data ? data : { value: data }) };
   },
-  async delete(_resource, _id) {},
+  async delete(resource, id) {
+    if (resource === "providers") await app().DeleteProvider(id);
+    if (resource === "mcpServers") await app().RemoveMCPServer(id);
+    if (resource === "permissions") {
+      const [list, ...rest] = id.split(":");
+      const rule = rest.join(":");
+      if (list && rule) await app().RemovePermissionRule(list, rule);
+    }
+  },
 };

@@ -309,6 +309,59 @@ section h2 {
   padding: 22px;
 }
 
+.update-banner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+  color: #12336b;
+  background: #e7efff;
+  border: 1px solid #c8dafd;
+  border-radius: 10px;
+}
+
+.update-banner--error {
+  color: #7f1d1d;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.update-banner strong,
+.update-banner span,
+.update-banner p {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-banner span,
+.update-banner p {
+  color: inherit;
+  opacity: 0.78;
+  font-size: 12px;
+}
+
+.update-banner progress {
+  width: min(320px, 100%);
+  height: 8px;
+}
+
+.update-banner button:not(.icon-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: #1d4ed8;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
 .topbar {
   display: flex;
   align-items: center;

@@ -18,6 +18,8 @@ import type {
   SlashArgItem,
   TabMeta,
   TopicMeta,
+  UpdateInfo,
+  UpdateProgress,
   WireEvent,
   WorkspaceDiffView,
   WorkspaceChangesView,
@@ -88,6 +90,10 @@ interface AppBindings {
   AddPermissionRule(list: string, rule: string): Promise<void>;
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
+  Version(): Promise<string>;
+  CheckUpdate(): Promise<UpdateInfo | null>;
+  ApplyUpdate(): Promise<void>;
+  OpenDownloadPage(): Promise<void>;
   Memory(): Promise<unknown>;
 }
 
@@ -310,9 +316,14 @@ function mockTabs(): TabMeta[] {
 }
 
 const mockListeners = new Set<(event: WireEvent) => void>();
+const mockUpdateListeners = new Set<(progress: UpdateProgress) => void>();
 
 function emitMock(event: WireEvent) {
   for (const listener of mockListeners) listener(event);
+}
+
+function emitMockUpdate(progress: UpdateProgress) {
+  for (const listener of mockUpdateListeners) listener(progress);
 }
 
 function delay(ms: number): Promise<void> {
@@ -962,6 +973,35 @@ const mockApp: AppBindings = {
   async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
     mockSettings.sandbox = { bash, network, workspaceRoot, allowWrite };
   },
+  async Version() {
+    return "v1.0.0";
+  },
+  async CheckUpdate() {
+    return {
+      available: true,
+      current: "v1.0.0",
+      latest: "v1.1.0",
+      notes: "Svelte workbench update smoke.",
+      canSelfUpdate: true,
+      downloadUrl: "https://example.com/voltui/releases/latest",
+      assetSize: 12000000,
+    };
+  },
+  async ApplyUpdate() {
+    const total = 12000000;
+    emitMockUpdate({ phase: "downloading", received: 3000000, total });
+    await delay(120);
+    emitMockUpdate({ phase: "downloading", received: total, total });
+    await delay(120);
+    emitMockUpdate({ phase: "verifying", received: total, total });
+    await delay(120);
+    emitMockUpdate({ phase: "applying", received: total, total });
+    await delay(120);
+    emitMockUpdate({ phase: "done", received: total, total });
+  },
+  async OpenDownloadPage() {
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: "Opened update download page." });
+  },
   async Memory() {
     return { entries: [{ name: "workbench-roadmap", note: "Keep Work and Code modes orthogonal." }] };
   },
@@ -977,6 +1017,14 @@ export function onAgentEvent(cb: (event: WireEvent) => void): () => void {
   }
   mockListeners.add(cb);
   return () => mockListeners.delete(cb);
+}
+
+export function onUpdaterProgress(cb: (progress: UpdateProgress) => void): () => void {
+  if (typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn("updater:progress", (payload) => cb(payload as UpdateProgress));
+  }
+  mockUpdateListeners.add(cb);
+  return () => mockUpdateListeners.delete(cb);
 }
 
 export function onProjectTreeChanged(cb: () => void): () => void {

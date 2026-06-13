@@ -192,7 +192,9 @@ handled here, and what to reach for if a target misbehaves:
   setting; the runtime must be installed (bundle it for distribution).
 - **macOS / WebKit** — inset/hidden title bar (`TitleBarHiddenInset`); the CSS
   marks the top bar as an OS drag region (`--wails-draggable: drag`) and leaves
-  room for the traffic lights.
+  room for the traffic lights. The native tray is disabled on macOS until it can
+  be initialized on the AppKit main thread; Dock/menu activation remains the
+  supported restore path.
 - **Theming** — colors are CSS variables gated on `prefers-color-scheme`, which all
   three webviews honor, so the UI follows the OS theme without native glue.
 - **Fonts / offline** — system font stack only; no web-font fetches, so first paint

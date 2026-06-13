@@ -8,7 +8,7 @@
   import RunModeBar from "./components/RunModeBar.svelte";
   import Transcript from "./components/Transcript.svelte";
   import WorkDashboard from "./components/WorkDashboard.svelte";
-  import { app, onAgentEvent } from "./lib/bridge";
+  import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
   import { wailsDataProvider, workbenchResources } from "./lib/resourceProvider";
   import type {
     ActivityMode,
@@ -20,6 +20,7 @@
     GoalInfo,
     HistoryMessage,
     ModelInfo,
+    ProjectNode,
     QuestionAnswer,
     RunMode,
     TabMeta,
@@ -59,6 +60,7 @@
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let resources = $state<Array<{ name: string; total: number }>>([]);
+  let projectTree = $state<ProjectNode[]>([]);
   let context = $state<ContextPanelInfo | undefined>();
   let goalInfo = $state<GoalInfo>({ objective: "", status: "idle" });
   let changes = $state<WorkspaceChangesView | undefined>();
@@ -74,9 +76,15 @@
   const modeLabel = $derived(`${activityMode.toUpperCase()} + ${runMode.toUpperCase()}`);
 
   onMount(() => {
-    const unsubscribe = onAgentEvent(handleEvent);
+    const unsubscribeEvents = onAgentEvent(handleEvent);
+    const unsubscribeProjectTree = onProjectTreeChanged(() => {
+      void refreshProjectTree();
+    });
     void refresh();
-    return unsubscribe;
+    return () => {
+      unsubscribeEvents();
+      unsubscribeProjectTree();
+    };
   });
 
   function updateLastAssistant(text: string) {
@@ -179,6 +187,7 @@
     loading = true;
     try {
       tabs = await app().ListTabs();
+      projectTree = await app().ListProjectTree();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
       models = active ? await app().ModelsForTab(active.id) : [];
       selectedModel = models.find((model) => model.current)?.name ?? models[0]?.name ?? "";
@@ -203,6 +212,10 @@
     context = await app().ContextPanel(tab.id);
     changes = await app().WorkspaceChanges();
     checkpoints = await app().CheckpointsForTab(tab.id);
+  }
+
+  async function refreshProjectTree() {
+    projectTree = await app().ListProjectTree();
   }
 
   async function send(displayText?: string, submitText?: string) {
@@ -234,6 +247,68 @@
     const topic = await app().CreateTopic("global", "", "");
     const tab = await app().OpenGlobalTab(topic.id);
     tabs = [...tabs.map((item) => ({ ...item, active: false })), { ...tab, active: true }];
+    await refresh();
+  }
+
+  async function openTopic(node: ProjectNode) {
+    if (!node.topicId) return;
+    if (node.kind === "global_topic") {
+      await app().OpenGlobalTab(node.topicId);
+      activityMode = "work";
+    } else if (node.root) {
+      await app().OpenProjectTab(node.root, node.topicId);
+      activityMode = "code";
+    }
+    await refresh();
+  }
+
+  async function newTopic(node: ProjectNode) {
+    const global = node.kind === "global_folder";
+    const workspaceRoot = global ? "" : (node.root ?? "");
+    const topic = await app().CreateTopic(global ? "global" : "project", workspaceRoot, "");
+    if (global) {
+      await app().OpenGlobalTab(topic.id);
+      activityMode = "work";
+    } else {
+      await app().OpenProjectTab(workspaceRoot, topic.id);
+      activityMode = "code";
+    }
+    await refresh();
+  }
+
+  async function renameProject(node: ProjectNode, title: string) {
+    await app().RenameProject(node.kind === "global_folder" ? "" : (node.root ?? ""), title);
+    await refreshProjectTree();
+  }
+
+  async function setProjectColor(node: ProjectNode, color: string) {
+    await app().SetProjectColor(node.kind === "global_folder" ? "" : (node.root ?? ""), color);
+    await refresh();
+  }
+
+  async function moveProject(node: ProjectNode, direction: "up" | "down") {
+    if (!node.root) return;
+    const projects = projectTree.filter((item) => item.kind === "project");
+    const index = projects.findIndex((item) => item.root === node.root);
+    const nextIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || nextIndex < 0 || nextIndex >= projects.length) return;
+    const nextProjects = projects.slice();
+    const current = nextProjects[index];
+    nextProjects[index] = nextProjects[nextIndex];
+    nextProjects[nextIndex] = current;
+    await app().ReorderProjects(nextProjects.map((item) => item.root ?? ""));
+    await refreshProjectTree();
+  }
+
+  async function renameTopic(node: ProjectNode, title: string) {
+    if (!node.topicId) return;
+    await app().RenameTopic(node.topicId, title);
+    await refresh();
+  }
+
+  async function trashTopic(node: ProjectNode) {
+    if (!node.topicId) return;
+    await app().TrashTopic(node.topicId);
     await refresh();
   }
 
@@ -335,12 +410,20 @@
     {activityMode}
     {tabs}
     {activeTab}
+    {projectTree}
     {resources}
     onActivity={(mode) => (activityMode = mode)}
     onTab={switchTab}
     onCloseTab={closeTab}
     onNewTab={newTab}
     onMoveTab={moveTab}
+    onOpenTopic={openTopic}
+    onNewTopic={newTopic}
+    onRenameProject={renameProject}
+    onSetProjectColor={setProjectColor}
+    onMoveProject={moveProject}
+    onRenameTopic={renameTopic}
+    onTrashTopic={trashTopic}
   />
 
   <section class="main-stage">

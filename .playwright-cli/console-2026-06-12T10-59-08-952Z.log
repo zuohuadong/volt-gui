@@ -1,0 +1,7 @@
+[     232ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases:0
+[    1066ms] [INFO] %cEverything As Code%c
+云原生构建(CNB)，一切皆代码。 font-size:28px; font-weight:900; padding:6px 0; color:transparent; background:linear-gradient(90deg,#00f5a0,#00d2ff,#7c4dff,#ff8a00); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; text-shadow:0 10px 30px rgba(124,77,255,0.16); font-size:18px; color:#f76945; padding-top:8px; @ https://cnb.cdn-go.cn/monorepo/402e633f/ff7a53e337d6e258/_next/static/chunks/pages/_app.js:0
+[    1067ms] [INFO] %c版本号: 1.22.18-402e633f-20260610 background:linear-gradient(15deg,#00a66e 0%,#00d7a0 80%,#00ffd6 100%);;color:#fff;padding:4px;border-radius:4px;font-size: 12px;padding: 4px 8px; @ https://cnb.cdn-go.cn/monorepo/402e633f/ff7a53e337d6e258/_next/static/chunks/pages/_app.js:0
+[    1067ms] [INFO] %cTraceID: 15239cd280a83cc549ac48fda779281c background:linear-gradient(15deg,#00a66e 0%,#00d7a0 80%,#00ffd6 100%);;color:#fff;padding:4px;border-radius:4px;font-size: 12px;padding: 4px 8px; @ https://cnb.cdn-go.cn/monorepo/402e633f/ff7a53e337d6e258/_next/static/chunks/pages/_app.js:0
+[    1300ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://cnb.cool/user:0
+[    1301ms] [ERROR] {event: request.error, method: get, host: /, url: /user, accept: application/vnd.cnb.web+json} @ https://cnb.cdn-go.cn/monorepo/402e633f/ff7a53e337d6e258/_next/static/chunks/pages/_app.js:200

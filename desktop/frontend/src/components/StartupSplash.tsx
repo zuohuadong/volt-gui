@@ -3,7 +3,7 @@ import logoSymbol from "../assets/logo-symbol.svg";
 import { useT } from "../lib/i18n";
 import { useBrand } from "../lib/brand";
 
-const SPLASH_FLAG = "reasonix.splash.shown";
+const SPLASH_FLAG = "voltui.splash.shown";
 const MIN_VISIBLE_MS = 1400;
 const FADE_OUT_MS = 420;
 const MAX_HOLD_MS = 6000;

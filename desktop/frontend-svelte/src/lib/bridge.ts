@@ -63,6 +63,8 @@ interface AppBindings {
   ListDir(rel: string): Promise<DirEntry[]>;
   SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
+  OpenWorkspacePath(rel: string): Promise<void>;
+  RevealWorkspacePath(rel: string): Promise<void>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   SavePastedImage(dataUrl: string): Promise<string>;
@@ -862,6 +864,12 @@ const mockApp: AppBindings = {
       truncated: false,
       binary: false,
     };
+  },
+  async OpenWorkspacePath(rel: string) {
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: `opened ${rel}` });
+  },
+  async RevealWorkspacePath(rel: string) {
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: `revealed ${rel}` });
   },
   async WorkspaceChanges() {
     return {

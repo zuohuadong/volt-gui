@@ -685,6 +685,21 @@ select {
   text-transform: none;
 }
 
+.code-dock__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.code-dock__section-head button {
+  flex: 0 0 auto;
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
 .code-dock span,
 .code-dock strong,
 .code-dock button {
@@ -711,6 +726,65 @@ select {
 
 .code-dock button:hover {
   border-color: #bfdbfe;
+}
+
+.code-dock__status {
+  color: #64748b;
+}
+
+.file-tree {
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  min-width: 0;
+  overflow: auto;
+  padding: 4px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.file-tree__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.file-tree__row--active .file-tree__main {
+  color: #0f766e;
+  background: #ecfdf5;
+  border-color: #99f6e4;
+}
+
+.file-tree__main {
+  padding-left: calc(8px + var(--tree-depth, 0) * 14px);
+}
+
+.file-tree__main span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree__spacer {
+  display: inline-block;
+  width: 13px;
+  flex: 0 0 auto;
+}
+
+.file-tree__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.file-tree__actions button {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  color: #475569;
+  background: white;
 }
 
 .code-dock pre {

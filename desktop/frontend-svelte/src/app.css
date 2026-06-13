@@ -23,8 +23,9 @@
 
 body {
   margin: 0;
-  min-width: 980px;
-  min-height: 720px;
+  min-width: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
   background: var(--bg);
 }
 
@@ -41,6 +42,8 @@ button {
 .workbench {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
   min-height: 100vh;
 }
 
@@ -50,6 +53,7 @@ button {
   gap: 22px;
   padding: 22px 16px;
   overflow-y: auto;
+  min-width: 0;
   background: #e8ebef;
   border-right: 1px solid var(--line);
 }
@@ -306,7 +310,9 @@ section h2 {
   display: grid;
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 16px;
+  min-width: 0;
   padding: 22px;
+  overflow: hidden;
 }
 
 .update-banner {
@@ -366,11 +372,14 @@ section h2 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
 }
 
 .topbar p,
 .topbar h1 {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .topbar h1 {
@@ -383,6 +392,7 @@ section h2 {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 select,
@@ -394,16 +404,25 @@ select,
   border-radius: 8px;
 }
 
+select {
+  min-width: 0;
+  max-width: 220px;
+}
+
 .mode-chip {
+  flex: 0 0 auto;
   color: #1d4ed8;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .run-modes {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 6px;
   width: fit-content;
+  max-width: 100%;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -424,6 +443,7 @@ select,
 .resource-panel,
 .transcript,
 .composer {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -513,8 +533,9 @@ select,
 
 .code-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   gap: 16px;
+  min-width: 0;
 }
 
 .code-layout .dashboard-grid {
@@ -693,7 +714,7 @@ select,
 
 .resource-form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(110px, auto);
   gap: 8px;
 }
 
@@ -754,7 +775,7 @@ select,
 }
 
 .message {
-  max-width: 860px;
+  max-width: min(860px, 100%);
   padding: 12px 14px;
   background: var(--panel-soft);
   border: 1px solid var(--line);
@@ -1149,7 +1170,7 @@ select,
 .decision-shelf {
   display: grid;
   gap: 12px;
-  max-width: 920px;
+  max-width: min(920px, 100%);
   padding: 14px;
   background: #fff7ed;
   border: 1px solid #fed7aa;
@@ -1221,4 +1242,114 @@ select,
 
 [data-activity="code"] .mode-chip {
   color: var(--code);
+}
+
+@media (max-width: 960px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    max-height: 42vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .main-stage {
+    padding: 16px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar__controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .topbar__controls select {
+    flex: 1 1 160px;
+  }
+
+  .dashboard-grid,
+  .code-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .resource-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .resource-form button {
+    width: 100%;
+  }
+
+  .update-banner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .update-banner button:not(.icon-button),
+  .update-banner progress {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .sidebar,
+  .main-stage {
+    padding: 12px;
+  }
+
+  .brand {
+    flex-wrap: wrap;
+  }
+
+  .activity-switch,
+  .dashboard-grid,
+  .resource-grid,
+  .resource-form {
+    grid-template-columns: 1fr;
+  }
+
+  .run-modes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .run-modes button {
+    min-width: 0;
+  }
+
+  .resource-panel__head,
+  .resource-console__toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .composer {
+    grid-template-columns: 1fr;
+  }
+
+  .composer button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .decision-shelf > div:first-child,
+  .decision-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .decision-actions button,
+  .answer-grid button {
+    width: 100%;
+  }
 }

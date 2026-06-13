@@ -1,3 +1,6 @@
+//go:build upstream_web_fetch_proxy
+// +build upstream_web_fetch_proxy
+
 package builtin
 
 import (

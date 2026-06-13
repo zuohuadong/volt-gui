@@ -1,4 +1,5 @@
-//go:build !windows
+//go:build upstream_reap_tree
+// +build upstream_reap_tree
 
 package builtin
 

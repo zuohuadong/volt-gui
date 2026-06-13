@@ -537,7 +537,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 }
 
 // OpenGlobalTab opens a new global-scope tab (no project root). The global
-// workspace root is the reasonix user config directory.
+// workspace root is the voltui user config directory.
 func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	globalRoot := globalWorkspaceRoot()
 	if err := os.MkdirAll(globalRoot, 0o755); err != nil {
@@ -1344,9 +1344,9 @@ func desktopConfigDir() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".reasonix")
+		return filepath.Join(home, ".voltui")
 	}
-	return filepath.Join(dir, "reasonix")
+	return filepath.Join(dir, "voltui")
 }
 
 func (a *App) saveTabsLocked() {
@@ -1764,21 +1764,21 @@ func topicTitlesPath(workspaceRoot string) string {
 	if workspaceRoot == "" {
 		return filepath.Join(desktopConfigDir(), "global", topicTitlesFile)
 	}
-	return filepath.Join(workspaceRoot, ".reasonix", topicTitlesFile)
+	return filepath.Join(workspaceRoot, ".voltui", topicTitlesFile)
 }
 
 func topicTitleSourcesPath(workspaceRoot string) string {
 	if workspaceRoot == "" {
 		return filepath.Join(desktopConfigDir(), "global", topicTitleSourcesFile)
 	}
-	return filepath.Join(workspaceRoot, ".reasonix", topicTitleSourcesFile)
+	return filepath.Join(workspaceRoot, ".voltui", topicTitleSourcesFile)
 }
 
 func topicCreatedAtsPath(workspaceRoot string) string {
 	if workspaceRoot == "" {
 		return filepath.Join(desktopConfigDir(), "global", topicCreatedAtsFile)
 	}
-	return filepath.Join(workspaceRoot, ".reasonix", topicCreatedAtsFile)
+	return filepath.Join(workspaceRoot, ".voltui", topicCreatedAtsFile)
 }
 
 func loadTopicTitles(workspaceRoot string) map[string]string {
@@ -3208,9 +3208,9 @@ func globalWorkspaceRoot() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".reasonix", "global-workspace")
+		return filepath.Join(home, ".voltui", "global-workspace")
 	}
-	return filepath.Join(dir, "reasonix", "global-workspace")
+	return filepath.Join(dir, "voltui", "global-workspace")
 }
 
 func ensureGlobalWorkspaceRoot() (string, error) {

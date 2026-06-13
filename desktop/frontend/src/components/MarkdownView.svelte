@@ -25,7 +25,17 @@
 
   let { text }: { text: string } = $props();
 
-  const blocks = $derived(parseMarkdown(normalizeMath(text)));
+  // Use $derived.by with a guard: only re-parse if the normalized text changed.
+  // This prevents redundant markdown parsing during streaming microtask flushes.
+  let lastParsedText = "";
+  let lastBlocks: MarkdownBlock[] = [];
+  const blocks = $derived.by(() => {
+    const normalized = normalizeMath(text);
+    if (normalized === lastParsedText) return lastBlocks;
+    lastParsedText = normalized;
+    lastBlocks = parseMarkdown(normalized);
+    return lastBlocks;
+  });
 
   function normalizeMath(value: string): string {
     return value

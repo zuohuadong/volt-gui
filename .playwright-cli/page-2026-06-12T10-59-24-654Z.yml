@@ -1,0 +1,240 @@
+- generic [active] [ref=e1]:
+  - img "logo"
+  - generic [ref=e3]:
+    - generic [ref=e9]:
+      - generic [ref=e13]:
+        - img [ref=e15]
+        - navigation [ref=e31]:
+          - generic [ref=e32] [cursor=pointer]: 发现
+          - generic [ref=e33] [cursor=pointer]: 功能
+          - generic [ref=e34] [cursor=pointer]: 文档
+          - generic [ref=e35] [cursor=pointer]: 定价
+          - generic [ref=e36] [cursor=pointer]: 企业版
+        - generic [ref=e37]:
+          - button "Site" [ref=e38] [cursor=pointer]:
+            - search "Site" [ref=e39]:
+              - generic [ref=e41]:
+                - img [ref=e42]
+                - generic [ref=e45]: 搜索/提问
+                - img [ref=e46]
+          - generic [ref=e50] [cursor=pointer]:
+            - img [ref=e51]
+            - generic [ref=e57]: 微信登录
+      - generic:
+        - generic:
+          - generic: "-"
+          - generic: ;
+          - generic: “”
+          - generic: "%"
+          - generic: +
+          - generic: $
+        - generic:
+          - generic: "-"
+          - generic: _
+          - generic: ;
+          - generic: (
+          - generic: )
+          - generic: "["
+          - generic: "{"
+          - generic: "}"
+          - generic: "*"
+          - generic: "*"
+          - generic: /
+          - generic: "&"
+          - generic: "#"
+          - generic: "%"
+          - generic: +
+          - generic: =
+          - generic: ">"
+          - generic: $
+        - generic:
+          - generic: “”
+          - generic: "*"
+          - generic: //
+          - generic: ~
+          - generic: "#"
+        - generic:
+          - generic: _
+          - generic: +
+          - generic: =
+          - generic: "#"
+          - generic: "%"
+          - generic: "["
+          - generic: "]"
+        - generic: "*"
+        - generic: "#"
+        - generic: ">"
+        - generic: "{"
+        - generic: "}"
+        - generic:
+          - generic: <
+          - generic: d
+          - generic: i
+          - generic: v
+          - generic: =
+          - generic: “
+          - generic: C
+          - generic: l
+          - generic: o
+          - generic: u
+          - generic: d
+          - generic: "N"
+          - generic: a
+          - generic: t
+          - generic: i
+          - generic: v
+          - generic: e
+          - generic: ”
+          - generic: ">"
+        - generic:
+          - generic: <
+          - generic: d
+          - generic: i
+          - generic: v
+          - generic: =
+          - generic: “
+          - generic: T
+          - generic: e
+          - generic: c
+          - generic: h
+          - generic: "n"
+          - generic: o
+          - generic: l
+          - generic: o
+          - generic: g
+          - generic: "y"
+          - generic: ”
+          - generic: ">"
+        - generic:
+          - generic: <
+          - generic: d
+          - generic: i
+          - generic: v
+          - generic: =
+          - generic: “
+          - generic: U
+          - generic: "n"
+          - generic: i
+          - generic: v
+          - generic: e
+          - generic: r
+          - generic: s
+          - generic: e
+          - generic: ”
+          - generic: ">"
+        - generic:
+          - generic: <
+          - generic: d
+          - generic: i
+          - generic: v
+          - generic: =
+          - generic: “
+          - generic: C
+          - generic: l
+          - generic: o
+          - generic: u
+          - generic: d
+          - generic: ”
+          - generic: ">"
+      - generic [ref=e60]:
+        - generic [ref=e61]: Everything
+        - generic [ref=e62]:
+          - generic [ref=e63]: as
+          - generic [ref=e64]: _
+        - generic [ref=e65]: 一切皆为代码
+        - generic [ref=e67] [cursor=pointer]: Let's Goooooo ->
+      - generic [ref=e70]:
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - heading "云原生构建 让研发更轻松" [level=2] [ref=e81]:
+              - generic [ref=e82]: 云原生构建
+              - generic [ref=e83]: 让研发更轻松
+            - paragraph [ref=e84]: 基于 Docker 生态，将环境、缓存、插件统一纳入代码管理，以更酷的方式构建软件
+          - generic [ref=e89]:
+            - generic [ref=e90]:
+              - img "declarative" [ref=e92]
+              - generic [ref=e93]:
+                - generic [ref=e94]: 声明式
+                - generic [ref=e95]: 声明式语法，可编程、易分享
+            - generic [ref=e96]:
+              - img "manageability" [ref=e98]
+              - generic [ref=e99]:
+                - generic [ref=e100]: 易管理
+                - generic [ref=e101]: 与代码同源管理
+            - generic [ref=e102]:
+              - img "cloudNative" [ref=e104]
+              - generic [ref=e105]:
+                - generic [ref=e106]: 云原生
+                - generic [ref=e107]: 资源池化，屏蔽基础设施复杂性
+        - generic [ref=e108]:
+          - generic [ref=e115]:
+            - img "star" [ref=e116]
+            - img "star" [ref=e117]
+            - img "star" [ref=e118]
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - generic [ref=e136]:
+                - paragraph [ref=e137]: 声明式构建环境
+                - generic [ref=e138]: 声明构建环境，确保任务在特定环境中执行，避免环境差异导致的问题。
+              - img "env" [ref=e140]
+            - generic [ref=e141]:
+              - generic [ref=e142]:
+                - paragraph [ref=e143]: 声明式缓存管理
+                - generic [ref=e144]: 百 G 仓库秒级准备，缓存并发加速构建。支持 TB 级仓库，轻松处理 AI 大模型。
+              - img "cache" [ref=e146]
+            - generic [ref=e147]:
+              - generic [ref=e148]:
+                - paragraph [ref=e149]: Docker 镜像即插件
+                - generic [ref=e150]: 基于 Docker 生态的插件，易于扩展，增强更多定制能力。
+              - img "plugin" [ref=e152]
+            - generic [ref=e153]:
+              - generic [ref=e154]:
+                - paragraph [ref=e155]: 计算资源弹性分配
+                - generic [ref=e156]: 灵活分配云端算力，按需使用资源，无需等待。
+              - img "computed" [ref=e158]
+            - generic [ref=e159]:
+              - generic [ref=e160]:
+                - paragraph [ref=e161]: 云端环境开发模式
+                - generic [ref=e162]: 分支即环境，随时开启云端开发空间，AI coding 一键启动。
+              - img "demand" [ref=e164]
+        - generic [ref=e165]:
+          - img "env" [ref=e166]
+          - generic [ref=e167]:
+            - generic [ref=e168]: NPC：我替你工作，你替我自由！
+            - generic [ref=e169] [cursor=pointer]: Let’s Goooooo ->
+    - generic [ref=e174]:
+      - generic [ref=e175]:
+        - generic [ref=e176]:
+          - link [ref=e177] [cursor=pointer]:
+            - /url: /
+            - img [ref=e178]
+          - generic [ref=e185]: © 2026 Tencent, Inc. 腾讯云提供计算服务
+        - generic [ref=e186]:
+          - link "关于我们" [ref=e188] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/about.html
+          - link "隐私声明" [ref=e190] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/privacy.html
+          - link "服务协议" [ref=e192] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/terms.html
+          - link "SLA" [ref=e194] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/sla.html
+          - link "API" [ref=e196] [cursor=pointer]:
+            - /url: https://api.cnb.cool
+          - link "SKILL" [ref=e198] [cursor=pointer]:
+            - /url: https://cnb.cool/cnb/skills/cnb-skill
+          - link "帮助文档" [ref=e200] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/
+          - link "最佳实践" [ref=e202] [cursor=pointer]:
+            - /url: https://cnb.cool/examples/showcase
+          - link "使用反馈" [ref=e204] [cursor=pointer]:
+            - /url: https://cnb.cool/cnb/feedback
+      - generic [ref=e205]:
+        - generic [ref=e207]: 深圳市南山区粤海街道麻岭社区科技中一路腾讯大厦35楼
+        - generic [ref=e208]:
+          - link "京ICP备11018762号-111" [ref=e210] [cursor=pointer]:
+            - /url: https://cnb.cool/110?url=https%3A%2F%2Fbeian.miit.gov.cn%2F%23%2FIntegrated%2Findex
+          - generic [ref=e211]:
+            - img "粤公网安备44030002006058号" [ref=e212]
+            - link "粤公网安备44030002006058号" [ref=e213] [cursor=pointer]:
+              - /url: https://cnb.cool/110?url=https%3A%2F%2Fbeian.mps.gov.cn%2F%23%2Fquery%2FwebSearch%3Fcode%3D44030002006058
+  - alert [ref=e214]

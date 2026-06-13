@@ -1,0 +1,62 @@
+- generic [active] [ref=e1]:
+  - img "logo"
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e9]:
+        - link [ref=e11] [cursor=pointer]:
+          - /url: /
+          - img [ref=e12]
+        - generic [ref=e19]:
+          - button "Site" [ref=e20] [cursor=pointer]:
+            - search "Site" [ref=e21]:
+              - generic [ref=e23]:
+                - img [ref=e24]
+                - generic [ref=e27]: 搜索/提问
+                - img [ref=e28]
+          - button [ref=e31] [cursor=pointer]:
+            - img [ref=e32]
+          - generic [ref=e36] [cursor=pointer]:
+            - img [ref=e37]
+            - generic [ref=e43]: 微信登录
+      - generic [ref=e45]:
+        - generic:
+          - generic:
+            - generic: "404"
+            - generic: 页面不存在，或您暂无访问权限
+            - generic: "Trace ID: 15239cd280a83cc549ac48fda779281c"
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - generic [ref=e51]:
+          - link [ref=e52] [cursor=pointer]:
+            - /url: /
+            - img [ref=e53]
+          - generic [ref=e60]: © 2026 Tencent, Inc.
+        - generic [ref=e61]:
+          - link "关于我们" [ref=e63] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/about.html
+          - link "隐私声明" [ref=e65] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/privacy.html
+          - link "服务协议" [ref=e67] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/terms.html
+          - link "SLA" [ref=e69] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/saas/sla.html
+          - link "API" [ref=e71] [cursor=pointer]:
+            - /url: https://api.cnb.cool
+          - link "SKILL" [ref=e73] [cursor=pointer]:
+            - /url: https://cnb.cool/cnb/skills/cnb-skill
+          - link "帮助文档" [ref=e75] [cursor=pointer]:
+            - /url: https://docs.cnb.cool/zh/
+          - link "最佳实践" [ref=e77] [cursor=pointer]:
+            - /url: https://cnb.cool/examples/showcase
+          - link "使用反馈" [ref=e79] [cursor=pointer]:
+            - /url: https://cnb.cool/cnb/feedback
+      - generic [ref=e80]:
+        - generic [ref=e82]: 深圳市南山区粤海街道麻岭社区科技中一路腾讯大厦35楼
+        - generic [ref=e83]:
+          - link "京ICP备11018762号-111" [ref=e85] [cursor=pointer]:
+            - /url: https://cnb.cool/110?url=https%3A%2F%2Fbeian.miit.gov.cn%2F%23%2FIntegrated%2Findex
+          - generic [ref=e86]:
+            - img "粤公网安备44030002006058号" [ref=e87]
+            - link "粤公网安备44030002006058号" [ref=e88] [cursor=pointer]:
+              - /url: https://cnb.cool/110?url=https%3A%2F%2Fbeian.mps.gov.cn%2F%23%2Fquery%2FwebSearch%3Fcode%3D44030002006058
+  - alert [ref=e89]

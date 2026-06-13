@@ -1,0 +1,1595 @@
+- generic [ref=e9]:
+  - generic [ref=e11]:
+    - generic [ref=e12]:
+      - heading "CNB OPENAPI" [level=4] [ref=e14]
+      - button "主题切换菜单" [ref=e15] [cursor=pointer]:
+        - img [ref=e17]
+    - button "Search APIs... /" [ref=e19] [cursor=pointer]:
+      - generic [ref=e21]: Search APIs...
+      - generic [ref=e22]: /
+    - generic [ref=e26]:
+      - link "Overview" [ref=e27] [cursor=pointer]:
+        - /url: "#/"
+        - generic "Overview" [ref=e28]:
+          - generic [ref=e29]: Overview
+      - generic [ref=e30]: Endpoints
+      - generic "Event" [ref=e31] [cursor=pointer]:
+        - generic [ref=e32]: Event
+        - img [ref=e35]
+      - generic "Organizations" [ref=e37] [cursor=pointer]:
+        - generic [ref=e38]: Organizations
+        - img [ref=e41]
+      - generic "Rank" [ref=e43] [cursor=pointer]:
+        - generic [ref=e44]: Rank
+        - img [ref=e47]
+      - generic "KnowledgeBase" [ref=e49] [cursor=pointer]:
+        - generic [ref=e50]: KnowledgeBase
+        - img [ref=e53]
+      - generic "Search" [ref=e55] [cursor=pointer]:
+        - generic [ref=e56]: Search
+        - img [ref=e59]
+      - generic "Users" [ref=e61] [cursor=pointer]:
+        - generic [ref=e62]: Users
+        - img [ref=e65]
+      - generic "Issues" [ref=e67] [cursor=pointer]:
+        - generic [ref=e68]: Issues
+        - img [ref=e71]
+      - generic "Repositories" [ref=e73] [cursor=pointer]:
+        - generic [ref=e74]: Repositories
+        - img [ref=e77]
+      - generic "Starring" [ref=e79] [cursor=pointer]:
+        - generic [ref=e80]: Starring
+        - img [ref=e83]
+      - generic "Activities" [ref=e85] [cursor=pointer]:
+        - generic [ref=e86]: Activities
+        - img [ref=e89]
+      - generic "Followers" [ref=e91] [cursor=pointer]:
+        - generic [ref=e92]: Followers
+        - img [ref=e95]
+      - generic "Workspace" [ref=e97] [cursor=pointer]:
+        - generic [ref=e98]: Workspace
+        - img [ref=e101]
+      - generic "Members" [ref=e103] [cursor=pointer]:
+        - generic [ref=e104]: Members
+        - img [ref=e107]
+      - generic "Missions" [ref=e109] [cursor=pointer]:
+        - generic [ref=e110]: Missions
+        - img [ref=e113]
+      - generic "Registries" [ref=e115] [cursor=pointer]:
+        - generic [ref=e116]: Registries
+        - img [ref=e119]
+      - generic "AI" [ref=e121] [cursor=pointer]:
+        - generic [ref=e122]: AI
+        - img [ref=e125]
+      - generic "Assets" [ref=e127] [cursor=pointer]:
+        - generic [ref=e128]: Assets
+        - img [ref=e131]
+      - generic "Badge" [ref=e133] [cursor=pointer]:
+        - generic [ref=e134]: Badge
+        - img [ref=e137]
+      - generic "Build" [ref=e139] [cursor=pointer]:
+        - generic [ref=e140]: Build
+        - img [ref=e143]
+      - generic "Git" [ref=e145] [cursor=pointer]:
+        - generic [ref=e146]: Git
+        - img [ref=e149]
+      - generic "Pulls" [ref=e151] [cursor=pointer]:
+        - generic [ref=e152]: Pulls
+        - img [ref=e155]
+      - generic "RepoLabels" [ref=e157] [cursor=pointer]:
+        - generic [ref=e158]: RepoLabels
+        - img [ref=e161]
+      - generic "Releases" [ref=e163] [cursor=pointer]:
+        - generic [ref=e164]: Releases
+        - img [ref=e167]
+      - link "查询 release 列表。List releases. get" [ref=e1642] [cursor=pointer]:
+        - /url: "#/operations/ListReleases"
+        - generic "查询 release 列表。List releases." [ref=e1643]:
+          - img [ref=e1644]
+          - generic [ref=e1646]: 查询 release 列表。List releases.
+          - generic [ref=e1648]: get
+      - link "新增一个 release。Create a release. post" [ref=e1649] [cursor=pointer]:
+        - /url: "#/operations/PostRelease"
+        - generic "新增一个 release。Create a release." [ref=e1650]:
+          - img [ref=e1651]
+          - generic [ref=e1653]: 新增一个 release。Create a release.
+          - generic [ref=e1655]: post
+      - link "发起一个获取 release 附件的请求， 302到有一定效期的下载地址。Get a request to fetch a release assets and returns 302 redirect to the assets URL with specific valid time. get" [ref=e1656] [cursor=pointer]:
+        - /url: "#/operations/GetReleasesAsset"
+        - generic "发起一个获取 release 附件的请求， 302到有一定效期的下载地址。Get a request to fetch a release assets and returns 302 redirect to the assets URL with specific valid time." [ref=e1657]:
+          - img [ref=e1658]
+          - generic [ref=e1660]: 发起一个获取 release 附件的请求， 302到有一定效期的下载地址。Get a request to fetch a release assets and returns 302 redirect to the assets URL with specific valid time.
+          - generic [ref=e1662]: get
+      - link "查询最新的 release。Query the latest release. get" [ref=e1663] [cursor=pointer]:
+        - /url: "#/operations/GetLatestRelease"
+        - generic "查询最新的 release。Query the latest release." [ref=e1664]:
+          - img [ref=e1665]
+          - generic [ref=e1667]: 查询最新的 release。Query the latest release.
+          - generic [ref=e1669]: get
+      - link "通过 tag 查询指定 release,包含附件信息。Get a release by tag, include assets information. get" [ref=e1670] [cursor=pointer]:
+        - /url: "#/operations/GetReleaseByTag"
+        - generic "通过 tag 查询指定 release,包含附件信息。Get a release by tag, include assets information." [ref=e1671]:
+          - img [ref=e1672]
+          - generic [ref=e1674]: 通过 tag 查询指定 release,包含附件信息。Get a release by tag, include assets information.
+          - generic [ref=e1676]: get
+      - link "根据 id 查询指定 release, 包含附件信息。Get a release by id, include assets information. get" [ref=e1677] [cursor=pointer]:
+        - /url: "#/operations/GetReleaseByID"
+        - generic "根据 id 查询指定 release, 包含附件信息。Get a release by id, include assets information." [ref=e1678]:
+          - img [ref=e1679]
+          - generic [ref=e1681]: 根据 id 查询指定 release, 包含附件信息。Get a release by id, include assets information.
+          - generic [ref=e1683]: get
+      - link "删除指定的 release。Delete a release. delete" [ref=e1684] [cursor=pointer]:
+        - /url: "#/operations/DeleteRelease"
+        - generic "删除指定的 release。Delete a release." [ref=e1685]:
+          - img [ref=e1686]
+          - generic [ref=e1688]: 删除指定的 release。Delete a release.
+          - generic [ref=e1690]: delete
+      - link "更新 release。Update a release. patch" [ref=e1691] [cursor=pointer]:
+        - /url: "#/operations/PatchRelease"
+        - generic "更新 release。Update a release." [ref=e1692]:
+          - img [ref=e1693]
+          - generic [ref=e1695]: 更新 release。Update a release.
+          - generic [ref=e1697]: patch
+      - link "确认 release 附件上传完成。Confirm release asset upload. post" [ref=e1698] [cursor=pointer]:
+        - /url: "#/operations/PostReleaseAssetUploadConfirmation"
+        - generic "确认 release 附件上传完成。Confirm release asset upload." [ref=e1699]:
+          - img [ref=e1700]
+          - generic [ref=e1702]: 确认 release 附件上传完成。Confirm release asset upload.
+          - generic [ref=e1704]: post
+      - link "新增一个 release 附件。Create a release asset. post" [ref=e1705] [cursor=pointer]:
+        - /url: "#/operations/PostReleaseAssetUploadURL"
+        - generic "新增一个 release 附件。Create a release asset." [ref=e1706]:
+          - img [ref=e1707]
+          - generic [ref=e1709]: 新增一个 release 附件。Create a release asset.
+          - generic [ref=e1711]: post
+      - link "查询指定的 release 附件 the specified release asset. get" [ref=e1712] [cursor=pointer]:
+        - /url: "#/operations/GetReleaseAsset"
+        - generic "查询指定的 release 附件 the specified release asset." [ref=e1713]:
+          - img [ref=e1714]
+          - generic [ref=e1716]: 查询指定的 release 附件 the specified release asset.
+          - generic [ref=e1718]: get
+      - link "删除指定的 release 附件 the specified release asset. delete" [ref=e1719] [cursor=pointer]:
+        - /url: "#/operations/DeleteReleaseAsset"
+        - generic "删除指定的 release 附件 the specified release asset." [ref=e1720]:
+          - img [ref=e1721]
+          - generic [ref=e1723]: 删除指定的 release 附件 the specified release asset.
+          - generic [ref=e1725]: delete
+      - generic "Security" [ref=e169] [cursor=pointer]:
+        - generic [ref=e170]: Security
+        - img [ref=e173]
+      - generic "GitSettings" [ref=e175] [cursor=pointer]:
+        - generic [ref=e176]: GitSettings
+        - img [ref=e179]
+      - generic "Charge" [ref=e181] [cursor=pointer]:
+        - generic [ref=e182]: Charge
+        - img [ref=e185]
+      - generic "RepoCodeIssue" [ref=e187] [cursor=pointer]:
+        - generic [ref=e188]: RepoCodeIssue
+        - img [ref=e191]
+      - generic "RepoContributor" [ref=e193] [cursor=pointer]:
+        - generic [ref=e194]: RepoContributor
+        - img [ref=e197]
+      - generic "Collaborators" [ref=e199] [cursor=pointer]:
+        - generic [ref=e200]: Collaborators
+        - img [ref=e203]
+      - generic [ref=e205]: Schemas
+      - link "api.AssetGroup" [ref=e206] [cursor=pointer]:
+        - /url: "#/schemas/api.AssetGroup"
+        - generic "api.AssetGroup" [ref=e207]:
+          - img [ref=e208]
+          - generic [ref=e210]: api.AssetGroup
+      - link "api.Author" [ref=e211] [cursor=pointer]:
+        - /url: "#/schemas/api.Author"
+        - generic "api.Author" [ref=e212]:
+          - img [ref=e213]
+          - generic [ref=e215]: api.Author
+      - link "api.Blob" [ref=e216] [cursor=pointer]:
+        - /url: "#/schemas/api.Blob"
+        - generic "api.Blob" [ref=e217]:
+          - img [ref=e218]
+          - generic [ref=e220]: api.Blob
+      - link "api.Branch" [ref=e221] [cursor=pointer]:
+        - /url: "#/schemas/api.Branch"
+        - generic "api.Branch" [ref=e222]:
+          - img [ref=e223]
+          - generic [ref=e225]: api.Branch
+      - link "api.BranchDetail" [ref=e226] [cursor=pointer]:
+        - /url: "#/schemas/api.BranchDetail"
+        - generic "api.BranchDetail" [ref=e227]:
+          - img [ref=e228]
+          - generic [ref=e230]: api.BranchDetail
+      - link "api.BranchProtection" [ref=e231] [cursor=pointer]:
+        - /url: "#/schemas/api.BranchProtection"
+        - generic "api.BranchProtection" [ref=e232]:
+          - img [ref=e233]
+          - generic [ref=e235]: api.BranchProtection
+      - link "api.CodeIssueDetail" [ref=e236] [cursor=pointer]:
+        - /url: "#/schemas/api.CodeIssueDetail"
+        - generic "api.CodeIssueDetail" [ref=e237]:
+          - img [ref=e238]
+          - generic [ref=e240]: api.CodeIssueDetail
+      - link "api.CodeIssueListData" [ref=e241] [cursor=pointer]:
+        - /url: "#/schemas/api.CodeIssueListData"
+        - generic "api.CodeIssueListData" [ref=e242]:
+          - img [ref=e243]
+          - generic [ref=e245]: api.CodeIssueListData
+      - link "api.CodeIssueRecord" [ref=e246] [cursor=pointer]:
+        - /url: "#/schemas/api.CodeIssueRecord"
+        - generic "api.CodeIssueRecord" [ref=e247]:
+          - img [ref=e248]
+          - generic [ref=e250]: api.CodeIssueRecord
+      - link "api.Commit" [ref=e251] [cursor=pointer]:
+        - /url: "#/schemas/api.Commit"
+        - generic "api.Commit" [ref=e252]:
+          - img [ref=e253]
+          - generic [ref=e255]: api.Commit
+      - link "api.CommitAsset" [ref=e256] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitAsset"
+        - generic "api.CommitAsset" [ref=e257]:
+          - img [ref=e258]
+          - generic [ref=e260]: api.CommitAsset
+      - link "api.CommitDiffFilePatch" [ref=e261] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitDiffFilePatch"
+        - generic "api.CommitDiffFilePatch" [ref=e262]:
+          - img [ref=e263]
+          - generic [ref=e265]: api.CommitDiffFilePatch
+      - link "api.CommitObject" [ref=e266] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitObject"
+        - generic "api.CommitObject" [ref=e267]:
+          - img [ref=e268]
+          - generic [ref=e270]: api.CommitObject
+      - link "api.CommitObjectTree" [ref=e271] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitObjectTree"
+        - generic "api.CommitObjectTree" [ref=e272]:
+          - img [ref=e273]
+          - generic [ref=e275]: api.CommitObjectTree
+      - link "api.CommitObjectVerification" [ref=e276] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitObjectVerification"
+        - generic "api.CommitObjectVerification" [ref=e277]:
+          - img [ref=e278]
+          - generic [ref=e280]: api.CommitObjectVerification
+      - link "api.CommitParent" [ref=e281] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitParent"
+        - generic "api.CommitParent" [ref=e282]:
+          - img [ref=e283]
+          - generic [ref=e285]: api.CommitParent
+      - link "api.CommitStatuses" [ref=e286] [cursor=pointer]:
+        - /url: "#/schemas/api.CommitStatuses"
+        - generic "api.CommitStatuses" [ref=e287]:
+          - img [ref=e288]
+          - generic [ref=e290]: api.CommitStatuses
+      - link "api.CompareResponse" [ref=e291] [cursor=pointer]:
+        - /url: "#/schemas/api.CompareResponse"
+        - generic "api.CompareResponse" [ref=e292]:
+          - img [ref=e293]
+          - generic [ref=e295]: api.CompareResponse
+      - link "api.Content" [ref=e296] [cursor=pointer]:
+        - /url: "#/schemas/api.Content"
+        - generic "api.Content" [ref=e297]:
+          - img [ref=e298]
+          - generic [ref=e300]: api.Content
+      - link "api.ContributorTrend" [ref=e301] [cursor=pointer]:
+        - /url: "#/schemas/api.ContributorTrend"
+        - generic "api.ContributorTrend" [ref=e302]:
+          - img [ref=e303]
+          - generic [ref=e305]: api.ContributorTrend
+      - link "api.DeleteIssueAssigneesForm" [ref=e306] [cursor=pointer]:
+        - /url: "#/schemas/api.DeleteIssueAssigneesForm"
+        - generic "api.DeleteIssueAssigneesForm" [ref=e307]:
+          - img [ref=e308]
+          - generic [ref=e310]: api.DeleteIssueAssigneesForm
+      - link "api.DeletePullAssigneesForm" [ref=e311] [cursor=pointer]:
+        - /url: "#/schemas/api.DeletePullAssigneesForm"
+        - generic "api.DeletePullAssigneesForm" [ref=e312]:
+          - img [ref=e313]
+          - generic [ref=e315]: api.DeletePullAssigneesForm
+      - link "api.DeletePullReviewersForm" [ref=e316] [cursor=pointer]:
+        - /url: "#/schemas/api.DeletePullReviewersForm"
+        - generic "api.DeletePullReviewersForm" [ref=e317]:
+          - img [ref=e318]
+          - generic [ref=e320]: api.DeletePullReviewersForm
+      - link "api.DiffLine" [ref=e321] [cursor=pointer]:
+        - /url: "#/schemas/api.DiffLine"
+        - generic "api.DiffLine" [ref=e322]:
+          - img [ref=e323]
+          - generic [ref=e325]: api.DiffLine
+      - link "api.GPGEmail" [ref=e326] [cursor=pointer]:
+        - /url: "#/schemas/api.GPGEmail"
+        - generic "api.GPGEmail" [ref=e327]:
+          - img [ref=e328]
+          - generic [ref=e330]: api.GPGEmail
+      - link "api.GPGPublicKey" [ref=e331] [cursor=pointer]:
+        - /url: "#/schemas/api.GPGPublicKey"
+        - generic "api.GPGPublicKey" [ref=e332]:
+          - img [ref=e333]
+          - generic [ref=e335]: api.GPGPublicKey
+      - link "api.GPGSubkey" [ref=e336] [cursor=pointer]:
+        - /url: "#/schemas/api.GPGSubkey"
+        - generic "api.GPGSubkey" [ref=e337]:
+          - img [ref=e338]
+          - generic [ref=e340]: api.GPGSubkey
+      - link "api.Issue" [ref=e341] [cursor=pointer]:
+        - /url: "#/schemas/api.Issue"
+        - generic "api.Issue" [ref=e342]:
+          - img [ref=e343]
+          - generic [ref=e345]: api.Issue
+      - link "api.IssueActivity" [ref=e346] [cursor=pointer]:
+        - /url: "#/schemas/api.IssueActivity"
+        - generic "api.IssueActivity" [ref=e347]:
+          - img [ref=e348]
+          - generic [ref=e350]: api.IssueActivity
+      - link "api.IssueAssetUploadURL" [ref=e351] [cursor=pointer]:
+        - /url: "#/schemas/api.IssueAssetUploadURL"
+        - generic "api.IssueAssetUploadURL" [ref=e352]:
+          - img [ref=e353]
+          - generic [ref=e355]: api.IssueAssetUploadURL
+      - link "api.IssueComment" [ref=e356] [cursor=pointer]:
+        - /url: "#/schemas/api.IssueComment"
+        - generic "api.IssueComment" [ref=e357]:
+          - img [ref=e358]
+          - generic [ref=e360]: api.IssueComment
+      - link "api.IssueDetail" [ref=e361] [cursor=pointer]:
+        - /url: "#/schemas/api.IssueDetail"
+        - generic "api.IssueDetail" [ref=e362]:
+          - img [ref=e363]
+          - generic [ref=e365]: api.IssueDetail
+      - link "api.IssueProperty" [ref=e366] [cursor=pointer]:
+        - /url: "#/schemas/api.IssueProperty"
+        - generic "api.IssueProperty" [ref=e367]:
+          - img [ref=e368]
+          - generic [ref=e370]: api.IssueProperty
+      - link "api.IssuePropertyUpdateResult" [ref=e371] [cursor=pointer]:
+        - /url: "#/schemas/api.IssuePropertyUpdateResult"
+        - generic "api.IssuePropertyUpdateResult" [ref=e372]:
+          - img [ref=e373]
+          - generic [ref=e375]: api.IssuePropertyUpdateResult
+      - link "api.Label" [ref=e376] [cursor=pointer]:
+        - /url: "#/schemas/api.Label"
+        - generic "api.Label" [ref=e377]:
+          - img [ref=e378]
+          - generic [ref=e380]: api.Label
+      - link "api.LabelInfo" [ref=e381] [cursor=pointer]:
+        - /url: "#/schemas/api.LabelInfo"
+        - generic "api.LabelInfo" [ref=e382]:
+          - img [ref=e383]
+          - generic [ref=e385]: api.LabelInfo
+      - link "api.MergePullRequest" [ref=e386] [cursor=pointer]:
+        - /url: "#/schemas/api.MergePullRequest"
+        - generic "api.MergePullRequest" [ref=e387]:
+          - img [ref=e388]
+          - generic [ref=e390]: api.MergePullRequest
+      - link "api.MergePullResponse" [ref=e391] [cursor=pointer]:
+        - /url: "#/schemas/api.MergePullResponse"
+        - generic "api.MergePullResponse" [ref=e392]:
+          - img [ref=e393]
+          - generic [ref=e395]: api.MergePullResponse
+      - link "api.Meta" [ref=e396] [cursor=pointer]:
+        - /url: "#/schemas/api.Meta"
+        - generic "api.Meta" [ref=e397]:
+          - img [ref=e398]
+          - generic [ref=e400]: api.Meta
+      - link "api.PatchIssueAssigneesForm" [ref=e401] [cursor=pointer]:
+        - /url: "#/schemas/api.PatchIssueAssigneesForm"
+        - generic "api.PatchIssueAssigneesForm" [ref=e402]:
+          - img [ref=e403]
+          - generic [ref=e405]: api.PatchIssueAssigneesForm
+      - link "api.PatchIssueCommentForm" [ref=e406] [cursor=pointer]:
+        - /url: "#/schemas/api.PatchIssueCommentForm"
+        - generic "api.PatchIssueCommentForm" [ref=e407]:
+          - img [ref=e408]
+          - generic [ref=e410]: api.PatchIssueCommentForm
+      - link "api.PatchIssueForm" [ref=e411] [cursor=pointer]:
+        - /url: "#/schemas/api.PatchIssueForm"
+        - generic "api.PatchIssueForm" [ref=e412]:
+          - img [ref=e413]
+          - generic [ref=e415]: api.PatchIssueForm
+      - link "api.PatchLabelForm" [ref=e416] [cursor=pointer]:
+        - /url: "#/schemas/api.PatchLabelForm"
+        - generic "api.PatchLabelForm" [ref=e417]:
+          - img [ref=e418]
+          - generic [ref=e420]: api.PatchLabelForm
+      - link "api.PatchPullCommentForm" [ref=e421] [cursor=pointer]:
+        - /url: "#/schemas/api.PatchPullCommentForm"
+        - generic "api.PatchPullCommentForm" [ref=e422]:
+          - img [ref=e423]
+          - generic [ref=e425]: api.PatchPullCommentForm
+      - link "api.PatchPullRequest" [ref=e426] [cursor=pointer]:
+        - /url: "#/schemas/api.PatchPullRequest"
+        - generic "api.PatchPullRequest" [ref=e427]:
+          - img [ref=e428]
+          - generic [ref=e430]: api.PatchPullRequest
+      - link "api.PipelineSettings" [ref=e431] [cursor=pointer]:
+        - /url: "#/schemas/api.PipelineSettings"
+        - generic "api.PipelineSettings" [ref=e432]:
+          - img [ref=e433]
+          - generic [ref=e435]: api.PipelineSettings
+      - link "api.PostAssetGroupForm" [ref=e436] [cursor=pointer]:
+        - /url: "#/schemas/api.PostAssetGroupForm"
+        - generic "api.PostAssetGroupForm" [ref=e437]:
+          - img [ref=e438]
+          - generic [ref=e440]: api.PostAssetGroupForm
+      - link "api.PostBlobForm" [ref=e441] [cursor=pointer]:
+        - /url: "#/schemas/api.PostBlobForm"
+        - generic "api.PostBlobForm" [ref=e442]:
+          - img [ref=e443]
+          - generic [ref=e445]: api.PostBlobForm
+      - link "api.PostIssueAssetUploadURLForm" [ref=e446] [cursor=pointer]:
+        - /url: "#/schemas/api.PostIssueAssetUploadURLForm"
+        - generic "api.PostIssueAssetUploadURLForm" [ref=e447]:
+          - img [ref=e448]
+          - generic [ref=e450]: api.PostIssueAssetUploadURLForm
+      - link "api.PostIssueAssigneesForm" [ref=e451] [cursor=pointer]:
+        - /url: "#/schemas/api.PostIssueAssigneesForm"
+        - generic "api.PostIssueAssigneesForm" [ref=e452]:
+          - img [ref=e453]
+          - generic [ref=e455]: api.PostIssueAssigneesForm
+      - link "api.PostIssueCommentForm" [ref=e456] [cursor=pointer]:
+        - /url: "#/schemas/api.PostIssueCommentForm"
+        - generic "api.PostIssueCommentForm" [ref=e457]:
+          - img [ref=e458]
+          - generic [ref=e460]: api.PostIssueCommentForm
+      - link "api.PostIssueForm" [ref=e461] [cursor=pointer]:
+        - /url: "#/schemas/api.PostIssueForm"
+        - generic "api.PostIssueForm" [ref=e462]:
+          - img [ref=e463]
+          - generic [ref=e465]: api.PostIssueForm
+      - link "api.PostIssueLabelsForm" [ref=e466] [cursor=pointer]:
+        - /url: "#/schemas/api.PostIssueLabelsForm"
+        - generic "api.PostIssueLabelsForm" [ref=e467]:
+          - img [ref=e468]
+          - generic [ref=e470]: api.PostIssueLabelsForm
+      - link "api.PostLabelForm" [ref=e471] [cursor=pointer]:
+        - /url: "#/schemas/api.PostLabelForm"
+        - generic "api.PostLabelForm" [ref=e472]:
+          - img [ref=e473]
+          - generic [ref=e475]: api.PostLabelForm
+      - link "api.PostPullAssigneesForm" [ref=e476] [cursor=pointer]:
+        - /url: "#/schemas/api.PostPullAssigneesForm"
+        - generic "api.PostPullAssigneesForm" [ref=e477]:
+          - img [ref=e478]
+          - generic [ref=e480]: api.PostPullAssigneesForm
+      - link "api.PostPullLabelsForm" [ref=e481] [cursor=pointer]:
+        - /url: "#/schemas/api.PostPullLabelsForm"
+        - generic "api.PostPullLabelsForm" [ref=e482]:
+          - img [ref=e483]
+          - generic [ref=e485]: api.PostPullLabelsForm
+      - link "api.PostPullRequestReviewReplyForm" [ref=e486] [cursor=pointer]:
+        - /url: "#/schemas/api.PostPullRequestReviewReplyForm"
+        - generic "api.PostPullRequestReviewReplyForm" [ref=e487]:
+          - img [ref=e488]
+          - generic [ref=e490]: api.PostPullRequestReviewReplyForm
+      - link "api.PostPullReviewersForm" [ref=e491] [cursor=pointer]:
+        - /url: "#/schemas/api.PostPullReviewersForm"
+        - generic "api.PostPullReviewersForm" [ref=e492]:
+          - img [ref=e493]
+          - generic [ref=e495]: api.PostPullReviewersForm
+      - link "api.PostTagFrom" [ref=e496] [cursor=pointer]:
+        - /url: "#/schemas/api.PostTagFrom"
+        - generic "api.PostTagFrom" [ref=e497]:
+          - img [ref=e498]
+          - generic [ref=e500]: api.PostTagFrom
+      - link "api.Pull" [ref=e501] [cursor=pointer]:
+        - /url: "#/schemas/api.Pull"
+        - generic "api.Pull" [ref=e502]:
+          - img [ref=e503]
+          - generic [ref=e505]: api.Pull
+      - link "api.PullCommentCreationForm" [ref=e506] [cursor=pointer]:
+        - /url: "#/schemas/api.PullCommentCreationForm"
+        - generic "api.PullCommentCreationForm" [ref=e507]:
+          - img [ref=e508]
+          - generic [ref=e510]: api.PullCommentCreationForm
+      - link "api.PullCreationForm" [ref=e511] [cursor=pointer]:
+        - /url: "#/schemas/api.PullCreationForm"
+        - generic "api.PullCreationForm" [ref=e512]:
+          - img [ref=e513]
+          - generic [ref=e515]: api.PullCreationForm
+      - link "api.PullFile" [ref=e516] [cursor=pointer]:
+        - /url: "#/schemas/api.PullFile"
+        - generic "api.PullFile" [ref=e517]:
+          - img [ref=e518]
+          - generic [ref=e520]: api.PullFile
+      - link "api.PullRef" [ref=e521] [cursor=pointer]:
+        - /url: "#/schemas/api.PullRef"
+        - generic "api.PullRef" [ref=e522]:
+          - img [ref=e523]
+          - generic [ref=e525]: api.PullRef
+      - link "api.PullRefInfo" [ref=e526] [cursor=pointer]:
+        - /url: "#/schemas/api.PullRefInfo"
+        - generic "api.PullRefInfo" [ref=e527]:
+          - img [ref=e528]
+          - generic [ref=e530]: api.PullRefInfo
+      - link "api.PullRequest" [ref=e531] [cursor=pointer]:
+        - /url: "#/schemas/api.PullRequest"
+        - generic "api.PullRequest" [ref=e532]:
+          - img [ref=e533]
+          - generic [ref=e535]: api.PullRequest
+      - link "api.PullRequestComment" [ref=e536] [cursor=pointer]:
+        - /url: "#/schemas/api.PullRequestComment"
+        - generic "api.PullRequestComment" [ref=e537]:
+          - img [ref=e538]
+          - generic [ref=e540]: api.PullRequestComment
+      - link "api.PullRequestInfo" [ref=e541] [cursor=pointer]:
+        - /url: "#/schemas/api.PullRequestInfo"
+        - generic "api.PullRequestInfo" [ref=e542]:
+          - img [ref=e543]
+          - generic [ref=e545]: api.PullRequestInfo
+      - link "api.PullRequestSettings" [ref=e546] [cursor=pointer]:
+        - /url: "#/schemas/api.PullRequestSettings"
+        - generic "api.PullRequestSettings" [ref=e547]:
+          - img [ref=e548]
+          - generic [ref=e550]: api.PullRequestSettings
+      - link "api.PullReview" [ref=e551] [cursor=pointer]:
+        - /url: "#/schemas/api.PullReview"
+        - generic "api.PullReview" [ref=e552]:
+          - img [ref=e553]
+          - generic [ref=e555]: api.PullReview
+      - link "api.PullReviewComment" [ref=e556] [cursor=pointer]:
+        - /url: "#/schemas/api.PullReviewComment"
+        - generic "api.PullReviewComment" [ref=e557]:
+          - img [ref=e558]
+          - generic [ref=e560]: api.PullReviewComment
+      - link "api.PullReviewCommentCreationForm" [ref=e561] [cursor=pointer]:
+        - /url: "#/schemas/api.PullReviewCommentCreationForm"
+        - generic "api.PullReviewCommentCreationForm" [ref=e562]:
+          - img [ref=e563]
+          - generic [ref=e565]: api.PullReviewCommentCreationForm
+      - link "api.PullReviewCreationForm" [ref=e566] [cursor=pointer]:
+        - /url: "#/schemas/api.PullReviewCreationForm"
+        - generic "api.PullReviewCreationForm" [ref=e567]:
+          - img [ref=e568]
+          - generic [ref=e570]: api.PullReviewCreationForm
+      - link "api.PullReviewer" [ref=e571] [cursor=pointer]:
+        - /url: "#/schemas/api.PullReviewer"
+        - generic "api.PullReviewer" [ref=e572]:
+          - img [ref=e573]
+          - generic [ref=e575]: api.PullReviewer
+      - link "api.PushLimitSettings" [ref=e576] [cursor=pointer]:
+        - /url: "#/schemas/api.PushLimitSettings"
+        - generic "api.PushLimitSettings" [ref=e577]:
+          - img [ref=e578]
+          - generic [ref=e580]: api.PushLimitSettings
+      - link "api.PutIssueLabelsForm" [ref=e581] [cursor=pointer]:
+        - /url: "#/schemas/api.PutIssueLabelsForm"
+        - generic "api.PutIssueLabelsForm" [ref=e582]:
+          - img [ref=e583]
+          - generic [ref=e585]: api.PutIssueLabelsForm
+      - link "api.PutPullLabelsForm" [ref=e586] [cursor=pointer]:
+        - /url: "#/schemas/api.PutPullLabelsForm"
+        - generic "api.PutPullLabelsForm" [ref=e587]:
+          - img [ref=e588]
+          - generic [ref=e590]: api.PutPullLabelsForm
+      - link "api.Release" [ref=e591] [cursor=pointer]:
+        - /url: "#/schemas/api.Release"
+        - generic "api.Release" [ref=e592]:
+          - img [ref=e593]
+          - generic [ref=e595]: api.Release
+      - link "api.ReleaseAsset" [ref=e596] [cursor=pointer]:
+        - /url: "#/schemas/api.ReleaseAsset"
+        - generic "api.ReleaseAsset" [ref=e597]:
+          - img [ref=e598]
+          - generic [ref=e600]: api.ReleaseAsset
+      - link "api.Repo" [ref=e601] [cursor=pointer]:
+        - /url: "#/schemas/api.Repo"
+        - generic "api.Repo" [ref=e602]:
+          - img [ref=e603]
+          - generic [ref=e605]: api.Repo
+      - link "api.RepoContribTrend" [ref=e606] [cursor=pointer]:
+        - /url: "#/schemas/api.RepoContribTrend"
+        - generic "api.RepoContribTrend" [ref=e607]:
+          - img [ref=e608]
+          - generic [ref=e610]: api.RepoContribTrend
+      - link "api.RepoInfo" [ref=e611] [cursor=pointer]:
+        - /url: "#/schemas/api.RepoInfo"
+        - generic "api.RepoInfo" [ref=e612]:
+          - img [ref=e613]
+          - generic [ref=e615]: api.RepoInfo
+      - link "api.RepoProperty" [ref=e616] [cursor=pointer]:
+        - /url: "#/schemas/api.RepoProperty"
+        - generic "api.RepoProperty" [ref=e617]:
+          - img [ref=e618]
+          - generic [ref=e620]: api.RepoProperty
+      - link "api.Signature" [ref=e621] [cursor=pointer]:
+        - /url: "#/schemas/api.Signature"
+        - generic "api.Signature" [ref=e622]:
+          - img [ref=e623]
+          - generic [ref=e625]: api.Signature
+      - link "api.Tag" [ref=e626] [cursor=pointer]:
+        - /url: "#/schemas/api.Tag"
+        - generic "api.Tag" [ref=e627]:
+          - img [ref=e628]
+          - generic [ref=e630]: api.Tag
+      - link "api.TagObjectVerification" [ref=e631] [cursor=pointer]:
+        - /url: "#/schemas/api.TagObjectVerification"
+        - generic "api.TagObjectVerification" [ref=e632]:
+          - img [ref=e633]
+          - generic [ref=e635]: api.TagObjectVerification
+      - link "api.TreeEntry" [ref=e636] [cursor=pointer]:
+        - /url: "#/schemas/api.TreeEntry"
+        - generic "api.TreeEntry" [ref=e637]:
+          - img [ref=e638]
+          - generic [ref=e640]: api.TreeEntry
+      - link "api.UserInfo" [ref=e641] [cursor=pointer]:
+        - /url: "#/schemas/api.UserInfo"
+        - generic "api.UserInfo" [ref=e642]:
+          - img [ref=e643]
+          - generic [ref=e645]: api.UserInfo
+      - link "api.UserIssue" [ref=e646] [cursor=pointer]:
+        - /url: "#/schemas/api.UserIssue"
+        - generic "api.UserIssue" [ref=e647]:
+          - img [ref=e648]
+          - generic [ref=e650]: api.UserIssue
+      - link "api.Week" [ref=e651] [cursor=pointer]:
+        - /url: "#/schemas/api.Week"
+        - generic "api.Week" [ref=e652]:
+          - img [ref=e653]
+          - generic [ref=e655]: api.Week
+      - link "chart.Dependency" [ref=e656] [cursor=pointer]:
+        - /url: "#/schemas/chart.Dependency"
+        - generic "chart.Dependency" [ref=e657]:
+          - img [ref=e658]
+          - generic [ref=e660]: chart.Dependency
+      - link "chart.Maintainer" [ref=e661] [cursor=pointer]:
+        - /url: "#/schemas/chart.Maintainer"
+        - generic "chart.Maintainer" [ref=e662]:
+          - img [ref=e663]
+          - generic [ref=e665]: chart.Maintainer
+      - link "chart.Metadata" [ref=e666] [cursor=pointer]:
+        - /url: "#/schemas/chart.Metadata"
+        - generic "chart.Metadata" [ref=e667]:
+          - img [ref=e668]
+          - generic [ref=e670]: chart.Metadata
+      - link "constant.AccessRole" [ref=e671] [cursor=pointer]:
+        - /url: "#/schemas/constant.AccessRole"
+        - generic "constant.AccessRole" [ref=e672]:
+          - img [ref=e673]
+          - generic [ref=e675]: constant.AccessRole
+      - link "constant.RepoDisplayModule" [ref=e676] [cursor=pointer]:
+        - /url: "#/schemas/constant.RepoDisplayModule"
+        - generic "constant.RepoDisplayModule" [ref=e677]:
+          - img [ref=e678]
+          - generic [ref=e680]: constant.RepoDisplayModule
+      - link "constant.RepoStatus" [ref=e681] [cursor=pointer]:
+        - /url: "#/schemas/constant.RepoStatus"
+        - generic "constant.RepoStatus" [ref=e682]:
+          - img [ref=e683]
+          - generic [ref=e685]: constant.RepoStatus
+      - link "constant.SlugType" [ref=e686] [cursor=pointer]:
+        - /url: "#/schemas/constant.SlugType"
+        - generic "constant.SlugType" [ref=e687]:
+          - img [ref=e688]
+          - generic [ref=e690]: constant.SlugType
+      - link "constant.UserType" [ref=e691] [cursor=pointer]:
+        - /url: "#/schemas/constant.UserType"
+        - generic "constant.UserType" [ref=e692]:
+          - img [ref=e693]
+          - generic [ref=e695]: constant.UserType
+      - link "constant.Visibility" [ref=e696] [cursor=pointer]:
+        - /url: "#/schemas/constant.Visibility"
+        - generic "constant.Visibility" [ref=e697]:
+          - img [ref=e698]
+          - generic [ref=e700]: constant.Visibility
+      - link "convert.NullTime" [ref=e701] [cursor=pointer]:
+        - /url: "#/schemas/convert.NullTime"
+        - generic "convert.NullTime" [ref=e702]:
+          - img [ref=e703]
+          - generic [ref=e705]: convert.NullTime
+      - link "die.WebError" [ref=e706] [cursor=pointer]:
+        - /url: "#/schemas/die.WebError"
+        - generic "die.WebError" [ref=e707]:
+          - img [ref=e708]
+          - generic [ref=e710]: die.WebError
+      - link "dto.ActivityCreateRepoDetail" [ref=e711] [cursor=pointer]:
+        - /url: "#/schemas/dto.ActivityCreateRepoDetail"
+        - generic "dto.ActivityCreateRepoDetail" [ref=e712]:
+          - img [ref=e713]
+          - generic [ref=e715]: dto.ActivityCreateRepoDetail
+      - link "dto.ActivityDate" [ref=e716] [cursor=pointer]:
+        - /url: "#/schemas/dto.ActivityDate"
+        - generic "dto.ActivityDate" [ref=e717]:
+          - img [ref=e718]
+          - generic [ref=e720]: dto.ActivityDate
+      - link "dto.ActivityJoinGroupDetail" [ref=e721] [cursor=pointer]:
+        - /url: "#/schemas/dto.ActivityJoinGroupDetail"
+        - generic "dto.ActivityJoinGroupDetail" [ref=e722]:
+          - img [ref=e723]
+          - generic [ref=e725]: dto.ActivityJoinGroupDetail
+      - link "dto.ActivityRepoDetail" [ref=e726] [cursor=pointer]:
+        - /url: "#/schemas/dto.ActivityRepoDetail"
+        - generic "dto.ActivityRepoDetail" [ref=e727]:
+          - img [ref=e728]
+          - generic [ref=e730]: dto.ActivityRepoDetail
+      - link "dto.ActivitySlugDetail" [ref=e731] [cursor=pointer]:
+        - /url: "#/schemas/dto.ActivitySlugDetail"
+        - generic "dto.ActivitySlugDetail" [ref=e732]:
+          - img [ref=e733]
+          - generic [ref=e735]: dto.ActivitySlugDetail
+      - link "dto.AiChatCompletionsChoice" [ref=e736] [cursor=pointer]:
+        - /url: "#/schemas/dto.AiChatCompletionsChoice"
+        - generic "dto.AiChatCompletionsChoice" [ref=e737]:
+          - img [ref=e738]
+          - generic [ref=e740]: dto.AiChatCompletionsChoice
+      - link "dto.AiChatCompletionsReq" [ref=e741] [cursor=pointer]:
+        - /url: "#/schemas/dto.AiChatCompletionsReq"
+        - generic "dto.AiChatCompletionsReq" [ref=e742]:
+          - img [ref=e743]
+          - generic [ref=e745]: dto.AiChatCompletionsReq
+      - link "dto.AiChatCompletionsResult" [ref=e746] [cursor=pointer]:
+        - /url: "#/schemas/dto.AiChatCompletionsResult"
+        - generic "dto.AiChatCompletionsResult" [ref=e747]:
+          - img [ref=e748]
+          - generic [ref=e750]: dto.AiChatCompletionsResult
+      - link "dto.AssetRecordType" [ref=e751] [cursor=pointer]:
+        - /url: "#/schemas/dto.AssetRecordType"
+        - generic "dto.AssetRecordType" [ref=e752]:
+          - img [ref=e753]
+          - generic [ref=e755]: dto.AssetRecordType
+      - link "dto.AssetRecords" [ref=e756] [cursor=pointer]:
+        - /url: "#/schemas/dto.AssetRecords"
+        - generic "dto.AssetRecords" [ref=e757]:
+          - img [ref=e758]
+          - generic [ref=e760]: dto.AssetRecords
+      - link "dto.Assets" [ref=e761] [cursor=pointer]:
+        - /url: "#/schemas/dto.Assets"
+        - generic "dto.Assets" [ref=e762]:
+          - img [ref=e763]
+          - generic [ref=e765]: dto.Assets
+      - link "dto.Badge" [ref=e766] [cursor=pointer]:
+        - /url: "#/schemas/dto.Badge"
+        - generic "dto.Badge" [ref=e767]:
+          - img [ref=e768]
+          - generic [ref=e770]: dto.Badge
+      - link "dto.BadgeGroup" [ref=e771] [cursor=pointer]:
+        - /url: "#/schemas/dto.BadgeGroup"
+        - generic "dto.BadgeGroup" [ref=e772]:
+          - img [ref=e773]
+          - generic [ref=e775]: dto.BadgeGroup
+      - link "dto.BuildCommonResult" [ref=e776] [cursor=pointer]:
+        - /url: "#/schemas/dto.BuildCommonResult"
+        - generic "dto.BuildCommonResult" [ref=e777]:
+          - img [ref=e778]
+          - generic [ref=e780]: dto.BuildCommonResult
+      - link "dto.BuildLogsResult" [ref=e781] [cursor=pointer]:
+        - /url: "#/schemas/dto.BuildLogsResult"
+        - generic "dto.BuildLogsResult" [ref=e782]:
+          - img [ref=e783]
+          - generic [ref=e785]: dto.BuildLogsResult
+      - link "dto.BuildPipelineInfo" [ref=e786] [cursor=pointer]:
+        - /url: "#/schemas/dto.BuildPipelineInfo"
+        - generic "dto.BuildPipelineInfo" [ref=e787]:
+          - img [ref=e788]
+          - generic [ref=e790]: dto.BuildPipelineInfo
+      - link "dto.BuildResult" [ref=e791] [cursor=pointer]:
+        - /url: "#/schemas/dto.BuildResult"
+        - generic "dto.BuildResult" [ref=e792]:
+          - img [ref=e793]
+          - generic [ref=e795]: dto.BuildResult
+      - link "dto.BuildStageResult" [ref=e796] [cursor=pointer]:
+        - /url: "#/schemas/dto.BuildStageResult"
+        - generic "dto.BuildStageResult" [ref=e797]:
+          - img [ref=e798]
+          - generic [ref=e800]: dto.BuildStageResult
+      - link "dto.BuildStatusResult" [ref=e801] [cursor=pointer]:
+        - /url: "#/schemas/dto.BuildStatusResult"
+        - generic "dto.BuildStatusResult" [ref=e802]:
+          - img [ref=e803]
+          - generic [ref=e805]: dto.BuildStatusResult
+      - link "dto.ChartPackageDetail" [ref=e806] [cursor=pointer]:
+        - /url: "#/schemas/dto.ChartPackageDetail"
+        - generic "dto.ChartPackageDetail" [ref=e807]:
+          - img [ref=e808]
+          - generic [ref=e810]: dto.ChartPackageDetail
+      - link "dto.ChartTag" [ref=e811] [cursor=pointer]:
+        - /url: "#/schemas/dto.ChartTag"
+        - generic "dto.ChartTag" [ref=e812]:
+          - img [ref=e813]
+          - generic [ref=e815]: dto.ChartTag
+      - link "dto.ChartTagDetail" [ref=e816] [cursor=pointer]:
+        - /url: "#/schemas/dto.ChartTagDetail"
+        - generic "dto.ChartTagDetail" [ref=e817]:
+          - img [ref=e818]
+          - generic [ref=e820]: dto.ChartTagDetail
+      - link "dto.CodeIssueSummary" [ref=e821] [cursor=pointer]:
+        - /url: "#/schemas/dto.CodeIssueSummary"
+        - generic "dto.CodeIssueSummary" [ref=e822]:
+          - img [ref=e823]
+          - generic [ref=e825]: dto.CodeIssueSummary
+      - link "dto.CodeLicenseOverview" [ref=e826] [cursor=pointer]:
+        - /url: "#/schemas/dto.CodeLicenseOverview"
+        - generic "dto.CodeLicenseOverview" [ref=e827]:
+          - img [ref=e828]
+          - generic [ref=e830]: dto.CodeLicenseOverview
+      - link "dto.CodeSbomOverview" [ref=e831] [cursor=pointer]:
+        - /url: "#/schemas/dto.CodeSbomOverview"
+        - generic "dto.CodeSbomOverview" [ref=e832]:
+          - img [ref=e833]
+          - generic [ref=e835]: dto.CodeSbomOverview
+      - link "dto.CodeSensitiveSummary" [ref=e836] [cursor=pointer]:
+        - /url: "#/schemas/dto.CodeSensitiveSummary"
+        - generic "dto.CodeSensitiveSummary" [ref=e837]:
+          - img [ref=e838]
+          - generic [ref=e840]: dto.CodeSensitiveSummary
+      - link "dto.CodeVulOverview" [ref=e841] [cursor=pointer]:
+        - /url: "#/schemas/dto.CodeVulOverview"
+        - generic "dto.CodeVulOverview" [ref=e842]:
+          - img [ref=e843]
+          - generic [ref=e845]: dto.CodeVulOverview
+      - link "dto.CommonRegistryPackageDetail" [ref=e846] [cursor=pointer]:
+        - /url: "#/schemas/dto.CommonRegistryPackageDetail"
+        - generic "dto.CommonRegistryPackageDetail" [ref=e847]:
+          - img [ref=e848]
+          - generic [ref=e850]: dto.CommonRegistryPackageDetail
+      - link "dto.CommonRegistryProvenance" [ref=e851] [cursor=pointer]:
+        - /url: "#/schemas/dto.CommonRegistryProvenance"
+        - generic "dto.CommonRegistryProvenance" [ref=e852]:
+          - img [ref=e853]
+          - generic [ref=e855]: dto.CommonRegistryProvenance
+      - link "dto.CommonRegistryTag" [ref=e856] [cursor=pointer]:
+        - /url: "#/schemas/dto.CommonRegistryTag"
+        - generic "dto.CommonRegistryTag" [ref=e857]:
+          - img [ref=e858]
+          - generic [ref=e860]: dto.CommonRegistryTag
+      - link "dto.CommonRegistryTagDetail" [ref=e861] [cursor=pointer]:
+        - /url: "#/schemas/dto.CommonRegistryTagDetail"
+        - generic "dto.CommonRegistryTagDetail" [ref=e862]:
+          - img [ref=e863]
+          - generic [ref=e865]: dto.CommonRegistryTagDetail
+      - link "dto.ConanMetaData" [ref=e866] [cursor=pointer]:
+        - /url: "#/schemas/dto.ConanMetaData"
+        - generic "dto.ConanMetaData" [ref=e867]:
+          - img [ref=e868]
+          - generic [ref=e870]: dto.ConanMetaData
+      - link "dto.ConanPackage" [ref=e871] [cursor=pointer]:
+        - /url: "#/schemas/dto.ConanPackage"
+        - generic "dto.ConanPackage" [ref=e872]:
+          - img [ref=e873]
+          - generic [ref=e875]: dto.ConanPackage
+      - link "dto.ConanProvenance" [ref=e876] [cursor=pointer]:
+        - /url: "#/schemas/dto.ConanProvenance"
+        - generic "dto.ConanProvenance" [ref=e877]:
+          - img [ref=e878]
+          - generic [ref=e880]: dto.ConanProvenance
+      - link "dto.ConanProvenanceSource" [ref=e881] [cursor=pointer]:
+        - /url: "#/schemas/dto.ConanProvenanceSource"
+        - generic "dto.ConanProvenanceSource" [ref=e882]:
+          - img [ref=e883]
+          - generic [ref=e885]: dto.ConanProvenanceSource
+      - link "dto.ConanRegistryTagDetail" [ref=e886] [cursor=pointer]:
+        - /url: "#/schemas/dto.ConanRegistryTagDetail"
+        - generic "dto.ConanRegistryTagDetail" [ref=e887]:
+          - img [ref=e888]
+          - generic [ref=e890]: dto.ConanRegistryTagDetail
+      - link "dto.ContainerAnnotation" [ref=e891] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerAnnotation"
+        - generic "dto.ContainerAnnotation" [ref=e892]:
+          - img [ref=e893]
+          - generic [ref=e895]: dto.ContainerAnnotation
+      - link "dto.ContainerImage" [ref=e896] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerImage"
+        - generic "dto.ContainerImage" [ref=e897]:
+          - img [ref=e898]
+          - generic [ref=e900]: dto.ContainerImage
+      - link "dto.ContainerImageLayer" [ref=e901] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerImageLayer"
+        - generic "dto.ContainerImageLayer" [ref=e902]:
+          - img [ref=e903]
+          - generic [ref=e905]: dto.ContainerImageLayer
+      - link "dto.ContainerPackageDetail" [ref=e906] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerPackageDetail"
+        - generic "dto.ContainerPackageDetail" [ref=e907]:
+          - img [ref=e908]
+          - generic [ref=e910]: dto.ContainerPackageDetail
+      - link "dto.ContainerProvenance" [ref=e911] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerProvenance"
+        - generic "dto.ContainerProvenance" [ref=e912]:
+          - img [ref=e913]
+          - generic [ref=e915]: dto.ContainerProvenance
+      - link "dto.ContainerTag" [ref=e916] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerTag"
+        - generic "dto.ContainerTag" [ref=e917]:
+          - img [ref=e918]
+          - generic [ref=e920]: dto.ContainerTag
+      - link "dto.ContainerTagDetail" [ref=e921] [cursor=pointer]:
+        - /url: "#/schemas/dto.ContainerTagDetail"
+        - generic "dto.ContainerTagDetail" [ref=e922]:
+          - img [ref=e923]
+          - generic [ref=e925]: dto.ContainerTagDetail
+      - link "dto.CreateGroupReq" [ref=e926] [cursor=pointer]:
+        - /url: "#/schemas/dto.CreateGroupReq"
+        - generic "dto.CreateGroupReq" [ref=e927]:
+          - img [ref=e928]
+          - generic [ref=e930]: dto.CreateGroupReq
+      - link "dto.CreateMissionReq" [ref=e931] [cursor=pointer]:
+        - /url: "#/schemas/dto.CreateMissionReq"
+        - generic "dto.CreateMissionReq" [ref=e932]:
+          - img [ref=e933]
+          - generic [ref=e935]: dto.CreateMissionReq
+      - link "dto.CreateRepoReq" [ref=e936] [cursor=pointer]:
+        - /url: "#/schemas/dto.CreateRepoReq"
+        - generic "dto.CreateRepoReq" [ref=e937]:
+          - img [ref=e938]
+          - generic [ref=e940]: dto.CreateRepoReq
+      - link "dto.Dependency" [ref=e941] [cursor=pointer]:
+        - /url: "#/schemas/dto.Dependency"
+        - generic "dto.Dependency" [ref=e942]:
+          - img [ref=e943]
+          - generic [ref=e945]: dto.Dependency
+      - link "dto.DockerModelConfig" [ref=e946] [cursor=pointer]:
+        - /url: "#/schemas/dto.DockerModelConfig"
+        - generic "dto.DockerModelConfig" [ref=e947]:
+          - img [ref=e948]
+          - generic [ref=e950]: dto.DockerModelConfig
+      - link "dto.DockerModelDescriptor" [ref=e951] [cursor=pointer]:
+        - /url: "#/schemas/dto.DockerModelDescriptor"
+        - generic "dto.DockerModelDescriptor" [ref=e952]:
+          - img [ref=e953]
+          - generic [ref=e955]: dto.DockerModelDescriptor
+      - link "dto.DockerModelPackageDetail" [ref=e956] [cursor=pointer]:
+        - /url: "#/schemas/dto.DockerModelPackageDetail"
+        - generic "dto.DockerModelPackageDetail" [ref=e957]:
+          - img [ref=e958]
+          - generic [ref=e960]: dto.DockerModelPackageDetail
+      - link "dto.DockerModelProvenance" [ref=e961] [cursor=pointer]:
+        - /url: "#/schemas/dto.DockerModelProvenance"
+        - generic "dto.DockerModelProvenance" [ref=e962]:
+          - img [ref=e963]
+          - generic [ref=e965]: dto.DockerModelProvenance
+      - link "dto.DockerModelTag" [ref=e966] [cursor=pointer]:
+        - /url: "#/schemas/dto.DockerModelTag"
+        - generic "dto.DockerModelTag" [ref=e967]:
+          - img [ref=e968]
+          - generic [ref=e970]: dto.DockerModelTag
+      - link "dto.DockerModelTagDetail" [ref=e971] [cursor=pointer]:
+        - /url: "#/schemas/dto.DockerModelTagDetail"
+        - generic "dto.DockerModelTagDetail" [ref=e972]:
+          - img [ref=e973]
+          - generic [ref=e975]: dto.DockerModelTagDetail
+      - link "dto.DocumentStatistics" [ref=e976] [cursor=pointer]:
+        - /url: "#/schemas/dto.DocumentStatistics"
+        - generic "dto.DocumentStatistics" [ref=e977]:
+          - img [ref=e978]
+          - generic [ref=e980]: dto.DocumentStatistics
+      - link "dto.EmbeddingModel" [ref=e981] [cursor=pointer]:
+        - /url: "#/schemas/dto.EmbeddingModel"
+        - generic "dto.EmbeddingModel" [ref=e982]:
+          - img [ref=e983]
+          - generic [ref=e985]: dto.EmbeddingModel
+      - link "dto.EmbeddingModels" [ref=e986] [cursor=pointer]:
+        - /url: "#/schemas/dto.EmbeddingModels"
+        - generic "dto.EmbeddingModels" [ref=e987]:
+          - img [ref=e988]
+          - generic [ref=e990]: dto.EmbeddingModels
+      - link "dto.File" [ref=e991] [cursor=pointer]:
+        - /url: "#/schemas/dto.File"
+        - generic "dto.File" [ref=e992]:
+          - img [ref=e993]
+          - generic [ref=e995]: dto.File
+      - link "dto.Forks" [ref=e996] [cursor=pointer]:
+        - /url: "#/schemas/dto.Forks"
+        - generic "dto.Forks" [ref=e997]:
+          - img [ref=e998]
+          - generic [ref=e1000]: dto.Forks
+      - link "dto.GGUF" [ref=e1001] [cursor=pointer]:
+        - /url: "#/schemas/dto.GGUF"
+        - generic "dto.GGUF" [ref=e1002]:
+          - img [ref=e1003]
+          - generic [ref=e1005]: dto.GGUF
+      - link "dto.GetBadgeReq" [ref=e1006] [cursor=pointer]:
+        - /url: "#/schemas/dto.GetBadgeReq"
+        - generic "dto.GetBadgeReq" [ref=e1007]:
+          - img [ref=e1008]
+          - generic [ref=e1010]: dto.GetBadgeReq
+      - link "dto.GetBadgeResult" [ref=e1011] [cursor=pointer]:
+        - /url: "#/schemas/dto.GetBadgeResult"
+        - generic "dto.GetBadgeResult" [ref=e1012]:
+          - img [ref=e1013]
+          - generic [ref=e1015]: dto.GetBadgeResult
+      - link "dto.GetRankResult" [ref=e1016] [cursor=pointer]:
+        - /url: "#/schemas/dto.GetRankResult"
+        - generic "dto.GetRankResult" [ref=e1017]:
+          - img [ref=e1018]
+          - generic [ref=e1020]: dto.GetRankResult
+      - link "dto.GroupSettingReq" [ref=e1021] [cursor=pointer]:
+        - /url: "#/schemas/dto.GroupSettingReq"
+        - generic "dto.GroupSettingReq" [ref=e1022]:
+          - img [ref=e1023]
+          - generic [ref=e1025]: dto.GroupSettingReq
+      - link "dto.HelmProvenance" [ref=e1026] [cursor=pointer]:
+        - /url: "#/schemas/dto.HelmProvenance"
+        - generic "dto.HelmProvenance" [ref=e1027]:
+          - img [ref=e1028]
+          - generic [ref=e1030]: dto.HelmProvenance
+      - link "dto.InheritMembersUser" [ref=e1031] [cursor=pointer]:
+        - /url: "#/schemas/dto.InheritMembersUser"
+        - generic "dto.InheritMembersUser" [ref=e1032]:
+          - img [ref=e1033]
+          - generic [ref=e1035]: dto.InheritMembersUser
+      - link "dto.IssueConfig" [ref=e1036] [cursor=pointer]:
+        - /url: "#/schemas/dto.IssueConfig"
+        - generic "dto.IssueConfig" [ref=e1037]:
+          - img [ref=e1038]
+          - generic [ref=e1040]: dto.IssueConfig
+      - link "dto.KnowledgeBaseInfoRes" [ref=e1041] [cursor=pointer]:
+        - /url: "#/schemas/dto.KnowledgeBaseInfoRes"
+        - generic "dto.KnowledgeBaseInfoRes" [ref=e1042]:
+          - img [ref=e1043]
+          - generic [ref=e1045]: dto.KnowledgeBaseInfoRes
+      - link "dto.KnowledgeBaseMetadata" [ref=e1046] [cursor=pointer]:
+        - /url: "#/schemas/dto.KnowledgeBaseMetadata"
+        - generic "dto.KnowledgeBaseMetadata" [ref=e1047]:
+          - img [ref=e1048]
+          - generic [ref=e1050]: dto.KnowledgeBaseMetadata
+      - link "dto.LastPusher" [ref=e1051] [cursor=pointer]:
+        - /url: "#/schemas/dto.LastPusher"
+        - generic "dto.LastPusher" [ref=e1052]:
+          - img [ref=e1053]
+          - generic [ref=e1055]: dto.LastPusher
+      - link "dto.ListBadgeReq" [ref=e1056] [cursor=pointer]:
+        - /url: "#/schemas/dto.ListBadgeReq"
+        - generic "dto.ListBadgeReq" [ref=e1057]:
+          - img [ref=e1058]
+          - generic [ref=e1060]: dto.ListBadgeReq
+      - link "dto.ListBadgeResult" [ref=e1061] [cursor=pointer]:
+        - /url: "#/schemas/dto.ListBadgeResult"
+        - generic "dto.ListBadgeResult" [ref=e1062]:
+          - img [ref=e1063]
+          - generic [ref=e1065]: dto.ListBadgeResult
+      - link "dto.ListForks" [ref=e1066] [cursor=pointer]:
+        - /url: "#/schemas/dto.ListForks"
+        - generic "dto.ListForks" [ref=e1067]:
+          - img [ref=e1068]
+          - generic [ref=e1070]: dto.ListForks
+      - link "dto.ListInheritMembers" [ref=e1071] [cursor=pointer]:
+        - /url: "#/schemas/dto.ListInheritMembers"
+        - generic "dto.ListInheritMembers" [ref=e1072]:
+          - img [ref=e1073]
+          - generic [ref=e1075]: dto.ListInheritMembers
+      - link "dto.LogInfo" [ref=e1076] [cursor=pointer]:
+        - /url: "#/schemas/dto.LogInfo"
+        - generic "dto.LogInfo" [ref=e1077]:
+          - img [ref=e1078]
+          - generic [ref=e1080]: dto.LogInfo
+      - link "dto.MemberAccessLevel" [ref=e1081] [cursor=pointer]:
+        - /url: "#/schemas/dto.MemberAccessLevel"
+        - generic "dto.MemberAccessLevel" [ref=e1082]:
+          - img [ref=e1083]
+          - generic [ref=e1085]: dto.MemberAccessLevel
+      - link "dto.MemberAccessLevelInSlugUnion" [ref=e1086] [cursor=pointer]:
+        - /url: "#/schemas/dto.MemberAccessLevelInSlugUnion"
+        - generic "dto.MemberAccessLevelInSlugUnion" [ref=e1087]:
+          - img [ref=e1088]
+          - generic [ref=e1090]: dto.MemberAccessLevelInSlugUnion
+      - link "dto.Message" [ref=e1091] [cursor=pointer]:
+        - /url: "#/schemas/dto.Message"
+        - generic "dto.Message" [ref=e1092]:
+          - img [ref=e1093]
+          - generic [ref=e1095]: dto.Message
+      - link "dto.MetaData" [ref=e1096] [cursor=pointer]:
+        - /url: "#/schemas/dto.MetaData"
+        - generic "dto.MetaData" [ref=e1097]:
+          - img [ref=e1098]
+          - generic [ref=e1100]: dto.MetaData
+      - link "dto.MetadataCondition" [ref=e1101] [cursor=pointer]:
+        - /url: "#/schemas/dto.MetadataCondition"
+        - generic "dto.MetadataCondition" [ref=e1102]:
+          - img [ref=e1103]
+          - generic [ref=e1105]: dto.MetadataCondition
+      - link "dto.MetadataFilteringConditions" [ref=e1106] [cursor=pointer]:
+        - /url: "#/schemas/dto.MetadataFilteringConditions"
+        - generic "dto.MetadataFilteringConditions" [ref=e1107]:
+          - img [ref=e1108]
+          - generic [ref=e1110]: dto.MetadataFilteringConditions
+      - link "dto.MissionPostViewReq" [ref=e1111] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionPostViewReq"
+        - generic "dto.MissionPostViewReq" [ref=e1112]:
+          - img [ref=e1113]
+          - generic [ref=e1115]: dto.MissionPostViewReq
+      - link "dto.MissionView" [ref=e1116] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionView"
+        - generic "dto.MissionView" [ref=e1117]:
+          - img [ref=e1118]
+          - generic [ref=e1120]: dto.MissionView
+      - link "dto.MissionViewConfig" [ref=e1121] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewConfig"
+        - generic "dto.MissionViewConfig" [ref=e1122]:
+          - img [ref=e1123]
+          - generic [ref=e1125]: dto.MissionViewConfig
+      - link "dto.MissionViewFieldConfig" [ref=e1126] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewFieldConfig"
+        - generic "dto.MissionViewFieldConfig" [ref=e1127]:
+          - img [ref=e1128]
+          - generic [ref=e1130]: dto.MissionViewFieldConfig
+      - link "dto.MissionViewGroup" [ref=e1131] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewGroup"
+        - generic "dto.MissionViewGroup" [ref=e1132]:
+          - img [ref=e1133]
+          - generic [ref=e1135]: dto.MissionViewGroup
+      - link "dto.MissionViewGroupCustom" [ref=e1136] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewGroupCustom"
+        - generic "dto.MissionViewGroupCustom" [ref=e1137]:
+          - img [ref=e1138]
+          - generic [ref=e1140]: dto.MissionViewGroupCustom
+      - link "dto.MissionViewSelector" [ref=e1141] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewSelector"
+        - generic "dto.MissionViewSelector" [ref=e1142]:
+          - img [ref=e1143]
+          - generic [ref=e1145]: dto.MissionViewSelector
+      - link "dto.MissionViewSort" [ref=e1146] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewSort"
+        - generic "dto.MissionViewSort" [ref=e1147]:
+          - img [ref=e1148]
+          - generic [ref=e1150]: dto.MissionViewSort
+      - link "dto.MissionViewSortOrder" [ref=e1151] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewSortOrder"
+        - generic "dto.MissionViewSortOrder" [ref=e1152]:
+          - img [ref=e1153]
+          - generic [ref=e1155]: dto.MissionViewSortOrder
+      - link "dto.MissionViewType" [ref=e1156] [cursor=pointer]:
+        - /url: "#/schemas/dto.MissionViewType"
+        - generic "dto.MissionViewType" [ref=e1157]:
+          - img [ref=e1158]
+          - generic [ref=e1160]: dto.MissionViewType
+      - link "dto.Missions4User" [ref=e1161] [cursor=pointer]:
+        - /url: "#/schemas/dto.Missions4User"
+        - generic "dto.Missions4User" [ref=e1162]:
+          - img [ref=e1163]
+          - generic [ref=e1165]: dto.Missions4User
+      - link "dto.OperatorType" [ref=e1166] [cursor=pointer]:
+        - /url: "#/schemas/dto.OperatorType"
+        - generic "dto.OperatorType" [ref=e1167]:
+          - img [ref=e1168]
+          - generic [ref=e1170]: dto.OperatorType
+      - link "dto.OrganizationAccess" [ref=e1171] [cursor=pointer]:
+        - /url: "#/schemas/dto.OrganizationAccess"
+        - generic "dto.OrganizationAccess" [ref=e1172]:
+          - img [ref=e1173]
+          - generic [ref=e1175]: dto.OrganizationAccess
+      - link "dto.OrganizationSettingWithParent" [ref=e1176] [cursor=pointer]:
+        - /url: "#/schemas/dto.OrganizationSettingWithParent"
+        - generic "dto.OrganizationSettingWithParent" [ref=e1177]:
+          - img [ref=e1178]
+          - generic [ref=e1180]: dto.OrganizationSettingWithParent
+      - link "dto.OrganizationUnion" [ref=e1181] [cursor=pointer]:
+        - /url: "#/schemas/dto.OrganizationUnion"
+        - generic "dto.OrganizationUnion" [ref=e1182]:
+          - img [ref=e1183]
+          - generic [ref=e1185]: dto.OrganizationUnion
+      - link "dto.OutsideCollaboratorInRepo" [ref=e1186] [cursor=pointer]:
+        - /url: "#/schemas/dto.OutsideCollaboratorInRepo"
+        - generic "dto.OutsideCollaboratorInRepo" [ref=e1187]:
+          - img [ref=e1188]
+          - generic [ref=e1190]: dto.OutsideCollaboratorInRepo
+      - link "dto.Package" [ref=e1191] [cursor=pointer]:
+        - /url: "#/schemas/dto.Package"
+        - generic "dto.Package" [ref=e1192]:
+          - img [ref=e1193]
+          - generic [ref=e1195]: dto.Package
+      - link "dto.PackageDetail" [ref=e1196] [cursor=pointer]:
+        - /url: "#/schemas/dto.PackageDetail"
+        - generic "dto.PackageDetail" [ref=e1197]:
+          - img [ref=e1198]
+          - generic [ref=e1200]: dto.PackageDetail
+      - link "dto.PackageType" [ref=e1201] [cursor=pointer]:
+        - /url: "#/schemas/dto.PackageType"
+        - generic "dto.PackageType" [ref=e1202]:
+          - img [ref=e1203]
+          - generic [ref=e1205]: dto.PackageType
+      - link "dto.PipelineLabel" [ref=e1206] [cursor=pointer]:
+        - /url: "#/schemas/dto.PipelineLabel"
+        - generic "dto.PipelineLabel" [ref=e1207]:
+          - img [ref=e1208]
+          - generic [ref=e1210]: dto.PipelineLabel
+      - link "dto.PipelineStatus" [ref=e1211] [cursor=pointer]:
+        - /url: "#/schemas/dto.PipelineStatus"
+        - generic "dto.PipelineStatus" [ref=e1212]:
+          - img [ref=e1213]
+          - generic [ref=e1215]: dto.PipelineStatus
+      - link "dto.ProcessingConfig" [ref=e1216] [cursor=pointer]:
+        - /url: "#/schemas/dto.ProcessingConfig"
+        - generic "dto.ProcessingConfig" [ref=e1217]:
+          - img [ref=e1218]
+          - generic [ref=e1220]: dto.ProcessingConfig
+      - link "dto.Provenance" [ref=e1221] [cursor=pointer]:
+        - /url: "#/schemas/dto.Provenance"
+        - generic "dto.Provenance" [ref=e1222]:
+          - img [ref=e1223]
+          - generic [ref=e1225]: dto.Provenance
+      - link "dto.PyPIMetaData" [ref=e1226] [cursor=pointer]:
+        - /url: "#/schemas/dto.PyPIMetaData"
+        - generic "dto.PyPIMetaData" [ref=e1227]:
+          - img [ref=e1228]
+          - generic [ref=e1230]: dto.PyPIMetaData
+      - link "dto.PyPIRegistryTagDetail" [ref=e1231] [cursor=pointer]:
+        - /url: "#/schemas/dto.PyPIRegistryTagDetail"
+        - generic "dto.PyPIRegistryTagDetail" [ref=e1232]:
+          - img [ref=e1233]
+          - generic [ref=e1235]: dto.PyPIRegistryTagDetail
+      - link "dto.PypiProvenance" [ref=e1236] [cursor=pointer]:
+        - /url: "#/schemas/dto.PypiProvenance"
+        - generic "dto.PypiProvenance" [ref=e1237]:
+          - img [ref=e1238]
+          - generic [ref=e1240]: dto.PypiProvenance
+      - link "dto.PypiProvenanceSource" [ref=e1241] [cursor=pointer]:
+        - /url: "#/schemas/dto.PypiProvenanceSource"
+        - generic "dto.PypiProvenanceSource" [ref=e1242]:
+          - img [ref=e1243]
+          - generic [ref=e1245]: dto.PypiProvenanceSource
+      - link "dto.QueryKnowledgeBaseReq" [ref=e1246] [cursor=pointer]:
+        - /url: "#/schemas/dto.QueryKnowledgeBaseReq"
+        - generic "dto.QueryKnowledgeBaseReq" [ref=e1247]:
+          - img [ref=e1248]
+          - generic [ref=e1250]: dto.QueryKnowledgeBaseReq
+      - link "dto.QueryKnowledgeBaseRes" [ref=e1251] [cursor=pointer]:
+        - /url: "#/schemas/dto.QueryKnowledgeBaseRes"
+        - generic "dto.QueryKnowledgeBaseRes" [ref=e1252]:
+          - img [ref=e1253]
+          - generic [ref=e1255]: dto.QueryKnowledgeBaseRes
+      - link "dto.QuotaItem" [ref=e1256] [cursor=pointer]:
+        - /url: "#/schemas/dto.QuotaItem"
+        - generic "dto.QuotaItem" [ref=e1257]:
+          - img [ref=e1258]
+          - generic [ref=e1260]: dto.QuotaItem
+      - link "dto.RankDetailWithIncr" [ref=e1261] [cursor=pointer]:
+        - /url: "#/schemas/dto.RankDetailWithIncr"
+        - generic "dto.RankDetailWithIncr" [ref=e1262]:
+          - img [ref=e1263]
+          - generic [ref=e1265]: dto.RankDetailWithIncr
+      - link "dto.RankLanguageList" [ref=e1266] [cursor=pointer]:
+        - /url: "#/schemas/dto.RankLanguageList"
+        - generic "dto.RankLanguageList" [ref=e1267]:
+          - img [ref=e1268]
+          - generic [ref=e1270]: dto.RankLanguageList
+      - link "dto.Registry4User" [ref=e1271] [cursor=pointer]:
+        - /url: "#/schemas/dto.Registry4User"
+        - generic "dto.Registry4User" [ref=e1272]:
+          - img [ref=e1273]
+          - generic [ref=e1275]: dto.Registry4User
+      - link "dto.RepoLanguage" [ref=e1276] [cursor=pointer]:
+        - /url: "#/schemas/dto.RepoLanguage"
+        - generic "dto.RepoLanguage" [ref=e1277]:
+          - img [ref=e1278]
+          - generic [ref=e1280]: dto.RepoLanguage
+      - link "dto.RepoPatch" [ref=e1281] [cursor=pointer]:
+        - /url: "#/schemas/dto.RepoPatch"
+        - generic "dto.RepoPatch" [ref=e1282]:
+          - img [ref=e1283]
+          - generic [ref=e1285]: dto.RepoPatch
+      - link "dto.RepoSecurityOverview" [ref=e1286] [cursor=pointer]:
+        - /url: "#/schemas/dto.RepoSecurityOverview"
+        - generic "dto.RepoSecurityOverview" [ref=e1287]:
+          - img [ref=e1288]
+          - generic [ref=e1290]: dto.RepoSecurityOverview
+      - link "dto.RepoSecurityRiskCnt" [ref=e1291] [cursor=pointer]:
+        - /url: "#/schemas/dto.RepoSecurityRiskCnt"
+        - generic "dto.RepoSecurityRiskCnt" [ref=e1292]:
+          - img [ref=e1293]
+          - generic [ref=e1295]: dto.RepoSecurityRiskCnt
+      - link "dto.RepoStarUsers" [ref=e1296] [cursor=pointer]:
+        - /url: "#/schemas/dto.RepoStarUsers"
+        - generic "dto.RepoStarUsers" [ref=e1297]:
+          - img [ref=e1298]
+          - generic [ref=e1300]: dto.RepoStarUsers
+      - link "dto.RepoVolume" [ref=e1301] [cursor=pointer]:
+        - /url: "#/schemas/dto.RepoVolume"
+        - generic "dto.RepoVolume" [ref=e1302]:
+          - img [ref=e1303]
+          - generic [ref=e1305]: dto.RepoVolume
+      - link "dto.Repos4User" [ref=e1306] [cursor=pointer]:
+        - /url: "#/schemas/dto.Repos4User"
+        - generic "dto.Repos4User" [ref=e1307]:
+          - img [ref=e1308]
+          - generic [ref=e1310]: dto.Repos4User
+      - link "dto.Repos4UserBase" [ref=e1311] [cursor=pointer]:
+        - /url: "#/schemas/dto.Repos4UserBase"
+        - generic "dto.Repos4UserBase" [ref=e1312]:
+          - img [ref=e1313]
+          - generic [ref=e1315]: dto.Repos4UserBase
+      - link "dto.SearchNpcRes" [ref=e1316] [cursor=pointer]:
+        - /url: "#/schemas/dto.SearchNpcRes"
+        - generic "dto.SearchNpcRes" [ref=e1317]:
+          - img [ref=e1318]
+          - generic [ref=e1320]: dto.SearchNpcRes
+      - link "dto.Slugs" [ref=e1321] [cursor=pointer]:
+        - /url: "#/schemas/dto.Slugs"
+        - generic "dto.Slugs" [ref=e1322]:
+          - img [ref=e1323]
+          - generic [ref=e1325]: dto.Slugs
+      - link "dto.SpecialAmount" [ref=e1326] [cursor=pointer]:
+        - /url: "#/schemas/dto.SpecialAmount"
+        - generic "dto.SpecialAmount" [ref=e1327]:
+          - img [ref=e1328]
+          - generic [ref=e1330]: dto.SpecialAmount
+      - link "dto.Stage" [ref=e1331] [cursor=pointer]:
+        - /url: "#/schemas/dto.Stage"
+        - generic "dto.Stage" [ref=e1332]:
+          - img [ref=e1333]
+          - generic [ref=e1335]: dto.Stage
+      - link "dto.StarUser" [ref=e1336] [cursor=pointer]:
+        - /url: "#/schemas/dto.StarUser"
+        - generic "dto.StarUser" [ref=e1337]:
+          - img [ref=e1338]
+          - generic [ref=e1340]: dto.StarUser
+      - link "dto.StartBuildReq" [ref=e1341] [cursor=pointer]:
+        - /url: "#/schemas/dto.StartBuildReq"
+        - generic "dto.StartBuildReq" [ref=e1342]:
+          - img [ref=e1343]
+          - generic [ref=e1345]: dto.StartBuildReq
+      - link "dto.StartWorkspaceReq" [ref=e1346] [cursor=pointer]:
+        - /url: "#/schemas/dto.StartWorkspaceReq"
+        - generic "dto.StartWorkspaceReq" [ref=e1347]:
+          - img [ref=e1348]
+          - generic [ref=e1350]: dto.StartWorkspaceReq
+      - link "dto.StartWorkspaceResult" [ref=e1351] [cursor=pointer]:
+        - /url: "#/schemas/dto.StartWorkspaceResult"
+        - generic "dto.StartWorkspaceResult" [ref=e1352]:
+          - img [ref=e1353]
+          - generic [ref=e1355]: dto.StartWorkspaceResult
+      - link "dto.TagDetail" [ref=e1356] [cursor=pointer]:
+        - /url: "#/schemas/dto.TagDetail"
+        - generic "dto.TagDetail" [ref=e1357]:
+          - img [ref=e1358]
+          - generic [ref=e1360]: dto.TagDetail
+      - link "dto.TransferSlugReq" [ref=e1361] [cursor=pointer]:
+        - /url: "#/schemas/dto.TransferSlugReq"
+        - generic "dto.TransferSlugReq" [ref=e1362]:
+          - img [ref=e1363]
+          - generic [ref=e1365]: dto.TransferSlugReq
+      - link "dto.UpdateGroupReq" [ref=e1366] [cursor=pointer]:
+        - /url: "#/schemas/dto.UpdateGroupReq"
+        - generic "dto.UpdateGroupReq" [ref=e1367]:
+          - img [ref=e1368]
+          - generic [ref=e1370]: dto.UpdateGroupReq
+      - link "dto.UpdateMembersRequest" [ref=e1371] [cursor=pointer]:
+        - /url: "#/schemas/dto.UpdateMembersRequest"
+        - generic "dto.UpdateMembersRequest" [ref=e1372]:
+          - img [ref=e1373]
+          - generic [ref=e1375]: dto.UpdateMembersRequest
+      - link "dto.UpdatePackageRequest" [ref=e1376] [cursor=pointer]:
+        - /url: "#/schemas/dto.UpdatePackageRequest"
+        - generic "dto.UpdatePackageRequest" [ref=e1377]:
+          - img [ref=e1378]
+          - generic [ref=e1380]: dto.UpdatePackageRequest
+      - link "dto.UpdateUserInfoPayload" [ref=e1381] [cursor=pointer]:
+        - /url: "#/schemas/dto.UpdateUserInfoPayload"
+        - generic "dto.UpdateUserInfoPayload" [ref=e1382]:
+          - img [ref=e1383]
+          - generic [ref=e1385]: dto.UpdateUserInfoPayload
+      - link "dto.UploadAssetsResponse" [ref=e1386] [cursor=pointer]:
+        - /url: "#/schemas/dto.UploadAssetsResponse"
+        - generic "dto.UploadAssetsResponse" [ref=e1387]:
+          - img [ref=e1388]
+          - generic [ref=e1390]: dto.UploadAssetsResponse
+      - link "dto.UploadBadgeReq" [ref=e1391] [cursor=pointer]:
+        - /url: "#/schemas/dto.UploadBadgeReq"
+        - generic "dto.UploadBadgeReq" [ref=e1392]:
+          - img [ref=e1393]
+          - generic [ref=e1395]: dto.UploadBadgeReq
+      - link "dto.UploadBadgeResult" [ref=e1396] [cursor=pointer]:
+        - /url: "#/schemas/dto.UploadBadgeResult"
+        - generic "dto.UploadBadgeResult" [ref=e1397]:
+          - img [ref=e1398]
+          - generic [ref=e1400]: dto.UploadBadgeResult
+      - link "dto.UploadRequestParams" [ref=e1401] [cursor=pointer]:
+        - /url: "#/schemas/dto.UploadRequestParams"
+        - generic "dto.UploadRequestParams" [ref=e1402]:
+          - img [ref=e1403]
+          - generic [ref=e1405]: dto.UploadRequestParams
+      - link "dto.UserEmails" [ref=e1406] [cursor=pointer]:
+        - /url: "#/schemas/dto.UserEmails"
+        - generic "dto.UserEmails" [ref=e1407]:
+          - img [ref=e1408]
+          - generic [ref=e1410]: dto.UserEmails
+      - link "dto.UserFollowResult" [ref=e1411] [cursor=pointer]:
+        - /url: "#/schemas/dto.UserFollowResult"
+        - generic "dto.UserFollowResult" [ref=e1412]:
+          - img [ref=e1413]
+          - generic [ref=e1415]: dto.UserFollowResult
+      - link "dto.Users" [ref=e1416] [cursor=pointer]:
+        - /url: "#/schemas/dto.Users"
+        - generic "dto.Users" [ref=e1417]:
+          - img [ref=e1418]
+          - generic [ref=e1420]: dto.Users
+      - link "dto.UsersResult" [ref=e1421] [cursor=pointer]:
+        - /url: "#/schemas/dto.UsersResult"
+        - generic "dto.UsersResult" [ref=e1422]:
+          - img [ref=e1423]
+          - generic [ref=e1425]: dto.UsersResult
+      - link "dto.UsersWithAccessLevelInSlug" [ref=e1426] [cursor=pointer]:
+        - /url: "#/schemas/dto.UsersWithAccessLevelInSlug"
+        - generic "dto.UsersWithAccessLevelInSlug" [ref=e1427]:
+          - img [ref=e1428]
+          - generic [ref=e1430]: dto.UsersWithAccessLevelInSlug
+      - link "dto.VolumeQuotaResp" [ref=e1431] [cursor=pointer]:
+        - /url: "#/schemas/dto.VolumeQuotaResp"
+        - generic "dto.VolumeQuotaResp" [ref=e1432]:
+          - img [ref=e1433]
+          - generic [ref=e1435]: dto.VolumeQuotaResp
+      - link "dto.VolumeUsedResp" [ref=e1436] [cursor=pointer]:
+        - /url: "#/schemas/dto.VolumeUsedResp"
+        - generic "dto.VolumeUsedResp" [ref=e1437]:
+          - img [ref=e1438]
+          - generic [ref=e1440]: dto.VolumeUsedResp
+      - link "dto.WorkspaceDeleteReq" [ref=e1441] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceDeleteReq"
+        - generic "dto.WorkspaceDeleteReq" [ref=e1442]:
+          - img [ref=e1443]
+          - generic [ref=e1445]: dto.WorkspaceDeleteReq
+      - link "dto.WorkspaceDeleteResult" [ref=e1446] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceDeleteResult"
+        - generic "dto.WorkspaceDeleteResult" [ref=e1447]:
+          - img [ref=e1448]
+          - generic [ref=e1450]: dto.WorkspaceDeleteResult
+      - link "dto.WorkspaceDetailResult" [ref=e1451] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceDetailResult"
+        - generic "dto.WorkspaceDetailResult" [ref=e1452]:
+          - img [ref=e1453]
+          - generic [ref=e1455]: dto.WorkspaceDetailResult
+      - link "dto.WorkspaceInfo" [ref=e1456] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceInfo"
+        - generic "dto.WorkspaceInfo" [ref=e1457]:
+          - img [ref=e1458]
+          - generic [ref=e1460]: dto.WorkspaceInfo
+      - link "dto.WorkspaceListResult" [ref=e1461] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceListResult"
+        - generic "dto.WorkspaceListResult" [ref=e1462]:
+          - img [ref=e1463]
+          - generic [ref=e1465]: dto.WorkspaceListResult
+      - link "dto.WorkspacePageInfo" [ref=e1466] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspacePageInfo"
+        - generic "dto.WorkspacePageInfo" [ref=e1467]:
+          - img [ref=e1468]
+          - generic [ref=e1470]: dto.WorkspacePageInfo
+      - link "dto.WorkspaceStopReq" [ref=e1471] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceStopReq"
+        - generic "dto.WorkspaceStopReq" [ref=e1472]:
+          - img [ref=e1473]
+          - generic [ref=e1475]: dto.WorkspaceStopReq
+      - link "dto.WorkspaceStopResult" [ref=e1476] [cursor=pointer]:
+        - /url: "#/schemas/dto.WorkspaceStopResult"
+        - generic "dto.WorkspaceStopResult" [ref=e1477]:
+          - img [ref=e1478]
+          - generic [ref=e1480]: dto.WorkspaceStopResult
+      - link "errors.webError" [ref=e1481] [cursor=pointer]:
+        - /url: "#/schemas/errors.webError"
+        - generic "errors.webError" [ref=e1482]:
+          - img [ref=e1483]
+          - generic [ref=e1485]: errors.webError
+      - link "flags.Repo" [ref=e1486] [cursor=pointer]:
+        - /url: "#/schemas/flags.Repo"
+        - generic "flags.Repo" [ref=e1487]:
+          - img [ref=e1488]
+          - generic [ref=e1490]: flags.Repo
+      - link "git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.CommitStatus" [ref=e1491] [cursor=pointer]:
+        - /url: "#/schemas/git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.CommitStatus"
+        - generic "git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.CommitStatus" [ref=e1492]:
+          - img [ref=e1493]
+          - generic [ref=e1495]: git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.CommitStatus
+      - link "git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.SceneReaction" [ref=e1496] [cursor=pointer]:
+        - /url: "#/schemas/git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.SceneReaction"
+        - generic "git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.SceneReaction" [ref=e1497]:
+          - img [ref=e1498]
+          - generic [ref=e1500]: git_woa_com_cnb_monorepo_git_internal_app_git_service_bff_api.SceneReaction
+      - link "git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.CommitStatus" [ref=e1501] [cursor=pointer]:
+        - /url: "#/schemas/git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.CommitStatus"
+        - generic "git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.CommitStatus" [ref=e1502]:
+          - img [ref=e1503]
+          - generic [ref=e1505]: git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.CommitStatus
+      - link "git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.SceneReaction" [ref=e1506] [cursor=pointer]:
+        - /url: "#/schemas/git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.SceneReaction"
+        - generic "git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.SceneReaction" [ref=e1507]:
+          - img [ref=e1508]
+          - generic [ref=e1510]: git_woa_com_cnb_monorepo_git_internal_app_vcs_service_bff_api.SceneReaction
+      - link "git_woa_com_cnb_monorepo_platform_service-api_internal_models_artifactory_dto.Tag" [ref=e1511] [cursor=pointer]:
+        - /url: "#/schemas/git_woa_com_cnb_monorepo_platform_service-api_internal_models_artifactory_dto.Tag"
+        - generic "git_woa_com_cnb_monorepo_platform_service-api_internal_models_artifactory_dto.Tag" [ref=e1512]:
+          - img [ref=e1513]
+          - generic [ref=e1515]: git_woa_com_cnb_monorepo_platform_service-api_internal_models_artifactory_dto.Tag
+      - link "member.ChannelTypeTarget" [ref=e1516] [cursor=pointer]:
+        - /url: "#/schemas/member.ChannelTypeTarget"
+        - generic "member.ChannelTypeTarget" [ref=e1517]:
+          - img [ref=e1518]
+          - generic [ref=e1520]: member.ChannelTypeTarget
+      - link "openapi.CommitAssetUploadURL" [ref=e1521] [cursor=pointer]:
+        - /url: "#/schemas/openapi.CommitAssetUploadURL"
+        - generic "openapi.CommitAssetUploadURL" [ref=e1522]:
+          - img [ref=e1523]
+          - generic [ref=e1525]: openapi.CommitAssetUploadURL
+      - link "openapi.CreateBranchForm" [ref=e1526] [cursor=pointer]:
+        - /url: "#/schemas/openapi.CreateBranchForm"
+        - generic "openapi.CreateBranchForm" [ref=e1527]:
+          - img [ref=e1528]
+          - generic [ref=e1530]: openapi.CreateBranchForm
+      - link "openapi.HeadRef" [ref=e1531] [cursor=pointer]:
+        - /url: "#/schemas/openapi.HeadRef"
+        - generic "openapi.HeadRef" [ref=e1532]:
+          - img [ref=e1533]
+          - generic [ref=e1535]: openapi.HeadRef
+      - link "openapi.IssuePropertiesForm" [ref=e1536] [cursor=pointer]:
+        - /url: "#/schemas/openapi.IssuePropertiesForm"
+        - generic "openapi.IssuePropertiesForm" [ref=e1537]:
+          - img [ref=e1538]
+          - generic [ref=e1540]: openapi.IssuePropertiesForm
+      - link "openapi.PatchReleaseForm" [ref=e1541] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PatchReleaseForm"
+        - generic "openapi.PatchReleaseForm" [ref=e1542]:
+          - img [ref=e1543]
+          - generic [ref=e1545]: openapi.PatchReleaseForm
+      - link "openapi.PostCommitAssetUploadURLForm" [ref=e1546] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PostCommitAssetUploadURLForm"
+        - generic "openapi.PostCommitAssetUploadURLForm" [ref=e1547]:
+          - img [ref=e1548]
+          - generic [ref=e1550]: openapi.PostCommitAssetUploadURLForm
+      - link "openapi.PostReleaseAssetUploadURLForm" [ref=e1551] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PostReleaseAssetUploadURLForm"
+        - generic "openapi.PostReleaseAssetUploadURLForm" [ref=e1552]:
+          - img [ref=e1553]
+          - generic [ref=e1555]: openapi.PostReleaseAssetUploadURLForm
+      - link "openapi.PostReleaseForm" [ref=e1556] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PostReleaseForm"
+        - generic "openapi.PostReleaseForm" [ref=e1557]:
+          - img [ref=e1558]
+          - generic [ref=e1560]: openapi.PostReleaseForm
+      - link "openapi.PropertyForm" [ref=e1561] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PropertyForm"
+        - generic "openapi.PropertyForm" [ref=e1562]:
+          - img [ref=e1563]
+          - generic [ref=e1565]: openapi.PropertyForm
+      - link "openapi.PutCommitAnnotation" [ref=e1566] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PutCommitAnnotation"
+        - generic "openapi.PutCommitAnnotation" [ref=e1567]:
+          - img [ref=e1568]
+          - generic [ref=e1570]: openapi.PutCommitAnnotation
+      - link "openapi.PutCommitAnnotationsForm" [ref=e1571] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PutCommitAnnotationsForm"
+        - generic "openapi.PutCommitAnnotationsForm" [ref=e1572]:
+          - img [ref=e1573]
+          - generic [ref=e1575]: openapi.PutCommitAnnotationsForm
+      - link "openapi.PutTagAnnotation" [ref=e1576] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PutTagAnnotation"
+        - generic "openapi.PutTagAnnotation" [ref=e1577]:
+          - img [ref=e1578]
+          - generic [ref=e1580]: openapi.PutTagAnnotation
+      - link "openapi.PutTagAnnotationsForm" [ref=e1581] [cursor=pointer]:
+        - /url: "#/schemas/openapi.PutTagAnnotationsForm"
+        - generic "openapi.PutTagAnnotationsForm" [ref=e1582]:
+          - img [ref=e1583]
+          - generic [ref=e1585]: openapi.PutTagAnnotationsForm
+      - link "openapi.ReleaseAssetUploadURL" [ref=e1586] [cursor=pointer]:
+        - /url: "#/schemas/openapi.ReleaseAssetUploadURL"
+        - generic "openapi.ReleaseAssetUploadURL" [ref=e1587]:
+          - img [ref=e1588]
+          - generic [ref=e1590]: openapi.ReleaseAssetUploadURL
+      - link "organization.SettingValue" [ref=e1591] [cursor=pointer]:
+        - /url: "#/schemas/organization.SettingValue"
+        - generic "organization.SettingValue" [ref=e1592]:
+          - img [ref=e1593]
+          - generic [ref=e1595]: organization.SettingValue
+      - link "web.CommitAnnotation" [ref=e1596] [cursor=pointer]:
+        - /url: "#/schemas/web.CommitAnnotation"
+        - generic "web.CommitAnnotation" [ref=e1597]:
+          - img [ref=e1598]
+          - generic [ref=e1600]: web.CommitAnnotation
+      - link "web.CommitAnnotationInBatch" [ref=e1601] [cursor=pointer]:
+        - /url: "#/schemas/web.CommitAnnotationInBatch"
+        - generic "web.CommitAnnotationInBatch" [ref=e1602]:
+          - img [ref=e1603]
+          - generic [ref=e1605]: web.CommitAnnotationInBatch
+      - link "web.GetCommitAnnotationsInBatchForm" [ref=e1606] [cursor=pointer]:
+        - /url: "#/schemas/web.GetCommitAnnotationsInBatchForm"
+        - generic "web.GetCommitAnnotationsInBatchForm" [ref=e1607]:
+          - img [ref=e1608]
+          - generic [ref=e1610]: web.GetCommitAnnotationsInBatchForm
+      - link "web.TagAnnotation" [ref=e1611] [cursor=pointer]:
+        - /url: "#/schemas/web.TagAnnotation"
+        - generic "web.TagAnnotation" [ref=e1612]:
+          - img [ref=e1613]
+          - generic [ref=e1615]: web.TagAnnotation
+  - generic [ref=e1619]:
+    - generic [ref=e1620]:
+      - heading "CNB OPENAPI" [level=1] [ref=e1622]
+      - button "Export" [ref=e1624] [cursor=pointer]
+    - generic [ref=e1629]: v1.0
+    - generic [ref=e1632]:
+      - heading "Additional Information" [ref=e1635]
+      - paragraph [ref=e1640]:
+        - link "Contact Open API Support" [ref=e1641] [cursor=pointer]:
+          - /url: https://docs.cnb.cool/

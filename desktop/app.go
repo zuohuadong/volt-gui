@@ -425,6 +425,61 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) {
 	ctrl.Submit(input)
 }
 
+// GoalInfo is the desktop-facing snapshot of a tab's long-running objective.
+type GoalInfo struct {
+	Objective     string `json:"objective"`
+	Status        string `json:"status"`
+	BlockedReason string `json:"blockedReason,omitempty"`
+}
+
+// Goal returns the active tab's long-running objective state.
+func (a *App) Goal() GoalInfo {
+	return a.GoalForTab("")
+}
+
+func (a *App) GoalForTab(tabID string) GoalInfo {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl == nil {
+		return GoalInfo{Status: string(control.GoalStatusIdle)}
+	}
+	return GoalInfo{
+		Objective:     ctrl.Goal(),
+		Status:        string(ctrl.GoalStatus()),
+		BlockedReason: ctrl.GoalBlockedReason(),
+	}
+}
+
+// StartGoal starts or replaces the active tab's long-running objective.
+func (a *App) StartGoal(objective string) {
+	a.StartGoalForTab("", objective)
+}
+
+func (a *App) StartGoalForTab(tabID, objective string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.StartGoal(objective)
+	}
+}
+
+func (a *App) ContinueGoal() {
+	a.ContinueGoalForTab("")
+}
+
+func (a *App) ContinueGoalForTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.ContinueGoal()
+	}
+}
+
+func (a *App) ClearGoal() {
+	a.ClearGoalForTab("")
+}
+
+func (a *App) ClearGoalForTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.ClearGoal()
+	}
+}
+
 // Cancel aborts the in-flight turn.
 func (a *App) Cancel() {
 	a.CancelTab("")

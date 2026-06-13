@@ -21,7 +21,7 @@ Status values:
 | Activity | Work/Code switcher | work, code | usable | Svelte shell switches activity mode independently from run mode. |
 | Run modes | Ask/Auto/YOLO controls | work, code | partial | Svelte shell preserves run-mode state and maps YOLO to `SetModeForTab`; permission-mode wiring still needs real runtime smoke. |
 | Run modes | Plan control | work, code | partial | Svelte shell maps Plan to `SetModeForTab("plan")` and renders plan/tool approval shelves; real plan handoff still needs Wails smoke. |
-| Run modes | Goal entry points | work, code | planned | Start, view, continue, clear goal. |
+| Run modes | Goal entry points | work, code | usable | `internal/control` goal loop supports start/continue/complete/blocked/clear; desktop Wails bindings expose per-tab goal state/actions; Svelte Work dashboard can start, view, continue, and clear goals; Browser smoke confirms Goal run mode stays orthogonal to Work/Code. |
 | Chat loop | Submit user turn | work, code | partial | Composer submits through `SubmitDisplayToTab`; browser mock smoke passes, real Wails stream smoke still required. |
 | Chat loop | Stream text/reasoning/events | work, code | partial | `agent:event` reducer renders text, reasoning, usage, and tool events; `HistoryForTab` hydration now loads saved turns on boot/tab switch. |
 | Chat loop | Cancel running turn | work, code | partial | Composer calls `CancelTab` while running; draft restore still required. |
@@ -33,7 +33,7 @@ Status values:
 | Composer | `@` file/workspace references | code | partial | File search/list, insertion, and preview are wired through `SearchFileRefs`/`ReadFile`; directory descent and attachments still required. |
 | Composer | Attachments and dropped files | work, code | partial | Svelte composer can paste/drop browser files, subscribe to native Wails file drops, render attachment chips/previews, and submit `@.voltui/attachments/...` refs; real Wails drop smoke and full old-composer parity still required. |
 | Composer | Model and effort switching | work, code | partial | Model and effort selectors list and set per tab through bridge/mock; real Wails smoke still required. |
-| Work dashboard | Tasks/goals overview | work | partial | Work dashboard shell exposes active topic and resource-backed shortcuts; task/goal data provider still required. |
+| Work dashboard | Tasks/goals overview | work | partial | Goal controls are wired through the controller/Wails bridge and Browser smoke; task data provider still required. |
 | Work dashboard | Recent sessions | work | partial | Session context is visible; full history/resume flow still required. |
 | Work dashboard | Memory shortcuts | work | partial | Memory resource counts render through the data provider; view/add/forget flows still required. |
 | Code dock | Context panel | code | partial | Token usage and read files render from `ContextPanel`; checkpoint and full context controls still required. |

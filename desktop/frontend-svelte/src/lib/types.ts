@@ -28,6 +28,12 @@ export interface EffortInfo {
   supported: string[];
 }
 
+export interface GoalInfo {
+  objective: string;
+  status: "idle" | "active" | "complete" | "blocked" | string;
+  blockedReason?: string;
+}
+
 export type WireEventKind =
   | "turn_started"
   | "reasoning"

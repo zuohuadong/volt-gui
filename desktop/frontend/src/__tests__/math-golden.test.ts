@@ -420,6 +420,14 @@ check("\\yng(2,1) renders as (2,1) Young diagram", () => {
   const html = renderHtml("$$\\yng(2,1)$$");
   return html.includes("katex-display") && !html.includes("katex-error");
 });
+check("\\yng(2,1) in prose (no $ delimiters) gets wrapped and rendered", () => {
+  // A model that writes "the partition \\yng(2,1) corresponds to the
+  // (2,1) irrep" doesn't usually put $$ around the macro. The
+  // translator wraps bare \\yng in `$…$` so remark-math sees it as
+  // inline math and katex renders the diagram.
+  const html = renderHtml("The partition \\yng(2,1) is symmetric.");
+  return html.includes("katex") && !html.includes("katex-error") && !html.includes("\\yng");
+});
 check("\\yng(3,2,1) renders as (3,2,1) Young diagram", () => {
   const html = renderHtml("$$\\yng(3,2,1)$$");
   return html.includes("katex-display") && !html.includes("katex-error");
@@ -445,8 +453,11 @@ check("expandYoungDiagrams substitutes correct array form", () => {
     && out.includes(" \\\\ ");
 });
 check("expandYoungDiagrams handles \\yng with content", () => {
+  // Bare \yng in prose gets wrapped in `$…$` so remark-math sees it as
+  // math; macros already inside a `$…$` block just substitute the inner
+  // form (the surrounding delimiters are preserved).
   const out = expandYoungDiagrams("\\yng(2,1){a&b\\\\c}");
-  return out === "\\begin{array}{c}a \\, b \\\\ c\\end{array}";
+  return out === "$\\begin{array}{c}a \\, b \\\\ c\\end{array}$";
 });
 check("expandYoungDiagrams leaves non-Young macros alone", () => {
   const out = expandYoungDiagrams("\\frac{a}{b}");

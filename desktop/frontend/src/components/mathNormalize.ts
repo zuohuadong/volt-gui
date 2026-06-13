@@ -2,16 +2,18 @@
 // that remark-math expects, and runs KaTeX-specific normalisations on each
 // recognised math source.
 //
-//   1. Protect Markdown code spans/fences from all math rewrites.
-//   2. Protect LaTeX line-break spacing (\\[...]) from the LLM-delimiter rewrite.
-//   3. \(...)/\[...] → $/$$.
-//   4. Inline `$$` glued to prose gets a blank line inserted before it
+//   1. Expand \yng/\young to KaTeX-compatible \boxed{array} forms.
+//      Stateful: tracks `$…$` so bare macros in prose get wrapped in
+//      `$…$` and macros already inside math just substitute.
+//   2. Protect Markdown code spans/fences from all math rewrites.
+//   3. Protect LaTeX line-break spacing (\\[...]) from the LLM-delimiter rewrite.
+//   4. \(...)/\[...] → $/$$.
+//   5. Inline `$$` glued to prose gets a blank line inserted before it
 //      (CommonMark requires that block math be paragraph-separated).
-//   5. $$…$$ → display placeholders, $…$ → inline placeholders, gated by
+//   6. $$…$$ → display placeholders, $…$ → inline placeholders, gated by
 //      isLikelyInlineMath; currency / env-var tokens become &#36; entities.
-//   6. Each recognised math source is run through latexNormalizeForKatex
-//      (text-mode escapes, |→\vert, %→\%) after expanding \yng/\young
-//      to KaTeX-compatible \boxed{array} forms.
+//   7. Each recognised math source is run through latexNormalizeForKatex
+//      (text-mode escapes, |→\vert, %→\%).
 
 import { isLikelyInlineMath } from "./mathClassify";
 import { latexNormalizeForKatex } from "./latexNormalize";
@@ -39,9 +41,14 @@ export function normalizeMath(s: string): string {
 }
 
 function normalizeMathText(s: string): string {
+  // Step 0: expand \yng/\young macros to KaTeX-compatible \boxed{array}
+  // forms. Stateful — tracks `$…$` so bare `\yng` in prose gets wrapped
+  // in inline math, and `\yng` already inside math just substitutes.
+  let r = expandYoungDiagrams(s);
+
   // Step 1: protect LaTeX line-break spacing (\\[4pt], \\[2ex], ...) so the
   // \[ → $$ rewrite below doesn't swallow it.
-  let r = s.replace(/\\\\\[/g, LB);
+  r = r.replace(/\\\\\[/g, LB);
 
   // Step 2: convert LLM-native delimiters to standard $/$$ syntax. Arrow
   // functions are required because "$$" in a JS replace string means a
@@ -75,9 +82,8 @@ function normalizeMathText(s: string): string {
 
   // Step 4: $$…$$ → display placeholders. KaTeX-specific normalisation
   // runs here so |→\vert (with \| protected) and \text{} escapes both
-  // apply to display math. \yng/\young are expanded to \boxed{array}
-  // first so the macro expansion happens inside the math body.
-  r = r.replace(/\$\$([\s\S]*?)\$\$/g, (_m, m) => `${DM}${latexNormalizeForKatex(expandYoungDiagrams(m))}${DM}`);
+  // apply to display math.
+  r = r.replace(/\$\$([\s\S]*?)\$\$/g, (_m, m) => `${DM}${latexNormalizeForKatex(m)}${DM}`);
 
   // Step 5: $\cmd{...}$ pairs where the body may contain a stray $
   // (e.g. $\text{price is $5}$). Recognised first so the inner $ doesn't
@@ -85,7 +91,7 @@ function normalizeMathText(s: string): string {
   // the inner $ to \textdollar{}.
   r = r.replace(TEXT_MODE_PAIR, (_match, m) => {
     if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
-    return `${IM}${latexNormalizeForKatex(expandYoungDiagrams(m))}${IM}`;
+    return `${IM}${latexNormalizeForKatex(m)}${IM}`;
   });
 
   // Step 6: remaining $…$ → classifier-gated inline math. remark-math
@@ -94,7 +100,7 @@ function normalizeMathText(s: string): string {
   // sees a $, and the decoded entity still renders as a literal dollar.
   r = r.replace(/\$([^$\n]+)\$/g, (_m, m) => {
     if (!isLikelyInlineMath(m.trim())) return `${DOLLAR}${m}${DOLLAR}`;
-    return `${IM}${latexNormalizeForKatex(expandYoungDiagrams(m))}${IM}`;
+    return `${IM}${latexNormalizeForKatex(m)}${IM}`;
   });
 
   // Step 7: restore standard $/$$ delimiters for remark-math to parse.

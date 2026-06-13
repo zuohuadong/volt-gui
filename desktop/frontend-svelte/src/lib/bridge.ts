@@ -527,15 +527,39 @@ const mockApp: AppBindings = {
       kind: "tool_dispatch",
       tabId: mockActiveTabId,
       tool: {
-        id: "mock-tool",
-        name: "workspace_overview",
-        args: JSON.stringify({ activity: mockActiveTabId === "mock-code" ? "code" : "work" }),
+        id: "mock-task",
+        name: "task",
+        args: JSON.stringify({ prompt: "Audit Work and Code surfaces", activity: mockActiveTabId === "mock-code" ? "code" : "work" }),
+        readOnly: false,
+      },
+    });
+    emitMock({
+      kind: "tool_dispatch",
+      tabId: mockActiveTabId,
+      tool: {
+        id: "mock-sub-read",
+        parentId: "mock-task",
+        name: "read_file",
+        args: JSON.stringify({ path: "docs/WORKBENCH_FEATURE_MATRIX.md" }),
+        readOnly: true,
+      },
+    });
+    emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-sub-read", name: "read_file", output: "matrix reviewed", readOnly: true } });
+    emitMock({
+      kind: "tool_dispatch",
+      tabId: mockActiveTabId,
+      tool: {
+        id: "mock-sub-grep",
+        parentId: "mock-task",
+        name: "grep",
+        args: JSON.stringify({ pattern: "partial" }),
         readOnly: true,
       },
     });
     await delay(120);
     if (mockCancelled) return;
-    emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-tool", name: "workspace_overview", output: "ready", readOnly: true } });
+    emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-sub-grep", name: "grep", output: "remaining partial rows found", readOnly: true } });
+    emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-task", name: "task", output: "sub-agent audit ready", readOnly: false } });
     emitMock({ kind: "usage", tabId: mockActiveTabId, usage: { promptTokens: 1200, completionTokens: 320, totalTokens: 1520 } });
     mockHistory[tabID] = [...(mockHistory[tabID] ?? []), { role: "assistant", content: response, reasoning: "Classifying activity mode, run mode, and workspace context." }];
     emitMock({ kind: "turn_done", tabId: mockActiveTabId });

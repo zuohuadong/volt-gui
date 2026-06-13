@@ -19,10 +19,12 @@
   let {
     activityMode,
     resources,
+    refreshKey = 0,
     onChanged,
   }: {
     activityMode: ActivityMode;
     resources: Array<{ name: string; total: number }>;
+    refreshKey?: number;
     onChanged: () => void;
   } = $props();
 
@@ -33,8 +35,19 @@
   let permissionDraft = $state({ list: "ask", rule: "" });
   let busy = $state(false);
   let status = $state("");
+  let seenRefreshKey: number | undefined;
 
   onMount(() => {
+    void loadRecords();
+  });
+
+  $effect(() => {
+    if (seenRefreshKey === undefined) {
+      seenRefreshKey = refreshKey;
+      return;
+    }
+    if (refreshKey === seenRefreshKey) return;
+    seenRefreshKey = refreshKey;
     void loadRecords();
   });
 

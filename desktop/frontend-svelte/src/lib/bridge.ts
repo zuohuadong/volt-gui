@@ -959,7 +959,9 @@ const mockApp: AppBindings = {
     mockEffort = level;
   },
   async SetModeForTab(tabID: string, mode: string) {
-    mockTabsState = mockTabsState.map((tab) => (tab.id === tabID ? { ...tab, mode: mode === "plan" || mode === "yolo" ? mode : "normal" } : tab));
+    const normalized = mode === "plan" || mode === "yolo" ? mode : "normal";
+    mockSettings.bypass = normalized === "yolo";
+    mockTabsState = mockTabsState.map((tab) => (tab.id === tabID ? { ...tab, mode: normalized } : tab));
   },
   async GoalForTab(tabID: string) {
     return mockGoals[tabID] ?? { objective: "", status: "idle" };

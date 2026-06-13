@@ -27,7 +27,8 @@ function run(label, args, cwd) {
 if (selected === "react" || selected === "legacy") {
   run("building React shell for Wails embed", ["run", "build:react"], reactFrontendDir);
 } else if (selected === "svelte" || selected === "workbench") {
-  run("building Svelte workbench", ["--dir", svelteFrontendDir, "build"], desktopDir);
+  run("installing Svelte workbench dependencies", ["--dir", svelteFrontendDir, "install", "--frozen-lockfile"], desktopDir);
+  run("building Svelte workbench", ["--dir", svelteFrontendDir, "run", "build"], desktopDir);
   run("syncing Svelte workbench into frontend/dist", ["run", "sync:svelte-dist"], reactFrontendDir);
 } else {
   console.error(

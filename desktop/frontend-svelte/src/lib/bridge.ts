@@ -4,6 +4,8 @@ import type {
   DirEntry,
   EffortInfo,
   FilePreview,
+  CheckpointMeta,
+  HistoryMessage,
   ModelInfo,
   QuestionAnswer,
   TabMeta,
@@ -19,6 +21,9 @@ interface AppBindings {
   SetActiveTab(tabID: string): Promise<void>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   CloseTab(tabID: string): Promise<void>;
+  HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
+  CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
+  Rewind(turn: number, scope: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
   SetModelForTab(tabID: string, name: string): Promise<void>;
   EffortForTab(tabID: string): Promise<EffortInfo>;
@@ -59,6 +64,20 @@ let mockActiveTabId = "mock-global";
 let mockSelectedModel = "deepseek-flash";
 let mockEffort = "auto";
 let mockCancelled = false;
+let mockHistory: Record<string, HistoryMessage[]> = {
+  "mock-global": [
+    { role: "user", content: "Plan the Svelte workbench migration." },
+    {
+      role: "assistant",
+      content: "The migration keeps Work/Code activity mode separate from Ask/Auto/YOLO/Plan/Goal run mode.",
+      reasoning: "Identify product mode boundaries before wiring runtime controls.",
+    },
+  ],
+  "mock-code": [
+    { role: "user", content: "Inspect the Svelte workbench shell." },
+    { role: "assistant", content: "Code mode should prioritize context, changed files, checkpoints, and file previews." },
+  ],
+};
 let mockTabsState: TabMeta[] = [
   {
     id: "mock-global",
@@ -123,7 +142,9 @@ const mockFiles: DirEntry[] = [
 const mockApp: AppBindings = {
   async SubmitToTab(_tabID: string, input: string) {
     mockCancelled = false;
+    const tabID = _tabID || mockActiveTabId;
     const lowered = input.trim().toLowerCase();
+    mockHistory[tabID] = [...(mockHistory[tabID] ?? []), { role: "user", content: input }];
     emitMock({ kind: "turn_started", tabId: mockActiveTabId });
     await delay(120);
     if (mockCancelled) return;
@@ -163,7 +184,8 @@ const mockApp: AppBindings = {
     emitMock({ kind: "reasoning", tabId: mockActiveTabId, reasoning: "Classifying activity mode, run mode, and workspace context." });
     await delay(120);
     if (mockCancelled) return;
-    emitMock({ kind: "text", tabId: mockActiveTabId, text: `Mock response for: ${input}` });
+    const response = `Mock response for: ${input}`;
+    emitMock({ kind: "text", tabId: mockActiveTabId, text: response });
     emitMock({
       kind: "tool_dispatch",
       tabId: mockActiveTabId,
@@ -178,6 +200,7 @@ const mockApp: AppBindings = {
     if (mockCancelled) return;
     emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-tool", name: "workspace_overview", output: "ready", readOnly: true } });
     emitMock({ kind: "usage", tabId: mockActiveTabId, usage: { promptTokens: 1200, completionTokens: 320, totalTokens: 1520 } });
+    mockHistory[tabID] = [...(mockHistory[tabID] ?? []), { role: "assistant", content: response, reasoning: "Classifying activity mode, run mode, and workspace context." }];
     emitMock({ kind: "turn_done", tabId: mockActiveTabId });
   },
   async SubmitDisplayToTab(tabID, _display, input) {
@@ -200,6 +223,32 @@ const mockApp: AppBindings = {
   async CloseTab(tabID: string) {
     mockTabsState = mockTabsState.filter((tab) => tab.id !== tabID);
     mockActiveTabId = mockTabsState[0]?.id ?? "mock-global";
+  },
+  async HistoryForTab(tabID: string) {
+    return mockHistory[tabID] ?? [];
+  },
+  async CheckpointsForTab(_tabID: string) {
+    return [
+      {
+        turn: 0,
+        prompt: "Plan the Svelte workbench migration.",
+        files: ["docs/WORKBENCH.zh-CN.md", "desktop/frontend-svelte/src/App.svelte"],
+        time: Date.now() - 180000,
+        canCode: true,
+        canConversation: true,
+      },
+      {
+        turn: 1,
+        prompt: "Inspect the Svelte workbench shell.",
+        files: ["desktop/frontend-svelte/src/components/CodeDashboard.svelte"],
+        time: Date.now() - 90000,
+        canCode: true,
+        canConversation: false,
+      },
+    ];
+  },
+  async Rewind(turn: number, scope: string) {
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: `Rewind requested for turn ${turn} (${scope}).` });
   },
   async ModelsForTab(_tabID: string) {
     return [
@@ -250,7 +299,10 @@ const mockApp: AppBindings = {
   async ReadFile(rel: string) {
     return {
       path: rel,
-      content: `// Preview for ${rel}\nexport const workbench = "svelte + svadmin";\n`,
+      body: `// Preview for ${rel}\nexport const workbench = "svelte + svadmin";\n`,
+      size: 68,
+      truncated: false,
+      binary: false,
     };
   },
   async WorkspaceChanges() {
@@ -259,7 +311,7 @@ const mockApp: AppBindings = {
         { path: "desktop/frontend-svelte/src/App.svelte", sources: ["mock"], gitStatus: "M", turns: [1] },
         { path: "docs/WORKBENCH_FEATURE_MATRIX.md", sources: ["mock"], gitStatus: "M", turns: [1] },
       ],
-      clean: false,
+      gitAvailable: true,
     };
   },
   async ContextPanel(_tabID: string) {

@@ -23,9 +23,9 @@ Status values:
 | Run modes | Plan control | work, code | partial | Svelte shell maps Plan to `SetModeForTab("plan")` and renders plan/tool approval shelves; real plan handoff still needs Wails smoke. |
 | Run modes | Goal entry points | work, code | planned | Start, view, continue, clear goal. |
 | Chat loop | Submit user turn | work, code | partial | Composer submits through `SubmitDisplayToTab`; browser mock smoke passes, real Wails stream smoke still required. |
-| Chat loop | Stream text/reasoning/events | work, code | partial | `agent:event` reducer renders text, reasoning, usage, and tool events; history hydration still required. |
+| Chat loop | Stream text/reasoning/events | work, code | partial | `agent:event` reducer renders text, reasoning, usage, and tool events; `HistoryForTab` hydration now loads saved turns on boot/tab switch. |
 | Chat loop | Cancel running turn | work, code | partial | Composer calls `CancelTab` while running; draft restore still required. |
-| Transcript | Assistant/user messages | work, code | usable | Browser smoke renders user and assistant turns in the Svelte transcript. |
+| Transcript | Assistant/user messages | work, code | usable | Browser smoke renders saved history plus live user and assistant turns in the Svelte transcript. |
 | Transcript | Markdown, code, math | work, code | planned | Markdown, fenced code, GFM, KaTeX smoke. |
 | Transcript | Tool calls and subcalls | work, code | partial | Tool dispatch/result cards render; nested sub-agent call grouping still required. |
 | Transcript | Approvals and ask questions | work, code | partial | Browser smoke completes approve/deny and answer-question flows; real Wails approval smoke still required. |
@@ -38,8 +38,8 @@ Status values:
 | Work dashboard | Memory shortcuts | work | partial | Memory resource counts render through the data provider; view/add/forget flows still required. |
 | Code dock | Context panel | code | partial | Token usage and read files render from `ContextPanel`; checkpoint and full context controls still required. |
 | Code dock | File tree and preview | code | partial | `@` search can preview files through `ReadFile`; full tree/reveal/open flows still required. |
-| Code dock | Changed files and diffs | code | partial | `WorkspaceChanges` renders changed files; diff viewer still required. |
-| Code dock | Checkpoints and rewind | code | planned | List checkpoints and rewind by scope. |
+| Code dock | Changed files and diffs | code | partial | `WorkspaceChanges` renders changed files and can preview changed paths; diff viewer still required. |
+| Code dock | Checkpoints and rewind | code | partial | `CheckpointsForTab` renders rewind points and calls `Rewind` by conversation/code/both scope; full post-rewind history refresh still required. |
 | Resources | Providers and models | work, code | partial | svadmin-compatible provider/resource panel can list provider/model counts through Wails/mock bridge; update/key flows remain. |
 | Resources | MCP servers | work, code | partial | MCP server resource count is exposed in the resource panel; add/update/enable/reconnect/remove still required. |
 | Resources | Skills | work, code | partial | Skill resource count is exposed in the resource panel; enable/disable/refresh still required. |

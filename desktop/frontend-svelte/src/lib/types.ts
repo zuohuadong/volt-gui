@@ -122,23 +122,27 @@ export interface DirEntry {
 
 export interface FilePreview {
   path: string;
-  content: string;
-  truncated?: boolean;
+  body: string;
+  size: number;
+  truncated: boolean;
+  binary: boolean;
+  err?: string;
 }
 
-export interface ChangedFileInfo {
+export interface WorkspaceChangeView {
   path: string;
   oldPath?: string;
   sources: string[];
   gitStatus?: string;
-  turns: number[];
+  turns?: number[];
   latestPrompt?: string;
   latestTime?: number;
 }
 
 export interface WorkspaceChangesView {
-  files: ChangedFileInfo[];
-  clean?: boolean;
+  files: WorkspaceChangeView[];
+  gitAvailable: boolean;
+  gitErr?: string;
 }
 
 export interface ReadFileRecord {
@@ -159,7 +163,22 @@ export interface ContextPanelInfo {
   cacheHitTokens: number;
   cacheMissTokens: number;
   readFiles: ReadFileRecord[];
-  changedFiles: ChangedFileInfo[];
+  changedFiles: WorkspaceChangeView[];
+}
+
+export interface HistoryMessage {
+  role: string;
+  content: string;
+  reasoning?: string;
+}
+
+export interface CheckpointMeta {
+  turn: number;
+  prompt: string;
+  files: string[];
+  time: number;
+  canCode?: boolean;
+  canConversation?: boolean;
 }
 
 export interface ResourceRecord {

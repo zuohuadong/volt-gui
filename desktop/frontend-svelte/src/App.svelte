@@ -12,10 +12,12 @@
   import { wailsDataProvider, workbenchResources } from "./lib/resourceProvider";
   import type {
     ActivityMode,
+    CheckpointMeta,
     CommandInfo,
     ContextPanelInfo,
     EffortInfo,
     FilePreview,
+    HistoryMessage,
     ModelInfo,
     QuestionAnswer,
     RunMode,
@@ -35,6 +37,16 @@
     { id: "goal", label: "Goal", hint: "Continue a saved long-running objective." },
   ];
 
+  function welcomeTranscript(): TranscriptItem[] {
+    return [
+      {
+        id: "system-welcome",
+        role: "system",
+        body: "Workbench preview is ready. Work/Code activity mode is independent from Ask/Auto/YOLO/Plan/Goal run mode.",
+      },
+    ];
+  }
+
   let activityMode = $state<ActivityMode>("work");
   let runMode = $state<RunMode>("ask");
   let tabs = $state<TabMeta[]>([]);
@@ -43,16 +55,11 @@
   let commands = $state<CommandInfo[]>([]);
   let selectedModel = $state("");
   let input = $state("");
-  let transcript = $state<TranscriptItem[]>([
-    {
-      id: "system-welcome",
-      role: "system",
-      body: "Workbench preview is ready. Work/Code activity mode is independent from Ask/Auto/YOLO/Plan/Goal run mode.",
-    },
-  ]);
+  let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let resources = $state<Array<{ name: string; total: number }>>([]);
   let context = $state<ContextPanelInfo | undefined>();
   let changes = $state<WorkspaceChangesView | undefined>();
+  let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
   let pendingApproval = $state<WireApproval | undefined>();
   let pendingAsk = $state<WireAsk | undefined>();
@@ -82,6 +89,29 @@
       return;
     }
     transcript.push({ id: `assistant-${Date.now()}`, role: "assistant", body: text, pending: true });
+  }
+
+  function historyToTranscript(messages: HistoryMessage[]): TranscriptItem[] {
+    const visible = messages.filter((message) => {
+      const hasContent = message.content.trim() !== "";
+      const hasReasoning = (message.reasoning ?? "").trim() !== "";
+      return (message.role === "user" && hasContent) || (message.role === "assistant" && (hasContent || hasReasoning));
+    });
+    if (!visible.length) return welcomeTranscript();
+    return visible.map((message, index) => ({
+      id: `history-${index}`,
+      role: message.role === "user" ? "user" : "assistant",
+      body: message.content,
+      title: message.reasoning ? "assistant + reasoning" : undefined,
+      pending: false,
+    }));
+  }
+
+  async function hydrateHistory(tab: TabMeta) {
+    const history = await app().HistoryForTab(tab.id);
+    transcript = historyToTranscript(history);
+    pendingApproval = undefined;
+    pendingAsk = undefined;
   }
 
   function handleEvent(event: WireEvent) {
@@ -156,6 +186,7 @@
         }),
       );
       await refreshCodeDock(active);
+      if (active) await hydrateHistory(active);
     } finally {
       loading = false;
     }
@@ -165,6 +196,7 @@
     if (!tab) return;
     context = await app().ContextPanel(tab.id);
     changes = await app().WorkspaceChanges();
+    checkpoints = await app().CheckpointsForTab(tab.id);
   }
 
   async function send() {
@@ -229,6 +261,13 @@
     filePreview = await app().ReadFile(path);
     activityMode = "code";
   }
+
+  async function rewind(turn: number, scope: string) {
+    if (!activeTab) return;
+    await app().Rewind(turn, scope);
+    transcript.push({ id: `rewind-${Date.now()}`, role: "notice", title: "rewind", body: `Requested rewind to turn ${turn} (${scope}).` });
+    await refreshCodeDock(activeTab);
+  }
 </script>
 
 <svelte:head>
@@ -272,7 +311,7 @@
     {#if activityMode === "work"}
       <WorkDashboard {activeTab} {resources} />
     {:else}
-      <CodeDashboard {context} {changes} {filePreview} />
+      <CodeDashboard {context} {changes} {checkpoints} {filePreview} onPreviewFile={previewFile} onRewind={rewind} />
     {/if}
 
     <ResourcePanel {activityMode} {resources} />

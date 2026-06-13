@@ -309,12 +309,31 @@ select,
 }
 
 .code-dock span,
-.code-dock strong {
+.code-dock strong,
+.code-dock button {
   overflow: hidden;
   color: var(--text-soft);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.code-dock button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 8px;
+  color: #293241;
+  text-align: left;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.code-dock button:hover {
+  border-color: #bfdbfe;
 }
 
 .code-dock pre {
@@ -327,6 +346,27 @@ select,
   border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 12px;
+}
+
+.checkpoint {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.checkpoint > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.checkpoint button {
+  min-height: 26px;
+  color: #1d4ed8;
+  background: white;
 }
 
 .resource-panel {

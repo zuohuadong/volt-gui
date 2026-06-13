@@ -613,6 +613,17 @@ export const en = {
   "onboarding.error.unknown": "Something went wrong: {msg}",
   "onboarding.skip": "Skip for now",
 
+  // employee auth gate
+  "auth.title": "Employee login",
+  "auth.tagline": "Sign in with your company account to continue using {name}.",
+  "auth.submit": "Continue with browser",
+  "auth.waiting": "Waiting for browser authorization…",
+  "auth.waitingButton": "Waiting for authorization…",
+  "auth.cancelHint": "Close the browser tab to stop this login attempt.",
+  "auth.error.timeout": "The login attempt expired. Start again when you're ready.",
+  "auth.error.security": "The identity response could not be verified. Please start a fresh login.",
+  "auth.error.unknown": "Unable to complete employee login.",
+
   // context panel
   "context.overview": "Session overview",
   "context.scopeGlobal": "Scope: Global",

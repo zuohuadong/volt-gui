@@ -66,6 +66,9 @@ type App struct {
 	forceQuit atomic.Bool
 	trayReady bool
 	tray      *desktopTray
+
+	authMu     sync.Mutex
+	authCancel context.CancelFunc
 }
 
 // NewApp constructs the bound object. Tabs are restored in startup from the

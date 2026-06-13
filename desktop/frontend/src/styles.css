@@ -6539,6 +6539,17 @@ a[href] {
 .onboarding__privacy {
   opacity: 0.8;
 }
+.auth-login__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 82%, var(--accent) 18%);
+  color: var(--fg);
+  font-size: 13px;
+}
 .onboarding__skip {
   background: none;
   border: none;

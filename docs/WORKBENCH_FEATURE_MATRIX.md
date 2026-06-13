@@ -17,7 +17,7 @@ Status values:
 | Runtime | Wails boot path | work, code | partial | Svelte app and Wails-style bridge exist; Wails runtime smoke still required. |
 | Runtime | Browser dev mock path | work, code | usable | `pnpm build` passes and Browser smoke confirms nonblank UI, Work/Code switch, approval, and ask flows. |
 | Navigation | App chrome and tabs | work, code | usable | List, switch, close, create-global-session, and reorder are wired through Svelte bridge/mock; Browser smoke confirms new session, move up/down, and Work/Code mode separation. |
-| Navigation | Sidebar workspaces/projects | work, code | partial | Session tabs render and preserve active selection; project tree/topic management still required. |
+| Navigation | Sidebar workspaces/projects | work, code | usable | Svelte sidebar lists the Wails project tree, opens global/project topics, creates topics, renames projects/topics, sets project colors, reorders projects, and moves topics to trash; Browser smoke covers topic open/create/rename/color/reorder while preserving run-mode separation. |
 | Activity | Work/Code switcher | work, code | usable | Svelte shell switches activity mode independently from run mode. |
 | Run modes | Ask/Auto/YOLO controls | work, code | partial | Svelte shell preserves run-mode state and maps YOLO to `SetModeForTab`; permission-mode wiring still needs real runtime smoke. |
 | Run modes | Plan control | work, code | partial | Svelte shell maps Plan to `SetModeForTab("plan")` and renders plan/tool approval shelves; real plan handoff still needs Wails smoke. |

@@ -9,6 +9,7 @@ export interface TabMeta {
   workspaceName: string;
   topicId: string;
   topicTitle: string;
+  projectColor?: string;
   label?: string;
   ready?: boolean;
   active: boolean;
@@ -21,6 +22,20 @@ export interface TopicMeta {
   id: string;
   title: string;
   createdAt: number;
+}
+
+export interface ProjectNode {
+  key: string;
+  kind: "project" | "topic" | "global_folder" | "global_topic";
+  label: string;
+  root?: string;
+  topicId?: string;
+  projectColor?: string;
+  turns?: number;
+  lastActivityAt?: number;
+  open?: boolean;
+  running?: boolean;
+  children?: ProjectNode[];
 }
 
 export interface ModelInfo {

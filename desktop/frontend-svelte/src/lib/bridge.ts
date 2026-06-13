@@ -9,6 +9,7 @@ import type {
   CheckpointMeta,
   HistoryMessage,
   ModelInfo,
+  ProjectNode,
   QuestionAnswer,
   TabMeta,
   TopicMeta,
@@ -24,9 +25,17 @@ interface AppBindings {
   ListTabs(): Promise<TabMeta[]>;
   SetActiveTab(tabID: string): Promise<void>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
+  OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
+  ListProjectTree(): Promise<ProjectNode[]>;
+  RenameProject(workspaceRoot: string, title: string): Promise<void>;
+  SetProjectColor(workspaceRoot: string, color: string): Promise<void>;
+  ReorderProjects(workspaceRoots: string[]): Promise<void>;
   CreateTopic(scope: string, workspaceRoot: string, title: string): Promise<TopicMeta>;
+  RenameTopic(topicID: string, title: string): Promise<void>;
+  DeleteTopic(topicID: string): Promise<void>;
+  TrashTopic(topicID: string): Promise<void>;
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
@@ -72,6 +81,7 @@ declare global {
 }
 
 const EVENT_CHANNEL = "agent:event";
+const PROJECT_TREE_CHANNEL = "project-tree:changed";
 
 function realApp(): AppBindings | undefined {
   return typeof window === "undefined" ? undefined : window.go?.main?.App;
@@ -159,6 +169,113 @@ let mockTabsState: TabMeta[] = [
     cwd: "~/projects/voltui",
   },
 ];
+
+let mockProjectTree: ProjectNode[] = [
+  {
+    key: "global_folder",
+    kind: "global_folder",
+    label: "Global",
+    root: "",
+    projectColor: "teal",
+    children: [
+      {
+        key: "global_topic_welcome",
+        kind: "global_topic",
+        label: "Workbench planning",
+        topicId: "welcome",
+        projectColor: "teal",
+        turns: 3,
+        lastActivityAt: Date.now() - 180000,
+        open: true,
+      },
+      {
+        key: "global_topic_research",
+        kind: "global_topic",
+        label: "Research notes",
+        topicId: "research",
+        projectColor: "teal",
+        turns: 1,
+        lastActivityAt: Date.now() - 900000,
+      },
+    ],
+  },
+  {
+    key: "project_~/projects/voltui",
+    kind: "project",
+    label: "voltui",
+    root: "~/projects/voltui",
+    projectColor: "blue",
+    children: [
+      {
+        key: "topic_code",
+        kind: "topic",
+        label: "Svelte migration",
+        root: "~/projects/voltui",
+        topicId: "code",
+        projectColor: "blue",
+        turns: 7,
+        lastActivityAt: Date.now() - 120000,
+        open: true,
+      },
+      {
+        key: "topic_resources",
+        kind: "topic",
+        label: "Resource surfaces",
+        root: "~/projects/voltui",
+        topicId: "resources",
+        projectColor: "blue",
+        turns: 2,
+        lastActivityAt: Date.now() - 600000,
+      },
+    ],
+  },
+  {
+    key: "project_~/projects/docs",
+    kind: "project",
+    label: "docs",
+    root: "~/projects/docs",
+    projectColor: "amber",
+    children: [
+      {
+        key: "topic_docs",
+        kind: "topic",
+        label: "Docs refresh",
+        root: "~/projects/docs",
+        topicId: "docs",
+        projectColor: "amber",
+        turns: 1,
+        lastActivityAt: Date.now() - 1200000,
+      },
+    ],
+  },
+];
+
+function cloneProjectTree(): ProjectNode[] {
+  return JSON.parse(JSON.stringify(mockProjectTree)) as ProjectNode[];
+}
+
+function nodeChildren(node: ProjectNode): ProjectNode[] {
+  return Array.isArray(node.children) ? node.children : [];
+}
+
+function findMockTopic(topicID: string): ProjectNode | undefined {
+  for (const parent of mockProjectTree) {
+    const found = nodeChildren(parent).find((child) => child.topicId === topicID);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function deleteMockTopic(topicID: string) {
+  mockProjectTree = mockProjectTree.map((parent) => ({
+    ...parent,
+    children: nodeChildren(parent).filter((child) => child.topicId !== topicID),
+  }));
+}
+
+function topicLabel(topicID: string, fallback: string): string {
+  return findMockTopic(topicID)?.label ?? fallback;
+}
 
 function mockTabs(): TabMeta[] {
   return mockTabsState.map((tab) => ({ ...tab, active: tab.id === mockActiveTabId }));
@@ -291,13 +408,44 @@ const mockApp: AppBindings = {
       workspaceRoot: "",
       workspaceName: "Global",
       topicId: topicID,
-      topicTitle: "New session",
+      topicTitle: topicLabel(topicID, "New session"),
+      projectColor: findMockTopic(topicID)?.projectColor,
       label: mockSelectedModel,
       active: true,
       running: false,
       mode: "normal",
       ready: true,
       cwd: "~/projects/voltui",
+    };
+    mockTabsState = [...mockTabsState.map((item) => ({ ...item, active: false })), tab];
+    mockActiveTabId = id;
+    mockHistory[id] = [];
+    mockGoals[id] = { objective: "", status: "idle" };
+    return { ...tab };
+  },
+  async OpenProjectTab(workspaceRoot: string, topicID: string) {
+    const existing = mockTabsState.find((tab) => tab.scope === "project" && tab.workspaceRoot === workspaceRoot && tab.topicId === topicID);
+    if (existing) {
+      mockActiveTabId = existing.id;
+      return { ...existing, active: true };
+    }
+    const topic = findMockTopic(topicID);
+    const id = `mock-project-${Date.now()}`;
+    const workspaceName = workspaceRoot.split("/").filter(Boolean).pop() ?? workspaceRoot;
+    const tab: TabMeta = {
+      id,
+      scope: "project",
+      workspaceRoot,
+      workspaceName,
+      topicId: topicID,
+      topicTitle: topic?.label ?? "New session",
+      projectColor: topic?.projectColor,
+      label: mockSelectedModel,
+      active: true,
+      running: false,
+      mode: "normal",
+      ready: true,
+      cwd: workspaceRoot,
     };
     mockTabsState = [...mockTabsState.map((item) => ({ ...item, active: false })), tab];
     mockActiveTabId = id;
@@ -315,12 +463,78 @@ const mockApp: AppBindings = {
     mockTabsState = mockTabsState.filter((tab) => tab.id !== tabID);
     mockActiveTabId = mockTabsState[0]?.id ?? "mock-global";
   },
-  async CreateTopic(_scope: string, _workspaceRoot: string, title: string) {
+  async ListProjectTree() {
+    return cloneProjectTree();
+  },
+  async RenameProject(workspaceRoot: string, title: string) {
+    const node = workspaceRoot
+      ? mockProjectTree.find((item) => item.root === workspaceRoot)
+      : mockProjectTree.find((item) => item.kind === "global_folder");
+    if (!node) return;
+    const fallback = node.kind === "global_folder" ? "Global" : (node.root?.split("/").filter(Boolean).pop() ?? node.label);
+    node.label = title.trim() || fallback;
+  },
+  async SetProjectColor(workspaceRoot: string, color: string) {
+    const node = workspaceRoot
+      ? mockProjectTree.find((item) => item.root === workspaceRoot)
+      : mockProjectTree.find((item) => item.kind === "global_folder");
+    if (!node) return;
+    node.projectColor = color || undefined;
+    node.children = nodeChildren(node).map((child) => ({ ...child, projectColor: node.projectColor }));
+    mockTabsState = mockTabsState.map((tab) =>
+      (workspaceRoot ? tab.workspaceRoot === workspaceRoot : tab.scope === "global")
+        ? { ...tab, projectColor: node.projectColor }
+        : tab,
+    );
+  },
+  async ReorderProjects(workspaceRoots: string[]) {
+    const globals = mockProjectTree.filter((node) => node.kind !== "project");
+    const projects = mockProjectTree.filter((node) => node.kind === "project");
+    const byRoot = new Map(projects.map((node) => [node.root, node]));
+    const ordered = workspaceRoots.map((root) => byRoot.get(root)).filter((node): node is ProjectNode => Boolean(node));
+    if (ordered.length === projects.length) mockProjectTree = [...globals, ...ordered];
+  },
+  async CreateTopic(scope: string, workspaceRoot: string, title: string) {
+    const topicID = `topic-${Date.now()}`;
+    const topicTitle = title.trim() || "New session";
+    const parent = scope === "global"
+      ? mockProjectTree.find((node) => node.kind === "global_folder")
+      : mockProjectTree.find((node) => node.root === workspaceRoot);
+    if (parent) {
+      parent.children = [
+        {
+          key: parent.kind === "global_folder" ? `global_topic_${topicID}` : `topic_${topicID}`,
+          kind: parent.kind === "global_folder" ? "global_topic" : "topic",
+          label: topicTitle,
+          root: parent.kind === "global_folder" ? undefined : parent.root,
+          topicId: topicID,
+          projectColor: parent.projectColor,
+          turns: 0,
+          lastActivityAt: Date.now(),
+        },
+        ...nodeChildren(parent),
+      ];
+    }
     return {
-      id: `topic-${Date.now()}`,
-      title: title.trim() || "New session",
+      id: topicID,
+      title: topicTitle,
       createdAt: Date.now(),
     };
+  },
+  async RenameTopic(topicID: string, title: string) {
+    const topic = findMockTopic(topicID);
+    const nextTitle = title.trim();
+    if (!topic || !nextTitle) return;
+    topic.label = nextTitle;
+    mockTabsState = mockTabsState.map((tab) => (tab.topicId === topicID ? { ...tab, topicTitle: nextTitle } : tab));
+  },
+  async DeleteTopic(topicID: string) {
+    deleteMockTopic(topicID);
+  },
+  async TrashTopic(topicID: string) {
+    deleteMockTopic(topicID);
+    mockTabsState = mockTabsState.filter((tab) => tab.topicId !== topicID);
+    mockActiveTabId = mockTabsState.find((tab) => tab.active)?.id ?? mockTabsState[0]?.id ?? "mock-global";
   },
   async HistoryForTab(tabID: string) {
     return mockHistory[tabID] ?? [];
@@ -529,6 +743,13 @@ export function onAgentEvent(cb: (event: WireEvent) => void): () => void {
   }
   mockListeners.add(cb);
   return () => mockListeners.delete(cb);
+}
+
+export function onProjectTreeChanged(cb: () => void): () => void {
+  if (typeof window !== "undefined" && window.runtime) {
+    return window.runtime.EventsOn(PROJECT_TREE_CHANNEL, () => cb());
+  }
+  return () => {};
 }
 
 export function onFilesDropped(cb: (paths: string[]) => void): () => void {

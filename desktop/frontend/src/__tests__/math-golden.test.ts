@@ -128,6 +128,9 @@ check("single-digit $1$, $2$, $5$ → NOT math (currency-shaped)", () => isLikel
 check("multi-digit $42$ → NOT math (currency-shaped)", () => isLikelyInlineMath("42") === false);
 check("$2.5x$ is math (number with variable)", () => isLikelyInlineMath("2.5x") === true);
 check("$10\%$ is math (percentage with LaTeX)", () => isLikelyInlineMath("10\\%") === true);
+check("$2.5x dollars$ → NOT math (prefix-only numeric variable)", () => isLikelyInlineMath("2.5x dollars") === false);
+check("$10\\% off$ → NOT math (prefix-only escaped percentage)", () => isLikelyInlineMath("10\\% off") === false);
+check("$5\\cdot3$ is math (number with LaTeX command)", () => isLikelyInlineMath("5\\cdot3") === true);
 
 check("comma-separated $A, B$ → math (ordered pair)", () => isLikelyInlineMath("A, B") === true);
 check("comma-separated $1, 2, 3$ → math (sequence)", () => isLikelyInlineMath("1, 2, 3") === true);
@@ -427,6 +430,21 @@ check("\\yng(2,1) in prose (no $ delimiters) gets wrapped and rendered", () => {
   const html = renderHtml("The partition \\yng(2,1) is symmetric.");
   return html.includes("katex") && !html.includes("katex-error") && !html.includes("\\yng");
 });
+check("\\yng inside \\(...\\) does not get double-wrapped", () => {
+  const out = normalizeMath("\\(\\yng(2,1)\\)");
+  return out === "$\\begin{array}{l}\\square \\! \\square \\\\[-0.525em] \\square\\end{array}$";
+});
+check("\\yng inside \\[...\\] stays display math without triple dollars", () => {
+  const out = normalizeMath("\\[\\yng(2,1)\\]");
+  return out.startsWith("$$\\begin{array}{l}")
+    && out.endsWith("$$")
+    && !out.includes("$$$");
+});
+check("escaped dollar before bare \\yng does not suppress wrapping", () => {
+  const src = String.raw`Price is \$5; shape \yng(2,1)`;
+  const expected = String.raw`Price is \$5; shape $\begin{array}{l}\square \! \square \\[-0.525em] \square\end{array}$`;
+  return normalizeMath(src) === expected;
+});
 check("\\yng (2,1) with a space before parens gets wrapped and rendered", () => {
   const html = renderHtml("The partition \\yng (2,1) is symmetric.");
   return html.includes("katex") && !html.includes("katex-error") && !html.includes("\\yng");
@@ -449,6 +467,17 @@ check("\\young(ab,c) labelled youngtab syntax renders labels", () => {
     && !html.includes("katex-error")
     && !html.includes("\\young")
     && ["a", "b", "c"].every((label) => html.includes(label));
+});
+check("\\young(ab,c) labelled cells keep boxes", () => {
+  const out = expandYoungDiagrams("\\young(ab,c)");
+  return out.includes("\\boxed{a}")
+    && out.includes("\\boxed{b}")
+    && out.includes("\\boxed{c}");
+});
+check("\\young(abcd,:cd,:c) skew placeholders are invisible offsets", () => {
+  const out = expandYoungDiagrams("\\young(abcd,:cd,:c)");
+  return out.includes("\\hphantom{\\boxed{x}}")
+    && !out.includes("\\boxed{:}");
 });
 check("\\yng(4,3,2,1) renders as (4,3,2,1) Young diagram", () => {
   const html = renderHtml("$$\\yng(4,3,2,1)$$");
@@ -504,15 +533,15 @@ check("expandYoungDiagrams handles \\yng with content", () => {
   // single-glyph strut), and the default 1.2em baseline spacing
   // leaves 0.525em of gap. `\\[-0.525em]` subtracts exactly that.
   const out = expandYoungDiagrams("\\yng(2,1){a&b\\\\c}");
-  return out === "$\\begin{array}{l}a \\! b \\\\[-0.525em] c\\end{array}$";
+  return out === "$\\begin{array}{l}\\boxed{a} \\! \\boxed{b} \\\\[-0.525em] \\boxed{c}\\end{array}$";
 });
 check("expandYoungDiagrams handles labelled \\young rows", () => {
   const out = expandYoungDiagrams("\\young(ab,c)");
-  return out === "$\\begin{array}{l}a \\! b \\\\[-0.525em] c\\end{array}$";
+  return out === "$\\begin{array}{l}\\boxed{a} \\! \\boxed{b} \\\\[-0.525em] \\boxed{c}\\end{array}$";
 });
 check("expandYoungDiagrams treats comma-separated numeric \\young as labels, not a 12-cell row", () => {
   const out = expandYoungDiagrams("\\young(12,3)");
-  return out === "$\\begin{array}{l}1 \\! 2 \\\\[-0.525em] 3\\end{array}$";
+  return out === "$\\begin{array}{l}\\boxed{1} \\! \\boxed{2} \\\\[-0.525em] \\boxed{3}\\end{array}$";
 });
 check("expandYoungDiagrams leaves invalid negative \\yng shape alone", () => {
   const out = expandYoungDiagrams("\\yng(-1)");

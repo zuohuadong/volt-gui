@@ -25,6 +25,12 @@
 
 const MAX_ROWS = 64;
 const MAX_CELLS = 512;
+const EMPTY_CELL = "\\square";
+const SKEW_CELL = "\\hphantom{\\boxed{x}}";
+
+function boxedCell(cell: string): string {
+  return `\\boxed{${cell}}`;
+}
 
 function splitAtTopLevel(s: string, sep: string): string[] {
   const out: string[] = [];
@@ -85,7 +91,7 @@ function expandShape(rows: number[], content: string | undefined): string | null
   // (visible Unicode white-square) so the diagram has uniform width
   // AND is actually visible to the reader.
   const cells: string[][] = Array.from({ length: rows.length }, () =>
-    Array(maxN).fill("\\square"),
+    Array(maxN).fill(EMPTY_CELL),
   );
 
   if (content) {
@@ -97,7 +103,7 @@ function expandShape(rows: number[], content: string | undefined): string | null
       const cs = splitAtTopLevel(contentRows[i], "&");
       for (let j = 0; j < cs.length && j < rows[i]; j++) {
         const c = cs[j].trim();
-        cells[i][j] = c === "" ? "\\square" : c;
+        cells[i][j] = c === "" ? EMPTY_CELL : boxedCell(c);
       }
     }
   }
@@ -162,10 +168,17 @@ function parseYoungTableau(s: string): string[][] | null {
         i++;
         continue;
       }
+      if (rawRow[i] === ":") {
+        row.push(SKEW_CELL);
+        totalCells++;
+        if (totalCells > MAX_CELLS) return null;
+        i++;
+        continue;
+      }
       const token = readLatexCell(rawRow, i);
       const cell = token.cell.trim();
       if (cell) {
-        row.push(cell);
+        row.push(boxedCell(cell));
         totalCells++;
         if (totalCells > MAX_CELLS) return null;
       }
@@ -255,6 +268,11 @@ export function expandYoungDiagrams(src: string): string {
     const ch = src[i];
 
     if (ch === "$") {
+      if (isEscapedDollar(src, i) || isCurrencyLikeDollar(src, i)) {
+        out += ch;
+        i += 1;
+        continue;
+      }
       // Look ahead for `$$` (display) vs single `$` (inline).
       if (src[i + 1] === "$") {
         // Display math: toggle 0↔2.
@@ -314,4 +332,14 @@ export function expandYoungDiagrams(src: string): string {
     i++;
   }
   return out;
+}
+
+function isEscapedDollar(src: string, i: number): boolean {
+  let slashCount = 0;
+  for (let j = i - 1; j >= 0 && src[j] === "\\"; j--) slashCount++;
+  return slashCount % 2 === 1;
+}
+
+function isCurrencyLikeDollar(src: string, i: number): boolean {
+  return /\d/.test(src[i + 1] ?? "") || /[\d%]/.test(src[i - 1] ?? "");
 }

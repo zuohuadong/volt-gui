@@ -2,12 +2,12 @@
 // that remark-math expects, and runs KaTeX-specific normalisations on each
 // recognised math source.
 //
-//   1. Expand \yng/\young to KaTeX-compatible \boxed{array} forms.
+//   1. Protect Markdown code spans/fences from all math rewrites.
+//   2. Protect LaTeX line-break spacing (\\[...]) from the LLM-delimiter rewrite.
+//   3. \(...)/\[...] → $/$$.
+//   4. Expand \yng/\young to KaTeX-compatible \boxed{array} forms.
 //      Stateful: tracks `$…$` so bare macros in prose get wrapped in
 //      `$…$` and macros already inside math just substitute.
-//   2. Protect Markdown code spans/fences from all math rewrites.
-//   3. Protect LaTeX line-break spacing (\\[...]) from the LLM-delimiter rewrite.
-//   4. \(...)/\[...] → $/$$.
 //   5. Inline `$$` glued to prose gets a blank line inserted before it
 //      (CommonMark requires that block math be paragraph-separated).
 //   6. $$…$$ → display placeholders, $…$ → inline placeholders, gated by
@@ -29,6 +29,7 @@ const TEXT_MODE_PAIR = /\$\s*(\\[A-Za-z]+\{(?:[^{}]|\{[^{}]*\})*\}[^$]*?)\s*\$/g
 const DM = "__REASONIX_MATH_DISPLAY__";
 const IM = "__REASONIX_MATH_INLINE__";
 const LB = "__REASONIX_LATEX_LINEBREAK__";
+const ED = "__REASONIX_ESCAPED_DOLLAR__";
 const DOLLAR = "&#36;";
 
 export function normalizeMath(s: string): string {
@@ -41,14 +42,9 @@ export function normalizeMath(s: string): string {
 }
 
 function normalizeMathText(s: string): string {
-  // Step 0: expand \yng/\young macros to KaTeX-compatible \boxed{array}
-  // forms. Stateful — tracks `$…$` so bare `\yng` in prose gets wrapped
-  // in inline math, and `\yng` already inside math just substitutes.
-  let r = expandYoungDiagrams(s);
-
   // Step 1: protect LaTeX line-break spacing (\\[4pt], \\[2ex], ...) so the
   // \[ → $$ rewrite below doesn't swallow it.
-  r = r.replace(/\\\\\[/g, LB);
+  let r = s.replace(/\\\\\[/g, LB);
 
   // Step 2: convert LLM-native delimiters to standard $/$$ syntax. Arrow
   // functions are required because "$$" in a JS replace string means a
@@ -59,6 +55,16 @@ function normalizeMathText(s: string): string {
     .replace(/\\\(/g, () => "$")
     .replace(/\\\)/g, () => "$");
   r = r.replace(new RegExp(LB, "g"), "\\\\[");
+
+  // Step 2.5: expand \yng/\young macros to KaTeX-compatible \boxed{array}
+  // forms after LLM-native delimiters have been converted, so macros inside
+  // \(...\) or \[...\] are correctly recognised as already being in math.
+  r = expandYoungDiagrams(r);
+
+  // Escaped dollars are literal prose dollars, not math delimiters. Hide them
+  // before the $...$ classifier passes so they cannot pair with inserted Young
+  // macro wrappers.
+  r = r.replace(/\\\$/g, ED);
 
   // Step 3: repair inline $$. CommonMark requires a blank line before
   // block math; without it remark-math parses the opening $$ as an
@@ -106,7 +112,8 @@ function normalizeMathText(s: string): string {
   // Step 7: restore standard $/$$ delimiters for remark-math to parse.
   return r
     .replace(new RegExp(DM, "g"), () => "$$")
-    .replace(new RegExp(IM, "g"), "$");
+    .replace(new RegExp(IM, "g"), "$")
+    .replace(new RegExp(ED, "g"), () => "\\$");
 }
 
 function protectMarkdownCode(s: string): { text: string; prefix: string; segments: string[] } {

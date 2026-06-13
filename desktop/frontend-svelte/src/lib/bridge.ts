@@ -493,6 +493,7 @@ let mockWorkspaceChanges: WorkspaceChangesView = {
       path: "desktop/frontend-svelte/src/App.svelte",
       sources: ["mock"],
       gitStatus: "M",
+      worktreeStatus: "M",
       turns: [0],
       latestPrompt: "Hydrate Svelte history and checkpoint state.",
     },
@@ -500,6 +501,7 @@ let mockWorkspaceChanges: WorkspaceChangesView = {
       path: "desktop/frontend-svelte/src/components/CodeDashboard.svelte",
       sources: ["mock"],
       gitStatus: "M",
+      worktreeStatus: "M",
       turns: [1],
       latestPrompt: "Refresh checkpoint rewind UI after backend rewind.",
     },
@@ -507,8 +509,34 @@ let mockWorkspaceChanges: WorkspaceChangesView = {
       path: "docs/WORKBENCH_FEATURE_MATRIX.md",
       sources: ["mock"],
       gitStatus: "M",
+      indexStatus: "M",
       turns: [1],
       latestPrompt: "Track checkpoint rewind parity.",
+    },
+    {
+      path: "docs/WORKBENCH.md",
+      oldPath: "docs/WORKBENCH.zh-CN.md",
+      sources: ["mock"],
+      gitStatus: "R",
+      indexStatus: "R",
+      turns: [2],
+      latestPrompt: "Rename workbench docs for upstream parity.",
+    },
+    {
+      path: "desktop/build/appicon.png",
+      sources: ["mock"],
+      gitStatus: "M",
+      worktreeStatus: "M",
+      turns: [2],
+      latestPrompt: "Refresh app icon asset.",
+    },
+    {
+      path: "desktop/frontend-svelte/src/large-fixture.ts",
+      sources: ["mock"],
+      gitStatus: "M",
+      worktreeStatus: "M",
+      turns: [3],
+      latestPrompt: "Exercise truncated diff rendering.",
     },
   ],
   gitAvailable: true,
@@ -1038,9 +1066,57 @@ const mockApp: AppBindings = {
     };
   },
   async WorkspaceDiff(rel: string) {
+    if (rel === "docs/WORKBENCH.md") {
+      return {
+        path: rel,
+        oldPath: "docs/WORKBENCH.zh-CN.md",
+        status: "R",
+        indexStatus: "R",
+        kind: "modify",
+        diff: [
+          "--- a/docs/WORKBENCH.zh-CN.md",
+          "+++ b/docs/WORKBENCH.md",
+          "@@ -1,3 +1,3 @@",
+          "-# 工作台迁移契约",
+          "+# Workbench migration contract",
+          " Keep Work and Code modes orthogonal.",
+        ].join("\n"),
+        added: 1,
+        removed: 1,
+        binary: false,
+        truncated: false,
+      };
+    }
+    if (rel === "desktop/build/appicon.png") {
+      return {
+        path: rel,
+        status: "M",
+        worktreeStatus: "M",
+        kind: "modify",
+        diff: "",
+        added: 0,
+        removed: 0,
+        binary: true,
+        truncated: false,
+      };
+    }
+    if (rel === "desktop/frontend-svelte/src/large-fixture.ts") {
+      return {
+        path: rel,
+        status: "M",
+        worktreeStatus: "M",
+        kind: "modify",
+        diff: "(diff omitted: change too large to render — +2048 / -2048 lines)",
+        added: 2048,
+        removed: 2048,
+        binary: false,
+        truncated: true,
+      };
+    }
     return {
       path: rel,
       status: "M",
+      worktreeStatus: "M",
       kind: "modify",
       diff: [
         `--- a/${rel}`,

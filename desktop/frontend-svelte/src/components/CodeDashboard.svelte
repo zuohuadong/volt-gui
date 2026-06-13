@@ -159,6 +159,24 @@
     return `${first}${remaining}`;
   }
 
+  function statusLabel(status?: string) {
+    if (!status) return "changed";
+    if (status === "??") return "untracked";
+    if (status.includes("R")) return "renamed";
+    if (status.includes("A")) return "added";
+    if (status.includes("D")) return "deleted";
+    if (status.includes("M")) return "modified";
+    return status;
+  }
+
+  function stageLabels(file: { indexStatus?: string; worktreeStatus?: string }) {
+    const labels: string[] = [];
+    if (file.indexStatus && file.indexStatus !== "?") labels.push("staged");
+    if (file.worktreeStatus && file.worktreeStatus !== "?") labels.push("unstaged");
+    if (file.indexStatus === "?" || file.worktreeStatus === "?") labels.push("untracked");
+    return labels;
+  }
+
   async function rewindCheckpoint(checkpoint: CheckpointMeta, scope: RewindScope) {
     const key = `${checkpoint.turn}:${scope}`;
     rewindBusy = key;
@@ -310,9 +328,15 @@
       <h2><GitPullRequest size={15} /> Changes</h2>
       {#if changes?.files.length}
         {#each changes.files as file (file.path)}
-          <button type="button" onclick={() => onPreviewChange(file.path)}>
-            <strong>{file.gitStatus || "?"}</strong>
+          <button class="change-row" type="button" data-change-path={file.path} data-status={file.gitStatus || ""} onclick={() => onPreviewChange(file.path)}>
+            <strong>{statusLabel(file.gitStatus)}</strong>
             <span>{file.path}</span>
+            {#if file.oldPath}
+              <em>from {file.oldPath}</em>
+            {/if}
+            {#each stageLabels(file) as label (label)}
+              <small>{label}</small>
+            {/each}
           </button>
         {/each}
       {:else}

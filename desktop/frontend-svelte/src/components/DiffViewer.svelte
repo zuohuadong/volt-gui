@@ -15,13 +15,39 @@
   const status = $derived(diff?.status || change?.gitStatus || "?");
   const detail = $derived(change?.latestPrompt || diff?.oldPath || change?.oldPath || change?.sources.join(", ") || "Workspace change");
   const language = $derived(preview?.path.split(".").pop());
+
+  function statusLabel(value?: string) {
+    if (!value) return "changed";
+    if (value === "??") return "untracked";
+    if (value.includes("R")) return "renamed";
+    if (value.includes("A")) return "added";
+    if (value.includes("D")) return "deleted";
+    if (value.includes("M")) return "modified";
+    return value;
+  }
+
+  function stageLabels(value?: { indexStatus?: string; worktreeStatus?: string }) {
+    const labels: string[] = [];
+    if (value?.indexStatus && value.indexStatus !== "?") labels.push(`staged ${value.indexStatus}`);
+    if (value?.worktreeStatus && value.worktreeStatus !== "?") labels.push(`unstaged ${value.worktreeStatus}`);
+    if (value?.indexStatus === "?" || value?.worktreeStatus === "?") labels.push("untracked");
+    return labels;
+  }
 </script>
 
 <div class="diff-viewer">
   {#if change}
     <header>
-      <strong>{status} {change.path}</strong>
+      <strong>{statusLabel(status)} {change.path}</strong>
       <span>{detail}</span>
+      {#if change.oldPath}
+        <span>Renamed from {change.oldPath}</span>
+      {/if}
+      <div class="diff-viewer__badges" data-testid="diff-stage-badges">
+        {#each stageLabels(change) as label (label)}
+          <span>{label}</span>
+        {/each}
+      </div>
     </header>
     {#if change.turns?.length}
       <p>Turns: {change.turns.join(", ")}</p>
@@ -36,6 +62,12 @@
     {:else if diff.diff}
       <div class="diff-viewer__summary">
         <span>{diff.kind}</span>
+        {#if diff.oldPath}
+          <span>renamed from {diff.oldPath}</span>
+        {/if}
+        {#each stageLabels(diff) as label (label)}
+          <span>{label}</span>
+        {/each}
         <span class="diff-viewer__added">+{diff.added}</span>
         <span class="diff-viewer__removed">-{diff.removed}</span>
       </div>

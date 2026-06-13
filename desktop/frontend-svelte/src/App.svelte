@@ -204,7 +204,7 @@
 
   async function refreshResources() {
     resources = await Promise.all(
-      workbenchResources.slice(0, 8).map(async (name) => {
+      workbenchResources.slice(0, 9).map(async (name) => {
         const result = await wailsDataProvider.list(name);
         return { name, total: result.total };
       }),

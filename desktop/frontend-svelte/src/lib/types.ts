@@ -134,6 +134,10 @@ export interface SettingsView {
   providers: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
+  desktopLanguage: string;
+  desktopTheme: string;
+  desktopThemeStyle: string;
+  closeBehavior: string;
   configPath: string;
   providerKinds: string[];
   bypass: boolean;

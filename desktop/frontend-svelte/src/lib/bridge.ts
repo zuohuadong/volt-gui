@@ -76,6 +76,9 @@ interface AppBindings {
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
   Settings(): Promise<SettingsView>;
+  SetCloseBehavior(mode: string): Promise<void>;
+  SetDesktopLanguage(lang: string): Promise<void>;
+  SetDesktopAppearance(theme: string, style: string): Promise<void>;
   SetDefaultModel(ref: string): Promise<void>;
   SetPlannerModel(ref: string): Promise<void>;
   SaveProvider(provider: ProviderView): Promise<void>;
@@ -413,6 +416,10 @@ let mockSettings: SettingsView = {
     workspaceRoot: "",
     allowWrite: [],
   },
+  desktopLanguage: "en",
+  desktopTheme: "dark",
+  desktopThemeStyle: "graphite",
+  closeBehavior: "background",
   configPath: "~/.voltui/config.toml",
   bypass: false,
 };
@@ -908,6 +915,16 @@ const mockApp: AppBindings = {
   },
   async Settings() {
     return cloneSettings();
+  },
+  async SetCloseBehavior(mode: string) {
+    mockSettings.closeBehavior = mode === "quit" ? "quit" : "background";
+  },
+  async SetDesktopLanguage(lang: string) {
+    mockSettings.desktopLanguage = lang === "zh" ? "zh" : "en";
+  },
+  async SetDesktopAppearance(theme: string, style: string) {
+    mockSettings.desktopTheme = theme === "light" || theme === "system" ? theme : "dark";
+    mockSettings.desktopThemeStyle = style || "graphite";
   },
   async SetDefaultModel(ref: string) {
     mockSettings.defaultModel = ref;

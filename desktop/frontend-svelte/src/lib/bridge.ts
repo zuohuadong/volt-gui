@@ -2,6 +2,7 @@ import type {
   CommandInfo,
   ContextPanelInfo,
   DirEntry,
+  DroppedItem,
   EffortInfo,
   FilePreview,
   CheckpointMeta,
@@ -37,6 +38,10 @@ interface AppBindings {
   SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
+  SavePastedImage(dataUrl: string): Promise<string>;
+  SavePastedFile(name: string, dataUrl: string): Promise<string>;
+  AttachDropped(path: string): Promise<DroppedItem>;
+  AttachmentDataURL(path: string): Promise<string>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
   Capabilities(): Promise<unknown>;
   Settings(): Promise<unknown>;
@@ -45,6 +50,8 @@ interface AppBindings {
 
 interface WailsRuntime {
   EventsOn(name: string, cb: (...data: unknown[]) => void): () => void;
+  OnFileDrop?(cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean): void;
+  OnFileDropOff?(): void;
 }
 
 declare global {
@@ -360,6 +367,23 @@ const mockApp: AppBindings = {
       gitAvailable: true,
     };
   },
+  async SavePastedImage(_dataUrl: string) {
+    return ".voltui/attachments/mock-image.png";
+  },
+  async SavePastedFile(name: string, _dataUrl: string) {
+    return `.voltui/attachments/mock-${name.replace(/\s+/g, "-")}`;
+  },
+  async AttachDropped(path: string) {
+    const name = path.split(/[/\\]/).filter(Boolean).pop() ?? path;
+    return {
+      kind: "attachment",
+      path: `.voltui/attachments/mock-${name}`,
+      previewUrl: name.match(/\.(png|jpe?g|gif|webp)$/i) ? "data:image/png;base64,iVBORw0KGgo=" : undefined,
+    };
+  },
+  async AttachmentDataURL(_path: string) {
+    return "data:image/png;base64,iVBORw0KGgo=";
+  },
   async ContextPanel(_tabID: string) {
     return {
       usedTokens: 18400,
@@ -406,4 +430,13 @@ export function onAgentEvent(cb: (event: WireEvent) => void): () => void {
   }
   mockListeners.add(cb);
   return () => mockListeners.delete(cb);
+}
+
+export function onFilesDropped(cb: (paths: string[]) => void): () => void {
+  const runtime = typeof window !== "undefined" ? window.runtime : undefined;
+  if (!runtime?.OnFileDrop) return () => {};
+  runtime.OnFileDrop((_x, _y, paths) => {
+    if (Array.isArray(paths) && paths.length > 0) cb(paths);
+  }, true);
+  return () => runtime.OnFileDropOff?.();
 }

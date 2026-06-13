@@ -2,7 +2,7 @@
 # Resolution order: flag > ./voltui.toml > ~/.config/voltui/config.toml > built-in defaults.
 # Secrets come from the environment via api_key_env; never put keys here.
 
-default_model = "deepseek"   # a provider name (→ its default model) or "provider/model"
+default_model = "qwen-gpu4"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 # White-label / OEM branding — replace the product name and logos for your
@@ -26,10 +26,10 @@ theme = "auto"   # auto|dark|light; controls CLI colors only; VOLTUI_THEME can o
 
 [agent]
 system_prompt = """
-You are VoltUI, a coding agent focused on executing code tasks.
-Use the provided tools to read and write files and run shell commands.
-Principles: understand the request before acting; verify with tools instead of
-guessing; keep changes minimal and correct; briefly summarize what you did."""
+你是西谷智灯暗涌系统，一个专注于执行编码任务的 AI 助手。
+使用提供的工具读写文件和运行 Shell 命令。
+原则：先理解需求再行动；用工具验证而非猜测；保持改动最小且正确；完成后简要总结你所做的。
+始终使用中文交互和注释。"""
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
 max_steps   = 25
 temperature = 0.0
@@ -47,17 +47,41 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # A provider is a vendor endpoint (one base_url + key) that offers one or more
 # models. Use `models = [...]` to expose several under a single entry — switching
 # models reuses the same connection; no need to re-declare base_url/api_key.
+# 西谷内网模型网关 — OpenAI 兼容接口 (http://192.168.1.47:9010/v1)
+# 每个模型单独一个 provider entry，model 字段写完整 id（含 provider 前缀斜杠）
+# 调用时 default_model = "qwen-gpu4" 或 "glm-primary"，ResolveModel 自动拼接
+
 [[providers]]
-name        = "deepseek"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-models      = ["deepseek-v4-flash", "deepseek-v4-pro"]
-default     = "deepseek-v4-flash"   # optional; defaults to the first of `models`
-api_key_env = "DEEPSEEK_API_KEY"
-context_window = 1000000
-price       = { cache_hit = 0.02, input = 1, output = 2, currency = "¥" }   # per 1M tokens
-# DeepSeek thinking is always on; effort: high | max. Omit for auto (provider default).
-effort      = "high"
+name           = "glm-primary"
+kind           = "openai"
+base_url       = "http://192.168.1.47:9010/v1"
+model          = "glm-primary/GLM-5.1-478B-A42B-REAP-NVFP4"
+api_key_env    = "XIGU_API_KEY"
+context_window = 131072
+
+[[providers]]
+name           = "qwen-gpu4"
+kind           = "openai"
+base_url       = "http://192.168.1.47:9010/v1"
+model          = "qwen-gpu4/qwen36-opus-prisma8-gpu4"
+api_key_env    = "XIGU_API_KEY"
+context_window = 131072
+
+[[providers]]
+name           = "qwen-gpu5"
+kind           = "openai"
+base_url       = "http://192.168.1.47:9010/v1"
+model          = "qwen-gpu5/qwen36-opus-prisma8-gpu5"
+api_key_env    = "XIGU_API_KEY"
+context_window = 131072
+
+[[providers]]
+name           = "image-gpu5"
+kind           = "openai"
+base_url       = "http://192.168.1.47:9010/v1"
+model          = "image-gpu5/image-gpu5"
+api_key_env    = "XIGU_API_KEY"
+context_window = 131072
 
 # A single-model provider still works (use `model = "..."`) — pick this form when a
 # model needs its own base_url / context_window / price (e.g. the two MiMo SKUs

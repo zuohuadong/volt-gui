@@ -206,6 +206,50 @@ let mockHistory: Record<string, HistoryMessage[]> = {
         "```",
       ].join("\n"),
     },
+    { role: "user", content: "Add checkpoint refresh after rewind." },
+    {
+      role: "assistant",
+      content: "Checkpoint rewind should refresh transcript history, context, changed files, and rewind points after the backend resolves.",
+      reasoning: "Post-rewind state is only trustworthy after re-reading the tab.",
+    },
+  ],
+};
+let mockCheckpoints: Record<string, CheckpointMeta[]> = {
+  "mock-global": [
+    {
+      turn: 0,
+      prompt: "Plan the Svelte workbench migration.",
+      files: ["docs/WORKBENCH.zh-CN.md", "desktop/frontend-svelte/src/App.svelte"],
+      time: Date.now() - 180000,
+      canCode: true,
+      canConversation: true,
+    },
+    {
+      turn: 1,
+      prompt: "Review Work and Code mode boundaries.",
+      files: ["docs/WORKBENCH_FEATURE_MATRIX.md"],
+      time: Date.now() - 90000,
+      canCode: true,
+      canConversation: true,
+    },
+  ],
+  "mock-code": [
+    {
+      turn: 0,
+      prompt: "Inspect the Svelte workbench shell.",
+      files: ["desktop/frontend-svelte/src/App.svelte"],
+      time: Date.now() - 180000,
+      canCode: true,
+      canConversation: true,
+    },
+    {
+      turn: 1,
+      prompt: "Add checkpoint refresh after rewind.",
+      files: ["desktop/frontend-svelte/src/components/CodeDashboard.svelte", "docs/WORKBENCH_FEATURE_MATRIX.md"],
+      time: Date.now() - 90000,
+      canCode: true,
+      canConversation: true,
+    },
   ],
 };
 let mockTabsState: TabMeta[] = [
@@ -380,6 +424,38 @@ const mockWorkspaceFiles = [
   "docs/WORKBENCH.md",
   "docs/WORKBENCH_FEATURE_MATRIX.md",
   "README.md",
+];
+
+let mockWorkspaceChanges: WorkspaceChangesView = {
+  files: [
+    {
+      path: "desktop/frontend-svelte/src/App.svelte",
+      sources: ["mock"],
+      gitStatus: "M",
+      turns: [0],
+      latestPrompt: "Hydrate Svelte history and checkpoint state.",
+    },
+    {
+      path: "desktop/frontend-svelte/src/components/CodeDashboard.svelte",
+      sources: ["mock"],
+      gitStatus: "M",
+      turns: [1],
+      latestPrompt: "Refresh checkpoint rewind UI after backend rewind.",
+    },
+    {
+      path: "docs/WORKBENCH_FEATURE_MATRIX.md",
+      sources: ["mock"],
+      gitStatus: "M",
+      turns: [1],
+      latestPrompt: "Track checkpoint rewind parity.",
+    },
+  ],
+  gitAvailable: true,
+};
+
+let mockReadFiles = [
+  { path: "docs/WORKBENCH.zh-CN.md", turn: 0, time: Date.now() - 120000 },
+  { path: "desktop/frontend-svelte/src/lib/bridge.ts", turn: 1, time: Date.now() - 60000 },
 ];
 
 function mockListDir(rel: string): DirEntry[] {
@@ -757,28 +833,25 @@ const mockApp: AppBindings = {
   async HistoryForTab(tabID: string) {
     return mockHistory[tabID] ?? [];
   },
-  async CheckpointsForTab(_tabID: string) {
-    return [
-      {
-        turn: 0,
-        prompt: "Plan the Svelte workbench migration.",
-        files: ["docs/WORKBENCH.zh-CN.md", "desktop/frontend-svelte/src/App.svelte"],
-        time: Date.now() - 180000,
-        canCode: true,
-        canConversation: true,
-      },
-      {
-        turn: 1,
-        prompt: "Inspect the Svelte workbench shell.",
-        files: ["desktop/frontend-svelte/src/components/CodeDashboard.svelte"],
-        time: Date.now() - 90000,
-        canCode: true,
-        canConversation: false,
-      },
-    ];
+  async CheckpointsForTab(tabID: string) {
+    const id = tabID || mockActiveTabId;
+    return (mockCheckpoints[id] ?? []).map((checkpoint) => ({ ...checkpoint, files: [...checkpoint.files] }));
   },
   async Rewind(turn: number, scope: string) {
-    emitMock({ kind: "notice", tabId: mockActiveTabId, text: `Rewind requested for turn ${turn} (${scope}).` });
+    const tabID = mockActiveTabId;
+    const normalizedScope = scope === "conversation" || scope === "code" ? scope : "both";
+    if (normalizedScope === "conversation" || normalizedScope === "both") {
+      mockHistory[tabID] = (mockHistory[tabID] ?? []).slice(0, Math.max(0, turn * 2));
+    }
+    if (normalizedScope === "code" || normalizedScope === "both") {
+      mockWorkspaceChanges = {
+        ...mockWorkspaceChanges,
+        files: mockWorkspaceChanges.files.filter((file) => !(file.turns ?? []).some((fileTurn) => fileTurn >= turn)),
+      };
+      mockReadFiles = mockReadFiles.filter((file) => file.turn < turn);
+    }
+    mockCheckpoints[tabID] = (mockCheckpoints[tabID] ?? []).filter((checkpoint) => checkpoint.turn < turn);
+    emitMock({ kind: "notice", tabId: tabID, text: `Rewind completed for turn ${turn} (${normalizedScope}).` });
   },
   async ModelsForTab(_tabID: string) {
     return mockSettings.providers.flatMap((provider) =>
@@ -873,23 +946,12 @@ const mockApp: AppBindings = {
   },
   async WorkspaceChanges() {
     return {
-      files: [
-        {
-          path: "desktop/frontend-svelte/src/App.svelte",
-          sources: ["mock"],
-          gitStatus: "M",
-          turns: [1],
-          latestPrompt: "Hydrate Svelte history and checkpoint state.",
-        },
-        {
-          path: "docs/WORKBENCH_FEATURE_MATRIX.md",
-          sources: ["mock"],
-          gitStatus: "M",
-          turns: [1],
-          latestPrompt: "Track Markdown and diff viewer parity.",
-        },
-      ],
-      gitAvailable: true,
+      ...mockWorkspaceChanges,
+      files: mockWorkspaceChanges.files.map((file) => ({
+        ...file,
+        sources: [...file.sources],
+        turns: file.turns ? [...file.turns] : undefined,
+      })),
     };
   },
   async WorkspaceDiff(rel: string) {
@@ -939,10 +1001,7 @@ const mockApp: AppBindings = {
       reasoningTokens: 900,
       cacheHitTokens: 7200,
       cacheMissTokens: 8800,
-      readFiles: [
-        { path: "docs/WORKBENCH.zh-CN.md", turn: 1, time: Date.now() - 120000 },
-        { path: "desktop/frontend-svelte/src/lib/bridge.ts", turn: 1, time: Date.now() - 60000 },
-      ],
+      readFiles: mockReadFiles.map((file) => ({ ...file })),
       changedFiles: (await this.WorkspaceChanges()).files,
     };
   },

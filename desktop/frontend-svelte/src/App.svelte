@@ -13,6 +13,7 @@
   import { wailsDataProvider, workbenchResources } from "./lib/resourceProvider";
   import type {
     ActivityMode,
+    BackendMode,
     CheckpointMeta,
     CommandInfo,
     ContextPanelInfo,
@@ -56,6 +57,9 @@
 
   let activityMode = $state<ActivityMode>("work");
   let runMode = $state<RunMode>("ask");
+  let runtimeMode = $state<BackendMode>("normal");
+  let permissionMode = $state("ask");
+  let runtimeBypass = $state(false);
   let tabs = $state<TabMeta[]>([]);
   let models = $state<ModelInfo[]>([]);
   let effort = $state<EffortInfo>({ current: "auto", supported: ["auto"] });
@@ -64,6 +68,7 @@
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let resources = $state<Array<{ name: string; total: number }>>([]);
+  let resourceRefreshKey = $state(0);
   let workTasks = $state<ResourceRecord[]>([]);
   let recentSessions = $state<SessionMeta[]>([]);
   let projectTree = $state<ProjectNode[]>([]);
@@ -83,6 +88,8 @@
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const modeLabel = $derived(`${activityMode.toUpperCase()} + ${runMode.toUpperCase()}`);
+  const runtimeLabel = $derived(`backend ${runtimeMode}${runtimeBypass ? " / bypass" : ""}`);
+  const permissionLabel = $derived(runtimeBypass ? "permission runtime-bypass" : `permission ${permissionMode}`);
 
   onMount(() => {
     const unsubscribeEvents = onAgentEvent(handleEvent);
@@ -219,11 +226,13 @@
       tabs = await app().ListTabs();
       projectTree = await app().ListProjectTree();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
+      runtimeMode = active?.mode ?? "normal";
       models = active ? await app().ModelsForTab(active.id) : [];
       selectedModel = models.find((model) => model.current)?.name ?? models[0]?.name ?? "";
       effort = active ? await app().EffortForTab(active.id) : { current: "auto", supported: ["auto"] };
       goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
+      await refreshRuntimeSettings();
       await refreshMemory();
       await refreshWorkDashboardData();
       await refreshResources();
@@ -241,6 +250,13 @@
         return { name, total: result.total };
       }),
     );
+    resourceRefreshKey += 1;
+  }
+
+  async function refreshRuntimeSettings() {
+    const settings = await app().Settings();
+    permissionMode = settings.permissions.mode || "ask";
+    runtimeBypass = settings.bypass;
   }
 
   async function refreshMemory() {
@@ -437,7 +453,15 @@
     if (!activeTab) return;
     const backendMode = next === "plan" ? "plan" : next === "yolo" ? "yolo" : "normal";
     await app().SetModeForTab(activeTab.id, backendMode);
+    if (next === "ask" || next === "plan") {
+      await app().SetPermissionMode("ask");
+    } else if (next === "auto") {
+      await app().SetPermissionMode("allow");
+    }
+    runtimeMode = backendMode;
     tabs = tabs.map((tab) => (tab.id === activeTab.id ? { ...tab, mode: backendMode } : tab));
+    await refreshRuntimeSettings();
+    await refreshResources();
   }
 
   async function startGoal(objective: string) {
@@ -594,7 +618,9 @@
             <option value={level}>{level}</option>
           {/each}
         </select>
-        <span class="mode-chip"><ShieldCheck size={14} /> {modeLabel}</span>
+        <span class="mode-chip" data-testid="mode-chip"><ShieldCheck size={14} /> {modeLabel}</span>
+        <span class="mode-chip mode-chip--subtle" data-testid="runtime-mode-chip">{runtimeLabel}</span>
+        <span class="mode-chip mode-chip--subtle" data-testid="permission-mode-chip">{permissionLabel}</span>
       </div>
     </header>
 
@@ -630,7 +656,7 @@
       />
     {/if}
 
-    <ResourcePanel {activityMode} {resources} onChanged={refreshResources} />
+    <ResourcePanel {activityMode} {resources} refreshKey={resourceRefreshKey} onChanged={refreshResources} />
 
     <Transcript
       items={transcript}

@@ -416,6 +416,11 @@ select {
   white-space: nowrap;
 }
 
+.mode-chip--subtle {
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.68);
+}
+
 .run-modes {
   display: inline-flex;
   flex-wrap: wrap;

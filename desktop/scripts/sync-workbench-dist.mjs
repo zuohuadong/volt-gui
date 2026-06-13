@@ -28,7 +28,11 @@ async function cleanTarget() {
 
 await assertBuiltWorkbench();
 await cleanTarget();
-await cp(sourceDir, targetDir, { recursive: true });
-await writeFile(resolve(targetDir, ".gitkeep"), "\n");
+try {
+  await cp(sourceDir, targetDir, { recursive: true });
+} finally {
+  await mkdir(targetDir, { recursive: true });
+  await writeFile(resolve(targetDir, ".gitkeep"), "\n");
+}
 
 console.log(`[frontend] synced ${sourceDir} -> ${targetDir}`);

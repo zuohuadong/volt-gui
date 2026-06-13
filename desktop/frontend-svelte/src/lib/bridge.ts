@@ -580,9 +580,10 @@ const mockApp: AppBindings = {
     mockCancelled = false;
     const tabID = _tabID || mockActiveTabId;
     const lowered = input.trim().toLowerCase();
+    const stepDelay = lowered.includes("slow") ? 600 : 120;
     mockHistory[tabID] = [...(mockHistory[tabID] ?? []), { role: "user", content: input }];
     emitMock({ kind: "turn_started", tabId: mockActiveTabId });
-    await delay(120);
+    await delay(stepDelay);
     if (mockCancelled) return;
     if (lowered.includes("approve")) {
       emitMock({
@@ -618,7 +619,7 @@ const mockApp: AppBindings = {
       return;
     }
     emitMock({ kind: "reasoning", tabId: mockActiveTabId, reasoning: "Classifying activity mode, run mode, and workspace context." });
-    await delay(120);
+    await delay(stepDelay);
     if (mockCancelled) return;
     const response = [
       `Mock response for: ${input}`,
@@ -667,7 +668,7 @@ const mockApp: AppBindings = {
         readOnly: true,
       },
     });
-    await delay(120);
+    await delay(stepDelay);
     if (mockCancelled) return;
     emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-sub-grep", name: "grep", output: "remaining partial rows found", readOnly: true } });
     emitMock({ kind: "tool_result", tabId: mockActiveTabId, tool: { id: "mock-task", name: "task", output: "sub-agent audit ready", readOnly: false } });

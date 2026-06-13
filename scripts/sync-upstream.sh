@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# sync-upstream.sh — Fetch new commits from upstream (main-v2), merge with
-# VoltUI branding replacements, and push to a sync branch.
+# sync-upstream.sh — Fetch new commits from upstream (main-v2), selectively
+# merge with VoltUI branding replacements, and push to a sync branch.
+#
+# Key design decisions:
+# 1. Skip React frontend, site, and docs entirely
+# 2. For heavily-forked packages (control, agent, cli), skip on conflict
+#    instead of blindly accepting upstream --theirs
+# 3. Only auto-merge safe packages (sandbox, config/migrate, proc, plugin)
+# 4. Global brand replacement: reasonix -> voltui
 #
 # Usage: sync-upstream.sh [BASE_COMMIT]
 # If BASE_COMMIT is provided, only sync commits after that commit.
 # Otherwise, read the last-synced commit from .upstream-sync-marker.
-#
-# The upstream repo (esengine/DeepSeek-Reasonix) uses the name "Reasonix";
-# this script applies branding replacements so the merged code uses "VoltUI"
-# consistently. The .upstream-sync-marker file tracks the last upstream commit
-# that was synced, so subsequent runs are incremental.
 
 set -euo pipefail
 
@@ -20,6 +22,13 @@ BRANCH_PREFIX="sync/upstream"
 MAIN_BRANCH="main"
 MARKER_FILE=".upstream-sync-marker"
 
+# Packages with heavy fork divergence — skip on conflict
+DIVERGENT_PKGS=(
+  "internal/control/"
+  "internal/agent/"
+  "internal/cli/"
+)
+
 # Branding replacements: upstream name → VoltUI name (order matters — longest first)
 REPLACEMENTS=(
   "DeepSeek-Reasonix:voltui"
@@ -27,17 +36,6 @@ REPLACEMENTS=(
   "REASONIX:VOLTUI"
   "Reasonix:VoltUI"
   "reasonix:voltui"
-)
-
-# Files/dirs to rename (upstream name → VoltUI name)
-FILE_RENAMES=(
-  "REASONIX.md:VOLTUI.md"
-  "reasonix.example.toml:voltui.example.toml"
-  ".reasonix:.voltui"
-  "cmd/reasonix:cmd/voltui"
-  "cmd/reasonix-plugin-example:cmd/voltui-plugin-example"
-  "npm/reasonix:npm/voltui"
-  "npm/reasonix/bin/reasonix.js:npm/voltui/bin/voltui.js"
 )
 
 # Determine base commit
@@ -61,7 +59,7 @@ if ! git remote get-url "$UPSTREAM_REMOTE" &>/dev/null; then
   git remote add "$UPSTREAM_REMOTE" "$UPSTREAM_REPO"
 fi
 
-# If the remote URL is wrong (e.g. from a previous brand replacement), fix it
+# If the remote URL is wrong, fix it
 CURRENT_URL=$(git remote get-url "$UPSTREAM_REMOTE" 2>/dev/null || true)
 if [ "$CURRENT_URL" != "$UPSTREAM_REPO" ]; then
   echo "Fixing upstream remote URL: $CURRENT_URL → $UPSTREAM_REPO"
@@ -100,95 +98,77 @@ else
   git checkout -b "$SYNC_BRANCH"
 fi
 
-# Attempt merge
-echo "Merging upstream/${UPSTREAM_BRANCH} into $SYNC_BRANCH..."
-MERGE_RESULT=0
-git merge "upstream/${UPSTREAM_BRANCH}" --no-edit || MERGE_RESULT=$?
+# Apply each upstream commit selectively, excluding React frontend and site
+SKIPPED_FILES=""
 
-if [ $MERGE_RESULT -ne 0 ]; then
-  echo "Merge conflicts detected, resolving automatically..."
+COMMITS=$(git log --reverse --format='%H' "${BASE_COMMIT}..upstream/${UPSTREAM_BRANCH}")
 
-  # Get list of conflicted files
-  CONFLICT_FILES=$(git diff --name-only --diff-filter=U)
-
-  for FILE in $CONFLICT_FILES; do
-    echo "Resolving conflicts in: $FILE"
-    # Use awk to resolve: keep upstream side (with VoltUI branding applied later)
-    awk '
-    /^<<<<<<< HEAD$/ { skip="head"; next }
-    /^=======$/ && skip=="head" { skip="upstream"; next }
-    /^>>>>>>> upstream\/main-v2$/ && skip=="upstream" { skip=""; next }
-    skip=="upstream" { print; next }
-    skip=="head" { next }
-    { print }
-    ' "$FILE" > "${FILE}.resolved"
-
-    mv "${FILE}.resolved" "$FILE"
-    git add "$FILE"
-  done
-fi
-
-# Rename files/directories from upstream naming to VoltUI naming
-echo "Renaming files/directories to VoltUI branding..."
-for PAIR in "${FILE_RENAMES[@]}"; do
-  OLD="${PAIR%%:*}"
-  NEW="${PAIR##*:}"
-  if [ -e "$OLD" ] && [ "$OLD" != "$NEW" ]; then
-    echo "  Renaming: $OLD → $NEW"
-    mkdir -p "$(dirname "$NEW")"
-    mv "$OLD" "$NEW"
-  fi
+for c in $COMMITS; do
+  echo "--- Patching $c ---"
+  git show "$c" -- . \
+    ':(exclude)desktop/frontend/' \
+    ':(exclude)desktop/frontend-legacy/' \
+    ':(exclude)site/' \
+    ':(exclude)docs/README*' \
+    | git apply --3way --whitespace=nowarn - 2>/dev/null || {
+      # Check which files conflicted
+      for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do
+        # Check if this file is in a divergent package
+        IS_DIVERGENT=false
+        for pkg in "${DIVERGENT_PKGS[@]}"; do
+          if [[ "$f" == "$pkg"* ]]; then
+            IS_DIVERGENT=true
+            break
+          fi
+        done
+        if $IS_DIVERGENT; then
+          echo "  SKIP (divergent package): $f"
+          git checkout --ours "$f" 2>/dev/null || true
+          SKIPPED_FILES="$SKIPPED_FILES $f"
+        else
+          # For non-divergent files, accept upstream and fix branding
+          echo "  MERGE (theirs + branding): $f"
+          git checkout --theirs "$f" 2>/dev/null || true
+          sed -i 's|reasonix/|voltui/|g' "$f" 2>/dev/null || true
+        fi
+        git add "$f" 2>/dev/null || true
+      done
+    }
 done
 
-# Apply VoltUI branding text replacements
-echo "Applying VoltUI branding replacements..."
-
-for PAIR in "${REPLACEMENTS[@]}"; do
-  OLD="${PAIR%%:*}"
-  NEW="${PAIR##*:}"
-  echo "  Replacing: $OLD → $NEW"
-
-  # Find text files containing the old brand name and replace
-  find . -type f \
-    ! -path './.git/*' \
-    ! -path './node_modules/*' \
-    ! -path './desktop/frontend/node_modules/*' \
-    ! -name 'package-lock.json' \
-    ! -name 'pnpm-lock.yaml' \
-    ! -name 'go.sum' \
-    ! -name '*.ico' \
-    ! -name '*.png' \
-    ! -name '*.jpg' \
-    ! -name '*.gz' \
-    ! -name '*.zip' \
-    -exec grep -l "$OLD" {} \; 2>/dev/null | while read -r FILE; do
-    # Skip binary files
-    if file "$FILE" | grep -q "text"; then
-      sed -i "s/${OLD}/${NEW}/g" "$FILE"
-      git add "$FILE" 2>/dev/null || true
-    fi
-  done
-done
+# Global brand replacement (Go files only to avoid touching lock files)
+echo "=== Fixing brand references ==="
+find . -name '*.go' -not -path './vendor/*' -exec sed -i 's|reasonix/|voltui/|g' {} + 2>/dev/null || true
+find . -name '*.go' -not -path './vendor/*' -exec sed -i 's|reasonix\b|voltui|g' {} + 2>/dev/null || true
 
 # Also handle ~/.reasonix/ path references → ~/.voltui/
-find . -type f \( -name '*.go' -o -name '*.ts' -o -name '*.tsx' -o -name '*.md' -o -name '*.toml' \) \
+find . -type f \( -name '*.go' -o -name '*.ts' -o -name '*.svelte' -o -name '*.md' -o -name '*.toml' \) \
   ! -path './.git/*' ! -path './node_modules/*' \
   -exec grep -l '~/.reasonix/' {} \; 2>/dev/null | while read -r FILE; do
   sed -i 's|~\/.reasonix/|~/.voltui/|g' "$FILE"
   git add "$FILE" 2>/dev/null || true
 done
 
-# Commit the merge if there are uncommitted changes
-if ! git diff --cached --quiet 2>/dev/null || ! git diff --quiet 2>/dev/null; then
-  git add -A
-  HEAD_COMMIT=$(git log --format="%h" -1 "upstream/${UPSTREAM_BRANCH}")
-  git commit -m "merge: sync upstream Go rewrite commits (${BASE_COMMIT:0:8}..${HEAD_COMMIT}) with VoltUI branding" || true
+# Update sync marker
+echo "$(git rev-parse "upstream/${UPSTREAM_BRANCH}")" > "$MARKER_FILE"
+
+# Commit
+git add -A
+
+if [ -n "$SKIPPED_FILES" ]; then
+  echo ""
+  echo "=== WARNING: The following divergent files were SKIPPED ==="
+  for f in $SKIPPED_FILES; do
+    echo "  - $f"
+  done
+  echo "Review upstream changes to these files manually if needed."
 fi
 
-# Update marker
-echo "$(git rev-parse "upstream/${UPSTREAM_BRANCH}")" > "$MARKER_FILE"
-git add "$MARKER_FILE"
-git commit -m "chore: update upstream sync marker" || true
+HEAD_COMMIT=$(git log --format="%h" -1 "upstream/${UPSTREAM_BRANCH}")
+git commit -m "sync: upstream Go backend changes (${BASE_COMMIT:0:8}..${HEAD_COMMIT}) with VoltUI branding
+
+Selective sync: Go backend only, Svelte frontend preserved.
+Divergent packages (control, agent, cli) skipped on conflict." || true
 
 # Push
 echo "Pushing $SYNC_BRANCH to origin..."
@@ -198,5 +178,3 @@ echo ""
 echo "=== Sync complete ==="
 echo "Branch: $SYNC_BRANCH"
 echo "New commits synced: $COMMIT_COUNT"
-echo ""
-echo "Next step: Merge $SYNC_BRANCH into $MAIN_BRANCH"

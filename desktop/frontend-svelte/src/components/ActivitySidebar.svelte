@@ -115,11 +115,23 @@
   </div>
 
   <div class="activity-switch" aria-label="Activity mode">
-    <button class={activityMode === "work" ? "is-active" : ""} type="button" onclick={() => onActivity("work")}>
+    <button
+      class={activityMode === "work" ? "is-active" : ""}
+      type="button"
+      aria-pressed={activityMode === "work"}
+      aria-keyshortcuts="Control+1 Meta+1"
+      onclick={() => onActivity("work")}
+    >
       <Bot size={16} />
       Work
     </button>
-    <button class={activityMode === "code" ? "is-active" : ""} type="button" onclick={() => onActivity("code")}>
+    <button
+      class={activityMode === "code" ? "is-active" : ""}
+      type="button"
+      aria-pressed={activityMode === "code"}
+      aria-keyshortcuts="Control+2 Meta+2"
+      onclick={() => onActivity("code")}
+    >
       <Code2 size={16} />
       Code
     </button>

@@ -237,6 +237,45 @@
     await app().CancelTab(activeTab.id);
   }
 
+  function focusComposer() {
+    const composer = document.querySelector<HTMLTextAreaElement>("[data-composer-input]");
+    composer?.focus();
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    const isPrimary = event.metaKey || event.ctrlKey;
+    if (isPrimary && event.key === "1") {
+      event.preventDefault();
+      activityMode = "work";
+      return;
+    }
+    if (isPrimary && event.key === "2") {
+      event.preventDefault();
+      activityMode = "code";
+      return;
+    }
+    if (isPrimary && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      focusComposer();
+      return;
+    }
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (sending) {
+      event.preventDefault();
+      void cancel();
+      return;
+    }
+    if (pendingApproval) {
+      event.preventDefault();
+      void answerApproval(false, false, false);
+      return;
+    }
+    if (pendingAsk) {
+      event.preventDefault();
+      pendingAsk = undefined;
+    }
+  }
+
   async function switchTab(tab: TabMeta) {
     await app().SetActiveTab(tab.id);
     tabs = tabs.map((item) => ({ ...item, active: item.id === tab.id }));
@@ -409,6 +448,8 @@
 <svelte:head>
   <title>VoltUI Workbench</title>
 </svelte:head>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 <main class="workbench" data-activity={activityMode}>
   <ActivitySidebar

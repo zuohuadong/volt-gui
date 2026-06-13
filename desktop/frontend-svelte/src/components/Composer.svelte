@@ -209,9 +209,13 @@
 >
   <div class="composer__input">
     <textarea
+      data-composer-input
+      data-testid="composer-input"
       value={input}
       placeholder={`Send a ${activityMode} request in ${runMode.toUpperCase()} mode...`}
       rows="3"
+      aria-label="Composer input"
+      aria-keyshortcuts="Control+K Meta+K Control+Enter Meta+Enter Escape"
       oninput={handleInput}
       onpaste={handlePaste}
       onkeydown={(event) => {

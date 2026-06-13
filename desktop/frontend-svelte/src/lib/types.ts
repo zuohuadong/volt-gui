@@ -1,5 +1,6 @@
 export type ActivityMode = "work" | "code";
 export type RunMode = "ask" | "auto" | "yolo" | "plan" | "goal";
+export type BackendMode = "normal" | "plan" | "yolo";
 
 export interface TabMeta {
   id: string;
@@ -8,15 +9,23 @@ export interface TabMeta {
   workspaceName: string;
   topicId: string;
   topicTitle: string;
+  label?: string;
+  ready?: boolean;
   active: boolean;
   running: boolean;
-  mode?: string;
+  mode?: BackendMode;
+  cwd?: string;
 }
 
 export interface ModelInfo {
   name: string;
   label?: string;
   current?: boolean;
+}
+
+export interface EffortInfo {
+  current: string;
+  supported: string[];
 }
 
 export type WireEventKind =
@@ -36,6 +45,7 @@ export interface WireEvent {
   kind: WireEventKind;
   text?: string;
   reasoning?: string;
+  level?: "info" | "warn";
   tabId?: string;
   tool?: {
     id?: string;
@@ -51,13 +61,105 @@ export interface WireEvent {
     tool: string;
     subject: string;
   };
+  ask?: WireAsk;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    reasoningTokens?: number;
+  };
 }
 
 export interface TranscriptItem {
   id: string;
-  role: "user" | "assistant" | "system" | "tool";
+  role: "user" | "assistant" | "system" | "tool" | "reasoning" | "notice";
   body: string;
+  title?: string;
   pending?: boolean;
+  readOnly?: boolean;
+}
+
+export interface WireAskOption {
+  label: string;
+  description?: string;
+}
+
+export interface WireAskQuestion {
+  id: string;
+  header?: string;
+  prompt: string;
+  options: WireAskOption[];
+  multi?: boolean;
+}
+
+export interface WireAsk {
+  id: string;
+  questions: WireAskQuestion[];
+}
+
+export interface QuestionAnswer {
+  questionId: string;
+  selected: string[];
+}
+
+export interface WireApproval {
+  id: string;
+  tool: string;
+  subject: string;
+}
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  hint?: string;
+  kind: "builtin" | "custom" | "mcp" | "skill";
+}
+
+export interface DirEntry {
+  name: string;
+  isDir: boolean;
+}
+
+export interface FilePreview {
+  path: string;
+  content: string;
+  truncated?: boolean;
+}
+
+export interface ChangedFileInfo {
+  path: string;
+  oldPath?: string;
+  sources: string[];
+  gitStatus?: string;
+  turns: number[];
+  latestPrompt?: string;
+  latestTime?: number;
+}
+
+export interface WorkspaceChangesView {
+  files: ChangedFileInfo[];
+  clean?: boolean;
+}
+
+export interface ReadFileRecord {
+  path: string;
+  turn: number;
+  time: number;
+  offset?: number;
+  limit?: number;
+  truncated?: boolean;
+}
+
+export interface ContextPanelInfo {
+  usedTokens: number;
+  windowTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  readFiles: ReadFileRecord[];
+  changedFiles: ChangedFileInfo[];
 }
 
 export interface ResourceRecord {

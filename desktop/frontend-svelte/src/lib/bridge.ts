@@ -15,6 +15,7 @@ import type {
   ProviderView,
   QuestionAnswer,
   SettingsView,
+  SlashArgItem,
   TabMeta,
   TopicMeta,
   WireEvent,
@@ -55,7 +56,7 @@ interface AppBindings {
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   Commands(): Promise<CommandInfo[]>;
-  SlashArgs(input: string): Promise<{ items: Array<{ label: string; insert: string; description?: string }>; from: number }>;
+  SlashArgs(input: string): Promise<{ items: SlashArgItem[]; from: number }>;
   ListDir(rel: string): Promise<DirEntry[]>;
   SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
@@ -744,9 +745,10 @@ const mockApp: AppBindings = {
   async SlashArgs(input: string) {
     const parts = input.split(/\s+/);
     const token = parts[parts.length - 1]?.toLowerCase() ?? "";
+    const command = input.split(/\s+/)[0]?.replace("/", "") || "command";
     const items = ["list", "show", "add", "remove", "refresh"]
       .filter((label) => label.includes(token))
-      .map((label) => ({ label, insert: label, description: `/${input.split(/\s+/)[0]?.replace("/", "")} ${label}` }));
+      .map((label) => ({ label, insert: label, hint: `/${command} ${label}`, descend: label === "show" || label === "remove" }));
     return { items, from: input.lastIndexOf(token) };
   },
   async ListDir(rel: string) {

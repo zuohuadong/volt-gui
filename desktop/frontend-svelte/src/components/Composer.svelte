@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { AtSign, FileText, Image, Search, Send, Square, X } from "@lucide/svelte";
   import { app, onFilesDropped } from "../lib/bridge";
-  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, RunMode } from "../lib/types";
+  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, RunMode, SlashArgItem } from "../lib/types";
 
   let {
     input,
@@ -27,12 +27,16 @@
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
+  let slashArgItems = $state<SlashArgItem[]>([]);
+  let slashArgFrom = $state(0);
+  let slashArgRequest = 0;
   let attachments = $state<ComposerAttachment[]>([]);
   let pendingAttachmentWrites = $state(0);
   let dragOver = $state(false);
 
   const slashQuery = $derived(input.startsWith("/") && !/\s/.test(input) ? input.slice(1).toLowerCase() : null);
   const slashMatches = $derived(slashQuery === null ? [] : commands.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 6));
+  const slashArgMode = $derived(/^\/[^\s]+\s+/.test(input));
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
   const canSubmit = $derived((input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
 
@@ -114,6 +118,7 @@
   async function handleInput(event: Event) {
     const next = (event.currentTarget as HTMLTextAreaElement).value;
     onInput(next);
+    void refreshSlashArgs(next);
     const match = /(?:^|\s)@([^\s]*)$/.exec(next)?.[1] ?? null;
     if (!match) {
       fileMatches = [];
@@ -123,7 +128,37 @@
   }
 
   function insertCommand(command: CommandInfo) {
-    onInput(`/${command.name} `);
+    const next = `/${command.name} `;
+    onInput(next);
+    void refreshSlashArgs(next);
+  }
+
+  async function refreshSlashArgs(value: string) {
+    const request = (slashArgRequest += 1);
+    if (!/^\/[^\s]+\s+/.test(value)) {
+      slashArgItems = [];
+      slashArgFrom = 0;
+      return;
+    }
+    try {
+      const result = await app().SlashArgs(value);
+      if (request !== slashArgRequest) return;
+      slashArgFrom = Math.max(0, result.from);
+      slashArgItems = result.items.slice(0, 6);
+    } catch {
+      if (request === slashArgRequest) {
+        slashArgItems = [];
+        slashArgFrom = 0;
+      }
+    }
+  }
+
+  function insertSlashArg(item: SlashArgItem) {
+    const prefix = input.slice(0, slashArgFrom);
+    const suffix = item.insert.endsWith(" ") ? "" : " ";
+    const next = `${prefix}${item.insert}${suffix}`;
+    onInput(next);
+    void refreshSlashArgs(next);
   }
 
   function insertFile(entry: DirEntry) {
@@ -192,6 +227,18 @@
           <button type="button" onclick={() => insertCommand(command)}>
             /{command.name}
             <em>{command.description}</em>
+          </button>
+        {/each}
+      </div>
+    {/if}
+
+    {#if slashArgMode && slashArgItems.length}
+      <div class="composer-menu">
+        <span><Search size={13} /> Arguments</span>
+        {#each slashArgItems as item (item.label)}
+          <button type="button" onclick={() => insertSlashArg(item)}>
+            {item.label}
+            <em>{item.hint || item.description}</em>
           </button>
         {/each}
       </div>

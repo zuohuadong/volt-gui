@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/frontmatter"
-	"reasonix/internal/skill"
+	"voltui/internal/config"
+	"voltui/internal/frontmatter"
+	"voltui/internal/skill"
 )
 
 const (

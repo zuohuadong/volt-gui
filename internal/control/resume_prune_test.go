@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 func coldResumeFixture(t *testing.T, threshold time.Duration) (*agent.Session, string) {

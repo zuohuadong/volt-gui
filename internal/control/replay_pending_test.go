@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"reasonix/internal/event"
+	"voltui/internal/event"
 )
 
 // TestReplayPendingPromptsReEmitsBlockedApproval proves a tool approval that is

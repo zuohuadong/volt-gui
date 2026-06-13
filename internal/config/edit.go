@@ -200,10 +200,9 @@ func (c *Config) SetNetwork(n NetworkConfig) error {
 	return netclient.Validate(c.NetworkProxySpec())
 }
 
-// RemoveProvider deletes the named provider. It refuses to remove the current
-// default_model (reassign it first, so the config never points at a missing
-// model); if the removed provider was the planner, planner_model is cleared as
-// a side effect since it is optional. Errors when the name isn't configured.
+// RemoveProvider deletes the named provider and migrates dangling model refs to
+// the next configured fallback. Required refs such as default_model block removal
+// when no fallback exists; optional planner/subagent refs are cleared.
 func (c *Config) RemoveProvider(name string) error {
 	idx := -1
 	for i := range c.Providers {
@@ -215,14 +214,41 @@ func (c *Config) RemoveProvider(name string) error {
 	if idx < 0 {
 		return fmt.Errorf("remove provider: no provider %q", name)
 	}
-	if c.DefaultModel == name {
-		return fmt.Errorf("remove provider: %q is the default model — set a different default_model first", name)
+	removed := c.Providers[idx]
+	remaining := *c
+	remaining.Providers = append(append([]ProviderEntry(nil), c.Providers[:idx]...), c.Providers[idx+1:]...)
+	fallback, _, hasFallback := remaining.ResolveModelWithFallback("")
+	if providerRefersToModel(c.DefaultModel, &removed) && !hasFallback {
+		return fmt.Errorf("remove provider: %q is used by default_model and no configured fallback exists", name)
 	}
-	c.Providers = append(c.Providers[:idx], c.Providers[idx+1:]...)
-	if c.Agent.PlannerModel == name {
-		c.Agent.PlannerModel = ""
+	c.Providers = remaining.Providers
+	if providerRefersToModel(c.DefaultModel, &removed) {
+		c.DefaultModel = fallbackProviderRef(fallback)
+	}
+	if providerRefersToModel(c.Agent.PlannerModel, &removed) {
+		c.Agent.PlannerModel = fallbackProviderRef(fallback)
+	}
+	if providerRefersToModel(c.Agent.SubagentModel, &removed) {
+		c.Agent.SubagentModel = fallbackProviderRef(fallback)
+	}
+	for key, ref := range c.Agent.SubagentModels {
+		if providerRefersToModel(ref, &removed) {
+			if hasFallback {
+				c.Agent.SubagentModels[key] = fallbackProviderRef(fallback)
+			} else {
+				delete(c.Agent.SubagentModels, key)
+			}
+		}
 	}
 	return nil
+}
+
+func fallbackProviderRef(ref string) string {
+	provider, _, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if ok {
+		return provider
+	}
+	return strings.TrimSpace(ref)
 }
 
 // validateProvider checks the fields a provider can't function without.

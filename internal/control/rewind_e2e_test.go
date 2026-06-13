@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 func runTwoTurns(t *testing.T) (*Controller, *agent.Agent, *[]event.Event) {

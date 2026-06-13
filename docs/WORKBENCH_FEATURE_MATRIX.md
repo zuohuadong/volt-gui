@@ -14,7 +14,7 @@ Status values:
 
 | Area | Feature | Mode | Status | Evidence required |
 | --- | --- | --- | --- | --- |
-| Runtime | Wails boot path | work, code | partial | Svelte app and Wails-style bridge exist; Wails runtime smoke still required. |
+| Runtime | Wails boot path | work, code | usable | `VOLTUI_DESKTOP_FRONTEND=svelte wails build` packages the Svelte workbench through the Wails embed path, and a macOS runtime smoke starts the built app without crashing after disabling the tray path that attempted to create AppKit status items off the main thread. |
 | Runtime | Browser dev mock path | work, code | usable | `pnpm build` passes and Browser smoke confirms nonblank UI, Work/Code switch, approval, and ask flows. |
 | Navigation | App chrome and tabs | work, code | usable | List, switch, close, create-global-session, and reorder are wired through Svelte bridge/mock; Browser smoke confirms new session, move up/down, and Work/Code mode separation. |
 | Navigation | Sidebar workspaces/projects | work, code | usable | Svelte sidebar lists the Wails project tree, opens global/project topics, creates topics, renames projects/topics, sets project colors, reorders projects, and moves topics to trash; Browser smoke covers topic open/create/rename/color/reorder while preserving run-mode separation. |

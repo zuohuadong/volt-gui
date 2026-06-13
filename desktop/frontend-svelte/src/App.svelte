@@ -544,7 +544,17 @@
         onForgetMemory={forgetMemory}
       />
     {:else}
-      <CodeDashboard {context} {changes} {checkpoints} {filePreview} {diffPreview} onPreviewFile={previewFile} onPreviewChange={previewChange} onRewind={rewind} />
+      <CodeDashboard
+        {context}
+        {changes}
+        {checkpoints}
+        {filePreview}
+        {diffPreview}
+        onPreviewFile={previewFile}
+        onPreviewChange={previewChange}
+        onRewind={rewind}
+        onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+      />
     {/if}
 
     <ResourcePanel {activityMode} {resources} onChanged={refreshResources} />

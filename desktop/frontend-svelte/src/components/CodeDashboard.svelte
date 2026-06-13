@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ChevronDown, ChevronRight, Code2, ExternalLink, FileText, Folder, GitPullRequest, Gauge, LocateFixed, RefreshCw, RotateCcw } from "@lucide/svelte";
+  import { ChevronDown, ChevronRight, Code2, ExternalLink, FileText, Folder, GitPullRequest, Gauge, LocateFixed, RefreshCw, RotateCcw, Search } from "@lucide/svelte";
   import DiffViewer from "./DiffViewer.svelte";
   import { app } from "../lib/bridge";
   import type { CheckpointMeta, ContextPanelInfo, DirEntry, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
@@ -14,6 +14,7 @@
     onPreviewFile,
     onPreviewChange,
     onRewind,
+    onRefreshContext,
   }: {
     context?: ContextPanelInfo;
     changes?: WorkspaceChangesView;
@@ -23,17 +24,51 @@
     onPreviewFile: (path: string) => void;
     onPreviewChange: (path: string) => void;
     onRewind: (turn: number, scope: string) => void;
+    onRefreshContext: () => Promise<void> | void;
   } = $props();
+
+  let entriesByDir = $state<Record<string, DirEntry[]>>({});
+  let openDirs = $state<string[]>([""]);
+  let treeStatus = $state("");
+  let treeBusy = $state(false);
+  let contextDetail = $state<"read" | "changed">("read");
+  let contextQuery = $state("");
+  let contextStatus = $state("");
+  let contextBusy = $state(false);
 
   const tokenPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const changedCount = $derived(changes?.files.length ?? 0);
   const selectedPath = $derived(diffPreview?.path ?? filePreview?.path);
   const selectedChange = $derived(selectedPath ? changes?.files.find((file) => file.path === selectedPath) : undefined);
-  let entriesByDir = $state<Record<string, DirEntry[]>>({});
-  let openDirs = $state<string[]>([""]);
-  let treeStatus = $state("");
-  let treeBusy = $state(false);
-
+  const promptTokens = $derived(context?.promptTokens ?? 0);
+  const completionTokens = $derived(context?.completionTokens ?? 0);
+  const reasoningTokens = $derived(context?.reasoningTokens ?? 0);
+  const otherTokens = $derived(Math.max(0, (context?.usedTokens ?? 0) - promptTokens - completionTokens - reasoningTokens));
+  const cacheTotal = $derived((context?.cacheHitTokens ?? 0) + (context?.cacheMissTokens ?? 0));
+  const cachePercent = $derived(cacheTotal > 0 ? Math.round(((context?.cacheHitTokens ?? 0) / cacheTotal) * 100) : 0);
+  const contextRows = $derived.by(() => {
+    if (contextDetail === "changed") {
+      return (context?.changedFiles ?? []).map((file, index) => ({
+        key: `${file.path}-${index}`,
+        path: file.path,
+        meta: file.gitStatus || file.sources.join(", ") || "changed",
+        detail: file.turns?.length ? `turns ${file.turns.join(", ")}` : "",
+        time: file.latestTime ?? 0,
+      }));
+    }
+    return (context?.readFiles ?? []).map((file, index) => ({
+      key: `${file.path}-${index}`,
+      path: file.path,
+      meta: `turn ${file.turn}`,
+      detail: file.limit ? `${file.offset ?? 0}-${(file.offset ?? 0) + file.limit}${file.truncated ? " truncated" : ""}` : "",
+      time: file.time,
+    }));
+  });
+  const filteredContextRows = $derived.by(() => {
+    const query = contextQuery.trim().toLowerCase();
+    if (!query) return contextRows;
+    return contextRows.filter((row) => `${row.path} ${row.meta} ${row.detail}`.toLowerCase().includes(query));
+  });
   const treeRows = $derived.by(() => {
     const rows: Array<DirEntry & { path: string; depth: number; open: boolean }> = [];
     function collect(dir: string, depth: number) {
@@ -102,6 +137,29 @@
     await app().RevealWorkspacePath(path);
     treeStatus = `Revealed ${path}`;
   }
+
+  function formatTokens(value: number) {
+    if (value >= 1000) return `${Math.round(value / 1000)}k`;
+    return String(value);
+  }
+
+  function formatTime(ms: number) {
+    if (!ms) return "";
+    return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function refreshContextPanel() {
+    contextBusy = true;
+    contextStatus = "Refreshing context...";
+    try {
+      await onRefreshContext();
+      contextStatus = "Context refreshed";
+    } catch (error) {
+      contextStatus = error instanceof Error ? error.message : String(error);
+    } finally {
+      contextBusy = false;
+    }
+  }
 </script>
 
 <section class="code-layout" aria-label="Code workspace">
@@ -124,6 +182,58 @@
   </div>
 
   <aside class="code-dock">
+    <section class="context-card" data-testid="code-context-panel">
+      <div class="code-dock__section-head">
+        <h2><Gauge size={15} /> Context panel</h2>
+        <button type="button" title="Refresh context" disabled={contextBusy} onclick={refreshContextPanel}><RefreshCw size={14} /></button>
+      </div>
+      {#if context}
+        <div class="context-card__meter" style:--context-used={`${tokenPercent}%`}>
+          <div>
+            <strong>{formatTokens(context.usedTokens)}</strong>
+            <span>/ {formatTokens(context.windowTokens)} tokens</span>
+          </div>
+          <span>{tokenPercent}%</span>
+        </div>
+        <div class="context-card__bar" aria-label="Context usage">
+          <span></span>
+        </div>
+        <div class="context-card__metrics">
+          <div><span>Prompt</span><strong>{promptTokens.toLocaleString()}</strong></div>
+          <div><span>Completion</span><strong>{completionTokens.toLocaleString()}</strong></div>
+          <div><span>Reasoning</span><strong>{reasoningTokens.toLocaleString()}</strong></div>
+          <div><span>Other</span><strong>{otherTokens.toLocaleString()}</strong></div>
+          <div><span>Cache hit</span><strong>{cachePercent ? `${cachePercent}%` : "-"}</strong></div>
+        </div>
+        <div class="context-card__tabs" role="tablist" aria-label="Context detail">
+          <button type="button" aria-pressed={contextDetail === "read"} onclick={() => (contextDetail = "read")}>Read {context.readFiles.length}</button>
+          <button type="button" aria-pressed={contextDetail === "changed"} onclick={() => (contextDetail = "changed")}>Changed {context.changedFiles.length}</button>
+        </div>
+        <label class="context-card__search">
+          <Search size={14} />
+          <input aria-label="Filter context files" placeholder="Filter files" bind:value={contextQuery} />
+        </label>
+        <div class="context-card__rows">
+          {#each filteredContextRows.slice(0, 6) as row (row.key)}
+            <button
+              type="button"
+              data-context-path={row.path}
+              onclick={() => (contextDetail === "changed" ? onPreviewChange(row.path) : onPreviewFile(row.path))}
+            >
+              <span>{row.path}</span>
+              <em>{row.meta}{row.detail ? ` · ${row.detail}` : ""}{row.time ? ` · ${formatTime(row.time)}` : ""}</em>
+            </button>
+          {:else}
+            <span>{contextDetail === "changed" ? "No changed files in context." : "No read files in context."}</span>
+          {/each}
+        </div>
+        {#if contextStatus}
+          <span class="code-dock__status">{contextStatus}</span>
+        {/if}
+      {:else}
+        <span>Context panel pending.</span>
+      {/if}
+    </section>
     <section>
       <div class="code-dock__section-head">
         <h2><Folder size={15} /> Files</h2>

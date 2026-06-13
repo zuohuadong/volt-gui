@@ -221,6 +221,7 @@ export interface TranscriptItem {
   title?: string;
   pending?: boolean;
   readOnly?: boolean;
+  parentId?: string;
 }
 
 export interface WireAskOption {

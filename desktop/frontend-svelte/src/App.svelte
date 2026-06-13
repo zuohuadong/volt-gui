@@ -104,6 +104,10 @@
     transcript.push({ id: `assistant-${Date.now()}`, role: "assistant", body: text, pending: true });
   }
 
+  function toolTranscriptId(id?: string) {
+    return `tool-${id ?? Date.now()}`;
+  }
+
   function historyToTranscript(messages: HistoryMessage[]): TranscriptItem[] {
     const visible = messages.filter((message) => {
       const hasContent = message.content.trim() !== "";
@@ -140,17 +144,28 @@
     }
     if ((event.kind === "text" || event.kind === "message") && event.text) updateLastAssistant(event.text);
     if (event.kind === "tool_dispatch" && event.tool) {
+      const id = toolTranscriptId(event.tool.id);
+      const existing = transcript.find((item) => item.id === id);
+      if (existing) {
+        existing.title = event.tool.name;
+        existing.body = event.tool.args ?? existing.body;
+        existing.pending = true;
+        existing.readOnly = event.tool.readOnly;
+        existing.parentId = event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined;
+        return;
+      }
       transcript.push({
-        id: `tool-${event.tool.id ?? Date.now()}`,
+        id,
         role: "tool",
         title: event.tool.name,
         body: event.tool.args ?? "",
         pending: true,
         readOnly: event.tool.readOnly,
+        parentId: event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined,
       });
     }
     if (event.kind === "tool_result" && event.tool) {
-      const tool = transcript.find((item) => item.id === `tool-${event.tool?.id}`);
+      const tool = transcript.find((item) => item.id === toolTranscriptId(event.tool?.id));
       if (tool) {
         tool.body += event.tool.output ? `\n${event.tool.output}` : "";
         tool.body += event.tool.err ? `\n${event.tool.err}` : "";

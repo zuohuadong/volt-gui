@@ -27,14 +27,36 @@
 
   const question = $derived(ask?.questions[0]);
   const askAnswer = $derived(question ? [{ questionId: question.id, selected: selectedAnswer ? [selectedAnswer] : [] }] : []);
+  const subcallsByParent = $derived.by(() => {
+    const grouped = new Map<string, TranscriptItem[]>();
+    for (const item of items) {
+      if (item.role !== "tool" || !item.parentId) continue;
+      const children = grouped.get(item.parentId) ?? [];
+      children.push(item);
+      grouped.set(item.parentId, children);
+    }
+    return grouped;
+  });
 </script>
 
 <section class="transcript" aria-busy={sending || loading}>
   {#each items as item (item.id)}
-    <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`}>
-      <span>{item.title || item.role}</span>
-      <MarkdownView text={item.body} />
-    </article>
+    {#if !(item.role === "tool" && item.parentId)}
+      <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`} data-tool-id={item.role === "tool" ? item.id : undefined}>
+        <span>{item.title || item.role}</span>
+        <MarkdownView text={item.body} />
+        {#if item.role === "tool" && subcallsByParent.get(item.id)?.length}
+          <div class="tool-subcalls" aria-label={`Subcalls for ${item.title || item.id}`}>
+            {#each subcallsByParent.get(item.id) ?? [] as child (child.id)}
+              <article class={`message message--tool message--subtool${child.pending ? " is-pending" : ""}`} data-parent-tool-id={item.id}>
+                <span>{child.title || "tool"}</span>
+                <MarkdownView text={child.body} />
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </article>
+    {/if}
   {/each}
 
   {#if approval}

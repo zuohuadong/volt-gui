@@ -792,6 +792,21 @@ select {
   font-size: 13px;
 }
 
+.tool-subcalls {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 2px solid #cbd5e1;
+}
+
+.message--subtool {
+  width: 100%;
+  max-width: 100%;
+  background: #ffffff;
+  box-shadow: none;
+}
+
 .message--reasoning {
   color: #475569;
   background: #f8fafc;

@@ -115,6 +115,36 @@ function memoryEntries(memory: MemoryView): ResourceRecord[] {
   return [...facts, ...docs];
 }
 
+let taskRecords: ResourceRecord[] = [
+  {
+    id: "task-work-dashboard",
+    title: "Wire Work dashboard tasks",
+    status: "ready",
+    owner: "Workbench",
+    mode: "work",
+    priority: "high",
+    summary: "Expose task queue controls from the svadmin-compatible resource layer.",
+  },
+  {
+    id: "task-runtime-smoke",
+    title: "Run Wails runtime smoke",
+    status: "blocked",
+    owner: "Desktop",
+    mode: "work",
+    priority: "high",
+    summary: "Requires a native Wails runtime session to verify bindings beyond browser mock.",
+  },
+  {
+    id: "task-code-diff-edges",
+    title: "Review changed-file edge cases",
+    status: "active",
+    owner: "Code dock",
+    mode: "code",
+    priority: "medium",
+    summary: "Rename, staged, binary, and truncated diffs still need richer parity.",
+  },
+];
+
 export const wailsDataProvider: WorkbenchDataProvider = {
   async list(resource) {
     switch (resource) {
@@ -164,7 +194,13 @@ export const wailsDataProvider: WorkbenchDataProvider = {
         const entries = memoryEntries(memory);
         return { data: entries, total: memory.facts.length + memory.docs.length };
       }
-      case "sessions":
+      case "tasks": {
+        return { data: taskRecords.map((task) => ({ ...task })), total: taskRecords.length };
+      }
+      case "sessions": {
+        const sessions = await app().ListSessions();
+        return { data: asRecords(sessions, "session"), total: sessions.length };
+      }
       case "topics": {
         const tabs = await app().ListTabs();
         return { data: asRecords(tabs, "tab"), total: tabs.length };
@@ -259,6 +295,11 @@ export const wailsDataProvider: WorkbenchDataProvider = {
       }
       if (id === "closeBehavior") await app().SetCloseBehavior(value);
       return { ...previous, value, id };
+    }
+    if (resource === "tasks") {
+      const record = asRecordData(data);
+      taskRecords = taskRecords.map((task) => (task.id === id ? { ...task, ...record, id } : task));
+      return taskRecords.find((task) => task.id === id) ?? { id, ...record };
     }
     return { id, ...(typeof data === "object" && data ? data : { value: data }) };
   },

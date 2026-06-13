@@ -1,30 +1,41 @@
 <script lang="ts">
-  import { Brain, Clock3, Database, Play, Plus, RotateCcw, Target, Trash2 } from "@lucide/svelte";
-  import type { GoalInfo, MemoryView, TabMeta } from "../lib/types";
+  import { Brain, CheckCircle2, Clock3, Database, ListChecks, Play, Plus, RotateCcw, Target, Trash2 } from "@lucide/svelte";
+  import type { GoalInfo, MemoryView, ResourceRecord, SessionMeta, TabMeta } from "../lib/types";
 
   let {
     activeTab,
     goalInfo,
     memoryView,
+    workTasks,
+    recentSessions,
     resources,
     onStartGoal,
     onContinueGoal,
     onClearGoal,
+    onUpdateTask,
+    onResumeSession,
     onRemember,
     onForgetMemory,
   }: {
     activeTab?: TabMeta;
     goalInfo: GoalInfo;
     memoryView: MemoryView;
+    workTasks: ResourceRecord[];
+    recentSessions: SessionMeta[];
     resources: Array<{ name: string; total: number }>;
     onStartGoal: (objective: string) => void;
     onContinueGoal: () => void;
     onClearGoal: () => void;
+    onUpdateTask: (id: string, status: string) => Promise<void> | void;
+    onResumeSession: (session: SessionMeta) => Promise<void> | void;
     onRemember: (scope: string, note: string) => Promise<void> | void;
     onForgetMemory: (name: string) => Promise<void> | void;
   } = $props();
 
   const memoryTotal = $derived(memoryView.facts.length + memoryView.docs.length || resources.find((resource) => resource.name === "memory")?.total || 0);
+  const taskTotal = $derived(workTasks.length || resources.find((resource) => resource.name === "tasks")?.total || 0);
+  const activeTaskCount = $derived(workTasks.filter((task) => text(task, "status") === "active").length);
+  const readyTaskCount = $derived(workTasks.filter((task) => text(task, "status") === "ready").length);
   const hasGoal = $derived(goalInfo.objective.trim() !== "");
   const goalStatus = $derived(goalInfo.status || "idle");
   const selectedScope = $derived(memoryView.scopes[0]?.scope ?? "project");
@@ -56,6 +67,26 @@
   function docExcerpt(body: string) {
     return body.replace(/^#+\s+/gm, "").split(/\n+/).map((line) => line.trim()).filter(Boolean).slice(-1)[0] ?? "No content";
   }
+
+  function text(record: ResourceRecord, key: string, fallback = "") {
+    const value = record[key];
+    return typeof value === "string" ? value : fallback;
+  }
+
+  function formatTime(ms: number) {
+    if (!ms) return "";
+    return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function sessionTitle(session: SessionMeta) {
+    return session.title || session.topicTitle || session.preview || "Untitled session";
+  }
+
+  async function advanceTask(task: ResourceRecord) {
+    const status = text(task, "status", "ready");
+    const next = status === "ready" ? "active" : status === "active" ? "complete" : "active";
+    await onUpdateTask(task.id, next);
+  }
 </script>
 
 <section class="dashboard-grid" aria-label="Work dashboard">
@@ -82,9 +113,44 @@
     {/if}
   </article>
   <article>
+    <ListChecks size={20} />
+    <h2>Tasks</h2>
+    <p>{taskTotal} tracked · {activeTaskCount} active · {readyTaskCount} ready</p>
+    <div class="work-list" data-testid="work-tasks">
+      {#each workTasks.slice(0, 4) as task (task.id)}
+        <div class="work-list__row">
+          <div>
+            <strong>{text(task, "title", task.id)}</strong>
+            <span>{text(task, "status", "ready")} · {text(task, "priority", "normal")} · {text(task, "owner", "team")}</span>
+            <p>{text(task, "summary", "No summary")}</p>
+          </div>
+          <button type="button" onclick={() => advanceTask(task)}>
+            {text(task, "status") === "ready" ? "Start" : text(task, "status") === "active" ? "Complete" : "Reopen"}
+          </button>
+        </div>
+      {:else}
+        <p>No tasks are tracked yet.</p>
+      {/each}
+    </div>
+  </article>
+  <article>
     <Clock3 size={20} />
     <h2>Recent sessions</h2>
     <p>{activeTab?.workspaceName || "Global"} is ready for research, writing, planning, and operations work.</p>
+    <div class="work-list" data-testid="recent-sessions">
+      {#each recentSessions.slice(0, 4) as session (session.path)}
+        <div class="work-list__row">
+          <div>
+            <strong>{sessionTitle(session)}</strong>
+            <span>{session.open ? "open" : "saved"} · {session.turns} turns · {formatTime(session.lastActivityAt || session.modTime)}</span>
+            <p>{session.preview || session.topicTitle || "No preview"}</p>
+          </div>
+          <button type="button" onclick={() => onResumeSession(session)}><CheckCircle2 size={14} /> Resume</button>
+        </div>
+      {:else}
+        <p>No saved sessions yet.</p>
+      {/each}
+    </div>
   </article>
   <article class="memory-card">
     <Brain size={20} />

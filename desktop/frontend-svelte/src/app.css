@@ -531,6 +531,55 @@ select {
   border-radius: 8px;
 }
 
+.work-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.work-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.work-list__row strong,
+.work-list__row span,
+.work-list__row p {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.work-list__row span {
+  margin-top: 3px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.work-list__row p {
+  margin-top: 6px;
+}
+
+.work-list__row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+  color: #0f766e;
+  background: white;
+  border: 1px solid #99f6e4;
+  border-radius: 7px;
+}
+
 .memory-card {
   display: grid;
   gap: 12px;

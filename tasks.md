@@ -55,7 +55,7 @@
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
 | VOLTGUI-003 | local | aizhuliren/volt-gui | - | 远端重写后重新提交通用 skills 与同步校验 | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
-| VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | review | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | - |
+| VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | review | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | https://cnb.cool/aizhuliren/volt-gui/-/compare/main...codex/feat-oidc-auth |
 
 ### VOLTGUI-004 Task Contract
 

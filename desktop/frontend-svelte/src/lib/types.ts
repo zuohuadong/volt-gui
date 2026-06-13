@@ -154,6 +154,33 @@ export interface GoalInfo {
   blockedReason?: string;
 }
 
+export interface MemoryDoc {
+  path: string;
+  scope: string;
+  body: string;
+}
+
+export interface MemoryFact {
+  name: string;
+  title?: string;
+  description: string;
+  type: string;
+  body: string;
+}
+
+export interface MemoryScope {
+  scope: string;
+  path: string;
+}
+
+export interface MemoryView {
+  docs: MemoryDoc[];
+  facts: MemoryFact[];
+  scopes: MemoryScope[];
+  storeDir: string;
+  available: boolean;
+}
+
 export interface UpdateInfo {
   available: boolean;
   current: string;

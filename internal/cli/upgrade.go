@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/i18n"
-	"reasonix/internal/netclient"
+	"voltui/internal/config"
+	"voltui/internal/i18n"
+	"voltui/internal/netclient"
 
 	"golang.org/x/mod/semver"
 )

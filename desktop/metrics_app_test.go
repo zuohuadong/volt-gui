@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 func TestObserveClassifiesEvents(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/event"
+	"voltui/internal/config"
+	"voltui/internal/event"
 )
 
 var errTestFailure = errors.New("failed")

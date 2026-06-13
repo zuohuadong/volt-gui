@@ -17,9 +17,9 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/config"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 // MCPConnectResult is what the ConnectMCP callback returns. Disconnect is

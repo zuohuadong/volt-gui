@@ -36,6 +36,11 @@ func (a *App) setTestCtrl(ctrl *control.Controller, model string) {
 	tab.model = model
 }
 
+func testCtrlWithHost() *control.Controller {
+	host := plugin.NewHost()
+	return control.New(control.Options{Host: host, Cleanup: host.Close})
+}
+
 func isolateDesktopUserDirs(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -571,7 +576,7 @@ args = ["-y", "@playwright/mcp"]
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer func() {
 		if c := app.activeCtrl(); c != nil {
 			c.Close()
@@ -596,7 +601,7 @@ func TestCapabilitiesShowsDefaultCodegraphDisabled(t *testing.T) {
 	t.Chdir(dir)
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
@@ -638,7 +643,7 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
@@ -672,7 +677,7 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
@@ -707,7 +712,7 @@ tier = "lazy"
 	host := plugin.NewHost()
 	host.RecordFailure(plugin.Spec{Name: "figma", Type: "http", URL: "https://mcp.figma.com/mcp"}, errors.New("connect: 401 unauthorized"))
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: host}), "")
+	app.setTestCtrl(control.New(control.Options{Host: host, Cleanup: host.Close}), "")
 	defer app.activeCtrl().Close()
 
 	view := app.Capabilities()
@@ -744,7 +749,7 @@ tier = "lazy"
 	host := plugin.NewHost()
 	host.RecordFailure(plugin.Spec{Name: "figma", Type: "http", URL: "https://mcp.figma.com/mcp"}, errors.New("connect: 401 unauthorized"))
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: host}), "")
+	app.setTestCtrl(control.New(control.Options{Host: host, Cleanup: host.Close}), "")
 	defer app.activeCtrl().Close()
 
 	if err := app.ClearMCPServerAuthentication("figma"); err != nil {
@@ -803,7 +808,7 @@ env = { TOKEN = "${PLAYWRIGHT_TOKEN}" }
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer func() {
 		if c := app.activeCtrl(); c != nil {
 			c.Close()
@@ -873,7 +878,7 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 
 	if err := app.UpdateMCPServer("broken", MCPServerInput{
@@ -929,7 +934,7 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer func() {
 		if c := app.activeCtrl(); c != nil {
 			c.Close()
@@ -994,7 +999,7 @@ auto_install = true
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 
 	if err := app.SetMCPServerTier("codegraph", "background"); err != nil {
@@ -1048,7 +1053,7 @@ tier = "lazy"
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 
 	if err := app.SetMCPServerEnabled("codegraph", false); err != nil {
@@ -1094,7 +1099,7 @@ tier = "eager"
 	}
 
 	app := NewApp()
-	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	app.setTestCtrl(testCtrlWithHost(), "")
 	defer app.activeCtrl().Close()
 	recordMCPFailure(app.activeCtrl(), config.PluginEntry{
 		Name:    "broken",

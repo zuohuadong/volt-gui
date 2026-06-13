@@ -74,23 +74,17 @@ function expandShape(rows: number[], content: string | undefined): string {
     }
   }
 
-  // Use per-row negative spacing `\\\\[Xem]` between rows instead of the
+  // Use per-row negative spacing `\\\\[-0.525em]` between rows instead of the
   // default `\\`. The default katex display math baseline-to-baseline
-  // spacing is 1.2em, but a `\square` glyph is only ~0.85em tall and
-  // sits centred on the math axis (so its bottom is ~0.15em below the
-  // baseline). With the default spacing, the gap between the bottom of
-  // one row's square and the top of the next is 1.2 − 0.85 = 0.35em
-  // of visible white space — the diagram looks like a column of
-  // disconnected boxes. `\\\\[-0.4em]` pulls each subsequent row up
-  // by 0.4em (roughly the math-axis offset), so adjacent squares
-  // touch. This is a *per-row spacing* fix, not a per-cell vertical
-  // shift: the offset is symmetric across the diagram, so all rows
-  // stay aligned.
-  //
-  // Earlier versions tried wrapping each cell in `\raisebox{-0.35em}`
-  // which does NOT close the gap (it shifts the whole diagram down
-  // uniformly; the relative distance between row baselines is
-  // invariant). The `\\\\[-0.4em]` approach fixes the root cause.
+  // spacing is 1.2em, but the `\square` glyph is only 0.675em tall
+  // (measured from the katex strut of a single `\square`). With the
+  // default spacing, the gap between the bottom of one row's square
+  // and the top of the next is 1.2 − 0.675 = 0.525em of visible white
+  // space — the diagram looks like a column of disconnected boxes.
+  // `\\\\[-0.525em]` reduces the baseline gap to exactly 0.675em so
+  // adjacent squares touch with zero visible gap. This is a *per-row
+  // spacing* fix, not a per-cell vertical shift: the offset is
+  // symmetric across the diagram, so all rows stay aligned.
   const arrRows = cells.map((row, ri) =>
     row.slice(0, rows[ri]).join(" \\! "),
   );
@@ -101,7 +95,7 @@ function expandShape(rows: number[], content: string | undefined): string {
   // like a Young diagram.
   return (
     "\\begin{array}{l}" +
-    arrRows.join(" \\\\[-0.4em] ") +
+    arrRows.join(" \\\\[-0.525em] ") +
     "\\end{array}"
   );
 }

@@ -462,7 +462,7 @@ check("expandYoungDiagrams uses flush cells (\\! cancels \\,) ", () => {
   const out = expandYoungDiagrams("\\yng(3)");
   return out.includes("\\!") && !out.includes("\\, ");
 });
-check("expandYoungDiagrams uses flush rows (\\[-0.4em] closes the math-axis gap)", () => {
+check("expandYoungDiagrams uses flush rows (\\[-0.525em] closes the math-axis gap)", () => {
   // The math axis positions a \square glyph centred on the row
   // baseline, which leaves a visible ~0.4em gap between the bottom of
   // one row's box and the top of the next row's box when the default
@@ -473,7 +473,7 @@ check("expandYoungDiagrams uses flush rows (\\[-0.4em] closes the math-axis gap)
   // uniform translation can't change the relative distance between
   // row baselines.)
   const out = expandYoungDiagrams("\\yng(2,1)");
-  return out.includes("\\\\[-0.4em]");
+  return out.includes("\\\\[-0.525em]");
 });
 check("expandYoungDiagrams substitutes correct array form", () => {
   // Direct unit test on the translator — no need to go through the
@@ -481,19 +481,20 @@ check("expandYoungDiagrams substitutes correct array form", () => {
   const out = expandYoungDiagrams("\\yng(2,1)");
   return out.includes("\\begin{array}{l}")
     && out.includes("\\square")
-    && out.includes(" \\\\[-0.4em] ");
+    && out.includes(" \\\\[-0.525em] ");
 });
 check("expandYoungDiagrams handles \\yng with content", () => {
   // Bare \yng in prose gets wrapped in `$…$` so remark-math sees it as
   // math; macros already inside a `$…$` block just substitute the inner
   // form (the surrounding delimiters are preserved).
   // Cells are joined with `\!` (negative thin space) so adjacent
-  // boxes are flush. Row separators use `\\[-0.4em]` (per-row
-  // negative spacing) so consecutive rows touch — the math-axis
-  // offset of `\square` and similar glyphs is ~0.4em, which the
-  // default 1.2em baseline spacing leaves as visible white space.
+  // boxes are flush. Row separators use `\\[-0.525em]` (per-row
+  // negative spacing) so consecutive rows touch — the visible
+  // glyph height of `\square` is 0.675em (measured from katex's
+  // single-glyph strut), and the default 1.2em baseline spacing
+  // leaves 0.525em of gap. `\\[-0.525em]` subtracts exactly that.
   const out = expandYoungDiagrams("\\yng(2,1){a&b\\\\c}");
-  return out === "$\\begin{array}{l}a \\! b \\\\[-0.4em] c\\end{array}$";
+  return out === "$\\begin{array}{l}a \\! b \\\\[-0.525em] c\\end{array}$";
 });
 check("expandYoungDiagrams leaves non-Young macros alone", () => {
   const out = expandYoungDiagrams("\\frac{a}{b}");

@@ -735,8 +735,8 @@ func (c *Controller) Turn() int {
 }
 
 // Approve answers a pending ApprovalRequest by ID: allow runs the call, session
-// also remembers a tool-wide grant for the rest of the session. Unknown/expired
-// IDs are ignored.
+// also remembers a grant for the rest of the session so the same tool+subject
+// isn't re-prompted. Unknown/expired IDs are ignored.
 func (c *Controller) Approve(id string, allow, session, persist bool) {
 	c.mu.Lock()
 	reply := c.approvals[id]
@@ -2108,7 +2108,7 @@ func parseRewind(args string, cps []checkpoint.Meta) (int, RewindScope, error) {
 }
 
 func (c *Controller) requestApproval(ctx context.Context, tool, subject string) (bool, bool, error) {
-	key := tool
+	key := tool + "\x00" + subject
 
 	c.mu.Lock()
 	// YOLO/bypass and the just-approved-plan window auto-allow every approval
@@ -2124,7 +2124,7 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	defer c.promptMu.Unlock()
 
 	// Re-check the grant: a session grant may have landed while we queued behind
-	// another prompt for the same tool.
+	// another prompt for the same subject.
 	c.mu.Lock()
 	if c.bypass || c.autoApprove || c.granted[key] {
 		c.mu.Unlock()

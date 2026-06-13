@@ -407,18 +407,9 @@ export interface CheckpointMeta {
   canConversation?: boolean;
 }
 
+// ResourceRecord is a BaseRecord with a required string id. The workbench data
+// adapter always synthesizes ids, so this stricter type is safe for UI code.
 export interface ResourceRecord {
   id: string;
   [key: string]: unknown;
-}
-
-export interface ListParams {
-  page?: number;
-  perPage?: number;
-  filter?: Record<string, unknown>;
-}
-
-export interface ListResult<T extends ResourceRecord = ResourceRecord> {
-  data: T[];
-  total: number;
 }

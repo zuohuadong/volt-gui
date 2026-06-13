@@ -10,7 +10,7 @@
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import WorkDashboard from "./components/WorkDashboard.svelte";
   import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
-  import { wailsDataProvider, workbenchResources } from "./lib/resourceProvider";
+  import { workbenchDataProvider, workbenchResources } from "./lib/resourceProvider";
   import type {
     ActivityMode,
     BackendMode,
@@ -246,7 +246,7 @@
   async function refreshResources() {
     resources = await Promise.all(
       workbenchResources.map(async (name) => {
-        const result = await wailsDataProvider.list(name);
+        const result = await workbenchDataProvider.list(name);
         return { name, total: result.total };
       }),
     );
@@ -264,7 +264,7 @@
   }
 
   async function refreshWorkDashboardData() {
-    const [tasks, sessions] = await Promise.all([wailsDataProvider.list("tasks"), app().ListSessions()]);
+    const [tasks, sessions] = await Promise.all([workbenchDataProvider.list("tasks"), app().ListSessions()]);
     workTasks = tasks.data;
     recentSessions = sessions;
   }
@@ -493,7 +493,7 @@
   }
 
   async function updateTaskStatus(id: string, status: string) {
-    await wailsDataProvider.update("tasks", id, { status });
+    await workbenchDataProvider.update("tasks", id, { status });
     await refreshWorkDashboardData();
     await refreshResources();
   }

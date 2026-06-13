@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { Database, KeyRound, MemoryStick, Palette, Plus, RefreshCw, Save, Server, ShieldCheck, Trash2, Wrench } from "@lucide/svelte";
   import type { ActivityMode, ResourceRecord } from "../lib/types";
-  import { wailsDataProvider, type WorkbenchResource } from "../lib/resourceProvider";
+  import { workbenchDataProvider, type WorkbenchResource } from "../lib/resourceProvider";
 
   const editableResources: WorkbenchResource[] = ["providers", "models", "mcpServers", "skills", "permissions", "desktopPrefs"];
   const icons = {
@@ -103,7 +103,7 @@
   async function loadRecords(resource = selected) {
     busy = true;
     try {
-      const result = await wailsDataProvider.list(resource);
+      const result = await workbenchDataProvider.list(resource);
       records = result.data;
       status = `${resource}: ${result.total}`;
     } finally {
@@ -175,7 +175,7 @@
       return;
     }
     await mutate("provider", async () => {
-      await wailsDataProvider.create("providers", payload);
+      await workbenchDataProvider.create("providers", payload);
     });
     providerDraft = { name: "", kind: "openai", baseUrl: "", models: "", apiKeyEnv: "", apiKeyValue: "" };
   }
@@ -187,7 +187,7 @@
       return;
     }
     await mutate("mcp server", async () => {
-      await wailsDataProvider.create("mcpServers", payload);
+      await workbenchDataProvider.create("mcpServers", payload);
     });
     serverDraft = { name: "", transport: "stdio", command: "", args: "", url: "", tier: "lazy" };
   }
@@ -195,7 +195,7 @@
   async function addPermissionRule() {
     if (!permissionDraft.rule.trim()) return;
     await mutate("permission rule", async () => {
-      await wailsDataProvider.create("permissions", permissionDraft);
+      await workbenchDataProvider.create("permissions", permissionDraft);
     });
     permissionDraft = { ...permissionDraft, rule: "" };
   }
@@ -249,7 +249,7 @@
             <button type="button" onclick={() => editProvider(record)}>{text(record, "name", record.id)}</button>
             <span>{text(record, "kind")} · {list(record, "models").join(", ")}</span>
             <em>{bool(record, "keySet") ? "key set" : "no key"}</em>
-            <button type="button" disabled={busy} onclick={() => mutate("delete provider", () => wailsDataProvider.delete("providers", record.id))}>
+            <button type="button" disabled={busy} onclick={() => mutate("delete provider", () => workbenchDataProvider.delete("providers", record.id))}>
               <Trash2 size={14} />
             </button>
           </article>
@@ -261,8 +261,8 @@
           <article>
             <strong>{record.id}</strong>
             <span>{bool(record, "default") && bool(record, "planner") ? "default + planner" : bool(record, "default") ? "default" : bool(record, "planner") ? "planner" : "available"}</span>
-            <button type="button" disabled={busy || bool(record, "default")} onclick={() => mutate("default model", () => wailsDataProvider.update("models", record.id, { default: true }))}>Default</button>
-            <button type="button" disabled={busy || bool(record, "planner")} onclick={() => mutate("planner model", () => wailsDataProvider.update("models", record.id, { planner: true }))}>Planner</button>
+            <button type="button" disabled={busy || bool(record, "default")} onclick={() => mutate("default model", () => workbenchDataProvider.update("models", record.id, { default: true }))}>Default</button>
+            <button type="button" disabled={busy || bool(record, "planner")} onclick={() => mutate("planner model", () => workbenchDataProvider.update("models", record.id, { planner: true }))}>Planner</button>
           </article>
         {/each}
       </div>
@@ -285,16 +285,16 @@
           <article>
             <strong>{record.id}</strong>
             <span>{text(record, "status")} · {text(record, "transport")} · {String(record.tools ?? 0)} tools</span>
-            <button type="button" disabled={busy} onclick={() => mutate("toggle mcp", () => wailsDataProvider.update("mcpServers", record.id, { enabled: text(record, "status") === "disabled" }))}>
+            <button type="button" disabled={busy} onclick={() => mutate("toggle mcp", () => workbenchDataProvider.update("mcpServers", record.id, { enabled: text(record, "status") === "disabled" }))}>
               {text(record, "status") === "disabled" ? "Enable" : "Disable"}
             </button>
-            <button type="button" disabled={busy} onclick={() => mutate("retry mcp", () => wailsDataProvider.update("mcpServers", record.id, { retry: true }))}>Retry</button>
+            <button type="button" disabled={busy} onclick={() => mutate("retry mcp", () => workbenchDataProvider.update("mcpServers", record.id, { retry: true }))}>Retry</button>
           </article>
         {/each}
       </div>
     {:else if selected === "skills"}
       <div class="resource-console__toolbar">
-        <button type="button" disabled={busy} onclick={() => mutate("refresh skills", () => wailsDataProvider.update("skills", "__refresh__", { refresh: true }))}>
+        <button type="button" disabled={busy} onclick={() => mutate("refresh skills", () => workbenchDataProvider.update("skills", "__refresh__", { refresh: true }))}>
           <RefreshCw size={14} /> Refresh skills
         </button>
       </div>
@@ -303,7 +303,7 @@
           <article>
             <strong>{record.id}</strong>
             <span>{text(record, "scope")} · {text(record, "runAs")}</span>
-            <button type="button" disabled={busy} onclick={() => mutate("toggle skill", () => wailsDataProvider.update("skills", record.id, { enabled: !bool(record, "enabled") }))}>
+            <button type="button" disabled={busy} onclick={() => mutate("toggle skill", () => workbenchDataProvider.update("skills", record.id, { enabled: !bool(record, "enabled") }))}>
               {bool(record, "enabled") ? "Disable" : "Enable"}
             </button>
           </article>
@@ -311,7 +311,7 @@
       </div>
     {:else if selected === "permissions"}
       <div class="resource-form" data-testid="permission-form">
-        <select aria-label="Permission mode" value={text(records.find((record) => record.id === "mode") ?? { id: "mode", value: "ask" }, "value", "ask")} onchange={(event) => mutate("permission mode", () => wailsDataProvider.update("permissions", "mode", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+        <select aria-label="Permission mode" value={text(records.find((record) => record.id === "mode") ?? { id: "mode", value: "ask" }, "value", "ask")} onchange={(event) => mutate("permission mode", () => workbenchDataProvider.update("permissions", "mode", { value: (event.currentTarget as HTMLSelectElement).value }))}>
           <option value="ask">ask</option>
           <option value="allow">allow</option>
           <option value="deny">deny</option>
@@ -331,7 +331,7 @@
             <strong>{record.id}</strong>
             <span>{list(record, "rules").join(", ") || "empty"}</span>
             {#each list(record, "rules") as rule (`${record.id}:${rule}`)}
-              <button type="button" disabled={busy} onclick={() => mutate("remove rule", () => wailsDataProvider.delete("permissions", `${record.id}:${rule}`))}>
+              <button type="button" disabled={busy} onclick={() => mutate("remove rule", () => workbenchDataProvider.delete("permissions", `${record.id}:${rule}`))}>
                 <Trash2 size={14} /> {rule}
               </button>
             {/each}
@@ -340,22 +340,22 @@
       </div>
     {:else if selected === "desktopPrefs"}
       <div class="resource-form" data-testid="desktop-prefs-form">
-        <select aria-label="Desktop language" value={recordValue("language", "en")} onchange={(event) => mutate("desktop language", () => wailsDataProvider.update("desktopPrefs", "language", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+        <select aria-label="Desktop language" value={recordValue("language", "en")} onchange={(event) => mutate("desktop language", () => workbenchDataProvider.update("desktopPrefs", "language", { value: (event.currentTarget as HTMLSelectElement).value }))}>
           <option value="en">English</option>
           <option value="zh">Chinese</option>
         </select>
-        <select aria-label="Desktop theme" value={recordValue("theme", "dark")} onchange={(event) => mutate("desktop theme", () => wailsDataProvider.update("desktopPrefs", "theme", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+        <select aria-label="Desktop theme" value={recordValue("theme", "dark")} onchange={(event) => mutate("desktop theme", () => workbenchDataProvider.update("desktopPrefs", "theme", { value: (event.currentTarget as HTMLSelectElement).value }))}>
           <option value="dark">dark</option>
           <option value="light">light</option>
           <option value="system">system</option>
         </select>
-        <select aria-label="Desktop theme style" value={recordValue("themeStyle", "graphite")} onchange={(event) => mutate("desktop style", () => wailsDataProvider.update("desktopPrefs", "themeStyle", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+        <select aria-label="Desktop theme style" value={recordValue("themeStyle", "graphite")} onchange={(event) => mutate("desktop style", () => workbenchDataProvider.update("desktopPrefs", "themeStyle", { value: (event.currentTarget as HTMLSelectElement).value }))}>
           <option value="graphite">graphite</option>
           <option value="glacier">glacier</option>
           <option value="ember">ember</option>
           <option value="violet">violet</option>
         </select>
-        <select aria-label="Close behavior" value={recordValue("closeBehavior", "background")} onchange={(event) => mutate("close behavior", () => wailsDataProvider.update("desktopPrefs", "closeBehavior", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+        <select aria-label="Close behavior" value={recordValue("closeBehavior", "background")} onchange={(event) => mutate("close behavior", () => workbenchDataProvider.update("desktopPrefs", "closeBehavior", { value: (event.currentTarget as HTMLSelectElement).value }))}>
           <option value="background">background</option>
           <option value="quit">quit</option>
         </select>

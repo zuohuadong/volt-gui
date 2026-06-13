@@ -2,12 +2,12 @@
 
 A native desktop window around the VoltUI Go kernel. The same
 transport-agnostic `control.Controller` that backs the chat TUI and the HTTP/SSE
-server is bound **directly** to a React webview — Go methods in, typed events
+server is bound **directly** to a Svelte webview — Go methods in, typed events
 out, no HTTP hop.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  webview (React + TS, Vite)                                  │
+│  webview (Svelte 5 + TS, Vite)                                  │
 │    bridge.ts ──calls──▶ window.go.main.App.{Submit,Cancel,…} │
 │    bridge.ts ◀─events── window.runtime.EventsOn("agent:event")│
 └───────────────▲───────────────────────────┬─────────────────┘
@@ -83,16 +83,13 @@ Fedora deps: `sudo dnf install webkit2gtk4.1-devel gtk3-devel`.
 `.gitkeep` that keeps the Go `//go:embed all:frontend/dist` compilable on a fresh
 checkout). A bare `go build` without a prior `pnpm build` produces a blank window.
 
-The React shell remains the default Wails frontend while the Svelte workbench
-reaches first-phase parity. To package the Svelte workbench through the same
-Wails embed path, run the Wails build with `VOLTUI_DESKTOP_FRONTEND=svelte`; the
-frontend build first runs `frontend-svelte`, then syncs its `dist` output into
+The desktop frontend is a Svelte 5 workbench. The build runs `pnpm build`
+(`svelte-check` + `vite build`) directly in `desktop/frontend`, producing
 `frontend/dist` for `main.go` to embed.
 
 ```sh
-VOLTUI_DESKTOP_FRONTEND=svelte wails build
-VOLTUI_DESKTOP_FRONTEND=svelte pnpm --dir frontend build
-pnpm --dir frontend build:svelte
+wails build
+pnpm --dir frontend build
 ```
 
 ## Releases & auto-update

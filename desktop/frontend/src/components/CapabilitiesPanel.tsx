@@ -75,7 +75,7 @@ export function CapabilitiesPanel({
     const q = skillQuery.trim().toLowerCase();
     if (!q) return view.skills;
     return view.skills.filter((sk) => {
-      const text = [sk.name, `/${sk.name}`, sk.description, sk.scope, sk.runAs].join(" ").toLowerCase();
+      const text = [skillDisplayName(sk.name), sk.name, `/${sk.name}`, sk.description, sk.scope, sk.runAs].join(" ").toLowerCase();
       return text.includes(q);
     });
   }, [view, skillQuery]);
@@ -522,12 +522,13 @@ function SkillRootSkillsList({
       {visible.map((skill) => (
         <div className="cap-source-skill" key={`${skill.scope}:${skill.name}`}>
           <div className="cap-source-skill__head">
-            <span className="cap-source-skill__name">/{skill.name}</span>
+            <span className="cap-source-skill__name" title={`/${skill.name}`}>{skillDisplayName(skill.name)}</span>
             <span className="cap-source-skill__badges">
               <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
               {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
             </span>
           </div>
+          <div className="cap-source-skill__command">/{skill.name}</div>
           {skill.description && <div className="cap-source-skill__desc">{skill.description}</div>}
         </div>
       ))}
@@ -1239,6 +1240,7 @@ function SkillRow({
   const t = useT();
   const summary = summarizeSkillDescription(skill.description);
   const canExpand = summary !== skill.description;
+  const displayName = skillDisplayName(skill.name);
   return (
     <div
       className={`cap-skill-card${expanded ? " cap-skill-card--expanded" : ""}${canExpand ? " cap-skill-card--expandable" : ""}${!skill.enabled ? " cap-skill-card--disabled" : ""}`}
@@ -1248,7 +1250,8 @@ function SkillRow({
           <span className="cap-skill-card__head">
             <span className="cap-skill-card__icon">/</span>
             <span className="cap-skill-card__main">
-              <span className="cap-skill-card__command">{skill.name}</span>
+              <span className="cap-skill-card__title" title={`/${skill.name}`}>{displayName}</span>
+              <span className="cap-skill-card__command">/{skill.name}</span>
               <span className="cap-skill-card__badges">
                 <span className={`cap-skill-badge cap-skill-badge--${skill.scope}`}>{skillScopeLabel(skill.scope, t)}</span>
                 {skill.runAs === "subagent" && <span className="cap-skill-badge cap-skill-badge--run">{t("caps.subagent")}</span>}
@@ -1273,6 +1276,54 @@ function SkillRow({
       {canExpand && <div className="cap-skill-card__more">{expanded ? t("common.collapse") : t("common.expand")}</div>}
     </div>
   );
+}
+
+function skillDisplayName(name: string): string {
+  const words = name
+    .replace(/[_:]+/g, "-")
+    .split("-")
+    .filter(Boolean);
+  if (words.length === 0) return name;
+  return words.map(skillDisplayWord).join(" ");
+}
+
+function skillDisplayWord(word: string): string {
+  const lower = word.toLowerCase();
+  const acronyms: Record<string, string> = {
+    ai: "AI",
+    api: "API",
+    ate: "ATE",
+    c: "C",
+    cd: "CD",
+    ci: "CI",
+    cicd: "CI/CD",
+    cnb: "CNB",
+    csv: "CSV",
+    db: "DB",
+    fa: "FA",
+    git: "Git",
+    gui: "GUI",
+    http: "HTTP",
+    js: "JS",
+    json: "JSON",
+    lims: "LIMS",
+    mcp: "MCP",
+    oa: "OA",
+    ocr: "OCR",
+    pdf: "PDF",
+    pr: "PR",
+    prd: "PRD",
+    qa: "QA",
+    rag: "RAG",
+    rn: "RN",
+    sdk: "SDK",
+    spc: "SPC",
+    sql: "SQL",
+    ssr: "SSR",
+    ui: "UI",
+    ux: "UX",
+  };
+  return acronyms[lower] ?? lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 function skillScopeLabel(scope: string, t: ReturnType<typeof useT>): string {

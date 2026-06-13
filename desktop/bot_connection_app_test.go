@@ -1,3 +1,5 @@
+//go:build bot
+
 package main
 
 import (
@@ -8,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestNormalizeBotInstallTarget(t *testing.T) {

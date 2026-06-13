@@ -98,6 +98,40 @@ func (t *WorkspaceTab) readTelemetrySnapshot() []readFileRecord {
 	return out
 }
 
+type tabRuntimeSettings struct {
+	model       string
+	effort      *string
+	mode        string
+	disabledMCP map[string]ServerView
+	mcpOrder    []string
+}
+
+func (a *App) inheritedTabSettingsLocked() tabRuntimeSettings {
+	source := a.activeTabLocked()
+	if source == nil {
+		return tabRuntimeSettings{mode: "normal", disabledMCP: map[string]ServerView{}}
+	}
+	return tabRuntimeSettings{
+		model:       source.model,
+		effort:      cloneStringPtr(source.effort),
+		mode:        currentTabMode(source),
+		disabledMCP: cloneServerViewMap(source.disabledMCP),
+		mcpOrder:    append([]string(nil), source.mcpOrder...),
+	}
+}
+
+func (s tabRuntimeSettings) applyTo(tab *WorkspaceTab) {
+	tab.model = s.model
+	tab.effort = cloneStringPtr(s.effort)
+	tab.mode = normalizeTabMode(s.mode)
+	if s.disabledMCP != nil {
+		tab.disabledMCP = cloneServerViewMap(s.disabledMCP)
+	} else {
+		tab.disabledMCP = map[string]ServerView{}
+	}
+	tab.mcpOrder = append([]string(nil), s.mcpOrder...)
+}
+
 // tabEventSink wraps a parent event.Sink and prepends a tabId to every wire
 // event so the frontend can route it to the correct tab's reducer.
 type tabEventSink struct {
@@ -302,15 +336,15 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 
 	tabID := a.newUniqueTabIDLocked()
 	topicTitle := topicTitleForTab("project", workspaceRoot, topicID)
+	settings := a.inheritedTabSettingsLocked()
 	tab := &WorkspaceTab{
 		ID:            tabID,
 		Scope:         "project",
 		WorkspaceRoot: workspaceRoot,
 		TopicID:       topicID,
 		TopicTitle:    topicTitle,
-		mode:          "normal",
-		disabledMCP:   map[string]ServerView{},
 	}
+	settings.applyTo(tab)
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
 	a.tabs[tabID] = tab
@@ -344,15 +378,15 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 
 	tabID := a.newUniqueTabIDLocked()
 	topicTitle := topicTitleForTab("global", "", topicID)
+	settings := a.inheritedTabSettingsLocked()
 	tab := &WorkspaceTab{
 		ID:            tabID,
 		Scope:         "global",
 		WorkspaceRoot: globalRoot,
 		TopicID:       topicID,
 		TopicTitle:    topicTitle,
-		mode:          "normal",
-		disabledMCP:   map[string]ServerView{},
 	}
+	settings.applyTo(tab)
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 
 	a.tabs[tabID] = tab
@@ -2100,6 +2134,13 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		used, window := ctrl.ContextSnapshot()
 		info.UsedTokens = used
 		info.WindowTokens = window
+		if usage := ctrl.LastUsage(); usage != nil {
+			info.PromptTokens = usage.PromptTokens
+			info.CompletionTokens = usage.CompletionTokens
+			info.ReasoningTokens = usage.ReasoningTokens
+			info.CacheHitTokens = usage.CacheHitTokens
+			info.CacheMissTokens = usage.CacheMissTokens
+		}
 	}
 
 	if records := tab.readTelemetrySnapshot(); records != nil {

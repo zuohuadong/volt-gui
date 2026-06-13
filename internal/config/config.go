@@ -157,6 +157,8 @@ type DesktopConfig struct {
 	Theme         string `toml:"theme"`          // auto|dark|light; empty resolves to dark
 	ThemeStyle    string `toml:"theme_style"`    // graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier
 	CloseBehavior string `toml:"close_behavior"` // quit|background; desktop window close behavior
+	Telemetry     *bool  `toml:"telemetry"`      // anonymous startup ping; nil defaults to true
+	Metrics       *bool  `toml:"metrics"`        // anonymous usage counters; nil defaults to false
 }
 
 // UITheme normalizes ui.theme to a supported value.
@@ -228,6 +230,18 @@ func (c *Config) DesktopTheme() string {
 // chooses the default style for the resolved desktop theme.
 func (c *Config) DesktopThemeStyle() string {
 	return normalizeThemeStyle(c.Desktop.ThemeStyle)
+}
+
+// DesktopTelemetry reports whether the desktop may send its anonymous startup
+// ping. It defaults on for existing configs unless explicitly disabled.
+func (c *Config) DesktopTelemetry() bool {
+	return c.Desktop.Telemetry == nil || *c.Desktop.Telemetry
+}
+
+// DesktopMetrics reports whether the desktop may flush anonymous aggregate
+// counters. It defaults off unless explicitly enabled.
+func (c *Config) DesktopMetrics() bool {
+	return c.Desktop.Metrics != nil && *c.Desktop.Metrics
 }
 
 // DesktopCloseBehavior normalizes the desktop close-window preference. It falls
@@ -569,6 +583,57 @@ func (e *ProviderEntry) ModelList() []string {
 	return nil
 }
 
+// IsLikelyChatModel filters provider model catalogs down to models that can
+// plausibly answer chat/completion requests.
+func IsLikelyChatModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" {
+		return false
+	}
+	nonChat := []string{
+		"embedding",
+		"moderation",
+		"rerank",
+		"dall-e",
+		"whisper",
+		"text-to-speech",
+		"speech-to-text",
+	}
+	for _, token := range nonChat {
+		if strings.Contains(m, token) {
+			return false
+		}
+	}
+	parts := strings.FieldsFunc(m, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == '/' || r == ':'
+	})
+	for _, part := range parts {
+		switch part {
+		case "asr", "tts":
+			return false
+		}
+	}
+	if strings.Contains(m, "voiceclone") || strings.Contains(m, "voicedesign") {
+		return false
+	}
+	return true
+}
+
+// ChatModelList returns ModelList filtered to likely chat-capable models.
+func (e *ProviderEntry) ChatModelList() []string {
+	models := e.ModelList()
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		if IsLikelyChatModel(model) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
 // DefaultModel returns the provider's default model: the explicit `default`, else
 // the first of ModelList.
 func (e *ProviderEntry) DefaultModel() string {
@@ -593,8 +658,18 @@ func (e *ProviderEntry) HasModel(m string) bool {
 
 // ToolsConfig selects which built-in tools are enabled. Empty means all of them.
 type ToolsConfig struct {
-	Enabled []string     `toml:"enabled"`
-	Search  SearchConfig `toml:"search"`
+	Enabled            []string     `toml:"enabled"`
+	BashTimeoutSeconds *int         `toml:"bash_timeout_seconds"`
+	Search             SearchConfig `toml:"search"`
+}
+
+func intPtr(v int) *int { return &v }
+
+func (c *Config) BashTimeoutSeconds() int {
+	if c.Tools.BashTimeoutSeconds == nil || *c.Tools.BashTimeoutSeconds < 0 {
+		return 120
+	}
+	return *c.Tools.BashTimeoutSeconds
 }
 
 // SearchConfig tunes the grep tool's engine. Engine is "auto" (default — use
@@ -1129,6 +1204,59 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	return nil, false
 }
 
+func ModelRefsProvider(ref, provider string) bool {
+	ref = strings.TrimSpace(ref)
+	provider = strings.TrimSpace(provider)
+	if ref == "" || provider == "" {
+		return false
+	}
+	return ref == provider || strings.HasPrefix(ref, provider+"/")
+}
+
+func modelRefForEntry(e *ProviderEntry) string {
+	if e == nil || e.Name == "" || e.Model == "" {
+		return ""
+	}
+	return e.Name + "/" + e.Model
+}
+
+func (c *Config) ResolveModelWithFallback(ref string) (resolved string, fallback bool, ok bool) {
+	if e, found := c.ResolveModel(strings.TrimSpace(ref)); found && e.Configured() {
+		return modelRefForEntry(e), false, true
+	}
+	if e, found := c.ResolveModel(strings.TrimSpace(c.DefaultModel)); found && e.Configured() {
+		return modelRefForEntry(e), true, true
+	}
+	for i := range c.Providers {
+		if !c.Providers[i].Configured() {
+			continue
+		}
+		cp := c.Providers[i]
+		cp.Model = cp.DefaultModel()
+		if got := modelRefForEntry(&cp); got != "" {
+			return got, true, true
+		}
+	}
+	return "", false, false
+}
+
+func providerRefersToModel(ref string, provider *ProviderEntry) bool {
+	if provider == nil {
+		return false
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	if ModelRefsProvider(ref, provider.Name) {
+		return true
+	}
+	if _, model, ok := strings.Cut(ref, "/"); ok {
+		return provider.HasModel(model)
+	}
+	return provider.HasModel(ref)
+}
+
 // APIKey resolves the entry's API key from its api_key_env.
 func (e *ProviderEntry) APIKey() string {
 	if e.APIKeyEnv == "" {
@@ -1148,8 +1276,16 @@ func (e *ProviderEntry) Configured() bool {
 // default prompt with the configured brand name, so OEM builds can customise the
 // agent's self-identity without editing the prompt text.
 func (c *Config) ResolveSystemPrompt() (string, error) {
+	return c.ResolveSystemPromptForRoot(".")
+}
+
+func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 	if c.Agent.SystemPromptFile != "" {
-		b, err := os.ReadFile(c.Agent.SystemPromptFile)
+		path := ExpandVars(c.Agent.SystemPromptFile)
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(resolveRoot(root), path)
+		}
+		b, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("system_prompt_file: %w", err)
 		}

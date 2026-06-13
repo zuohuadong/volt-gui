@@ -83,6 +83,18 @@ Fedora deps: `sudo dnf install webkit2gtk4.1-devel gtk3-devel`.
 `.gitkeep` that keeps the Go `//go:embed all:frontend/dist` compilable on a fresh
 checkout). A bare `go build` without a prior `pnpm build` produces a blank window.
 
+The React shell remains the default Wails frontend while the Svelte workbench
+reaches first-phase parity. To package the Svelte workbench through the same
+Wails embed path, run the Wails build with `VOLTUI_DESKTOP_FRONTEND=svelte`; the
+frontend build first runs `frontend-svelte`, then syncs its `dist` output into
+`frontend/dist` for `main.go` to embed.
+
+```sh
+VOLTUI_DESKTOP_FRONTEND=svelte wails build
+VOLTUI_DESKTOP_FRONTEND=svelte pnpm --dir frontend build
+pnpm --dir frontend build:svelte
+```
+
 ## Releases & auto-update
 
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`
@@ -180,7 +192,9 @@ handled here, and what to reach for if a target misbehaves:
   setting; the runtime must be installed (bundle it for distribution).
 - **macOS / WebKit** — inset/hidden title bar (`TitleBarHiddenInset`); the CSS
   marks the top bar as an OS drag region (`--wails-draggable: drag`) and leaves
-  room for the traffic lights.
+  room for the traffic lights. The native tray is disabled on macOS until it can
+  be initialized on the AppKit main thread; Dock/menu activation remains the
+  supported restore path.
 - **Theming** — colors are CSS variables gated on `prefers-color-scheme`, which all
   three webviews honor, so the UI follows the OS theme without native glue.
 - **Fonts / offline** — system font stack only; no web-font fetches, so first paint

@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "node ../scripts/build-wails-frontend.mjs",
+    "build:react": "tsc --noEmit && vite build",
+    "build:svelte": "node ../scripts/build-wails-frontend.mjs svelte",
+    "sync:svelte-dist": "node ../scripts/sync-workbench-dist.mjs",
     "preview": "vite preview",
     "test:todo-visibility": "node scripts/test-todo-visibility.mjs",
     "typecheck": "tsc --noEmit"

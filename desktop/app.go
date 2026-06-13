@@ -422,7 +422,65 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) {
 		return
 	}
 	_ = recordSessionDisplay(config.SessionDir(), ctrl.SessionPath(), input, display)
+	if ctrl.PlanMode() {
+		_ = recordSessionDisplay(config.SessionDir(), ctrl.SessionPath(), control.PlanModeMarker+"\n\n"+input, display)
+	}
 	ctrl.Submit(input)
+}
+
+// GoalInfo is the desktop-facing snapshot of a tab's long-running objective.
+type GoalInfo struct {
+	Objective     string `json:"objective"`
+	Status        string `json:"status"`
+	BlockedReason string `json:"blockedReason,omitempty"`
+}
+
+// Goal returns the active tab's long-running objective state.
+func (a *App) Goal() GoalInfo {
+	return a.GoalForTab("")
+}
+
+func (a *App) GoalForTab(tabID string) GoalInfo {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl == nil {
+		return GoalInfo{Status: string(control.GoalStatusIdle)}
+	}
+	return GoalInfo{
+		Objective:     ctrl.Goal(),
+		Status:        string(ctrl.GoalStatus()),
+		BlockedReason: ctrl.GoalBlockedReason(),
+	}
+}
+
+// StartGoal starts or replaces the active tab's long-running objective.
+func (a *App) StartGoal(objective string) {
+	a.StartGoalForTab("", objective)
+}
+
+func (a *App) StartGoalForTab(tabID, objective string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.StartGoal(objective)
+	}
+}
+
+func (a *App) ContinueGoal() {
+	a.ContinueGoalForTab("")
+}
+
+func (a *App) ContinueGoalForTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.ContinueGoal()
+	}
+}
+
+func (a *App) ClearGoal() {
+	a.ClearGoalForTab("")
+}
+
+func (a *App) ClearGoalForTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
+		ctrl.ClearGoal()
+	}
 }
 
 // Cancel aborts the in-flight turn.
@@ -574,13 +632,21 @@ func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 	}
 	metas := ctrl.Checkpoints()
 	out := make([]CheckpointMeta, 0, len(metas))
-	for _, m := range metas {
+	canCode := make([]bool, len(metas))
+	hasCode := false
+	for i := len(metas) - 1; i >= 0; i-- {
+		if len(metas[i].Paths) > 0 {
+			hasCode = true
+		}
+		canCode[i] = hasCode
+	}
+	for i, m := range metas {
 		out = append(out, CheckpointMeta{
 			Turn:            m.Turn,
 			Prompt:          m.Prompt,
 			Files:           m.Paths,
 			Time:            m.Time.UnixMilli(),
-			CanCode:         len(m.Paths) > 0,
+			CanCode:         canCode[i],
 			CanConversation: ctrl.CheckpointHasBoundary(m.Turn),
 		})
 	}
@@ -2540,19 +2606,36 @@ type FilePreview struct {
 }
 
 type WorkspaceChangeView struct {
-	Path         string   `json:"path"`
-	OldPath      string   `json:"oldPath,omitempty"`
-	Sources      []string `json:"sources"`
-	GitStatus    string   `json:"gitStatus,omitempty"`
-	Turns        []int    `json:"turns,omitempty"`
-	LatestPrompt string   `json:"latestPrompt,omitempty"`
-	LatestTime   int64    `json:"latestTime,omitempty"`
+	Path           string   `json:"path"`
+	OldPath        string   `json:"oldPath,omitempty"`
+	Sources        []string `json:"sources"`
+	GitStatus      string   `json:"gitStatus,omitempty"`
+	IndexStatus    string   `json:"indexStatus,omitempty"`
+	WorktreeStatus string   `json:"worktreeStatus,omitempty"`
+	Turns          []int    `json:"turns,omitempty"`
+	LatestPrompt   string   `json:"latestPrompt,omitempty"`
+	LatestTime     int64    `json:"latestTime,omitempty"`
 }
 
 type WorkspaceChangesView struct {
 	Files        []WorkspaceChangeView `json:"files"`
 	GitAvailable bool                  `json:"gitAvailable"`
 	GitErr       string                `json:"gitErr,omitempty"`
+}
+
+type WorkspaceDiffView struct {
+	Path           string `json:"path"`
+	OldPath        string `json:"oldPath,omitempty"`
+	Status         string `json:"status,omitempty"`
+	IndexStatus    string `json:"indexStatus,omitempty"`
+	WorktreeStatus string `json:"worktreeStatus,omitempty"`
+	Kind           string `json:"kind"`
+	Diff           string `json:"diff"`
+	Added          int    `json:"added"`
+	Removed        int    `json:"removed"`
+	Binary         bool   `json:"binary"`
+	Truncated      bool   `json:"truncated"`
+	Err            string `json:"err,omitempty"`
 }
 
 // atSkip are entries the "@" menu hides as noise.

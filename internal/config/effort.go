@@ -32,6 +32,8 @@ func EffortCapabilityForEntry(e *ProviderEntry) EffortCapability {
 	switch {
 	case isDeepSeekEntry(e):
 		return EffortCapability{Supported: true, Levels: []string{"auto", "high", "max"}, Default: "high"}
+	case isMiniMaxEntry(e):
+		return EffortCapability{Supported: true, Levels: []string{"auto", "adaptive", "disabled"}, Default: "adaptive"}
 	case e != nil && e.Kind == "anthropic":
 		return EffortCapability{Supported: true, Levels: []string{"auto", "low", "medium", "high", "xhigh", "max"}, Default: "auto"}
 	default:
@@ -67,6 +69,15 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 			return "max", nil
 		default:
 			return "", fmt.Errorf("usage: /effort auto|high|max")
+		}
+	case isMiniMaxEntry(e):
+		switch level {
+		case "adaptive", "low", "medium", "high":
+			return "adaptive", nil
+		case "disabled", "off", "xhigh", "max":
+			return "disabled", nil
+		default:
+			return "", fmt.Errorf("usage: /effort auto|adaptive|disabled")
 		}
 	case e != nil && e.Kind == "anthropic":
 		switch level {
@@ -149,6 +160,18 @@ func isDeepSeekEntry(e *ProviderEntry) bool {
 	}
 	host := strings.ToLower(u.Hostname())
 	return host == "api.deepseek.com" || strings.HasSuffix(host, ".deepseek.com")
+}
+
+func isMiniMaxEntry(e *ProviderEntry) bool {
+	if e == nil || e.Kind != "openai" {
+		return false
+	}
+	u, err := url.Parse(e.BaseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "api.minimaxi.com" || strings.HasSuffix(host, ".minimaxi.com")
 }
 
 func containsString(haystack []string, needle string) bool {

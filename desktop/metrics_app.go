@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"reasonix/internal/config"
-	"reasonix/internal/event"
+	"voltui/internal/config"
+	"voltui/internal/event"
 )
 
 // metrics_app.go is the opt-in aggregate agent-metrics flush: anonymous

@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 type mcpImportPicker struct {

@@ -234,6 +234,11 @@ func (a *App) restoreOrBuildTabs() {
 	ctx := a.ctx
 	ensureWorkspace()
 
+	// Run legacy config migration before the first config load so the
+	// freshly written config (including the user's default_model) is
+	// picked up by Load instead of falling back to built-in defaults.
+	config.MigrateLegacyIfNeeded()
+
 	// Load i18n from the first available config.
 	if cfg, err := config.Load(); err == nil {
 		i18n.DetectLanguage(cfg.Language)

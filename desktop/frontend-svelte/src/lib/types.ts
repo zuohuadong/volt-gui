@@ -39,9 +39,104 @@ export interface ProjectNode {
 }
 
 export interface ModelInfo {
+  ref?: string;
+  provider?: string;
+  model?: string;
   name: string;
   label?: string;
   current?: boolean;
+}
+
+export interface ProviderView {
+  name: string;
+  kind: string;
+  baseUrl: string;
+  models: string[];
+  default: string;
+  apiKeyEnv: string;
+  keySet: boolean;
+  balanceUrl: string;
+  contextWindow: number;
+  supportedEfforts: string[];
+  defaultEffort: string;
+}
+
+export interface ServerView {
+  name: string;
+  transport: string;
+  status: "connected" | "deferred" | "failed" | "initializing" | "disabled" | string;
+  builtIn?: boolean;
+  configured?: boolean;
+  autoStart: boolean;
+  tier?: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  envKeys?: string[];
+  tools: number;
+  prompts: number;
+  resources: number;
+  error?: string;
+}
+
+export interface SkillView {
+  name: string;
+  description: string;
+  scope: string;
+  runAs: string;
+  enabled: boolean;
+}
+
+export interface SkillRootView {
+  dir: string;
+  scope: string;
+  priority: number;
+  status: string;
+  configured: boolean;
+  skills: number;
+  warning?: string;
+}
+
+export interface CapabilitiesView {
+  servers: ServerView[];
+  skills: SkillView[];
+  skillRoots: SkillRootView[];
+}
+
+export interface MCPServerInput {
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  url: string;
+  env?: Record<string, string> | null;
+  tier: string;
+}
+
+export interface PermissionsView {
+  mode: string;
+  allow: string[];
+  ask: string[];
+  deny: string[];
+}
+
+export interface SandboxView {
+  bash: string;
+  network: boolean;
+  workspaceRoot: string;
+  allowWrite: string[];
+}
+
+export interface SettingsView {
+  defaultModel: string;
+  plannerModel: string;
+  autoPlan: string;
+  providers: ProviderView[];
+  permissions: PermissionsView;
+  sandbox: SandboxView;
+  configPath: string;
+  providerKinds: string[];
+  bypass: boolean;
 }
 
 export interface EffortInfo {

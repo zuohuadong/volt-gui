@@ -40,10 +40,10 @@ Status values:
 | Code dock | File tree and preview | code | partial | `@` search can preview files through `ReadFile`; full tree/reveal/open flows still required. |
 | Code dock | Changed files and diffs | code | partial | `WorkspaceChanges` renders changed files and Svelte calls the new `WorkspaceDiff` Wails binding to render unified diff hunks with +/− counts; real Wails runtime smoke and richer staged/rename edge cases still required. |
 | Code dock | Checkpoints and rewind | code | partial | `CheckpointsForTab` renders rewind points and calls `Rewind` by conversation/code/both scope; full post-rewind history refresh still required. |
-| Resources | Providers and models | work, code | partial | svadmin-compatible provider/resource panel can list provider/model counts through Wails/mock bridge; update/key flows remain. |
-| Resources | MCP servers | work, code | partial | MCP server resource count is exposed in the resource panel; add/update/enable/reconnect/remove still required. |
-| Resources | Skills | work, code | partial | Skill resource count is exposed in the resource panel; enable/disable/refresh still required. |
-| Resources | Permissions and sandbox | code | partial | Permission resource count is exposed in the resource panel; rule/sandbox editors still required. |
+| Resources | Providers and models | work, code | usable | svadmin-compatible resource console lists providers/models through `Settings`, can save providers with key env updates, delete providers, and set default/planner models through Wails bindings; Browser smoke covers provider template/save/key and model default/planner flows. |
+| Resources | MCP servers | work, code | usable | Resource console lists MCP servers through `Capabilities`, can add/update/remove/retry/toggle servers through existing Wails bindings; Browser smoke covers MCP template/add and enable flows. |
+| Resources | Skills | work, code | usable | Resource console lists skills through `Capabilities`, can refresh and enable/disable skills through existing Wails bindings; Browser smoke covers skill toggle flow. |
+| Resources | Permissions and sandbox | code | usable | Resource console lists permission mode/rules/sandbox through `Settings`, can set permission mode, add/remove rules, and update sandbox through existing Wails bindings; Browser smoke covers permission mode and rule flows. |
 | Resources | Appearance, language, desktop prefs | work, code | planned | Persist settings through Go bindings. |
 | Updates | Update banner/check/apply | work, code | planned | Check, manual download path, apply when supported. |
 | Accessibility | Keyboard navigation | work, code | planned | Tab order and primary shortcuts work. |

@@ -7,10 +7,14 @@ import type {
   FilePreview,
   GoalInfo,
   CheckpointMeta,
+  CapabilitiesView,
   HistoryMessage,
+  MCPServerInput,
   ModelInfo,
   ProjectNode,
+  ProviderView,
   QuestionAnswer,
+  SettingsView,
   TabMeta,
   TopicMeta,
   WireEvent,
@@ -62,8 +66,24 @@ interface AppBindings {
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
-  Capabilities(): Promise<unknown>;
-  Settings(): Promise<unknown>;
+  Capabilities(): Promise<CapabilitiesView>;
+  AddMCPServer(input: MCPServerInput): Promise<number>;
+  UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
+  RemoveMCPServer(name: string): Promise<void>;
+  RetryMCPServer(name: string): Promise<void>;
+  SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
+  RefreshSkills(): Promise<void>;
+  SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
+  Settings(): Promise<SettingsView>;
+  SetDefaultModel(ref: string): Promise<void>;
+  SetPlannerModel(ref: string): Promise<void>;
+  SaveProvider(provider: ProviderView): Promise<void>;
+  DeleteProvider(name: string): Promise<void>;
+  SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
+  SetPermissionMode(mode: string): Promise<void>;
+  AddPermissionRule(list: string, rule: string): Promise<void>;
+  RemovePermissionRule(list: string, rule: string): Promise<void>;
+  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
   Memory(): Promise<unknown>;
 }
 
@@ -306,6 +326,99 @@ const mockFiles: DirEntry[] = [
   { name: "desktop/frontend-svelte/src/lib/bridge.ts", isDir: false },
   { name: "docs/WORKBENCH.zh-CN.md", isDir: false },
 ];
+
+let mockCapabilities: CapabilitiesView = {
+  servers: [
+    {
+      name: "filesystem",
+      transport: "stdio",
+      status: "connected",
+      configured: true,
+      autoStart: true,
+      tier: "background",
+      command: "voltui-mcp-filesystem",
+      args: [],
+      tools: 8,
+      prompts: 0,
+      resources: 2,
+    },
+    {
+      name: "browser",
+      transport: "http",
+      status: "disabled",
+      configured: true,
+      autoStart: false,
+      tier: "lazy",
+      url: "http://127.0.0.1:9876/mcp",
+      tools: 0,
+      prompts: 0,
+      resources: 0,
+    },
+  ],
+  skills: [
+    { name: "svelte-code-writer", description: "Svelte 5 component authoring", scope: "global", runAs: "inline", enabled: true },
+    { name: "svadmin-admin-ui", description: "svadmin resource/admin surfaces", scope: "global", runAs: "inline", enabled: true },
+    { name: "typescript", description: "Strict TypeScript workflow", scope: "global", runAs: "inline", enabled: true },
+  ],
+  skillRoots: [],
+};
+
+let mockSettings: SettingsView = {
+  defaultModel: "deepseek/deepseek-chat",
+  plannerModel: "",
+  autoPlan: "off",
+  providerKinds: ["openai", "anthropic", "google"],
+  providers: [
+    {
+      name: "deepseek",
+      kind: "openai",
+      baseUrl: "https://api.deepseek.com",
+      models: ["deepseek-chat", "deepseek-reasoner"],
+      default: "deepseek-chat",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
+      keySet: true,
+      balanceUrl: "",
+      contextWindow: 128000,
+      supportedEfforts: ["auto", "low", "medium", "high"],
+      defaultEffort: "auto",
+    },
+    {
+      name: "mimo",
+      kind: "openai",
+      baseUrl: "https://api.mimo.example/v1",
+      models: ["mimo-pro"],
+      default: "mimo-pro",
+      apiKeyEnv: "MIMO_API_KEY",
+      keySet: false,
+      balanceUrl: "",
+      contextWindow: 64000,
+      supportedEfforts: ["auto", "medium", "high"],
+      defaultEffort: "auto",
+    },
+  ],
+  permissions: {
+    mode: "ask",
+    allow: ["read_file"],
+    ask: ["bash(*)"],
+    deny: ["bash(rm -rf *)"],
+  },
+  sandbox: {
+    bash: "enforce",
+    network: false,
+    workspaceRoot: "",
+    allowWrite: [],
+  },
+  configPath: "~/.voltui/config.toml",
+  bypass: false,
+};
+
+function cloneCapabilities(): CapabilitiesView {
+  return JSON.parse(JSON.stringify(mockCapabilities)) as CapabilitiesView;
+}
+
+function cloneSettings(): SettingsView {
+  return JSON.parse(JSON.stringify(mockSettings)) as SettingsView;
+}
 
 const mockApp: AppBindings = {
   async SubmitToTab(_tabID: string, input: string) {
@@ -563,10 +676,19 @@ const mockApp: AppBindings = {
     emitMock({ kind: "notice", tabId: mockActiveTabId, text: `Rewind requested for turn ${turn} (${scope}).` });
   },
   async ModelsForTab(_tabID: string) {
-    return [
-      { name: "deepseek-flash", label: "DeepSeek Flash", current: mockSelectedModel === "deepseek-flash" },
-      { name: "mimo-pro", label: "MiMo Pro", current: mockSelectedModel === "mimo-pro" },
-    ];
+    return mockSettings.providers.flatMap((provider) =>
+      provider.models.map((model) => {
+        const ref = `${provider.name}/${model}`;
+        return {
+          ref,
+          provider: provider.name,
+          model,
+          name: ref,
+          label: ref,
+          current: mockSelectedModel === ref || mockSettings.defaultModel === ref,
+        };
+      }),
+    );
   },
   async SetModelForTab(_tabID: string, name: string) {
     mockSelectedModel = name;
@@ -714,19 +836,106 @@ const mockApp: AppBindings = {
     };
   },
   async Capabilities() {
-    return {
-      skills: [
-        { name: "svelte-code-writer", enabled: true },
-        { name: "svadmin-admin-ui", enabled: true },
-      ],
-      servers: [{ name: "filesystem", status: "connected" }],
-    };
+    return cloneCapabilities();
+  },
+  async AddMCPServer(input: MCPServerInput) {
+    const tools = input.transport === "stdio" ? 3 : 5;
+    mockCapabilities.servers = [
+      ...mockCapabilities.servers.filter((server) => server.name !== input.name),
+      {
+        name: input.name,
+        transport: input.transport,
+        status: "connected",
+        configured: true,
+        autoStart: true,
+        tier: input.tier || "lazy",
+        command: input.command,
+        args: input.args,
+        url: input.url,
+        envKeys: input.env ? Object.keys(input.env).sort() : [],
+        tools,
+        prompts: 0,
+        resources: 0,
+      },
+    ];
+    return tools;
+  },
+  async UpdateMCPServer(name: string, input: MCPServerInput) {
+    mockCapabilities.servers = mockCapabilities.servers.map((server) =>
+      server.name === name
+        ? {
+            ...server,
+            transport: input.transport,
+            tier: input.tier || server.tier,
+            command: input.transport === "stdio" ? input.command : "",
+            args: input.transport === "stdio" ? input.args : [],
+            url: input.transport === "stdio" ? "" : input.url,
+            envKeys: input.env ? Object.keys(input.env).sort() : server.envKeys,
+            status: server.status === "disabled" ? "disabled" : "connected",
+            tools: server.status === "disabled" ? 0 : server.tools || (input.transport === "stdio" ? 3 : 5),
+          }
+        : server,
+    );
+  },
+  async RemoveMCPServer(name: string) {
+    mockCapabilities.servers = mockCapabilities.servers.filter((server) => server.name !== name);
+  },
+  async RetryMCPServer(name: string) {
+    mockCapabilities.servers = mockCapabilities.servers.map((server) =>
+      server.name === name ? { ...server, status: "connected", tools: server.tools || 4, error: undefined } : server,
+    );
+  },
+  async SetMCPServerEnabled(name: string, enabled: boolean) {
+    mockCapabilities.servers = mockCapabilities.servers.map((server) =>
+      server.name === name
+        ? { ...server, status: enabled ? "connected" : "disabled", tools: enabled ? server.tools || 4 : 0, error: undefined }
+        : server,
+    );
+  },
+  async RefreshSkills() {
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: "skills refreshed" });
+  },
+  async SetSkillEnabled(name: string, enabled: boolean) {
+    mockCapabilities.skills = mockCapabilities.skills.map((skill) => (skill.name === name ? { ...skill, enabled } : skill));
   },
   async Settings() {
-    return {
-      providers: [{ name: "deepseek-flash" }, { name: "mimo-pro" }],
-      permissions: { mode: "ask", allow: ["read_file"], deny: ["bash(rm *)"] },
-    };
+    return cloneSettings();
+  },
+  async SetDefaultModel(ref: string) {
+    mockSettings.defaultModel = ref;
+    mockSelectedModel = ref;
+  },
+  async SetPlannerModel(ref: string) {
+    mockSettings.plannerModel = ref;
+  },
+  async SaveProvider(provider: ProviderView) {
+    const next = { ...provider, keySet: Boolean(provider.keySet) };
+    const index = mockSettings.providers.findIndex((item) => item.name === next.name);
+    if (index >= 0) {
+      mockSettings.providers[index] = next;
+    } else {
+      mockSettings.providers = [...mockSettings.providers, next];
+    }
+  },
+  async DeleteProvider(name: string) {
+    mockSettings.providers = mockSettings.providers.filter((provider) => provider.name !== name);
+  },
+  async SetProviderKey(apiKeyEnv: string, value: string) {
+    mockSettings.providers = mockSettings.providers.map((provider) => (provider.apiKeyEnv === apiKeyEnv ? { ...provider, keySet: value.trim() !== "" } : provider));
+  },
+  async SetPermissionMode(mode: string) {
+    mockSettings.permissions.mode = mode;
+  },
+  async AddPermissionRule(list: string, rule: string) {
+    const key = list === "allow" || list === "ask" || list === "deny" ? list : "ask";
+    if (rule.trim() && !mockSettings.permissions[key].includes(rule.trim())) mockSettings.permissions[key] = [...mockSettings.permissions[key], rule.trim()];
+  },
+  async RemovePermissionRule(list: string, rule: string) {
+    const key = list === "allow" || list === "ask" || list === "deny" ? list : "ask";
+    mockSettings.permissions[key] = mockSettings.permissions[key].filter((item) => item !== rule);
+  },
+  async SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]) {
+    mockSettings.sandbox = { bash, network, workspaceRoot, allowWrite };
   },
   async Memory() {
     return { entries: [{ name: "workbench-roadmap", note: "Keep Work and Code modes orthogonal." }] };

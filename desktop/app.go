@@ -422,6 +422,9 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) {
 		return
 	}
 	_ = recordSessionDisplay(config.SessionDir(), ctrl.SessionPath(), input, display)
+	if ctrl.PlanMode() {
+		_ = recordSessionDisplay(config.SessionDir(), ctrl.SessionPath(), control.PlanModeMarker+"\n\n"+input, display)
+	}
 	ctrl.Submit(input)
 }
 

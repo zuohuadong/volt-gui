@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,5 +111,54 @@ func TestAttachDroppedImageStoresThumbnail(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.PreviewURL, "data:image/png;base64,") {
 		t.Fatalf("preview = %q, want png data URL", got.PreviewURL)
+	}
+}
+
+func TestWailsAttachmentBindingsCoverPasteAndDrop(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	root := t.TempDir()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{}
+
+	fileData := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte("notes"))
+	fileRef, err := app.SavePastedFile("notes.txt", fileData)
+	if err != nil {
+		t.Fatalf("SavePastedFile: %v", err)
+	}
+	if !strings.HasPrefix(fileRef, ".voltui/attachments/") || !strings.HasSuffix(fileRef, ".txt") {
+		t.Fatalf("file ref = %q, want .voltui txt attachment", fileRef)
+	}
+	if b, err := os.ReadFile(filepath.FromSlash(fileRef)); err != nil || string(b) != "notes" {
+		t.Fatalf("saved pasted file = %q/%v, want notes", string(b), err)
+	}
+
+	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 64)...)
+	imageData := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	imageRef, err := app.SavePastedImage(imageData)
+	if err != nil {
+		t.Fatalf("SavePastedImage: %v", err)
+	}
+	preview, err := app.AttachmentDataURL(imageRef)
+	if err != nil {
+		t.Fatalf("AttachmentDataURL: %v", err)
+	}
+	if !strings.HasPrefix(preview, "data:image/png;base64,") {
+		t.Fatalf("preview = %q, want png data URL", preview)
+	}
+
+	outside := filepath.Join(t.TempDir(), "report.pdf")
+	if err := os.WriteFile(outside, []byte("%PDF body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dropped, err := app.AttachDropped(outside)
+	if err != nil {
+		t.Fatalf("AttachDropped: %v", err)
+	}
+	if dropped.Kind != "attachment" || !strings.HasPrefix(dropped.Path, ".voltui/attachments/") || !strings.HasSuffix(dropped.Path, ".pdf") {
+		t.Fatalf("dropped = %+v, want copied pdf attachment", dropped)
 	}
 }

@@ -14,12 +14,12 @@ Status values:
 
 | Area | Feature | Mode | Status | Evidence required |
 | --- | --- | --- | --- | --- |
-| Runtime | Wails boot path | work, code | planned | Wails runtime smoke renders nonblank UI. |
-| Runtime | Browser dev mock path | work, code | planned | `pnpm dev` works without Go bindings and streams mock events. |
+| Runtime | Wails boot path | work, code | partial | Svelte app and Wails-style bridge exist; Wails runtime smoke still required. |
+| Runtime | Browser dev mock path | work, code | usable | `pnpm build` verifies the mock-backed Svelte shell compiles; dev smoke still required. |
 | Navigation | App chrome and tabs | work, code | planned | List, switch, close, reorder, and create tabs. |
 | Navigation | Sidebar workspaces/projects | work, code | planned | List workspaces/projects, open topics, preserve active selection. |
-| Activity | Work/Code switcher | work, code | planned | Switch activity mode without changing run mode. |
-| Run modes | Ask/Auto/YOLO controls | work, code | planned | Toggle mode and verify approval behavior. |
+| Activity | Work/Code switcher | work, code | usable | Svelte shell switches activity mode independently from run mode. |
+| Run modes | Ask/Auto/YOLO controls | work, code | partial | Svelte shell preserves run-mode state; Go approval behavior still needs wiring. |
 | Run modes | Plan control | work, code | planned | Read-only plan turn and approval handoff. |
 | Run modes | Goal entry points | work, code | planned | Start, view, continue, clear goal. |
 | Chat loop | Submit user turn | work, code | planned | Submit text and route to active tab. |
@@ -40,7 +40,7 @@ Status values:
 | Code dock | File tree and preview | code | planned | List/search/read/reveal workspace files. |
 | Code dock | Changed files and diffs | code | planned | Workspace changes and diff viewer render. |
 | Code dock | Checkpoints and rewind | code | planned | List checkpoints and rewind by scope. |
-| Resources | Providers and models | work, code | planned | Data provider list/update, key entry path. |
+| Resources | Providers and models | work, code | partial | svadmin-compatible provider can list models through Wails/mock bridge; update/key flows remain. |
 | Resources | MCP servers | work, code | planned | List, add, update, enable, reconnect, remove. |
 | Resources | Skills | work, code | planned | List roots/skills, enable/disable, refresh. |
 | Resources | Permissions and sandbox | code | planned | View/update permission rules and sandbox settings. |
@@ -48,7 +48,7 @@ Status values:
 | Updates | Update banner/check/apply | work, code | planned | Check, manual download path, apply when supported. |
 | Accessibility | Keyboard navigation | work, code | planned | Tab order and primary shortcuts work. |
 | Accessibility | Text overflow/responsive layout | work, code | planned | Desktop and narrow viewport screenshots. |
-| Packaging | Production build | work, code | planned | Frontend production build and Wails build. |
+| Packaging | Production build | work, code | partial | `desktop/frontend-svelte pnpm build` passes; Wails build integration remains. |
 
 The React desktop shell can only be removed after every row is at least `usable`
 and all first-phase rows in [`WORKBENCH.md`](./WORKBENCH.md#required-first-phase-feature-parity)

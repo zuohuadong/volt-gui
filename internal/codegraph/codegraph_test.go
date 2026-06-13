@@ -92,6 +92,115 @@ func TestEnsureInitPropagatesFailure(t *testing.T) {
 	}
 }
 
+func TestDaemonPIDNoLog(t *testing.T) {
+	root := t.TempDir()
+	pid, ok := DaemonPID(root)
+	if ok || pid != 0 {
+		t.Fatalf("DaemonPID with no log = %d, %v; want 0, false", pid, ok)
+	}
+}
+
+func TestDaemonPIDEmptyLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pid, ok := DaemonPID(root)
+	if ok || pid != 0 {
+		t.Fatalf("DaemonPID with empty log = %d, %v; want 0, false", pid, ok)
+	}
+}
+
+func TestDaemonPIDNoListeningLine(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := "[CodeGraph MCP] File watcher active\n[CodeGraph MCP] Caught up 7 file(s)\n"
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pid, ok := DaemonPID(root)
+	if ok || pid != 0 {
+		t.Fatalf("DaemonPID with no Listening line = %d, %v; want 0, false", pid, ok)
+	}
+}
+
+func TestDaemonPIDSingleLine(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 12345, v0.9.7). Idle timeout 300000ms.\n"
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pid, ok := DaemonPID(root)
+	if !ok || pid != 12345 {
+		t.Fatalf("DaemonPID = %d, %v; want 12345, true", pid, ok)
+	}
+}
+
+func TestDaemonPIDReturnsLast(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 100, v0.9.7). Idle timeout 300000ms.\n"
+	log += "[CodeGraph daemon] Shutting down (idle timeout; clients=0).\n"
+	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 99999, v0.9.9). Idle timeout 300000ms.\n"
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pid, ok := DaemonPID(root)
+	if !ok || pid != 99999 {
+		t.Fatalf("DaemonPID = %d, %v; want 99999 (last), true", pid, ok)
+	}
+}
+
+func TestDaemonPIDSkipsMalformed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Lines missing "(pid ", with non-numeric PID, and with zero PID should all be skipped.
+	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (v0.9.7). Idle timeout 300000ms.\n"
+	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid abc, v0.9.7). Idle timeout 300000ms.\n"
+	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 0, v0.9.7). Idle timeout 300000ms.\n"
+	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid -5, v0.9.7). Idle timeout 300000ms.\n"
+	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 42, v0.9.7). Idle timeout 300000ms.\n"
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pid, ok := DaemonPID(root)
+	if !ok || pid != 42 {
+		t.Fatalf("DaemonPID = %d, %v; want 42 (only valid PID), true", pid, ok)
+	}
+}
+
+func TestKillDaemonNoLog(t *testing.T) {
+	// Must not panic or error when there is no .codegraph directory at all.
+	root := t.TempDir()
+	KillDaemon(root) // no-op
+}
+
+func TestKillDaemonBadPID(t *testing.T) {
+	// PID that doesn't correspond to a running process: KillDaemon must not error.
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Use a PID that almost certainly doesn't exist (max int32).
+	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 2147483647, v0.9.7). Idle timeout 300000ms.\n"
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	KillDaemon(root) // best-effort; must not panic
+}
+
 func TestIndexableRootRejectsFilesystemRoots(t *testing.T) {
 	if got := IndexableRoot(t.TempDir()); !got {
 		t.Fatal("a real project dir must be indexable")

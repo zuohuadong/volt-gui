@@ -14,12 +14,14 @@
 package codegraph
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -206,4 +208,61 @@ func isExec(p string) bool {
 		return true
 	}
 	return fi.Mode()&0o111 != 0
+}
+
+// DaemonPID returns the PID of the most recently started CodeGraph daemon for
+// root, parsed from the daemon log. It returns 0, false when the log doesn't
+// exist, is empty, or contains no parsable PID line.
+//
+// The daemon writes lines like:
+//
+//	[CodeGraph daemon] Listening on /path/.codegraph/daemon.sock (pid 12345, v0.9.7). Idle timeout 300000ms.
+//
+// We scan for the last such line to handle log rotation/restart.
+func DaemonPID(root string) (int, bool) {
+	logPath := filepath.Join(root, ".codegraph", "daemon.log")
+	f, err := os.Open(logPath)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+
+	var lastPID int
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.Contains(line, "Listening on") {
+			continue
+		}
+		idx := strings.Index(line, "(pid ")
+		if idx == -1 {
+			continue
+		}
+		rest := line[idx+5:] // after "(pid "
+		end := strings.IndexByte(rest, ',')
+		if end == -1 {
+			continue
+		}
+		pid, err := strconv.Atoi(rest[:end])
+		if err != nil || pid <= 0 {
+			continue
+		}
+		lastPID = pid
+	}
+	return lastPID, lastPID > 0
+}
+
+// KillDaemon sends SIGKILL (or the platform equivalent) to the most recently
+// started CodeGraph daemon for root. It is a no-op when no daemon PID can be
+// found or the daemon has already exited.
+func KillDaemon(root string) {
+	pid, ok := DaemonPID(root)
+	if !ok {
+		return
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = p.Kill()
 }

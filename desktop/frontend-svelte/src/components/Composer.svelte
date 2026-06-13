@@ -38,12 +38,34 @@
   const slashMatches = $derived(slashQuery === null ? [] : commands.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 6));
   const slashArgMode = $derived(/^\/[^\s]+\s+/.test(input));
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
+  const atDir = $derived(splitAtToken(input)?.dir ?? "");
   const canSubmit = $derived((input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
 
   onMount(() => onFilesDropped((paths) => void attachDroppedPaths(paths)));
 
   function baseName(path: string): string {
     return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
+  }
+
+  function splitAtToken(value: string) {
+    const raw = /(?:^|\s)@([^\s]*)$/.exec(value)?.[1] ?? null;
+    if (raw === null) return undefined;
+    const slash = raw.lastIndexOf("/");
+    return {
+      raw,
+      dir: slash >= 0 ? raw.slice(0, slash + 1) : "",
+      fragment: slash >= 0 ? raw.slice(slash + 1).toLowerCase() : raw.toLowerCase(),
+    };
+  }
+
+  function joinEntryPath(dir: string, entry: DirEntry) {
+    const path = `${dir}${entry.name}`;
+    return entry.isDir && !path.endsWith("/") ? `${path}/` : path;
+  }
+
+  function fileMatchLabel(dir: string, entry: DirEntry) {
+    const path = joinEntryPath(dir, entry);
+    return entry.isDir || dir ? path : entry.name;
   }
 
   function addAttachment(attachment: ComposerAttachment) {
@@ -119,12 +141,25 @@
     const next = (event.currentTarget as HTMLTextAreaElement).value;
     onInput(next);
     void refreshSlashArgs(next);
-    const match = /(?:^|\s)@([^\s]*)$/.exec(next)?.[1] ?? null;
-    if (!match) {
+    await refreshFileMatches(next);
+  }
+
+  async function refreshFileMatches(value: string) {
+    const token = splitAtToken(value);
+    if (!token) {
       fileMatches = [];
       return;
     }
-    fileMatches = await app().SearchFileRefs(match);
+    if (token.dir) {
+      const entries = await app().ListDir(token.dir);
+      fileMatches = entries.filter((entry) => entry.name.toLowerCase().includes(token.fragment)).slice(0, 8);
+      return;
+    }
+    const [entries, searchEntries] = await Promise.all([app().ListDir(""), token.fragment ? app().SearchFileRefs(token.fragment) : Promise.resolve<DirEntry[]>([])]);
+    const local = entries.filter((entry) => entry.name.toLowerCase().includes(token.fragment));
+    const seen = new Set(local.map((entry) => entry.name));
+    const searched = searchEntries.filter((entry) => !seen.has(entry.name));
+    fileMatches = [...local, ...searched].slice(0, 8);
   }
 
   function insertCommand(command: CommandInfo) {
@@ -162,9 +197,17 @@
   }
 
   function insertFile(entry: DirEntry) {
-    onInput(input.replace(/@([^\s]*)$/, `@${entry.name} `));
+    const token = splitAtToken(input);
+    if (!token) return;
+    const path = joinEntryPath(token.dir, entry);
+    const next = input.replace(/@([^\s]*)$/, `@${path}${entry.isDir ? "" : " "}`);
+    onInput(next);
+    if (entry.isDir) {
+      void refreshFileMatches(next);
+      return;
+    }
     fileMatches = [];
-    if (!entry.isDir) onPreviewFile(entry.name);
+    onPreviewFile(path);
   }
 
   function handlePaste(event: ClipboardEvent) {
@@ -254,7 +297,7 @@
         {#each fileMatches as entry (entry.name)}
           <button type="button" onclick={() => insertFile(entry)}>
             <FileText size={13} />
-            {entry.name}
+            {fileMatchLabel(atDir, entry)}
           </button>
         {/each}
       </div>

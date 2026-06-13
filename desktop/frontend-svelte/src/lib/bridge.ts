@@ -338,13 +338,34 @@ const mockCommands: CommandInfo[] = [
   { name: "skill", description: "List or run installed skills.", kind: "skill" },
 ];
 
-const mockFiles: DirEntry[] = [
-  { name: "desktop/", isDir: true },
-  { name: "desktop/frontend-svelte/", isDir: true },
-  { name: "desktop/frontend-svelte/src/App.svelte", isDir: false },
-  { name: "desktop/frontend-svelte/src/lib/bridge.ts", isDir: false },
-  { name: "docs/WORKBENCH.zh-CN.md", isDir: false },
+const mockWorkspaceFiles = [
+  "desktop/frontend-svelte/src/App.svelte",
+  "desktop/frontend-svelte/src/components/Composer.svelte",
+  "desktop/frontend-svelte/src/lib/bridge.ts",
+  "docs/WORKBENCH.md",
+  "docs/WORKBENCH_FEATURE_MATRIX.md",
+  "README.md",
 ];
+
+function mockListDir(rel: string): DirEntry[] {
+  const dir = rel.replace(/^\/+/, "").replace(/\/?$/, rel ? "/" : "");
+  const entries = new Map<string, DirEntry>();
+  for (const file of mockWorkspaceFiles) {
+    if (dir && !file.startsWith(dir)) continue;
+    const rest = dir ? file.slice(dir.length) : file;
+    if (!rest) continue;
+    const slash = rest.indexOf("/");
+    if (slash >= 0) {
+      entries.set(rest.slice(0, slash), { name: rest.slice(0, slash), isDir: true });
+    } else {
+      entries.set(rest, { name: rest, isDir: false });
+    }
+  }
+  return [...entries.values()].sort((left, right) => {
+    if (left.isDir !== right.isDir) return left.isDir ? -1 : 1;
+    return left.name.localeCompare(right.name);
+  });
+}
 
 let mockCapabilities: CapabilitiesView = {
   servers: [
@@ -770,12 +791,11 @@ const mockApp: AppBindings = {
     return { items, from: input.lastIndexOf(token) };
   },
   async ListDir(rel: string) {
-    if (!rel) return mockFiles;
-    return mockFiles.filter((file) => file.name.startsWith(rel));
+    return mockListDir(rel);
   },
   async SearchFileRefs(query: string) {
     const q = query.toLowerCase();
-    return mockFiles.filter((file) => file.name.toLowerCase().includes(q));
+    return mockWorkspaceFiles.filter((file) => file.toLowerCase().includes(q) || file.split("/").pop()?.toLowerCase().includes(q)).map((name) => ({ name, isDir: false }));
   },
   async ReadFile(rel: string) {
     return {

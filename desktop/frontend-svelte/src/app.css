@@ -732,6 +732,141 @@ select {
   color: #64748b;
 }
 
+.context-card {
+  padding: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.context-card__meter {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.context-card__meter div {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.context-card__meter strong {
+  color: #17202a;
+  font-size: 20px;
+}
+
+.context-card__meter > span {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.context-card__bar {
+  height: 8px;
+  overflow: hidden;
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+
+.context-card__bar span {
+  display: block;
+  width: var(--context-used, 0%);
+  height: 100%;
+  background: linear-gradient(90deg, #13a7a5, #2f6df6);
+}
+
+.context-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.context-card__metrics div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.context-card__metrics strong {
+  color: #17202a;
+}
+
+.context-card__tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.context-card__tabs button[aria-pressed="true"] {
+  color: white;
+  background: var(--code);
+  border-color: var(--code);
+}
+
+.context-card__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px;
+  color: #64748b;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.context-card__search input {
+  min-width: 0;
+  width: 100%;
+  min-height: 30px;
+  color: #17202a;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.context-card__rows {
+  display: grid;
+  gap: 5px;
+  max-height: 178px;
+  overflow: auto;
+}
+
+.context-card__rows button {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  height: auto;
+  min-height: 38px;
+  padding: 6px 8px;
+  background: white;
+}
+
+.context-card__rows button span,
+.context-card__rows button em {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-card__rows button span {
+  color: #17202a;
+}
+
+.context-card__rows button em {
+  color: #64748b;
+  font-style: normal;
+  font-size: 11px;
+}
+
 .file-tree {
   display: grid;
   gap: 4px;

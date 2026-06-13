@@ -17,6 +17,12 @@ export interface TabMeta {
   cwd?: string;
 }
 
+export interface TopicMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+}
+
 export interface ModelInfo {
   name: string;
   label?: string;

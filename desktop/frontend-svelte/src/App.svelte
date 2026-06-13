@@ -230,6 +230,25 @@
     await refresh();
   }
 
+  async function newTab() {
+    const topic = await app().CreateTopic("global", "", "");
+    const tab = await app().OpenGlobalTab(topic.id);
+    tabs = [...tabs.map((item) => ({ ...item, active: false })), { ...tab, active: true }];
+    await refresh();
+  }
+
+  async function moveTab(tab: TabMeta, direction: "up" | "down") {
+    const index = tabs.findIndex((item) => item.id === tab.id);
+    const nextIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || nextIndex < 0 || nextIndex >= tabs.length) return;
+    const nextTabs = tabs.slice();
+    const current = nextTabs[index];
+    nextTabs[index] = nextTabs[nextIndex];
+    nextTabs[nextIndex] = current;
+    tabs = nextTabs;
+    await app().ReorderTabs(nextTabs.map((item) => item.id));
+  }
+
   async function switchModel(event: Event) {
     const next = (event.currentTarget as HTMLSelectElement).value;
     selectedModel = next;
@@ -320,6 +339,8 @@
     onActivity={(mode) => (activityMode = mode)}
     onTab={switchTab}
     onCloseTab={closeTab}
+    onNewTab={newTab}
+    onMoveTab={moveTab}
   />
 
   <section class="main-stage">

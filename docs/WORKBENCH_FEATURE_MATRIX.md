@@ -46,7 +46,7 @@ Status values:
 | Resources | Permissions and sandbox | code | usable | Resource console lists permission mode/rules/sandbox through `Settings`, can set permission mode, add/remove rules, and update sandbox through existing Wails bindings; Browser smoke covers permission mode and rule flows. |
 | Resources | Appearance, language, desktop prefs | work, code | usable | `desktopPrefs` svadmin-compatible resource reads `Settings()` and persists language, theme, theme style, and close behavior through `SetDesktopLanguage`, `SetDesktopAppearance`, and `SetCloseBehavior`; Browser smoke updates all four values and verifies row refresh with no console errors. |
 | Updates | Update banner/check/apply | work, code | usable | Svelte `UpdateBanner` auto-checks through `CheckUpdate`, renders available/error/progress/done states, calls `ApplyUpdate` for self-update platforms and `OpenDownloadPage` for manual-download platforms, and subscribes to `updater:progress`; Browser smoke verifies available → verifying → done with no console errors. |
-| Accessibility | Keyboard navigation | work, code | planned | Tab order and primary shortcuts work. |
+| Accessibility | Keyboard navigation | work, code | usable | Workbench exposes primary shortcuts for Work (`Ctrl/Meta+1`), Code (`Ctrl/Meta+2`), composer focus (`Ctrl/Meta+K`), and Escape cancel/deny/dismiss; Browser smoke verifies shortcuts, focus movement, Escape cancel, and focusable control order with no console errors. |
 | Accessibility | Text overflow/responsive layout | work, code | planned | Desktop and narrow viewport screenshots. |
 | Packaging | Production build | work, code | partial | `desktop/frontend-svelte pnpm build` passes after component split; Wails build integration remains. |
 

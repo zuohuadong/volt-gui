@@ -14,7 +14,7 @@
 
 <div class="run-modes" aria-label="Run mode">
   {#each runModes as mode (mode.id)}
-    <button class={runMode === mode.id ? "is-active" : ""} type="button" title={mode.hint} onclick={() => onSelect(mode.id)}>
+    <button class={runMode === mode.id ? "is-active" : ""} type="button" title={mode.hint} aria-pressed={runMode === mode.id} onclick={() => onSelect(mode.id)}>
       {mode.label}
     </button>
   {/each}

@@ -257,9 +257,12 @@ func verifyOIDCToken(ctx context.Context, provider *oidc.Provider, cfg *config.C
 	if !ok || strings.TrimSpace(rawIDToken) == "" {
 		return UserInfo{}, fmt.Errorf("token response missing id_token")
 	}
-	idToken, err := provider.Verifier(&oidc.Config{ClientID: strings.TrimSpace(cfg.Auth.ClientID)}).Verify(ctx, rawIDToken, oidc.Nonce(nonce))
+	idToken, err := provider.Verifier(&oidc.Config{ClientID: strings.TrimSpace(cfg.Auth.ClientID)}).Verify(ctx, rawIDToken)
 	if err != nil {
 		return UserInfo{}, fmt.Errorf("verify id_token: %w", err)
+	}
+	if nonce != "" && idToken.Nonce != nonce {
+		return UserInfo{}, fmt.Errorf("id_token nonce mismatch")
 	}
 	return userInfoFromIDToken(idToken)
 }

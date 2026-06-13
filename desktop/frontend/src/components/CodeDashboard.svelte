@@ -4,6 +4,7 @@
   import DiffViewer from "./DiffViewer.svelte";
   import { app } from "../lib/bridge";
   import type { CheckpointMeta, ContextPanelInfo, DirEntry, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
+  import { t } from "../lib/i18n";
 
   type RewindScope = "conversation" | "code" | "both";
 
@@ -209,7 +210,7 @@
   <div class="dashboard-grid">
     <article>
       <Gauge size={20} />
-      <h2>Context</h2>
+      <h2>{t.code.contextFiles}</h2>
       <p>{context ? `${context.usedTokens.toLocaleString()} / ${context.windowTokens.toLocaleString()} tokens (${tokenPercent}%)` : "Context panel pending."}</p>
     </article>
     <article>
@@ -219,7 +220,7 @@
     </article>
     <article>
       <RotateCcw size={20} />
-      <h2>Checkpoints</h2>
+      <h2>{t.code.checkpoints}</h2>
       <p>{checkpoints.length ? `${checkpoints.length} rewind points available for this tab.` : "No checkpoints yet."}</p>
     </article>
   </div>
@@ -227,8 +228,8 @@
   <aside class="code-dock">
     <section class="context-card" data-testid="code-context-panel">
       <div class="code-dock__section-head">
-        <h2><Gauge size={15} /> Context panel</h2>
-        <button type="button" title="Refresh context" disabled={contextBusy} onclick={refreshContextPanel}><RefreshCw size={14} /></button>
+        <h2><Gauge size={15} /> {t.code.contextFiles}</h2>
+        <button type="button" title={t.code.refresh} disabled={contextBusy} onclick={refreshContextPanel}><RefreshCw size={14} /></button>
       </div>
       {#if context}
         <div class="context-card__meter" style:--context-used={`${tokenPercent}%`}>
@@ -254,7 +255,7 @@
         </div>
         <label class="context-card__search">
           <Search size={14} />
-          <input aria-label="Filter context files" placeholder="Filter files" bind:value={contextQuery} />
+          <input aria-label="Filter context files" placeholder={t.code.filter} bind:value={contextQuery} />
         </label>
         <div class="context-card__rows">
           {#each filteredContextRows.slice(0, 6) as row (row.key)}
@@ -280,7 +281,7 @@
     <section>
       <div class="code-dock__section-head">
         <h2><Folder size={15} /> Files</h2>
-        <button type="button" title="Refresh file tree" disabled={treeBusy} onclick={refreshTree}><RefreshCw size={14} /></button>
+        <button type="button" title={t.code.refresh} disabled={treeBusy} onclick={refreshTree}><RefreshCw size={14} /></button>
       </div>
       <div class="file-tree" data-testid="code-file-tree">
         {#if treeRows.length}
@@ -301,8 +302,8 @@
                 <span>{row.name}</span>
               </button>
               <div class="file-tree__actions">
-                <button type="button" title={`Open ${row.path}`} onclick={() => openWorkspacePath(row.path)}><ExternalLink size={13} /></button>
-                <button type="button" title={`Reveal ${row.path}`} onclick={() => revealWorkspacePath(row.path)}><LocateFixed size={13} /></button>
+                <button type="button" title={`${t.code.open} ${row.path}`} onclick={() => openWorkspacePath(row.path)}><ExternalLink size={13} /></button>
+                <button type="button" title={`${t.code.reveal} ${row.path}`} onclick={() => revealWorkspacePath(row.path)}><LocateFixed size={13} /></button>
               </div>
             </div>
           {/each}

@@ -4,13 +4,13 @@
   import ActivitySidebar from "./components/ActivitySidebar.svelte";
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
-  import ResourcePanel from "./components/ResourcePanel.svelte";
   import RunModeBar from "./components/RunModeBar.svelte";
   import Transcript from "./components/Transcript.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import WorkDashboard from "./components/WorkDashboard.svelte";
   import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
+  import { t } from "./lib/i18n";
   import { workbenchDataProvider, workbenchResources } from "./lib/resourceProvider";
   import type {
     ActivityMode,
@@ -39,11 +39,11 @@
   } from "./lib/types";
 
   const runModes: Array<{ id: RunMode; label: string; hint: string }> = [
-    { id: "ask", label: "Ask", hint: "Ask before fallback approvals." },
-    { id: "auto", label: "Auto", hint: "Use normal mode while allowing configured defaults." },
-    { id: "yolo", label: "YOLO", hint: "Auto-approve ordinary tools; hard denies still apply." },
-    { id: "plan", label: "Plan", hint: "Keep the next turn read-only until a plan is approved." },
-    { id: "goal", label: "Goal", hint: "Continue a saved long-running objective." },
+    { id: "ask", label: t.runMode.ask, hint: t.runMode.askHint },
+    { id: "auto", label: t.runMode.auto, hint: t.runMode.autoHint },
+    { id: "yolo", label: t.runMode.yolo, hint: t.runMode.yoloHint },
+    { id: "plan", label: t.runMode.plan, hint: t.runMode.planHint },
+    { id: "goal", label: t.runMode.goal, hint: t.runMode.goalHint },
   ];
 
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
@@ -55,7 +55,7 @@
       {
         id: "system-welcome",
         role: "system",
-        body: "Workbench preview is ready. Work/Code activity mode is independent from Ask/Auto/YOLO/Plan/Goal run mode.",
+        body: t.transcript.welcome,
       },
     ];
   }
@@ -137,7 +137,7 @@
   }
 
   function appendTranscript(item: TranscriptItem) {
-    appendTranscript(item);
+    transcript.push(item);
     if (transcript.length > MAX_TRANSCRIPT_ITEMS) {
       // Keep the most recent items; drop from the front.
       transcript.splice(0, transcript.length - MAX_TRANSCRIPT_ITEMS);
@@ -196,7 +196,7 @@
       appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: "", pending: true });
     }
     if (event.kind === "reasoning" && event.reasoning) {
-      appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: "reasoning", body: event.reasoning, pending: true });
+      appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: t.transcript.reasoning, body: event.reasoning, pending: true });
     }
     if ((event.kind === "text" || event.kind === "message") && event.text) {
     pendingTextBuffer += event.text;
@@ -244,7 +244,7 @@
         id: `usage-${Date.now()}`,
         role: "notice",
         title: "usage",
-        body: `${event.usage.totalTokens ?? 0} tokens`,
+        body: `${event.usage.totalTokens ?? 0} ${t.transcript.tokens}`,
       });
     }
     if (event.kind === "notice" && event.text) {
@@ -611,13 +611,13 @@
       id: `rewind-${Date.now()}`,
       role: "notice",
       title: "rewind",
-      body: `Rewound to turn ${turn} (${scope}); history and code state refreshed.`,
+      body: t.transcript.rewound.replace("{turn}", String(turn)).replace("{scope}", scope),
     });
   }
 </script>
 
 <svelte:head>
-  <title>VoltUI Workbench</title>
+  <title>{t.app.title}</title>
 </svelte:head>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
@@ -655,16 +655,16 @@
 
     <header class="topbar">
       <div>
-        <p>{activeTab?.workspaceName || "Global"}</p>
-        <h1>{activityMode === "work" ? "Work dashboard" : "Code workspace"}</h1>
+        <p>{activeTab?.workspaceName || t.common.global}</p>
+        <h1>{activityMode === "work" ? t.work.title : t.code.title}</h1>
       </div>
       <div class="topbar__controls">
-        <select aria-label="Model" value={selectedModel} onchange={switchModel}>
+        <select aria-label={t.common.model} value={selectedModel} onchange={switchModel}>
           {#each models as model (model.name)}
             <option value={model.name}>{model.label || model.name}</option>
           {/each}
         </select>
-        <select aria-label="Effort" value={effort.current} onchange={switchEffort}>
+        <select aria-label={t.common.effort} value={effort.current} onchange={switchEffort}>
           {#each effort.supported as level (level)}
             <option value={level}>{level}</option>
           {/each}
@@ -706,8 +706,6 @@
         onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
       />
     {/if}
-
-    <ResourcePanel {activityMode} {resources} refreshKey={resourceRefreshKey} onChanged={refreshResources} />
 
     <Transcript
       items={transcript}

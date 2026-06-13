@@ -454,6 +454,14 @@ check("\\yng(3,2,1) uses left-aligned array (rows start at same x)", () => {
   return out.includes("\\begin{array}{l}")
     && !out.includes("\\begin{array}{c}");
 });
+check("expandYoungDiagrams uses flush cells (\\! cancels \\,) ", () => {
+  // Adjacent \square boxes should be flush — the convention for Young
+  // diagrams. The translator uses `\!` (negative thin space, -0.1667em)
+  // which exactly cancels `\,` so cells touch without visible gap.
+  // `\,` (positive thin space) would leave a gap.
+  const out = expandYoungDiagrams("\\yng(3)");
+  return out.includes("\\!") && !out.includes("\\, ");
+});
 check("expandYoungDiagrams substitutes correct array form", () => {
   // Direct unit test on the translator — no need to go through the
   // full pipeline for this assertion.
@@ -466,8 +474,10 @@ check("expandYoungDiagrams handles \\yng with content", () => {
   // Bare \yng in prose gets wrapped in `$…$` so remark-math sees it as
   // math; macros already inside a `$…$` block just substitute the inner
   // form (the surrounding delimiters are preserved).
+  // Cells are joined with `\!` (negative thin space) so adjacent
+  // boxes are flush, like a real Young diagram.
   const out = expandYoungDiagrams("\\yng(2,1){a&b\\\\c}");
-  return out === "$\\begin{array}{l}a \\, b \\\\ c\\end{array}$";
+  return out === "$\\begin{array}{l}a \\! b \\\\ c\\end{array}$";
 });
 check("expandYoungDiagrams leaves non-Young macros alone", () => {
   const out = expandYoungDiagrams("\\frac{a}{b}");

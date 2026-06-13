@@ -74,11 +74,18 @@ function expandShape(rows: number[], content: string | undefined): string {
     }
   }
 
-  // Each row is left-aligned by `\begin{array}{c}…\end{array}` plus the
+  // Each row is left-aligned by `\begin{array}{l}…\end{array}` plus the
   // joined cells, with rows separated by `\\`. Empty / missing trailing
   // cells in shorter rows are already absent because we slice.
+  //
+  // Cells are joined with `\!` (negative thin space, -0.1667em) rather
+  // than `\,` (positive thin space, +0.1667em). The two cancel out
+  // exactly, giving *zero* visible spacing between adjacent boxes —
+  // which is how Young diagrams are conventionally drawn. `\,` would
+  // leave a visible gap between every box, making the diagram look
+  // like a row of spaced-out boxes rather than a connected shape.
   const arrRows = cells.map((row, ri) =>
-    row.slice(0, rows[ri]).join(" \\, "),
+    row.slice(0, rows[ri]).join(" \\! "),
   );
   // Use `{l}` (left) instead of `{c}` (centered): a Young diagram has
   // every row's first cell at the same horizontal position — the

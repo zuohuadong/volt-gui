@@ -43,6 +43,7 @@ type Config struct {
 	DefaultModel  string            `toml:"default_model"`
 	Language      string            `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $VOLTUI_LANG
 	Brand         BrandConfig       `toml:"brand"`
+	Auth          AuthConfig        `toml:"auth"`
 	UI            UIConfig          `toml:"ui"`
 	Desktop       DesktopConfig     `toml:"desktop"`
 	Agent         AgentConfig       `toml:"agent"`
@@ -93,6 +94,65 @@ type BrandConfig struct {
 	// used for the system tray / taskbar. On Windows this should be an .ico
 	// file; on macOS/Linux a .png file. Empty means the compiled-in icon is used.
 	IconPath string `toml:"icon_path"`
+}
+
+// AuthConfig enables a desktop identity gate. VoltUI treats OIDC as a generic
+// standard provider; SupAuth, Keycloak, Auth0, Okta, or another compliant issuer
+// are selected only by issuer/client_id configuration.
+type AuthConfig struct {
+	Provider        string `toml:"provider"` // "oidc"; empty disables desktop auth
+	Issuer          string `toml:"issuer"`
+	ClientID        string `toml:"client_id"`
+	Scope           string `toml:"scope"`
+	CallbackMinPort int    `toml:"callback_port_min"`
+	CallbackMaxPort int    `toml:"callback_port_max"`
+}
+
+// AuthProvider normalizes the configured identity provider.
+func (c *Config) AuthProvider() string {
+	return strings.ToLower(strings.TrimSpace(c.Auth.Provider))
+}
+
+// AuthScope returns the OIDC scopes requested during login.
+func (c *Config) AuthScope() string {
+	if scope := strings.TrimSpace(c.Auth.Scope); scope != "" {
+		return scope
+	}
+	return "openid profile email"
+}
+
+// AuthCallbackPorts returns the loopback callback port range, clamped to the
+// documented desktop default when config is missing or inverted.
+func (c *Config) AuthCallbackPorts() (int, int) {
+	minPort, maxPort := c.Auth.CallbackMinPort, c.Auth.CallbackMaxPort
+	if minPort <= 0 {
+		minPort = 42000
+	}
+	if maxPort <= 0 {
+		maxPort = 42099
+	}
+	if maxPort < minPort {
+		maxPort = minPort
+	}
+	return minPort, maxPort
+}
+
+// AuthConfigured reports whether the user opted into an auth gate at all. A
+// partial OIDC section still counts so the desktop can fail closed with a clear
+// login/configuration error instead of silently falling back to API keys.
+func (c *Config) AuthConfigured() bool {
+	return c.AuthProvider() != "" ||
+		strings.TrimSpace(c.Auth.Issuer) != "" ||
+		strings.TrimSpace(c.Auth.ClientID) != ""
+}
+
+// AuthEnabled reports whether the config is complete enough to require desktop
+// OIDC login. Invalid or partial auth config should fail closed in NeedsAuth
+// via StartOIDCLogin's validation instead of silently falling back to API keys.
+func (c *Config) AuthEnabled() bool {
+	return c.AuthProvider() == "oidc" &&
+		strings.TrimSpace(c.Auth.Issuer) != "" &&
+		strings.TrimSpace(c.Auth.ClientID) != ""
 }
 
 // BrandName returns the effective product name: env override → config → "VoltUI".
@@ -785,6 +845,7 @@ func Default() *Config {
 		ConfigVersion: 2,
 		DefaultModel:  "deepseek-flash",
 		Brand:         BrandConfig{Name: "VoltUI"},
+		Auth:          AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},
 		UI:            UIConfig{Theme: "auto"},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,

@@ -237,6 +237,14 @@ export interface CommandInfo {
   kind: "builtin" | "custom" | "mcp" | "skill";
 }
 
+export interface SlashArgItem {
+  label: string;
+  insert: string;
+  hint?: string;
+  description?: string;
+  descend?: boolean;
+}
+
 export interface DirEntry {
   name: string;
   isDir: boolean;

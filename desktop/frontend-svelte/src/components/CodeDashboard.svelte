@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Code2, FileText, GitPullRequest, Gauge, RotateCcw } from "@lucide/svelte";
+  import DiffViewer from "./DiffViewer.svelte";
   import type { CheckpointMeta, ContextPanelInfo, FilePreview, WorkspaceChangesView } from "../lib/types";
 
   let {
@@ -20,6 +21,7 @@
 
   const tokenPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const changedCount = $derived(changes?.files.length ?? 0);
+  const selectedChange = $derived(filePreview ? changes?.files.find((file) => file.path === filePreview.path) : undefined);
 </script>
 
 <section class="code-layout" aria-label="Code workspace">
@@ -89,12 +91,7 @@
     </section>
     <section>
       <h2><FileText size={15} /> Preview</h2>
-      {#if filePreview}
-        <strong>{filePreview.path}</strong>
-        <pre>{filePreview.err || filePreview.body}</pre>
-      {:else}
-        <span>Select an @ reference in the composer to preview it here.</span>
-      {/if}
+      <DiffViewer change={selectedChange} preview={filePreview} />
     </section>
   </aside>
 </section>

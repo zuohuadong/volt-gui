@@ -69,13 +69,37 @@ let mockHistory: Record<string, HistoryMessage[]> = {
     { role: "user", content: "Plan the Svelte workbench migration." },
     {
       role: "assistant",
-      content: "The migration keeps Work/Code activity mode separate from Ask/Auto/YOLO/Plan/Goal run mode.",
+      content: [
+        "## Workbench plan",
+        "",
+        "The migration keeps **Work/Code** activity mode separate from `Ask/Auto/YOLO/Plan/Goal` run mode.",
+        "",
+        "- [x] Define the contract",
+        "- [x] Scaffold the Svelte shell",
+        "- [ ] Replace the React desktop frontend",
+        "",
+        "| Mode | Purpose |",
+        "| --- | --- |",
+        "| Work | General agent work |",
+        "| Code | Repository-aware coding |",
+        "",
+        "Inline math: $tokens = prompt + completion$.",
+      ].join("\n"),
       reasoning: "Identify product mode boundaries before wiring runtime controls.",
     },
   ],
   "mock-code": [
     { role: "user", content: "Inspect the Svelte workbench shell." },
-    { role: "assistant", content: "Code mode should prioritize context, changed files, checkpoints, and file previews." },
+    {
+      role: "assistant",
+      content: [
+        "Code mode should prioritize context, changed files, checkpoints, and file previews.",
+        "",
+        "```ts",
+        "export const activityMode = \"code\";",
+        "```",
+      ].join("\n"),
+    },
   ],
 };
 let mockTabsState: TabMeta[] = [
@@ -184,7 +208,17 @@ const mockApp: AppBindings = {
     emitMock({ kind: "reasoning", tabId: mockActiveTabId, reasoning: "Classifying activity mode, run mode, and workspace context." });
     await delay(120);
     if (mockCancelled) return;
-    const response = `Mock response for: ${input}`;
+    const response = [
+      `Mock response for: ${input}`,
+      "",
+      "```ts",
+      "const next = \"wire real Wails events\";",
+      "```",
+      "",
+      "$$",
+      "total = prompt + completion",
+      "$$",
+    ].join("\n");
     emitMock({ kind: "text", tabId: mockActiveTabId, text: response });
     emitMock({
       kind: "tool_dispatch",
@@ -299,7 +333,7 @@ const mockApp: AppBindings = {
   async ReadFile(rel: string) {
     return {
       path: rel,
-      body: `// Preview for ${rel}\nexport const workbench = "svelte + svadmin";\n`,
+      body: `// Preview for ${rel}\nexport const workbench = "svelte + svadmin";\nexport const mode = "code";\n`,
       size: 68,
       truncated: false,
       binary: false,
@@ -308,8 +342,20 @@ const mockApp: AppBindings = {
   async WorkspaceChanges() {
     return {
       files: [
-        { path: "desktop/frontend-svelte/src/App.svelte", sources: ["mock"], gitStatus: "M", turns: [1] },
-        { path: "docs/WORKBENCH_FEATURE_MATRIX.md", sources: ["mock"], gitStatus: "M", turns: [1] },
+        {
+          path: "desktop/frontend-svelte/src/App.svelte",
+          sources: ["mock"],
+          gitStatus: "M",
+          turns: [1],
+          latestPrompt: "Hydrate Svelte history and checkpoint state.",
+        },
+        {
+          path: "docs/WORKBENCH_FEATURE_MATRIX.md",
+          sources: ["mock"],
+          gitStatus: "M",
+          turns: [1],
+          latestPrompt: "Track Markdown and diff viewer parity.",
+        },
       ],
       gitAvailable: true,
     };

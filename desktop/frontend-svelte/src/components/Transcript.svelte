@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Check, HelpCircle, ShieldAlert, X } from "@lucide/svelte";
+  import MarkdownView from "./MarkdownView.svelte";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
   let {
@@ -32,7 +33,7 @@
   {#each items as item (item.id)}
     <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`}>
       <span>{item.title || item.role}</span>
-      <p>{item.body}</p>
+      <MarkdownView text={item.body} />
     </article>
   {/each}
 

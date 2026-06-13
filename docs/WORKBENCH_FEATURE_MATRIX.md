@@ -48,7 +48,7 @@ Status values:
 | Updates | Update banner/check/apply | work, code | usable | Svelte `UpdateBanner` auto-checks through `CheckUpdate`, renders available/error/progress/done states, calls `ApplyUpdate` for self-update platforms and `OpenDownloadPage` for manual-download platforms, and subscribes to `updater:progress`; Browser smoke verifies available → verifying → done with no console errors. |
 | Accessibility | Keyboard navigation | work, code | usable | Workbench exposes primary shortcuts for Work (`Ctrl/Meta+1`), Code (`Ctrl/Meta+2`), composer focus (`Ctrl/Meta+K`), and Escape cancel/deny/dismiss; Browser smoke verifies shortcuts, focus movement, Escape cancel, and focusable control order with no console errors. |
 | Accessibility | Text overflow/responsive layout | work, code | usable | Fixed-width desktop minimums are removed; Work, Code, resource, update, transcript, and composer surfaces wrap or stack below 960px/640px; Browser smoke and screenshots cover 1280px and 390px viewports with no horizontal overflow or console errors. |
-| Packaging | Production build | work, code | partial | `desktop/frontend-svelte pnpm build` passes after component split; Wails build integration remains. |
+| Packaging | Production build | work, code | usable | `VOLTUI_DESKTOP_FRONTEND=svelte pnpm --dir desktop/frontend build` builds the Svelte workbench, syncs it into the Wails embed path `desktop/frontend/dist`, and the desktop Go package compiles against that embedded output; React remains the default build until first-phase parity is complete. |
 
 The React desktop shell can only be removed after every row is at least `usable`
 and all first-phase rows in [`WORKBENCH.md`](./WORKBENCH.md#required-first-phase-feature-parity)

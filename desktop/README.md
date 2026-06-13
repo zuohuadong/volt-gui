@@ -83,6 +83,18 @@ Fedora deps: `sudo dnf install webkit2gtk4.1-devel gtk3-devel`.
 `.gitkeep` that keeps the Go `//go:embed all:frontend/dist` compilable on a fresh
 checkout). A bare `go build` without a prior `pnpm build` produces a blank window.
 
+The React shell remains the default Wails frontend while the Svelte workbench
+reaches first-phase parity. To package the Svelte workbench through the same
+Wails embed path, run the Wails build with `VOLTUI_DESKTOP_FRONTEND=svelte`; the
+frontend build first runs `frontend-svelte`, then syncs its `dist` output into
+`frontend/dist` for `main.go` to embed.
+
+```sh
+VOLTUI_DESKTOP_FRONTEND=svelte wails build
+VOLTUI_DESKTOP_FRONTEND=svelte pnpm --dir frontend build
+pnpm --dir frontend build:svelte
+```
+
 ## Releases & auto-update
 
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`

@@ -617,6 +617,11 @@ select,
   padding: 12px;
 }
 
+.composer--drop {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
 .composer__input {
   position: relative;
   min-width: 0;
@@ -699,6 +704,71 @@ select,
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.composer-context__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(340px, 100%);
+  min-height: 30px;
+  padding: 4px 7px;
+  color: #293241;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.composer-context__item span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-context__item img {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.composer-context__item button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+}
+
+.composer-context__item button:hover {
+  color: #17202a;
+  background: #e5e7eb;
+}
+
+.composer-context__item--image {
+  background: #eef7ff;
+}
+
+.composer-context__item--pending {
+  color: var(--text-soft);
+  border-style: dashed;
 }
 
 .decision-shelf {

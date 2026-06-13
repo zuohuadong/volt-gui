@@ -199,12 +199,13 @@
     checkpoints = await app().CheckpointsForTab(tab.id);
   }
 
-  async function send() {
-    const text = input.trim();
-    if (!text || !activeTab) return;
+  async function send(displayText?: string, submitText?: string) {
+    const text = (displayText ?? input).trim();
+    const submission = (submitText ?? text).trim();
+    if (!text || !submission || !activeTab) return;
     input = "";
     transcript.push({ id: `user-${Date.now()}`, role: "user", body: text });
-    await app().SubmitDisplayToTab(activeTab.id, text, text);
+    await app().SubmitDisplayToTab(activeTab.id, text, submission);
   }
 
   async function cancel() {

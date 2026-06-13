@@ -31,7 +31,7 @@ Status values:
 | Transcript | Approvals and ask questions | work, code | partial | Browser smoke completes approve/deny and answer-question flows; real Wails approval smoke still required. |
 | Composer | Slash commands | work, code | partial | Command list and filtering render from `Commands`; slash-arg application and submit semantics still required. |
 | Composer | `@` file/workspace references | code | partial | File search/list, insertion, and preview are wired through `SearchFileRefs`/`ReadFile`; directory descent and attachments still required. |
-| Composer | Attachments and dropped files | work, code | planned | Paste/drop image/file and submit attachment text. |
+| Composer | Attachments and dropped files | work, code | partial | Svelte composer can paste/drop browser files, subscribe to native Wails file drops, render attachment chips/previews, and submit `@.voltui/attachments/...` refs; real Wails drop smoke and full old-composer parity still required. |
 | Composer | Model and effort switching | work, code | partial | Model and effort selectors list and set per tab through bridge/mock; real Wails smoke still required. |
 | Work dashboard | Tasks/goals overview | work | partial | Work dashboard shell exposes active topic and resource-backed shortcuts; task/goal data provider still required. |
 | Work dashboard | Recent sessions | work | partial | Session context is visible; full history/resume flow still required. |

@@ -74,6 +74,8 @@
   let pendingAsk = $state<WireAsk | undefined>();
   let loading = $state(true);
   let sending = $state(false);
+  let submittedDraft = $state<{ display: string; submission: string } | undefined>();
+  let restoreDraftOnTurnDone = false;
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const modeLabel = $derived(`${activityMode.toUpperCase()} + ${runMode.toUpperCase()}`);
@@ -196,6 +198,12 @@
     if (event.kind === "turn_done") {
       sending = false;
       for (const item of transcript) item.pending = false;
+      if (restoreDraftOnTurnDone && submittedDraft) {
+        if (!input.trim()) input = submittedDraft.display;
+        transcript.push({ id: `draft-${Date.now()}`, role: "notice", body: "Draft restored after cancellation." });
+      }
+      restoreDraftOnTurnDone = false;
+      submittedDraft = undefined;
       void refreshCodeDock();
       if (activeTab) void app().GoalForTab(activeTab.id).then((next) => (goalInfo = next));
     }
@@ -249,13 +257,24 @@
     const text = (displayText ?? input).trim();
     const submission = (submitText ?? text).trim();
     if (!text || !submission || !activeTab) return;
+    const draft = { display: text, submission };
+    submittedDraft = draft;
+    restoreDraftOnTurnDone = false;
     input = "";
     transcript.push({ id: `user-${Date.now()}`, role: "user", body: text });
-    await app().SubmitDisplayToTab(activeTab.id, text, submission);
+    try {
+      await app().SubmitDisplayToTab(activeTab.id, text, submission);
+    } catch (error) {
+      input = draft.display;
+      submittedDraft = undefined;
+      restoreDraftOnTurnDone = false;
+      throw error;
+    }
   }
 
   async function cancel() {
     if (!activeTab) return;
+    restoreDraftOnTurnDone = Boolean(submittedDraft);
     await app().CancelTab(activeTab.id);
   }
 

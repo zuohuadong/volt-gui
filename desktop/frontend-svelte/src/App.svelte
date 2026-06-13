@@ -7,6 +7,7 @@
   import ResourcePanel from "./components/ResourcePanel.svelte";
   import RunModeBar from "./components/RunModeBar.svelte";
   import Transcript from "./components/Transcript.svelte";
+  import UpdateBanner from "./components/UpdateBanner.svelte";
   import WorkDashboard from "./components/WorkDashboard.svelte";
   import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
   import { wailsDataProvider, workbenchResources } from "./lib/resourceProvider";
@@ -431,6 +432,8 @@
   />
 
   <section class="main-stage">
+    <UpdateBanner />
+
     <header class="topbar">
       <div>
         <p>{activeTab?.workspaceName || "Global"}</p>

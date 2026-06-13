@@ -154,6 +154,24 @@ export interface GoalInfo {
   blockedReason?: string;
 }
 
+export interface UpdateInfo {
+  available: boolean;
+  current: string;
+  latest: string;
+  notes: string;
+  canSelfUpdate: boolean;
+  downloadUrl: string;
+  assetSize: number;
+  err?: string;
+}
+
+export interface UpdateProgress {
+  phase: "downloading" | "verifying" | "applying" | "done" | "error";
+  received: number;
+  total: number;
+  err?: string;
+}
+
 export type WireEventKind =
   | "turn_started"
   | "reasoning"

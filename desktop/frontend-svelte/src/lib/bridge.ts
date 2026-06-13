@@ -141,6 +141,10 @@ let mockHistory: Record<string, HistoryMessage[]> = {
         "| Code | Repository-aware coding |",
         "",
         "Inline math: $tokens = prompt + completion$.",
+        "",
+        "\\[",
+        "\\int_0^1 x^2 dx = \\frac{1}{3}",
+        "\\]",
       ].join("\n"),
       reasoning: "Identify product mode boundaries before wiring runtime controls.",
     },
@@ -475,6 +479,8 @@ const mockApp: AppBindings = {
       "$$",
       "total = prompt + completion",
       "$$",
+      "",
+      "Inline KaTeX smoke: \\(E = mc^2\\).",
     ].join("\n");
     emitMock({ kind: "text", tabId: mockActiveTabId, text: response });
     emitMock({

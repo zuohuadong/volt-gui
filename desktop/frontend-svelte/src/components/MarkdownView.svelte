@@ -1,5 +1,6 @@
 <script lang="ts">
   import CodeBlock from "./CodeBlock.svelte";
+  import MathView from "./MathView.svelte";
 
   type InlinePart =
     | { id: string; kind: "text"; text: string }
@@ -27,12 +28,16 @@
   const blocks = $derived(parseMarkdown(normalizeMath(text)));
 
   function normalizeMath(value: string): string {
-    return value.replace(/\\\[/g, "$$").replace(/\\\]/g, "$$").replace(/\\\(/g, "$").replace(/\\\)/g, "$");
+    return value
+      .replace(/\\\[/g, "$$$$")
+      .replace(/\\\]/g, "$$$$")
+      .replace(/\\\(/g, "$")
+      .replace(/\\\)/g, "$");
   }
 
   function inlineParts(value: string, owner: string): InlinePart[] {
     const parts: InlinePart[] = [];
-    const pattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|~~([^~]+)~~|\*([^*\n]+)\*|\$([^$\n]+)\$|(https?:\/\/[^\s<]+)/g;
+    const pattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|~~([^~]+)~~|\*([^*\n]+)\*|(?<!\$)\$([^$\n]+)\$(?!\$)|(https?:\/\/[^\s<]+)/g;
     let cursor = 0;
     let ordinal = 0;
     for (const match of value.matchAll(pattern)) {
@@ -111,11 +116,17 @@
         parsed.push({ id: `code-${start}`, kind: "code", language: fence[1], code: body.join("\n") });
         continue;
       }
-      if (line.trim() === "$$") {
+      const displayMath = /^\s*\$\$\s*(.*?)\s*\$\$\s*$/.exec(line);
+      if (displayMath && displayMath[1]) {
+        parsed.push({ id: `math-${index}`, kind: "math", body: displayMath[1].trim() });
+        index += 1;
+        continue;
+      }
+      if (/^\s*\$\$\s*$/.test(line)) {
         const start = index;
         const body: string[] = [];
         index += 1;
-        while (index < lines.length && lines[index].trim() !== "$$") {
+        while (index < lines.length && !/^\s*\$\$\s*$/.test(lines[index])) {
           body.push(lines[index]);
           index += 1;
         }
@@ -190,7 +201,7 @@
     {:else if part.kind === "del"}
       <del>{part.text}</del>
     {:else if part.kind === "math"}
-      <span class="math math--inline">{part.text}</span>
+      <MathView source={part.text} />
     {:else if part.kind === "link"}
       <a href={part.href} target="_blank" rel="noreferrer">{part.text}</a>
     {/if}
@@ -252,7 +263,7 @@
         </tbody>
       </table>
     {:else if block.kind === "math"}
-      <pre class="math math--block">{block.body}</pre>
+      <MathView source={block.body} display={true} />
     {/if}
   {/each}
 </div>

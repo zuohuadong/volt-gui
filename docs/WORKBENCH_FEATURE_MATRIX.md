@@ -26,7 +26,7 @@ Status values:
 | Chat loop | Stream text/reasoning/events | work, code | partial | `agent:event` reducer renders text, reasoning, usage, and tool events; `HistoryForTab` hydration now loads saved turns on boot/tab switch. |
 | Chat loop | Cancel running turn | work, code | partial | Composer calls `CancelTab` while running; draft restore still required. |
 | Transcript | Assistant/user messages | work, code | usable | Browser smoke renders saved history plus live user and assistant turns in the Svelte transcript. |
-| Transcript | Markdown, code, math | work, code | partial | Lightweight Svelte renderer covers headings, task lists, tables, links, inline code, fenced code, and math text; full KaTeX parity still required. |
+| Transcript | Markdown, code, math | work, code | usable | Lightweight Svelte renderer covers headings, task lists, tables, links, inline code, fenced code, and KaTeX inline/block math; Browser smoke verifies `[data-katex="inline"] .katex` and `[data-katex="block"] .katex` with no console errors. |
 | Transcript | Tool calls and subcalls | work, code | partial | Tool dispatch/result cards render; nested sub-agent call grouping still required. |
 | Transcript | Approvals and ask questions | work, code | partial | Browser smoke completes approve/deny and answer-question flows; real Wails approval smoke still required. |
 | Composer | Slash commands | work, code | partial | Command list and filtering render from `Commands`; slash-arg application and submit semantics still required. |

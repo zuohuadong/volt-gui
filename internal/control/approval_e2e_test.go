@@ -6,11 +6,11 @@ import (
 	"sync"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/permission"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/permission"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 type recordingWriter struct {

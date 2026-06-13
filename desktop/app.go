@@ -574,13 +574,21 @@ func (a *App) CheckpointsForTab(tabID string) []CheckpointMeta {
 	}
 	metas := ctrl.Checkpoints()
 	out := make([]CheckpointMeta, 0, len(metas))
-	for _, m := range metas {
+	canCode := make([]bool, len(metas))
+	hasCode := false
+	for i := len(metas) - 1; i >= 0; i-- {
+		if len(metas[i].Paths) > 0 {
+			hasCode = true
+		}
+		canCode[i] = hasCode
+	}
+	for i, m := range metas {
 		out = append(out, CheckpointMeta{
 			Turn:            m.Turn,
 			Prompt:          m.Prompt,
 			Files:           m.Paths,
 			Time:            m.Time.UnixMilli(),
-			CanCode:         len(m.Paths) > 0,
+			CanCode:         canCode[i],
 			CanConversation: ctrl.CheckpointHasBoundary(m.Turn),
 		})
 	}

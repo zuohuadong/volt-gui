@@ -103,8 +103,7 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 }
 
 func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
-	cmd := exec.Command("git", "-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	proc.HideWindowDetached(cmd)
+	cmd := workspaceGit("-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -127,6 +126,13 @@ func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
 		out = append(out, entry)
 	}
 	return out, nil
+}
+
+func workspaceGit(args ...string) *exec.Cmd {
+	fullArgs := append([]string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false"}, args...)
+	cmd := exec.Command("git", fullArgs...)
+	proc.HideWindowDetached(cmd)
+	return cmd
 }
 
 func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
@@ -211,8 +217,7 @@ func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
 }
 
 func workspaceGitRoot(base string) (string, error) {
-	topCmd := exec.Command("git", "-C", base, "rev-parse", "--show-toplevel")
-	proc.HideWindowDetached(topCmd)
+	topCmd := workspaceGit("-C", base, "rev-parse", "--show-toplevel")
 	topRaw, err := topCmd.Output()
 	if err != nil {
 		return "", err
@@ -237,8 +242,7 @@ func gitWorkspaceText(repoRoot, base, rel string) (string, error) {
 }
 
 func gitBlobText(repoRoot, spec string) (string, error) {
-	cmd := exec.Command("git", "-C", repoRoot, "show", spec)
-	proc.HideWindowDetached(cmd)
+	cmd := workspaceGit("-C", repoRoot, "show", spec)
 	raw, err := cmd.Output()
 	if err != nil {
 		return "", err

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/sandbox"
+	"voltui/internal/sandbox"
 )
 
 func TestBashForegroundTimeoutConfig(t *testing.T) {

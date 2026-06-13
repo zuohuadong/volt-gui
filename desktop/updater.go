@@ -131,8 +131,9 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 		return info
 	}
 	// A dev/invalid running version never auto-prompts.
+	newer := false
 	if okCur && semver.Compare(latest, cur) > 0 {
-		info.Available = true
+		newer = true
 	}
 	if a, ok := m.Asset(); ok {
 		info.AssetSize = a.Size
@@ -142,6 +143,7 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 	} else {
 		return info
 	}
+	info.Available = newer
 	return info
 }
 

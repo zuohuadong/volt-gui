@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/checkpoint"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
+	"voltui/internal/agent"
+	"voltui/internal/checkpoint"
+	"voltui/internal/control"
+	"voltui/internal/event"
 )
 
 func seedCheckpoint(t *testing.T, ckptDir string, c checkpoint.Checkpoint) {

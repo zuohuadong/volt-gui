@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/hook"
+	"voltui/internal/hook"
 )
 
 type HookConfigView struct {

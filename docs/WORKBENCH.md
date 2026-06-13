@@ -146,9 +146,9 @@ usable and verified.
    code-workspace surfaces.
 6. **Resource surfaces**: migrate settings and operations panels to typed
    resources.
-7. **Replace React shell**: switch Wails build commands to the Svelte frontend
+7. ~~**Replace React shell**: switch Wails build commands to the Svelte frontend~~ (done)
    only after parity gates pass.
-8. **Remove obsolete React code**: remove React dependencies and dead components
+8. ~~**Remove obsolete React code**: remove React dependencies and dead components~~ (done)
    in the final replacement PR.
 
 ## Verification Gates

@@ -24,7 +24,50 @@ branch.
 
 #### Rejected: 硬编码品牌替换 | 不可维护，每次同步上游需重新 65 文件替换
 
-### [1.0.0] — 2026-06-03 (VoltUI upstream)
+### 西谷智灯暗涌系统 Fork 版本记录
+
+### [desktop-v0.1.4] — 2026-06-13
+
+#### Fixed
+
+- **StartupSplash 品牌替换**: 将硬编码的 "Reasonix" 替换为 `useBrand()` 动态品牌名，splash flag 从 `reasonix.splash.shown` 改为 `voltui.splash.shown`
+
+### [desktop-v0.1.3] — 2026-06-13
+
+#### Added
+
+- **Xigu 内部网关编译时默认值**: `ProviderEntry.APIKeyDefault` 字段，`APIKey()` 方法优先读环境变量，回退到编译时内嵌值，实现零配置部署
+
+### [desktop-v0.1.2] — 2026-06-12
+
+#### Added
+
+- **品牌重命名**: 产品名从 VoltUI/Reasonix 改为 西谷智灯暗涌系统，BrandConfig 配置化方案替代硬编码替换
+
+### [desktop-v0.1.1] — 2026-06-12
+
+#### Fixed
+
+- **自动发版版本计算**: 修正首次发版应为 0.1.0 而非 0.2.0 的 bug；修正上游链接
+
+### [desktop-v0.1.0] — 2026-06-12
+
+首次 CNB 桌面端自动发版。
+
+#### Added
+
+- **CNB auto-release 管道**: 约定式提交 → 自动打 `desktop-v*` tag → CNB 构建 Windows amd64 桌面安装包
+- **merge-request CI 门禁**: 桌面模块编译验证
+- **行业 skill**: 新增 `anyong-brand-config`、`cnb-ci-cd`、`xigu-ai-ops` 三个 fork 专属 skill
+- **产品文档**: 新增 `暗涌.md` 产品策略文档
+
+#### Rejected: 硬编码品牌替换 | 不可维护，每次同步上游需重新 65 文件替换
+
+### [1.0.0-anyong] — 2026-06-12
+
+西谷AI 西谷智灯暗涌系统 fork 初始化，基于 VoltUI 1.0.0 (commit 4e5b14b8)。
+
+### [1.0.0] — 2026-06-03 (VoltUI upstream) (VoltUI upstream)
 
 First stable release — a **ground-up rewrite in Go**. Not an upgrade of the `0.x`
 TypeScript line; a new codebase that becomes the default (`main-v2`).
@@ -69,3 +112,9 @@ TypeScript line; a new codebase that becomes the default (`main-v2`).
   the auto-fetch doesn't resolve there.
 
 [1.0.0]: https://github.com/esengine/DeepSeek-Reasonix/releases/tag/v1.0.0
+[desktop-v0.1.4]: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v0.1.4
+[desktop-v0.1.3]: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v0.1.3
+[desktop-v0.1.2]: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v0.1.2
+[desktop-v0.1.1]: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v0.1.1
+[desktop-v0.1.0]: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v0.1.0
+[1.0.0-anyong]: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v0.1.0

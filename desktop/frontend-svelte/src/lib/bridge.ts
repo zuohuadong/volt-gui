@@ -5,6 +5,7 @@ import type {
   DroppedItem,
   EffortInfo,
   FilePreview,
+  GoalInfo,
   CheckpointMeta,
   HistoryMessage,
   ModelInfo,
@@ -31,6 +32,10 @@ interface AppBindings {
   EffortForTab(tabID: string): Promise<EffortInfo>;
   SetEffortForTab(tabID: string, level: string): Promise<void>;
   SetModeForTab(tabID: string, mode: string): Promise<void>;
+  GoalForTab(tabID: string): Promise<GoalInfo>;
+  StartGoalForTab(tabID: string, objective: string): Promise<void>;
+  ContinueGoalForTab(tabID: string): Promise<void>;
+  ClearGoalForTab(tabID: string): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
   Commands(): Promise<CommandInfo[]>;
@@ -73,6 +78,16 @@ let mockActiveTabId = "mock-global";
 let mockSelectedModel = "deepseek-flash";
 let mockEffort = "auto";
 let mockCancelled = false;
+let mockGoals: Record<string, GoalInfo> = {
+  "mock-global": {
+    objective: "Finish the Svelte + svadmin workbench migration until Work and Code are both usable.",
+    status: "active",
+  },
+  "mock-code": {
+    objective: "Make Code mode diffs, context, checkpoints, and file previews production-ready.",
+    status: "idle",
+  },
+};
 let mockHistory: Record<string, HistoryMessage[]> = {
   "mock-global": [
     { role: "user", content: "Plan the Svelte workbench migration." },
@@ -310,6 +325,27 @@ const mockApp: AppBindings = {
   },
   async SetModeForTab(tabID: string, mode: string) {
     mockTabsState = mockTabsState.map((tab) => (tab.id === tabID ? { ...tab, mode: mode === "plan" || mode === "yolo" ? mode : "normal" } : tab));
+  },
+  async GoalForTab(tabID: string) {
+    return mockGoals[tabID] ?? { objective: "", status: "idle" };
+  },
+  async StartGoalForTab(tabID: string, objective: string) {
+    mockGoals[tabID] = { objective, status: "active" };
+    mockHistory[tabID] = [...(mockHistory[tabID] ?? []), { role: "user", content: `/goal ${objective}` }];
+    emitMock({ kind: "notice", tabId: tabID || mockActiveTabId, text: `goal started: ${objective}` });
+  },
+  async ContinueGoalForTab(tabID: string) {
+    const current = mockGoals[tabID] ?? { objective: "", status: "idle" };
+    if (!current.objective) {
+      emitMock({ kind: "notice", tabId: tabID || mockActiveTabId, text: "no active goal" });
+      return;
+    }
+    mockGoals[tabID] = { ...current, status: current.status === "blocked" ? "active" : "complete", blockedReason: undefined };
+    emitMock({ kind: "notice", tabId: tabID || mockActiveTabId, text: `goal ${mockGoals[tabID].status}` });
+  },
+  async ClearGoalForTab(tabID: string) {
+    mockGoals[tabID] = { objective: "", status: "idle" };
+    emitMock({ kind: "notice", tabId: tabID || mockActiveTabId, text: "goal cleared" });
   },
   async ApproveTab(_tabID: string, id: string, allow: boolean) {
     emitMock({ kind: "notice", tabId: mockActiveTabId, text: `${allow ? "Approved" : "Denied"} ${id}.` });

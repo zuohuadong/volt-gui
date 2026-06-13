@@ -17,6 +17,7 @@
     ContextPanelInfo,
     EffortInfo,
     FilePreview,
+    GoalInfo,
     HistoryMessage,
     ModelInfo,
     QuestionAnswer,
@@ -59,6 +60,7 @@
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let resources = $state<Array<{ name: string; total: number }>>([]);
   let context = $state<ContextPanelInfo | undefined>();
+  let goalInfo = $state<GoalInfo>({ objective: "", status: "idle" });
   let changes = $state<WorkspaceChangesView | undefined>();
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
@@ -169,6 +171,7 @@
       sending = false;
       for (const item of transcript) item.pending = false;
       void refreshCodeDock();
+      if (activeTab) void app().GoalForTab(activeTab.id).then((next) => (goalInfo = next));
     }
   }
 
@@ -180,6 +183,7 @@
       models = active ? await app().ModelsForTab(active.id) : [];
       selectedModel = models.find((model) => model.current)?.name ?? models[0]?.name ?? "";
       effort = active ? await app().EffortForTab(active.id) : { current: "auto", supported: ["auto"] };
+      goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
       resources = await Promise.all(
         workbenchResources.slice(0, 8).map(async (name) => {
@@ -244,6 +248,28 @@
     const backendMode = next === "plan" ? "plan" : next === "yolo" ? "yolo" : "normal";
     await app().SetModeForTab(activeTab.id, backendMode);
     tabs = tabs.map((tab) => (tab.id === activeTab.id ? { ...tab, mode: backendMode } : tab));
+  }
+
+  async function startGoal(objective: string) {
+    if (!activeTab) return;
+    runMode = "goal";
+    await app().SetModeForTab(activeTab.id, "normal");
+    await app().StartGoalForTab(activeTab.id, objective);
+    goalInfo = await app().GoalForTab(activeTab.id);
+  }
+
+  async function continueGoal() {
+    if (!activeTab) return;
+    runMode = "goal";
+    await app().SetModeForTab(activeTab.id, "normal");
+    await app().ContinueGoalForTab(activeTab.id);
+    goalInfo = await app().GoalForTab(activeTab.id);
+  }
+
+  async function clearGoal() {
+    if (!activeTab) return;
+    await app().ClearGoalForTab(activeTab.id);
+    goalInfo = await app().GoalForTab(activeTab.id);
   }
 
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
@@ -320,7 +346,7 @@
     <RunModeBar {runModes} {runMode} onSelect={selectRunMode} />
 
     {#if activityMode === "work"}
-      <WorkDashboard {activeTab} {resources} />
+      <WorkDashboard {activeTab} {resources} {goalInfo} onStartGoal={startGoal} onContinueGoal={continueGoal} onClearGoal={clearGoal} />
     {:else}
       <CodeDashboard {context} {changes} {checkpoints} {filePreview} {diffPreview} onPreviewFile={previewFile} onPreviewChange={previewChange} onRewind={rewind} />
     {/if}

@@ -46,6 +46,10 @@
     { id: "goal", label: "Goal", hint: "Continue a saved long-running objective." },
   ];
 
+  // Cap the in-memory transcript to prevent unbounded growth during long sessions.
+  // Older items are trimmed when the array exceeds this threshold.
+  const MAX_TRANSCRIPT_ITEMS = 500;
+
   function welcomeTranscript(): TranscriptItem[] {
     return [
       {
@@ -117,6 +121,29 @@
     };
   });
 
+  // Debounce batch-appends of streaming text events to avoid re-render storms.
+  let pendingTextBuffer = "";
+  let textFlushScheduled = false;
+
+  function scheduleTextFlush() {
+    if (textFlushScheduled) return;
+    textFlushScheduled = true;
+    queueMicrotask(() => {
+      textFlushScheduled = false;
+      if (!pendingTextBuffer) return;
+      updateLastAssistant(pendingTextBuffer);
+      pendingTextBuffer = "";
+    });
+  }
+
+  function appendTranscript(item: TranscriptItem) {
+    appendTranscript(item);
+    if (transcript.length > MAX_TRANSCRIPT_ITEMS) {
+      // Keep the most recent items; drop from the front.
+      transcript.splice(0, transcript.length - MAX_TRANSCRIPT_ITEMS);
+    }
+  }
+
   function updateLastAssistant(text: string) {
     let current: TranscriptItem | undefined;
     for (let index = transcript.length - 1; index >= 0; index -= 1) {
@@ -130,7 +157,7 @@
       current.body += text;
       return;
     }
-    transcript.push({ id: `assistant-${Date.now()}`, role: "assistant", body: text, pending: true });
+    appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: text, pending: true });
   }
 
   function toolTranscriptId(id?: string) {
@@ -166,12 +193,15 @@
       sending = true;
       pendingApproval = undefined;
       pendingAsk = undefined;
-      transcript.push({ id: `assistant-${Date.now()}`, role: "assistant", body: "", pending: true });
+      appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: "", pending: true });
     }
     if (event.kind === "reasoning" && event.reasoning) {
-      transcript.push({ id: `reasoning-${Date.now()}`, role: "reasoning", title: "reasoning", body: event.reasoning, pending: true });
+      appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: "reasoning", body: event.reasoning, pending: true });
     }
-    if ((event.kind === "text" || event.kind === "message") && event.text) updateLastAssistant(event.text);
+    if ((event.kind === "text" || event.kind === "message") && event.text) {
+    pendingTextBuffer += event.text;
+    scheduleTextFlush();
+  }
     if (event.kind === "tool_dispatch" && event.tool) {
       const id = toolTranscriptId(event.tool.id);
       const existing = transcript.find((item) => item.id === id);
@@ -183,7 +213,7 @@
         existing.parentId = event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined;
         return;
       }
-      transcript.push({
+      appendTranscript({
         id,
         role: "tool",
         title: event.tool.name,
@@ -210,7 +240,7 @@
       sending = false;
     }
     if (event.kind === "usage" && event.usage) {
-      transcript.push({
+      appendTranscript({
         id: `usage-${Date.now()}`,
         role: "notice",
         title: "usage",
@@ -218,14 +248,14 @@
       });
     }
     if (event.kind === "notice" && event.text) {
-      transcript.push({ id: `notice-${Date.now()}`, role: "notice", body: event.text });
+      appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: event.text });
     }
     if (event.kind === "turn_done") {
       sending = false;
       for (const item of transcript) item.pending = false;
       if (restoreDraftOnTurnDone && submittedDraft) {
         if (!input.trim()) input = submittedDraft.display;
-        transcript.push({ id: `draft-${Date.now()}`, role: "notice", body: "Draft restored after cancellation." });
+        appendTranscript({ id: `draft-${Date.now()}`, role: "notice", body: "Draft restored after cancellation." });
       }
       restoreDraftOnTurnDone = false;
       submittedDraft = undefined;
@@ -302,7 +332,7 @@
     submittedDraft = draft;
     restoreDraftOnTurnDone = false;
     input = "";
-    transcript.push({ id: `user-${Date.now()}`, role: "user", body: text });
+    appendTranscript({ id: `user-${Date.now()}`, role: "user", body: text });
     try {
       await app().SubmitDisplayToTab(activeTab.id, text, submission);
     } catch (error) {
@@ -577,7 +607,7 @@
     }
     await hydrateHistory(tab);
     await refreshCodeDock(tab);
-    transcript.push({
+    appendTranscript({
       id: `rewind-${Date.now()}`,
       role: "notice",
       title: "rewind",

@@ -10,6 +10,7 @@ import type {
   CapabilitiesView,
   HistoryMessage,
   MCPServerInput,
+  MemoryView,
   ModelInfo,
   ProjectNode,
   ProviderView,
@@ -94,7 +95,9 @@ interface AppBindings {
   CheckUpdate(): Promise<UpdateInfo | null>;
   ApplyUpdate(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
-  Memory(): Promise<unknown>;
+  Memory(): Promise<MemoryView>;
+  Remember(scope: string, note: string): Promise<string>;
+  Forget(name: string): Promise<void>;
 }
 
 interface WailsRuntime {
@@ -130,6 +133,36 @@ let mockGoals: Record<string, GoalInfo> = {
     objective: "Make Code mode diffs, context, checkpoints, and file previews production-ready.",
     status: "idle",
   },
+};
+let mockMemory: MemoryView = {
+  available: true,
+  storeDir: "~/.config/voltui/projects/-mock/memory",
+  docs: [
+    {
+      path: "VOLTUI.md",
+      scope: "project",
+      body: "# VoltUI project memory\n\nKeep Work and Code modes orthogonal.",
+    },
+    {
+      path: "~/.config/voltui/VOLTUI.md",
+      scope: "user",
+      body: "# User memory\n\nPrefer concise implementation notes.",
+    },
+  ],
+  facts: [
+    {
+      name: "workbench-roadmap",
+      title: "Workbench roadmap",
+      description: "Keep Work and Code modes orthogonal.",
+      type: "project",
+      body: "The Svelte workbench must preserve Work/Code activity mode separately from Ask/Auto/YOLO/Plan/Goal run mode.",
+    },
+  ],
+  scopes: [
+    { scope: "user", path: "~/.config/voltui/VOLTUI.md" },
+    { scope: "project", path: "VOLTUI.md" },
+    { scope: "local", path: "VOLTUI.local.md" },
+  ],
 };
 let mockHistory: Record<string, HistoryMessage[]> = {
   "mock-global": [
@@ -1047,7 +1080,24 @@ const mockApp: AppBindings = {
     emitMock({ kind: "notice", tabId: mockActiveTabId, text: "Opened update download page." });
   },
   async Memory() {
-    return { entries: [{ name: "workbench-roadmap", note: "Keep Work and Code modes orthogonal." }] };
+    return JSON.parse(JSON.stringify(mockMemory)) as MemoryView;
+  },
+  async Remember(scope: string, note: string) {
+    const selected = mockMemory.scopes.find((item) => item.scope === scope) ?? mockMemory.scopes[0];
+    const trimmed = note.trim();
+    const line = `- ${trimmed}`;
+    mockMemory.docs = mockMemory.docs.map((doc) =>
+      doc.scope === selected?.scope ? { ...doc, body: `${doc.body.trim()}\n\n${line}` } : doc,
+    );
+    if (selected && !mockMemory.docs.some((doc) => doc.scope === selected.scope)) {
+      mockMemory.docs = [...mockMemory.docs, { path: selected.path, scope: selected.scope, body: `# ${selected.scope} memory\n\n${line}` }];
+    }
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: `remembered ${selected?.scope ?? "project"} memory` });
+    return selected?.path ?? "VOLTUI.md";
+  },
+  async Forget(name: string) {
+    mockMemory.facts = mockMemory.facts.filter((fact) => fact.name !== name);
+    emitMock({ kind: "notice", tabId: mockActiveTabId, text: `forgot memory ${name}` });
   },
 };
 

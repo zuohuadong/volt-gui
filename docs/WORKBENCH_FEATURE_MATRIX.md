@@ -35,7 +35,7 @@ Status values:
 | Composer | Model and effort switching | work, code | partial | Model and effort selectors list and set per tab through bridge/mock; real Wails smoke still required. |
 | Work dashboard | Tasks/goals overview | work | partial | Goal controls are wired through the controller/Wails bridge and Browser smoke; task data provider still required. |
 | Work dashboard | Recent sessions | work | partial | Session context is visible; full history/resume flow still required. |
-| Work dashboard | Memory shortcuts | work | partial | Memory resource counts render through the data provider; view/add/forget flows still required. |
+| Work dashboard | Memory shortcuts | work | usable | Svelte Work dashboard hydrates the Wails `Memory()` view, shows saved facts/docs and store location, quick-adds notes through `Remember(scope,note)`, forgets facts through `Forget(name)`, refreshes svadmin-compatible resource counts, and Browser smoke covers view/add/forget with no console errors. |
 | Code dock | Context panel | code | partial | Token usage and read files render from `ContextPanel`; checkpoint and full context controls still required. |
 | Code dock | File tree and preview | code | partial | `@` search can preview files through `ReadFile`; full tree/reveal/open flows still required. |
 | Code dock | Changed files and diffs | code | partial | `WorkspaceChanges` renders changed files and Svelte calls the new `WorkspaceDiff` Wails binding to render unified diff hunks with +/− counts; real Wails runtime smoke and richer staged/rename edge cases still required. |

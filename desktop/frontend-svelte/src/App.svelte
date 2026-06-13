@@ -20,6 +20,7 @@
     FilePreview,
     GoalInfo,
     HistoryMessage,
+    MemoryView,
     ModelInfo,
     ProjectNode,
     QuestionAnswer,
@@ -64,6 +65,7 @@
   let projectTree = $state<ProjectNode[]>([]);
   let context = $state<ContextPanelInfo | undefined>();
   let goalInfo = $state<GoalInfo>({ objective: "", status: "idle" });
+  let memoryView = $state<MemoryView>({ docs: [], facts: [], scopes: [], storeDir: "", available: false });
   let changes = $state<WorkspaceChangesView | undefined>();
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
@@ -210,6 +212,7 @@
       effort = active ? await app().EffortForTab(active.id) : { current: "auto", supported: ["auto"] };
       goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
+      await refreshMemory();
       await refreshResources();
       await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
@@ -220,11 +223,15 @@
 
   async function refreshResources() {
     resources = await Promise.all(
-      workbenchResources.slice(0, 9).map(async (name) => {
+      workbenchResources.map(async (name) => {
         const result = await wailsDataProvider.list(name);
         return { name, total: result.total };
       }),
     );
+  }
+
+  async function refreshMemory() {
+    memoryView = await app().Memory();
   }
 
   async function refreshCodeDock(tab = activeTab) {
@@ -425,6 +432,18 @@
     goalInfo = await app().GoalForTab(activeTab.id);
   }
 
+  async function remember(scope: string, note: string) {
+    await app().Remember(scope, note);
+    await refreshMemory();
+    await refreshResources();
+  }
+
+  async function forgetMemory(name: string) {
+    await app().Forget(name);
+    await refreshMemory();
+    await refreshResources();
+  }
+
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
     if (!activeTab || !pendingApproval) return;
     const approval = pendingApproval;
@@ -513,7 +532,17 @@
     <RunModeBar {runModes} {runMode} onSelect={selectRunMode} />
 
     {#if activityMode === "work"}
-      <WorkDashboard {activeTab} {resources} {goalInfo} onStartGoal={startGoal} onContinueGoal={continueGoal} onClearGoal={clearGoal} />
+      <WorkDashboard
+        {activeTab}
+        {resources}
+        {goalInfo}
+        {memoryView}
+        onStartGoal={startGoal}
+        onContinueGoal={continueGoal}
+        onClearGoal={clearGoal}
+        onRemember={remember}
+        onForgetMemory={forgetMemory}
+      />
     {:else}
       <CodeDashboard {context} {changes} {checkpoints} {filePreview} {diffPreview} onPreviewFile={previewFile} onPreviewChange={previewChange} onRewind={rewind} />
     {/if}

@@ -1,5 +1,5 @@
 import { app } from "./bridge";
-import type { ListParams, ListResult, MCPServerInput, ProviderView, ResourceRecord, SettingsView } from "./types";
+import type { ListParams, ListResult, MCPServerInput, MemoryView, ProviderView, ResourceRecord, SettingsView } from "./types";
 
 export const workbenchResources = [
   "providers",
@@ -96,6 +96,25 @@ function modelRefs(settings: SettingsView): ResourceRecord[] {
   );
 }
 
+function memoryEntries(memory: MemoryView): ResourceRecord[] {
+  const facts = memory.facts.map((fact) => ({
+    id: fact.name,
+    name: fact.name,
+    title: fact.title ?? fact.name,
+    description: fact.description,
+    type: fact.type,
+    body: fact.body,
+  }));
+  const docs = memory.docs.map((doc) => ({
+    id: `doc:${doc.scope}`,
+    name: doc.path,
+    scope: doc.scope,
+    body: doc.body,
+    type: "doc",
+  }));
+  return [...facts, ...docs];
+}
+
 export const wailsDataProvider: WorkbenchDataProvider = {
   async list(resource) {
     switch (resource) {
@@ -142,8 +161,8 @@ export const wailsDataProvider: WorkbenchDataProvider = {
       }
       case "memory": {
         const memory = await app().Memory();
-        const entries = (memory as { entries?: unknown[] }).entries ?? [];
-        return { data: asRecords(entries, "memory"), total: entries.length };
+        const entries = memoryEntries(memory);
+        return { data: entries, total: memory.facts.length + memory.docs.length };
       }
       case "sessions":
       case "topics": {
@@ -177,6 +196,13 @@ export const wailsDataProvider: WorkbenchDataProvider = {
       const rule = String(record.rule ?? "");
       await app().AddPermissionRule(list, rule);
       return { id: `${list}:${rule}`, list, rule };
+    }
+    if (resource === "memory") {
+      const record = asRecordData(data);
+      const scope = String(record.scope ?? "project");
+      const note = String(record.note ?? record.description ?? record.body ?? "").trim();
+      const path = await app().Remember(scope, note);
+      return { id: `doc:${scope}`, scope, path, note };
     }
     return { id: crypto.randomUUID(), ...(typeof data === "object" && data ? data : { value: data }) };
   },
@@ -239,6 +265,7 @@ export const wailsDataProvider: WorkbenchDataProvider = {
   async delete(resource, id) {
     if (resource === "providers") await app().DeleteProvider(id);
     if (resource === "mcpServers") await app().RemoveMCPServer(id);
+    if (resource === "memory") await app().Forget(id);
     if (resource === "permissions") {
       const [list, ...rest] = id.split(":");
       const rule = rest.join(":");

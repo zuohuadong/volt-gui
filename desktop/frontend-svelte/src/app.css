@@ -531,6 +531,122 @@ select {
   border-radius: 8px;
 }
 
+.memory-card {
+  display: grid;
+  gap: 12px;
+}
+
+.memory-card > svg {
+  color: var(--work);
+}
+
+.memory-card h2,
+.memory-card > div > p {
+  margin: 0;
+}
+
+.memory-card__quickadd {
+  display: grid;
+  grid-template-columns: minmax(90px, 120px) minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.memory-card__quickadd select,
+.memory-card__quickadd textarea {
+  min-width: 0;
+  padding: 8px 10px;
+  color: #17202a;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.memory-card__quickadd textarea {
+  resize: vertical;
+}
+
+.memory-card__quickadd button,
+.memory-card__fact button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: white;
+  background: var(--work);
+  border: 1px solid var(--work);
+  border-radius: 8px;
+}
+
+.memory-card__quickadd button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.memory-card__status {
+  color: #166534;
+}
+
+.memory-card__list {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-card__fact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.memory-card__fact strong,
+.memory-card__fact span,
+.memory-card__fact p {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-card__fact span {
+  margin-top: 3px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.memory-card__fact p {
+  margin-top: 6px;
+}
+
+.memory-card__fact button {
+  color: #7f1d1d;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.memory-card__docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-card__docs span {
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  overflow-wrap: anywhere;
+  color: #293241;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
 .code-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);

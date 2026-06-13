@@ -16,6 +16,7 @@ import type {
   ProviderView,
   QuestionAnswer,
   SettingsView,
+  SessionMeta,
   SlashArgItem,
   TabMeta,
   TopicMeta,
@@ -44,6 +45,8 @@ interface AppBindings {
   RenameTopic(topicID: string, title: string): Promise<void>;
   DeleteTopic(topicID: string): Promise<void>;
   TrashTopic(topicID: string): Promise<void>;
+  ListSessions(): Promise<SessionMeta[]>;
+  ResumeSessionForTab(tabID: string, path: string): Promise<HistoryMessage[]>;
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
@@ -212,6 +215,64 @@ let mockHistory: Record<string, HistoryMessage[]> = {
       content: "Checkpoint rewind should refresh transcript history, context, changed files, and rewind points after the backend resolves.",
       reasoning: "Post-rewind state is only trustworthy after re-reading the tab.",
     },
+  ],
+};
+let mockSessions: SessionMeta[] = [
+  {
+    path: "/mock/sessions/workbench-roadmap.jsonl",
+    preview: "Plan the Svelte workbench migration.",
+    title: "Workbench roadmap",
+    turns: 4,
+    createdAt: Date.now() - 7200000,
+    lastActivityAt: Date.now() - 600000,
+    modTime: Date.now() - 600000,
+    current: true,
+    open: true,
+    scope: "global",
+    topicId: "welcome",
+    topicTitle: "Workbench planning",
+  },
+  {
+    path: "/mock/sessions/code-dock-review.jsonl",
+    preview: "Inspect the Svelte workbench shell.",
+    title: "Code dock review",
+    turns: 6,
+    createdAt: Date.now() - 5400000,
+    lastActivityAt: Date.now() - 360000,
+    modTime: Date.now() - 360000,
+    current: false,
+    open: true,
+    scope: "project",
+    workspaceRoot: "~/projects/voltui",
+    topicId: "code",
+    topicTitle: "Svelte migration",
+  },
+  {
+    path: "/mock/sessions/provider-cleanup.jsonl",
+    preview: "Review provider settings and model defaults.",
+    turns: 3,
+    createdAt: Date.now() - 10800000,
+    lastActivityAt: Date.now() - 1800000,
+    modTime: Date.now() - 1800000,
+    current: false,
+    open: false,
+    scope: "global",
+    topicId: "research",
+    topicTitle: "Research notes",
+  },
+];
+const mockSessionHistory: Record<string, HistoryMessage[]> = {
+  "/mock/sessions/workbench-roadmap.jsonl": [
+    { role: "user", content: "Plan the Svelte workbench migration." },
+    { role: "assistant", content: "The Work dashboard should show goals, tasks, memory, and recent sessions without mixing into Code mode." },
+  ],
+  "/mock/sessions/code-dock-review.jsonl": [
+    { role: "user", content: "Inspect the Svelte workbench shell." },
+    { role: "assistant", content: "Code mode focuses on context, diffs, file previews, and checkpoints." },
+  ],
+  "/mock/sessions/provider-cleanup.jsonl": [
+    { role: "user", content: "Review provider settings and model defaults." },
+    { role: "assistant", content: "Provider defaults are editable through the svadmin-compatible resource layer." },
   ],
 };
 let mockCheckpoints: Record<string, CheckpointMeta[]> = {
@@ -830,6 +891,25 @@ const mockApp: AppBindings = {
     deleteMockTopic(topicID);
     mockTabsState = mockTabsState.filter((tab) => tab.topicId !== topicID);
     mockActiveTabId = mockTabsState.find((tab) => tab.active)?.id ?? mockTabsState[0]?.id ?? "mock-global";
+  },
+  async ListSessions() {
+    return mockSessions.map((session) => ({ ...session }));
+  },
+  async ResumeSessionForTab(tabID: string, path: string) {
+    const id = tabID || mockActiveTabId;
+    const history = mockSessionHistory[path] ?? [];
+    mockHistory[id] = history.map((message) => ({ ...message }));
+    mockSessions = mockSessions
+      .map((session) => ({
+        ...session,
+        current: session.path === path,
+        open: session.open || session.path === path,
+        lastActivityAt: session.path === path ? Date.now() : session.lastActivityAt,
+        modTime: session.path === path ? Date.now() : session.modTime,
+      }))
+      .sort((left, right) => right.lastActivityAt - left.lastActivityAt);
+    emitMock({ kind: "notice", tabId: id, text: `resumed ${path}` });
+    return mockHistory[id];
   },
   async HistoryForTab(tabID: string) {
     return mockHistory[tabID] ?? [];

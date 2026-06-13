@@ -24,7 +24,9 @@
     ModelInfo,
     ProjectNode,
     QuestionAnswer,
+    ResourceRecord,
     RunMode,
+    SessionMeta,
     TabMeta,
     TranscriptItem,
     WireApproval,
@@ -62,6 +64,8 @@
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let resources = $state<Array<{ name: string; total: number }>>([]);
+  let workTasks = $state<ResourceRecord[]>([]);
+  let recentSessions = $state<SessionMeta[]>([]);
   let projectTree = $state<ProjectNode[]>([]);
   let context = $state<ContextPanelInfo | undefined>();
   let goalInfo = $state<GoalInfo>({ objective: "", status: "idle" });
@@ -221,6 +225,7 @@
       goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
       await refreshMemory();
+      await refreshWorkDashboardData();
       await refreshResources();
       await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
@@ -240,6 +245,12 @@
 
   async function refreshMemory() {
     memoryView = await app().Memory();
+  }
+
+  async function refreshWorkDashboardData() {
+    const [tasks, sessions] = await Promise.all([wailsDataProvider.list("tasks"), app().ListSessions()]);
+    workTasks = tasks.data;
+    recentSessions = sessions;
   }
 
   async function refreshCodeDock(tab = activeTab) {
@@ -435,6 +446,8 @@
     await app().SetModeForTab(activeTab.id, "normal");
     await app().StartGoalForTab(activeTab.id, objective);
     goalInfo = await app().GoalForTab(activeTab.id);
+    await refreshWorkDashboardData();
+    await refreshResources();
   }
 
   async function continueGoal() {
@@ -443,12 +456,38 @@
     await app().SetModeForTab(activeTab.id, "normal");
     await app().ContinueGoalForTab(activeTab.id);
     goalInfo = await app().GoalForTab(activeTab.id);
+    await refreshWorkDashboardData();
+    await refreshResources();
   }
 
   async function clearGoal() {
     if (!activeTab) return;
     await app().ClearGoalForTab(activeTab.id);
     goalInfo = await app().GoalForTab(activeTab.id);
+    await refreshWorkDashboardData();
+    await refreshResources();
+  }
+
+  async function updateTaskStatus(id: string, status: string) {
+    await wailsDataProvider.update("tasks", id, { status });
+    await refreshWorkDashboardData();
+    await refreshResources();
+  }
+
+  async function resumeSession(session: SessionMeta) {
+    let target = activeTab;
+    const scope = session.scope || (session.workspaceRoot ? "project" : "global");
+    if (scope === "project" && session.workspaceRoot && session.topicId) {
+      target = await app().OpenProjectTab(session.workspaceRoot, session.topicId);
+      activityMode = "code";
+    } else if (session.topicId) {
+      target = await app().OpenGlobalTab(session.topicId);
+      activityMode = "work";
+    }
+    if (!target) return;
+    const history = await app().ResumeSessionForTab(target.id, session.path);
+    await refresh();
+    transcript = historyToTranscript(history);
   }
 
   async function remember(scope: string, note: string) {
@@ -567,9 +606,13 @@
         {resources}
         {goalInfo}
         {memoryView}
+        {workTasks}
+        {recentSessions}
         onStartGoal={startGoal}
         onContinueGoal={continueGoal}
         onClearGoal={clearGoal}
+        onUpdateTask={updateTaskStatus}
+        onResumeSession={resumeSession}
         onRemember={remember}
         onForgetMemory={forgetMemory}
       />

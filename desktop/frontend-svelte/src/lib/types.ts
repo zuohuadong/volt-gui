@@ -18,6 +18,23 @@ export interface TabMeta {
   cwd?: string;
 }
 
+export interface SessionMeta {
+  path: string;
+  preview: string;
+  title?: string;
+  turns: number;
+  createdAt: number;
+  lastActivityAt: number;
+  modTime: number;
+  deletedAt?: number;
+  current: boolean;
+  open: boolean;
+  scope?: string;
+  workspaceRoot?: string;
+  topicId?: string;
+  topicTitle?: string;
+}
+
 export interface TopicMeta {
   id: string;
   title: string;

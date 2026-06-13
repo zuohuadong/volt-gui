@@ -449,7 +449,7 @@ check("expandYoungDiagrams substitutes correct array form", () => {
   // full pipeline for this assertion.
   const out = expandYoungDiagrams("\\yng(2,1)");
   return out.includes("\\begin{array}{c}")
-    && out.includes("\\hphantom{x}")
+    && out.includes("\\square")
     && out.includes(" \\\\ ");
 });
 check("expandYoungDiagrams handles \\yng with content", () => {

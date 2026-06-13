@@ -10,8 +10,12 @@
 //                              (rows separated by `\\`, cells by `&`)
 // `\young(2 1)`             — youngtab syntax (whitespace separator)
 //
-// Cells are `\hphantom{x}` by default so the row width is uniform and
-// the diagram doesn't look ragged.
+// Cells are `\square` (a Unicode white-square, rendered by KaTeX as
+// `mord amsrm` with a real visible glyph) by default so the diagram
+// has the same width as a filled one AND is actually visible. Earlier
+// versions used `\hphantom{x}` for invisible placeholder width, which
+// renders to *no visible glyph* — correct typesetting but the user
+// sees nothing on screen and the chat looks empty.
 //
 // The translator is stateful: it tracks `$…$` math delimiters so it
 // only wraps *bare* `\yng`/`\young` in `$…$`. When the macros are
@@ -30,10 +34,11 @@ function parseShape(s: string, sep: "comma" | "space"): number[] {
 
 function expandShape(rows: number[], content: string | undefined): string {
   const maxN = rows.length === 0 ? 0 : Math.max(...rows);
-  // 2D array of cell content. Each cell is `\hphantom{x}` by default
-  // so the column width is uniform and rows are left-aligned.
+  // 2D array of cell content. Each cell is `\square` by default
+  // (visible Unicode white-square) so the diagram has uniform width
+  // AND is actually visible to the reader.
   const cells: string[][] = Array.from({ length: rows.length }, () =>
-    Array(maxN).fill("\\hphantom{x}"),
+    Array(maxN).fill("\\square"),
   );
 
   if (content) {
@@ -64,7 +69,7 @@ function expandShape(rows: number[], content: string | undefined): string {
       const cs = splitAtTopLevel(contentRows[i], "&");
       for (let j = 0; j < cs.length && j < rows[i]; j++) {
         const c = cs[j].trim();
-        cells[i][j] = c === "" ? "\\hphantom{x}" : c;
+        cells[i][j] = c === "" ? "\\square" : c;
       }
     }
   }

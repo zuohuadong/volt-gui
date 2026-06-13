@@ -1518,8 +1518,10 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 		if err != nil {
 			return c.rewindFail(fmt.Errorf("rewind code: %w", err))
 		}
-		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-			Text: fmt.Sprintf("rewound code to turn %d — %d file(s) restored, %d removed", turn, len(written), len(deleted))})
+		if len(written) > 0 || len(deleted) > 0 {
+			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+				Text: fmt.Sprintf("rewound code to turn %d — %d file(s) restored, %d removed", turn, len(written), len(deleted))})
+		}
 	}
 	if scope == RewindConversation || scope == RewindBoth {
 		if !hasBound {
@@ -1631,8 +1633,14 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 func (c *Controller) CheckpointHasBoundary(turn int) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, ok := c.cpBound[turn]
-	return ok
+	boundary, ok := c.cpBound[turn]
+	if !ok {
+		return false
+	}
+	// After compaction the key may still exist but the boundary value is
+	// stale (it points past the truncated message log).  Treat those
+	// turns the same as "no boundary" so the UI can disable the button.
+	return boundary <= len(c.executor.Session().Messages)
 }
 
 // Branch copies the current conversation into a child branch and switches to it.

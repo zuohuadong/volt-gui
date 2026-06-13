@@ -606,6 +606,36 @@ select,
   font-size: 12px;
 }
 
+.diff-viewer__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diff-viewer__summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  color: #475569;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.diff-viewer__summary .diff-viewer__added {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+.diff-viewer__summary .diff-viewer__removed {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
 .diff-viewer__error {
   color: #b91c1c;
 }

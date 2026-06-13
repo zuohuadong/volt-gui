@@ -1,27 +1,32 @@
 <script lang="ts">
   import { Code2, FileText, GitPullRequest, Gauge, RotateCcw } from "@lucide/svelte";
   import DiffViewer from "./DiffViewer.svelte";
-  import type { CheckpointMeta, ContextPanelInfo, FilePreview, WorkspaceChangesView } from "../lib/types";
+  import type { CheckpointMeta, ContextPanelInfo, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
 
   let {
     context,
     changes,
     checkpoints,
     filePreview,
+    diffPreview,
     onPreviewFile,
+    onPreviewChange,
     onRewind,
   }: {
     context?: ContextPanelInfo;
     changes?: WorkspaceChangesView;
     checkpoints: CheckpointMeta[];
     filePreview?: FilePreview;
+    diffPreview?: WorkspaceDiffView;
     onPreviewFile: (path: string) => void;
+    onPreviewChange: (path: string) => void;
     onRewind: (turn: number, scope: string) => void;
   } = $props();
 
   const tokenPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const changedCount = $derived(changes?.files.length ?? 0);
-  const selectedChange = $derived(filePreview ? changes?.files.find((file) => file.path === filePreview.path) : undefined);
+  const selectedPath = $derived(diffPreview?.path ?? filePreview?.path);
+  const selectedChange = $derived(selectedPath ? changes?.files.find((file) => file.path === selectedPath) : undefined);
 </script>
 
 <section class="code-layout" aria-label="Code workspace">
@@ -58,7 +63,7 @@
       <h2><GitPullRequest size={15} /> Changes</h2>
       {#if changes?.files.length}
         {#each changes.files as file (file.path)}
-          <button type="button" onclick={() => onPreviewFile(file.path)}>
+          <button type="button" onclick={() => onPreviewChange(file.path)}>
             <strong>{file.gitStatus || "?"}</strong>
             <span>{file.path}</span>
           </button>
@@ -91,7 +96,7 @@
     </section>
     <section>
       <h2><FileText size={15} /> Preview</h2>
-      <DiffViewer change={selectedChange} preview={filePreview} />
+      <DiffViewer change={selectedChange} preview={filePreview} diff={diffPreview} />
     </section>
   </aside>
 </section>

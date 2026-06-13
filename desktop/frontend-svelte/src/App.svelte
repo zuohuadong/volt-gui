@@ -26,6 +26,7 @@
     WireApproval,
     WireAsk,
     WireEvent,
+    WorkspaceDiffView,
     WorkspaceChangesView,
   } from "./lib/types";
 
@@ -61,6 +62,7 @@
   let changes = $state<WorkspaceChangesView | undefined>();
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
+  let diffPreview = $state<WorkspaceDiffView | undefined>();
   let pendingApproval = $state<WireApproval | undefined>();
   let pendingAsk = $state<WireAsk | undefined>();
   let loading = $state(true);
@@ -260,6 +262,14 @@
 
   async function previewFile(path: string) {
     filePreview = await app().ReadFile(path);
+    diffPreview = undefined;
+    activityMode = "code";
+  }
+
+  async function previewChange(path: string) {
+    const [diff, preview] = await Promise.all([app().WorkspaceDiff(path), app().ReadFile(path)]);
+    diffPreview = diff;
+    filePreview = preview;
     activityMode = "code";
   }
 
@@ -312,7 +322,7 @@
     {#if activityMode === "work"}
       <WorkDashboard {activeTab} {resources} />
     {:else}
-      <CodeDashboard {context} {changes} {checkpoints} {filePreview} onPreviewFile={previewFile} onRewind={rewind} />
+      <CodeDashboard {context} {changes} {checkpoints} {filePreview} {diffPreview} onPreviewFile={previewFile} onPreviewChange={previewChange} onRewind={rewind} />
     {/if}
 
     <ResourcePanel {activityMode} {resources} />

@@ -11,6 +11,7 @@ import type {
   QuestionAnswer,
   TabMeta,
   WireEvent,
+  WorkspaceDiffView,
   WorkspaceChangesView,
 } from "./types";
 
@@ -38,6 +39,7 @@ interface AppBindings {
   SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
+  WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   AttachDropped(path: string): Promise<DroppedItem>;
@@ -365,6 +367,27 @@ const mockApp: AppBindings = {
         },
       ],
       gitAvailable: true,
+    };
+  },
+  async WorkspaceDiff(rel: string) {
+    return {
+      path: rel,
+      status: "M",
+      kind: "modify",
+      diff: [
+        `--- a/${rel}`,
+        `+++ b/${rel}`,
+        "@@ -1,4 +1,5 @@",
+        " import App from './App.svelte';",
+        "-const mode = 'react';",
+        "+const mode = 'svelte';",
+        "+const workbench = 'svadmin';",
+        " export default App;",
+      ].join("\n"),
+      added: 2,
+      removed: 1,
+      binary: false,
+      truncated: false,
     };
   },
   async SavePastedImage(_dataUrl: string) {

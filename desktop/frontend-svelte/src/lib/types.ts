@@ -157,6 +157,19 @@ export interface WorkspaceChangesView {
   gitErr?: string;
 }
 
+export interface WorkspaceDiffView {
+  path: string;
+  oldPath?: string;
+  status?: string;
+  kind: "create" | "modify" | "delete" | string;
+  diff: string;
+  added: number;
+  removed: number;
+  binary: boolean;
+  truncated: boolean;
+  err?: string;
+}
+
 export interface ReadFileRecord {
   path: string;
   turn: number;

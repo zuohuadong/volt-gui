@@ -7,6 +7,7 @@
   import ResourcePanel from "./components/ResourcePanel.svelte";
   import RunModeBar from "./components/RunModeBar.svelte";
   import Transcript from "./components/Transcript.svelte";
+  import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import WorkDashboard from "./components/WorkDashboard.svelte";
   import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
@@ -82,6 +83,7 @@
   let pendingApproval = $state<WireApproval | undefined>();
   let pendingAsk = $state<WireAsk | undefined>();
   let loading = $state(true);
+  let needsAuth = $state<boolean | null>(null);
   let sending = $state(false);
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
   let restoreDraftOnTurnDone = false;
@@ -92,11 +94,23 @@
   const permissionLabel = $derived(runtimeBypass ? "permission runtime-bypass" : `permission ${permissionMode}`);
 
   onMount(() => {
+    // Check auth gate first — if [auth] is configured and no valid token exists,
+    // show the OIDC login overlay before anything else.
+    app()
+      .NeedsAuth()
+      .then((auth) => {
+        needsAuth = auth;
+        if (!auth) void refresh();
+      })
+      .catch(() => {
+        needsAuth = false;
+        void refresh();
+      });
+
     const unsubscribeEvents = onAgentEvent(handleEvent);
     const unsubscribeProjectTree = onProjectTreeChanged(() => {
       void refreshProjectTree();
     });
-    void refresh();
     return () => {
       unsubscribeEvents();
       unsubscribeProjectTree();
@@ -577,6 +591,13 @@
 </svelte:head>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
+
+{#if needsAuth}
+  <OIDCLoginOverlay onComplete={() => { needsAuth = false; void refresh(); }} />
+{:else if needsAuth === null}
+  <div class="workbench__boot">Loading…</div>
+
+{/if}
 
 <main class="workbench" data-activity={activityMode}>
   <ActivitySidebar

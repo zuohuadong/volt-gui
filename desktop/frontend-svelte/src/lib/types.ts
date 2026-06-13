@@ -413,3 +413,9 @@ export interface ResourceRecord {
   id: string;
   [key: string]: unknown;
 }
+
+export interface UserInfo {
+  sub: string;
+  email?: string;
+  name?: string;
+}

@@ -26,6 +26,7 @@ import type {
   TopicMeta,
   UpdateInfo,
   UpdateProgress,
+  UserInfo,
   WireEvent,
   WorkspaceDiffView,
   WorkspaceChangesView,
@@ -100,6 +101,11 @@ interface AppBindings {
   AddPermissionRule(list: string, rule: string): Promise<void>;
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
+  NeedsAuth(): Promise<boolean>;
+  StartOIDCLogin(): Promise<void>;
+  CancelOIDCLogin(): Promise<void>;
+  CurrentUser(): Promise<UserInfo | null>;
+  Logout(): Promise<void>;
   Version(): Promise<string>;
   CheckUpdate(): Promise<UpdateInfo | null>;
   ApplyUpdate(): Promise<void>;

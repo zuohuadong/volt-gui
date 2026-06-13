@@ -1798,3 +1798,12 @@ select {
     width: 100%;
   }
 }
+
+.workbench__boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+}

@@ -221,6 +221,14 @@ type DesktopConfig struct {
 	Metrics       *bool  `toml:"metrics"`        // anonymous usage counters; nil defaults to false
 }
 
+// NotificationsConfig controls optional system notifications for CLI chat/run.
+type NotificationsConfig struct {
+	Enabled         bool `toml:"enabled"`
+	TurnDone        bool `toml:"turn_done"`
+	ApprovalRequest bool `toml:"approval_request"`
+	AskRequest      bool `toml:"ask_request"`
+}
+
 // UITheme normalizes ui.theme to a supported value.
 func (c *Config) UITheme() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.Theme)) {

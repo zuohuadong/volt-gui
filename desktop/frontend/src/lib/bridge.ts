@@ -79,6 +79,12 @@ interface BrandInfo {
   iconUrl: string;
 }
 
+interface UserInfo {
+  sub: string;
+  email?: string;
+  name?: string;
+}
+
 // AppBindings is the hand-written contract between the React app and the Go
 // kernel. It uses local types (types.ts) so components don't import generated
 // model classes. _CheckGeneratedBindings catches drift: when a Go method is
@@ -195,6 +201,11 @@ export interface AppBindings {
   CheckUpdate(): Promise<UpdateInfo | null>;
   ApplyUpdate(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
+  NeedsAuth(): Promise<boolean>;
+  StartOIDCLogin(): Promise<void>;
+  CancelOIDCLogin(): Promise<void>;
+  CurrentUser(): Promise<UserInfo | null>;
+  Logout(): Promise<void>;
   NeedsOnboarding(): Promise<boolean>;
   ConnectKey(apiKey: string): Promise<void>;
   ListTabs(): Promise<TabMeta[]>;
@@ -376,6 +387,8 @@ function makeMockApp(): AppBindings {
   const globalWorkspaceRoot = "~/Library/Application Support/voltui/global-workspace";
   let workspaces = ["~/projects/joyquant-db", "~/projects/joyquant-sys", "~/projects/voltui", "~/projects/blade"];
   let mockEffort = "auto";
+  const mockAuthRequired = false;
+  let mockCurrentUser: UserInfo | null = null;
   const day = 86_400_000;
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
@@ -1449,6 +1462,20 @@ function makeMockApp(): AppBindings {
       if (typeof window !== "undefined") {
         window.open("https://github.com/esengine/voltui/releases/latest", "_blank", "noopener");
       }
+    },
+    async NeedsAuth() {
+      return mockAuthRequired && mockCurrentUser === null;
+    },
+    async StartOIDCLogin() {
+      await delay(500);
+      mockCurrentUser = { sub: "dev-user", email: "dev@example.com", name: "Dev User" };
+    },
+    async CancelOIDCLogin() {},
+    async CurrentUser() {
+      return mockCurrentUser;
+    },
+    async Logout() {
+      mockCurrentUser = null;
     },
     // Dev seam: drives the overlay flow in the browser until ConnectKey sets the
     // key. Matches ConnectKey on apiKeyEnv so the two stay in sync.

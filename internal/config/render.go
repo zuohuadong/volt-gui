@@ -104,6 +104,21 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("\n")
 	}
 
+	if c.AuthProvider() != "" || c.Auth.Issuer != "" || c.Auth.ClientID != "" {
+		b.WriteString("[auth]\n")
+		provider := c.AuthProvider()
+		if provider == "" {
+			provider = "oidc"
+		}
+		fmt.Fprintf(&b, "provider = %q   # oidc; empty disables desktop identity login\n", provider)
+		fmt.Fprintf(&b, "issuer = %q   # OIDC issuer URL, e.g. https://auth.example.com\n", strings.TrimRight(strings.TrimSpace(c.Auth.Issuer), "/"))
+		fmt.Fprintf(&b, "client_id = %q   # public desktop client; use PKCE, not client_secret\n", strings.TrimSpace(c.Auth.ClientID))
+		fmt.Fprintf(&b, "scope = %q\n", c.AuthScope())
+		minPort, maxPort := c.AuthCallbackPorts()
+		fmt.Fprintf(&b, "callback_port_min = %d\n", minPort)
+		fmt.Fprintf(&b, "callback_port_max = %d\n\n", maxPort)
+	}
+
 	if shouldRenderNetwork(c, defaults, scope) {
 		b.WriteString("[network]\n")
 		fmt.Fprintf(&b, "proxy_mode = %q   # auto|env|custom|off; auto currently uses env proxy\n", c.NetworkProxyMode())

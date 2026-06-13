@@ -22,10 +22,13 @@ require (
 	golang.org/x/text v0.37.0
 )
 
+require github.com/go-jose/go-jose/v4 v4.0.5 // indirect
+
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
@@ -51,6 +54,7 @@ require (
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/oauth2 v0.30.0
 )
 
 replace voltui => ../

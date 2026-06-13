@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"runtime"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 // telemetry_app.go is the anonymous launch ping: one POST per app start carrying a
@@ -25,6 +25,9 @@ var installIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 type startupPing struct {
 	InstallID string `json:"installId"`
+	UserID    string `json:"userId,omitempty"`
+	UserName  string `json:"userName,omitempty"`
+	Email     string `json:"email,omitempty"`
 	Version   string `json:"version"`
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
@@ -68,13 +71,19 @@ func (a *App) sendStartupPing() {
 	if err != nil {
 		return
 	}
-	_ = postStartupPing(a.bootContext(), c, pingEndpoint, startupPing{
+	ping := startupPing{
 		InstallID: id,
 		Version:   version,
 		OS:        runtime.GOOS,
 		Arch:      runtime.GOARCH,
 		OSVersion: platformOSVersion(),
-	})
+	}
+	if user := a.CurrentUser(); user != nil {
+		ping.UserID = user.Sub
+		ping.UserName = user.Name
+		ping.Email = user.Email
+	}
+	_ = postStartupPing(a.bootContext(), c, pingEndpoint, ping)
 }
 
 func postStartupPing(ctx context.Context, c *http.Client, endpoint string, p startupPing) error {

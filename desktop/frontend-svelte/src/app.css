@@ -937,13 +937,25 @@ select {
 .checkpoint {
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding: 8px;
   background: var(--panel-soft);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
 
-.checkpoint > div {
+.checkpoint__meta,
+.checkpoint__files {
+  min-width: 0;
+  white-space: normal;
+}
+
+.checkpoint__files {
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.checkpoint__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -953,6 +965,11 @@ select {
   min-height: 26px;
   color: #1d4ed8;
   background: white;
+}
+
+.checkpoint button:disabled {
+  cursor: progress;
+  opacity: 0.62;
 }
 
 .resource-panel {

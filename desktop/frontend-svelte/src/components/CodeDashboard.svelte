@@ -5,6 +5,8 @@
   import { app } from "../lib/bridge";
   import type { CheckpointMeta, ContextPanelInfo, DirEntry, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
 
+  type RewindScope = "conversation" | "code" | "both";
+
   let {
     context,
     changes,
@@ -23,7 +25,7 @@
     diffPreview?: WorkspaceDiffView;
     onPreviewFile: (path: string) => void;
     onPreviewChange: (path: string) => void;
-    onRewind: (turn: number, scope: string) => void;
+    onRewind: (turn: number, scope: RewindScope) => Promise<void> | void;
     onRefreshContext: () => Promise<void> | void;
   } = $props();
 
@@ -35,6 +37,8 @@
   let contextQuery = $state("");
   let contextStatus = $state("");
   let contextBusy = $state(false);
+  let rewindBusy = $state("");
+  let rewindStatus = $state("");
 
   const tokenPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const changedCount = $derived(changes?.files.length ?? 0);
@@ -146,6 +150,27 @@
   function formatTime(ms: number) {
     if (!ms) return "";
     return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function formatCheckpointFiles(checkpoint: CheckpointMeta) {
+    if (!checkpoint.files.length) return "conversation only";
+    const first = checkpoint.files.slice(0, 2).join(", ");
+    const remaining = checkpoint.files.length > 2 ? ` +${checkpoint.files.length - 2}` : "";
+    return `${first}${remaining}`;
+  }
+
+  async function rewindCheckpoint(checkpoint: CheckpointMeta, scope: RewindScope) {
+    const key = `${checkpoint.turn}:${scope}`;
+    rewindBusy = key;
+    rewindStatus = `Rewinding #${checkpoint.turn} ${scope}...`;
+    try {
+      await onRewind(checkpoint.turn, scope);
+      rewindStatus = `Rewound #${checkpoint.turn} ${scope}; refreshed history, context, changes, and checkpoints.`;
+    } catch (error) {
+      rewindStatus = error instanceof Error ? error.message : String(error);
+    } finally {
+      rewindBusy = "";
+    }
   }
 
   async function refreshContextPanel() {
@@ -294,26 +319,34 @@
         <span>{changes?.gitErr || "No changed files."}</span>
       {/if}
     </section>
-    <section>
+    <section data-testid="code-checkpoints">
       <h2><RotateCcw size={15} /> Checkpoints</h2>
       {#if checkpoints.length}
         {#each checkpoints as checkpoint (checkpoint.turn)}
           <div class="checkpoint">
             <strong>#{checkpoint.turn} {checkpoint.prompt}</strong>
-            <span>{checkpoint.files.length} files</span>
-            <div>
+            <span class="checkpoint__meta">
+              {formatTime(checkpoint.time)}
+              <span aria-hidden="true">·</span>
+              {checkpoint.files.length} files
+            </span>
+            <span class="checkpoint__files">{formatCheckpointFiles(checkpoint)}</span>
+            <div class="checkpoint__actions">
               {#if checkpoint.canConversation !== false}
-                <button type="button" onclick={() => onRewind(checkpoint.turn, "conversation")}>Conversation</button>
+                <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:conversation`} onclick={() => rewindCheckpoint(checkpoint, "conversation")}>Conversation</button>
               {/if}
               {#if checkpoint.canCode !== false}
-                <button type="button" onclick={() => onRewind(checkpoint.turn, "code")}>Code</button>
+                <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:code`} onclick={() => rewindCheckpoint(checkpoint, "code")}>Code</button>
               {/if}
-              <button type="button" onclick={() => onRewind(checkpoint.turn, "both")}>Both</button>
+              <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:both`} onclick={() => rewindCheckpoint(checkpoint, "both")}>Both</button>
             </div>
           </div>
         {/each}
       {:else}
         <span>No rewind points yet.</span>
+      {/if}
+      {#if rewindStatus}
+        <span class="code-dock__status">{rewindStatus}</span>
       {/if}
     </section>
     <section>

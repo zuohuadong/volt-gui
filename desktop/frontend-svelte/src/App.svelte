@@ -472,10 +472,21 @@
   }
 
   async function rewind(turn: number, scope: string) {
-    if (!activeTab) return;
+    const tab = activeTab;
+    if (!tab) return;
     await app().Rewind(turn, scope);
-    transcript.push({ id: `rewind-${Date.now()}`, role: "notice", title: "rewind", body: `Requested rewind to turn ${turn} (${scope}).` });
-    await refreshCodeDock(activeTab);
+    if (scope === "code" || scope === "both") {
+      filePreview = undefined;
+      diffPreview = undefined;
+    }
+    await hydrateHistory(tab);
+    await refreshCodeDock(tab);
+    transcript.push({
+      id: `rewind-${Date.now()}`,
+      role: "notice",
+      title: "rewind",
+      body: `Rewound to turn ${turn} (${scope}); history and code state refreshed.`,
+    });
   }
 </script>
 

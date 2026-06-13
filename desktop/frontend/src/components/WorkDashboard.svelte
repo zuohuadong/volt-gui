@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Brain, CheckCircle2, Clock3, Database, ListChecks, Play, Plus, RotateCcw, Target, Trash2 } from "@lucide/svelte";
+  import { Brain, CheckCircle2, Clock3, ListChecks, Play, Plus, RotateCcw, Target, Trash2 } from "@lucide/svelte";
   import type { GoalInfo, MemoryView, ResourceRecord, SessionMeta, TabMeta } from "../lib/types";
+  import { t } from "../lib/i18n";
 
   let {
     activeTab,
@@ -56,12 +57,12 @@
     if (!note) return;
     await onRemember(memoryScope || selectedScope, note);
     draftMemory = "";
-    memoryStatus = "Memory saved";
+    memoryStatus = t.work.remember;
   }
 
   async function forgetMemory(name: string) {
     await onForgetMemory(name);
-    memoryStatus = `Forgot ${name}`;
+    memoryStatus = `${t.work.forget} ${name}`;
   }
 
   function docExcerpt(body: string) {
@@ -79,7 +80,7 @@
   }
 
   function sessionTitle(session: SessionMeta) {
-    return session.title || session.topicTitle || session.preview || "Untitled session";
+    return session.title || session.topicTitle || session.preview || t.common.untitledSession;
   }
 
   async function advanceTask(task: ResourceRecord) {
@@ -94,7 +95,7 @@
     <div class="goal-card__header">
       <Target size={20} />
       <div>
-        <h2>Goal</h2>
+        <h2>{t.work.goal}</h2>
         <p>{goalStatus}</p>
       </div>
     </div>
@@ -104,58 +105,58 @@
         <p class="goal-card__blocked">{goalInfo.blockedReason}</p>
       {/if}
       <div class="goal-card__actions">
-        <button type="button" title="Continue goal" onclick={onContinueGoal}><RotateCcw size={15} /> Continue</button>
-        <button type="button" title="Clear goal" onclick={onClearGoal}><Trash2 size={15} /> Clear</button>
+        <button type="button" title={t.work.continueGoal} onclick={onContinueGoal}><RotateCcw size={15} /> {t.work.continueGoal}</button>
+        <button type="button" title={t.work.clearGoal} onclick={onClearGoal}><Trash2 size={15} /> {t.work.clearGoal}</button>
       </div>
     {:else}
       <textarea aria-label="Goal objective" bind:value={draftGoal} rows="3" placeholder="Ship the workbench redesign"></textarea>
-      <button type="button" title="Start goal" disabled={!draftGoal.trim()} onclick={submitGoal}><Play size={15} /> Start</button>
+      <button type="button" title={t.work.startGoal} disabled={!draftGoal.trim()} onclick={submitGoal}><Play size={15} /> {t.work.startGoal}</button>
     {/if}
   </article>
   <article>
     <ListChecks size={20} />
-    <h2>Tasks</h2>
+    <h2>{t.work.tasks}</h2>
     <p>{taskTotal} tracked · {activeTaskCount} active · {readyTaskCount} ready</p>
     <div class="work-list" data-testid="work-tasks">
       {#each workTasks.slice(0, 4) as task (task.id)}
         <div class="work-list__row">
           <div>
             <strong>{text(task, "title", task.id)}</strong>
-            <span>{text(task, "status", "ready")} · {text(task, "priority", "normal")} · {text(task, "owner", "team")}</span>
-            <p>{text(task, "summary", "No summary")}</p>
+            <span>{text(task, "status", t.work.taskReady)} · {text(task, "priority", "normal")} · {text(task, "owner", "team")}</span>
+            <p>{text(task, "summary", t.work.noTasks)}</p>
           </div>
           <button type="button" onclick={() => advanceTask(task)}>
-            {text(task, "status") === "ready" ? "Start" : text(task, "status") === "active" ? "Complete" : "Reopen"}
+            {text(task, "status") === "ready" ? t.work.start : text(task, "status") === "active" ? t.work.complete : t.work.reopen}
           </button>
         </div>
       {:else}
-        <p>No tasks are tracked yet.</p>
+        <p>{t.work.noTasks}</p>
       {/each}
     </div>
   </article>
   <article>
     <Clock3 size={20} />
-    <h2>Recent sessions</h2>
+    <h2>{t.work.recentSessions}</h2>
     <p>{activeTab?.workspaceName || "Global"} is ready for research, writing, planning, and operations work.</p>
     <div class="work-list" data-testid="recent-sessions">
       {#each recentSessions.slice(0, 4) as session (session.path)}
         <div class="work-list__row">
           <div>
             <strong>{sessionTitle(session)}</strong>
-            <span>{session.open ? "open" : "saved"} · {session.turns} turns · {formatTime(session.lastActivityAt || session.modTime)}</span>
+            <span>{session.open ? t.activity.open : t.work.saved} · {session.turns} {t.work.turns} · {formatTime(session.lastActivityAt || session.modTime)}</span>
             <p>{session.preview || session.topicTitle || "No preview"}</p>
           </div>
-          <button type="button" onclick={() => onResumeSession(session)}><CheckCircle2 size={14} /> Resume</button>
+          <button type="button" onclick={() => onResumeSession(session)}><CheckCircle2 size={14} /> {t.work.resume}</button>
         </div>
       {:else}
-        <p>No saved sessions yet.</p>
+        <p>{t.work.noSessions}</p>
       {/each}
     </div>
   </article>
   <article class="memory-card">
     <Brain size={20} />
     <div>
-      <h2>Memory</h2>
+      <h2>{t.work.memory}</h2>
       <p>{memoryTotal} entries · {memoryView.storeDir || "memory store pending"}</p>
     </div>
     <div class="memory-card__quickadd" data-testid="memory-quickadd">
@@ -164,8 +165,8 @@
           <option value={scope.scope}>{scope.scope}</option>
         {/each}
       </select>
-      <textarea aria-label="Memory note" rows="2" placeholder="Remember that Work and Code stay separate" bind:value={draftMemory}></textarea>
-      <button type="button" title="Remember" disabled={!draftMemory.trim() || !memoryView.available} onclick={submitMemory}><Plus size={15} /> Remember</button>
+      <textarea aria-label="{t.work.memory}" rows="2" placeholder="{t.work.memoryPlaceholder}" bind:value={draftMemory}></textarea>
+      <button type="button" title={t.work.remember} disabled={!draftMemory.trim() || !memoryView.available} onclick={submitMemory}><Plus size={15} /> {t.work.remember}</button>
     </div>
     {#if memoryStatus}
       <p class="memory-card__status">{memoryStatus}</p>
@@ -178,10 +179,10 @@
             <span>{fact.name} · {fact.type}</span>
             <p>{fact.description || fact.body || "Saved memory"}</p>
           </div>
-          <button type="button" title={`Forget ${fact.name}`} onclick={() => forgetMemory(fact.name)}><Trash2 size={14} /></button>
+          <button type="button" title={`${t.work.forget} ${fact.name}`} onclick={() => forgetMemory(fact.name)}><Trash2 size={14} /></button>
         </div>
       {:else}
-        <p>No saved facts yet. Quick-add writes to the selected memory file.</p>
+        <p>{t.work.noMemory}</p>
       {/each}
     </div>
     <div class="memory-card__docs" aria-label="Memory docs">
@@ -189,10 +190,5 @@
         <span>{doc.scope}: {doc.path} · {docExcerpt(doc.body)}</span>
       {/each}
     </div>
-  </article>
-  <article>
-    <Database size={20} />
-    <h2>Resource shortcuts</h2>
-    <p>Providers, models, MCP servers, skills, permissions, sessions, tasks, and memory share one typed surface.</p>
   </article>
 </section>

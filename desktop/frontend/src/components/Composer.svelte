@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { AtSign, FileText, Image, Search, Send, Square, X } from "@lucide/svelte";
+  import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
   import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, RunMode, SlashArgItem } from "../lib/types";
 
@@ -255,7 +256,7 @@
       data-composer-input
       data-testid="composer-input"
       value={input}
-      placeholder={`Send a ${activityMode} request in ${runMode.toUpperCase()} mode...`}
+      placeholder={t.composer.placeholder}
       rows="3"
       aria-label="Composer input"
       aria-keyshortcuts="Control+K Meta+K Control+Enter Meta+Enter Escape"
@@ -339,7 +340,7 @@
   {#if sending}
     <button class="secondary" type="button" onclick={onCancel}>
       <Square size={16} />
-      Cancel
+      {t.composer.cancel}
     </button>
   {:else}
     <button type="submit" disabled={!canSubmit}>

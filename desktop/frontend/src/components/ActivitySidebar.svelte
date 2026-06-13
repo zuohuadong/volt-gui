@@ -17,6 +17,7 @@
     X,
   } from "@lucide/svelte";
   import type { ActivityMode, ProjectNode, TabMeta } from "../lib/types";
+  import { t } from "../lib/i18n";
 
   const colorSwatches = ["blue", "teal", "violet", "amber", "rose", "slate"] as const;
   const swatchValues: Record<string, string> = {
@@ -123,7 +124,7 @@
       onclick={() => onActivity("work")}
     >
       <Bot size={16} />
-      Work
+      {t.activity.work}
     </button>
     <button
       class={activityMode === "code" ? "is-active" : ""}
@@ -133,14 +134,14 @@
       onclick={() => onActivity("code")}
     >
       <Code2 size={16} />
-      Code
+      {t.activity.code}
     </button>
   </div>
 
   <section>
     <div class="section-heading">
-      <h2>Sessions</h2>
-      <button class="icon-button" type="button" aria-label="New session" title="New session" onclick={onNewTab}>
+      <h2>{t.activity.sessions}</h2>
+      <button class="icon-button" type="button" aria-label="{t.activity.newSession}" title="{t.activity.newSession}" onclick={onNewTab}>
         <Plus size={14} />
       </button>
     </div>
@@ -149,9 +150,9 @@
         <div class={tab.id === activeTab?.id ? "nav-row is-active" : "nav-row"}>
           <button type="button" onclick={() => onTab(tab)}>
             <FolderGit2 size={15} />
-            <span>{tab.topicTitle || tab.workspaceName || "Untitled"}</span>
+            <span>{tab.topicTitle || tab.workspaceName || t.activity.untitled}</span>
           </button>
-          <button class="icon-button" type="button" aria-label="Move tab up" title="Move tab up" disabled={index === 0} onclick={() => onMoveTab(tab, "up")}>
+          <button class="icon-button" type="button" aria-label={t.activity.moveUp} title={t.activity.moveUp} disabled={index === 0} onclick={() => onMoveTab(tab, "up")}>
             <ArrowUp size={14} />
           </button>
           <button
@@ -174,7 +175,7 @@
 
   <section>
     <div class="section-heading">
-      <h2>Workspaces</h2>
+      <h2>{t.activity.workspaces}</h2>
     </div>
     <div class="project-tree" data-testid="project-tree">
       {#each projectTree as node (node.key)}
@@ -205,7 +206,7 @@
                 <Check size={14} />
               </button>
             {:else}
-              <button class="icon-button" type="button" aria-label="Rename project" title="Rename project" onclick={() => startRename(node)}>
+              <button class="icon-button" type="button" aria-label={t.activity.rename} title={t.activity.rename} onclick={() => startRename(node)}>
                 <Pencil size={14} />
               </button>
             {/if}
@@ -213,8 +214,8 @@
               <button
                 class="icon-button"
                 type="button"
-                aria-label="Move project up"
-                title="Move project up"
+                aria-label={t.activity.moveUp}
+                title={t.activity.moveUp}
                 disabled={projectIndex(node) <= 0}
                 onclick={() => onMoveProject(node, "up")}
               >
@@ -223,15 +224,15 @@
               <button
                 class="icon-button"
                 type="button"
-                aria-label="Move project down"
-                title="Move project down"
+                aria-label={t.activity.moveDown}
+                title={t.activity.moveDown}
                 disabled={projectIndex(node) === projectNodes.length - 1}
                 onclick={() => onMoveProject(node, "down")}
               >
                 <ArrowDown size={14} />
               </button>
             {/if}
-            <button class="icon-button" type="button" aria-label="New topic" title="New topic" data-testid="new-topic" onclick={() => onNewTopic(node)}>
+            <button class="icon-button" type="button" aria-label={t.activity.newTopic} title={t.activity.newTopic} data-testid="new-topic" onclick={() => onNewTopic(node)}>
               <Plus size={14} />
             </button>
           </div>
@@ -263,12 +264,12 @@
                       onclick={(event) => event.stopPropagation()}
                     />
                   {:else}
-                    <span>{child.label || "Untitled"}</span>
+                    <span>{child.label || t.activity.untitled}</span>
                   {/if}
                   {#if child.running}
-                    <em>run</em>
+                    <em>{t.activity.running}</em>
                   {:else if child.open}
-                    <em>open</em>
+                    <em>{t.activity.open}</em>
                   {/if}
                 </button>
                 {#if editingKey === child.key}
@@ -276,11 +277,11 @@
                     <Check size={14} />
                   </button>
                 {:else}
-                  <button class="icon-button" type="button" aria-label="Rename topic" title="Rename topic" onclick={() => startRename(child)}>
+                  <button class="icon-button" type="button" aria-label={t.activity.rename} title={t.activity.rename} onclick={() => startRename(child)}>
                     <Pencil size={14} />
                   </button>
                 {/if}
-                <button class="icon-button" type="button" aria-label="Move topic to trash" title="Move topic to trash" onclick={() => onTrashTopic(child)}>
+                <button class="icon-button" type="button" aria-label={t.activity.moveTopicToTrash} title={t.activity.moveTopicToTrash} onclick={() => onTrashTopic(child)}>
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -291,12 +292,4 @@
     </div>
   </section>
 
-  <section>
-    <h2>Resources</h2>
-    <div class="resource-list">
-      {#each resources as resource (resource.name)}
-        <span><Database size={13} /> {resource.name} <em>{resource.total}</em></span>
-      {/each}
-    </div>
-  </section>
 </aside>

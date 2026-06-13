@@ -44,7 +44,7 @@ Status values:
 | Resources | MCP servers | work, code | usable | Resource console lists MCP servers through `Capabilities`, can add/update/remove/retry/toggle servers through existing Wails bindings; Browser smoke covers MCP template/add and enable flows. |
 | Resources | Skills | work, code | usable | Resource console lists skills through `Capabilities`, can refresh and enable/disable skills through existing Wails bindings; Browser smoke covers skill toggle flow. |
 | Resources | Permissions and sandbox | code | usable | Resource console lists permission mode/rules/sandbox through `Settings`, can set permission mode, add/remove rules, and update sandbox through existing Wails bindings; Browser smoke covers permission mode and rule flows. |
-| Resources | Appearance, language, desktop prefs | work, code | planned | Persist settings through Go bindings. |
+| Resources | Appearance, language, desktop prefs | work, code | usable | `desktopPrefs` svadmin-compatible resource reads `Settings()` and persists language, theme, theme style, and close behavior through `SetDesktopLanguage`, `SetDesktopAppearance`, and `SetCloseBehavior`; Browser smoke updates all four values and verifies row refresh with no console errors. |
 | Updates | Update banner/check/apply | work, code | planned | Check, manual download path, apply when supported. |
 | Accessibility | Keyboard navigation | work, code | planned | Tab order and primary shortcuts work. |
 | Accessibility | Text overflow/responsive layout | work, code | planned | Desktop and narrow viewport screenshots. |

@@ -1,16 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Database, KeyRound, MemoryStick, Plus, RefreshCw, Save, Server, ShieldCheck, Trash2, Wrench } from "@lucide/svelte";
+  import { Database, KeyRound, MemoryStick, Palette, Plus, RefreshCw, Save, Server, ShieldCheck, Trash2, Wrench } from "@lucide/svelte";
   import type { ActivityMode, ResourceRecord } from "../lib/types";
   import { wailsDataProvider, type WorkbenchResource } from "../lib/resourceProvider";
 
-  const editableResources: WorkbenchResource[] = ["providers", "models", "mcpServers", "skills", "permissions"];
+  const editableResources: WorkbenchResource[] = ["providers", "models", "mcpServers", "skills", "permissions", "desktopPrefs"];
   const icons = {
     providers: Server,
     models: Database,
     mcpServers: Wrench,
     skills: Wrench,
     permissions: ShieldCheck,
+    desktopPrefs: Palette,
     memory: MemoryStick,
     updates: KeyRound,
   };
@@ -51,6 +52,10 @@
     if (Array.isArray(value)) return value.map(String);
     if (typeof value === "string") return value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
     return [];
+  }
+
+  function recordValue(id: string, fallback = "") {
+    return text(records.find((record) => record.id === id) ?? { id, value: fallback }, "value", fallback);
   }
 
   function providerPayload() {
@@ -317,6 +322,36 @@
                 <Trash2 size={14} /> {rule}
               </button>
             {/each}
+          </article>
+        {/each}
+      </div>
+    {:else if selected === "desktopPrefs"}
+      <div class="resource-form" data-testid="desktop-prefs-form">
+        <select aria-label="Desktop language" value={recordValue("language", "en")} onchange={(event) => mutate("desktop language", () => wailsDataProvider.update("desktopPrefs", "language", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+          <option value="en">English</option>
+          <option value="zh">Chinese</option>
+        </select>
+        <select aria-label="Desktop theme" value={recordValue("theme", "dark")} onchange={(event) => mutate("desktop theme", () => wailsDataProvider.update("desktopPrefs", "theme", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+          <option value="dark">dark</option>
+          <option value="light">light</option>
+          <option value="system">system</option>
+        </select>
+        <select aria-label="Desktop theme style" value={recordValue("themeStyle", "graphite")} onchange={(event) => mutate("desktop style", () => wailsDataProvider.update("desktopPrefs", "themeStyle", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+          <option value="graphite">graphite</option>
+          <option value="glacier">glacier</option>
+          <option value="ember">ember</option>
+          <option value="violet">violet</option>
+        </select>
+        <select aria-label="Close behavior" value={recordValue("closeBehavior", "background")} onchange={(event) => mutate("close behavior", () => wailsDataProvider.update("desktopPrefs", "closeBehavior", { value: (event.currentTarget as HTMLSelectElement).value }))}>
+          <option value="background">background</option>
+          <option value="quit">quit</option>
+        </select>
+      </div>
+      <div class="resource-table">
+        {#each records as record (record.id)}
+          <article>
+            <strong>{record.id}</strong>
+            <span>{text(record, "value")}</span>
           </article>
         {/each}
       </div>

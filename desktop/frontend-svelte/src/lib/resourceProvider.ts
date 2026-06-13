@@ -7,6 +7,7 @@ export const workbenchResources = [
   "mcpServers",
   "skills",
   "permissions",
+  "desktopPrefs",
   "workspaces",
   "sessions",
   "topics",
@@ -129,6 +130,16 @@ export const wailsDataProvider: WorkbenchDataProvider = {
         ];
         return { data: records, total: records.length };
       }
+      case "desktopPrefs": {
+        const settings = await app().Settings();
+        const records = [
+          { id: "language", name: "language", value: settings.desktopLanguage || "en" },
+          { id: "theme", name: "theme", value: settings.desktopTheme || "dark" },
+          { id: "themeStyle", name: "themeStyle", value: settings.desktopThemeStyle || "graphite" },
+          { id: "closeBehavior", name: "closeBehavior", value: settings.closeBehavior || "background" },
+        ];
+        return { data: records, total: records.length };
+      }
       case "memory": {
         const memory = await app().Memory();
         const entries = (memory as { entries?: unknown[] }).entries ?? [];
@@ -209,6 +220,19 @@ export const wailsDataProvider: WorkbenchDataProvider = {
         );
       }
       return { ...previous, ...record, id };
+    }
+    if (resource === "desktopPrefs") {
+      const record = asRecordData(data);
+      const value = String(record.value ?? "");
+      if (id === "language") await app().SetDesktopLanguage(value);
+      if (id === "theme" || id === "themeStyle") {
+        const settings = await app().Settings();
+        const theme = id === "theme" ? value : settings.desktopTheme || "dark";
+        const style = id === "themeStyle" ? value : settings.desktopThemeStyle || "graphite";
+        await app().SetDesktopAppearance(theme, style);
+      }
+      if (id === "closeBehavior") await app().SetCloseBehavior(value);
+      return { ...previous, value, id };
     }
     return { id, ...(typeof data === "object" && data ? data : { value: data }) };
   },

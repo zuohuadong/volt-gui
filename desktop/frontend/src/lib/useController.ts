@@ -544,6 +544,11 @@ async function refreshMetaForTab(tabId: string, dispatchTo: (tabId: string, acti
   }
 }
 
+export function replayPendingPromptsForActiveTab(activeTabId: string | undefined, replay: () => Promise<void> = () => app.ReplayPendingPrompts()): void {
+  if (!activeTabId) return;
+  void replay().catch(() => {});
+}
+
 export function useController() {
   const statesRef = useRef<TabStates>(new Map());
   const lastTokenAt = useRef(0);
@@ -737,7 +742,7 @@ export function useController() {
   // Replay any pending approval/ask prompts when switching tabs, so a
   // plan-mode session left awaiting confirmation rebuilds its modal (#4275).
   useEffect(() => {
-    if (activeTabId) void app.ReplayPendingPrompts().catch(() => {});
+    replayPendingPromptsForActiveTab(activeTabId);
   }, [activeTabId]);
 
   const send = useCallback((displayText: string, submitText = displayText) => {

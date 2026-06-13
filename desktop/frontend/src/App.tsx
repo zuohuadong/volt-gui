@@ -39,6 +39,7 @@ import { ContextPanel } from "./components/ContextPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
+import { OIDCLoginOverlay } from "./components/OIDCLoginOverlay";
 import { TabBar } from "./components/TabBar";
 import { ProjectTree } from "./components/ProjectTree";
 import { parseTodos } from "./lib/tools";
@@ -272,8 +273,9 @@ export default function App() {
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
   const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
   const [tabRevealSignal, setTabRevealSignal] = useState(0);
-  // null until the mount probe resolves; true shows the overlay. Probed once —
-  // clearing the key mid-session is the Settings panel's job, not the gate's.
+  // null until the mount probe resolves; true shows the overlay. Probed once:
+  // auth runs first, then the legacy API-key onboarding gate remains compatible.
+  const [needsAuth, setNeedsAuth] = useState<boolean | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const [memView, setMemView] = useState<MemoryView | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
@@ -616,17 +618,36 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const needs = await app.NeedsOnboarding();
-        if (!cancelled) setNeedsOnboarding(needs);
+        const auth = await app.NeedsAuth();
+        if (cancelled) return;
+        setNeedsAuth(auth);
+        if (auth) {
+          setNeedsOnboarding(false);
+          return;
+        }
+        const onboarding = await app.NeedsOnboarding();
+        if (!cancelled) setNeedsOnboarding(onboarding);
       } catch {
         // Bridge unavailable (browser dev seam) — skip the gate; a real key
         // failure still surfaces via the topbar startupError banner.
-        if (!cancelled) setNeedsOnboarding(false);
+        if (!cancelled) {
+          setNeedsAuth(false);
+          setNeedsOnboarding(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const completeAuth = useCallback(async () => {
+    setNeedsAuth(false);
+    try {
+      setNeedsOnboarding(await app.NeedsOnboarding());
+    } catch {
+      setNeedsOnboarding(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -1566,7 +1587,8 @@ export default function App() {
 
       {capsOpen && <CapabilitiesPanel onClose={() => setCapsOpen(false)} />}
 
-      {needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
+      {needsAuth && <OIDCLoginOverlay onComplete={() => void completeAuth()} />}
+      {!needsAuth && needsOnboarding && <OnboardingOverlay onComplete={() => setNeedsOnboarding(false)} />}
     </div>
     </ShellExpandProvider>
     </BrandProvider>

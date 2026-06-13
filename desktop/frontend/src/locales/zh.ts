@@ -614,6 +614,17 @@ export const zh: Record<DictKey, string> = {
   "onboarding.error.unknown": "出错啦：{msg}",
   "onboarding.skip": "稍后设置",
 
+  // 员工身份登录
+  "auth.title": "员工登录",
+  "auth.tagline": "使用公司账号登录后继续使用 {name}。",
+  "auth.submit": "打开浏览器继续",
+  "auth.waiting": "正在等待浏览器授权…",
+  "auth.waitingButton": "等待授权中…",
+  "auth.cancelHint": "关闭浏览器标签页即可停止本次登录尝试。",
+  "auth.error.timeout": "本次登录已超时。准备好后可以重新开始。",
+  "auth.error.security": "身份响应未通过校验，请重新发起登录。",
+  "auth.error.unknown": "无法完成员工登录。",
+
   // 上下文面板
   "context.overview": "当前会话概览",
   "context.scopeGlobal": "范围：全局",

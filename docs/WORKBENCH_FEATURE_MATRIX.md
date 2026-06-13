@@ -47,7 +47,7 @@ Status values:
 | Resources | Appearance, language, desktop prefs | work, code | usable | `desktopPrefs` svadmin-compatible resource reads `Settings()` and persists language, theme, theme style, and close behavior through `SetDesktopLanguage`, `SetDesktopAppearance`, and `SetCloseBehavior`; Browser smoke updates all four values and verifies row refresh with no console errors. |
 | Updates | Update banner/check/apply | work, code | usable | Svelte `UpdateBanner` auto-checks through `CheckUpdate`, renders available/error/progress/done states, calls `ApplyUpdate` for self-update platforms and `OpenDownloadPage` for manual-download platforms, and subscribes to `updater:progress`; Browser smoke verifies available → verifying → done with no console errors. |
 | Accessibility | Keyboard navigation | work, code | usable | Workbench exposes primary shortcuts for Work (`Ctrl/Meta+1`), Code (`Ctrl/Meta+2`), composer focus (`Ctrl/Meta+K`), and Escape cancel/deny/dismiss; Browser smoke verifies shortcuts, focus movement, Escape cancel, and focusable control order with no console errors. |
-| Accessibility | Text overflow/responsive layout | work, code | planned | Desktop and narrow viewport screenshots. |
+| Accessibility | Text overflow/responsive layout | work, code | usable | Fixed-width desktop minimums are removed; Work, Code, resource, update, transcript, and composer surfaces wrap or stack below 960px/640px; Browser smoke and screenshots cover 1280px and 390px viewports with no horizontal overflow or console errors. |
 | Packaging | Production build | work, code | partial | `desktop/frontend-svelte pnpm build` passes after component split; Wails build integration remains. |
 
 The React desktop shell can only be removed after every row is at least `usable`

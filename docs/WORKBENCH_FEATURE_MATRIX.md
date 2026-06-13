@@ -38,7 +38,7 @@ Status values:
 | Work dashboard | Memory shortcuts | work | partial | Memory resource counts render through the data provider; view/add/forget flows still required. |
 | Code dock | Context panel | code | partial | Token usage and read files render from `ContextPanel`; checkpoint and full context controls still required. |
 | Code dock | File tree and preview | code | partial | `@` search can preview files through `ReadFile`; full tree/reveal/open flows still required. |
-| Code dock | Changed files and diffs | code | partial | `WorkspaceChanges` renders changed files and the Svelte diff viewer previews selected changed paths; true unified diff content still required. |
+| Code dock | Changed files and diffs | code | partial | `WorkspaceChanges` renders changed files and Svelte calls the new `WorkspaceDiff` Wails binding to render unified diff hunks with +/− counts; real Wails runtime smoke and richer staged/rename edge cases still required. |
 | Code dock | Checkpoints and rewind | code | partial | `CheckpointsForTab` renders rewind points and calls `Rewind` by conversation/code/both scope; full post-rewind history refresh still required. |
 | Resources | Providers and models | work, code | partial | svadmin-compatible provider/resource panel can list provider/model counts through Wails/mock bridge; update/key flows remain. |
 | Resources | MCP servers | work, code | partial | MCP server resource count is exposed in the resource panel; add/update/enable/reconnect/remove still required. |

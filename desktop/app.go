@@ -2555,6 +2555,19 @@ type WorkspaceChangesView struct {
 	GitErr       string                `json:"gitErr,omitempty"`
 }
 
+type WorkspaceDiffView struct {
+	Path      string `json:"path"`
+	OldPath   string `json:"oldPath,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Kind      string `json:"kind"`
+	Diff      string `json:"diff"`
+	Added     int    `json:"added"`
+	Removed   int    `json:"removed"`
+	Binary    bool   `json:"binary"`
+	Truncated bool   `json:"truncated"`
+	Err       string `json:"err,omitempty"`
+}
+
 // atSkip are entries the "@" menu hides as noise.
 var atSkip = map[string]bool{".git": true, "node_modules": true, ".DS_Store": true}
 

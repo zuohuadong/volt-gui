@@ -341,6 +341,104 @@ func TestWorkspaceChangesUntrackedDirectoryListsFiles(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDiffModifiedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("tracked.txt", []byte("v1\nsame\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	runGit(t, "add", "tracked.txt")
+	runGit(t, "commit", "-m", "baseline")
+	if err := os.WriteFile("tracked.txt", []byte("v2\nsame\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("tracked.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.Kind != "modify" || got.Added != 1 || got.Removed != 1 {
+		t.Fatalf("diff summary = %+v", got)
+	}
+	if !strings.Contains(got.Diff, "-v1") || !strings.Contains(got.Diff, "+v2") {
+		t.Fatalf("diff missing modified lines:\n%s", got.Diff)
+	}
+}
+
+func TestWorkspaceDiffUntrackedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("new.txt", []byte("new\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("new.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.Kind != "create" || got.Added != 2 || got.Removed != 0 {
+		t.Fatalf("diff summary = %+v", got)
+	}
+	if !strings.Contains(got.Diff, "+new") || !strings.Contains(got.Diff, "+file") {
+		t.Fatalf("diff missing added lines:\n%s", got.Diff)
+	}
+}
+
+func TestWorkspaceDiffDeletedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("gone.txt", []byte("old\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	runGit(t, "add", "gone.txt")
+	runGit(t, "commit", "-m", "baseline")
+	if err := os.Remove("gone.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("gone.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.Kind != "delete" || got.Added != 0 || got.Removed != 2 {
+		t.Fatalf("diff summary = %+v", got)
+	}
+	if !strings.Contains(got.Diff, "-old") || !strings.Contains(got.Diff, "-file") {
+		t.Fatalf("diff missing removed lines:\n%s", got.Diff)
+	}
+}
+
 func runGit(t *testing.T, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

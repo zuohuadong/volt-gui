@@ -558,6 +558,10 @@ type ProviderEntry struct {
 	// NoProxy reaches this provider's base_url directly, never through the proxy.
 	// For China-only endpoints a foreign-exit proxy resets the TLS handshake (#2803).
 	NoProxy bool `toml:"no_proxy"`
+	// APIKeyDefault is a compiled-in fallback used when api_key_env is unset or
+	// empty. Useful for private deployments where every binary ships with a key.
+	// Ignored when api_key_env resolves to a non-empty value.
+	APIKeyDefault string `toml:"-"`
 }
 
 // ModelList returns the models this provider exposes: the explicit `models` list,
@@ -688,6 +692,8 @@ const DefaultSystemPrompt = `You are VoltUI, a coding agent focused on executing
 Use the provided tools to read and write files and run shell commands.
 Principles: understand the request before acting; verify with tools instead of
 guessing; keep changes minimal and correct; briefly summarize what you did.
+Always reply in Simplified Chinese unless the user writes in another language.
+Use Chinese for code comments, commit messages, and explanations.
 When the request leaves a real choice to the user — which approach or library,
 the scope, or a consequential or ambiguous decision — call the ask tool to offer
 2-4 concrete options rather than guessing or burying the question in prose. Skip
@@ -711,8 +717,8 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 func Default() *Config {
 	return &Config{
 		ConfigVersion: 2,
-		DefaultModel:  "deepseek-flash",
-		Brand:         BrandConfig{Name: "VoltUI"},
+		DefaultModel:  "qwen-gpu4",
+		Brand:         BrandConfig{Name: "西谷智灯暗涌系统"},
 		UI:            UIConfig{Theme: "auto"},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
@@ -745,10 +751,12 @@ func Default() *Config {
 		LSP:     LSPConfig{Enabled: true},
 		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Providers: []ProviderEntry{
-			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}},
-			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}},
-			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.025, Input: 3, Output: 6, Currency: "¥"}, NoProxy: true},
-			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.02, Input: 1, Output: 2, Currency: "¥"}, NoProxy: true},
+			// 西谷内网模型网关 — OpenAI 兼容 (http://192.168.1.47:9010/v1)
+			// API key 编译期内置，无需用户配置；仍可通过 XIGU_API_KEY 环境变量覆盖。
+			{Name: "qwen-gpu4", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "XIGU_API_KEY", APIKeyDefault: "sk_gom_Yh39mmZwknIShzS6Oj3vBAL-iKFmhN8GOv3TM3EZqQs", ContextWindow: 131072, NoProxy: true},
+			{Name: "glm-primary", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "glm-primary/GLM-5.1-478B-A42B-REAP-NVFP4", APIKeyEnv: "XIGU_API_KEY", APIKeyDefault: "sk_gom_Yh39mmZwknIShzS6Oj3vBAL-iKFmhN8GOv3TM3EZqQs", ContextWindow: 131072, NoProxy: true},
+			{Name: "qwen-gpu5", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "XIGU_API_KEY", APIKeyDefault: "sk_gom_Yh39mmZwknIShzS6Oj3vBAL-iKFmhN8GOv3TM3EZqQs", ContextWindow: 131072, NoProxy: true},
+			{Name: "image-gpu5", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", APIKeyDefault: "sk_gom_Yh39mmZwknIShzS6Oj3vBAL-iKFmhN8GOv3TM3EZqQs", ContextWindow: 131072, NoProxy: true},
 		},
 	}
 }
@@ -1132,12 +1140,16 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	return nil, false
 }
 
-// APIKey resolves the entry's API key from its api_key_env.
+// APIKey resolves the entry's API key from its api_key_env, falling back to
+// the compiled-in APIKeyDefault when the environment variable is unset or empty.
 func (e *ProviderEntry) APIKey() string {
 	if e.APIKeyEnv == "" {
-		return ""
+		return e.APIKeyDefault
 	}
-	return os.Getenv(e.APIKeyEnv)
+	if v := os.Getenv(e.APIKeyEnv); v != "" {
+		return v
+	}
+	return e.APIKeyDefault
 }
 
 // Configured reports whether the provider's api_key_env is set — the same check

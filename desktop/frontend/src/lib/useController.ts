@@ -452,9 +452,10 @@ function applyEvent(s: State, e: WireEvent): State {
         return it;
       });
       let items: Item[] = e.err ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }] : finalized;
-      // Archive completed tool items that aren't in the visible window:
-      // keep args/output to a short preview to bound memory in long sessions.
-      // Full data is loaded on demand via app.ToolResultForTab when expanded.
+      // Archive completed tool items: collapsed cards only show tool name
+      // and command (from args). Drop the output entirely and trim args to a
+      // short preview. Full data is loaded on demand via app.ToolResultForTab
+      // when the card is expanded.
       const RETENTION_TOOL_COUNT = 100;
       const toolItems = items.filter((it) => it.kind === "tool");
       if (toolItems.length > RETENTION_TOOL_COUNT) {
@@ -463,10 +464,9 @@ function applyEvent(s: State, e: WireEvent): State {
         items = items.map((it) => {
           if (it.kind !== "tool" || !archiveIDs.has(it.id)) return it;
           const t = it;
-          const shortArgs = t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
-          const shortOutput = t.output && t.output.length > 200 ? t.output.slice(0, 200) + "…" : t.output;
-          if (shortArgs === t.args && shortOutput === t.output) return it;
-          return { ...t, args: shortArgs, output: shortOutput, dataArchived: true };
+          const shortArgs = t.args && t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
+          if (shortArgs === t.args && t.output === undefined) return it;
+          return { ...t, args: shortArgs, output: undefined, dataArchived: true };
         });
       }
       return { ...s, items, live: undefined, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };

@@ -56,6 +56,23 @@ func TestListTabsKeepsExplicitOrderWhenActiveChanges(t *testing.T) {
 	}
 }
 
+func TestSaveTabsSkipsOlderSnapshot(t *testing.T) {
+	app := testAppWithOrderedTabs(t, "a", "a", "b")
+
+	app.mu.Lock()
+	dir, oldEntries, oldActiveID, oldVersion := app.saveTabsCollectLocked()
+	app.activeTabID = "b"
+	_, newEntries, newActiveID, newVersion := app.saveTabsCollectLocked()
+	app.mu.Unlock()
+
+	app.saveTabsWrite(dir, newEntries, newActiveID, newVersion)
+	app.saveTabsWrite(dir, oldEntries, oldActiveID, oldVersion)
+
+	if got := loadTabsFile().ActiveTab; got != "b" {
+		t.Fatalf("persisted active tab = %q, want b", got)
+	}
+}
+
 func TestReorderTabsPersistsSubmittedOrder(t *testing.T) {
 	app := testAppWithOrderedTabs(t, "a", "a", "b", "c")
 

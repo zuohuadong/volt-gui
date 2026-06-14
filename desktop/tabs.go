@@ -475,8 +475,8 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 
 // ListTabs returns every open tab's metadata for the frontend TabBar.
 func (a *App) ListTabs() []TabMeta {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	out := make([]TabMeta, 0, len(a.tabs))
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
@@ -798,15 +798,21 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 // already active or unknown.
 func (a *App) SetActiveTab(tabID string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if _, ok := a.tabs[tabID]; !ok {
+		a.mu.Unlock()
 		return fmt.Errorf("tab %q not found", tabID)
 	}
 	if a.activeTabID == tabID {
+		a.mu.Unlock()
 		return nil
 	}
 	a.activeTabID = tabID
-	a.saveTabsLocked()
+	dir, entries, activeID, version := a.saveTabsCollectLocked()
+	a.mu.Unlock()
+
+	// I/O outside the lock — disk writes can block for hundreds of ms on
+	// Windows when antivirus or the search indexer briefly locks the file.
+	a.saveTabsWrite(dir, entries, activeID, version)
 	return nil
 }
 
@@ -1307,8 +1313,16 @@ func desktopConfigDir() string {
 }
 
 func (a *App) saveTabsLocked() {
+	dir, entries, activeID, version := a.saveTabsCollectLocked()
+	a.saveTabsWrite(dir, entries, activeID, version)
+}
+
+// saveTabsCollectLocked gathers the tab-snapshot data under the caller's lock
+// (it calls orderedTabIDsLocked which requires a.mu). Returns the config dir,
+// the serializable entries, the active tab ID, and a monotonic snapshot version.
+// The write can happen outside the lock to avoid blocking the UI with disk I/O.
+func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64) {
 	dir := desktopConfigDir()
-	_ = os.MkdirAll(dir, 0o755)
 	var entries []desktopTabEntry
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
@@ -1327,12 +1341,37 @@ func (a *App) saveTabsLocked() {
 			})
 		}
 	}
-	f := desktopTabsFile{Tabs: entries, ActiveTab: a.activeTabID}
-	b, _ := json.MarshalIndent(f, "", "  ")
+	a.tabsSaveVersion++
+	return dir, entries, a.activeTabID, a.tabsSaveVersion
+}
+
+// saveTabsWrite writes the tab-snapshot to disk. It does not require a.mu, but
+// writes must be serialized because every save uses the same destination and
+// fixed .tmp path.
+func (a *App) saveTabsWrite(dir string, entries []desktopTabEntry, activeID string, version uint64) {
+	a.tabsSaveMu.Lock()
+	defer a.tabsSaveMu.Unlock()
+	if version < a.tabsLastWrittenVersion {
+		return
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	f := desktopTabsFile{Tabs: entries, ActiveTab: activeID}
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return
+	}
 	path := filepath.Join(dir, tabsFileName)
 	tmp := path + ".tmp"
-	_ = os.WriteFile(tmp, b, 0o644)
-	_ = fileutil.ReplaceFile(tmp, path)
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return
+	}
+	if err := fileutil.ReplaceFile(tmp, path); err != nil {
+		return
+	}
+	a.tabsLastWrittenVersion = version
 }
 
 func (a *App) orderedTabIDsLocked() []string {

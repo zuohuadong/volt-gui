@@ -1,6 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Bot, Code2, Plus, ShieldCheck } from "@lucide/svelte";
+  import {
+    BookOpen,
+    Bot,
+    Code2,
+    Folder,
+    GitBranch,
+    Gauge,
+    List,
+    PanelLeft,
+    Plus,
+    RotateCcw,
+    Sparkles,
+    Wrench,
+    Zap,
+  } from "@lucide/svelte";
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
   import Transcript from "./components/Transcript.svelte";
@@ -9,13 +23,10 @@
   import { t } from "./lib/i18n";
   import type {
     ActivityMode,
-    BackendMode,
     CheckpointMeta,
     CommandInfo,
     ContextPanelInfo,
-    EffortInfo,
     FilePreview,
-    GoalInfo,
     HistoryMessage,
     ModelInfo,
     ProjectNode,
@@ -47,19 +58,14 @@
 
   let activityMode = $state<ActivityMode>("work");
   let runMode = $state<RunMode>("ask");
-  let runtimeMode = $state<BackendMode>("normal");
-  let permissionMode = $state("ask");
-  let runtimeBypass = $state(false);
   let tabs = $state<TabMeta[]>([]);
   let models = $state<ModelInfo[]>([]);
-  let effort = $state<EffortInfo>({ current: "auto", supported: ["auto"] });
   let commands = $state<CommandInfo[]>([]);
   let selectedModel = $state("");
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let projectTree = $state<ProjectNode[]>([]);
   let context = $state<ContextPanelInfo | undefined>();
-  let goalInfo = $state<GoalInfo>({ objective: "", status: "idle" });
   let changes = $state<WorkspaceChangesView | undefined>();
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
@@ -69,13 +75,26 @@
   let loading = $state(true);
   let needsAuth = $state<boolean | null>(null);
   let sending = $state(false);
+  let sidebarCollapsed = $state(false);
+  let sortTasksByRecent = $state(false);
+  let codeInspectorOpen = $state(false);
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
   let restoreDraftOnTurnDone = false;
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
-  const modeLabel = $derived(`${activityMode.toUpperCase()} + ${runMode.toUpperCase()}`);
-  const runtimeLabel = $derived(`backend ${runtimeMode}${runtimeBypass ? " / bypass" : ""}`);
-  const permissionLabel = $derived(runtimeBypass ? "permission runtime-bypass" : `permission ${permissionMode}`);
+  const activeTaskKey = $derived(activeTab?.topicId || activeTab?.id || "");
+  const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
+  const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
+  const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
+  const changedCount = $derived(changes?.files.length ?? 0);
+  const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
+  const projectGroups = $derived(
+    projectTree
+      .filter((node) => node.children?.length)
+      .map((node) => ({ ...node, children: sortNodes(node.children ?? []) })),
+  );
+  const standaloneTopics = $derived(sortNodes(projectTree.filter((node) => node.kind === "global_topic" || node.kind === "topic")));
+  const visibleTasks = $derived(standaloneTopics.length ? standaloneTopics : tabs.map(tabToProjectNode));
 
   onMount(() => {
     // Check auth gate first — if [auth] is configured and no valid token exists,
@@ -122,6 +141,23 @@
       // Keep the most recent items; drop from the front.
       transcript.splice(0, transcript.length - MAX_TRANSCRIPT_ITEMS);
     }
+  }
+
+  function tabToProjectNode(tab: TabMeta): ProjectNode {
+    return {
+      key: tab.id,
+      kind: tab.scope === "project" ? "topic" : "global_topic",
+      label: tab.topicTitle || tab.workspaceName || t.activity.untitled,
+      root: tab.workspaceRoot,
+      topicId: tab.topicId,
+      open: tab.active,
+      running: tab.running,
+    };
+  }
+
+  function sortNodes(nodes: ProjectNode[]) {
+    if (!sortTasksByRecent) return nodes;
+    return nodes.slice().sort((left, right) => (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0));
   }
 
   function updateLastAssistant(text: string) {
@@ -239,8 +275,6 @@
       }
       restoreDraftOnTurnDone = false;
       submittedDraft = undefined;
-      void refreshCodeDock();
-      if (activeTab) void app().GoalForTab(activeTab.id).then((next) => (goalInfo = next));
     }
   }
 
@@ -250,14 +284,10 @@
       tabs = await app().ListTabs();
       projectTree = await app().ListProjectTree();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
-      runtimeMode = active?.mode ?? "normal";
       models = active ? await app().ModelsForTab(active.id) : [];
       selectedModel = models.find((model) => model.current)?.name ?? models[0]?.name ?? "";
-      effort = active ? await app().EffortForTab(active.id) : { current: "auto", supported: ["auto"] };
-      goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
-      await refreshRuntimeSettings();
-      await refreshCodeDock(active);
+      if (active) await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
     } finally {
       loading = false;
@@ -265,22 +295,15 @@
   }
 
 
-  async function refreshRuntimeSettings() {
-    const settings = await app().Settings();
-    permissionMode = settings.permissions.mode || "ask";
-    runtimeBypass = settings.bypass;
+  async function refreshProjectTree() {
+    projectTree = await app().ListProjectTree();
   }
-
 
   async function refreshCodeDock(tab = activeTab) {
     if (!tab) return;
     context = await app().ContextPanel(tab.id);
     changes = await app().WorkspaceChanges();
     checkpoints = await app().CheckpointsForTab(tab.id);
-  }
-
-  async function refreshProjectTree() {
-    projectTree = await app().ListProjectTree();
   }
 
   async function send(displayText?: string, submitText?: string) {
@@ -311,6 +334,17 @@
   function focusComposer() {
     const composer = document.querySelector<HTMLTextAreaElement>("[data-composer-input]");
     composer?.focus();
+  }
+
+  function commandPrompt(name: string) {
+    const command = commands.find((item) => item.name.toLowerCase() === name.toLowerCase());
+    input = command ? `/${command.name} ` : "";
+    focusComposer();
+  }
+
+  function useQuickPrompt(text: string) {
+    input = text;
+    focusComposer();
   }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
@@ -353,11 +387,6 @@
     await refresh();
   }
 
-  async function closeTab(tab: TabMeta) {
-    await app().CloseTab(tab.id);
-    await refresh();
-  }
-
   async function newTab() {
     const topic = await app().CreateTopic("global", "", "");
     const tab = await app().OpenGlobalTab(topic.id);
@@ -377,6 +406,15 @@
     await refresh();
   }
 
+  async function openTask(node: ProjectNode) {
+    if (node.topicId) {
+      await openTopic(node);
+      return;
+    }
+    const tab = tabs.find((item) => item.id === node.key);
+    if (tab) await switchTab(tab);
+  }
+
   async function newTopic(node: ProjectNode) {
     const global = node.kind === "global_folder";
     const workspaceRoot = global ? "" : (node.root ?? "");
@@ -391,81 +429,11 @@
     await refresh();
   }
 
-  async function renameProject(node: ProjectNode, title: string) {
-    await app().RenameProject(node.kind === "global_folder" ? "" : (node.root ?? ""), title);
-    await refreshProjectTree();
-  }
-
-  async function setProjectColor(node: ProjectNode, color: string) {
-    await app().SetProjectColor(node.kind === "global_folder" ? "" : (node.root ?? ""), color);
-    await refresh();
-  }
-
-  async function moveProject(node: ProjectNode, direction: "up" | "down") {
-    if (!node.root) return;
-    const projects = projectTree.filter((item) => item.kind === "project");
-    const index = projects.findIndex((item) => item.root === node.root);
-    const nextIndex = direction === "up" ? index - 1 : index + 1;
-    if (index < 0 || nextIndex < 0 || nextIndex >= projects.length) return;
-    const nextProjects = projects.slice();
-    const current = nextProjects[index];
-    nextProjects[index] = nextProjects[nextIndex];
-    nextProjects[nextIndex] = current;
-    await app().ReorderProjects(nextProjects.map((item) => item.root ?? ""));
-    await refreshProjectTree();
-  }
-
-  async function renameTopic(node: ProjectNode, title: string) {
-    if (!node.topicId) return;
-    await app().RenameTopic(node.topicId, title);
-    await refresh();
-  }
-
-  async function trashTopic(node: ProjectNode) {
-    if (!node.topicId) return;
-    await app().TrashTopic(node.topicId);
-    await refresh();
-  }
-
-  async function moveTab(tab: TabMeta, direction: "up" | "down") {
-    const index = tabs.findIndex((item) => item.id === tab.id);
-    const nextIndex = direction === "up" ? index - 1 : index + 1;
-    if (index < 0 || nextIndex < 0 || nextIndex >= tabs.length) return;
-    const nextTabs = tabs.slice();
-    const current = nextTabs[index];
-    nextTabs[index] = nextTabs[nextIndex];
-    nextTabs[nextIndex] = current;
-    tabs = nextTabs;
-    await app().ReorderTabs(nextTabs.map((item) => item.id));
-  }
-
   async function switchModel(event: Event) {
     const next = (event.currentTarget as HTMLSelectElement).value;
     selectedModel = next;
     if (activeTab && next) await app().SetModelForTab(activeTab.id, next);
   }
-
-  async function switchEffort(event: Event) {
-    const next = (event.currentTarget as HTMLSelectElement).value;
-    effort = { ...effort, current: next };
-    if (activeTab && next) await app().SetEffortForTab(activeTab.id, next);
-  }
-
-  async function selectRunMode(next: RunMode) {
-    runMode = next;
-    if (!activeTab) return;
-    const backendMode = next === "plan" ? "plan" : next === "yolo" ? "yolo" : "normal";
-    await app().SetModeForTab(activeTab.id, backendMode);
-    if (next === "ask" || next === "plan") {
-      await app().SetPermissionMode("ask");
-    } else if (next === "auto") {
-      await app().SetPermissionMode("allow");
-    }
-    runtimeMode = backendMode;
-    tabs = tabs.map((tab) => (tab.id === activeTab.id ? { ...tab, mode: backendMode } : tab));
-    await refreshRuntimeSettings();
-  }
-
 
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
     if (!activeTab || !pendingApproval) return;
@@ -481,10 +449,17 @@
     await app().AnswerQuestionForTab(activeTab.id, ask.id, answers);
   }
 
+  async function openCodeInspector() {
+    activityMode = "code";
+    codeInspectorOpen = true;
+    await refreshCodeDock();
+  }
+
   async function previewFile(path: string) {
     filePreview = await app().ReadFile(path);
     diffPreview = undefined;
     activityMode = "code";
+    codeInspectorOpen = true;
   }
 
   async function previewChange(path: string) {
@@ -492,6 +467,7 @@
     diffPreview = diff;
     filePreview = preview;
     activityMode = "code";
+    codeInspectorOpen = true;
   }
 
   async function rewind(turn: number, scope: string) {
@@ -523,265 +499,624 @@
 {:else if needsAuth === null}
   <div class="boot-screen">{t.app.loading}</div>
 {:else}
-  <main class="shell" data-mode={activityMode}>
-    <!-- Icon sidebar (56px) -->
-    <nav class="dock">
-      <button
-        class="dock__btn"
-        class:is-active={activityMode === "work"}
-        title={t.activity.work}
-        aria-pressed={activityMode === "work"}
-        onclick={() => (activityMode = "work")}
-      >
-        <Bot size={18} />
-      </button>
-      <button
-        class="dock__btn"
-        class:is-active={activityMode === "code"}
-        title={t.activity.code}
-        aria-pressed={activityMode === "code"}
-        onclick={() => (activityMode = "code")}
-      >
-        <Code2 size={18} />
-      </button>
-
-      <div class="dock__divider"></div>
-
-      <button class="dock__btn" title={t.activity.newSession} onclick={newTab}>
-        <Plus size={18} />
-      </button>
-
-      <div class="dock__sessions">
-        {#each tabs as tab (tab.id)}
+  <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
+    <aside class="sidebar">
+      <header class="sidebar__chrome">
+        <div class="window-dots" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="mode-switch" role="tablist" aria-label="Activity mode">
           <button
-            class="dock__session"
-            class:is-active={tab.id === activeTab?.id}
-            title={tab.topicTitle || tab.workspaceName || t.activity.untitled}
-            onclick={() => switchTab(tab)}
+            class={["mode-switch__item", activityMode === "work" && "is-active"]}
+            type="button"
+            role="tab"
+            aria-selected={activityMode === "work"}
+            onclick={() => (activityMode = "work")}
           >
-            {#if tab.running}
-              <span class="dock__dot dock__dot--run"></span>
-            {:else if tab.id === activeTab?.id}
-              <span class="dock__dot"></span>
-            {:else}
-              <span class="dock__dot dock__dot--off"></span>
-            {/if}
+            <BookOpen size={16} />
+            {t.activity.work}
           </button>
-        {/each}
-      </div>
-    </nav>
-
-    <!-- Main stage -->
-    <section class="stage">
-      <!-- Minimal topbar -->
-      <header class="bar">
-        <div class="bar__left">
-          <span class="bar__mode">{activityMode === "work" ? t.activity.work : t.activity.code}</span>
-          <span class="bar__sep">·</span>
-          <span class="bar__name">{activeTab?.topicTitle || activeTab?.workspaceName || t.common.global}</span>
+          <button
+            class={["mode-switch__item", activityMode === "code" && "is-active"]}
+            type="button"
+            role="tab"
+            aria-selected={activityMode === "code"}
+            onclick={() => (activityMode = "code")}
+          >
+            <Code2 size={16} />
+            {t.activity.code}
+          </button>
         </div>
-        <div class="bar__right">
-          {#if activityMode === "work"}
-            <select aria-label={t.common.model} value={selectedModel} onchange={switchModel}>
-              {#each models as model (model.name)}
-                <option value={model.name}>{model.label || model.name}</option>
-              {/each}
-            </select>
-          {/if}
-        </div>
+        <button class="sidebar__icon" type="button" aria-label={t.home.sidebar} title={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}>
+          <PanelLeft size={17} />
+        </button>
       </header>
 
-      <!-- Content area -->
-      <div class="content">
-        {#if activityMode === "code"}
-          <!-- Code mode: split view -->
-          <div class="code-split">
-            <div class="code-pane code-pane--chat">
-              {#if loading}
-                <div class="content__loading">{t.app.loading}</div>
-              {:else}
-                <Transcript
-                  items={transcript}
-                  {loading}
-                  {sending}
-                  approval={pendingApproval}
-                  ask={pendingAsk}
-                  onApprove={answerApproval}
-                  onAnswerAsk={answerAsk}
-                  onDismissAsk={() => (pendingAsk = undefined)}
-                />
-              {/if}
-            </div>
-            <div class="code-pane code-pane--files">
-              <CodeDashboard
-                {context}
-                {changes}
-                {checkpoints}
-                {filePreview}
-                {diffPreview}
-                onPreviewFile={previewFile}
-                onPreviewChange={previewChange}
-                onRewind={rewind}
-                onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+      <nav class="primary-actions" aria-label="Primary actions">
+        <button class="primary-actions__new" type="button" onclick={newTab}>
+          <Plus size={17} />
+          <span>{t.activity.newSession}</span>
+          <kbd>⌃⌘N</kbd>
+        </button>
+        <button type="button" onclick={() => commandPrompt("skills")}>
+          <Wrench size={17} />
+          <span>{t.home.skills}</span>
+        </button>
+        <button type="button" onclick={() => commandPrompt("automation")}>
+          <Zap size={17} />
+          <span>{t.home.automation}</span>
+        </button>
+      </nav>
+
+      <section class="task-list" aria-label={t.home.taskList}>
+        <div class="task-list__head">
+          <span>{t.home.taskList}</span>
+          <div>
+            <button type="button" aria-label={t.home.expand} title={t.home.expand} onclick={() => (sidebarCollapsed = false)}>
+              <Sparkles size={15} />
+            </button>
+            <button type="button" aria-label={t.home.sort} title={t.home.sort} onclick={() => (sortTasksByRecent = !sortTasksByRecent)}>
+              <List size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div class="task-list__body">
+          {#if projectGroups.length}
+            {#each projectGroups as group (group.key)}
+              <section class="task-group">
+                <div class="task-group__label">
+                  <Folder size={15} />
+                  <span>{group.label || t.common.global}</span>
+                  <button type="button" aria-label={t.activity.newTopic} onclick={() => newTopic(group)}>
+                    <Plus size={14} />
+                  </button>
+                </div>
+                {#each group.children ?? [] as topic (topic.key)}
+                  <button
+                    class={["task-row", (topic.topicId || topic.key) === activeTaskKey && "is-active"]}
+                    type="button"
+                    onclick={() => openTask(topic)}
+                  >
+                    <span>{topic.label || t.activity.untitled}</span>
+                    {#if topic.running}<i>{t.activity.running}</i>{/if}
+                  </button>
+                {/each}
+              </section>
+            {/each}
+          {:else if visibleTasks.length}
+            {#each visibleTasks as topic (topic.key)}
+              <button
+                class={["task-row", (topic.topicId || topic.key) === activeTaskKey && "is-active"]}
+                type="button"
+                onclick={() => openTask(topic)}
+              >
+                <span>{topic.label || t.activity.untitled}</span>
+                {#if topic.running}<i>{t.activity.running}</i>{/if}
+              </button>
+            {/each}
+          {:else}
+            <p class="task-list__empty">{t.work.noTasks}</p>
+          {/if}
+        </div>
+      </section>
+
+      <footer class="sidebar__user">
+        <span class="sidebar__avatar"><Bot size={17} /></span>
+        <strong>{t.home.user}</strong>
+        <em>{t.home.free}</em>
+      </footer>
+    </aside>
+
+    <section class="stage">
+      <div class="window-drag-region" aria-hidden="true"></div>
+      <div class="stage__surface">
+        {#if loading}
+          <div class="content__loading">{t.app.loading}</div>
+        {:else if showTranscript}
+          <section class="conversation-view">
+            <header class="conversation-header">
+              <div>
+                <strong>{activeTab?.topicTitle || t.activity.untitled}</strong>
+                <span>{activeTab?.workspaceName || t.common.global}</span>
+              </div>
+              <button type="button" onclick={() => (activityMode = "code")}>
+                <Code2 size={15} />
+                {t.home.openInCode}
+              </button>
+            </header>
+            <div class="conversation">
+              <Transcript
+                items={transcript}
+                {loading}
+                {sending}
+                approval={pendingApproval}
+                ask={pendingAsk}
+                onApprove={answerApproval}
+                onAnswerAsk={answerAsk}
+                onDismissAsk={() => (pendingAsk = undefined)}
               />
             </div>
-          </div>
-        {:else if loading}
-          <div class="content__loading">{t.app.loading}</div>
+          </section>
         {:else}
-          <!-- Work mode: pure chat -->
-          <Transcript
-            items={transcript}
-            {loading}
-            {sending}
-            approval={pendingApproval}
-            ask={pendingAsk}
-            onApprove={answerApproval}
-            onAnswerAsk={answerAsk}
-            onDismissAsk={() => (pendingAsk = undefined)}
-          />
+          <section class="home">
+            <h1>
+              {#if activityMode === "code"}
+                <Code2 size={38} />
+              {:else}
+                <BookOpen size={34} />
+              {/if}
+              {landing.title}
+              <span>{t.home.beta}</span>
+            </h1>
+            <div class="home__composer">
+              <Composer
+                {input}
+                {activityMode}
+                {runMode}
+                {commands}
+                {sending}
+                onInput={(value) => (input = value)}
+                onSend={send}
+                onCancel={cancel}
+                onPreviewFile={previewFile}
+                {models}
+                {selectedModel}
+                onModelChange={switchModel}
+              />
+              <div class="home__context">
+                <button type="button" onclick={focusComposer}>
+                  <PanelLeft size={16} />
+                  {t.home.local}
+                </button>
+                <button type="button" onclick={() => (activityMode = "code")}>
+                  <Folder size={16} />
+                  {activeTab?.workspaceName || t.common.global}
+                </button>
+                {#if activityMode === "code"}
+                  <button type="button" onclick={focusComposer}>
+                    <GitBranch size={16} />
+                    main
+                  </button>
+                {/if}
+              </div>
+            </div>
+            <div class="home__quick">
+              {#each landing.quick as quick (quick.label)}
+                <button type="button" onclick={() => useQuickPrompt(quick.prompt)}>
+                  {#if quick.icon === "bot"}
+                    <Bot size={16} />
+                  {:else if quick.icon === "list"}
+                    <List size={16} />
+                  {:else if quick.icon === "folder"}
+                    <Folder size={16} />
+                  {:else if quick.icon === "code"}
+                    <Code2 size={16} />
+                  {:else}
+                    <Sparkles size={16} />
+                  {/if}
+                  {quick.label}
+                </button>
+              {/each}
+            </div>
+            {#if activityMode === "code"}
+              <div class="code-tools" aria-label={t.home.codeTools.title}>
+                <button type="button" onclick={openCodeInspector}>
+                  <Gauge size={17} />
+                  <span>{t.home.codeTools.context}</span>
+                  <em>{context ? `${contextPercent}%` : "-"}</em>
+                </button>
+                <button type="button" onclick={openCodeInspector}>
+                  <Folder size={17} />
+                  <span>{t.code.fileTree}</span>
+                  <em>{t.common.ready}</em>
+                </button>
+                <button type="button" onclick={openCodeInspector}>
+                  <GitBranch size={17} />
+                  <span>{t.code.changes}</span>
+                  <em>{changedCount}</em>
+                </button>
+                <button type="button" onclick={openCodeInspector}>
+                  <RotateCcw size={17} />
+                  <span>{t.code.checkpoints}</span>
+                  <em>{checkpoints.length}</em>
+                </button>
+              </div>
+            {/if}
+          </section>
         {/if}
       </div>
 
-      <!-- Composer at bottom -->
-      <Composer
-        {input}
-        {activityMode}
-        {runMode}
-        {commands}
-        {sending}
-        onInput={(value) => (input = value)}
-        onSend={send}
-        onCancel={cancel}
-        onPreviewFile={previewFile}
-      />
+      {#if activityMode === "code" && codeInspectorOpen}
+        <aside class="code-inspector" aria-label={t.home.codeTools.title}>
+          <header>
+            <strong>{t.home.codeTools.title}</strong>
+            <button type="button" onclick={() => (codeInspectorOpen = false)} aria-label={t.common.close}>
+              ×
+            </button>
+          </header>
+          <CodeDashboard
+            {context}
+            {changes}
+            {checkpoints}
+            {filePreview}
+            {diffPreview}
+            onPreviewFile={previewFile}
+            onPreviewChange={previewChange}
+            onRewind={rewind}
+            onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+          />
+        </aside>
+      {/if}
+
+      {#if showTranscript}
+        <div class="stage__composer">
+          <Composer
+            {input}
+            {activityMode}
+            {runMode}
+            {commands}
+            {sending}
+            onInput={(value) => (input = value)}
+            onSend={send}
+            onCancel={cancel}
+            onPreviewFile={previewFile}
+            {models}
+            {selectedModel}
+            onModelChange={switchModel}
+          />
+        </div>
+      {/if}
     </section>
   </main>
 {/if}
 
 <style>
   .shell {
+    --sidebar-width: clamp(292px, 20vw, 386px);
     display: grid;
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     height: 100vh;
-    background: var(--bg);
-    color: var(--fg);
+    padding: 0;
+    color: #202124;
+    background: #f0f0f0;
   }
 
-  /* === Icon dock === */
-  .dock {
+  .shell.is-sidebar-collapsed {
+    --sidebar-width: 72px;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar {
+    padding-inline: 10px;
+  }
+
+  .shell.is-sidebar-collapsed .window-dots,
+  .shell.is-sidebar-collapsed .mode-switch,
+  .shell.is-sidebar-collapsed .primary-actions span,
+  .shell.is-sidebar-collapsed .primary-actions kbd,
+  .shell.is-sidebar-collapsed .task-list,
+  .shell.is-sidebar-collapsed .sidebar__user strong,
+  .shell.is-sidebar-collapsed .sidebar__user em {
+    display: none;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__chrome {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .shell.is-sidebar-collapsed .primary-actions {
+    margin-top: 38px;
+  }
+
+  .shell.is-sidebar-collapsed .primary-actions button,
+  .shell.is-sidebar-collapsed .sidebar__user {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .shell.is-sidebar-collapsed .stage__composer {
+    left: max(32px, calc(var(--sidebar-width) + 10vw));
+  }
+
+  .sidebar {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 10px 0;
-    background: var(--panel-soft);
-    border-right: 1px solid var(--line);
-    overflow-y: auto;
+    min-width: 0;
+    padding: 19px 14px 14px;
+    background: #eeeeee;
+    border-right: 1px solid #dfdfdf;
   }
-  .dock::-webkit-scrollbar { width: 0; }
 
-  .dock__btn {
+  .sidebar__chrome {
+    --wails-draggable: drag;
     display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--fg-faint);
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .dock__btn:hover { background: var(--line); color: var(--fg); }
-  .dock__btn.is-active { background: var(--accent); color: white; }
-
-  .dock__divider {
-    width: 24px;
-    height: 1px;
-    margin: 6px 0;
-    background: var(--line);
+    grid-template-columns: 78px 1fr 34px;
+    align-items: center;
+    gap: 10px;
+    min-height: 34px;
   }
 
-  .dock__sessions {
+  .window-dots {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    flex: 1;
-    padding-top: 4px;
+    gap: 12px;
+    padding-left: 16px;
   }
 
-  .dock__session {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 28px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    cursor: pointer;
-    transition: background 0.12s;
-  }
-  .dock__session:hover { background: var(--line); }
-  .dock__session.is-active { background: var(--line); }
-
-  .dock__dot {
-    width: 6px;
-    height: 6px;
+  .window-dots span {
+    width: 17px;
+    height: 17px;
+    background: #d1d1d1;
     border-radius: 50%;
-    background: var(--accent);
-  }
-  .dock__dot--off { background: var(--fg-faint); opacity: 0.4; }
-  .dock__dot--run {
-    background: var(--accent);
-    animation: pulse 1.2s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
   }
 
-  /* === Main stage === */
-  .stage {
+  .mode-switch {
+    --wails-draggable: no-drag;
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    padding: 3px;
+    background: #e2e2e2;
+    border-radius: 9px;
+  }
+
+  .mode-switch__item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 11px;
+    color: #333333;
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    font-size: 16px;
+    font-weight: 520;
+  }
+
+  .mode-switch__item.is-active {
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+
+  .sidebar__icon {
+    --wails-draggable: no-drag;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    color: #424242;
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+  }
+
+  .sidebar__icon:hover,
+  .primary-actions button:hover,
+  .task-list__head button:hover {
+    background: #dedede;
+  }
+
+  .primary-actions {
+    display: grid;
+    gap: 8px;
+    margin-top: 43px;
+  }
+
+  .primary-actions button {
+    --wails-draggable: no-drag;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 7px;
+    min-height: 40px;
+    padding: 0 10px;
+    color: #2f2f2f;
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    font-size: 16px;
+    font-weight: 470;
+    text-align: left;
+  }
+
+  .primary-actions__new {
+    background: #dedede !important;
+  }
+
+  .primary-actions kbd {
+    color: #7c7c7c;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .task-list {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow: hidden;
+    flex: 1;
+    margin-top: 30px;
   }
 
-  .bar {
+  .task-list__head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 16px;
-    height: 40px;
-    flex-shrink: 0;
-    border-bottom: 1px solid var(--line);
-    background: var(--panel);
-    font-size: 13px;
-  }
-  .bar__left { display: flex; align-items: center; gap: 6px; }
-  .bar__mode { font-weight: 600; }
-  .bar__sep { color: var(--fg-faint); }
-  .bar__name { color: var(--fg-faint); }
-  .bar__right select {
-    font-size: 12px;
-    padding: 3px 8px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--fg);
-    outline: none;
-    cursor: pointer;
+    min-height: 34px;
+    padding: 0 8px;
+    color: #6a6a6a;
+    font-size: 16px;
+    font-weight: 520;
   }
 
-  .content {
-    flex: 1;
+  .task-list__head div {
+    display: flex;
+    gap: 8px;
+  }
+
+  .task-list__head button,
+  .task-group__label button {
+    --wails-draggable: no-drag;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    color: #777777;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+  }
+
+  .task-list__body {
+    display: grid;
+    gap: 12px;
     min-height: 0;
+    overflow: auto;
+    padding: 4px 0 10px;
+  }
+
+  .task-group {
+    display: grid;
+    gap: 6px;
+  }
+
+  .task-group__label {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 8px;
+    color: #707070;
+    font-size: 15px;
+  }
+
+  .task-group__label span,
+  .task-row span {
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .task-row {
+    --wails-draggable: no-drag;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-height: 34px;
+    margin-left: 26px;
+    padding: 0 10px;
+    color: #333333;
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    font-size: 15px;
+    text-align: left;
+  }
+
+  .task-row:hover,
+  .task-row.is-active {
+    background: #e1e1e1;
+  }
+
+  .task-row i {
+    color: #8a8a8a;
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .task-list__empty {
+    margin: 12px 8px;
+    color: #8a8a8a;
+    font-size: 14px;
+  }
+
+  .sidebar__user {
+    display: grid;
+    grid-template-columns: 34px minmax(0, auto) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    color: #3f3f3f;
+    font-size: 15px;
+  }
+
+  .sidebar__avatar {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    color: #5b28cf;
+    background: #b89cff;
+    border-radius: 8px;
+  }
+
+  .sidebar__user strong {
+    overflow: hidden;
+    font-weight: 560;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar__user em {
+    padding: 2px 6px;
+    color: #4a4a4a;
+    background: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 5px;
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .stage {
+    position: relative;
     display: flex;
     flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: 10px 10px 10px 0;
+    background: #f0f0f0;
+  }
+
+  .window-drag-region {
+    --wails-draggable: drag;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    left: 0;
+    z-index: 2;
+    height: 44px;
+  }
+
+  .stage__surface {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: #ffffff;
+    border: 1px solid #dedede;
+    border-radius: 18px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+
+  .stage__surface,
+  .home,
+  .conversation-view,
+  .conversation,
+  .stage__composer,
+  .home__composer,
+  button,
+  :global(select),
+  :global(textarea),
+  :global(input) {
+    --wails-draggable: no-drag;
   }
 
   .content__loading {
@@ -793,23 +1128,299 @@
     font-size: 14px;
   }
 
-  /* Code mode split */
-  .code-split {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-  .code-pane {
+  .home {
     display: flex;
     flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
     min-height: 0;
-    overflow: hidden;
+    padding: clamp(28px, 7vh, 74px) clamp(18px, 3vw, 36px) 112px;
   }
-  .code-pane--files {
-    border-left: 1px solid var(--line);
-    background: var(--panel);
+
+  .home h1 {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 0 clamp(30px, 6vh, 60px);
+    color: #1f1f1f;
+    font-size: clamp(32px, 3.2vw, 46px);
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+
+  .home h1 span {
+    align-self: flex-start;
+    margin-top: 3px;
+    padding: 2px 7px;
+    color: #777777;
+    background: #eeeeee;
+    border: 1px solid #d7d7d7;
+    border-radius: 5px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .home__composer {
+    width: min(1028px, max(560px, 72%));
+    overflow: hidden;
+    background: #f4f4f4;
+    border-radius: 15px;
+  }
+
+  .home__context {
+    display: flex;
+    gap: 26px;
+    min-height: 54px;
+    padding: 0 24px;
+  }
+
+  .home__context button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #3e3e3e;
+    background: transparent;
+    border: 0;
+    font-size: 15px;
+    font-weight: 540;
+  }
+
+  .home__quick {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(132px, max-content));
+    justify-content: center;
+    gap: 10px;
+    margin-top: 40px;
+  }
+
+  .home__quick button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 62px;
+    padding: 0 22px;
+    color: #333333;
+    background: #ffffff;
+    border: 1px solid #e3e3e3;
+    border-radius: 17px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    font-size: 16px;
+    font-weight: 560;
+  }
+
+  .code-tools {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(128px, 1fr));
+    gap: 10px;
+    width: min(860px, max(520px, 62%));
+    margin-top: 18px;
+  }
+
+  .code-tools button {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0 12px;
+    color: #3c3c3c;
+    background: #fafafa;
+    border: 1px solid #e5e5e5;
+    border-radius: 12px;
+    font-size: 14px;
+    text-align: left;
+  }
+
+  .code-tools button:hover {
+    background: #f3f3f3;
+    border-color: #d8d8d8;
+  }
+
+  .code-tools span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .code-tools em {
+    color: #6f6f6f;
+    font-style: normal;
+  }
+
+  .home__quick button:hover {
+    background: #f8f8f8;
+    border-color: #d4d4d4;
+  }
+
+  .conversation {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 24px 48px 220px;
+  }
+
+  .conversation-view {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .conversation-header {
+    --wails-draggable: drag;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 54px;
+    padding: 0 22px;
+    border-bottom: 1px solid #eeeeee;
+  }
+
+  .conversation-header div {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .conversation-header strong {
+    overflow: hidden;
+    color: #242424;
+    font-size: 16px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conversation-header span {
+    overflow: hidden;
+    color: #8a8a8a;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conversation-header button {
+    --wails-draggable: no-drag;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 0 12px;
+    color: #303030;
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+    border-radius: 9px;
+    font-size: 14px;
+  }
+
+  .stage__composer {
+    position: absolute;
+    right: max(32px, calc(6vw + 40px));
+    bottom: 32px;
+    left: max(32px, calc(var(--sidebar-width) + 10vw + 40px));
+    z-index: 4;
+    max-width: 1100px;
+  }
+
+  .code-inspector {
+    --wails-draggable: no-drag;
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    bottom: 24px;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    width: min(520px, calc(100% - var(--sidebar-width) - 64px));
+    min-width: 360px;
+    overflow: hidden;
+    background: #ffffff;
+    border: 1px solid #dedede;
+    border-radius: 16px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.12);
+  }
+
+  .code-inspector header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 46px;
+    padding: 0 14px 0 18px;
+    border-bottom: 1px solid #ededed;
+  }
+
+  .code-inspector header strong {
+    font-size: 15px;
+    font-weight: 620;
+  }
+
+  .code-inspector header button {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    color: #666666;
+    background: #f4f4f4;
+    border: 0;
+    border-radius: 8px;
+    font-size: 20px;
+  }
+
+  .code-inspector :global(.code-layout) {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+  }
+
+  .code-inspector :global(.dashboard-grid) {
+    grid-template-columns: 1fr;
+  }
+
+  .code-inspector :global(.code-dock) {
+    box-shadow: none;
+  }
+
+  .home__composer :global(.composer),
+  .stage__composer :global(.composer) {
+    min-height: 160px;
+    background: #ffffff;
+    border: 1px solid #e2e2e2;
+    border-radius: 15px;
+    box-shadow: none;
+  }
+
+  .home__composer :global(.composer) {
+    border-radius: 15px 15px 0 0;
+  }
+
+  .home__composer :global(.composer textarea),
+  .stage__composer :global(.composer textarea) {
+    min-height: 88px;
+    color: #242424;
+    font-size: 16px;
+  }
+
+  .home__composer :global(.composer button[type="submit"]),
+  .stage__composer :global(.composer button[type="submit"]) {
+    width: 39px;
+    height: 39px;
+    justify-content: center;
+    padding: 0;
+    color: #7a6edb;
+    background: #ded8ff;
+    border-radius: 11px;
+  }
+
+  .home__composer :global(.composer button[type="submit"] span),
+  .stage__composer :global(.composer button[type="submit"] span) {
+    display: none;
   }
 
   .boot-screen {
@@ -821,8 +1432,94 @@
     font-size: 14px;
   }
 
+  @media (max-width: 980px) {
+    .shell {
+      --sidebar-width: 292px;
+    }
+
+    .stage__composer {
+      left: calc(var(--sidebar-width) + 28px);
+      right: 24px;
+    }
+
+    .home__composer,
+    .code-tools {
+      width: min(760px, 86%);
+    }
+
+    .home__quick,
+    .code-tools {
+      grid-template-columns: repeat(2, minmax(150px, 1fr));
+    }
+  }
+
   @media (max-width: 768px) {
-    .code-split { grid-template-columns: 1fr; }
-    .code-pane--files { display: none; }
+    .shell {
+      grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+      display: none;
+    }
+
+    .stage {
+      padding: 8px;
+    }
+
+    .stage__composer {
+      left: 20px;
+      right: 20px;
+      bottom: 20px;
+    }
+
+    .conversation {
+      padding: 18px 18px 200px;
+    }
+
+    .conversation-header {
+      padding: 0 14px;
+    }
+
+    .home {
+      padding: 32px 14px 90px;
+    }
+
+    .home__composer {
+      width: 100%;
+    }
+
+    .home__quick,
+    .code-tools {
+      width: 100%;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .code-inspector {
+      right: 12px;
+      left: 12px;
+      bottom: 12px;
+      width: auto;
+      min-width: 0;
+    }
+
+    .home h1 {
+      margin-bottom: 34px;
+      font-size: 30px;
+    }
+
+  }
+
+  @media (max-width: 520px) {
+    .home h1 {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .home__quick,
+    .code-tools {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

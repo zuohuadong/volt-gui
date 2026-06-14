@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, FileText, Image, Search, Send, Square, X } from "@lucide/svelte";
+  import { AtSign, FileText, Image, Mic, Monitor, Paperclip, Search, Send, Square, Volume2, X, Zap } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
-  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, RunMode, SlashArgItem } from "../lib/types";
+  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, RunMode, SlashArgItem } from "../lib/types";
 
   let {
     input,
@@ -15,6 +15,9 @@
     onSend,
     onCancel,
     onPreviewFile,
+    models = [],
+    selectedModel = "",
+    onModelChange,
   }: {
     input: string;
     activityMode: ActivityMode;
@@ -25,6 +28,9 @@
     onSend: (displayText: string, submitText?: string) => void;
     onCancel: () => void;
     onPreviewFile: (path: string) => void;
+    models?: ModelInfo[];
+    selectedModel?: string;
+    onModelChange?: (event: Event) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -34,6 +40,7 @@
   let attachments = $state<ComposerAttachment[]>([]);
   let pendingAttachmentWrites = $state(0);
   let dragOver = $state(false);
+  let fileInput: HTMLInputElement | undefined;
 
   const slashQuery = $derived(input.startsWith("/") && !/\s/.test(input) ? input.slice(1).toLowerCase() : null);
   const slashMatches = $derived(slashQuery === null ? [] : commands.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 6));
@@ -107,6 +114,12 @@
 
   function attachFiles(files: File[]) {
     for (const file of files) void attachFile(file);
+  }
+
+  function handleFilePicker(event: Event) {
+    const files = Array.from((event.currentTarget as HTMLInputElement).files ?? []);
+    attachFiles(files);
+    if (fileInput) fileInput.value = "";
   }
 
   async function attachDroppedPaths(paths: string[]) {
@@ -268,9 +281,11 @@
       }}
     ></textarea>
 
+    <input bind:this={fileInput} class="composer__file" type="file" multiple onchange={handleFilePicker} />
+
     {#if slashMatches.length}
       <div class="composer-menu">
-        <span><Search size={13} /> Commands</span>
+        <span><Search size={13} /> {t.composer.commands}</span>
         {#each slashMatches as command (command.name)}
           <button type="button" onclick={() => insertCommand(command)}>
             /{command.name}
@@ -282,7 +297,7 @@
 
     {#if slashArgMode && slashArgItems.length}
       <div class="composer-menu">
-        <span><Search size={13} /> Arguments</span>
+        <span><Search size={13} /> {t.composer.arguments}</span>
         {#each slashArgItems as item (item.label)}
           <button type="button" onclick={() => insertSlashArg(item)}>
             {item.label}
@@ -294,7 +309,7 @@
 
     {#if atMatch !== null && fileMatches.length}
       <div class="composer-menu">
-        <span><AtSign size={13} /> File references</span>
+        <span><AtSign size={13} /> {t.composer.fileReferences}</span>
         {#each fileMatches as entry (entry.name)}
           <button type="button" onclick={() => insertFile(entry)}>
             <FileText size={13} />
@@ -324,28 +339,60 @@
         {#if pendingAttachmentWrites > 0}
           <div class="composer-context__item composer-context__item--pending">
             <Image size={14} />
-            Attaching...
+            {t.composer.attaching}
           </div>
         {/if}
         {#if dragOver}
           <div class="composer-context__item composer-context__item--pending">
             <FileText size={14} />
-            Drop to attach
+            {t.composer.dropToAttach}
           </div>
         {/if}
       </div>
     {/if}
   </div>
 
-  {#if sending}
-    <button class="secondary" type="button" onclick={onCancel}>
-      <Square size={16} />
-      {t.composer.cancel}
-    </button>
-  {:else}
-    <button type="submit" disabled={!canSubmit}>
-      <Send size={16} />
-      Send
-    </button>
-  {/if}
+  <div class="composer__toolbar">
+    <div class="composer__tools">
+      <button type="button" aria-label={t.composer.fileReferences} title={t.composer.fileReferences} onclick={() => onInput(`${input}${input.endsWith(" ") || input === "" ? "" : " "}@`)}>
+        <AtSign size={16} />
+      </button>
+      <button type="button" aria-label={t.composer.attaching} title={t.composer.attaching} onclick={() => fileInput?.click()}>
+        <Paperclip size={16} />
+      </button>
+      <button type="button" aria-label={t.composer.fast} title={t.composer.fast} onclick={() => onInput(`${input}${input.endsWith(" ") || input === "" ? "" : " "}${t.composer.fastPrompt}`)}>
+        <Zap size={16} />
+        <span>{t.composer.fast}</span>
+      </button>
+    </div>
+
+    <div class="composer__actions">
+      {#if models.length}
+        <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange}>
+          {#each models as model (model.name)}
+            <option value={model.name}>{model.label || model.name}</option>
+          {/each}
+        </select>
+      {/if}
+      <button type="button" aria-label={t.composer.local} title={activityMode === "code" ? t.activity.code : t.composer.local}>
+        <Monitor size={16} />
+      </button>
+      <button type="button" aria-label={runMode} title={runMode}>
+        <Volume2 size={16} />
+      </button>
+      <button type="button" aria-label={t.composer.voice} title={t.composer.voice}>
+        <Mic size={16} />
+      </button>
+      {#if sending}
+        <button class="composer__submit secondary" type="button" aria-label={t.composer.cancel} title={t.composer.cancel} onclick={onCancel}>
+          <Square size={16} />
+        </button>
+      {:else}
+        <button class="composer__submit" type="submit" aria-label={t.composer.send} title={t.composer.send} disabled={!canSubmit}>
+          <Send size={16} />
+          <span>{t.composer.send}</span>
+        </button>
+      {/if}
+    </div>
+  </div>
 </form>

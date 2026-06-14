@@ -4,8 +4,9 @@
 export type Lang = "zh" | "en";
 
 function detectLang(): Lang {
-  const nav = typeof navigator !== "undefined" ? navigator.language : "en";
-  if (nav.toLowerCase().startsWith("zh")) return "zh";
+  const langs = typeof navigator !== "undefined" ? [navigator.language, ...(navigator.languages ?? [])] : [];
+  if (!langs.length) return "zh";
+  if (langs.some((item) => item.toLowerCase().startsWith("zh"))) return "zh";
   return "en";
 }
 
@@ -33,6 +34,54 @@ const en = {
     untitled: "Untitled",
     running: "running",
     open: "open",
+  },
+  home: {
+    title: "Work with Volt",
+    beta: "Beta",
+    sidebar: "Toggle sidebar",
+    skills: "Skills",
+    automation: "Automation",
+    taskList: "Tasks",
+    expand: "Expand",
+    sort: "Sort",
+    user: "User 37108329398",
+    free: "Free",
+    local: "Local",
+    openInCode: "Open in Code",
+    work: {
+      title: "Work with Volt",
+      quick: [
+        { label: "Web reading", prompt: "Read the web and summarize the key points.", icon: "sparkles" },
+        { label: "Research analysis", prompt: "Research this topic and produce an actionable analysis.", icon: "bot" },
+        { label: "Data mining", prompt: "Analyze this data and extract useful patterns.", icon: "list" },
+        { label: "File management", prompt: "Help me organize, inspect, and manage project files.", icon: "folder" },
+      ],
+    },
+    code: {
+      title: "Code with Volt",
+      quick: [
+        { label: "App development", prompt: "Help me build or improve this application.", icon: "code" },
+        { label: "Project understanding", prompt: "Read this project and explain its structure and key flows.", icon: "folder" },
+        { label: "Game ideas", prompt: "Help design and implement a small playable game idea.", icon: "sparkles" },
+        { label: "Tool scripts", prompt: "Write a practical script or automation for this workspace.", icon: "bot" },
+      ],
+    },
+    codeTools: {
+      title: "Workspace tools",
+      context: "Context",
+    },
+    quick: {
+      web: "Web reading",
+      research: "Research analysis",
+      data: "Data mining",
+      files: "File management",
+    },
+    prompts: {
+      web: "Read the web and summarize the key points.",
+      research: "Research this topic and produce an actionable analysis.",
+      data: "Analyze this data and extract useful patterns.",
+      files: "Help me organize, inspect, and manage project files.",
+    },
   },
   work: {
     title: "Work dashboard",
@@ -90,6 +139,15 @@ const en = {
     placeholder: "Send a message... (Enter to send, Shift+Enter for newline)",
     send: "Send",
     cancel: "Cancel",
+    commands: "Commands",
+    arguments: "Arguments",
+    fileReferences: "File references",
+    attaching: "Attaching...",
+    dropToAttach: "Drop to attach",
+    fast: "Fast",
+    fastPrompt: "Handle this quickly ",
+    local: "Local",
+    voice: "Voice input",
   },
   transcript: {
     reasoning: "Reasoning",
@@ -105,6 +163,7 @@ const en = {
     ready: "Ready",
     noPreview: "No preview",
     untitledSession: "Untitled session",
+    close: "Close",
   },
 };
 
@@ -130,6 +189,54 @@ const zh: typeof en = {
     untitled: "未命名",
     running: "运行中",
     open: "打开",
+  },
+  home: {
+    title: "Work with Volt",
+    beta: "Beta",
+    sidebar: "切换侧边栏",
+    skills: "技能",
+    automation: "自动化",
+    taskList: "任务列表",
+    expand: "展开",
+    sort: "排序",
+    user: "用户 37108329398",
+    free: "免费",
+    local: "本地",
+    openInCode: "在代码中打开",
+    work: {
+      title: "Work with Volt",
+      quick: [
+        { label: "网页读取", prompt: "读取网页内容，整理要点并给出可执行结论。", icon: "sparkles" },
+        { label: "调研分析", prompt: "围绕这个主题做调研分析，输出清晰的判断和下一步建议。", icon: "bot" },
+        { label: "数据挖掘", prompt: "分析这些数据，挖掘有用模式并总结关键发现。", icon: "list" },
+        { label: "文件管理", prompt: "帮我整理、检查并管理当前项目文件。", icon: "folder" },
+      ],
+    },
+    code: {
+      title: "Code with Volt",
+      quick: [
+        { label: "应用开发", prompt: "帮我编写代码、调试 Bug、优化性能，并交付生产级代码。", icon: "code" },
+        { label: "项目理解", prompt: "阅读当前项目，解释架构、目录结构和关键执行流程。", icon: "folder" },
+        { label: "游戏创意", prompt: "帮我设计并实现一个可玩的小游戏创意。", icon: "sparkles" },
+        { label: "工具脚本", prompt: "为当前工作区编写实用脚本或自动化工具。", icon: "bot" },
+      ],
+    },
+    codeTools: {
+      title: "工作区工具",
+      context: "上下文",
+    },
+    quick: {
+      web: "网页读取",
+      research: "调研分析",
+      data: "数据挖掘",
+      files: "文件管理",
+    },
+    prompts: {
+      web: "读取网页内容，整理要点并给出可执行结论。",
+      research: "围绕这个主题做调研分析，输出清晰的判断和下一步建议。",
+      data: "分析这些数据，挖掘有用模式并总结关键发现。",
+      files: "帮我整理、检查并管理当前项目文件。",
+    },
   },
   work: {
     title: "工作台",
@@ -187,6 +294,15 @@ const zh: typeof en = {
     placeholder: "发送消息... (Enter 发送, Shift+Enter 换行)",
     send: "发送",
     cancel: "取消",
+    commands: "命令",
+    arguments: "参数",
+    fileReferences: "文件引用",
+    attaching: "正在附加...",
+    dropToAttach: "拖放以附加",
+    fast: "速通",
+    fastPrompt: "快速处理 ",
+    local: "本地",
+    voice: "语音输入",
   },
   transcript: {
     reasoning: "推理",
@@ -202,6 +318,7 @@ const zh: typeof en = {
     ready: "就绪",
     noPreview: "无预览",
     untitledSession: "未命名会话",
+    close: "关闭",
   },
 };
 

@@ -34,13 +34,13 @@ import type {
 
 export type ToolStatus = "running" | "done" | "error" | "stopped";
 
-export type LiveStream = { id: string; text: string; reasoning: string };
+export type LiveStream = { id: string; text: string; reasoning: string; reasoningComplete: boolean };
 export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversation" | "code" | "both";
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 
 export type Item =
   | { kind: "user"; id: string; text: string; failed?: boolean }
-  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean }
+  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
   | {
@@ -341,14 +341,17 @@ function applyEvent(s: State, e: WireEvent): State {
       let cur: State = s;
       if (cur.pendingUser !== undefined) cur = flushPendingUser(cur);
       const { items, id, seq } = ensureAssistant(cur);
-      return { ...cur, items, currentAssistant: id, seq, live: { id, text: "", reasoning: "" }, running: true, turnActive: true, turnStartAt: Date.now(), turnTokens: 0, turnTotalTokens: 0, turnCost: 0 };
+      return { ...cur, items, currentAssistant: id, seq, live: { id, text: "", reasoning: "", reasoningComplete: false }, running: true, turnActive: true, turnStartAt: Date.now(), turnTokens: 0, turnTotalTokens: 0, turnCost: 0 };
     }
     case "text":
     case "reasoning": {
       const { items, id, seq } = ensureAssistant(s);
       const delta = e.text ?? e.reasoning ?? "";
-      const base = s.live?.id === id ? s.live : { id, text: "", reasoning: "" };
-      const live = e.kind === "text" ? { ...base, text: base.text + delta } : { ...base, reasoning: base.reasoning + delta };
+      const base = s.live?.id === id ? s.live : { id, text: "", reasoning: "", reasoningComplete: false };
+      const live =
+        e.kind === "text"
+          ? { ...base, text: base.text + delta, reasoningComplete: base.reasoning !== "" || base.reasoningComplete }
+          : { ...base, reasoning: base.reasoning + delta, reasoningComplete: false };
       return { ...s, items, live, currentAssistant: id, seq };
     }
     case "message": {

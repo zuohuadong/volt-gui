@@ -349,26 +349,36 @@ export const AssistantMessage = memo(function AssistantMessage({
   const [reasoningOpen, setReasoningOpen] = useState(item.streaming || defaultExpanded);
   const userOverridden = useRef(false);
   const prevStreamingRef = useRef(item.streaming);
+  const prevReasoningCompleteRef = useRef(item.reasoningComplete ?? false);
   useGSAPCollapse(reasoningBodyRef, reasoningOpen);
 
-  // Auto-open on new stream start; auto-close when stream finishes, but only
-  // when the user has never manually toggled this cycle.
+  // Auto-open on new stream start; auto-close when reasoning finishes (or when
+  // the stream fully ends), but only if the user has never manually toggled.
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current;
     const nowStreaming = item.streaming;
     prevStreamingRef.current = nowStreaming;
 
+    const wasRC = prevReasoningCompleteRef.current;
+    const nowRC = item.reasoningComplete ?? false;
+    prevReasoningCompleteRef.current = nowRC;
+
     if (nowStreaming && !wasStreaming) {
       // New stream started — reset user override, auto-open.
       userOverridden.current = false;
       if (!defaultExpanded) setReasoningOpen(true);
+    } else if (nowRC && !wasRC) {
+      // Reasoning just finished — auto-close while we wait for text.
+      if (!defaultExpanded && !userOverridden.current) {
+        setReasoningOpen(false);
+      }
     } else if (!nowStreaming && wasStreaming) {
-      // Stream just ended — auto-close if user didn't interact.
+      // Stream fully ended — auto-close (fallback if no reasoning signal).
       if (!defaultExpanded && !userOverridden.current) {
         setReasoningOpen(false);
       }
     }
-  }, [item.streaming, defaultExpanded]);
+  }, [item.streaming, item.reasoningComplete, defaultExpanded]);
 
   const toggleReasoning = () => {
     userOverridden.current = true;
@@ -384,13 +394,13 @@ export const AssistantMessage = memo(function AssistantMessage({
           <button
             type="button"
             className="reasoning__head"
-            data-running={item.streaming ? "" : undefined}
+            data-running={item.streaming && !item.reasoningComplete ? "" : undefined}
             onClick={toggleReasoning}
             aria-expanded={reasoningOpen}
           >
             <ProcessBrainIcon size={12} />
             <span>{t("msg.thinking")}</span>
-            <span className="reasoning__meta">{item.streaming ? t("msg.thinkingRunning") : t("msg.thinkingDone")}</span>
+            <span className="reasoning__meta">{item.streaming && !item.reasoningComplete ? t("msg.thinkingRunning") : t("msg.thinkingDone")}</span>
             <ChevronRight className={`reasoning__chevron${reasoningOpen ? " reasoning__chevron--open" : ""}`} size={12} />
           </button>
           <div ref={reasoningBodyRef} className="reasoning__body">{item.reasoning}</div>

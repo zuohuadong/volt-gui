@@ -25,7 +25,7 @@ const LiveStreamContext = createContext<LiveStream | undefined>(undefined);
 
 const LiveAssistantMessage = memo(function LiveAssistantMessage({ item, defaultExpanded = false }: { item: AssistantItem; defaultExpanded?: boolean }) {
   const live = useContext(LiveStreamContext);
-  const shown = live && live.id === item.id ? { ...item, text: live.text, reasoning: live.reasoning, streaming: true } : item;
+  const shown = live && live.id === item.id ? { ...item, text: live.text, reasoning: live.reasoning, streaming: true, reasoningComplete: live.reasoningComplete } : item;
   return <AssistantMessage item={shown} defaultExpanded={defaultExpanded} />;
 });
 
@@ -140,6 +140,7 @@ export function Transcript({
   checkpoints = [],
   actionPending = false,
   rewindDisabled = false,
+  running = false,
   questionNavigator = true,
   rewindSignal = 0,
 }: {
@@ -151,6 +152,7 @@ export function Transcript({
   checkpoints?: CheckpointMeta[];
   actionPending?: boolean;
   rewindDisabled?: boolean;
+  running?: boolean;
   questionNavigator?: boolean;
   rewindSignal?: number;
 }) {
@@ -467,7 +469,7 @@ export function Transcript({
         }
       }
       flushCollapseBatch();
-      pushTurnActions();
+      if (!running) pushTurnActions();
     } else {
       // Standard mode: flat rendering
       const roBatch: ToolItem[] = [];
@@ -519,10 +521,10 @@ export function Transcript({
         }
       }
       flushRO();
-      pushTurnActions();
+      if (!running) pushTurnActions();
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens

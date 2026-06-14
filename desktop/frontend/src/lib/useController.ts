@@ -62,6 +62,7 @@ export type Item =
       output?: string;
       error?: string;
       truncated?: boolean;
+      dataArchived?: boolean; // args/output trimmed for memory; full data available via backend
       durationMs?: number;
       isShell?: boolean; // true for !-prefix shell commands (controls default expand)
       parentId?: string; // a sub-agent call nests under the `task` call with this id
@@ -450,7 +451,24 @@ function applyEvent(s: State, e: WireEvent): State {
         if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
         return it;
       });
-      const items: Item[] = e.err ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }] : finalized;
+      let items: Item[] = e.err ? [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }] : finalized;
+      // Archive completed tool items that aren't in the visible window:
+      // keep args/output to a short preview to bound memory in long sessions.
+      // Full data is loaded on demand via app.ToolResultForTab when expanded.
+      const RETENTION_TOOL_COUNT = 100;
+      const toolItems = items.filter((it) => it.kind === "tool");
+      if (toolItems.length > RETENTION_TOOL_COUNT) {
+        const cutoff = toolItems.length - RETENTION_TOOL_COUNT;
+        const archiveIDs = new Set(toolItems.slice(0, cutoff).map((t) => t.id));
+        items = items.map((it) => {
+          if (it.kind !== "tool" || !archiveIDs.has(it.id)) return it;
+          const t = it;
+          const shortArgs = t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
+          const shortOutput = t.output && t.output.length > 200 ? t.output.slice(0, 200) + "…" : t.output;
+          if (shortArgs === t.args && shortOutput === t.output) return it;
+          return { ...t, args: shortArgs, output: shortOutput, dataArchived: true };
+        });
+      }
       return { ...s, items, live: undefined, running: false, turnActive: false, currentAssistant: undefined, approval: undefined, ask: undefined, seq: s.seq + 1 };
     }
     default: return s;

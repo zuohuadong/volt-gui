@@ -71,6 +71,17 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
   const openRef = useRef(open);
   openRef.current = open;
   const [showAll, setShowAll] = useState(false);
+  // Lazy-load full tool data from the backend when the card is expanded and
+  // the in-memory copy was archived for memory efficiency.
+  const [fullData, setFullData] = useState<{ args: string; output?: string } | null>(null);
+  useEffect(() => {
+    if (!open || !item.dataArchived || fullData) return;
+    import("../lib/bridge").then(({ app }) =>
+      app.ToolResultForTab("", item.id).then((d) => {
+        if (d) setFullData(d);
+      }).catch(() => {}),
+    );
+  }, [open, item.id, item.dataArchived, fullData]);
 
   // Register this shell card's toggle with the global ShellExpand context so
   // Ctrl/Cmd+B can expand/collapse the most recent shell output. openRef keeps the

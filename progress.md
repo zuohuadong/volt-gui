@@ -5,6 +5,9 @@
 > **格式：** `[时间] [workspace名] [状态] 描述`
 
 ---
+[{now}] [codex] [done:ui-shell-cleanup] 完成 OpenLoaf 风格极简 shell 清理：1）App.svelte 重写为 48px icon dock + stage 布局（Work/Code 双模式切换，会话点指示器，极简 topbar + composer）；2）app.css 从 1809 行精简至 ~480 行，删除所有旧布局/调试面板样式（workbench/sidebar/resource-panel/update-banner/run-modes/goal-card/work-list/memory-card），保留活跃组件样式（transcript/composer/code-dock/context-card/file-tree/checkpoint/markdown/diff-viewer/decision-shelf）；3）删除不再使用的组件文件（ResourcePanel/ActivitySidebar/RunModeBar/WorkDashboard/UpdateBanner）；4）清理 App.svelte 中 10 个死函数（refreshResources/refreshMemory/refreshWorkDashboardData/remember/forgetMemory/startGoal/continueGoal/clearGoal/updateTaskStatus/resumeSession）和 3 个死状态变量（recentSessions/memoryView/SessionMeta import）。验证：`vite build` 通过，`go build ./...` 和 `cd desktop && go build ./...` 通过，`git diff --check` 通过。已推送到 CNB origin 和 GitHub。
+
+---
 
 [2026-06-13T09:15:35+0800] [codex] [review:VOLTGUI-004-oidc-auth] 在 `codex/feat-oidc-auth` 实现通用 OIDC desktop auth gate，非 SupAuth 专用：新增 `[auth] provider = "oidc"` 配置、OIDC Authorization Code + PKCE S256 登录、state/nonce 校验、loopback callback、0600 `auth.json` token 存储、refresh_token 静默续期、`NeedsAuth`/`StartOIDCLogin`/`CancelOIDCLogin`/`CurrentUser`/`Logout` Wails 绑定、前端员工登录 overlay、登录后再进入 legacy API key onboarding，以及 startup telemetry 可选用户维度。协作：已按要求派发 `gpt-5.3-codex` executor 与 verifier 子线程；两者均长时间无输出且未产生/修改文件，主线程终止后完成实现和审查。验证：`gofmt` 已执行；`git diff --check` 通过；`GOTOOLCHAIN=local go test -mod=mod ./cmd/sign ./internal/update -count=1` 通过；`cd desktop/frontend && pnpm install --frozen-lockfile` 通过。阻塞：`GOTOOLCHAIN=local go test -mod=mod . -run 'TestAuth|TestOIDC|TestIsLoopback|TestPostStartupPing' -count=1` 仍被既有 `desktop/*` 与根模块 `reasonix/internal/...` import 漂移阻断；`GOTOOLCHAIN=local go test ./internal/config -run Auth -count=1` 仍被既有 config 测试符号缺失阻断；`cd desktop/frontend && pnpm build` 仍被既有前端门禁阻断（缺 Wails generated runtime、缺 Node 类型、缺 `@tanstack/react-virtual`、若干既有测试导出/i18n key 漂移）。本次未扩展处理这些既有全仓漂移。
 

@@ -1486,6 +1486,114 @@ export function ProjectTree({
     },
   ];
 
+  const timeFilterBadge = timeFilter !== "all" ? (timeFilter === "1d" ? "24h" : timeFilter) : "";
+  const timeFilterDisplayLabel = timeFilter === "all" ? t("projectTree.timeFilterAll")
+    : timeFilter === "10" ? t("projectTree.timeFilter10")
+    : timeFilter === "20" ? t("projectTree.timeFilter20")
+    : timeFilter === "1h" ? t("projectTree.timeFilter1h")
+    : timeFilter === "3h" ? t("projectTree.timeFilter3h")
+    : timeFilter === "5h" ? t("projectTree.timeFilter5h")
+    : t("projectTree.timeFilter1d");
+  const renderTimeFilterControl = (mode: "classic" | "workbench") => {
+    const workbench = mode === "workbench";
+    const active = timeFilter !== "all";
+    const controlLabel = workbench ? `${t("projectTree.timeFilter")}: ${timeFilterDisplayLabel}` : t("projectTree.timeFilter");
+    const buttonClassName = workbench
+      ? `project-tree__header-icon-btn project-tree__header-icon-btn--filter${active ? " project-tree__header-icon-btn--active" : ""}`
+      : `project-tree__header-action-btn${active ? " project-tree__header-action-btn--active" : ""}`;
+    return (
+      <Tooltip
+        label={controlLabel}
+        className={`project-tree__action-slot project-tree__header-action-slot project-tree__header-action-slot--filter${workbench ? " project-tree__header-action-slot--workbench-filter" : ""}`}
+      >
+        <div ref={filterRef} className="project-tree__time-filter">
+          <button
+            ref={filterTriggerRef}
+            type="button"
+            className={buttonClassName}
+            aria-label={controlLabel}
+            aria-haspopup="menu"
+            aria-expanded={filterMenuOpen}
+            onClick={() => {
+              setWorkbenchHeaderMenu(null);
+              setMenuPoint(null);
+              setFilterMenuOpen(!filterMenuOpen);
+            }}
+          >
+            <Clock size={workbench ? 15 : 14} aria-hidden="true" />
+            {timeFilterBadge && (
+              <span className="project-tree__time-filter-label">
+                {timeFilterBadge}
+              </span>
+            )}
+          </button>
+          {filterMenuOpen && (
+            <div className="project-tree__time-filter-menu" role="menu" aria-label={t("projectTree.timeFilter")} onKeyDown={moveMenuFocus}>
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "all" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("all"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilterAll")}
+              </button>
+              <div className="project-tree__time-filter-sep" role="separator" />
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "10" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("10"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilter10")}
+              </button>
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "20" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("20"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilter20")}
+              </button>
+              <div className="project-tree__time-filter-sep" role="separator" />
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "1h" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("1h"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilter1h")}
+              </button>
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "3h" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("3h"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilter3h")}
+              </button>
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "5h" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("5h"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilter5h")}
+              </button>
+              <button
+                type="button"
+                className={`project-tree__time-filter-opt${timeFilter === "1d" ? " project-tree__time-filter-opt--on" : ""}`}
+                onClick={() => { onTimeFilterChange("1d"); setFilterMenuOpen(false); }}
+                role="menuitem"
+              >
+                {t("projectTree.timeFilter1d")}
+              </button>
+            </div>
+          )}
+        </div>
+      </Tooltip>
+    );
+  };
+
   const renderProjectHeader = (mode: "classic" | "workbench") => (
     <div className="project-tree__header">
       <span className="project-tree__header-title">
@@ -1495,6 +1603,7 @@ export function ProjectTree({
       <span className="project-tree__header-actions">
         {mode === "workbench" ? (
           <>
+            {renderTimeFilterControl("workbench")}
             <Tooltip label={workbenchCollapseToggleLabel} className="project-tree__header-action-slot">
               <button
                 type="button"
@@ -1558,88 +1667,7 @@ export function ProjectTree({
           </>
         ) : (
           <>
-            <Tooltip label={t("projectTree.timeFilter")} className="project-tree__action-slot project-tree__header-action-slot project-tree__header-action-slot--filter">
-              <div ref={filterRef} className="project-tree__time-filter">
-                <button
-                  ref={filterTriggerRef}
-                  type="button"
-                  className={`project-tree__header-action-btn${timeFilter !== "all" ? " project-tree__header-action-btn--active" : ""}`}
-                  aria-label={t("projectTree.timeFilter")}
-                  aria-haspopup="menu"
-                  aria-expanded={filterMenuOpen}
-                  onClick={() => setFilterMenuOpen(!filterMenuOpen)}
-                >
-                  <Clock size={14} />
-                  {timeFilter !== "all" && (
-                    <span className="project-tree__time-filter-label">
-                      {timeFilter === "1d" ? "24h" : timeFilter}
-                    </span>
-                  )}
-                </button>
-                {filterMenuOpen && (
-                  <div className="project-tree__time-filter-menu" role="menu" aria-label={t("projectTree.timeFilter")} onKeyDown={moveMenuFocus}>
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "all" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("all"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilterAll")}
-                    </button>
-                    <div className="project-tree__time-filter-sep" role="separator" />
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "10" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("10"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilter10")}
-                    </button>
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "20" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("20"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilter20")}
-                    </button>
-                    <div className="project-tree__time-filter-sep" role="separator" />
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "1h" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("1h"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilter1h")}
-                    </button>
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "3h" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("3h"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilter3h")}
-                    </button>
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "5h" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("5h"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilter5h")}
-                    </button>
-                    <button
-                      type="button"
-                      className={`project-tree__time-filter-opt${timeFilter === "1d" ? " project-tree__time-filter-opt--on" : ""}`}
-                      onClick={() => { onTimeFilterChange("1d"); setFilterMenuOpen(false); }}
-                      role="menuitem"
-                    >
-                      {t("projectTree.timeFilter1d")}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </Tooltip>
+            {renderTimeFilterControl("classic")}
             <Tooltip label={collapseToggleLabel} className="project-tree__action-slot project-tree__header-action-slot project-tree__action-slot--collapse">
               <button
                 type="button"

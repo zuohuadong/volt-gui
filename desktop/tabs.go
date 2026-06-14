@@ -476,8 +476,21 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 // ListTabs returns every open tab's metadata for the frontend TabBar.
 func (a *App) ListTabs() []TabMeta {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
 	out := make([]TabMeta, 0, len(a.tabs))
+	ordered, needsRepair := a.orderedTabIDsSnapshotLocked()
+	for _, id := range ordered {
+		if tab := a.tabs[id]; tab != nil {
+			out = append(out, a.tabMeta(tab, tab.ID == a.activeTabID))
+		}
+	}
+	a.mu.RUnlock()
+	if !needsRepair {
+		return out
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out = make([]TabMeta, 0, len(a.tabs))
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
 			out = append(out, a.tabMeta(tab, tab.ID == a.activeTabID))
@@ -1375,6 +1388,14 @@ func (a *App) saveTabsWrite(dir string, entries []desktopTabEntry, activeID stri
 }
 
 func (a *App) orderedTabIDsLocked() []string {
+	ordered, needsRepair := a.orderedTabIDsSnapshotLocked()
+	if needsRepair {
+		a.tabOrder = append([]string(nil), ordered...)
+	}
+	return ordered
+}
+
+func (a *App) orderedTabIDsSnapshotLocked() ([]string, bool) {
 	seen := make(map[string]bool, len(a.tabs))
 	ordered := make([]string, 0, len(a.tabs))
 	for _, id := range a.tabOrder {
@@ -1391,10 +1412,7 @@ func (a *App) orderedTabIDsLocked() []string {
 	}
 	sort.Strings(missing)
 	ordered = append(ordered, missing...)
-	if len(ordered) != len(a.tabOrder) || len(missing) > 0 {
-		a.tabOrder = append([]string(nil), ordered...)
-	}
-	return ordered
+	return ordered, len(ordered) != len(a.tabOrder) || len(missing) > 0
 }
 
 func (a *App) removeTabOrderLocked(tabID string) {

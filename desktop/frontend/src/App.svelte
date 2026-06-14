@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     BookOpen,
     Bot,
@@ -45,6 +45,7 @@
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
+  type WorkLayer = "today" | "capabilities";
 
   function welcomeTranscript(): TranscriptItem[] {
     return [
@@ -78,6 +79,7 @@
   let sidebarCollapsed = $state(false);
   let sortTasksByRecent = $state(false);
   let codeInspectorOpen = $state(false);
+  let workLayer = $state<WorkLayer>("today");
   let nowMs = $state(Date.now());
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
   let restoreDraftOnTurnDone = false;
@@ -92,6 +94,13 @@
   const clockLabel = $derived(formatClock(clock));
   const monthLabel = $derived(formatMonth(clock));
   const calendarCells = $derived(buildCalendar(clock));
+  const builtinCommands = $derived(commands.filter((command) => command.kind === "builtin"));
+  const skillCommands = $derived(commands.filter((command) => command.kind === "skill"));
+  const customCommands = $derived(commands.filter((command) => command.kind === "custom"));
+  const mcpCommands = $derived(commands.filter((command) => command.kind === "mcp"));
+  const extensionCommands = $derived([...customCommands, ...mcpCommands]);
+  const reasonixCommandNames = ["memory", "remember", "mcp", "hooks", "skill", "model", "effort", "compact"];
+  const reasonixCommands = $derived(reasonixCommandNames.map((name) => builtinCommands.find((command) => command.name === name)).filter(Boolean) as CommandInfo[]);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const projectGroups = $derived(
     projectTree
@@ -385,6 +394,14 @@
     focusComposer();
   }
 
+  async function useWorkbenchCommand(name: string) {
+    workLayer = "today";
+    const command = commands.find((item) => item.name.toLowerCase() === name.toLowerCase());
+    input = command ? `/${command.name} ` : `/${name} `;
+    await tick();
+    focusComposer();
+  }
+
   function useQuickPrompt(text: string) {
     input = text;
     focusComposer();
@@ -433,6 +450,7 @@
   async function newTab() {
     const topic = await app().CreateTopic("global", "", "");
     const tab = await app().OpenGlobalTab(topic.id);
+    workLayer = "today";
     tabs = [...tabs.map((item) => ({ ...item, active: false })), { ...tab, active: true }];
     await refresh();
   }
@@ -442,6 +460,7 @@
     if (node.kind === "global_topic") {
       await app().OpenGlobalTab(node.topicId);
       activityMode = "work";
+      workLayer = "today";
     } else if (node.root) {
       await app().OpenProjectTab(node.root, node.topicId);
       activityMode = "code";
@@ -465,6 +484,7 @@
     if (global) {
       await app().OpenGlobalTab(topic.id);
       activityMode = "work";
+      workLayer = "today";
     } else {
       await app().OpenProjectTab(workspaceRoot, topic.id);
       activityMode = "code";
@@ -583,13 +603,9 @@
           <span>{t.activity.newSession}</span>
           <kbd>⌃⌘N</kbd>
         </button>
-        <button type="button" onclick={() => commandPrompt("skills")}>
+        <button type="button" onclick={() => { activityMode = "work"; workLayer = "capabilities"; }}>
           <Wrench size={17} />
-          <span>{t.home.skills}</span>
-        </button>
-        <button type="button" onclick={() => commandPrompt("automation")}>
-          <Zap size={17} />
-          <span>{t.home.automation}</span>
+          <span>{t.home.work.workbench.capabilityCenter}</span>
         </button>
       </nav>
 
@@ -690,111 +706,202 @@
                 <span>{t.home.work.workbench.eyebrow}</span>
                 <h1>{t.home.work.workbench.title}</h1>
               </div>
+              <div class="workbench__layers" role="tablist" aria-label={t.home.work.workbench.layers}>
+                <button class={workLayer === "today" ? "is-active" : ""} type="button" role="tab" aria-selected={workLayer === "today"} onclick={() => (workLayer = "today")}>
+                  {t.home.work.workbench.today}
+                </button>
+                <button class={workLayer === "capabilities" ? "is-active" : ""} type="button" role="tab" aria-selected={workLayer === "capabilities"} onclick={() => (workLayer = "capabilities")}>
+                  {t.home.work.workbench.capabilities}
+                </button>
+              </div>
               <div class="workbench__actions">
                 <button type="button" onclick={newTab}>
                   <Plus size={14} />
                   {t.activity.newSession}
                 </button>
-                <button type="button" onclick={() => commandPrompt("skills")}>
-                  <Wrench size={14} />
-                  {t.home.skills}
+                <button type="button" onclick={() => (activityMode = "code")}>
+                  <Code2 size={14} />
+                  {t.activity.code}
                 </button>
               </div>
             </header>
 
-            <div class="workbench-grid">
-              <section class="work-card work-card--clock">
-                <span>{t.home.work.workbench.focusTime}</span>
-                <strong>{clockLabel}</strong>
-                <p>{activeTab?.topicTitle || t.transcript.welcome}</p>
-              </section>
+            {#if workLayer === "today"}
+              <div class="workbench-grid">
+                <section class="work-card work-card--clock">
+                  <span>{t.home.work.workbench.focusTime}</span>
+                  <strong>{clockLabel}</strong>
+                  <p>{activeTab?.topicTitle || t.transcript.welcome}</p>
+                </section>
 
-              <section class="work-card work-card--actions">
-                <header>
-                  <strong>{t.home.work.workbench.actions}</strong>
-                  <span>{t.home.work.workbench.actionsHint}</span>
-                </header>
-                <div class="action-grid">
-                  <button type="button" onclick={focusComposer}>
-                    <Sparkles size={15} />
-                    {t.home.work.workbench.aiChat}
-                  </button>
-                  <button type="button" onclick={() => commandPrompt("search")}>
-                    <Gauge size={15} />
-                    {t.home.work.workbench.search}
-                  </button>
-                  <button type="button" onclick={() => commandPrompt("automation")}>
-                    <Zap size={15} />
-                    {t.home.automation}
-                  </button>
-                  <button type="button" onclick={() => (activityMode = "code")}>
-                    <Code2 size={15} />
-                    {t.activity.code}
-                  </button>
-                </div>
-              </section>
+                <section class="work-card work-card--actions">
+                  <header>
+                    <strong>{t.home.work.workbench.actions}</strong>
+                    <span>{t.home.work.workbench.actionsHint}</span>
+                  </header>
+                  <div class="action-grid">
+                    <button type="button" onclick={focusComposer}>
+                      <Sparkles size={15} />
+                      {t.home.work.workbench.aiChat}
+                    </button>
+                    <button type="button" onclick={() => useQuickPrompt(t.home.work.workbench.researchPrompt)}>
+                      <Gauge size={15} />
+                      {t.home.work.workbench.research}
+                    </button>
+                    <button type="button" onclick={() => useQuickPrompt(t.home.work.workbench.automationPrompt)}>
+                      <Zap size={15} />
+                      {t.home.automation}
+                    </button>
+                    <button type="button" onclick={() => (workLayer = "capabilities")}>
+                      <Wrench size={15} />
+                      {t.home.work.workbench.capabilityCenter}
+                    </button>
+                  </div>
+                </section>
 
-              <section class="work-card work-card--calendar">
-                <header>
-                  <strong>{monthLabel}</strong>
-                  <span>{t.home.work.workbench.calendar}</span>
-                </header>
-                <div class="mini-calendar">
-                  {#each t.home.work.workbench.weekdays as day (day)}
-                    <span class="mini-calendar__week">{day}</span>
-                  {/each}
-                  {#each calendarCells as day (day.key)}
-                    <span class={["mini-calendar__day", !day.current && "is-muted", day.today && "is-today"]}>{day.day}</span>
-                  {/each}
-                </div>
-              </section>
-
-              <section class="work-card work-card--tasks">
-                <header>
-                  <strong>{t.home.work.workbench.taskBoard}</strong>
-                  <span>
-                    {t.home.work.workbench.taskStats
-                      .replace("{running}", String(tabs.filter((tab) => tab.running).length))
-                      .replace("{changes}", String(changedCount))}
-                  </span>
-                </header>
-                <div class="task-board">
-                  {#if visibleTasks.length}
-                    {#each visibleTasks.slice(0, 6) as task (task.key)}
-                      <button class={["work-task", (task.topicId || task.key) === activeTaskKey && "is-active"]} type="button" onclick={() => openTask(task)}>
-                        <i></i>
-                        <span>{task.label || t.activity.untitled}</span>
-                        {#if task.running}<em>{t.activity.running}</em>{/if}
-                      </button>
+                <section class="work-card work-card--calendar">
+                  <header>
+                    <strong>{monthLabel}</strong>
+                    <span>{t.home.work.workbench.calendar}</span>
+                  </header>
+                  <div class="mini-calendar">
+                    {#each t.home.work.workbench.weekdays as day (day)}
+                      <span class="mini-calendar__week">{day}</span>
                     {/each}
-                  {:else}
-                    <p>{t.work.noTasks}</p>
-                  {/if}
-                </div>
-              </section>
+                    {#each calendarCells as day (day.key)}
+                      <span class={["mini-calendar__day", !day.current && "is-muted", day.today && "is-today"]}>{day.day}</span>
+                    {/each}
+                  </div>
+                </section>
 
-              <section class="work-card work-card--assistant">
-                <div class="assistant-empty">
-                  <span><Bot size={22} /></span>
-                  <strong>{t.home.work.workbench.assistantTitle}</strong>
-                  <p>{t.home.work.workbench.assistantHint}</p>
+                <section class="work-card work-card--tasks">
+                  <header>
+                    <strong>{t.home.work.workbench.taskBoard}</strong>
+                    <span>
+                      {t.home.work.workbench.taskStats
+                        .replace("{running}", String(tabs.filter((tab) => tab.running).length))
+                        .replace("{changes}", String(changedCount))}
+                    </span>
+                  </header>
+                  <div class="task-board">
+                    {#if visibleTasks.length}
+                      {#each visibleTasks.slice(0, 6) as task (task.key)}
+                        <button class={["work-task", (task.topicId || task.key) === activeTaskKey && "is-active"]} type="button" onclick={() => openTask(task)}>
+                          <i></i>
+                          <span>{task.label || t.activity.untitled}</span>
+                          {#if task.running}<em>{t.activity.running}</em>{/if}
+                        </button>
+                      {/each}
+                    {:else}
+                      <p>{t.work.noTasks}</p>
+                    {/if}
+                  </div>
+                </section>
+
+                <section class="work-card work-card--assistant">
+                  <div class="assistant-empty">
+                    <span><Bot size={22} /></span>
+                    <strong>{t.home.work.workbench.assistantTitle}</strong>
+                    <p>{t.home.work.workbench.assistantHint}</p>
+                  </div>
+                  <Composer
+                    {input}
+                    {activityMode}
+                    {runMode}
+                    {commands}
+                    {sending}
+                    onInput={(value) => (input = value)}
+                    onSend={send}
+                    onCancel={cancel}
+                    onPreviewFile={previewFile}
+                    {models}
+                    {selectedModel}
+                    onModelChange={switchModel}
+                  />
+                </section>
+              </div>
+            {:else}
+              <section class="capability-page">
+                <div class="capability-page__intro">
+                  <span>{t.home.work.workbench.capabilityEyebrow}</span>
+                  <strong>{t.home.work.workbench.capabilityTitle}</strong>
+                  <p>{t.home.work.workbench.capabilityHint}</p>
                 </div>
-                <Composer
-                  {input}
-                  {activityMode}
-                  {runMode}
-                  {commands}
-                  {sending}
-                  onInput={(value) => (input = value)}
-                  onSend={send}
-                  onCancel={cancel}
-                  onPreviewFile={previewFile}
-                  {models}
-                  {selectedModel}
-                  onModelChange={switchModel}
-                />
+
+                <div class="capability-grid">
+                  <article class="cap-card cap-card--engine">
+                    <header>
+                      <strong>{t.home.work.workbench.engine}</strong>
+                      <span>{selectedModel || t.common.ready}</span>
+                    </header>
+                    <div class="engine-metrics">
+                      <span>{t.common.model}<strong>{selectedModel || "-"}</strong></span>
+                      <span>{t.home.codeTools.context}<strong>{context ? `${contextPercent}%` : "-"}</strong></span>
+                      <span>{t.code.changes}<strong>{changedCount}</strong></span>
+                    </div>
+                    <div class="cap-actions">
+                      <button type="button" onclick={() => useWorkbenchCommand("model")}>/{reasonixCommands.find((command) => command.name === "model")?.name ?? "model"}</button>
+                      <button type="button" onclick={() => useWorkbenchCommand("effort")}>/{reasonixCommands.find((command) => command.name === "effort")?.name ?? "effort"}</button>
+                      <button type="button" onclick={openCodeInspector}>{t.home.codeTools.title}</button>
+                    </div>
+                  </article>
+
+                  <article class="cap-card">
+                    <header>
+                      <strong>{t.home.work.workbench.reasonixCore}</strong>
+                      <span>{reasonixCommands.length}</span>
+                    </header>
+                    <div class="command-list">
+                      {#each reasonixCommands as command (command.name)}
+                        <button type="button" onclick={() => useWorkbenchCommand(command.name)}>
+                          <span>/{command.name}</span>
+                          <em>{command.description}</em>
+                        </button>
+                      {/each}
+                    </div>
+                  </article>
+
+                  <article class="cap-card">
+                    <header>
+                      <strong>{t.home.skills}</strong>
+                      <span>{skillCommands.length}</span>
+                    </header>
+                    <div class="command-list">
+                      {#if skillCommands.length}
+                        {#each skillCommands.slice(0, 6) as command (command.name)}
+                          <button type="button" onclick={() => useWorkbenchCommand(command.name)}>
+                            <span>/{command.name}</span>
+                            <em>{command.description}</em>
+                          </button>
+                        {/each}
+                      {:else}
+                        <p>{t.home.work.workbench.noSkills}</p>
+                      {/if}
+                    </div>
+                    <button class="cap-card__footer" type="button" onclick={() => useWorkbenchCommand("skill")}>{t.home.work.workbench.manageSkills}</button>
+                  </article>
+
+                  <article class="cap-card">
+                    <header>
+                      <strong>{t.home.work.workbench.extensions}</strong>
+                      <span>{extensionCommands.length}</span>
+                    </header>
+                    <div class="command-list">
+                      {#each extensionCommands.slice(0, 6) as command (command.name)}
+                        <button type="button" onclick={() => useWorkbenchCommand(command.name)}>
+                          <span>/{command.name}</span>
+                          <em>{command.description}</em>
+                        </button>
+                      {/each}
+                      {#if extensionCommands.length === 0}
+                        <p>{t.home.work.workbench.noExtensions}</p>
+                      {/if}
+                    </div>
+                    <button class="cap-card__footer" type="button" onclick={() => useWorkbenchCommand("mcp")}>{t.home.work.workbench.manageMcp}</button>
+                  </article>
+                </div>
               </section>
-            </div>
+            {/if}
           </section>
         {:else}
           <section class="home">
@@ -1333,6 +1440,34 @@
     font-weight: 680;
   }
 
+  .workbench__layers {
+    --wails-draggable: no-drag;
+    display: inline-grid;
+    grid-template-columns: repeat(2, minmax(72px, 1fr));
+    gap: 2px;
+    padding: 3px;
+    background: #f0f1f3;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+  }
+
+  .workbench__layers button {
+    min-height: 28px;
+    padding: 0 10px;
+    color: #6c737f;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 620;
+  }
+
+  .workbench__layers button.is-active {
+    color: #242424;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  }
+
   .workbench__actions {
     --wails-draggable: no-drag;
     display: flex;
@@ -1471,6 +1606,12 @@
     color: #7c3aed;
     background: #f2e8ff;
     border-color: #ead8ff;
+  }
+
+  .action-grid button:nth-child(4) {
+    color: #9a3412;
+    background: #fff4e5;
+    border-color: #ffe2b7;
   }
 
   .work-card--calendar {
@@ -1621,6 +1762,180 @@
   .work-card--assistant :global(.composer textarea) {
     min-height: 42px;
     font-size: 13px;
+  }
+
+  .capability-page {
+    display: grid;
+    gap: 14px;
+    min-height: 0;
+  }
+
+  .capability-page__intro {
+    display: grid;
+    gap: 5px;
+    padding: 18px 20px;
+    background: linear-gradient(135deg, #fff7ed, #f8fafc 58%, #eef6ff);
+    border: 1px solid #e8ebef;
+    border-radius: 16px;
+  }
+
+  .capability-page__intro span {
+    color: #9a6a3a;
+    font-size: 12px;
+    font-weight: 720;
+  }
+
+  .capability-page__intro strong {
+    color: #222222;
+    font-size: 20px;
+    font-weight: 720;
+  }
+
+  .capability-page__intro p {
+    max-width: 720px;
+    margin: 0;
+    color: #727984;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .capability-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .cap-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 220px;
+    overflow: hidden;
+    background: #f8f9fb;
+    border: 1px solid #e8ebef;
+    border-radius: 14px;
+  }
+
+  .cap-card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px 10px;
+  }
+
+  .cap-card header strong {
+    color: #242424;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .cap-card header span {
+    overflow: hidden;
+    color: #8a8f98;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .engine-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 16px 12px;
+  }
+
+  .engine-metrics span {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px;
+    color: #7b828d;
+    background: #ffffff;
+    border: 1px solid #eceff3;
+    border-radius: 11px;
+    font-size: 11px;
+  }
+
+  .engine-metrics strong {
+    overflow: hidden;
+    color: #252932;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cap-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: auto;
+    padding: 0 16px 16px;
+  }
+
+  .cap-actions button,
+  .cap-card__footer {
+    min-height: 30px;
+    padding: 0 10px;
+    color: #2f3a4a;
+    background: #ffffff;
+    border: 1px solid #e1e5eb;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 620;
+  }
+
+  .command-list {
+    display: grid;
+    gap: 6px;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 12px 12px;
+  }
+
+  .command-list button {
+    display: grid;
+    grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    min-height: 34px;
+    padding: 0 10px;
+    color: #293241;
+    background: #ffffff;
+    border: 1px solid #eceff3;
+    border-radius: 10px;
+    text-align: left;
+  }
+
+  .command-list button:hover,
+  .cap-actions button:hover,
+  .cap-card__footer:hover {
+    border-color: #d8dee8;
+    background: #fdfdfd;
+  }
+
+  .command-list span {
+    color: #2563eb;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .command-list em,
+  .command-list p {
+    min-width: 0;
+    overflow: hidden;
+    margin: 0;
+    color: #7b828d;
+    font-size: 12px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cap-card__footer {
+    align-self: flex-start;
+    margin: auto 12px 12px;
   }
 
   .home {
@@ -1964,6 +2279,10 @@
         "tasks"
         "assistant";
     }
+
+    .capability-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 768px) {
@@ -2012,6 +2331,14 @@
       flex-wrap: wrap;
     }
 
+    .workbench__layers {
+      width: 100%;
+    }
+
+    .capability-page__intro {
+      padding: 14px;
+    }
+
     .home__composer {
       width: 100%;
     }
@@ -2051,6 +2378,11 @@
     }
 
     .action-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .engine-metrics,
+    .command-list button {
       grid-template-columns: 1fr;
     }
 

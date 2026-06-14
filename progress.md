@@ -5,6 +5,8 @@
 > **格式：** `[时间] [workspace名] [状态] 描述`
 
 ---
+[2026-06-14T08:54:28+0800] [codex] [done:frontend-trae-polish] 继续按用户参考图修正 Svelte 桌面壳：Code 模式首屏不再默认展开 CodeDashboard，改为干净 Code landing + 工作区工具轻入口；Volt 自身上下文/文件/改动/检查点能力通过可关闭 code-inspector 抽屉保留；补回 Wails macOS frameless 拖拽区域（--wails-draggable: drag/no-drag）；主布局改为 clamp + 多断点响应式；Composer 改成一体式输入卡 + 底部工具条；对话态改为文档阅读流（标题栏、居中 transcript、底部同宽 composer），削弱土气卡片/气泡视觉。验证：Svelte MCP autofixer App/Composer 无错误（Composer 仅 bind:this 风格建议）；vite build 通过；root go build ./... 通过；desktop go build ./... 通过；git diff --check 通过。说明：pnpm check 仍被 node_modules/@svadmin/core 源码 unused 类型阻断，项目源码侧错误已清零。
+
 [{now}] [codex] [done:ui-shell-cleanup] 完成 OpenLoaf 风格极简 shell 清理：1）App.svelte 重写为 48px icon dock + stage 布局（Work/Code 双模式切换，会话点指示器，极简 topbar + composer）；2）app.css 从 1809 行精简至 ~480 行，删除所有旧布局/调试面板样式（workbench/sidebar/resource-panel/update-banner/run-modes/goal-card/work-list/memory-card），保留活跃组件样式（transcript/composer/code-dock/context-card/file-tree/checkpoint/markdown/diff-viewer/decision-shelf）；3）删除不再使用的组件文件（ResourcePanel/ActivitySidebar/RunModeBar/WorkDashboard/UpdateBanner）；4）清理 App.svelte 中 10 个死函数（refreshResources/refreshMemory/refreshWorkDashboardData/remember/forgetMemory/startGoal/continueGoal/clearGoal/updateTaskStatus/resumeSession）和 3 个死状态变量（recentSessions/memoryView/SessionMeta import）。验证：`vite build` 通过，`go build ./...` 和 `cd desktop && go build ./...` 通过，`git diff --check` 通过。已推送到 CNB origin 和 GitHub。
 
 ---

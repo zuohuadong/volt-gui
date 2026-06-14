@@ -66,6 +66,10 @@ export const ToolCard = memo(function ToolCard({ item, subcalls }: { item: ToolI
   const effectiveArgs = fullData?.args ?? item.args;
   const diffs = diffsFor(item.name, effectiveArgs);
   const subject = subjectOf(item.name, effectiveArgs);
+  // Reset cached fullData when the item identity changes (e.g. after rewind).
+  useEffect(() => {
+    return () => setFullData(null);
+  }, [item]);
 
   // edit diffs are the point of the card, so they're shown inline; everything
   // else folds its args/output away by default.  Open while running so the

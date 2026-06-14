@@ -526,7 +526,7 @@ export function reducer(s: State, a: Action): State {
         if (it.kind !== "tool") return it;
         const t = it;
         const shortArgs = t.args && t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
-        if (shortArgs === t.args && t.output === undefined) return it;
+        if (shortArgs === t.args && (t.output === undefined || t.output === "")) return it;
         return { ...t, args: shortArgs, output: undefined, dataArchived: true };
       });
       return { ...s, items: archived, seq };

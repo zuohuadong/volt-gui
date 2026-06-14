@@ -1,17 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ShieldCheck } from "@lucide/svelte";
-  import ActivitySidebar from "./components/ActivitySidebar.svelte";
+  import { Bot, Code2, Plus, ShieldCheck } from "@lucide/svelte";
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
-  import RunModeBar from "./components/RunModeBar.svelte";
   import Transcript from "./components/Transcript.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
-  import UpdateBanner from "./components/UpdateBanner.svelte";
-  import WorkDashboard from "./components/WorkDashboard.svelte";
   import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
   import { t } from "./lib/i18n";
-  import { workbenchDataProvider, workbenchResources } from "./lib/resourceProvider";
   import type {
     ActivityMode,
     BackendMode,
@@ -22,13 +17,10 @@
     FilePreview,
     GoalInfo,
     HistoryMessage,
-    MemoryView,
     ModelInfo,
     ProjectNode,
     QuestionAnswer,
-    ResourceRecord,
     RunMode,
-    SessionMeta,
     TabMeta,
     TranscriptItem,
     WireApproval,
@@ -38,13 +30,6 @@
     WorkspaceChangesView,
   } from "./lib/types";
 
-  const runModes: Array<{ id: RunMode; label: string; hint: string }> = [
-    { id: "ask", label: t.runMode.ask, hint: t.runMode.askHint },
-    { id: "auto", label: t.runMode.auto, hint: t.runMode.autoHint },
-    { id: "yolo", label: t.runMode.yolo, hint: t.runMode.yoloHint },
-    { id: "plan", label: t.runMode.plan, hint: t.runMode.planHint },
-    { id: "goal", label: t.runMode.goal, hint: t.runMode.goalHint },
-  ];
 
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
@@ -72,14 +57,9 @@
   let selectedModel = $state("");
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
-  let resources = $state<Array<{ name: string; total: number }>>([]);
-  let resourceRefreshKey = $state(0);
-  let workTasks = $state<ResourceRecord[]>([]);
-  let recentSessions = $state<SessionMeta[]>([]);
   let projectTree = $state<ProjectNode[]>([]);
   let context = $state<ContextPanelInfo | undefined>();
   let goalInfo = $state<GoalInfo>({ objective: "", status: "idle" });
-  let memoryView = $state<MemoryView>({ docs: [], facts: [], scopes: [], storeDir: "", available: false });
   let changes = $state<WorkspaceChangesView | undefined>();
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
@@ -277,9 +257,6 @@
       goalInfo = active ? await app().GoalForTab(active.id) : { objective: "", status: "idle" };
       commands = await app().Commands();
       await refreshRuntimeSettings();
-      await refreshMemory();
-      await refreshWorkDashboardData();
-      await refreshResources();
       await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
     } finally {
@@ -287,15 +264,6 @@
     }
   }
 
-  async function refreshResources() {
-    resources = await Promise.all(
-      workbenchResources.map(async (name) => {
-        const result = await workbenchDataProvider.list(name);
-        return { name, total: result.total };
-      }),
-    );
-    resourceRefreshKey += 1;
-  }
 
   async function refreshRuntimeSettings() {
     const settings = await app().Settings();
@@ -303,15 +271,6 @@
     runtimeBypass = settings.bypass;
   }
 
-  async function refreshMemory() {
-    memoryView = await app().Memory();
-  }
-
-  async function refreshWorkDashboardData() {
-    const [tasks, sessions] = await Promise.all([workbenchDataProvider.list("tasks"), app().ListSessions()]);
-    workTasks = tasks.data;
-    recentSessions = sessions;
-  }
 
   async function refreshCodeDock(tab = activeTab) {
     if (!tab) return;
@@ -505,70 +464,8 @@
     runtimeMode = backendMode;
     tabs = tabs.map((tab) => (tab.id === activeTab.id ? { ...tab, mode: backendMode } : tab));
     await refreshRuntimeSettings();
-    await refreshResources();
   }
 
-  async function startGoal(objective: string) {
-    if (!activeTab) return;
-    runMode = "goal";
-    await app().SetModeForTab(activeTab.id, "normal");
-    await app().StartGoalForTab(activeTab.id, objective);
-    goalInfo = await app().GoalForTab(activeTab.id);
-    await refreshWorkDashboardData();
-    await refreshResources();
-  }
-
-  async function continueGoal() {
-    if (!activeTab) return;
-    runMode = "goal";
-    await app().SetModeForTab(activeTab.id, "normal");
-    await app().ContinueGoalForTab(activeTab.id);
-    goalInfo = await app().GoalForTab(activeTab.id);
-    await refreshWorkDashboardData();
-    await refreshResources();
-  }
-
-  async function clearGoal() {
-    if (!activeTab) return;
-    await app().ClearGoalForTab(activeTab.id);
-    goalInfo = await app().GoalForTab(activeTab.id);
-    await refreshWorkDashboardData();
-    await refreshResources();
-  }
-
-  async function updateTaskStatus(id: string, status: string) {
-    await workbenchDataProvider.update("tasks", id, { status });
-    await refreshWorkDashboardData();
-    await refreshResources();
-  }
-
-  async function resumeSession(session: SessionMeta) {
-    let target = activeTab;
-    const scope = session.scope || (session.workspaceRoot ? "project" : "global");
-    if (scope === "project" && session.workspaceRoot && session.topicId) {
-      target = await app().OpenProjectTab(session.workspaceRoot, session.topicId);
-      activityMode = "code";
-    } else if (session.topicId) {
-      target = await app().OpenGlobalTab(session.topicId);
-      activityMode = "work";
-    }
-    if (!target) return;
-    const history = await app().ResumeSessionForTab(target.id, session.path);
-    await refresh();
-    transcript = historyToTranscript(history);
-  }
-
-  async function remember(scope: string, note: string) {
-    await app().Remember(scope, note);
-    await refreshMemory();
-    await refreshResources();
-  }
-
-  async function forgetMemory(name: string) {
-    await app().Forget(name);
-    await refreshMemory();
-    await refreshResources();
-  }
 
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
     if (!activeTab || !pendingApproval) return;
@@ -615,7 +512,6 @@
     });
   }
 </script>
-
 <svelte:head>
   <title>{t.app.title}</title>
 </svelte:head>
@@ -625,109 +521,308 @@
 {#if needsAuth}
   <OIDCLoginOverlay onComplete={() => { needsAuth = false; void refresh(); }} />
 {:else if needsAuth === null}
-  <div class="workbench__boot">Loading…</div>
+  <div class="boot-screen">{t.app.loading}</div>
+{:else}
+  <main class="shell" data-mode={activityMode}>
+    <!-- Icon sidebar (56px) -->
+    <nav class="dock">
+      <button
+        class="dock__btn"
+        class:is-active={activityMode === "work"}
+        title={t.activity.work}
+        aria-pressed={activityMode === "work"}
+        onclick={() => (activityMode = "work")}
+      >
+        <Bot size={18} />
+      </button>
+      <button
+        class="dock__btn"
+        class:is-active={activityMode === "code"}
+        title={t.activity.code}
+        aria-pressed={activityMode === "code"}
+        onclick={() => (activityMode = "code")}
+      >
+        <Code2 size={18} />
+      </button>
 
+      <div class="dock__divider"></div>
+
+      <button class="dock__btn" title={t.activity.newSession} onclick={newTab}>
+        <Plus size={18} />
+      </button>
+
+      <div class="dock__sessions">
+        {#each tabs as tab (tab.id)}
+          <button
+            class="dock__session"
+            class:is-active={tab.id === activeTab?.id}
+            title={tab.topicTitle || tab.workspaceName || t.activity.untitled}
+            onclick={() => switchTab(tab)}
+          >
+            {#if tab.running}
+              <span class="dock__dot dock__dot--run"></span>
+            {:else if tab.id === activeTab?.id}
+              <span class="dock__dot"></span>
+            {:else}
+              <span class="dock__dot dock__dot--off"></span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+    </nav>
+
+    <!-- Main stage -->
+    <section class="stage">
+      <!-- Minimal topbar -->
+      <header class="bar">
+        <div class="bar__left">
+          <span class="bar__mode">{activityMode === "work" ? t.activity.work : t.activity.code}</span>
+          <span class="bar__sep">·</span>
+          <span class="bar__name">{activeTab?.topicTitle || activeTab?.workspaceName || t.common.global}</span>
+        </div>
+        <div class="bar__right">
+          {#if activityMode === "work"}
+            <select aria-label={t.common.model} value={selectedModel} onchange={switchModel}>
+              {#each models as model (model.name)}
+                <option value={model.name}>{model.label || model.name}</option>
+              {/each}
+            </select>
+          {/if}
+        </div>
+      </header>
+
+      <!-- Content area -->
+      <div class="content">
+        {#if activityMode === "code"}
+          <!-- Code mode: split view -->
+          <div class="code-split">
+            <div class="code-pane code-pane--chat">
+              {#if loading}
+                <div class="content__loading">{t.app.loading}</div>
+              {:else}
+                <Transcript
+                  items={transcript}
+                  {loading}
+                  {sending}
+                  approval={pendingApproval}
+                  ask={pendingAsk}
+                  onApprove={answerApproval}
+                  onAnswerAsk={answerAsk}
+                  onDismissAsk={() => (pendingAsk = undefined)}
+                />
+              {/if}
+            </div>
+            <div class="code-pane code-pane--files">
+              <CodeDashboard
+                {context}
+                {changes}
+                {checkpoints}
+                {filePreview}
+                {diffPreview}
+                onPreviewFile={previewFile}
+                onPreviewChange={previewChange}
+                onRewind={rewind}
+                onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+              />
+            </div>
+          </div>
+        {:else if loading}
+          <div class="content__loading">{t.app.loading}</div>
+        {:else}
+          <!-- Work mode: pure chat -->
+          <Transcript
+            items={transcript}
+            {loading}
+            {sending}
+            approval={pendingApproval}
+            ask={pendingAsk}
+            onApprove={answerApproval}
+            onAnswerAsk={answerAsk}
+            onDismissAsk={() => (pendingAsk = undefined)}
+          />
+        {/if}
+      </div>
+
+      <!-- Composer at bottom -->
+      <Composer
+        {input}
+        {activityMode}
+        {runMode}
+        {commands}
+        {sending}
+        onInput={(value) => (input = value)}
+        onSend={send}
+        onCancel={cancel}
+        onPreviewFile={previewFile}
+      />
+    </section>
+  </main>
 {/if}
 
-<main class="workbench" data-activity={activityMode}>
-  <ActivitySidebar
-    {activityMode}
-    {tabs}
-    {activeTab}
-    {projectTree}
-    {resources}
-    onActivity={(mode) => (activityMode = mode)}
-    onTab={switchTab}
-    onCloseTab={closeTab}
-    onNewTab={newTab}
-    onMoveTab={moveTab}
-    onOpenTopic={openTopic}
-    onNewTopic={newTopic}
-    onRenameProject={renameProject}
-    onSetProjectColor={setProjectColor}
-    onMoveProject={moveProject}
-    onRenameTopic={renameTopic}
-    onTrashTopic={trashTopic}
-  />
+<style>
+  .shell {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+  }
 
-  <section class="main-stage">
-    <UpdateBanner />
+  /* === Icon dock === */
+  .dock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 0;
+    background: var(--panel-soft);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+  }
+  .dock::-webkit-scrollbar { width: 0; }
 
-    <header class="topbar">
-      <div>
-        <p>{activeTab?.workspaceName || t.common.global}</p>
-        <h1>{activityMode === "work" ? t.work.title : t.code.title}</h1>
-      </div>
-      <div class="topbar__controls">
-        <select aria-label={t.common.model} value={selectedModel} onchange={switchModel}>
-          {#each models as model (model.name)}
-            <option value={model.name}>{model.label || model.name}</option>
-          {/each}
-        </select>
-        <select aria-label={t.common.effort} value={effort.current} onchange={switchEffort}>
-          {#each effort.supported as level (level)}
-            <option value={level}>{level}</option>
-          {/each}
-        </select>
-        <span class="mode-chip" data-testid="mode-chip"><ShieldCheck size={14} /> {modeLabel}</span>
-        <span class="mode-chip mode-chip--subtle" data-testid="runtime-mode-chip">{runtimeLabel}</span>
-        <span class="mode-chip mode-chip--subtle" data-testid="permission-mode-chip">{permissionLabel}</span>
-      </div>
-    </header>
+  .dock__btn {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg-faint);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .dock__btn:hover { background: var(--line); color: var(--fg); }
+  .dock__btn.is-active { background: var(--accent); color: white; }
 
-    <RunModeBar {runModes} {runMode} onSelect={selectRunMode} />
+  .dock__divider {
+    width: 24px;
+    height: 1px;
+    margin: 6px 0;
+    background: var(--line);
+  }
 
-    {#if activityMode === "work"}
-      <WorkDashboard
-        {activeTab}
-        {resources}
-        {goalInfo}
-        {memoryView}
-        {workTasks}
-        {recentSessions}
-        onStartGoal={startGoal}
-        onContinueGoal={continueGoal}
-        onClearGoal={clearGoal}
-        onUpdateTask={updateTaskStatus}
-        onResumeSession={resumeSession}
-        onRemember={remember}
-        onForgetMemory={forgetMemory}
-      />
-    {:else}
-      <CodeDashboard
-        {context}
-        {changes}
-        {checkpoints}
-        {filePreview}
-        {diffPreview}
-        onPreviewFile={previewFile}
-        onPreviewChange={previewChange}
-        onRewind={rewind}
-        onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
-      />
-    {/if}
+  .dock__sessions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    padding-top: 4px;
+  }
 
-    <Transcript
-      items={transcript}
-      {loading}
-      {sending}
-      approval={pendingApproval}
-      ask={pendingAsk}
-      onApprove={answerApproval}
-      onAnswerAsk={answerAsk}
-      onDismissAsk={() => (pendingAsk = undefined)}
-    />
+  .dock__session {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .dock__session:hover { background: var(--line); }
+  .dock__session.is-active { background: var(--line); }
 
-    <Composer
-      {input}
-      {activityMode}
-      {runMode}
-      {commands}
-      {sending}
-      onInput={(value) => (input = value)}
-      onSend={send}
-      onCancel={cancel}
-      onPreviewFile={previewFile}
-    />
-  </section>
-</main>
+  .dock__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .dock__dot--off { background: var(--fg-faint); opacity: 0.4; }
+  .dock__dot--run {
+    background: var(--accent);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* === Main stage === */
+  .stage {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    height: 40px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    font-size: 13px;
+  }
+  .bar__left { display: flex; align-items: center; gap: 6px; }
+  .bar__mode { font-weight: 600; }
+  .bar__sep { color: var(--fg-faint); }
+  .bar__name { color: var(--fg-faint); }
+  .bar__right select {
+    font-size: 12px;
+    padding: 3px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    outline: none;
+    cursor: pointer;
+  }
+
+  .content {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .content__loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    color: var(--fg-faint);
+    font-size: 14px;
+  }
+
+  /* Code mode split */
+  .code-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .code-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .code-pane--files {
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .boot-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    color: var(--fg-faint);
+    font-size: 14px;
+  }
+
+  @media (max-width: 768px) {
+    .code-split { grid-template-columns: 1fr; }
+    .code-pane--files { display: none; }
+  }
+</style>

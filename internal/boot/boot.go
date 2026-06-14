@@ -285,7 +285,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	//
 	// CodeGraph is fixed to background startup. Legacy tier values are ignored so
 	// enabling it never blocks chat startup.
-	var codegraphRoot string
 	if cfg.Codegraph.Enabled && !tokenEconomy {
 		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
 		switch {
@@ -293,12 +292,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
 				Text: "codegraph: project root is a filesystem root — skipped to avoid indexing the whole volume"})
 		case ok:
-			codegraphRoot = root
 			spec := plugin.Spec{
-				Name:              "codegraph",
-				StripRawPrefix:    "codegraph_",
-				Command:           bin,
-				Args:              []string{"serve", "--mcp"},
+				Name:           "codegraph",
+				StripRawPrefix: "codegraph_",
+				Command:        bin,
+				Args:           []string{"serve", "--mcp"},
+				Env: map[string]string{
+					codegraph.DaemonIdleTimeoutEnv: codegraph.ReasonixDaemonIdleTimeoutMS,
+				},
 				Dir:               root,
 				ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
 				// The daemon walks and indexes the whole tree; below-normal
@@ -435,13 +436,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		prev := cleanup
 		cleanup = func() { prev(); lspMgr.Close() }
-	}
-
-	// CodeGraph daemon detaches via setsid and escapes the process-group kill in
-	// KillTree; hunt it down explicitly via the PID it logs on startup.
-	if codegraphRoot != "" {
-		prev := cleanup
-		cleanup = func() { prev(); codegraph.KillDaemon(codegraphRoot) }
 	}
 
 	maxSteps := cfg.Agent.MaxSteps

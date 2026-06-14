@@ -118,8 +118,8 @@ func TestE2ECodegraphMCP(t *testing.T) {
 // TestE2ECodegraphKillDaemon verifies that KillDaemon can reap a real CodeGraph
 // daemon that escapes the process-group kill in KillTree. The daemon does
 // setsid(2) to detach into its own process group, so the negative-PID SIGKILL
-// that KillTree sends to the launcher's group misses it. KillDaemon reads the
-// daemon's PID from its log and sends a direct SIGKILL.
+// that KillTree sends to the launcher's group misses it. KillDaemon verifies the
+// daemon lockfile against the socket hello before sending a direct SIGKILL.
 //
 // Gated on REASONIX_CODEGRAPH_E2E=1 like the other E2E test; skipped on Windows
 // because the Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) already captures
@@ -155,7 +155,7 @@ func TestE2ECodegraphKillDaemon(t *testing.T) {
 	}
 
 	// Start the codegraph server — this launches the MCP bridge (foreground) and
-	// a daemon (background). The daemon logs its PID on startup.
+	// a daemon (background). The daemon records its PID in its lockfile on startup.
 	host, _, err := plugin.StartAll(ctx, []plugin.Spec{{
 		Name:              "codegraph",
 		Command:           bin,
@@ -167,7 +167,7 @@ func TestE2ECodegraphKillDaemon(t *testing.T) {
 		t.Fatalf("StartAll: %v", err)
 	}
 
-	// Give the daemon a moment to start and write its PID to the log.
+	// Give the daemon a moment to start and write its PID lockfile.
 	var daemonPID int
 	var daemonOK bool
 	deadline := time.Now().Add(10 * time.Second)
@@ -179,7 +179,7 @@ func TestE2ECodegraphKillDaemon(t *testing.T) {
 	}
 	if !daemonOK {
 		host.Close()
-		t.Fatal("daemon PID never appeared in .codegraph/daemon.log")
+		t.Fatal("daemon PID never appeared in .codegraph/daemon.pid")
 	}
 	t.Logf("daemon PID: %d", daemonPID)
 

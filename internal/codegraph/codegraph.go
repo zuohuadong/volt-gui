@@ -16,12 +16,13 @@ package codegraph
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,22 @@ import (
 )
 
 const initTimeout = 30 * time.Second
+const daemonProbeTimeout = 300 * time.Millisecond
+
+// DaemonIdleTimeoutEnv is CodeGraph's own root-scoped daemon idle timeout knob.
+const DaemonIdleTimeoutEnv = "CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS"
+
+// ReasonixDaemonIdleTimeoutMS keeps Reasonix-launched daemons short-lived after
+// the last client disconnects while still preserving CodeGraph's shared-client
+// refcount semantics.
+const ReasonixDaemonIdleTimeoutMS = "1000"
+
+type daemonInfo struct {
+	PID        int    `json:"pid"`
+	Version    string `json:"version"`
+	SocketPath string `json:"socketPath"`
+	StartedAt  int64  `json:"startedAt"`
+}
 
 // SteerText is injected into the system prompt when CodeGraph tools are
 // available, so the model knows to prefer them for symbol-level questions. The
@@ -210,59 +227,80 @@ func isExec(p string) bool {
 	return fi.Mode()&0o111 != 0
 }
 
-// DaemonPID returns the PID of the most recently started CodeGraph daemon for
-// root, parsed from the daemon log. It returns 0, false when the log doesn't
-// exist, is empty, or contains no parsable PID line.
-//
-// The daemon writes lines like:
-//
-//	[CodeGraph daemon] Listening on /path/.codegraph/daemon.sock (pid 12345, v0.9.7). Idle timeout 300000ms.
-//
-// We scan for the last such line to handle log rotation/restart.
+// DaemonPID returns the PID recorded in CodeGraph's structured daemon lockfile.
+// It returns 0, false when the lockfile doesn't exist or does not contain the
+// full pid/version/socket record written by CodeGraph's daemon.
 func DaemonPID(root string) (int, bool) {
-	logPath := filepath.Join(root, ".codegraph", "daemon.log")
-	f, err := os.Open(logPath)
-	if err != nil {
+	info, ok := readDaemonInfo(root)
+	if !ok {
 		return 0, false
 	}
-	defer f.Close()
-
-	var lastPID int
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if !strings.Contains(line, "Listening on") {
-			continue
-		}
-		idx := strings.Index(line, "(pid ")
-		if idx == -1 {
-			continue
-		}
-		rest := line[idx+5:] // after "(pid "
-		end := strings.IndexByte(rest, ',')
-		if end == -1 {
-			continue
-		}
-		pid, err := strconv.Atoi(rest[:end])
-		if err != nil || pid <= 0 {
-			continue
-		}
-		lastPID = pid
-	}
-	return lastPID, lastPID > 0
+	return info.PID, true
 }
 
-// KillDaemon sends SIGKILL (or the platform equivalent) to the most recently
-// started CodeGraph daemon for root. It is a no-op when no daemon PID can be
-// found or the daemon has already exited.
+func readDaemonInfo(root string) (daemonInfo, bool) {
+	pidPath := filepath.Join(root, ".codegraph", "daemon.pid")
+	raw, err := os.ReadFile(pidPath)
+	if err != nil {
+		return daemonInfo{}, false
+	}
+	var info daemonInfo
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return daemonInfo{}, false
+	}
+	if info.PID <= 0 || info.Version == "" || info.SocketPath == "" || info.StartedAt <= 0 {
+		return daemonInfo{}, false
+	}
+	return info, true
+}
+
+// KillDaemon terminates the CodeGraph daemon for root after verifying that the
+// recorded PID still answers on the daemon socket as the same CodeGraph process.
+// This is intentionally for explicit cleanup paths such as tests/diagnostics:
+// CodeGraph daemons are root-scoped and may be shared by other MCP clients, so a
+// normal Reasonix controller close must only close its proxy connection and let
+// CodeGraph's own refcount/idle timer own daemon lifetime.
 func KillDaemon(root string) {
-	pid, ok := DaemonPID(root)
+	info, ok := readDaemonInfo(root)
 	if !ok {
 		return
 	}
-	p, err := os.FindProcess(pid)
+	if !daemonIdentityMatches(info) {
+		return
+	}
+	p, err := os.FindProcess(info.PID)
 	if err != nil {
 		return
 	}
 	_ = p.Kill()
+}
+
+func daemonIdentityMatches(info daemonInfo) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", info.SocketPath, daemonProbeTimeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(daemonProbeTimeout))
+
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	var hello struct {
+		Codegraph  string `json:"codegraph"`
+		PID        int    `json:"pid"`
+		SocketPath string `json:"socketPath"`
+		Protocol   int    `json:"protocol"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &hello); err != nil {
+		return false
+	}
+	return hello.Codegraph != "" &&
+		hello.PID == info.PID &&
+		hello.SocketPath == info.SocketPath &&
+		hello.Protocol == 1
 }

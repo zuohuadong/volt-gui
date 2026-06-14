@@ -2,10 +2,15 @@ package codegraph
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // writeExec writes an executable file at path with the given content and +x.
@@ -92,113 +97,200 @@ func TestEnsureInitPropagatesFailure(t *testing.T) {
 	}
 }
 
-func TestDaemonPIDNoLog(t *testing.T) {
+func TestDaemonPIDNoLock(t *testing.T) {
 	root := t.TempDir()
 	pid, ok := DaemonPID(root)
 	if ok || pid != 0 {
-		t.Fatalf("DaemonPID with no log = %d, %v; want 0, false", pid, ok)
+		t.Fatalf("DaemonPID with no lock = %d, %v; want 0, false", pid, ok)
 	}
 }
 
-func TestDaemonPIDEmptyLog(t *testing.T) {
+func TestDaemonPIDEmptyLock(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(""), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.pid"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pid, ok := DaemonPID(root)
 	if ok || pid != 0 {
-		t.Fatalf("DaemonPID with empty log = %d, %v; want 0, false", pid, ok)
+		t.Fatalf("DaemonPID with empty lock = %d, %v; want 0, false", pid, ok)
 	}
 }
 
-func TestDaemonPIDNoListeningLine(t *testing.T) {
+func TestDaemonPIDRejectsLegacyPlainPID(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	log := "[CodeGraph MCP] File watcher active\n[CodeGraph MCP] Caught up 7 file(s)\n"
-	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.pid"), []byte("12345\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pid, ok := DaemonPID(root)
 	if ok || pid != 0 {
-		t.Fatalf("DaemonPID with no Listening line = %d, %v; want 0, false", pid, ok)
+		t.Fatalf("DaemonPID with legacy plain PID = %d, %v; want 0, false", pid, ok)
 	}
 }
 
-func TestDaemonPIDSingleLine(t *testing.T) {
+func TestDaemonPIDStructuredLock(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 12345, v0.9.7). Idle timeout 300000ms.\n"
-	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeDaemonInfo(t, root, daemonInfo{
+		PID:        12345,
+		Version:    "0.9.7",
+		SocketPath: filepath.Join(root, ".codegraph", "daemon.sock"),
+		StartedAt:  123456789,
+	})
 	pid, ok := DaemonPID(root)
 	if !ok || pid != 12345 {
 		t.Fatalf("DaemonPID = %d, %v; want 12345, true", pid, ok)
 	}
 }
 
-func TestDaemonPIDReturnsLast(t *testing.T) {
+func TestDaemonPIDRejectsPartialLock(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 100, v0.9.7). Idle timeout 300000ms.\n"
-	log += "[CodeGraph daemon] Shutting down (idle timeout; clients=0).\n"
-	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 99999, v0.9.9). Idle timeout 300000ms.\n"
-	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.pid"), []byte(`{"pid":42}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pid, ok := DaemonPID(root)
-	if !ok || pid != 99999 {
-		t.Fatalf("DaemonPID = %d, %v; want 99999 (last), true", pid, ok)
+	if ok || pid != 0 {
+		t.Fatalf("DaemonPID with partial lock = %d, %v; want 0, false", pid, ok)
 	}
 }
 
-func TestDaemonPIDSkipsMalformed(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Lines missing "(pid ", with non-numeric PID, and with zero PID should all be skipped.
-	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (v0.9.7). Idle timeout 300000ms.\n"
-	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid abc, v0.9.7). Idle timeout 300000ms.\n"
-	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 0, v0.9.7). Idle timeout 300000ms.\n"
-	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid -5, v0.9.7). Idle timeout 300000ms.\n"
-	log += "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 42, v0.9.7). Idle timeout 300000ms.\n"
-	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pid, ok := DaemonPID(root)
-	if !ok || pid != 42 {
-		t.Fatalf("DaemonPID = %d, %v; want 42 (only valid PID), true", pid, ok)
-	}
-}
-
-func TestKillDaemonNoLog(t *testing.T) {
+func TestKillDaemonNoLock(t *testing.T) {
 	// Must not panic or error when there is no .codegraph directory at all.
 	root := t.TempDir()
 	KillDaemon(root) // no-op
 }
 
-func TestKillDaemonBadPID(t *testing.T) {
-	// PID that doesn't correspond to a running process: KillDaemon must not error.
+func TestKillDaemonRequiresMatchingSocketHello(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix process/signal semantics only")
+	}
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep command not available")
+	}
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		if processExists(cmd.Process.Pid) {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	})
+
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+	writeDaemonInfo(t, root, daemonInfo{
+		PID:        cmd.Process.Pid,
+		Version:    "0.9.7",
+		SocketPath: filepath.Join(root, ".codegraph", "missing.sock"),
+		StartedAt:  123456789,
+	})
+
+	KillDaemon(root)
+	if !processExists(cmd.Process.Pid) {
+		t.Fatal("KillDaemon killed a process without a matching daemon socket hello")
+	}
+}
+
+func TestKillDaemonKillsMatchingSocketDaemon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket/process semantics only")
+	}
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep command not available")
+	}
+	root := shortTempDir(t)
+	cgDir := filepath.Join(root, ".codegraph")
+	if err := os.Mkdir(cgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Use a PID that almost certainly doesn't exist (max int32).
-	log := "[CodeGraph daemon] Listening on /tmp/.codegraph/daemon.sock (pid 2147483647, v0.9.7). Idle timeout 300000ms.\n"
-	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.log"), []byte(log), 0o644); err != nil {
+	socketPath := filepath.Join(cgDir, "daemon.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	KillDaemon(root) // best-effort; must not panic
+	defer ln.Close()
+
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		if processExists(cmd.Process.Pid) {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	})
+	writeDaemonInfo(t, root, daemonInfo{
+		PID:        cmd.Process.Pid,
+		Version:    "0.9.7",
+		SocketPath: socketPath,
+		StartedAt:  123456789,
+	})
+
+	accepted := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		fmt.Fprintf(conn, `{"codegraph":"0.9.7","pid":%d,"socketPath":%q,"protocol":1}`+"\n", cmd.Process.Pid, socketPath)
+		close(accepted)
+	}()
+
+	KillDaemon(root)
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("KillDaemon did not probe the daemon socket")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("KillDaemon did not kill the matching daemon process")
+	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "reasonix-codegraph-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func writeDaemonInfo(t *testing.T, root string, info daemonInfo) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codegraph", "daemon.pid"), append(b, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIndexableRootRejectsFilesystemRoots(t *testing.T) {

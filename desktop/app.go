@@ -1559,13 +1559,6 @@ func (a *App) beginDestroySessionJobs(dir, sessionPath string) []control.Session
 	return destroys
 }
 
-func runDestroyHandles(destroys []control.SessionDestroyHandle) {
-	for _, destroy := range destroys {
-		waitDestroyHandles([]control.SessionDestroyHandle{destroy})
-		finishDestroyHandles([]control.SessionDestroyHandle{destroy})
-	}
-}
-
 func (a *App) openSessionPaths(dir string) map[string]struct{} {
 	a.mu.RLock()
 	paths := make([]string, 0, len(a.tabs)+len(a.detachedSessions))

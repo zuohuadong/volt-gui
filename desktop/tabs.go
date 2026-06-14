@@ -3705,12 +3705,3 @@ func findTopicSession(dir, topicID string) string {
 	}
 	return bestPath
 }
-
-func (a *App) findKnownTopicSession(topicID string) (string, string) {
-	for _, dir := range a.knownSessionDirs() {
-		if path := findTopicSession(dir, topicID); path != "" {
-			return path, dir
-		}
-	}
-	return "", ""
-}

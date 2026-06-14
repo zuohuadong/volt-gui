@@ -38,6 +38,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/hook"
 	"reasonix/internal/i18n"
 	"reasonix/internal/jobs"
@@ -2960,7 +2961,19 @@ func (c *Controller) seedPlanTodos(plan string) string {
 	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
 	t.Output = "task list seeded from the approved plan"
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
+	c.seedAgentTodoState(args)
 	return args
+}
+
+func (c *Controller) seedAgentTodoState(args string) {
+	if c.executor == nil {
+		return
+	}
+	todos := agentTodoStateFromArgs(args)
+	if len(todos) == 0 {
+		return
+	}
+	c.executor.SeedTodoState(todos)
 }
 
 func (c *Controller) completePlanTodos(args string) {
@@ -2975,6 +2988,28 @@ func (c *Controller) completePlanTodos(args string) {
 	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
 	t.Output = "approved plan finished"
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
+	c.replaceAgentTodoState(done)
+}
+
+func (c *Controller) replaceAgentTodoState(args string) {
+	if c.executor == nil {
+		return
+	}
+	todos := agentTodoStateFromArgs(args)
+	if len(todos) == 0 {
+		return
+	}
+	c.executor.ReplaceTodoState(todos)
+}
+
+func agentTodoStateFromArgs(args string) []evidence.TodoItem {
+	var payload struct {
+		Todos []evidence.TodoItem `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(args), &payload); err != nil {
+		return nil
+	}
+	return payload.Todos
 }
 
 // PlanTodosJSON parses an approved plan's markdown into todo_write-shaped args

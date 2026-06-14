@@ -20,7 +20,7 @@
   import Transcript from "./components/Transcript.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import { app, onAgentEvent, onProjectTreeChanged } from "./lib/bridge";
-  import { t } from "./lib/i18n";
+  import { lang, t } from "./lib/i18n";
   import type {
     ActivityMode,
     CheckpointMeta,
@@ -78,6 +78,7 @@
   let sidebarCollapsed = $state(false);
   let sortTasksByRecent = $state(false);
   let codeInspectorOpen = $state(false);
+  let nowMs = $state(Date.now());
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
   let restoreDraftOnTurnDone = false;
 
@@ -87,6 +88,10 @@
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
+  const clock = $derived(new Date(nowMs));
+  const clockLabel = $derived(formatClock(clock));
+  const monthLabel = $derived(formatMonth(clock));
+  const calendarCells = $derived(buildCalendar(clock));
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const projectGroups = $derived(
     projectTree
@@ -110,11 +115,15 @@
         void refresh();
       });
 
+    const tick = window.setInterval(() => {
+      nowMs = Date.now();
+    }, 1000);
     const unsubscribeEvents = onAgentEvent(handleEvent);
     const unsubscribeProjectTree = onProjectTreeChanged(() => {
       void refreshProjectTree();
     });
     return () => {
+      window.clearInterval(tick);
       unsubscribeEvents();
       unsubscribeProjectTree();
     };
@@ -158,6 +167,40 @@
   function sortNodes(nodes: ProjectNode[]) {
     if (!sortTasksByRecent) return nodes;
     return nodes.slice().sort((left, right) => (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0));
+  }
+
+  function formatClock(value: Date) {
+    return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(value);
+  }
+
+  function formatMonth(value: Date) {
+    return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+      year: "numeric",
+      month: "long",
+    }).format(value);
+  }
+
+  function buildCalendar(value: Date) {
+    const year = value.getFullYear();
+    const month = value.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const startOffset = firstDay.getDay();
+    const startTime = new Date(year, month, 1 - startOffset).getTime();
+    const dayMs = 24 * 60 * 60 * 1000;
+    return Array.from({ length: 35 }, (_, index) => {
+      const date = new Date(startTime + index * dayMs);
+      return {
+        key: date.toISOString(),
+        day: date.getDate(),
+        current: date.getMonth() === month,
+        today: date.toDateString() === value.toDateString(),
+      };
+    });
   }
 
   function updateLastAssistant(text: string) {
@@ -640,6 +683,119 @@
               />
             </div>
           </section>
+        {:else if activityMode === "work"}
+          <section class="workbench">
+            <header class="workbench__top">
+              <div>
+                <span>{t.home.work.workbench.eyebrow}</span>
+                <h1>{t.home.work.workbench.title}</h1>
+              </div>
+              <div class="workbench__actions">
+                <button type="button" onclick={newTab}>
+                  <Plus size={14} />
+                  {t.activity.newSession}
+                </button>
+                <button type="button" onclick={() => commandPrompt("skills")}>
+                  <Wrench size={14} />
+                  {t.home.skills}
+                </button>
+              </div>
+            </header>
+
+            <div class="workbench-grid">
+              <section class="work-card work-card--clock">
+                <span>{t.home.work.workbench.focusTime}</span>
+                <strong>{clockLabel}</strong>
+                <p>{activeTab?.topicTitle || t.transcript.welcome}</p>
+              </section>
+
+              <section class="work-card work-card--actions">
+                <header>
+                  <strong>{t.home.work.workbench.actions}</strong>
+                  <span>{t.home.work.workbench.actionsHint}</span>
+                </header>
+                <div class="action-grid">
+                  <button type="button" onclick={focusComposer}>
+                    <Sparkles size={15} />
+                    {t.home.work.workbench.aiChat}
+                  </button>
+                  <button type="button" onclick={() => commandPrompt("search")}>
+                    <Gauge size={15} />
+                    {t.home.work.workbench.search}
+                  </button>
+                  <button type="button" onclick={() => commandPrompt("automation")}>
+                    <Zap size={15} />
+                    {t.home.automation}
+                  </button>
+                  <button type="button" onclick={() => (activityMode = "code")}>
+                    <Code2 size={15} />
+                    {t.activity.code}
+                  </button>
+                </div>
+              </section>
+
+              <section class="work-card work-card--calendar">
+                <header>
+                  <strong>{monthLabel}</strong>
+                  <span>{t.home.work.workbench.calendar}</span>
+                </header>
+                <div class="mini-calendar">
+                  {#each t.home.work.workbench.weekdays as day (day)}
+                    <span class="mini-calendar__week">{day}</span>
+                  {/each}
+                  {#each calendarCells as day (day.key)}
+                    <span class={["mini-calendar__day", !day.current && "is-muted", day.today && "is-today"]}>{day.day}</span>
+                  {/each}
+                </div>
+              </section>
+
+              <section class="work-card work-card--tasks">
+                <header>
+                  <strong>{t.home.work.workbench.taskBoard}</strong>
+                  <span>
+                    {t.home.work.workbench.taskStats
+                      .replace("{running}", String(tabs.filter((tab) => tab.running).length))
+                      .replace("{changes}", String(changedCount))}
+                  </span>
+                </header>
+                <div class="task-board">
+                  {#if visibleTasks.length}
+                    {#each visibleTasks.slice(0, 6) as task (task.key)}
+                      <button class={["work-task", (task.topicId || task.key) === activeTaskKey && "is-active"]} type="button" onclick={() => openTask(task)}>
+                        <i></i>
+                        <span>{task.label || t.activity.untitled}</span>
+                        {#if task.running}<em>{t.activity.running}</em>{/if}
+                      </button>
+                    {/each}
+                  {:else}
+                    <p>{t.work.noTasks}</p>
+                  {/if}
+                </div>
+              </section>
+
+              <section class="work-card work-card--assistant">
+                <div class="assistant-empty">
+                  <span><Bot size={22} /></span>
+                  <strong>{t.home.work.workbench.assistantTitle}</strong>
+                  <p>{t.home.work.workbench.assistantHint}</p>
+                </div>
+                <Composer
+                  {input}
+                  {activityMode}
+                  {runMode}
+                  {commands}
+                  {sending}
+                  onInput={(value) => (input = value)}
+                  onSend={send}
+                  onCancel={cancel}
+                  onPreviewFile={previewFile}
+                  {models}
+                  {selectedModel}
+                  onModelChange={switchModel}
+                />
+              </section>
+            </div>
+          </section>
         {:else}
           <section class="home">
             <h1>
@@ -775,7 +931,9 @@
 
 <style>
   .shell {
-    --sidebar-width: clamp(292px, 20vw, 386px);
+    --sidebar-width: clamp(220px, 15vw, 280px);
+    --content-width: clamp(620px, 52vw, 900px);
+    --document-width: clamp(620px, 58vw, 860px);
     display: grid;
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     height: 100vh;
@@ -819,14 +977,14 @@
   }
 
   .shell.is-sidebar-collapsed .stage__composer {
-    left: max(32px, calc(var(--sidebar-width) + 10vw));
+    left: 50%;
   }
 
   .sidebar {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    padding: 19px 14px 14px;
+    padding: 14px 12px 12px;
     background: #eeeeee;
     border-right: 1px solid #dfdfdf;
   }
@@ -834,21 +992,21 @@
   .sidebar__chrome {
     --wails-draggable: drag;
     display: grid;
-    grid-template-columns: 78px 1fr 34px;
+    grid-template-columns: 62px auto 28px;
     align-items: center;
-    gap: 10px;
-    min-height: 34px;
+    gap: 8px;
+    min-height: 28px;
   }
 
   .window-dots {
     display: flex;
-    gap: 12px;
-    padding-left: 16px;
+    gap: 8px;
+    padding-left: 8px;
   }
 
   .window-dots span {
-    width: 17px;
-    height: 17px;
+    width: 10px;
+    height: 10px;
     background: #d1d1d1;
     border-radius: 50%;
   }
@@ -858,24 +1016,37 @@
     display: inline-grid;
     grid-template-columns: 1fr 1fr;
     gap: 2px;
-    padding: 3px;
+    width: 132px;
+    padding: 2px;
     background: #e2e2e2;
-    border-radius: 9px;
+    border-radius: 8px;
   }
 
   .mode-switch__item {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    height: 34px;
-    padding: 0 11px;
+    gap: 4px;
+    flex: 1 0 0;
+    height: 26px;
+    min-width: 0;
+    padding: 0 7px;
     color: #333333;
     background: transparent;
     border: 0;
-    border-radius: 7px;
-    font-size: 16px;
+    border-radius: 6px;
+    font-size: 12px;
     font-weight: 520;
+    line-height: 1;
+    word-break: keep-all;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+  }
+
+  .mode-switch__item :global(svg) {
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
   }
 
   .mode-switch__item.is-active {
@@ -887,8 +1058,8 @@
     --wails-draggable: no-drag;
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     color: #424242;
     background: transparent;
     border: none;
@@ -903,23 +1074,23 @@
 
   .primary-actions {
     display: grid;
-    gap: 8px;
-    margin-top: 43px;
+    gap: 6px;
+    margin-top: 30px;
   }
 
   .primary-actions button {
     --wails-draggable: no-drag;
     display: grid;
-    grid-template-columns: 22px minmax(0, 1fr) auto;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 7px;
-    min-height: 40px;
-    padding: 0 10px;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 8px;
     color: #2f2f2f;
     background: transparent;
     border: 0;
     border-radius: 7px;
-    font-size: 16px;
+    font-size: 13px;
     font-weight: 470;
     text-align: left;
   }
@@ -931,7 +1102,7 @@
   .primary-actions kbd {
     color: #7c7c7c;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 500;
   }
 
@@ -940,23 +1111,23 @@
     flex-direction: column;
     min-height: 0;
     flex: 1;
-    margin-top: 30px;
+    margin-top: 24px;
   }
 
   .task-list__head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 34px;
-    padding: 0 8px;
+    min-height: 30px;
+    padding: 0 7px;
     color: #6a6a6a;
-    font-size: 16px;
+    font-size: 13px;
     font-weight: 520;
   }
 
   .task-list__head div {
     display: flex;
-    gap: 8px;
+    gap: 5px;
   }
 
   .task-list__head button,
@@ -964,8 +1135,8 @@
     --wails-draggable: no-drag;
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     color: #777777;
     border: none;
     border-radius: 6px;
@@ -974,7 +1145,7 @@
 
   .task-list__body {
     display: grid;
-    gap: 12px;
+    gap: 8px;
     min-height: 0;
     overflow: auto;
     padding: 4px 0 10px;
@@ -987,13 +1158,13 @@
 
   .task-group__label {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
     gap: 6px;
-    min-height: 32px;
-    padding: 0 8px;
+    min-height: 28px;
+    padding: 0 7px;
     color: #707070;
-    font-size: 15px;
+    font-size: 13px;
   }
 
   .task-group__label span,
@@ -1008,14 +1179,14 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    min-height: 34px;
-    margin-left: 26px;
-    padding: 0 10px;
+    min-height: 29px;
+    margin-left: 24px;
+    padding: 0 8px;
     color: #333333;
     background: transparent;
     border: 0;
     border-radius: 7px;
-    font-size: 15px;
+    font-size: 13px;
     text-align: left;
   }
 
@@ -1031,26 +1202,26 @@
   }
 
   .task-list__empty {
-    margin: 12px 8px;
+    margin: 10px 7px;
     color: #8a8a8a;
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .sidebar__user {
     display: grid;
-    grid-template-columns: 34px minmax(0, auto) auto;
+    grid-template-columns: 30px minmax(0, auto) auto;
     align-items: center;
-    gap: 10px;
-    min-height: 42px;
+    gap: 8px;
+    min-height: 36px;
     color: #3f3f3f;
-    font-size: 15px;
+    font-size: 13px;
   }
 
   .sidebar__avatar {
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
     color: #5b28cf;
     background: #b89cff;
     border-radius: 8px;
@@ -1069,7 +1240,7 @@
     background: #ffffff;
     border: 1px solid #dddddd;
     border-radius: 5px;
-    font-size: 12px;
+    font-size: 11px;
     font-style: normal;
   }
 
@@ -1079,7 +1250,7 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    padding: 10px 10px 10px 0;
+    padding: 8px 8px 8px 0;
     background: #f0f0f0;
   }
 
@@ -1102,11 +1273,12 @@
     overflow: hidden;
     background: #ffffff;
     border: 1px solid #dedede;
-    border-radius: 18px;
+    border-radius: 16px;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   }
 
   .stage__surface,
+  .workbench,
   .home,
   .conversation-view,
   .conversation,
@@ -1128,6 +1300,329 @@
     font-size: 14px;
   }
 
+  .workbench {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 18px;
+    background: #ffffff;
+  }
+
+  .workbench__top {
+    --wails-draggable: drag;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 42px;
+    margin-bottom: 12px;
+  }
+
+  .workbench__top span {
+    color: #9a6a3a;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .workbench__top h1 {
+    margin: 2px 0 0;
+    color: #222222;
+    font-size: 18px;
+    font-weight: 680;
+  }
+
+  .workbench__actions {
+    --wails-draggable: no-drag;
+    display: flex;
+    gap: 8px;
+  }
+
+  .workbench__actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 0 10px;
+    color: #2563eb;
+    background: #eef5ff;
+    border: 1px solid #e2ecff;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 620;
+  }
+
+  .workbench-grid {
+    display: grid;
+    grid-template-columns: minmax(320px, 0.86fr) minmax(420px, 1.14fr);
+    grid-template-areas:
+      "clock calendar"
+      "actions calendar"
+      "tasks assistant";
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .work-card {
+    min-width: 0;
+    overflow: hidden;
+    background: #f8f9fb;
+    border: 1px solid #e8ebef;
+    border-radius: 14px;
+  }
+
+  .work-card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px 8px;
+  }
+
+  .work-card header strong {
+    color: #242424;
+    font-size: 14px;
+    font-weight: 680;
+  }
+
+  .work-card header span {
+    color: #8a8f98;
+    font-size: 12px;
+  }
+
+  .work-card--clock {
+    grid-area: clock;
+    display: grid;
+    place-items: center;
+    min-height: 144px;
+    padding: 22px;
+    text-align: center;
+  }
+
+  .work-card--clock span {
+    color: #8a8f98;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .work-card--clock strong {
+    display: block;
+    margin-top: 12px;
+    padding: 3px 8px;
+    color: #f8fafc;
+    background: #18181b;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: clamp(28px, 3vw, 48px);
+    letter-spacing: 0.08em;
+  }
+
+  .work-card--clock p {
+    max-width: 520px;
+    margin: 12px 0 0;
+    overflow: hidden;
+    color: #767b84;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .work-card--actions {
+    grid-area: actions;
+    min-height: 128px;
+  }
+
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px 16px 16px;
+  }
+
+  .action-grid button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 12px;
+    color: #2d3748;
+    background: #ffffff;
+    border: 1px solid #e7e9ee;
+    border-radius: 11px;
+    font-size: 13px;
+    font-weight: 620;
+  }
+
+  .action-grid button:nth-child(1) {
+    color: #15803d;
+    background: #eaf7ee;
+    border-color: #d9f0df;
+  }
+
+  .action-grid button:nth-child(2) {
+    color: #2563eb;
+    background: #edf4ff;
+    border-color: #dce9ff;
+  }
+
+  .action-grid button:nth-child(3) {
+    color: #7c3aed;
+    background: #f2e8ff;
+    border-color: #ead8ff;
+  }
+
+  .work-card--calendar {
+    grid-area: calendar;
+    min-height: 284px;
+  }
+
+  .mini-calendar {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    padding: 0 10px 12px;
+    border-top: 1px solid #e6e9ee;
+  }
+
+  .mini-calendar__week,
+  .mini-calendar__day {
+    display: grid;
+    min-height: 38px;
+    place-items: start;
+    padding: 8px;
+    color: #30343b;
+    border-right: 1px solid #e6e9ee;
+    border-bottom: 1px solid #e6e9ee;
+    font-size: 12px;
+  }
+
+  .mini-calendar__week {
+    min-height: 34px;
+    place-items: center;
+    color: #777d86;
+    font-weight: 650;
+  }
+
+  .mini-calendar__day.is-muted {
+    color: #b6bbc3;
+  }
+
+  .mini-calendar__day.is-today {
+    color: #ffffff;
+    background: radial-gradient(circle at 22px 22px, #2563eb 0 12px, transparent 13px);
+    font-weight: 720;
+  }
+
+  .work-card--tasks {
+    grid-area: tasks;
+    min-height: 196px;
+  }
+
+  .task-board {
+    display: grid;
+    gap: 6px;
+    max-height: 220px;
+    overflow: auto;
+    padding: 4px 16px 16px;
+  }
+
+  .task-board p {
+    margin: 8px 0;
+    color: #8a8f98;
+    font-size: 13px;
+  }
+
+  .work-task {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    min-height: 30px;
+    padding: 0 8px;
+    color: #292d33;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    font-size: 13px;
+    text-align: left;
+  }
+
+  .work-task:hover,
+  .work-task.is-active {
+    background: #ffffff;
+  }
+
+  .work-task i {
+    width: 7px;
+    height: 7px;
+    background: #f59e0b;
+    border-radius: 50%;
+  }
+
+  .work-task span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .work-task em {
+    color: #ef4444;
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .work-card--assistant {
+    grid-area: assistant;
+    display: grid;
+    align-content: center;
+    gap: 16px;
+    min-height: 196px;
+    padding: 24px;
+  }
+
+  .assistant-empty {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .assistant-empty span {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    color: #2563eb;
+    background: #eaf2ff;
+    border-radius: 13px;
+  }
+
+  .assistant-empty strong {
+    color: #222222;
+    font-size: 14px;
+  }
+
+  .assistant-empty p {
+    max-width: 420px;
+    margin: 0;
+    color: #7d838c;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .work-card--assistant :global(.composer) {
+    min-height: 104px;
+    background: #ffffff;
+    border-radius: 13px;
+    box-shadow: none;
+  }
+
+  .work-card--assistant :global(.composer textarea) {
+    min-height: 42px;
+    font-size: 13px;
+  }
+
   .home {
     display: flex;
     flex-direction: column;
@@ -1135,34 +1630,41 @@
     justify-content: center;
     flex: 1;
     min-height: 0;
-    padding: clamp(28px, 7vh, 74px) clamp(18px, 3vw, 36px) 112px;
+    padding: clamp(24px, 6vh, 64px) clamp(18px, 4vw, 56px) clamp(70px, 12vh, 120px);
   }
 
   .home h1 {
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin: 0 0 clamp(30px, 6vh, 60px);
+    gap: 12px;
+    margin: 0 0 clamp(26px, 5vh, 50px);
     color: #1f1f1f;
-    font-size: clamp(32px, 3.2vw, 46px);
+    font-size: clamp(26px, 1.9vw, 34px);
     font-weight: 650;
     letter-spacing: 0;
+    line-height: 1.08;
+    white-space: nowrap;
+  }
+
+  .home h1 :global(svg) {
+    width: clamp(24px, 1.7vw, 30px);
+    height: clamp(24px, 1.7vw, 30px);
   }
 
   .home h1 span {
     align-self: flex-start;
     margin-top: 3px;
-    padding: 2px 7px;
+    padding: 2px 6px;
     color: #777777;
     background: #eeeeee;
     border: 1px solid #d7d7d7;
     border-radius: 5px;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
   }
 
   .home__composer {
-    width: min(1028px, max(560px, 72%));
+    width: min(100%, var(--content-width));
     overflow: hidden;
     background: #f4f4f4;
     border-radius: 15px;
@@ -1170,65 +1672,65 @@
 
   .home__context {
     display: flex;
-    gap: 26px;
-    min-height: 54px;
-    padding: 0 24px;
+    gap: 22px;
+    min-height: 44px;
+    padding: 0 18px;
   }
 
   .home__context button {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     color: #3e3e3e;
     background: transparent;
     border: 0;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 540;
   }
 
   .home__quick {
     display: grid;
-    grid-template-columns: repeat(4, minmax(132px, max-content));
+    grid-template-columns: repeat(4, minmax(112px, max-content));
     justify-content: center;
-    gap: 10px;
-    margin-top: 40px;
+    gap: 9px;
+    margin-top: 24px;
   }
 
   .home__quick button {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    min-height: 62px;
-    padding: 0 22px;
+    gap: 7px;
+    min-height: 42px;
+    padding: 0 14px;
     color: #333333;
     background: #ffffff;
     border: 1px solid #e3e3e3;
-    border-radius: 17px;
+    border-radius: 11px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-    font-size: 16px;
+    font-size: 13px;
     font-weight: 560;
   }
 
   .code-tools {
     display: grid;
-    grid-template-columns: repeat(4, minmax(128px, 1fr));
-    gap: 10px;
-    width: min(860px, max(520px, 62%));
-    margin-top: 18px;
+    grid-template-columns: repeat(4, minmax(116px, 1fr));
+    gap: 8px;
+    width: min(100%, 720px);
+    margin-top: 16px;
   }
 
   .code-tools button {
     display: grid;
-    grid-template-columns: 22px minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
-    min-height: 42px;
-    padding: 0 12px;
+    gap: 7px;
+    min-height: 36px;
+    padding: 0 10px;
     color: #3c3c3c;
     background: #fafafa;
     border: 1px solid #e5e5e5;
-    border-radius: 12px;
-    font-size: 14px;
+    border-radius: 10px;
+    font-size: 12px;
     text-align: left;
   }
 
@@ -1259,7 +1761,7 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 24px 48px 220px;
+    padding: 26px clamp(24px, 5vw, 80px) 196px;
   }
 
   .conversation-view {
@@ -1274,22 +1776,22 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 54px;
-    padding: 0 22px;
+    min-height: 50px;
+    padding: 0 18px;
     border-bottom: 1px solid #eeeeee;
   }
 
   .conversation-header div {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     min-width: 0;
   }
 
   .conversation-header strong {
     overflow: hidden;
     color: #242424;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1298,7 +1800,7 @@
   .conversation-header span {
     overflow: hidden;
     color: #8a8a8a;
-    font-size: 14px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1308,22 +1810,22 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    min-height: 34px;
-    padding: 0 12px;
+    min-height: 30px;
+    padding: 0 10px;
     color: #303030;
     background: #ffffff;
     border: 1px solid #e5e5e5;
-    border-radius: 9px;
-    font-size: 14px;
+    border-radius: 8px;
+    font-size: 12px;
   }
 
   .stage__composer {
     position: absolute;
-    right: max(32px, calc(6vw + 40px));
-    bottom: 32px;
-    left: max(32px, calc(var(--sidebar-width) + 10vw + 40px));
+    bottom: 26px;
+    left: 50%;
     z-index: 4;
-    max-width: 1100px;
+    width: min(100%, var(--document-width));
+    transform: translateX(-50%);
   }
 
   .code-inspector {
@@ -1335,7 +1837,7 @@
     z-index: 5;
     display: flex;
     flex-direction: column;
-    width: min(520px, calc(100% - var(--sidebar-width) - 64px));
+    width: min(500px, calc(100% - var(--sidebar-width) - 56px));
     min-width: 360px;
     overflow: hidden;
     background: #ffffff;
@@ -1389,7 +1891,7 @@
 
   .home__composer :global(.composer),
   .stage__composer :global(.composer) {
-    min-height: 160px;
+    min-height: 112px;
     background: #ffffff;
     border: 1px solid #e2e2e2;
     border-radius: 15px;
@@ -1402,15 +1904,15 @@
 
   .home__composer :global(.composer textarea),
   .stage__composer :global(.composer textarea) {
-    min-height: 88px;
+    min-height: 56px;
     color: #242424;
-    font-size: 16px;
+    font-size: 14px;
   }
 
   .home__composer :global(.composer button[type="submit"]),
   .stage__composer :global(.composer button[type="submit"]) {
-    width: 39px;
-    height: 39px;
+    width: 36px;
+    height: 36px;
     justify-content: center;
     padding: 0;
     color: #7a6edb;
@@ -1434,12 +1936,13 @@
 
   @media (max-width: 980px) {
     .shell {
-      --sidebar-width: 292px;
+      --sidebar-width: 220px;
+      --content-width: min(760px, calc(100vw - var(--sidebar-width) - 72px));
+      --document-width: min(760px, calc(100vw - var(--sidebar-width) - 72px));
     }
 
     .stage__composer {
-      left: calc(var(--sidebar-width) + 28px);
-      right: 24px;
+      width: min(100%, var(--document-width));
     }
 
     .home__composer,
@@ -1451,10 +1954,22 @@
     .code-tools {
       grid-template-columns: repeat(2, minmax(150px, 1fr));
     }
+
+    .workbench-grid {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "clock"
+        "actions"
+        "calendar"
+        "tasks"
+        "assistant";
+    }
   }
 
   @media (max-width: 768px) {
     .shell {
+      --content-width: calc(100vw - 36px);
+      --document-width: calc(100vw - 36px);
       grid-template-columns: 1fr;
     }
 
@@ -1467,8 +1982,7 @@
     }
 
     .stage__composer {
-      left: 20px;
-      right: 20px;
+      width: var(--document-width);
       bottom: 20px;
     }
 
@@ -1482,6 +1996,20 @@
 
     .home {
       padding: 32px 14px 90px;
+    }
+
+    .workbench {
+      padding: 12px;
+    }
+
+    .workbench__top {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .workbench__actions {
+      width: 100%;
+      flex-wrap: wrap;
     }
 
     .home__composer {
@@ -1520,6 +2048,41 @@
     .home__quick,
     .code-tools {
       grid-template-columns: 1fr;
+    }
+
+    .action-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .mini-calendar__week,
+    .mini-calendar__day {
+      min-height: 32px;
+      padding: 6px;
+      font-size: 11px;
+    }
+  }
+
+  @media (min-width: 1800px) {
+    .shell {
+      --sidebar-width: 280px;
+      --content-width: 900px;
+      --document-width: 820px;
+    }
+
+    .home {
+      padding-bottom: 13vh;
+    }
+  }
+
+  @media (min-width: 2400px) {
+    .shell {
+      --sidebar-width: 280px;
+      --content-width: 900px;
+      --document-width: 820px;
+    }
+
+    .home h1 {
+      font-size: 34px;
     }
   }
 </style>

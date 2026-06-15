@@ -530,6 +530,10 @@ func chatREPL(args []string) int {
 	m.refreshEffortStatus()
 
 	if m.nativeScrollback {
+		// Clear the terminal's scrollback history so a reopened chat starts
+		// with a clean slate (Termux stays in the normal buffer, so prior
+		// output would otherwise remain visible above the banner).
+		fmt.Fprint(os.Stdout, "\x1B[3J\x1B[2J\x1B[H")
 		reserveNativeScrollbackFrame(os.Stdout, m.bottomRows())
 	}
 

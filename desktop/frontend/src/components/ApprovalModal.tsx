@@ -21,6 +21,7 @@ export function ApprovalModal({
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -68,22 +69,39 @@ export function ApprovalModal({
     setRevisionOpen(false);
     setRevisionText("");
     setDetailsOpen(false);
+    setSelectedIndex(0);
     playAttentionChime();
   }, [approval.id]);
+
+  const actionCount = isPlanApproval ? 3 : 4;
+  const selectedIndexRef = useRef(selectedIndex);
+  selectedIndexRef.current = selectedIndex;
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName.toLowerCase();
       if (tag === "input" || tag === "textarea" || target?.isContentEditable) return;
-      if (event.key !== "1" && event.key !== "2" && event.key !== "3" && event.key !== "4" && event.key !== "Escape") return;
-      event.preventDefault();
-      if (isPlanApproval) choosePlanAction(event.key);
-      else chooseToolAction(event.key);
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setSelectedIndex((i) => (i - 1 + actionCount) % actionCount);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setSelectedIndex((i) => (i + 1) % actionCount);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        const key = String(selectedIndexRef.current + 1);
+        if (isPlanApproval) choosePlanAction(key);
+        else chooseToolAction(key);
+      } else if (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4" || event.key === "Escape") {
+        event.preventDefault();
+        if (isPlanApproval) choosePlanAction(event.key);
+        else chooseToolAction(event.key);
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isPlanApproval, onAnswer, onExitPlan]);
+  }, [isPlanApproval, onAnswer, onExitPlan, actionCount]);
 
   useEffect(() => {
     if (revisionOpen) inputRef.current?.focus();
@@ -109,12 +127,13 @@ export function ApprovalModal({
         meta={t("approval.planReadyHint")}
         actions={
           <>
-            <PromptAction keyLabel="1" label={t("approval.revisePlan")} onClick={() => setRevisionOpen((open) => !open)} />
-            <PromptAction keyLabel="2" label={t("approval.startExecution")} onClick={() => answerWithExit(() => onAnswer(true, false, false))} selected />
+            <PromptAction keyLabel="1" label={t("approval.revisePlan")} onClick={() => setRevisionOpen((open) => !open)} selected={selectedIndex === 0} />
+            <PromptAction keyLabel="2" label={t("approval.startExecution")} onClick={() => answerWithExit(() => onAnswer(true, false, false))} selected={selectedIndex === 1} />
             <PromptAction
               keyLabel="3"
               label={t("approval.exitPlan")}
               onClick={() => answerWithExit(() => (onExitPlan ?? (() => onAnswer(false, false, false)))())}
+              selected={selectedIndex === 2}
             />
           </>
         }
@@ -171,10 +190,10 @@ export function ApprovalModal({
               onClick={() => setDetailsOpen((open) => !open)}
             />
           )}
-          <PromptAction keyLabel="1" label={t("approval.allowOnce")} onClick={() => answerWithExit(() => onAnswer(true, false, false))} selected />
-          <PromptAction keyLabel="2" label={t("approval.allowRuleSession")} onClick={() => answerWithExit(() => onAnswer(true, true, false))} />
-          <PromptAction keyLabel="3" label={t("approval.allowRulePersistent")} onClick={() => answerWithExit(() => onAnswer(true, true, true))} />
-          <PromptAction keyLabel="4" label={t("approval.deny")} onClick={() => answerWithExit(() => onAnswer(false, false, false))} />
+          <PromptAction keyLabel="1" label={t("approval.allowOnce")} onClick={() => answerWithExit(() => onAnswer(true, false, false))} selected={selectedIndex === 0} />
+          <PromptAction keyLabel="2" label={t("approval.allowRuleSession")} onClick={() => answerWithExit(() => onAnswer(true, true, false))} selected={selectedIndex === 1} />
+          <PromptAction keyLabel="3" label={t("approval.allowRulePersistent")} onClick={() => answerWithExit(() => onAnswer(true, true, true))} selected={selectedIndex === 2} />
+          <PromptAction keyLabel="4" label={t("approval.deny")} onClick={() => answerWithExit(() => onAnswer(false, false, false))} selected={selectedIndex === 3} />
         </>
       }
     >

@@ -12,6 +12,8 @@
     Plus,
     RotateCcw,
     Sparkles,
+    SquarePen,
+    Trash2,
     Wrench,
     Zap,
   } from "@lucide/svelte";
@@ -109,6 +111,13 @@
   );
   const standaloneTopics = $derived(sortNodes(projectTree.filter((node) => node.kind === "global_topic" || node.kind === "topic")));
   const visibleTasks = $derived(standaloneTopics.length ? standaloneTopics : tabs.map(tabToProjectNode));
+  const sidebarProjectFolders = [
+    { name: "个人...", hint: "New proj..." },
+    { name: "svadmin", hint: "" },
+    { name: "Ether Orient", hint: "" },
+    { name: "game", hint: "" },
+    { name: "mediagroup", hint: "" },
+  ];
 
   onMount(() => {
     // Check auth gate first — if [auth] is configured and no valid token exists,
@@ -477,6 +486,23 @@
     if (tab) await switchTab(tab);
   }
 
+  async function renameTask(node: ProjectNode) {
+    if (!node.topicId) return;
+    const current = node.label || t.activity.untitled;
+    const next = window.prompt("编辑会话名称", current)?.trim();
+    if (!next || next === current) return;
+    await app().RenameTopic(node.topicId, next);
+    await refresh();
+  }
+
+  async function deleteTask(node: ProjectNode) {
+    if (!node.topicId) return;
+    const name = node.label || t.activity.untitled;
+    if (!window.confirm(`删除会话“${name}”？`)) return;
+    await app().TrashTopic(node.topicId);
+    await refresh();
+  }
+
   async function newTopic(node: ProjectNode) {
     const global = node.kind === "global_folder";
     const workspaceRoot = global ? "" : (node.root ?? "");
@@ -609,56 +635,55 @@
         </button>
       </nav>
 
-      <section class="task-list" aria-label={t.home.taskList}>
-        <div class="task-list__head">
-          <span>{t.home.taskList}</span>
-          <div>
-            <button type="button" aria-label={t.home.expand} title={t.home.expand} onclick={() => (sidebarCollapsed = false)}>
-              <Sparkles size={15} />
-            </button>
-            <button type="button" aria-label={t.home.sort} title={t.home.sort} onclick={() => (sortTasksByRecent = !sortTasksByRecent)}>
-              <List size={16} />
-            </button>
-          </div>
-        </div>
+      <section class="task-list project-list" aria-label="项目与对话管理">
+        <div class="project-list__title">项目</div>
+        <button class="project-list__folder is-current" type="button" onclick={() => (sidebarCollapsed = false)}>
+          <Folder size={15} />
+          <span>{activeTab?.workspaceName || "volt-gui"}</span>
+        </button>
 
-        <div class="task-list__body">
+        <div class="project-list__threads">
           {#if projectGroups.length}
             {#each projectGroups as group (group.key)}
-              <section class="task-group">
-                <div class="task-group__label">
-                  <Folder size={15} />
-                  <span>{group.label || t.common.global}</span>
-                  <button type="button" aria-label={t.activity.newTopic} onclick={() => newTopic(group)}>
-                    <Plus size={14} />
-                  </button>
-                </div>
-                {#each group.children ?? [] as topic (topic.key)}
-                  <button
-                    class={["task-row", (topic.topicId || topic.key) === activeTaskKey && "is-active"]}
-                    type="button"
-                    onclick={() => openTask(topic)}
-                  >
+              {#each group.children ?? [] as topic (topic.key)}
+                <article class={(topic.topicId || topic.key) === activeTaskKey ? "is-active" : ""}>
+                  <button class="project-list__thread" type="button" onclick={() => openTask(topic)}>
                     <span>{topic.label || t.activity.untitled}</span>
-                    {#if topic.running}<i>{t.activity.running}</i>{/if}
+                    {#if topic.running}<i aria-label={t.activity.running}></i>{/if}
                   </button>
-                {/each}
-              </section>
+                  <div>
+                    <button type="button" aria-label="编辑会话" title="编辑会话" onclick={(event) => { event.stopPropagation(); void renameTask(topic); }}><SquarePen size={13} /></button>
+                    <button type="button" aria-label="删除会话" title="删除会话" onclick={(event) => { event.stopPropagation(); void deleteTask(topic); }}><Trash2 size={13} /></button>
+                  </div>
+                </article>
+              {/each}
             {/each}
           {:else if visibleTasks.length}
             {#each visibleTasks as topic (topic.key)}
-              <button
-                class={["task-row", (topic.topicId || topic.key) === activeTaskKey && "is-active"]}
-                type="button"
-                onclick={() => openTask(topic)}
-              >
-                <span>{topic.label || t.activity.untitled}</span>
-                {#if topic.running}<i>{t.activity.running}</i>{/if}
-              </button>
+              <article class={(topic.topicId || topic.key) === activeTaskKey ? "is-active" : ""}>
+                <button class="project-list__thread" type="button" onclick={() => openTask(topic)}>
+                  <span>{topic.label || t.activity.untitled}</span>
+                  {#if topic.running}<i aria-label={t.activity.running}></i>{/if}
+                </button>
+                <div>
+                  <button type="button" aria-label="编辑会话" title="编辑会话" onclick={(event) => { event.stopPropagation(); void renameTask(topic); }}><SquarePen size={13} /></button>
+                  <button type="button" aria-label="删除会话" title="删除会话" onclick={(event) => { event.stopPropagation(); void deleteTask(topic); }}><Trash2 size={13} /></button>
+                </div>
+              </article>
             {/each}
           {:else}
             <p class="task-list__empty">{t.work.noTasks}</p>
           {/if}
+        </div>
+
+        <div class="project-list__folders">
+          {#each sidebarProjectFolders as project (project.name)}
+            <button type="button" onclick={() => (sidebarCollapsed = false)}>
+              <Folder size={15} />
+              <span>{project.name}</span>
+              {#if project.hint}<em>{project.hint}</em>{/if}
+            </button>
+          {/each}
         </div>
       </section>
 
@@ -1174,8 +1199,7 @@
   }
 
   .sidebar__icon:hover,
-  .primary-actions button:hover,
-  .task-list__head button:hover {
+  .primary-actions button:hover {
     background: #dedede;
   }
 
@@ -1214,98 +1238,145 @@
   }
 
   .task-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    align-content: start;
     min-height: 0;
     flex: 1;
+    gap: 2px;
     margin-top: 24px;
   }
 
-  .task-list__head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 30px;
-    padding: 0 7px;
-    color: #6a6a6a;
-    font-size: 13px;
+  .project-list__title {
+    padding: 0 8px 8px;
+    color: #888888;
+    font-size: 12px;
     font-weight: 520;
   }
 
-  .task-list__head div {
-    display: flex;
-    gap: 5px;
-  }
-
-  .task-list__head button,
-  .task-group__label button {
+  .project-list__folder,
+  .project-list__folders button {
     --wails-draggable: no-drag;
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    color: #777777;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-  }
-
-  .task-list__body {
-    display: grid;
-    gap: 8px;
-    min-height: 0;
-    overflow: auto;
-    padding: 4px 0 10px;
-  }
-
-  .task-group {
-    display: grid;
-    gap: 6px;
-  }
-
-  .task-group__label {
     display: grid;
     grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 6px;
-    min-height: 28px;
-    padding: 0 7px;
-    color: #707070;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 8px;
+    color: #6a6a6a;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
     font-size: 13px;
+    font-weight: 480;
+    text-align: left;
   }
 
-  .task-group__label span,
-  .task-row span {
+  .project-list__folder:hover,
+  .project-list__folders button:hover {
+    color: #333333;
+    background: #e7e7e7;
+  }
+
+  .project-list__folder :global(svg),
+  .project-list__folders :global(svg) {
+    color: #737373;
+  }
+
+  .project-list__folder span,
+  .project-list__folders span,
+  .project-list__thread span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .task-row {
+  .project-list__threads,
+  .project-list__folders {
+    display: grid;
+    gap: 1px;
+  }
+
+  .project-list__threads {
+    margin: 2px 0 10px;
+  }
+
+  .project-list__threads article {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-width: 0;
+    min-height: 31px;
+    padding: 0 4px 0 0;
+    border-radius: 8px;
+  }
+
+  .project-list__threads article:hover,
+  .project-list__threads article.is-active {
+    background: #e1e1e1;
+  }
+
+  .project-list__thread {
     --wails-draggable: no-drag;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    min-height: 29px;
-    margin-left: 24px;
-    padding: 0 8px;
-    color: #333333;
+    gap: 8px;
+    min-width: 0;
+    min-height: 31px;
+    padding: 0 6px 0 33px;
+    color: #292929;
     background: transparent;
     border: 0;
-    border-radius: 7px;
     font-size: 13px;
+    font-weight: 560;
     text-align: left;
   }
 
-  .task-row:hover,
-  .task-row.is-active {
-    background: #e1e1e1;
+  .project-list__thread i {
+    width: 9px;
+    height: 9px;
+    border: 1.5px solid #7c7c7c;
+    border-top-color: transparent;
+    border-radius: 999px;
   }
 
-  .task-row i {
-    color: #8a8a8a;
+  .project-list__threads article > div {
+    display: inline-flex;
+    gap: 1px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .project-list__threads article:hover > div,
+  .project-list__threads article:focus-within > div,
+  .project-list__threads article.is-active > div {
+    opacity: 1;
+  }
+
+  .project-list__threads article > div button {
+    --wails-draggable: no-drag;
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    color: #777777;
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+  }
+
+  .project-list__threads article > div button:hover {
+    color: #333333;
+    background: #d5d5d5;
+  }
+
+  .project-list__folders em {
+    overflow: hidden;
+    color: #a3a3a3;
     font-size: 12px;
     font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .task-list__empty {

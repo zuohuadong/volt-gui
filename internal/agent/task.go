@@ -33,6 +33,12 @@ var subagentMetaTools = []string{
 	"security_review",
 }
 
+var subagentJobTools = []string{
+	"wait",
+	"bash_output",
+	"kill_shell",
+}
+
 // SubagentMetaTools returns the tool names that spawned agents should not inherit
 // from the parent registry unless a future call site deliberately opts into a
 // different boundary. They can spawn or author more agent work, so excluding them
@@ -42,6 +48,54 @@ func SubagentMetaTools() []string {
 	copy(out, subagentMetaTools)
 	return out
 }
+
+// SubagentToolRegistry returns the tool set exposed inside spawned sub-agents:
+// the requested whitelist (or every parent tool), minus meta tools that would
+// spawn more agent work and job tools whose runtime manager is not injected into
+// sub-agents. When bash is present, it is wrapped to advertise and allow only
+// foreground execution.
+func SubagentToolRegistry(parent *tool.Registry, names []string) *tool.Registry {
+	exclude := append(SubagentMetaTools(), subagentJobTools...)
+	sub := FilterRegistry(parent, names, exclude...)
+	if bash, ok := sub.Get("bash"); ok {
+		sub.Add(foregroundOnlyBash{inner: bash})
+	}
+	return sub
+}
+
+type foregroundOnlyBash struct {
+	inner tool.Tool
+}
+
+func (b foregroundOnlyBash) Name() string { return "bash" }
+
+func (b foregroundOnlyBash) Description() string {
+	desc := strings.TrimSpace(b.inner.Description())
+	if desc == "" {
+		desc = "Execute a command in the shell and return combined stdout/stderr."
+	}
+	desc = strings.Replace(desc, "Execute a command in the shell", "Execute a foreground command in the shell", 1)
+	return desc + " Background execution is unavailable inside subagents."
+}
+
+func (foregroundOnlyBash) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute in the foreground"}},"required":["command"]}`)
+}
+
+func (b foregroundOnlyBash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		RunInBackground bool `json:"run_in_background"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if p.RunInBackground {
+		return "", fmt.Errorf("background bash is unavailable in subagents; run a foreground command or ask the parent agent to start a background job")
+	}
+	return b.inner.Execute(ctx, args)
+}
+
+func (b foregroundOnlyBash) ReadOnly() bool { return b.inner.ReadOnly() }
 
 // TaskTool spawns a sub-agent in its own session for a focused sub-task. The
 // sub-agent runs with a filtered tool whitelist and the same step budget shape
@@ -344,10 +398,9 @@ func (t *TaskTool) effectiveEffortIdentity(effort string) string {
 }
 
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
-// subagent/skill meta-tools, to bar recursive nesting), or every parent tool
-// except those meta-tools.
+// unavailable sub-agent tools), or every parent tool except those tools.
 func (t *TaskTool) buildSubReg(names []string) *tool.Registry {
-	return FilterRegistry(t.parentReg, names, SubagentMetaTools()...)
+	return SubagentToolRegistry(t.parentReg, names)
 }
 
 // FilterRegistry builds a sub-registry from parent: the named whitelist (empty =
@@ -355,11 +408,14 @@ func (t *TaskTool) buildSubReg(names []string) *tool.Registry {
 // sub-agent — a `task` sub-agent or a subagent skill — may call, e.g. excluding
 // `task` to bar recursive nesting, or restricting to a skill's allowed-tools.
 func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *tool.Registry {
+	sub := tool.NewRegistry()
+	if parent == nil {
+		return sub
+	}
 	ex := make(map[string]bool, len(exclude))
 	for _, e := range exclude {
 		ex[e] = true
 	}
-	sub := tool.NewRegistry()
 	src := names
 	if len(src) == 0 {
 		src = parent.Names()

@@ -64,7 +64,8 @@ export function diffRowsFromUnifiedDiff(diff: string): DiffRow[] {
   let newLine = 0;
   let inHunk = false;
 
-  for (const line of diff.split("\n")) {
+  const lines = diff.endsWith("\n") ? diff.slice(0, -1).split("\n") : diff.split("\n");
+  for (const line of lines) {
     const header = hunkHeader.exec(line);
     if (header) {
       oldLine = Number(header[1]);

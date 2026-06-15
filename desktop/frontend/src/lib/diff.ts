@@ -52,6 +52,49 @@ export function diffLines(a: string, b: string): DiffRow[] {
   return rows;
 }
 
+const hunkHeader = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/;
+
+// diffRowsFromUnifiedDiff renders an already-computed unified diff while keeping
+// the real hunk line numbers. This is used when the backend previewed a writer
+// tool against the whole file, so the UI does not have to re-diff tiny args
+// snippets and accidentally restart line numbers at 1.
+export function diffRowsFromUnifiedDiff(diff: string): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+
+  for (const line of diff.split("\n")) {
+    const header = hunkHeader.exec(line);
+    if (header) {
+      oldLine = Number(header[1]);
+      newLine = Number(header[2]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    if (line.startsWith("\\ No newline")) continue;
+
+    const marker = line[0];
+    const text = marker === " " || marker === "+" || marker === "-" ? line.slice(1) : line;
+    if (marker === "+") {
+      rows.push({ type: "add", text, newLine });
+      newLine++;
+      continue;
+    }
+    if (marker === "-") {
+      rows.push({ type: "del", text, oldLine });
+      oldLine++;
+      continue;
+    }
+    rows.push({ type: "ctx", text, oldLine, newLine });
+    oldLine++;
+    newLine++;
+  }
+
+  return rows;
+}
+
 // cleanGitDiff strips standard git diff headers (diff --git, index, ---, +++)
 // and hunk headers (@@ -x,y +x,y @@) so the view focuses directly on the changed lines.
 export function cleanGitDiff(diff: string): string {

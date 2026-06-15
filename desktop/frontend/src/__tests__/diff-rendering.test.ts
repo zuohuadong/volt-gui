@@ -85,6 +85,7 @@ console.log("\ndiff rendering contract");
     "-func save():",
     "+func save_file():",
     "+func save_backup():",
+    "",
   ].join("\n"));
   eq(JSON.stringify(rows.map((r) => [r.type, r.oldLine ?? "", r.newLine ?? "", r.text])), JSON.stringify([
     ["ctx", 27, 27, "func keep():"],

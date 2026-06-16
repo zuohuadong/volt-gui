@@ -1222,14 +1222,6 @@ func applyKnownPluginOverrides(specs []plugin.Spec) []plugin.Spec {
 	return out
 }
 
-func pluginSpecNames(specs []plugin.Spec) []string {
-	names := make([]string, 0, len(specs))
-	for _, s := range specs {
-		names = append(names, s.Name)
-	}
-	return names
-}
-
 // autoShellPrefer reports whether [tools.shell] left the interpreter to
 // auto-detection, so the "fell back to PowerShell" hint is suppressed once the
 // user has explicitly chosen a shell.

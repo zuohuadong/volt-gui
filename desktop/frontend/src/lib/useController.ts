@@ -41,7 +41,7 @@ export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversat
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 
 export type Item =
-  | { kind: "user"; id: string; text: string; failed?: boolean }
+  | { kind: "user"; id: string; text: string; submitText?: string; failed?: boolean; createdAt?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
@@ -224,7 +224,7 @@ export function isReadOnlyTool(name: string): boolean {
 
 type Action =
   | { type: "event"; e: WireEvent }
-  | { type: "user"; text: string; seq: number }
+  | { type: "user"; text: string; submitText?: string; seq: number }
   | { type: "unsend" }
   | { type: "send_failed"; error: string }
   | { type: "backend_status"; running: boolean; pendingPrompt?: boolean; backgroundJobs?: number; cancelRequested?: boolean; cancellable?: boolean }
@@ -290,7 +290,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
     if (m.role === "user") {
       if (m.content.trim() === "") continue;
-      items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content });
+      items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content, submitText: m.submitText, createdAt: m.createdAt });
       seq++;
       continue;
     }
@@ -416,7 +416,7 @@ function flushPendingUser(s: State): State {
   return {
     ...s,
     seq: s.seq + 1,
-    items: [...s.items, { kind: "user", id: `u${s.seq}`, text: s.pendingUser }],
+    items: [...s.items, { kind: "user", id: `u${s.seq}`, text: s.pendingUser, createdAt: Date.now() }],
     pendingUser: undefined,
   };
 }
@@ -589,7 +589,7 @@ export function reducer(s: State, a: Action): State {
       return {
         ...s,
         seq: seq + 1,
-        items: [...s.items, { kind: "user", id: `u${seq}`, text: a.text }],
+        items: [...s.items, { kind: "user", id: `u${seq}`, text: a.text, submitText: a.submitText, createdAt: Date.now() }],
         running: true,
         pendingPrompt: false,
         cancelRequested: false,
@@ -947,28 +947,30 @@ export function useController() {
     replayPendingPromptsForActiveTab(activeTabId);
   }, [activeTabId]);
 
+  const sendToTab = useCallback((tabId: string, displayText: string, submitText = displayText) => {
+    if (!tabId) return;
+    const seq = getOrCreateState(statesRef.current, tabId).seq;
+    const display = displayText.trim();
+    const submit = submitText.trim();
+    dispatchTo(tabId, { type: "user", text: displayText, submitText: display !== submit ? submit : undefined, seq });
+    invalidateCache();
+    (display !== submit ? app.SubmitDisplayToTab(tabId, display, submit) : app.SubmitToTab(tabId, submit)).catch((error) => {
+      dispatchTo(tabId, { type: "send_failed", error: `Send failed: ${error instanceof Error ? error.message : String(error)}` });
+    });
+  }, [dispatchTo]);
+
   const send = useCallback((displayText: string, submitText = displayText) => {
-    const submitForTab = (tabId: string) => {
-      const seq = getOrCreateState(statesRef.current, tabId).seq;
-      dispatchTo(tabId, { type: "user", text: displayText, seq });
-      const display = displayText.trim();
-      const submit = submitText.trim();
-      invalidateCache();
-      (display !== submit ? app.SubmitDisplayToTab(tabId, display, submit) : app.SubmitToTab(tabId, submit)).catch((error) => {
-        dispatchTo(tabId, { type: "send_failed", error: `Send failed: ${error instanceof Error ? error.message : String(error)}` });
-      });
-    };
     const tabId = activeTabIdRef.current ?? activeTabId;
     if (tabId) {
-      submitForTab(tabId);
+      sendToTab(tabId, displayText, submitText);
       return;
     }
     void activeTabFromBackend().then((active) => {
       if (!active?.id) return;
       setActiveTabId(active.id);
-      submitForTab(active.id);
+      sendToTab(active.id, displayText, submitText);
     });
-  }, [activeTabFromBackend, activeTabId, dispatchTo]);
+  }, [activeTabFromBackend, activeTabId, sendToTab]);
 
   const runShell = useCallback((command: string) => {
     if (!activeTabId) return;
@@ -1181,9 +1183,9 @@ export function useController() {
   const forget = useCallback(async (name: string) => { await app.Forget(name).catch(() => {}); }, []);
   const saveDoc = useCallback(async (path: string, body: string) => { await app.SaveDoc(path, body).catch(() => {}); }, []);
 
-  const rewind = useCallback(async (turn: number, scope: string) => {
+  const rewind = useCallback(async (turn: number, scope: string): Promise<boolean> => {
     const sourceTabId = activeTabId;
-    if (!sourceTabId) return;
+    if (!sourceTabId) return false;
     const actionScope = (["fork", "summ-from", "summ-upto", "conversation", "code", "both"].includes(scope) ? scope : "both") as MessageActionScope;
     dispatchTo(sourceTabId, { type: "message_action_start", action: { turn, scope: actionScope } });
     dispatchTo(sourceTabId, { type: "local_notice", level: "info", text: messageActionBusyText(actionScope) });
@@ -1200,7 +1202,7 @@ export function useController() {
         } else {
           await syncActiveTabFromBackend(true);
         }
-        return;
+        return true;
       }
 
       if (actionScope === "summ-from") await app.SummarizeFrom(turn);
@@ -1212,8 +1214,10 @@ export function useController() {
       if (messages.length) dispatchTo(sourceTabId, { type: "history", messages });
       dispatchTo(sourceTabId, { type: "context", context: await app.ContextUsageForTab(sourceTabId) });
       dispatchTo(sourceTabId, { type: "checkpoints", checkpoints: asArray(await app.CheckpointsForTab(sourceTabId)) });
+      return true;
     } catch {
       /* The controller emits a warning notice with the specific failure reason. */
+      return false;
     } finally {
       dispatchTo(sourceTabId, { type: "message_action_done" });
     }
@@ -1278,7 +1282,7 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, runShell, steer, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
+    send, sendToTab, runShell, steer, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort, setTokenMode,
     fetchMemory, remember, forget, saveDoc,

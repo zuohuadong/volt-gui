@@ -812,6 +812,7 @@ export default function App() {
     state,
     activeTabId,
     send,
+    sendToTab,
     runShell,
     steer,
     notice,
@@ -2064,19 +2065,18 @@ export default function App() {
     const rs = rewindStateRef.current;
     if (rs) {
       setRewindState(null);
-      try {
-        await rewind(rs.turn, rs.scope);
-        setRewindSignal((v) => v + 1);
-        if (rs.scope === "both") {
-          // Code was only reverted now (deferred), so refresh the dock here.
-          setDockRefreshKey((v) => v + 1);
-          setProjectRevision((v) => v + 1);
-        }
-      } catch {
+      const ok = await rewind(rs.turn, rs.scope);
+      if (!ok) {
         // Rewind failed: the Go conversation is intact, so the cleared
         // optimistic state already shows the full transcript. Don't send —
         // the controller emits a notice with the reason.
         return;
+      }
+      setRewindSignal((v) => v + 1);
+      if (rs.scope === "both") {
+        // Code was only reverted now (deferred), so refresh the dock here.
+        setDockRefreshKey((v) => v + 1);
+        setProjectRevision((v) => v + 1);
       }
     }
     send(displayText, submitText);
@@ -2086,7 +2086,8 @@ export default function App() {
     if (activeTab?.readOnly) return;
     if (scope === "fork") {
       // Fork still goes through the controller (not optimistic).
-      rewind(turn, scope).then(() => {
+      rewind(turn, scope).then((ok) => {
+        if (!ok) return;
         refreshTabMetas();
         setProjectRevision((v) => v + 1);
       });
@@ -2096,9 +2097,11 @@ export default function App() {
     // Code-only rewind only affects files — no message truncation,
     // no optimistic UI needed.  Execute immediately.
     if (scope === "code") {
-      rewind(turn, scope);
-      setDockRefreshKey((v) => v + 1);
-      setProjectRevision((v) => v + 1);
+      rewind(turn, scope).then((ok) => {
+        if (!ok) return;
+        setDockRefreshKey((v) => v + 1);
+        setProjectRevision((v) => v + 1);
+      });
       return;
     }
 
@@ -2118,21 +2121,35 @@ export default function App() {
 
     // Save full items for undo.
     const userItem = items[boundaryIdx]?.kind === "user" ? items[boundaryIdx] as Extract<Item, { kind: "user" }> : undefined;
+    const prompt = userItem?.text ?? "";
     setRewindState({
       turn,
       scope,
       fullItems: items,
       boundaryIdx,
       turnDiff,
-      prompt: userItem?.text ?? "",
+      prompt,
     });
 
     // Fill composer with the rewound-to user message.
     const insertId = Date.now();
-    setComposerInsertRequest({ id: insertId, text: userItem?.text ?? "" });
+    setComposerInsertRequest({ id: insertId, text: prompt, mode: "replace" });
 
     setRewindSignal((v) => v + 1);
   }, [activeTab?.readOnly, state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
+
+  const handleEditPrompt = useCallback(async (turn: number, displayText: string, submitText?: string): Promise<boolean> => {
+    const sourceTabId = activeTabId;
+    if (!sourceTabId || activeTab?.readOnly || rewindStateRef.current || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending) return false;
+    const next = displayText.trim();
+    if (!next) return false;
+    const submit = (submitText ?? displayText).trim();
+    const ok = await rewind(turn, "conversation");
+    if (!ok) return false;
+    setRewindSignal((v) => v + 1);
+    sendToTab(sourceTabId, next, submit);
+    return true;
+  }, [activeTab?.readOnly, activeTabId, clearContextPending, sendToTab, state.approval, state.ask, state.messageAction, state.running, rewind]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => {
     closeTransientOverlays();
@@ -2906,10 +2923,11 @@ export default function App() {
                 tabId={activeTabId}
                 footerHeight={footerHeight}
                 onPrompt={commitThenSend}
+                onEditPrompt={handleEditPrompt}
                 onRewind={handleMessageAction}
                 checkpoints={state.checkpoints}
                 actionPending={state.messageAction != null}
-                rewindDisabled={Boolean(activeTab?.readOnly) || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+                rewindDisabled={Boolean(activeTab?.readOnly) || rewindState != null || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
                 running={state.running}
                 rewindSignal={rewindSignal}
               />
@@ -2927,7 +2945,7 @@ export default function App() {
                   filesRemoved: [],
                   onUndo: () => {
                     setRewindState(null);
-                    setComposerInsertRequest({ id: Date.now(), text: "" });
+                    setComposerInsertRequest({ id: Date.now(), text: "", mode: "replace" });
                   },
                 }}
               />

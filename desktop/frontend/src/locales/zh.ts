@@ -1359,6 +1359,7 @@ export const zh: Record<DictKey, string> = {
   "msg.thinkingRunning": "思考中…",
   "msg.thinkingDone": "已完成",
   "msg.copy": "复制",
+  "msg.editSend": "发送",
   "msg.attachments": "附件",
   "msg.fromIm": "来自 {source}",
   "msg.imSender": "发送者 {id}",

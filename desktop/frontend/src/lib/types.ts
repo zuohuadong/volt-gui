@@ -237,6 +237,8 @@ export interface ChangedFileInfo {
 export interface HistoryMessage {
   role: string;
   content: string;
+  submitText?: string;
+  createdAt?: number;
   reasoning?: string;
   level?: "info" | "warn";
   toolCalls?: HistoryToolCall[];
@@ -475,6 +477,7 @@ export interface GitCommitDetailView {
 export interface ComposerInsertRequest {
   id: number;
   text: string;
+  mode?: "insert" | "replace";
 }
 
 // MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to

@@ -354,7 +354,7 @@ func (a *App) Settings() SettingsView {
 			Agent:              AgentView{PlannerMaxSteps: 12, ColdResumePrune: true, ReasoningLanguage: "auto"},
 			Bot:                botSettingsView(config.BotConfig{}),
 			AutoPlan:           "off",
-			DesktopLayoutStyle: "classic",
+			DesktopLayoutStyle: "workbench",
 			DesktopTheme:       "auto",
 			DesktopThemeStyle:  "graphite",
 			CloseBehavior:      "background",
@@ -363,7 +363,7 @@ func (a *App) Settings() SettingsView {
 			StatusBarItems:     config.DefaultDesktopStatusBarItems(),
 			CheckUpdates:       true,
 			Telemetry:          true,
-			Metrics:            false,
+			Metrics:            true,
 			ExpandThinking:     false,
 		}
 	}
@@ -1571,7 +1571,7 @@ func (a *App) SetDesktopTelemetry(enabled bool) error {
 	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopTelemetry(enabled) })
 }
 
-// SetDesktopMetrics sets whether the desktop sends opt-in aggregate desktop metrics,
+// SetDesktopMetrics sets whether the desktop sends aggregate desktop metrics,
 // starting or stopping the live aggregator so the toggle takes effect immediately.
 func (a *App) SetDesktopMetrics(enabled bool) error {
 	if err := a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopMetrics(enabled) }); err != nil {

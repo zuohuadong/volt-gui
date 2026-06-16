@@ -540,20 +540,25 @@ type GlobalCrashEventLike = Pick<Event, "defaultPrevented"> & {
 const RESIZE_OBSERVER_LOOP_MESSAGE_RE =
   /^ResizeObserver loop (?:limit exceeded|completed with undelivered notifications\.?)$/;
 
-function globalCrashEventMessage(e: GlobalCrashEventLike): string {
-  if (typeof e.message === "string") return e.message.trim();
+function globalCrashEventMessages(e: GlobalCrashEventLike): string[] {
+  const messages: string[] = [];
+  const pushMessage = (message: string) => {
+    const trimmed = message.trim();
+    if (trimmed) messages.push(trimmed);
+  };
+  if (typeof e.message === "string") pushMessage(e.message);
   const error = e.error;
-  if (typeof error === "string") return error.trim();
+  if (typeof error === "string") pushMessage(error);
   if (error && typeof error === "object" && "message" in error) {
     const msg = (error as { message?: unknown }).message;
-    if (typeof msg === "string") return msg.trim();
+    if (typeof msg === "string") pushMessage(msg);
   }
-  return "";
+  return messages;
 }
 
 export function shouldReportGlobalCrashEvent(e: GlobalCrashEventLike): boolean {
   if (e.defaultPrevented) return false;
-  if (RESIZE_OBSERVER_LOOP_MESSAGE_RE.test(globalCrashEventMessage(e))) return false;
+  if (globalCrashEventMessages(e).some((message) => RESIZE_OBSERVER_LOOP_MESSAGE_RE.test(message))) return false;
   return true;
 }
 

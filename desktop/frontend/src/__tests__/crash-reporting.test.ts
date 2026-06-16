@@ -62,6 +62,24 @@ eq(
   false,
   "ignores ResizeObserver notices delivered through ErrorEvent.error",
 );
+eq(
+  shouldReportGlobalCrashEvent({
+    defaultPrevented: false,
+    message: "",
+    error: new Error("ResizeObserver loop limit exceeded"),
+  }),
+  false,
+  "checks ErrorEvent.error when ErrorEvent.message is empty",
+);
+eq(
+  shouldReportGlobalCrashEvent({
+    defaultPrevented: false,
+    message: "Uncaught Error",
+    error: new Error("ResizeObserver loop limit exceeded"),
+  }),
+  false,
+  "checks ErrorEvent.error when ErrorEvent.message is a wrapper",
+);
 
 const perf: PerformanceSnapshot = {
   reason: "event loop lag 1300ms",

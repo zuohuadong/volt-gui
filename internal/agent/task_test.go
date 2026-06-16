@@ -322,7 +322,7 @@ func TestTaskToolBackgroundPanicPersistsFailedMetadata(t *testing.T) {
 	store := NewSubagentStore(t.TempDir())
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "read_file", readOnly: true})
-	task := NewTaskTool(sub, nil, reg, 20, 0, 0, 0, 0, 0.0, "", "sys", nil, "", "", nil).
+	task := NewTaskTool(sub, nil, reg, 20, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
 		WithTranscripts(store, t.TempDir(), "base-model", "base-effort")
 
 	jm := jobs.NewManager(event.Discard)

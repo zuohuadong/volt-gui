@@ -56,6 +56,32 @@ func TestLoadPermissionRequestHook(t *testing.T) {
 	}
 }
 
+func TestReasonixHomeOverridesGlobalHookPaths(t *testing.T) {
+	home := t.TempDir()
+	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("REASONIX_HOME", reasonixHome)
+	if err := os.MkdirAll(reasonixHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reasonixHome, SettingsFilename), []byte(`{"hooks":{"PostToolUse":[{"command":"echo rx"}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo old"}]}}`)
+
+	if got := GlobalSettingsPath(""); got != filepath.Join(reasonixHome, SettingsFilename) {
+		t.Fatalf("GlobalSettingsPath = %q, want Reasonix home", got)
+	}
+	if got := TrustPath(""); got != filepath.Join(reasonixHome, TrustFilename) {
+		t.Fatalf("TrustPath = %q, want Reasonix home", got)
+	}
+	hooks := Load(LoadOptions{})
+	if len(hooks) != 1 || hooks[0].Command != "echo rx" {
+		t.Fatalf("Load hooks = %+v, want Reasonix home hook only", hooks)
+	}
+}
+
 func TestProjectDefinesHooks(t *testing.T) {
 	proj := t.TempDir()
 	if ProjectDefinesHooks(proj) {

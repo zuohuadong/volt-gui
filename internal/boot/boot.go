@@ -834,45 +834,74 @@ func migrateLegacySessionSources(sink event.Sink) {
 	}
 	type legacySource struct {
 		dir     string
+		dest    string
 		label   string
 		migrate func(srcDir, globalDest string, projectDir func(string) string) (int, error)
 	}
 	var sources []legacySource
-	if home, herr := os.UserHomeDir(); herr == nil {
+	addFlatSource := func(dir, label string, migrate func(string, string, func(string) string) (int, error)) {
 		sources = append(sources, legacySource{
-			dir:     filepath.Join(home, ".reasonix", "sessions"),
-			label:   "~/.reasonix/sessions",
-			migrate: agent.MigrateLegacySessions,
+			dir:     dir,
+			dest:    dest,
+			label:   label,
+			migrate: migrate,
 		})
 	}
-	if legacyConfig := config.LegacyUserConfigPath(); legacyConfig != "" {
+	addProjectSources := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" || config.MemoryUserDir() == "" {
+			return
+		}
+		projectsDir := filepath.Join(root, "projects")
+		entries, err := os.ReadDir(projectsDir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			slug := entry.Name()
+			srcDir := filepath.Join(projectsDir, slug, "sessions")
+			dstDir := filepath.Join(config.MemoryUserDir(), "projects", slug, "sessions")
+			sources = append(sources, legacySource{
+				dir:     srcDir,
+				dest:    dstDir,
+				label:   srcDir,
+				migrate: agent.MigrateLegacySessionsFromConfigDir,
+			})
+		}
+	}
+	if home, herr := os.UserHomeDir(); herr == nil {
+		reasonixHome := filepath.Join(home, ".reasonix")
+		addFlatSource(filepath.Join(reasonixHome, "sessions"), "~/.reasonix/sessions", agent.MigrateLegacySessions)
+		addProjectSources(reasonixHome)
+	}
+	for _, legacyConfig := range config.LegacyUserConfigPaths() {
 		legacyDir := filepath.Join(filepath.Dir(legacyConfig), "sessions")
-		sources = append(sources, legacySource{
-			dir:     legacyDir,
-			label:   legacyDir,
-			migrate: agent.MigrateLegacySessionsFromConfigDir,
-		})
+		addFlatSource(legacyDir, legacyDir, agent.MigrateLegacySessionsFromConfigDir)
+		addProjectSources(filepath.Dir(legacyConfig))
 	}
 	// Back-fill v0.x sessions from the current user config session directory as
 	// well. This covers users whose platform config root was redirected before the
 	// Go rewrite; their event logs can already live where v2 stores sessions.
-	sources = append(sources, legacySource{
-		dir:     dest,
-		label:   dest,
-		migrate: agent.MigrateLegacySessionsFromConfigDir,
-	})
+	addFlatSource(dest, dest, agent.MigrateLegacySessionsFromConfigDir)
 
 	seen := map[string]bool{}
 	for _, src := range sources {
 		if strings.TrimSpace(src.dir) == "" {
 			continue
 		}
-		key := filepath.Clean(src.dir)
+		sourceDest := strings.TrimSpace(src.dest)
+		if sourceDest == "" {
+			sourceDest = dest
+		}
+		key := filepath.Clean(src.dir) + "=>" + filepath.Clean(sourceDest)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		if n, serr := src.migrate(src.dir, dest, config.ProjectSessionDir); serr == nil && n > 0 {
+		if n, serr := src.migrate(src.dir, sourceDest, config.ProjectSessionDir); serr == nil && n > 0 {
 			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("imported %d past session(s) from %s — resume them with --resume or the history panel", n, src.label)})
 		}
 	}

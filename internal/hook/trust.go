@@ -21,9 +21,10 @@ type trustFile struct {
 	Projects map[string]bool `json:"projects"`
 }
 
-// TrustPath is ~/.reasonix/trust.json (homeDir overrides ~).
+// TrustPath is <Reasonix home>/trust.json (homeDir overrides ~ for tests and
+// legacy callers).
 func TrustPath(homeDir string) string {
-	return filepath.Join(home(homeDir), SettingsDirname, TrustFilename)
+	return filepath.Join(reasonixHome(homeDir), TrustFilename)
 }
 
 // IsTrusted reports whether projectRoot has been trusted to run its hooks.

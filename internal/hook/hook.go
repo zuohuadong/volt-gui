@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"reasonix/internal/config"
 	"reasonix/internal/proc"
 )
 
@@ -129,9 +130,10 @@ const (
 	SettingsFilename = "settings.json"
 )
 
-// GlobalSettingsPath is ~/.reasonix/settings.json (homeDir overrides ~).
+// GlobalSettingsPath is <Reasonix home>/settings.json (homeDir overrides ~ for
+// tests and legacy callers).
 func GlobalSettingsPath(homeDir string) string {
-	return filepath.Join(home(homeDir), SettingsDirname, SettingsFilename)
+	return filepath.Join(reasonixHome(homeDir), SettingsFilename)
 }
 
 // ProjectSettingsPath is <root>/.reasonix/settings.json.
@@ -447,12 +449,15 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 
 func (c *cappedBuffer) String() string { return c.buf.String() }
 
-func home(override string) string {
+func reasonixHome(override string) string {
 	if override != "" {
-		return override
+		return filepath.Join(override, SettingsDirname)
+	}
+	if dir := config.ReasonixHomeDir(); dir != "" {
+		return dir
 	}
 	if h, err := os.UserHomeDir(); err == nil {
-		return h
+		return filepath.Join(h, SettingsDirname)
 	}
 	return ""
 }

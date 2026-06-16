@@ -2496,6 +2496,34 @@ func UserConfigPath() string { return userConfigPath() }
 // primary user config does not exist.
 func LegacyUserConfigPath() string { return legacyUserConfigPath() }
 
+// LegacyUserConfigPaths returns every known legacy user config path that differs
+// from the current v1.8.1 Reasonix-home config path.
+func LegacyUserConfigPaths() []string {
+	primary := userConfigPath()
+	var out []string
+	add := func(path string) {
+		if path == "" || samePath(path, primary) {
+			return
+		}
+		for _, existing := range out {
+			if samePath(existing, path) {
+				return
+			}
+		}
+		out = append(out, path)
+	}
+	add(legacyUserConfigPath())
+	for _, path := range legacyXDGConfigPaths() {
+		add(path)
+	}
+	return out
+}
+
+// ReasonixHomeDir is the current Reasonix home directory. It honors
+// REASONIX_HOME, then uses ~/.reasonix on macOS/Linux or %APPDATA%/reasonix on
+// Windows.
+func ReasonixHomeDir() string { return reasonixHomeDir() }
+
 // UserCredentialsPath is the reasonix-owned global secrets file under Reasonix
 // home. It holds KEY=value lines loaded into the environment by loadDotEnv. The
 // setup wizard writes API keys here, deliberately NOT named .env: keys never

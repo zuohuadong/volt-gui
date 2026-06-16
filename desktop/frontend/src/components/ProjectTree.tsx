@@ -4,7 +4,7 @@
 // new topic.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { Archive, ArrowDown, ChevronRight, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, SquarePen, Minimize2, Maximize2 } from "lucide-react";
+import { Archive, ArrowDown, ChevronRight, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, History, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2 } from "lucide-react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import type { ProjectNode, ProjectTopicStatus } from "../lib/types";
@@ -1046,8 +1046,8 @@ export function ProjectTree({
                 </span>
               )}
             </span>
-            {compactTopics && (timeLabel || showStatusInSide) && (
-              <span className="project-tree__topic-side" aria-hidden="true">
+            {compactTopics && (
+              <span className={`project-tree__topic-side${!timeLabel && !showStatusInSide ? " project-tree__topic-side--empty" : ""}`} aria-hidden="true">
                 {showStatusInSide && <span className={`project-tree__topic-state project-tree__topic-state--${status}`} title={statusLabel} />}
                 {timeLabel && <span className="project-tree__topic-time">{timeLabel}</span>}
               </span>
@@ -1421,7 +1421,7 @@ export function ProjectTree({
                 void handleCreateTopic(scope, projectRoot, key);
               }}
             >
-              {compactTopics ? <SquarePen size={15} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}
+              {compactTopics ? <Plus size={15} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}
             </button>
           </Tooltip>
           <ContextMenu
@@ -1799,24 +1799,26 @@ export function ProjectTree({
         />
       </label>
       {compactTopics ? (
-        <div className="project-tree__list project-tree__list--workbench">
-          {!hasWorkbenchRows ? (
-            renderEmptyState()
-          ) : (
-            <>
-              {workbenchTreeSections.pinned.length > 0 && (
-                <div className="project-tree__section project-tree__section--pinned">
-                  <div className="project-tree__section-title">{t("projectTree.pinnedTitle")}</div>
-                  {workbenchTreeSections.pinned.map((node) => renderNode(node, 0, "pinned"))}
+        <>
+          {renderProjectHeader("workbench")}
+          <div className="project-tree__list project-tree__list--workbench">
+            {!hasWorkbenchRows ? (
+              renderEmptyState()
+            ) : (
+              <>
+                {workbenchTreeSections.pinned.length > 0 && (
+                  <div className="project-tree__section project-tree__section--pinned">
+                    <div className="project-tree__section-title">{t("projectTree.pinnedTitle")}</div>
+                    {workbenchTreeSections.pinned.map((node) => renderNode(node, 0, "pinned"))}
+                  </div>
+                )}
+                <div className="project-tree__section project-tree__section--projects">
+                  {workbenchTreeSections.projects.map((node) => renderNode(node, 0, "projects"))}
                 </div>
-              )}
-              <div className="project-tree__section project-tree__section--projects">
-                {renderProjectHeader("workbench")}
-                {workbenchTreeSections.projects.map((node) => renderNode(node, 0, "projects"))}
-              </div>
-            </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
+        </>
       ) : (
         <>
           {renderProjectHeader("classic")}

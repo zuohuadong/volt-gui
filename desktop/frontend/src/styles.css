@@ -17213,6 +17213,38 @@ a[href] {
   font-size: 11px;
   color: color-mix(in srgb, var(--fg-faint) 72%, transparent);
 }
+:root[data-theme-style] .sidebar--workbench .project-tree__topic-side--empty {
+  visibility: hidden;
+}
+/* Ensure consistent topic height regardless of time/status presence */
+:root[data-theme-style] .sidebar--workbench .project-tree__topic {
+  min-height: 34px;
+  height: 34px;
+  box-sizing: border-box;
+}
+:root[data-theme-style] .sidebar--workbench .project-tree__topic-main {
+  min-height: 34px;
+  height: 34px;
+  box-sizing: border-box;
+}
+
+/* Sidebar: keep search & header fixed, only list scrolls */
+:root[data-theme-style] .sidebar--workbench .project-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+:root[data-theme-style] .sidebar--workbench .project-tree__search,
+:root[data-theme-style] .sidebar--workbench .project-tree__header {
+  flex: 0 0 auto;
+}
+:root[data-theme-style] .sidebar--workbench .project-tree__list,
+:root[data-theme-style] .sidebar--workbench .project-tree__list--workbench {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 
 /* Folder: no active background, but very weak hover hint */
 :root[data-theme-style] .sidebar--workbench .project-tree__folder:hover {
@@ -17247,6 +17279,17 @@ a[href] {
   border-color: transparent;
   box-shadow: none;
   transform: none;
+}
+
+/* Folder action icons: hidden by default, show on folder hover */
+:root[data-theme-style] .sidebar--workbench .project-tree__folder-action-slot {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast);
+}
+:root[data-theme-style] .sidebar--workbench .project-tree__folder:hover .project-tree__folder-action-slot {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Remove right-side slide animations on topic hover */

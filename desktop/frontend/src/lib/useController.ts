@@ -41,7 +41,7 @@ export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversat
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 
 export type Item =
-  | { kind: "user"; id: string; text: string; failed?: boolean }
+  | { kind: "user"; id: string; text: string; failed?: boolean; createdAt?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string }
@@ -246,6 +246,7 @@ type Action =
 // ---- reducer helpers (unchanged logic) ----
 
 export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: string, startSeq = 0): { items: Item[]; seq: number } {
+  const loadedAt = Date.now();
   const resultByID = new Map<string, HistoryMessage>();
   for (const m of messages) {
     if (m.role === "tool" && m.toolCallId && !resultByID.has(m.toolCallId)) {
@@ -290,7 +291,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
     if (m.role === "user") {
       if (m.content.trim() === "") continue;
-      items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content });
+      items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content, createdAt: m.createdAt ?? loadedAt });
       seq++;
       continue;
     }
@@ -416,7 +417,7 @@ function flushPendingUser(s: State): State {
   return {
     ...s,
     seq: s.seq + 1,
-    items: [...s.items, { kind: "user", id: `u${s.seq}`, text: s.pendingUser }],
+    items: [...s.items, { kind: "user", id: `u${s.seq}`, text: s.pendingUser, createdAt: Date.now() }],
     pendingUser: undefined,
   };
 }
@@ -589,7 +590,7 @@ export function reducer(s: State, a: Action): State {
       return {
         ...s,
         seq: seq + 1,
-        items: [...s.items, { kind: "user", id: `u${seq}`, text: a.text }],
+        items: [...s.items, { kind: "user", id: `u${seq}`, text: a.text, createdAt: Date.now() }],
         running: true,
         pendingPrompt: false,
         cancelRequested: false,

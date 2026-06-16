@@ -816,6 +816,7 @@ export const zhTW: Record<DictKey, string> = {
   "msg.thinkingRunning": "思考中…",
   "msg.thinkingDone": "已完成",
   "msg.copy": "複製",
+  "msg.editSend": "傳送",
   "msg.attachments": "附件",
   "msg.fileAttachment": "檔案",
   "msg.imageAttachment": "圖片",

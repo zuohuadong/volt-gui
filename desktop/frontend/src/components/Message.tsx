@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, RotateCcw, ScrollText } from "lucide-react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ProcessBrainIcon } from "./ProcessCard";
@@ -62,29 +63,102 @@ function attachmentIcon(kind: "image" | "file" | "folder") {
   return <FileText size={15} />;
 }
 
+function messageDate(value?: number): Date {
+  return new Date(typeof value === "number" && Number.isFinite(value) && value > 0 ? value : Date.now());
+}
+
+function formatMessageTime(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
 export function UserMessage({
   text,
   failed,
   turn,
   anchorId,
   id,
+  createdAt,
+  onEdit,
+  editDisabled = false,
 }: {
   text: string;
   failed?: boolean;
   turn?: number;
   anchorId?: string;
   id?: string;
+  createdAt?: number;
+  onEdit?: (turn: number, text: string) => boolean | void | Promise<boolean | void>;
+  editDisabled?: boolean;
 }) {
   const t = useT();
   const imSource = parseImSourceMessage(text);
-  const { text: displayText, attachments } = parseAttachmentRefsForDisplay(imSource?.text ?? text);
+  const actionText = imSource?.text ?? text;
+  const { text: displayText, attachments } = parseAttachmentRefsForDisplay(actionText);
   const orderedAttachments = sortDisplayAttachments(attachments);
   const sourceLabel = imSource ? imSourceLabel(imSource, t) : "";
+  const sentAt = messageDate(createdAt);
+  const canEdit = turn !== undefined && onEdit !== undefined && !editDisabled;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(actionText);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const editRef = useRef<HTMLTextAreaElement>(null);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const imagePreviewKey = orderedAttachments
     .filter((attachment) => attachment.kind === "image" && attachment.source === "attachment")
     .map((attachment) => attachment.path)
     .join("\n");
+
+  useEffect(() => {
+    if (!editing) setDraft(actionText);
+  }, [actionText, editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    requestAnimationFrame(() => {
+      const node = editRef.current;
+      if (!node) return;
+      node.focus();
+      node.selectionStart = node.selectionEnd = node.value.length;
+    });
+  }, [editing]);
+
+  const startEdit = () => {
+    if (!canEdit) return;
+    setDraft(actionText);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setDraft(actionText);
+    setEditing(false);
+  };
+
+  const submitEdit = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (!canEdit || editSubmitting) return;
+    const next = draft.trim();
+    if (!next) return;
+    setEditSubmitting(true);
+    try {
+      const ok = await onEdit?.(turn as number, next);
+      if (ok !== false) setEditing(false);
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const onEditKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelEdit();
+      return;
+    }
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      void submitEdit();
+    }
+  };
 
   useEffect(() => {
     const paths = imagePreviewKey ? imagePreviewKey.split("\n") : [];
@@ -113,8 +187,29 @@ export function UserMessage({
       data-history-restore={id && id.startsWith("h") ? "" : undefined}
       data-entrance={id || undefined}
     >
-      <div className="msg__body">
-        {imSource ? (
+      <div className={`msg__body${editing ? " msg__body--editing" : ""}`}>
+        {editing ? (
+          <form className="msg-edit" onSubmit={(event) => void submitEdit(event)}>
+            <textarea
+              ref={editRef}
+              className="msg-edit__input"
+              value={draft}
+              rows={Math.max(2, Math.min(8, draft.split(/\r?\n/).length))}
+              aria-label={t("common.edit")}
+              disabled={editSubmitting}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onEditKeyDown}
+            />
+            <div className="msg-edit__actions">
+              <button className="msg-edit__btn" type="button" disabled={editSubmitting} onClick={cancelEdit}>
+                {t("common.cancel")}
+              </button>
+              <button className="msg-edit__btn msg-edit__btn--primary" type="submit" disabled={editSubmitting || draft.trim() === ""}>
+                {t("msg.editSend")}
+              </button>
+            </div>
+          </form>
+        ) : imSource ? (
           <div className="im-source-card">
             <div className="im-source-card__head">
               <MessageSquare size={14} />
@@ -152,6 +247,26 @@ export function UserMessage({
           </div>
         )}
       </div>
+      {!editing && (
+        <div className="msg-meta" role="group" aria-label={t("rewind.label")}>
+          <time className="msg-meta__time" dateTime={sentAt.toISOString()} title={sentAt.toLocaleString()}>
+            {formatMessageTime(sentAt)}
+          </time>
+          <CopyButton text={actionText} label={t("msg.copy")} showInlineLabel={false} className="msg-meta__btn msg-meta__copy" />
+          {onEdit && (
+            <button
+              className="msg-meta__btn"
+              type="button"
+              aria-label={t("common.edit")}
+              title={t("common.edit")}
+              disabled={!canEdit}
+              onClick={startEdit}
+            >
+              <Pencil size={14} />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

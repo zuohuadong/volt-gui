@@ -1558,6 +1558,26 @@ func TestSlashQuitExit(t *testing.T) {
 	}
 }
 
+func TestSlashMigrateShowsProgress(t *testing.T) {
+	isolateCLIConfigHome(t)
+	m := newTestChatTUI()
+
+	if cmd := m.runSlashCommand("/migrate"); cmd != nil {
+		t.Fatal("/migrate should run locally without returning a command")
+	}
+	out := strings.Join(m.transcript, "\n")
+	for _, want := range []string{
+		"/migrate",
+		"migration rescue: checking legacy config and credentials",
+		"migration rescue: scanning legacy sessions",
+		"migration rescue complete:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in transcript:\n%s", want, out)
+		}
+	}
+}
+
 // TestDoubleCtrlCQuit verifies that Ctrl+C while idle requires a double-press
 // within the 1.5s window to actually quit. A single press shows a hint; a
 // second press within the window returns tea.Quit.

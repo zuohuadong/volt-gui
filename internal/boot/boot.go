@@ -31,6 +31,7 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
 	"reasonix/internal/memory"
+	"reasonix/internal/migration"
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
@@ -154,7 +155,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	} else if migrated != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: migrated.Notice()})
 	}
-	migrateLegacySessionSources(sink)
+	migration.MigrateLegacySessionSources(sink)
 
 	// A resolvable model whose API key env is unset would otherwise build fine
 	// (RequireKey is false so the UI stays reachable) and then fail silently on the
@@ -825,86 +826,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrlOpts.Classifier = classifier
 	}
 	return control.New(ctrlOpts), nil
-}
-
-func migrateLegacySessionSources(sink event.Sink) {
-	dest := config.SessionDir()
-	if strings.TrimSpace(dest) == "" {
-		return
-	}
-	type legacySource struct {
-		dir     string
-		dest    string
-		label   string
-		migrate func(srcDir, globalDest string, projectDir func(string) string) (int, error)
-	}
-	var sources []legacySource
-	addFlatSource := func(dir, label string, migrate func(string, string, func(string) string) (int, error)) {
-		sources = append(sources, legacySource{
-			dir:     dir,
-			dest:    dest,
-			label:   label,
-			migrate: migrate,
-		})
-	}
-	addProjectSources := func(root string) {
-		root = strings.TrimSpace(root)
-		if root == "" || config.MemoryUserDir() == "" {
-			return
-		}
-		projectsDir := filepath.Join(root, "projects")
-		entries, err := os.ReadDir(projectsDir)
-		if err != nil {
-			return
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			slug := entry.Name()
-			srcDir := filepath.Join(projectsDir, slug, "sessions")
-			dstDir := filepath.Join(config.MemoryUserDir(), "projects", slug, "sessions")
-			sources = append(sources, legacySource{
-				dir:     srcDir,
-				dest:    dstDir,
-				label:   srcDir,
-				migrate: agent.MigrateLegacySessionsFromConfigDir,
-			})
-		}
-	}
-	if home, herr := os.UserHomeDir(); herr == nil {
-		reasonixHome := filepath.Join(home, ".reasonix")
-		addFlatSource(filepath.Join(reasonixHome, "sessions"), "~/.reasonix/sessions", agent.MigrateLegacySessions)
-		addProjectSources(reasonixHome)
-	}
-	for _, legacyConfig := range config.LegacyUserConfigPaths() {
-		legacyDir := filepath.Join(filepath.Dir(legacyConfig), "sessions")
-		addFlatSource(legacyDir, legacyDir, agent.MigrateLegacySessionsFromConfigDir)
-		addProjectSources(filepath.Dir(legacyConfig))
-	}
-	// Back-fill v0.x sessions from the current user config session directory as
-	// well. This covers users whose platform config root was redirected before the
-	// Go rewrite; their event logs can already live where v2 stores sessions.
-	addFlatSource(dest, dest, agent.MigrateLegacySessionsFromConfigDir)
-
-	seen := map[string]bool{}
-	for _, src := range sources {
-		if strings.TrimSpace(src.dir) == "" {
-			continue
-		}
-		sourceDest := strings.TrimSpace(src.dest)
-		if sourceDest == "" {
-			sourceDest = dest
-		}
-		key := filepath.Clean(src.dir) + "=>" + filepath.Clean(sourceDest)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if n, serr := src.migrate(src.dir, sourceDest, config.ProjectSessionDir); serr == nil && n > 0 {
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("imported %d past session(s) from %s — resume them with --resume or the history panel", n, src.label)})
-		}
-	}
 }
 
 func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {

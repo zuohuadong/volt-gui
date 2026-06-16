@@ -2058,13 +2058,13 @@ func (c *Controller) snapshot(markActivity bool) error {
 			return err
 		}
 	}
+	if err := s.Save(path); err != nil {
+		return err
+	}
 	if strings.TrimSpace(modelRef) != "" {
 		if err := agent.SetBranchModelPreserveUpdated(path, modelRef); err != nil {
 			return err
 		}
-	}
-	if err := s.Save(path); err != nil {
-		return err
 	}
 	if markActivity {
 		return agent.TouchBranchMeta(path)

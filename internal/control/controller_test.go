@@ -219,6 +219,32 @@ func TestSnapshotActivityRefreshesSessionActivity(t *testing.T) {
 	}
 }
 
+func TestSnapshotActivitySavesTranscriptBeforeModelMeta(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "must persist"})
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test", ModelRef: "provider/model-a"})
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent.BranchMetaPath(path), []byte("{bad json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.SnapshotActivity(); err == nil {
+		t.Fatal("SnapshotActivity should report malformed branch metadata")
+	}
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("transcript was not saved before metadata error: %v", err)
+	}
+	if len(loaded.Messages) == 0 || loaded.Messages[len(loaded.Messages)-1].Content != "must persist" {
+		t.Fatalf("saved transcript = %+v, want persisted user message", loaded.Messages)
+	}
+}
+
 func TestNewSessionStartsFreshContextAndSavesTranscript(t *testing.T) {
 	dir := t.TempDir()
 	sess := agent.NewSession("sys")

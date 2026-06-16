@@ -1482,7 +1482,9 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 
 	model := strings.TrimSpace(tab.model)
 	if sessionModel, ok := agent.LoadSessionModel(startupSessionPath); ok {
-		model = sessionModel
+		if _, ok := cfg.ResolveModel(sessionModel); ok {
+			model = sessionModel
+		}
 	}
 	if model == "" {
 		model = cfg.DefaultModel

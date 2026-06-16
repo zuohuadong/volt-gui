@@ -69,6 +69,24 @@ export function projectTreeTopicOpenRequest(node: ProjectNode): ProjectTreeTopic
   };
 }
 
+export type ProjectTreeFolderDisclosure = {
+  canExpand: boolean;
+  isOpen: boolean;
+  ariaExpanded?: boolean;
+  iconStackClassName: string;
+};
+
+export function projectTreeFolderDisclosure(hasChildren: boolean, isExpanded: boolean): ProjectTreeFolderDisclosure {
+  const canExpand = hasChildren;
+  const isOpen = canExpand && isExpanded;
+  return {
+    canExpand,
+    isOpen,
+    ariaExpanded: canExpand ? isExpanded : undefined,
+    iconStackClassName: `project-tree__icon-stack${canExpand ? " project-tree__icon-stack--expandable" : ""}`,
+  };
+}
+
 function topicIsActive(node: ProjectNode, activeScope?: string, activeWorkspaceRoot?: string, activeTopicId?: string, activeSessionPath?: string): boolean {
   if (!isTopicNode(node) && !isRuntimeSessionNode(node)) return false;
   if (node.sessionPath) return Boolean(activeSessionPath && activeSessionPath === node.sessionPath);
@@ -921,6 +939,7 @@ export function ProjectTree({
     const children = asArray(node.children);
     const isExpanded = query.trim() ? true : expanded.has(key);
     const hasChildren = children.length > 0;
+    const folderDisclosure = projectTreeFolderDisclosure(hasChildren, isExpanded);
 
     if (isTopicNode(node) || isRuntimeSessionNode(node)) {
       const isSessionNode = isRuntimeSessionNode(node);
@@ -1374,20 +1393,22 @@ export function ProjectTree({
             className="project-tree__folder-main"
             style={{ paddingLeft: 8 + depth * 16 }}
             onClick={() => {
-              toggleExpand(key);
+              if (folderDisclosure.canExpand) toggleExpand(key);
             }}
             onKeyDown={(event) => {
               if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
                 openProjectMenu(event);
               }
             }}
-            aria-expanded={isExpanded || undefined}
+            aria-expanded={folderDisclosure.ariaExpanded}
           >
-            <span className="project-tree__icon-stack">
-              <span className={`project-tree__chevron project-tree__chevron--on-hover${isExpanded ? " project-tree__chevron--open" : ""}`}>
-                <ChevronRight size={16} strokeWidth={2} />
-              </span>
-              {isExpanded ? <FolderOpen size={14} className="project-tree__folder-icon" /> : <Folder size={14} className="project-tree__folder-icon" />}
+            <span className={folderDisclosure.iconStackClassName}>
+              {folderDisclosure.canExpand && (
+                <span className={`project-tree__chevron project-tree__chevron--on-hover${folderDisclosure.isOpen ? " project-tree__chevron--open" : ""}`}>
+                  <ChevronRight size={16} strokeWidth={2} />
+                </span>
+              )}
+              {folderDisclosure.isOpen ? <FolderOpen size={14} className="project-tree__folder-icon" /> : <Folder size={14} className="project-tree__folder-icon" />}
             </span>
             <span className="project-tree__folder-color" aria-hidden="true" />
             <span className={`project-tree__folder-label${!hasChildren ? " project-tree__folder-label--empty" : ""}`}>{projectLabel}</span>

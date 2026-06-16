@@ -17171,12 +17171,12 @@ a[href] {
   display: none;
 }
 /* Hover: show chevron, hide folder icon */
-:root[data-theme-style] .project-tree__folder-main:hover .project-tree__chevron--on-hover,
-.project-tree__folder-main:hover .project-tree__chevron--on-hover {
+:root[data-theme-style] .project-tree__folder-main:hover .project-tree__icon-stack--expandable .project-tree__chevron--on-hover,
+.project-tree__folder-main:hover .project-tree__icon-stack--expandable .project-tree__chevron--on-hover {
   display: inline-flex;
 }
-:root[data-theme-style] .project-tree__folder-main:hover .project-tree__icon-stack > .project-tree__folder-icon,
-.project-tree__folder-main:hover .project-tree__icon-stack > .project-tree__folder-icon {
+:root[data-theme-style] .project-tree__folder-main:hover .project-tree__icon-stack--expandable > .project-tree__folder-icon,
+.project-tree__folder-main:hover .project-tree__icon-stack--expandable > .project-tree__folder-icon {
   display: none;
 }
 /* Topic hover/active effect: full row width (remove left margin) */

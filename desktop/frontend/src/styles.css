@@ -11347,12 +11347,15 @@ a[href] {
   }
 }
 
-/* ── responsive: stacked nav on narrow screens ──────────────────────────────── */
-@media (max-width: 760px) {
+/* ── responsive: stacked nav on narrow and mid screens ─────────────────────── */
+@media (max-width: 900px) {
+  .settings-modal-backdrop {
+    padding: 16px;
+  }
+
   .settings-modal {
-    width: min(100vw, 100vw);
-    height: min(100vh, 100vh);
-    border-radius: 0;
+    width: 100%;
+    height: min(900px, calc(100vh - 32px));
   }
 
   .settings-center {
@@ -11389,7 +11392,7 @@ a[href] {
   }
 
   .settings-center__content {
-    padding: 14px 14px;
+    padding: 18px 20px;
   }
 
   .settings-page--form,
@@ -11410,6 +11413,7 @@ a[href] {
   .settings-field {
     grid-template-columns: 1fr;
     gap: 8px;
+    align-items: stretch;
   }
 
   .settings-field__control,
@@ -11419,6 +11423,18 @@ a[href] {
 
   .settings-inline-controls {
     flex-wrap: wrap;
+  }
+
+  .settings-inline-controls .set-seg {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .settings-inline-controls .set-seg__btn {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .step-limit-control {
@@ -11456,6 +11472,27 @@ a[href] {
   .set-key {
     grid-template-columns: 1fr;
     display: grid;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-modal-backdrop {
+    padding: 0;
+  }
+
+  .settings-modal {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .settings-center__content {
+    padding: 14px 14px;
+  }
+
+  .settings-section,
+  .settings-page--manager .mem-section {
+    padding: 14px;
   }
 }
 

@@ -194,7 +194,7 @@ export function shouldReconcileStaleTurn(
   return Math.max(0, now - lastTurnActivityAt) >= timeoutMs;
 }
 
-/** Mirrors Go backend's ReadOnly() + codegraph ReadOnlyToolNames(). */
+/** Mirrors Go backend's ReadOnly() hints. */
 export function isReadOnlyTool(name: string): boolean {
   switch (name) {
     case "read_file":
@@ -206,16 +206,6 @@ export function isReadOnlyTool(name: string): boolean {
     case "waitJob":
     case "todo_write":
     case "read_skill":
-    case "codegraph_callees":
-    case "codegraph_callers":
-    case "codegraph_context":
-    case "codegraph_explore":
-    case "codegraph_files":
-    case "codegraph_impact":
-    case "codegraph_node":
-    case "codegraph_search":
-    case "codegraph_status":
-    case "codegraph_trace":
       return true;
     default:
       return false;

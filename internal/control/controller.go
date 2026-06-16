@@ -31,9 +31,7 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
-	"reasonix/internal/builtinmcp"
 	"reasonix/internal/checkpoint"
-	"reasonix/internal/codegraph"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/diff"
@@ -2369,7 +2367,7 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
-	return c.connectMCPSpec(plugin.Spec{
+	return c.connectMCPSpec(plugin.ApplyKnownReadOnlyOverrides(plugin.Spec{
 		Name:    exp.Name,
 		Type:    exp.Type,
 		Command: exp.Command,
@@ -2377,7 +2375,7 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		Env:     exp.Env,
 		URL:     exp.URL,
 		Headers: exp.Headers,
-	})
+	}))
 }
 
 func (c *Controller) connectMCPSpec(s plugin.Spec) (int, error) {
@@ -2488,60 +2486,7 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 			return c.connectMCPServer(p)
 		}
 	}
-	if name == "codegraph" {
-		return c.connectCodegraphMCPServer(cfg)
-	}
-	if p, ok := builtinmcp.Entry(name); ok {
-		return c.connectMCPServer(p)
-	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
-}
-
-// ConnectCodegraphMCPServer connects the built-in CodeGraph server using an
-// already-resolved config. Desktop uses this after saving user-level settings so
-// a stale project config cannot override the just-applied choice.
-func (c *Controller) ConnectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return 0, err
-	}
-	return c.ConnectCodegraphMCPServerForRoot(cfg, cwd)
-}
-
-// ConnectCodegraphMCPServerForRoot connects CodeGraph pinned to root. Desktop
-// project tabs use this after hot updates so a reconnect keeps the same project
-// scope as boot-time CodeGraph startup.
-func (c *Controller) ConnectCodegraphMCPServerForRoot(cfg *config.Config, root string) (int, error) {
-	return c.connectCodegraphMCPServerForRoot(cfg, root)
-}
-
-func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	return c.ConnectCodegraphMCPServer(cfg)
-}
-
-func (c *Controller) connectCodegraphMCPServerForRoot(cfg *config.Config, root string) (int, error) {
-	if !cfg.Codegraph.Enabled {
-		return 0, fmt.Errorf("codegraph is disabled in config")
-	}
-	bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
-	if !ok {
-		return 0, fmt.Errorf("codegraph is not installed")
-	}
-	root = strings.TrimSpace(root)
-	if root == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return 0, err
-		}
-		root = cwd
-	}
-	if !codegraph.IndexableRoot(root) {
-		return 0, fmt.Errorf("codegraph: refusing to index %q — a filesystem root would index the whole volume", root)
-	}
-	if err := codegraph.EnsureInit(c.pluginCtx, bin, root); err != nil {
-		return 0, fmt.Errorf("codegraph init: %w", err)
-	}
-	return c.connectMCPSpec(codegraph.MCPSpec(bin, root))
 }
 
 // RemoveMCPServer disconnects a live MCP server — its tools vanish from the next

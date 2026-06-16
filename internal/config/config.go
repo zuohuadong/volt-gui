@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -40,26 +39,23 @@ func SkillNameKey(name string) string {
 
 // Config is Reasonix's runtime configuration.
 type Config struct {
-	ConfigVersion     int                     `toml:"config_version"`
-	DefaultModel      string                  `toml:"default_model"`
-	Language          string                  `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
-	UI                UIConfig                `toml:"ui"`
-	Desktop           DesktopConfig           `toml:"desktop"`
-	Notifications     NotificationsConfig     `toml:"notifications"`
-	Agent             AgentConfig             `toml:"agent"`
-	Providers         []ProviderEntry         `toml:"providers"`
-	Tools             ToolsConfig             `toml:"tools"`
-	Permissions       PermissionsConfig       `toml:"permissions"`
-	Sandbox           SandboxConfig           `toml:"sandbox"`
-	Network           NetworkConfig           `toml:"network"`
-	Plugins           []PluginEntry           `toml:"plugins"`
-	Skills            SkillsConfig            `toml:"skills"`
-	Codegraph         CodegraphConfig         `toml:"codegraph"`
-	BuiltInMCP        BuiltInMCPConfig        `toml:"builtin_mcp"`
-	BuiltInMCPUpdates BuiltInMCPUpdatesConfig `toml:"builtin_mcp_updates"`
-	Statusline        StatuslineConfig        `toml:"statusline"`
-	LSP               LSPConfig               `toml:"lsp"`
-	Bot               BotConfig               `toml:"bot"`
+	ConfigVersion int                 `toml:"config_version"`
+	DefaultModel  string              `toml:"default_model"`
+	Language      string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	UI            UIConfig            `toml:"ui"`
+	Desktop       DesktopConfig       `toml:"desktop"`
+	Notifications NotificationsConfig `toml:"notifications"`
+	Agent         AgentConfig         `toml:"agent"`
+	Providers     []ProviderEntry     `toml:"providers"`
+	Tools         ToolsConfig         `toml:"tools"`
+	Permissions   PermissionsConfig   `toml:"permissions"`
+	Sandbox       SandboxConfig       `toml:"sandbox"`
+	Network       NetworkConfig       `toml:"network"`
+	Plugins       []PluginEntry       `toml:"plugins"`
+	Skills        SkillsConfig        `toml:"skills"`
+	Statusline    StatuslineConfig    `toml:"statusline"`
+	LSP           LSPConfig           `toml:"lsp"`
+	Bot           BotConfig           `toml:"bot"`
 
 	providerSources map[string]providerSourceScope
 }
@@ -399,121 +395,6 @@ type LSPServer struct {
 // status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
 type StatuslineConfig struct {
 	Command string `toml:"command"`
-}
-
-// CodegraphConfig governs the built-in CodeGraph MCP server — symbol/call-graph
-// code intelligence (tree-sitter + SQLite) that gives the agent codegraph_*
-// search / context / explore / trace / node tools. Enabled defaults to true so
-// upgrades keep it for existing configs; first-run scaffolds write enabled =
-// false so only brand-new users start without it. AutoInstall (default true)
-// lets reasonix fetch the CodeGraph runtime into its cache when CodeGraph is
-// enabled but missing; set false to require an explicit `reasonix codegraph
-// install` (e.g. for air-gapped or headless runs). Path overrides binary
-// resolution; empty resolves the cache, then a `codegraph` on PATH, then a
-// bundle beside the executable. CodeGraph always starts in the background when
-// enabled; legacy tier values are ignored and removed during config load.
-type CodegraphConfig struct {
-	Enabled     bool   `toml:"enabled"`
-	AutoInstall bool   `toml:"auto_install"`
-	Path        string `toml:"path"`
-	Tier        string `toml:"tier"`
-}
-
-func (c CodegraphConfig) ShouldAutoStart() bool {
-	return c.Enabled
-}
-
-func (c CodegraphConfig) ResolvedTier() string {
-	return "background"
-}
-
-// BuiltInMCPConfig controls Reasonix-shipped MCP servers that require no user
-// server definition. They are off by default and become provider-visible only
-// after the user enables them.
-type BuiltInMCPConfig struct {
-	TimeEnabled     bool `toml:"time_enabled"`
-	Context7Enabled bool `toml:"context7_enabled"`
-}
-
-func (c BuiltInMCPConfig) Enabled(name string) bool {
-	switch name {
-	case "time":
-		return c.TimeEnabled
-	case "context7":
-		return c.Context7Enabled
-	default:
-		return false
-	}
-}
-
-func (c *BuiltInMCPConfig) SetEnabled(name string, enabled bool) bool {
-	switch name {
-	case "time":
-		c.TimeEnabled = enabled
-		return true
-	case "context7":
-		c.Context7Enabled = enabled
-		return true
-	default:
-		return false
-	}
-}
-
-func (c BuiltInMCPConfig) EnabledNames() []string {
-	var out []string
-	if c.TimeEnabled {
-		out = append(out, "time")
-	}
-	if c.Context7Enabled {
-		out = append(out, "context7")
-	}
-	return out
-}
-
-const (
-	BuiltInMCPUpdateModeOff             = "off"
-	BuiltInMCPUpdateModeNotify          = "notify"
-	BuiltInMCPUpdateModeDownload        = "download"
-	BuiltInMCPUpdateModeAutoNextSession = "auto_next_session"
-
-	defaultBuiltInMCPUpdateInterval = 24 * time.Hour
-)
-
-// BuiltInMCPUpdatesConfig controls background update checks for Reasonix-owned
-// built-in MCP runtimes. The default is notify-only so startup never silently
-// changes provider-visible MCP tool schemas.
-type BuiltInMCPUpdatesConfig struct {
-	Mode          string `toml:"mode"`
-	CheckInterval string `toml:"check_interval"`
-}
-
-func (c BuiltInMCPUpdatesConfig) ResolvedMode() string {
-	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
-	case BuiltInMCPUpdateModeOff:
-		return BuiltInMCPUpdateModeOff
-	case BuiltInMCPUpdateModeDownload:
-		return BuiltInMCPUpdateModeDownload
-	case BuiltInMCPUpdateModeAutoNextSession:
-		return BuiltInMCPUpdateModeAutoNextSession
-	default:
-		return BuiltInMCPUpdateModeNotify
-	}
-}
-
-func (c BuiltInMCPUpdatesConfig) CheckIntervalDuration() time.Duration {
-	raw := strings.TrimSpace(c.CheckInterval)
-	if raw == "" {
-		return defaultBuiltInMCPUpdateInterval
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return defaultBuiltInMCPUpdateInterval
-	}
-	return d
-}
-
-func (c BuiltInMCPUpdatesConfig) ResolvedCheckInterval() string {
-	return c.CheckIntervalDuration().String()
 }
 
 // BotConfig 控制多渠道 IM bot 消息网关。
@@ -1275,18 +1156,6 @@ func Default() *Config {
 		// so an absent [sandbox] in a user's file keeps egress (zero value would
 		// wrongly deny it).
 		Sandbox: SandboxConfig{Bash: "enforce", Network: true},
-		// CodeGraph code-intelligence defaults on so existing configs (which never
-		// wrote a [codegraph] section) keep it after an upgrade. First-run scaffolds
-		// write enabled = false instead, so only brand-new users start without it.
-		// AutoInstall fetches the runtime into the cache when enabled and missing.
-		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
-		// Time is dependency-free and bundled, so expose it by default. Context7
-		// can invoke a package runner and remains opt-in.
-		BuiltInMCP: BuiltInMCPConfig{TimeEnabled: true},
-		BuiltInMCPUpdates: BuiltInMCPUpdatesConfig{
-			Mode:          BuiltInMCPUpdateModeNotify,
-			CheckInterval: defaultBuiltInMCPUpdateInterval.String(),
-		},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
 		LSP:     LSPConfig{Enabled: true},
@@ -1577,10 +1446,8 @@ func LoadForRoot(root string) (*Config, error) {
 		tomlSources = append(tomlSources, uc)
 	}
 	tomlSources = append(tomlSources, projectTOML)
-	sawConfigFile := false
 	for _, path := range tomlSources {
 		if _, err := os.Stat(path); err == nil {
-			sawConfigFile = true
 			if err := migrateLegacyMCPTiersFile(path); err != nil {
 				slog.Warn("config: legacy mcp tier migration failed", "path", path, "err", err)
 			}
@@ -1636,12 +1503,6 @@ func LoadForRoot(root string) (*Config, error) {
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
-	// First run (no config file anywhere): keep CodeGraph off until the user opts
-	// in. An existing config — even one without a [codegraph] section — keeps the
-	// built-in default (on), so an upgrade never silently drops code intelligence.
-	if !sawConfigFile {
-		cfg.Codegraph.Enabled = false
-	}
 	return cfg, nil
 }
 
@@ -1894,7 +1755,6 @@ func normalizeLegacyMCPTiers(c *Config) {
 	if c == nil {
 		return
 	}
-	c.Codegraph.Tier = ""
 	for i := range c.Plugins {
 		c.Plugins[i].Tier = ""
 	}
@@ -1925,7 +1785,7 @@ func stripLegacyMCPTierLines(raw string) (string, bool) {
 		if header := tomlSectionHeader(line); header != "" {
 			section = header
 		}
-		if (section == "codegraph" || section == "plugins") && isTOMLKeyAssignment(line, "tier") {
+		if section == "plugins" && isTOMLKeyAssignment(line, "tier") {
 			changed = true
 			continue
 		}
@@ -1943,8 +1803,6 @@ func tomlSectionHeader(line string) string {
 		trimmed = strings.TrimSpace(trimmed[:i])
 	}
 	switch trimmed {
-	case "[codegraph]":
-		return "codegraph"
 	case "[[plugins]]":
 		return "plugins"
 	default:

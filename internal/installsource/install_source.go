@@ -294,51 +294,22 @@ func (t *installSourceTool) executeApply(ctx context.Context, req request, actio
 // uninstall: the user already named the entry, and removal is the inverse
 // of the install they authorized.
 func (t *installSourceTool) executeUninstall(req request) string {
-	scope := req.Scope
-	if scope == "" {
-		scope = "global"
-	}
 	actions := []action{}
-	cfgPath := t.configPath(scope)
-	cfg := config.LoadForEdit(cfgPath)
-
-	// Skills: try the flat file, then the directory layout, in the chosen
-	// scope. We don't require a kind — "name" disambiguates.
-	if path, ok := t.resolveSkillPath(req.Name, scope); ok {
-		actions = append(actions, action{
-			Kind:       "skill",
-			Action:     "remove_skill",
-			Name:       req.Name,
-			Target:     path,
-			Scope:      scope,
-			ConfigPath: cfgPath,
-			RiskLevel:  RiskLow,
-		})
-	} else if rootAction, ok := t.resolveRegisteredSkillRoot(req.Name, scope, cfgPath, cfg); ok {
-		actions = append(actions, rootAction)
-	}
-
-	// MCP: scan the chosen config for the named plugin.
-	for _, p := range cfg.Plugins {
-		if p.Name == req.Name {
-			actions = append(actions, action{
-				Kind:       "mcp",
-				Action:     "remove_mcp_server",
-				Name:       p.Name,
-				Target:     p.URL,
-				Scope:      scope,
-				Transport:  pluginTransport(p),
-				ConfigPath: cfgPath,
-				RiskLevel:  RiskMedium,
-				RiskReasons: []string{
-					"disconnects a running server and drops its tools from the active session",
-				},
-			})
+	scopes := t.uninstallSearchScopes(req)
+	for _, scope := range scopes {
+		actions = t.uninstallActionsForScope(req.Name, scope)
+		if len(actions) > 0 {
 			break
 		}
 	}
 
+	scope := commonActionScope(actions)
 	if len(actions) == 0 {
+		if len(scopes) == 1 {
+			scope = scopes[0]
+		} else {
+			scope = strings.Join(scopes, "/")
+		}
 		return marshalJSON(response{
 			OK:      false,
 			Status:  "blocked",
@@ -386,6 +357,60 @@ func (t *installSourceTool) executeUninstall(req request) string {
 		Actions: publicActions(actions),
 		Next:    "Removed.",
 	})
+}
+
+func (t *installSourceTool) uninstallSearchScopes(req request) []string {
+	if req.scopeExplicit && req.Scope != "" {
+		return []string{req.Scope}
+	}
+	scopes := []string{}
+	if strings.TrimSpace(t.root) != "" {
+		scopes = append(scopes, "project")
+	}
+	return append(scopes, "global")
+}
+
+func (t *installSourceTool) uninstallActionsForScope(name, scope string) []action {
+	var actions []action
+	cfgPath := t.configPath(scope)
+	cfg := config.LoadForEdit(cfgPath)
+
+	// Skills: try the flat file, then the directory layout, in the chosen
+	// scope. We don't require a kind — "name" disambiguates.
+	if path, ok := t.resolveSkillPath(name, scope); ok {
+		actions = append(actions, action{
+			Kind:       "skill",
+			Action:     "remove_skill",
+			Name:       name,
+			Target:     path,
+			Scope:      scope,
+			ConfigPath: cfgPath,
+			RiskLevel:  RiskLow,
+		})
+	} else if rootAction, ok := t.resolveRegisteredSkillRoot(name, scope, cfgPath, cfg); ok {
+		actions = append(actions, rootAction)
+	}
+
+	// MCP: scan the chosen config for the named plugin.
+	for _, p := range cfg.Plugins {
+		if p.Name == name {
+			actions = append(actions, action{
+				Kind:       "mcp",
+				Action:     "remove_mcp_server",
+				Name:       p.Name,
+				Target:     p.URL,
+				Scope:      scope,
+				Transport:  pluginTransport(p),
+				ConfigPath: cfgPath,
+				RiskLevel:  RiskMedium,
+				RiskReasons: []string{
+					"disconnects a running server and drops its tools from the active session",
+				},
+			})
+			break
+		}
+	}
+	return actions
 }
 
 // resolveSkillPath finds the on-disk location of a previously installed

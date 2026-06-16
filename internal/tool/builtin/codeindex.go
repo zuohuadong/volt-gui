@@ -90,7 +90,11 @@ func (c codeIndex) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	root := resolveIn(c.workDir, p.Path)
-	symbols, truncated, err := c.collect(ctx, root, p.Limit, p.Action == "outline")
+	collectionLimit := p.Limit
+	if p.Action == "outline" && hasCodeSymbolFilter(p) {
+		collectionLimit = 0
+	}
+	symbols, truncated, err := c.collect(ctx, root, collectionLimit, p.Action == "outline")
 	if err != nil {
 		return "", err
 	}
@@ -151,7 +155,7 @@ func (c codeIndex) collect(ctx context.Context, root string, limit int, outline 
 			continue
 		}
 		symbols = append(symbols, found...)
-		if outline && len(symbols) >= limit {
+		if outline && limit > 0 && len(symbols) >= limit {
 			truncated = true
 			break
 		}
@@ -270,6 +274,10 @@ func (c codeIndex) displayPath(path string) string {
 		}
 	}
 	return filepath.ToSlash(path)
+}
+
+func hasCodeSymbolFilter(p codeIndexArgs) bool {
+	return strings.TrimSpace(p.Kind) != "" || strings.TrimSpace(p.Query) != ""
 }
 
 func filterCodeSymbols(in []codeSymbol, p codeIndexArgs) []codeSymbol {

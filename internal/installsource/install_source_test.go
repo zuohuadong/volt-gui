@@ -1162,6 +1162,75 @@ func TestUninstallRemovesMCPAndDisconnects(t *testing.T) {
 	}
 }
 
+func TestUninstallWithoutScopePrefersProjectSkill(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	projectTarget := filepath.Join(project, ".reasonix", "skills", "dupe.md")
+	globalTarget := filepath.Join(home, ".reasonix", "skills", "dupe.md")
+	writeFile(t, projectTarget, "---\nname: dupe\ndescription: Project\n---\nbody")
+	writeFile(t, globalTarget, "---\nname: dupe\ndescription: Global\n---\nbody")
+
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	resp := execInstall(t, tl, map[string]any{
+		"op":   "uninstall",
+		"name": "dupe",
+	})
+
+	if !resp.OK || resp.Scope != "project" {
+		t.Fatalf("response = %+v, want project uninstall", resp)
+	}
+	if _, err := os.Lstat(projectTarget); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("project skill should be gone, lstat err = %v", err)
+	}
+	if _, err := os.Lstat(globalTarget); err != nil {
+		t.Errorf("global skill should remain when project matched first, lstat err = %v", err)
+	}
+}
+
+func TestUninstallWithoutScopeFallsBackToGlobalMCP(t *testing.T) {
+	project := t.TempDir()
+	home := t.TempDir()
+	name := "global-fallback"
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if err := cfg.UpsertPlugin(config.PluginEntry{Name: name, Type: "http", URL: "https://global.example.com/mcp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup := config.LoadForEdit(config.UserConfigPath())
+		if cleanup.RemovePlugin(name) {
+			_ = cleanup.SaveTo(config.UserConfigPath())
+		}
+	})
+
+	var disconnects atomic.Int32
+	tl := NewTool(Options{
+		ProjectRoot: project,
+		HomeDir:     home,
+		OnDisconnect: func(string) bool {
+			disconnects.Add(1)
+			return true
+		},
+	})
+	resp := execInstall(t, tl, map[string]any{
+		"op":   "uninstall",
+		"name": name,
+	})
+
+	if !resp.OK || resp.Scope != "global" {
+		t.Fatalf("response = %+v, want global fallback uninstall", resp)
+	}
+	if disconnects.Load() != 1 {
+		t.Errorf("OnDisconnect should fire once, got %d", disconnects.Load())
+	}
+	reloaded := config.LoadForEdit(config.UserConfigPath())
+	if _, ok := findPlugin(reloaded.Plugins, name); ok {
+		t.Fatalf("global MCP should be removed, got %+v", reloaded.Plugins)
+	}
+}
+
 func TestUninstallUnknownNameIsBlocked(t *testing.T) {
 	project := t.TempDir()
 	home := t.TempDir()

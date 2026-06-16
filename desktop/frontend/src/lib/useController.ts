@@ -202,6 +202,7 @@ export function isReadOnlyTool(name: string): boolean {
     case "grep":
     case "glob":
     case "web_fetch":
+    case "code_index":
     case "bash_output":
     case "waitJob":
     case "todo_write":

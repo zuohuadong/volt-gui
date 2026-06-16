@@ -1812,6 +1812,26 @@ func TestPluginSpecsTrustKnownCodeGraphReadTools(t *testing.T) {
 	}
 }
 
+func TestPluginSpecsForRootPinsCodeGraphToWorkspace(t *testing.T) {
+	specs := PluginSpecsForRoot([]config.PluginEntry{{Name: "codegraph"}}, "/workspace")
+	if len(specs) != 1 {
+		t.Fatalf("PluginSpecsForRoot returned %d specs, want 1", len(specs))
+	}
+	if specs[0].Dir != "/workspace" {
+		t.Fatalf("codegraph Dir = %q, want workspace root", specs[0].Dir)
+	}
+}
+
+func TestPluginSpecsForRootDoesNotPinHTTPCodeGraph(t *testing.T) {
+	specs := PluginSpecsForRoot([]config.PluginEntry{{Name: "codegraph", Type: "http", URL: "https://example.com/mcp"}}, "/workspace")
+	if len(specs) != 1 {
+		t.Fatalf("PluginSpecsForRoot returned %d specs, want 1", len(specs))
+	}
+	if specs[0].Dir != "" {
+		t.Fatalf("http codegraph Dir = %q, want empty", specs[0].Dir)
+	}
+}
+
 func TestPluginSpecsDoNotTrustCodeGraphToolsForOtherServers(t *testing.T) {
 	specs := PluginSpecs([]config.PluginEntry{{Name: "not-codegraph"}})
 	if len(specs) != 1 {

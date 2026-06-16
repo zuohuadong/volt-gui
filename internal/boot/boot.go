@@ -251,11 +251,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// session starts immediately while enabled MCP servers warm up.
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, lazyEntries, bgEntries := partitionByTier(autoStartEntries)
-	extraSpecs := applyKnownPluginOverrides(opts.ExtraPlugins)
+	extraSpecs := applyKnownPluginOverrides(opts.ExtraPlugins, root)
 	onDemandMCPSpecs := map[string]plugin.Spec{}
 	onDemandMCPNames := []string{}
 	if tokenEconomy {
-		for _, spec := range append(PluginSpecs(autoStartEntries), extraSpecs...) {
+		for _, spec := range append(PluginSpecsForRoot(autoStartEntries, root), extraSpecs...) {
 			name := strings.TrimSpace(spec.Name)
 			if name == "" {
 				continue
@@ -286,9 +286,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	eagerEntries = kept
 
-	eagerSpecs := PluginSpecs(eagerEntries)
-	lazySpecs := PluginSpecs(lazyEntries)
-	bgSpecs := PluginSpecs(bgEntries)
+	eagerSpecs := PluginSpecsForRoot(eagerEntries, root)
+	lazySpecs := PluginSpecsForRoot(lazyEntries, root)
+	bgSpecs := PluginSpecsForRoot(bgEntries, root)
 
 	if !tokenEconomy {
 		eagerSpecs = append(eagerSpecs, extraSpecs...)
@@ -605,16 +605,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			ProjectRoot: root,
 			HTTPClient:  balanceClient,
 			ConnectMCP: func(e config.PluginEntry) (installsource.MCPConnectResult, error) {
-				exp := e.ExpandedPlugin()
-				spec := plugin.Spec{
-					Name:    exp.Name,
-					Type:    exp.Type,
-					Command: exp.Command,
-					Args:    exp.Args,
-					Env:     exp.Env,
-					URL:     exp.URL,
-					Headers: exp.Headers,
-				}
+				spec := pluginSpecFromEntry(e, root)
 				if opts.Stderr != nil {
 					spec.Stderr = opts.Stderr
 				}
@@ -1197,27 +1188,36 @@ func partitionByTier(entries []config.PluginEntry) (eager, lazy, bg []config.Plu
 // references. Exported so custom assemblers can connect the config's plugins
 // alongside their own (e.g. ACP's per-session MCP servers).
 func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
+	return PluginSpecsForRoot(entries, "")
+}
+
+// PluginSpecsForRoot maps configured plugin entries to plugin.Spec and applies
+// workspace-aware compatibility overrides for known cwd-sensitive servers.
+func PluginSpecsForRoot(entries []config.PluginEntry, workspaceRoot string) []plugin.Spec {
 	specs := make([]plugin.Spec, len(entries))
 	for i, e := range entries {
-		e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
-		spec := plugin.Spec{
-			Name:    e.Name,
-			Type:    e.Type,
-			Command: e.Command,
-			Args:    e.Args,
-			Env:     e.Env,
-			URL:     e.URL,
-			Headers: e.Headers,
-		}
-		specs[i] = plugin.ApplyKnownReadOnlyOverrides(spec)
+		specs[i] = pluginSpecFromEntry(e, workspaceRoot)
 	}
 	return specs
 }
 
-func applyKnownPluginOverrides(specs []plugin.Spec) []plugin.Spec {
+func pluginSpecFromEntry(e config.PluginEntry, workspaceRoot string) plugin.Spec {
+	e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
+	return plugin.ApplyKnownOverrides(plugin.Spec{
+		Name:    e.Name,
+		Type:    e.Type,
+		Command: e.Command,
+		Args:    e.Args,
+		Env:     e.Env,
+		URL:     e.URL,
+		Headers: e.Headers,
+	}, workspaceRoot)
+}
+
+func applyKnownPluginOverrides(specs []plugin.Spec, workspaceRoot string) []plugin.Spec {
 	out := make([]plugin.Spec, len(specs))
 	for i, spec := range specs {
-		out[i] = plugin.ApplyKnownReadOnlyOverrides(spec)
+		out[i] = plugin.ApplyKnownOverrides(spec, workspaceRoot)
 	}
 	return out
 }

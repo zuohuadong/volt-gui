@@ -65,6 +65,29 @@ export const loadUser = async () => {}
 	}
 }
 
+func TestCodeIndexOutlineFiltersBeforeLimit(t *testing.T) {
+	root := t.TempDir()
+	mkfile(t, filepath.Join(root, "a.ts"), `export const first = () => {}
+export const second = () => {}
+`)
+	mkfile(t, filepath.Join(root, "z.ts"), `export interface Later {
+  id: string
+}
+`)
+
+	out := runTool(t, codeIndex{workDir: root}, map[string]any{
+		"action": "outline",
+		"kind":   "interface",
+		"limit":  1,
+	})
+	if !strings.Contains(out, "z.ts:1: interface Later") {
+		t.Fatalf("code_index should find filtered symbols after early unfiltered matches; got:\n%s", out)
+	}
+	if strings.Contains(out, "first") || strings.Contains(out, "second") {
+		t.Fatalf("code_index should filter before returning limited outline; got:\n%s", out)
+	}
+}
+
 func TestCodeIndexKindFiltersJavaTypes(t *testing.T) {
 	root := t.TempDir()
 	mkfile(t, filepath.Join(root, "src", "Example.java"), `package demo;

@@ -137,6 +137,19 @@ function usageTotalTokens(usage?: WireUsage): number {
   return Math.max(0, promptTokens + usage.completionTokens);
 }
 
+type RuntimeMetaSnapshot = {
+  running: boolean;
+  pendingPrompt?: boolean;
+  backgroundJobs?: number;
+  cancellable?: boolean;
+};
+
+export function foregroundRunningFromRuntimeMeta(meta: RuntimeMetaSnapshot): boolean {
+  if (typeof meta.cancellable === "boolean") return meta.cancellable;
+  if ((meta.backgroundJobs ?? 0) > 0 && !meta.pendingPrompt) return false;
+  return Boolean(meta.running);
+}
+
 function updatesContextGauge(usage?: WireUsage): boolean {
   const source = usage?.source?.trim();
   return !source || source === "executor";
@@ -606,15 +619,16 @@ export function reducer(s: State, a: Action): State {
       const pendingPrompt = Boolean(a.pendingPrompt);
       const backgroundJobs = Math.max(0, a.backgroundJobs ?? s.backgroundJobs ?? 0);
       const cancelRequested = Boolean(a.cancelRequested);
-      const cancellable = Boolean(a.cancellable ?? a.running);
+      const foregroundRunning = foregroundRunningFromRuntimeMeta({ running: a.running, pendingPrompt, backgroundJobs, cancellable: a.cancellable });
+      const cancellable = foregroundRunning;
       if (
-        a.running === s.running &&
+        foregroundRunning === s.running &&
         pendingPrompt === s.pendingPrompt &&
         backgroundJobs === s.backgroundJobs &&
         cancelRequested === s.cancelRequested &&
         cancellable === s.cancellable
       ) return s;
-      if (a.running) {
+      if (foregroundRunning) {
         return {
           ...s,
           running: true,
@@ -819,7 +833,7 @@ export function useController() {
     if (!tab) return undefined;
     const local = statesRef.current.get(tabId);
     const needsInitialLoad = !local?.meta;
-    const foregroundRunning = Boolean(tab.cancellable ?? tab.running);
+    const foregroundRunning = foregroundRunningFromRuntimeMeta(tab);
     const missedTurnDone = Boolean(local?.running && !foregroundRunning);
     dispatchTo(tabId, {
       type: "backend_status",
@@ -827,7 +841,7 @@ export function useController() {
       pendingPrompt: Boolean(tab.pendingPrompt),
       backgroundJobs: tab.backgroundJobs ?? 0,
       cancelRequested: Boolean(tab.cancelRequested),
-      cancellable: Boolean(tab.cancellable),
+      cancellable: foregroundRunning,
     });
     if (needsInitialLoad || missedTurnDone) {
       await loadSessionDataForTab(tabId, missedTurnDone);

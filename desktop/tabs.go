@@ -844,7 +844,7 @@ type TabMeta struct {
 	PendingPrompt     bool   `json:"pendingPrompt,omitempty"`
 	BackgroundJobs    int    `json:"backgroundJobs,omitempty"`
 	CancelRequested   bool   `json:"cancelRequested,omitempty"`
-	Cancellable       bool   `json:"cancellable,omitempty"`
+	Cancellable       bool   `json:"cancellable"`
 	Mode              string `json:"mode"`
 	CollaborationMode string `json:"collaborationMode"`
 	ToolApprovalMode  string `json:"toolApprovalMode"`

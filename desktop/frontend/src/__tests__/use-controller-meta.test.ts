@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/use-controller-meta.test.ts
 
-import { initialState, reducer, sameMeta, shouldReconcileStaleTurn } from "../lib/useController";
+import { foregroundRunningFromRuntimeMeta, initialState, reducer, sameMeta, shouldReconcileStaleTurn } from "../lib/useController";
 import type { Meta, WireUsage } from "../lib/types";
 
 let passed = 0;
@@ -91,6 +91,13 @@ console.log("\nuse controller meta");
   eq(backgroundOnly.running, false, "background jobs alone do not make the composer runstatus active");
   eq(backgroundOnly.backgroundJobs, 1, "backend_status stores background job count");
   eq(backgroundOnly.cancellable, false, "background jobs alone are not foreground-cancellable");
+
+  const omittedCancellableBackgroundOnly = reducer(initialState, { type: "backend_status", running: true, backgroundJobs: 1 });
+  eq(omittedCancellableBackgroundOnly.running, false, "missing cancellable does not promote background-only metadata");
+  eq(omittedCancellableBackgroundOnly.cancellable, false, "missing cancellable stays non-cancellable with background-only metadata");
+  eq(foregroundRunningFromRuntimeMeta({ running: true }), true, "legacy running metadata remains foreground-running");
+  eq(foregroundRunningFromRuntimeMeta({ running: true, pendingPrompt: true, backgroundJobs: 1 }), true, "pending prompts remain foreground-running");
+  eq(foregroundRunningFromRuntimeMeta({ running: true, backgroundJobs: 1 }), false, "background jobs without cancellable are background-only");
 }
 
 {

@@ -85,3 +85,36 @@ Legacy credentials and sessions are also imported into the configured credential
 store / Reasonix home when the new destination does not already exist. If the
 new global config already exists, it wins and legacy config files are only kept
 as compatibility fallbacks.
+
+## Manual Migration Rescue
+
+If Reasonix has already created the new home directory but some legacy data was
+not present yet, or if the desktop app was opened before the old paths were
+available, run the migration rescue command from either frontend:
+
+```text
+/migrate
+```
+
+In the CLI TUI, type `/migrate` into the chat input. In the desktop app, type the
+same command into the composer. The command prints progress notices while it:
+
+1. checks legacy config and credentials,
+2. scans known legacy session directories,
+3. imports any sessions that were not previously imported, and
+4. prints a final summary.
+
+The rescue command is intentionally non-destructive. It does not overwrite an
+existing `<Reasonix home>/config.toml`; if the new config already exists, copy
+any missing legacy settings across by hand. It also respects session import
+markers, so sessions that were already imported and later deleted by the user
+will not be restored on a later `/migrate` run.
+
+Version limits:
+
+- Automatic migration starts in **v1.8.1**.
+- `/migrate` is available only in Go-based Reasonix builds that include the
+  command. If Reasonix reports `unknown command`, upgrade first and rerun it.
+- The command is not available in the legacy `0.x` TypeScript line.
+- It rescans the legacy locations listed above; it is not a backup restore tool,
+  a downgrade importer, or a general importer for arbitrary directories.

@@ -72,3 +72,28 @@ Windows:     %APPDATA%\reasonix\config.toml
 ```
 
 旧 credentials 和 sessions 也会在新目标不存在时导入到配置的 credential store / Reasonix home。若新的全局配置已经存在，则新配置优先；旧配置只作为兼容 fallback 保留。
+
+## 手动补救迁移
+
+如果 Reasonix 已经创建了新的 home 目录，但当时旧数据还不在可扫描路径里；或者先打开了桌面端，导致自动迁移没有把旧路径数据补齐，可以在任一前端运行补救命令：
+
+```text
+/migrate
+```
+
+在 CLI TUI 中，把 `/migrate` 输入到聊天输入框。在桌面端中，把同一个命令输入到 composer。命令会显示进度提示：
+
+1. 检查旧配置和 credentials；
+2. 扫描已知旧 sessions 目录；
+3. 导入尚未迁移过的 sessions；
+4. 输出最终汇总。
+
+该补救命令仍然是非破坏性的。它不会覆盖已有的
+`<Reasonix home>/config.toml`；如果新配置已经存在，需要手动把旧配置里缺失的设置复制过去。它也会尊重 session 导入 marker，因此已经迁移过、之后又被用户删除的会话，不会在后续 `/migrate` 中被重新恢复。
+
+版本限制：
+
+- 自动迁移从 **v1.8.1** 开始。
+- `/migrate` 只存在于包含该命令的 Go 版 Reasonix 构建中。如果 Reasonix 提示 `unknown command`，请先升级后再运行。
+- legacy `0.x` TypeScript 线没有这个命令。
+- 它只会重新扫描上面列出的旧路径；它不是备份恢复工具、降级导入工具，也不是任意目录导入器。

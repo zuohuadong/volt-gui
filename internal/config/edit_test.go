@@ -148,8 +148,8 @@ func TestDesktopPreferencesAreSeparateFromCLI(t *testing.T) {
 }
 
 func TestDesktopLayoutStyleNormalizes(t *testing.T) {
-	if got := Default().DesktopLayoutStyle(); got != "classic" {
-		t.Fatalf("default desktop layout style = %q, want classic", got)
+	if got := Default().DesktopLayoutStyle(); got != "workbench" {
+		t.Fatalf("default desktop layout style = %q, want workbench", got)
 	}
 	for _, tt := range []struct {
 		in      string
@@ -160,7 +160,7 @@ func TestDesktopLayoutStyleNormalizes(t *testing.T) {
 		{"classic", "classic", false},
 		{" workbench ", "workbench", false},
 		{"workspace", "workbench", false},
-		{"later", "classic", true},
+		{"later", "workbench", true},
 	} {
 		c := Default()
 		if err := c.SetDesktopLayoutStyle(tt.in); (err != nil) != tt.wantErr {

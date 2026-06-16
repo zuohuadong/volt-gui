@@ -547,7 +547,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 			prov, price, ctxWin = p, pr, cw
 		}
-		subReg := agent.FilterRegistry(reg, sk.AllowedTools, agent.SubagentMetaTools()...)
+		subReg := agent.SubagentToolRegistry(reg, sk.AllowedTools)
 		continueFrom, forkFrom := strings.TrimSpace(runOpts.ContinueFrom), strings.TrimSpace(runOpts.ForkFrom)
 		if continueFrom != "" && forkFrom != "" {
 			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive")

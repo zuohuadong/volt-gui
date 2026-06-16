@@ -2118,21 +2118,36 @@ export default function App() {
 
     // Save full items for undo.
     const userItem = items[boundaryIdx]?.kind === "user" ? items[boundaryIdx] as Extract<Item, { kind: "user" }> : undefined;
+    const prompt = userItem?.text ?? "";
     setRewindState({
       turn,
       scope,
       fullItems: items,
       boundaryIdx,
       turnDiff,
-      prompt: userItem?.text ?? "",
+      prompt,
     });
 
     // Fill composer with the rewound-to user message.
     const insertId = Date.now();
-    setComposerInsertRequest({ id: insertId, text: userItem?.text ?? "" });
+    setComposerInsertRequest({ id: insertId, text: prompt, mode: "replace" });
 
     setRewindSignal((v) => v + 1);
   }, [activeTab?.readOnly, state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
+
+  const handleEditPrompt = useCallback(async (turn: number, text: string): Promise<boolean> => {
+    if (activeTab?.readOnly || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending) return false;
+    const next = text.trim();
+    if (!next) return false;
+    try {
+      await rewind(turn, "conversation");
+      setRewindSignal((v) => v + 1);
+      send(next);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [activeTab?.readOnly, clearContextPending, send, state.approval, state.ask, state.messageAction, state.running, rewind]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => {
     closeTransientOverlays();
@@ -2902,6 +2917,7 @@ export default function App() {
                 tabId={activeTabId}
                 footerHeight={footerHeight}
                 onPrompt={commitThenSend}
+                onEditPrompt={handleEditPrompt}
                 onRewind={handleMessageAction}
                 checkpoints={state.checkpoints}
                 actionPending={state.messageAction != null}
@@ -2923,7 +2939,7 @@ export default function App() {
                   filesRemoved: [],
                   onUndo: () => {
                     setRewindState(null);
-                    setComposerInsertRequest({ id: Date.now(), text: "" });
+                    setComposerInsertRequest({ id: Date.now(), text: "", mode: "replace" });
                   },
                 }}
               />

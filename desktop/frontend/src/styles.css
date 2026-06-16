@@ -3129,7 +3129,8 @@ a[href] {
 }
 .msg--user {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
   color: var(--fg);
 }
 .msg--user .msg__body {
@@ -3139,6 +3140,117 @@ a[href] {
   border-radius: 14px;
   padding: 10px 16px;
   position: relative;
+}
+.msg--user .msg__body--editing {
+  width: min(82%, 680px);
+  min-width: min(420px, 82%);
+  padding: 14px 16px 16px;
+  border-radius: 18px;
+}
+.msg-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.msg-edit__input {
+  width: 100%;
+  min-height: 78px;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: vertical;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.msg-edit__input:disabled {
+  opacity: 0.72;
+}
+.msg-edit__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.msg-edit__btn {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--button-border);
+  border-radius: var(--button-radius);
+  background: var(--button-bg);
+  color: var(--button-fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  transition: color 0.12s, background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.msg-edit__btn:hover:not(:disabled),
+.msg-edit__btn:focus-visible:not(:disabled) {
+  background: var(--button-bg-hover);
+  border-color: var(--button-border-hover);
+}
+.msg-edit__btn--primary {
+  border-color: var(--control-primary-bg);
+  background: var(--control-primary-bg);
+  color: var(--control-primary-fg);
+}
+.msg-edit__btn--primary:hover:not(:disabled),
+.msg-edit__btn--primary:focus-visible:not(:disabled) {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+.msg-edit__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-top: 4px;
+  margin-right: 10px;
+  color: var(--fg-faint);
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.msg-meta__time {
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.msg-meta__btn,
+.msg-meta .copybtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  gap: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  box-shadow: none;
+  transition: color 0.12s, background 0.12s;
+}
+.msg-meta__btn:hover:not(:disabled),
+.msg-meta__btn:focus-visible:not(:disabled),
+.msg-meta .copybtn:hover,
+.msg-meta .copybtn:focus-visible {
+  color: var(--fg);
+  background: var(--button-bg-hover);
+}
+.msg-meta__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 .rewind {
   position: absolute;
@@ -3804,6 +3916,10 @@ a[href] {
   color: var(--fg);
   border-color: var(--fg-faint);
   gap: 6px;
+}
+.copybtn--copied {
+  color: var(--fg);
+  border-color: var(--button-border-hover);
 }
 /* Show the "Copy" text only on hover, inside the button — no overflow risk */
 .copybtn__label-inline {

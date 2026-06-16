@@ -756,6 +756,16 @@ export function Composer({
     });
   };
 
+  const replaceComposerText = (next: string) => {
+    clearAttachments();
+    setWorkspaceRefs([]);
+    setSessionRefs([]);
+    pastedBlocksRef.current = [];
+    setPastedBlocks([]);
+    setOpenPastedLabels([]);
+    setTextCaretEnd(next);
+  };
+
   const addWorkspaceReference = (ref: WorkspaceReference) => {
     setWorkspaceRefs((prev) => {
       const key = workspaceReferenceKey(ref);
@@ -768,6 +778,10 @@ export function Composer({
   useEffect(() => {
     if (!insertRequest || insertRequest.id === consumedInsertIdRef.current) return;
     consumedInsertIdRef.current = insertRequest.id;
+    if (insertRequest.mode === "replace") {
+      replaceComposerText(insertRequest.text);
+      return;
+    }
     const ref = parseWorkspaceReference(insertRequest.text);
     if (ref) {
       addWorkspaceReference(ref);

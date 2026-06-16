@@ -1357,6 +1357,7 @@ export const en = {
   "msg.thinkingRunning": "thinking…",
   "msg.thinkingDone": "done",
   "msg.copy": "Copy",
+  "msg.editSend": "Send",
   "msg.attachments": "Attachments",
   "msg.fromIm": "From {source}",
   "msg.imSender": "Sender {id}",

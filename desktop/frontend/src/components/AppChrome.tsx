@@ -58,7 +58,6 @@ export function AppChrome({
 }: AppChromeProps) {
   const t = useT();
   const darwinChrome = platform === "darwin";
-  const detachCommand = !darwinChrome;
   const showWindowsPreviewControls = browserPreviewChrome && platform === "windows";
   const chromeClassName = [
     "app-chrome",
@@ -80,21 +79,6 @@ export function AppChrome({
       onTabsReorder={onTabsReorder}
       onNewTab={onNewTab}
       onOpenPalette={undefined}
-      commandCompact={commandCompact}
-    />
-  );
-
-  const tabBar = (
-    <TabBar
-      tabs={tabs}
-      activeTabId={activeTabId}
-      revealActiveSignal={revealActiveSignal}
-      onTabChange={onTabChange}
-      onTabClose={onTabClose}
-      onTabsClose={onTabsClose}
-      onTabsReorder={onTabsReorder}
-      onNewTab={onNewTab}
-      onOpenPalette={detachCommand ? undefined : onOpenPalette}
       commandCompact={commandCompact}
     />
   );

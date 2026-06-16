@@ -563,6 +563,7 @@ export const en = {
   "projectTree.status.thinking": "thinking",
   "projectTree.status.streaming": "responding",
   "projectTree.status.waitingConfirmation": "waiting",
+  "projectTree.status.backgroundJob": "background job",
   "projectTree.status.paused": "paused",
   "projectTree.status.error": "error",
   "projectTree.removeProject": "Remove from sidebar",

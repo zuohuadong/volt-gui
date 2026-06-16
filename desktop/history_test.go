@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -284,7 +283,7 @@ func TestPreviewSessionMessagesIncludesProcessEvents(t *testing.T) {
 
 func TestResumeSessionForTabTargetsSpecifiedTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
-	dir := config.SessionDir()
+	dir := desktopSessionDir(globalTabWorkspaceRoot())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir session dir: %v", err)
 	}
@@ -305,8 +304,25 @@ func TestResumeSessionForTabTargetsSpecifiedTab(t *testing.T) {
 
 	app := &App{
 		tabs: map[string]*WorkspaceTab{
-			"active":   {ID: "active", Scope: "global", Ctrl: activeCtrl, Ready: true},
-			"inactive": {ID: "inactive", Scope: "global", Ctrl: inactiveCtrl, Ready: true},
+			"active": {
+				ID:            "active",
+				Scope:         "global",
+				WorkspaceRoot: globalTabWorkspaceRoot(),
+				Ctrl:          activeCtrl,
+				Ready:         true,
+				sink:          &tabEventSink{tabID: "active"},
+				disabledMCP:   map[string]ServerView{},
+			},
+			"inactive": {
+				ID:            "inactive",
+				Scope:         "global",
+				WorkspaceRoot: globalTabWorkspaceRoot(),
+				SessionPath:   inactivePath,
+				Ctrl:          inactiveCtrl,
+				Ready:         true,
+				sink:          &tabEventSink{tabID: "inactive"},
+				disabledMCP:   map[string]ServerView{},
+			},
 		},
 		tabOrder:    []string{"active", "inactive"},
 		activeTabID: "active",
@@ -319,8 +335,14 @@ func TestResumeSessionForTabTargetsSpecifiedTab(t *testing.T) {
 	if activeCtrl.SessionPath() != activePath {
 		t.Fatalf("active tab session path = %q, want %q", activeCtrl.SessionPath(), activePath)
 	}
-	if inactiveCtrl.SessionPath() != targetPath {
-		t.Fatalf("inactive tab session path = %q, want %q", inactiveCtrl.SessionPath(), targetPath)
+	if inactiveCtrl.SessionPath() != inactivePath {
+		t.Fatalf("original inactive controller session path = %q, want %q", inactiveCtrl.SessionPath(), inactivePath)
+	}
+	if app.tabs["inactive"].Ctrl == inactiveCtrl {
+		t.Fatal("resume to a different sessionPath mutated the existing controller in place")
+	}
+	if app.tabs["inactive"].Ctrl.SessionPath() != targetPath {
+		t.Fatalf("inactive tab session path = %q, want %q", app.tabs["inactive"].Ctrl.SessionPath(), targetPath)
 	}
 	f := loadTabsFile()
 	var savedInactive string

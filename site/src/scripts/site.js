@@ -144,17 +144,29 @@
   });
 
   /* refresh the published version and immutable desktop download links between rebuilds */
+  const desktopAssets = [
+    "Reasonix-darwin-universal.dmg",
+    "Reasonix-darwin-arm64.zip",
+    "Reasonix-darwin-amd64.zip",
+    "Reasonix-windows-amd64-installer.exe",
+    "Reasonix-windows-arm64-installer.exe",
+    "Reasonix-windows-amd64.zip",
+    "Reasonix-linux-amd64.deb",
+    "Reasonix-linux-amd64.tar.gz",
+  ];
   fetch("https://dl.reasonix.io/latest/latest.json", { cache: "no-cache" })
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
       const rawVersion = String((d && d.version) || "");
-      const v = rawVersion.replace(/^v/, "");
-      if (!v) return;
+      const versionMatch = rawVersion.match(/^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/);
+      if (!versionMatch) return;
+      const v = versionMatch[1];
       const desktopBase = "https://dl.reasonix.io/desktop-v" + v;
       document.querySelectorAll(".rxv").forEach((e) => { e.textContent = v; });
-      document.querySelectorAll("[data-desktop-asset]").forEach((a) => {
-        const asset = a.getAttribute("data-desktop-asset");
-        if (asset) a.href = desktopBase + "/" + asset;
+      desktopAssets.forEach((asset) => {
+        document.querySelectorAll('[data-desktop-asset="' + asset + '"]').forEach((a) => {
+          a.href = desktopBase + "/" + asset;
+        });
       });
       document.querySelectorAll("a.rxnotes").forEach((a) => {
         a.href = a.href.replace(/releases\/tag\/v[^/]*$/, "releases/tag/v" + v);

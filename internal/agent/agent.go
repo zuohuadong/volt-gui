@@ -71,6 +71,14 @@ var planModeFindWriteArgs = map[string]bool{
 	"-fls":     true,
 }
 
+var planModeGoWriteOrExecArgs = map[string]bool{
+	"-fix":      true,
+	"-mod":      true,
+	"-modfile":  true,
+	"-toolexec": true,
+	"-vettool":  true,
+}
+
 const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 1
@@ -1657,7 +1665,7 @@ func planModeBashBlocked(args json.RawMessage) (bool, string) {
 		if !planModeBashMatchesSafePrefix(lower, safe) {
 			continue
 		}
-		if arg := planModeUnsafeSafeCommandArg(lower, safe); arg != "" {
+		if arg := planModeUnsafeSafeCommandArg(cmd, safe); arg != "" {
 			return true, fmt.Sprintf("blocked: bash command in plan mode uses a write-capable argument (%q). Use a read-only command while planning.", arg)
 		}
 		return false, ""
@@ -1677,30 +1685,41 @@ func planModeBashMatchesSafePrefix(lower, safe string) bool {
 	return unicode.IsSpace(r)
 }
 
-func planModeUnsafeSafeCommandArg(lower, safe string) string {
-	fields := strings.Fields(lower)
+func planModeUnsafeSafeCommandArg(cmd, safe string) string {
+	fields := strings.Fields(cmd)
 	base := strings.Fields(safe)
 	if len(fields) <= len(base) {
 		return ""
 	}
 	args := fields[len(base):]
+	lowerArgs := make([]string, len(args))
+	for i, arg := range args {
+		lowerArgs[i] = strings.ToLower(arg)
+	}
 	if strings.HasPrefix(safe, "git ") {
-		for _, arg := range args {
+		for _, arg := range lowerArgs {
 			if arg == "--output" || strings.HasPrefix(arg, "--output=") || arg == "--ext-diff" {
 				return arg
 			}
 		}
 	}
 	switch safe {
+	case "git grep":
+		for i, arg := range args {
+			lowerArg := lowerArgs[i]
+			if arg == "-O" || strings.HasPrefix(arg, "-O") || strings.HasPrefix(lowerArg, "--open-files-in-pager") {
+				return arg
+			}
+		}
 	case "find":
-		for _, arg := range args {
+		for _, arg := range lowerArgs {
 			if planModeFindWriteArgs[arg] {
 				return arg
 			}
 		}
-	case "go vet":
-		for _, arg := range args {
-			if arg == "-vettool" || strings.HasPrefix(arg, "-vettool=") {
+	case "go list", "go vet":
+		for _, arg := range lowerArgs {
+			if planModeGoWriteOrExecArgs[arg] || strings.HasPrefix(arg, "-mod=mod") || strings.HasPrefix(arg, "-modfile=") || strings.HasPrefix(arg, "-toolexec=") || strings.HasPrefix(arg, "-vettool=") {
 				return arg
 			}
 		}

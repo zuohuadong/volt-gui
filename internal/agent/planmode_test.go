@@ -148,6 +148,7 @@ func TestPlanModeBashBlocked_SafeCommands(t *testing.T) {
 		"git show HEAD",
 		"git ls-files",
 		"git grep 'func main'",
+		"git grep -o 'func'",
 		"git blame file.go",
 		"ls -la",
 		"cat file.go",
@@ -223,6 +224,14 @@ func TestPlanModeBashBlocked_WriteCapableSafeCommandArgs(t *testing.T) {
 		{"git_diff_output_space", "git diff --output patch.diff", "--output"},
 		{"git_show_output", "git show HEAD --output=show.txt", "--output=show.txt"},
 		{"git_log_ext_diff", "git log --ext-diff", "--ext-diff"},
+		{"git_grep_open_pager_short", "git grep -O 'func main'", "-O"},
+		{"git_grep_open_pager_long", "git grep --open-files-in-pager=sh 'func main'", "--open-files-in-pager=sh"},
+		{"go_list_mod_write", "go list -mod=mod ./...", "-mod=mod"},
+		{"go_list_mod_space", "go list -mod mod ./...", "-mod"},
+		{"go_list_modfile", "go list -modfile=other.mod ./...", "-modfile=other.mod"},
+		{"go_list_toolexec", "go list -toolexec=./wrapper ./...", "-toolexec=./wrapper"},
+		{"go_vet_fix", "go vet -fix ./...", "-fix"},
+		{"go_vet_toolexec", "go vet -toolexec ./wrapper ./...", "-toolexec"},
 		{"go_vet_vettool", "go vet -vettool=./writer ./...", "-vettool=./writer"},
 	}
 	for _, tt := range tests {

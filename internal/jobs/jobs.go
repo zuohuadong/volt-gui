@@ -12,10 +12,11 @@
 package jobs
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -63,17 +64,25 @@ type Job struct {
 	SessionID string
 
 	mu          sync.Mutex
-	buf         bytes.Buffer
-	readOffset  int
+	tail        []byte
+	readOffset  int64
 	status      Status
 	result      string
 	resultRead  bool // result already surfaced by Output (task jobs stream nothing to buf)
 	startedAt   int64
+	finishedAt  int64
 	activityAt  int64
 	runReturned bool
 	cancel      context.CancelFunc
 	done        chan struct{}
 	stalled     bool
+
+	artifactPath     string
+	artifactMetaPath string
+	artifactFile     *os.File
+	artifactComplete bool
+	artifactErr      string
+	tombstone        bool
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -83,13 +92,16 @@ type Manager struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu         sync.Mutex
-	seq        int
-	jobs       map[string]*Job
-	order      []string
-	completed  []completion // finished-job summaries awaiting drain into the next turn
-	active     string
-	destroying map[string]bool
+	mu           sync.Mutex
+	seq          int
+	jobs         map[string]*Job
+	order        []string
+	completed    []completion // finished-job summaries awaiting drain into the next turn
+	active       string
+	destroying   map[string]bool
+	artifactDirs map[string]string
+	loaded       map[string]bool
+	tempRoot     string
 
 	stalledWarning time.Duration
 }
@@ -120,7 +132,17 @@ func NewManager(sink event.Sink, opts ...Option) *Manager {
 		sink = event.Discard
 	}
 	root, cancel := context.WithCancel(context.Background())
-	m := &Manager{sink: sink, root: root, cancel: cancel, jobs: map[string]*Job{}, destroying: map[string]bool{}}
+	tempRoot, _ := os.MkdirTemp("", "reasonix-jobs-*")
+	m := &Manager{
+		sink:         sink,
+		root:         root,
+		cancel:       cancel,
+		jobs:         map[string]*Job{},
+		destroying:   map[string]bool{},
+		artifactDirs: map[string]string{},
+		loaded:       map[string]bool{},
+		tempRoot:     tempRoot,
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(m)
@@ -137,7 +159,13 @@ func (w jobWriter) Write(p []byte) (int, error) {
 	w.j.mu.Lock()
 	defer w.j.mu.Unlock()
 	w.j.activityAt = nowMs()
-	return w.j.buf.Write(p)
+	w.j.tail = appendTail(w.j.tail, p, defaultTailBytes)
+	if w.j.artifactFile != nil {
+		if _, err := w.j.artifactFile.Write(p); err != nil {
+			w.j.artifactErr = err.Error()
+		}
+	}
+	return len(p), nil
 }
 
 // Start launches run on a goroutine under the manager's session context and
@@ -158,7 +186,23 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 	id := fmt.Sprintf("%s-%d", kind, m.seq)
 	ctx, cancel := context.WithCancel(m.root)
 	startedAt := nowMs()
-	j := &Job{ID: id, Kind: kind, Label: label, SessionID: parentSession, status: Running, startedAt: startedAt, activityAt: startedAt, cancel: cancel, done: make(chan struct{})}
+	logPath, metaPath, file, artifactErr := m.openArtifactLocked(parentSession, id)
+	j := &Job{
+		ID:               id,
+		Kind:             kind,
+		Label:            label,
+		SessionID:        parentSession,
+		status:           Running,
+		startedAt:        startedAt,
+		activityAt:       startedAt,
+		cancel:           cancel,
+		done:             make(chan struct{}),
+		artifactPath:     logPath,
+		artifactMetaPath: metaPath,
+		artifactFile:     file,
+		artifactComplete: artifactErr == "",
+		artifactErr:      artifactErr,
+	}
 	m.jobs[id] = j
 	m.order = append(m.order, id)
 	m.mu.Unlock()
@@ -189,6 +233,46 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		default:
 			st = Done
 		}
+		finishedAt := nowMs()
+		if result != "" {
+			j.mu.Lock()
+			if j.artifactFile != nil {
+				if _, writeErr := j.artifactFile.WriteString(result); writeErr != nil {
+					j.artifactErr = writeErr.Error()
+				}
+			} else {
+				j.result = result
+			}
+			j.tail = appendTail(j.tail, []byte(result), defaultTailBytes)
+			j.mu.Unlock()
+		}
+		j.mu.Lock()
+		if j.artifactFile != nil {
+			if closeErr := j.artifactFile.Close(); closeErr != nil && j.artifactErr == "" {
+				j.artifactErr = closeErr.Error()
+			}
+			j.artifactFile = nil
+		}
+		if j.artifactErr != "" {
+			j.artifactComplete = false
+			if st == Done {
+				st = Failed
+			}
+			err = joinJobError(err, fmt.Errorf("job artifact incomplete: %s", j.artifactErr))
+		}
+		j.finishedAt = finishedAt
+		metaErr := m.writeJobMetaLocked(j, st)
+		if metaErr != nil {
+			if j.artifactErr == "" {
+				j.artifactErr = "metadata: " + metaErr.Error()
+			}
+			j.artifactComplete = false
+			if st == Done {
+				st = Failed
+			}
+			err = joinJobError(err, fmt.Errorf("job artifact metadata incomplete: %w", metaErr))
+		}
+		j.mu.Unlock()
 		// Queue the drain note (and emit the closing Notice) BEFORE publishing the
 		// terminal status. Wait(nil)/resolve only block on Running jobs, so if the
 		// status flipped to terminal before the note was queued, a Wait could observe
@@ -198,9 +282,12 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		m.recordCompletion(parentSession, id, kind, label, st, err)
 
 		j.mu.Lock()
-		j.result = result
 		if j.status != Killed { // a concurrent Kill already published Killed — keep it
 			j.status = st
+		}
+		if j.artifactPath != "" && j.artifactComplete {
+			j.result = ""
+			j.tail = nil
 		}
 		j.mu.Unlock()
 		close(j.done)
@@ -215,6 +302,67 @@ func runRecovered(ctx context.Context, out io.Writer, run func(context.Context, 
 		}
 	}()
 	return run(ctx, out)
+}
+
+func joinJobError(a, b error) error {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return fmt.Errorf("%v; %w", a, b)
+}
+
+func (m *Manager) openArtifactLocked(parentSession, id string) (logPath, metaPath string, file *os.File, artifactErr string) {
+	dir := m.artifactDirLocked(parentSession)
+	if dir == "" {
+		return "", "", nil, "artifact directory unavailable"
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return filepath.Join(dir, id+jobLogExt), filepath.Join(dir, id+jobMetaExt), nil, err.Error()
+	}
+	logPath = filepath.Join(dir, id+jobLogExt)
+	metaPath = filepath.Join(dir, id+jobMetaExt)
+	f, err := os.Create(logPath)
+	if err != nil {
+		return logPath, metaPath, nil, err.Error()
+	}
+	return logPath, metaPath, f, ""
+}
+
+func (m *Manager) artifactDirLocked(parentSession string) string {
+	parentSession = strings.TrimSpace(parentSession)
+	if parentSession != "" {
+		if dir := strings.TrimSpace(m.artifactDirs[parentSession]); dir != "" {
+			return dir
+		}
+	}
+	if strings.TrimSpace(m.tempRoot) == "" {
+		return ""
+	}
+	if parentSession == "" {
+		return filepath.Join(m.tempRoot, "default")
+	}
+	return filepath.Join(m.tempRoot, parentSession)
+}
+
+func (m *Manager) writeJobMetaLocked(j *Job, st Status) error {
+	if j.artifactMetaPath == "" {
+		return nil
+	}
+	return writeMeta(j.artifactMetaPath, artifactMeta{
+		ID:               j.ID,
+		Kind:             j.Kind,
+		Label:            j.Label,
+		SessionID:        j.SessionID,
+		Status:           st,
+		StartedAt:        j.startedAt,
+		FinishedAt:       j.finishedAt,
+		ArtifactComplete: j.artifactComplete && j.artifactErr == "",
+		ArtifactError:    j.artifactErr,
+		LogPath:          filepath.Base(j.artifactPath),
+	})
 }
 
 func (m *Manager) monitorStalled(parentSession string, j *Job) {
@@ -328,9 +476,15 @@ func (m *Manager) OutputForSession(parentSession, id string) (text string, statu
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	full := j.buf.String()
-	text = full[j.readOffset:]
-	j.readOffset = len(full)
+	if j.artifactPath != "" {
+		text = j.readArtifactSinceOffsetLocked()
+	} else {
+		full := string(j.tail)
+		if j.readOffset < int64(len(full)) {
+			text = full[j.readOffset:]
+			j.readOffset = int64(len(full))
+		}
+	}
 	// A task job streams nothing to the buffer — its answer lands in result. Once
 	// it is terminal with no buffered output, surface that result once so a task's
 	// answer is visible here too (bash_output's description promises task support).
@@ -339,6 +493,37 @@ func (m *Manager) OutputForSession(parentSession, id string) (text string, statu
 		j.resultRead = true
 	}
 	return text, j.status, true
+}
+
+func (j *Job) readArtifactSinceOffsetLocked() string {
+	b, err := os.ReadFile(j.artifactPath)
+	if err != nil {
+		if j.artifactErr == "" {
+			j.artifactErr = err.Error()
+		}
+		return ""
+	}
+	if j.readOffset > int64(len(b)) {
+		j.readOffset = int64(len(b))
+		return ""
+	}
+	text := string(b[j.readOffset:])
+	j.readOffset = int64(len(b))
+	return text
+}
+
+func (j *Job) readArtifactAllLocked() string {
+	if j.artifactPath == "" {
+		return ""
+	}
+	b, err := os.ReadFile(j.artifactPath)
+	if err != nil {
+		if j.artifactErr == "" {
+			j.artifactErr = err.Error()
+		}
+		return ""
+	}
+	return string(b)
 }
 
 // Kill cancels a running job. Returns false when the id is unknown or the job has
@@ -439,8 +624,17 @@ func (m *Manager) results(targets []*Job) []Result {
 	for _, j := range targets {
 		j.mu.Lock()
 		text := j.result
+		if text == "" && j.artifactPath != "" {
+			text = j.readArtifactAllLocked()
+		}
 		if text == "" {
-			text = j.buf.String()
+			text = string(j.tail)
+		}
+		if j.artifactErr != "" {
+			if text != "" {
+				text += "\n"
+			}
+			text += "job artifact incomplete: " + j.artifactErr
 		}
 		out = append(out, Result{ID: j.ID, Kind: j.Kind, Label: j.Label, Status: j.status, Output: text})
 		j.mu.Unlock()
@@ -518,6 +712,115 @@ func (m *Manager) SetActiveSession(parentSession string) {
 	m.mu.Unlock()
 }
 
+// SetActiveSessionPath binds a parent session id to its persistent transcript
+// path, migrates any temporary artifacts, and loads completed job tombstones from
+// the session sidecar.
+func (m *Manager) SetActiveSessionPath(parentSession, sessionPath string) {
+	parentSession = strings.TrimSpace(parentSession)
+	sessionPath = strings.TrimSpace(sessionPath)
+	m.mu.Lock()
+	m.active = parentSession
+	if parentSession == "" || sessionPath == "" {
+		m.mu.Unlock()
+		return
+	}
+	oldDir := m.artifactDirLocked(parentSession)
+	newDir := ArtifactDir(sessionPath)
+	m.artifactDirs[parentSession] = newDir
+	loaded := m.loaded[parentSession]
+	m.mu.Unlock()
+
+	if oldDir != "" && newDir != "" && oldDir != newDir {
+		_ = migrateArtifactDir(oldDir, newDir)
+	}
+	if !loaded {
+		m.loadSessionArtifacts(parentSession, newDir)
+	}
+}
+
+func migrateArtifactDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := os.Rename(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+			return err
+		}
+	}
+	_ = os.Remove(src)
+	return nil
+}
+
+func (m *Manager) loadSessionArtifacts(parentSession, dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		m.mu.Lock()
+		m.loaded[parentSession] = true
+		m.mu.Unlock()
+		return
+	}
+	var loaded []*Job
+	maxSeq := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != jobMetaExt {
+			continue
+		}
+		meta, err := readMeta(filepath.Join(dir, entry.Name()))
+		if err != nil || strings.TrimSpace(meta.ID) == "" {
+			continue
+		}
+		id := strings.TrimSpace(meta.ID)
+		if seq := maxJobSeq(id); seq > maxSeq {
+			maxSeq = seq
+		}
+		done := make(chan struct{})
+		close(done)
+		logPath := filepath.Join(dir, id+jobLogExt)
+		if strings.TrimSpace(meta.LogPath) != "" {
+			logPath = filepath.Join(dir, filepath.Base(meta.LogPath))
+		}
+		loaded = append(loaded, &Job{
+			ID:               id,
+			Kind:             meta.Kind,
+			Label:            meta.Label,
+			SessionID:        parentSession,
+			status:           meta.Status,
+			startedAt:        meta.StartedAt,
+			finishedAt:       meta.FinishedAt,
+			activityAt:       meta.FinishedAt,
+			done:             done,
+			artifactPath:     logPath,
+			artifactMetaPath: filepath.Join(dir, id+jobMetaExt),
+			artifactComplete: meta.ArtifactComplete,
+			artifactErr:      meta.ArtifactError,
+			tombstone:        true,
+		})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, j := range loaded {
+		if _, exists := m.jobs[j.ID]; exists {
+			continue
+		}
+		m.jobs[j.ID] = j
+		m.order = append(m.order, j.ID)
+	}
+	if maxSeq > m.seq {
+		m.seq = maxSeq
+	}
+	m.loaded[parentSession] = true
+}
+
 // DestroySession marks a parent session as being removed from active use and
 // cancels its running jobs. The returned channels close when each cancelled job
 // has fully unwound.
@@ -592,6 +895,9 @@ func (m *Manager) FinishDestroySession(parentSession string) {
 func (m *Manager) Close() {
 	m.cancel()
 	m.wg.Wait()
+	if m.tempRoot != "" {
+		_ = os.RemoveAll(m.tempRoot)
+	}
 }
 
 func nowMs() int64 { return time.Now().UnixMilli() }

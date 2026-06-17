@@ -1549,6 +1549,12 @@ func (c *Controller) ClearSession() error {
 	if running {
 		return fmt.Errorf("cannot clear while a turn is running")
 	}
+	preMarkedCleanup := c.hasUnfinishedSessionJobs(oldPath)
+	if preMarkedCleanup {
+		if err := agent.MarkCleanupPending(oldPath, "clear"); err != nil {
+			return err
+		}
+	}
 	destroy := c.BeginDestroySession(oldPath)
 	if !destroy.Async {
 		if err := removeSessionArtifacts(oldPath); err != nil {
@@ -1587,6 +1593,13 @@ func (c *Controller) ClearSession() error {
 		}()
 	}
 	return nil
+}
+
+func (c *Controller) hasUnfinishedSessionJobs(sessionPath string) bool {
+	if c.jobs == nil {
+		return false
+	}
+	return c.jobs.HasUnfinishedForSession(agent.BranchID(sessionPath))
 }
 
 func removeSessionArtifacts(path string) error {

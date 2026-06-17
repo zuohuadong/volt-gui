@@ -804,6 +804,26 @@ func (m *Manager) RunningForSession(parentSession string) []View {
 	return out
 }
 
+// HasUnfinishedForSession reports whether parentSession owns any job whose
+// goroutine has not fully exited yet. Empty parentSession preserves the legacy
+// unscoped behavior.
+func (m *Manager) HasUnfinishedForSession(parentSession string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, key := range m.order {
+		j := m.jobs[key]
+		if !sessionMatches(parentSession, j.SessionID) {
+			continue
+		}
+		select {
+		case <-j.done:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // DrainCompletedNote returns (and clears) a one-line summary of jobs that
 // finished since the last drain, for the controller to fold into the next turn
 // so the model learns of completions. "" when nothing finished.

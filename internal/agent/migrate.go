@@ -111,6 +111,7 @@ func migrateLegacySessions(srcDir, globalDest, marker string, projectDir func(st
 	}
 
 	imported := 0
+	hadArtifactFailure := false
 
 	// Pass 1 — event-log sessions (*.events.jsonl). When a same-named .jsonl
 	// exists in the source with a modification time >= the event log's, prefer
@@ -177,7 +178,9 @@ func migrateLegacySessions(srcDir, globalDest, marker string, projectDir func(st
 	// its own marker so existing upgraders whose events passes completed still
 	// get their .jsonl-only sessions imported.
 	if !importMarkerExists(globalDest, legacyJsonlPassMarker) {
-		imported += importJsonlSessions(entries, srcDir, globalDest, hasEvents, projectDir)
+		n, failed := importJsonlSessions(entries, srcDir, globalDest, hasEvents, projectDir)
+		imported += n
+		hadArtifactFailure = hadArtifactFailure || failed
 
 		// .jsonl.bak recovery: when the .jsonl was lost but a backup remains.
 		for _, e := range entries {
@@ -227,6 +230,9 @@ func migrateLegacySessions(srcDir, globalDest, marker string, projectDir func(st
 		if !e.IsDir() {
 			continue
 		}
+		if e.Name() == "subagents" {
+			continue
+		}
 		subDir := filepath.Join(srcDir, e.Name())
 		subEntries, err := os.ReadDir(subDir)
 		if err != nil {
@@ -252,15 +258,19 @@ func migrateLegacySessions(srcDir, globalDest, marker string, projectDir func(st
 
 	// Also stamp the flat markers so a downgrade to an older build doesn't
 	// re-run the flat import over routed sessions.
+	if hadArtifactFailure {
+		return imported, nil
+	}
 	writeImportMarkers(globalDest, marker, legacyImportMarker, legacyEventsHomeImportMarker, legacyEventsConfigImportMarker, legacyJsonlPassMarker)
 	return imported, nil
 }
 
 // importJsonlSessions copies .jsonl files that are already in message format
 // (no .events.jsonl counterpart) from srcDir into their appropriate destination
-// dirs. Returns the count imported.
-func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEvents map[string]bool, projectDir func(string) string) int {
+// dirs. Returns the count imported and whether a related artifact copy failed.
+func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEvents map[string]bool, projectDir func(string) string) (int, bool) {
 	imported := 0
+	hadArtifactFailure := false
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".events.jsonl") || strings.HasSuffix(name, ".jsonl.bak") {
@@ -284,6 +294,11 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 		destDir, summary, copyBranchMeta := jsonlSessionDestDir(srcDir, jsonlPath, base, globalDest, projectDir)
 		dest := filepath.Join(destDir, base+".jsonl")
 		if _, err := os.Stat(dest); err == nil {
+			if copyBranchMeta {
+				if err := copySubagentArtifacts(srcDir, destDir, base); err != nil {
+					hadArtifactFailure = true
+				}
+			}
 			continue
 		}
 		srcInfo, _ := e.Info()
@@ -295,11 +310,14 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 		}
 		if copyBranchMeta {
 			copyBranchMetaSidecar(jsonlPath, dest)
+			if err := copySubagentArtifacts(srcDir, destDir, base); err != nil {
+				hadArtifactFailure = true
+			}
 		}
 		recordImportedTitle(destDir, base, summary)
 		imported++
 	}
-	return imported
+	return imported, hadArtifactFailure
 }
 
 func jsonlSessionDestDir(srcDir, srcPath, base, globalDest string, projectDir func(string) string) (string, string, bool) {
@@ -705,6 +723,9 @@ func rehomeStrandedSessions(srcDir, globalDest, marker string, projectDir func(s
 		}
 		dest := filepath.Join(destDir, name)
 		if _, err := os.Stat(dest); err == nil {
+			if err := copySubagentArtifacts(srcDir, destDir, base); err != nil {
+				hadCopyFailure = true
+			}
 			continue // already routed on a previous boot
 		}
 		if err := transformAndCopyJsonl(srcPath, dest); err != nil {
@@ -713,6 +734,9 @@ func rehomeStrandedSessions(srcDir, globalDest, marker string, projectDir func(s
 		}
 		_ = os.Chtimes(dest, info.ModTime(), info.ModTime()) // preserve resume ordering
 		copyBranchMetaSidecar(srcPath, dest)
+		if err := copySubagentArtifacts(srcDir, destDir, base); err != nil {
+			hadCopyFailure = true
+		}
 		recordImportedTitle(destDir, base, summary)
 		imported++
 	}
@@ -781,6 +805,71 @@ func copyBranchMetaSidecar(srcPath, dstPath string) {
 	if err := os.Rename(tmpPath, dstMeta); err != nil {
 		os.Remove(tmpPath)
 	}
+}
+
+func copySubagentArtifacts(srcSessionDir, dstSessionDir, parentSession string) error {
+	if sameDirPath(srcSessionDir, dstSessionDir) {
+		return nil
+	}
+	artifacts, err := ListSubagentsByParent(srcSessionDir, parentSession)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	dstSubagentDir := filepath.Join(dstSessionDir, "subagents")
+	for _, artifact := range artifacts {
+		for _, src := range []string{artifact.SessionPath, artifact.MetaPath} {
+			if err := copyFileIfExists(src, filepath.Join(dstSubagentDir, filepath.Base(src))); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func copyFileIfExists(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() {
+		return nil
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".subagent.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	_ = os.Chtimes(dst, info.ModTime(), info.ModTime())
+	return nil
 }
 
 // sameDirPath reports whether two directory paths resolve to the same location.

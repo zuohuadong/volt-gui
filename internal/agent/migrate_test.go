@@ -266,6 +266,8 @@ func TestRehomeStrandedSessionAfterDowngrade(t *testing.T) {
 	if err := SaveBranchMeta(sessionPath, BranchMeta{Scope: "project", WorkspaceRoot: workspace, TopicTitle: "downgrade work"}); err != nil {
 		t.Fatal(err)
 	}
+	ref := "sa_20260101_000000_000000000_aabbccddeeff"
+	writeMigratedSubagentArtifact(t, src, ref, base)
 
 	n, err := MigrateLegacySessions(src, dest, projectDir)
 	if err != nil {
@@ -280,6 +282,12 @@ func TestRehomeStrandedSessionAfterDowngrade(t *testing.T) {
 	// The branch sidecar must follow so the sidebar keeps title/topic.
 	if _, err := os.Stat(BranchMetaPath(filepath.Join(projectDest, base+".jsonl"))); err != nil {
 		t.Errorf("branch meta sidecar should be copied alongside: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDest, "subagents", ref+".jsonl")); err != nil {
+		t.Errorf("subagent transcript should be copied alongside: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDest, "subagents", ref+".meta.json")); err != nil {
+		t.Errorf("subagent metadata should be copied alongside: %v", err)
 	}
 	// Source is never modified.
 	if _, err := os.Stat(sessionPath); err != nil {
@@ -316,6 +324,8 @@ func TestJsonlPassRoutesBranchMetaWhenJsonlMarkerMissing(t *testing.T) {
 	if err := SaveBranchMeta(sessionPath, BranchMeta{Scope: "project", WorkspaceRoot: workspace, TopicTitle: "half-upgraded"}); err != nil {
 		t.Fatal(err)
 	}
+	ref := "sa_20260101_003000_000000000_aabbccddeeff"
+	writeMigratedSubagentArtifact(t, src, ref, base)
 
 	n, err := MigrateLegacySessions(src, dest, projectDir)
 	if err != nil {
@@ -332,6 +342,12 @@ func TestJsonlPassRoutesBranchMetaWhenJsonlMarkerMissing(t *testing.T) {
 	}
 	if _, err := os.Stat(BranchMetaPath(filepath.Join(projectDest, base+".jsonl"))); err != nil {
 		t.Fatalf("branch meta sidecar should be copied alongside: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDest, "subagents", ref+".jsonl")); err != nil {
+		t.Fatalf("subagent transcript should be copied alongside: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDest, "subagents", ref+".meta.json")); err != nil {
+		t.Fatalf("subagent metadata should be copied alongside: %v", err)
 	}
 	if n, err := MigrateLegacySessions(src, dest, projectDir); err != nil || n != 0 {
 		t.Fatalf("second run should be a no-op: n=%d err=%v", n, err)
@@ -469,6 +485,73 @@ func TestRehomeKeepsWatermarkWhenProjectCopyFails(t *testing.T) {
 	}
 	if !info.ModTime().Equal(past) {
 		t.Fatalf("watermark advanced after copy failure: got %s want %s", info.ModTime(), past)
+	}
+}
+
+func TestRehomeKeepsWatermarkWhenSubagentCopyFails(t *testing.T) {
+	src := t.TempDir()
+	dest := t.TempDir()
+	workspace := t.TempDir()
+	projectDest := t.TempDir()
+	projectDir := func(root string) string {
+		if root == workspace {
+			return projectDest
+		}
+		return ""
+	}
+
+	past := time.Now().Add(-24 * time.Hour).Round(0)
+	stampMigrated(t, dest, past)
+	base := "20260101-024000.000000000-deepseek"
+	sessionPath := filepath.Join(src, base+".jsonl")
+	if err := os.WriteFile(sessionPath, []byte(v1MessageSession), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveBranchMeta(sessionPath, BranchMeta{Scope: "project", WorkspaceRoot: workspace}); err != nil {
+		t.Fatal(err)
+	}
+	writeMigratedSubagentArtifact(t, src, "sa_20260101_024000_000000000_aabbccddeeff", base)
+	if err := os.MkdirAll(projectDest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDest, "subagents"), []byte("block"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := MigrateLegacySessions(src, dest, projectDir); err != nil || n != 1 {
+		t.Fatalf("parent session should still import: n=%d err=%v", n, err)
+	}
+	info, err := os.Stat(filepath.Join(dest, legacyRoutedHomeImportMarker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(past) {
+		t.Fatalf("watermark advanced after subagent copy failure: got %s want %s", info.ModTime(), past)
+	}
+}
+
+func writeMigratedSubagentArtifact(t *testing.T, sessionDir, ref, parentSession string) {
+	t.Helper()
+	subagentDir := filepath.Join(sessionDir, "subagents")
+	if err := os.MkdirAll(subagentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subagentDir, ref+".jsonl"), []byte(`{"role":"user","content":"sub"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	meta := SubagentMeta{
+		Ref:           ref,
+		Status:        SubagentCompleted,
+		Kind:          "task",
+		Name:          "task",
+		ParentSession: parentSession,
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subagentDir, ref+".meta.json"), data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -45,10 +45,15 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		{Name: "example", Command: "voltui-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
 	}
-	mm, _ := orig.Provider("mimo-pro")
-	mm.BaseURL = "http://localhost:8000/v1"
-	ds, _ := orig.Provider("deepseek-flash")
-	ds.Effort = "max"
+	orig.Providers = append(orig.Providers, ProviderEntry{
+		Name:      "render-smoke",
+		Kind:      "openai",
+		BaseURL:   "http://localhost:8000/v1",
+		Model:     "render-model",
+		Models:    []string{"render-model"},
+		APIKeyEnv: "RENDER_MODEL_KEY",
+		Effort:    "max",
+	})
 
 	rendered := RenderTOML(orig)
 
@@ -126,11 +131,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.SubagentModels["review"] != "deepseek-pro" {
 		t.Errorf("subagent_models.review = %q, want deepseek-pro", got.Agent.SubagentModels["review"])
 	}
-	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" {
-		t.Errorf("mimo-pro base_url not preserved: %+v", g)
-	}
-	if g, _ := got.Provider("deepseek-flash"); g == nil || g.Effort != "max" {
-		t.Errorf("deepseek-flash effort not preserved: %+v", g)
+	if g, _ := got.Provider("render-smoke"); g == nil || g.BaseURL != "http://localhost:8000/v1" || g.Effort != "max" {
+		t.Errorf("render-smoke provider not preserved: %+v", g)
 	}
 	if len(got.Providers) != len(orig.Providers) {
 		t.Errorf("providers count = %d, want %d", len(got.Providers), len(orig.Providers))

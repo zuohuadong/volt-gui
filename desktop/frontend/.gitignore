@@ -4,12 +4,3 @@ node_modules
 # fresh checkout before the first build.
 dist/*
 !dist/.gitkeep
-
-# Wails-generated bindings (we hand-write a typed bridge instead; regenerate with
-# `wails generate module` if you prefer the generated ones).
-wailsjs
-
-*.local
-
-# Wails dev install-checksum cache
-package.json.md5

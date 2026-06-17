@@ -2,18 +2,22 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	codediff "voltui/internal/diff"
 	"voltui/internal/proc"
 )
 
 type gitStatusEntry struct {
-	Path    string
-	OldPath string
-	Status  string
+	Path           string
+	OldPath        string
+	Status         string
+	IndexStatus    string
+	WorktreeStatus string
 }
 
 type workspaceChangeAccumulator struct {
@@ -77,6 +81,8 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 		}
 		acc.hasGit = true
 		acc.view.GitStatus = entry.Status
+		acc.view.IndexStatus = entry.IndexStatus
+		acc.view.WorktreeStatus = entry.WorktreeStatus
 		acc.view.OldPath = normalizeWorkspaceRelPath(base, entry.OldPath)
 	}
 
@@ -101,20 +107,16 @@ func (a *App) WorkspaceChanges() WorkspaceChangesView {
 }
 
 func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
-	cmd := exec.Command("git", "-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	proc.HideWindowDetached(cmd)
+	cmd := workspaceGit("-C", base, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
 	entries := parseGitStatusPorcelainZ(raw)
-	topCmd := exec.Command("git", "-C", base, "rev-parse", "--show-toplevel")
-	proc.HideWindowDetached(topCmd)
-	topRaw, err := topCmd.Output()
+	repoRoot, err := workspaceGitRoot(base)
 	if err != nil {
 		return nil, err
 	}
-	repoRoot := strings.TrimSpace(string(topRaw))
 	if repoRoot == "" {
 		return entries, nil
 	}
@@ -130,6 +132,130 @@ func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
 	return out, nil
 }
 
+func workspaceGit(args ...string) *exec.Cmd {
+	fullArgs := append([]string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false"}, args...)
+	cmd := exec.Command("git", fullArgs...)
+	proc.HideWindowDetached(cmd)
+	return cmd
+}
+
+func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
+	out := WorkspaceDiffView{Path: normalizeWorkspaceRelPath("", rel)}
+	base, err := a.activeWorkspaceBase()
+	if err != nil {
+		out.Err = err.Error()
+		return out
+	}
+	path, ok, err := workspacePathForBase(base, rel)
+	if err != nil || !ok {
+		out.Err = "invalid path"
+		return out
+	}
+	rel = normalizeWorkspaceRelPath(base, path)
+	out.Path = rel
+	if rel == "" {
+		out.Err = "invalid path"
+		return out
+	}
+
+	repoRoot, err := workspaceGitRoot(base)
+	if err != nil {
+		out.Err = err.Error()
+		return out
+	}
+	statusEntries, err := workspaceGitStatus(base)
+	if err != nil {
+		out.Err = err.Error()
+		return out
+	}
+
+	var entry gitStatusEntry
+	for _, candidate := range statusEntries {
+		if candidate.Path == rel {
+			entry = candidate
+			break
+		}
+	}
+	out.Status = entry.Status
+	out.IndexStatus = entry.IndexStatus
+	out.WorktreeStatus = entry.WorktreeStatus
+	out.OldPath = entry.OldPath
+
+	kind := codediff.Modify
+	oldRel := rel
+	oldText := ""
+	newText := ""
+
+	switch {
+	case entry.Status == "??" || strings.Contains(entry.Status, "A"):
+		kind = codediff.Create
+	case strings.Contains(entry.Status, "D"):
+		kind = codediff.Delete
+	}
+	if entry.OldPath != "" {
+		oldRel = entry.OldPath
+	}
+
+	if kind != codediff.Create {
+		oldText, err = gitWorkspaceText(repoRoot, base, oldRel)
+		if err != nil {
+			out.Err = err.Error()
+			return out
+		}
+	}
+	if kind != codediff.Delete {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			out.Err = err.Error()
+			return out
+		}
+		newText = string(data)
+	}
+
+	change := codediff.Build(rel, oldText, newText, kind)
+	out.Kind = string(change.Kind)
+	out.Diff = change.Diff
+	out.Added = change.Added
+	out.Removed = change.Removed
+	out.Binary = change.Binary
+	out.Truncated = strings.Contains(change.Diff, "diff omitted:")
+	return out
+}
+
+func workspaceGitRoot(base string) (string, error) {
+	topCmd := workspaceGit("-C", base, "rev-parse", "--show-toplevel")
+	topRaw, err := topCmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(topRaw)), nil
+}
+
+func gitWorkspaceText(repoRoot, base, rel string) (string, error) {
+	abs, ok, err := workspacePathForBase(base, rel)
+	if err != nil || !ok {
+		return "", os.ErrInvalid
+	}
+	repoRel, err := filepath.Rel(repoRoot, abs)
+	if err != nil {
+		return "", err
+	}
+	spec := filepath.ToSlash(repoRel)
+	if text, err := gitBlobText(repoRoot, "HEAD:"+spec); err == nil {
+		return text, nil
+	}
+	return gitBlobText(repoRoot, ":"+spec)
+}
+
+func gitBlobText(repoRoot, spec string) (string, error) {
+	cmd := workspaceGit("-C", repoRoot, "show", spec)
+	raw, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
 func parseGitStatusPorcelainZ(raw []byte) []gitStatusEntry {
 	parts := bytes.Split(raw, []byte{0})
 	out := make([]gitStatusEntry, 0, len(parts))
@@ -140,7 +266,12 @@ func parseGitStatusPorcelainZ(raw []byte) []gitStatusEntry {
 		}
 		status := string(part[:2])
 		path := string(part[3:])
-		entry := gitStatusEntry{Path: path, Status: strings.TrimSpace(status)}
+		entry := gitStatusEntry{
+			Path:           path,
+			Status:         strings.TrimSpace(status),
+			IndexStatus:    strings.TrimSpace(status[:1]),
+			WorktreeStatus: strings.TrimSpace(status[1:2]),
+		}
 		if strings.ContainsAny(status, "RC") && i+1 < len(parts) {
 			i++
 			entry.OldPath = string(parts[i])

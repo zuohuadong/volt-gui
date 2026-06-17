@@ -68,6 +68,7 @@ type Controller struct {
 	classifier   autoPlanClassifier
 	startedOnce  bool              // guards the one-shot SessionStart hook on first turn
 	onRemember   func(rule string) // set via Options; invoked when user picks "always allow"
+	goal         goalState
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -110,15 +111,17 @@ type Controller struct {
 
 	// mu guards the run state and approval bookkeeping; every critical section
 	// under it is short and non-blocking.
-	mu          sync.Mutex
-	cancel      context.CancelFunc
-	running     bool
-	planMode    bool
-	sessionPath string
-	approvals   map[string]chan approvalReply
-	asks        map[string]chan []event.AskAnswer
-	granted     map[string]bool
-	nextID      int
+	mu               sync.Mutex
+	cancel           context.CancelFunc
+	running          bool
+	planMode         bool
+	sessionPath      string
+	approvals        map[string]chan approvalReply
+	pendingApprovals map[string]event.Approval
+	asks             map[string]chan []event.AskAnswer
+	pendingAsks      map[string]event.Ask
+	granted          map[string]bool
+	nextID           int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 	// autoApprove auto-allows writer tool calls without prompting. Set only while
@@ -148,6 +151,11 @@ type approvalReply struct {
 	session bool
 	persist bool // true = write "always allow" rule to config
 }
+
+// cacheColdAfter controls when resuming an older session may prune stale,
+// re-derivable tool results before the next model turn. Tests override it to
+// exercise cold and warm resume paths deterministically.
+var cacheColdAfter = 12 * time.Hour
 
 // Options carries the already-built pieces setup assembles. Lifecycle metadata
 // lets the controller mint and rotate session files; Host/Commands are surfaced
@@ -205,34 +213,36 @@ func New(opts Options) *Controller {
 		pluginCtx = context.Background()
 	}
 	c := &Controller{
-		runner:        opts.Runner,
-		executor:      opts.Executor,
-		sink:          sink,
-		policy:        opts.Policy,
-		label:         opts.Label,
-		systemPrompt:  opts.SystemPrompt,
-		sessionDir:    opts.SessionDir,
-		sessionPath:   opts.SessionPath,
-		host:          opts.Host,
-		commands:      opts.Commands,
-		skills:        opts.Skills,
-		allSkills:     opts.AllSkills,
-		hooks:         opts.Hooks,
-		mem:           opts.Memory,
-		cleanup:       opts.Cleanup,
-		autoPlan:      normalizeAutoPlan(opts.AutoPlan),
-		classifier:    classifier,
-		onRemember:    opts.OnRemember,
-		balanceURL:    opts.BalanceURL,
-		balanceKey:    opts.BalanceKey,
-		balanceClient: opts.BalanceClient,
-		jobs:          opts.Jobs,
-		reg:           opts.Registry,
-		pluginCtx:     pluginCtx,
-		cpRoot:        opts.WorkspaceRoot,
-		approvals:     map[string]chan approvalReply{},
-		asks:          map[string]chan []event.AskAnswer{},
-		granted:       map[string]bool{},
+		runner:           opts.Runner,
+		executor:         opts.Executor,
+		sink:             sink,
+		policy:           opts.Policy,
+		label:            opts.Label,
+		systemPrompt:     opts.SystemPrompt,
+		sessionDir:       opts.SessionDir,
+		sessionPath:      opts.SessionPath,
+		host:             opts.Host,
+		commands:         opts.Commands,
+		skills:           opts.Skills,
+		allSkills:        opts.AllSkills,
+		hooks:            opts.Hooks,
+		mem:              opts.Memory,
+		cleanup:          opts.Cleanup,
+		autoPlan:         normalizeAutoPlan(opts.AutoPlan),
+		classifier:       classifier,
+		onRemember:       opts.OnRemember,
+		balanceURL:       opts.BalanceURL,
+		balanceKey:       opts.BalanceKey,
+		balanceClient:    opts.BalanceClient,
+		jobs:             opts.Jobs,
+		reg:              opts.Registry,
+		pluginCtx:        pluginCtx,
+		cpRoot:           opts.WorkspaceRoot,
+		approvals:        map[string]chan approvalReply{},
+		pendingApprovals: map[string]event.Approval{},
+		asks:             map[string]chan []event.AskAnswer{},
+		pendingAsks:      map[string]event.Ask{},
+		granted:          map[string]bool{},
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
@@ -352,8 +362,18 @@ func (c *Controller) RunTurn(ctx context.Context, input string) error {
 }
 
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
+	return c.runTurnWithRawOptions(ctx, input, raw, runTurnOptions{})
+}
+
+type runTurnOptions struct {
+	skipAutoPlan bool
+}
+
+func (c *Controller) runTurnWithRawOptions(ctx context.Context, input, raw string, opts runTurnOptions) error {
 	c.maybeSessionStart(ctx)
-	c.maybeAutoPlan(ctx, raw)
+	if !opts.skipAutoPlan {
+		c.maybeAutoPlan(ctx, raw)
+	}
 	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
@@ -449,6 +469,8 @@ func (c *Controller) Submit(input string) {
 		return
 	}
 	switch {
+	case trimmed == "/goal" || strings.HasPrefix(trimmed, "/goal "):
+		c.submitGoalCommand(trimmed)
 	case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
 		go func() {
@@ -719,6 +741,7 @@ func (c *Controller) Approve(id string, allow, session, persist bool) {
 	c.mu.Lock()
 	reply := c.approvals[id]
 	delete(c.approvals, id)
+	delete(c.pendingApprovals, id)
 	c.mu.Unlock()
 	if reply != nil {
 		reply <- approvalReply{allow: allow, session: session, persist: persist} // buffered, never blocks
@@ -758,10 +781,12 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 	c.nextID++
 	id := strconv.Itoa(c.nextID)
 	reply := make(chan []event.AskAnswer, 1)
+	ask := event.Ask{ID: id, Questions: questions}
 	c.asks[id] = reply
+	c.pendingAsks[id] = ask
 	c.mu.Unlock()
 
-	c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: event.Ask{ID: id, Questions: questions}})
+	c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: ask})
 
 	select {
 	case ans := <-reply:
@@ -769,6 +794,7 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.asks, id)
+		delete(c.pendingAsks, id)
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	}
@@ -797,9 +823,33 @@ func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
 	c.mu.Lock()
 	reply := c.asks[id]
 	delete(c.asks, id)
+	delete(c.pendingAsks, id)
 	c.mu.Unlock()
 	if reply != nil {
 		reply <- answers // buffered, never blocks
+	}
+}
+
+// ReplayPendingPrompts re-emits any approval or ask prompt that is currently
+// blocking the controller. Desktop frontends call this after reload/reconnect so
+// the UI can rebuild the modal/card for a still-waiting backend gate.
+func (c *Controller) ReplayPendingPrompts() {
+	c.mu.Lock()
+	approvals := make([]event.Approval, 0, len(c.pendingApprovals))
+	for _, approval := range c.pendingApprovals {
+		approvals = append(approvals, approval)
+	}
+	asks := make([]event.Ask, 0, len(c.pendingAsks))
+	for _, ask := range c.pendingAsks {
+		asks = append(asks, ask)
+	}
+	c.mu.Unlock()
+
+	for _, approval := range approvals {
+		c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: approval})
+	}
+	for _, ask := range asks {
+		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: ask})
 	}
 }
 
@@ -919,6 +969,9 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error {
 	c.mu.Unlock()
 	if running {
 		return c.rewindFail(fmt.Errorf("cannot rewind while a turn is running"))
+	}
+	if (scope == RewindConversation || scope == RewindBoth) && hasBound && boundary > len(c.executor.Session().Snapshot()) {
+		return c.rewindFail(fmt.Errorf("conversation rewind compacted past turn %d; summarize or fork from a newer turn", turn))
 	}
 
 	if scope == RewindCode || scope == RewindBoth {
@@ -1222,11 +1275,32 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(s)
+		if c.shouldPruneColdResume(path) {
+			if _, err := c.executor.PruneStaleToolResults(); err != nil {
+				slog.Warn("controller: prune cold resume", "err", err)
+			} else if err := s.Save(path); err != nil {
+				slog.Warn("controller: save pruned cold resume", "err", err)
+			}
+		}
 	}
 	c.mu.Lock()
 	c.sessionPath = path
 	c.mu.Unlock()
 	c.rebindCheckpoints(path)
+}
+
+func (c *Controller) shouldPruneColdResume(path string) bool {
+	if path == "" {
+		return false
+	}
+	if cacheColdAfter <= 0 {
+		return true
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.UpdatedAt.IsZero() {
+		return false
+	}
+	return time.Since(meta.UpdatedAt) >= cacheColdAfter
 }
 
 // Snapshot writes the executor's conversation to the active session file. No-op
@@ -1706,6 +1780,7 @@ func (c *Controller) drainApprovalsLocked() []chan approvalReply {
 	pending := make([]chan approvalReply, 0, len(c.approvals))
 	for id, reply := range c.approvals {
 		delete(c.approvals, id)
+		delete(c.pendingApprovals, id)
 		pending = append(pending, reply)
 	}
 	return pending
@@ -2058,10 +2133,12 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	c.nextID++
 	id := strconv.Itoa(c.nextID)
 	reply := make(chan approvalReply, 1)
+	approval := event.Approval{ID: id, Tool: tool, Subject: subject}
 	c.approvals[id] = reply
+	c.pendingApprovals[id] = approval
 	c.mu.Unlock()
 
-	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject}})
+	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: approval})
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
 	if subject != "" {
@@ -2086,6 +2163,7 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string) 
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.approvals, id)
+		delete(c.pendingApprovals, id)
 		c.mu.Unlock()
 		return false, false, ctx.Err()
 	}

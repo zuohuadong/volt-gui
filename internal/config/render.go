@@ -388,6 +388,85 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 		}
 	}
+	b.WriteString("\n")
+
+	b.WriteString("# Native workbench plugins and generation providers.\n")
+	b.WriteString("# [workbench] plugins own product UI/workflow surfaces; providers adapt MCP,\n")
+	b.WriteString("# HTTP, or local commands behind those surfaces. Keep secrets in env vars.\n")
+	if len(c.Workbench.Plugins) == 0 && len(c.Workbench.Providers) == 0 {
+		b.WriteString("# [[workbench.plugins]]\n")
+		b.WriteString("# id           = \"content-studio\"\n")
+		b.WriteString("# name         = \"Content Studio\"\n")
+		b.WriteString("# kind         = \"native\"\n")
+		b.WriteString("# entry        = \"content-studio\"\n")
+		b.WriteString("# capabilities = [\"presentation\", \"poster\", \"video\"]\n")
+		b.WriteString("# provider_ids = [\"asset-mcp\"]\n")
+		b.WriteString("# [[workbench.providers]]\n")
+		b.WriteString("# id           = \"asset-mcp\"\n")
+		b.WriteString("# type         = \"mcp\"\n")
+		b.WriteString("# server       = \"internal-assets\"\n")
+		b.WriteString("# capabilities = [\"image-search\", \"asset-library\"]\n")
+	} else {
+		for _, pl := range c.Workbench.Plugins {
+			b.WriteString("\n[[workbench.plugins]]\n")
+			fmt.Fprintf(&b, "id           = %q\n", pl.ID)
+			if pl.Name != "" {
+				fmt.Fprintf(&b, "name         = %q\n", pl.Name)
+			}
+			if pl.Kind != "" {
+				fmt.Fprintf(&b, "kind         = %q\n", pl.Kind)
+			}
+			if pl.Entry != "" {
+				fmt.Fprintf(&b, "entry        = %q\n", pl.Entry)
+			}
+			if pl.Version != "" {
+				fmt.Fprintf(&b, "version      = %q\n", pl.Version)
+			}
+			if len(pl.Capabilities) > 0 {
+				fmt.Fprintf(&b, "capabilities = %s\n", renderStringArray(pl.Capabilities))
+			}
+			if len(pl.ProviderIDs) > 0 {
+				fmt.Fprintf(&b, "provider_ids = %s\n", renderStringArray(pl.ProviderIDs))
+			}
+			if len(pl.Config) > 0 {
+				fmt.Fprintf(&b, "config       = %s\n", renderStringMap(pl.Config))
+			}
+			if pl.Enabled != nil {
+				fmt.Fprintf(&b, "enabled      = %v\n", *pl.Enabled)
+			}
+		}
+		for _, p := range c.Workbench.Providers {
+			b.WriteString("\n[[workbench.providers]]\n")
+			fmt.Fprintf(&b, "id   = %q\n", p.ID)
+			if p.Type != "" {
+				fmt.Fprintf(&b, "type = %q\n", p.Type)
+			}
+			if p.Server != "" {
+				fmt.Fprintf(&b, "server = %q\n", p.Server)
+			}
+			if p.URL != "" {
+				fmt.Fprintf(&b, "url = %q\n", p.URL)
+			}
+			if p.Command != "" {
+				fmt.Fprintf(&b, "command = %q\n", p.Command)
+			}
+			if len(p.Args) > 0 {
+				fmt.Fprintf(&b, "args = %s\n", renderStringArray(p.Args))
+			}
+			if len(p.Capabilities) > 0 {
+				fmt.Fprintf(&b, "capabilities = %s\n", renderStringArray(p.Capabilities))
+			}
+			if len(p.Headers) > 0 {
+				fmt.Fprintf(&b, "headers = %s\n", renderStringMap(p.Headers))
+			}
+			if len(p.Env) > 0 {
+				fmt.Fprintf(&b, "env = %s\n", renderStringMap(p.Env))
+			}
+			if len(p.Config) > 0 {
+				fmt.Fprintf(&b, "config = %s\n", renderStringMap(p.Config))
+			}
+		}
+	}
 
 	return b.String()
 }

@@ -281,13 +281,7 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 		if !isMessageFormat(jsonlPath) {
 			continue
 		}
-		meta := readLegacyMeta(srcDir, base)
-		destDir := globalDest
-		if projectDir != nil && meta.Workspace != "" && dirExists(meta.Workspace) {
-			if d := projectDir(meta.Workspace); d != "" {
-				destDir = d
-			}
-		}
+		destDir, summary, copyBranchMeta := jsonlSessionDestDir(srcDir, jsonlPath, base, globalDest, projectDir)
 		dest := filepath.Join(destDir, base+".jsonl")
 		if _, err := os.Stat(dest); err == nil {
 			continue
@@ -299,10 +293,39 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 		if srcInfo != nil {
 			_ = os.Chtimes(dest, srcInfo.ModTime(), srcInfo.ModTime())
 		}
-		recordImportedTitle(destDir, base, meta.Summary)
+		if copyBranchMeta {
+			copyBranchMetaSidecar(jsonlPath, dest)
+		}
+		recordImportedTitle(destDir, base, summary)
 		imported++
 	}
 	return imported
+}
+
+func jsonlSessionDestDir(srcDir, srcPath, base, globalDest string, projectDir func(string) string) (string, string, bool) {
+	if meta, ok, err := LoadBranchMeta(srcPath); err == nil && ok {
+		summary := strings.TrimSpace(meta.TopicTitle)
+		scope := meta.DefaultScope()
+		if projectDir != nil && scope == "project" && meta.WorkspaceRoot != "" && dirExists(meta.WorkspaceRoot) {
+			if d := projectDir(meta.WorkspaceRoot); d != "" {
+				return d, summary, true
+			}
+		}
+		// Explicit branch meta is newer than any stale v0.x sidecar. Preserve
+		// global branch metadata, but do not carry a dead project scope into the
+		// global directory when its workspace can no longer be resolved.
+		if meta.Scope != "" {
+			return globalDest, summary, scope == "global"
+		}
+	}
+	meta := readLegacyMeta(srcDir, base)
+	destDir := globalDest
+	if projectDir != nil && meta.Workspace != "" && dirExists(meta.Workspace) {
+		if d := projectDir(meta.Workspace); d != "" {
+			destDir = d
+		}
+	}
+	return destDir, meta.Summary, false
 }
 
 // migrateSubDirectory imports sessions from a project-scoped subdirectory
@@ -657,6 +680,7 @@ func rehomeStrandedSessions(srcDir, globalDest, marker string, projectDir func(s
 		return 0, nil
 	}
 	imported := 0
+	hadCopyFailure := false
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".jsonl") ||
@@ -684,6 +708,7 @@ func rehomeStrandedSessions(srcDir, globalDest, marker string, projectDir func(s
 			continue // already routed on a previous boot
 		}
 		if err := transformAndCopyJsonl(srcPath, dest); err != nil {
+			hadCopyFailure = true
 			continue
 		}
 		_ = os.Chtimes(dest, info.ModTime(), info.ModTime()) // preserve resume ordering
@@ -691,10 +716,12 @@ func rehomeStrandedSessions(srcDir, globalDest, marker string, projectDir func(s
 		recordImportedTitle(destDir, base, summary)
 		imported++
 	}
-	// Advance the watermark so the next boot starts from here, regardless of
-	// whether anything matched this time.
-	now := time.Now()
-	_ = os.Chtimes(markerPath, now, now)
+	// Advance the watermark so the next boot starts from here, unless a matched
+	// project session failed to copy and still needs a retry.
+	if !hadCopyFailure {
+		now := time.Now()
+		_ = os.Chtimes(markerPath, now, now)
+	}
 	return imported, nil
 }
 

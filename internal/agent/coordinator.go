@@ -47,6 +47,7 @@ func PlannerPromptWithContext(context string) string {
 type Coordinator struct {
 	planner        provider.Provider
 	plannerSess    *Session
+	plannerSystem  string
 	plannerPricing *provider.Pricing
 	plannerAgent   *Agent
 	executor       *Agent
@@ -66,6 +67,10 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 	if nilutil.IsNil(sink) {
 		sink = event.Discard
 	}
+	if plannerSession == nil {
+		plannerSession = NewSession("")
+	}
+	plannerSystem := sessionSystemPrompt(plannerSession)
 	var plannerAgent *Agent
 	if plannerTools != nil {
 		plannerOptions.Temperature = temperature
@@ -79,12 +84,44 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 	return &Coordinator{
 		planner:        planner,
 		plannerSess:    plannerSession,
+		plannerSystem:  plannerSystem,
 		plannerPricing: plannerPricing,
 		plannerAgent:   plannerAgent,
 		executor:       executor,
 		temperature:    temperature,
 		sink:           sink,
 		shouldPlan:     shouldPlan,
+	}
+}
+
+func sessionSystemPrompt(s *Session) string {
+	if s == nil {
+		return ""
+	}
+	for _, m := range s.Snapshot() {
+		if m.Role == provider.RoleSystem {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// ResetPlannerSession discards turn-local planner history when the owning
+// controller moves to a different executor session. Saved transcripts only
+// persist executor-visible conversation; carrying the old planner transcript
+// into a new/resumed session can make the next plan reuse unrelated tasks.
+func (c *Coordinator) ResetPlannerSession() {
+	if c == nil {
+		return
+	}
+	system := c.plannerSystem
+	if system == "" {
+		system = sessionSystemPrompt(c.plannerSess)
+	}
+	next := NewSession(system)
+	c.plannerSess = next
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetSession(next)
 	}
 }
 

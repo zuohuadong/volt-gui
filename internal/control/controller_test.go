@@ -107,6 +107,45 @@ func (t startBackgroundJobTool) Execute(ctx context.Context, _ json.RawMessage) 
 	return "started " + j.ID, nil
 }
 
+type recordingProvider struct {
+	name     string
+	streams  [][]provider.Chunk
+	requests []provider.Request
+}
+
+func (p *recordingProvider) Name() string {
+	if p.name != "" {
+		return p.name
+	}
+	return "recording"
+}
+
+func (p *recordingProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.requests = append(p.requests, req)
+	i := len(p.requests) - 1
+	if i >= len(p.streams) {
+		i = len(p.streams) - 1
+	}
+	chunks := p.streams[i]
+	ch := make(chan provider.Chunk, len(chunks))
+	for _, c := range chunks {
+		ch <- c
+	}
+	close(ch)
+	return ch, nil
+}
+
+func requestMessagesText(messages []provider.Message) string {
+	var b strings.Builder
+	for _, m := range messages {
+		b.WriteString(string(m.Role))
+		b.WriteString(": ")
+		b.WriteString(m.Content)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func TestNewTreatsTypedNilSinkAsDiscard(t *testing.T) {
 	var sink *typedNilControllerSink
 	c := New(Options{Sink: sink})
@@ -329,6 +368,81 @@ func TestNewSessionStartsFreshContextAndSavesTranscript(t *testing.T) {
 	current := exec.Session().Snapshot()
 	if len(current) != 1 || current[0].Role != provider.RoleSystem || current[0].Content != "sys" {
 		t.Fatalf("fresh context = %+v, want only system prompt", current)
+	}
+}
+
+func TestNewSessionResetsTwoModelPlannerContext(t *testing.T) {
+	dir := t.TempDir()
+	planner := &recordingProvider{name: "planner", streams: [][]provider.Chunk{
+		textTurn("OLD PLAN: inspect alpha.go"),
+		textTurn("NEW PLAN: inspect beta.go"),
+	}}
+	execProv := &recordingProvider{name: "executor", streams: [][]provider.Chunk{
+		textTurn("old done"),
+		textTurn("new done"),
+	}}
+	exec := agent.New(execProv, tool.NewRegistry(), agent.NewSession("exec sys"), agent.Options{}, event.Discard)
+	plannerSess := agent.NewSession("planner sys")
+	coord := agent.NewCoordinator(planner, plannerSess, nil, tool.NewRegistry(), agent.Options{}, exec, 0, event.Discard, nil)
+	path := filepath.Join(dir, "session.jsonl")
+	c := New(Options{Runner: coord, Executor: exec, SystemPrompt: "exec sys", SessionDir: dir, SessionPath: path, Label: "test"})
+
+	if err := c.Run(context.Background(), "old task alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Run(context.Background(), "new task beta"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(planner.requests) != 2 {
+		t.Fatalf("planner requests = %d, want 2", len(planner.requests))
+	}
+	second := requestMessagesText(planner.requests[1].Messages)
+	if strings.Contains(second, "old task alpha") || strings.Contains(second, "OLD PLAN") {
+		t.Fatalf("new planner request leaked previous session context:\n%s", second)
+	}
+	if !strings.Contains(second, "new task beta") {
+		t.Fatalf("new planner request missing current task:\n%s", second)
+	}
+}
+
+func TestResumeResetsTwoModelPlannerContext(t *testing.T) {
+	dir := t.TempDir()
+	planner := &recordingProvider{name: "planner", streams: [][]provider.Chunk{
+		textTurn("OLD PLAN: inspect alpha.go"),
+		textTurn("RESUMED PLAN: inspect gamma.go"),
+	}}
+	execProv := &recordingProvider{name: "executor", streams: [][]provider.Chunk{
+		textTurn("old done"),
+		textTurn("resumed done"),
+	}}
+	exec := agent.New(execProv, tool.NewRegistry(), agent.NewSession("exec sys"), agent.Options{}, event.Discard)
+	plannerSess := agent.NewSession("planner sys")
+	coord := agent.NewCoordinator(planner, plannerSess, nil, tool.NewRegistry(), agent.Options{}, exec, 0, event.Discard, nil)
+	c := New(Options{Runner: coord, Executor: exec, SystemPrompt: "exec sys", SessionDir: dir, SessionPath: filepath.Join(dir, "old.jsonl"), Label: "test"})
+
+	if err := c.Run(context.Background(), "old task alpha"); err != nil {
+		t.Fatal(err)
+	}
+	resumed := agent.NewSession("exec sys")
+	resumed.Add(provider.Message{Role: provider.RoleUser, Content: "saved task gamma"})
+	c.Resume(resumed, filepath.Join(dir, "resumed.jsonl"))
+	if err := c.Run(context.Background(), "continue gamma"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(planner.requests) != 2 {
+		t.Fatalf("planner requests = %d, want 2", len(planner.requests))
+	}
+	second := requestMessagesText(planner.requests[1].Messages)
+	if strings.Contains(second, "old task alpha") || strings.Contains(second, "OLD PLAN") {
+		t.Fatalf("resumed planner request leaked previous session context:\n%s", second)
+	}
+	if !strings.Contains(second, "continue gamma") {
+		t.Fatalf("resumed planner request missing current task:\n%s", second)
 	}
 }
 

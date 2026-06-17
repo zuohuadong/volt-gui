@@ -27,6 +27,12 @@ import type {
   UpdateInfo,
   UpdateProgress,
   UserInfo,
+  WorkbenchArtifactInput,
+  WorkbenchJob,
+  WorkbenchPlugin,
+  WorkbenchProvider,
+  CreateWorkbenchJobInput,
+  UpdateWorkbenchStepInput,
   WireEvent,
   WorkspaceDiffView,
   WorkspaceChangesView,
@@ -113,6 +119,15 @@ interface AppBindings {
   Memory(): Promise<MemoryView>;
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
+  WorkbenchPlugins(): Promise<WorkbenchPlugin[]>;
+  WorkbenchProviders(): Promise<WorkbenchProvider[]>;
+  ListWorkbenchJobs(): Promise<WorkbenchJob[]>;
+  CreateWorkbenchJob(input: CreateWorkbenchJobInput): Promise<WorkbenchJob>;
+  GetWorkbenchJob(id: string): Promise<WorkbenchJob>;
+  UpdateWorkbenchStep(jobID: string, stepID: string, patch: UpdateWorkbenchStepInput): Promise<WorkbenchJob>;
+  ApproveWorkbenchStep(jobID: string, stepID: string): Promise<WorkbenchJob>;
+  AddWorkbenchArtifact(jobID: string, artifact: WorkbenchArtifactInput): Promise<WorkbenchJob>;
+  WorkbenchArtifactDir(jobID: string): Promise<string>;
 }
 
 interface WailsRuntime {

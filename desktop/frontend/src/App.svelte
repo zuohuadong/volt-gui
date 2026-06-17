@@ -388,12 +388,6 @@
     composer?.focus();
   }
 
-  function commandPrompt(name: string) {
-    const command = commands.find((item) => item.name.toLowerCase() === name.toLowerCase());
-    input = command ? `/${command.name} ` : "";
-    focusComposer();
-  }
-
   async function useWorkbenchCommand(name: string) {
     workLayer = "today";
     const command = commands.find((item) => item.name.toLowerCase() === name.toLowerCase());

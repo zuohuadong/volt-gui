@@ -38,6 +38,29 @@ updated_at: ""
 
 - 预计修改的模块、文件或目录
 
+## Goal Forge
+
+> 当设计文档、架构/API/数据模型、迁移方案或高风险计划本身是交付物时填写；普通实现任务可保持 disabled。
+
+```yaml
+goal_forge:
+  enabled: false
+  checkout_path: "../goal-forge | env:GOAL_FORGE_PATH | env:GOAL_FORGE_HOME | unknown"
+  run_dir: ""
+  config_path: ".agents/goal-forge/goal-forge.config.json"
+  ledger_paths: []
+  adapter: "local | codex | openai | none"
+  evidence_summary: ""
+  verification:
+    status_check: "agent-team goal-forge status ."
+    init_check: "agent-team goal-forge init . '<goal>'"
+    run_check: "agent-team goal-forge run . '<runDir>' --adapter local"
+  non_goals:
+    - "do not vendor Goal Forge into this project"
+    - "do not require model-backed Goal Forge runs during deploy"
+    - "do not place secrets in Goal Forge config or ledgers"
+```
+
 ## Delegation Gate
 
 ```yaml
@@ -170,6 +193,33 @@ deployment_profile:
 ```
 
 数据库或持久化任务补充：
+
+```yaml
+memory_profile:
+  target: "none | local-file | mem0 | openmemory | blocked"
+  decision_source: "user | docs | detected | project-overlay | recommended-fallback | blocked"
+  evidence: []
+  scope: "global-user | project | task | repo | unknown"
+  recall_token_budget: 1200
+  save_policy: "stable-facts-only | disabled | provider-managed | unknown"
+  secrets_strategy: "none | env-explicit | provider-managed | blocked"
+  required_skills: []
+  verification:
+    status_check: "agent-team memory status ."
+    recall_check: "agent-team memory recall '<query>' --token-budget 1200"
+    save_check: "agent-team memory save decisions '<compact decision>'"
+  non_goals:
+    - "do not inject unbounded memory into prompts"
+    - "do not require mem0/OpenMemory unless explicitly configured"
+    - "do not migrate task ledgers, progress logs, or mailbox history into memory unless explicitly requested"
+```
+
+规则：
+
+- 默认 `target: local-file`，读取 `.agents/state/project-memory.json`，零外部依赖。
+- `mem0` / OpenMemory 是现成 Agent Memory 方案的 opt-in provider，不是默认 provider。
+- 外部 provider 必须记录 secrets 策略、scope 边界和 token budget；不得硬编码 API key。
+- `recall` 结果必须受 token budget 限制；记忆召回不能替代读取项目事实源。
 
 ```yaml
 database_profile:

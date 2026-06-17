@@ -56,6 +56,7 @@ func newStdioTransport(ctx context.Context, s Spec) (*stdioTransport, error) {
 	}
 	cmd := exec.CommandContext(ctx, exe, s.Args...)
 	proc.HideWindow(cmd)
+	prepareStdioShellPATHProbe(cmd)
 	cmd.Env = env
 	if s.Dir != "" {
 		cmd.Dir = s.Dir // pin cwd-aware servers (e.g. CodeGraph) to the project root
@@ -222,6 +223,7 @@ func runShellPATHCommand(parent context.Context, shell string, args []string) []
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shell, args...)
 	proc.HideWindow(cmd)
+	prepareStdioShellPATHProbe(cmd)
 	cmd.Stdin = strings.NewReader("")
 	out, _ := cmd.CombinedOutput()
 	return out
@@ -464,4 +466,8 @@ func (b *tailBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return strings.TrimSpace(string(b.buf))
+}
+
+func prepareStdioShellPATHProbe(cmd *exec.Cmd) {
+	proc.PrepareShellPATHProbe(cmd)
 }

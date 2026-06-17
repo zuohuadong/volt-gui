@@ -130,6 +130,11 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 		info.Err = "manifest has no valid version"
 		return info
 	}
+	// A dev/invalid running version never auto-prompts.
+	newer := false
+	if okCur && semver.Compare(latest, cur) > 0 {
+		newer = true
+	}
 	if a, ok := m.Asset(); ok {
 		info.AssetSize = a.Size
 		if strings.TrimSpace(a.Sig) == "" {
@@ -138,10 +143,7 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 	} else {
 		return info
 	}
-	// A dev/invalid running version never auto-prompts.
-	if okCur && semver.Compare(latest, cur) > 0 {
-		info.Available = true
-	}
+	info.Available = newer
 	return info
 }
 

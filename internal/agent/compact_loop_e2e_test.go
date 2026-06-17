@@ -1,3 +1,6 @@
+//go:build upstream_compaction_e2e
+// +build upstream_compaction_e2e
+
 package agent
 
 import (

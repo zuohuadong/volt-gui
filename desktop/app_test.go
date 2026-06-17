@@ -1887,6 +1887,48 @@ func TestClearSessionCancelsRunningRuntimeAndKeepsTopic(t *testing.T) {
 	}
 }
 
+func TestClearSessionRemovesRunningJobArtifacts(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	path := filepath.Join(dir, "clear-running-job.jsonl")
+	if err := os.WriteFile(path, []byte(`{"role":"user","content":"old"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+	jm := jobs.NewManager(event.Discard)
+	oldCtrl := control.New(control.Options{SessionDir: dir, SessionPath: path, Label: "test", Jobs: jm})
+	app := NewApp()
+	app.projectTreeChangedHook = func() {}
+	app.setTestCtrl(oldCtrl, "deepseek-flash/deepseek-v4-flash")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
+
+	started := make(chan struct{})
+	jm.StartForSession(agent.BranchID(path), "bash", "clear artifact", func(ctx context.Context, _ io.Writer) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	<-started
+	jobsDir := jobs.ArtifactDir(path)
+	if _, err := os.Stat(jobsDir); err != nil {
+		t.Fatalf("job sidecar should exist before clear: %v", err)
+	}
+
+	if err := app.ClearSession(); err != nil {
+		t.Fatalf("ClearSession: %v", err)
+	}
+	if _, err := os.Stat(jobsDir); !os.IsNotExist(err) {
+		t.Fatalf("old job sidecar should be removed after clear, stat err = %v", err)
+	}
+}
+
 func TestSearchFileRefsFindsNestedBasename(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)

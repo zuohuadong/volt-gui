@@ -45,6 +45,23 @@
 - 如果启用 `.agents/state/tasks.json`，同步记录 subagent evidence 或 safe skip reason；doctor 仅在该机器可读状态存在时执行缺失证据 warning
 - 非显而易见决策写入 commit trailer
 
+## Memory Adapter
+
+- 默认记忆 provider 是 `local-file`，读写 `.agents/state/project-memory.json`，不需要外部服务或密钥。
+- `mem0` / OpenMemory 作为现成 Agent Memory 方案只允许显式 opt-in：设置 `AGENT_TEAM_MEMORY_PROVIDER=mem0` 或 `openmemory`，并在 Task Contract 的 `memory_profile` 中记录证据、scope、secrets 策略和验证计划。
+- 任务开始前可运行 `agent-team memory recall "<query>" --token-budget 1200`，只把命中摘要注入 prompt。
+- 任务完成后可运行 `agent-team memory save decisions "<compact decision>"` 保存稳定决策。
+- 不要把 `progress.md`、`tasks.md` 或 `.mailbox/` 整文件写入 memory；这些文件仍是任务事实源。
+- 任何外部 provider 都不能绕过 token budget，也不能成为默认依赖。
+
+## Goal Forge Integration
+
+- `agent-team deploy .` 会创建 `.agents/goal-forge/README.md`、`.agents/goal-forge/goal-forge.config.json` 和 `.agents/goal-forge/runs/`。
+- 默认从项目上级目录寻找 `../goal-forge` source checkout；也可设置 `GOAL_FORGE_PATH` 或 `GOAL_FORGE_HOME` 指向 checkout。Goal Forge 当前不是全局 CLI，不要假设存在 `goal-forge` 命令。
+- 设计文档、架构/API/数据模型、迁移方案或高风险计划本身是交付物时，可运行 `agent-team goal-forge init . "<goal>"` 创建质证 run；需要实际执行时再运行 `agent-team goal-forge run . <runDir>`。
+- agent-team 仍以 `tasks.md`、`progress.md`、`.mailbox/` 和 Task Contract 为执行源；Goal Forge run/ledger 只作为设计质证证据，在 Task Contract 的 `goal_forge.run_dir` / `goal_forge.ledger_paths` 中引用。
+- `agent-team automation status|doctor .` 会检查 Goal Forge checkout、项目配置和依赖状态；找不到 checkout 是 warning，不阻塞普通实现任务。
+
 ## 任务契约模板
 
 deploy 会生成 `.agents/automations/task-contract.md`，用于把不同平台的任务统一到同一结构。

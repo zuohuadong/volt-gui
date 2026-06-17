@@ -2,4 +2,4 @@
 
 package main
 
-func traySupported() bool { return true }
+func traySupported() bool { return false }

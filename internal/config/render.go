@@ -80,6 +80,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
 		}
 		fmt.Fprintf(&b, "close_behavior = %q   # desktop: quit|background when the window close button is clicked\n", c.DesktopCloseBehavior())
+		fmt.Fprintf(&b, "telemetry = %t   # anonymous startup ping; no prompts, keys, or file data\n", c.DesktopTelemetry())
+		fmt.Fprintf(&b, "metrics = %t   # anonymous aggregate desktop counters; default off\n", c.DesktopMetrics())
 		b.WriteString("\n")
 	}
 
@@ -102,6 +104,21 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			fmt.Fprintf(&b, "icon_path = %q   # custom tray/taskbar icon (PNG on macOS/Linux, ICO on Windows)\n", c.Brand.IconPath)
 		}
 		b.WriteString("\n")
+	}
+
+	if c.AuthProvider() != "" || c.Auth.Issuer != "" || c.Auth.ClientID != "" {
+		b.WriteString("[auth]\n")
+		provider := c.AuthProvider()
+		if provider == "" {
+			provider = "oidc"
+		}
+		fmt.Fprintf(&b, "provider = %q   # oidc; empty disables desktop identity login\n", provider)
+		fmt.Fprintf(&b, "issuer = %q   # OIDC issuer URL, e.g. https://auth.example.com\n", strings.TrimRight(strings.TrimSpace(c.Auth.Issuer), "/"))
+		fmt.Fprintf(&b, "client_id = %q   # public desktop client; use PKCE, not client_secret\n", strings.TrimSpace(c.Auth.ClientID))
+		fmt.Fprintf(&b, "scope = %q\n", c.AuthScope())
+		minPort, maxPort := c.AuthCallbackPorts()
+		fmt.Fprintf(&b, "callback_port_min = %d\n", minPort)
+		fmt.Fprintf(&b, "callback_port_max = %d\n\n", maxPort)
 	}
 
 	if shouldRenderNetwork(c, defaults, scope) {

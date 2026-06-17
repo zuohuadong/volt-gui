@@ -124,6 +124,27 @@ func TestDesktopCloseBehaviorFallsBackToLegacyUI(t *testing.T) {
 	}
 }
 
+func TestDesktopTelemetryAndMetricsDefaults(t *testing.T) {
+	c := Default()
+	if !c.DesktopTelemetry() {
+		t.Fatal("desktop telemetry should default on")
+	}
+	if c.DesktopMetrics() {
+		t.Fatal("desktop metrics should default off")
+	}
+
+	disabled := false
+	enabled := true
+	c.Desktop.Telemetry = &disabled
+	c.Desktop.Metrics = &enabled
+	if c.DesktopTelemetry() {
+		t.Fatal("desktop telemetry should honor explicit false")
+	}
+	if !c.DesktopMetrics() {
+		t.Fatal("desktop metrics should honor explicit true")
+	}
+}
+
 func TestSetUICloseBehavior(t *testing.T) {
 	c := Default()
 	if err := c.SetUICloseBehavior("background"); err != nil {

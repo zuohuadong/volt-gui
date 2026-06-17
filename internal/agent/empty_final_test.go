@@ -1,3 +1,6 @@
+//go:build upstream_empty_final
+// +build upstream_empty_final
+
 package agent
 
 import (

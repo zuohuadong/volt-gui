@@ -250,8 +250,14 @@ func TestWorkspaceChangesGitStatus(t *testing.T) {
 	if byPath["tracked.txt"].GitStatus == "" {
 		t.Fatalf("tracked.txt missing git status: %+v", got.Files)
 	}
+	if byPath["tracked.txt"].IndexStatus != "A" || byPath["tracked.txt"].WorktreeStatus != "M" {
+		t.Fatalf("tracked.txt stage status = %+v, want index A worktree M", byPath["tracked.txt"])
+	}
 	if byPath["untracked.txt"].GitStatus != "??" {
 		t.Fatalf("untracked.txt = %+v", byPath["untracked.txt"])
+	}
+	if byPath["untracked.txt"].IndexStatus != "?" || byPath["untracked.txt"].WorktreeStatus != "?" {
+		t.Fatalf("untracked.txt stage status = %+v, want ??", byPath["untracked.txt"])
 	}
 }
 
@@ -338,6 +344,219 @@ func TestWorkspaceChangesUntrackedDirectoryListsFiles(t *testing.T) {
 	}
 	if byPath["newdir/nested/file.txt"].GitStatus != "??" {
 		t.Fatalf("untracked file missing from directory: %+v", got.Files)
+	}
+}
+
+func TestWorkspaceDiffModifiedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("tracked.txt", []byte("v1\nsame\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	runGit(t, "add", "tracked.txt")
+	runGit(t, "commit", "-m", "baseline")
+	if err := os.WriteFile("tracked.txt", []byte("v2\nsame\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("tracked.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.Kind != "modify" || got.Added != 1 || got.Removed != 1 {
+		t.Fatalf("diff summary = %+v", got)
+	}
+	if !strings.Contains(got.Diff, "-v1") || !strings.Contains(got.Diff, "+v2") {
+		t.Fatalf("diff missing modified lines:\n%s", got.Diff)
+	}
+}
+
+func TestWorkspaceDiffUntrackedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("new.txt", []byte("new\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("new.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.Kind != "create" || got.Added != 2 || got.Removed != 0 {
+		t.Fatalf("diff summary = %+v", got)
+	}
+	if !strings.Contains(got.Diff, "+new") || !strings.Contains(got.Diff, "+file") {
+		t.Fatalf("diff missing added lines:\n%s", got.Diff)
+	}
+}
+
+func TestWorkspaceDiffDeletedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	if err := os.WriteFile("gone.txt", []byte("old\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	runGit(t, "add", "gone.txt")
+	runGit(t, "commit", "-m", "baseline")
+	if err := os.Remove("gone.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("gone.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.Kind != "delete" || got.Added != 0 || got.Removed != 2 {
+		t.Fatalf("diff summary = %+v", got)
+	}
+	if !strings.Contains(got.Diff, "-old") || !strings.Contains(got.Diff, "-file") {
+		t.Fatalf("diff missing removed lines:\n%s", got.Diff)
+	}
+}
+
+func TestWorkspaceDiffRenamedFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	if err := os.WriteFile("old.txt", []byte("old\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "old.txt")
+	runGit(t, "commit", "-m", "baseline")
+	runGit(t, "mv", "old.txt", "new.txt")
+	if err := os.WriteFile("new.txt", []byte("new\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changes := (&App{}).WorkspaceChanges()
+	byPath := map[string]WorkspaceChangeView{}
+	for _, file := range changes.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["new.txt"].OldPath != "old.txt" || byPath["new.txt"].IndexStatus != "R" {
+		t.Fatalf("renamed change = %+v, want old path and staged rename", byPath["new.txt"])
+	}
+
+	got := (&App{}).WorkspaceDiff("new.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if got.OldPath != "old.txt" || got.IndexStatus != "R" {
+		t.Fatalf("rename metadata = %+v, want old.txt/R", got)
+	}
+	if !strings.Contains(got.Diff, "-old") || !strings.Contains(got.Diff, "+new") {
+		t.Fatalf("rename diff missing content change:\n%s", got.Diff)
+	}
+}
+
+func TestWorkspaceDiffBinaryFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	if err := os.WriteFile("asset.bin", []byte{0, 1, 2, 3}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "asset.bin")
+	runGit(t, "commit", "-m", "baseline")
+	if err := os.WriteFile("asset.bin", []byte{0, 9, 8, 7}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("asset.bin")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if !got.Binary || got.Diff != "" {
+		t.Fatalf("binary diff = %+v, want binary with empty textual diff", got)
+	}
+}
+
+func TestWorkspaceDiffLargeRewriteIsTruncated(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "init")
+	runGit(t, "config", "user.email", "test@example.com")
+	runGit(t, "config", "user.name", "Test User")
+	oldLines := make([]string, 2600)
+	newLines := make([]string, 2600)
+	for i := range oldLines {
+		oldLines[i] = "old line"
+		newLines[i] = "new line"
+	}
+	if err := os.WriteFile("large.txt", []byte(strings.Join(oldLines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "large.txt")
+	runGit(t, "commit", "-m", "baseline")
+	if err := os.WriteFile("large.txt", []byte(strings.Join(newLines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&App{}).WorkspaceDiff("large.txt")
+	if got.Err != "" {
+		t.Fatalf("WorkspaceDiff err = %q", got.Err)
+	}
+	if !got.Truncated || !strings.Contains(got.Diff, "diff omitted") {
+		t.Fatalf("large rewrite diff = %+v, want truncated omitted diff", got)
 	}
 }
 

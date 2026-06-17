@@ -184,8 +184,8 @@ func TestOutputReadsArtifactFromOffset(t *testing.T) {
 		artifactPath: path,
 		done:         make(chan struct{}),
 	}
-	m.jobs[j.ID] = j
-	m.order = append(m.order, j.ID)
+	m.jobs[jobKey("session", j.ID)] = j
+	m.order = append(m.order, jobKey("session", j.ID))
 
 	text, status, ok := m.OutputForSession("session", j.ID)
 	if !ok || status != Running {
@@ -196,5 +196,55 @@ func TestOutputReadsArtifactFromOffset(t *testing.T) {
 	}
 	if j.readOffset != int64(len(prefix)+len(suffix)) {
 		t.Fatalf("readOffset = %d, want %d", j.readOffset, len(prefix)+len(suffix))
+	}
+}
+
+func TestRestoredArtifactsAreScopedBySession(t *testing.T) {
+	root := t.TempDir()
+	pathA := filepath.Join(root, "a.jsonl")
+	pathB := filepath.Join(root, "b.jsonl")
+
+	first := NewManager(event.Discard)
+	first.SetActiveSessionPath("session-a", pathA)
+	jobA := first.StartForSession("session-a", "bash", "a", func(_ context.Context, out io.Writer) (string, error) {
+		_, _ = io.WriteString(out, "from-a")
+		return "", nil
+	})
+	<-jobA.done
+	first.Close()
+
+	second := NewManager(event.Discard)
+	second.SetActiveSessionPath("session-b", pathB)
+	jobB := second.StartForSession("session-b", "bash", "b", func(_ context.Context, out io.Writer) (string, error) {
+		_, _ = io.WriteString(out, "from-b")
+		return "", nil
+	})
+	<-jobB.done
+	second.Close()
+
+	if jobA.ID != "bash-1" || jobB.ID != "bash-1" {
+		t.Fatalf("test setup expected duplicate ids, got %s and %s", jobA.ID, jobB.ID)
+	}
+
+	m := NewManager(event.Discard)
+	defer m.Close()
+	m.SetActiveSessionPath("session-a", pathA)
+	m.SetActiveSessionPath("session-b", pathB)
+
+	resA := m.WaitForSession(context.Background(), "session-a", []string{"bash-1"}, 1)
+	if len(resA) != 1 || resA[0].Output != "from-a" {
+		t.Fatalf("session-a wait = %+v, want from-a", resA)
+	}
+	resB := m.WaitForSession(context.Background(), "session-b", []string{"bash-1"}, 1)
+	if len(resB) != 1 || resB[0].Output != "from-b" {
+		t.Fatalf("session-b wait = %+v, want from-b", resB)
+	}
+
+	next := m.StartForSession("session-b", "bash", "next", func(context.Context, io.Writer) (string, error) {
+		return "", nil
+	})
+	<-next.done
+	if next.ID == "bash-1" {
+		t.Fatal("new job should not reuse restored bash-1")
 	}
 }

@@ -203,8 +203,9 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		artifactComplete: artifactErr == "",
 		artifactErr:      artifactErr,
 	}
-	m.jobs[id] = j
-	m.order = append(m.order, id)
+	key := jobKey(parentSession, id)
+	m.jobs[key] = j
+	m.order = append(m.order, key)
 	m.mu.Unlock()
 
 	m.emitIfActive(parentSession, event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: startedText(kind, id, label)})
@@ -455,10 +456,25 @@ func (m *Manager) recordStalled(parentSession, id, kind, label string) {
 	}
 }
 
-func (m *Manager) get(id string) *Job {
+func (m *Manager) get(parentSession, id string) *Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.jobs[id]
+	return m.findJobLocked(parentSession, id)
+}
+
+func (m *Manager) findJobLocked(parentSession, id string) *Job {
+	parentSession = strings.TrimSpace(parentSession)
+	id = strings.TrimSpace(id)
+	if parentSession != "" {
+		return m.jobs[jobKey(parentSession, id)]
+	}
+	for _, key := range m.order {
+		j := m.jobs[key]
+		if j != nil && j.ID == id {
+			return j
+		}
+	}
+	return nil
 }
 
 // Output returns the job's output produced since the last Output call plus its
@@ -470,8 +486,8 @@ func (m *Manager) Output(id string) (text string, status Status, ok bool) {
 // OutputForSession returns output only when id belongs to parentSession. Empty
 // parentSession preserves the legacy unscoped behavior.
 func (m *Manager) OutputForSession(parentSession, id string) (text string, status Status, ok bool) {
-	j := m.get(id)
-	if j == nil || !sessionMatches(parentSession, j.SessionID) {
+	j := m.get(parentSession, id)
+	if j == nil {
 		return "", "", false
 	}
 	j.mu.Lock()
@@ -560,8 +576,8 @@ func (m *Manager) Kill(id string) bool {
 // KillForSession cancels a running job only when it belongs to parentSession.
 // Empty parentSession preserves the legacy unscoped behavior.
 func (m *Manager) KillForSession(parentSession, id string) bool {
-	j := m.get(id)
-	if j == nil || !sessionMatches(parentSession, j.SessionID) {
+	j := m.get(parentSession, id)
+	if j == nil {
 		return false
 	}
 	j.mu.Lock()
@@ -622,8 +638,8 @@ func (m *Manager) resolve(parentSession string, ids []string) []*Job {
 	defer m.mu.Unlock()
 	var out []*Job
 	if len(ids) == 0 {
-		for _, id := range m.order {
-			j := m.jobs[id]
+		for _, key := range m.order {
+			j := m.jobs[key]
 			if !sessionMatches(parentSession, j.SessionID) {
 				continue
 			}
@@ -637,7 +653,7 @@ func (m *Manager) resolve(parentSession string, ids []string) []*Job {
 		return out
 	}
 	for _, id := range ids {
-		if j := m.jobs[id]; j != nil && sessionMatches(parentSession, j.SessionID) {
+		if j := m.findJobLocked(parentSession, id); j != nil {
 			out = append(out, j)
 		}
 	}
@@ -678,8 +694,8 @@ func (m *Manager) RunningForSession(parentSession string) []View {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []View
-	for _, id := range m.order {
-		j := m.jobs[id]
+	for _, key := range m.order {
+		j := m.jobs[key]
 		if !sessionMatches(parentSession, j.SessionID) {
 			continue
 		}
@@ -877,11 +893,12 @@ func (m *Manager) loadSessionArtifacts(parentSession, dir string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, j := range loaded {
-		if _, exists := m.jobs[j.ID]; exists {
+		key := jobKey(parentSession, j.ID)
+		if _, exists := m.jobs[key]; exists {
 			continue
 		}
-		m.jobs[j.ID] = j
-		m.order = append(m.order, j.ID)
+		m.jobs[key] = j
+		m.order = append(m.order, key)
 	}
 	if maxSeq > m.seq {
 		m.seq = maxSeq
@@ -908,8 +925,8 @@ func (m *Manager) DestroySession(parentSession string) []<-chan struct{} {
 		}
 	}
 	m.completed = remaining
-	for _, id := range m.order {
-		j := m.jobs[id]
+	for _, key := range m.order {
+		j := m.jobs[key]
 		if !sessionMatches(parentSession, j.SessionID) {
 			continue
 		}
@@ -960,13 +977,13 @@ func (m *Manager) FinishDestroySession(parentSession string) {
 
 func (m *Manager) purgeSessionLocked(parentSession string) {
 	kept := m.order[:0]
-	for _, id := range m.order {
-		j := m.jobs[id]
+	for _, key := range m.order {
+		j := m.jobs[key]
 		if j == nil || sessionMatches(parentSession, j.SessionID) {
-			delete(m.jobs, id)
+			delete(m.jobs, key)
 			continue
 		}
-		kept = append(kept, id)
+		kept = append(kept, key)
 	}
 	m.order = kept
 }
@@ -1005,6 +1022,10 @@ func (m *Manager) emitIfActive(parentSession string, ev event.Event) {
 func sessionMatches(filter, jobSession string) bool {
 	filter = strings.TrimSpace(filter)
 	return filter == "" || strings.TrimSpace(jobSession) == filter
+}
+
+func jobKey(parentSession, id string) string {
+	return strings.TrimSpace(parentSession) + "\x00" + strings.TrimSpace(id)
 }
 
 // --- call-context injection (mirrors agent.CallContext) ---

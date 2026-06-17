@@ -1573,7 +1573,10 @@ func (c *Controller) ClearSession() error {
 	c.hooks.SessionStart(context.Background())
 	if destroy.Async {
 		go func() {
-			destroy.Wait()
+			result := destroy.Wait()
+			if result.HasTimedOut() && destroy.WaitAll != nil {
+				destroy.WaitAll()
+			}
 			if err := removeSessionArtifacts(oldPath); err != nil {
 				c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "clear session cleanup failed: " + err.Error()})
 			}
@@ -2127,9 +2130,10 @@ func (c *Controller) SetSessionPath(p string) {
 // SessionDestroyHandle separates waiting for cancelled jobs from ending the
 // destroy window, so callers can move/delete persistent artifacts in between.
 type SessionDestroyHandle struct {
-	Wait   func()
-	Finish func()
-	Async  bool
+	Wait    func() jobs.TeardownResult
+	WaitAll func()
+	Finish  func()
+	Async   bool
 }
 
 // BeginDestroySession marks a session as leaving active use and cancels its
@@ -2138,20 +2142,24 @@ type SessionDestroyHandle struct {
 func (c *Controller) BeginDestroySession(sessionPath string) SessionDestroyHandle {
 	parentSession := agent.BranchID(sessionPath)
 	if c.jobs == nil || parentSession == "" {
+		wait := func() jobs.TeardownResult { return jobs.TeardownResult{} }
 		noop := func() {}
-		return SessionDestroyHandle{Wait: noop, Finish: noop}
+		return SessionDestroyHandle{Wait: wait, WaitAll: noop, Finish: noop}
 	}
-	done := c.jobs.DestroySession(parentSession)
+	teardown := c.jobs.BeginDestroySession(parentSession)
 	return SessionDestroyHandle{
-		Wait: func() {
-			for _, ch := range done {
+		Wait: func() jobs.TeardownResult {
+			return c.jobs.WaitTeardown(context.Background(), teardown, jobs.DefaultTeardownGrace)
+		},
+		WaitAll: func() {
+			for _, ch := range teardown.DoneChannels() {
 				<-ch
 			}
 		},
 		Finish: func() {
 			c.jobs.FinishDestroySession(parentSession)
 		},
-		Async: len(done) > 0,
+		Async: teardown.Async(),
 	}
 }
 

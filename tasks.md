@@ -55,7 +55,8 @@
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
 | VOLTGUI-003 | local | aizhuliren/volt-gui | - | 远端重写后重新提交通用 skills 与同步校验 | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
-| VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | review | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | https://cnb.cool/aizhuliren/volt-gui/-/compare/main...codex/feat-oidc-auth |
+| VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | https://cnb.cool/aizhuliren/volt-gui/-/compare/main...codex/feat-oidc-auth |
+| VOLTGUI-005 | local | aizhuliren/volt-gui | review-merge | Workbench 产品插件框架（通用 upstream 插件层） | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/product-plugin-framework | https://cnb.cool/aizhuliren/volt-gui/-/pull/6 |
 
 ### VOLTGUI-004 Task Contract
 
@@ -68,6 +69,17 @@
 - 风险：OIDC 回调和 token 持久化涉及安全边界；必须限制 loopback、校验 state/nonce、避免落盘 id_token 原文；新增依赖可能受 Go toolchain/download 环境影响。
 - 回滚方案：移除新增 OIDC 文件、回退 config/auth 字段、前端 overlay/bridge 改动和 telemetry user fields，恢复 `go.mod/go.sum` 与 frontend 绑定文件。
 - 验证计划：`gofmt`；OIDC 单元测试；`GOTOOLCHAIN=local go test` 相关 Go 包；`cd desktop/frontend && pnpm build`；`git diff --check`。全量 `go test ./...` 若仍受既有 `reasonix/internal` 漂移阻断，需在 PR 说明中列为既有残余风险。
+
+### VOLTGUI-005 Task Contract (review-merge)
+
+- 目标：审查并合并 CNB PR #6 `codex/product-plugin-framework`，新增通用 Workbench 产品插件框架（配置合约 + workspace-local job/step/artifact store + Wails 绑定 + Svelte bridge/types/resourceProvider + 插件开发文档）。
+- 非目标：不在 XGIC 私有层承载插件机制、不引入 MCP/HTTP/local provider 之外的新 provider 类型、不改既有 `[[plugins]]` MCP 语义、不部署。
+- 验收标准：`[workbench]` 配置按 id 合并 user/project；`internal/workbench.Store` 实现 CreateJob/UpdateStep/ApproveStep/AddArtifact/ArtifactDir，原子写 0600、ID 清洗防路径穿越；Wails 绑定 `WorkbenchPlugins/WorkbenchProviders/ListJobs/CreateJob/GetJob/UpdateStep/ApproveStep/AddArtifact/ArtifactDir`；**Provider 向前端只暴露 headerKeys/envKeys（键名），绝不暴露 headers/env 值**；render.go 与既有 plugins/mcp 渲染一致（headers/env 建议 `${VAR}`）；TS 类型与 Go model 对齐。
+- 相关 skill：`agent-team-automation`、`provider-adapter`、`typescript`；遵循 `.agents/AGENTS.local.md` Go/Wails/frontend Verification Profile。
+- 风险：medium，跨多 subsystem（internal/config + internal/workbench + desktop + frontend）；安全边界为 provider secrets 不泄露到前端，已逐条验证。
+- 回滚方案：回退 CNB main 至 `08e8019`（合并前头），删除新增 workbench 文件与配置字段。
+- 审查与验证证据（独立审查由主线程执行等价验证）：`gofmt -l` 干净；`GOTOOLCHAIN=local go vet ./internal/config/... ./internal/workbench/...` EXIT 0；`go test ./internal/workbench/...` PASS；`go test ./internal/config/... -run 'TestRender|TestWorkbench'` PASS；`cd desktop && go test . -run 'TestWorkbench|TestWailsBinding|TestWorkspace|TestCheckpoints|TestAuth|TestOIDC|TestIsLoopback|TestPostStartupPing|TestAttachDropped'` PASS（补 dist 占位，仅 macOS `-lobjc` 既有警告）；`pnpm check`（svelte-check）0 errors/0 warnings；`pnpm build`（vite）✓ 1.23s。
+- 合并方式：fast-forward `08e8019..54b3588`，CNB main 现为 `54b3588`；`git diff --check` 临时 worktree 通过。
 
 ### VOLTGUI-003 Task Contract
 

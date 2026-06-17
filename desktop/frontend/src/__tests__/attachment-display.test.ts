@@ -2,6 +2,11 @@
 
 import { baseName, parseAttachmentRefsForDisplay, replaceAttachmentRefsForDisplay, sortDisplayAttachments } from "../lib/attachmentDisplay";
 
+declare const process: {
+  stdout: { write(text: string): void };
+  exit(code?: number): never;
+};
+
 let passed = 0;
 let failed = 0;
 

@@ -2,12 +2,12 @@
 
 A native desktop window around the VoltUI Go kernel. The same
 transport-agnostic `control.Controller` that backs the chat TUI and the HTTP/SSE
-server is bound **directly** to a React webview — Go methods in, typed events
+server is bound **directly** to a Svelte webview — Go methods in, typed events
 out, no HTTP hop.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  webview (React + TS, Vite)                                  │
+│  webview (Svelte 5 + TS, Vite)                                  │
 │    bridge.ts ──calls──▶ window.go.main.App.{Submit,Cancel,…} │
 │    bridge.ts ◀─events── window.runtime.EventsOn("agent:event")│
 └───────────────▲───────────────────────────┬─────────────────┘
@@ -83,6 +83,15 @@ Fedora deps: `sudo dnf install webkit2gtk4.1-devel gtk3-devel`.
 `.gitkeep` that keeps the Go `//go:embed all:frontend/dist` compilable on a fresh
 checkout). A bare `go build` without a prior `pnpm build` produces a blank window.
 
+The desktop frontend is a Svelte 5 workbench. The build runs `pnpm build`
+(`svelte-check` + `vite build`) directly in `desktop/frontend`, producing
+`frontend/dist` for `main.go` to embed.
+
+```sh
+wails build
+pnpm --dir frontend build
+```
+
 ## Releases & auto-update
 
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`
@@ -142,31 +151,24 @@ minisign -Vm VoltUI-darwin-arm64.zip \
 
 ## Editor seam (Monaco / CodeMirror)
 
-Code and diff rendering go through two components with stable prop contracts and a
-lazy boundary, so a heavy editor stays out of the initial bundle and dropping one
-in is a one-line change — no consumer touches:
+The desktop frontend is the Svelte 5 workbench in `desktop/frontend/src`.
+Code, markdown, math, and diff rendering are centralized in Svelte components so
+the rest of the workbench does not depend on a specific heavy editor:
 
-| Component | Props | Default impl | Upgrade |
-|---|---|---|---|
-| `components/CodeViewer.tsx` | `EditorProps` | `editors/PlainCode.tsx` (`<pre>`) | swap the lazy import for `editors/MonacoCode` or `editors/CodeMirrorCode` |
-| `components/DiffView.tsx` | `DiffProps` | `editors/PlainDiff.tsx` (LCS line diff) | swap for `editors/MonacoDiff` or `editors/CodeMirrorMerge` |
+| Component | Responsibility | Upgrade |
+|---|---|---|
+| `components/CodeBlock.svelte` | Fenced-code rendering and syntax highlighting | wrap a Monaco or CodeMirror read-only view behind the same inputs |
+| `components/DiffViewer.svelte` | Changed-file and edit diff display | replace the internal renderer with a merge/diff editor adapter |
+| `components/MarkdownView.svelte` | Markdown structure, links, code, and math delegation | extend the parser/renderer while keeping code delegated to `CodeBlock` |
+
+For CodeMirror 6, prefer the framework-neutral packages:
 
 ```sh
-# Monaco
-pnpm add @monaco-editor/react monaco-editor
-# or CodeMirror 6
-pnpm add @uiw/react-codemirror @codemirror/lang-javascript @codemirror/merge
+pnpm add @codemirror/view @codemirror/state @codemirror/lang-javascript
 ```
 
-Then add `editors/MonacoCode.tsx` (default-export a component taking
-`EditorProps`) and point `CodeViewer.tsx`'s `lazy(() => import(...))` at it.
-`ToolCard` already routes `edit_file` calls' `old_string`/`new_string` through
-`DiffView`, and `Markdown` routes fenced code blocks through `CodeViewer`, so
-both seams light up everywhere at once.
-
-Markdown itself is currently minimal (fenced code + plain text). Upgrade path:
-`pnpm add react-markdown remark-gfm` and render in `components/Markdown.tsx`,
-keeping fenced code delegated to `CodeViewer`.
+If Monaco is needed, use `monaco-editor` directly from a Svelte wrapper rather
+than introducing a second frontend framework.
 
 ## Multi-platform adaptation
 
@@ -184,7 +186,9 @@ handled here, and what to reach for if a target misbehaves:
   setting; the runtime must be installed (bundle it for distribution).
 - **macOS / WebKit** — inset/hidden title bar (`TitleBarHiddenInset`); the CSS
   marks the top bar as an OS drag region (`--wails-draggable: drag`) and leaves
-  room for the traffic lights.
+  room for the traffic lights. The native tray is disabled on macOS until it can
+  be initialized on the AppKit main thread; Dock/menu activation remains the
+  supported restore path.
 - **Theming** — colors are CSS variables gated on `prefers-color-scheme`, which all
   three webviews honor, so the UI follows the OS theme without native glue.
 - **Fonts / offline** — system font stack only; no web-font fetches, so first paint

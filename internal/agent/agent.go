@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"reasonix/internal/diff"
@@ -44,12 +45,12 @@ var planModeDeniedTools = map[string]bool{
 // command during plan mode, the command is blocked — even if the command prefix
 // matches a safe read-only entry — because chaining can introduce side effects
 // after an otherwise safe prefix.
-var planModeBashMetachars = []string{";", "&&", "||", "|", ">", ">>", "<", "<<", "$(", "\x60"}
+var planModeBashMetachars = []string{"&&", "||", ">>", "<<", "$(", "\x60", ";", "|", ">", "<", "&", "\n", "\r"}
 
 // planModeSafeBashCommands are bash command prefixes that are safe to run in
 // plan mode. Each entry is matched as a prefix against the trimmed, lowercased
-// command string. The match requires a word boundary after the prefix: a space,
-// a dash, or end-of-string — so "echop" never matches "echo".
+// command string. The match requires a shell-argument boundary after the prefix:
+// whitespace or end-of-string — so "echop" never matches "echo".
 var planModeSafeBashCommands = []string{
 	"git status", "git diff", "git log", "git show",
 	"git ls-files", "git grep", "git blame",
@@ -57,6 +58,17 @@ var planModeSafeBashCommands = []string{
 	"echo", "wc", "which", "type", "uname", "hostname",
 	"go version", "go list", "go doc", "go vet",
 	"node -v", "npm list", "python --version",
+}
+
+var planModeFindWriteArgs = map[string]bool{
+	"-delete":  true,
+	"-exec":    true,
+	"-execdir": true,
+	"-ok":      true,
+	"-okdir":   true,
+	"-fprint":  true,
+	"-fprintf": true,
+	"-fls":     true,
 }
 
 const maxFinalReadinessBlocks = 3
@@ -1639,17 +1651,61 @@ func planModeBashBlocked(args json.RawMessage) (bool, string) {
 		}
 	}
 
-	// Check the command prefix against the safe read-only whitelist.
-	// Require a word boundary after the match to avoid prefix collisions.
+	// Check the command prefix against the safe read-only whitelist. Require a
+	// shell-argument boundary after the match to avoid prefix collisions.
 	for _, safe := range planModeSafeBashCommands {
-		if strings.HasPrefix(lower, safe) {
-			if len(lower) == len(safe) || lower[len(safe)] == ' ' || lower[len(safe)] == '-' {
-				return false, ""
-			}
+		if !planModeBashMatchesSafePrefix(lower, safe) {
+			continue
 		}
+		if arg := planModeUnsafeSafeCommandArg(lower, safe); arg != "" {
+			return true, fmt.Sprintf("blocked: bash command in plan mode uses a write-capable argument (%q). Use a read-only command while planning.", arg)
+		}
+		return false, ""
 	}
 
 	return true, fmt.Sprintf("blocked: bash commands in plan mode must be read-only. %q is not in the safe command list. Use read-only tools for exploration, then exit plan mode to run this command.", cmd)
+}
+
+func planModeBashMatchesSafePrefix(lower, safe string) bool {
+	if !strings.HasPrefix(lower, safe) {
+		return false
+	}
+	if len(lower) == len(safe) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(lower[len(safe):])
+	return unicode.IsSpace(r)
+}
+
+func planModeUnsafeSafeCommandArg(lower, safe string) string {
+	fields := strings.Fields(lower)
+	base := strings.Fields(safe)
+	if len(fields) <= len(base) {
+		return ""
+	}
+	args := fields[len(base):]
+	if strings.HasPrefix(safe, "git ") {
+		for _, arg := range args {
+			if arg == "--output" || strings.HasPrefix(arg, "--output=") || arg == "--ext-diff" {
+				return arg
+			}
+		}
+	}
+	switch safe {
+	case "find":
+		for _, arg := range args {
+			if planModeFindWriteArgs[arg] {
+				return arg
+			}
+		}
+	case "go vet":
+		for _, arg := range args {
+			if arg == "-vettool" || strings.HasPrefix(arg, "-vettool=") {
+				return arg
+			}
+		}
+	}
+	return ""
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {

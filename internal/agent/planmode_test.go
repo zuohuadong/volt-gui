@@ -84,6 +84,17 @@ func serializeToolNames(ts []provider.ToolSchema) string {
 	return strings.Join(names, ",")
 }
 
+func bashCommandArgs(t *testing.T, cmd string) json.RawMessage {
+	t.Helper()
+	args, err := json.Marshal(struct {
+		Command string `json:"command"`
+	}{Command: cmd})
+	if err != nil {
+		t.Fatalf("marshal bash args: %v", err)
+	}
+	return args
+}
+
 // --- planModeBlocked tests ---
 
 func TestPlanModeDeniedToolsBlocked(t *testing.T) {
@@ -161,8 +172,7 @@ func TestPlanModeBashBlocked_SafeCommands(t *testing.T) {
 	}
 	for _, cmd := range safe {
 		t.Run(cmd, func(t *testing.T) {
-			args := json.RawMessage(`{"command":"` + strings.ReplaceAll(cmd, `"`, `\"`) + `"}`)
-			blocked, msg := planModeBashBlocked(args)
+			blocked, msg := planModeBashBlocked(bashCommandArgs(t, cmd))
 			if blocked {
 				t.Errorf("planModeBashBlocked(%q) = blocked, want allowed; msg: %s", cmd, msg)
 			}
@@ -184,16 +194,45 @@ func TestPlanModeBashBlocked_Metacharacters(t *testing.T) {
 		{"redirect_in", "cat < file.go"},
 		{"heredoc", "cat << EOF"},
 		{"cmd_sub_dollar", "echo $(rm file.go)"},
+		{"background_ampersand", "git status & rm file.go"},
+		{"newline", "git status\nrm file.go"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := json.RawMessage(`{"command":"` + strings.ReplaceAll(tt.cmd, `"`, `\"`) + `"}`)
-			blocked, msg := planModeBashBlocked(args)
+			blocked, msg := planModeBashBlocked(bashCommandArgs(t, tt.cmd))
 			if !blocked {
 				t.Errorf("planModeBashBlocked(%q) = allowed, want blocked", tt.cmd)
 			}
 			if !strings.Contains(msg, "shell operators") {
 				t.Errorf("unexpected message: %s", msg)
+			}
+		})
+	}
+}
+
+func TestPlanModeBashBlocked_WriteCapableSafeCommandArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		arg  string
+	}{
+		{"find_delete", "find . -delete", "-delete"},
+		{"find_exec", "find . -name '*.tmp' -exec rm {} +", "-exec"},
+		{"find_fprint", "find . -name '*.go' -fprint files.txt", "-fprint"},
+		{"git_diff_output_equals", "git diff --output=patch.diff", "--output=patch.diff"},
+		{"git_diff_output_space", "git diff --output patch.diff", "--output"},
+		{"git_show_output", "git show HEAD --output=show.txt", "--output=show.txt"},
+		{"git_log_ext_diff", "git log --ext-diff", "--ext-diff"},
+		{"go_vet_vettool", "go vet -vettool=./writer ./...", "-vettool=./writer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocked, msg := planModeBashBlocked(bashCommandArgs(t, tt.cmd))
+			if !blocked {
+				t.Errorf("planModeBashBlocked(%q) = allowed, want blocked", tt.cmd)
+			}
+			if !strings.Contains(msg, tt.arg) {
+				t.Errorf("blocked message %q does not mention unsafe arg %q", msg, tt.arg)
 			}
 		})
 	}
@@ -232,8 +271,7 @@ func TestPlanModeBashBlocked_UnsafeCommands(t *testing.T) {
 	}
 	for _, cmd := range unsafe {
 		t.Run(cmd, func(t *testing.T) {
-			args := json.RawMessage(`{"command":"` + strings.ReplaceAll(cmd, `"`, `\"`) + `"}`)
-			blocked, _ := planModeBashBlocked(args)
+			blocked, _ := planModeBashBlocked(bashCommandArgs(t, cmd))
 			if !blocked {
 				t.Errorf("planModeBashBlocked(%q) = allowed, want blocked", cmd)
 			}
@@ -256,11 +294,24 @@ func TestPlanModeBashBlocked_BoundaryCheck(t *testing.T) {
 		t.Error("lsblk should not match ls prefix — boundary check failed")
 	}
 
-	// "git status" with dash boundary should match
+	// "git status" with a flag after a whitespace boundary should match.
 	args = json.RawMessage(`{"command":"git status --short"}`)
 	blocked, _ = planModeBashBlocked(args)
 	if blocked {
 		t.Error("git status --short should match git status prefix")
+	}
+
+	// A dash inside the command name should NOT match a shorter safe prefix.
+	args = json.RawMessage(`{"command":"git diff-files"}`)
+	blocked, _ = planModeBashBlocked(args)
+	if !blocked {
+		t.Error("git diff-files should not match git diff prefix")
+	}
+
+	args = json.RawMessage(`{"command":"cat-file --batch"}`)
+	blocked, _ = planModeBashBlocked(args)
+	if !blocked {
+		t.Error("cat-file should not match cat prefix")
 	}
 }
 

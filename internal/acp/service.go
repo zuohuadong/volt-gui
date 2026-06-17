@@ -387,6 +387,9 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 	}
 
 	if sess := s.session(id); sess != nil {
+		if agent.IsCleanupPending(sess.transcript) {
+			return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
+		}
 		if replay {
 			newUpdateSink(s.conn, id).replay(sess.ctrl.History())
 		}
@@ -398,8 +401,13 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 	}
 
 	var saved acpSessionMeta
+	persistedPath := ""
 	if dir := s.sessionDir(); dir != "" {
-		meta, _, metaErr := loadACPMeta(transcriptPath(dir, id))
+		persistedPath = transcriptPath(dir, id)
+		if agent.IsCleanupPending(persistedPath) {
+			return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
+		}
+		meta, _, metaErr := loadACPMeta(persistedPath)
 		if metaErr != nil {
 			return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": " + metaErr.Error()}
 		}
@@ -439,6 +447,10 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 		return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": persistence is disabled"}
 	}
 	path := transcriptPath(dir, id)
+	if path != persistedPath && agent.IsCleanupPending(path) {
+		ctrl.Close()
+		return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
+	}
 	loaded, err := agent.LoadSession(path)
 	if err != nil {
 		ctrl.Close()

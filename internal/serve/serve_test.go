@@ -379,6 +379,41 @@ func TestResumeRequiresSessionPathInsideSessionDir(t *testing.T) {
 	}
 }
 
+func TestResumeRejectsCleanupPendingSession(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "active.jsonl")
+	pending := filepath.Join(dir, "pending.jsonl")
+	for _, path := range []string{active, pending} {
+		if err := os.WriteFile(path, []byte(`{"role":"user","content":"hi"}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := agent.MarkCleanupPending(pending, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: active})
+	srv := httptest.NewServer(New(ctrl, bc).Handler())
+	defer srv.Close()
+
+	body, err := json.Marshal(map[string]string{"path": pending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(srv.URL+"/resume", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cleanup-pending resume status = %d, want 400", resp.StatusCode)
+	}
+	if got := filepath.Clean(ctrl.SessionPath()); got != filepath.Clean(active) {
+		t.Fatalf("session path after rejected resume = %q, want active %q", got, active)
+	}
+}
+
 func TestSessionsSkipsCleanupPending(t *testing.T) {
 	dir := t.TempDir()
 	active := filepath.Join(dir, "active.jsonl")

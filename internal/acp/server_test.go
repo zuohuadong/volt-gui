@@ -733,6 +733,45 @@ func TestServeSessionLoadFallsBackFromStaleSavedModel(t *testing.T) {
 	}
 }
 
+func TestServeSessionLoadRejectsCleanupPending(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	sessionID := "pending-load"
+	path := transcriptPath(dir, sessionID)
+	saved := agent.NewSession("")
+	saved.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	if err := saved.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveACPMeta(path, acpSessionMeta{
+		SessionID: sessionID,
+		Cwd:       cwd,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	factory := &configurableFactory{dir: dir}
+	client, stop := startServer(t, factory)
+	defer stop()
+
+	client.call(t, "initialize", InitializeParams{ProtocolVersion: 1})
+	loadResp := client.call(t, "session/load", SessionLoadParams{SessionID: sessionID, Cwd: cwd})
+	if loadResp.Error == nil || !strings.Contains(loadResp.Error.Message, "unknown session") {
+		t.Fatalf("session/load cleanup-pending error = %+v, want unknown session", loadResp.Error)
+	}
+	factory.mu.Lock()
+	builds := append([]SessionParams(nil), factory.builds...)
+	factory.mu.Unlock()
+	if len(builds) != 0 {
+		t.Fatalf("cleanup-pending load should not build a controller, got builds %+v", builds)
+	}
+}
+
 func TestServeCancel(t *testing.T) {
 	started := make(chan struct{})
 	factory := &fakeFactory{behavior: func(ctx context.Context, _ event.Sink, _ string) error {

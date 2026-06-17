@@ -2467,6 +2467,43 @@ func TestOpenChannelSessionForTabIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestResumeSessionRejectsCleanupPending(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	activePath := filepath.Join(dir, "active.jsonl")
+	pendingPath := filepath.Join(dir, "pending.jsonl")
+	for _, path := range []string{activePath, pendingPath} {
+		if err := os.WriteFile(path, []byte(`{"role":"user","content":"hello"}`+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	if err := agent.MarkCleanupPending(pendingPath, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: activePath, Label: "test"})
+	app.setTestCtrl(ctrl, "")
+	defer app.activeCtrl().Close()
+
+	if _, err := app.ResumeSession(pendingPath); err == nil || !strings.Contains(err.Error(), "pending cleanup") {
+		t.Fatalf("ResumeSession cleanup-pending error = %v, want pending cleanup", err)
+	}
+	if got := app.activeCtrl().SessionPath(); filepath.Clean(got) != filepath.Clean(activePath) {
+		t.Fatalf("active session path after rejected resume = %q, want %q", got, activePath)
+	}
+	if _, err := app.OpenChannelSessionForTab("test", pendingPath); err == nil || !strings.Contains(err.Error(), "pending cleanup") {
+		t.Fatalf("OpenChannelSessionForTab cleanup-pending error = %v, want pending cleanup", err)
+	}
+	if meta := app.tabMeta(app.activeTab(), true); meta.ReadOnly {
+		t.Fatalf("rejected channel open should not make tab read-only: %+v", meta)
+	}
+}
+
 func TestResumeSessionRejectsPathOutsideControllerSessionDir(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()

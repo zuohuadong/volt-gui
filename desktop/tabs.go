@@ -1475,7 +1475,9 @@ func (a *App) buildTabController(tab *WorkspaceTab) {
 	}
 	startupSessionPath := ""
 	if pinnedPath, ok := pinnedTabSessionPath(sessionDir, tab.SessionPath); ok {
-		startupSessionPath = pinnedPath
+		if !agent.IsCleanupPending(pinnedPath) {
+			startupSessionPath = pinnedPath
+		}
 	} else if topicID != "" {
 		startupSessionPath = findTopicSession(sessionDir, topicID)
 	}
@@ -4101,6 +4103,9 @@ func globalTabWorkspaceRoot() string {
 func loadPinnedTabSession(dir, sessionPath string) (*agent.Session, string, bool) {
 	path, ok := pinnedTabSessionPath(dir, sessionPath)
 	if !ok {
+		return nil, "", false
+	}
+	if agent.IsCleanupPending(path) {
 		return nil, "", false
 	}
 	loaded, err := agent.LoadSession(path)

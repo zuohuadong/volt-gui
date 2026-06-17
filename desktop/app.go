@@ -1993,7 +1993,7 @@ func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := agent.LoadSession(sessionPath); err != nil {
+	if _, err := loadResumableSession(sessionPath); err != nil {
 		return nil, err
 	}
 	if sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(sessionPath) {
@@ -2018,7 +2018,7 @@ func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, er
 	if err != nil {
 		return nil, err
 	}
-	if _, err := agent.LoadSession(sessionPath); err != nil {
+	if _, err := loadResumableSession(sessionPath); err != nil {
 		return nil, err
 	}
 	if sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(sessionPath) {
@@ -2047,7 +2047,7 @@ func (a *App) rebindTabToSessionPath(tab *WorkspaceTab, sessionPath string) erro
 	if sessionPath == "" {
 		return fmt.Errorf("session path is required")
 	}
-	if _, err := agent.LoadSession(sessionPath); err != nil {
+	if _, err := loadResumableSession(sessionPath); err != nil {
 		return err
 	}
 	if sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(sessionPath) {
@@ -2101,6 +2101,13 @@ func (a *App) rebindTabToSessionPath(tab *WorkspaceTab, sessionPath string) erro
 		return fmt.Errorf("resume session: controller was not built")
 	}
 	return nil
+}
+
+func loadResumableSession(sessionPath string) (*agent.Session, error) {
+	if agent.IsCleanupPending(sessionPath) {
+		return nil, fmt.Errorf("session is pending cleanup")
+	}
+	return agent.LoadSession(sessionPath)
 }
 
 // PreviewSession reads a saved session for display only. It does not snapshot or

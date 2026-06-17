@@ -745,6 +745,10 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "path outside session dir", http.StatusForbidden)
 		return
 	}
+	if agent.IsCleanupPending(realPath) {
+		http.Error(w, "session is pending cleanup", http.StatusBadRequest)
+		return
+	}
 	// Snapshot the current session before switching away.
 	if err := s.ctl().Snapshot(); err != nil {
 		slog.Warn("serve: snapshot before resume", "err", err)

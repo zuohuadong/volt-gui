@@ -166,6 +166,12 @@ func IsCleanupPending(sessionPath string) bool {
 	return err == nil
 }
 
+// IsVisibleSession reports whether a persisted session should appear on normal
+// user/agent-facing list, restore, and retrieval surfaces.
+func IsVisibleSession(sessionPath string) bool {
+	return strings.TrimSpace(sessionPath) != "" && !IsCleanupPending(sessionPath)
+}
+
 // ListSessionOrder returns every *.jsonl session under dir in the same
 // most-recently-active order used by ListSessions, using only file metadata and
 // branch sidecars. A missing directory is not an error.
@@ -187,7 +193,7 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 			continue
 		}
 		full := filepath.Join(dir, e.Name())
-		if IsCleanupPending(full) {
+		if !IsVisibleSession(full) {
 			continue
 		}
 		createdAt := info.ModTime()

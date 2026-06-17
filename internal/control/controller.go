@@ -1887,6 +1887,9 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	if err != nil {
 		return agent.BranchInfo{}, c.rewindFail(err)
 	}
+	if !agent.IsVisibleSession(match.Path) {
+		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("branch %q not found", ref))
+	}
 	loaded, err := agent.LoadSession(match.Path)
 	if err != nil {
 		return agent.BranchInfo{}, c.rewindFail(err)

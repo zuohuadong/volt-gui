@@ -3,12 +3,10 @@
   import { AtSign, FileText, Folder, Image, Search, Send, Square, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
-  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, RunMode, SlashArgItem } from "../lib/types";
+  import type { CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
 
   let {
     input,
-    activityMode,
-    runMode,
     commands,
     sending,
     onInput,
@@ -26,8 +24,6 @@
     onClientChange,
   }: {
     input: string;
-    activityMode: ActivityMode;
-    runMode: RunMode;
     commands: CommandInfo[];
     sending: boolean;
     onInput: (value: string) => void;

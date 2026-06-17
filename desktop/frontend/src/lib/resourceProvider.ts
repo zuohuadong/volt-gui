@@ -1,17 +1,22 @@
-import type {
-  DataProvider,
-  BaseRecord,
-  GetListParams,
-  GetListResult,
-  GetOneParams,
-  GetOneResult,
-  CreateParams,
-  CreateResult,
-  UpdateParams,
-  UpdateResult,
-  DeleteParams,
-  DeleteResult,
-} from "@svadmin/core";
+type BaseRecord = { id: string | number; [key: string]: unknown };
+type GetListParams = { resource: string };
+type GetListResult<TData extends BaseRecord = BaseRecord> = { data: TData[]; total: number };
+type GetOneParams = { resource: string; id: string | number };
+type GetOneResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type CreateParams<TVariables = unknown> = { resource: string; variables: TVariables };
+type CreateResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type UpdateParams<TVariables = unknown> = { resource: string; id: string | number; variables: TVariables };
+type UpdateResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type DeleteParams<TVariables = unknown> = { resource: string; id: string | number; variables?: TVariables };
+type DeleteResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type DataProvider = {
+  getList<TData extends BaseRecord = BaseRecord>(params: GetListParams): Promise<GetListResult<TData>>;
+  getOne<TData extends BaseRecord = BaseRecord>(params: GetOneParams): Promise<GetOneResult<TData>>;
+  create<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: CreateParams<TVariables>): Promise<CreateResult<TData>>;
+  update<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: UpdateParams<TVariables>): Promise<UpdateResult<TData>>;
+  deleteOne<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: DeleteParams<TVariables>): Promise<DeleteResult<TData>>;
+  getApiUrl?: () => string;
+};
 import { app } from "./bridge";
 import type { MCPServerInput, MemoryView, ProviderView, ResourceRecord, SettingsView } from "./types";
 

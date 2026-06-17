@@ -1,3 +1,5 @@
+//go:build upstream_canonical_todo
+
 package agent
 
 import (

@@ -12,6 +12,7 @@ Inputs:
   CACHE_IMPACT_PR_BODY or PR_BODY          Pull request body text.
   CACHE_IMPACT_PR_BODY_FILE               File containing the pull request body.
   CACHE_IMPACT_CHANGED_FILES              Newline-separated changed files.
+  CACHE_IMPACT_CHANGED_FILES_FILE         File containing newline-separated changed files.
   CACHE_IMPACT_BASE_SHA / BASE_SHA        Diff base when files are not supplied.
   CACHE_IMPACT_HEAD_SHA / HEAD_SHA        Diff head when files are not supplied.
 USAGE
@@ -30,6 +31,8 @@ fi
 changed_input=""
 if [[ "$#" -gt 0 ]]; then
   changed_input="$(printf '%s\n' "$@")"
+elif [[ -n "${CACHE_IMPACT_CHANGED_FILES_FILE:-}" ]]; then
+  changed_input="$(cat "$CACHE_IMPACT_CHANGED_FILES_FILE")"
 elif [[ -n "${CACHE_IMPACT_CHANGED_FILES:-}" ]]; then
   changed_input="$CACHE_IMPACT_CHANGED_FILES"
 else
@@ -38,7 +41,11 @@ else
   if [[ -z "$base" ]]; then
     base="$(git merge-base origin/main-v2 "$head" 2>/dev/null || git merge-base main-v2 "$head")"
   fi
-  changed_input="$(git diff --name-only "$base" "$head")"
+  diff_base="$base"
+  if merge_base="$(git merge-base "$base" "$head" 2>/dev/null)"; then
+    diff_base="$merge_base"
+  fi
+  changed_input="$(git diff --name-only "$diff_base" "$head")"
 fi
 
 changed_files=()
@@ -53,6 +60,7 @@ system_prompt_sensitive=()
 for file in "${changed_files[@]:-}"; do
   case "$file" in
     internal/agent/agent.go|\
+    internal/agent/ask.go|\
     internal/agent/cache*|\
     internal/agent/compact*|\
     internal/agent/parallel_tasks.go|\
@@ -60,7 +68,12 @@ for file in "${changed_files[@]:-}"; do
     internal/agent/subagent_registry*|\
     internal/agent/task.go|\
     internal/boot/*|\
+    internal/command/slashtool.go|\
+    internal/config/config.go|\
     internal/config/system_prompt*|\
+    internal/history/tool.go|\
+    internal/installsource/*|\
+    internal/lsp/tool.go|\
     internal/memory/*|\
     internal/outputstyle/*|\
     internal/plugin/*|\
@@ -74,7 +87,9 @@ for file in "${changed_files[@]:-}"; do
   esac
 
   case "$file" in
+    internal/agent/task.go|\
     internal/boot/*|\
+    internal/config/config.go|\
     internal/config/system_prompt*|\
     internal/memory/*|\
     internal/outputstyle/*|\

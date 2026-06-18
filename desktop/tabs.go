@@ -1519,13 +1519,14 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	a.mu.Unlock()
 
 	ctrl, err := boot.Build(buildCtx, boot.Options{
-		Model:          model,
-		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  root,
-		SessionDir:     sessionDir,
-		EffortOverride: cloneStringPtr(tab.effort),
-		TokenMode:      currentTabTokenMode(tab),
+		Model:                    model,
+		RequireKey:               false,
+		Sink:                     tab.sink,
+		WorkspaceRoot:            root,
+		SessionDir:               sessionDir,
+		EffortOverride:           cloneStringPtr(tab.effort),
+		TokenMode:                currentTabTokenMode(tab),
+		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 	})
 	if err != nil {
 		a.mu.Lock()

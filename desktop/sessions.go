@@ -120,6 +120,20 @@ func trashSessionArtifacts(dir, sessionPath, key string) error {
 	return trashSessionArtifactsBeforeMove(dir, sessionPath, key, nil)
 }
 
+func reconcileDesktopCleanupPending(dir string) error {
+	return agent.ReconcileCleanupPending(dir, func(item agent.CleanupPendingInfo) error {
+		if strings.TrimSpace(item.Meta.Operation) == "delete" {
+			if _, err := os.Stat(item.SessionPath); os.IsNotExist(err) {
+				return agent.ClearCleanupPending(item.SessionPath)
+			} else if err != nil {
+				return err
+			}
+			return trashSessionArtifacts(dir, item.SessionPath, filepath.Base(item.SessionPath))
+		}
+		return removeDesktopSessionArtifacts(item.SessionPath)
+	})
+}
+
 func validateSessionTrashTarget(dir, sessionPath, key string) error {
 	if _, err := os.Stat(sessionPath); os.IsNotExist(err) {
 		return nil

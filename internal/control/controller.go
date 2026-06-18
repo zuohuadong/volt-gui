@@ -1631,6 +1631,14 @@ func removeSessionArtifacts(path string) error {
 	return nil
 }
 
+// ReconcileCleanupPending retries physical cleanup for logically removed
+// sessions that were left behind by a previous process.
+func ReconcileCleanupPending(dir string) error {
+	return agent.ReconcileCleanupPending(dir, func(item agent.CleanupPendingInfo) error {
+		return removeSessionArtifacts(item.SessionPath)
+	})
+}
+
 // RewindScope selects what a Rewind restores.
 type RewindScope int
 

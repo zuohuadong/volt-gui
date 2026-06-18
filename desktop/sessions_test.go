@@ -181,6 +181,43 @@ func TestDeleteSessionFile(t *testing.T) {
 	}
 }
 
+func TestReconcileDesktopCleanupPendingDeleteMovesArtifactsToTrash(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "pending.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"pending"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(jobs.ArtifactDir(sessionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jobs.ArtifactDir(sessionPath), "job.log"), []byte("job output"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.MarkCleanupPending(sessionPath, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileDesktopCleanupPending(dir); err != nil {
+		t.Fatalf("reconcileDesktopCleanupPending: %v", err)
+	}
+
+	trashPath := filepath.Join(dir, sessionTrashDir, "pending.jsonl", "pending.jsonl")
+	trashJobsDir := filepath.Join(dir, sessionTrashDir, "pending.jsonl", "pending.jobs")
+	for _, p := range []string{
+		trashPath,
+		filepath.Join(trashJobsDir, "job.log"),
+	} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("expected trashed artifact %s: %v", p, err)
+		}
+	}
+	for _, p := range []string{sessionPath, jobs.ArtifactDir(sessionPath), agent.CleanupPendingPath(sessionPath)} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists after reconciliation (err=%v)", p, err)
+		}
+	}
+}
+
 func TestDeleteSessionFileMovesOwnedSubagentsToTrash(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "session.jsonl")

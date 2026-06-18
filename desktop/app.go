@@ -1013,13 +1013,14 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl *control.Cont
 
 	newSink := &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:          tab.model,
-		RequireKey:     false,
-		Sink:           newSink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
-		SessionDir:     tabSessionDir(tab),
-		EffortOverride: cloneStringPtr(tab.effort),
-		TokenMode:      currentTabTokenMode(tab),
+		Model:                    tab.model,
+		RequireKey:               false,
+		Sink:                     newSink,
+		WorkspaceRoot:            tab.WorkspaceRoot,
+		SessionDir:               tabSessionDir(tab),
+		EffortOverride:           cloneStringPtr(tab.effort),
+		TokenMode:                currentTabTokenMode(tab),
+		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 	})
 	if err != nil {
 		if teardownTimedOut {
@@ -4895,13 +4896,14 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:          name,
-		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
-		SessionDir:     tabSessionDir(tab),
-		EffortOverride: cloneStringPtr(effortOverride),
-		TokenMode:      currentTabTokenMode(tab),
+		Model:                    name,
+		RequireKey:               false,
+		Sink:                     tab.sink,
+		WorkspaceRoot:            tab.WorkspaceRoot,
+		SessionDir:               tabSessionDir(tab),
+		EffortOverride:           cloneStringPtr(effortOverride),
+		TokenMode:                currentTabTokenMode(tab),
+		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 	})
 	if err != nil {
 		return err
@@ -4991,13 +4993,14 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		tab.Ctrl.Close()
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:          modelRef,
-		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
-		SessionDir:     tabSessionDir(tab),
-		EffortOverride: &effort,
-		TokenMode:      currentTabTokenMode(tab),
+		Model:                    modelRef,
+		RequireKey:               false,
+		Sink:                     tab.sink,
+		WorkspaceRoot:            tab.WorkspaceRoot,
+		SessionDir:               tabSessionDir(tab),
+		EffortOverride:           &effort,
+		TokenMode:                currentTabTokenMode(tab),
+		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 	})
 	if err != nil {
 		return err
@@ -5063,13 +5066,14 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		carried = oldCtrl.History()
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:          modelRef,
-		RequireKey:     false,
-		Sink:           tab.sink,
-		WorkspaceRoot:  tab.WorkspaceRoot,
-		SessionDir:     tabSessionDir(tab),
-		EffortOverride: cloneStringPtr(tab.effort),
-		TokenMode:      mode,
+		Model:                    modelRef,
+		RequireKey:               false,
+		Sink:                     tab.sink,
+		WorkspaceRoot:            tab.WorkspaceRoot,
+		SessionDir:               tabSessionDir(tab),
+		EffortOverride:           cloneStringPtr(tab.effort),
+		TokenMode:                mode,
+		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 	})
 	if err != nil {
 		return err

@@ -117,6 +117,14 @@ type CleanupPendingMeta struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
+// CleanupPendingInfo describes one durable delayed-cleanup marker and the
+// session transcript it belongs to.
+type CleanupPendingInfo struct {
+	SessionPath string
+	MarkerPath  string
+	Meta        CleanupPendingMeta
+}
+
 // CleanupPendingPath returns the durable marker path for a session transcript.
 func CleanupPendingPath(sessionPath string) string {
 	sessionPath = strings.TrimSpace(sessionPath)
@@ -170,6 +178,71 @@ func IsCleanupPending(sessionPath string) bool {
 // user/agent-facing list, restore, and retrieval surfaces.
 func IsVisibleSession(sessionPath string) bool {
 	return strings.TrimSpace(sessionPath) != "" && !IsCleanupPending(sessionPath)
+}
+
+// ListCleanupPending returns delayed-cleanup markers left in dir. A missing
+// directory is not an error.
+func ListCleanupPending(dir string) ([]CleanupPendingInfo, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []CleanupPendingInfo
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), cleanupPendingExt) {
+			continue
+		}
+		markerPath := filepath.Join(dir, e.Name())
+		var meta CleanupPendingMeta
+		b, err := os.ReadFile(markerPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if strings.TrimSpace(string(b)) != "" {
+			if err := json.Unmarshal(b, &meta); err != nil {
+				return nil, fmt.Errorf("read cleanup-pending marker %s: %w", markerPath, err)
+			}
+		}
+		name := strings.TrimSuffix(e.Name(), cleanupPendingExt) + ".jsonl"
+		out = append(out, CleanupPendingInfo{
+			SessionPath: filepath.Join(dir, name),
+			MarkerPath:  markerPath,
+			Meta:        meta,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SessionPath < out[j].SessionPath
+	})
+	return out, nil
+}
+
+// ReconcileCleanupPending retries physical cleanup for leftover delayed-cleanup
+// markers. It keeps going after individual cleanup errors and returns them joined.
+func ReconcileCleanupPending(dir string, cleanup func(CleanupPendingInfo) error) error {
+	pending, err := ListCleanupPending(dir)
+	if err != nil {
+		return err
+	}
+	if cleanup == nil {
+		return nil
+	}
+	var errs []error
+	for _, item := range pending {
+		if err := cleanup(item); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", item.SessionPath, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ListSessionOrder returns every *.jsonl session under dir in the same

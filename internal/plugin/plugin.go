@@ -488,6 +488,7 @@ type Client struct {
 	// parallel startup can collect them per-client before merging into Host.
 	prompts   []Prompt
 	resources []Resource
+	toolsMu   sync.Mutex
 	tools     []ToolInfo
 }
 
@@ -931,6 +932,9 @@ func (s Spec) toolReadOnly(rawName string, hinted bool) bool {
 }
 
 func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+
 	res, err := c.call(ctx, "tools/list", map[string]any{})
 	if err != nil {
 		return nil, err

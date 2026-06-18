@@ -3918,6 +3918,18 @@ func (a *App) mcpServersView() []ServerView {
 	}
 	if h := ctrl.Host(); h != nil {
 		for _, s := range h.Servers() {
+			if disabledView, ok := disabled[s.Name]; ok {
+				disabledView.Status = "disabled"
+				disabledView.Error = ""
+				if p, ok := configured[s.Name]; ok {
+					disabledView = withPluginConfig(disabledView, p)
+				}
+				out = append(out, disabledView)
+				retainedDisabled[s.Name] = disabledView
+				seen[s.Name] = true
+				delete(disabled, s.Name)
+				continue
+			}
 			seen[s.Name] = true
 			connected[s.Name] = true
 			view := ServerView{
@@ -4543,7 +4555,11 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 		tab.mcpOrder = mergeServerOrder(tab.mcpOrder, []ServerView{s})
 		a.mu.Unlock()
 	}
-	tab.Ctrl.DisconnectMCPServer(name)
+	if tab.SharedHostKey != "" {
+		tab.Ctrl.UnregisterMCPServerTools(name)
+	} else {
+		tab.Ctrl.DisconnectMCPServer(name)
+	}
 	return nil
 }
 

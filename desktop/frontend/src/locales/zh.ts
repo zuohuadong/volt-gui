@@ -308,6 +308,14 @@ export const zh: Record<DictKey, string> = {
   "welcome.ex2": "总结最近的 git 改动",
   "welcome.ex3": "智能体的运行主循环在哪，它做了什么？",
   "welcome.ex4": "找出并修复这个项目里的一个 bug",
+  "welcome.creation.titlePrimary": "你好，今天想构建什么？",
+  "welcome.creation.titleSecondary": "从一个任务开始。",
+  "welcome.creation.explainTitle": "讲解代码架构",
+  "welcome.creation.explainBody": "梳理模块和关键链路。",
+  "welcome.creation.gitTitle": "总结 Git 改动",
+  "welcome.creation.gitBody": "查看变化和风险点。",
+  "welcome.creation.bugTitle": "修复一个 Bug",
+  "welcome.creation.bugBody": "定位问题并验证补丁。",
 
   // 输入框
   "composer.placeholder": "给 Reasonix 发消息…  ( / 命令 · @ 文件 · ! 终端 )",

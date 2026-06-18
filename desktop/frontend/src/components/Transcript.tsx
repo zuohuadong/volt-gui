@@ -85,6 +85,7 @@ export function Transcript({
   rewindDisabled = false,
   running = false,
   questionNavigator = true,
+  welcomeVariant = "default",
   rewindSignal = 0,
 }: {
   items: Item[];
@@ -99,6 +100,7 @@ export function Transcript({
   rewindDisabled?: boolean;
   running?: boolean;
   questionNavigator?: boolean;
+  welcomeVariant?: "default" | "creation";
   rewindSignal?: number;
 }) {
   const {
@@ -549,7 +551,7 @@ export function Transcript({
       ref={scrollRef}
       onScroll={onScroll}
     >
-      {empty && <Welcome onPrompt={onPrompt} />}
+      {empty && <Welcome onPrompt={onPrompt} variant={welcomeVariant} />}
 
       {!empty && showQuestionNav && (
         <QuestionJumpBar questions={questions} onJump={handleJumpToQuestion} />

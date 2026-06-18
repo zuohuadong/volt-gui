@@ -221,6 +221,14 @@ export const zhTW: Record<DictKey, string> = {
   "welcome.ex1": "講講這個程式碼庫的架構",
   "welcome.ex2": "總結最近的 git 變更",
   "welcome.ex3": "智慧體的執行主循環在哪，它做了什麼？",
+  "welcome.creation.titlePrimary": "你好，今天想構建什麼？",
+  "welcome.creation.titleSecondary": "從一個任務開始。",
+  "welcome.creation.explainTitle": "講解程式碼架構",
+  "welcome.creation.explainBody": "梳理模組和關鍵鏈路。",
+  "welcome.creation.gitTitle": "總結 Git 變更",
+  "welcome.creation.gitBody": "查看變化和風險點。",
+  "welcome.creation.bugTitle": "修復一個 Bug",
+  "welcome.creation.bugBody": "定位問題並驗證補丁。",
 
   // 輸入框
   "composer.placeholder": "給 Reasonix 發訊息…  ( / 命令 · @ 檔案 )",

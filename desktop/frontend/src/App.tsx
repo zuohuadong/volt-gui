@@ -2817,6 +2817,7 @@ export default function App() {
                 actionPending={state.messageAction != null}
                 rewindDisabled={Boolean(activeTab?.readOnly) || rewindState != null || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
                 running={state.running}
+                welcomeVariant={sidebarCreation ? "creation" : "default"}
                 rewindSignal={rewindSignal}
               />
             )}

@@ -56,7 +56,7 @@ func (p *ParallelTasksTool) Schema() json.RawMessage {
 }`)
 }
 
-func (p *ParallelTasksTool) ReadOnly() bool { return true }
+func (p *ParallelTasksTool) ReadOnly() bool { return false }
 
 // ParallelTaskItem mirrors one entry in the schema's tasks array.
 type ParallelTaskItem struct {
@@ -81,6 +81,9 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	if len(params.Tasks) == 1 {
 		return "", fmt.Errorf("parallel_tasks with a single task is equivalent to task; use task instead")
 	}
+	if err := validateParallelTaskItems(params.Tasks); err != nil {
+		return "", err
+	}
 
 	jm, ok := jobs.FromContext(ctx)
 	if !ok {
@@ -95,9 +98,6 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	var refs []jobRef
 
 	for i, t := range params.Tasks {
-		if strings.TrimSpace(t.Prompt) == "" {
-			return "", fmt.Errorf("task %d: prompt is required", i+1)
-		}
 		label := t.Description
 		if label == "" {
 			label = fmt.Sprintf("task-%d", i+1)
@@ -161,6 +161,15 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		fmt.Fprintf(&b, "── %s ──\n[%s] %s\n%s", label, r.ID, r.Status, strings.TrimSpace(r.Output))
 	}
 	return b.String(), nil
+}
+
+func validateParallelTaskItems(tasks []ParallelTaskItem) error {
+	for i, t := range tasks {
+		if strings.TrimSpace(t.Prompt) == "" {
+			return fmt.Errorf("task %d: prompt is required", i+1)
+		}
+	}
+	return nil
 }
 
 // extractJobID pulls the background job id from a task tool start message.

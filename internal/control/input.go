@@ -3,6 +3,8 @@ package control
 import (
 	"context"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/skill"
@@ -197,19 +199,7 @@ func ParseGoalCommand(input string) (GoalCommand, bool) {
 		return GoalCommand{}, false
 	}
 	args := strings.TrimSpace(trimmed[len("/goal"):])
-
-	// Parse --strict flag before checking action.
-	strict := false
-	fields := strings.Fields(args)
-	cleaned := make([]string, 0, len(fields))
-	for _, f := range fields {
-		if f == "--strict" {
-			strict = true
-		} else {
-			cleaned = append(cleaned, f)
-		}
-	}
-	actionArgs := strings.Join(cleaned, " ")
+	strict, actionArgs := parseLeadingGoalStrictFlag(args)
 
 	switch strings.ToLower(actionArgs) {
 	case "", "status":
@@ -219,6 +209,23 @@ func ParseGoalCommand(input string) (GoalCommand, bool) {
 	default:
 		return GoalCommand{Action: GoalCommandSet, Text: actionArgs, Strict: strict}, true
 	}
+}
+
+func parseLeadingGoalStrictFlag(args string) (bool, string) {
+	strict := false
+	rest := strings.TrimLeftFunc(args, unicode.IsSpace)
+	for strings.HasPrefix(rest, "--strict") {
+		after := rest[len("--strict"):]
+		if after != "" {
+			r, _ := utf8.DecodeRuneInString(after)
+			if !unicode.IsSpace(r) {
+				break
+			}
+		}
+		strict = true
+		rest = strings.TrimLeftFunc(after, unicode.IsSpace)
+	}
+	return strict, strings.TrimSpace(rest)
 }
 
 // CustomCommand resolves a "/name args…" line against the loaded custom slash

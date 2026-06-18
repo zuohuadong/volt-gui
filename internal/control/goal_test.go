@@ -264,9 +264,7 @@ func TestStrictGoalBlocksRepeatedComplete(t *testing.T) {
 
 	c := New(Options{Runner: ag, Executor: ag, Sink: event.Discard})
 
-	// Enable strict mode.
-	c.GoalStrict(true)
-	c.Submit("/goal fix everything")
+	c.Submit("/goal --strict fix everything")
 
 	// In strict mode the agent still has incomplete todos but only one
 	// turn was given (the provider recycles it). The goal loop keeps

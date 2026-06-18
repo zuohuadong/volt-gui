@@ -3601,6 +3601,7 @@ func (m *chatTUI) runGoalSubcommand(input string) tea.Cmd {
 		m.planMode = false
 		m.ctrl.SetPlanMode(false)
 		m.ctrl.SetGoal(cmd.Text)
+		m.ctrl.GoalStrict(cmd.Strict)
 		m.notice(fmt.Sprintf(i18n.M.GoalSetFmt, control.ShortGoalForNotice(cmd.Text)))
 		return m.startTurn("Start pursuing the active goal now.", input, input)
 	case control.GoalCommandClear:

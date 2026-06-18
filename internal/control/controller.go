@@ -433,12 +433,21 @@ func ckptDir(sessionPath string) string {
 	return strings.TrimSuffix(sessionPath, ".jsonl") + ".ckpt"
 }
 
+// goalStatePath derives a session's persisted goal-state sidecar.
+func goalStatePath(sessionPath string) string {
+	if sessionPath == "" {
+		return ""
+	}
+	return strings.TrimSuffix(sessionPath, ".jsonl") + ".goal-state.json"
+}
+
 // rebindCheckpoints points the store at the (possibly new) session, loading any
 // checkpoints already on disk, and resets the turn boundaries. Called on
 // construction and whenever the session path changes (NewSession/Resume/SetSessionPath).
 func (c *Controller) rebindCheckpoints(sessionPath string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.goalStatePath = goalStatePath(sessionPath)
 	c.cp = checkpoint.New(ckptDir(sessionPath), c.cpRoot)
 	c.cpTurn = c.cp.NextTurn() // continue numbering past any checkpoints on disk
 	c.cpBound = c.cp.Bounds()  // rebuilt from persisted checkpoints so a resumed
@@ -914,13 +923,14 @@ func (c *Controller) saveGoalState() {
 	}
 	todos := c.executor.CanonicalTodoState()
 	state := goalState{
-		Goal:   c.goal,
-		Status: c.goalStatus,
-		Turns:  c.goalTurns,
-		Blocks: c.goalBlocks,
-		Block:  c.goalBlock,
-		Strict: c.goalStrict,
-		Todos:  todos,
+		Goal:         c.goal,
+		Status:       c.goalStatus,
+		ResearchMode: c.goalResearchMode,
+		Turns:        c.goalTurns,
+		Blocks:       c.goalBlocks,
+		Block:        c.goalBlock,
+		Strict:       c.goalStrict,
+		Todos:        todos,
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -932,13 +942,14 @@ func (c *Controller) saveGoalState() {
 
 // goalState is the serializable form of a running goal.
 type goalState struct {
-	Goal   string              `json:"goal,omitempty"`
-	Status string              `json:"status,omitempty"`
-	Turns  int                 `json:"turns,omitempty"`
-	Blocks int                 `json:"blocks,omitempty"`
-	Block  string              `json:"block,omitempty"`
-	Strict bool                `json:"strict,omitempty"`
-	Todos  []evidence.TodoItem `json:"todos,omitempty"`
+	Goal         string              `json:"goal,omitempty"`
+	Status       string              `json:"status,omitempty"`
+	ResearchMode GoalResearchMode    `json:"researchMode,omitempty"`
+	Turns        int                 `json:"turns,omitempty"`
+	Blocks       int                 `json:"blocks,omitempty"`
+	Block        string              `json:"block,omitempty"`
+	Strict       bool                `json:"strict,omitempty"`
+	Todos        []evidence.TodoItem `json:"todos,omitempty"`
 }
 
 // lastAssistantText returns the content of the most recent assistant message with
@@ -1237,7 +1248,7 @@ func (c *Controller) applyGoalCommand(input, display string) bool {
 	switch cmd.Action {
 	case GoalCommandSet:
 		c.SetPlanMode(false)
-		c.SetGoal(cmd.Text)
+		c.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
 		c.GoalStrict(cmd.Strict)
 		c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(cmd.Text)))
 		if c.runner != nil {
@@ -1369,8 +1380,8 @@ func (c *Controller) applyPrometheus(input, display string) {
 	}
 	prompt := prometheusPrompt + "\n\n## User request\n\n" + args + "\n\nBegin the interview by asking your first clarifying question."
 	c.SetPlanMode(false)
-	c.GoalStrict(strict)
 	c.SetGoal("plan: " + ShortGoalForNotice(args))
+	c.GoalStrict(strict)
 	c.notice("prometheus: starting planning interview")
 	if c.runner != nil {
 		c.runGuarded(func(ctx context.Context) error {
@@ -1806,6 +1817,7 @@ func (c *Controller) PlanMode() bool {
 func (c *Controller) GoalStrict(strict bool) {
 	c.mu.Lock()
 	c.goalStrict = strict
+	c.saveGoalState()
 	c.mu.Unlock()
 }
 
@@ -1827,6 +1839,12 @@ func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResea
 		c.goalTurns = 0
 		c.goalBlocks = 0
 		c.goalBlock = ""
+		c.goalInterceptMsg = ""
+		c.goalIntercepts = 0
+		c.goalSelfCheckDone = false
+		c.goalIdleTurns = 0
+		c.goalStrict = false
+		c.saveGoalState()
 		return
 	}
 	if c.goal == goal && c.goalStatus == GoalStatusRunning && c.goalResearchMode == researchMode {

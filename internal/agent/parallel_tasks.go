@@ -87,20 +87,8 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	if len(params.Tasks) == 1 {
 		return "", fmt.Errorf("parallel_tasks with a single task is equivalent to task; use task instead")
 	}
-
-	// Validate all tasks upfront before dispatching any.
-	for i, t := range params.Tasks {
-		if strings.TrimSpace(t.Prompt) == "" {
-			return "", fmt.Errorf("task %d: prompt is required", i+1)
-		}
-		for _, dep := range t.DependsOn {
-			if dep < 0 || dep >= len(params.Tasks) {
-				return "", fmt.Errorf("task %d: depends_on[%d] = %d out of range (0-%d)", i+1, dep, dep, len(params.Tasks)-1)
-			}
-			if dep == i {
-				return "", fmt.Errorf("task %d: self-referencing depends_on", i+1)
-			}
-		}
+	if err := validateParallelTaskItems(params.Tasks); err != nil {
+		return "", err
 	}
 
 	parentID, sink, _, ok := CallContext(ctx)
@@ -116,21 +104,6 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	n := len(params.Tasks)
-
-	// Validate: no out-of-range deps, no self-references.
-	for i, t := range params.Tasks {
-		if strings.TrimSpace(t.Prompt) == "" {
-			return "", fmt.Errorf("task %d: prompt is required", i+1)
-		}
-		for _, dep := range t.DependsOn {
-			if dep < 0 || dep >= n {
-				return "", fmt.Errorf("task %d: depends_on[%d] = %d out of range (0-%d)", i+1, dep, dep, n-1)
-			}
-			if dep == i {
-				return "", fmt.Errorf("task %d: self-referencing depends_on", i+1)
-			}
-		}
-	}
 
 	// Dependency state: remaining = number of deps not yet completed.
 	remaining := make([]int, n)
@@ -173,7 +146,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			if len(t.DependsOn) > 0 && wisdomDir != "" {
 				entries, _ := os.ReadDir(wisdomDir)
 				if len(entries) > 0 {
-					prefix.WriteString(fmt.Sprintf("Previous task results are available at %s. Read the relevant files with read_file before starting.\n\n", wisdomDir))
+					fmt.Fprintf(&prefix, "Previous task results are available at %s. Read the relevant files with read_file before starting.\n\n", wisdomDir)
 				}
 			}
 			prefix.WriteString(t.Prompt)
@@ -235,6 +208,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 				}
 			}
 		}
+		close(spawnCh)
 		close(allDone)
 	}()
 
@@ -315,13 +289,12 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		}()
 	}
 
-	wg.Wait()
-	close(spawnCh)
 	<-allDone
+	wg.Wait()
 
 	// Collect in order.
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Completed %d parallel tasks:\n", n))
+	fmt.Fprintf(&b, "Completed %d parallel tasks:\n", n)
 	for i := 0; i < n; i++ {
 		if errors[i] != nil {
 			fmt.Fprintf(&b, "── task-%d ──\n[FAILED] %s\n", i+1, errors[i])
@@ -340,19 +313,8 @@ func (p *ParallelTasksTool) runAsBackgroundJobs(ctx context.Context, tasks []par
 	}
 	session := jobs.SessionFromContext(ctx)
 
-	// Validate all tasks upfront before dispatching any.
-	for i, t := range tasks {
-		if strings.TrimSpace(t.Prompt) == "" {
-			return "", fmt.Errorf("task %d: prompt is required", i+1)
-		}
-		for _, dep := range t.DependsOn {
-			if dep < 0 || dep >= len(tasks) {
-				return "", fmt.Errorf("task %d: depends_on[%d] = %d out of range (0-%d)", i+1, dep, dep, len(tasks)-1)
-			}
-			if dep == i {
-				return "", fmt.Errorf("task %d: self-referencing depends_on", i+1)
-			}
-		}
+	if err := validateParallelTaskItems(tasks); err != nil {
+		return "", err
 	}
 
 	type jobRef struct {
@@ -406,7 +368,7 @@ func (p *ParallelTasksTool) runAsBackgroundJobs(ctx context.Context, tasks []par
 		return "", fmt.Errorf("no tasks were dispatched")
 	}
 
-	jobIDs := make([]string, len(refs))
+	jobIDs := make([]string, 0, len(refs))
 	order := make(map[string]int)
 	for _, r := range refs {
 		jobIDs = append(jobIDs, r.id)
@@ -419,7 +381,7 @@ func (p *ParallelTasksTool) runAsBackgroundJobs(ctx context.Context, tasks []par
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Completed %d parallel tasks:\n", len(results)))
+	fmt.Fprintf(&b, "Completed %d parallel tasks:\n", len(results))
 	for _, r := range results {
 		idx := order[r.ID]
 		label := r.ID
@@ -430,6 +392,47 @@ func (p *ParallelTasksTool) runAsBackgroundJobs(ctx context.Context, tasks []par
 		_ = idx
 	}
 	return b.String(), nil
+}
+
+func validateParallelTaskItems(tasks []parallelTaskItem) error {
+	for i, t := range tasks {
+		if strings.TrimSpace(t.Prompt) == "" {
+			return fmt.Errorf("task %d: prompt is required", i+1)
+		}
+		for j, dep := range t.DependsOn {
+			if dep < 0 || dep >= len(tasks) {
+				return fmt.Errorf("task %d: depends_on[%d] = %d out of range (0-%d)", i+1, j, dep, len(tasks)-1)
+			}
+			if dep == i {
+				return fmt.Errorf("task %d: self-referencing depends_on", i+1)
+			}
+		}
+	}
+
+	state := make([]int, len(tasks)) // 0 = unvisited, 1 = visiting, 2 = done
+	var visit func(int) error
+	visit = func(i int) error {
+		switch state[i] {
+		case 1:
+			return fmt.Errorf("task dependency cycle detected at task %d", i+1)
+		case 2:
+			return nil
+		}
+		state[i] = 1
+		for _, dep := range tasks[i].DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		state[i] = 2
+		return nil
+	}
+	for i := range tasks {
+		if err := visit(i); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveSubagentProvider resolves a provider for a sub-agent, using the

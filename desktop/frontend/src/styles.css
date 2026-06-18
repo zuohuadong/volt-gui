@@ -18009,6 +18009,15 @@ a[href] {
   font-weight: 650;
 }
 
+.context-panel__usage-progress {
+  display: none;
+}
+
+.context-panel__summary-rows,
+.context-panel__creation-grid {
+  display: none;
+}
+
 .context-panel__breakdown {
   display: flex;
   flex-direction: column;
@@ -22293,6 +22302,15 @@ a[href] {
   box-shadow: none;
 }
 
+.app--creation .workspace-panel-resizer::after,
+.app--creation .workspace-panel-resizer:hover::after,
+.app--creation .workspace-panel-resizer:focus-visible::after,
+.app--creation .layout--workspace-resizing .workspace-panel-resizer::after,
+:root[data-theme-style] .app--creation .workspace-panel-resizer::after {
+  background: transparent;
+  box-shadow: none;
+}
+
 .app--creation .transcript,
 :root[data-theme-style] .app--creation .transcript {
   scrollbar-width: auto;
@@ -22348,4 +22366,241 @@ a[href] {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
+}
+
+.app--creation .workbench-dock__tools,
+:root[data-theme-style] .app--creation .workbench-dock__tools {
+  height: 48px;
+  padding: 0 12px;
+}
+
+.app--creation .workbench-dock__tabs,
+:root[data-theme-style] .app--creation .workbench-dock__tabs {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 0;
+}
+
+.app--creation .workbench-dock__tab,
+:root[data-theme-style] .app--creation .workbench-dock__tab {
+  justify-content: center;
+  width: 100%;
+  max-width: none;
+  height: 48px;
+  padding: 0 8px 1px;
+  gap: 6px;
+  color: color-mix(in srgb, var(--fg-dim) 72%, transparent);
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+}
+
+.app--creation .workbench-dock__tab--active,
+:root[data-theme-style] .app--creation .workbench-dock__tab--active {
+  color: var(--fg);
+  font-weight: 620;
+}
+
+.app--creation .workbench-dock__tab--active::after,
+:root[data-theme-style] .app--creation .workbench-dock__tab--active::after {
+  left: 28%;
+  right: 28%;
+  bottom: 0;
+  height: 1px;
+}
+
+.app--creation .context-panel {
+  --creation-panel-card: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, color-mix(in srgb, var(--bg-elev) 32%, transparent)) 0%, color-mix(in srgb, var(--fg) 2%, color-mix(in srgb, var(--bg-elev) 24%, transparent)) 52%, color-mix(in srgb, var(--accent) 4%, color-mix(in srgb, var(--bg-elev) 18%, transparent)) 100%);
+  --creation-panel-border: color-mix(in srgb, var(--fg-faint) 5%, transparent);
+  --creation-panel-shadow: none;
+}
+
+.app--creation .context-panel__body {
+  padding: 8px 10px 18px;
+}
+
+.app--creation .context-panel__overview {
+  gap: 10px;
+}
+
+.app--creation .context-panel__usage,
+.app--creation .context-panel__section,
+:root[data-theme-style] .app--creation .context-panel__usage,
+:root[data-theme-style] .app--creation .context-panel__section {
+  gap: 12px;
+  padding: 11px;
+  border: 1px solid var(--creation-panel-border);
+  border-radius: 12px;
+  background: var(--creation-panel-card);
+  box-shadow: var(--creation-panel-shadow);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.app--creation .context-panel__section {
+  display: none;
+}
+
+.app--creation .context-panel__section-head h3,
+:root[data-theme-style] .app--creation .context-panel__section-head h3 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.app--creation .context-panel__section-head span,
+:root[data-theme-style] .app--creation .context-panel__section-head span {
+  color: color-mix(in srgb, var(--fg-faint) 86%, transparent);
+  font-size: 11.5px;
+  font-weight: 420;
+}
+
+.app--creation .context-panel__usage-visual {
+  display: none;
+}
+
+.app--creation .context-panel__usage-progress {
+  display: grid;
+  gap: 7px;
+}
+
+.app--creation .context-panel__progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.app--creation .context-panel__progress-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app--creation .context-panel__progress-head span {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 660;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.app--creation .context-panel__progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg-faint) 10%, transparent);
+}
+
+.app--creation .context-panel__progress-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent));
+}
+
+.app--creation .context-panel__summary-rows {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.app--creation .context-panel__mini-stat {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  color: color-mix(in srgb, var(--fg-dim) 84%, transparent);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.app--creation .context-panel__mini-stat span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 430;
+}
+
+.app--creation .context-panel__mini-stat strong {
+  color: var(--fg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.app--creation .context-panel__breakdown {
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.app--creation .context-panel__legend-row,
+.app--creation .context-panel__total,
+:root[data-theme-style] .app--creation .context-panel__legend-row,
+:root[data-theme-style] .app--creation .context-panel__total {
+  color: color-mix(in srgb, var(--fg-dim) 86%, transparent);
+  font-size: 12px;
+  font-weight: 430;
+}
+
+.app--creation .context-panel__legend-row strong,
+.app--creation .context-panel__total strong,
+:root[data-theme-style] .app--creation .context-panel__legend-row strong,
+:root[data-theme-style] .app--creation .context-panel__total strong {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.app--creation .context-panel__total {
+  border-top-color: color-mix(in srgb, var(--accent) 12%, var(--border-soft));
+}
+
+.app--creation .context-panel__stats,
+:root[data-theme-style] .app--creation .context-panel__stats {
+  gap: 8px;
+  animation: none;
+}
+
+.app--creation .context-panel__metric,
+:root[data-theme-style] .app--creation .context-panel__metric {
+  --creation-panel-card: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--bg-elev) 28%, transparent)) 0%, color-mix(in srgb, var(--fg) 2%, color-mix(in srgb, var(--bg-elev) 20%, transparent)) 55%, color-mix(in srgb, var(--accent) 3%, color-mix(in srgb, var(--bg-elev) 14%, transparent)) 100%);
+  min-height: 68px;
+  padding: 11px 13px;
+  border: 1px solid var(--creation-panel-border);
+  border-radius: 10px;
+  background: var(--creation-panel-card);
+  box-shadow: var(--creation-panel-shadow);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.app--creation .context-panel__metric span,
+:root[data-theme-style] .app--creation .context-panel__metric span {
+  color: color-mix(in srgb, var(--fg-dim) 84%, transparent);
+  font-size: 11.5px;
+  font-weight: 430;
+}
+
+.app--creation .context-panel__metric strong,
+:root[data-theme-style] .app--creation .context-panel__metric strong {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.app--creation .context-panel__creation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }

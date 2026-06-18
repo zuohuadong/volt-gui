@@ -3006,6 +3006,10 @@ export default function App() {
                   sessionTokens={state.sessionTokens}
                   sessionCost={state.sessionCost}
                   sessionCurrency={state.sessionCurrency}
+                  sessionTurns={sessionTurns}
+                  turnTokens={state.turnTotalTokens}
+                  turnCost={state.turnCost}
+                  balance={state.balance}
                   sessionGen={state.sessionGen}
                   refreshKey={dockRefreshKey}
                 />

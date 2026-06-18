@@ -624,6 +624,18 @@ func (a *App) SubmitToTab(tabID, input string) {
 	}
 }
 
+func (a *App) submitUserTurnToTab(tabID, input string) bool {
+	if a.tabReadOnly(tabID) {
+		return false
+	}
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl == nil {
+		return false
+	}
+	ctrl.SubmitUserTurn(input, input)
+	return true
+}
+
 // RunShell executes a shell command directly (bypassing the model) and streams
 // output as events on eventChannel.
 func (a *App) RunShell(command string) {

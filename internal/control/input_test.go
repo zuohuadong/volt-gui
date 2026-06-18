@@ -249,6 +249,31 @@ func TestParseGoalCommandWithStrict(t *testing.T) {
 	}
 }
 
+func TestParseGoalCommandStrictOnlyConsumesLeadingFlags(t *testing.T) {
+	structuredGoal := "implement parser\n\n  keep  spacing\nliteral --strict stays"
+	cmd, ok := ParseGoalCommand("/goal --strict " + structuredGoal)
+	if !ok {
+		t.Fatal("ParseGoalCommand returned ok=false")
+	}
+	if !cmd.Strict {
+		t.Fatal("leading --strict should enable strict mode")
+	}
+	if cmd.Text != structuredGoal {
+		t.Fatalf("goal text was rewritten:\nwant %q\ngot  %q", structuredGoal, cmd.Text)
+	}
+
+	cmd, ok = ParseGoalCommand("/goal implement parser --strict literally")
+	if !ok {
+		t.Fatal("ParseGoalCommand with literal --strict returned ok=false")
+	}
+	if cmd.Strict {
+		t.Fatal("non-leading --strict should remain part of the goal text")
+	}
+	if want := "implement parser --strict literally"; cmd.Text != want {
+		t.Fatalf("goal text = %q, want %q", cmd.Text, want)
+	}
+}
+
 func TestComposeDrainsQueuedMemory(t *testing.T) {
 	c := New(Options{}) // no executor/memory — QueueMemory still queues a turn-tail note
 

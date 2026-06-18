@@ -1546,16 +1546,24 @@ export default function App() {
         if (isThemeMode(arg)) {
           const next = arg;
           const style = getThemeStyle(next);
-          await app.SetDesktopAppearance(next, style);
-          applyTheme(next, style);
-          notice(t("settings.themeChanged", { theme: next, style }));
+          try {
+            await app.SetDesktopAppearance(next, style);
+            applyTheme(next, style);
+            notice(t("settings.themeChanged", { theme: next, style }));
+          } catch (err) {
+            showToast(err instanceof Error ? err.message : String(err), "error");
+          }
           return;
         }
         if (isThemeStyle(arg)) {
           const cur = getTheme();
-          await app.SetDesktopAppearance(cur, arg);
-          applyTheme(cur, arg);
-          notice(t("settings.themeChanged", { theme: cur, style: arg }));
+          try {
+            await app.SetDesktopAppearance(cur, arg);
+            applyTheme(cur, arg);
+            notice(t("settings.themeChanged", { theme: cur, style: arg }));
+          } catch (err) {
+            showToast(err instanceof Error ? err.message : String(err), "error");
+          }
           return;
         }
         notice(t("settings.themeUnknown", { name: arg }), "warn");
@@ -1567,7 +1575,7 @@ export default function App() {
       if (goal.trim()) await setControllerGoal(goal);
       commitThenSend(trimmed, submitText.trim());
     },
-    [applyGoal, closeTransientOverlays, collaborationMode, composerProfile, goal, send, runShell, notice, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, steer, switchModel, t, toolApprovalMode],
+    [applyGoal, closeTransientOverlays, collaborationMode, composerProfile, goal, send, runShell, notice, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, steer, switchModel, t, toolApprovalMode, showToast],
   );
 
   const refreshTabMetas = useCallback(async (): Promise<TabMeta[]> => {
@@ -2318,9 +2326,13 @@ export default function App() {
   const renameTopic = useCallback(async (topicId: string, title: string) => {
     const nextTitle = title.trim();
     if (!topicId || !nextTitle) return;
-    await app.RenameTopic(topicId, nextTitle);
-    await refreshProjectsAndTabs();
-  }, [refreshProjectsAndTabs]);
+    try {
+      await app.RenameTopic(topicId, nextTitle);
+      await refreshProjectsAndTabs();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    }
+  }, [refreshProjectsAndTabs, showToast]);
 
   const startActiveTopicRename = useCallback(() => {
     if (!activeTab?.topicId) return;

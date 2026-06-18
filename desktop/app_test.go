@@ -3246,6 +3246,87 @@ args = ["serve"]
 	}
 }
 
+func TestRemoveMCPServerDeletesProjectMCPJSONEntry(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{
+  "mcpServers": {
+    "codegraph": { "command": "codegraph", "args": ["serve", "--mcp"] },
+    "keep": { "command": "keep-mcp" }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	if err := app.RemoveMCPServer("codegraph"); err != nil {
+		t.Fatalf("RemoveMCPServer(.mcp.json codegraph): %v", err)
+	}
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findPluginEntry(cfg.Plugins, "codegraph"); ok {
+		t.Fatalf("codegraph still merged after remove: %+v", cfg.Plugins)
+	}
+	if _, ok := findPluginEntry(cfg.Plugins, "keep"); !ok {
+		t.Fatalf("unrelated .mcp.json server should be preserved: %+v", cfg.Plugins)
+	}
+}
+
+func TestUpdateMCPServerEditsProjectMCPJSONEntry(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{
+  "mcpServers": {
+    "codegraph": { "command": "codegraph", "args": ["serve", "--mcp"] }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	if err := app.UpdateMCPServer("codegraph", MCPServerInput{
+		Name:      "codegraph",
+		Transport: "stdio",
+		Command:   "reasonix-missing-mcp-binary",
+		Args:      []string{"serve", "--mcp"},
+		Env:       map[string]string{"CODEGRAPH_LOG": "debug"},
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer(.mcp.json codegraph): %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		MCPServers map[string]struct {
+			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+			Env     map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	got := doc.MCPServers["codegraph"]
+	if got.Command != "reasonix-missing-mcp-binary" || !reflect.DeepEqual(got.Args, []string{"serve", "--mcp"}) || got.Env["CODEGRAPH_LOG"] != "debug" {
+		t.Fatalf(".mcp.json codegraph = %+v, want updated command/args/env", got)
+	}
+	if _, ok := findPluginEntry(config.LoadForEdit(config.UserConfigPath()).Plugins, "codegraph"); ok {
+		t.Fatalf(".mcp.json update should not create a user config shadow entry")
+	}
+}
+
 func TestCapabilitiesMarksBackgroundRemoteMCPAuthPossible(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

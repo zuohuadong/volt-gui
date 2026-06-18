@@ -4631,6 +4631,10 @@ func (a *App) desktopMCPServerForEdit(name string) (config.PluginEntry, bool, er
 }
 
 func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
+	if a.desktopMCPServerOwnedByProjectMCPJSON(entry.Name) {
+		_, err := config.UpsertMCPJSONPlugin(projectMCPJSONPathForRoot(a.activeWorkspaceRoot()), entry)
+		return err
+	}
 	cfg, path, err := a.loadDesktopUserConfigForEdit()
 	if err != nil {
 		return err
@@ -4661,7 +4665,11 @@ func (a *App) removeDesktopMCPServer(name string) (bool, error) {
 	if err != nil {
 		return removed, err
 	}
-	return removed || projectRemoved, nil
+	mcpJSONRemoved, err := a.removeProjectMCPJSONServer(name)
+	if err != nil {
+		return removed || projectRemoved, err
+	}
+	return removed || projectRemoved || mcpJSONRemoved, nil
 }
 
 func (a *App) removeProjectMCPOverride(name string) (bool, error) {
@@ -4684,6 +4692,35 @@ func (a *App) removeProjectMCPOverride(name string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (a *App) removeProjectMCPJSONServer(name string) (bool, error) {
+	return config.RemoveMCPJSONPlugin(projectMCPJSONPathForRoot(a.activeWorkspaceRoot()), name)
+}
+
+func (a *App) desktopMCPServerOwnedByProjectMCPJSON(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	cfg, _, err := a.loadDesktopUserConfigForEdit()
+	if err == nil {
+		if _, ok := findPluginEntry(cfg.Plugins, name); ok {
+			return false
+		}
+	}
+	projectCfg := config.LoadForEdit(projectConfigPathForRoot(a.activeWorkspaceRoot()))
+	if _, ok := findPluginEntry(projectCfg.Plugins, name); ok {
+		return false
+	}
+	_, ok, err := config.LoadMCPJSONPlugin(projectMCPJSONPathForRoot(a.activeWorkspaceRoot()), name)
+	return err == nil && ok
+}
+
+func projectMCPJSONPathForRoot(root string) string {
+	if strings.TrimSpace(root) == "" || root == "." {
+		return ".mcp.json"
+	}
+	return filepath.Join(root, ".mcp.json")
 }
 
 func findPluginEntry(entries []config.PluginEntry, name string) (config.PluginEntry, bool) {

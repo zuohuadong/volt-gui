@@ -54,6 +54,13 @@ function fmtUsageCacheRate(usage?: WireUsage): string {
   return `${((usage.cacheHitTokens / denom) * 100).toFixed(2)}%`;
 }
 
+function fmtSessionCacheRate(usage?: WireUsage): string {
+  if (!usage) return "-";
+  const denom = usage.sessionCacheHitTokens + usage.sessionCacheMissTokens;
+  if (denom <= 0) return "-";
+  return `${((usage.sessionCacheHitTokens / denom) * 100).toFixed(2)}%`;
+}
+
 export function formatCacheHitRate(hitTokens: number, missTokens: number): string {
   const denom = hitTokens + missTokens;
   if (denom <= 0) return "-";
@@ -311,6 +318,7 @@ export function ContextPanel({
   const health = contextHealth(usagePct, Math.round(cachePct), readFiles.length);
   const balanceLabel = balance?.available && balance.display ? balance.display : "-";
   const turnCostLabel = formatMoneyLocalized(turnCost, sessionCurrency, { locale, empty: "dash" });
+  const sessionCostLabel = formatMoneyLocalized(sessionCost, sessionCurrency, { locale, empty: "dash" });
 
   return (
     <div className="context-panel">
@@ -338,10 +346,9 @@ export function ContextPanel({
             </div>
             <div className="context-panel__summary-rows">
               <MiniStat label={t("status.compactLabel")} value={compactPct > 0 ? `${compactPct}%` : "-"} />
-              <MiniStat label={t("status.cacheAvgLabel")} value={cachePctDisplay} />
-              <MiniStat label={t("context.sessionCost")} value={formatMoneyLocalized(cost.amount, cost.currency, { locale, empty: "dash" })} />
+              <MiniStat label={t("status.cacheAvgLabel")} value={fmtSessionCacheRate(usage)} />
+              <MiniStat label={t("context.sessionCost")} value={sessionCostLabel} />
               <MiniStat label={t("status.sessionTurnsLabel")} value={fmtTurns(sessionTurns, t)} />
-              <MiniStat label={t("status.ctxLabel")} value={`${usagePct}%`} />
             </div>
             <div className="context-panel__breakdown">
               <TokenLegend label={t("context.prompt")} value={breakdown.promptTokens} color="prompt" />

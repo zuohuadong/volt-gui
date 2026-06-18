@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, FileText, Folder, Image, Search, Send, Square, X } from "@lucide/svelte";
+  import { AtSign, FileText, Folder, Image, Plus, Search, Send, Square, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
   import type { CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
@@ -363,7 +363,7 @@
   <div class="composer__toolbar">
     <div class="composer__tools">
       <button type="button" aria-label={t.composer.attaching} title={t.composer.attaching} onclick={() => fileInput?.click()}>
-        <AtSign size={16} />
+        <Plus size={16} />
       </button>
       <label class="composer__link-picker" aria-label="关联项目">
         <Folder size={16} />

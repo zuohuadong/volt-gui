@@ -147,10 +147,12 @@ function isThemeMode(value: string): value is Theme {
   return value === "auto" || value === "light" || value === "dark";
 }
 
-type DesktopLayoutStyle = "classic" | "workbench";
+type DesktopLayoutStyle = "classic" | "workbench" | "creation";
 
 function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutStyle {
-  return style === "workbench" ? "workbench" : "classic";
+  if (style === "workbench") return "workbench";
+  if (style === "creation") return "creation";
+  return "classic";
 }
 const RIGHT_DOCK_TREE_DEFAULT_WIDTH = 300;
 const RIGHT_DOCK_TREE_MIN_WIDTH = 300;
@@ -2347,6 +2349,10 @@ export default function App() {
     ? [topicbarWorkspaceLabel, topicbarImSourceLabel, sidebarImScopeLabel(sidebarImDetailConnection, t)].filter(Boolean).join(" · ")
     : [topicbarWorkspacePath || topicbarWorkspaceLabel, topicbarImSourceLabel].filter(Boolean).join(" · ");
   const sidebarWorkbench = desktopLayoutStyle === "workbench";
+  // Creation reuses the classic JSX structure for now; it is isolated purely via
+  // the .app--creation CSS scope so the look can be redesigned without touching
+  // classic/workbench. It deliberately does NOT set sidebarWorkbench.
+  const sidebarCreation = desktopLayoutStyle === "creation";
   const workbenchChromeHidden = sidebarWorkbench;
   const sidebarClassName = [
     "sidebar",
@@ -2365,6 +2371,7 @@ export default function App() {
         `app--${desktopPlatform}`,
         browserPreviewChrome ? "app--browser-preview" : "",
         sidebarWorkbench ? "app--workbench" : "",
+        sidebarCreation ? "app--creation" : "",
       ].filter(Boolean).join(" ")}
     >
       <div

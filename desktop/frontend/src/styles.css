@@ -22220,3 +22220,20 @@ a[href] {
   from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ==========================================================================
+   Creation desktop style — scaffold
+   --------------------------------------------------------------------------
+   The "creation" desktop layout style (Settings → Desktop style → Creation).
+   It currently reuses the classic JSX structure and is isolated entirely
+   within this .app--creation scope, ready to be redesigned.
+
+   RULES (see AGENTS.md):
+   - Only style under the .app--creation scope here.
+   - Do NOT touch global base tokens (--bg / --border / --text-base /
+     --scrollbar-size) — override them scoped to .app--creation if needed.
+   ========================================================================== */
+.app--creation {
+  /* Creation-scoped overrides go here. */
+}
+

@@ -800,6 +800,7 @@ export const en = {
   "settings.desktopLayoutStyle": "Desktop style",
   "settings.desktopLayoutStyle.classic": "Classic",
   "settings.desktopLayoutStyle.workbench": "Workbench",
+  "settings.desktopLayoutStyle.creation": "Creation",
   "settings.displayMode": "Transcript display mode",
   "settings.displayMode.standard": "Standard",
   "settings.displayMode.compact": "Compact",

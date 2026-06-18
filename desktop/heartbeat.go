@@ -51,7 +51,7 @@ type HeartbeatEngine struct {
 	tasks   []HeartbeatTask
 	done    chan struct{}
 	running bool
-	app     *App // back-reference for CreateTopic & SubmitToTab
+	app     *App // back-reference for topic creation, tab routing, and prompt submission
 }
 
 func newHeartbeatEngine(app *App) *HeartbeatEngine {
@@ -153,45 +153,21 @@ func (e *HeartbeatEngine) tick() {
 	e.mu.Unlock()
 
 	now := time.Now()
+	updates := make(map[string]HeartbeatTask)
 	for i, t := range tasks {
 		if !t.Enabled {
 			continue
 		}
-		d, err := parseInterval(t.Interval)
-		if err != nil || d <= 0 {
-			continue
-		}
-		elapsed := now.Sub(time.UnixMilli(t.LastRunAt))
-		if elapsed < d {
+		if !heartbeatTaskDueAt(t, now) {
 			continue
 		}
 		// Run this task
 		tasks[i] = e.executeTask(t)
+		updates[t.ID] = tasks[i]
 	}
 
 	e.mu.Lock()
-	// Merge back: only update topicId and LastRunAt for tasks that ran,
-	// preserving any concurrent edits from HeartbeatSaveTasks.
-	oldMap := make(map[string]HeartbeatTask, len(e.tasks))
-	for _, t := range e.tasks {
-		oldMap[t.ID] = t
-	}
-	for i, t := range tasks {
-		if old, ok := oldMap[t.ID]; ok {
-			if t.TopicID != old.TopicID {
-				oldMap[t.ID] = t
-			} else if t.LastRunAt != old.LastRunAt {
-				// Only forward-merge the run timestamp
-				old.LastRunAt = t.LastRunAt
-				oldMap[t.ID] = old
-			}
-		} else {
-			oldMap[t.ID] = t
-		}
-		tasks[i] = oldMap[t.ID]
-	}
-	e.tasks = tasks
-	_ = e.saveTasks(tasks)
+	e.mergeRunUpdatesLocked(updates)
 	e.mu.Unlock()
 }
 
@@ -220,14 +196,14 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		t.TopicID = topicID
 	}
 
-	// Open the tab for the topic (creates one if needed).
-	// Use OpenProjectTab / OpenGlobalTab but do NOT switch active tab.
+	// Open the tab for the topic (creates one if needed) without changing the
+	// user's active tab or active workspace pointer.
 	var tabMeta TabMeta
 	var err error
 	if scope == "project" && workspaceRoot != "" {
-		tabMeta, err = e.app.OpenProjectTab(workspaceRoot, topicID)
+		tabMeta, err = e.app.openProjectTabInactive(workspaceRoot, topicID)
 	} else {
-		tabMeta, err = e.app.OpenGlobalTab(topicID)
+		tabMeta, err = e.app.openGlobalTabInactive(topicID)
 	}
 	if err != nil {
 		log.Printf("[heartbeat] OpenTab(%q): %v", t.Title, err)
@@ -250,9 +226,12 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		return t // don't update LastRunAt — retry next tick
 	}
 
-	// Always wrap the prompt as a user message so it isn't treated as a
-	// desktop command (e.g. "!ls" or "/clear").
-	e.app.SubmitToTab(tabMeta.ID, t.Prompt)
+	// Submit as a plain user turn so scheduled prompts cannot invoke desktop
+	// shell or slash-command handlers such as "!cmd", "/clear", or "/compact".
+	if !e.app.submitUserTurnToTab(tabMeta.ID, t.Prompt) {
+		log.Printf("[heartbeat] submit skipped for %q", t.Title)
+		return t
+	}
 
 	t.LastRunAt = time.Now().UnixMilli()
 	if t.CreatedAt == 0 {
@@ -291,34 +270,50 @@ func (e *HeartbeatEngine) ReplaceTasks(tasks []HeartbeatTask) error {
 // TriggerNow runs a single task immediately by ID.
 func (e *HeartbeatEngine) TriggerNow(id string) {
 	e.mu.Lock()
-	var target *HeartbeatTask
-	for i := range e.tasks {
-		if e.tasks[i].ID == id {
-			target = &e.tasks[i]
-			break
-		}
-	}
-	e.mu.Unlock()
-	if target == nil {
-		return
-	}
-	e.mu.Lock()
 	tasks := append([]HeartbeatTask(nil), e.tasks...)
 	e.mu.Unlock()
+	updates := make(map[string]HeartbeatTask, 1)
 	for i, t := range tasks {
 		if t.ID == id {
 			tasks[i] = e.executeTask(t)
+			updates[id] = tasks[i]
 			break
 		}
 	}
+	if len(updates) == 0 {
+		return
+	}
 	e.mu.Lock()
-	e.tasks = tasks
-	_ = e.saveTasks(tasks)
+	e.mergeRunUpdatesLocked(updates)
 	e.mu.Unlock()
 }
 
+func (e *HeartbeatEngine) mergeRunUpdatesLocked(updates map[string]HeartbeatTask) {
+	if len(updates) == 0 {
+		return
+	}
+	tasks := append([]HeartbeatTask(nil), e.tasks...)
+	for i := range tasks {
+		update, ok := updates[tasks[i].ID]
+		if !ok {
+			continue
+		}
+		if update.TopicID != "" {
+			tasks[i].TopicID = update.TopicID
+		}
+		if update.LastRunAt != 0 {
+			tasks[i].LastRunAt = update.LastRunAt
+		}
+		if tasks[i].CreatedAt == 0 && update.CreatedAt != 0 {
+			tasks[i].CreatedAt = update.CreatedAt
+		}
+	}
+	e.tasks = tasks
+	_ = e.saveTasks(tasks)
+}
+
 // parseInterval converts a string like "5m", "1h", "30s" to time.Duration.
-// Suffix after '|' is stripped (e.g. "24h|daily@09:00" → "24h").
+// Suffix after '|' is stripped (e.g. "24h|daily@09:00" -> "24h").
 // Empty or invalid strings return 0, nil (task will be skipped).
 func parseInterval(s string) (time.Duration, error) {
 	if idx := strings.Index(s, "|"); idx >= 0 {
@@ -335,6 +330,262 @@ func parseInterval(s string) (time.Duration, error) {
 		// Try "Xm" as default assumption
 		return time.ParseDuration(s + "m")
 	}
+}
+
+func heartbeatTaskDueAt(t HeartbeatTask, now time.Time) bool {
+	if scheduled, ok := previousHeartbeatScheduleAt(t, now); ok {
+		if t.CreatedAt != 0 && scheduled.Before(time.UnixMilli(t.CreatedAt)) {
+			return false
+		}
+		if t.LastRunAt != 0 && !time.UnixMilli(t.LastRunAt).Before(scheduled) {
+			return false
+		}
+		return !scheduled.After(now)
+	}
+
+	d, err := parseInterval(t.Interval)
+	if err != nil || d <= 0 {
+		return false
+	}
+	baseMillis := t.LastRunAt
+	if baseMillis == 0 {
+		baseMillis = t.CreatedAt
+	}
+	if baseMillis == 0 {
+		return true
+	}
+	return now.Sub(time.UnixMilli(baseMillis)) >= d
+}
+
+type heartbeatSchedule struct {
+	kind     string
+	days     []time.Weekday
+	month    int
+	day      int
+	hour     int
+	minute   int
+	hasRules bool
+}
+
+func parseHeartbeatSchedule(interval string) (heartbeatSchedule, bool) {
+	idx := strings.Index(interval, "|")
+	if idx < 0 {
+		return heartbeatSchedule{}, false
+	}
+	raw := strings.TrimSpace(interval[idx+1:])
+	if raw == "" {
+		return heartbeatSchedule{}, false
+	}
+	at := "09:00"
+	if parts := strings.SplitN(raw, "@", 2); len(parts) == 2 {
+		raw = parts[0]
+		at = parts[1]
+	}
+	hour, minute, ok := parseHeartbeatClock(at)
+	if !ok {
+		return heartbeatSchedule{}, false
+	}
+	kind := raw
+	rule := ""
+	if parts := strings.SplitN(raw, ":", 2); len(parts) == 2 {
+		kind = parts[0]
+		rule = parts[1]
+	}
+	s := heartbeatSchedule{kind: kind, hour: hour, minute: minute, hasRules: true}
+	switch kind {
+	case "daily":
+		return s, true
+	case "weekly", "biweekly":
+		for _, part := range strings.Split(rule, ",") {
+			if wd, ok := parseHeartbeatWeekday(part); ok {
+				s.days = append(s.days, wd)
+			}
+		}
+		return s, len(s.days) > 0
+	case "monthly":
+		s.day = parsePositiveInt(rule, 1)
+		return s, true
+	case "yearly":
+		parts := strings.SplitN(rule, "-", 2)
+		s.month = parsePositiveInt(firstString(parts), 1)
+		s.day = 1
+		if len(parts) == 2 {
+			s.day = parsePositiveInt(parts[1], 1)
+		}
+		if s.month < 1 {
+			s.month = 1
+		}
+		if s.month > 12 {
+			s.month = 12
+		}
+		return s, true
+	default:
+		return heartbeatSchedule{}, false
+	}
+}
+
+func previousHeartbeatScheduleAt(t HeartbeatTask, now time.Time) (time.Time, bool) {
+	s, ok := parseHeartbeatSchedule(t.Interval)
+	if !ok || !s.hasRules {
+		return time.Time{}, false
+	}
+	switch s.kind {
+	case "daily":
+		candidate := dateAt(now.Year(), now.Month(), now.Day(), s.hour, s.minute, now.Location())
+		if candidate.After(now) {
+			candidate = candidate.AddDate(0, 0, -1)
+		}
+		return candidate, true
+	case "weekly":
+		return previousHeartbeatWeeklyAt(s, now, 7, time.Time{})
+	case "biweekly":
+		anchor := heartbeatScheduleAnchor(t, now)
+		return previousHeartbeatWeeklyAt(s, now, 14, anchor)
+	case "monthly":
+		return previousHeartbeatMonthlyAt(s, now), true
+	case "yearly":
+		return previousHeartbeatYearlyAt(s, now), true
+	default:
+		return time.Time{}, false
+	}
+}
+
+func previousHeartbeatWeeklyAt(s heartbeatSchedule, now time.Time, windowDays int, anchor time.Time) (time.Time, bool) {
+	var best time.Time
+	for offset := 0; offset < windowDays; offset++ {
+		day := now.AddDate(0, 0, -offset)
+		for _, wd := range s.days {
+			if day.Weekday() != wd {
+				continue
+			}
+			candidate := dateAt(day.Year(), day.Month(), day.Day(), s.hour, s.minute, now.Location())
+			if candidate.After(now) {
+				continue
+			}
+			if !anchor.IsZero() && weeksBetween(weekStart(anchor), weekStart(candidate))%2 != 0 {
+				continue
+			}
+			if best.IsZero() || candidate.After(best) {
+				best = candidate
+			}
+		}
+	}
+	return best, !best.IsZero()
+}
+
+func previousHeartbeatMonthlyAt(s heartbeatSchedule, now time.Time) time.Time {
+	candidate := monthlyCandidate(now.Year(), now.Month(), s.day, s.hour, s.minute, now.Location())
+	if candidate.After(now) {
+		prev := now.AddDate(0, -1, 0)
+		candidate = monthlyCandidate(prev.Year(), prev.Month(), s.day, s.hour, s.minute, now.Location())
+	}
+	return candidate
+}
+
+func previousHeartbeatYearlyAt(s heartbeatSchedule, now time.Time) time.Time {
+	month := time.Month(s.month)
+	candidate := monthlyCandidate(now.Year(), month, s.day, s.hour, s.minute, now.Location())
+	if candidate.After(now) {
+		candidate = monthlyCandidate(now.Year()-1, month, s.day, s.hour, s.minute, now.Location())
+	}
+	return candidate
+}
+
+func heartbeatScheduleAnchor(t HeartbeatTask, now time.Time) time.Time {
+	if t.CreatedAt != 0 {
+		return time.UnixMilli(t.CreatedAt)
+	}
+	if t.LastRunAt != 0 {
+		return time.UnixMilli(t.LastRunAt)
+	}
+	return now
+}
+
+func parseHeartbeatClock(s string) (int, int, bool) {
+	parts := strings.SplitN(strings.TrimSpace(s), ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	hour := parsePositiveInt(parts[0], -1)
+	minute := parsePositiveInt(parts[1], -1)
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, false
+	}
+	return hour, minute, true
+}
+
+func parseHeartbeatWeekday(s string) (time.Weekday, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "sun":
+		return time.Sunday, true
+	case "mon":
+		return time.Monday, true
+	case "tue":
+		return time.Tuesday, true
+	case "wed":
+		return time.Wednesday, true
+	case "thu":
+		return time.Thursday, true
+	case "fri":
+		return time.Friday, true
+	case "sat":
+		return time.Saturday, true
+	default:
+		return time.Sunday, false
+	}
+}
+
+func parsePositiveInt(s string, fallback int) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fallback
+	}
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return fallback
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func dateAt(year int, month time.Month, day, hour, minute int, loc *time.Location) time.Time {
+	return time.Date(year, month, day, hour, minute, 0, 0, loc)
+}
+
+func monthlyCandidate(year int, month time.Month, day, hour, minute int, loc *time.Location) time.Time {
+	if day < 1 {
+		day = 1
+	}
+	if max := daysInMonth(year, month, loc); day > max {
+		day = max
+	}
+	return dateAt(year, month, day, hour, minute, loc)
+}
+
+func daysInMonth(year int, month time.Month, loc *time.Location) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, loc).Day()
+}
+
+func weekStart(t time.Time) time.Time {
+	dayOffset := (int(t.Weekday()) + 6) % 7
+	base := dateAt(t.Year(), t.Month(), t.Day(), 0, 0, t.Location())
+	return base.AddDate(0, 0, -dayOffset)
+}
+
+func weeksBetween(a, b time.Time) int {
+	if b.Before(a) {
+		a, b = b, a
+	}
+	return int(b.Sub(a).Hours() / 24 / 7)
 }
 
 // ── Wails bindings on App ───────────────────────────────────────────────────

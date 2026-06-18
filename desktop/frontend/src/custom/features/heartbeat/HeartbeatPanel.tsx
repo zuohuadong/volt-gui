@@ -613,7 +613,7 @@ function CycleEditor({
     setTimeVal(tm);
     const days = cycleType === "weekly" || cycleType === "biweekly" ? selectedDays
       : cycleType === "monthly" ? [monthDay]
-      : cycleType === "yearly" ? [`${yearMonth}-${yearDay}`]
+      : cycleType === "yearly" ? [yearMonth, yearDay]
       : [];
     setDraft("interval", buildInterval(cycleType, days, tm));
   }, [buildInterval, cycleType, selectedDays, monthDay, yearMonth, yearDay, setDraft]);
@@ -917,4 +917,3 @@ function TaskEditor({
     </div>
   );
 }
-

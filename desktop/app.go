@@ -1024,6 +1024,8 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl *control.Cont
 	})
 	if err != nil {
 		if teardownTimedOut {
+			// The old session was already marked cleanup-pending, so finish the
+			// destroy cleanup instead of re-exposing a runtime in teardown.
 			go delayedDesktopSessionCleanup(oldPath, destroys)
 		} else {
 			finishDestroyHandles(destroys)

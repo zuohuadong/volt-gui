@@ -73,7 +73,7 @@ type TeardownResult struct {
 	TimedOut []TeardownJob
 }
 
-// TimedOut reports whether teardown returned before every job had unwound.
+// HasTimedOut reports whether teardown returned before every job had unwound.
 func (r TeardownResult) HasTimedOut() bool { return len(r.TimedOut) > 0 }
 
 type teardownTarget struct {

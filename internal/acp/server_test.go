@@ -1032,6 +1032,36 @@ func TestDeleteSessionFilesDeletesOwnedSubagents(t *testing.T) {
 	}
 }
 
+func TestReconcileCleanupPendingDeletesACPMeta(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := transcriptPath(dir, "pending-acp")
+	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"hi"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveACPMeta(sessionPath, acpSessionMeta{Cwd: t.TempDir(), Model: "test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	jobsDir := jobs.ArtifactDir(sessionPath)
+	if err := os.MkdirAll(jobsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jobsDir, "bash-1.log"), []byte("output"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.MarkCleanupPending(sessionPath, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileCleanupPending(dir); err != nil {
+		t.Fatalf("ReconcileCleanupPending: %v", err)
+	}
+	for _, path := range []string{sessionPath, acpMetaPath(sessionPath), jobsDir, agent.CleanupPendingPath(sessionPath)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists after reconciliation (err=%v)", path, err)
+		}
+	}
+}
+
 func writeACPSubagentArtifact(t *testing.T, dir, ref, parentSession string) {
 	t.Helper()
 	subagentDir := filepath.Join(dir, "subagents")

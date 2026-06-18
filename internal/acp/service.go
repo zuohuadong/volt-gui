@@ -1448,6 +1448,14 @@ func deleteSessionFiles(sessionPath string) error {
 	return agent.ClearCleanupPending(sessionPath)
 }
 
+// ReconcileCleanupPending retries delayed ACP session cleanup left by a previous
+// process, including ACP's own metadata sidecar.
+func ReconcileCleanupPending(dir string) error {
+	return agent.ReconcileCleanupPending(dir, func(item agent.CleanupPendingInfo) error {
+		return deleteSessionFiles(item.SessionPath)
+	})
+}
+
 func delayedDeleteSessionFiles(sessionPath string, destroy control.SessionDestroyHandle) {
 	if destroy.WaitAll != nil {
 		destroy.WaitAll()

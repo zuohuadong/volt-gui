@@ -97,10 +97,10 @@ type Host struct {
 
 	// spawningMu + spawning prevent concurrent spawns of the same server from
 	// multiple callers (e.g. several controller tabs sharing one Host). The
-	// channel is closed by the owner when the spawn finishes so waiters can
-	// reuse the connected client without forking their own subprocess.
+	// owner publishes its result before closing done so waiters can reuse the
+	// discovered tools without issuing concurrent tools/list calls.
 	spawningMu sync.Mutex
-	spawning   map[string]chan struct{}
+	spawning   map[string]*spawnAttempt
 
 	// Detached stats/schema-cache writers from Start; off the boot path but
 	// drained by Close so cleanup can't race a still-open cache file.
@@ -630,30 +630,38 @@ func (h *Host) endDeferredSpawn() {
 // spawning the same server on this host. The caller should retry later.
 var ErrSpawningInFlight = errors.New("server spawn already in progress")
 
+type spawnAttempt struct {
+	done  chan struct{}
+	tools []tool.Tool
+	err   error
+}
+
 // beginSpawn atomically claims the sole right to spawn the named server.
 // Returns owner=true if the caller should proceed. When another caller is
 // already spawning the same server, owner=false and done is closed when that
 // spawn finishes.
-func (h *Host) beginSpawn(name string) (done <-chan struct{}, owner bool) {
+func (h *Host) beginSpawn(name string) (*spawnAttempt, bool) {
 	h.spawningMu.Lock()
 	defer h.spawningMu.Unlock()
 	if h.spawning == nil {
-		h.spawning = make(map[string]chan struct{})
+		h.spawning = make(map[string]*spawnAttempt)
 	}
-	if done, ok := h.spawning[name]; ok {
-		return done, false
+	if attempt, ok := h.spawning[name]; ok {
+		return attempt, false
 	}
-	ch := make(chan struct{})
-	h.spawning[name] = ch
-	return ch, true
+	attempt := &spawnAttempt{done: make(chan struct{})}
+	h.spawning[name] = attempt
+	return attempt, true
 }
 
 // endSpawn releases the spawn claim for the named server.
-func (h *Host) endSpawn(name string) {
+func (h *Host) endSpawn(name string, tools []tool.Tool, err error) {
 	h.spawningMu.Lock()
-	if done, ok := h.spawning[name]; ok {
+	if attempt, ok := h.spawning[name]; ok {
+		attempt.tools = append([]tool.Tool(nil), tools...)
+		attempt.err = err
 		delete(h.spawning, name)
-		close(done)
+		close(attempt.done)
 	}
 	h.spawningMu.Unlock()
 }
@@ -717,25 +725,29 @@ func (h *Host) Add(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	if h.has(s.Name) {
 		return nil, serverAlreadyConnectedError(s.Name)
 	}
-	done, owner := h.beginSpawn(s.Name)
+	attempt, owner := h.beginSpawn(s.Name)
 	if !owner {
 		select {
-		case <-done:
-			if tools, err := h.ToolsFor(ctx, s.Name); err == nil {
-				return tools, nil
+		case <-attempt.done:
+			if attempt.err != nil {
+				return nil, attempt.err
 			}
-			return nil, fmt.Errorf("%w: %s", ErrSpawningInFlight, s.Name)
+			return append([]tool.Tool(nil), attempt.tools...), nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
-	defer h.endSpawn(s.Name)
+	var tools []tool.Tool
+	var err error
+	defer func() { h.endSpawn(s.Name, tools, err) }()
 	// Double-check after acquiring the spawn token: another caller may have
 	// connected the server between our h.has check and beginSpawn.
 	if h.has(s.Name) {
-		return nil, serverAlreadyConnectedError(s.Name)
+		err = serverAlreadyConnectedError(s.Name)
+		return nil, err
 	}
-	return h.addConnected(ctx, s)
+	tools, err = h.addConnected(ctx, s)
+	return tools, err
 }
 
 func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {

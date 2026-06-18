@@ -22,6 +22,13 @@ import (
 
 var validSkillName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
+const (
+	appConfigDirName        = "voltui"
+	legacyConfigDirName     = "reasonix"
+	projectConfigFile       = "voltui.toml"
+	legacyProjectConfigFile = "reasonix.toml"
+)
+
 // IsValidSkillName reports whether name is a usable skill identifier.
 func IsValidSkillName(name string) bool { return validSkillName.MatchString(name) }
 
@@ -158,7 +165,7 @@ func (c *Config) AuthEnabled() bool {
 
 // BrandName returns the effective product name: env override → config → "VoltUI".
 func (c *Config) BrandName() string {
-	if v := strings.TrimSpace(os.Getenv("VOLTUI_BRAND_NAME")); v != "" {
+	if v := firstEnv("VOLTUI_BRAND_NAME", "REASONIX_BRAND_NAME"); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(c.Brand.Name); v != "" {
@@ -169,7 +176,7 @@ func (c *Config) BrandName() string {
 
 // BrandShortName returns the effective short name: env override → config → BrandName.
 func (c *Config) BrandShortName() string {
-	if v := strings.TrimSpace(os.Getenv("VOLTUI_BRAND_SHORT_NAME")); v != "" {
+	if v := firstEnv("VOLTUI_BRAND_SHORT_NAME", "REASONIX_BRAND_SHORT_NAME"); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(c.Brand.ShortName); v != "" {
@@ -180,7 +187,7 @@ func (c *Config) BrandShortName() string {
 
 // BrandLogoPath returns the effective logo file path (empty = built-in).
 func (c *Config) BrandLogoPath() string {
-	if v := strings.TrimSpace(os.Getenv("VOLTUI_BRAND_LOGO")); v != "" {
+	if v := firstEnv("VOLTUI_BRAND_LOGO", "REASONIX_BRAND_LOGO"); v != "" {
 		return v
 	}
 	return ExpandVars(strings.TrimSpace(c.Brand.LogoPath))
@@ -188,7 +195,7 @@ func (c *Config) BrandLogoPath() string {
 
 // BrandWordmarkPath returns the effective wordmark file path (empty = built-in).
 func (c *Config) BrandWordmarkPath() string {
-	if v := strings.TrimSpace(os.Getenv("VOLTUI_BRAND_WORDMARK")); v != "" {
+	if v := firstEnv("VOLTUI_BRAND_WORDMARK", "REASONIX_BRAND_WORDMARK"); v != "" {
 		return v
 	}
 	return ExpandVars(strings.TrimSpace(c.Brand.WordmarkPath))
@@ -196,7 +203,7 @@ func (c *Config) BrandWordmarkPath() string {
 
 // BrandIconPath returns the effective icon file path for tray/taskbar (empty = built-in).
 func (c *Config) BrandIconPath() string {
-	if v := strings.TrimSpace(os.Getenv("VOLTUI_BRAND_ICON")); v != "" {
+	if v := firstEnv("VOLTUI_BRAND_ICON", "REASONIX_BRAND_ICON"); v != "" {
 		return v
 	}
 	return ExpandVars(strings.TrimSpace(c.Brand.IconPath))
@@ -951,16 +958,7 @@ func LoadForRoot(root string) (*Config, error) {
 	loadDotEnvForRoot(root)
 	cfg := Default()
 
-	projectTOML := "voltui.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "voltui.toml")
-	}
-
-	var tomlSources []string
-	if uc := userConfigPath(); uc != "" {
-		tomlSources = append(tomlSources, uc)
-	}
-	tomlSources = append(tomlSources, projectTOML)
+	tomlSources := configLoadSources(root)
 	sawConfigFile := false
 	for _, path := range tomlSources {
 		if _, err := os.Stat(path); err == nil {
@@ -1160,12 +1158,57 @@ func mergeFile(cfg *Config, path string) error {
 	return nil
 }
 
-func userConfigPath() string {
+func userConfigRoot(name string) string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "voltui", "config.toml")
+	return filepath.Join(dir, name)
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func userConfigPathFor(name string) string {
+	root := userConfigRoot(name)
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, "config.toml")
+}
+
+func userConfigPath() string {
+	return userConfigPathFor(appConfigDirName)
+}
+
+func legacyUserConfigPath() string {
+	return userConfigPathFor(legacyConfigDirName)
+}
+
+func projectConfigPath(root, name string) string {
+	if root == "." {
+		return name
+	}
+	return filepath.Join(root, name)
+}
+
+func configLoadSources(root string) []string {
+	var out []string
+	if p := legacyUserConfigPath(); p != "" {
+		out = append(out, p)
+	}
+	if p := userConfigPath(); p != "" {
+		out = append(out, p)
+	}
+	out = append(out, projectConfigPath(root, legacyProjectConfigFile))
+	out = append(out, projectConfigPath(root, projectConfigFile))
+	return out
 }
 
 // UserConfigPath is the user-global config file (~/.config/voltui/config.toml),
@@ -1180,33 +1223,41 @@ func UserConfigPath() string { return userConfigPath() }
 // committed, and resolve from any working directory. "" when the user config dir
 // can't be resolved.
 func UserCredentialsPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	root := userConfigRoot(appConfigDirName)
+	if root == "" {
 		return ""
 	}
-	return filepath.Join(dir, "voltui", "credentials")
+	return filepath.Join(root, "credentials")
+}
+
+func legacyUserCredentialsPath() string {
+	root := userConfigRoot(legacyConfigDirName)
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, "credentials")
 }
 
 // ArchiveDir is where compacted conversation history is archived for
 // traceability (one timestamped .jsonl per compaction). Empty if the user config
 // directory cannot be resolved, in which case archiving is skipped.
 func ArchiveDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	root := userConfigRoot(appConfigDirName)
+	if root == "" {
 		return ""
 	}
-	return filepath.Join(dir, "voltui", "archive")
+	return filepath.Join(root, "archive")
 }
 
 // SessionDir is where chat sessions are persisted (one .jsonl per session).
 // Used by `voltui chat --continue` / `--resume` to find the recent ones. Empty
 // if the user config dir can't be resolved — sessions then aren't saved.
 func SessionDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	root := userConfigRoot(appConfigDirName)
+	if root == "" {
 		return ""
 	}
-	return filepath.Join(dir, "voltui", "sessions")
+	return filepath.Join(root, "sessions")
 }
 
 // CacheDir is the per-user cache root for derived/regenerable artefacts: MCP
@@ -1215,22 +1266,22 @@ func SessionDir() string {
 // shares one root the user can wipe in a single rm. Empty when the OS dir is
 // unavailable — callers must tolerate that (caching is best-effort).
 func CacheDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	root := userConfigRoot(appConfigDirName)
+	if root == "" {
 		return ""
 	}
-	return filepath.Join(dir, "voltui", "cache")
+	return filepath.Join(root, "cache")
 }
 
 // MemoryUserDir returns the voltui user config root (…/voltui), under which
 // the user-global VOLTUI.md and the per-project auto-memory store live. Empty
 // when the user config dir can't be resolved, which disables user-scoped memory.
 func MemoryUserDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	root := userConfigRoot(appConfigDirName)
+	if root == "" {
 		return ""
 	}
-	return filepath.Join(dir, "voltui")
+	return root
 }
 
 // ConventionDirs are the parent directories scanned for agent assets (skills,
@@ -1240,7 +1291,7 @@ func MemoryUserDir() string {
 // the same set. Note: hooks are NOT scanned across these — a .claude/settings.json
 // uses a different hook schema that can't be parsed as ours, so hooks stay in
 // .voltui/settings.json (see internal/hook).
-var ConventionDirs = []string{".voltui", ".agents", ".agent", ".claude"}
+var ConventionDirs = []string{".voltui", ".reasonix", ".agents", ".agent", ".claude"}
 
 // conventionSubdirsAsc joins sub under each ConventionDir of base, in ascending
 // priority (reverse of ConventionDirs) so the canonical .voltui ends up the
@@ -1274,7 +1325,8 @@ func CommandDirsForRoot(root string) []string {
 		dirs = append(dirs, conventionSubdirsAsc(home, "commands")...)
 	}
 	if dir, err := os.UserConfigDir(); err == nil {
-		dirs = append(dirs, filepath.Join(dir, "voltui", "commands")) // legacy XDG user dir
+		dirs = append(dirs, filepath.Join(dir, legacyConfigDirName, "commands"))
+		dirs = append(dirs, filepath.Join(dir, appConfigDirName, "commands")) // legacy XDG user dir
 	}
 	dirs = append(dirs, conventionSubdirsAsc(root, "commands")...)
 	return dirs
@@ -1289,16 +1341,17 @@ func SourcePath() string {
 // root, or "" if none. Equivalent to SourcePath() when root is ".".
 func SourcePathForRoot(root string) string {
 	root = resolveRoot(root)
-	projectTOML := "voltui.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "voltui.toml")
-	}
-	if _, err := os.Stat(projectTOML); err == nil {
-		return projectTOML
-	}
-	if uc := userConfigPath(); uc != "" {
-		if _, err := os.Stat(uc); err == nil {
-			return uc
+	for _, path := range []string{
+		projectConfigPath(root, projectConfigFile),
+		projectConfigPath(root, legacyProjectConfigFile),
+		userConfigPath(),
+		legacyUserConfigPath(),
+	} {
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			return path
 		}
 	}
 	return ""

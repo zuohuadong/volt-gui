@@ -388,7 +388,7 @@ func DetectLanguage(override string) string {
 }
 
 func envCandidates() []string {
-	keys := []string{"VOLTUI_LANG", "LC_ALL", "LC_MESSAGES", "LANG"}
+	keys := []string{"VOLTUI_LANG", "REASONIX_LANG", "LC_ALL", "LC_MESSAGES", "LANG"}
 	out := make([]string, len(keys))
 	for i, k := range keys {
 		out[i] = os.Getenv(k)

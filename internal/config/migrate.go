@@ -160,9 +160,15 @@ func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
 }
 
 func legacyTOMLPaths(dest, home string) []string {
-	paths := []string{filepath.Join(filepath.Dir(dest), "voltui.toml")}
+	paths := []string{
+		legacyUserConfigPath(),
+		filepath.Join(filepath.Dir(dest), "voltui.toml"),
+		filepath.Join(filepath.Dir(dest), "reasonix.toml"),
+	}
 	if home != "" {
 		paths = append(paths, filepath.Join(home, ".voltui", "voltui.toml"))
+		paths = append(paths, filepath.Join(home, ".reasonix", "config.toml"))
+		paths = append(paths, filepath.Join(home, ".reasonix", "reasonix.toml"))
 	}
 	return paths
 }

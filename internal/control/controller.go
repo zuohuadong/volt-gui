@@ -1328,12 +1328,13 @@ func (c *Controller) applyPlanExec(input, display string) {
 	}
 	b.WriteString("\n## Routing rules\n")
 	b.WriteString("1. Analyze each step: what files/directories does it touch? What module is it about?\n")
-	b.WriteString("2. Group steps by MODULE — steps in different modules can run in parallel batches\n")
-	b.WriteString("3. Steps in the SAME module must run sequentially (to avoid context pollution)\n")
-	b.WriteString("4. Dispatch each batch using parallel_tasks — each sub-agent gets ONLY its module's context\n")
-	b.WriteString("5. After each batch, verify results before proceeding to the next batch\n")
-	b.WriteString("6. If a step fails, fix it before moving on\n")
-	b.WriteString("7. Report which module each batch covered\n")
+	b.WriteString("2. Group steps by MODULE \u2014 steps in different modules can run in parallel batches\n")
+	b.WriteString("3. Research/exploration steps across different modules should use parallel_tasks\n")
+	b.WriteString("4. Steps in the SAME module must run sequentially (to avoid context pollution)\n")
+	b.WriteString("5. Dispatch each batch using parallel_tasks \u2014 each sub-agent gets ONLY its module\u2019s context\n")
+	b.WriteString("6. After each batch, verify results before proceeding to the next batch\n")
+	b.WriteString("7. If a step fails, fix it before moving on\n")
+	b.WriteString("8. Report which module each batch covered\n")
 	b.WriteString("\nGoal: each sub-agent focuses on one module and does not carry irrelevant context.\n")
 	if done > 0 {
 		fmt.Fprintf(&b, "\nNote: %d/%d steps are already completed. Focus on the remaining %d steps.\n", done, total, total-done)
@@ -1357,7 +1358,7 @@ func (c *Controller) applyPlanExec(input, display string) {
 }
 
 // prometheusPrompt is the strategic planner system prompt.
-const prometheusPrompt = "You are Prometheus, a strategic planner. Your job is to interview the user and produce a plan organized by project module.\n\nProcess:\n1. Ask one clarifying question at a time\n2. Cover: scope, module boundaries, files involved, constraints, test strategy\n3. Understand which modules/directories are affected\n4. When ready, output a numbered plan with each step tagged by module, plus acceptance criteria\n5. End with [goal:complete]\n6. Do not start implementing\n\nEach plan step should specify which file, directory, or module it belongs to. This lets the execution conductor route steps to the right sub-agent."
+const prometheusPrompt = "You are Prometheus, a strategic planner. Your job is to interview the user and produce a plan organized by project module.\n\nProcess:\n1. Ask one clarifying question at a time\n2. Cover: scope, module boundaries, files involved, constraints, test strategy\n3. Understand which modules/directories are affected\n4. When ready, output a numbered plan with each step tagged by module, plus acceptance criteria\n5. End with [goal:complete]\n6. Do not start implementing\n7. If research is needed before planning (e.g. exploring codebase patterns, checking existing implementations), use parallel_tasks to dispatch independent research directions concurrently instead of doing them one by one\n\nEach plan step should specify which file, directory, or module it belongs to. This lets the execution conductor route steps to the right sub-agent."
 
 // applyPrometheus starts an interactive planning interview, inspired by OMO's
 // Prometheus agent. It enters goal mode with a structured interview prompt.

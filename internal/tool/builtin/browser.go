@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -402,11 +404,11 @@ func truncate(s string, n int) string {
 }
 
 func findBrowserBin() (string, error) {
-	if p := os.Getenv("VOLTUI_BROWSER_PATH"); p != "" {
+	if p := firstSetEnv("VOLTUI_BROWSER_PATH", "REASONIX_BROWSER_PATH"); p != "" {
 		if isBrowserBin(p) {
 			return p, nil
 		}
-		return "", fmt.Errorf("VOLTUI_BROWSER_PATH=%q not found or not executable", p)
+		return "", fmt.Errorf("browser path %q not found or not executable", p)
 	}
 
 	for _, p := range browserBinCandidates() {
@@ -424,10 +426,28 @@ func findBrowserBin() (string, error) {
 	return "", fmt.Errorf("no Chromium/Chrome/Edge found on system")
 }
 
+func firstSetEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func isBrowserBin(p string) bool {
 	fi, err := os.Stat(p)
 	if err != nil || fi.IsDir() {
 		return false
+	}
+	if runtime.GOOS == "windows" {
+		ext := strings.ToLower(filepath.Ext(p))
+		switch ext {
+		case ".exe", ".bat", ".cmd":
+			return true
+		}
+		name := strings.ToLower(filepath.Base(p))
+		return strings.Contains(name, "chrome") || strings.Contains(name, "chromium") || strings.Contains(name, "edge") || strings.Contains(name, "msedge")
 	}
 	return fi.Mode().Perm()&0111 != 0
 }

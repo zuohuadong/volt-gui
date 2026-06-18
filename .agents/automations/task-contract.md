@@ -38,6 +38,29 @@ updated_at: ""
 
 - 预计修改的模块、文件或目录
 
+## Goal Forge
+
+> 当设计文档、架构/API/数据模型、迁移方案或高风险计划本身是交付物时填写；普通实现任务可保持 disabled。
+
+```yaml
+goal_forge:
+  enabled: false
+  checkout_path: "../goal-forge | env:GOAL_FORGE_PATH | env:GOAL_FORGE_HOME | unknown"
+  run_dir: ""
+  config_path: ".agents/goal-forge/goal-forge.config.json"
+  ledger_paths: []
+  adapter: "local | codex | openai | none"
+  evidence_summary: ""
+  verification:
+    status_check: "agent-team goal-forge status ."
+    init_check: "agent-team goal-forge init . '<goal>'"
+    run_check: "agent-team goal-forge run . '<runDir>' --adapter local"
+  non_goals:
+    - "do not vendor Goal Forge into this project"
+    - "do not require model-backed Goal Forge runs during deploy"
+    - "do not place secrets in Goal Forge config or ledgers"
+```
+
 ## Delegation Gate
 
 ```yaml
@@ -56,10 +79,20 @@ delegation:
       scope: ""
       ownership: "read-only | write"
       allowed_files: []
+      context_isolation: "isolated | shared-readonly | shared-write | blocked"
+      shared_context_allowed: []
+      handoff_artifacts: []
       verification_command: ""
       output_schema: "verdict, evidence, blocking_findings, non_blocking_risks, recommended_next_action"
       mailbox_persistence: "required | optional | none"
       mailbox_ref: ""
+  interruption_recovery:
+    resume_state: "not-needed | resumable | blocked | unknown"
+    last_stable_artifact: ""
+    dangling_subagents: []
+    recovery_owner: "orchestrator | original-subagent | verifier | blocked"
+    recovery_action: "continue | rerun-subagent | request-human | mark-blocked | none"
+    placeholder_evidence: []
   safe_skip_reason: ""
 ```
 
@@ -68,7 +101,56 @@ delegation:
 - `gpt-5.3-codex` 是默认执行器和 explorer/critic/verifier sidecar。
 - `gpt-5.5` 只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`。
 - 并行 worker 只有在 `allowed_files` 明确互斥时才允许。
+- 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、`.mailbox/` 和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
+- `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
+- 子代理中断、超时或输出不完整时，先记录 `interruption_recovery`，再决定续跑、重派或阻塞；不要把半截输出当作完成证据。
 - 中/高风险任务进入 `review` / `done` 时，应在机器可读 task state 记录 subagent evidence 或 safe skip reason。
+
+## Skill Loading
+
+```yaml
+skill_loading:
+  required_skills: []
+  optional_skills: []
+  activation_mode: "auto | explicit | task-contract | disabled"
+  progressive_loading: true
+  loaded_for_turn: []
+  disabled_skills: []
+  metadata_required:
+    - "name"
+    - "description"
+  compatibility_notes: []
+  non_goals:
+    - "do not load every installed skill into every prompt"
+    - "do not bypass project AGENTS.md or task-specific conventions"
+```
+
+规则：
+
+- 默认渐进加载：先读取 skill 元数据和索引，只有任务命中时才完整读取 `SKILL.md` 及其必要引用。
+- 明确用户写出 `/skill-name` 或 Task Contract 指定 skill 时，可视为单轮显式激活；仍需遵守禁用列表、项目规则和安全边界。
+- `.skill` 归档或外部 skill 若被引入，应至少保留 `name`、`description`，推荐记录 `version`、`author`、`compatibility`；外部来源不能成为运行时 live dependency，除非任务契约显式允许。
+
+## Run Record
+
+```yaml
+run_record:
+  enabled: false
+  run_id: ""
+  schema_path: ".agents/state/run-records.schema.json"
+  record_path: ".agents/state/runs/<run_id>.json"
+  trace_tags: []
+  evidence_refs: []
+  privacy:
+    secrets_redacted: true
+    raw_logs_stored: false
+```
+
+规则：
+
+- `progress.md` 面向人类协作；run record 面向 automation doctor、dashboard 和后续观测工具。
+- 默认不接入 LangSmith/Langfuse；若未来接入，只引用 run record 的 ID、标签和证据路径，不上传 secrets 或完整 mailbox 历史。
+- 中/高风险、长程、多子代理或需恢复的任务建议开启 run record。
 
 ## Stack Profile
 
@@ -170,6 +252,33 @@ deployment_profile:
 ```
 
 数据库或持久化任务补充：
+
+```yaml
+memory_profile:
+  target: "none | local-file | mem0 | openmemory | blocked"
+  decision_source: "user | docs | detected | project-overlay | recommended-fallback | blocked"
+  evidence: []
+  scope: "global-user | project | task | repo | unknown"
+  recall_token_budget: 1200
+  save_policy: "stable-facts-only | disabled | provider-managed | unknown"
+  secrets_strategy: "none | env-explicit | provider-managed | blocked"
+  required_skills: []
+  verification:
+    status_check: "agent-team memory status ."
+    recall_check: "agent-team memory recall '<query>' --token-budget 1200"
+    save_check: "agent-team memory save decisions '<compact decision>'"
+  non_goals:
+    - "do not inject unbounded memory into prompts"
+    - "do not require mem0/OpenMemory unless explicitly configured"
+    - "do not migrate task ledgers, progress logs, or mailbox history into memory unless explicitly requested"
+```
+
+规则：
+
+- 默认 `target: local-file`，读取 `.agents/state/project-memory.json`，零外部依赖。
+- `mem0` / OpenMemory 是现成 Agent Memory 方案的 opt-in provider，不是默认 provider。
+- 外部 provider 必须记录 secrets 策略、scope 边界和 token budget；不得硬编码 API key。
+- `recall` 结果必须受 token budget 限制；记忆召回不能替代读取项目事实源。
 
 ```yaml
 database_profile:

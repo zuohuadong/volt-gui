@@ -63,3 +63,10 @@ servers.local.md
 !.mailbox/README.md
 .agents/state/*
 !.agents/state/README.md
+progress.md
+tasks.md
+.agents/automations/
+.agents/goal-forge/runs/
+AGENTS.md
+CLAUDE.md
+.zed/CONVENTIONS.md

@@ -155,6 +155,9 @@ type Controller struct {
 	// injected for the current goal. On first [goal:complete] with all todos
 	// done, the agent is asked to self-verify before final completion.
 	goalSelfCheckDone bool
+	// goalIdleTurns counts consecutive turns without any tool call. When this
+	// exceeds the threshold an idle reminder is injected via goalInterceptMsg.
+	goalIdleTurns int
 	sessionPath       string
 	approvals         map[string]pendingApproval
 	asks              map[string]pendingAsk
@@ -244,6 +247,7 @@ const (
 
 const (
 	maxGoalAutoTurns  = 50
+	maxGoalIdleTurns  = 2
 	goalContinueTurn  = "Continue pursuing the active goal. If it is complete, provide the concise final result and end with [goal:complete]. If it is truly blocked on a user-owned decision after trying sensible defaults, end with [goal:blocked:<short reason>]. Otherwise do the next useful work and end with [goal:continue]."
 	goalSelfCheckTurn = "The agent signaled goal completion and all tasks are marked done. Before finalizing, perform a brief quality self-check:\n1. Verify any changed files compile or parse correctly\n2. Run the relevant tests if applicable\n3. Confirm the original requirements are met\nIf everything checks out, signal [goal:complete]. If issues are found, fix them and signal [goal:complete] when done."
 )
@@ -713,6 +717,7 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		// Self-check passed — complete the goal.
 		c.goalIntercepts = 0
 		c.goalSelfCheckDone = false
+		c.goalIdleTurns = 0
 		c.goal = ""
 		c.goalStatus = GoalStatusComplete
 		c.goalBlocks = 0
@@ -739,6 +744,21 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		c.goalBlock = ""
 		c.goalIntercepts = 0
 		c.goalSelfCheckDone = false
+		c.goalIdleTurns = 0
+	}
+	// Idle detection: if the agent went multiple turns without any tool
+	// calls, inject a reminder to make progress (unless the goal is already
+	// completing or hitting the auto-turn limit).
+	if notice == "" && c.goalInterceptMsg == "" {
+		if c.toolWasCalledLastTurn() {
+			c.goalIdleTurns = 0
+		} else {
+			c.goalIdleTurns++
+			if c.goalIdleTurns >= maxGoalIdleTurns {
+				c.goalIdleTurns = 0
+				c.goalInterceptMsg = "The agent has gone multiple turns without any tool calls. If progress is being made, describe what you are doing and use tools to verify. If you are blocked, explain the issue and use [goal:blocked:<reason>]."
+			}
+		}
 	}
 	if notice == "" && c.goalTurns >= maxGoalAutoTurns {
 		c.goalStatus = GoalStatusBlocked
@@ -746,6 +766,7 @@ func (c *Controller) advanceGoalAfterTurn() bool {
 		c.goalIntercepts = 0
 		c.goalSelfCheckDone = false
 		c.goalInterceptMsg = ""
+		c.goalIdleTurns = 0
 		notice = c.goalBlock
 	}
 	cont := notice == ""
@@ -796,6 +817,22 @@ func (c *Controller) incompleteGoalTodos() string {
 	}
 	b.WriteString("\nIf the work is actually done, update your task list with todo_write or complete_step and run the required verification commands, then signal [goal:complete] again. Otherwise finish the remaining work.")
 	return b.String()
+}
+
+// toolWasCalledLastTurn reports whether the most recent assistant message
+// contained any tool calls, indicating the agent made observable progress.
+func (c *Controller) toolWasCalledLastTurn() bool {
+	msgs := c.History()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == provider.RoleAssistant {
+			return len(m.ToolCalls) > 0
+		}
+		if m.Role == provider.RoleUser {
+			return false
+		}
+	}
+	return false
 }
 
 func parseGoalStatusMarker(text string) (status, reason string, ok bool) {
@@ -856,6 +893,7 @@ func (c *Controller) stopGoal(status string) {
 	c.goalInterceptMsg = ""
 	c.goalIntercepts = 0
 	c.goalSelfCheckDone = false
+	c.goalIdleTurns = 0
 	c.mu.Unlock()
 }
 
@@ -1643,6 +1681,7 @@ func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResea
 	c.goalInterceptMsg = ""
 	c.goalIntercepts = 0
 	c.goalSelfCheckDone = false
+	c.goalIdleTurns = 0
 	c.goalStrict = false
 }
 

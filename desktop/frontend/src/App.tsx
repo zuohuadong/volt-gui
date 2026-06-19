@@ -2481,7 +2481,7 @@ export default function App() {
                 }}
               >
                 <SquarePen size={18} />
-                <span>{t("topbar.newSession")}</span>
+                <span>{sidebarCreation ? "New Chat" : t("topbar.newSession")}</span>
               </button>
             </>
           )}
@@ -2671,18 +2671,6 @@ export default function App() {
           )}
 
         </aside>
-        {sidebarCreation && (
-          <button
-            className={`sidebar-collapse-toggle${sidebarCollapsed ? " sidebar-collapse-toggle--collapsed" : ""}${sidebarTogglePressed ? " sidebar-collapse-toggle--pressed" : ""}`}
-            type="button"
-            onClick={toggleSidebar}
-            aria-label={sidebarToggleTitle}
-            aria-pressed={!sidebarCollapsed}
-            title={sidebarToggleTitle}
-          >
-            {sidebarCollapsed ? <PanelRight size={14} /> : <PanelLeft size={14} />}
-          </button>
-        )}
         <button
           className="sidebar-resizer"
           type="button"
@@ -2696,6 +2684,18 @@ export default function App() {
           onKeyDown={resizeSidebarWithKeyboard}
           onDoubleClick={() => setExpandedSidebarWidth(defaultSidebarWidth())}
         />
+        {sidebarCreation && (
+          <button
+            className={`sidebar-collapse-toggle${sidebarCollapsed ? " sidebar-collapse-toggle--collapsed" : ""}${sidebarTogglePressed ? " sidebar-collapse-toggle--pressed" : ""}`}
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={sidebarToggleTitle}
+            aria-pressed={!sidebarCollapsed}
+            title={sidebarToggleTitle}
+          >
+            {sidebarCollapsed ? <PanelRight size={14} /> : <PanelLeft size={14} />}
+          </button>
+        )}
 
         <section className="chat-pane">
           <>

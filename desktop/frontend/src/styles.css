@@ -22465,18 +22465,24 @@ a[href] {
 :root[data-theme="light"][data-theme-style] .app--creation,
 :root[data-theme="light"][data-theme-style] .app--creation .layout,
 :root[data-theme="light"][data-theme-style] .app--creation .chat-pane,
-:root[data-theme="light"][data-theme-style] .app--creation .transcript,
-:root[data-theme="light"][data-theme-style] .app--creation .footer {
+:root[data-theme="light"][data-theme-style] .app--creation .transcript {
   background: var(--creation-canvas-bg);
+}
+
+:root[data-theme="light"][data-theme-style] .app--creation .footer {
+  background: transparent;
 }
 
 @media (prefers-color-scheme: light) {
   :root[data-theme-style]:not([data-theme]) .app--creation,
   :root[data-theme-style]:not([data-theme]) .app--creation .layout,
   :root[data-theme-style]:not([data-theme]) .app--creation .chat-pane,
-  :root[data-theme-style]:not([data-theme]) .app--creation .transcript,
-  :root[data-theme-style]:not([data-theme]) .app--creation .footer {
+  :root[data-theme-style]:not([data-theme]) .app--creation .transcript {
     background: var(--creation-canvas-bg);
+  }
+
+  :root[data-theme-style]:not([data-theme]) .app--creation .footer {
+    background: transparent;
   }
 }
 

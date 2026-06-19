@@ -557,6 +557,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// durable facts to the project's auto-memory store; `forget` prunes ones that
 	// turn out wrong. The saved index loads into the prefix on the next session.
 	reg.Add(history.NewTool(history.Options{SessionDir: sessionDir, GlobalSessionDir: config.SessionDir(), ArchiveDir: config.ArchiveDir()}))
+
+	// Session history tools let the AI discover and read past conversations.
+	// `list_sessions` returns all saved session files; `read_session` loads one
+	// and renders the full conversation as readable text.
+	reg.Add(builtin.NewListSessionsTool(sessionDir))
+	reg.Add(builtin.NewReadSessionTool(sessionDir))
+
 	reg.Add(memory.NewRecallTool(mem.Store))
 	reg.Add(memory.NewRememberTool(mem.Store))
 	reg.Add(memory.NewForgetTool(mem.Store))

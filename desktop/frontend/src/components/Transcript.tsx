@@ -946,6 +946,12 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId }: TurnCollapse
 
   if (displayItems.length === 0) return null;
 
+  const collapseKind = displayItems.some((it) => it.kind === "tool")
+    ? "tool"
+    : displayItems.some((it) => it.kind === "assistant" && Boolean(it.reasoning))
+      ? "reasoning"
+      : "process";
+
   // Pre-compute body: group consecutive completed read-only tools into ReadOnlyBatch
   const body: ReactNode[] = [];
   const roBatch: ToolItem[] = [];
@@ -978,7 +984,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId }: TurnCollapse
   flushRO();
 
   return (
-    <div className={`turn-collapse${open ? " turn-collapse--open" : ""}`} data-entrance={displayItems[0]?.id || undefined}>
+    <div className={`turn-collapse${open ? " turn-collapse--open" : ""}`} data-kind={collapseKind} data-entrance={displayItems[0]?.id || undefined}>
       <button
         type="button"
         className="reasoning__head"

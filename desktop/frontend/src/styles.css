@@ -23519,22 +23519,52 @@ a[href] {
   line-height: 1.4;
 }
 
-.app--creation .reasoning__head > svg:first-child,
-.app--creation .reasoning__meta,
-:root[data-theme-style] .app--creation .reasoning__head > svg:first-child,
-:root[data-theme-style] .app--creation .reasoning__meta {
+.app--creation .reasoning > .reasoning__head > svg:first-child,
+.app--creation .reasoning > .reasoning__head .reasoning__meta,
+:root[data-theme-style] .app--creation .reasoning > .reasoning__head > svg:first-child,
+:root[data-theme-style] .app--creation .reasoning > .reasoning__head .reasoning__meta {
   display: none;
 }
 
-.app--creation .reasoning__head > span:first-of-type,
-:root[data-theme-style] .app--creation .reasoning__head > span:first-of-type {
+.app--creation .reasoning > .reasoning__head > span:first-of-type,
+:root[data-theme-style] .app--creation .reasoning > .reasoning__head > span:first-of-type,
+.app--creation .readonly-batch > .reasoning__head > .readonly-batch__label,
+:root[data-theme-style] .app--creation .readonly-batch > .reasoning__head > .readonly-batch__label,
+.app--creation .turn-collapse[data-kind="tool"] > .reasoning__head > .turn-collapse__label,
+:root[data-theme-style] .app--creation .turn-collapse[data-kind="tool"] > .reasoning__head > .turn-collapse__label,
+.app--creation .turn-collapse[data-kind="reasoning"] > .reasoning__head > .turn-collapse__label,
+:root[data-theme-style] .app--creation .turn-collapse[data-kind="reasoning"] > .reasoning__head > .turn-collapse__label {
   font-size: 0;
 }
 
-.app--creation .reasoning__head > span:first-of-type::before,
-:root[data-theme-style] .app--creation .reasoning__head > span:first-of-type::before {
+.app--creation .reasoning > .reasoning__head > span:first-of-type::before,
+:root[data-theme-style] .app--creation .reasoning > .reasoning__head > span:first-of-type::before,
+.app--creation .turn-collapse[data-kind="reasoning"] > .reasoning__head > .turn-collapse__label::before,
+:root[data-theme-style] .app--creation .turn-collapse[data-kind="reasoning"] > .reasoning__head > .turn-collapse__label::before {
   content: "深度思考";
   font-size: 13px;
+}
+
+.app--creation .readonly-batch > .reasoning__head > .readonly-batch__label::before,
+:root[data-theme-style] .app--creation .readonly-batch > .reasoning__head > .readonly-batch__label::before,
+.app--creation .turn-collapse[data-kind="tool"] > .reasoning__head > .turn-collapse__label::before,
+:root[data-theme-style] .app--creation .turn-collapse[data-kind="tool"] > .reasoning__head > .turn-collapse__label::before {
+  content: "工具调用";
+  font-size: 13px;
+}
+
+.app--creation .readonly-batch > .reasoning__head > .readonly-batch__label,
+.app--creation .turn-collapse > .reasoning__head > .turn-collapse__label,
+:root[data-theme-style] .app--creation .readonly-batch > .reasoning__head > .readonly-batch__label,
+:root[data-theme-style] .app--creation .turn-collapse > .reasoning__head > .turn-collapse__label {
+  order: 1;
+}
+
+.app--creation .readonly-batch > .reasoning__head > .reasoning__chevron,
+.app--creation .turn-collapse > .reasoning__head > .reasoning__chevron,
+:root[data-theme-style] .app--creation .readonly-batch > .reasoning__head > .reasoning__chevron,
+:root[data-theme-style] .app--creation .turn-collapse > .reasoning__head > .reasoning__chevron {
+  order: 2;
 }
 
 .app--creation .turn-actions,

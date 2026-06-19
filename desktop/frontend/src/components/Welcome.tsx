@@ -10,17 +10,17 @@ export function Welcome({ onPrompt, variant = "default" }: { onPrompt: (text: st
   if (variant === "creation") {
     const cards = [
       {
-        icon: "/",
+        icon: "plan",
         title: t("welcome.creation.explainTitle"),
         body: t("welcome.creation.explainBody"),
       },
       {
-        icon: "git",
+        icon: "html",
         title: t("welcome.creation.gitTitle"),
         body: t("welcome.creation.gitBody"),
       },
       {
-        icon: "!",
+        icon: "think",
         title: t("welcome.creation.bugTitle"),
         body: t("welcome.creation.bugBody"),
       },

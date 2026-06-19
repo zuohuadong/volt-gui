@@ -22923,20 +22923,30 @@ a[href] {
   min-height: 38px;
   margin-bottom: 12px;
   padding-inline: 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 0;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: color-mix(in srgb, var(--accent) 84%, var(--fg));
+  background:
+    radial-gradient(120% 95% at 12% 0%, color-mix(in srgb, var(--accent) 11%, transparent) 0%, color-mix(in srgb, var(--accent) 5%, transparent) 38%, transparent 72%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, color-mix(in srgb, var(--bg-elev) 30%, transparent)) 0%, color-mix(in srgb, var(--bg-elev) 18%, transparent) 48%, color-mix(in srgb, var(--bg) 10%, transparent) 100%);
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 650;
   box-shadow: none;
+}
+
+.app--creation .sidebar__new svg,
+:root[data-theme-style] .app--creation .sidebar__new svg {
+  color: var(--accent);
 }
 
 .app--creation .sidebar__new:hover,
 :root[data-theme-style] .app--creation .sidebar__new:hover {
-  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: color-mix(in srgb, var(--accent) 94%, var(--fg));
+  background:
+    radial-gradient(120% 95% at 12% 0%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, color-mix(in srgb, var(--accent) 7%, transparent) 38%, transparent 72%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, color-mix(in srgb, var(--bg-elev) 34%, transparent)) 0%, color-mix(in srgb, var(--bg-elev) 22%, transparent) 48%, color-mix(in srgb, var(--bg) 12%, transparent) 100%);
+  color: var(--fg);
   filter: none;
-  transform: none;
+  transform: translateY(-1px);
 }
 
 .app--creation .sidebar-feature-zone,
@@ -23034,6 +23044,11 @@ a[href] {
   font-weight: 560;
 }
 
+.app--creation .project-tree__header-title,
+:root[data-theme-style] .app--creation .project-tree__header-title {
+  padding-left: 0;
+}
+
 .app--creation .project-tree__list,
 :root[data-theme-style] .app--creation .project-tree__list {
   order: 3;
@@ -23102,6 +23117,11 @@ a[href] {
   font-weight: 540;
 }
 
+.app--creation .project-tree__folder--active .project-tree__folder-label,
+:root[data-theme-style] .app--creation .project-tree__folder--active .project-tree__folder-label {
+  color: var(--fg);
+}
+
 .app--creation .project-tree__action-slot,
 :root[data-theme-style] .app--creation .project-tree__action-slot {
   flex-basis: 28px;
@@ -23151,9 +23171,12 @@ a[href] {
 
 .app--creation .project-tree__topic,
 :root[data-theme-style] .app--creation .project-tree__topic {
+  min-height: 23px;
   margin-left: 17px;
   margin-right: 2px;
+  margin-bottom: 0;
   border: 1px solid transparent;
+  font-size: 12px;
 }
 
 .app--creation .project-tree__topic--active,
@@ -23167,8 +23190,8 @@ a[href] {
 .app--creation .project-tree__topic--active::before,
 :root[data-theme-style] .app--creation .project-tree__topic--active::before {
   left: 6px;
-  top: 10px;
-  bottom: 10px;
+  top: 5px;
+  bottom: 5px;
   width: 2px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--project-accent, var(--accent)) 82%, transparent);
@@ -23176,12 +23199,13 @@ a[href] {
 
 .app--creation .project-tree__topic-main,
 :root[data-theme-style] .app--creation .project-tree__topic-main {
+  min-height: 23px;
   padding-left: 12px;
 }
 
 .app--creation .project-tree__topic--with-side,
 :root[data-theme-style] .app--creation .project-tree__topic--with-side {
-  min-height: 34px;
+  min-height: 23px;
 }
 
 .app--creation .project-tree__topic--with-side .project-tree__topic-main,
@@ -23189,7 +23213,25 @@ a[href] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  min-height: 34px;
+  min-height: 23px;
+}
+
+.app--creation .project-tree__topic-label,
+:root[data-theme-style] .app--creation .project-tree__topic-label {
+  color: color-mix(in srgb, var(--fg-dim) 72%, var(--fg-faint));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.app--creation .project-tree__topic--active .project-tree__topic-label,
+:root[data-theme-style] .app--creation .project-tree__topic--active .project-tree__topic-label {
+  color: var(--fg);
+}
+
+.app--creation .project-tree__topic-status,
+:root[data-theme-style] .app--creation .project-tree__topic-status {
+  display: none;
 }
 
 .app--creation .project-tree__topic--with-side .project-tree__topic-copy,
@@ -23280,10 +23322,12 @@ a[href] {
   transition: opacity 0.14s, border-color 0.14s, background 0.14s, color 0.14s, transform 0.14s;
 }
 
-.app--creation .sidebar:hover ~ .sidebar-collapse-toggle,
+.app--creation .sidebar-resizer:hover + .sidebar-collapse-toggle,
+.app--creation .sidebar-resizer:focus-visible + .sidebar-collapse-toggle,
 .app--creation .sidebar-collapse-toggle:hover,
 .app--creation .sidebar-collapse-toggle:focus-visible,
-:root[data-theme-style] .app--creation .sidebar:hover ~ .sidebar-collapse-toggle,
+:root[data-theme-style] .app--creation .sidebar-resizer:hover + .sidebar-collapse-toggle,
+:root[data-theme-style] .app--creation .sidebar-resizer:focus-visible + .sidebar-collapse-toggle,
 :root[data-theme-style] .app--creation .sidebar-collapse-toggle:hover,
 :root[data-theme-style] .app--creation .sidebar-collapse-toggle:focus-visible {
   opacity: 1;
@@ -23307,15 +23351,24 @@ a[href] {
 .app--creation .sidebar-collapse-toggle--collapsed,
 :root[data-theme-style] .app--creation .sidebar-collapse-toggle--collapsed {
   left: 8px;
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .app--creation .layout--sidebar-collapsed .sidebar-collapse-toggle,
 :root[data-theme-style] .app--creation .layout--sidebar-collapsed .sidebar-collapse-toggle {
   left: 8px;
-  opacity: 1;
-  pointer-events: auto;
+}
+
+.app--creation .layout--sidebar-collapsed .sidebar-resizer,
+:root[data-theme-style] .app--creation .layout--sidebar-collapsed .sidebar-resizer {
+  display: block;
+  left: 0;
+  width: 18px;
+  cursor: default;
+}
+
+.app--creation .layout--sidebar-collapsed .sidebar-resizer::after,
+:root[data-theme-style] .app--creation .layout--sidebar-collapsed .sidebar-resizer::after {
+  background: transparent;
 }
 
 .app--creation .sidebar-resizer::after,
@@ -23659,15 +23712,16 @@ a[href] {
 
 .app--creation .welcome-creation__card strong {
   color: var(--fg);
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 650;
   line-height: 1.25;
 }
 
 .app--creation .welcome-creation__card > span:last-child {
   color: color-mix(in srgb, var(--fg-dim) 72%, transparent);
-  font-size: 11.5px;
+  font-size: 10.5px;
   line-height: 1.35;
+  white-space: nowrap;
 }
 
 @container (max-width: 760px) {

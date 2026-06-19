@@ -1002,7 +1002,7 @@ export function MemorySettingsPage() {
 						>
 							{tabs.map((tb) => (
 								<option key={tb.id} value={tb.id}>
-									{tb.label || tb.workspaceName || tb.scope || tb.id}
+									{tb.workspaceName || tb.label || tb.scope || tb.id}
 								</option>
 							))}
 						</select>
@@ -1089,7 +1089,7 @@ export function MemorySettingsPage() {
 					>
 						{tabs.map((tb) => (
 							<option key={tb.id} value={tb.id}>
-								{tb.label || tb.workspaceName || tb.scope}
+								{tb.workspaceName || tb.label || tb.scope}
 							</option>
 						))}
 					</select>

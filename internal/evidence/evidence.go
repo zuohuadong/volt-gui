@@ -251,6 +251,23 @@ func (l *Ledger) HasSuccessfulTodoWrite() bool {
 	return false
 }
 
+// HasSuccessfulNonTodoReceipt reports whether any successful tool other than
+// todo_write ran this turn. A pure "show me a task list" turn should not be
+// gated the same way an execution turn is.
+func (l *Ledger) HasSuccessfulNonTodoReceipt() bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range l.receipts {
+		if r.Success && r.ToolName != "todo_write" {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Ledger) IncompleteLatestTodos() ([]TodoStepMatch, bool) {
 	if l == nil {
 		return nil, false

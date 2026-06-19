@@ -33,7 +33,7 @@ func TestFinalReadinessFailureBranches(t *testing.T) {
 	}{
 		{"nil evidence never gates", []instruction.VerifyCheck{check}, nil, true, ""},
 		{"no writer never gates", []instruction.VerifyCheck{check}, readinessLedger(checkAfter), true, ""},
-		{"incomplete todo without writer is reported", nil, readinessLedger(todo), false, "latest successful todo_write"},
+		{"todo-only turn may end with incomplete list", nil, readinessLedger(todo), true, ""},
 		{"completed todo without writer satisfies", nil, readinessLedger(doneTodo), true, ""},
 		{"writer without checks or todo never gates", nil, readinessLedger(writer), true, ""},
 		{"missing project check after writer is reported", []instruction.VerifyCheck{check}, readinessLedger(checkAfter, writer), false, "go test ./..."},
@@ -77,7 +77,8 @@ func TestFinalReadinessAllowsIncompleteTodosInPlanMode(t *testing.T) {
 
 func TestFinalReadinessCheckAuditsIncompleteTodos(t *testing.T) {
 	todo := evidence.Receipt{ToolName: "todo_write", Success: true, Todos: []evidence.TodoItem{{Content: "edit", Status: "in_progress"}}}
-	a := &Agent{evidence: readinessLedger(todo)}
+	writer := evidence.Receipt{ToolName: "write_file", Success: true, Write: true, Paths: []string{"a.go"}}
+	a := &Agent{evidence: readinessLedger(writer, todo)}
 
 	got := a.finalReadinessCheck()
 	if !got.applies {

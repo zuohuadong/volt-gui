@@ -29,3 +29,31 @@ func TestHasSuccessfulTodoWriteMatchesOnlySuccessfulTodoWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestHasSuccessfulNonTodoReceipt(t *testing.T) {
+	cases := []struct {
+		name     string
+		receipts []Receipt
+		want     bool
+	}{
+		{"nil", nil, false},
+		{"todo only", []Receipt{{ToolName: "todo_write", Success: true}}, false},
+		{"failed non-todo only", []Receipt{{ToolName: "bash", Success: false}}, false},
+		{"successful non-todo", []Receipt{{ToolName: "bash", Success: true}}, true},
+		{"mixed with todo", []Receipt{{ToolName: "todo_write", Success: true}, {ToolName: "read_file", Success: true, Read: true}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var l *Ledger
+			if tc.receipts != nil {
+				l = NewLedger()
+				for _, r := range tc.receipts {
+					l.Record(r)
+				}
+			}
+			if got := l.HasSuccessfulNonTodoReceipt(); got != tc.want {
+				t.Fatalf("HasSuccessfulNonTodoReceipt() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

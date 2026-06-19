@@ -74,6 +74,8 @@ export type Item =
       profile?: { model?: string; effort?: string }; // subagent model/effort from tool event
     };
 
+type ToolItem = Extract<Item, { kind: "tool" }>;
+
 interface State {
   items: Item[];
   running: boolean;
@@ -211,6 +213,28 @@ export function isReadOnlyTool(name: string): boolean {
     default:
       return false;
   }
+}
+
+const ARCHIVED_TOOL_ARG_LIMIT = 200;
+
+function preserveStructuredToolArgs(name: string): boolean {
+  // The bottom task panel parses todo_write JSON directly from the tool item, so
+  // those args must remain intact even after the finished tool card is archived.
+  return name === "todo_write";
+}
+
+function archivedToolArgs(name: string, args: string): string {
+  if (preserveStructuredToolArgs(name)) return args;
+  return args && args.length > ARCHIVED_TOOL_ARG_LIMIT ? args.slice(0, ARCHIVED_TOOL_ARG_LIMIT) + "…" : args;
+}
+
+function archiveCompletedTool(tool: ToolItem): ToolItem {
+  return {
+    ...tool,
+    args: archivedToolArgs(tool.name, tool.args),
+    output: undefined,
+    dataArchived: true,
+  };
 }
 
 type Action =
@@ -498,9 +522,16 @@ function applyEvent(s: State, e: WireEvent): State {
           // subject (from args). Drop output entirely; full data is loaded on
           // demand via app.ToolResultForTab when the card is expanded.
           const existing = it;
-          const shortArgs = existing.args && existing.args.length > 200 ? existing.args.slice(0, 200) + "…" : existing.args;
           const summary = t.err ? undefined : existing.summary || summarize(existing.name, existing.args, t.output);
-          next[idx] = { ...existing, status: t.err ? "error" : "done", args: shortArgs, output: undefined, error: t.err, truncated: t.truncated, durationMs: t.durationMs, dataArchived: true, summary };
+          next[idx] = archiveCompletedTool({
+            ...existing,
+            status: t.err ? "error" : "done",
+            output: t.output,
+            error: t.err,
+            truncated: t.truncated,
+            durationMs: t.durationMs,
+            summary,
+          });
         }
       }
       return { ...s, items: next };
@@ -659,8 +690,8 @@ export function reducer(s: State, a: Action): State {
       const archived = items.map((it) => {
         if (it.kind !== "tool") return it;
         const t = it;
-        if (t.name === "todo_write") return it;
-        const shortArgs = t.args && t.args.length > 200 ? t.args.slice(0, 200) + "…" : t.args;
+        if (preserveStructuredToolArgs(t.name)) return it;
+        const shortArgs = archivedToolArgs(t.name, t.args);
         if (shortArgs === t.args && (t.output === undefined || t.output === "")) return it;
         return { ...t, args: shortArgs, output: undefined, dataArchived: true };
       });

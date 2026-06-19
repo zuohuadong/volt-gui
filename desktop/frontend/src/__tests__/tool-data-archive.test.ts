@@ -1,9 +1,9 @@
 // Run: tsx src/__tests__/tool-data-archive.test.ts
 //
-// Verifies that the tool_result reducer archives ALL completed tools
-// immediately: args are trimmed to 200 chars, output is set to undefined,
-// and the dataArchived flag is set. Collapsed cards only keep tool name
-// + command in memory; full data is loaded on demand via the backend.
+// Verifies that the tool_result reducer archives completed tools immediately:
+// output is dropped, dataArchived is set, and most args are trimmed to 200
+// chars. Structured todo_write args are the exception because the bottom task
+// panel parses them directly from the live tool item.
 
 import { initialState, reducer } from "../lib/useController";
 import type { Item } from "../lib/useController";
@@ -198,6 +198,38 @@ console.log("\ntool data archiving on tool_result");
   ok(Boolean(todo), "history restored todo_write");
   eq(todo?.args, args, "todo_write args are not truncated during history restore");
   eq(JSON.parse(todo?.args ?? "{}").todos.length, todos.length, "todo_write args remain parseable JSON");
+}
+
+// ── Test 8: Live todo_write result keeps full args for the bottom task panel ──
+{
+  const todos = Array.from({ length: 8 }, (_, i) => ({
+    content: `Task ${i} ${"x".repeat(30)}`,
+    status: i === 0 ? "in_progress" : "pending",
+  }));
+  const args = JSON.stringify({ todos });
+  let s = initialState;
+  s = reducer(s, { type: "event", e: { kind: "turn_started" } });
+  s = reducer(s, {
+    type: "event",
+    e: {
+      kind: "tool_dispatch",
+      tool: { id: "todo-live", name: "todo_write", args, readOnly: true },
+    },
+  });
+  s = reducer(s, {
+    type: "event",
+    e: {
+      kind: "tool_result",
+      tool: { id: "todo-live", name: "todo_write", readOnly: true, output: "Todos updated", durationMs: 15 },
+    },
+  });
+
+  const tools = toolItems(s);
+  const todo = tools.find((tool) => tool.id === "todo-live");
+  ok(Boolean(todo), "live todo_write result is recorded");
+  eq(todo?.dataArchived, true, "live todo_write still marks output as archived");
+  eq(todo?.args, args, "live todo_write args are not truncated");
+  eq(JSON.parse(todo?.args ?? "{}").todos.length, todos.length, "live todo_write args remain parseable JSON");
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);

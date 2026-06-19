@@ -30,7 +30,7 @@ func TestHasSuccessfulTodoWriteMatchesOnlySuccessfulTodoWrite(t *testing.T) {
 	}
 }
 
-func TestHasSuccessfulNonTodoReceipt(t *testing.T) {
+func TestHasSuccessfulTodoProgressReceipt(t *testing.T) {
 	cases := []struct {
 		name     string
 		receipts []Receipt
@@ -38,9 +38,12 @@ func TestHasSuccessfulNonTodoReceipt(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{"todo only", []Receipt{{ToolName: "todo_write", Success: true}}, false},
-		{"failed non-todo only", []Receipt{{ToolName: "bash", Success: false}}, false},
-		{"successful non-todo", []Receipt{{ToolName: "bash", Success: true}}, true},
-		{"mixed with todo", []Receipt{{ToolName: "todo_write", Success: true}, {ToolName: "read_file", Success: true, Read: true}}, true},
+		{"read-only context only", []Receipt{{ToolName: "read_file", Success: true, Read: true}}, false},
+		{"failed execution only", []Receipt{{ToolName: "bash", Success: false}}, false},
+		{"successful command counts", []Receipt{{ToolName: "bash", Success: true}}, true},
+		{"complete_step counts", []Receipt{{ToolName: "complete_step", Success: true, Step: "done"}}, true},
+		{"todo plus read-only context still does not count", []Receipt{{ToolName: "todo_write", Success: true}, {ToolName: "read_file", Success: true, Read: true}}, false},
+		{"todo plus writer counts", []Receipt{{ToolName: "todo_write", Success: true}, {ToolName: "write_file", Success: true, Write: true}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,8 +54,8 @@ func TestHasSuccessfulNonTodoReceipt(t *testing.T) {
 					l.Record(r)
 				}
 			}
-			if got := l.HasSuccessfulNonTodoReceipt(); got != tc.want {
-				t.Fatalf("HasSuccessfulNonTodoReceipt() = %v, want %v", got, tc.want)
+			if got := l.HasSuccessfulTodoProgressReceipt(); got != tc.want {
+				t.Fatalf("HasSuccessfulTodoProgressReceipt() = %v, want %v", got, tc.want)
 			}
 		})
 	}

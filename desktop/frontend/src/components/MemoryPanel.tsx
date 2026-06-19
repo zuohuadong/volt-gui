@@ -776,6 +776,12 @@ export function MemorySettingsPage() {
 
 	const reload = useCallback(async () => {
 		const tabId = selectedTabId;
+		// Clear view immediately so stale data from the previous workspace
+		// doesn't persist while the new workspace loads.
+		setView((prev) => {
+			if (prev && tabId) return { ...prev, facts: [], archives: [], docs: [] };
+			return prev;
+		});
 		setView(tabId ? await app.MemoryForTab(tabId).catch(() => null) : await app.Memory().catch(() => null));
 	}, [selectedTabId]);
 
@@ -790,6 +796,17 @@ export function MemorySettingsPage() {
 	}, []);
 
 	useEffect(() => { void reload(); }, [reload]);
+
+	// Deduplicate tabs by workspace: multiple conversations in the same project
+	// should appear as a single entry in the memory workspace selector.
+	const uniqueWorkspaceTabs = useMemo(() => {
+		const byWorkspace = new Map<string, TabMeta>();
+		for (const tb of tabs) {
+			const key = tb.workspaceRoot || `${tb.scope}:global`;
+			if (!byWorkspace.has(key)) byWorkspace.set(key, tb);
+		}
+		return [...byWorkspace.values()];
+	}, [tabs]);
 
 	const refreshSuggestions = useCallback(async () => {
 		if (suggestionBusy) return;
@@ -990,24 +1007,27 @@ export function MemorySettingsPage() {
 		}
 	}, [busy, selectedTabId]);
 
+	// Workspace selector: always visible when multiple workspaces exist
+	const wsSelector = uniqueWorkspaceTabs.length > 1 ? (
+		<div className="mem-tab-selector">
+			<select
+				className="mem-tab-select"
+				value={selectedTabId ?? ""}
+				onChange={(e) => setSelectedTabId(e.target.value || null)}
+			>
+				{uniqueWorkspaceTabs.map((tb) => (
+					<option key={tb.id} value={tb.id}>
+						{tb.workspaceName || tb.label || tb.scope || tb.id}
+					</option>
+				))}
+			</select>
+		</div>
+	) : null;
+
 	if (!view?.available) {
 		return (
 			<>
-				{tabs.length > 1 && (
-					<div className="mem-tab-selector">
-						<select
-							className="mem-tab-select"
-							value={selectedTabId ?? ""}
-							onChange={(e) => setSelectedTabId(e.target.value || null)}
-						>
-							{tabs.map((tb) => (
-								<option key={tb.id} value={tb.id}>
-									{tb.workspaceName || tb.label || tb.scope || tb.id}
-								</option>
-							))}
-						</select>
-					</div>
-				)}
+				{wsSelector}
 				<div className="empty">{t("memory.unavailable")}</div>
 			</>
 		);
@@ -1080,21 +1100,7 @@ export function MemorySettingsPage() {
 					{suggestionTotal(suggestions) > 0 && <span className="settings-subtab__count">{suggestionTotal(suggestions)}</span>}
 				</button>
 			</div>
-			{tabs.length > 1 && (
-				<div className="mem-tab-selector">
-					<select
-						className="mem-tab-select"
-						value={selectedTabId ?? ""}
-						onChange={(e) => setSelectedTabId(e.target.value || null)}
-					>
-						{tabs.map((tb) => (
-							<option key={tb.id} value={tb.id}>
-								{tb.workspaceName || tb.label || tb.scope}
-							</option>
-						))}
-					</select>
-				</div>
-			)}
+			{wsSelector}
 
 			{tab === "saved" && <section className="mem-section">
 				<div className="mem-section__head">

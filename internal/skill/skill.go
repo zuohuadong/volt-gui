@@ -660,9 +660,15 @@ func loadBodyWithScripts(skillPath, body string) string {
 	}
 	var names []string
 	for _, e := range entries {
-		if !e.IsDir() {
-			names = append(names, e.Name())
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
 		}
+		// Only list files that look like scripts: no extension, or common script ext.
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != "" && ext != ".sh" && ext != ".py" && ext != ".js" && ext != ".ts" && ext != ".rb" && ext != ".pl" && ext != ".php" && ext != ".ps1" {
+			continue
+		}
+		names = append(names, e.Name())
 	}
 	if len(names) == 0 {
 		return body
@@ -670,8 +676,7 @@ func loadBodyWithScripts(skillPath, body string) string {
 	sort.Strings(names)
 	var b strings.Builder
 	b.WriteString(body)
-	b.WriteString("\n\n## Scripts\n\n")
-	b.WriteString("The skill has the following scripts. Run them with bash, for example `python " + filepath.Join(scriptsDir, "<name>") + "`. Read a script with read_file before running if unsure.\n\n")
+	b.WriteString("\n\n## Scripts\n\nThe skill has the following scripts. Run them with bash.\n\n")
 	for _, n := range names {
 		b.WriteString("- `" + filepath.Join(scriptsDir, n) + "`\n")
 	}

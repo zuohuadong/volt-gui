@@ -751,7 +751,45 @@ func (h *Host) Add(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	return tools, err
 }
 
+// AddWithLifecycle connects one server live, allowing caller to specify separate
+// contexts for the subprocess lifecycle (lifeCtx, session-scoped) and the startup
+// handshake/list calls (callCtx, turn-scoped/timeout-bound).
+func (h *Host) AddWithLifecycle(lifeCtx, callCtx context.Context, s Spec) ([]tool.Tool, error) {
+	if h.has(s.Name) {
+		return nil, serverAlreadyConnectedError(s.Name)
+	}
+	attempt, owner := h.beginSpawn(s.Name)
+	if !owner {
+		select {
+		case <-attempt.done:
+			if attempt.err != nil {
+				return nil, attempt.err
+			}
+			return append([]tool.Tool(nil), attempt.tools...), nil
+		case <-callCtx.Done():
+			return nil, callCtx.Err()
+		case <-lifeCtx.Done():
+			return nil, lifeCtx.Err()
+		}
+	}
+	var tools []tool.Tool
+	var err error
+	defer func() { h.endSpawn(s.Name, tools, err) }()
+	// Double-check after acquiring the spawn token: another caller may have
+	// connected the server between our h.has check and beginSpawn.
+	if h.has(s.Name) {
+		err = serverAlreadyConnectedError(s.Name)
+		return nil, err
+	}
+	tools, err = h.addConnectedWithLifecycle(lifeCtx, callCtx, s)
+	return tools, err
+}
+
 func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
+	return h.addConnectedWithLifecycle(ctx, ctx, s)
+}
+
+func (h *Host) addConnectedWithLifecycle(lifeCtx, callCtx context.Context, s Spec) ([]tool.Tool, error) {
 	h.mu.RLock()
 	if h.closed {
 		h.mu.RUnlock()
@@ -759,11 +797,11 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	}
 	h.mu.RUnlock()
 
-	c, err := start(ctx, ctx, s)
+	c, err := start(lifeCtx, callCtx, s)
 	if err != nil {
 		return nil, err
 	}
-	ts, err := c.listTools(ctx)
+	ts, err := c.listTools(callCtx)
 	if err != nil {
 		c.close()
 		return nil, fmt.Errorf("list tools: %w", err)
@@ -783,15 +821,15 @@ func (h *Host) addConnected(ctx context.Context, s Spec) ([]tool.Tool, error) {
 	h.clients = append(h.clients, c)
 	h.clearFailure(s.Name)
 	h.mu.Unlock()
-	// Prompts and resources stream in on the long ctx the caller passed (Host.Add
+	// Prompts and resources stream in on the long lifeCtx the caller passed (Host.Add
 	// uses the session-scoped PluginCtx, not a per-turn ctx), so the slow list
 	// calls cannot starve a /mcp add of its return value. nil sink keeps hot-add
 	// quiet — the chat UI re-queries Host.Prompts()/Resources() on demand.
 	if c.hasPrompts {
-		go h.fetchPrompts(ctx, c, nil)
+		go h.fetchPrompts(lifeCtx, c, nil)
 	}
 	if c.hasResources {
-		go h.fetchResources(ctx, c, nil)
+		go h.fetchResources(lifeCtx, c, nil)
 	}
 	return ts, nil
 }

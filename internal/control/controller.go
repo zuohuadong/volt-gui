@@ -27,7 +27,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
@@ -116,14 +115,10 @@ type Controller struct {
 	reg       *tool.Registry
 	pluginCtx context.Context
 
-	// goalStatePath is where the current goal state is persisted for session
-	// continuity. Empty means no persistence.
-	goalStatePath string
-	// goalWriteMu serializes goal-state disk writes so they happen OFF c.mu: a
-	// caller builds the JSON under c.mu (cheap) then writes it here after
-	// unlocking, keeping the per-turn goal persistence out of the critical
-	// section that approvals and status polls also take.
-	goalWriteMu sync.Mutex
+	// goals owns the active goal's FSM (status, intercepts, idle/turn counters)
+	// and its persistence, behind its own mutex so a per-turn goal save never
+	// stalls an approval or status poll on c.mu. See goal.go.
+	goals goalMachine
 
 	// Checkpoints (snapshot-based rewind). cp is the per-session store rebound when
 	// the session path changes; cpRoot is the workspace root used to guard restore
@@ -154,43 +149,17 @@ type Controller struct {
 
 	// mu guards the run state and approval bookkeeping; every critical section
 	// under it is short and non-blocking.
-	mu               sync.Mutex
-	cancel           context.CancelFunc
-	running          bool
-	canceling        bool
-	autosaveWG       sync.WaitGroup
-	planMode         bool
-	goal             string
-	goalStatus       string
-	goalResearchMode GoalResearchMode
-	goalTurns        int
-	goalBlocks       int
-	goalBlock        string
-	// goalInterceptMsg, when non-empty, overrides the generic goalContinueTurn prompt
-	// for the next continuation turn. Used by advanceGoalAfterTurn to inject specific
-	// feedback such as incomplete-todo reminders.
-	goalInterceptMsg string
-	// goalIntercepts counts consecutive incomplete-todo intercepts for the current
-	// goal. After the first intercept, the agent is reminded to update its todo
-	// list if the work is actually done; a second consecutive claim of completion
-	// is treated as an override and let through.
-	goalIntercepts int
-	// goalStrict, when true, disables the override escape hatch: every
-	// [goal:complete] while todos are incomplete is intercepted, and the
-	// agent must actually finish or update all items before it can complete.
-	goalStrict bool
-	// goalSelfCheckDone tracks whether the quality self-check prompt has been
-	// injected for the current goal. On first [goal:complete] with all todos
-	// done, the agent is asked to self-verify before final completion.
-	goalSelfCheckDone bool
-	// goalIdleTurns counts consecutive turns without any tool call. When this
-	// exceeds the threshold an idle reminder is injected via goalInterceptMsg.
-	goalIdleTurns int
-	sessionPath   string
-	approvals     map[string]pendingApproval
-	asks          map[string]pendingAsk
-	granted       map[string]bool
-	nextID        int
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	running     bool
+	canceling   bool
+	autosaveWG  sync.WaitGroup
+	planMode    bool
+	sessionPath string
+	approvals   map[string]pendingApproval
+	asks        map[string]pendingAsk
+	granted     map[string]bool
+	nextID      int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 	// approvedPlanAutoApproveTools auto-allows writer tool calls without prompting.
@@ -271,13 +240,6 @@ const (
 const (
 	memoryRememberTool = "remember"
 	memoryForgetTool   = "forget"
-)
-
-const (
-	maxGoalAutoTurns  = 50
-	maxGoalIdleTurns  = 2
-	goalContinueTurn  = "Continue pursuing the active goal. If it is complete, provide the concise final result and end with [goal:complete]. If it is truly blocked on a user-owned decision after trying sensible defaults, end with [goal:blocked:<short reason>]. Otherwise do the next useful work and end with [goal:continue]."
-	goalSelfCheckTurn = "The agent signaled goal completion and all tasks are marked done. Before finalizing, perform a brief quality self-check:\n1. Verify any changed files compile or parse correctly\n2. Run the relevant tests if applicable\n3. Confirm the original requirements are met\nIf everything checks out, signal [goal:complete]. If issues are found, fix them and signal [goal:complete] when done."
 )
 
 // RememberResult describes what happened when an approval rule was persisted.
@@ -463,21 +425,13 @@ func ckptDir(sessionPath string) string {
 	return strings.TrimSuffix(sessionPath, ".jsonl") + ".ckpt"
 }
 
-// goalStatePath derives a session's persisted goal-state sidecar.
-func goalStatePath(sessionPath string) string {
-	if sessionPath == "" {
-		return ""
-	}
-	return strings.TrimSuffix(sessionPath, ".jsonl") + ".goal-state.json"
-}
-
 // rebindCheckpoints points the store at the (possibly new) session, loading any
 // checkpoints already on disk, and resets the turn boundaries. Called on
 // construction and whenever the session path changes (NewSession/Resume/SetSessionPath).
 func (c *Controller) rebindCheckpoints(sessionPath string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.goalStatePath = goalStatePath(sessionPath)
+	c.goals.setStatePath(goalStatePath(sessionPath))
 	c.cp = checkpoint.New(ckptDir(sessionPath), c.cpRoot)
 	c.cpTurn = c.cp.NextTurn() // continue numbering past any checkpoints on disk
 	c.cpBound = c.cp.Bounds()  // rebuilt from persisted checkpoints so a resumed
@@ -713,14 +667,9 @@ func (c *Controller) continueGoal(ctx context.Context) error {
 			return err
 		}
 		turn := goalContinueTurn
-		c.mu.Lock()
-		if c.goalInterceptMsg != "" {
-			turn = c.goalInterceptMsg
-			c.goalInterceptMsg = ""
-			c.mu.Unlock()
+		if msg, ok := c.goals.takeIntercept(); ok {
+			turn = msg
 			c.notice("goal intercept: incomplete todos remain (override with a second [goal:complete])")
-		} else {
-			c.mu.Unlock()
 		}
 		if err := c.runTurnWithRawDisplay(ctx, turn, turn, ""); err != nil {
 			if ctx.Err() != nil {
@@ -732,142 +681,26 @@ func (c *Controller) continueGoal(ctx context.Context) error {
 }
 
 func (c *Controller) advanceGoalAfterTurn() bool {
-	reply := lastAssistantText(c.History())
-	status, reason, _ := parseGoalStatusMarker(reply)
-	var notice string
-	c.mu.Lock()
-	if strings.TrimSpace(c.goal) == "" || c.goalStatus != GoalStatusRunning {
-		c.mu.Unlock()
-		return false
+	// Gather every input the FSM needs off the goal lock: parse the marker,
+	// snapshot the executor's todos + readiness, and check tool activity. None
+	// of these touch goal state, so the machine's critical section stays pure.
+	status, reason, _ := parseGoalStatusMarker(lastAssistantText(c.History()))
+	var readiness string
+	if c.executor != nil {
+		readiness = c.executor.GoalReadinessFailure()
 	}
-	c.goalTurns++
-	switch status {
-	case GoalStatusComplete:
-		if incomplete := c.incompleteGoalTodos(); len(incomplete) > 0 && (c.goalStrict || c.goalIntercepts == 0) {
-			// In strict mode every claim is blocked until todos are done;
-			// otherwise only the first consecutive claim is intercepted.
-			c.goalIntercepts++
-			c.goalInterceptMsg = incomplete
-			break
-		}
-		// Todos are all done — in strict mode run self-check before final
-		// completion. Non-strict mode completes immediately.
-		if c.goalStrict && !c.goalSelfCheckDone {
-			c.goalSelfCheckDone = true
-			c.goalInterceptMsg = goalSelfCheckTurn
-			break
-		}
-		// Self-check passed — complete the goal.
-		c.goalIntercepts = 0
-		c.goalSelfCheckDone = false
-		c.goalIdleTurns = 0
-		// (final state is persisted once below, after the lock is released)
-		c.goal = ""
-		c.goalStatus = GoalStatusComplete
-		c.goalBlocks = 0
-		c.goalBlock = ""
-		c.goalInterceptMsg = ""
-		notice = "goal complete"
-	case GoalStatusBlocked:
-		reason = cleanGoalBlockReason(reason)
-		if reason == "" {
-			reason = "blocked"
-		}
-		if sameGoalBlock(c.goalBlock, reason) {
-			c.goalBlocks++
-		} else {
-			c.goalBlocks = 1
-			c.goalBlock = reason
-		}
-		if c.goalBlocks >= 3 {
-			c.goalStatus = GoalStatusBlocked
-			notice = "goal blocked: " + reason
-		}
-	default:
-		c.goalBlocks = 0
-		c.goalBlock = ""
-		c.goalIntercepts = 0
-		c.goalSelfCheckDone = false
-		c.goalIdleTurns = 0
+	res := c.goals.advance(goalAdvanceInput{
+		status:     status,
+		reason:     reason,
+		toolCalled: c.toolWasCalledLastTurn(),
+		todos:      c.goalTodos(),
+		readiness:  readiness,
+	})
+	c.persistGoalState(res.path, res.data, res.ok)
+	if res.notice != "" {
+		c.notice(res.notice)
 	}
-	// Idle detection: if the agent went multiple turns without any tool
-	// calls, inject a reminder to make progress (unless the goal is already
-	// completing or hitting the auto-turn limit).
-	if notice == "" && c.goalInterceptMsg == "" {
-		if c.toolWasCalledLastTurn() {
-			c.goalIdleTurns = 0
-		} else {
-			c.goalIdleTurns++
-			if c.goalIdleTurns >= maxGoalIdleTurns {
-				c.goalIdleTurns = 0
-				c.goalInterceptMsg = "No tool calls in recent turns. Either make progress with tools or signal [goal:blocked:<reason>]."
-			}
-		}
-	}
-	if notice == "" && c.goalTurns >= maxGoalAutoTurns {
-		c.goalStatus = GoalStatusBlocked
-		c.goalBlock = "goal continuation limit reached"
-		c.goalIntercepts = 0
-		c.goalSelfCheckDone = false
-		c.goalInterceptMsg = ""
-		c.goalIdleTurns = 0
-		notice = c.goalBlock
-	}
-	var savePath string
-	var saveData []byte
-	if notice != "" {
-		savePath, saveData, _ = c.buildGoalStateLocked()
-	}
-	cont := notice == ""
-	c.mu.Unlock()
-	c.writeGoalState(savePath, saveData)
-	if notice != "" {
-		c.notice(notice)
-	}
-	return cont
-}
-
-// incompleteGoalTodos checks the executor's canonical todo state and evidence
-// readiness (project checks) for anything that should block [goal:complete].
-// Returns a formatted reminder string, or empty if nothing is blocking.
-func (c *Controller) incompleteGoalTodos() string {
-	if c.executor == nil {
-		return ""
-	}
-	var parts []string
-
-	// 1. Check canonical todos.
-	todos := c.executor.CanonicalTodoState()
-	if len(todos) > 0 {
-		incomplete := evidence.IncompleteTodos(todos)
-		if len(incomplete) > 0 {
-			var b strings.Builder
-			b.WriteString("the following tasks are still incomplete:")
-			for _, t := range incomplete {
-				fmt.Fprintf(&b, "\n  - %s (%s)", t.Content, t.Status)
-			}
-			parts = append(parts, b.String())
-		}
-	}
-
-	// 2. Check evidence readiness (project checks from AGENTS.md).
-	if reason := c.executor.GoalReadinessFailure(); reason != "" {
-		parts = append(parts, reason)
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.WriteString("Goal signaled complete but issues remain:\n")
-	for _, p := range parts {
-		b.WriteString("- ")
-		b.WriteString(p)
-		b.WriteString("\n")
-	}
-	b.WriteString("Fix or use todo_write/complete_step to mark done, then [goal:complete] again.")
-	return b.String()
+	return res.cont
 }
 
 // toolWasCalledLastTurn reports whether the most recent assistant message
@@ -886,125 +719,9 @@ func (c *Controller) toolWasCalledLastTurn() bool {
 	return false
 }
 
-func parseGoalStatusMarker(text string) (status, reason string, ok bool) {
-	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		lower := strings.ToLower(line)
-		switch lower {
-		case "[goal:complete]":
-			return GoalStatusComplete, "", true
-		case "[goal:continue]":
-			return GoalStatusRunning, "", true
-		}
-		const blockedPrefix = "[goal:blocked:"
-		if strings.HasPrefix(lower, blockedPrefix) && strings.HasSuffix(line, "]") {
-			return GoalStatusBlocked, strings.TrimSpace(line[len(blockedPrefix) : len(line)-1]), true
-		}
-		return "", "", false
-	}
-	return "", "", false
-}
-
-func sameGoalBlock(a, b string) bool {
-	return normalizeGoalBlockReason(a) == normalizeGoalBlockReason(b)
-}
-
-func cleanGoalBlockReason(reason string) string {
-	return strings.Trim(strings.TrimSpace(reason), " \t\r\n:：,，.。;；!！?？-—_[]()（）")
-}
-
-func normalizeGoalBlockReason(reason string) string {
-	reason = strings.ToLower(cleanGoalBlockReason(reason))
-	var b strings.Builder
-	lastSpace := true
-	for _, r := range reason {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(r)
-			lastSpace = false
-		default:
-			if !lastSpace {
-				b.WriteByte(' ')
-				lastSpace = true
-			}
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
-}
-
 func (c *Controller) stopGoal(status string) {
-	c.mu.Lock()
-	if strings.TrimSpace(c.goal) != "" && c.goalStatus == GoalStatusRunning {
-		c.goalStatus = status
-	}
-	c.goalInterceptMsg = ""
-	c.goalIntercepts = 0
-	c.goalSelfCheckDone = false
-	c.goalIdleTurns = 0
-	path, data, _ := c.buildGoalStateLocked()
-	c.mu.Unlock()
-	c.writeGoalState(path, data)
-}
-
-// buildGoalStateLocked marshals the current goal state for persistence. The
-// caller holds c.mu; this only reads in-memory state and the executor's todo
-// snapshot, never touching disk. Returns the target path and JSON, or ok=false
-// when persistence is disabled. The matching writeGoalState does the disk write
-// OFF c.mu so the per-turn save can't stall an approval or status poll.
-func (c *Controller) buildGoalStateLocked() (path string, data []byte, ok bool) {
-	if c.goalStatePath == "" || c.executor == nil {
-		return "", nil, false
-	}
-	state := goalState{
-		Goal:         c.goal,
-		Status:       c.goalStatus,
-		ResearchMode: c.goalResearchMode,
-		Turns:        c.goalTurns,
-		Blocks:       c.goalBlocks,
-		Block:        c.goalBlock,
-		Strict:       c.goalStrict,
-		Todos:        c.executor.CanonicalTodoState(),
-	}
-	b, err := json.Marshal(state)
-	if err != nil {
-		slog.Warn("controller: marshal goal state", "err", err)
-		return "", nil, false
-	}
-	return c.goalStatePath, b, true
-}
-
-// writeGoalState persists pre-marshaled goal-state bytes to disk, OFF c.mu and
-// serialized by goalWriteMu so concurrent saves don't interleave or land out of
-// order. Best-effort: failures are logged, not surfaced.
-func (c *Controller) writeGoalState(path string, data []byte) {
-	if path == "" || data == nil {
-		return
-	}
-	c.goalWriteMu.Lock()
-	defer c.goalWriteMu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		slog.Warn("controller: goal state dir", "err", err)
-		return
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		slog.Warn("controller: write goal state", "err", err)
-	}
-}
-
-// goalState is the serializable form of a running goal.
-type goalState struct {
-	Goal         string              `json:"goal,omitempty"`
-	Status       string              `json:"status,omitempty"`
-	ResearchMode GoalResearchMode    `json:"researchMode,omitempty"`
-	Turns        int                 `json:"turns,omitempty"`
-	Blocks       int                 `json:"blocks,omitempty"`
-	Block        string              `json:"block,omitempty"`
-	Strict       bool                `json:"strict,omitempty"`
-	Todos        []evidence.TodoItem `json:"todos,omitempty"`
+	path, data, ok := c.goals.stop(status, c.goalTodos())
+	c.persistGoalState(path, data, ok)
 }
 
 // lastAssistantText returns the content of the most recent assistant message with
@@ -1275,9 +992,8 @@ func (c *Controller) autoStartResearchGoalCandidate(input string) (string, bool)
 	c.mu.Lock()
 	plan := c.planMode
 	running := c.running
-	activeGoal := strings.TrimSpace(c.goal) != "" && c.goalStatus == GoalStatusRunning
 	c.mu.Unlock()
-	if plan || running || activeGoal {
+	if plan || running || c.goals.active() {
 		return "", false
 	}
 	return goal, true
@@ -1323,16 +1039,6 @@ func (c *Controller) applyGoalCommand(input, display string) bool {
 		}
 	}
 	return true
-}
-
-func ShortGoalForNotice(goal string) string {
-	goal = strings.Join(strings.Fields(goal), " ")
-	runes := []rune(goal)
-	const max = 160
-	if len(runes) <= max {
-		return goal
-	}
-	return string(runes[:max]) + "..."
 }
 
 // applyPlanExec reads the current canonical todo list and starts a goal that
@@ -1873,11 +1579,8 @@ func (c *Controller) PlanMode() bool {
 // cannot override an incomplete-todo intercept — it must actually finish or
 // update all items before [goal:complete] is accepted.
 func (c *Controller) GoalStrict(strict bool) {
-	c.mu.Lock()
-	c.goalStrict = strict
-	path, data, _ := c.buildGoalStateLocked()
-	c.mu.Unlock()
-	c.writeGoalState(path, data)
+	path, data, ok := c.goals.setStrict(strict, c.goalTodos())
+	c.persistGoalState(path, data, ok)
 }
 
 // SetGoal stores a session-scoped active goal. Compose injects it into outgoing
@@ -1888,43 +1591,8 @@ func (c *Controller) SetGoal(goal string) {
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
-	goal = strings.TrimSpace(goal)
-	c.mu.Lock()
-	if goal == "" {
-		c.goal = ""
-		c.goalStatus = GoalStatusStopped
-		c.goalResearchMode = GoalResearchAuto
-		c.goalTurns = 0
-		c.goalBlocks = 0
-		c.goalBlock = ""
-		c.goalInterceptMsg = ""
-		c.goalIntercepts = 0
-		c.goalSelfCheckDone = false
-		c.goalIdleTurns = 0
-		c.goalStrict = false
-		path, data, _ := c.buildGoalStateLocked()
-		c.mu.Unlock()
-		c.writeGoalState(path, data)
-		return
-	}
-	if c.goal == goal && c.goalStatus == GoalStatusRunning && c.goalResearchMode == researchMode {
-		c.mu.Unlock()
-		return
-	}
-	c.goal = goal
-	c.goalStatus = GoalStatusRunning
-	c.goalResearchMode = researchMode
-	c.goalTurns = 0
-	c.goalBlocks = 0
-	c.goalBlock = ""
-	c.goalInterceptMsg = ""
-	c.goalIntercepts = 0
-	c.goalSelfCheckDone = false
-	c.goalIdleTurns = 0
-	c.goalStrict = false
-	path, data, _ := c.buildGoalStateLocked()
-	c.mu.Unlock()
-	c.writeGoalState(path, data)
+	path, data, ok := c.goals.set(goal, researchMode, c.goalTodos())
+	c.persistGoalState(path, data, ok)
 }
 
 func (c *Controller) ClearGoal() {
@@ -1932,21 +1600,11 @@ func (c *Controller) ClearGoal() {
 }
 
 func (c *Controller) Goal() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.goal
+	return c.goals.goalText()
 }
 
 func (c *Controller) GoalStatus() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if strings.TrimSpace(c.goal) == "" && c.goalStatus == "" {
-		return GoalStatusStopped
-	}
-	if c.goalStatus == "" {
-		return GoalStatusStopped
-	}
-	return c.goalStatus
+	return c.goals.statusForDisplay()
 }
 
 // Compact runs one compaction pass on the executor's session on demand.

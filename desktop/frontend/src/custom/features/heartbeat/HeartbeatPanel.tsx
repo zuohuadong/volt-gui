@@ -689,23 +689,23 @@ function CycleEditor({
           value={timeVal}
           onChange={(e) => onTimeChange(e.target.value)}
         />
-      </div>
 
-      {(cycleType === "daily" || cycleType === "weekly" || cycleType === "biweekly") && (
-        <div className="set-seg" style={{ alignSelf: "flex-start", marginTop: "6px" }}>
-          {WEEKDAYS.map((wd) => (
-            <button
-              key={wd.key}
-              type="button"
-              className={`set-seg__btn${selectedDays.includes(wd.key) ? " set-seg__btn--on" : ""}`}
-              onClick={() => onDayToggle(wd.key)}
-              aria-pressed={selectedDays.includes(wd.key)}
-            >
-              {wd.label}
-            </button>
-          ))}
-        </div>
-      )}
+        {(cycleType === "daily" || cycleType === "weekly" || cycleType === "biweekly") && (
+          <div className="set-seg">
+            {WEEKDAYS.map((wd) => (
+              <button
+                key={wd.key}
+                type="button"
+                className={`set-seg__btn${selectedDays.includes(wd.key) ? " set-seg__btn--on" : ""}`}
+                onClick={() => onDayToggle(wd.key)}
+                aria-pressed={selectedDays.includes(wd.key)}
+              >
+                {wd.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

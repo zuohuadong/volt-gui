@@ -430,11 +430,32 @@ function TaskCard({
 
   // Parse interval for display and next-run calculation
   const intervalLabel = (() => {
+    // Check for cycle format: duration|type[:days]@HH:MM
+    const cycleMatch = task.interval.match(/^(\d+)[smh]\|(daily|weekly|biweekly|monthly|yearly)(?::([^@]*))?(?:@(\d{2}:\d{2}))?$/);
+    if (cycleMatch) {
+      const [, , type, days, time] = cycleMatch;
+      const timeStr = time ? ` ${time}` : "";
+      if (type === "daily") return `每天${timeStr}`;
+      if (type === "weekly" || type === "biweekly") {
+        const dayLabels: Record<string, string> = { mon: "一", tue: "二", wed: "三", thu: "四", fri: "五", sat: "六", sun: "日" };
+        const daysStr = days
+          ? days.split(",").map((d) => `周${dayLabels[d.trim()] || d.trim()}`).join("/")
+          : "每天";
+        const prefix = type === "biweekly" ? "每两周" : "每周";
+        return `${prefix} ${daysStr}${timeStr}`;
+      }
+      if (type === "monthly") return `每月${days ? ` ${days}日` : ""}${timeStr}`;
+      if (type === "yearly") {
+        const parts = (days || "").split("-");
+        return `每年 ${parts[0] || "1"}月${parts[1] || "1"}日${timeStr}`;
+      }
+    }
+    // Simple interval: e.g. "30m", "1h"
     const clean = task.interval.replace(/\|.*$/, "");
     const m = clean.match(/^(\d+)([smh])$/);
     if (!m) return clean;
-    const unitMap: Record<string, string> = { s: "s", m: "m", h: "h" };
-    return `${m[1]}${unitMap[m[2]] || m[2]}`;
+    const unitLabels: Record<string, string> = { s: "秒", m: "分钟", h: "小时" };
+    return `每${m[1]}${unitLabels[m[2]] || m[2]}`;
   })();
 
   const nextRunLabel = (() => {

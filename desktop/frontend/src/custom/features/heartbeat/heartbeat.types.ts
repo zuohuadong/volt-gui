@@ -11,5 +11,5 @@ export interface HeartbeatTask {
   topicId?: string;
   lastRunAt?: number;  // unix millis
   createdAt?: number;
-  approvalMode?: string; // "ask" | "auto" | "yolo"; empty defaults to "yolo"
+  approvalMode?: "ask" | "auto" | "yolo"; // empty defaults to "yolo"
 }

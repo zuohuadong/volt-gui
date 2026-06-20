@@ -706,7 +706,7 @@ function CycleEditor({
 
 // ── Editor ─────────────────────────────────────────────────────────────────────
 
-function normalizeMode(mode: string | undefined): string {
+function normalizeMode(mode: "ask" | "auto" | "yolo" | undefined): "ask" | "auto" | "yolo" {
   if (mode === "ask" || mode === "auto" || mode === "yolo") return mode;
   return "yolo"; // default
 }

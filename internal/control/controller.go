@@ -2220,6 +2220,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		ForkMessageIndex: boundary,
 		Preview:          forkPreview,
 		Turns:            forkTurns,
+		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -2290,6 +2291,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		ForkMessageIndex: len(branched),
 		Preview:          branchPreview,
 		Turns:            branchTurns,
+		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}

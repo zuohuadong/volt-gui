@@ -95,6 +95,7 @@ export function HeartbeatPanel({ open, onClose, startNew, onOpenTopic }: Heartbe
           prompt: "",
           interval: "30m",
           enabled: true,
+          approvalMode: "yolo",
           createdAt: Date.now(),
         });
       });
@@ -121,6 +122,7 @@ export function HeartbeatPanel({ open, onClose, startNew, onOpenTopic }: Heartbe
       prompt: "",
       interval: "30m",
       enabled: true,
+      approvalMode: "yolo",
       createdAt: Date.now(),
     });
   }, []);
@@ -893,7 +895,7 @@ function TaskEditor({
         </div>
 
         {freqType === "cycle" ? <CycleEditor draft={draft} setDraft={set} /> : (
-          <><div className="heartbeat-editor__freq-interval">
+          <div className="heartbeat-editor__freq-interval">
             <span className="heartbeat-editor__freq-label">{t("heartbeat.freqEvery")}</span>
             <input
               className="heartbeat-editor__freq-input"
@@ -924,25 +926,47 @@ function TaskEditor({
               <option value="m">{t("heartbeat.unitMin")}</option>
               <option value="h">{t("heartbeat.unitHour")}</option>
             </select>
+            <span className="heartbeat-editor__freq-label" style={{ marginLeft: "6px" }}>
+              {draft.timeWindowStart || draft.timeWindowEnd ? (
+                <>{t("heartbeat.timeWindow")}</>
+              ) : (
+                <span
+                  style={{ cursor: "pointer", color: "var(--fg-faint)" }}
+                  onClick={() => setDraft((prev) => ({ ...prev, timeWindowStart: "09:00", timeWindowEnd: "17:00" }))}
+                >
+                  + {t("heartbeat.timeWindow")}
+                </span>
+              )}
+            </span>
+            {(draft.timeWindowStart || draft.timeWindowEnd) && (
+              <>
+                <input
+                  className="heartbeat-editor__freq-input heartbeat-editor__freq-input--time"
+                  type="time"
+                  value={draft.timeWindowStart || ""}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, timeWindowStart: e.target.value || undefined }))}
+                  placeholder="09:00"
+                />
+                <span className="heartbeat-editor__freq-label" style={{ fontSize: "11px" }}>—</span>
+                <input
+                  className="heartbeat-editor__freq-input heartbeat-editor__freq-input--time"
+                  type="time"
+                  value={draft.timeWindowEnd || ""}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, timeWindowEnd: e.target.value || undefined }))}
+                  placeholder="17:00"
+                />
+                <button
+                  className="heartbeat-card__open-btn"
+                  type="button"
+                  style={{ padding: "0 4px", fontSize: "13px", lineHeight: "20px", color: "var(--fg-muted)", border: "none", background: "none", cursor: "pointer" }}
+                  onClick={() => setDraft((prev) => ({ ...prev, timeWindowStart: undefined, timeWindowEnd: undefined }))}
+                  title="清除时间窗口"
+                >
+                  ×
+                </button>
+              </>
+            )}
           </div>
-          <div className="heartbeat-editor__freq-interval" style={{ marginTop: "6px" }}>
-            <span className="heartbeat-editor__freq-label">{t("heartbeat.timeWindow")}</span>
-            <input
-              className="heartbeat-editor__freq-input heartbeat-editor__freq-input--time"
-              type="time"
-              value={draft.timeWindowStart || ""}
-              onChange={(e) => setDraft((prev) => ({ ...prev, timeWindowStart: e.target.value || undefined }))}
-              placeholder="09:00"
-            />
-            <span className="heartbeat-editor__freq-label" style={{ fontSize: "11px" }}>—</span>
-            <input
-              className="heartbeat-editor__freq-input heartbeat-editor__freq-input--time"
-              type="time"
-              value={draft.timeWindowEnd || ""}
-              onChange={(e) => setDraft((prev) => ({ ...prev, timeWindowEnd: e.target.value || undefined }))}
-              placeholder="17:00"
-            />
-          </div></>
         )}
       </div>
 

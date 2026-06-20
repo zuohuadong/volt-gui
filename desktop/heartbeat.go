@@ -249,6 +249,10 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		ctrl.SetToolApprovalMode(normalizeHeartbeatApprovalMode(t.ApprovalMode))
 	}
 
+	// Normalize and store back so the persisted JSON gets a real value
+	// (e.g. "yolo") rather than "" or null.
+	t.ApprovalMode = normalizeHeartbeatApprovalMode(t.ApprovalMode)
+
 	// Submit as a plain user turn so scheduled prompts cannot invoke desktop
 	// shell or slash-command handlers such as "!cmd", "/clear", or "/compact".
 	if !e.app.submitUserTurnToTab(tabMeta.ID, t.Prompt) {

@@ -2959,8 +2959,43 @@ func activityStatusForTab(tab *WorkspaceTab) string {
 // and from ListProjectTree, so without it parallel runs lose each other's appends.
 var legacyMigrationMu sync.Mutex
 
+// topicMigrationMarker, once written into a session dir, records that the
+// pre-topic → Global-topic migration pass completed for that dir, so the
+// per-render ListProjectTree call can skip the full session scan instead of
+// re-reading every .jsonl + sidecar only to find nothing left to migrate. New
+// sessions are born with a TopicID, so no fresh legacy files appear afterwards.
+// It is stamped only when the pass left nothing deferred (an empty legacy
+// session that could gain content later keeps the dir unmarked), so the gate
+// never hides a session that should still be migrated.
+const topicMigrationMarker = ".topics-migrated"
+
+func topicMigrationDone(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, topicMigrationMarker))
+	return err == nil
+}
+
+func markTopicMigrationDone(dir string) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, topicMigrationMarker), nil, 0o644)
+}
+
 func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	// One-shot per dir: once the migration pass has completed, skip the full
+	// per-render session scan entirely.
+	if topicMigrationDone(dir) {
 		return nil
 	}
 	// Determine scope from the directory. The global session dir gets Global
@@ -2985,20 +3020,31 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	}
 	legacyMigrationMu.Lock()
 	defer legacyMigrationMu.Unlock()
-	infos, err := agent.ListSessionOrder(dir)
-	if err != nil || len(infos) == 0 {
+	// Re-check under the lock: another render may have completed the pass while
+	// this one waited.
+	if topicMigrationDone(dir) {
 		return nil
+	}
+	infos, err := agent.ListSessionOrder(dir)
+	if err != nil {
+		return nil // transient read error — retry on the next render, leave unmarked
 	}
 
 	var migratedTopicIDs []string
 	var titles map[string]string
 	var topicTitles map[string]string
 	var topicSources map[string]string
+	// deferred stays false only when every session was either migrated or is
+	// permanently non-migratable. A transient skip (unreadable meta, empty
+	// session that may gain content, failed write) sets it, keeping the dir
+	// unmarked so the next render retries instead of the gate hiding it forever.
+	deferred := false
 	for _, info := range infos {
 		if strings.TrimSpace(info.TopicID) != "" {
 			continue
 		}
 		if meta, ok, err := agent.LoadBranchMeta(info.Path); err != nil {
+			deferred = true
 			continue
 		} else if ok && (meta.Scope != "" || strings.TrimSpace(meta.WorkspaceRoot) != "" || strings.TrimSpace(meta.TopicID) != "") {
 			continue
@@ -3009,6 +3055,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		}
 		preview, turns := agent.SessionPreview(info.Path)
 		if turns == 0 {
+			deferred = true // empty now, but a later turn could make it migratable
 			continue
 		}
 		if titles == nil {
@@ -3034,6 +3081,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 
 		meta, err := agent.EnsureBranchMeta(info.Path)
 		if err != nil {
+			deferred = true
 			continue
 		}
 		// Skip sessions that already have a scope or workspace — they were
@@ -3046,6 +3094,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		meta.TopicID = topicID
 		meta.TopicTitle = title
 		if err := agent.SaveBranchMetaPreserveUpdated(info.Path, meta); err != nil {
+			deferred = true
 			continue
 		}
 		if topicTitles == nil {
@@ -3061,6 +3110,9 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		migratedTopicIDs = append(migratedTopicIDs, topicID)
 	}
 	if len(migratedTopicIDs) == 0 {
+		if !deferred {
+			markTopicMigrationDone(dir) // nothing left to migrate — gate future scans
+		}
 		return nil
 	}
 	f := loadProjectsFile()
@@ -3083,6 +3135,9 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		_ = saveTopicTitleSources(topicTitleRoot, topicSources)
 	}
 	invalidateTopicSessionIndex(dir)
+	if !deferred {
+		markTopicMigrationDone(dir) // pass complete with nothing deferred
+	}
 	return migratedTopicIDs
 }
 

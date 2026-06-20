@@ -9,14 +9,14 @@ importers:
   .:
     dependencies:
       '@lucide/svelte':
-        specifier: ^1.17.0
-        version: 1.18.0(svelte@5.56.3)
+        specifier: ^1.21.0
+        version: 1.21.0(svelte@5.56.3)
       '@svadmin/core':
-        specifier: ^0.29.0
-        version: 0.29.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)
+        specifier: ^0.30.0
+        version: 0.30.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)
       '@svadmin/ui':
-        specifier: ^0.36.0
-        version: 0.36.0(@internationalized/date@3.12.2)(@svadmin/core@0.29.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3))(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)(tailwindcss@4.3.1)
+        specifier: ^0.37.0
+        version: 0.37.0(@internationalized/date@3.12.2)(@svadmin/core@0.30.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3))(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)(tailwindcss@4.3.1)
       '@tanstack/svelte-query':
         specifier: ^6.1.34
         version: 6.1.34(svelte@5.56.3)
@@ -82,8 +82,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@lucide/svelte@1.18.0':
-    resolution: {integrity: sha512-S1cjiJflMLIirDZtZ8ou2Vy0xMrOqEQzYzDo29AUxoJiOjUfMHUeClvprJsGUEr60RYDJzEgkjSkWm1nlN9iyQ==}
+  '@lucide/svelte@1.21.0':
+    resolution: {integrity: sha512-MEv//A7Jv3kHukZowv/DWp1MAtUzJKYwtJsmnQ7X98lCgtac3z3NbaToDl3Q6jO3gS9sougFpcD+t+YuxOkRMw==}
     peerDependencies:
       svelte: ^5
 
@@ -136,42 +136,36 @@ packages:
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rolldown/binding-linux-arm64-musl@1.0.3':
     resolution: {integrity: sha512-VWkUHwWriDciit80wleYwKILoR/KMvxh/IdwS/paX+ZgpuRpCrKLUdadJbc0NpBEiyhpYawsJ73j9aCvOH+f7Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rolldown/binding-linux-ppc64-gnu@1.0.3':
     resolution: {integrity: sha512-5f1laC0SlIR0yDbFCd8acUhvJIag6N3zC5P7oUPN6wX0aOma+uKJ0wBDH5aq7I1PVI2ttTlhJwzwRIBnLiSGEg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@rolldown/binding-linux-s390x-gnu@1.0.3':
     resolution: {integrity: sha512-Iq4ko0r4XsgbrF/LunNgHtAGLRRVE2kXonAXQ/MV0mC6jQpMOhW1SvtZja2EhC/kd05++bP78dsqBeIQyYJ6Yg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@rolldown/binding-linux-x64-gnu@1.0.3':
     resolution: {integrity: sha512-B8m6tD5+/N5FeNQFbKlLA/2yVq9ycQP1SeedyEYYKWBNR3ZQbkvIUcNnDNM03lO1l5F2roiiFJGgvoLLyZXtSg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rolldown/binding-linux-x64-musl@1.0.3':
     resolution: {integrity: sha512-pSdpdUJHkuCxun9LE7jvgUB9qsRgaiyNNCX7m/AvHTcq67AiT/Yhoxvw5zPfhrM8k/BfP8ce/hMOpthKDpEUow==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rolldown/binding-openharmony-arm64@1.0.3':
     resolution: {integrity: sha512-OXXS3RKJgX2uLwM+gYyuH5omcH8fL1LJs96pZGgtetVCahON57+d4SJHzTgZiOjxgGkSnpXpOsWuPDGAKAigEg==}
@@ -199,8 +193,8 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
-  '@svadmin/core@0.29.0':
-    resolution: {integrity: sha512-ucKHB+oDZgPRSR2sNzcC3/Cf6M7HDcjMejypNVJOsfqA+XIIZ+z5JON/dlmw4pAchUn6GQfYOj1DZpaQdYx+Zg==}
+  '@svadmin/core@0.30.0':
+    resolution: {integrity: sha512-Qt7NrhcV0zfG15ajXMfwih9NWf2t9R2MYXu44XDgPZFLh9zXNoy84EStq7w8cDQoaZPaoNsx2gl5GD66pUjEUg==}
     peerDependencies:
       '@tanstack/svelte-query': ^6.1.29
       svelte: ^5.0.0
@@ -210,10 +204,10 @@ packages:
       svelte:
         optional: true
 
-  '@svadmin/ui@0.36.0':
-    resolution: {integrity: sha512-lXvANQWSIqdTrxGBLcpmyibSf66cZr0gAZeGCrghLjJaOKfewThsWavLqf/PuowL08ZHGwLWHt78UcztvG2yxQ==}
+  '@svadmin/ui@0.37.0':
+    resolution: {integrity: sha512-bBHdGwEET6LzaP+ebJZH2iIbJMWDKSJZuXq3Udo3ctjHXhQIKpWoLO5K+/xmlTjuTXe9K+AJBLLLEbvfNumQUQ==}
     peerDependencies:
-      '@svadmin/core': ^0.29.0
+      '@svadmin/core': ^0.30.0
       '@svadmin/editor': '*'
       '@tanstack/svelte-query': ^6.1.29
       highlight.js: ^11.11.1
@@ -423,28 +417,24 @@ packages:
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   lightningcss-linux-arm64-musl@1.32.0:
     resolution: {integrity: sha512-UpQkoenr4UJEzgVIYpI80lDFvRmPVg6oqboNHfoH4CQIfNA+HOrZ7Mo7KZP02dC6LjghPQJeBsvXhJod/wnIBg==}
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   lightningcss-linux-x64-gnu@1.32.0:
     resolution: {integrity: sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   lightningcss-linux-x64-musl@1.32.0:
     resolution: {integrity: sha512-bYcLp+Vb0awsiXg/80uCRezCYHNg1/l3mt0gzHnWV9XP1W5sKa5/TCdGWaR/zBM2PeF/HbsQv/j2URNOiVuxWg==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   lightningcss-win32-arm64-msvc@1.32.0:
     resolution: {integrity: sha512-8SbC8BR40pS6baCM8sbtYDSwEVQd4JlFTOlaD3gWGHfThTcABnNDBda6eTZeqbofalIJhFx0qKzgHJmcPTnGdw==}
@@ -481,8 +471,8 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
-  nanoid@5.1.11:
-    resolution: {integrity: sha512-v+KEsUv2ps74PaSKv0gHTxTCgMXOIfBEbaqa6w6ISIGC7ZsvHN4N9oJ8d4cmf0n5oTzQz2SLmThbQWhjd/8eKg==}
+  nanoid@5.1.14:
+    resolution: {integrity: sha512-5c8l8kVzqpnDPaicbEop/fV0Q1w16FmbWtVhMqugTozAwYdlIQojWH5a/M7UfziFmGdQRrUdV+EPzc9Xng3VAQ==}
     engines: {node: ^18 || >=20}
     hasBin: true
 
@@ -691,7 +681,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@lucide/svelte@1.18.0(svelte@5.56.3)':
+  '@lucide/svelte@1.21.0(svelte@5.56.3)':
     dependencies:
       svelte: 5.56.3
 
@@ -702,7 +692,7 @@ snapshots:
       '@internationalized/date': 3.12.2
       dequal: 2.0.3
       focus-trap: 7.8.0
-      nanoid: 5.1.11
+      nanoid: 5.1.14
       svelte: 5.56.3
 
   '@napi-rs/wasm-runtime@1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
@@ -765,14 +755,14 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@svadmin/core@0.29.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)':
+  '@svadmin/core@0.30.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)':
     optionalDependencies:
       '@tanstack/svelte-query': 6.1.34(svelte@5.56.3)
       svelte: 5.56.3
 
-  '@svadmin/ui@0.36.0(@internationalized/date@3.12.2)(@svadmin/core@0.29.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3))(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)(tailwindcss@4.3.1)':
+  '@svadmin/ui@0.37.0(@internationalized/date@3.12.2)(@svadmin/core@0.30.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3))(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)(tailwindcss@4.3.1)':
     dependencies:
-      '@lucide/svelte': 1.18.0(svelte@5.56.3)
+      '@lucide/svelte': 1.21.0(svelte@5.56.3)
       '@tanstack/svelte-table': 9.0.0-alpha.53(svelte@5.56.3)
       '@tanstack/table-core': 9.0.0-alpha.53
       bits-ui: 2.18.1(@internationalized/date@3.12.2)(svelte@5.56.3)
@@ -782,7 +772,7 @@ snapshots:
       tailwind-merge: 3.6.0
       tailwind-variants: 3.2.2(tailwind-merge@3.6.0)(tailwindcss@4.3.1)
     optionalDependencies:
-      '@svadmin/core': 0.29.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)
+      '@svadmin/core': 0.30.0(@tanstack/svelte-query@6.1.34(svelte@5.56.3))(svelte@5.56.3)
       '@tanstack/svelte-query': 6.1.34(svelte@5.56.3)
       svelte: 5.56.3
     transitivePeerDependencies:
@@ -852,7 +842,7 @@ snapshots:
     dependencies:
       '@internationalized/date': 3.12.2
       '@melt-ui/svelte': 0.76.2(svelte@5.56.3)
-      nanoid: 5.1.11
+      nanoid: 5.1.14
       svelte: 5.56.3
 
   bits-ui@2.18.1(@internationalized/date@3.12.2)(svelte@5.56.3):
@@ -877,7 +867,7 @@ snapshots:
   cmdk-sv@0.0.19(svelte@5.56.3):
     dependencies:
       bits-ui: 0.21.16(svelte@5.56.3)
-      nanoid: 5.1.11
+      nanoid: 5.1.14
       svelte: 5.56.3
 
   commander@8.3.0: {}
@@ -978,7 +968,7 @@ snapshots:
 
   nanoid@3.3.12: {}
 
-  nanoid@5.1.11: {}
+  nanoid@5.1.14: {}
 
   obug@2.1.3: {}
 

@@ -431,7 +431,7 @@ function TaskCard({
   // Parse interval for display and next-run calculation
   const intervalLabel = (() => {
     // Check for cycle format: duration|type[:days]@HH:MM
-    const cycleMatch = task.interval.match(/^(\d+)[smh]\|(daily|weekly|biweekly|monthly|yearly)(?::([^@]*))?(?:@(\d{2}:\d{2}))?$/);
+    const cycleMatch = (task.interval || "").match(/^(\d+)[smh]\|(daily|weekly|biweekly|monthly|yearly)(?::([^@]*))?(?:@(\d{2}:\d{2}))?$/);
     if (cycleMatch) {
       const [, , type, days, time] = cycleMatch;
       const timeStr = time ? ` ${time}` : "";
@@ -447,7 +447,7 @@ function TaskCard({
       }
     }
     // Simple interval: e.g. "30m", "1h"
-    const clean = task.interval.replace(/\|.*$/, "");
+    const clean = (task.interval || "").replace(/\|.*$/, "");
     const m = clean.match(/^(\d+)([smh])$/);
     if (!m) return clean;
     const unitLabels: Record<string, string> = { s: "秒", m: "分钟", h: "小时" };
@@ -456,7 +456,7 @@ function TaskCard({
 
   const nextRunLabel = (() => {
     if (!task.enabled) return t("heartbeat.disabled");
-    const clean = task.interval.replace(/\|.*$/, "");
+    const clean = (task.interval || "").replace(/\|.*$/, "");
     const m = clean.match(/^(\d+)([smh])$/);
     if (!m) return "";
     const ms = parseInt(m[1]) * { s: 1000, m: 60000, h: 3600000 }[m[2] as "s" | "m" | "h"];
@@ -899,8 +899,9 @@ function TaskEditor({
             onClick={() => {
               setFreqType("cycle");
               // Save the original interval so switching back can restore it
-              if (!draft.interval.includes("|")) {
-                intervalBeforeCycle.current = draft.interval;
+              const cur = draft.interval || "";
+              if (!cur.includes("|")) {
+                intervalBeforeCycle.current = cur;
                 setDraft((prev) => ({ ...prev, interval: "24h|daily@09:00" }));
               }
             }}
@@ -915,9 +916,9 @@ function TaskEditor({
               if (intervalBeforeCycle.current !== null) {
                 setDraft((prev) => ({ ...prev, interval: intervalBeforeCycle.current! }));
                 intervalBeforeCycle.current = null;
-              } else if (draft.interval.includes("|")) {
+              } else if ((draft.interval || "").includes("|")) {
                 // Fallback: strip cycle suffix
-                setDraft((prev) => ({ ...prev, interval: prev.interval.replace(/\|.*$/, "") }));
+                setDraft((prev) => ({ ...prev, interval: (prev.interval || "").replace(/\|.*$/, "") }));
               }
             }}
           >

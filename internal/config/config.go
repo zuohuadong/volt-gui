@@ -53,6 +53,7 @@ type Config struct {
 	Sandbox       SandboxConfig     `toml:"sandbox"`
 	Network       NetworkConfig     `toml:"network"`
 	Plugins       []PluginEntry     `toml:"plugins"`
+	Workbench     WorkbenchConfig   `toml:"workbench"`
 	Skills        SkillsConfig      `toml:"skills"`
 	Codegraph     CodegraphConfig   `toml:"codegraph"`
 	Statusline    StatuslineConfig  `toml:"statusline"`
@@ -798,6 +799,44 @@ type PluginEntry struct {
 	Tier string `toml:"tier"`
 }
 
+// WorkbenchConfig declares product-level workbench plugins. These are separate
+// from [[plugins]] MCP servers: MCP plugins expose model tools, while workbench
+// plugins own native UI/workflow surfaces that may call MCP, HTTP, or local
+// providers behind the scenes.
+type WorkbenchConfig struct {
+	Plugins   []WorkbenchPluginEntry   `toml:"plugins"`
+	Providers []WorkbenchProviderEntry `toml:"providers"`
+}
+
+type WorkbenchPluginEntry struct {
+	ID           string            `toml:"id"`
+	Name         string            `toml:"name"`
+	Kind         string            `toml:"kind"`  // "native" initially; future values require an explicit host contract.
+	Entry        string            `toml:"entry"` // native route/module key, e.g. "content-studio".
+	Version      string            `toml:"version"`
+	Capabilities []string          `toml:"capabilities"`
+	ProviderIDs  []string          `toml:"provider_ids"`
+	Config       map[string]string `toml:"config"`
+	Enabled      *bool             `toml:"enabled"`
+}
+
+func (e WorkbenchPluginEntry) IsEnabled() bool {
+	return e.Enabled == nil || *e.Enabled
+}
+
+type WorkbenchProviderEntry struct {
+	ID           string            `toml:"id"`
+	Type         string            `toml:"type"` // "mcp" | "http" | "local"
+	Server       string            `toml:"server"`
+	URL          string            `toml:"url"`
+	Command      string            `toml:"command"`
+	Args         []string          `toml:"args"`
+	Capabilities []string          `toml:"capabilities"`
+	Headers      map[string]string `toml:"headers"`
+	Env          map[string]string `toml:"env"`
+	Config       map[string]string `toml:"config"`
+}
+
 func (e PluginEntry) ShouldAutoStart() bool {
 	return e.AutoStart == nil || *e.AutoStart
 }
@@ -951,6 +990,12 @@ func LoadForRoot(root string) (*Config, error) {
 	}
 	cfg.Plugins = plugins
 
+	workbenchConfig, err := mergeTOMLWorkbench(tomlSources)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Workbench = workbenchConfig
+
 	// Claude Code's .mcp.json (project root) is read last and merged into
 	// [[plugins]], so a server configured for Claude works here unchanged.
 	// voltui.toml wins on a name collision (see mergeMCPJSON).
@@ -1054,6 +1099,46 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 			}
 			index[p.Name] = len(merged)
 			merged = append(merged, p)
+		}
+	}
+	return merged, nil
+}
+
+// mergeTOMLWorkbench merges [workbench] plugin/provider arrays across TOML
+// sources by id. Later sources win, so project voltui.toml can override a
+// user-global workbench plugin without dropping unrelated user entries.
+func mergeTOMLWorkbench(paths []string) (WorkbenchConfig, error) {
+	var merged WorkbenchConfig
+	pluginIndex := map[string]int{}
+	providerIndex := map[string]int{}
+	for _, path := range paths {
+		var tmp Config
+		if err := mergeFile(&tmp, path); err != nil {
+			return WorkbenchConfig{}, err
+		}
+		for _, p := range tmp.Workbench.Plugins {
+			id := strings.TrimSpace(p.ID)
+			if id == "" {
+				continue
+			}
+			if i, ok := pluginIndex[id]; ok {
+				merged.Plugins[i] = p
+				continue
+			}
+			pluginIndex[id] = len(merged.Plugins)
+			merged.Plugins = append(merged.Plugins, p)
+		}
+		for _, p := range tmp.Workbench.Providers {
+			id := strings.TrimSpace(p.ID)
+			if id == "" {
+				continue
+			}
+			if i, ok := providerIndex[id]; ok {
+				merged.Providers[i] = p
+				continue
+			}
+			providerIndex[id] = len(merged.Providers)
+			merged.Providers = append(merged.Providers, p)
 		}
 	}
 	return merged, nil

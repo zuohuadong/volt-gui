@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import {
+    Activity,
+    AlertTriangle,
     Archive,
+    ArrowLeft,
     Blocks,
     BookMarked,
     BookOpen,
@@ -15,6 +18,7 @@
     ClipboardList,
     Code2,
     ContactRound,
+    Crown,
     Database,
     FileText,
     Folder,
@@ -23,9 +27,13 @@
     GitBranch,
     List,
     ListTodo,
-    Megaphone,
+    Loader2,
+    Mail,
+    MapPin,
     MessageSquare,
     PanelLeft,
+    Pencil,
+    Phone,
     Plus,
     Puzzle,
     RefreshCw,
@@ -69,9 +77,10 @@
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
-  type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "mockHearing" | "reports" | "regulations" | "library" | "resources" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "media" | "capabilities";
+  type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "mockHearing" | "reports" | "regulations" | "library" | "resources" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
   type CapabilityTab = "plugin" | "mcp" | "skill";
-  type ResourceTab = "resources" | "library" | "regulations" | "search" | "ingest";
+  type ResourceTab = "resources" | "knowledge" | "search" | "ingest";
+  type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "hearing" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
 
@@ -114,24 +123,28 @@
   let userMenuOpen = $state(false);
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
-  let teamViewMode = $state<"teams" | "office">("teams");
+  let teamViewMode = $state<"teams" | "office" | "chat">("teams");
   let teamConfigTitle = $state<string | undefined>();
   let teamBuilderName = $state("");
   let teamBuilderSearch = $state("");
   let teamBuilderMemberIds = $state<string[]>(["code-review", "research"]);
+  let teamBuilderLeaderId = $state("code-review");
+  let teamChatInput = $state("");
+  let teamChatModel = $state("GPT-4o");
+  let teamChatAttachments = $state<string[]>([]);
+  let teamChatSending = $state(false);
   let automationDialog = $state<string | undefined>();
   let agentWizardOpen = $state(false);
   let agentWizardTab = $state("identity");
   let selectedAgentId = $state("code-review");
   let selectedCoreFile = $state("SYSTEM.md");
-  let mediaDialog = $state<"channels" | "accounts" | undefined>();
   let configDialog = $state<ConfigDialog | undefined>();
   let selectedProjectId = $state("volt-gui");
   let selectedCustomerId = $state("internal");
   let projectSearch = $state("");
   let customerSearch = $state("");
+  let customerDetailTab = $state<CustomerDetailTab>("overview");
   let projectStatusFilter = $state<"all" | "active" | "closed">("all");
-  let customerTypeFilter = $state<"all" | "company" | "person" | "risk">("all");
   let projectDetailOpen = $state(false);
   let customerDetailOpen = $state(false);
   let selectedHearingTitle = $state<string | undefined>();
@@ -147,6 +160,7 @@
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
+  const showActiveTranscript = $derived(showTranscript && !(activityMode === "work" && workLayer === "newTask" && !sending && !pendingApproval && !pendingAsk));
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
@@ -161,7 +175,6 @@
     calendar: CalendarDays,
     resources: Database,
     teams: UsersRound,
-    media: Megaphone,
     capabilities: Blocks,
     models: BrainCircuit,
     settings: Settings,
@@ -192,9 +205,9 @@
   function avatarIcon(avatar: string) { return avatarIcons[avatar as keyof typeof avatarIcons] ?? UserRound; }
 
   const workspaceNav = [
-    { title: "Agent Work", items: [{ label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "团队协作", layer: "teams", icon: "teams" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }, { label: "Agent 中心", layer: "agents", icon: "agents" }] },
-    { title: "知识库", items: [{ label: "资料中心", layer: "resources", icon: "resources" }] },
-    { title: "运营", items: [{ label: "自媒体运营中心", layer: "media", icon: "media" }, { label: "管理项目", layer: "projects", icon: "projects" }, { label: "管理客户", layer: "customers", icon: "customers" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }] },
+    { title: "Agent Work", items: [{ label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "Agent Team", layer: "teams", icon: "teams" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
+    { title: "运营", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }] },
+    { title: "知识库", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }, { label: "资料中心", layer: "resources", icon: "resources" }] },
   ] as { title: string; items: { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string }[] }[];
   const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
   const todoItems = [
@@ -203,9 +216,9 @@
     { title: "复核项目与客户关联", desc: "检查新建任务中的关联入口", due: "明天", state: "待处理" },
   ];
   const runningAutomations = [
-    { id: "daily-review", title: "每日代码巡检", desc: "扫描变更、生成风险清单并写入任务中心", status: "运行中", startedAtMs: Date.now() - 11880000, cadence: "每天 09:30" },
-    { id: "media-publish", title: "自媒体选题同步", desc: "抓取渠道数据、生成选题草案", status: "暂停", startedAtMs: Date.now() - 3120000, cadence: "每 4 小时" },
-    { id: "mcp-health", title: "MCP 健康检查", desc: "检测 MCP 连接、权限和失败记录", status: "运行中", startedAtMs: Date.now() - 1620000, cadence: "每小时" },
+    { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", scope: "desktop/frontend", command: "npm run check / npm run build / git diff --check" },
+    { id: "wails-go-gate", title: "Wails 与 Go 模块门禁", desc: "分别检查根 Go CLI/TUI 与 desktop Wails 模块，避免桌面端改动影响 CLI、绑定层或嵌入资源。", status: "待配置", startedAtMs: Date.now() - 3120000, cadence: "涉及 Go 或 Wails 绑定时", scope: "go.mod / desktop/go.mod", command: "go test ./... / cd desktop && go test ./..." },
+    { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", scope: "Vite dev server / 浏览器 DOM", command: "HTTP 200 / DOM snapshot / console warnings" },
   ];
   const agentCards = [
     { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。" },
@@ -215,36 +228,68 @@
   const newTaskQuickTasks = [
     { agentId: "code-review", agent: "代码审查 Agent", title: "审查当前改动", prompt: "请阅读当前仓库变更，按严重程度列出风险、回归点和缺失测试。" },
     { agentId: "research", agent: "资料研究 Agent", title: "整理项目资料", prompt: "请汇总当前项目资料，输出关键结论、待确认事项和下一步执行清单。" },
-    { agentId: "automation", agent: "自动化 Agent", title: "配置自动化任务", prompt: "请把这个重复流程整理为可执行自动化，包含触发条件、输入、输出和失败处理。" },
+    { agentId: "automation", agent: "自动化 Agent", title: "配置项目验证自动化", prompt: "请把 Volt GUI 可执行的检查流程整理为自动化，包含触发条件、验证命令、输出证据和失败处理。" },
   ];
   const projectCards = [
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", client: "内部研发", stage: "进行中", owner: "产品工作台", desc: "恢复 AoristLawer 式导航、Agent 与能力中心。", category: "桌面端重构", court: "研发工作台", budget: "1,200,000", acceptedAt: "2026-06-15", status: "active" },
-    { id: "lurefree", name: "Lurefree 小程序发布", client: "运营团队", stage: "验证中", owner: "增长项目", desc: "小程序包体、地图交互与发布材料。", category: "小程序发布", court: "增长项目组", budget: "350,000", acceptedAt: "2026-06-10", status: "active" },
-    { id: "homepage", name: "品牌主页恢复与部署", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed" },
+    { id: "volt-gui", name: "Volt GUI 桌面端重构", code: "PRJ-2026-0615", client: "内部研发", stage: "进行中", owner: "产品工作台", desc: "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建任务。", category: "桌面端重构", court: "研发工作台", budget: "1,200,000", acceptedAt: "2026-06-15", status: "active", progress: 78, priority: "高", risk: "中风险", updatedAt: "28 分钟前", nextStep: "完成项目管理页深化并做构建验证", agent: "代码审查 Agent", materials: 12, todos: 5, events: 3, reports: 4, timeline: ["AORISTLAWER 参考界面已完成源码对照", "新建任务与代码状态入口已统一", "项目管理页进入深化验收"] },
+    { id: "lurefree", name: "Lurefree 小程序发布", code: "PRJ-2026-0610", client: "运营团队", stage: "验证中", owner: "增长项目", desc: "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。", category: "小程序发布", court: "增长项目组", budget: "350,000", acceptedAt: "2026-06-10", status: "active", progress: 64, priority: "中", risk: "低风险", updatedAt: "2 小时前", nextStep: "补齐地图与详情页回归清单", agent: "资料研究 Agent", materials: 8, todos: 4, events: 2, reports: 2, timeline: ["地图交互问题已纳入检查", "发布材料进入复核", "等待小程序预览确认"] },
+    { id: "homepage", name: "品牌主页恢复与部署", code: "PRJ-2026-0601", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed", progress: 100, priority: "低", risk: "已关闭", updatedAt: "昨天", nextStep: "仅保留归档和复盘记录", agent: "自动化 Agent", materials: 5, todos: 0, events: 1, reports: 3, timeline: ["历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"] },
   ];
   const customerCards = [
-    { id: "internal", name: "内部研发团队", type: "企业", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", matters: 4, risk: "低风险", riskLevel: "low", status: "active" },
-    { id: "ops", name: "运营增长团队", type: "企业", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", matters: 3, risk: "中风险", riskLevel: "medium", status: "active" },
-    { id: "founder", name: "个人创始人项目", type: "自然人", phone: "138-0000-0003", email: "founder@example.com", industry: "个人委托", matters: 1, risk: "高风险", riskLevel: "high", status: "active" },
+    { id: "internal", name: "内部研发团队", type: "企业", contact: "产品负责人", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", matters: 4, materials: 12, events: 3, todos: 5, risk: "低风险", riskLevel: "low", status: "active", createdAt: "2026-06-01", lastContact: "28 分钟前", address: "局域网本地客户档案", note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", projectIds: ["volt-gui", "homepage"] },
+    { id: "ops", name: "运营增长团队", type: "企业", contact: "增长负责人", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", matters: 3, materials: 8, events: 2, todos: 4, risk: "中风险", riskLevel: "medium", status: "active", createdAt: "2026-06-08", lastContact: "2 小时前", address: "运营项目群", note: "负责客户触达、发布材料和小程序增长相关任务，需保留交付前验证记录。", projectIds: ["lurefree"] },
+    { id: "founder", name: "个人创始人项目", type: "自然人", contact: "创始人本人", phone: "138-0000-0003", email: "founder@example.com", industry: "个人委托", matters: 1, materials: 5, events: 1, todos: 2, risk: "高风险", riskLevel: "high", status: "active", createdAt: "2026-06-12", lastContact: "今天", address: "远程访谈记录", note: "需求边界变化频繁，任务进入执行前需补齐确认记录与风险说明。", projectIds: [] },
+  ];
+  const customerMaterialRows = [
+    { customerId: "internal", title: "Volt GUI 客户需求纪要", category: "访谈记录", source: "workspace", status: "已索引", updatedAt: "28 分钟前", desc: "整理导航、客户管理和项目管理的最新确认口径。" },
+    { customerId: "internal", title: "桌面前端验证证据包", category: "交付资料", source: "desktop/frontend", status: "已同步", updatedAt: "今天", desc: "包含 Svelte 检查、构建、浏览器 DOM 与控制台验证记录。" },
+    { customerId: "internal", title: "AORISTLAWER 参考映射", category: "参考资料", source: "aoristlawer", status: "已关联", updatedAt: "昨天", desc: "记录客户详情、项目详情和创建弹窗的对照关系。" },
+    { customerId: "internal", title: "风险与回滚说明", category: "复核资料", source: "memory", status: "待复核", updatedAt: "昨天", desc: "用于补齐交付前风险说明和可回退边界。" },
+    { customerId: "ops", title: "小程序发布清单", category: "交付资料", source: "lurefree", status: "已索引", updatedAt: "2 小时前", desc: "汇总包体、地图交互和发布前验收项。" },
+    { customerId: "ops", title: "客户触达话术", category: "运营资料", source: "local", status: "草稿", updatedAt: "今天", desc: "用于增长团队跟进项目状态和确认上线窗口。" },
+    { customerId: "ops", title: "发布复核附件", category: "附件", source: "workspace", status: "待清理", updatedAt: "昨天", desc: "保留预览、问题记录和人工确认材料。" },
+    { customerId: "founder", title: "创始人访谈记录", category: "访谈记录", source: "remote", status: "已索引", updatedAt: "今天", desc: "记录需求边界、预算和变更口径。" },
+    { customerId: "founder", title: "执行前确认单", category: "确认资料", source: "manual", status: "待确认", updatedAt: "今天", desc: "进入任务前需要客户再次确认范围和验收标准。" },
+  ];
+  const customerScheduleRows = [
+    { customerId: "internal", title: "桌面端体验复盘", date: "06-20", time: "10:30", place: "研发工作台", state: "今日", desc: "确认客户管理和项目管理补齐范围。" },
+    { customerId: "internal", title: "构建验证窗口", date: "06-20", time: "16:00", place: "本地预览", state: "待开始", desc: "跑完前端门禁并检查 127.0.0.1 预览。" },
+    { customerId: "internal", title: "交付前确认", date: "06-21", time: "14:00", place: "项目群", state: "已排期", desc: "确认详情页标签内容和资料联动。" },
+    { customerId: "ops", title: "发布素材复核", date: "06-20", time: "15:30", place: "运营项目群", state: "今日", desc: "复核小程序发布材料与客户触达节奏。" },
+    { customerId: "ops", title: "增长任务同步", date: "06-22", time: "11:00", place: "线上会议", state: "已排期", desc: "同步地图、包体和发布排期风险。" },
+    { customerId: "founder", title: "需求边界确认", date: "06-20", time: "18:00", place: "远程会议", state: "待确认", desc: "确认任务进入执行前的范围冻结条件。" },
+  ];
+  const customerTodoRows = [
+    { customerId: "internal", title: "补齐客户详情五个标签页", due: "今天", priority: "高", state: "进行中", desc: "对照 AORISTLAWER 的客户详情结构补足面板内容。" },
+    { customerId: "internal", title: "运行 Svelte autofixer", due: "今天", priority: "中", state: "待处理", desc: "确认新增模板满足 Svelte 5 语法。" },
+    { customerId: "internal", title: "执行前端构建门禁", due: "今天", priority: "中", state: "待处理", desc: "运行 check、build 和 diff 空白检查。" },
+    { customerId: "internal", title: "浏览器验证客户详情", due: "今天", priority: "中", state: "待处理", desc: "检查标签切换、内容可见性和控制台错误。" },
+    { customerId: "internal", title: "回写验收结论", due: "明天", priority: "低", state: "待处理", desc: "把验证证据同步到客户档案和交付说明。" },
+    { customerId: "ops", title: "复核小程序发布材料", due: "今天", priority: "高", state: "进行中", desc: "确认发布附件、预览记录和客户触达话术。" },
+    { customerId: "ops", title: "整理增长任务清单", due: "明天", priority: "中", state: "待处理", desc: "把运营动作拆成可执行任务。" },
+    { customerId: "ops", title: "同步项目日程", due: "06-22", priority: "中", state: "待处理", desc: "补齐下次会议、验收窗口和风险提醒。" },
+    { customerId: "ops", title: "更新客户周报", due: "06-23", priority: "低", state: "待处理", desc: "同步项目状态、资料清理和下一步。" },
+    { customerId: "founder", title: "确认需求边界", due: "今天", priority: "高", state: "待确认", desc: "进入执行前冻结范围、交付物和验收标准。" },
+    { customerId: "founder", title: "补齐风险说明", due: "明天", priority: "中", state: "待处理", desc: "记录频繁变更带来的排期和交付风险。" },
   ];
   const filteredProjects = $derived(projectCards.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
-    const matchSearch = !keyword || [project.name, project.client, project.owner, project.stage, project.desc, project.category, project.court].some((value) => value.toLowerCase().includes(keyword));
+    const matchSearch = !keyword || [project.name, project.code, project.client, project.owner, project.stage, project.desc, project.category, project.court, project.priority, project.risk, project.agent].some((value) => value.toLowerCase().includes(keyword));
     const matchStatus = projectStatusFilter === "all" || project.status === projectStatusFilter;
     return matchSearch && matchStatus;
   }));
+  const projectBudgetTotalText = $derived(`¥${(projectCards.reduce((sum, project) => sum + Number(project.budget.replace(/,/g, "")), 0) / 10000).toFixed(1)} 万`);
+  const projectTotalTodos = $derived(projectCards.reduce((sum, project) => sum + project.todos, 0));
   const filteredCustomers = $derived(customerCards.filter((customer) => {
     const keyword = customerSearch.trim().toLowerCase();
-    const matchSearch = !keyword || [customer.name, customer.type, customer.phone, customer.email, customer.risk, customer.industry, String(customer.matters)].some((value) => value.toLowerCase().includes(keyword));
-    const matchType = customerTypeFilter === "all" || (customerTypeFilter === "company" && customer.type === "企业") || (customerTypeFilter === "person" && customer.type === "自然人") || (customerTypeFilter === "risk" && customer.riskLevel === "high");
-    return matchSearch && matchType;
+    const matchSearch = !keyword || [customer.name, customer.type, customer.contact, customer.phone, customer.email, customer.risk, customer.industry, customer.status, String(customer.matters)].some((value) => value.toLowerCase().includes(keyword));
+    return matchSearch;
   }));
   const newTaskProjectOptions = $derived(projectCards.map((project) => ({ id: project.id, label: project.name })));
   const newTaskClientOptions = $derived(customerCards.map((customer) => ({ id: customer.id, label: customer.name })));
-  const mediaChannels = [{ name: "微信公众号", accounts: 3, status: "已配置", metric: "12 篇待发" }, { name: "视频号", accounts: 2, status: "需授权", metric: "4 条脚本" }, { name: "小红书", accounts: 4, status: "已配置", metric: "18 个选题" }];
   const capabilityBuckets = {
     plugin: [
-      { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "代码工作台", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
+      { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建任务", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
       { id: "browser-preview", name: "浏览器预览", desc: "打开本地页面、检查 DOM 状态和控制台错误。", status: "已启用", version: "v1.2", source: "Browser 插件", scope: "本地预览", sync: "5 分钟前", path: "127.0.0.1", permission: "本地页面读取 / 点击验证", enabled: true },
       { id: "resource-ingest", name: "资料导入助手", desc: "把文档、法规、客户资料导入资料中心并建立索引。", status: "待配置", version: "v0.8", source: "工作台插件", scope: "资料中心", sync: "待授权", path: "resources/import", permission: "上传文件 / 建立索引", enabled: false },
     ],
@@ -282,12 +327,6 @@
     { id: "frontend", title: "Frontend Polish", version: "v1.8", desc: "重建界面层级、导航和交互。", active: true },
     { id: "automation", title: "Automation Ops", version: "v0.9", desc: "配置计划任务、监控和运行记录。", active: false },
   ];
-  const mediaAccounts = [
-    { platform: "微信公众号", name: "Volt 研发日报", owner: "内容团队", status: "已授权" },
-    { platform: "视频号", name: "Volt Lab", owner: "运营团队", status: "需刷新" },
-    { platform: "小红书", name: "AI 工作台实验室", owner: "增长团队", status: "已授权" },
-  ];
-
   const calendarEvents = [
     { day: "09", title: "版本评审会议", time: "09:30", type: "meeting", place: "线上会议室" },
     { day: "12", title: "客户工作流复盘", time: "14:00", type: "deadline", place: "项目群" },
@@ -300,8 +339,8 @@
   ];
   const reportCards = [
     { title: "项目风险分析报告", status: "已生成", owner: "代码审查 Agent", desc: "覆盖变更风险、测试缺口、回滚建议。" },
-    { title: "客户运营周报", status: "草稿", owner: "自媒体 Agent", desc: "整理渠道矩阵、账号状态与选题表现。" },
-    { title: "自动化运行报告", status: "待复核", owner: "自动化 Agent", desc: "汇总计划任务执行、失败原因和下一步动作。" },
+    { title: "客户运营周报", status: "草稿", owner: "运营 Agent", desc: "整理客户触达、项目状态与内容草案。" },
+    { title: "项目自动化运行报告", status: "待复核", owner: "自动化 Agent", desc: "汇总前端门禁、Go/Wails 门禁和本地预览回归的执行证据。" },
   ];
   const regulationItems = [
     { title: "桌面端安全执行规范", category: "内部规则", status: "现行有效", tags: "权限 / 沙箱 / 审计" },
@@ -311,7 +350,7 @@
   const documentItems = [
     { title: "需求澄清记录模板", type: "模板", count: 18, status: "可用" },
     { title: "项目复盘文书", type: "归档", count: 42, status: "已索引" },
-    { title: "自动化配置说明", type: "说明", count: 9, status: "待更新" },
+    { title: "项目自动化配置说明", type: "说明", count: 9, status: "已更新" },
   ];
   const resourceItems = [
     { title: "项目资料库", source: "workspace", size: "128 files", status: "已同步" },
@@ -319,9 +358,16 @@
     { title: "Agent 核心文件", source: "memory", size: "12 files", status: "已挂载" },
   ];
   let teamRooms = $state([
-    { id: "product-lab", title: "产品研发组", members: 3, active: "2 个 Agent 在线", desc: "围绕桌面端体验、代码质量和发布节奏协作。", leader: "代码审查 Agent", status: "运行中", topic: "桌面端体验复刻", queue: "3 条任务", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"] },
-    { id: "ops-growth", title: "运营增长组", members: 2, active: "3 个任务进行中", desc: "处理自媒体选题、账号配置和客户触达。", leader: "资料研究 Agent", status: "待配置", topic: "渠道矩阵运营", queue: "5 条任务", memberIds: ["research", "automation"], avatars: ["R", "A"] },
-    { id: "delivery-review", title: "交付审查组", members: 3, active: "1 个报告待审", desc: "审查项目风险、交付记录和验收标准。", leader: "自动化 Agent", status: "已启用", topic: "项目验收复盘", queue: "2 条任务", memberIds: ["automation", "code-review", "research"], avatars: ["A", "C", "R"] },
+    { id: "product-lab", title: "产品研发组", members: 3, active: "2 个 Agent 在线", desc: "围绕桌面端体验、代码质量和发布节奏协作。", leader: "代码审查 Agent", leaderId: "code-review", status: "运行中", topic: "桌面端体验复刻", queue: "3 条任务", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"] },
+    { id: "ops-growth", title: "运营增长组", members: 2, active: "3 个任务进行中", desc: "处理客户触达、内容草案和项目跟进。", leader: "资料研究 Agent", leaderId: "research", status: "待配置", topic: "客户运营协同", queue: "5 条任务", memberIds: ["research", "automation"], avatars: ["R", "A"] },
+    { id: "delivery-review", title: "交付审查组", members: 3, active: "1 个报告待审", desc: "审查项目风险、交付记录和验收标准。", leader: "自动化 Agent", leaderId: "automation", status: "已启用", topic: "项目验收复盘", queue: "2 条任务", memberIds: ["automation", "code-review", "research"], avatars: ["A", "C", "R"] },
+  ]);
+  type TeamChatMessage = { id: string; teamId: string; role: "user" | "agent"; agentId?: string; agentName?: string; agentAvatar?: string; content: string };
+  let teamChatMessages = $state<TeamChatMessage[]>([
+    { id: "product-lab-system-1", teamId: "product-lab", role: "agent", agentId: "code-review", agentName: "代码审查 Agent", agentAvatar: "C", content: "我会先拆解当前桌面端体验问题，再把验证点分配给资料研究和自动化 Agent。" },
+    { id: "product-lab-system-2", teamId: "product-lab", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "已整理 AORISTLAWER 参考路径，建议优先同步 TeamsPage、CreateTeamModal 和 TeamChatPage 的交互结构。" },
+    { id: "ops-growth-system-1", teamId: "ops-growth", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "客户触达素材已汇总，下一步可以生成项目跟进话术和执行清单。" },
+    { id: "delivery-review-system-1", teamId: "delivery-review", role: "agent", agentId: "automation", agentName: "自动化 Agent", agentAvatar: "A", content: "验收流程已准备：构建、检查、预览、残留文案扫描会按顺序执行。" },
   ]);
   const filteredTeamBuilderAgents = $derived(agentCards.filter((agent) => {
     const keyword = teamBuilderSearch.trim().toLowerCase();
@@ -339,7 +385,7 @@
   ];
   const operationLogs = [
     { action: "创建 Agent", target: "代码审查 Agent", user: "我的", time: "刚刚", result: "成功" },
-    { action: "更新自动化", target: "每日代码巡检", user: "我的", time: "12 分钟前", result: "成功" },
+    { action: "更新自动化", target: "桌面前端质量门禁", user: "我的", time: "12 分钟前", result: "成功" },
     { action: "关联项目", target: "Volt GUI 桌面端重构", user: "我的", time: "28 分钟前", result: "成功" },
   ];
   const searchResults = [
@@ -439,7 +485,7 @@
     }
   }
 
-  function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; sidebarCollapsed = false; userMenuOpen = false; }
+  function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; }
   function openUserPanelDialog(layer: UserPanelDialog) { userPanelDialog = layer; userMenuOpen = false; }
   function userPanelDialogTitle() {
     if (userPanelDialog === "models") return "模型管理";
@@ -456,39 +502,112 @@
     return "用户中心弹窗。";
   }
   function focusNewTask() { openWorkLayer("newTask"); void tick().then(focusComposer); }
+  async function openUnifiedCodeTask() {
+    openWorkLayer("newTask");
+    codeInspectorOpen = true;
+    await tick();
+    if (hasWailsBindings()) await refreshCodeDock();
+    focusComposer();
+  }
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
+  function customerProjects(customer = selectedCustomer()) { return projectCards.filter((project) => customer.projectIds.includes(project.id)); }
+  function customerMaterials(customer = selectedCustomer()) { return customerMaterialRows.filter((item) => item.customerId === customer.id); }
+  function customerSchedules(customer = selectedCustomer()) { return customerScheduleRows.filter((item) => item.customerId === customer.id); }
+  function customerTodos(customer = selectedCustomer()) { return customerTodoRows.filter((item) => item.customerId === customer.id); }
   function selectedAgent() { return agentCards.find((agent) => agent.id === selectedAgentId) ?? agentCards[0]; }
   function selectedHearingRoom() { return hearingRooms.find((room) => room.title === selectedHearingTitle) ?? hearingRooms[0]; }
   function selectedTeamRoom() { return teamRooms.find((team) => team.title === selectedTeamTitle) ?? teamRooms[0]; }
   function teamMembers(team = selectedTeamRoom()) { return (team?.memberIds ?? []).map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
+  function teamLeaderId(team = selectedTeamRoom()) { return team?.leaderId || team?.memberIds?.[0] || ""; }
+  function teamLeader(team = selectedTeamRoom()) { return agentCards.find((agent) => agent.id === teamLeaderId(team)) ?? teamMembers(team)[0]; }
+  function selectedTeamChatMessages() { return teamChatMessages.filter((message) => message.teamId === selectedTeamRoom()?.id); }
   function selectedTeamBuilderMembers() { return teamBuilderMemberIds.map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
   function openTeamBuilder(teamTitle?: string) {
     const team = teamRooms.find((item) => item.title === teamTitle);
     teamConfigTitle = teamTitle;
     teamBuilderName = team?.title ?? "";
     teamBuilderMemberIds = team?.memberIds ? [...team.memberIds] : ["code-review", "research"];
+    teamBuilderLeaderId = team?.leaderId ?? team?.memberIds?.[0] ?? "code-review";
     teamBuilderSearch = "";
     configDialog = "team";
   }
   function toggleTeamBuilderMember(agentId: string) {
-    teamBuilderMemberIds = teamBuilderMemberIds.includes(agentId)
-      ? teamBuilderMemberIds.filter((id) => id !== agentId)
-      : teamBuilderMemberIds.length >= 10
-        ? teamBuilderMemberIds
-        : [...teamBuilderMemberIds, agentId];
+    if (teamBuilderMemberIds.includes(agentId)) {
+      const nextMembers = teamBuilderMemberIds.filter((id) => id !== agentId);
+      teamBuilderMemberIds = nextMembers;
+      if (teamBuilderLeaderId === agentId) teamBuilderLeaderId = nextMembers[0] ?? "";
+      return;
+    }
+    if (teamBuilderMemberIds.length >= 10) return;
+    teamBuilderMemberIds = [...teamBuilderMemberIds, agentId];
+    if (!teamBuilderLeaderId) teamBuilderLeaderId = agentId;
+  }
+  function toggleTeamBuilderLeader(agentId: string) {
+    if (!teamBuilderMemberIds.includes(agentId)) return;
+    teamBuilderLeaderId = agentId;
+  }
+  function openTeamChat(teamTitle: string) {
+    selectedTeamTitle = teamTitle;
+    teamViewMode = "chat";
+  }
+  function deleteTeam(teamId: string) {
+    const nextTeams = teamRooms.filter((team) => team.id !== teamId);
+    teamRooms = nextTeams;
+    if (!nextTeams.some((team) => team.title === selectedTeamTitle)) {
+      selectedTeamTitle = nextTeams[0]?.title;
+      if (teamViewMode === "chat" && !selectedTeamTitle) teamViewMode = "teams";
+    }
+  }
+  function addTeamChatAttachment() {
+    const nextIndex = teamChatAttachments.length + 1;
+    teamChatAttachments = [...teamChatAttachments, `团队材料-${nextIndex}.md`];
+  }
+  function removeTeamChatAttachment(index: number) {
+    teamChatAttachments = teamChatAttachments.filter((_, itemIndex) => itemIndex !== index);
+  }
+  function sendTeamChat() {
+    const text = teamChatInput.trim();
+    const team = selectedTeamRoom();
+    if (!text || !team || teamChatSending) return;
+    const members = teamMembers(team);
+    const responders = members.length ? members.slice(0, Math.min(3, members.length)) : agentCards.slice(0, 2);
+    const now = Date.now();
+    teamChatInput = "";
+    teamChatSending = true;
+    teamChatMessages = [
+      ...teamChatMessages,
+      { id: `${team.id}-user-${now}`, teamId: team.id, role: "user" as const, content: text },
+      ...responders.map((agent, index) => ({
+        id: `${team.id}-agent-${now}-${index}`,
+        teamId: team.id,
+        role: "agent" as const,
+        agentId: agent.id,
+        agentName: agent.name,
+        agentAvatar: agent.name.slice(0, 1),
+        content: index === 0
+          ? `收到任务。我会作为 Team Leader 先拆解目标：${text}。接下来同步分工、风险点和验证步骤。`
+          : `我会补充 ${agent.role} 视角，围绕资料、执行和验收输出可落地建议。`,
+      })),
+    ];
+    window.setTimeout(() => {
+      teamChatSending = false;
+    }, 380);
   }
   function saveTeamBuilder() {
     const name = teamBuilderName.trim();
     if (!name || teamBuilderMemberIds.length === 0) return;
     const memberAgents = teamBuilderMemberIds.map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards;
+    const leaderId = teamBuilderMemberIds.includes(teamBuilderLeaderId) ? teamBuilderLeaderId : teamBuilderMemberIds[0];
+    const leaderAgent = memberAgents.find((agent) => agent.id === leaderId) ?? memberAgents[0];
     const nextTeam = {
       id: teamConfigTitle ? (teamRooms.find((team) => team.title === teamConfigTitle)?.id ?? `team-${Date.now()}`) : `team-${Date.now()}`,
       title: name,
       members: memberAgents.length,
       active: `${Math.min(memberAgents.length, 3)} 个 Agent 在线`,
       desc: memberAgents.map((agent) => agent.name).join("、") || "新配置的 Agent 团队。",
-      leader: memberAgents[0]?.name ?? "Team Leader",
+      leader: leaderAgent?.name ?? "Team Leader",
+      leaderId,
       status: "已配置",
       topic: "团队协作任务",
       queue: "0 条任务",
@@ -526,7 +645,7 @@
     if (configDialog === "project") return "新建项目";
     if (configDialog === "customer") return "新建客户";
     if (configDialog === "hearing") return "创建模拟庭辩";
-    if (configDialog === "team") return "创建团队";
+    if (configDialog === "team") return teamConfigTitle ? "编辑 Agent 团队" : "配置 Agent 团队";
     if (configDialog === "dossier") return "新建资料卷宗";
     if (configDialog === "selectProject") return "选择项目";
     if (configDialog === "selectCustomer") return "选择客户";
@@ -741,12 +860,12 @@
     const isPrimary = event.metaKey || event.ctrlKey;
     if (isPrimary && event.key === "1") {
       event.preventDefault();
-      activityMode = "work";
+      openWorkLayer("today");
       return;
     }
     if (isPrimary && event.key === "2") {
       event.preventDefault();
-      activityMode = "code";
+      void openUnifiedCodeTask();
       return;
     }
     if (isPrimary && event.key.toLowerCase() === "k") {
@@ -793,15 +912,16 @@
   }
 
   async function openCodeInspector() {
-    activityMode = "code";
+    openWorkLayer("newTask");
     codeInspectorOpen = true;
-    await refreshCodeDock();
+    await tick();
+    if (hasWailsBindings()) await refreshCodeDock();
   }
 
   async function previewFile(path: string) {
     filePreview = await app().ReadFile(path);
     diffPreview = undefined;
-    activityMode = "code";
+    openWorkLayer("newTask");
     codeInspectorOpen = true;
   }
 
@@ -809,7 +929,7 @@
     const [diff, preview] = await Promise.all([app().WorkspaceDiff(path), app().ReadFile(path)]);
     diffPreview = diff;
     filePreview = preview;
-    activityMode = "code";
+    openWorkLayer("newTask");
     codeInspectorOpen = true;
   }
 
@@ -844,7 +964,7 @@
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
     <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class:active={activityMode === "code"} class="brand-mode-switch" type="button" onclick={() => (activityMode = activityMode === "code" ? "work" : "code")} aria-label="切换代码工作台"><Code2 size={14} /><span>{activityMode === "code" ? "工作台" : "代码"}</span></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
+      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class:active={activityMode === "work" && workLayer === "newTask"} class="brand-mode-switch" type="button" onclick={focusNewTask} aria-label="打开新建任务"><Plus size={14} /><span>任务</span></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
       <nav class="workspace-nav" aria-label="工作台导航">
         {#each workspaceNav as section (section.title)}<section><h2>{section.title}</h2>{#each section.items as item (item.label)}{@const Icon = navIcon(item.icon)}<button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkLayer(item.layer)}><span class="nav-icon"><Icon size={15} /></span><span>{item.label}</span>{#if item.badge}<em>{item.badge}</em>{/if}</button>{/each}</section>{/each}
 
@@ -857,16 +977,16 @@
       <div class="stage__surface">
         {#if loading}
           <div class="content__loading">{t.app.loading}</div>
-        {:else if showTranscript}
+        {:else if showActiveTranscript}
           <section class="conversation-view">
             <header class="conversation-header">
               <div>
                 <strong>{activeTab?.topicTitle || t.activity.untitled}</strong>
                 <span>{activeTab?.workspaceName || t.common.global}</span>
               </div>
-              <button type="button" onclick={() => (activityMode = "code")}>
+              <button type="button" onclick={openCodeInspector}>
                 <Code2 size={15} />
-                {t.home.openInCode}
+                代码状态
               </button>
             </header>
             <div class="conversation">
@@ -884,8 +1004,8 @@
           </section>
         {:else if activityMode === "work"}
           <section class="workbench aorist-workbench">
-            <header class="stage-topbar"><div><span>Workbench</span><strong>{workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div><div class="stage-topbar__actions"><button type="button" onclick={() => openWorkLayer("today")}>工作台入口</button><button type="button" onclick={focusNewTask}><Plus size={14} /> 新建任务</button><button type="button" onclick={() => (activityMode = "code")}><Code2 size={14} /> 代码工作台</button></div></header>
-            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建任务</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>管理项目</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            <header class="stage-topbar"><div><span>Workbench</span><strong>{workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div><div class="stage-topbar__actions"><button type="button" onclick={() => openWorkLayer("today")}>工作台入口</button><button type="button" onclick={focusNewTask}><Plus size={14} /> 新建任务</button><button type="button" onclick={openCodeInspector}><Code2 size={14} /> 代码状态</button></div></header>
+            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建任务</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -954,14 +1074,6 @@
                       onClientChange={linkCustomerById}
                     />
                     <div class="agent-compose-meta">
-                      <button type="button" onclick={() => openConfigDialog("selectProject")}>
-                        <FolderKanban size={14} />
-                        关联项目
-                      </button>
-                      <button type="button" onclick={() => openConfigDialog("selectCustomer")}>
-                        <ContactRound size={14} />
-                        关联客户
-                      </button>
                       {#if linkedProject}<span>项目：{linkedProject}</span>{/if}
                       {#if linkedCustomer}<span>客户：{linkedCustomer}</span>{/if}
                     </div>
@@ -971,34 +1083,60 @@
                 </div>
               </section>
             {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button">新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.desc}</p><em>{item.due}</em></div><span>{item.state}</span></article>{/each}</div></section>
-            {:else if workLayer === "automations"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Automation</span><strong>自动化</strong></div><button type="button">新增自动化</button></div><div class="aorist-card-grid">{#each runningAutomations as item (item.id)}<div class="automation-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") automationDialog = item.id; }} onclick={() => (automationDialog = item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><dl><dt>运行时长</dt><dd>{formatRuntime(item.startedAtMs)}</dd><dt>频率</dt><dd>{item.cadence}</dd></dl><footer role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}><button type="button">{item.status === "运行中" ? "暂停" : "开始"}</button><button type="button" onclick={() => (automationDialog = item.id)}>编辑</button><button type="button">删除</button></footer></div>{/each}</div></section>
+            {:else if workLayer === "automations"}
+              <section class="aorist-page">
+                <div class="aorist-toolbar">
+                  <div><span>Project Automation</span><strong>项目自动化</strong></div>
+                  <button type="button">新增验证自动化</button>
+                </div>
+                <div class="aorist-card-grid">
+                  {#each runningAutomations as item (item.id)}
+                    <div class="automation-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") automationDialog = item.id; }} onclick={() => (automationDialog = item.id)}>
+                      <span>{item.status}</span>
+                      <strong>{item.title}</strong>
+                      <p>{item.desc}</p>
+                      <dl>
+                        <dt>覆盖范围</dt><dd>{item.scope}</dd>
+                        <dt>验证命令</dt><dd>{item.command}</dd>
+                        <dt>触发条件</dt><dd>{item.cadence}</dd>
+                      </dl>
+                      <footer role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
+                        <button type="button">{item.status === "运行中" ? "暂停" : "开始"}</button>
+                        <button type="button" onclick={() => (automationDialog = item.id)}>编辑</button>
+                        <button type="button">删除</button>
+                      </footer>
+                    </div>
+                  {/each}
+                </div>
+              </section>
             {:else if workLayer === "agents"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Agent Center</span><strong>Agent 中心</strong></div><div><button type="button" onclick={() => { distillStep = 1; openConfigDialog("distill"); }}>蒸馏 Agent</button><button type="button" onclick={() => openAgentWizard()}>创建 Agent</button></div></div><label class="aorist-search"><span>搜索 Agent</span><input placeholder="输入 Agent 名称或职责" /></label><div class="aorist-card-grid agent-grid">{#each agentCards as agent (agent.id)}{@const AgentIcon = agentIcon(agent.id)}<div class="agent-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") openAgentWizard(agent.id); }} onclick={() => openAgentWizard(agent.id)}><header><span><AgentIcon size={19} /></span><div><strong>{agent.name}</strong><em>{agent.role}</em></div><button type="button" onclick={(event) => event.stopPropagation()}><Trash2 size={14} /></button></header><p>{agent.desc}</p><footer><span><Zap size={13} /> {agent.runs} 次运行</span><b>{agent.status}</b></footer></div>{/each}</div></section>
             {:else if workLayer === "projects"}
-              <section class="aorist-page management-page">
-                <div class="management-stats">
+              <section class="aorist-page management-page project-management-page">
+                <div class="management-stats project-stats">
                   <article><div><span>项目总数</span><strong>{projectCards.length}</strong><em>全部在库项目</em></div><FolderKanban size={18} /></article>
                   <article><div><span>进行中</span><strong>{projectCards.filter((project) => project.status === "active").length}</strong><em>当前执行项目</em></div><Gauge size={18} /></article>
-                  <article><div><span>已归档</span><strong>{projectCards.filter((project) => project.status === "closed").length}</strong><em>完成复盘项目</em></div><ShieldCheck size={18} /></article>
-                  <article><div><span>预算合计</span><strong>¥173.0 万</strong><em>按当前项目估算</em></div><BriefcaseBusiness size={18} /></article>
+                  <article><div><span>待办事项</span><strong>{projectTotalTodos}</strong><em>跨项目任务池</em></div><ListTodo size={18} /></article>
+                  <article><div><span>预算合计</span><strong>{projectBudgetTotalText}</strong><em>按当前项目估算</em></div><BriefcaseBusiness size={18} /></article>
                 </div>
-                <div class="management-controls">
-                  <label class="management-search"><Search size={16} /><input bind:value={projectSearch} placeholder="搜索项目名称、客户、负责人或阶段" /></label>
+                <div class="management-controls project-controls">
+                  <label class="management-search"><Search size={16} /><input bind:value={projectSearch} placeholder="搜索项目名称、编号、客户、负责人、阶段、Agent" /></label>
                   <div class="management-tabs" role="tablist" aria-label="项目状态筛选">
                     <button class:active={projectStatusFilter === "all"} type="button" onclick={() => (projectStatusFilter = "all")}>全部</button>
                     <button class:active={projectStatusFilter === "active"} type="button" onclick={() => (projectStatusFilter = "active")}>进行中</button>
-                    <button class:active={projectStatusFilter === "closed"} type="button" onclick={() => (projectStatusFilter = "closed")}>已结束</button>
+                    <button class:active={projectStatusFilter === "closed"} type="button" onclick={() => (projectStatusFilter = "closed")}>已归档</button>
                   </div>
                   <button class="management-primary" type="button" onclick={() => openConfigDialog("project")}><Plus size={15} /> 新建项目</button>
                 </div>
-                <div class="management-list">
+                <div class="project-list-panel project-list-panel--single">
                   {#each filteredProjects as project (project.id)}
-                    <button class="management-card matter-card" type="button" onclick={() => { selectedProjectId = project.id; projectDetailOpen = true; }}>
+                    <button class="management-card matter-card project-matter-card" type="button" onclick={() => { selectedProjectId = project.id; projectDetailOpen = true; }}>
                       <span class="management-card__icon"><FolderKanban size={20} /></span>
                       <div class="management-card__body">
-                        <strong>{project.name}</strong>
-                        <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span>{#if project.court}<em>{project.court}</em>{/if}</div>
-                        <p>{project.desc}</p>
-                        <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>客户：{project.client}</span></div>
+                        <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
+                        <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span><em>{project.priority}优先级</em><em class:riskHigh={project.risk === "中风险"}>{project.risk}</em></div>
+                        <p>{project.court || project.desc}</p>
+                        <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>委托人：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
+                        <div class="project-progress-line"><i style={`--progress:${project.progress}%`}></i><span>{project.progress}%</span></div>
                       </div>
                       <b>›</b>
                     </button>
@@ -1008,7 +1146,7 @@
                 </div>
               </section>
             {:else if workLayer === "customers"}
-              <section class="aorist-page management-page">
+              <section class="aorist-page management-page customer-management-page">
                 <div class="management-stats">
                   <article><div><span>客户总数</span><strong>{customerCards.length}</strong><em>全部客户档案</em></div><UsersRound size={18} /></article>
                   <article><div><span>企业客户</span><strong>{customerCards.filter((customer) => customer.type === "企业").length}</strong><em>机构与团队主体</em></div><BriefcaseBusiness size={18} /></article>
@@ -1016,25 +1154,23 @@
                   <article><div><span>高风险客户</span><strong>{customerCards.filter((customer) => customer.riskLevel === "high").length}</strong><em>需重点跟进</em></div><ShieldCheck size={18} /></article>
                 </div>
                 <div class="management-controls">
-                  <label class="management-search"><Search size={16} /><input bind:value={customerSearch} placeholder="搜索客户名称、电话、邮箱或风险等级" /></label>
-                  <div class="management-tabs" role="tablist" aria-label="客户类型筛选">
-                    <button class:active={customerTypeFilter === "all"} type="button" onclick={() => (customerTypeFilter = "all")}>全部</button>
-                    <button class:active={customerTypeFilter === "company"} type="button" onclick={() => (customerTypeFilter = "company")}>企业</button>
-                    <button class:active={customerTypeFilter === "person"} type="button" onclick={() => (customerTypeFilter = "person")}>自然人</button>
-                    <button class:active={customerTypeFilter === "risk"} type="button" onclick={() => (customerTypeFilter = "risk")}>高风险</button>
-                  </div>
+                  <label class="management-search"><Search size={16} /><input bind:value={customerSearch} placeholder="搜索客户名称..." /></label>
                   <button class="management-primary" type="button" onclick={() => openConfigDialog("customer")}><Plus size={15} /> 新建客户</button>
                 </div>
                 <div class="management-list">
                   {#each filteredCustomers as customer (customer.id)}
                     {@const CustomerIcon = customer.type === "企业" ? BriefcaseBusiness : ContactRound}
-                    <button class="management-card client-card" type="button" onclick={() => { selectedCustomerId = customer.id; customerDetailOpen = true; }}>
-                      <span class="management-card__icon"><CustomerIcon size={20} /></span>
+                    <button class="management-card client-card" type="button" onclick={() => { selectedCustomerId = customer.id; customerDetailTab = "overview"; customerDetailOpen = true; }}>
+                      <span class="client-avatar"><CustomerIcon size={20} /></span>
                       <div class="management-card__body">
-                        <strong>{customer.name}</strong>
-                        <div class="management-badges"><span>{customer.type}</span><span>{customer.industry}</span><em class:riskHigh={customer.riskLevel === "high"}>{customer.risk}</em></div>
-                        <div class="management-meta"><span><ContactRound size={13} />{customer.phone}</span><span><MessageSquare size={13} />{customer.email}</span><span>{customer.matters} 个项目</span></div>
+                        <div class="client-card-title"><strong>{customer.name}</strong><span>{customer.type}</span>{#if customer.riskLevel === "high"}<AlertTriangle size={14} />{/if}</div>
+                        <div class="client-contact-row">
+                          <span><Phone size={13} />{customer.phone}</span>
+                          <span><Mail size={13} />{customer.email}</span>
+                          <span><BriefcaseBusiness size={13} />{customer.industry || "个人档案"}</span>
+                        </div>
                       </div>
+                      <aside class="client-card-side"><span>{customer.matters} 个项目</span><em class:riskHigh={customer.riskLevel === "high"}>{customer.risk}</em></aside>
                       <b>›</b>
                     </button>
                   {:else}
@@ -1045,96 +1181,172 @@
             {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button">同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button"><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
             {:else if workLayer === "mockHearing"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Mock Hearing</span><strong>模拟庭辩</strong></div><div><button type="button" onclick={() => openConfigDialog("hearing")}>创建庭辩</button><button type="button" onclick={() => (selectedHearingTitle = hearingRooms[0]?.title)}>进入庭辩室</button></div></div><div class="aorist-card-grid">{#each hearingRooms as room (room.title)}<button class="agent-card hearing-card" type="button" onclick={() => (selectedHearingTitle = room.title)}><header><span>辩</span><div><strong>{room.title}</strong><em>{room.stage}</em></div></header><p>{room.role}</p><footer><span>{room.next}</span><b>AI 庭辩</b></footer></button>{/each}</div></section>
             {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button">批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
-            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="aorist-toolbar"><div><span>Resource Center</span><strong>资料中心</strong></div><div><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "library"} type="button" onclick={() => (resourceTab = "library")}>文书库</button><button class:active={resourceTab === "regulations"} type="button" onclick={() => (resourceTab = "regulations")}>法规库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div>{#if resourceTab === "resources"}<div class="aorist-card-grid">{#each resourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{/each}</div>{:else if resourceTab === "library"}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入文书</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button></div><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div>{:else if resourceTab === "regulations"}<div class="resource-actions"><button type="button">新增法规</button><button type="button">同步订阅源</button></div><label class="aorist-search"><span>搜索法规与规则</span><input placeholder="搜索标题、条文或标签" /></label><div class="knowledge-layout"><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div><aside class="knowledge-preview"><span>法规预览</span><strong>{regulationItems[0].title}</strong><p>用于展示全文条文、标签、效力状态、导入来源和更新记录。资料中心统一承载法规、文书、资料、检索与导入任务。</p></aside></div>{:else if resourceTab === "search"}<label class="aorist-search"><span>跨项目、客户、文书、法规检索</span><input placeholder="输入关键词，检索所有工作台内容" /></label><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="aorist-toolbar"><div><span>Resource Center</span><strong>资料中心</strong></div><div><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div>{#if resourceTab === "resources"}<div class="aorist-card-grid">{#each resourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div><label class="aorist-search"><span>搜索文书、法规与规则</span><input placeholder="搜索标题、条文、模板或标签" /></label><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文书知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>法规知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文书、法规、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<label class="aorist-search"><span>跨项目、客户、文书、法规检索</span><input placeholder="输入关键词，检索所有工作台内容" /></label><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
-                <div class="team-page-head">
-                  <div>
-                    <h1><UsersRound size={30} />Agent 团队协作</h1>
-                    <p>配置并管理多 Agent 工作小组，也可以在 Office 视图中查看团队状态、席位和任务流。</p>
-                  </div>
-                  <div class="team-head-actions">
-                    <div class="team-view-switch" role="tablist" aria-label="团队视图">
-                      <button class:active={teamViewMode === "teams"} type="button" onclick={() => (teamViewMode = "teams")}><UsersRound size={15} />团队列表</button>
-                      <button class:active={teamViewMode === "office"} type="button" onclick={() => (teamViewMode = "office")}><BriefcaseBusiness size={15} />Agent Office</button>
-                    </div>
-                    <button class="team-primary" type="button" onclick={() => openTeamBuilder()}><Plus size={15} />配置新组</button>
-                  </div>
-                </div>
-
-                {#if teamViewMode === "office"}
-                  <div class="team-office-shell">
-                    <div class="team-office-toolbar">
-                      <select value={selectedTeamTitle || teamRooms[0]?.title || ""} onchange={(event) => (selectedTeamTitle = (event.currentTarget as HTMLSelectElement).value)}>
-                        {#each teamRooms as team (team.id)}
-                          <option value={team.title}>{team.title}</option>
-                        {/each}
-                      </select>
-                      <button type="button" onclick={() => (selectedTeamTitle = selectedTeamTitle || teamRooms[0]?.title)}>重载办公室</button>
-                    </div>
-                    <div class="team-office-stage">
-                      <div class="team-office-status">
-                        <span>{selectedTeamRoom()?.status}</span>
-                        <strong>{selectedTeamRoom()?.title} Office</strong>
-                        <p>{selectedTeamRoom()?.leader}: 正在推进 {selectedTeamRoom()?.topic}</p>
+                {#if teamViewMode === "chat"}
+                  {@const activeTeam = selectedTeamRoom()}
+                  <div class="team-chat-shell">
+                    <header class="team-chat-header">
+                      <div class="team-chat-title">
+                        <button type="button" aria-label="返回团队大厅" onclick={() => (teamViewMode = "teams")}><ArrowLeft size={16} /></button>
+                        <span><UsersRound size={16} /></span>
+                        <strong>{activeTeam?.title || "Agent Team"}</strong>
+                        <button type="button" title="编辑团队" onclick={() => openTeamBuilder(activeTeam?.title)}><Pencil size={14} /></button>
                       </div>
-                      <div class="team-office-grid">
-                        {#each teamMembers() as agent, index (agent.id)}
+                      <div class="team-member-bar">
+                        {#each teamMembers(activeTeam) as agent (agent.id)}
                           {@const AgentIcon = agentIcon(agent.id)}
-                          <article class:leader={index === 0}>
-                            <span><AgentIcon size={18} /></span>
-                            <strong>{agent.name}</strong>
-                            <em>{index === 0 ? "Team Leader" : "Agent Seat"}</em>
-                            <p>{index === 0 ? "正在拆解任务和同步结论" : agent.desc}</p>
-                          </article>
+                          <span class:leader={agent.id === teamLeaderId(activeTeam)}>
+                            <i><AgentIcon size={12} /></i>
+                            {agent.name}
+                            {#if agent.id === teamLeaderId(activeTeam)}<b>Team Leader</b>{/if}
+                          </span>
                         {/each}
                       </div>
-                      <div class="team-office-memo">
-                        <strong>Office Memo</strong>
-                        <p>{selectedTeamRoom()?.title} 已接入团队协作协议，成员状态、任务流和会话记录会同步到工作台。</p>
-                      </div>
-                    </div>
-                  </div>
-                {:else}
-                  <div class="team-card-grid">
-                    {#each teamRooms as team (team.id)}
-                      <article class="team-list-card team-card">
-                        <header>
-                          <span><UsersRound size={22} /></span>
-                          <div class="team-card-actions" role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
-                            <button type="button" title="配置团队" onclick={() => openTeamBuilder(team.title)}><Settings size={15} /></button>
-                            <button type="button" title="删除团队"><Trash2 size={15} /></button>
-                          </div>
-                        </header>
-                        <main>
-                          <strong>{team.title}</strong>
-                          <p>{team.desc}</p>
-                        </main>
-                        <footer>
-                          <span>包含 {team.members} 位协作 Agent</span>
-                          <div class="team-avatar-stack">
-                            {#each team.avatars as avatar, index (avatar)}
-                              <i style={`z-index:${10 - index}`}>{avatar}</i>
+                    </header>
+                    <main class="team-message-list">
+                      {#if selectedTeamChatMessages().length === 0}
+                        <div class="team-chat-empty">
+                          <div>
+                            {#each teamMembers(activeTeam) as agent (agent.id)}
+                              {@const AgentIcon = agentIcon(agent.id)}
+                              <span><AgentIcon size={18} /></span>
                             {/each}
                           </div>
-                        </footer>
-                        <div class="team-card-meta"><em>{team.active}</em><b>{team.queue}</b><button type="button" onclick={() => (selectedTeamTitle = team.title)}>进入会话</button></div>
-                      </article>
-                    {:else}
-                      <div class="team-empty-state">
-                        <UsersRound size={44} />
-                        <p>目前还没有任何 Agent 团队配置。</p>
-                        <button type="button" onclick={() => openTeamBuilder()}>点击开始配置第一组</button>
+                          <strong>团队已就绪</strong>
+                          <p>发送任务指令后，{teamMembers(activeTeam).length} 位 Agent 会依次协作输出。</p>
+                        </div>
+                      {/if}
+                      {#each selectedTeamChatMessages() as message (message.id)}
+                        {@const MessageIcon = message.role === "user" ? UserRound : agentIcon(message.agentId || "")}
+                        <article class="team-message" class:user={message.role === "user"}>
+                          <span><MessageIcon size={16} /></span>
+                          <div>
+                            {#if message.role === "agent"}
+                              <header>{message.agentName || "Agent"}{#if message.agentId === teamLeaderId(activeTeam)}<b><Crown size={11} />Team Leader</b>{/if}</header>
+                            {/if}
+                            <p>{message.content}</p>
+                          </div>
+                        </article>
+                      {/each}
+                      {#if teamChatSending}
+                        <article class="team-message team-message--loading">
+                          <span><Loader2 size={16} /></span>
+                          <div><header>Agent Team</header><p><Activity size={13} />团队成员处理中...</p></div>
+                        </article>
+                      {/if}
+                    </main>
+                    <footer class="team-compose-bar">
+                      {#if teamChatAttachments.length}
+                        <div class="team-attachments">
+                          {#each teamChatAttachments as attachment, index (attachment)}
+                            <button type="button" onclick={() => removeTeamChatAttachment(index)}>{attachment}<b>×</b></button>
+                          {/each}
+                        </div>
+                      {/if}
+                      <div class="team-compose-row">
+                        <button type="button" aria-label="上传文件" onclick={addTeamChatAttachment}><Plus size={16} /></button>
+                        <select bind:value={teamChatModel} aria-label="选择模型">
+                          {#each modelCards as model (model.name)}
+                            <option value={model.name}>{model.name}</option>
+                          {/each}
+                        </select>
+                        <textarea bind:value={teamChatInput} rows="1" placeholder="向 Agent Team 发送任务..." onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendTeamChat(); } }}></textarea>
+                        <button class="team-send" type="button" disabled={!teamChatInput.trim() || teamChatSending} onclick={sendTeamChat}>发送</button>
                       </div>
-                    {/each}
+                    </footer>
                   </div>
+                {:else}
+                  <div class="team-page-head">
+                    <div>
+                      <h1><UsersRound size={30} />Agent 团队协作</h1>
+                      <p>配置并管理多 Agent 工作小组，也可以在 Office 视图中查看团队状态、席位和任务流。</p>
+                    </div>
+                    <div class="team-head-actions">
+                      <div class="team-view-switch" role="tablist" aria-label="团队视图">
+                        <button class:active={teamViewMode === "teams"} type="button" onclick={() => (teamViewMode = "teams")}><UsersRound size={15} />团队列表</button>
+                        <button class:active={teamViewMode === "office"} type="button" onclick={() => (teamViewMode = "office")}><BriefcaseBusiness size={15} />Agent Office</button>
+                      </div>
+                      <button class="team-primary" type="button" onclick={() => openTeamBuilder()}><Plus size={15} />配置新组</button>
+                    </div>
+                  </div>
+
+                  {#if teamViewMode === "office"}
+                    <div class="team-office-shell">
+                      <div class="team-office-toolbar">
+                        <select value={selectedTeamTitle || teamRooms[0]?.title || ""} onchange={(event) => (selectedTeamTitle = (event.currentTarget as HTMLSelectElement).value)}>
+                          {#each teamRooms as team (team.id)}
+                            <option value={team.title}>{team.title}</option>
+                          {/each}
+                        </select>
+                        <button type="button" onclick={() => (selectedTeamTitle = selectedTeamTitle || teamRooms[0]?.title)}><RefreshCw size={13} />重载办公室</button>
+                      </div>
+                      <div class="team-office-stage">
+                        <div class="team-office-status">
+                          <span>{selectedTeamRoom()?.status}</span>
+                          <strong>{selectedTeamRoom()?.title} Office</strong>
+                          <p>{teamLeader()?.name}: 正在推进 {selectedTeamRoom()?.topic}</p>
+                        </div>
+                        <div class="team-office-grid">
+                          {#each teamMembers() as agent (agent.id)}
+                            {@const AgentIcon = agentIcon(agent.id)}
+                            <article class:leader={agent.id === teamLeaderId()}>
+                              <span><AgentIcon size={18} /></span>
+                              <strong>{agent.name}</strong>
+                              <em>{agent.id === teamLeaderId() ? "Team Leader" : "Agent Seat"}</em>
+                              <p>{agent.id === teamLeaderId() ? "正在拆解任务和同步结论" : agent.desc}</p>
+                            </article>
+                          {/each}
+                        </div>
+                        <div class="team-office-memo">
+                          <strong>Office Memo</strong>
+                          <p>{selectedTeamRoom()?.title} 已接入团队协作协议，成员状态、任务流和会话记录会同步到工作台。</p>
+                        </div>
+                      </div>
+                    </div>
+                  {:else}
+                    <div class="team-card-grid">
+                      {#each teamRooms as team (team.id)}
+                        <div class="team-list-card team-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") openTeamChat(team.title); }} onclick={() => openTeamChat(team.title)}>
+                          <header>
+                            <span><UsersRound size={22} /></span>
+                            <div class="team-card-actions" role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
+                              <button type="button" title="配置团队" onclick={() => openTeamBuilder(team.title)}><Settings size={15} /></button>
+                              <button type="button" title="删除团队" onclick={() => deleteTeam(team.id)}><Trash2 size={15} /></button>
+                            </div>
+                          </header>
+                          <main>
+                            <strong>{team.title}</strong>
+                            <p>{team.desc}</p>
+                          </main>
+                          <footer>
+                            <span>包含 {team.members} 位协作 Agent</span>
+                            <div class="team-avatar-stack">
+                              {#each teamMembers(team).slice(0, 3) as agent, index (agent.id)}
+                                {@const StackIcon = agentIcon(agent.id)}
+                                <i style={`z-index:${10 - index}`}><StackIcon size={14} /></i>
+                              {/each}
+                              {#if team.members > 3}<i class="team-avatar-more">+{team.members - 3}</i>{/if}
+                            </div>
+                          </footer>
+                          <div class="team-card-meta"><em>{team.active}</em><b>{team.queue}</b><button type="button">进入会话</button></div>
+                        </div>
+                      {:else}
+                        <div class="team-empty-state">
+                          <UsersRound size={44} />
+                          <p>目前还没有任何 Agent 团队配置。</p>
+                          <button type="button" onclick={() => openTeamBuilder()}>点击开始配置第一组</button>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 {/if}
               </section>
             {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openConfigDialog("model")}>添加模型</button><button type="button">刷新状态</button></div></div><div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>可选模型</em></article><article><span>远程 LLM</span><strong>ON</strong><em>已允许</em></article><article><span>密钥状态</span><strong>OK</strong><em>环境变量托管</em></article></div><div class="aorist-card-grid">{#each modelCards as model (model.name)}<article class="capability-item"><span>{model.status}</span><strong>{model.name}</strong><p>{model.provider} / {model.role}</p><button type="button">设为默认</button></article>{/each}</div></section>
             {:else if workLayer === "settings"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Settings</span><strong>系统设置</strong></div><button type="button">保存设置</button></div><div class="aorist-card-grid">{#each settingGroups as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div></section>
             {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button">立即同步</button></div><div class="aorist-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
             {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button">导出日志</button></div><div class="aorist-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
-            {:else if workLayer === "media"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Media Ops</span><strong>自媒体运营中心</strong></div><div><button type="button" onclick={() => (mediaDialog = "channels")}>渠道矩阵</button><button type="button" onclick={() => (mediaDialog = "accounts")}>账号配置</button></div></div><div class="aorist-card-grid">{#each mediaChannels as channel (channel.name)}<article class="media-card"><span>{channel.status}</span><strong>{channel.name}</strong><p>{channel.accounts} 个账号</p><em>{channel.metric}</em></article>{/each}</div></section>
             {:else}
               {@const selectedCapability = currentCapability()}
               <section class="aorist-page capability-manager capability-console">
@@ -1257,7 +1469,7 @@
                     <PanelLeft size={15} />
                     <span>{t.home.local}</span>
                   </button>
-                  <button type="button" onclick={() => (activityMode = "code")}>
+                  <button type="button" onclick={openCodeInspector}>
                     <Folder size={15} />
                     <span>{activeTab?.workspaceName || t.common.global}</span>
                   </button>
@@ -1318,7 +1530,7 @@
         {/if}
       </div>
 
-      {#if activityMode === "code" && codeInspectorOpen}
+      {#if codeInspectorOpen}
         <aside class="code-inspector" aria-label={t.home.codeTools.title}>
           <header>
             <strong>{t.home.codeTools.title}</strong>
@@ -1341,19 +1553,227 @@
       {/if}
 
       {#if automationDialog && currentAutomation()}
-        <div class="modal-backdrop"><section class="config-modal"><header><div><span>Automation Config</span><strong>{currentAutomation()?.title}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>运行频率<input value={currentAutomation()?.cadence || ""} /></label><label>运行时长<input value={currentAutomation() ? formatRuntime(currentAutomation()!.startedAtMs) : ""} readonly /></label><label class="wide">任务说明<textarea rows="4" value={currentAutomation()?.desc || ""}></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button><button type="button" onclick={() => (automationDialog = undefined)}>保存配置</button></footer></section></div>
+        <div class="modal-backdrop"><section class="config-modal"><header><div><span>Automation Config</span><strong>{currentAutomation()?.title}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>覆盖范围<input value={currentAutomation()?.scope || ""} /></label><label>触发条件<input value={currentAutomation()?.cadence || ""} /></label><label class="wide">验证命令<textarea rows="3" value={currentAutomation()?.command || ""}></textarea></label><label class="wide">任务说明<textarea rows="4" value={currentAutomation()?.desc || ""}></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button><button type="button" onclick={() => (automationDialog = undefined)}>保存配置</button></footer></section></div>
       {/if}
       {#if selectedHearingTitle}
         <div class="modal-backdrop"><section class="config-modal room-modal"><header><div><span>Mock Hearing Room</span><strong>{selectedHearingRoom()?.title}</strong></div><button type="button" onclick={() => (selectedHearingTitle = undefined)}>x</button></header><div class="room-layout"><aside><span>{selectedHearingRoom()?.stage}</span><strong>{selectedHearingRoom()?.role}</strong><p>{selectedHearingRoom()?.next}</p></aside><main><article class="room-message judge"><b>审判视角</b><p>先核对争议焦点，再进入询问与反询问。</p></article><article class="room-message plaintiff"><b>主张方 Agent</b><p>基于项目记录提炼证据链和责任边界。</p></article><article class="room-message defendant"><b>答辩方 Agent</b><p>按时间线检查对方假设和缺失材料。</p></article></main></div><footer><button type="button" onclick={() => (selectedHearingTitle = undefined)}>暂停</button><button type="button" onclick={() => (selectedHearingTitle = undefined)}>生成总结</button></footer></section></div>
       {/if}
-      {#if selectedTeamTitle}
-        <div class="modal-backdrop"><section class="config-modal room-modal"><header><div><span>Team Chat</span><strong>{selectedTeamRoom()?.title}</strong></div><button type="button" onclick={() => (selectedTeamTitle = undefined)}>x</button></header><div class="team-chat-layout"><aside><strong>{selectedTeamRoom()?.members} 名成员</strong><span>{selectedTeamRoom()?.active}</span><p>{selectedTeamRoom()?.desc}</p></aside><main><article><b>我</b><p>请审查当前页面与 AORISTLAWER 对标结果。</p></article><article><b>代码审查 Agent</b><p>已检查导航、详情、弹窗与构建验证项。</p></article><article><b>产品 Agent</b><p>建议保留侧边密度，将二级内容放入右侧详情面板。</p></article></main></div><footer><button type="button" onclick={() => (selectedTeamTitle = undefined)}>关闭</button><button type="button" onclick={() => (selectedTeamTitle = undefined)}>发起协作任务</button></footer></section></div>
-      {/if}
       {#if projectDetailOpen}
-        <div class="modal-backdrop"><section class="config-modal detail-modal"><header><div><span>Project Detail</span><strong>{selectedProject()?.name}</strong></div><button type="button" onclick={() => (projectDetailOpen = false)}>x</button></header><aside class="detail-panel"><header><div><span>Project Profile</span><strong>{selectedProject()?.name}</strong></div><button type="button" onclick={() => linkProjectToTask(selectedProject()?.name || "")}>关联到新建任务</button></header><section class="detail-summary"><article><span>客户</span><strong>{selectedProject()?.client}</strong></article><article><span>阶段</span><strong>{selectedProject()?.stage}</strong></article><article><span>负责人</span><strong>{selectedProject()?.owner}</strong></article></section><div class="detail-tabs"><button class="active" type="button">概览</button><button type="button">资料</button><button type="button">待办</button><button type="button">日程</button></div><div class="detail-timeline"><article><b>最近进展</b><p>{selectedProject()?.desc}</p><em>28 分钟前</em></article><article><b>待处理事项</b><p>复核构建、预览和 Agent 配置闭环。</p><em>今天</em></article><article><b>关联资料</b><p>已挂载项目资料库、导入记录和操作日志。</p><em>已同步</em></article></div></aside></section></div>
+        {@const project = selectedProject()}
+        <div class="modal-backdrop">
+          <section class="config-modal detail-modal project-detail-modal">
+            <header class="project-detail-head">
+              <button class="project-detail-back" type="button" aria-label="返回项目列表" onclick={() => (projectDetailOpen = false)}><ArrowLeft size={16} /></button>
+              <div class="project-detail-title">
+                <div><strong>{project.name}</strong><span>{project.code} / {project.category}</span></div>
+                <em>{project.status === "closed" ? "已归档" : "进行中"}</em>
+              </div>
+              <div class="project-detail-actions">
+                <button type="button" onclick={() => linkProjectToTask(project.name)}><Activity size={14} /> 发起项目任务</button>
+                <button type="button" onclick={() => openConfigDialog("dossier")}><Plus size={14} /> 新增资料</button>
+              </div>
+            </header>
+            <aside class="detail-panel project-detail-panel">
+              <header>
+                <div><span>{project.client}</span><strong>{project.court}</strong><p>{project.desc}</p></div>
+              </header>
+              <section class="detail-summary project-detail-summary">
+                <article><span>项目阶段</span><strong>{project.stage}</strong></article>
+                <article><span>项目类型</span><strong>{project.category}</strong></article>
+                <article><span>关联资料</span><strong>{project.materials} 份</strong></article>
+                <article><span>待办事项</span><strong>{project.todos} 项</strong></article>
+              </section>
+              <div class="project-detail-body">
+                <main class="project-detail-main">
+                  <div class="detail-tabs"><button class="active" type="button">概览</button><button type="button">资料 ({project.materials})</button><button type="button">日程 ({project.events})</button><button type="button">报告 ({project.reports})</button><button type="button">待办</button></div>
+                  <section class="project-detail-card">
+                    <h3><FileText size={15} /> 项目概览</h3>
+                    <p>当前项目数据来自本地工作台记录。请在资料、报告和任务页补充可复核的上下文、执行记录与交付证据。</p>
+                    <div class="project-detail-metrics"><article><FileText size={14} /><strong>{project.materials}</strong><span>资料</span></article><article><Database size={14} /><strong>{project.reports}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
+                  </section>
+                  <section class="project-detail-card project-detail-risk">
+                    <h3><ShieldCheck size={15} /> 本地风控备忘</h3>
+                    <p>{project.nextStep}</p>
+                    <button type="button" onclick={focusNewTask}>查看执行任务</button>
+                  </section>
+                  <div class="detail-timeline project-detail-timeline">
+                    {#each project.timeline as item, index (item)}
+                      <article><b>{index + 1}. {item}</b><p>{index === 0 ? project.desc : project.nextStep}</p><em>{index === 0 ? project.updatedAt : index === 1 ? "今天" : "待复核"}</em></article>
+                    {/each}
+                  </div>
+                </main>
+                <aside class="project-detail-aside">
+                  <section>
+                    <h3>当事人结构</h3>
+                    <div><span>客户方</span><strong>{project.client}</strong></div>
+                    <div><span>负责人</span><strong>{project.owner}</strong></div>
+                  </section>
+                  <section>
+                    <h3>Agent 执行</h3>
+                    <p>{project.agent} 正在维护项目上下文、风险摘要和下一步任务建议。</p>
+                    <button type="button" onclick={() => linkProjectToTask(project.name)}>进入项目任务</button>
+                  </section>
+                </aside>
+              </div>
+            </aside>
+          </section>
+        </div>
       {/if}
       {#if customerDetailOpen}
-        <div class="modal-backdrop"><section class="config-modal detail-modal"><header><div><span>Customer Detail</span><strong>{selectedCustomer()?.name}</strong></div><button type="button" onclick={() => (customerDetailOpen = false)}>x</button></header><aside class="detail-panel"><header><div><span>Customer Profile</span><strong>{selectedCustomer()?.name}</strong></div><button type="button" onclick={() => linkCustomerToTask(selectedCustomer()?.name || "")}>关联到新建任务</button></header><section class="detail-summary"><article><span>电话</span><strong>{selectedCustomer()?.phone}</strong></article><article><span>邮箱</span><strong>{selectedCustomer()?.email}</strong></article><article><span>风险</span><strong>{selectedCustomer()?.risk}</strong></article></section><div class="detail-tabs"><button class="active" type="button">档案</button><button type="button">项目</button><button type="button">资料</button><button type="button">日程</button></div><div class="detail-timeline"><article><b>客户画像</b><p>{selectedCustomer()?.type}客户，目前关联 {selectedCustomer()?.matters} 个项目。</p><em>已建档</em></article><article><b>最近沟通</b><p>已记录访谈附件、需求跟进和自动化提醒。</p><em>12 分钟前</em></article><article><b>资料状态</b><p>关联资料可在资料库和全文检索中复用。</p><em>已索引</em></article></div></aside></section></div>
+        {@const customer = selectedCustomer()}
+        {@const linkedCustomerProjects = customerProjects(customer)}
+        {@const linkedCustomerMaterials = customerMaterials(customer)}
+        {@const linkedCustomerSchedules = customerSchedules(customer)}
+        {@const linkedCustomerTodos = customerTodos(customer)}
+        <div class="modal-backdrop">
+          <section class="config-modal detail-modal customer-detail-modal">
+            <header class="customer-detail-head">
+              <button class="customer-detail-back" type="button" aria-label="返回客户列表" onclick={() => (customerDetailOpen = false)}><ArrowLeft size={16} /></button>
+              <span class="client-avatar client-avatar--large">
+                {#if customer.type === "企业"}<BriefcaseBusiness size={24} />{:else}<UserRound size={24} />{/if}
+              </span>
+              <div class="customer-detail-title">
+                <div>
+                  <strong>{customer.name}</strong>
+                  <span><Phone size={13} />{customer.phone}<Mail size={13} />{customer.email}</span>
+                </div>
+                <em>{customer.type === "企业" ? "企业客户" : "个人客户"}</em>
+                <em class="muted">{customer.status}</em>
+              </div>
+              <button class="customer-detail-primary" type="button" onclick={() => openConfigDialog("todo")}><Plus size={14} /> 新增待办</button>
+            </header>
+            <aside class="detail-panel customer-detail-panel">
+              <div class="customer-detail-body">
+                <main class="customer-detail-main">
+                  <div class="detail-tabs" role="tablist" aria-label="客户详情标签">
+                    <button class:active={customerDetailTab === "overview"} type="button" onclick={() => (customerDetailTab = "overview")}>概览</button>
+                    <button class:active={customerDetailTab === "projects"} type="button" onclick={() => (customerDetailTab = "projects")}>项目 ({linkedCustomerProjects.length})</button>
+                    <button class:active={customerDetailTab === "materials"} type="button" onclick={() => (customerDetailTab = "materials")}>资料 ({customer.materials})</button>
+                    <button class:active={customerDetailTab === "schedules"} type="button" onclick={() => (customerDetailTab = "schedules")}>日程 ({customer.events})</button>
+                    <button class:active={customerDetailTab === "todos"} type="button" onclick={() => (customerDetailTab = "todos")}>待办</button>
+                  </div>
+                  {#if customerDetailTab === "overview"}
+                    <section class="customer-detail-card">
+                      <h3><BriefcaseBusiness size={15} /> 客户画像</h3>
+                      <div class="customer-profile-grid">
+                        <article><span>联系人</span><strong>{customer.contact}</strong></article>
+                        <article><span>当前活跃项目</span><strong>{linkedCustomerProjects.filter((project) => project.status !== "closed").length} 件</strong></article>
+                        <article><span>关联资料</span><strong>{customer.materials} 份</strong></article>
+                        <article><span>本月日程</span><strong>{customer.events} 项</strong></article>
+                      </div>
+                      <p>{customer.note}</p>
+                    </section>
+                    <div class="detail-timeline customer-detail-timeline">
+                      <article><b>客户画像</b><p>{customer.type}客户，目前关联 {customer.matters} 个项目。</p><em>已建档</em></article>
+                      <article><b>最近沟通</b><p>已记录访谈附件、需求跟进和自动化提醒。</p><em>{customer.lastContact}</em></article>
+                      <article><b>资料状态</b><p>关联资料可在资料中心和全文检索中复用。</p><em>已索引</em></article>
+                    </div>
+                  {:else if customerDetailTab === "projects"}
+                    <section class="customer-detail-card customer-tab-panel">
+                      <header class="customer-section-head">
+                        <div><h3><FolderKanban size={15} /> 关联项目</h3><p>对标 AORISTLAWER 的关联案件列表，点击后进入项目详情。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("project")}><Plus size={13} /> 新建项目</button>
+                      </header>
+                      {#if linkedCustomerProjects.length}
+                        <div class="customer-project-list">
+                          {#each linkedCustomerProjects as project (project.id)}
+                            <button type="button" onclick={() => { selectedProjectId = project.id; customerDetailOpen = false; projectDetailOpen = true; }}>
+                              <span><FolderKanban size={17} /></span>
+                              <div><strong>{project.name}</strong><em>{project.category} / {project.stage} / {project.updatedAt}</em></div>
+                              <b>{project.status === "closed" ? "已归档" : "进行中"}</b>
+                            </button>
+                          {/each}
+                        </div>
+                      {:else}
+                        <article class="detail-empty"><strong>暂无关联项目</strong><p>可在新建任务中关联客户后补齐项目记录。</p></article>
+                      {/if}
+                    </section>
+                  {:else if customerDetailTab === "materials"}
+                    <section class="customer-detail-card customer-tab-panel">
+                      <header class="customer-section-head">
+                        <div><h3><Database size={15} /> 客户资料库</h3><p>展示最近关联资料，完整 {customer.materials} 份资料继续在资料中心索引。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("resource")}><Upload size={13} /> 上传资料</button>
+                      </header>
+                      <div class="customer-resource-toolbar">
+                        <span>已展示 {linkedCustomerMaterials.length} 份</span>
+                        <button type="button" onclick={() => { customerDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>打开资料中心</button>
+                      </div>
+                      <div class="customer-detail-list">
+                        {#each linkedCustomerMaterials as material (material.title)}
+                          <button class="customer-detail-row" type="button" onclick={() => { customerDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>
+                            <span><FileText size={17} /></span>
+                            <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
+                            <b>{material.status}<small>{material.updatedAt}</small></b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无关联资料</strong><p>上传客户资料后会自动进入资料中心和全文检索。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {:else if customerDetailTab === "schedules"}
+                    <section class="customer-detail-card customer-tab-panel">
+                      <header class="customer-section-head">
+                        <div><h3><CalendarDays size={15} /> 关联日程</h3><p>同步客户本月会议、验收窗口和提醒。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("schedule")}><Plus size={13} /> 新建日程</button>
+                      </header>
+                      <div class="customer-detail-list customer-schedule-list">
+                        {#each linkedCustomerSchedules as schedule (schedule.title)}
+                          <button class="customer-detail-row" type="button" onclick={() => openWorkLayer("calendar")}>
+                            <span><CalendarDays size={17} /></span>
+                            <div><strong>{schedule.title}</strong><em>{schedule.date} {schedule.time} / {schedule.place}</em><p>{schedule.desc}</p></div>
+                            <b>{schedule.state}</b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无本月关联日程</strong><p>可新建日程并关联当前客户。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {:else}
+                    <section class="customer-detail-card customer-tab-panel">
+                      <header class="customer-section-head">
+                        <div><h3><ListTodo size={15} /> 客户待办</h3><p>对标 TodoList：聚合当前客户的执行项、优先级和截止时间。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("todo")}><Plus size={13} /> 新增待办</button>
+                      </header>
+                      <div class="customer-detail-list">
+                        {#each linkedCustomerTodos as todo (todo.title)}
+                          <button class="customer-detail-row customer-todo-row" type="button" onclick={() => linkCustomerToTask(customer.name)}>
+                            <span><ListTodo size={17} /></span>
+                            <div><strong>{todo.title}</strong><em>{todo.priority}优先级 / {todo.due}</em><p>{todo.desc}</p></div>
+                            <b>{todo.state}</b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无客户待办</strong><p>新建待办后会自动出现在当前客户档案中。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
+                </main>
+                <aside class="customer-detail-aside">
+                  <section>
+                    <h3><UserRound size={15} /> 联系信息</h3>
+                    <strong>{customer.contact || customer.name}</strong>
+                    <p><Phone size={14} />{customer.phone}</p>
+                    <p><Mail size={14} />{customer.email}</p>
+                    <p><MapPin size={14} />{customer.address}</p>
+                  </section>
+                  <section>
+                    <h3>业务指标</h3>
+                    <div><span>项目总数</span><strong>{customer.matters}</strong></div>
+                    <div><span>活跃项目</span><strong>{linkedCustomerProjects.filter((project) => project.status !== "closed").length}</strong></div>
+                    <div><span>材料数量</span><strong>{customer.materials}</strong></div>
+                    <div><span>本月日程</span><strong>{customer.events}</strong></div>
+                  </section>
+                  <section class="customer-risk-card">
+                    <h3><ShieldCheck size={15} /> 风险等级</h3>
+                    <strong>{customer.risk}</strong>
+                    <p>客户风险用于决定任务前置检查、资料复核和人工确认强度。</p>
+                    <button type="button" onclick={() => linkCustomerToTask(customer.name)}>关联到新建任务</button>
+                  </section>
+                </aside>
+              </div>
+            </aside>
+          </section>
+        </div>
       {/if}
       {#if userPanelDialog}
         {@const UserPanelIcon = navIcon(userPanelDialog)}
@@ -1383,14 +1803,50 @@
         </div>
       {/if}
       {#if configDialog}
-        <div class="modal-backdrop"><section class="config-modal"><header><div><span>Aorist Dialog</span><strong>{configDialogTitle()}</strong></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}<div class="team-builder"><section><label class="team-builder-search"><Search size={15} /><input bind:value={teamBuilderSearch} placeholder="搜索 Agent 名称或职责" /></label><span>所有智能体 ({agentCards.length})</span><div class="team-builder-list">{#each filteredTeamBuilderAgents as agent (agent.id)}{@const AgentIcon = agentIcon(agent.id)}{@const added = teamBuilderMemberIds.includes(agent.id)}<button class:active={added} type="button" onclick={() => toggleTeamBuilderMember(agent.id)}><i><AgentIcon size={16} /></i><div><strong>{agent.name}</strong><em>{agent.desc}</em></div><b>{added ? "×" : "+"}</b></button>{:else}<p>没有匹配结果</p>{/each}</div></section><aside><span>已选成员 ({teamBuilderMemberIds.length} / 10)</span><div class="team-selected-list">{#each selectedTeamBuilderMembers() as member (member.id)}<button type="button" onclick={() => toggleTeamBuilderMember(member.id)}><strong>{member.name}</strong><em>{member.role}</em><b>移除</b></button>{:else}<p>请在左侧添加至少一个智能体。</p>{/each}</div><label>团队名称 *<input bind:value={teamBuilderName} placeholder="例如 庭审突击团队" /></label></aside></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "model"}<label>Provider<select>{#each modelProviders as provider (provider)}<option>{provider}</option>{/each}</select></label><label>Base URL<input value="https://api.example.com/v1" /></label>{:else if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else if configDialog === "hearing"}<label>庭辩角色<select><option>产品方 / 交付方</option><option>主张方 / 答辩方</option></select></label><label>争议焦点<input value="需求边界与交付责任" /></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => configDialog === "team" ? saveTeamBuilder() : (configDialog = undefined)}>确认</button></footer></section></div>
+        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"}><header><div><span>{configDialog === "team" ? "Agent Team" : "Aorist Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责推进主流程的 Team Leader。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
+  <div class="team-builder">
+    <section>
+      <label class="team-builder-search">
+        <Search size={15} />
+        <input bind:value={teamBuilderSearch} placeholder="搜索" />
+      </label>
+      <span>所有智能体 ({agentCards.length})</span>
+      <div class="team-builder-list">
+        {#each filteredTeamBuilderAgents as agent (agent.id)}
+          {@const AgentIcon = agentIcon(agent.id)}
+          {@const added = teamBuilderMemberIds.includes(agent.id)}
+          <div class:active={added} class="team-builder-agent">
+            <i><AgentIcon size={16} /></i>
+            <div><strong>{agent.name}</strong><em>{agent.desc}</em></div>
+            <button type="button" aria-label={added ? `移除 ${agent.name}` : `添加 ${agent.name}`} onclick={() => toggleTeamBuilderMember(agent.id)}>{added ? "×" : "+"}</button>
+          </div>
+        {:else}
+          <p>没有匹配结果</p>
+        {/each}
+      </div>
+    </section>
+    <aside>
+      <span>已选成员 ({teamBuilderMemberIds.length} / 10)</span>
+      <div class="team-selected-list">
+        {#each selectedTeamBuilderMembers() as member (member.id)}
+          {@const MemberIcon = agentIcon(member.id)}
+          <div class="team-selected-member">
+            <i><MemberIcon size={13} /></i>
+            <strong>{member.name}</strong>
+            <button class:active={teamBuilderLeaderId === member.id} class="team-leader-button" type="button" title="设为 TL" onclick={() => toggleTeamBuilderLeader(member.id)}><Crown size={12} /></button>
+            <button class="team-remove-button" type="button" aria-label={`移除 ${member.name}`} onclick={() => toggleTeamBuilderMember(member.id)}>×</button>
+          </div>
+        {:else}
+          <p>请在左侧添加至少一个智能体。</p>
+        {/each}
+      </div>
+      <label>团队名称 *<input bind:value={teamBuilderName} placeholder="例如 庭审突击团队" /></label>
+    </aside>
+  </div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "model"}<label>Provider<select>{#each modelProviders as provider (provider)}<option>{provider}</option>{/each}</select></label><label>Base URL<input value="https://api.example.com/v1" /></label>{:else if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else if configDialog === "hearing"}<label>庭辩角色<select><option>产品方 / 交付方</option><option>主张方 / 答辩方</option></select></label><label>争议焦点<input value="需求边界与交付责任" /></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => configDialog === "team" ? saveTeamBuilder() : (configDialog = undefined)}>确认</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
         <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "创建 Agent"}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input value={agentCards.find((agent) => agent.id === selectedAgentId)?.name || ""} /></label><label>系统设定指示词<textarea rows="4" value={agentCards.find((agent) => agent.id === selectedAgentId)?.desc || ""}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>执业风格</span>{#each vibePresets as vibe (vibe)}<button type="button">{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentCards.find((agent) => agent.id === selectedAgentId)?.desc || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} type="button"><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.active ? "已启用" : "未启用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.active ? "已挂载" : "未挂载"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file (file)}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => (agentWizardOpen = false)}>完成并部署</button></footer></section></div>
-      {/if}
-      {#if mediaDialog}
-        <div class="modal-backdrop"><section class="config-modal media-config-modal"><header><div><span>Media Ops</span><strong>{mediaDialog === "channels" ? "渠道矩阵" : "账号配置"}</strong></div><button type="button" onclick={() => (mediaDialog = undefined)}>x</button></header>{#if mediaDialog === "channels"}<div class="media-config-list">{#each mediaChannels as channel (channel.name)}<article><strong>{channel.name}</strong><span>{channel.status}</span><p>{channel.accounts} 个账号 / {channel.metric}</p></article>{/each}</div>{:else}<div class="media-config-list">{#each mediaAccounts as account (account.name)}<article><strong>{account.name}</strong><span>{account.status}</span><p>{account.platform} / {account.owner}</p></article>{/each}</div>{/if}<footer><button type="button" onclick={() => (mediaDialog = undefined)}>关闭</button><button type="button" onclick={() => (mediaDialog = undefined)}>保存配置</button></footer></section></div>
       {/if}
 
       {#if capabilityCreateOpen}
@@ -1525,6 +1981,7 @@
     left: 0;
     z-index: 2;
     height: 44px;
+    pointer-events: none;
   }
 
   .stage__surface {
@@ -1693,7 +2150,7 @@
   .code-inspector {
     --wails-draggable: no-drag;
     position: absolute;
-    top: 24px;
+    top: 72px;
     right: 24px;
     bottom: 24px;
     z-index: 5;
@@ -1929,7 +2386,7 @@
   .aorist-workbench{padding:0;overflow:hidden}.aorist-page{min-height:0;height:100%;overflow:auto;padding:18px;background:radial-gradient(circle at 18% 0%,rgba(31,95,191,.1),transparent 32%),#f7f8fb}.hero-panel{padding:28px;border:1px solid #dfe5ef;border-radius:22px;background:linear-gradient(135deg,#fff 0%,#eef4ff 100%);box-shadow:0 16px 34px rgba(15,23,42,.08)}.hero-panel h1{max-width:760px;margin:10px 0;color:#111827;font-size:clamp(28px,4vw,46px);line-height:1.05;letter-spacing:-.04em}.hero-panel p{max-width:680px;margin:0 0 18px;color:#5f6774;line-height:1.7}.hero-panel div{display:flex;gap:10px;flex-wrap:wrap}.aorist-stats,.aorist-card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.aorist-stats article,.aorist-card,.aorist-list article,.agent-card,.automation-card,.media-card,.capability-item,:global(.task-composer-card){border:1px solid #e2e8f0;border-radius:16px;background:rgba(255,255,255,.92);box-shadow:0 8px 22px rgba(15,23,42,.05)}.aorist-stats article{padding:16px}.aorist-stats span,.aorist-stats em{display:block;color:#7b8494;font-size:12px;font-style:normal}.aorist-stats strong{display:block;margin:8px 0 3px;color:#111827;font-size:28px;letter-spacing:-.04em}.aorist-split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);gap:12px;margin-top:14px}.aorist-card{padding:14px}.aorist-card header,.aorist-toolbar,.agent-card header,:global(.task-composer-card__head),.config-modal header,.agent-wizard__header,.agent-wizard__footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.aorist-card header strong,.aorist-toolbar strong{color:#111827;font-size:16px}.aorist-card header button{border:0;background:transparent;color:#1f5fbf;font-size:12px}.todo-row,.automation-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;width:100%;gap:10px;margin-top:8px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff;text-align:left}.automation-row{grid-template-columns:minmax(0,1fr) auto}.todo-row i{width:8px;height:8px;border-radius:999px;background:#1f5fbf}.todo-row strong,.automation-row strong{display:block;color:#1f2937;font-size:13px}.todo-row em,.automation-row em{display:block;margin-top:3px;color:#7b8494;font-size:11px;font-style:normal}.todo-row b,.automation-row b{color:#1f5fbf;font-size:11px}
   :global(.agent-strip){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}:global(.agent-strip button){display:grid;grid-template-columns:34px minmax(0,1fr);gap:9px;align-items:center;padding:12px;border:1px solid #e2e8f0;border-radius:15px;background:#fff;text-align:left}:global(.agent-strip button.active){border-color:#1f5fbf;background:#eef4ff}:global(.agent-strip span){grid-row:span 2;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;background:#1f5fbf;color:#fff}:global(.agent-strip strong){color:#111827;font-size:13px}:global(.agent-strip em){color:#7b8494;font-size:11px;font-style:normal}:global(.task-composer-card){padding:14px}:global(.task-composer-card__head){margin-bottom:12px}:global(.task-composer-card__head) strong{display:block;color:#111827;font-size:18px}:global(.task-composer-card__head) select,.config-grid input,.config-grid textarea,.aorist-search input,.wizard-form input,.wizard-form textarea,.wizard-form select{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}:global(.task-composer-card__head) select{height:34px;padding:0 10px}:global(.composer-context-actions){display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}:global(.composer-context-actions > span){display:inline-flex;align-items:center;min-height:32px;padding:0 10px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1f5fbf;font-size:12px;font-weight:650}
   .aorist-toolbar{margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.aorist-search{display:block;max-width:420px;margin-bottom:12px}.aorist-search span{display:block;margin-bottom:6px;color:#7b8494;font-size:12px}.aorist-search input{width:100%;height:38px;padding:0 12px}.aorist-list{display:grid;gap:10px}.aorist-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px;cursor:pointer}.aorist-list strong{color:#111827}.aorist-list p{margin:4px 0;color:#5f6774;font-size:13px}.aorist-list em{color:#7b8494;font-size:12px;font-style:normal}.aorist-list span{padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:12px;white-space:nowrap}.aorist-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.automation-card,.agent-card,.media-card,.capability-item{padding:15px;cursor:pointer}.automation-card span,.media-card span,.capability-item span{display:inline-block;margin-bottom:9px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.automation-card strong,.media-card strong,.capability-item strong{display:block;color:#111827;font-size:15px}.automation-card p,.media-card p,.capability-item p{color:#5f6774;font-size:13px;line-height:1.6}.automation-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;color:#7b8494;font-size:12px}.automation-card dd{margin:0;color:#111827}.automation-card footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}.automation-card footer button:last-child{color:#b42318}.agent-card header{align-items:flex-start}.agent-card header>span{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:#eef4ff;color:#1f5fbf}.agent-card header div{flex:1;min-width:0}.agent-card header strong{display:block;color:#111827}.agent-card header em{display:inline-block;margin-top:4px;color:#7b8494;font-size:11px;font-style:normal}.agent-card header button{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#98a2b3;opacity:0}.agent-card:hover header button{opacity:1}.agent-card p{color:#5f6774;line-height:1.6;font-size:13px}.agent-card footer{display:flex;align-items:center;justify-content:space-between;color:#7b8494;font-size:12px}.agent-card footer span{display:inline-flex;align-items:center;gap:4px}.agent-card footer b{color:#1f5fbf;font-size:12px}.capability-tabs{display:flex;gap:8px;margin:0 0 12px;padding:4px;width:max-content;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.capability-tabs button{min-width:92px;height:32px;border:0;border-radius:9px;background:transparent;color:#5f6774;font-weight:700}.capability-tabs button.active{background:#1f5fbf;color:#fff}
-  .modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}.config-modal,.agent-wizard{width:min(860px,calc(100vw - 44px));max-height:calc(100vh - 44px);overflow:hidden;border:1px solid #e2e8f0;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.28)}.config-modal{padding:18px}.config-modal header strong,.agent-wizard__header strong{display:block;color:#111827;font-size:17px}.config-modal header button,.agent-wizard__header>button{border:0;background:transparent;color:#667085;font-size:24px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.config-grid label{display:grid;gap:6px;color:#5f6774;font-size:12px}.config-grid .wide{grid-column:1/-1}.config-grid input{height:36px;padding:0 10px}.config-grid textarea{padding:10px;resize:vertical}.config-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.agent-wizard{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:min(680px,calc(100vh - 44px))}.agent-wizard__header{padding:16px 18px;border-bottom:1px solid #e5e7eb}.wizard-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#1f5fbf,#3b82f6);color:#fff}.agent-wizard__header div:nth-child(2){flex:1}.agent-wizard__header span{color:#7b8494;font-size:12px}.agent-wizard__body{display:grid;grid-template-columns:178px minmax(0,1fr);min-height:0}.wizard-tabs{padding:12px;border-right:1px solid #e5e7eb;background:#f8fafc}.wizard-tabs button{width:100%;padding:10px;border:0;border-radius:12px;background:transparent;text-align:left;color:#111827}.wizard-tabs button.active{background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.08)}.wizard-panel{min-height:0;overflow:auto;padding:18px}.wizard-identity{display:grid;grid-template-columns:minmax(0,1fr)230px;gap:18px}.wizard-form{display:grid;gap:14px}.wizard-form label{display:grid;gap:6px;color:#5f6774;font-size:12px}.wizard-form input,.wizard-form select{height:38px;padding:0 10px}.wizard-form textarea{padding:10px;resize:vertical}.pill-group{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.pill-group span{width:100%;color:#5f6774;font-size:12px}.pill-group button{min-height:30px;padding:0 10px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#344054}.pill-group button.active{border-color:#1f5fbf;background:#eef4ff;color:#1f5fbf}.wizard-preview{padding-left:18px;border-left:1px solid #e5e7eb}.wizard-preview>span{color:#7b8494;font-size:11px;font-weight:700;text-transform:uppercase}.wizard-preview div{display:grid;justify-items:center;gap:8px;margin-top:12px;padding:18px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.wizard-preview b{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:#1f5fbf;color:#fff}.wizard-preview strong{color:#111827}.wizard-preview em,.wizard-preview p{color:#7b8494;font-size:12px;font-style:normal;line-height:1.5}.wizard-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.wizard-card-grid button{display:grid;gap:5px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-card-grid button.active,.wizard-skill-list button.active{border-color:#1f5fbf;background:#eef4ff}.wizard-card-grid strong{color:#111827}.wizard-card-grid span,.wizard-card-grid em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list{display:grid;gap:9px}.wizard-skill-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-skill-list strong{color:#111827}.wizard-skill-list span,.wizard-skill-list p,.wizard-skill-list em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list p{margin:5px 0 0}.media-config-list{display:grid;gap:10px;margin-top:14px}.media-config-list article{padding:12px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.media-config-list strong{display:block;color:#111827}.media-config-list span{display:inline-block;margin-top:7px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.media-config-list p{margin:7px 0 0;color:#667085;font-size:12px}.wizard-files{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px}.wizard-files nav{display:grid;align-content:start;gap:8px}.wizard-files button{height:34px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#344054}.wizard-files button.active{border-color:#1f5fbf;color:#1f5fbf;background:#eef4ff}.wizard-files pre{margin:0;min-height:320px;overflow:auto;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:12px;line-height:1.6;white-space:pre-wrap}.agent-wizard__footer{padding:12px 18px;border-top:1px solid #e5e7eb;justify-content:flex-end}
+  .modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}.config-modal,.agent-wizard{width:min(860px,calc(100vw - 44px));max-height:calc(100vh - 44px);overflow:hidden;border:1px solid #e2e8f0;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.28)}.config-modal{padding:18px}.config-modal header strong,.agent-wizard__header strong{display:block;color:#111827;font-size:17px}.config-modal header button,.agent-wizard__header>button{border:0;background:transparent;color:#667085;font-size:24px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.config-grid label{display:grid;gap:6px;color:#5f6774;font-size:12px}.config-grid .wide{grid-column:1/-1}.config-grid input{height:36px;padding:0 10px}.config-grid textarea{padding:10px;resize:vertical}.config-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.agent-wizard{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:min(680px,calc(100vh - 44px))}.agent-wizard__header{padding:16px 18px;border-bottom:1px solid #e5e7eb}.wizard-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#1f5fbf,#3b82f6);color:#fff}.agent-wizard__header div:nth-child(2){flex:1}.agent-wizard__header span{color:#7b8494;font-size:12px}.agent-wizard__body{display:grid;grid-template-columns:178px minmax(0,1fr);min-height:0}.wizard-tabs{padding:12px;border-right:1px solid #e5e7eb;background:#f8fafc}.wizard-tabs button{width:100%;padding:10px;border:0;border-radius:12px;background:transparent;text-align:left;color:#111827}.wizard-tabs button.active{background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.08)}.wizard-panel{min-height:0;overflow:auto;padding:18px}.wizard-identity{display:grid;grid-template-columns:minmax(0,1fr)230px;gap:18px}.wizard-form{display:grid;gap:14px}.wizard-form label{display:grid;gap:6px;color:#5f6774;font-size:12px}.wizard-form input,.wizard-form select{height:38px;padding:0 10px}.wizard-form textarea{padding:10px;resize:vertical}.pill-group{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.pill-group span{width:100%;color:#5f6774;font-size:12px}.pill-group button{min-height:30px;padding:0 10px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#344054}.pill-group button.active{border-color:#1f5fbf;background:#eef4ff;color:#1f5fbf}.wizard-preview{padding-left:18px;border-left:1px solid #e5e7eb}.wizard-preview>span{color:#7b8494;font-size:11px;font-weight:700;text-transform:uppercase}.wizard-preview div{display:grid;justify-items:center;gap:8px;margin-top:12px;padding:18px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.wizard-preview b{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:#1f5fbf;color:#fff}.wizard-preview strong{color:#111827}.wizard-preview em,.wizard-preview p{color:#7b8494;font-size:12px;font-style:normal;line-height:1.5}.wizard-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.wizard-card-grid button{display:grid;gap:5px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-card-grid button.active,.wizard-skill-list button.active{border-color:#1f5fbf;background:#eef4ff}.wizard-card-grid strong{color:#111827}.wizard-card-grid span,.wizard-card-grid em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list{display:grid;gap:9px}.wizard-skill-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-skill-list strong{color:#111827}.wizard-skill-list span,.wizard-skill-list p,.wizard-skill-list em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list p{margin:5px 0 0}.wizard-files{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px}.wizard-files nav{display:grid;align-content:start;gap:8px}.wizard-files button{height:34px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#344054}.wizard-files button.active{border-color:#1f5fbf;color:#1f5fbf;background:#eef4ff}.wizard-files pre{margin:0;min-height:320px;overflow:auto;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:12px;line-height:1.6;white-space:pre-wrap}.agent-wizard__footer{padding:12px 18px;border-top:1px solid #e5e7eb;justify-content:flex-end}
   .shell.is-sidebar-collapsed .workspace-nav h2,.shell.is-sidebar-collapsed .workspace-nav button span:nth-child(2),.shell.is-sidebar-collapsed .workspace-nav button em,.shell.is-sidebar-collapsed .sidebar__brand div:not(.brand-mark),.shell.is-sidebar-collapsed .sidebar__user strong,.shell.is-sidebar-collapsed .sidebar__user em{display:none}.shell.is-sidebar-collapsed .sidebar__brand{grid-template-columns:34px;justify-content:center}.shell.is-sidebar-collapsed .workspace-nav button{grid-template-columns:28px;justify-content:center;padding-inline:8px}.shell.is-sidebar-collapsed .sidebar__user-wrap .sidebar__user{grid-template-columns:28px;justify-content:center}
   @media(max-width:980px){.aorist-stats,.aorist-card-grid,:global(.agent-strip){grid-template-columns:repeat(2,minmax(0,1fr))}.aorist-split{grid-template-columns:1fr}}@media(max-width:720px){.stage-topbar,.aorist-toolbar{align-items:flex-start;flex-direction:column}.aorist-stats,.aorist-card-grid,:global(.agent-strip),.wizard-card-grid,.agent-wizard__body,.wizard-files,.config-grid,.wizard-identity{grid-template-columns:1fr}.wizard-preview{padding-left:0;border-left:0}}
 
@@ -2283,13 +2740,14 @@
 
   .calendar-board{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,.6fr);gap:14px;margin-top:14px}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.calendar-grid article{min-height:92px;padding:10px;border:1px solid rgba(226,232,240,.88);border-radius:14px;background:rgba(255,255,255,.78);box-shadow:0 10px 24px rgba(15,23,42,.04)}.calendar-grid article.today{border-color:#93c5fd;background:linear-gradient(135deg,#eff6ff,#fff)}.calendar-grid b{display:block;margin-bottom:8px;color:#0f172a}.calendar-grid span{display:block;margin-top:4px;padding:4px 6px;border-radius:8px;background:#eef4ff;color:#1d4ed8;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.knowledge-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.55fr);gap:14px}.knowledge-preview{padding:18px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.82);box-shadow:0 14px 34px rgba(15,23,42,.055)}.knowledge-preview span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.knowledge-preview strong{display:block;margin-top:12px;color:#0f172a;font-size:18px}.knowledge-preview p{color:#5f6774;line-height:1.7;font-size:13px}@media(max-width:980px){.calendar-board,.knowledge-layout{grid-template-columns:1fr}.calendar-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
-  .detail-panel{padding:18px;border:1px solid rgba(226,232,240,.9);border-radius:20px;background:rgba(255,255,255,.82);box-shadow:0 18px 42px rgba(15,23,42,.06)}.detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.detail-panel header span{color:#7b8494;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.detail-panel header strong{display:block;margin-top:6px;color:#0f172a;font-size:22px;line-height:1.18;letter-spacing:-.035em}.detail-panel header button{min-height:34px;padding:0 12px;border:1px solid #2563eb;border-radius:10px;background:#2563eb;color:#fff;font-size:12px;font-weight:700}.detail-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}.detail-summary article{padding:12px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.detail-summary span{display:block;color:#7b8494;font-size:11px}.detail-summary strong{display:block;margin-top:6px;color:#111827;font-size:13px}.detail-tabs{display:flex;gap:7px;margin:16px 0 10px}.detail-tabs button{height:30px;padding:0 10px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#5f6774;font-size:12px}.detail-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.detail-timeline{display:grid;gap:10px}.detail-timeline article{padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.detail-timeline b{display:block;color:#111827}.detail-timeline p{margin:6px 0;color:#5f6774;font-size:13px;line-height:1.6}.detail-timeline em{color:#7b8494;font-size:11px;font-style:normal}.room-modal{width:min(940px,calc(100vw - 44px))}.room-layout,.team-chat-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-top:16px}.room-layout aside,.team-chat-layout aside{padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc}.room-layout aside span,.team-chat-layout aside span{display:inline-block;margin-bottom:8px;padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.room-layout aside strong,.team-chat-layout aside strong{display:block;color:#111827}.room-layout aside p,.team-chat-layout aside p{color:#5f6774;font-size:13px;line-height:1.6}.room-layout main,.team-chat-layout main{display:grid;align-content:start;gap:10px;max-height:420px;overflow:auto;padding:6px}.room-message,.team-chat-layout main article{padding:12px 14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.room-message.judge{margin-inline:28px;background:#fffbeb}.room-message.plaintiff{margin-right:64px;background:#eff6ff}.room-message.defendant{margin-left:64px;background:#f8fafc}.room-message b,.team-chat-layout b{display:block;color:#111827;font-size:13px}.room-message p,.team-chat-layout p{margin:6px 0 0;color:#5f6774;font-size:13px;line-height:1.6}.hearing-card,.team-card{cursor:pointer;text-align:left}.hearing-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.team-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.config-grid select{height:36px;padding:0 10px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}.config-grid textarea,.config-grid input{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}@media(max-width:980px){.room-layout,.team-chat-layout{grid-template-columns:1fr}.detail-summary{grid-template-columns:1fr}}
+  .detail-panel{padding:18px;border:1px solid rgba(226,232,240,.9);border-radius:20px;background:rgba(255,255,255,.82);box-shadow:0 18px 42px rgba(15,23,42,.06)}.detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.detail-panel header span{color:#7b8494;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.detail-panel header strong{display:block;margin-top:6px;color:#0f172a;font-size:22px;line-height:1.18;letter-spacing:-.035em}.detail-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}.detail-summary article{padding:12px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.detail-summary span{display:block;color:#7b8494;font-size:11px}.detail-summary strong{display:block;margin-top:6px;color:#111827;font-size:13px}.detail-tabs{display:flex;gap:7px;margin:16px 0 10px}.detail-tabs button{height:30px;padding:0 10px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#5f6774;font-size:12px}.detail-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.detail-timeline{display:grid;gap:10px}.detail-timeline article{padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.detail-timeline b{display:block;color:#111827}.detail-timeline p{margin:6px 0;color:#5f6774;font-size:13px;line-height:1.6}.detail-timeline em{color:#7b8494;font-size:11px;font-style:normal}.room-modal{width:min(940px,calc(100vw - 44px))}.room-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-top:16px}.room-layout aside{padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc}.room-layout aside span{display:inline-block;margin-bottom:8px;padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.room-layout aside strong{display:block;color:#111827}.room-layout aside p{color:#5f6774;font-size:13px;line-height:1.6}.room-layout main{display:grid;align-content:start;gap:10px;max-height:420px;overflow:auto;padding:6px}.room-message{padding:12px 14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.room-message.judge{margin-inline:28px;background:#fffbeb}.room-message.plaintiff{margin-right:64px;background:#eff6ff}.room-message.defendant{margin-left:64px;background:#f8fafc}.room-message b{display:block;color:#111827;font-size:13px}.room-message p{margin:6px 0 0;color:#5f6774;font-size:13px;line-height:1.6}.hearing-card,.team-card{cursor:pointer;text-align:left}.hearing-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.team-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.config-grid select{height:36px;padding:0 10px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}.config-grid textarea,.config-grid input{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}@media(max-width:980px){.room-layout{grid-template-columns:1fr}.detail-summary{grid-template-columns:1fr}}
 
   .detail-empty{padding:18px;border:1px dashed #cbd5e1;border-radius:16px;background:rgba(248,250,252,.78);color:#5f6774}.detail-empty strong{display:block;color:#111827}.detail-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}.detail-modal{width:min(840px,calc(100vw - 44px));padding:18px}.detail-modal>.detail-panel{margin-top:14px;background:rgba(255,255,255,.88)}
 
   .select-list,.distill-panel{display:grid;gap:10px;margin-top:16px}.select-list>p,.distill-panel>p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.select-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.select-list button:hover{border-color:#93c5fd;background:#f8fbff}.select-list strong{color:#111827}.select-list span{color:#667085;font-size:12px}.distill-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.distill-steps button{min-height:36px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;color:#5f6774;font-weight:700}.distill-steps button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.distill-preview{padding:0;border:0}.distill-preview div{margin-top:0}@media(max-width:720px){.distill-steps{grid-template-columns:1fr}}
 
   .resource-center .resource-tabs{margin-top:0;margin-bottom:14px;flex-wrap:wrap}.resource-center .resource-tabs button{min-width:104px}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}
+  .knowledge-stack{display:grid;gap:14px;min-width:0}.knowledge-stack section{padding:14px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.76);box-shadow:0 12px 30px rgba(15,23,42,.04)}.knowledge-stack header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}.knowledge-stack header span{color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.knowledge-stack header strong{color:#0f172a;font-size:17px;letter-spacing:-.03em}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:720px){.knowledge-layout--merged .aorist-card-grid{grid-template-columns:1fr}.knowledge-stack header{display:grid;align-items:start}}
 
   .nav-icon :global(svg),.brand-mark :global(svg),:global(.agent-strip span svg),.agent-card header>span :global(svg),.wizard-avatar :global(svg),.wizard-preview b :global(svg){display:block;stroke-width:2}
 
@@ -2816,8 +3274,7 @@
   .config-modal footer button,
   .agent-wizard__footer button,
   .resource-actions button,
-  .workbench-calendar footer button,
-  .detail-panel header button {
+  .workbench-calendar footer button {
     min-height: 32px;
     border-color: var(--aorist-line-strong);
     border-radius: 10px;
@@ -2837,8 +3294,7 @@
   .config-modal footer button:hover,
   .agent-wizard__footer button:hover,
   .resource-actions button:hover,
-  .workbench-calendar footer button:hover,
-  .detail-panel header button:hover {
+  .workbench-calendar footer button:hover {
     transform: translateY(-1px);
     border-color: #bfdbfe;
     background: #ffffff;
@@ -2850,8 +3306,7 @@
   .aorist-toolbar button:last-child,
   .config-modal footer button:last-child,
   .agent-wizard__footer button:last-child,
-  .workbench-calendar footer button:last-child,
-  .detail-panel header button {
+  .workbench-calendar footer button:last-child {
     border-color: var(--aorist-primary);
     background: linear-gradient(135deg, var(--aorist-primary), var(--aorist-primary-strong));
     color: #ffffff;
@@ -3509,8 +3964,15 @@
     letter-spacing: -0.02em;
   }
 
+  .stage-topbar {
+    --wails-draggable: drag;
+  }
+
   .stage-topbar__actions {
+    position: relative;
+    z-index: 3;
     gap: 8px;
+    --wails-draggable: no-drag;
   }
 
   .stage-topbar__actions button,
@@ -3522,8 +3984,7 @@
   .config-modal footer button,
   .agent-wizard__footer button,
   .resource-actions button,
-  .workbench-calendar footer button,
-  .detail-panel header button {
+  .workbench-calendar footer button {
     min-height: 36px;
     padding: 0 12px;
     border: 1px solid var(--aorist-line);
@@ -3533,6 +3994,7 @@
     font-size: 13px;
     font-weight: 600;
     box-shadow: none;
+    --wails-draggable: no-drag;
   }
 
   .stage-topbar__actions button:hover,
@@ -3544,8 +4006,7 @@
   .config-modal footer button:hover,
   .agent-wizard__footer button:hover,
   .resource-actions button:hover,
-  .workbench-calendar footer button:hover,
-  .detail-panel header button:hover {
+  .workbench-calendar footer button:hover {
     transform: none;
     border-color: var(--aorist-line);
     background: hsl(220 20% 96%);
@@ -3557,8 +4018,7 @@
   .aorist-toolbar button:last-child,
   .config-modal footer button:last-child,
   .agent-wizard__footer button:last-child,
-  .workbench-calendar footer button:last-child,
-  .detail-panel header button {
+  .workbench-calendar footer button:last-child {
     border-color: var(--aorist-primary);
     background: var(--aorist-primary);
     color: hsl(0 0% 100%);
@@ -4268,6 +4728,320 @@
     gap: 8px;
   }
 
+  .project-management-page {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .project-list-panel {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .project-list-panel--single {
+    width: 100%;
+  }
+
+  .project-matter-card {
+    border-radius: 10px;
+  }
+
+  .project-card-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .project-card-title strong {
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-card-title em {
+    flex: 0 0 auto;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .project-progress-line {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 8px;
+    border-radius: 999px;
+    background: hsl(220 20% 94%);
+    overflow: visible;
+  }
+
+  .project-matter-card .project-progress-line {
+    width: min(320px, calc(100% - 48px));
+    margin-top: 2px;
+  }
+
+  .project-progress-line i {
+    width: var(--progress);
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--aorist-primary), #38bdf8);
+  }
+
+  .project-progress-line span {
+    position: absolute;
+    right: 0;
+    transform: translateX(calc(100% + 8px));
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .project-detail-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .project-detail-metrics article {
+    display: grid;
+    gap: 4px;
+    padding: 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+  }
+
+  .project-detail-metrics strong {
+    color: var(--aorist-ink);
+    font-size: 18px;
+  }
+
+  .project-detail-metrics span {
+    color: var(--aorist-muted);
+    font-size: 11px;
+  }
+
+  .project-detail-modal {
+    width: min(1120px, calc(100vw - 44px));
+    max-height: calc(100vh - 44px);
+    overflow: auto;
+  }
+
+  .project-detail-modal > .project-detail-head {
+    position: sticky;
+    top: -18px;
+    z-index: 1;
+    align-items: center;
+    gap: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--aorist-line);
+    background: hsl(0 0% 100%);
+  }
+
+  .project-detail-back,
+  .project-detail-actions button,
+  .project-detail-card button,
+  .project-detail-aside button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: hsl(0 0% 100%);
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .project-detail-back {
+    width: 34px;
+    padding: 0;
+  }
+
+  .project-detail-title {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .project-detail-title strong {
+    display: block;
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-detail-title span {
+    display: block;
+    margin-top: 3px;
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .project-detail-title em {
+    flex: 0 0 auto;
+    min-height: 24px;
+    padding: 4px 8px;
+    border: 1px solid color-mix(in srgb, var(--aorist-primary) 22%, transparent);
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary);
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 700;
+  }
+
+  .project-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .project-detail-actions button:last-child,
+  .project-detail-card button,
+  .project-detail-aside button {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+    color: hsl(0 0% 100%);
+  }
+
+  .project-detail-panel > header p {
+    max-width: 680px;
+    margin: 6px 0 0;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .project-detail-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .project-detail-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 16px;
+    margin-top: 16px;
+  }
+
+  .project-detail-main,
+  .project-detail-aside {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .project-detail-main .detail-tabs {
+    margin: 0 0 2px;
+    border-bottom: 1px solid var(--aorist-line);
+    border-radius: 0;
+  }
+
+  .project-detail-main .detail-tabs button {
+    height: 38px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .project-detail-main .detail-tabs button.active {
+    border-color: var(--aorist-primary);
+    background: transparent;
+    color: var(--aorist-primary);
+  }
+
+  .project-detail-card,
+  .project-detail-aside section {
+    padding: 14px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 12px;
+    background: hsl(0 0% 100%);
+  }
+
+  .project-detail-card h3,
+  .project-detail-aside h3 {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 10px;
+    color: var(--aorist-ink);
+    font-size: 14px;
+  }
+
+  .project-detail-card p,
+  .project-detail-aside p {
+    margin: 0;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .project-detail-card button,
+  .project-detail-aside button {
+    margin-top: 12px;
+  }
+
+  .project-detail-risk {
+    border-color: #fde68a;
+    background: #fffbeb;
+  }
+
+  .project-detail-risk h3 {
+    color: #b45309;
+  }
+
+  .project-detail-aside section {
+    display: grid;
+    gap: 12px;
+  }
+
+  .project-detail-aside div {
+    display: grid;
+    gap: 5px;
+  }
+
+  .project-detail-aside span {
+    display: inline-flex;
+    width: fit-content;
+    min-height: 22px;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .project-detail-aside strong {
+    color: var(--aorist-ink);
+    font-size: 13px;
+  }
+
+  .project-detail-timeline {
+    margin-top: 12px;
+  }
+
   .management-card {
     display: flex;
     align-items: flex-start;
@@ -4306,20 +5080,6 @@
     flex: 1;
     min-width: 0;
     gap: 7px;
-  }
-
-  .management-card__body > strong {
-    overflow: hidden;
-    color: var(--aorist-ink);
-    font-size: 15px;
-    font-weight: 700;
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .management-card:hover .management-card__body > strong {
-    color: var(--aorist-primary);
   }
 
   .management-card__body p {
@@ -4388,6 +5148,479 @@
     opacity: 1;
   }
 
+  .client-card {
+    align-items: center;
+  }
+
+  .client-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    color: var(--aorist-primary);
+    background: var(--aorist-primary-soft);
+  }
+
+  .client-avatar--large {
+    width: 56px;
+    height: 56px;
+  }
+
+  .client-card-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .client-card-title strong {
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .client-card-title span,
+  .client-card-side span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    background: hsl(0 0% 100%);
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .client-card-title :global(svg) {
+    color: #dc2626;
+  }
+
+  .client-contact-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .client-contact-row span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .client-card-side {
+    display: grid;
+    justify-items: end;
+    flex: 0 0 auto;
+    gap: 5px;
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .client-card-side em {
+    font-style: normal;
+    font-weight: 700;
+  }
+
+  .client-card-side .riskHigh {
+    color: #dc2626;
+  }
+
+  .customer-detail-modal {
+    width: min(1120px, calc(100vw - 44px));
+    max-height: calc(100vh - 44px);
+    overflow: auto;
+  }
+
+  .customer-detail-modal > .customer-detail-head {
+    position: sticky;
+    top: -18px;
+    z-index: 1;
+    align-items: center;
+    gap: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--aorist-line);
+    background: hsl(0 0% 100%);
+  }
+
+  .customer-detail-back,
+  .customer-detail-primary,
+  .customer-project-list button,
+  .customer-risk-card button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: hsl(0 0% 100%);
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .customer-detail-back {
+    width: 34px;
+    padding: 0;
+  }
+
+  .customer-detail-primary,
+  .customer-risk-card button {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+    color: hsl(0 0% 100%);
+  }
+
+  .customer-detail-title {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .customer-detail-title > div {
+    min-width: 0;
+  }
+
+  .customer-detail-title strong {
+    display: block;
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 22px;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .customer-detail-title span {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 5px;
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .customer-detail-title em {
+    flex: 0 0 auto;
+    min-height: 24px;
+    padding: 4px 8px;
+    border: 1px solid color-mix(in srgb, var(--aorist-primary) 22%, transparent);
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary);
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 700;
+  }
+
+  .customer-detail-title em.muted {
+    border-color: var(--aorist-line);
+    background: hsl(220 20% 96%);
+    color: var(--aorist-muted);
+  }
+
+  .customer-detail-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 16px;
+  }
+
+  .customer-detail-main,
+  .customer-detail-aside {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .customer-detail-main .detail-tabs {
+    margin: 0 0 2px;
+    border-bottom: 1px solid var(--aorist-line);
+    border-radius: 0;
+  }
+
+  .customer-detail-main .detail-tabs button {
+    height: 38px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .customer-detail-main .detail-tabs button.active {
+    border-color: var(--aorist-primary);
+    background: transparent;
+    color: var(--aorist-primary);
+  }
+
+  .customer-detail-card,
+  .customer-detail-aside section {
+    padding: 14px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 12px;
+    background: hsl(0 0% 100%);
+  }
+
+  .customer-detail-card h3,
+  .customer-detail-aside h3 {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 10px;
+    color: var(--aorist-ink);
+    font-size: 14px;
+  }
+
+  .customer-detail-card p,
+  .customer-detail-aside p {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .customer-tab-panel {
+    display: grid;
+    gap: 12px;
+  }
+
+  .customer-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .customer-section-head h3 {
+    margin: 0 0 4px;
+  }
+
+  .customer-section-head p,
+  .customer-detail-row p {
+    display: block;
+    margin: 0;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .customer-section-head button,
+  .customer-resource-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: hsl(0 0% 100%);
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .customer-section-head button:hover,
+  .customer-resource-toolbar button:hover,
+  .customer-detail-row:hover {
+    border-color: color-mix(in srgb, var(--aorist-primary) 32%, var(--aorist-line));
+    background: color-mix(in srgb, var(--aorist-primary-soft) 54%, hsl(0 0% 100%));
+  }
+
+  .customer-resource-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+  }
+
+  .customer-resource-toolbar span {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .customer-detail-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .customer-detail-row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) minmax(72px, auto);
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 66px;
+    padding: 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(0 0% 100%);
+    text-align: left;
+  }
+
+  .customer-detail-row > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    color: var(--aorist-primary);
+    background: var(--aorist-primary-soft);
+  }
+
+  .customer-detail-row strong {
+    display: block;
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .customer-detail-row em {
+    display: block;
+    margin-top: 3px;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 700;
+  }
+
+  .customer-detail-row p {
+    margin-top: 4px;
+  }
+
+  .customer-detail-row b {
+    display: grid;
+    justify-items: end;
+    gap: 3px;
+    color: var(--aorist-primary);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .customer-detail-row small {
+    color: var(--aorist-muted);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .customer-todo-row b,
+  .customer-schedule-list .customer-detail-row b {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+  }
+
+  .customer-profile-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .customer-profile-grid article {
+    padding: 12px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+  }
+
+  .customer-profile-grid span,
+  .customer-detail-aside span {
+    display: block;
+    color: var(--aorist-muted);
+    font-size: 11px;
+  }
+
+  .customer-profile-grid strong,
+  .customer-detail-aside strong {
+    display: block;
+    margin-top: 5px;
+    color: var(--aorist-ink);
+    font-size: 13px;
+  }
+
+  .customer-project-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .customer-project-list button {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    width: 100%;
+    min-height: 58px;
+    text-align: left;
+  }
+
+  .customer-project-list button > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    color: var(--aorist-primary);
+    background: var(--aorist-primary-soft);
+  }
+
+  .customer-project-list strong {
+    display: block;
+    overflow: hidden;
+    color: var(--aorist-ink);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .customer-project-list em,
+  .customer-project-list b {
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .customer-risk-card {
+    border-color: #fde68a;
+    background: #fffbeb;
+  }
+
+  .customer-risk-card h3,
+  .customer-risk-card > strong {
+    color: #b45309;
+  }
+
+  .customer-detail-timeline {
+    margin-top: 0;
+  }
+
   @media (max-width: 1100px) {
     .management-stats {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4396,6 +5629,14 @@
     .management-controls {
       align-items: flex-start;
       flex-wrap: wrap;
+    }
+
+    .project-detail-body {
+      grid-template-columns: 1fr;
+    }
+
+    .customer-detail-body {
+      grid-template-columns: 1fr;
     }
   }
 
@@ -4420,6 +5661,35 @@
 
     .management-card > b {
       display: none;
+    }
+
+    .project-detail-summary,
+    .project-detail-metrics {
+      grid-template-columns: 1fr;
+    }
+
+    .customer-detail-modal > .customer-detail-head,
+    .customer-section-head,
+    .customer-resource-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .customer-detail-title {
+      flex-wrap: wrap;
+    }
+
+    .customer-profile-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .customer-detail-row {
+      grid-template-columns: 36px minmax(0, 1fr);
+    }
+
+    .customer-detail-row b {
+      justify-items: start;
+      grid-column: 2;
     }
   }
 
@@ -5076,7 +6346,6 @@
     padding: 10px 4px 0;
   }
 
-  .agent-compose-meta button,
   .agent-compose-meta span {
     display: inline-flex;
     align-items: center;
@@ -5089,11 +6358,6 @@
     background: hsl(0 0% 100%);
     font-size: 12px;
     font-weight: 700;
-  }
-
-  .agent-compose-meta button:hover {
-    color: var(--aorist-primary);
-    background: hsl(220 70% 96%);
   }
 
   .agent-compose-meta span {
@@ -5126,6 +6390,9 @@
 
 
   .team-collab-page {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     padding: 24px;
     background:
       radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.09), transparent 30%),
@@ -5354,6 +6621,326 @@
     font-weight: 750;
   }
 
+  .team-chat-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-height: min(760px, calc(100vh - 136px));
+    overflow: hidden;
+    border: 1px solid var(--aorist-line);
+    border-radius: 18px;
+    background: hsl(0 0% 100%);
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+  }
+
+  .team-chat-header {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 64px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--aorist-line);
+    background: hsl(220 20% 98% / 0.92);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+  }
+
+  .team-chat-title,
+  .team-member-bar,
+  .team-member-bar span,
+  .team-message header b {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .team-chat-title button,
+  .team-chat-title > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 999px;
+    color: var(--aorist-muted);
+    background: transparent;
+  }
+
+  .team-chat-title > span {
+    border-radius: 10px;
+    color: var(--aorist-primary);
+    background: hsl(220 70% 96%);
+  }
+
+  .team-chat-title button:hover {
+    color: var(--aorist-primary);
+    background: hsl(220 20% 94%);
+  }
+
+  .team-chat-title strong {
+    color: var(--aorist-ink);
+    font-size: 14px;
+  }
+
+  .team-member-bar {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 7px;
+  }
+
+  .team-member-bar span {
+    min-height: 28px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    color: var(--aorist-ink);
+    background: hsl(220 20% 96%);
+    font-size: 11px;
+    font-weight: 750;
+  }
+
+  .team-member-bar span.leader {
+    color: hsl(39 90% 34%);
+    background: hsl(45 94% 94%);
+  }
+
+  .team-member-bar i {
+    display: inline-flex;
+    color: var(--aorist-primary);
+    font-style: normal;
+  }
+
+  .team-member-bar b {
+    color: hsl(39 90% 38%);
+    font-size: 9px;
+    font-weight: 800;
+  }
+
+  .team-message-list {
+    display: grid;
+    align-content: start;
+    gap: 22px;
+    overflow: auto;
+    padding: 32px max(18px, calc((100% - 760px) / 2));
+    background:
+      radial-gradient(circle at 20% 12%, rgba(37, 99, 235, 0.05), transparent 28%),
+      hsl(0 0% 100%);
+  }
+
+  .team-chat-empty {
+    display: grid;
+    justify-items: center;
+    gap: 10px;
+    padding: 64px 16px;
+    color: var(--aorist-muted);
+    text-align: center;
+  }
+
+  .team-chat-empty div {
+    display: flex;
+    margin-bottom: 8px;
+  }
+
+  .team-chat-empty div span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    margin-right: -12px;
+    border: 4px solid hsl(0 0% 100%);
+    border-radius: 999px;
+    color: hsl(0 0% 100%);
+    background: linear-gradient(135deg, var(--aorist-primary), hsl(217 91% 60%));
+    box-shadow: 0 10px 26px rgba(37, 99, 235, 0.18);
+  }
+
+  .team-chat-empty strong {
+    color: var(--aorist-ink);
+    font-size: 16px;
+  }
+
+  .team-chat-empty p {
+    max-width: 360px;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .team-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .team-message.user {
+    flex-direction: row-reverse;
+  }
+
+  .team-message > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    border-radius: 12px;
+    color: hsl(0 0% 100%);
+    background: linear-gradient(135deg, var(--aorist-primary), hsl(217 91% 60%));
+  }
+
+  .team-message.user > span {
+    background: var(--aorist-primary);
+  }
+
+  .team-message > div {
+    max-width: min(75%, 620px);
+  }
+
+  .team-message.user > div {
+    text-align: right;
+  }
+
+  .team-message header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 6px 4px;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 750;
+  }
+
+  .team-message header b {
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: hsl(39 90% 38%);
+    background: hsl(45 94% 94%);
+    font-size: 9px;
+  }
+
+  .team-message p {
+    margin: 0;
+    padding: 12px 15px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 18px;
+    color: var(--aorist-ink);
+    background: hsl(220 20% 97%);
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+  }
+
+  .team-message.user p {
+    border-color: var(--aorist-primary);
+    color: hsl(0 0% 100%);
+    background: var(--aorist-primary);
+  }
+
+  .team-message--loading > span {
+    color: var(--aorist-primary);
+    background: hsl(220 20% 96%);
+    animation: team-spin 0.9s linear infinite;
+  }
+
+  .team-message--loading p {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--aorist-muted);
+  }
+
+  .team-compose-bar {
+    display: grid;
+    gap: 8px;
+    padding: 12px max(18px, calc((100% - 820px) / 2)) 16px;
+    border-top: 1px solid var(--aorist-line);
+    background: hsl(0 0% 100%);
+  }
+
+  .team-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
+  .team-attachments button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    color: var(--aorist-muted);
+    background: hsl(220 20% 98%);
+    font-size: 11px;
+  }
+
+  .team-compose-row {
+    display: grid;
+    grid-template-columns: 36px 150px minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+  }
+
+  .team-compose-row > button:not(.team-send) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 12px;
+    color: var(--aorist-muted);
+    background: hsl(220 20% 98%);
+  }
+
+  .team-compose-row select,
+  .team-compose-row textarea {
+    border: 1px solid var(--aorist-line);
+    border-radius: 12px;
+    color: var(--aorist-ink);
+    background: hsl(220 20% 98%);
+    outline: none;
+  }
+
+  .team-compose-row select {
+    height: 36px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .team-compose-row textarea {
+    min-height: 36px;
+    max-height: 120px;
+    padding: 9px 12px;
+    resize: vertical;
+    font: inherit;
+    font-size: 13px;
+  }
+
+  .team-send {
+    min-height: 36px;
+    padding: 0 15px;
+    border: 1px solid var(--aorist-primary);
+    border-radius: 12px;
+    color: hsl(0 0% 100%);
+    background: var(--aorist-primary);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .team-send:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+  }
+
+  @keyframes team-spin {
+    to { transform: rotate(360deg); }
+  }
+
   .team-empty-state {
     grid-column: 1 / -1;
     display: grid;
@@ -5504,6 +7091,39 @@
     line-height: 1.5;
   }
 
+  .team-modal {
+    display: flex;
+    flex-direction: column;
+    width: min(680px, calc(100vw - 44px));
+    max-height: min(80vh, 720px);
+    padding: 0;
+  }
+
+  .team-modal header {
+    padding: 18px 22px 12px;
+  }
+
+  .team-modal header p {
+    max-width: 520px;
+    margin: 5px 0 0;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .team-modal footer {
+    margin: 0;
+    padding: 12px 22px 16px;
+    border-top: 1px solid var(--aorist-line);
+  }
+
+  .team-modal .team-builder {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 0 22px 16px;
+  }
+
   .team-builder {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 220px;
@@ -5580,7 +7200,7 @@
     max-height: 280px;
   }
 
-  .team-builder-list button {
+  .team-builder-agent {
     display: grid;
     grid-template-columns: 40px minmax(0, 1fr) 28px;
     align-items: center;
@@ -5591,15 +7211,15 @@
     border-radius: 14px;
     color: var(--aorist-muted);
     background: hsl(0 0% 100%);
-    text-align: left;
   }
 
-  .team-builder-list button.active {
+  .team-builder-agent.active {
     border-color: hsl(152 70% 38% / 0.36);
     background: hsl(152 70% 96%);
   }
 
-  .team-builder-list i {
+  .team-builder-list i,
+  .team-selected-member i {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -5611,6 +7231,12 @@
     font-style: normal;
   }
 
+  .team-selected-member i {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+  }
+
   .team-builder-list strong,
   .team-selected-list strong {
     display: block;
@@ -5618,8 +7244,7 @@
     font-size: 13px;
   }
 
-  .team-builder-list em,
-  .team-selected-list em {
+  .team-builder-list em {
     display: block;
     overflow: hidden;
     margin-top: 3px;
@@ -5630,33 +7255,57 @@
     white-space: nowrap;
   }
 
-  .team-builder-list b {
+  .team-builder-agent button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 26px;
     height: 26px;
+    border: 0;
     border-radius: 999px;
     color: hsl(152 70% 34%);
     background: hsl(152 70% 94%);
+    font-size: 16px;
+    font-weight: 800;
   }
 
-  .team-selected-list button {
+  .team-selected-member {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px;
-    padding: 8px;
-    border: 0;
+    grid-template-columns: 26px minmax(0, 1fr) 24px 24px;
+    align-items: center;
+    gap: 7px;
+    padding: 7px;
     border-radius: 10px;
     background: hsl(220 20% 96%);
-    text-align: left;
   }
 
-  .team-selected-list button b {
-    grid-row: span 2;
-    align-self: center;
+  .team-selected-member strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .team-leader-button,
+  .team-remove-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 7px;
     color: var(--aorist-muted);
-    font-size: 11px;
+    background: transparent;
+  }
+
+  .team-leader-button.active {
+    color: hsl(39 90% 38%);
+    background: hsl(45 94% 91%);
+  }
+
+  .team-remove-button:hover {
+    color: hsl(0 84% 55%);
+    background: hsl(0 84% 95%);
   }
 
   .team-selected-list p,
@@ -5688,7 +7337,507 @@
       grid-template-columns: 1fr;
     }
 
+    .team-chat-header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .team-member-bar {
+      justify-content: flex-start;
+    }
+
+    .team-message > div {
+      max-width: 86%;
+    }
+
+    .team-compose-row {
+      grid-template-columns: 36px 1fr auto;
+    }
+
+    .team-compose-row select {
+      grid-column: 2 / -1;
+      grid-row: 1;
+    }
+
+    .team-compose-row textarea {
+      grid-column: 1 / 3;
+      grid-row: 2;
+    }
+
+    .team-compose-row .team-send {
+      grid-column: 3;
+      grid-row: 2;
+    }
+
     .team-builder {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .shell {
+    --sidebar-width: 236px;
+    --aorist-primary: hsl(219 72% 48%);
+    --aorist-primary-strong: hsl(222 70% 40%);
+    --aorist-primary-soft: hsl(218 80% 96%);
+    --aorist-ink: hsl(224 32% 12%);
+    --aorist-muted: hsl(220 12% 42%);
+    --aorist-faint: hsl(220 10% 62%);
+    --aorist-line: hsl(220 22% 88%);
+    --aorist-line-strong: hsl(220 24% 82%);
+    --aorist-sidebar: hsl(218 26% 97%);
+    --aorist-sidebar-hover: hsl(217 28% 93%);
+    --aorist-sidebar-active: hsl(218 80% 95%);
+    --aorist-card-bg: hsl(0 0% 100%);
+    --aorist-page-bg: hsl(216 30% 97%);
+    background: var(--aorist-sidebar);
+  }
+
+  .stage {
+    padding: 10px 10px 10px 0;
+    background: var(--aorist-sidebar);
+  }
+
+  .stage__surface {
+    height: calc(100vh - 20px);
+    overflow: hidden;
+    border: 1px solid var(--aorist-line);
+    border-radius: 14px;
+    background: var(--aorist-card-bg);
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.07);
+  }
+
+  .sidebar--aorist {
+    background: var(--aorist-sidebar);
+  }
+
+  .sidebar__brand {
+    grid-template-columns: 26px minmax(0, 1fr) auto 28px;
+    min-height: 60px;
+    padding: 0 14px;
+    background: color-mix(in srgb, var(--aorist-sidebar) 86%, white);
+  }
+
+  .sidebar__brand strong {
+    font-size: 15px;
+  }
+
+  .brand-mode-switch {
+    min-width: 50px;
+    height: 30px;
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg);
+  }
+
+  .workspace-nav {
+    padding: 10px 0 12px;
+  }
+
+  .workspace-nav h2 {
+    padding: 8px 14px 6px;
+    color: var(--aorist-faint);
+    font-size: 10px;
+    font-weight: 750;
+  }
+
+  .workspace-nav button {
+    width: calc(100% - 18px);
+    min-height: 38px;
+    margin-inline: 9px;
+    border-radius: 10px;
+    color: var(--aorist-muted);
+  }
+
+  .workspace-nav button:hover {
+    background: var(--aorist-sidebar-hover);
+  }
+
+  .workspace-nav button.active {
+    color: var(--aorist-primary-strong);
+    background: var(--aorist-sidebar-active);
+  }
+
+  .workspace-nav button em,
+  .sidebar__user em {
+    background: hsl(218 28% 92%);
+    color: var(--aorist-muted);
+  }
+
+  .sidebar__user-wrap {
+    background: color-mix(in srgb, var(--aorist-sidebar) 88%, white);
+  }
+
+  .sidebar__user-wrap .sidebar__user:hover,
+  .user-menu button:hover {
+    background: var(--aorist-sidebar-hover);
+  }
+
+  .stage-topbar,
+  .conversation-header {
+    min-height: 58px;
+    padding-inline: 24px;
+    background: color-mix(in srgb, white 92%, var(--aorist-page-bg));
+  }
+
+  .stage-topbar__actions button,
+  .hero-panel button,
+  .aorist-toolbar button,
+  .project-detail-actions button,
+  .project-detail-card button,
+  .project-detail-aside button,
+  .team-view-switch button,
+  .team-primary,
+  .management-primary,
+  .team-card-meta button {
+    min-height: 34px;
+    border-radius: 9px;
+  }
+
+  .stage-topbar__actions button:nth-child(2),
+  .hero-panel button:first-child,
+  .aorist-toolbar button:last-child,
+  .project-detail-actions button:last-child,
+  .project-detail-card button,
+  .project-detail-aside button,
+  .management-primary,
+  .team-primary,
+  .team-card-meta button {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+    color: white;
+  }
+
+  .stage-topbar__actions button:hover,
+  .hero-panel button:hover,
+  .project-detail-actions button:hover,
+  .project-detail-card button:hover,
+  .project-detail-aside button:hover,
+  .team-card-meta button:hover {
+    background: hsl(217 30% 94%);
+  }
+
+  .stage-topbar__actions button:nth-child(2):hover,
+  .hero-panel button:first-child:hover,
+  .project-detail-actions button:last-child:hover,
+  .project-detail-card button:hover,
+  .project-detail-aside button:hover,
+  .team-primary:hover,
+  .management-primary:hover,
+  .team-card-meta button:hover {
+    background: var(--aorist-primary-strong);
+    color: white;
+  }
+
+  .aorist-page,
+  .team-collab-page {
+    padding: 22px;
+    background: var(--aorist-page-bg);
+  }
+
+  .hero-panel {
+    position: relative;
+    padding: 18px 280px 18px 20px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 14px;
+    background: var(--aorist-card-bg);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .hero-panel h1 {
+    max-width: 720px;
+    margin: 7px 0;
+    font-size: 30px;
+    line-height: 1.12;
+  }
+
+  .hero-panel p {
+    max-width: 760px;
+    margin-bottom: 0;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .hero-panel > div {
+    position: absolute;
+    right: 20px;
+    bottom: 18px;
+    justify-content: flex-end;
+  }
+
+  .aorist-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .aorist-stats article,
+  .management-stats article,
+  .aorist-card,
+  .management-card,
+  .team-list-card,
+  .team-chat-shell,
+  .detail-panel,
+  .knowledge-preview,
+  :global(.task-composer-card) {
+    border-color: var(--aorist-line);
+    border-radius: 13px;
+    background: var(--aorist-card-bg);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    backdrop-filter: none;
+  }
+
+  .aorist-stats article {
+    min-height: 92px;
+    padding: 14px 16px;
+  }
+
+  .aorist-stats span,
+  .aorist-stats em {
+    font-size: 12px;
+  }
+
+  .aorist-stats strong {
+    margin: 5px 0 2px;
+    font-size: 26px;
+  }
+
+  .aorist-split,
+  .workbench-grid {
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .workbench-grid {
+    grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr) minmax(286px, 0.78fr);
+  }
+
+  .aorist-card {
+    padding: 16px;
+  }
+
+  .aorist-card header {
+    min-height: 30px;
+    margin-bottom: 8px;
+  }
+
+  .todo-row,
+  .automation-row {
+    min-height: 58px;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-color: hsl(220 22% 91%);
+    border-radius: 10px;
+    background: hsl(216 30% 98%);
+  }
+
+  .todo-row b,
+  .automation-row b {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary-strong);
+    font-weight: 750;
+  }
+
+  .calendar-mini-grid {
+    gap: 5px;
+  }
+
+  .calendar-mini-grid article {
+    min-height: 42px;
+    border-color: hsl(220 22% 91%);
+    background: hsl(216 30% 98%);
+  }
+
+  .team-page-head {
+    border-color: var(--aorist-line);
+    border-radius: 14px;
+    background: var(--aorist-card-bg);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .team-page-head {
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+
+  .team-page-head h1 {
+    font-size: 28px;
+    line-height: 1.12;
+  }
+
+  .management-stats {
+    gap: 10px;
+  }
+
+  .management-stats article {
+    min-height: 88px;
+    padding: 14px;
+  }
+
+  .management-stats article > :global(svg) {
+    width: 32px;
+    height: 32px;
+    padding: 8px;
+    border-radius: 9px;
+    background: var(--aorist-primary-soft);
+  }
+
+  .management-controls {
+    gap: 10px;
+  }
+
+  .management-search input,
+  .team-builder-search input,
+  .team-builder aside input,
+  .aorist-search input {
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg);
+  }
+
+  .project-list-panel {
+    gap: 9px;
+  }
+
+  .project-progress-line {
+    background: hsl(220 20% 92%);
+  }
+
+  .project-progress-line i {
+    background: var(--aorist-primary);
+  }
+
+  .management-badges span,
+  .management-badges em {
+    background: hsl(218 28% 94%);
+    color: var(--aorist-muted);
+  }
+
+  .management-badges span:nth-child(2) {
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary-strong);
+  }
+
+  .team-collab-page {
+    gap: 0;
+  }
+
+  .team-card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(282px, 1fr));
+    gap: 14px;
+  }
+
+  .team-list-card {
+    min-height: 214px;
+    padding: 18px;
+  }
+
+  .team-list-card header > span {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: var(--aorist-primary-soft);
+  }
+
+  .team-view-switch {
+    border-color: var(--aorist-line);
+    background: hsl(216 30% 97%);
+  }
+
+  .team-view-switch button.active {
+    background: var(--aorist-primary);
+    color: white;
+  }
+
+  .team-chat-shell {
+    min-height: min(720px, calc(100vh - 142px));
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--aorist-primary) 42%, transparent);
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 1100px) {
+    .aorist-stats,
+    .management-stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .workbench-grid,
+    .project-detail-body {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .shell {
+      --sidebar-width: 220px;
+      grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+      display: none;
+    }
+
+    .stage {
+      padding: 0;
+    }
+
+    .stage__surface {
+      height: 100vh;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .aorist-page,
+    .team-collab-page {
+      padding: 16px;
+    }
+
+    .project-detail-modal > .project-detail-head {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .project-detail-title {
+      flex: 1 1 calc(100% - 48px);
+    }
+
+    .project-detail-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+
+    .project-detail-actions button {
+      flex: 1 1 150px;
+    }
+
+    .hero-panel {
+      padding: 16px;
+    }
+
+    .hero-panel h1 {
+      font-size: 25px;
+      line-height: 1.18;
+      letter-spacing: -0.03em;
+    }
+
+    .hero-panel > div {
+      position: static;
+      justify-content: flex-start;
+      margin-top: 14px;
+    }
+
+    .aorist-stats,
+    .management-stats,
+    .team-card-grid {
       grid-template-columns: 1fr;
     }
   }

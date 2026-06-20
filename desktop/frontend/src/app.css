@@ -19,6 +19,18 @@
   --mono: ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", monospace;
   --fg: var(--foreground);
   --fg-faint: var(--muted-foreground);
+  --law-bg: hsl(220 22% 97%);
+  --law-surface: hsl(0 0% 100%);
+  --law-panel: hsl(220 20% 98%);
+  --law-panel-strong: hsl(220 20% 95%);
+  --law-border: hsl(220 20% 90%);
+  --law-border-soft: hsl(220 22% 93%);
+  --law-text: hsl(220 30% 10%);
+  --law-muted: hsl(220 10% 46%);
+  --law-primary: hsl(220 70% 50%);
+  --law-primary-soft: hsl(220 70% 95%);
+  --law-green: hsl(158 66% 37%);
+  --law-shadow: 0 1px 2px hsl(220 28% 12% / 0.04), 0 18px 44px hsl(220 28% 12% / 0.06);
 }
 
 * {
@@ -75,10 +87,10 @@ button {
 .dashboard-grid article,
 .composer {
   min-width: 0;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  background: var(--law-surface);
+  border: 1px solid var(--law-border-soft);
+  border-radius: 8px;
+  box-shadow: var(--law-shadow);
 }
 
 .dashboard-grid article {
@@ -765,59 +777,74 @@ button {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0;
+  min-width: 0;
+  min-height: 92px;
   padding: 0;
   overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #dfe5ef;
+  border-radius: 17px;
+  box-shadow: 0 12px 30px rgb(31 41 55 / 0.06), 0 1px 2px rgb(31 41 55 / 0.05);
 }
 
 .composer--drop {
-  border-color: #93c5fd;
+  border-color: hsl(220 70% 78%);
   background: #f8fbff;
 }
 
 .composer__input {
   position: relative;
   min-width: 0;
-  padding: 14px 16px 6px;
+  padding: 13px 16px 0;
 }
 
 .composer textarea {
   width: 100%;
-  min-height: 60px;
-  resize: vertical;
-  color: #17202a;
+  min-height: 38px;
+  max-height: 132px;
+  resize: none;
+  color: #273142;
   line-height: 1.55;
   background: transparent;
   border: 0;
   outline: 0;
+  font-size: 14px;
+}
+
+.composer textarea::placeholder {
+  color: #8d98aa;
 }
 
 .composer button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-width: 30px;
-  height: 30px;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
   padding: 0 8px;
-  color: #444444;
+  color: #7b8798;
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 9px;
   cursor: pointer;
+  font-size: 12px;
+  font-weight: 560;
 }
 
 .composer button:hover {
-  background: #f0f0f0;
+  color: #354052;
+  background: #f3f6fb;
 }
 
 .composer button.secondary {
-  color: #293241;
-  background: #e5e7eb;
+  color: #354052;
+  background: #eef3fb;
 }
 
 .composer button:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.62;
 }
 
 .composer__file {
@@ -828,47 +855,140 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 42px;
-  padding: 0 12px 11px 14px;
+  gap: 12px;
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 11px 10px 14px;
 }
 
 .composer__tools,
 .composer__actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
 
-.composer__tools button span {
-  color: #a0a0a0;
+.composer__tools {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.composer__actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.composer__tools button:first-child {
+  width: 24px;
+  padding: 0;
+  font-size: 20px;
+  font-weight: 360;
+}
+
+.composer__tools button:first-child svg {
+  display: none;
+}
+
+.composer__tools button:first-child::before {
+  content: "+";
+  transform: translateY(-1px);
+}
+
+.composer__link-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 148px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  color: #687489;
+  border-radius: 9px;
+  cursor: pointer;
   font-size: 12px;
+  font-weight: 560;
+}
+
+.composer__link-picker:hover {
+  color: #354052;
+  background: #f3f6fb;
+}
+
+.composer__link-picker span {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__link-picker select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.composer__tools button span {
+  color: inherit;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .composer__model {
+  width: min(190px, 32vw);
+  min-width: 96px;
   max-width: 190px;
-  height: 30px;
-  padding: 0 7px;
-  color: #4b4b4b;
+  height: 28px;
+  padding: 0 20px 0 14px;
+  color: #7e889a;
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 999px;
   outline: none;
   font-size: 12px;
+  font-weight: 680;
+}
+
+.composer__model:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .composer__model:hover {
-  background: #f0f0f0;
+  color: #4c5a70;
+  background: #f4f7fc;
+}
+
+.composer__actions::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: #4f7fe8;
+  border-radius: 999px;
 }
 
 .composer__submit {
-  width: 34px;
-  min-width: 34px;
-  height: 34px !important;
-  color: #7b72d9 !important;
-  background: #ded9ff !important;
-  border-radius: 10px !important;
+  width: 32px;
+  min-width: 32px;
+  height: 32px !important;
+  padding: 0 !important;
+  color: #ffffff !important;
+  background: #b9cdf2 !important;
+  border-radius: 12px !important;
+}
+
+.composer__submit span {
+  display: none;
+}
+
+.composer__submit:not(:disabled) {
+  background: #8fb1ec !important;
 }
 
 .composer-menu {
@@ -877,19 +997,19 @@ button {
   bottom: calc(100% + 8px);
   display: grid;
   gap: 4px;
-  width: min(420px, 100%);
+  width: min(480px, calc(100vw - 48px));
   padding: 8px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
+  background: var(--law-surface);
+  border: 1px solid var(--law-border);
+  border-radius: 10px;
+  box-shadow: 0 18px 60px hsl(220 28% 12% / 0.14);
 }
 
 .composer-menu > span {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-soft);
+  color: var(--law-muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -899,17 +1019,15 @@ button {
   justify-content: flex-start;
   width: 100%;
   height: auto;
-  min-height: 34px;
-  padding: 8px;
-  color: #293241;
-  background: transparent;
-  border: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  color: var(--law-text);
 }
 
 .composer-menu em {
   margin-left: auto;
   overflow: hidden;
-  color: var(--text-soft);
+  color: var(--law-muted);
   font-size: 12px;
   font-style: normal;
   text-overflow: ellipsis;
@@ -920,7 +1038,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .composer-context__item {
@@ -928,12 +1046,12 @@ button {
   align-items: center;
   gap: 7px;
   max-width: min(340px, 100%);
-  min-height: 30px;
-  padding: 4px 7px;
-  color: #293241;
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--law-text);
+  background: var(--law-panel);
+  border: 1px solid var(--law-border-soft);
+  border-radius: 999px;
   font-size: 12px;
 }
 
@@ -951,8 +1069,8 @@ button {
   width: 22px;
   height: 22px;
   object-fit: cover;
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  border: 1px solid var(--law-border-soft);
+  border-radius: 999px;
 }
 
 .composer-context__item button {
@@ -960,27 +1078,24 @@ button {
   flex: 0 0 auto;
   width: 22px;
   height: 22px;
-  place-items: center;
   padding: 0;
-  color: var(--text-soft);
-  background: transparent;
-  border: 0;
+  place-items: center;
+  color: var(--law-muted);
 }
 
 .composer-context__item button:hover {
-  color: #17202a;
-  background: #e5e7eb;
+  color: var(--law-text);
+  background: var(--law-panel-strong);
 }
 
 .composer-context__item--image {
-  background: #eef7ff;
+  background: var(--law-primary-soft);
 }
 
 .composer-context__item--pending {
-  color: var(--text-soft);
+  color: var(--law-muted);
   border-style: dashed;
 }
-
 /* === Decision shelf (approval / ask) === */
 .decision-shelf {
   display: grid;

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -54,6 +56,27 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		APIKeyEnv: "RENDER_MODEL_KEY",
 		Effort:    "max",
 	})
+	orig.Workbench = WorkbenchConfig{
+		Plugins: []WorkbenchPluginEntry{{
+			ID:           "content-studio",
+			Name:         "Content Studio",
+			Kind:         "native",
+			Entry:        "content-studio",
+			Version:      "1.0.0",
+			Capabilities: []string{"presentation", "poster", "video"},
+			ProviderIDs:  []string{"asset-mcp"},
+			Config:       map[string]string{"default_mode": "manual"},
+			Enabled:      boolPtr(true),
+		}},
+		Providers: []WorkbenchProviderEntry{{
+			ID:           "asset-mcp",
+			Type:         "mcp",
+			Server:       "internal-assets",
+			Capabilities: []string{"image-search", "asset-library"},
+			Headers:      map[string]string{"X-Team": "creative"},
+			Config:       map[string]string{"asset_root": "${ASSET_ROOT}"},
+		}},
+	}
 
 	rendered := RenderTOML(orig)
 
@@ -171,6 +194,29 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if stripe.Tier != "background" {
 		t.Errorf("plugin tier should render and parse as background, got %q", stripe.Tier)
 	}
+	if len(got.Workbench.Plugins) != 1 {
+		t.Fatalf("workbench plugins count = %d, want 1", len(got.Workbench.Plugins))
+	}
+	workbenchPlugin := got.Workbench.Plugins[0]
+	if workbenchPlugin.ID != "content-studio" || workbenchPlugin.Kind != "native" || workbenchPlugin.Entry != "content-studio" {
+		t.Errorf("workbench plugin not preserved: %+v", workbenchPlugin)
+	}
+	if !workbenchPlugin.IsEnabled() || len(workbenchPlugin.Capabilities) != 3 || workbenchPlugin.Capabilities[2] != "video" {
+		t.Errorf("workbench plugin capabilities/enabled not preserved: %+v", workbenchPlugin)
+	}
+	if len(workbenchPlugin.ProviderIDs) != 1 || workbenchPlugin.ProviderIDs[0] != "asset-mcp" || workbenchPlugin.Config["default_mode"] != "manual" {
+		t.Errorf("workbench plugin provider/config not preserved: %+v", workbenchPlugin)
+	}
+	if len(got.Workbench.Providers) != 1 {
+		t.Fatalf("workbench providers count = %d, want 1", len(got.Workbench.Providers))
+	}
+	workbenchProvider := got.Workbench.Providers[0]
+	if workbenchProvider.ID != "asset-mcp" || workbenchProvider.Type != "mcp" || workbenchProvider.Server != "internal-assets" {
+		t.Errorf("workbench provider not preserved: %+v", workbenchProvider)
+	}
+	if workbenchProvider.Headers["X-Team"] != "creative" || workbenchProvider.Config["asset_root"] != "${ASSET_ROOT}" {
+		t.Errorf("workbench provider headers/config not preserved: %+v", workbenchProvider)
+	}
 }
 
 func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
@@ -215,6 +261,58 @@ func TestProjectRenderPreservesNonDefaultLegacySections(t *testing.T) {
 		if !strings.Contains(project, want) {
 			t.Fatalf("project render missing legacy/non-default %q:\n%s", want, project)
 		}
+	}
+}
+
+func TestLoadForRootMergesWorkbenchConfigByID(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(home, ".config")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	if err := os.MkdirAll(filepath.Dir(userConfigPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfigPath(), []byte(`
+[[workbench.plugins]]
+id = "global-studio"
+name = "Global Studio"
+kind = "native"
+entry = "global-studio"
+
+[[workbench.providers]]
+id = "shared-render"
+type = "mcp"
+server = "global-render"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "voltui.toml"), []byte(`
+[[workbench.plugins]]
+id = "project-studio"
+name = "Project Studio"
+kind = "native"
+entry = "project-studio"
+
+[[workbench.providers]]
+id = "shared-render"
+type = "http"
+url = "https://render.example.com"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Workbench.Plugins) != 2 {
+		t.Fatalf("workbench plugins = %+v, want global + project", cfg.Workbench.Plugins)
+	}
+	if len(cfg.Workbench.Providers) != 1 || cfg.Workbench.Providers[0].Type != "http" {
+		t.Fatalf("workbench providers = %+v, want project override", cfg.Workbench.Providers)
 	}
 }
 

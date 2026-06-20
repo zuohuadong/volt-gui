@@ -1,19 +1,25 @@
-import type {
-  DataProvider,
-  BaseRecord,
-  GetListParams,
-  GetListResult,
-  GetOneParams,
-  GetOneResult,
-  CreateParams,
-  CreateResult,
-  UpdateParams,
-  UpdateResult,
-  DeleteParams,
-  DeleteResult,
-} from "@svadmin/core";
 import { app } from "./bridge";
-import type { MCPServerInput, MemoryView, ProviderView, ResourceRecord, SettingsView } from "./types";
+import type { CreateWorkbenchJobInput, MCPServerInput, MemoryView, ProviderView, ResourceRecord, SettingsView, UpdateWorkbenchStepInput, WorkbenchArtifactInput } from "./types";
+
+type BaseRecord = { id: string | number; [key: string]: unknown };
+type GetListParams = { resource: string };
+type GetListResult<TData extends BaseRecord = BaseRecord> = { data: TData[]; total: number };
+type GetOneParams = { resource: string; id: string | number };
+type GetOneResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type CreateParams<TVariables = unknown> = { resource: string; variables: TVariables };
+type CreateResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type UpdateParams<TVariables = unknown> = { resource: string; id: string | number; variables: TVariables };
+type UpdateResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type DeleteParams<TVariables = unknown> = { resource: string; id: string | number; variables?: TVariables };
+type DeleteResult<TData extends BaseRecord = BaseRecord> = { data: TData };
+type DataProvider = {
+  getList<TData extends BaseRecord = BaseRecord>(params: GetListParams): Promise<GetListResult<TData>>;
+  getOne<TData extends BaseRecord = BaseRecord>(params: GetOneParams): Promise<GetOneResult<TData>>;
+  create<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: CreateParams<TVariables>): Promise<CreateResult<TData>>;
+  update<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: UpdateParams<TVariables>): Promise<UpdateResult<TData>>;
+  deleteOne<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: DeleteParams<TVariables>): Promise<DeleteResult<TData>>;
+  getApiUrl(): string;
+};
 
 export const workbenchResources = [
   "providers",
@@ -29,6 +35,9 @@ export const workbenchResources = [
   "memory",
   "checkpoints",
   "updates",
+  "workbenchPlugins",
+  "workbenchProviders",
+  "workbenchJobs",
 ] as const;
 
 export type WorkbenchResource = (typeof workbenchResources)[number];
@@ -191,6 +200,18 @@ export const wailsDataProvider: DataProvider = {
         data = taskRecords.map((task) => ({ ...task }));
         break;
       }
+      case "workbenchPlugins": {
+        data = asRecords(await app().WorkbenchPlugins(), "workbench-plugin");
+        break;
+      }
+      case "workbenchProviders": {
+        data = asRecords(await app().WorkbenchProviders(), "workbench-provider");
+        break;
+      }
+      case "workbenchJobs": {
+        data = asRecords(await app().ListWorkbenchJobs(), "workbench-job");
+        break;
+      }
       case "sessions": {
         data = asRecords(await app().ListSessions(), "session");
         break;
@@ -206,6 +227,9 @@ export const wailsDataProvider: DataProvider = {
   },
 
   async getOne<TData extends BaseRecord = BaseRecord>(params: GetOneParams): Promise<GetOneResult<TData>> {
+    if ((params.resource as WorkbenchResource) === "workbenchJobs") {
+      return { data: (await app().GetWorkbenchJob(String(params.id))) as unknown as TData };
+    }
     const result = await this.getList({ resource: params.resource });
     const record = result.data.find((item) => String(item.id) === String(params.id)) ?? ({ id: params.id } as BaseRecord);
     return { data: record as unknown as TData };
@@ -239,6 +263,10 @@ export const wailsDataProvider: DataProvider = {
       const note = String(record.note ?? record.description ?? record.body ?? "").trim();
       const path = await app().Remember(scope, note);
       return { data: { id: `doc:${scope}`, scope, path, note } as unknown as TData };
+    }
+    if (resource === "workbenchJobs") {
+      const job = await app().CreateWorkbenchJob(data as CreateWorkbenchJobInput);
+      return { data: job as unknown as TData };
     }
     return { data: { id: crypto.randomUUID(), ...(typeof data === "object" && data ? (data as object) : { value: data }) } as unknown as TData };
   },
@@ -305,6 +333,18 @@ export const wailsDataProvider: DataProvider = {
       const record = asRecordData(data);
       taskRecords = taskRecords.map((task) => (String(task.id) === id ? { ...task, ...record, id } : task));
       return { data: (taskRecords.find((task) => String(task.id) === id) ?? { id, ...record }) as unknown as TData };
+    }
+    if (resource === "workbenchJobs") {
+      const record = asRecordData(data);
+      if (typeof record.artifact === "object" && record.artifact !== null) {
+        const job = await app().AddWorkbenchArtifact(id, record.artifact as WorkbenchArtifactInput);
+        return { data: job as unknown as TData };
+      }
+      const stepId = String(record.stepId ?? "");
+      if (stepId) {
+        const job = await app().UpdateWorkbenchStep(id, stepId, record as UpdateWorkbenchStepInput);
+        return { data: job as unknown as TData };
+      }
     }
     return { data: { id, ...(typeof data === "object" && data ? (data as object) : { value: data }) } as unknown as TData };
   },

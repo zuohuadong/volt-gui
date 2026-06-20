@@ -773,6 +773,7 @@ function TaskEditor({
   }, [projectOpen]);
 
   const [draft, setDraft] = useState(task);
+  const intervalBeforeCycle = useRef<string | null>(null);
   const set = useCallback((field: keyof HeartbeatTask, value: string | boolean) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
   }, []);
@@ -897,8 +898,9 @@ function TaskEditor({
             className={`set-seg__btn${freqType === "cycle" ? " set-seg__btn--on" : ""}`}
             onClick={() => {
               setFreqType("cycle");
-              // Initialize interval to daily schedule when switching to cycle mode
+              // Save the original interval so switching back can restore it
               if (!draft.interval.includes("|")) {
+                intervalBeforeCycle.current = draft.interval;
                 setDraft((prev) => ({ ...prev, interval: "24h|daily@09:00" }));
               }
             }}
@@ -907,7 +909,17 @@ function TaskEditor({
           </button>
           <button
             className={`set-seg__btn${freqType === "interval" ? " set-seg__btn--on" : ""}`}
-            onClick={() => setFreqType("interval")}
+            onClick={() => {
+              setFreqType("interval");
+              // Restore original interval if user toggled cycle and back without saving
+              if (intervalBeforeCycle.current !== null) {
+                setDraft((prev) => ({ ...prev, interval: intervalBeforeCycle.current! }));
+                intervalBeforeCycle.current = null;
+              } else if (draft.interval.includes("|")) {
+                // Fallback: strip cycle suffix
+                setDraft((prev) => ({ ...prev, interval: prev.interval.replace(/\|.*$/, "") }));
+              }
+            }}
           >
             {t("heartbeat.freqInterval")}
           </button>

@@ -885,7 +885,116 @@
         {:else if activityMode === "work"}
           <section class="workbench aorist-workbench">
             <header class="stage-topbar"><div><span>Workbench</span><strong>{workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div><div class="stage-topbar__actions"><button type="button" onclick={() => openWorkLayer("today")}>工作台入口</button><button type="button" onclick={focusNewTask}><Plus size={14} /> 新建任务</button><button type="button" onclick={() => (activityMode = "code")}><Code2 size={14} /> 代码工作台</button></div></header>
-            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建任务</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>管理项目</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            {#if workLayer === "today"}
+              <section class="aorist-page brand-home">
+                <div class="brand-home__intro hero-panel">
+                  <div>
+                    <span class="brand-home__kicker">Volt GUI Console</span>
+                    <h1>把今天的 Agent 工作收进一个清爽界面。</h1>
+                    <p>延续 Brandingcenter 的纸面感、细线和克制按钮：默认页先给出真实任务入口，再把自动化、日程、项目和能力模块放在可扫读的位置。</p>
+                  </div>
+                  <div class="brand-home__actions">
+                    <button type="button" onclick={focusNewTask}><Plus size={15} />新建任务</button>
+                    <button type="button" onclick={() => openWorkLayer("agents")}><Bot size={15} />Agent 中心</button>
+                    <button type="button" onclick={() => (activityMode = "code")}><Code2 size={15} />代码工作台</button>
+                  </div>
+                </div>
+
+                <div class="brand-metrics aorist-stats">
+                  <button type="button" onclick={() => openWorkLayer("automations")}>
+                    <span>运行自动化</span>
+                    <strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong>
+                    <em>持续监控中</em>
+                  </button>
+                  <button type="button" onclick={() => openWorkLayer("todos")}>
+                    <span>今日待办</span>
+                    <strong>{todoItems.length}</strong>
+                    <em>可立即处理</em>
+                  </button>
+                  <button type="button" onclick={() => openWorkLayer("projects")}>
+                    <span>管理项目</span>
+                    <strong>{projectCards.length}</strong>
+                    <em>可关联任务</em>
+                  </button>
+                  <button type="button" onclick={() => openWorkLayer("capabilities")}>
+                    <span>能力模块</span>
+                    <strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong>
+                    <em>插件 / MCP / Skill</em>
+                  </button>
+                </div>
+
+                <div class="brand-workgrid aorist-split workbench-grid">
+                  <section class="brand-panel brand-panel--tasks aorist-card">
+                    <header>
+                      <div><span>Focus</span><strong>今日待办</strong></div>
+                      <button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button>
+                    </header>
+                    <div class="brand-task-list">
+                      {#each todoItems as item (item.title)}
+                        <button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}>
+                          <i></i>
+                          <span><strong>{item.title}</strong><em>{item.desc}</em></span>
+                          <b>{item.state}</b>
+                        </button>
+                      {/each}
+                    </div>
+                  </section>
+
+                  <section class="brand-panel aorist-card">
+                    <header>
+                      <div><span>Automation</span><strong>运行中的自动化</strong></div>
+                      <button type="button" onclick={() => openWorkLayer("automations")}>管理</button>
+                    </header>
+                    <div class="brand-automation-list">
+                      {#each runningAutomations.slice(0, 3) as item (item.id)}
+                        <button type="button" onclick={() => (automationDialog = item.id)}>
+                          <span>
+                            <strong>{item.title}</strong>
+                            <em>{item.cadence} / 已运行 {formatRuntime(item.startedAtMs)}</em>
+                          </span>
+                          <b>{item.status}</b>
+                        </button>
+                      {/each}
+                    </div>
+                  </section>
+
+                  <aside class="brand-side">
+                    <section class="brand-panel brand-panel--calendar aorist-card workbench-calendar">
+                      <header>
+                        <div><span>Schedule</span><strong>近日安排</strong></div>
+                        <button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button>
+                      </header>
+                      <div class="brand-date-strip calendar-mini-grid">
+                        {#each Array.from({ length: 7 }, (_, index) => index + 9) as day (day)}
+                          <article class:active={calendarEvents.some((event) => Number(event.day) === day)} class:today={calendarEvents.some((event) => Number(event.day) === day)}>
+                            <b>{day}</b>
+                            <span>{calendarEvents.find((event) => Number(event.day) === day)?.time ?? ""}</span>
+                          </article>
+                        {/each}
+                      </div>
+                      {#each calendarEvents.slice(0, 2) as event (event.title)}
+                        <button class="brand-mini-row" type="button" onclick={() => openConfigDialog("schedule")}>
+                          <span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span>
+                          <b>{event.type}</b>
+                        </button>
+                      {/each}
+                      <footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer>
+                    </section>
+
+                    <section class="brand-panel brand-panel--shortcuts aorist-card">
+                      <header>
+                        <div><span>Launch</span><strong>快速入口</strong></div>
+                      </header>
+                      <div>
+                        <button type="button" onclick={() => openWorkLayer("resources")}><Database size={14} />资料中心</button>
+                        <button type="button" onclick={() => openWorkLayer("teams")}><UsersRound size={14} />团队协作</button>
+                        <button type="button" onclick={() => openWorkLayer("media")}><Megaphone size={14} />运营中心</button>
+                        <button type="button" onclick={() => openWorkLayer("capabilities")}><Blocks size={14} />能力中心</button>
+                      </div>
+                    </section>
+                  </aside>
+                </div>
+              </section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -5691,5 +5800,567 @@
     .team-builder {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* Brandingcenter-style default workbench */
+  .shell {
+    --brand-bg: #f7f6f3;
+    --brand-paper: #fdfdfc;
+    --brand-ink: #16171a;
+    --brand-body: #3c3e44;
+    --brand-muted: #74777e;
+    --brand-faint: #9b9ea5;
+    --brand-line: #e7e5df;
+    --brand-line-strong: #dcd9d1;
+    --brand-accent: #2f5bd6;
+    --brand-soft: #dfe6fb;
+  }
+
+  .shell[data-mode="work"] .stage__surface::before {
+    display: none;
+  }
+
+  .shell[data-mode="work"] .brand-mark {
+    color: #ffffff;
+    background: var(--brand-ink);
+    box-shadow: none;
+  }
+
+  .brand-home {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 28px;
+    color: var(--brand-body);
+    background: var(--brand-bg);
+  }
+
+  .brand-home__intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--brand-line);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .brand-home__intro::after {
+    display: none;
+  }
+
+  .brand-home__kicker,
+  .brand-panel header span {
+    color: var(--brand-muted);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .brand-home h1 {
+    max-width: 680px;
+    margin: 12px 0 14px;
+    color: var(--brand-ink);
+    font-size: 34px;
+    font-weight: 650;
+    line-height: 1.12;
+    letter-spacing: 0;
+  }
+
+  .brand-home p {
+    max-width: 720px;
+    margin: 0;
+    color: var(--brand-muted);
+    font-size: 15px;
+    line-height: 1.68;
+  }
+
+  .brand-home__actions,
+  .brand-panel header,
+  .brand-panel--shortcuts > div {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .brand-home__actions {
+    justify-content: flex-end;
+  }
+
+  .brand-home__actions button,
+  .brand-panel header button,
+  .brand-panel--shortcuts button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 36px;
+    padding: 0 13px;
+    border: 1px solid var(--brand-line-strong);
+    border-radius: 8px;
+    color: var(--brand-ink);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .brand-home__actions button:first-child,
+  .brand-panel header button:hover,
+  .brand-panel--shortcuts button:hover {
+    border-color: var(--brand-ink);
+    color: #ffffff;
+    background: var(--brand-ink);
+  }
+
+  .brand-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--brand-line);
+    border-radius: 8px;
+    background: var(--brand-line);
+  }
+
+  .brand-metrics button {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 18px;
+    border: 0;
+    color: var(--brand-body);
+    background: var(--brand-paper);
+    text-align: left;
+  }
+
+  .brand-metrics button:hover {
+    background: #ffffff;
+  }
+
+  .brand-metrics span,
+  .brand-metrics em {
+    overflow: hidden;
+    color: var(--brand-muted);
+    font-size: 13px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand-metrics strong {
+    color: var(--brand-ink);
+    font-size: 30px;
+    line-height: 1;
+  }
+
+  .brand-workgrid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(280px, 0.72fr);
+    gap: 16px;
+    min-height: 0;
+  }
+
+  .brand-side {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .brand-panel {
+    min-width: 0;
+    padding: 18px;
+    border: 1px solid var(--brand-line);
+    border-radius: 8px;
+    background: var(--brand-paper);
+    box-shadow: none;
+  }
+
+  .brand-panel header {
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .brand-panel header strong {
+    display: block;
+    margin-top: 3px;
+    color: var(--brand-ink);
+    font-size: 18px;
+    letter-spacing: 0;
+  }
+
+  .brand-task-list,
+  .brand-automation-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .brand-task-list button,
+  .brand-automation-list button,
+  .brand-mini-row {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 56px;
+    padding: 10px 0;
+    border: 0;
+    border-top: 1px solid var(--brand-line);
+    color: var(--brand-body);
+    background: transparent;
+    text-align: left;
+  }
+
+  .brand-automation-list button,
+  .brand-mini-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .brand-task-list i {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--brand-accent);
+  }
+
+  .brand-task-list strong,
+  .brand-automation-list strong,
+  .brand-mini-row strong {
+    display: block;
+    overflow: hidden;
+    color: var(--brand-ink);
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand-task-list em,
+  .brand-automation-list em,
+  .brand-mini-row em {
+    display: block;
+    overflow: hidden;
+    margin-top: 3px;
+    color: var(--brand-muted);
+    font-size: 12px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand-task-list b,
+  .brand-automation-list b,
+  .brand-mini-row b {
+    padding: 3px 8px;
+    border-radius: 999px;
+    color: var(--brand-accent);
+    background: var(--brand-soft);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .brand-date-strip {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .brand-date-strip article {
+    min-width: 0;
+    min-height: 48px;
+    padding: 7px;
+    border: 1px solid var(--brand-line);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .brand-date-strip article.active {
+    border-color: var(--brand-accent);
+    background: #f3f6ff;
+  }
+
+  .brand-date-strip b,
+  .brand-date-strip span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand-date-strip b {
+    color: var(--brand-ink);
+    font-size: 13px;
+  }
+
+  .brand-date-strip span {
+    margin-top: 3px;
+    color: var(--brand-muted);
+    font-size: 10px;
+  }
+
+  .brand-panel--shortcuts > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .brand-panel--shortcuts button {
+    justify-content: flex-start;
+    min-width: 0;
+    background: #ffffff;
+  }
+
+  @media (max-width: 1180px) {
+    .brand-workgrid {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .brand-side {
+      grid-column: 1 / -1;
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  @media (max-width: 860px) {
+    .brand-home__intro,
+    .brand-workgrid,
+    .brand-side {
+      grid-template-columns: 1fr;
+    }
+
+    .brand-home__actions {
+      justify-content: flex-start;
+    }
+
+    .brand-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 560px) {
+    .brand-home {
+      padding: 18px;
+    }
+
+    .brand-home h1 {
+      font-size: 27px;
+    }
+
+    .brand-metrics,
+    .brand-panel--shortcuts > div,
+    .brand-date-strip {
+      grid-template-columns: 1fr;
+    }
+  }
+  /* Work 模式品牌化覆盖层：把 aorist-* 蓝色卡片体系收敛到 brand 纸面语言。
+     仅作用于 data-mode="work"；:not(.brand-home) 保护已完成的今日层。
+     不改模板、不影响 Code 模式；token 重定向 + 视觉收敛。 */
+  .shell[data-mode="work"] {
+    --aorist-primary: var(--brand-accent);
+    --aorist-primary-strong: var(--brand-accent);
+    --aorist-primary-soft: var(--brand-soft);
+    --aorist-primary-softer: var(--brand-soft);
+    --aorist-ink: var(--brand-ink);
+    --aorist-muted: var(--brand-muted);
+    --aorist-faint: var(--brand-faint);
+    --aorist-line: var(--brand-line);
+    --aorist-line-strong: var(--brand-line-strong);
+    --aorist-card: var(--brand-paper);
+    --aorist-card-strong: var(--brand-paper);
+  }
+
+  /* Work 页面背景改纸面，去掉放射渐变 */
+  .shell[data-mode="work"] .aorist-page:not(.brand-home) {
+    padding: 24px;
+    background: var(--brand-bg);
+  }
+
+  /* hero-panel（brand-home 内部）改纸面 */
+  .shell[data-mode="work"] .hero-panel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .shell[data-mode="work"] .hero-panel::after {
+    display: none;
+  }
+
+  /* 卡片类统一：纸面色、1px 细线、8px 圆角、无阴影、hover 轻提亮 */
+  .shell[data-mode="work"] .aorist-stats article:not(.brand-metrics *),
+  .shell[data-mode="work"] .aorist-card:not(.brand-panel):not(.brand-workgrid *),
+  .shell[data-mode="work"] .aorist-list article,
+  .shell[data-mode="work"] .agent-card:not(.brand-workgrid *),
+  .shell[data-mode="work"] .automation-card,
+  .shell[data-mode="work"] .media-card,
+  .shell[data-mode="work"] .capability-item,
+  .shell[data-mode="work"] .management-card,
+  .shell[data-mode="work"] .management-stats article,
+  .shell[data-mode="work"] .capability-stats article,
+  .shell[data-mode="work"] .capability-panel,
+  .shell[data-mode="work"] .detail-summary article,
+  .shell[data-mode="work"] .detail-timeline article,
+  .shell[data-mode="work"] .room-message,
+  .shell[data-mode="work"] .hearing-card,
+  .shell[data-mode="work"] .team-card {
+    border: 1px solid var(--brand-line);
+    border-radius: 8px;
+    background: var(--brand-paper);
+    backdrop-filter: none;
+    box-shadow: none;
+    transition: border-color 0.16s ease, background 0.16s ease;
+  }
+  .shell[data-mode="work"] .aorist-stats article:hover:not(.brand-metrics *),
+  .shell[data-mode="work"] .aorist-card:hover:not(.brand-panel):not(.brand-workgrid *),
+  .shell[data-mode="work"] .aorist-list article:hover,
+  .shell[data-mode="work"] .agent-card:hover:not(.brand-workgrid *),
+  .shell[data-mode="work"] .automation-card:hover,
+  .shell[data-mode="work"] .media-card:hover,
+  .shell[data-mode="work"] .capability-item:hover,
+  .shell[data-mode="work"] .management-card:hover,
+  .shell[data-mode="work"] .management-stats article:hover,
+  .shell[data-mode="work"] .capability-stats article:hover,
+  .shell[data-mode="work"] .capability-panel:hover {
+    transform: none;
+    border-color: var(--brand-line-strong);
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  /* 状态药丸：蓝→品牌 accent */
+  .shell[data-mode="work"] .aorist-list span,
+  .shell[data-mode="work"] .automation-card span,
+  .shell[data-mode="work"] .media-card span,
+  .shell[data-mode="work"] .capability-item span,
+  .shell[data-mode="work"] .management-badges span,
+  .shell[data-mode="work"] .management-badges em,
+  .shell[data-mode="work"] .agent-card footer b,
+  .shell[data-mode="work"] .todo-row b,
+  .shell[data-mode="work"] .automation-row b,
+  .shell[data-mode="work"] .room-layout aside span,
+  .shell[data-mode="work"] .team-chat-layout aside span {
+    background: var(--brand-soft);
+    color: var(--brand-accent);
+  }
+
+  /* 按钮：克制描边 + hover 反白 ink；主按钮改 ink 实底 */
+  .shell[data-mode="work"] .stage-topbar__actions button,
+  .shell[data-mode="work"] .hero-panel button,
+  .shell[data-mode="work"] .aorist-toolbar button,
+  .shell[data-mode="work"] :global(.composer-context-actions button),
+  .shell[data-mode="work"] .automation-card footer button,
+  .shell[data-mode="work"] .capability-item button,
+  .shell[data-mode="work"] .config-modal footer button,
+  .shell[data-mode="work"] .agent-wizard__footer button,
+  .shell[data-mode="work"] .detail-panel header button,
+  .shell[data-mode="work"] .select-list button,
+  .shell[data-mode="work"] .distill-steps button {
+    border: 1px solid var(--brand-line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--brand-ink);
+    box-shadow: none;
+    backdrop-filter: none;
+    transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+  }
+  .shell[data-mode="work"] .stage-topbar__actions button:hover,
+  .shell[data-mode="work"] .hero-panel button:hover,
+  .shell[data-mode="work"] .aorist-toolbar button:hover,
+  .shell[data-mode="work"] :global(.composer-context-actions button:hover),
+  .shell[data-mode="work"] .automation-card footer button:hover,
+  .shell[data-mode="work"] .capability-item button:hover,
+  .shell[data-mode="work"] .config-modal footer button:hover,
+  .shell[data-mode="work"] .agent-wizard__footer button:hover {
+    transform: none;
+    border-color: var(--brand-ink);
+    background: var(--brand-ink);
+    color: #ffffff;
+    box-shadow: none;
+  }
+  /* 主按钮（:last-child / :nth-child(2)）保持 ink 实底、无渐变 */
+  .shell[data-mode="work"] .stage-topbar__actions button:nth-child(2),
+  .shell[data-mode="work"] .hero-panel button:first-child,
+  .shell[data-mode="work"] .aorist-toolbar button:last-child,
+  .shell[data-mode="work"] .config-modal footer button:last-child,
+  .shell[data-mode="work"] .agent-wizard__footer button:last-child,
+  .shell[data-mode="work"] .detail-panel header button {
+    border-color: var(--brand-ink);
+    background: var(--brand-ink);
+    color: #ffffff;
+    box-shadow: none;
+  }
+
+  /* 列表行：去边框圆角，改顶部细线分隔 */
+  .shell[data-mode="work"] .todo-row,
+  .shell[data-mode="work"] .automation-row {
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    margin-top: 0;
+    padding: 12px 0;
+    border: 0;
+    border-top: 1px solid var(--brand-line);
+    border-radius: 0;
+    background: transparent;
+  }
+  .shell[data-mode="work"] .automation-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .shell[data-mode="work"] .todo-row:hover,
+  .shell[data-mode="work"] .automation-row:hover {
+    transform: none;
+    border-color: var(--brand-line);
+    background: transparent;
+  }
+  .shell[data-mode="work"] .todo-row i {
+    background: var(--brand-accent);
+  }
+
+  /* 顶栏：去阴影、纸面化 */
+  .shell[data-mode="work"] .stage-topbar {
+    box-shadow: none;
+    border-bottom-color: var(--brand-line);
+    background: var(--brand-paper);
+  }
+
+  /* 搜索框：纸面细线 */
+  .shell[data-mode="work"] .aorist-search {
+    margin: 14px 0;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--brand-line);
+    background: transparent;
+    border-radius: 0;
+  }
+
+  /* agent-strip / 标签 / distill active：品牌 accent 强调 */
+  .shell[data-mode="work"] :global(.agent-strip button) {
+    border-color: var(--brand-line);
+    background: var(--brand-paper);
+    box-shadow: none;
+  }
+  .shell[data-mode="work"] :global(.agent-strip button.active),
+  .shell[data-mode="work"] .wizard-card-grid button.active,
+  .shell[data-mode="work"] .wizard-skill-list button.active,
+  .shell[data-mode="work"] .capability-tabs button.active,
+  .shell[data-mode="work"] .distill-steps button.active,
+  .shell[data-mode="work"] .detail-tabs button.active {
+    border-color: var(--brand-accent);
+    background: var(--brand-soft);
+    color: var(--brand-accent);
+  }
+  .shell[data-mode="work"] :global(.agent-strip span),
+  .shell[data-mode="work"] .agent-card header > span,
+  .shell[data-mode="work"] .wizard-avatar,
+  .shell[data-mode="work"] .wizard-preview b {
+    background: var(--brand-accent);
+    box-shadow: none;
+  }
+
+  /* 日历今日格强调 */
+  .shell[data-mode="work"] .calendar-grid article.today {
+    border-color: var(--brand-accent);
+    background: var(--brand-soft);
   }
 </style>

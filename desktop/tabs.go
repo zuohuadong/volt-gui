@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1002,13 +1003,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			}
 			if sessionRuntimeKey(tab.currentSessionPath()) == targetKey {
 				if activate {
-					wasActive := a.activeTabID == tab.ID
 					a.activeTabID = tab.ID
-					// Reset planner session when switching to a different tab to
-					// prevent cross-session contamination in dual-model mode (#4926).
-					if !wasActive && tab.Ctrl != nil {
-						tab.Ctrl.ResetPlannerSession()
-					}
 				}
 				meta := a.tabMeta(tab, tab.ID == a.activeTabID)
 				a.saveTabsLocked()
@@ -1020,7 +1015,6 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 
 	for _, tab := range a.tabs {
 		if tabMatchesTopicTarget(tab, scope, workspaceRoot, topicID) {
-			wasActive := a.activeTabID == tab.ID
 			if activate {
 				a.activeTabID = tab.ID
 			}
@@ -1029,11 +1023,6 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			a.saveTabsLocked()
 			a.mu.Unlock()
 			if sameSession {
-				// Reset planner session when switching to a different tab to
-				// prevent cross-session contamination in dual-model mode (#4926).
-				if activate && !wasActive && tab.Ctrl != nil {
-					tab.Ctrl.ResetPlannerSession()
-				}
 				return enrichTabMeta(meta), nil
 			}
 			if err := a.rebindTabToSessionPath(tab, sessionPath); err != nil {
@@ -1374,18 +1363,8 @@ func (a *App) SetActiveTab(tabID string) error {
 		return nil
 	}
 	a.activeTabID = tabID
-	tab := a.tabs[tabID]
 	dir, entries, activeID, version := a.saveTabsCollectLocked()
 	a.mu.Unlock()
-
-	// Reset the planner session when switching tabs to prevent cross-session
-	// contamination in dual-model (Plan+Execute) mode. Each tab's planner
-	// history should be scoped to that tab's conversation; without this reset,
-	// stale planner output from a previously active tab could leak into the
-	// newly active tab's executor handoff (#4926).
-	if tab != nil && tab.Ctrl != nil {
-		tab.Ctrl.ResetPlannerSession()
-	}
 
 	// I/O outside the lock — disk writes can block for hundreds of ms on
 	// Windows when antivirus or the search indexer briefly locks the file.
@@ -1436,7 +1415,7 @@ func (a *App) CloseTab(tabID string) error {
 	// This closes a race window with DeleteSession: if Snapshot runs
 	// after delete(a.tabs, tabID), a concurrent DeleteSession can delete
 	// the session files, and the deferred Snapshot recreates them.
-	if tab.Ctrl != nil {
+	if tab.Ctrl != nil && !tab.ReadOnly {
 		_ = tab.Ctrl.Snapshot()
 	}
 
@@ -1462,11 +1441,6 @@ func (a *App) CloseTab(tabID string) error {
 				nextIndex = len(a.tabOrder) - 1
 			}
 			a.activeTabID = a.tabOrder[nextIndex]
-			// Reset planner session on the newly active tab to prevent
-			// cross-session contamination in dual-model mode (#4926).
-			if nextTab := a.tabs[a.activeTabID]; nextTab != nil && nextTab.Ctrl != nil {
-				nextTab.Ctrl.ResetPlannerSession()
-			}
 		}
 	}
 	a.saveTabsLocked()
@@ -2734,6 +2708,48 @@ func loadTopicCreatedAts(workspaceRoot string) map[string]int64 {
 	return m
 }
 
+func loadStringMapForUpdate(path string) (map[string]string, error) {
+	m := map[string]string{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return m, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &m); err != nil || m == nil {
+		return map[string]string{}, nil
+	}
+	return m, nil
+}
+
+func loadInt64MapForUpdate(path string) (map[string]int64, error) {
+	m := map[string]int64{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return m, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &m); err != nil || m == nil {
+		return map[string]int64{}, nil
+	}
+	return m, nil
+}
+
+func loadTopicTitlesForUpdate(workspaceRoot string) (map[string]string, error) {
+	return loadStringMapForUpdate(topicTitlesPath(workspaceRoot))
+}
+
+func loadTopicTitleSourcesForUpdate(workspaceRoot string) (map[string]string, error) {
+	return loadStringMapForUpdate(topicTitleSourcesPath(workspaceRoot))
+}
+
+func loadTopicCreatedAtsForUpdate(workspaceRoot string) (map[string]int64, error) {
+	return loadInt64MapForUpdate(topicCreatedAtsPath(workspaceRoot))
+}
+
 func saveTopicTitles(workspaceRoot string, m map[string]string) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -2828,7 +2844,10 @@ func setTopicTitle(workspaceRoot, topicID, title string) error {
 }
 
 func setTopicTitleWithSource(workspaceRoot, topicID, title, source string) error {
-	m := loadTopicTitles(workspaceRoot)
+	m, err := loadTopicTitlesForUpdate(workspaceRoot)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(title) == "" {
 		delete(m, topicID)
 	} else {
@@ -2838,7 +2857,10 @@ func setTopicTitleWithSource(workspaceRoot, topicID, title, source string) error
 		return err
 	}
 
-	sources := loadTopicTitleSources(workspaceRoot)
+	sources, err := loadTopicTitleSourcesForUpdate(workspaceRoot)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(title) == "" || strings.TrimSpace(source) == "" {
 		delete(sources, topicID)
 	} else {
@@ -2848,7 +2870,10 @@ func setTopicTitleWithSource(workspaceRoot, topicID, title, source string) error
 }
 
 func setTopicCreatedAt(workspaceRoot, topicID string, createdAt int64) error {
-	created := loadTopicCreatedAts(workspaceRoot)
+	created, err := loadTopicCreatedAtsForUpdate(workspaceRoot)
+	if err != nil {
+		return err
+	}
 	topicID = strings.TrimSpace(topicID)
 	if topicID == "" || createdAt <= 0 {
 		delete(created, topicID)
@@ -2859,7 +2884,10 @@ func setTopicCreatedAt(workspaceRoot, topicID string, createdAt int64) error {
 }
 
 func deleteTopicCreatedAt(workspaceRoot, topicID string) {
-	created := loadTopicCreatedAts(workspaceRoot)
+	created, err := loadTopicCreatedAtsForUpdate(workspaceRoot)
+	if err != nil {
+		return
+	}
 	delete(created, topicID)
 	_ = saveTopicCreatedAts(workspaceRoot, created)
 }
@@ -3621,26 +3649,46 @@ func (a *App) DeleteTopic(topicID string) error {
 	f := loadProjectsFile()
 	found := false
 	for _, p := range f.Projects {
-		m := loadTopicTitles(p.Root)
+		m, err := loadTopicTitlesForUpdate(p.Root)
+		if err != nil {
+			return err
+		}
 		if _, ok := m[topicID]; ok {
 			delete(m, topicID)
-			_ = saveTopicTitles(p.Root, m)
-			sources := loadTopicTitleSources(p.Root)
+			if err := saveTopicTitles(p.Root, m); err != nil {
+				return err
+			}
+			sources, err := loadTopicTitleSourcesForUpdate(p.Root)
+			if err != nil {
+				return err
+			}
 			delete(sources, topicID)
-			_ = saveTopicTitleSources(p.Root, sources)
+			if err := saveTopicTitleSources(p.Root, sources); err != nil {
+				return err
+			}
 			deleteTopicCreatedAt(p.Root, topicID)
 			found = true
 			break
 		}
 	}
 	if !found {
-		m := loadTopicTitles("")
+		m, err := loadTopicTitlesForUpdate("")
+		if err != nil {
+			return err
+		}
 		if _, ok := m[topicID]; ok {
 			delete(m, topicID)
-			_ = saveTopicTitles("", m)
-			sources := loadTopicTitleSources("")
+			if err := saveTopicTitles("", m); err != nil {
+				return err
+			}
+			sources, err := loadTopicTitleSourcesForUpdate("")
+			if err != nil {
+				return err
+			}
 			delete(sources, topicID)
-			_ = saveTopicTitleSources("", sources)
+			if err := saveTopicTitleSources("", sources); err != nil {
+				return err
+			}
 			deleteTopicCreatedAt("", topicID)
 			f.GlobalTopics = removeString(f.GlobalTopics, topicID)
 			f.GlobalPinnedTopics = removeString(f.GlobalPinnedTopics, topicID)

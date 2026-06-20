@@ -58,6 +58,10 @@ func loadSessionTitles(dir string) map[string]string {
 	return m
 }
 
+func loadSessionTitlesForUpdate(dir string) (map[string]string, error) {
+	return loadStringMapForUpdate(sessionTitlesPath(dir))
+}
+
 // saveSessionTitles writes the map atomically (temp file + rename).
 func saveSessionTitles(dir string, m map[string]string) error {
 	b, err := json.MarshalIndent(m, "", "  ")
@@ -90,7 +94,10 @@ func setSessionTitle(dir, sessionPath, title string) error {
 	if err != nil {
 		return err
 	}
-	m := loadSessionTitles(dir)
+	m, err := loadSessionTitlesForUpdate(dir)
+	if err != nil {
+		return err
+	}
 	key := filepath.Base(sessionPath)
 	if strings.TrimSpace(title) == "" {
 		delete(m, key)
@@ -315,7 +322,10 @@ func purgeTrashedSessionFile(dir, path string) error {
 	if err := os.RemoveAll(itemDir); err != nil {
 		return err
 	}
-	m := loadSessionTitles(dir)
+	m, err := loadSessionTitlesForUpdate(dir)
+	if err != nil {
+		return err
+	}
 	if _, ok := m[key]; ok {
 		delete(m, key)
 		if err := saveSessionTitles(dir, m); err != nil {

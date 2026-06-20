@@ -1561,7 +1561,7 @@ func (c *Controller) NewSession() error {
 	}
 	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
-	c.resetPlannerSession()
+	c.ResetPlannerSession()
 	c.rebindCheckpoints(c.SessionPath())
 	c.mu.Lock()
 	c.startedOnce = true // NewSession fires SessionStart itself; don't re-fire on the next turn
@@ -1605,7 +1605,7 @@ func (c *Controller) ClearSession() error {
 	}
 	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
-	c.resetPlannerSession()
+	c.ResetPlannerSession()
 	c.rebindCheckpoints(c.SessionPath())
 	c.mu.Lock()
 	c.startedOnce = true
@@ -1826,7 +1826,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	}
 	if switchToFork {
 		c.executor.SetSession(sess)
-		c.resetPlannerSession()
+		c.ResetPlannerSession()
 		c.mu.Lock()
 		c.sessionPath = newPath
 		c.mu.Unlock()
@@ -1896,7 +1896,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		return "", c.rewindFail(err)
 	}
 	c.executor.SetSession(sess)
-	c.resetPlannerSession()
+	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = newPath
 	c.mu.Unlock()
@@ -1947,7 +1947,7 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	if c.executor != nil {
 		c.executor.SetSession(loaded)
 	}
-	c.resetPlannerSession()
+	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = match.Path
 	c.mu.Unlock()
@@ -2047,7 +2047,7 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(s)
 	}
-	c.resetPlannerSession()
+	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = path
 	c.mu.Unlock()
@@ -2056,7 +2056,11 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.maybeColdResumePrune(path)
 }
 
-func (c *Controller) resetPlannerSession() {
+// ResetPlannerSession clears the planner's conversation history so the next
+// plan starts fresh. In dual-model (Plan+Execute) mode, this prevents stale
+// planner output from a previous session or tab from contaminating the current
+// executor's handoff. Safe to call on a single-model controller (no-op).
+func (c *Controller) ResetPlannerSession() {
 	runner, ok := c.runner.(plannerSessionResetter)
 	if ok {
 		runner.ResetPlannerSession()

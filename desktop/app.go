@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -52,10 +53,24 @@ import (
 // `data:` frames.
 const eventChannel = "agent:event"
 
+const singleInstanceIDPrefix = "com.reasonix.desktop"
+
 // singleInstanceID is used by Wails to route a second desktop launch back to the
-// running instance. Keep it stable across releases so launcher/Dock/taskbar
-// reopen behavior remains predictable on every platform.
-const singleInstanceID = "com.reasonix.desktop"
+// running instance. It is stable for a given binary path, while allowing a dev
+// build and an installed release at different paths to run side by side.
+func singleInstanceID() string {
+	abs, err := os.Executable()
+	if err != nil {
+		return singleInstanceIDPrefix
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	} else if fallback, err := filepath.Abs(abs); err == nil {
+		abs = fallback
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return singleInstanceIDPrefix + "." + hex.EncodeToString(sum[:8])
+}
 
 // PromptHistoryEntry is one user prompt extracted from a session JSONL file.
 // The frontend uses these for ↑/↓ prompt-history navigation.
@@ -1611,14 +1626,17 @@ func (a *App) DeleteSession(path string) error {
 		return err
 	}
 	removed, fallback := a.removeSessionRuntimeBindings(dir, sessionPath)
-	if err := prepareRemovedSessionRuntimes(removed); err != nil {
+	if err := a.prepareRemovedSessionRuntimes(removed); err != nil {
 		a.closeRemovedSessionRuntimes(removed)
 		return err
 	}
+	closedRemoved := map[control.SessionAPI]bool{}
 	destroys := a.destroyHandlesForSession(dir, sessionPath, removed)
-	if waitDestroyHandles(destroys) {
+	teardownTimedOut := waitDestroyHandles(destroys)
+	a.closeRemovedSessionRuntimesForSessionAfterDestroy(removed, dir, sessionPath, closedRemoved)
+	if teardownTimedOut {
 		if err := agent.MarkCleanupPending(sessionPath, "delete"); err != nil {
-			a.closeRemovedSessionRuntimesAfterDestroy(removed)
+			a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
 			return err
 		}
 		go delayedDesktopSessionTrash(dir, sessionPath, key, destroys)
@@ -1626,11 +1644,11 @@ func (a *App) DeleteSession(path string) error {
 		err = trashSessionArtifacts(dir, sessionPath, key)
 		finishDestroyHandles(destroys)
 		if err != nil {
-			a.closeRemovedSessionRuntimesAfterDestroy(removed)
+			a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
 			return err
 		}
 	}
-	a.closeRemovedSessionRuntimesAfterDestroy(removed)
+	a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
 	if fallback.needs {
 		if err := a.openFallbackRuntime(fallback); err != nil {
 			return err
@@ -1764,7 +1782,7 @@ func tabMatchesSession(tab *WorkspaceTab, dir, sessionPath string) bool {
 	return err == nil && currentPath == sessionPath
 }
 
-func prepareRemovedSessionRuntimes(removed []removedSessionRuntime) error {
+func (a *App) prepareRemovedSessionRuntimes(removed []removedSessionRuntime) error {
 	for _, item := range removed {
 		if item.sink != nil {
 			item.sink.ctx = nil
@@ -1784,6 +1802,8 @@ func prepareRemovedSessionRuntimes(removed []removedSessionRuntime) error {
 		if err := item.ctrl.Snapshot(); err != nil {
 			return err
 		}
+		item.ctrl.SetSessionPath("")
+		a.quiesceTabAutosave(item.tab)
 	}
 	return nil
 }
@@ -1855,30 +1875,57 @@ func delayedDesktopSessionTrash(dir, sessionPath, key string, destroys []control
 }
 
 func (a *App) closeRemovedSessionRuntimes(removed []removedSessionRuntime) {
-	seen := map[control.SessionAPI]bool{}
+	a.closeRemainingRemovedSessionRuntimes(removed, map[control.SessionAPI]bool{})
+}
+
+func (a *App) closeRemovedSessionRuntimesForSessionAfterDestroy(removed []removedSessionRuntime, dir, sessionPath string, closed map[control.SessionAPI]bool) {
 	releasedTabs := map[*WorkspaceTab]bool{}
 	for _, item := range removed {
-		if item.tab != nil && !releasedTabs[item.tab] {
-			releasedTabs[item.tab] = true
-			a.releaseTabSharedHost(item.tab)
-		}
-		if item.ctrl == nil || seen[item.ctrl] {
+		if item.sessionDir != dir || item.sessionPath != sessionPath {
 			continue
 		}
-		seen[item.ctrl] = true
-		item.ctrl.Close()
+		a.closeRemovedSessionRuntime(item, closed, releasedTabs, true)
 	}
 }
 
-func (a *App) closeRemovedSessionRuntimesAfterDestroy(removed []removedSessionRuntime) {
-	seen := map[control.SessionAPI]bool{}
+func (a *App) closeRemainingRemovedSessionRuntimes(removed []removedSessionRuntime, closed map[control.SessionAPI]bool) {
+	releasedTabs := map[*WorkspaceTab]bool{}
 	for _, item := range removed {
-		if item.ctrl == nil || seen[item.ctrl] {
-			continue
-		}
-		seen[item.ctrl] = true
-		item.ctrl.CloseAfterDestroy()
+		a.closeRemovedSessionRuntime(item, closed, releasedTabs, false)
 	}
+}
+
+func (a *App) closeRemainingRemovedSessionRuntimesAfterDestroy(removed []removedSessionRuntime, closed map[control.SessionAPI]bool) {
+	releasedTabs := map[*WorkspaceTab]bool{}
+	for _, item := range removed {
+		a.closeRemovedSessionRuntime(item, closed, releasedTabs, true)
+	}
+}
+
+func (a *App) closeRemovedSessionRuntime(item removedSessionRuntime, closed map[control.SessionAPI]bool, releasedTabs map[*WorkspaceTab]bool, afterDestroy bool) {
+	if item.tab != nil {
+		if releasedTabs == nil || !releasedTabs[item.tab] {
+			if releasedTabs != nil {
+				releasedTabs[item.tab] = true
+			}
+			a.releaseTabSharedHost(item.tab)
+		}
+	}
+	if item.ctrl == nil {
+		return
+	}
+	if closed == nil {
+		closed = map[control.SessionAPI]bool{}
+	}
+	if closed[item.ctrl] {
+		return
+	}
+	closed[item.ctrl] = true
+	if afterDestroy {
+		item.ctrl.CloseAfterDestroy()
+		return
+	}
+	item.ctrl.Close()
 }
 
 func (a *App) openFallbackRuntime(target fallbackRuntimeTarget) error {

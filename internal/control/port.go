@@ -91,6 +91,7 @@ type Goals interface {
 	GoalStrict(strict bool)
 	ClearGoal()
 	AutoStartResearchGoal(input string) (string, bool)
+	ResetPlannerSession()
 	PlanMode() bool
 	SetPlanMode(v bool)
 	SetAutoPlan(mode string)

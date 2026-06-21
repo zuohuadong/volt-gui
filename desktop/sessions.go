@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"reasonix/internal/agent"
@@ -350,7 +352,104 @@ func movePathIfExists(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	return os.Rename(src, dst)
+	// Try os.Rename first — it's atomic and fast when it works.
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	} else if !isRenameCrossDeviceOrBusy(err) {
+		return err
+	}
+	// Fallback: copy then remove. This handles cross-device moves and the
+	// Windows case where a directory rename fails because a handle is briefly
+	// held open (e.g. antivirus scan, indexing, or a just-closed file).
+	return copyAndRemove(src, dst)
+}
+
+// isRenameCrossDeviceOrBusy reports whether err is a cross-device rename or
+// a "file busy" error that a copy+remove fallback can recover from.
+func isRenameCrossDeviceOrBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Cross-device link.
+	if le, ok := err.(*os.LinkError); ok {
+		if le.Err == syscall.EXDEV {
+			return true
+		}
+		// Windows: "The process cannot access the file because it is being used by another process."
+		if errno, ok := le.Err.(syscall.Errno); ok {
+			return errno == 32 // ERROR_SHARING_VIOLATION
+		}
+	}
+	return false
+}
+
+// copyAndRemove recursively copies src to dst, then removes src. Used as a
+// fallback when os.Rename fails (cross-device or Windows file-lock races).
+func copyAndRemove(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return copyDir(src, dst)
+	}
+	return copyFile(src, dst, info.Mode())
+}
+
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			info, err := e.Info()
+			if err != nil {
+				return err
+			}
+			if err := copyFile(srcPath, dstPath, info.Mode()); err != nil {
+				return err
+			}
+		}
+	}
+	return os.RemoveAll(src)
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	// Open source file.
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	// Create destination file.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		in.Close()
+		return err
+	}
+	// Copy content.
+	_, err = io.Copy(out, in)
+	// Close both files before any removal.
+	closeErr := out.Close()
+	in.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	// On Windows, wait briefly for any file handle release.
+	time.Sleep(10 * time.Millisecond)
+	return os.Remove(src)
 }
 
 func trashSubagentArtifacts(dir, sessionPath, itemDir string) error {

@@ -24512,6 +24512,107 @@ a[href] {
    圆点置于工具头最右端（折叠箭头之后）。classic/workbench 下圆点默认隐藏，
    左侧文字图标不变，零影响。 */
 
+.app--creation .tool-group,
+:root[data-theme-style] .app--creation .tool-group {
+  margin: 8px auto 6px;
+  color: var(--fg-faint);
+}
+
+.app--creation .tool-group__head,
+:root[data-theme-style] .app--creation .tool-group__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.app--creation .tool-group__title,
+:root[data-theme-style] .app--creation .tool-group__title {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.app--creation .tool-group__summary,
+:root[data-theme-style] .app--creation .tool-group__summary {
+  min-width: 0;
+  color: color-mix(in srgb, var(--fg-faint) 86%, transparent);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app--creation .tool-group__chevron,
+:root[data-theme-style] .app--creation .tool-group__chevron {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  transition: transform 0.16s;
+}
+
+.app--creation .tool-group__chevron--open,
+:root[data-theme-style] .app--creation .tool-group__chevron--open {
+  transform: rotate(90deg);
+}
+
+.app--creation .tool-group__body,
+:root[data-theme-style] .app--creation .tool-group__body {
+  overflow: hidden;
+  padding: 8px 0 0 26px;
+}
+
+.app--creation .tool-group__body > .tool,
+:root[data-theme-style] .app--creation .tool-group__body > .tool {
+  margin: 2px 0;
+  contain-intrinsic-size: 1px 28px;
+}
+
+.app--creation .tool-group__body .tool__head,
+:root[data-theme-style] .app--creation .tool-group__body .tool__head {
+  min-height: 28px;
+  color: color-mix(in srgb, var(--fg-dim) 64%, transparent);
+}
+
+.app--creation .tool-group__body .tool__head:hover,
+:root[data-theme-style] .app--creation .tool-group__body .tool__head:hover {
+  color: var(--fg);
+}
+
+.app--creation .tool-group__body .tool__name,
+:root[data-theme-style] .app--creation .tool-group__body .tool__name {
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.app--creation .tool-group__body .tool__subject,
+.app--creation .tool-group__body .tool__profile,
+:root[data-theme-style] .app--creation .tool-group__body .tool__subject,
+:root[data-theme-style] .app--creation .tool-group__body .tool__profile {
+  color: color-mix(in srgb, var(--fg-dim) 68%, transparent);
+}
+
+.app--creation .reasoning__body,
+:root[data-theme-style] .app--creation .reasoning__body {
+  font-family: "Source Han Sans CN", "Source Han Sans SC", "Noto Sans CJK SC",
+    "Source Han Sans", "思源黑体", "Source Han Sans HC", "Microsoft YaHei UI",
+    "Microsoft YaHei", sans-serif;
+  font-style: normal;
+}
+
 .app--creation .tool__status-icon,
 :root[data-theme-style] .app--creation .tool__status-icon {
   display: none;
@@ -24541,13 +24642,6 @@ a[href] {
 .app--creation .tool__dot--stopped,
 :root[data-theme-style] .app--creation .tool__dot--stopped {
   background: var(--warn);
-}
-
-/* 工具头与深度思考头左对齐：reasoning__head 在 Creation 下 padding:0，
-   tool__head 仍是基础规则的 3px 8px，导致左右各多 8px。这里对齐到 0。 */
-.app--creation .tool__head,
-:root[data-theme-style] .app--creation .tool__head {
-  padding: 0;
 }
 
 /* 工具头与深度思考头对齐：reasoning__head 在 Creation 下 padding:0（flush），
@@ -24600,6 +24694,11 @@ a[href] {
 .app--creation .tool__profile,
 .app--creation .tool__nested-count,
 .app--creation .tool__body,
+.app--creation .tool-group,
+.app--creation .tool-group__head,
+.app--creation .tool-group__title,
+.app--creation .tool-group__summary,
+.app--creation .tool-group__body,
 .app--creation .readonly-batch,
 .app--creation .readonly-batch__label,
 .app--creation .turn-collapse,
@@ -24616,6 +24715,11 @@ a[href] {
 :root[data-theme-style] .app--creation .tool__profile,
 :root[data-theme-style] .app--creation .tool__nested-count,
 :root[data-theme-style] .app--creation .tool__body,
+:root[data-theme-style] .app--creation .tool-group,
+:root[data-theme-style] .app--creation .tool-group__head,
+:root[data-theme-style] .app--creation .tool-group__title,
+:root[data-theme-style] .app--creation .tool-group__summary,
+:root[data-theme-style] .app--creation .tool-group__body,
 :root[data-theme-style] .app--creation .readonly-batch,
 :root[data-theme-style] .app--creation .readonly-batch__label,
 :root[data-theme-style] .app--creation .turn-collapse,

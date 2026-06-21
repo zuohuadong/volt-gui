@@ -8,6 +8,7 @@ import { ToolCard } from "./ToolCard";
 import { ChevronRight } from "lucide-react";
 import { Welcome } from "./Welcome";
 import { ReadOnlyBatch } from "./ReadOnlyBatch";
+import { ToolGroup, isCreationGroupableTool, toolGroupKind, type ToolGroupKind } from "./ToolGroup";
 import { getDisplayMode, onDisplayModeChange, type DisplayMode } from "../lib/displayMode";
 import { isReadOnlyTool } from "../lib/useController";
 import { useGSAPCollapse } from "../lib/useGSAPCollapse";
@@ -86,6 +87,7 @@ export function Transcript({
   running = false,
   questionNavigator = true,
   welcomeVariant = "default",
+  creationMode = false,
   actionHoverMenus = false,
   rewindSignal = 0,
 }: {
@@ -102,6 +104,7 @@ export function Transcript({
   running?: boolean;
   questionNavigator?: boolean;
   welcomeVariant?: "default" | "creation";
+  creationMode?: boolean;
   actionHoverMenus?: boolean;
   rewindSignal?: number;
 }) {
@@ -389,6 +392,7 @@ export function Transcript({
             mode={displayMode}
             subcalls={subcallsByParent}
             tabId={tabId}
+            creationMode={creationMode}
           />,
         );
         collapseBatch = [];
@@ -444,6 +448,7 @@ export function Transcript({
               mode={displayMode}
               subcalls={subcallsByParent}
               tabId={tabId}
+              creationMode={creationMode}
             />,
           );
         } else if (nonAssistantItems.length > 0) {
@@ -479,14 +484,32 @@ export function Transcript({
     } else {
       // Standard mode: flat rendering
       const roBatch: ToolItem[] = [];
+      const toolBatch: ToolItem[] = [];
+      let toolBatchKind: ToolGroupKind | null = null;
       const flushRO = () => {
         if (roBatch.length === 0) return;
         out.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcallsByParent} tabId={tabId} />);
         roBatch.length = 0;
       };
+      const flushToolBatch = () => {
+        if (!toolBatchKind || toolBatch.length === 0) return;
+        out.push(<ToolGroup key={`tg-${toolBatch[0].id}`} kind={toolBatchKind} items={[...toolBatch]} subcalls={subcallsByParent} tabId={tabId} />);
+        toolBatch.length = 0;
+        toolBatchKind = null;
+      };
       for (let i = hotStartIdx; i < items.length; i++) {
         const it = items[i];
+        if (creationMode && it.kind === "tool" && isCreationGroupableTool(it as ToolItem)) {
+          const kind = toolGroupKind(it as ToolItem);
+          if (kind) {
+            if (toolBatchKind && toolBatchKind !== kind) flushToolBatch();
+            toolBatchKind = kind;
+            toolBatch.push(it as ToolItem);
+            continue;
+          }
+        }
         if (
+          !creationMode &&
           it.kind === "tool" &&
           !it.parentId &&
           it.status !== "running" &&
@@ -497,6 +520,7 @@ export function Transcript({
           roBatch.push(it as ToolItem);
           continue;
         }
+        flushToolBatch();
         flushRO();
         switch (it.kind) {
           case "user": {
@@ -538,11 +562,12 @@ export function Transcript({
           case "compaction": out.push(<CompactionCard key={it.id} item={it} />); break;
         }
       }
+      flushToolBatch();
       flushRO();
       if (!running) pushTurnActions();
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onEditPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups, tabId, actionHoverMenus]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onEditPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, stepGroups, tabId, actionHoverMenus, creationMode]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens
@@ -580,6 +605,7 @@ export function Transcript({
             warmSetOpenAction={setOpenAction}
             warmOnEdit={onEditPrompt}
             tabId={tabId}
+            creationMode={creationMode}
             onToggleColdPage={() => setColdPage((p) => p + 1)}
             onToggleWarmTurn={(g, expand) => {
               setExpandedWarmTurns((prev) => {
@@ -620,6 +646,7 @@ const WarmZone = memo(function WarmZone({
   warmSetOpenAction,
   warmOnEdit,
   tabId,
+  creationMode,
   onToggleColdPage,
   onToggleWarmTurn,
 }: {
@@ -640,6 +667,7 @@ const WarmZone = memo(function WarmZone({
   warmSetOpenAction: (action: OpenTurnAction | null) => void;
   warmOnEdit?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   tabId?: string;
+  creationMode?: boolean;
   onToggleColdPage: () => void;
   onToggleWarmTurn: (g: number, expand: boolean) => void;
 }) {
@@ -697,6 +725,7 @@ const WarmZone = memo(function WarmZone({
               setOpenAction={warmSetOpenAction}
               onEdit={warmOnEdit}
               tabId={tabId}
+              creationMode={creationMode}
             />
           </WarmTurnCard>,
         );
@@ -743,6 +772,7 @@ function WarmTurnItems({
   setOpenAction,
   onEdit,
   tabId,
+  creationMode = false,
 }: {
   startIdx: number;
   endIdx: number;
@@ -758,6 +788,7 @@ function WarmTurnItems({
   setOpenAction: (action: OpenTurnAction | null) => void;
   onEdit?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   tabId?: string;
+  creationMode?: boolean;
 }) {
   const nodes: React.ReactNode[] = [];
   let actionText = "";
@@ -790,20 +821,38 @@ function WarmTurnItems({
 
   // Group consecutive completed read-only tools into ReadOnlyBatch
   const roBatch: ToolItem[] = [];
+  const toolBatch: ToolItem[] = [];
+  let toolBatchKind: ToolGroupKind | null = null;
   const flushRO = () => {
     if (roBatch.length === 0) return;
     nodes.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcalls} tabId={tabId} />);
     roBatch.length = 0;
+  };
+  const flushToolBatch = () => {
+    if (!toolBatchKind || toolBatch.length === 0) return;
+    nodes.push(<ToolGroup key={`tg-${toolBatch[0].id}`} kind={toolBatchKind} items={[...toolBatch]} subcalls={subcalls} tabId={tabId} />);
+    toolBatch.length = 0;
+    toolBatchKind = null;
   };
 
   for (let i = startIdx; i < endIdx && i < items.length; i++) {
     const it = items[i];
 
     // Completed read-only tools → batch into ReadOnlyBatch
-    if (it.kind === "tool" && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && isReadOnlyTool(it.name)) {
+    if (creationMode && it.kind === "tool" && isCreationGroupableTool(it as ToolItem)) {
+      const kind = toolGroupKind(it as ToolItem);
+      if (kind) {
+        if (toolBatchKind && toolBatchKind !== kind) flushToolBatch();
+        toolBatchKind = kind;
+        toolBatch.push(it as ToolItem);
+        continue;
+      }
+    }
+    if (!creationMode && it.kind === "tool" && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && isReadOnlyTool(it.name)) {
       roBatch.push(it as ToolItem);
       continue;
     }
+    flushToolBatch();
     flushRO();
 
     switch (it.kind) {
@@ -847,6 +896,7 @@ function WarmTurnItems({
       case "compaction": nodes.push(<CompactionCard key={it.id} item={it} />); break;
     }
   }
+  flushToolBatch();
   flushRO();
   pushTurnActions();
   return nodes;
@@ -918,9 +968,10 @@ type TurnCollapseProps = {
   mode: DisplayMode;
   subcalls: Map<string, ToolItem[]>;
   tabId?: string;
+  creationMode?: boolean;
 };
 
-function TurnCollapse({ items, durationMs, mode, subcalls, tabId }: TurnCollapseProps) {
+function TurnCollapse({ items, durationMs, mode, subcalls, tabId, creationMode = false }: TurnCollapseProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -960,16 +1011,34 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId }: TurnCollapse
   // Pre-compute body: group consecutive completed read-only tools into ReadOnlyBatch
   const body: ReactNode[] = [];
   const roBatch: ToolItem[] = [];
+  const toolBatch: ToolItem[] = [];
+  let toolBatchKind: ToolGroupKind | null = null;
   const flushRO = () => {
     if (roBatch.length === 0) return;
     body.push(<ReadOnlyBatch key={`rob-${roBatch[0].id}`} items={[...roBatch]} subcalls={subcalls} tabId={tabId} />);
     roBatch.length = 0;
   };
+  const flushToolBatch = () => {
+    if (!toolBatchKind || toolBatch.length === 0) return;
+    body.push(<ToolGroup key={`tg-${toolBatch[0].id}`} kind={toolBatchKind} items={[...toolBatch]} subcalls={subcalls} tabId={tabId} />);
+    toolBatch.length = 0;
+    toolBatchKind = null;
+  };
   for (const it of displayItems) {
-    if (it.kind === "tool" && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running" && isReadOnlyTool(it.name)) {
+    if (creationMode && it.kind === "tool" && isCreationGroupableTool(it as ToolItem)) {
+      const kind = toolGroupKind(it as ToolItem);
+      if (kind) {
+        if (toolBatchKind && toolBatchKind !== kind) flushToolBatch();
+        toolBatchKind = kind;
+        toolBatch.push(it as ToolItem);
+        continue;
+      }
+    }
+    if (!creationMode && it.kind === "tool" && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running" && isReadOnlyTool(it.name)) {
       roBatch.push(it as ToolItem);
       continue;
     }
+    flushToolBatch();
     flushRO();
     switch (it.kind) {
       case "tool":
@@ -986,6 +1055,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId }: TurnCollapse
       }
     }
   }
+  flushToolBatch();
   flushRO();
 
   return (

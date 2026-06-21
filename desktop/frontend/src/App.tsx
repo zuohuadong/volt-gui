@@ -2250,7 +2250,15 @@ export default function App() {
   const onDeleteSession = useCallback(
     async (path: string) => {
       if (state.running) return;
-      await deleteSession(path);
+      try {
+        await deleteSession(path);
+      } catch {
+        // If the backend could not delete the session (validation, snapshot,
+        // or I/O failure), keep it in the history panel.  The old
+        // listSessions() refresh masked this by re-reading disk; with local
+        // state removal we must let the error propagate.
+        return;
+      }
       // Local state removal: filter the deleted session out of the current
       // history view instead of re-fetching the full list from the backend.
       setHistView((cur) =>

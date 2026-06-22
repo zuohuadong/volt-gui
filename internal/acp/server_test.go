@@ -70,6 +70,7 @@ type configurableFactory struct {
 	hookEvents []hook.Event
 	behavior   func(ctx context.Context, sink event.Sink, input string, p SessionParams) error
 	managers   []*jobs.Manager
+	withCtrl   func(ctx context.Context, sink event.Sink, input string, p SessionParams, ctrl *control.Controller) error
 }
 
 func (f *configurableFactory) NewSession(_ context.Context, p SessionParams) (*control.Controller, error) {
@@ -87,9 +88,15 @@ func (f *configurableFactory) NewSession(_ context.Context, p SessionParams) (*c
 			return nil
 		}
 	}
+	var ctrl *control.Controller
 	runner := &fakeRunner{
-		sink:     p.Sink,
-		behavior: func(ctx context.Context, sink event.Sink, input string) error { return behavior(ctx, sink, input, p) },
+		sink: p.Sink,
+		behavior: func(ctx context.Context, sink event.Sink, input string) error {
+			if f.withCtrl != nil {
+				return f.withCtrl(ctx, sink, input, p, ctrl)
+			}
+			return behavior(ctx, sink, input, p)
+		},
 	}
 	opts := control.Options{Runner: runner, Sink: p.Sink, SessionDir: f.dir}
 	if f.withHooks {
@@ -102,7 +109,8 @@ func (f *configurableFactory) NewSession(_ context.Context, p SessionParams) (*c
 		f.mu.Unlock()
 		opts.Jobs = jm
 	}
-	return control.New(opts), nil
+	ctrl = control.New(opts)
+	return ctrl, nil
 }
 
 func (f *configurableFactory) SessionDir() string { return f.dir }
@@ -736,6 +744,10 @@ func TestServeSessionConfigRejectsBackgroundJobsWhileIdle(t *testing.T) {
 	if setResp.Error == nil || !strings.Contains(setResp.Error.Message, "stop background jobs") {
 		t.Fatalf("set_config_option with background job error = %+v, want stop background jobs RPC error", setResp.Error)
 	}
+	legacyResp := client.call(t, "session/set_model", SetSessionModelParams{SessionID: nr.SessionID, ModelID: "pro"})
+	if legacyResp.Error == nil || !strings.Contains(legacyResp.Error.Message, "stop background jobs") {
+		t.Fatalf("set_model with background job error = %+v, want stop background jobs RPC error", legacyResp.Error)
+	}
 	if got := factory.buildCount(); got != 1 {
 		t.Fatalf("build count after rejected switch = %d, want 1", got)
 	}
@@ -848,6 +860,62 @@ func TestServeQueuedSessionConfigDiscardedWhenPromptLeavesBackgroundJob(t *testi
 	}
 	if got := factory.buildCount(); got != 1 {
 		t.Fatalf("build count after discarded queued switch = %d, want 1", got)
+	}
+}
+
+func TestServeSessionConfigRejectsPendingAsk(t *testing.T) {
+	factory := &configurableFactory{
+		withCtrl: func(ctx context.Context, _ event.Sink, _ string, _ SessionParams, ctrl *control.Controller) error {
+			_, err := ctrl.Ask(ctx, []event.AskQuestion{{
+				ID:      "choice",
+				Prompt:  "Pick one",
+				Options: []event.AskOption{{Label: "A"}, {Label: "B"}},
+			}})
+			return err
+		},
+	}
+	client, stop := startServer(t, factory)
+	defer stop()
+
+	client.call(t, "initialize", InitializeParams{ProtocolVersion: 1})
+	newResp := client.call(t, "session/new", SessionNewParams{Cwd: t.TempDir()})
+	var nr SessionNewResult
+	if err := json.Unmarshal(newResp.Result, &nr); err != nil {
+		t.Fatalf("session/new result: %v", err)
+	}
+
+	promptCh := client.callAsync("session/prompt", SessionPromptParams{
+		SessionID: nr.SessionID,
+		Prompt:    []ContentBlock{{Type: "text", Text: "ask"}},
+	})
+	var req frame
+	select {
+	case req = <-client.reqs:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ask request was not sent to client")
+	}
+
+	setResp := client.call(t, "session/set_config_option", SetSessionConfigOptionParams{
+		SessionID: nr.SessionID,
+		ConfigID:  "model",
+		Value:     "pro",
+	})
+	if setResp.Error == nil || !strings.Contains(setResp.Error.Message, "pending") {
+		t.Fatalf("set_config_option with pending ask error = %+v, want pending interaction RPC error", setResp.Error)
+	}
+	if got := factory.buildCount(); got != 1 {
+		t.Fatalf("build count while ask is pending = %d, want 1", got)
+	}
+
+	client.reply(req.ID, PermissionRequestResult{
+		Outcome: PermissionOutcome{Outcome: "selected", OptionID: "choice:1"},
+	})
+	_, resp := drainPrompt(t, client, promptCh)
+	if resp.Error != nil {
+		t.Fatalf("prompt errored: %+v", resp.Error)
+	}
+	if got := factory.buildCount(); got != 1 {
+		t.Fatalf("build count after answered ask = %d, want no queued rebuild", got)
 	}
 }
 

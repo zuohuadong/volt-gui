@@ -663,6 +663,10 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 		return &RPCError{Code: ErrInvalidRequest, Message: "session config: session is deleted"}
 	}
 	status := sess.ctrl.RuntimeStatus()
+	if status.PendingPrompt {
+		sess.mu.Unlock()
+		return sessionConfigActiveWorkError("answer pending prompts before switching config")
+	}
 	if !sess.running && !status.Running && status.BackgroundJobs > 0 {
 		sess.mu.Unlock()
 		return sessionConfigActiveWorkError("stop background jobs before switching config")

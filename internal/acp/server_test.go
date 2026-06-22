@@ -69,6 +69,7 @@ type configurableFactory struct {
 	withHooks  bool
 	hookEvents []hook.Event
 	behavior   func(ctx context.Context, sink event.Sink, input string, p SessionParams) error
+	managers   []*jobs.Manager
 }
 
 func (f *configurableFactory) NewSession(_ context.Context, p SessionParams) (*control.Controller, error) {
@@ -93,6 +94,13 @@ func (f *configurableFactory) NewSession(_ context.Context, p SessionParams) (*c
 	opts := control.Options{Runner: runner, Sink: p.Sink, SessionDir: f.dir}
 	if f.withHooks {
 		opts.Hooks = f.hookRunner()
+	}
+	if f.managers != nil {
+		jm := jobs.NewManager(event.Discard)
+		f.mu.Lock()
+		f.managers = append(f.managers, jm)
+		f.mu.Unlock()
+		opts.Jobs = jm
 	}
 	return control.New(opts), nil
 }
@@ -184,6 +192,19 @@ func (f *configurableFactory) buildCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.builds)
+}
+
+func (f *configurableFactory) managerAt(t *testing.T, idx int) *jobs.Manager {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.managers == nil {
+		t.Fatal("factory does not create job managers")
+	}
+	if len(f.managers) <= idx {
+		t.Fatalf("builds = %d, want manager index %d", len(f.builds), idx)
+	}
+	return f.managers[idx]
 }
 
 func (f *configurableFactory) hookRunner() *hook.Runner {
@@ -630,6 +651,58 @@ func TestServeSessionConfigQueuesDuringActivePrompt(t *testing.T) {
 	}
 	if got := factory.buildAt(t, 1).Model; got != "pro" {
 		t.Fatalf("queued rebuild model = %q, want pro", got)
+	}
+}
+
+func TestServeSessionConfigRejectsBackgroundJobsWhileIdle(t *testing.T) {
+	dir := t.TempDir()
+	factory := &configurableFactory{dir: dir, managers: []*jobs.Manager{}}
+	client, stop := startServer(t, factory)
+	defer stop()
+
+	client.call(t, "initialize", InitializeParams{ProtocolVersion: 1})
+	newResp := client.call(t, "session/new", SessionNewParams{Cwd: t.TempDir()})
+	var nr SessionNewResult
+	if err := json.Unmarshal(newResp.Result, &nr); err != nil {
+		t.Fatalf("session/new result: %v", err)
+	}
+
+	jm := factory.managerAt(t, 0)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	sessionPath := transcriptPath(dir, nr.SessionID)
+	jm.StartForSession(agent.BranchID(sessionPath), "bash", "server", func(ctx context.Context, _ io.Writer) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	defer func() {
+		close(release)
+		jm.Close()
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background job never started")
+	}
+
+	setResp := client.call(t, "session/set_config_option", SetSessionConfigOptionParams{
+		SessionID: nr.SessionID,
+		ConfigID:  "model",
+		Value:     "pro",
+	})
+	if setResp.Error == nil || !strings.Contains(setResp.Error.Message, "stop background jobs") {
+		t.Fatalf("set_config_option with background job error = %+v, want stop background jobs RPC error", setResp.Error)
+	}
+	if got := factory.buildCount(); got != 1 {
+		t.Fatalf("build count after rejected switch = %d, want 1", got)
+	}
+	if running := jm.RunningForSession(agent.BranchID(sessionPath)); len(running) != 1 {
+		t.Fatalf("running jobs after rejected switch = %+v, want original job still running", running)
 	}
 }
 

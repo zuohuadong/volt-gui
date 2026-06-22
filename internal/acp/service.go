@@ -657,7 +657,12 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 		sess.mu.Unlock()
 		return &RPCError{Code: ErrInvalidRequest, Message: "session config: session is deleted"}
 	}
-	if sess.running || sess.ctrl.Running() {
+	status := sess.ctrl.RuntimeStatus()
+	if !sess.running && !status.Running && status.BackgroundJobs > 0 {
+		sess.mu.Unlock()
+		return &RPCError{Code: ErrInvalidRequest, Message: "session config: stop background jobs before switching config"}
+	}
+	if sess.running || status.Running {
 		pending := cloneSessionConfigState(cfgState)
 		sess.model = cfgState.Model
 		sess.effortOverride = cloneStringPtr(cfgState.EffortOverride)

@@ -1705,8 +1705,10 @@ func (a *App) removeSessionRuntimeBindings(dir, sessionPath string) ([]removedSe
 		a.activeTabID = a.tabOrder[0]
 	}
 	fallback.needs = len(removed) > 0 && len(a.tabs) == 0
-	a.saveTabsLocked()
+	dir, entries, activeID, version := a.saveTabsCollectLocked()
 	a.mu.Unlock()
+
+	a.saveTabsWrite(dir, entries, activeID, version)
 
 	return removed, fallback
 }
@@ -1748,8 +1750,10 @@ func (a *App) removeTopicRuntimeBindings(topicID string) ([]removedSessionRuntim
 		a.activeTabID = a.tabOrder[0]
 	}
 	fallback.needs = len(removed) > 0 && len(a.tabs) == 0
-	a.saveTabsLocked()
+	dir, entries, activeID, version := a.saveTabsCollectLocked()
 	a.mu.Unlock()
+
+	a.saveTabsWrite(dir, entries, activeID, version)
 
 	return removed, fallback
 }

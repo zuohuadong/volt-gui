@@ -344,7 +344,7 @@ func purgeTrashedSessionFile(dir, path string) error {
 }
 
 func movePathIfExists(src, dst string) error {
-	if _, err := os.Stat(src); os.IsNotExist(err) {
+	if _, err := os.Lstat(src); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return err
@@ -386,18 +386,34 @@ func isRenameCrossDeviceOrBusy(err error) bool {
 // copyAndRemove recursively copies src to dst, then removes src. Used as a
 // fallback when os.Rename fails (cross-device or Windows file-lock races).
 func copyAndRemove(src, dst string) error {
-	info, err := os.Stat(src)
+	if err := copyPath(src, dst); err != nil {
+		return err
+	}
+	// On Windows, wait briefly for any file handle release.
+	time.Sleep(10 * time.Millisecond)
+	return os.RemoveAll(src)
+}
+
+func copyPath(src, dst string) error {
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
-	if info.IsDir() {
-		return copyDir(src, dst)
+	mode := info.Mode()
+	switch {
+	case mode&os.ModeSymlink != 0:
+		return copySymlink(src, dst)
+	case mode.IsDir():
+		return copyDir(src, dst, mode.Perm())
+	case mode.IsRegular():
+		return copyFile(src, dst, mode.Perm())
+	default:
+		return fmt.Errorf("unsupported file type in rename fallback: %s", src)
 	}
-	return copyFile(src, dst, info.Mode())
 }
 
-func copyDir(src, dst string) error {
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+func copyDir(src, dst string, mode os.FileMode) error {
+	if err := os.MkdirAll(dst, mode); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(src)
@@ -407,21 +423,11 @@ func copyDir(src, dst string) error {
 	for _, e := range entries {
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
-				return err
-			}
-		} else {
-			info, err := e.Info()
-			if err != nil {
-				return err
-			}
-			if err := copyFile(srcPath, dstPath, info.Mode()); err != nil {
-				return err
-			}
+		if err := copyPath(srcPath, dstPath); err != nil {
+			return err
 		}
 	}
-	return os.RemoveAll(src)
+	return nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
@@ -447,9 +453,15 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	// On Windows, wait briefly for any file handle release.
-	time.Sleep(10 * time.Millisecond)
-	return os.Remove(src)
+	return nil
+}
+
+func copySymlink(src, dst string) error {
+	target, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+	return os.Symlink(target, dst)
 }
 
 func trashSubagentArtifacts(dir, sessionPath, itemDir string) error {

@@ -4295,7 +4295,7 @@ func cloneSkillRootViews(in []SkillRootView) []SkillRootView {
 func rootActive(roots []SkillRootView, path string) bool {
 	want := config.CanonicalSkillPath(path)
 	for _, r := range roots {
-		if r.Scope == string(skill.ScopeCustom) && config.CanonicalSkillPath(r.Dir) == want {
+		if config.CanonicalSkillPath(r.Dir) == want {
 			return true
 		}
 	}

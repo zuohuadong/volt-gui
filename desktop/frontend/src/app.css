@@ -294,23 +294,42 @@ button {
 .context-card__search {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  padding: 0 8px;
-  color: #64748b;
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  min-height: 36px;
+  padding: 0 10px;
+  color: #777777;
+  background: #ffffff;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.context-card__search:focus-within {
+  border-color: #222222;
+  box-shadow: 0 0 0 3px rgba(34, 34, 34, 0.12);
+}
+
+.context-card__search svg {
+  flex: 0 0 auto;
+  color: #777777;
 }
 
 .context-card__search input {
   min-width: 0;
   width: 100%;
-  min-height: 30px;
-  color: #17202a;
+  min-height: 34px;
+  padding: 0;
+  color: #222222;
   background: transparent;
   border: 0;
   outline: none;
+  box-shadow: none;
+  font: inherit;
+}
+
+.context-card__search input::placeholder {
+  color: #8e8e93;
 }
 
 .context-card__rows {
@@ -835,6 +854,49 @@ button {
 .composer button:hover {
   color: #354052;
   background: #f3f6fb;
+}
+
+.composer__mode-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  width: fit-content;
+  margin: 12px 16px 0;
+  padding: 3px;
+  border: 1px solid #d4d4d8;
+  border-radius: 10px;
+  background: #f4f4f5;
+}
+
+.composer__mode-switch button {
+  min-width: 66px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: #52525b;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.composer__mode-switch button:hover {
+  color: #18181b;
+  background: #ffffff;
+}
+
+.composer__mode-switch button.active {
+  color: #ffffff;
+  background: #18181b;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+
+.composer__mode-switch button span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .composer button.secondary {

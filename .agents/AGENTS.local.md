@@ -1,5 +1,13 @@
 # Volt GUI Project Overlay
 
+## UI Reference Policy
+
+- Volt GUI 的所有 UI 设计、视觉调整、布局重构、交互补齐、组件状态和信息架构调整，必须先参考 `E:\workspace\aoristlawer` 项目的真实源码与运行结构。
+- 首选参考路径包括 `E:\workspace\aoristlawer\apps\desktop\src\index.css`、`layouts\DashboardLayout.tsx`、`pages\*.tsx`、`components\ui\*.tsx` 和相关业务组件。
+- 不要只做颜色或表层风格模仿。应优先对齐 aoristlawer 的页面结构、侧栏/顶栏节奏、卡片密度、按钮层级、标签页样式、弹窗结构、列表行信息组织和空状态方式。
+- 只有当 Volt GUI 的既有技术栈、Svelte/Wails 约束或当前业务目标明确不适配时，才允许偏离；偏离时需要在回复中说明原因。
+- 除非用户明确指定其他参考对象，后续不要再优先使用 Accio、通用模板、截图臆测或新的外部设计系统作为 Volt GUI UI 的第一参考。
+
 本仓库是 Go CLI/TUI + Wails desktop + Astro docs 的混合项目。执行任务时优先保持现有技术栈和目录边界，不引入新的前端或桌面框架。
 
 ## Stack Profile

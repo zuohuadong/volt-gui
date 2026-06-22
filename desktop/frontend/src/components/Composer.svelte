@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, FileText, Folder, Image, Plus, Search, Send, Square, X } from "@lucide/svelte";
+  import { AtSign, Code2, FileText, Folder, Image, LayoutDashboard, Plus, Search, Send, Square, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
-  import type { CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
+  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
 
   let {
     input,
@@ -22,6 +22,8 @@
     clientOptions = [],
     selectedClientId = "",
     onClientChange,
+    activityMode,
+    onActivityModeChange,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -39,6 +41,8 @@
     clientOptions?: { id: string; label: string }[];
     selectedClientId?: string;
     onClientChange?: (value: string) => void;
+    activityMode?: ActivityMode;
+    onActivityModeChange?: (mode: ActivityMode) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -272,6 +276,19 @@
   ondragover={handleDragOver}
   ondragleave={() => (dragOver = false)}
 >
+  {#if activityMode && onActivityModeChange}
+    <div class="composer__mode-switch" role="group" aria-label="Code / Work 切换">
+      <button class:active={activityMode === "code"} type="button" aria-pressed={activityMode === "code"} onclick={() => onActivityModeChange("code")}>
+        <Code2 size={14} />
+        <span>Code</span>
+      </button>
+      <button class:active={activityMode === "work"} type="button" aria-pressed={activityMode === "work"} onclick={() => onActivityModeChange("work")}>
+        <LayoutDashboard size={14} />
+        <span>Work</span>
+      </button>
+    </div>
+  {/if}
+
   <div class="composer__input">
     <textarea
       data-composer-input

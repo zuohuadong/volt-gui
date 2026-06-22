@@ -20,11 +20,13 @@
     ContactRound,
     Crown,
     Database,
+    Download,
     FileText,
     Folder,
     FolderKanban,
     Gauge,
     GitBranch,
+    LayoutDashboard,
     List,
     ListTodo,
     Loader2,
@@ -81,6 +83,12 @@
   type CapabilityTab = "plugin" | "mcp" | "skill";
   type ResourceTab = "resources" | "knowledge" | "search" | "ingest";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
+  type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
+  type AgentCard = { id: string; name: string; role: string; runs: number; status: string; desc: string };
+  type AgentMarketItem = AgentCard & { category: string; source: string; version: string; tags: string[]; localPath: string };
+  type SidebarConversation = { id: string; title: string; updatedAt: string };
+  type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
+  type SidebarProjectSort = "recent" | "name" | "conversations";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "hearing" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
 
@@ -117,7 +125,9 @@
   let codeInspectorOpen = $state(false);
   let workLayer = $state<WorkLayer>("today");
   let capabilityTab = $state<CapabilityTab>("plugin");
+  let capabilitySearch = $state("");
   let selectedCapabilityId = $state("git-panel");
+  let capabilityDetailOpen = $state(false);
   let capabilityCreateOpen = $state(false);
   let resourceTab = $state<ResourceTab>("resources");
   let userMenuOpen = $state(false);
@@ -135,6 +145,9 @@
   let teamChatSending = $state(false);
   let automationDialog = $state<string | undefined>();
   let agentWizardOpen = $state(false);
+  let agentMarketOpen = $state(false);
+  let agentMarketSearch = $state("");
+  let downloadedMarketAgentIds = $state<string[]>([]);
   let agentWizardTab = $state("identity");
   let selectedAgentId = $state("code-review");
   let selectedCoreFile = $state("SYSTEM.md");
@@ -144,6 +157,7 @@
   let projectSearch = $state("");
   let customerSearch = $state("");
   let customerDetailTab = $state<CustomerDetailTab>("overview");
+  let projectDetailTab = $state<ProjectDetailTab>("overview");
   let projectStatusFilter = $state<"all" | "active" | "closed">("all");
   let projectDetailOpen = $state(false);
   let customerDetailOpen = $state(false);
@@ -160,12 +174,12 @@
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
-  const showActiveTranscript = $derived(showTranscript && !(activityMode === "work" && workLayer === "newTask" && !sending && !pendingApproval && !pendingAsk));
+  const showActiveTranscript = $derived(showTranscript && !(workLayer === "newTask" && !sending && !pendingApproval && !pendingAsk));
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const navIcons = {
-    today: Gauge,
+    today: LayoutDashboard,
     newTask: CirclePlus,
     todos: ListTodo,
     automations: Workflow,
@@ -191,6 +205,12 @@
     "code-review": ShieldCheck,
     research: BookMarked,
     automation: Workflow,
+    "requirement-planner": ClipboardList,
+    "contract-review": FileText,
+    "customer-followup": ContactRound,
+    "data-analyst": Database,
+    "qa-verifier": ShieldCheck,
+    "meeting-scheduler": CalendarDays,
   } as const;
   const avatarIcons = {
     C: Bot,
@@ -205,7 +225,7 @@
   function avatarIcon(avatar: string) { return avatarIcons[avatar as keyof typeof avatarIcons] ?? UserRound; }
 
   const workspaceNav = [
-    { title: "Agent Work", items: [{ label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "Agent Team", layer: "teams", icon: "teams" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
+    { title: "Agent Work", items: [{ label: "新建对话", layer: "newTask", icon: "newTask" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
     { title: "运营", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }] },
     { title: "知识库", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }, { label: "资料中心", layer: "resources", icon: "resources" }] },
   ] as { title: string; items: { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string }[] }[];
@@ -213,17 +233,27 @@
   const todoItems = [
     { title: "验证桌面预览加载状态", desc: "确认浏览器模式无需 Wails 绑定也能进入工作台", due: "今天", state: "进行中" },
     { title: "整理 Agent 创建模板", desc: "补齐工具、技能、核心文件与模型配置", due: "16:00", state: "待处理" },
-    { title: "复核项目与客户关联", desc: "检查新建任务中的关联入口", due: "明天", state: "待处理" },
+    { title: "复核项目与客户关联", desc: "检查新建对话中的关联入口", due: "明天", state: "待处理" },
   ];
   const runningAutomations = [
-    { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", scope: "desktop/frontend", command: "npm run check / npm run build / git diff --check" },
-    { id: "wails-go-gate", title: "Wails 与 Go 模块门禁", desc: "分别检查根 Go CLI/TUI 与 desktop Wails 模块，避免桌面端改动影响 CLI、绑定层或嵌入资源。", status: "待配置", startedAtMs: Date.now() - 3120000, cadence: "涉及 Go 或 Wails 绑定时", scope: "go.mod / desktop/go.mod", command: "go test ./... / cd desktop && go test ./..." },
-    { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", scope: "Vite dev server / 浏览器 DOM", command: "HTTP 200 / DOM snapshot / console warnings" },
+    { id: "preflight-validation", title: "提交前验证自动化", desc: "参考 Codex 自动化，把前端门禁、构建、空白检查和浏览器日志验证串成一个可复用的自动化任务。", status: "运行中", kind: "验证自动化", owner: "自动化 Agent", startedAtMs: Date.now() - 5400000, cadence: "每次 UI 改动后", schedule: "手动触发 / 提交前", scope: "desktop/frontend", environment: "local workspace", command: "autofixer -> npm run check -> npm run build -> browser logs", result: "最近一次通过", lastRun: "刚刚", nextRun: "等待下一次改动", steps: ["Svelte autofixer", "类型检查", "生产构建", "浏览器 DOM / 控制台验证"], logs: ["0 errors / 0 warnings", "构建通过，保留已知 @theme warning", "浏览器 warn/error 为空"] },
+    { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", kind: "质量门禁", owner: "代码审查 Agent", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", schedule: "改动后手动复跑", scope: "desktop/frontend", environment: "local workspace", command: "npm run check / npm run build / git diff --check", result: "通过", lastRun: "12 分钟前", nextRun: "下一次前端改动", steps: ["npm run check", "npm run build", "git diff --check"], logs: ["svelte-check 通过", "Vite build 通过", "无空白错误"] },
+    { id: "wails-go-gate", title: "Wails 与 Go 模块门禁", desc: "分别检查根 Go CLI/TUI 与 desktop Wails 模块，避免桌面端改动影响 CLI、绑定层或嵌入资源。", status: "待配置", kind: "工程验证", owner: "代码审查 Agent", startedAtMs: Date.now() - 3120000, cadence: "涉及 Go 或 Wails 绑定时", schedule: "按需触发", scope: "go.mod / desktop/go.mod", environment: "local workspace", command: "go test ./... / cd desktop && go test ./...", result: "待接入", lastRun: "未运行", nextRun: "绑定层改动后", steps: ["根模块 go test", "desktop 模块 go test", "Wails 绑定检查"], logs: ["等待启用"] },
+    { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", kind: "浏览器验证", owner: "Browser 插件", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", schedule: "预览刷新后", scope: "Vite dev server / 浏览器 DOM", environment: "in-app browser", command: "HTTP 200 / DOM snapshot / console warnings", result: "通过", lastRun: "5 分钟前", nextRun: "下一次页面改动", steps: ["刷新本地预览", "检查关键 DOM", "读取 warn/error 日志"], logs: ["页面可访问", "关键节点存在", "控制台无错误"] },
   ];
-  const agentCards = [
+  const primaryAutomation = runningAutomations[0];
+  let agentCards = $state<AgentCard[]>([
     { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。" },
     { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。" },
     { id: "automation", name: "自动化 Agent", role: "已蒸馏", runs: 37, status: "已停用", desc: "把重复工作转为可配置的计划任务和监控。" },
+  ]);
+  const agentMarketItems: AgentMarketItem[] = [
+    { id: "requirement-planner", name: "需求拆解 Agent", role: "市场", runs: 0, status: "未下载", category: "产品规划", source: "Agent Market", version: "v1.2", desc: "把模糊需求整理成目标、非目标、验收标准和执行步骤，适合新项目启动。", tags: ["需求", "规划", "验收"], localPath: ".volt/agents/requirement-planner.agent.json" },
+    { id: "contract-review", name: "合同审阅 Agent", role: "市场", runs: 0, status: "未下载", category: "文档审查", source: "Agent Market", version: "v1.0", desc: "检查合同、协议和交付条款中的风险点，输出修改建议和待确认清单。", tags: ["合同", "风险", "审阅"], localPath: ".volt/agents/contract-review.agent.json" },
+    { id: "customer-followup", name: "客户跟进 Agent", role: "市场", runs: 0, status: "未下载", category: "客户运营", source: "Agent Market", version: "v1.1", desc: "根据客户状态生成跟进话术、待办和复盘摘要，适合客户管理工作流。", tags: ["客户", "跟进", "运营"], localPath: ".volt/agents/customer-followup.agent.json" },
+    { id: "data-analyst", name: "数据分析 Agent", role: "市场", runs: 0, status: "未下载", category: "数据分析", source: "Agent Market", version: "v0.9", desc: "读取表格、日志和指标数据，生成可执行洞察、异常解释和下一步实验。", tags: ["数据", "指标", "分析"], localPath: ".volt/agents/data-analyst.agent.json" },
+    { id: "qa-verifier", name: "测试验证 Agent", role: "市场", runs: 0, status: "未下载", category: "质量验证", source: "Agent Market", version: "v1.3", desc: "把检查命令、浏览器验证和失败处理整理成复用门禁，适合提交前验证。", tags: ["测试", "构建", "门禁"], localPath: ".volt/agents/qa-verifier.agent.json" },
+    { id: "meeting-scheduler", name: "会议纪要 Agent", role: "市场", runs: 0, status: "未下载", category: "协作效率", source: "Agent Market", version: "v1.0", desc: "把会议记录压缩为决策、负责人、截止时间和下一次沟通议程。", tags: ["会议", "纪要", "协作"], localPath: ".volt/agents/meeting-scheduler.agent.json" },
   ];
   const newTaskQuickTasks = [
     { agentId: "code-review", agent: "代码审查 Agent", title: "审查当前改动", prompt: "请阅读当前仓库变更，按严重程度列出风险、回归点和缺失测试。" },
@@ -231,9 +261,59 @@
     { agentId: "automation", agent: "自动化 Agent", title: "配置项目验证自动化", prompt: "请把 Volt GUI 可执行的检查流程整理为自动化，包含触发条件、验证命令、输出证据和失败处理。" },
   ];
   const projectCards = [
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", code: "PRJ-2026-0615", client: "内部研发", stage: "进行中", owner: "产品工作台", desc: "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建任务。", category: "桌面端重构", court: "研发工作台", budget: "1,200,000", acceptedAt: "2026-06-15", status: "active", progress: 78, priority: "高", risk: "中风险", updatedAt: "28 分钟前", nextStep: "完成项目管理页深化并做构建验证", agent: "代码审查 Agent", materials: 12, todos: 5, events: 3, reports: 4, timeline: ["AORISTLAWER 参考界面已完成源码对照", "新建任务与代码状态入口已统一", "项目管理页进入深化验收"] },
+    { id: "volt-gui", name: "Volt GUI 桌面端重构", code: "PRJ-2026-0615", client: "内部研发", stage: "进行中", owner: "产品工作台", desc: "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建对话。", category: "桌面端重构", court: "研发工作台", budget: "1,200,000", acceptedAt: "2026-06-15", status: "active", progress: 78, priority: "高", risk: "中风险", updatedAt: "28 分钟前", nextStep: "完成项目管理页深化并做构建验证", agent: "代码审查 Agent", materials: 12, todos: 5, events: 3, reports: 4, timeline: ["AORISTLAWER 参考界面已完成源码对照", "新建对话与代码状态入口已统一", "项目管理页进入深化验收"] },
     { id: "lurefree", name: "Lurefree 小程序发布", code: "PRJ-2026-0610", client: "运营团队", stage: "验证中", owner: "增长项目", desc: "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。", category: "小程序发布", court: "增长项目组", budget: "350,000", acceptedAt: "2026-06-10", status: "active", progress: 64, priority: "中", risk: "低风险", updatedAt: "2 小时前", nextStep: "补齐地图与详情页回归清单", agent: "资料研究 Agent", materials: 8, todos: 4, events: 2, reports: 2, timeline: ["地图交互问题已纳入检查", "发布材料进入复核", "等待小程序预览确认"] },
     { id: "homepage", name: "品牌主页恢复与部署", code: "PRJ-2026-0601", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed", progress: 100, priority: "低", risk: "已关闭", updatedAt: "昨天", nextStep: "仅保留归档和复盘记录", agent: "自动化 Agent", materials: 5, todos: 0, events: 1, reports: 3, timeline: ["历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"] },
+  ];
+  let sidebarProjects = $state<SidebarProject[]>([
+    { id: "volt-gui", name: "Volt GUI 桌面端重构", localPath: "E:\\workspace\\volt-gui", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚" }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天" }] },
+    { id: "lurefree", name: "Lurefree 小程序发布", localPath: "E:\\workspace\\lurefree", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天" }] },
+    { id: "homepage", name: "品牌主页恢复与部署", localPath: "C:\\Users\\1\\Documents\\HOMEPAGE", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天" }] },
+  ]);
+  let activeSidebarProjectId = $state("volt-gui");
+  let activeSidebarConversationId = $state("volt-gui-review");
+  let sidebarProjectDraft = $state("");
+  let sidebarProjectCreateOpen = $state(false);
+  let sidebarProjectDockCollapsed = $state(false);
+  let sidebarProjectSort = $state<SidebarProjectSort>("recent");
+  let sidebarProjectFolderInput = $state<HTMLInputElement | undefined>();
+  let editingSidebarProjectId = $state("");
+  let sidebarProjectRenameDraft = $state("");
+  let sidebarProjectRenameInput = $state<HTMLInputElement | undefined>();
+  const projectMaterialRows = [
+    { projectId: "volt-gui", title: "AORISTLAWER 项目详情源码对照", category: "参考资料", source: "MatterDetailPage.tsx", status: "已关联", updatedAt: "28 分钟前", desc: "映射概览、资料、日程、报告、待办五个标签页。" },
+    { projectId: "volt-gui", title: "Volt GUI 工作台 IA 调整记录", category: "需求资料", source: "App.svelte", status: "已索引", updatedAt: "今天", desc: "覆盖项目管理、客户管理、能力中心与资料中心入口调整。" },
+    { projectId: "volt-gui", title: "桌面前端质量门禁说明", category: "验证资料", source: "desktop/frontend", status: "已同步", updatedAt: "今天", desc: "记录 Svelte 检查、Vite 构建和本地预览回归要求。" },
+    { projectId: "volt-gui", title: "客户与项目关联样例", category: "业务资料", source: "local", status: "待复核", updatedAt: "昨天", desc: "用于验证项目详情与客户详情之间的跳转和任务关联。" },
+    { projectId: "lurefree", title: "小程序发布清单", category: "发布资料", source: "lurefree", status: "已索引", updatedAt: "2 小时前", desc: "包体、地图交互、图钉资产与发布前检查记录。" },
+    { projectId: "lurefree", title: "地图交互回归记录", category: "验证资料", source: "dist/wx", status: "待复核", updatedAt: "今天", desc: "确认运行产物和源码行为一致。" },
+    { projectId: "homepage", title: "历史版本恢复记录", category: "归档资料", source: "_restore-backups", status: "已归档", updatedAt: "昨天", desc: "记录恢复来源、构建验证和无截图校验边界。" },
+  ];
+  const projectScheduleRows = [
+    { projectId: "volt-gui", title: "项目详情标签验收", date: "06-20", time: "13:30", place: "本地预览", state: "今日", desc: "检查五个标签页可切换并显示对应内容。" },
+    { projectId: "volt-gui", title: "前端门禁复跑", date: "06-20", time: "16:00", place: "desktop/frontend", state: "待开始", desc: "执行 autofixer、check、build 与 diff 空白检查。" },
+    { projectId: "volt-gui", title: "交付确认", date: "06-21", time: "10:00", place: "项目群", state: "已排期", desc: "同步 AORISTLAWER 参考补齐结果和剩余风险。" },
+    { projectId: "lurefree", title: "发布素材复核", date: "06-20", time: "15:30", place: "运营项目群", state: "今日", desc: "核对发布附件和预览记录。" },
+    { projectId: "lurefree", title: "上线窗口确认", date: "06-22", time: "11:00", place: "线上会议", state: "已排期", desc: "确认小程序提交和风险提醒。" },
+    { projectId: "homepage", title: "归档复盘", date: "06-24", time: "14:00", place: "官网项目", state: "已排期", desc: "整理恢复记录和发布边界。" },
+  ];
+  const projectReportRows = [
+    { projectId: "volt-gui", title: "项目风险分析报告", type: "风险报告", status: "已生成", owner: "代码审查 Agent", updatedAt: "28 分钟前", summary: "聚焦 UI 改动范围、Svelte 模板风险和验证缺口。" },
+    { projectId: "volt-gui", title: "项目自动化运行报告", type: "验证报告", status: "待复核", owner: "自动化 Agent", updatedAt: "今天", summary: "汇总前端门禁、Go/Wails 边界和浏览器预览证据。" },
+    { projectId: "volt-gui", title: "AORISTLAWER 对照报告", type: "参考报告", status: "草稿", owner: "资料研究 Agent", updatedAt: "今天", summary: "说明 MatterDetailPage 的功能如何落到 Volt 项目详情。" },
+    { projectId: "volt-gui", title: "客户运营周报", type: "周报", status: "草稿", owner: "运营 Agent", updatedAt: "昨天", summary: "记录客户关联、项目状态和下一步触达动作。" },
+    { projectId: "lurefree", title: "发布风险分析", type: "风险报告", status: "已生成", owner: "资料研究 Agent", updatedAt: "2 小时前", summary: "覆盖包体、地图交互和发布资料完整性。" },
+    { projectId: "lurefree", title: "增长任务周报", type: "周报", status: "草稿", owner: "运营 Agent", updatedAt: "今天", summary: "整理触达节奏和下一轮任务。" },
+    { projectId: "homepage", title: "恢复复盘报告", type: "归档报告", status: "已归档", owner: "自动化 Agent", updatedAt: "昨天", summary: "总结恢复来源、构建验证和后续维护边界。" },
+  ];
+  const projectTodoRows = [
+    { projectId: "volt-gui", title: "补齐项目详情五个标签页", due: "今天", priority: "高", state: "进行中", desc: "让资料、日程、报告、待办都具备可见内容和操作入口。" },
+    { projectId: "volt-gui", title: "执行 Svelte autofixer", due: "今天", priority: "中", state: "待处理", desc: "确认新增模板满足 Svelte 5 语法。" },
+    { projectId: "volt-gui", title: "运行前端构建门禁", due: "今天", priority: "中", state: "待处理", desc: "执行 check、build 和 diff 空白检查。" },
+    { projectId: "volt-gui", title: "浏览器验证项目详情", due: "今天", priority: "中", state: "待处理", desc: "检查截图中的标签页切换和控制台日志。" },
+    { projectId: "volt-gui", title: "整理交付说明", due: "明天", priority: "低", state: "待处理", desc: "记录本次参考 AORISTLAWER 的落地范围。" },
+    { projectId: "lurefree", title: "复核发布资料", due: "今天", priority: "高", state: "进行中", desc: "确认发布前材料和验收证据。" },
+    { projectId: "lurefree", title: "同步上线排期", due: "06-22", priority: "中", state: "待处理", desc: "更新客户与运营团队的提醒。" },
   ];
   const customerCards = [
     { id: "internal", name: "内部研发团队", type: "企业", contact: "产品负责人", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", matters: 4, materials: 12, events: 3, todos: 5, risk: "低风险", riskLevel: "low", status: "active", createdAt: "2026-06-01", lastContact: "28 分钟前", address: "局域网本地客户档案", note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", projectIds: ["volt-gui", "homepage"] },
@@ -287,9 +367,14 @@
   }));
   const newTaskProjectOptions = $derived(projectCards.map((project) => ({ id: project.id, label: project.name })));
   const newTaskClientOptions = $derived(customerCards.map((customer) => ({ id: customer.id, label: customer.name })));
+  const sortedSidebarProjects = $derived([...sidebarProjects].sort((a, b) => {
+    if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
+    if (sidebarProjectSort === "conversations") return b.conversations.length - a.conversations.length || a.name.localeCompare(b.name, "zh-Hans-CN");
+    return b.updatedAtMs - a.updatedAtMs;
+  }));
   const capabilityBuckets = {
     plugin: [
-      { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建任务", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
+      { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建对话", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
       { id: "browser-preview", name: "浏览器预览", desc: "打开本地页面、检查 DOM 状态和控制台错误。", status: "已启用", version: "v1.2", source: "Browser 插件", scope: "本地预览", sync: "5 分钟前", path: "127.0.0.1", permission: "本地页面读取 / 点击验证", enabled: true },
       { id: "resource-ingest", name: "资料导入助手", desc: "把文档、法规、客户资料导入资料中心并建立索引。", status: "待配置", version: "v0.8", source: "工作台插件", scope: "资料中心", sync: "待授权", path: "resources/import", permission: "上传文件 / 建立索引", enabled: false },
     ],
@@ -304,6 +389,15 @@
       { id: "agent-team-automation", name: "agent-team-automation", desc: "把可复用任务契约、执行日志和回调流程打包为团队技能。", status: "待安装", version: "v0.7", source: "Agent Team", scope: "团队协作", sync: "待导入", path: "skills/agent-team", permission: "任务契约 / 进度日志", enabled: false },
     ],
   };
+  type CapabilityItem = typeof capabilityBuckets.plugin[number];
+  const capabilityInstallSteps = [
+    { id: "install_files", label: "安装文件", desc: "写入插件包、版本元数据和本地资源清单。" },
+    { id: "install_dependencies", label: "安装依赖", desc: "检查 CLI、Skill 文件和运行时依赖是否可用。" },
+    { id: "connect", label: "连接 MCP", desc: "复用或创建 MCP Server，并完成连接状态校验。" },
+    { id: "authorize", label: "授权", desc: "校验连接器权限、API Token 和工作区访问范围。" },
+    { id: "create_agent", label: "创建 Agent", desc: "按能力模板生成可调用的 Agent 或任务入口。" },
+    { id: "bind_agents", label: "绑定 Agent", desc: "把能力挂载到 Agent 中心和新建对话流程。" },
+  ];
   const wizardTabs = [{ id: "identity", label: "助手特征" }, { id: "tools", label: "基础工具" }, { id: "skills", label: "业务技能" }, { id: "files", label: "核心文件" }];
   const avatarPresets = ["C", "R", "A", "M", "S", "P"];
   const vibePresets = ["精准执行", "研究严谨", "客户友好", "表达简洁"];
@@ -390,7 +484,7 @@
   ];
   const searchResults = [
     { title: "Agent 创建与配置", scope: "Agent 中心", snippet: "助手特征、基础工具、业务技能、核心文件均可配置。" },
-    { title: "项目管理入口", scope: "业务管理", snippet: "项目可点击关联到新建任务。" },
+    { title: "项目管理入口", scope: "业务管理", snippet: "项目可点击关联到新建对话。" },
     { title: "能力中心 MCP 管理", scope: "能力中心", snippet: "插件、MCP、SKILL 顶部横向切换。" },
   ];
   const syncJobs = [
@@ -486,6 +580,22 @@
   }
 
   function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; }
+  function openCodeConversation() {
+    activityMode = "code";
+    workLayer = "newTask";
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+  }
+  function openActivityMode(mode: ActivityMode) {
+    if (mode === "work") {
+      if (activityMode === "work" && workLayer === "newTask") return;
+      openWorkLayer("newTask");
+      return;
+    }
+    openCodeConversation();
+    void tick().then(focusComposer);
+  }
   function openUserPanelDialog(layer: UserPanelDialog) { userPanelDialog = layer; userMenuOpen = false; }
   function userPanelDialogTitle() {
     if (userPanelDialog === "models") return "模型管理";
@@ -502,14 +612,155 @@
     return "用户中心弹窗。";
   }
   function focusNewTask() { openWorkLayer("newTask"); void tick().then(focusComposer); }
+  function syncSidebarProjectContext(project: SidebarProject) {
+    activeSidebarProjectId = project.id;
+    const linked = projectCards.find((item) => item.id === project.id || item.name === project.name);
+    selectedProjectId = linked?.id ?? "";
+    linkedProject = linked?.name ?? project.name;
+  }
+  function sidebarProjectSortLabel() {
+    if (sidebarProjectSort === "name") return "名称";
+    if (sidebarProjectSort === "conversations") return "对话";
+    return "最近";
+  }
+  function cycleSidebarProjectSort() {
+    sidebarProjectSort = sidebarProjectSort === "recent" ? "name" : sidebarProjectSort === "name" ? "conversations" : "recent";
+  }
+  function pathBasename(path: string) {
+    const trimmed = path.trim().replace(/[\\/]+$/, "");
+    return trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed || "新项目";
+  }
+  function addSidebarProjectFromPath(path: string, fallbackName = "") {
+    const cleanPath = path.trim();
+    const name = fallbackName.trim() || pathBasename(cleanPath);
+    if (!name) return;
+    const existing = sidebarProjects.find((item) => item.localPath === cleanPath || item.name === name);
+    const now = Date.now();
+    if (existing) {
+      sidebarProjects = sidebarProjects.map((item) => item.id === existing.id ? { ...item, expanded: true, localPath: item.localPath || cleanPath, updatedAtMs: now } : item);
+      sidebarProjectDockCollapsed = false;
+      activeSidebarConversationId = "";
+      syncSidebarProjectContext({ ...existing, expanded: true, localPath: existing.localPath || cleanPath, updatedAtMs: now });
+      return;
+    }
+    const id = `sidebar-project-${now}`;
+    const project: SidebarProject = { id, name, localPath: cleanPath || name, updatedAtMs: now, expanded: true, conversations: [] };
+    sidebarProjects = [project, ...sidebarProjects];
+    sidebarProjectDockCollapsed = false;
+    sidebarProjectCreateOpen = false;
+    sidebarProjectDraft = "";
+    activeSidebarConversationId = "";
+    syncSidebarProjectContext(project);
+  }
+  function handleSidebarProjectFolderInput(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const firstFile = input.files?.[0] as (File & { path?: string; webkitRelativePath?: string }) | undefined;
+    if (!firstFile) return;
+    const relativePath = firstFile.webkitRelativePath || firstFile.name;
+    const rootName = relativePath.split("/").filter(Boolean)[0] || firstFile.name;
+    addSidebarProjectFromPath(firstFile.path || rootName, rootName);
+    input.value = "";
+  }
+  async function chooseSidebarProjectFolder() {
+    if (hasWailsBindings()) {
+      try {
+        const picked = await app().PickWorkspace();
+        if (picked) {
+          addSidebarProjectFromPath(picked);
+          await refresh();
+          return;
+        }
+      } catch {
+        // Browser preview falls back to the hidden directory input below.
+      }
+    }
+    if (sidebarProjectFolderInput) {
+      sidebarProjectFolderInput.setAttribute("webkitdirectory", "");
+      sidebarProjectFolderInput.setAttribute("directory", "");
+      sidebarProjectFolderInput.click();
+      return;
+    }
+    sidebarProjectCreateOpen = true;
+  }
+  function openSidebarProject(projectId: string) {
+    const project = sidebarProjects.find((item) => item.id === projectId);
+    if (!project) return;
+    const now = Date.now();
+    syncSidebarProjectContext(project);
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true, updatedAtMs: now } : item);
+  }
+  function toggleSidebarProject(projectId: string) {
+    const project = sidebarProjects.find((item) => item.id === projectId);
+    if (!project) return;
+    const now = Date.now();
+    syncSidebarProjectContext(project);
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: !item.expanded, updatedAtMs: now } : item);
+  }
+  function createSidebarProject() {
+    const name = sidebarProjectDraft.trim();
+    if (!name) return;
+    const now = Date.now();
+    const id = `sidebar-project-${now}`;
+    const project: SidebarProject = { id, name, updatedAtMs: now, expanded: true, conversations: [] };
+    sidebarProjects = [project, ...sidebarProjects];
+    sidebarProjectDraft = "";
+    sidebarProjectCreateOpen = false;
+    sidebarProjectDockCollapsed = false;
+    activeSidebarConversationId = "";
+    syncSidebarProjectContext(project);
+  }
+  function startRenameSidebarProjectTask(project: SidebarProject) {
+    editingSidebarProjectId = project.id;
+    sidebarProjectRenameDraft = project.name;
+    void tick().then(() => {
+      sidebarProjectRenameInput?.focus();
+      sidebarProjectRenameInput?.select();
+    });
+  }
+  function cancelRenameSidebarProjectTask() {
+    editingSidebarProjectId = "";
+    sidebarProjectRenameDraft = "";
+  }
+  function saveSidebarProjectTaskName(projectId: string) {
+    const name = sidebarProjectRenameDraft.trim();
+    if (!name) {
+      cancelRenameSidebarProjectTask();
+      return;
+    }
+    const now = Date.now();
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, name, updatedAtMs: now } : item);
+    if (activeSidebarProjectId === projectId) linkedProject = name;
+    cancelRenameSidebarProjectTask();
+  }
+  function openSidebarConversation(projectId: string, conversationId: string) {
+    const project = sidebarProjects.find((item) => item.id === projectId);
+    if (!project) return;
+    const conversation = project.conversations.find((item) => item.id === conversationId);
+    syncSidebarProjectContext(project);
+    activeSidebarConversationId = conversationId;
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, updatedAtMs: Date.now() } : item);
+    input = `项目：${project.name}\n${conversation ? `对话：${conversation.title}\n` : ""}`;
+    focusNewTask();
+  }
+  function createSidebarConversation(projectId: string) {
+    const project = sidebarProjects.find((item) => item.id === projectId);
+    if (!project) return;
+    const now = Date.now();
+    const conversation: SidebarConversation = { id: `${projectId}-conversation-${Date.now()}`, title: `新对话 ${project.conversations.length + 1}`, updatedAt: "刚刚" };
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] } : item);
+    openSidebarConversation(projectId, conversation.id);
+  }
   async function openUnifiedCodeTask() {
-    openWorkLayer("newTask");
-    codeInspectorOpen = true;
+    openCodeConversation();
     await tick();
     if (hasWailsBindings()) await refreshCodeDock();
     focusComposer();
   }
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
+  function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
+  function projectSchedules(project = selectedProject()) { return projectScheduleRows.filter((item) => item.projectId === project.id); }
+  function projectReports(project = selectedProject()) { return projectReportRows.filter((item) => item.projectId === project.id); }
+  function projectTodos(project = selectedProject()) { return projectTodoRows.filter((item) => item.projectId === project.id); }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
   function customerProjects(customer = selectedCustomer()) { return projectCards.filter((project) => customer.projectIds.includes(project.id)); }
   function customerMaterials(customer = selectedCustomer()) { return customerMaterialRows.filter((item) => item.customerId === customer.id); }
@@ -621,7 +872,12 @@
   }
   function selectAgentForTask(agentId: string) { selectedAgentId = agentId; agentSelectorOpen = false; }
   function linkProjectById(projectId: string) {
-    selectedProjectId = projectId || selectedProjectId;
+    if (!projectId) {
+      selectedProjectId = "";
+      linkedProject = "";
+      return;
+    }
+    selectedProjectId = projectId;
     const project = projectCards.find((item) => item.id === projectId);
     linkedProject = project?.name ?? "";
   }
@@ -655,17 +911,73 @@
   function formatRuntime(startedAtMs: number) { const m = Math.max(1, Math.floor((nowMs - startedAtMs) / 60000)); const h = Math.floor(m / 60); return h ? `${h} 小时 ${m % 60} 分钟` : `${m} 分钟`; }
   function currentAutomation() { return runningAutomations.find((item) => item.id === automationDialog); }
   function openAgentWizard(agentId?: string) { selectedAgentId = agentId || selectedAgentId; agentWizardTab = "identity"; agentWizardOpen = true; }
+  function filteredAgentMarketItems() {
+    const keyword = agentMarketSearch.trim().toLowerCase();
+    if (!keyword) return agentMarketItems;
+    return agentMarketItems.filter((item) => [item.name, item.category, item.desc, item.source, item.version, ...item.tags].some((value) => value.toLowerCase().includes(keyword)));
+  }
+  function marketAgentDownloaded(item: AgentMarketItem) {
+    return downloadedMarketAgentIds.includes(item.id) || agentCards.some((agent) => agent.id === item.id);
+  }
+  function downloadMarketAgent(item: AgentMarketItem) {
+    if (!agentCards.some((agent) => agent.id === item.id)) {
+      agentCards = [{ id: item.id, name: item.name, role: item.role, runs: 0, status: "已下载", desc: item.desc }, ...agentCards];
+    }
+    if (!downloadedMarketAgentIds.includes(item.id)) downloadedMarketAgentIds = [...downloadedMarketAgentIds, item.id];
+    selectedAgentId = item.id;
+    const payload = {
+      id: item.id,
+      name: item.name,
+      role: item.role,
+      category: item.category,
+      version: item.version,
+      desc: item.desc,
+      tags: item.tags,
+      installedAt: new Date().toISOString(),
+      localPath: item.localPath,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${item.id}.agent.json`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
   function capabilityLabel(kind: CapabilityTab) { return kind === "plugin" ? "插件" : kind === "mcp" ? "MCP" : "SKILL"; }
   function capabilitySubtitle(kind: CapabilityTab) {
-    if (kind === "plugin") return "管理工作台插件、预览能力和导入扩展。";
-    if (kind === "mcp") return "管理 MCP 连接、授权状态和运行范围。";
-    return "管理可复用 Skill 包、版本和挂载状态。";
+    if (kind === "plugin") return "插件市场、安装流程和启用状态";
+    if (kind === "mcp") return "MCP Server、连接器和授权状态";
+    return "Skill 包、版本来源和 Agent 挂载";
   }
   function allCapabilities() { return [...capabilityBuckets.plugin, ...capabilityBuckets.mcp, ...capabilityBuckets.skill]; }
   function capabilityEnabledCount() { return allCapabilities().filter((item) => item.enabled).length; }
   function currentCapabilityList() { return capabilityBuckets[capabilityTab]; }
   function currentCapability() { return currentCapabilityList().find((item) => item.id === selectedCapabilityId) ?? currentCapabilityList()[0]; }
-  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; }
+  function filteredCapabilities() {
+    const keyword = capabilitySearch.trim().toLowerCase();
+    if (!keyword) return currentCapabilityList();
+    return currentCapabilityList().filter((item) => [item.name, item.desc, item.status, item.source, item.scope, item.path].some((value) => value.toLowerCase().includes(keyword)));
+  }
+  function capabilityStatusTone(item: CapabilityItem) {
+    if (item.enabled) return "enabled";
+    if (item.status.includes("授权") || item.sync.includes("授权")) return "auth";
+    return "pending";
+  }
+  function capabilityActionLabel(item: CapabilityItem) {
+    if (item.enabled) return "配置";
+    if (item.status.includes("授权") || item.sync.includes("授权")) return "授权";
+    if (item.status.includes("待安装")) return "安装";
+    return "启用";
+  }
+  function capabilityStepDone(item: CapabilityItem, index: number) {
+    if (item.enabled) return true;
+    const currentIndex = item.status.includes("授权") ? 2 : item.status.includes("配置") ? 1 : 0;
+    return index <= currentIndex;
+  }
+  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; }
   function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
   function configDialogIntro() {
     if (configDialog === "project") return "对标 CreateMatterDialog：记录项目名称、客户、阶段、负责人和初始任务。";
@@ -912,7 +1224,7 @@
   }
 
   async function openCodeInspector() {
-    openWorkLayer("newTask");
+    openCodeConversation();
     codeInspectorOpen = true;
     await tick();
     if (hasWailsBindings()) await refreshCodeDock();
@@ -921,7 +1233,7 @@
   async function previewFile(path: string) {
     filePreview = await app().ReadFile(path);
     diffPreview = undefined;
-    openWorkLayer("newTask");
+    openCodeConversation();
     codeInspectorOpen = true;
   }
 
@@ -929,7 +1241,7 @@
     const [diff, preview] = await Promise.all([app().WorkspaceDiff(path), app().ReadFile(path)]);
     diffPreview = diff;
     filePreview = preview;
-    openWorkLayer("newTask");
+    openCodeConversation();
     codeInspectorOpen = true;
   }
 
@@ -964,12 +1276,61 @@
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
     <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class:active={activityMode === "work" && workLayer === "newTask"} class="brand-mode-switch" type="button" onclick={focusNewTask} aria-label="打开新建任务"><Plus size={14} /><span>任务</span></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
+      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
       <nav class="workspace-nav" aria-label="工作台导航">
         {#each workspaceNav as section (section.title)}<section><h2>{section.title}</h2>{#each section.items as item (item.label)}{@const Icon = navIcon(item.icon)}<button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkLayer(item.layer)}><span class="nav-icon"><Icon size={15} /></span><span>{item.label}</span>{#if item.badge}<em>{item.badge}</em>{/if}</button>{/each}</section>{/each}
-
+        <section class="sidebar-project-dock" data-sidebar-project-dock>
+          <div class="sidebar-project-head">
+            <button class="sidebar-project-section-toggle" class:expanded={!sidebarProjectDockCollapsed} type="button" aria-label={sidebarProjectDockCollapsed ? "展开项目" : "收起项目"} aria-expanded={!sidebarProjectDockCollapsed} onclick={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}><ChevronDown size={13} /></button>
+            <h2>项目</h2>
+            <button class="sidebar-project-sort" type="button" aria-label={`项目排序：${sidebarProjectSortLabel()}`} onclick={cycleSidebarProjectSort}><List size={12} /><span>{sidebarProjectSortLabel()}</span></button>
+            <button class="sidebar-project-icon" type="button" aria-label="选择本地项目文件夹" onclick={() => void chooseSidebarProjectFolder()}><Plus size={13} /></button>
+          </div>
+          <input bind:this={sidebarProjectFolderInput} class="sidebar-project-folder-input" type="file" multiple tabindex="-1" aria-hidden="true" onchange={handleSidebarProjectFolderInput} />
+          {#if sidebarProjectCreateOpen && !sidebarProjectDockCollapsed}
+            <form class="sidebar-project-create" onsubmit={(event) => { event.preventDefault(); createSidebarProject(); }}>
+              <Folder size={14} />
+              <input bind:value={sidebarProjectDraft} aria-label="项目名称" placeholder="项目名称" onkeydown={(event) => { if (event.key === "Escape") { sidebarProjectDraft = ""; sidebarProjectCreateOpen = false; } }} />
+              <button type="submit" aria-label="确认创建项目"><Check size={13} /></button>
+            </form>
+          {/if}
+          {#if !sidebarProjectDockCollapsed}
+          <div class="sidebar-project-list" data-sidebar-project-sort={sidebarProjectSort}>
+            {#each sortedSidebarProjects as project (project.id)}
+              <div class="sidebar-project-group" data-sidebar-project={project.id}>
+                <div class="sidebar-project-row" class:active={activeSidebarProjectId === project.id}>
+                  <button class="sidebar-project-disclosure" class:expanded={project.expanded} type="button" aria-label={project.expanded ? `收起 ${project.name}` : `展开 ${project.name}`} aria-expanded={project.expanded} onclick={() => toggleSidebarProject(project.id)}><ChevronDown size={13} /></button>
+                  {#if editingSidebarProjectId === project.id}
+                    <form class="sidebar-project-open sidebar-project-inline-rename" onsubmit={(event) => { event.preventDefault(); saveSidebarProjectTaskName(project.id); }}>
+                      <Folder size={15} />
+                      <input bind:this={sidebarProjectRenameInput} bind:value={sidebarProjectRenameDraft} aria-label={`修改 ${project.name} 任务名称`} placeholder="任务名称" onblur={() => saveSidebarProjectTaskName(project.id)} onkeydown={(event) => { if (event.key === "Escape") cancelRenameSidebarProjectTask(); }} />
+                    </form>
+                  {:else}
+                    <button class="sidebar-project-open" type="button" title={project.name} onclick={() => openSidebarProject(project.id)}><Folder size={15} /><span class="sidebar-project-label"><strong>{project.name}</strong></span></button>
+                  {/if}
+                  <button class="sidebar-project-rename" type="button" data-sidebar-rename-task aria-label={`修改 ${project.name} 任务名称`} title="修改任务名称" onclick={() => startRenameSidebarProjectTask(project)}><Pencil size={12} /></button>
+                  <button class="sidebar-project-action" type="button" data-sidebar-new-conversation aria-label={`在 ${project.name} 下新建对话`} onclick={() => createSidebarConversation(project.id)}><Plus size={13} /></button>
+                </div>
+                {#if project.expanded}
+                  <div class="sidebar-conversation-list">
+                    {#each project.conversations as conversation (conversation.id)}
+                      <button class="sidebar-conversation-row" class:active={activeSidebarConversationId === conversation.id} type="button" data-sidebar-conversation={conversation.id} onclick={() => openSidebarConversation(project.id, conversation.id)}>
+                        <MessageSquare size={13} />
+                        <span>{conversation.title}</span>
+                        <em>{conversation.updatedAt}</em>
+                      </button>
+                    {:else}
+                      <button class="sidebar-conversation-empty" type="button" onclick={() => createSidebarConversation(project.id)}>新建对话</button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          {/if}
+        </section>
       </nav>
-      <footer class="sidebar__user-wrap">{#if userMenuOpen}<div class="user-menu" role="menu">{#each userMenuItems as item (item.layer)}<button type="button" role="menuitem" onclick={() => openUserPanelDialog(item.layer)}>{item.label}</button>{/each}</div>{/if}<button class="sidebar__user" type="button" onclick={() => (userMenuOpen = !userMenuOpen)}><span class="sidebar__avatar"><Bot size={17} /></span><strong>我的</strong><em>{t.home.free}</em></button></footer>
+      <footer class="sidebar__user-wrap">{#if userMenuOpen}<div class="user-menu" role="menu">{#each userMenuItems as item (item.layer)}<button type="button" role="menuitem" onclick={() => openUserPanelDialog(item.layer)}>{item.label}</button>{/each}</div>{/if}<button class="sidebar__user sidebar__profile" type="button" aria-label="打开用户菜单" title="用户菜单" onclick={() => (userMenuOpen = !userMenuOpen)}><span class="sidebar__avatar"><UserRound size={16} /></span><strong>用户名</strong><em hidden aria-hidden="true"></em></button></footer>
     </aside>
 
     <section class="stage">
@@ -1002,10 +1363,10 @@
               />
             </div>
           </section>
-        {:else if activityMode === "work"}
+        {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench">
-            <header class="stage-topbar"><div><span>Workbench</span><strong>{workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div><div class="stage-topbar__actions"><button type="button" onclick={() => openWorkLayer("today")}>工作台入口</button><button type="button" onclick={focusNewTask}><Plus size={14} /> 新建任务</button><button type="button" onclick={openCodeInspector}><Code2 size={14} /> 代码状态</button></div></header>
-            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建任务</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div></div><div class="stage-topbar__actions" aria-hidden="true"></div></header>
+            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -1041,7 +1402,7 @@
                     </div>
 
                     <div class="agent-quick-tasks">
-                      <p>选一个任务，快速开始</p>
+                      <p>选一个对话模板，快速开始</p>
                       <div class="agent-quick-grid">
                         {#each newTaskQuickTasks as task (task.title)}
                           <button type="button" onclick={() => useNewTaskPrompt(task)}>
@@ -1054,7 +1415,7 @@
                     </div>
                   </div>
 
-                  <section class="agent-compose-card" aria-label="新建任务输入区">
+                  <section class="agent-compose-card" aria-label="新建对话输入区">
                     <Composer
                       {input}
                       {commands}
@@ -1072,11 +1433,9 @@
                       clientOptions={newTaskClientOptions}
                       selectedClientId={linkedCustomer ? selectedCustomerId : ""}
                       onClientChange={linkCustomerById}
+                      {activityMode}
+                      onActivityModeChange={openActivityMode}
                     />
-                    <div class="agent-compose-meta">
-                      {#if linkedProject}<span>项目：{linkedProject}</span>{/if}
-                      {#if linkedCustomer}<span>客户：{linkedCustomer}</span>{/if}
-                    </div>
                   </section>
 
                   <p class="agent-assistant-disclaimer">Volt GUI 由 AI 驱动生成，请结合构建、测试和人工复核采纳执行建议。</p>
@@ -1086,30 +1445,71 @@
             {:else if workLayer === "automations"}
               <section class="aorist-page">
                 <div class="aorist-toolbar">
-                  <div><span>Project Automation</span><strong>项目自动化</strong></div>
-                  <button type="button">新增验证自动化</button>
+                  <div><span>Codex Automation</span><strong>自动化任务</strong></div>
+                  <button type="button" onclick={() => (automationDialog = primaryAutomation.id)}>新建自动化任务</button>
                 </div>
-                <div class="aorist-card-grid">
-                  {#each runningAutomations as item (item.id)}
-                    <div class="automation-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") automationDialog = item.id; }} onclick={() => (automationDialog = item.id)}>
-                      <span>{item.status}</span>
-                      <strong>{item.title}</strong>
-                      <p>{item.desc}</p>
-                      <dl>
-                        <dt>覆盖范围</dt><dd>{item.scope}</dd>
-                        <dt>验证命令</dt><dd>{item.command}</dd>
-                        <dt>触发条件</dt><dd>{item.cadence}</dd>
-                      </dl>
-                      <footer role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
-                        <button type="button">{item.status === "运行中" ? "暂停" : "开始"}</button>
-                        <button type="button" onclick={() => (automationDialog = item.id)}>编辑</button>
-                        <button type="button">删除</button>
-                      </footer>
+                <div class="automation-console">
+                  <section class="automation-overview">
+                    <article><span>运行中</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>自动化任务</em></article>
+                    <article><span>验证自动化</span><strong>{runningAutomations.filter((item) => item.kind.includes("验证")).length}</strong><em>已接入门禁</em></article>
+                    <article><span>最近结果</span><strong>{primaryAutomation.result}</strong><em>{primaryAutomation.lastRun}</em></article>
+                  </section>
+
+                  <div class="automation-layout">
+                    <section class="automation-task-list" aria-label="自动化任务列表">
+                      {#each runningAutomations as item (item.id)}
+                        {@const isRunning = item.status === "运行中"}
+                        <div class:active={automationDialog === item.id} class="automation-card automation-task-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") automationDialog = item.id; }} onclick={() => (automationDialog = item.id)}>
+                          <header>
+                            <span>{item.kind}</span>
+                            <em>{item.status}</em>
+                          </header>
+                          <strong>{item.title}</strong>
+                          <p>{item.desc}</p>
+                          <dl>
+                            <dt>触发方式</dt><dd>{item.schedule}</dd>
+                            <dt>工作区</dt><dd>{item.scope}</dd>
+                            <dt>下一次</dt><dd>{item.nextRun}</dd>
+                          </dl>
+                          <div class="automation-step-strip">
+                            {#each item.steps as step (step)}
+                              <b>{step}</b>
+                            {/each}
+                          </div>
+                          <footer role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
+                            <button type="button">{isRunning ? "暂停" : "开始"}</button>
+                            <button type="button" onclick={() => (automationDialog = item.id)}>编辑</button>
+                            <button type="button">删除</button>
+                          </footer>
+                        </div>
+                      {/each}
+                    </section>
+
+                  </div>
+                </div>
+              </section>
+            {:else if workLayer === "agents"}
+              <section class="aorist-page">
+                <div class="aorist-toolbar">
+                  <div><span>Agent Center</span><strong>Agent 中心</strong></div>
+                  <div>
+                    <button type="button" onclick={() => { agentMarketSearch = ""; agentMarketOpen = true; }}><Blocks size={15} /> Agent 市场</button>
+                    <button type="button" onclick={() => { distillStep = 1; openConfigDialog("distill"); }}>蒸馏 Agent</button>
+                    <button type="button" onclick={() => openAgentWizard()}>创建 Agent</button>
+                  </div>
+                </div>
+                <label class="aorist-search"><Search size={16} /><input aria-label="搜索 Agent" placeholder="输入 Agent 名称或职责" /></label>
+                <div class="aorist-card-grid agent-grid">
+                  {#each agentCards as agent (agent.id)}
+                    {@const AgentIcon = agentIcon(agent.id)}
+                    <div class="agent-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") openAgentWizard(agent.id); }} onclick={() => openAgentWizard(agent.id)}>
+                      <header><span><AgentIcon size={19} /></span><div><strong>{agent.name}</strong><em>{agent.role}</em></div><button type="button" onclick={(event) => event.stopPropagation()}><Trash2 size={14} /></button></header>
+                      <p>{agent.desc}</p>
+                      <footer><span><Zap size={13} /> {agent.runs} 次运行</span><b>{agent.status}</b></footer>
                     </div>
                   {/each}
                 </div>
               </section>
-            {:else if workLayer === "agents"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Agent Center</span><strong>Agent 中心</strong></div><div><button type="button" onclick={() => { distillStep = 1; openConfigDialog("distill"); }}>蒸馏 Agent</button><button type="button" onclick={() => openAgentWizard()}>创建 Agent</button></div></div><label class="aorist-search"><span>搜索 Agent</span><input placeholder="输入 Agent 名称或职责" /></label><div class="aorist-card-grid agent-grid">{#each agentCards as agent (agent.id)}{@const AgentIcon = agentIcon(agent.id)}<div class="agent-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") openAgentWizard(agent.id); }} onclick={() => openAgentWizard(agent.id)}><header><span><AgentIcon size={19} /></span><div><strong>{agent.name}</strong><em>{agent.role}</em></div><button type="button" onclick={(event) => event.stopPropagation()}><Trash2 size={14} /></button></header><p>{agent.desc}</p><footer><span><Zap size={13} /> {agent.runs} 次运行</span><b>{agent.status}</b></footer></div>{/each}</div></section>
             {:else if workLayer === "projects"}
               <section class="aorist-page management-page project-management-page">
                 <div class="management-stats project-stats">
@@ -1129,7 +1529,7 @@
                 </div>
                 <div class="project-list-panel project-list-panel--single">
                   {#each filteredProjects as project (project.id)}
-                    <button class="management-card matter-card project-matter-card" type="button" onclick={() => { selectedProjectId = project.id; projectDetailOpen = true; }}>
+                    <button class="management-card matter-card project-matter-card" type="button" onclick={() => { selectedProjectId = project.id; projectDetailTab = "overview"; projectDetailOpen = true; }}>
                       <span class="management-card__icon"><FolderKanban size={20} /></span>
                       <div class="management-card__body">
                         <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
@@ -1181,7 +1581,7 @@
             {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button">同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button"><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
             {:else if workLayer === "mockHearing"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Mock Hearing</span><strong>模拟庭辩</strong></div><div><button type="button" onclick={() => openConfigDialog("hearing")}>创建庭辩</button><button type="button" onclick={() => (selectedHearingTitle = hearingRooms[0]?.title)}>进入庭辩室</button></div></div><div class="aorist-card-grid">{#each hearingRooms as room (room.title)}<button class="agent-card hearing-card" type="button" onclick={() => (selectedHearingTitle = room.title)}><header><span>辩</span><div><strong>{room.title}</strong><em>{room.stage}</em></div></header><p>{room.role}</p><footer><span>{room.next}</span><b>AI 庭辩</b></footer></button>{/each}</div></section>
             {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button">批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
-            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="aorist-toolbar"><div><span>Resource Center</span><strong>资料中心</strong></div><div><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div>{#if resourceTab === "resources"}<div class="aorist-card-grid">{#each resourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div><label class="aorist-search"><span>搜索文书、法规与规则</span><input placeholder="搜索标题、条文、模板或标签" /></label><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文书知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>法规知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文书、法规、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<label class="aorist-search"><span>跨项目、客户、文书、法规检索</span><input placeholder="输入关键词，检索所有工作台内容" /></label><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="aorist-toolbar"><div><span>Resource Center</span><strong>资料中心</strong></div><div><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div>{#if resourceTab === "resources"}<div class="aorist-card-grid">{#each resourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div><label class="aorist-search"><Search size={16} /><input aria-label="搜索文书、法规与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文书知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>法规知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文书、法规、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文书、法规检索" placeholder="输入关键词，检索所有工作台内容" /></label><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
                 {#if teamViewMode === "chat"}
@@ -1350,75 +1750,81 @@
             {:else}
               {@const selectedCapability = currentCapability()}
               <section class="aorist-page capability-manager capability-console">
-                <div class="capability-hero">
-                  <div class="capability-hero__mark">
-                    {#if capabilityTab === "plugin"}<Puzzle size={24} />{:else if capabilityTab === "mcp"}<Database size={24} />{:else}<Sparkles size={24} />{/if}
+                <header class="capability-hub-header">
+                  <div class="capability-hub-header__title">
+                    <span>Plugin Hub</span>
+                    <strong>能力中心</strong>
+                    <p>参考 Accio 插件模块：用目录检索、安装步骤、MCP 连接、授权和 Agent 绑定来管理工作台能力。</p>
                   </div>
-                  <div>
-                    <span>Capability Center</span>
-                    <strong>插件、MCP、SKILL 的统一能力配置台</strong>
-                    <p>参考 AORISTLAWER 的 AgentWizard：用工具、技能、核心文件的配置方式管理工作台能力，并保留启用状态、权限、版本和运行范围。</p>
-                  </div>
-                  <div class="capability-hero__actions">
-                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> 创建能力</button>
+                  <label class="capability-search">
+                    <Search size={15} />
+                    <input bind:value={capabilitySearch} placeholder={`搜索${capabilityLabel(capabilityTab)}名称 / 描述 / 来源`} />
+                  </label>
+                  <div class="capability-hub-header__actions">
                     <button type="button" onclick={() => openConfigDialog("ingest")}><Upload size={15} /> 导入配置</button>
                     <button type="button"><RefreshCw size={15} /> 刷新状态</button>
+                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> 创建插件</button>
                   </div>
-                </div>
+                </header>
                 <div class="capability-stats">
                   <article><span>能力总数</span><strong>{allCapabilities().length}</strong><em>插件 / MCP / SKILL</em></article>
                   <article><span>已启用</span><strong>{capabilityEnabledCount()}</strong><em>可被 Agent 调用</em></article>
-                  <article><span>需配置</span><strong>{allCapabilities().filter((item) => !item.enabled).length}</strong><em>等待授权或导入</em></article>
-                  <article><span>当前分组</span><strong>{capabilityLabel(capabilityTab)}</strong><em>{capabilitySubtitle(capabilityTab)}</em></article>
+                  <article><span>待处理</span><strong>{allCapabilities().filter((item) => !item.enabled).length}</strong><em>等待安装 / 授权 / 配置</em></article>
+                  <article><span>当前目录</span><strong>{capabilityLabel(capabilityTab)}</strong><em>{capabilitySubtitle(capabilityTab)}</em></article>
                 </div>
-                <div class="capability-tabs capability-tabs--wide" role="tablist" aria-label="能力类型切换">
-                  <button class:active={capabilityTab === "plugin"} type="button" onclick={() => switchCapabilityTab("plugin")}>插件</button>
-                  <button class:active={capabilityTab === "mcp"} type="button" onclick={() => switchCapabilityTab("mcp")}>MCP</button>
-                  <button class:active={capabilityTab === "skill"} type="button" onclick={() => switchCapabilityTab("skill")}>SKILL</button>
-                </div>
-                <div class="capability-workspace">
-                  <section class="capability-panel">
+                <div class="capability-hub-shell">
+                  <aside class="capability-catalog-sidebar" aria-label="能力目录">
+                    <span>Catalog</span>
+                    <button class:active={capabilityTab === "plugin"} type="button" onclick={() => switchCapabilityTab("plugin")}>
+                      <Puzzle size={16} />
+                      <strong>插件模块</strong>
+                      <em>{capabilityBuckets.plugin.length} 个本地插件</em>
+                    </button>
+                    <button class:active={capabilityTab === "mcp"} type="button" onclick={() => switchCapabilityTab("mcp")}>
+                      <Database size={16} />
+                      <strong>MCP 连接</strong>
+                      <em>{capabilityBuckets.mcp.length} 个服务入口</em>
+                    </button>
+                    <button class:active={capabilityTab === "skill"} type="button" onclick={() => switchCapabilityTab("skill")}>
+                      <Sparkles size={16} />
+                      <strong>Skill 包</strong>
+                      <em>{capabilityBuckets.skill.length} 个可复用技能</em>
+                    </button>
+                    <div class="capability-catalog-note">
+                      <ShieldCheck size={16} />
+                      <p>安装前先确认来源、权限和可绑定 Agent，避免能力入口失控。</p>
+                    </div>
+                  </aside>
+                  <section class="capability-panel capability-market">
                     <header>
-                      <div><span>{capabilityLabel(capabilityTab)} Management</span><strong>{capabilityLabel(capabilityTab)} 管理</strong><p>{capabilitySubtitle(capabilityTab)}</p></div>
-                      <button type="button" onclick={() => startCapabilityCreate(capabilityTab)}><Plus size={14} /> 创建{capabilityLabel(capabilityTab)}</button>
+                      <div><span>{capabilityLabel(capabilityTab)} Catalog</span><strong>{capabilityLabel(capabilityTab)} 目录</strong><p>按 Accio 插件卡片方式展示来源、版本、状态、权限和安装动作。</p></div>
+                      <button type="button" onclick={() => startCapabilityCreate(capabilityTab)}><Plus size={14} /> 添加{capabilityLabel(capabilityTab)}</button>
                     </header>
-                    <div class="capability-list">
-                      {#each capabilityBuckets[capabilityTab] as item (item.id)}
-                        <button class="capability-row" class:active={selectedCapability?.id === item.id} type="button" onclick={() => (selectedCapabilityId = item.id)}>
+                    <div class="capability-list capability-market-list">
+                      {#if filteredCapabilities().length > 0}
+                      {#each filteredCapabilities() as item (item.id)}
+                        <button class="capability-row" class:active={selectedCapability?.id === item.id} type="button" onclick={() => { selectedCapabilityId = item.id; capabilityDetailOpen = true; }}>
                           <span class="capability-row__icon">{#if capabilityTab === "plugin"}<Puzzle size={18} />{:else if capabilityTab === "mcp"}<Database size={18} />{:else}<Sparkles size={18} />{/if}</span>
                           <span class="capability-row__body">
-                            <strong>{item.name}</strong>
+                            <span class="capability-title-line"><strong>{item.name}</strong><b>{capabilityLabel(capabilityTab)}</b></span>
                             <em>{item.desc}</em>
                             <span class="capability-badges"><b>{item.version}</b><b>{item.source}</b><b>{item.scope}</b></span>
                           </span>
-                          <span class="capability-row__side"><i>{item.status}</i><span class="capability-toggle" class:enabled={item.enabled}><u></u></span></span>
+                          <span class="capability-row__side">
+                            <i class={`capability-state capability-state--${capabilityStatusTone(item)}`}>{item.status}</i>
+                            <span class="capability-row__action">{capabilityActionLabel(item)}</span>
+                          </span>
                         </button>
                       {/each}
+                      {:else}
+                        <div class="capability-empty">
+                          <Search size={18} />
+                          <strong>没有匹配的能力</strong>
+                          <p>换一个关键词，或切换插件、MCP、SKILL 目录继续查找。</p>
+                        </div>
+                      {/if}
                     </div>
                   </section>
-                  {#if selectedCapability}
-                    <aside class="capability-detail">
-                      <div class="capability-detail__top">
-                        <span>{capabilityLabel(capabilityTab)} Profile</span>
-                        <strong>{selectedCapability.name}</strong>
-                        <p>{selectedCapability.desc}</p>
-                      </div>
-                      <dl>
-                        <div><dt>状态</dt><dd>{selectedCapability.status}</dd></div>
-                        <div><dt>版本</dt><dd>{selectedCapability.version}</dd></div>
-                        <div><dt>来源</dt><dd>{selectedCapability.source}</dd></div>
-                        <div><dt>同步</dt><dd>{selectedCapability.sync}</dd></div>
-                        <div><dt>路径</dt><dd>{selectedCapability.path}</dd></div>
-                        <div><dt>权限</dt><dd>{selectedCapability.permission}</dd></div>
-                      </dl>
-                      <div class="capability-pipeline">
-                        <article class:done={selectedCapability.enabled}><span>1</span><div><strong>注册能力</strong><p>写入能力中心目录和版本元数据。</p></div></article>
-                        <article class:done={selectedCapability.enabled}><span>2</span><div><strong>授权检查</strong><p>校验工具权限、MCP 连接或 Skill 文件。</p></div></article>
-                        <article class:done={selectedCapability.enabled}><span>3</span><div><strong>挂载 Agent</strong><p>允许在新建任务和 Agent 中心调用。</p></div></article>
-                      </div>
-                      <footer><button type="button" onclick={() => (capabilityCreateOpen = true)}>配置</button><button type="button">运行检测</button></footer>
-                    </aside>
-                  {/if}
                 </div>
               </section>{/if}          </section>
         {:else}
@@ -1463,6 +1869,8 @@
                   {models}
                   {selectedModel}
                   onModelChange={switchModel}
+                  {activityMode}
+                  onActivityModeChange={openActivityMode}
                 />
                 <div class="home__context">
                   <button type="button" onclick={focusComposer}>
@@ -1553,13 +1961,17 @@
       {/if}
 
       {#if automationDialog && currentAutomation()}
-        <div class="modal-backdrop"><section class="config-modal"><header><div><span>Automation Config</span><strong>{currentAutomation()?.title}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>覆盖范围<input value={currentAutomation()?.scope || ""} /></label><label>触发条件<input value={currentAutomation()?.cadence || ""} /></label><label class="wide">验证命令<textarea rows="3" value={currentAutomation()?.command || ""}></textarea></label><label class="wide">任务说明<textarea rows="4" value={currentAutomation()?.desc || ""}></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button><button type="button" onclick={() => (automationDialog = undefined)}>保存配置</button></footer></section></div>
+        <div class="modal-backdrop"><section class="config-modal automation-config-modal"><header><div><span>Automation Task</span><strong>{currentAutomation()?.title}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>任务类型<input value={currentAutomation()?.kind || ""} /></label><label>运行状态<input value={currentAutomation()?.status || ""} /></label><label>覆盖范围<input value={currentAutomation()?.scope || ""} /></label><label>触发条件<input value={currentAutomation()?.cadence || ""} /></label><label>执行环境<input value={currentAutomation()?.environment || ""} /></label><label>下次运行<input value={currentAutomation()?.nextRun || ""} /></label><label class="wide">验证命令<textarea rows="3" value={currentAutomation()?.command || ""}></textarea></label><label class="wide">任务说明<textarea rows="4" value={currentAutomation()?.desc || ""}></textarea></label><label class="wide">运行步骤<textarea rows="4" value={currentAutomation()?.steps.join("\n") || ""}></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button><button type="button" onclick={() => (automationDialog = undefined)}>保存配置</button></footer></section></div>
       {/if}
       {#if selectedHearingTitle}
         <div class="modal-backdrop"><section class="config-modal room-modal"><header><div><span>Mock Hearing Room</span><strong>{selectedHearingRoom()?.title}</strong></div><button type="button" onclick={() => (selectedHearingTitle = undefined)}>x</button></header><div class="room-layout"><aside><span>{selectedHearingRoom()?.stage}</span><strong>{selectedHearingRoom()?.role}</strong><p>{selectedHearingRoom()?.next}</p></aside><main><article class="room-message judge"><b>审判视角</b><p>先核对争议焦点，再进入询问与反询问。</p></article><article class="room-message plaintiff"><b>主张方 Agent</b><p>基于项目记录提炼证据链和责任边界。</p></article><article class="room-message defendant"><b>答辩方 Agent</b><p>按时间线检查对方假设和缺失材料。</p></article></main></div><footer><button type="button" onclick={() => (selectedHearingTitle = undefined)}>暂停</button><button type="button" onclick={() => (selectedHearingTitle = undefined)}>生成总结</button></footer></section></div>
       {/if}
       {#if projectDetailOpen}
         {@const project = selectedProject()}
+        {@const linkedProjectMaterials = projectMaterials(project)}
+        {@const linkedProjectSchedules = projectSchedules(project)}
+        {@const linkedProjectReports = projectReports(project)}
+        {@const linkedProjectTodos = projectTodos(project)}
         <div class="modal-backdrop">
           <section class="config-modal detail-modal project-detail-modal">
             <header class="project-detail-head">
@@ -1585,22 +1997,103 @@
               </section>
               <div class="project-detail-body">
                 <main class="project-detail-main">
-                  <div class="detail-tabs"><button class="active" type="button">概览</button><button type="button">资料 ({project.materials})</button><button type="button">日程 ({project.events})</button><button type="button">报告 ({project.reports})</button><button type="button">待办</button></div>
-                  <section class="project-detail-card">
-                    <h3><FileText size={15} /> 项目概览</h3>
-                    <p>当前项目数据来自本地工作台记录。请在资料、报告和任务页补充可复核的上下文、执行记录与交付证据。</p>
-                    <div class="project-detail-metrics"><article><FileText size={14} /><strong>{project.materials}</strong><span>资料</span></article><article><Database size={14} /><strong>{project.reports}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
-                  </section>
-                  <section class="project-detail-card project-detail-risk">
-                    <h3><ShieldCheck size={15} /> 本地风控备忘</h3>
-                    <p>{project.nextStep}</p>
-                    <button type="button" onclick={focusNewTask}>查看执行任务</button>
-                  </section>
-                  <div class="detail-timeline project-detail-timeline">
-                    {#each project.timeline as item, index (item)}
-                      <article><b>{index + 1}. {item}</b><p>{index === 0 ? project.desc : project.nextStep}</p><em>{index === 0 ? project.updatedAt : index === 1 ? "今天" : "待复核"}</em></article>
-                    {/each}
+                  <div class="detail-tabs" role="tablist" aria-label="项目详情标签">
+                    <button class:active={projectDetailTab === "overview"} type="button" onclick={() => (projectDetailTab = "overview")}>概览</button>
+                    <button class:active={projectDetailTab === "materials"} type="button" onclick={() => (projectDetailTab = "materials")}>资料 ({project.materials})</button>
+                    <button class:active={projectDetailTab === "schedules"} type="button" onclick={() => (projectDetailTab = "schedules")}>日程 ({project.events})</button>
+                    <button class:active={projectDetailTab === "reports"} type="button" onclick={() => (projectDetailTab = "reports")}>报告 ({project.reports})</button>
+                    <button class:active={projectDetailTab === "todos"} type="button" onclick={() => (projectDetailTab = "todos")}>待办</button>
                   </div>
+                  {#if projectDetailTab === "overview"}
+                    <section class="project-detail-card">
+                      <h3><FileText size={15} /> 项目概览</h3>
+                      <p>当前项目数据来自本地工作台记录。请在资料、报告和任务页补充可复核的上下文、执行记录与交付证据。</p>
+                      <div class="project-detail-metrics"><article><FileText size={14} /><strong>{project.materials}</strong><span>资料</span></article><article><Database size={14} /><strong>{project.reports}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
+                    </section>
+                    <section class="project-detail-card project-detail-risk">
+                      <h3><ShieldCheck size={15} /> 本地风控备忘</h3>
+                      <p>{project.nextStep}</p>
+                      <button type="button" onclick={() => linkProjectToTask(project.name)}>查看执行任务</button>
+                    </section>
+                    <div class="detail-timeline project-detail-timeline">
+                      {#each project.timeline as item, index (item)}
+                        <article><b>{index + 1}. {item}</b><p>{index === 0 ? project.desc : project.nextStep}</p><em>{index === 0 ? project.updatedAt : index === 1 ? "今天" : "待复核"}</em></article>
+                      {/each}
+                    </div>
+                  {:else if projectDetailTab === "materials"}
+                    <section class="project-detail-card project-tab-panel">
+                      <header class="project-section-head">
+                        <div><h3><Database size={15} /> 项目资料库</h3><p>对标 LinkedResourceLibrary：展示项目关联资料，完整 {project.materials} 份继续在资料中心索引。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("dossier")}><Plus size={13} /> 新增资料</button>
+                      </header>
+                      <div class="project-resource-toolbar"><span>已展示 {linkedProjectMaterials.length} 份资料</span><button type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>打开资料中心</button></div>
+                      <div class="project-detail-list">
+                        {#each linkedProjectMaterials as material (material.title)}
+                          <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>
+                            <span><FileText size={17} /></span>
+                            <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
+                            <b>{material.status}<small>{material.updatedAt}</small></b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无关联资料</strong><p>新增资料后会出现在项目资料库与全文检索中。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {:else if projectDetailTab === "schedules"}
+                    <section class="project-detail-card project-tab-panel">
+                      <header class="project-section-head">
+                        <div><h3><CalendarDays size={15} /> 项目日程</h3><p>对标 MatterDetailPage 的 timeline，集中展示本月项目会议、验证窗口和交付排期。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("schedule")}><Plus size={13} /> 新建日程</button>
+                      </header>
+                      <div class="project-detail-list project-schedule-list">
+                        {#each linkedProjectSchedules as schedule (schedule.title)}
+                          <button class="project-detail-row" type="button" onclick={() => openWorkLayer("calendar")}>
+                            <span><CalendarDays size={17} /></span>
+                            <div><strong>{schedule.title}</strong><em>{schedule.date} {schedule.time} / {schedule.place}</em><p>{schedule.desc}</p></div>
+                            <b>{schedule.state}</b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无本月关联日程</strong><p>可新建日程并关联当前项目。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {:else if projectDetailTab === "reports"}
+                    <section class="project-detail-card project-tab-panel">
+                      <header class="project-section-head">
+                        <div><h3><FileText size={15} /> 项目报告</h3><p>对标 reports 标签，沉淀分析报告、风险报告和项目周报。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("report")}><Plus size={13} /> 新建报告</button>
+                      </header>
+                      <div class="project-detail-list">
+                        {#each linkedProjectReports as report (report.title)}
+                          <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("reports"); }}>
+                            <span><FileText size={17} /></span>
+                            <div><strong>{report.title}</strong><em>{report.type} / {report.owner}</em><p>{report.summary}</p></div>
+                            <b>{report.status}<small>{report.updatedAt}</small></b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无项目报告</strong><p>新建报告后会按项目归档到这里。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {:else}
+                    <section class="project-detail-card project-tab-panel">
+                      <header class="project-section-head">
+                        <div><h3><ListTodo size={15} /> 项目待办</h3><p>对标 TodoList：聚合当前项目的执行项、优先级和截止时间。</p></div>
+                        <button type="button" onclick={() => openConfigDialog("todo")}><Plus size={13} /> 新增待办</button>
+                      </header>
+                      <div class="project-detail-list">
+                        {#each linkedProjectTodos as todo (todo.title)}
+                          <button class="project-detail-row project-todo-row" type="button" onclick={() => linkProjectToTask(project.name)}>
+                            <span><ListTodo size={17} /></span>
+                            <div><strong>{todo.title}</strong><em>{todo.priority}优先级 / {todo.due}</em><p>{todo.desc}</p></div>
+                            <b>{todo.state}</b>
+                          </button>
+                        {:else}
+                          <article class="detail-empty"><strong>暂无项目待办</strong><p>新建待办后会自动关联到当前项目。</p></article>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
                 </main>
                 <aside class="project-detail-aside">
                   <section>
@@ -1677,7 +2170,7 @@
                       {#if linkedCustomerProjects.length}
                         <div class="customer-project-list">
                           {#each linkedCustomerProjects as project (project.id)}
-                            <button type="button" onclick={() => { selectedProjectId = project.id; customerDetailOpen = false; projectDetailOpen = true; }}>
+                            <button type="button" onclick={() => { selectedProjectId = project.id; projectDetailTab = "overview"; customerDetailOpen = false; projectDetailOpen = true; }}>
                               <span><FolderKanban size={17} /></span>
                               <div><strong>{project.name}</strong><em>{project.category} / {project.stage} / {project.updatedAt}</em></div>
                               <b>{project.status === "closed" ? "已归档" : "进行中"}</b>
@@ -1685,7 +2178,7 @@
                           {/each}
                         </div>
                       {:else}
-                        <article class="detail-empty"><strong>暂无关联项目</strong><p>可在新建任务中关联客户后补齐项目记录。</p></article>
+                        <article class="detail-empty"><strong>暂无关联项目</strong><p>可在新建对话中关联客户后补齐项目记录。</p></article>
                       {/if}
                     </section>
                   {:else if customerDetailTab === "materials"}
@@ -1767,7 +2260,7 @@
                     <h3><ShieldCheck size={15} /> 风险等级</h3>
                     <strong>{customer.risk}</strong>
                     <p>客户风险用于决定任务前置检查、资料复核和人工确认强度。</p>
-                    <button type="button" onclick={() => linkCustomerToTask(customer.name)}>关联到新建任务</button>
+                    <button type="button" onclick={() => linkCustomerToTask(customer.name)}>关联到新建对话</button>
                   </section>
                 </aside>
               </div>
@@ -1800,6 +2293,54 @@
             {/if}
             <footer><button type="button" onclick={() => (userPanelDialog = undefined)}>关闭</button><button type="button" onclick={() => (userPanelDialog = undefined)}>{userPanelDialog === "operationLog" ? "导出日志" : "保存"}</button></footer>
           </section>
+        </div>
+      {/if}
+      {#if capabilityDetailOpen && currentCapability()}
+        {@const selectedCapability = currentCapability()}
+        <div class="modal-backdrop">
+          <div class="config-modal capability-detail-modal" role="dialog" aria-modal="true" aria-label={`${capabilityLabel(capabilityTab)}详情`}>
+            <header>
+              <div><span>{capabilityLabel(capabilityTab)} Detail</span><strong>{selectedCapability.name}</strong></div>
+              <button type="button" onclick={() => (capabilityDetailOpen = false)}>x</button>
+            </header>
+            <div class="capability-detail capability-plugin-detail capability-detail-modal__body">
+              <div class="capability-detail__top">
+                <p>{selectedCapability.desc}</p>
+                <div class="capability-detail__meta">
+                  <b>{selectedCapability.version}</b>
+                  <b>{selectedCapability.source}</b>
+                  <b>{selectedCapability.scope}</b>
+                </div>
+              </div>
+              <section class="capability-install-flow">
+                <header><Workflow size={16} /><strong>安装与连接流程</strong></header>
+                {#each capabilityInstallSteps as step, index (step.id)}
+                  <article class:done={capabilityStepDone(selectedCapability, index)}>
+                    <span>{#if capabilityStepDone(selectedCapability, index)}<Check size={13} />{:else}{index + 1}{/if}</span>
+                    <div><strong>{step.label}</strong><p>{step.desc}</p></div>
+                  </article>
+                {/each}
+              </section>
+              <section class="capability-agent-binding">
+                <header><Zap size={16} /><strong>绑定 Agent</strong></header>
+                {#each agentCards.slice(0, 3) as agent (agent.id)}
+                  <button type="button" aria-pressed={selectedCapability.enabled}>
+                    <span><strong>{agent.name}</strong><em>{agent.role} / {agent.status}</em></span>
+                    <i class:enabled={selectedCapability.enabled}><u></u></i>
+                  </button>
+                {/each}
+              </section>
+              <dl class="capability-runtime">
+                <div><dt>状态</dt><dd>{selectedCapability.status}</dd></div>
+                <div><dt>版本</dt><dd>{selectedCapability.version}</dd></div>
+                <div><dt>来源</dt><dd>{selectedCapability.source}</dd></div>
+                <div><dt>同步</dt><dd>{selectedCapability.sync}</dd></div>
+                <div><dt>路径</dt><dd>{selectedCapability.path}</dd></div>
+                <div><dt>权限</dt><dd>{selectedCapability.permission}</dd></div>
+              </dl>
+            </div>
+            <footer><button type="button" onclick={() => (capabilityDetailOpen = false)}>关闭</button><button type="button" onclick={() => { capabilityCreateOpen = true; capabilityDetailOpen = false; }}>{capabilityActionLabel(selectedCapability)}</button></footer>
+          </div>
         </div>
       {/if}
       {#if configDialog}
@@ -1848,6 +2389,51 @@
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
         <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "创建 Agent"}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input value={agentCards.find((agent) => agent.id === selectedAgentId)?.name || ""} /></label><label>系统设定指示词<textarea rows="4" value={agentCards.find((agent) => agent.id === selectedAgentId)?.desc || ""}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>执业风格</span>{#each vibePresets as vibe (vibe)}<button type="button">{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentCards.find((agent) => agent.id === selectedAgentId)?.desc || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} type="button"><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.active ? "已启用" : "未启用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.active ? "已挂载" : "未挂载"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file (file)}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => (agentWizardOpen = false)}>完成并部署</button></footer></section></div>
       {/if}
+      {#if agentMarketOpen}
+        <div class="modal-backdrop">
+          <div class="config-modal agent-market-modal" role="dialog" aria-modal="true" aria-label="Agent 市场">
+            <header>
+              <div><span>Agent Market</span><strong>Agent 市场</strong></div>
+              <button type="button" onclick={() => (agentMarketOpen = false)}>x</button>
+            </header>
+            <div class="agent-market-toolbar">
+              <label class="aorist-search agent-market-search"><Search size={16} /><input bind:value={agentMarketSearch} aria-label="搜索 Agent 市场" placeholder="搜索 Agent 类型、能力或来源" /></label>
+              <div class="agent-market-stats">
+                <span>{downloadedMarketAgentIds.length} 已下载</span>
+                <span>{agentMarketItems.length} 可用</span>
+              </div>
+            </div>
+            <div class="agent-market-grid">
+              {#each filteredAgentMarketItems() as item (item.id)}
+                {@const MarketIcon = agentIcon(item.id)}
+                {@const downloaded = marketAgentDownloaded(item)}
+                <article class:downloaded class="agent-market-card">
+                  <header>
+                    <span><MarketIcon size={18} /></span>
+                    <div><strong>{item.name}</strong><em>{item.category} / {item.source}</em></div>
+                    <b>{item.version}</b>
+                  </header>
+                  <p>{item.desc}</p>
+                  <div class="agent-market-tags">
+                    {#each item.tags as tag (tag)}
+                      <span>{tag}</span>
+                    {/each}
+                  </div>
+                  <footer>
+                    <small>本地 JSON 包</small>
+                    <button class:downloaded type="button" onclick={() => downloadMarketAgent(item)}>
+                      {#if downloaded}<Check size={14} /> 已下载{:else}<Download size={14} /> 下载到本地{/if}
+                    </button>
+                  </footer>
+                </article>
+              {:else}
+                <div class="agent-market-empty"><Search size={18} /><strong>没有匹配的 Agent</strong><p>换一个关键词继续查找。</p></div>
+              {/each}
+            </div>
+            <footer><button type="button" onclick={() => (agentMarketOpen = false)}>关闭</button><button type="button" onclick={() => { agentMarketOpen = false; openAgentWizard(); }}>创建自定义 Agent</button></footer>
+          </div>
+        </div>
+      {/if}
 
       {#if capabilityCreateOpen}
         <div class="modal-backdrop">
@@ -1865,7 +2451,7 @@
               <label>运行范围<input value={capabilityTab === "mcp" ? "workspace" : capabilityTab === "skill" ? "skills" : "desktop/frontend"} /></label>
               <label>入口路径<input value={capabilityTab === "mcp" ? "mcp/server.json" : capabilityTab === "skill" ? "SKILL.md" : "plugin.json"} /></label>
               <label>默认状态<select><option>启用</option><option>待配置</option><option>需授权</option></select></label>
-              <label class="wide">配置说明<textarea rows="4">{capabilitySubtitle(capabilityTab)} 对标 AORISTLAWER 的工具 / 技能配置流程：先登记元数据，再配置权限，最后挂载到 Agent 与新建任务。</textarea></label>
+              <label class="wide">配置说明<textarea rows="4">{capabilitySubtitle(capabilityTab)} 对标 AORISTLAWER 的工具 / 技能配置流程：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。</textarea></label>
             </div>
             <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => (capabilityCreateOpen = false)}>创建并挂载</button></footer>
           </section>
@@ -1885,6 +2471,8 @@
             {models}
             {selectedModel}
             onModelChange={switchModel}
+            {activityMode}
+            onActivityModeChange={openActivityMode}
           />
         </div>
       {/if}
@@ -2382,10 +2970,10 @@
   .sidebar__brand{--wails-draggable:drag;display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:56px;padding:0 12px;border-bottom:1px solid #e5e7eb}.brand-mark,.nav-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;color:#1f5fbf;background:#eaf2ff}.sidebar__brand strong,.sidebar__brand span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar__brand strong{font-size:14px;color:#111827}.sidebar__brand span{margin-top:2px;color:#6b7280;font-size:11px}
   .workspace-nav{flex:1;min-height:0;overflow:auto;padding:10px 8px}.workspace-nav section{margin-bottom:10px}.workspace-nav h2{margin:8px 8px 5px;color:#8b95a1;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.workspace-nav button{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;min-height:36px;padding:4px 8px;color:#5f6774;background:transparent;border:0;border-radius:10px;text-align:left;font:inherit}.workspace-nav button:hover,.workspace-nav button.active{color:#1f2937;background:hsl(220 20% 94%)}.workspace-nav button span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:620}.workspace-nav button em{min-width:18px;padding:1px 5px;border-radius:999px;background:#e6eefc;color:#1f5fbf;font-size:10px;font-style:normal;text-align:center}
   .sidebar__user-wrap{position:relative;padding:0 8px 10px}.sidebar__user-wrap .sidebar__user{width:100%;display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid #e5e7eb;border-radius:13px;background:#fff;text-align:left;font:inherit}.user-menu{position:absolute;left:8px;right:8px;bottom:58px;z-index:40;display:grid;gap:4px;padding:6px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;box-shadow:0 18px 38px rgba(15,23,42,.16)}.user-menu button{width:100%;padding:9px 10px;border:0;border-radius:9px;color:#344054;background:transparent;text-align:left;font-size:13px}.user-menu button:hover{background:#f3f6fb;color:#111827}
-  .stage-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:0 18px;border-bottom:1px solid #e5e7eb;background:rgba(255,255,255,.76);backdrop-filter:blur(16px)}.stage-topbar span,.aorist-toolbar span,.hero-panel span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.stage-topbar strong{display:block;margin-top:2px;font-size:17px;color:#111827}.stage-topbar__actions,.aorist-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.stage-topbar__actions button,.hero-panel button,.aorist-toolbar button,:global(.composer-context-actions button),.automation-card footer button,.capability-item button,.config-modal footer button,.agent-wizard__footer button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:650}.stage-topbar__actions button:nth-child(2),.hero-panel button:first-child,.aorist-toolbar button:last-child,.config-modal footer button:last-child,.agent-wizard__footer button:last-child{border-color:#1f5fbf;background:#1f5fbf;color:#fff}
+  .stage-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:0 18px;border-bottom:1px solid #e5e7eb;background:rgba(255,255,255,.76);backdrop-filter:blur(16px)}.stage-topbar span,.aorist-toolbar span,.hero-panel span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.stage-topbar strong{display:block;margin-top:2px;font-size:17px;color:#111827}.stage-topbar__actions,.aorist-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hero-panel button,.aorist-toolbar button,:global(.composer-context-actions button),.automation-card footer button,.capability-item button,.config-modal footer button,.agent-wizard__footer button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:650}.hero-panel button:first-child,.aorist-toolbar button:last-child,.config-modal footer button:last-child,.agent-wizard__footer button:last-child{border-color:#1f5fbf;background:#1f5fbf;color:#fff}
   .aorist-workbench{padding:0;overflow:hidden}.aorist-page{min-height:0;height:100%;overflow:auto;padding:18px;background:radial-gradient(circle at 18% 0%,rgba(31,95,191,.1),transparent 32%),#f7f8fb}.hero-panel{padding:28px;border:1px solid #dfe5ef;border-radius:22px;background:linear-gradient(135deg,#fff 0%,#eef4ff 100%);box-shadow:0 16px 34px rgba(15,23,42,.08)}.hero-panel h1{max-width:760px;margin:10px 0;color:#111827;font-size:clamp(28px,4vw,46px);line-height:1.05;letter-spacing:-.04em}.hero-panel p{max-width:680px;margin:0 0 18px;color:#5f6774;line-height:1.7}.hero-panel div{display:flex;gap:10px;flex-wrap:wrap}.aorist-stats,.aorist-card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.aorist-stats article,.aorist-card,.aorist-list article,.agent-card,.automation-card,.media-card,.capability-item,:global(.task-composer-card){border:1px solid #e2e8f0;border-radius:16px;background:rgba(255,255,255,.92);box-shadow:0 8px 22px rgba(15,23,42,.05)}.aorist-stats article{padding:16px}.aorist-stats span,.aorist-stats em{display:block;color:#7b8494;font-size:12px;font-style:normal}.aorist-stats strong{display:block;margin:8px 0 3px;color:#111827;font-size:28px;letter-spacing:-.04em}.aorist-split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);gap:12px;margin-top:14px}.aorist-card{padding:14px}.aorist-card header,.aorist-toolbar,.agent-card header,:global(.task-composer-card__head),.config-modal header,.agent-wizard__header,.agent-wizard__footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.aorist-card header strong,.aorist-toolbar strong{color:#111827;font-size:16px}.aorist-card header button{border:0;background:transparent;color:#1f5fbf;font-size:12px}.todo-row,.automation-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;width:100%;gap:10px;margin-top:8px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff;text-align:left}.automation-row{grid-template-columns:minmax(0,1fr) auto}.todo-row i{width:8px;height:8px;border-radius:999px;background:#1f5fbf}.todo-row strong,.automation-row strong{display:block;color:#1f2937;font-size:13px}.todo-row em,.automation-row em{display:block;margin-top:3px;color:#7b8494;font-size:11px;font-style:normal}.todo-row b,.automation-row b{color:#1f5fbf;font-size:11px}
   :global(.agent-strip){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}:global(.agent-strip button){display:grid;grid-template-columns:34px minmax(0,1fr);gap:9px;align-items:center;padding:12px;border:1px solid #e2e8f0;border-radius:15px;background:#fff;text-align:left}:global(.agent-strip button.active){border-color:#1f5fbf;background:#eef4ff}:global(.agent-strip span){grid-row:span 2;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;background:#1f5fbf;color:#fff}:global(.agent-strip strong){color:#111827;font-size:13px}:global(.agent-strip em){color:#7b8494;font-size:11px;font-style:normal}:global(.task-composer-card){padding:14px}:global(.task-composer-card__head){margin-bottom:12px}:global(.task-composer-card__head) strong{display:block;color:#111827;font-size:18px}:global(.task-composer-card__head) select,.config-grid input,.config-grid textarea,.aorist-search input,.wizard-form input,.wizard-form textarea,.wizard-form select{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}:global(.task-composer-card__head) select{height:34px;padding:0 10px}:global(.composer-context-actions){display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}:global(.composer-context-actions > span){display:inline-flex;align-items:center;min-height:32px;padding:0 10px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1f5fbf;font-size:12px;font-weight:650}
-  .aorist-toolbar{margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.aorist-search{display:block;max-width:420px;margin-bottom:12px}.aorist-search span{display:block;margin-bottom:6px;color:#7b8494;font-size:12px}.aorist-search input{width:100%;height:38px;padding:0 12px}.aorist-list{display:grid;gap:10px}.aorist-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px;cursor:pointer}.aorist-list strong{color:#111827}.aorist-list p{margin:4px 0;color:#5f6774;font-size:13px}.aorist-list em{color:#7b8494;font-size:12px;font-style:normal}.aorist-list span{padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:12px;white-space:nowrap}.aorist-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.automation-card,.agent-card,.media-card,.capability-item{padding:15px;cursor:pointer}.automation-card span,.media-card span,.capability-item span{display:inline-block;margin-bottom:9px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.automation-card strong,.media-card strong,.capability-item strong{display:block;color:#111827;font-size:15px}.automation-card p,.media-card p,.capability-item p{color:#5f6774;font-size:13px;line-height:1.6}.automation-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;color:#7b8494;font-size:12px}.automation-card dd{margin:0;color:#111827}.automation-card footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}.automation-card footer button:last-child{color:#b42318}.agent-card header{align-items:flex-start}.agent-card header>span{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:#eef4ff;color:#1f5fbf}.agent-card header div{flex:1;min-width:0}.agent-card header strong{display:block;color:#111827}.agent-card header em{display:inline-block;margin-top:4px;color:#7b8494;font-size:11px;font-style:normal}.agent-card header button{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#98a2b3;opacity:0}.agent-card:hover header button{opacity:1}.agent-card p{color:#5f6774;line-height:1.6;font-size:13px}.agent-card footer{display:flex;align-items:center;justify-content:space-between;color:#7b8494;font-size:12px}.agent-card footer span{display:inline-flex;align-items:center;gap:4px}.agent-card footer b{color:#1f5fbf;font-size:12px}.capability-tabs{display:flex;gap:8px;margin:0 0 12px;padding:4px;width:max-content;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.capability-tabs button{min-width:92px;height:32px;border:0;border-radius:9px;background:transparent;color:#5f6774;font-weight:700}.capability-tabs button.active{background:#1f5fbf;color:#fff}
+  .aorist-toolbar{margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.aorist-search{display:block;max-width:420px;margin-bottom:12px}.aorist-search input{width:100%;height:38px;padding:0 12px}.aorist-list{display:grid;gap:10px}.aorist-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px;cursor:pointer}.aorist-list strong{color:#111827}.aorist-list p{margin:4px 0;color:#5f6774;font-size:13px}.aorist-list em{color:#7b8494;font-size:12px;font-style:normal}.aorist-list span{padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:12px;white-space:nowrap}.aorist-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.automation-card,.agent-card,.media-card,.capability-item{padding:15px;cursor:pointer}.automation-card span,.media-card span,.capability-item span{display:inline-block;margin-bottom:9px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.automation-card strong,.media-card strong,.capability-item strong{display:block;color:#111827;font-size:15px}.automation-card p,.media-card p,.capability-item p{color:#5f6774;font-size:13px;line-height:1.6}.automation-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;color:#7b8494;font-size:12px}.automation-card dd{margin:0;color:#111827}.automation-card footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}.automation-card footer button:last-child{color:#b42318}.agent-card header{align-items:flex-start}.agent-card header>span{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:#eef4ff;color:#1f5fbf}.agent-card header div{flex:1;min-width:0}.agent-card header strong{display:block;color:#111827}.agent-card header em{display:inline-block;margin-top:4px;color:#7b8494;font-size:11px;font-style:normal}.agent-card header button{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#98a2b3;opacity:0}.agent-card:hover header button{opacity:1}.agent-card p{color:#5f6774;line-height:1.6;font-size:13px}.agent-card footer{display:flex;align-items:center;justify-content:space-between;color:#7b8494;font-size:12px}.agent-card footer span{display:inline-flex;align-items:center;gap:4px}.agent-card footer b{color:#1f5fbf;font-size:12px}.capability-tabs{display:flex;gap:8px;margin:0 0 12px;padding:4px;width:max-content;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.capability-tabs button{min-width:92px;height:32px;border:0;border-radius:9px;background:transparent;color:#5f6774;font-weight:700}.capability-tabs button.active{background:#1f5fbf;color:#fff}
   .modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}.config-modal,.agent-wizard{width:min(860px,calc(100vw - 44px));max-height:calc(100vh - 44px);overflow:hidden;border:1px solid #e2e8f0;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.28)}.config-modal{padding:18px}.config-modal header strong,.agent-wizard__header strong{display:block;color:#111827;font-size:17px}.config-modal header button,.agent-wizard__header>button{border:0;background:transparent;color:#667085;font-size:24px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.config-grid label{display:grid;gap:6px;color:#5f6774;font-size:12px}.config-grid .wide{grid-column:1/-1}.config-grid input{height:36px;padding:0 10px}.config-grid textarea{padding:10px;resize:vertical}.config-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.agent-wizard{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:min(680px,calc(100vh - 44px))}.agent-wizard__header{padding:16px 18px;border-bottom:1px solid #e5e7eb}.wizard-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#1f5fbf,#3b82f6);color:#fff}.agent-wizard__header div:nth-child(2){flex:1}.agent-wizard__header span{color:#7b8494;font-size:12px}.agent-wizard__body{display:grid;grid-template-columns:178px minmax(0,1fr);min-height:0}.wizard-tabs{padding:12px;border-right:1px solid #e5e7eb;background:#f8fafc}.wizard-tabs button{width:100%;padding:10px;border:0;border-radius:12px;background:transparent;text-align:left;color:#111827}.wizard-tabs button.active{background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.08)}.wizard-panel{min-height:0;overflow:auto;padding:18px}.wizard-identity{display:grid;grid-template-columns:minmax(0,1fr)230px;gap:18px}.wizard-form{display:grid;gap:14px}.wizard-form label{display:grid;gap:6px;color:#5f6774;font-size:12px}.wizard-form input,.wizard-form select{height:38px;padding:0 10px}.wizard-form textarea{padding:10px;resize:vertical}.pill-group{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.pill-group span{width:100%;color:#5f6774;font-size:12px}.pill-group button{min-height:30px;padding:0 10px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#344054}.pill-group button.active{border-color:#1f5fbf;background:#eef4ff;color:#1f5fbf}.wizard-preview{padding-left:18px;border-left:1px solid #e5e7eb}.wizard-preview>span{color:#7b8494;font-size:11px;font-weight:700;text-transform:uppercase}.wizard-preview div{display:grid;justify-items:center;gap:8px;margin-top:12px;padding:18px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.wizard-preview b{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:#1f5fbf;color:#fff}.wizard-preview strong{color:#111827}.wizard-preview em,.wizard-preview p{color:#7b8494;font-size:12px;font-style:normal;line-height:1.5}.wizard-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.wizard-card-grid button{display:grid;gap:5px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-card-grid button.active,.wizard-skill-list button.active{border-color:#1f5fbf;background:#eef4ff}.wizard-card-grid strong{color:#111827}.wizard-card-grid span,.wizard-card-grid em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list{display:grid;gap:9px}.wizard-skill-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-skill-list strong{color:#111827}.wizard-skill-list span,.wizard-skill-list p,.wizard-skill-list em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list p{margin:5px 0 0}.wizard-files{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px}.wizard-files nav{display:grid;align-content:start;gap:8px}.wizard-files button{height:34px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#344054}.wizard-files button.active{border-color:#1f5fbf;color:#1f5fbf;background:#eef4ff}.wizard-files pre{margin:0;min-height:320px;overflow:auto;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:12px;line-height:1.6;white-space:pre-wrap}.agent-wizard__footer{padding:12px 18px;border-top:1px solid #e5e7eb;justify-content:flex-end}
   .shell.is-sidebar-collapsed .workspace-nav h2,.shell.is-sidebar-collapsed .workspace-nav button span:nth-child(2),.shell.is-sidebar-collapsed .workspace-nav button em,.shell.is-sidebar-collapsed .sidebar__brand div:not(.brand-mark),.shell.is-sidebar-collapsed .sidebar__user strong,.shell.is-sidebar-collapsed .sidebar__user em{display:none}.shell.is-sidebar-collapsed .sidebar__brand{grid-template-columns:34px;justify-content:center}.shell.is-sidebar-collapsed .workspace-nav button{grid-template-columns:28px;justify-content:center;padding-inline:8px}.shell.is-sidebar-collapsed .sidebar__user-wrap .sidebar__user{grid-template-columns:28px;justify-content:center}
   @media(max-width:980px){.aorist-stats,.aorist-card-grid,:global(.agent-strip){grid-template-columns:repeat(2,minmax(0,1fr))}.aorist-split{grid-template-columns:1fr}}@media(max-width:720px){.stage-topbar,.aorist-toolbar{align-items:flex-start;flex-direction:column}.aorist-stats,.aorist-card-grid,:global(.agent-strip),.wizard-card-grid,.agent-wizard__body,.wizard-files,.config-grid,.wizard-identity{grid-template-columns:1fr}.wizard-preview{padding-left:0;border-left:0}}
@@ -2540,7 +3128,6 @@
     letter-spacing: -0.025em;
   }
 
-  .stage-topbar__actions button,
   .hero-panel button,
   .aorist-toolbar button,
   :global(.composer-context-actions button),
@@ -2554,7 +3141,6 @@
     transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
   }
 
-  .stage-topbar__actions button:hover,
   .hero-panel button:hover,
   .aorist-toolbar button:hover,
   :global(.composer-context-actions button:hover),
@@ -2567,7 +3153,6 @@
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
   }
 
-  .stage-topbar__actions button:nth-child(2),
   .hero-panel button:first-child,
   .aorist-toolbar button:last-child,
   .config-modal footer button:last-child,
@@ -2751,7 +3336,7 @@
 
   .nav-icon :global(svg),.brand-mark :global(svg),:global(.agent-strip span svg),.agent-card header>span :global(svg),.wizard-avatar :global(svg),.wizard-preview b :global(svg){display:block;stroke-width:2}
 
-  .brand-copy{min-width:0}.sidebar__brand{grid-template-columns:34px minmax(0,1fr) auto 30px;gap:8px}.brand-mode-switch{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:52px;height:28px;padding:0 7px;border:1px solid rgba(37,99,235,.14);border-radius:10px;background:#eef4ff;color:#1d4ed8;font-size:11px;font-weight:800}.brand-mode-switch:hover,.brand-mode-switch.active{border-color:#93c5fd;background:#dbeafe;color:#1e40af}.brand-mode-switch span{white-space:nowrap}.shell.is-sidebar-collapsed .brand-mode-switch{display:none}
+  .brand-copy{min-width:0}.sidebar__brand{grid-template-columns:34px minmax(0,1fr) 30px;gap:8px}.brand-mode-switch{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:52px;height:28px;padding:0 7px;border:1px solid rgba(37,99,235,.14);border-radius:10px;background:#eef4ff;color:#1d4ed8;font-size:11px;font-weight:800}.brand-mode-switch:hover,.brand-mode-switch.active{border-color:#93c5fd;background:#dbeafe;color:#1e40af}.shell.is-sidebar-collapsed .brand-mode-switch{display:none}
 
   /* Code home command center */
   .home--command {
@@ -3265,7 +3850,6 @@
     letter-spacing: -0.03em;
   }
 
-  .stage-topbar__actions button,
   .hero-panel button,
   .aorist-toolbar button,
   :global(.composer-context-actions button),
@@ -3285,7 +3869,6 @@
     transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
   }
 
-  .stage-topbar__actions button:hover,
   .hero-panel button:hover,
   .aorist-toolbar button:hover,
   :global(.composer-context-actions button:hover),
@@ -3301,7 +3884,6 @@
     box-shadow: 0 10px 22px rgba(15, 23, 42, 0.075);
   }
 
-  .stage-topbar__actions button:nth-child(2),
   .hero-panel button:first-child,
   .aorist-toolbar button:last-child,
   .config-modal footer button:last-child,
@@ -3759,7 +4341,7 @@
   }
 
   .sidebar__brand {
-    grid-template-columns: 24px minmax(0, 1fr) auto 28px;
+    grid-template-columns: 24px minmax(0, 1fr) 28px;
     gap: 8px;
     min-height: 56px;
     padding: 0 16px;
@@ -3975,7 +4557,6 @@
     --wails-draggable: no-drag;
   }
 
-  .stage-topbar__actions button,
   .hero-panel button,
   .aorist-toolbar button,
   :global(.composer-context-actions button),
@@ -3997,7 +4578,6 @@
     --wails-draggable: no-drag;
   }
 
-  .stage-topbar__actions button:hover,
   .hero-panel button:hover,
   .aorist-toolbar button:hover,
   :global(.composer-context-actions button:hover),
@@ -4013,7 +4593,6 @@
     box-shadow: none;
   }
 
-  .stage-topbar__actions button:nth-child(2),
   .hero-panel button:first-child,
   .aorist-toolbar button:last-child,
   .config-modal footer button:last-child,
@@ -5001,6 +5580,148 @@
     margin-top: 12px;
   }
 
+  .project-tab-panel {
+    display: grid;
+    gap: 12px;
+  }
+
+  .project-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .project-section-head h3 {
+    margin: 0 0 4px;
+  }
+
+  .project-section-head p,
+  .project-detail-row p {
+    margin: 0;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .project-section-head button,
+  .project-resource-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    margin-top: 0;
+    padding: 0 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: hsl(0 0% 100%);
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .project-section-head button:hover,
+  .project-resource-toolbar button:hover,
+  .project-detail-card .project-detail-row:hover {
+    border-color: color-mix(in srgb, var(--aorist-primary) 32%, var(--aorist-line));
+    background: color-mix(in srgb, var(--aorist-primary-soft) 54%, hsl(0 0% 100%));
+  }
+
+  .project-resource-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+  }
+
+  .project-resource-toolbar span {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .project-detail-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .project-detail-card .project-detail-row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) minmax(72px, auto);
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 66px;
+    margin-top: 0;
+    padding: 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(0 0% 100%);
+    color: inherit;
+    text-align: left;
+  }
+
+  .project-detail-row > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    color: var(--aorist-primary);
+    background: var(--aorist-primary-soft);
+  }
+
+  .project-detail-row strong {
+    display: block;
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-detail-row em {
+    display: block;
+    margin-top: 3px;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 700;
+  }
+
+  .project-detail-row p {
+    margin-top: 4px;
+  }
+
+  .project-detail-row b {
+    display: grid;
+    justify-items: end;
+    gap: 3px;
+    color: var(--aorist-primary);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .project-detail-row small {
+    color: var(--aorist-muted);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .project-todo-row b,
+  .project-schedule-list .project-detail-row b {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+  }
+
   .project-detail-risk {
     border-color: #fde68a;
     background: #fffbeb;
@@ -5668,6 +6389,9 @@
       grid-template-columns: 1fr;
     }
 
+    .project-detail-modal > .project-detail-head,
+    .project-section-head,
+    .project-resource-toolbar,
     .customer-detail-modal > .customer-detail-head,
     .customer-section-head,
     .customer-resource-toolbar {
@@ -5675,6 +6399,7 @@
       flex-direction: column;
     }
 
+    .project-detail-title,
     .customer-detail-title {
       flex-wrap: wrap;
     }
@@ -5683,10 +6408,12 @@
       grid-template-columns: 1fr;
     }
 
+    .project-detail-card .project-detail-row,
     .customer-detail-row {
       grid-template-columns: 36px minmax(0, 1fr);
     }
 
+    .project-detail-row b,
     .customer-detail-row b {
       justify-items: start;
       grid-column: 2;
@@ -5701,47 +6428,31 @@
     gap: 14px;
   }
 
-  .capability-hero {
+  .capability-hub-header {
     display: grid;
-    grid-template-columns: 54px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(220px, 1fr) minmax(260px, 360px) auto;
     align-items: center;
     gap: 14px;
-    padding: 18px;
+    padding: 16px;
     border: 1px solid var(--aorist-line);
-    border-radius: 16px;
-    background: linear-gradient(135deg, hsl(0 0% 100%), hsl(220 70% 98%));
+    border-radius: 14px;
+    background: hsl(220 20% 99%);
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
 
-  .capability-hero__mark,
-  .capability-row__icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--aorist-primary);
-    background: hsl(220 70% 96%);
-  }
-
-  .capability-hero__mark {
-    width: 54px;
-    height: 54px;
-    border-radius: 14px;
-  }
-
-  .capability-hero span,
+  .capability-hub-header__title span,
   .capability-panel header span,
-  .capability-detail__top span {
+  .capability-catalog-sidebar > span {
     display: block;
     color: var(--aorist-muted);
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.08em;
+    letter-spacing: 0;
     text-transform: uppercase;
   }
 
-  .capability-hero strong,
-  .capability-panel header strong,
-  .capability-detail__top strong {
+  .capability-hub-header__title strong,
+  .capability-panel header strong {
     display: block;
     margin-top: 5px;
     color: var(--aorist-ink);
@@ -5749,7 +6460,7 @@
     line-height: 1.2;
   }
 
-  .capability-hero p,
+  .capability-hub-header__title p,
   .capability-panel header p,
   .capability-detail__top p {
     margin: 6px 0 0;
@@ -5758,19 +6469,44 @@
     line-height: 1.6;
   }
 
-  .capability-hero__actions,
-  .capability-detail footer {
+  .capability-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 12px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    background: hsl(0 0% 100%);
+    color: var(--aorist-muted);
+  }
+
+  .capability-search input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--aorist-ink);
+    font-size: 13px;
+  }
+
+  .capability-search input::placeholder {
+    color: color-mix(in srgb, var(--aorist-muted) 74%, hsl(0 0% 100%));
+  }
+
+  .capability-hub-header__actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 8px;
   }
 
-  .capability-hero__actions button,
-  .capability-panel header button,
-  .capability-detail footer button {
+  .capability-hub-header__actions button,
+  .capability-panel header button {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     min-height: 34px;
     padding: 0 12px;
@@ -5782,9 +6518,8 @@
     font-weight: 700;
   }
 
-  .capability-hero__actions button:first-child,
-  .capability-panel header button,
-  .capability-detail footer button:last-child {
+  .capability-hub-header__actions button:last-child,
+  .capability-panel header button {
     border-color: var(--aorist-primary);
     background: var(--aorist-primary);
     color: hsl(0 0% 100%);
@@ -5819,27 +6554,90 @@
     letter-spacing: -0.04em;
   }
 
-  .capability-tabs--wide,
   .capability-create-tabs {
     width: fit-content;
     margin: 0;
   }
 
-  .capability-workspace {
+  .capability-hub-shell {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
+    grid-template-columns: 190px minmax(0, 1fr);
     gap: 12px;
     min-height: 0;
   }
 
-  .capability-panel,
-  .capability-detail {
+  .capability-catalog-sidebar,
+  .capability-panel {
     min-width: 0;
     padding: 16px;
     border: 1px solid var(--aorist-line);
     border-radius: 14px;
     background: hsl(0 0% 100%);
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .capability-catalog-sidebar {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+  }
+
+  .capability-catalog-sidebar button {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 8px 10px;
+    width: 100%;
+    padding: 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-muted);
+    text-align: left;
+  }
+
+  .capability-catalog-sidebar button :global(svg) {
+    grid-row: span 2;
+    margin-top: 2px;
+    color: var(--aorist-primary);
+  }
+
+  .capability-catalog-sidebar button strong {
+    color: var(--aorist-ink);
+    font-size: 13px;
+  }
+
+  .capability-catalog-sidebar button em {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .capability-catalog-sidebar button:hover,
+  .capability-catalog-sidebar button.active {
+    border-color: color-mix(in srgb, var(--aorist-primary) 22%, var(--aorist-line));
+    background: hsl(220 70% 98%);
+  }
+
+  .capability-catalog-note {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px dashed var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+    color: var(--aorist-muted);
+  }
+
+  .capability-catalog-note :global(svg) {
+    color: var(--aorist-primary);
+  }
+
+  .capability-catalog-note p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .capability-panel header {
@@ -5850,6 +6648,11 @@
     margin-bottom: 12px;
   }
 
+  .capability-market {
+    display: grid;
+    align-content: start;
+  }
+
   .capability-list {
     display: grid;
     gap: 8px;
@@ -5857,7 +6660,7 @@
 
   .capability-row {
     display: grid;
-    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
     align-items: center;
     gap: 12px;
     width: 100%;
@@ -5877,9 +6680,14 @@
   }
 
   .capability-row__icon {
-    width: 40px;
-    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
     border-radius: 10px;
+    color: var(--aorist-primary);
+    background: hsl(220 70% 96%);
   }
 
   .capability-row__body {
@@ -5888,12 +6696,29 @@
     gap: 5px;
   }
 
-  .capability-row__body strong {
+  .capability-title-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .capability-title-line strong {
     overflow: hidden;
     color: var(--aorist-ink);
     font-size: 14px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .capability-title-line b {
+    flex: none;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: hsl(220 20% 94%);
+    color: var(--aorist-muted);
+    font-size: 10px;
+    font-weight: 800;
   }
 
   .capability-row__body em {
@@ -5912,7 +6737,7 @@
   }
 
   .capability-badges b,
-  .capability-row__side i {
+  .capability-state {
     display: inline-flex;
     align-items: center;
     min-height: 20px;
@@ -5925,41 +6750,55 @@
     font-weight: 650;
   }
 
+  .capability-state--enabled {
+    background: hsl(145 48% 94%);
+    color: hsl(150 64% 28%);
+  }
+
+  .capability-state--auth {
+    background: hsl(42 90% 93%);
+    color: hsl(31 80% 32%);
+  }
+
+  .capability-state--pending {
+    background: hsl(220 20% 94%);
+    color: var(--aorist-muted);
+  }
+
   .capability-row__side {
     display: grid;
     justify-items: end;
-    gap: 8px;
+    gap: 7px;
   }
 
-  .capability-toggle {
-    position: relative;
-    display: inline-flex;
-    width: 38px;
-    height: 20px;
-    border: 1px solid var(--aorist-line);
-    border-radius: 999px;
-    background: hsl(220 20% 92%);
+  .capability-row__action {
+    color: var(--aorist-primary);
+    font-size: 12px;
+    font-weight: 750;
   }
 
-  .capability-toggle u {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    background: hsl(0 0% 100%);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
-    transition: transform 0.16s ease;
+  .capability-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    min-height: 190px;
+    padding: 28px;
+    border: 1px dashed var(--aorist-line);
+    border-radius: 12px;
+    background: hsl(220 20% 98%);
+    color: var(--aorist-muted);
+    text-align: center;
   }
 
-  .capability-toggle.enabled {
-    border-color: var(--aorist-primary);
-    background: var(--aorist-primary);
+  .capability-empty strong {
+    color: var(--aorist-ink);
+    font-size: 14px;
   }
 
-  .capability-toggle.enabled u {
-    transform: translateX(18px);
+  .capability-empty p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .capability-detail {
@@ -5968,50 +6807,52 @@
     gap: 14px;
   }
 
-  .capability-detail dl {
-    display: grid;
-    gap: 8px;
-    margin: 0;
+  .capability-detail__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
   }
 
-  .capability-detail dl div {
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
-    gap: 10px;
-    padding: 9px 0;
-    border-bottom: 1px solid var(--aorist-line);
-  }
-
-  .capability-detail dt {
+  .capability-detail__meta b {
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: hsl(220 20% 96%);
     color: var(--aorist-muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
-  .capability-detail dd {
-    min-width: 0;
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--aorist-ink);
-    font-size: 12px;
-    font-weight: 650;
-  }
-
-  .capability-pipeline {
+  .capability-install-flow,
+  .capability-agent-binding {
     display: grid;
     gap: 8px;
   }
 
-  .capability-pipeline article {
+  .capability-install-flow header,
+  .capability-agent-binding header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--aorist-ink);
+    font-size: 13px;
+  }
+
+  .capability-install-flow header :global(svg),
+  .capability-agent-binding header :global(svg) {
+    color: var(--aorist-primary);
+  }
+
+  .capability-install-flow article {
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr);
     gap: 10px;
-    padding: 10px;
+    padding: 9px 10px;
     border: 1px solid var(--aorist-line);
     border-radius: 10px;
     background: hsl(220 20% 98%);
   }
 
-  .capability-pipeline article > span {
+  .capability-install-flow article > span {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -6024,34 +6865,130 @@
     font-weight: 800;
   }
 
-  .capability-pipeline article.done > span {
+  .capability-install-flow article.done > span {
+    border-color: var(--aorist-primary);
     background: var(--aorist-primary);
     color: hsl(0 0% 100%);
   }
 
-  .capability-pipeline strong {
+  .capability-install-flow strong,
+  .capability-agent-binding strong {
     color: var(--aorist-ink);
     font-size: 12px;
   }
 
-  .capability-pipeline p {
-    margin: 3px 0 0;
+  .capability-install-flow p {
+    margin: 0;
     color: var(--aorist-muted);
     font-size: 12px;
     line-height: 1.45;
+  }
+
+  .capability-agent-binding button {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(0 0% 100%);
+    text-align: left;
+  }
+
+  .capability-agent-binding button span {
+    display: grid;
+    gap: 3px;
+  }
+
+  .capability-agent-binding em {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .capability-agent-binding i {
+    position: relative;
+    display: inline-flex;
+    width: 36px;
+    height: 20px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    background: hsl(220 20% 92%);
+  }
+
+  .capability-agent-binding i u {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: hsl(0 0% 100%);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+    transition: transform 0.16s ease;
+  }
+
+  .capability-agent-binding i.enabled {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+  }
+
+  .capability-agent-binding i.enabled u {
+    transform: translateX(16px);
+  }
+
+  .capability-runtime {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .capability-runtime div {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--aorist-line);
+  }
+
+  .capability-runtime dt {
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .capability-runtime dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 650;
   }
 
   .capability-create-modal {
     width: min(760px, calc(100vw - 44px));
   }
 
+  .capability-detail-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(680px, calc(100vw - 44px));
+    max-height: min(760px, calc(100vh - 44px));
+  }
+
+  .capability-detail-modal__body {
+    overflow: auto;
+    padding: 16px;
+  }
+
   @media (max-width: 1080px) {
-    .capability-hero,
-    .capability-workspace {
+    .capability-hub-header,
+    .capability-hub-shell {
       grid-template-columns: 1fr;
     }
 
-    .capability-hero__actions {
+    .capability-hub-header__actions {
       justify-content: flex-start;
     }
 
@@ -6068,6 +7005,10 @@
     .capability-panel header,
     .capability-row {
       grid-template-columns: 1fr;
+    }
+
+    .capability-panel header {
+      flex-direction: column;
     }
 
     .capability-row__side {
@@ -6337,33 +7278,6 @@
   .agent-compose-card :global(.composer__submit) {
     color: hsl(0 0% 100%);
     background: var(--aorist-primary);
-  }
-
-  .agent-compose-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 10px 4px 0;
-  }
-
-  .agent-compose-meta span {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--aorist-line);
-    border-radius: 999px;
-    color: var(--aorist-muted);
-    background: hsl(0 0% 100%);
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  .agent-compose-meta span {
-    border-color: color-mix(in srgb, var(--aorist-primary) 28%, var(--aorist-line));
-    color: var(--aorist-primary);
-    background: hsl(220 70% 96%);
   }
 
   .agent-assistant-disclaimer {
@@ -7411,7 +8325,7 @@
   }
 
   .sidebar__brand {
-    grid-template-columns: 26px minmax(0, 1fr) auto 28px;
+    grid-template-columns: 26px minmax(0, 1fr) 28px;
     min-height: 60px;
     padding: 0 14px;
     background: color-mix(in srgb, var(--aorist-sidebar) 86%, white);
@@ -7478,7 +8392,6 @@
     background: color-mix(in srgb, white 92%, var(--aorist-page-bg));
   }
 
-  .stage-topbar__actions button,
   .hero-panel button,
   .aorist-toolbar button,
   .project-detail-actions button,
@@ -7492,7 +8405,6 @@
     border-radius: 9px;
   }
 
-  .stage-topbar__actions button:nth-child(2),
   .hero-panel button:first-child,
   .aorist-toolbar button:last-child,
   .project-detail-actions button:last-child,
@@ -7506,7 +8418,6 @@
     color: white;
   }
 
-  .stage-topbar__actions button:hover,
   .hero-panel button:hover,
   .project-detail-actions button:hover,
   .project-detail-card button:hover,
@@ -7515,7 +8426,6 @@
     background: hsl(217 30% 94%);
   }
 
-  .stage-topbar__actions button:nth-child(2):hover,
   .hero-panel button:first-child:hover,
   .project-detail-actions button:last-child:hover,
   .project-detail-card button:hover,
@@ -7839,6 +8749,2474 @@
     .management-stats,
     .team-card-grid {
       grid-template-columns: 1fr;
+    }
+  }
+
+  /* AoristLawer 1:1 final alignment: sourced from E:\workspace\aoristlawer\apps\desktop\src. */
+  .shell {
+    --sidebar-width: 220px;
+    --content-width: min(960px, calc(100vw - var(--sidebar-width) - 72px));
+    --document-width: min(900px, calc(100vw - var(--sidebar-width) - 72px));
+    --aorist-primary: hsl(220 70% 50%);
+    --aorist-primary-strong: hsl(220 70% 46%);
+    --aorist-primary-soft: hsl(220 70% 96%);
+    --aorist-primary-softer: hsl(220 70% 98%);
+    --aorist-ink: hsl(220 30% 10%);
+    --aorist-muted: hsl(220 10% 46%);
+    --aorist-faint: hsl(220 10% 62%);
+    --aorist-line: hsl(220 20% 90%);
+    --aorist-line-strong: hsl(220 20% 86%);
+    --aorist-border-divider: hsl(220 20% 90%);
+    --aorist-card-bg: hsl(0 0% 100%);
+    --aorist-card-bg-soft: hsl(220 20% 96%);
+    --aorist-page-bg: hsl(0 0% 100%);
+    --aorist-sidebar: hsl(220 20% 98%);
+    --aorist-sidebar-hover: hsl(220 20% 94%);
+    --aorist-sidebar-active: hsl(220 20% 90%);
+    --aorist-shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --aorist-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    color: var(--aorist-ink);
+    background: var(--aorist-page-bg);
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Noto Sans", sans-serif;
+  }
+
+  .stage {
+    padding: 0;
+    background: var(--aorist-page-bg);
+  }
+
+  .stage__surface {
+    height: 100vh;
+    border: 0;
+    border-radius: 0;
+    background: var(--aorist-card-bg);
+    box-shadow: none;
+  }
+
+  .sidebar--aorist {
+    border-right-color: var(--aorist-border-divider, #e8e8e8);
+    background: var(--aorist-sidebar);
+  }
+
+  .sidebar__brand {
+    min-height: 56px;
+    padding-inline: 14px;
+    border-bottom-color: var(--aorist-border-divider);
+    background: var(--aorist-sidebar);
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--aorist-primary);
+    color: #ffffff;
+    box-shadow: none;
+  }
+
+  .sidebar__brand strong {
+    color: var(--aorist-ink);
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+
+  .brand-copy span {
+    display: block;
+    margin-top: 1px;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .brand-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    padding: 0;
+    border-color: var(--aorist-line);
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--aorist-primary);
+    box-shadow: none;
+  }
+
+  .brand-mode-switch:hover,
+  .brand-mode-switch.active {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+    color: #ffffff;
+  }
+
+  .sidebar__icon:hover,
+  .user-menu button:hover {
+    background: var(--aorist-sidebar-hover);
+    color: var(--aorist-ink);
+  }
+
+  .workspace-nav {
+    padding: 8px 0 12px;
+  }
+
+  .workspace-nav h2 {
+    margin: 0;
+    padding: 6px 12px 4px;
+    color: var(--aorist-faint);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .workspace-nav button {
+    width: calc(100% - 16px);
+    min-height: 36px;
+    margin: 1px 8px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--aorist-muted);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .workspace-nav button:hover {
+    border-color: transparent;
+    background: var(--aorist-sidebar-hover);
+    color: var(--aorist-ink);
+  }
+
+  .workspace-nav button.active {
+    border-color: transparent;
+    background: var(--aorist-sidebar-active);
+    color: var(--aorist-primary);
+    box-shadow: none;
+  }
+
+  .nav-icon {
+    border-radius: 8px;
+  }
+
+  .workspace-nav button.active .nav-icon {
+    background: #ffffff;
+  }
+
+  .sidebar-project-dock {
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--aorist-border-divider);
+  }
+
+  .sidebar-project-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-right: 8px;
+  }
+
+  .workspace-nav .sidebar-project-head h2 {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .workspace-nav .sidebar-project-dock button {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .workspace-nav .sidebar-project-dock button:hover {
+    background: var(--aorist-sidebar-hover);
+    color: var(--aorist-ink);
+  }
+
+  .workspace-nav .sidebar-project-icon,
+  .workspace-nav .sidebar-project-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+  }
+
+  .workspace-nav .sidebar-project-icon:hover,
+  .workspace-nav .sidebar-project-action:hover {
+    color: var(--aorist-primary);
+  }
+
+  .sidebar-project-create {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) 24px;
+    align-items: center;
+    gap: 7px;
+    min-height: 32px;
+    margin: 1px 8px 6px;
+    padding: 3px 4px 3px 8px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .sidebar-project-create > :global(svg) {
+    color: var(--aorist-primary);
+  }
+
+  .sidebar-project-create input {
+    min-width: 0;
+    height: 24px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--aorist-ink);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .workspace-nav .sidebar-project-create button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    color: var(--aorist-primary);
+  }
+
+  .sidebar-project-list,
+  .sidebar-project-group,
+  .sidebar-conversation-list {
+    display: grid;
+    gap: 1px;
+  }
+
+  .sidebar-project-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 24px;
+    align-items: center;
+    gap: 2px;
+    min-height: 30px;
+    margin: 1px 8px;
+    padding: 1px 3px;
+    border-radius: 8px;
+  }
+
+  .sidebar-project-row:hover,
+  .sidebar-project-row.active {
+    background: var(--aorist-sidebar-hover);
+  }
+
+  .sidebar-project-row.active {
+    color: var(--aorist-primary);
+  }
+
+  .workspace-nav .sidebar-project-disclosure {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 26px;
+  }
+
+  .sidebar-project-disclosure :global(svg) {
+    transform: rotate(-90deg);
+    transition: transform 0.16s ease;
+  }
+
+  .sidebar-project-disclosure.expanded :global(svg) {
+    transform: rotate(0deg);
+  }
+
+  .workspace-nav .sidebar-project-open {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    height: 28px;
+    text-align: left;
+  }
+
+  .workspace-nav .sidebar-project-open :global(svg),
+  .workspace-nav .sidebar-conversation-row :global(svg) {
+    color: inherit;
+  }
+
+  .workspace-nav .sidebar-project-open span {
+    min-width: 0;
+    overflow: hidden;
+    color: inherit;
+    font-size: 13px;
+    font-weight: 540;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-nav .sidebar-project-action {
+    opacity: 0;
+    transition: opacity 0.14s ease;
+  }
+
+  .sidebar-project-row:hover .sidebar-project-action,
+  .sidebar-project-row.active .sidebar-project-action {
+    opacity: 1;
+  }
+
+  .sidebar-conversation-list {
+    margin: 0 8px 4px 36px;
+  }
+
+  .workspace-nav .sidebar-conversation-row {
+    display: grid;
+    grid-template-columns: 15px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 28px;
+    padding: 0 7px;
+    text-align: left;
+  }
+
+  .workspace-nav .sidebar-conversation-row.active {
+    background: var(--aorist-sidebar-active);
+    color: var(--aorist-primary);
+  }
+
+  .workspace-nav .sidebar-conversation-row span {
+    min-width: 0;
+    overflow: hidden;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-nav .sidebar-conversation-row em {
+    min-width: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--aorist-faint);
+    font-size: 10px;
+    font-style: normal;
+  }
+
+  .workspace-nav .sidebar-conversation-empty {
+    width: 100%;
+    min-height: 28px;
+    padding: 0 8px;
+    color: var(--aorist-faint);
+    text-align: left;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar-project-dock {
+    display: none;
+  }
+
+  .sidebar__user-wrap {
+    border-top-color: var(--aorist-border-divider);
+  }
+
+  .sidebar__user-wrap .sidebar__user {
+    border: 1px solid var(--aorist-line);
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .sidebar__avatar {
+    color: var(--aorist-primary-strong);
+    background: var(--aorist-primary-soft);
+  }
+
+  .stage-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-direction: row;
+    gap: 16px;
+    min-height: 56px;
+    padding: 0 24px;
+    border-bottom-color: var(--aorist-border-divider);
+    background: var(--aorist-card-bg);
+    backdrop-filter: none;
+  }
+
+  .stage-topbar__leading {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .stage-topbar__leading > div {
+    min-width: 0;
+  }
+
+  .stage-topbar__actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .stage-topbar span,
+  .aorist-toolbar span,
+  .hero-panel span {
+    color: var(--aorist-faint);
+    letter-spacing: 0.06em;
+  }
+
+  .stage-topbar strong,
+  .aorist-toolbar strong {
+    color: var(--aorist-ink);
+  }
+
+  .hero-panel button,
+  .aorist-toolbar button,
+  .management-primary,
+  .project-section-head button,
+  .customer-section-head button,
+  .config-modal footer button,
+  .agent-wizard__footer button,
+  .capability-item button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 12px;
+    border-color: var(--aorist-line-strong);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--aorist-ink);
+    box-shadow: none;
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .hero-panel button:hover,
+  .aorist-toolbar button:hover,
+  .management-primary:hover,
+  .project-section-head button:hover,
+  .customer-section-head button:hover,
+  .config-modal footer button:hover,
+  .agent-wizard__footer button:hover,
+  .capability-item button:hover {
+    border-color: var(--aorist-line-strong);
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary);
+  }
+
+  .hero-panel button:first-child,
+  .aorist-toolbar button:last-child,
+  .management-primary,
+  .config-modal footer button:last-child,
+  .agent-wizard__footer button:last-child {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+    color: #ffffff;
+  }
+
+  .hero-panel button:first-child:hover,
+  .aorist-toolbar button:last-child:hover,
+  .management-primary:hover,
+  .config-modal footer button:last-child:hover,
+  .agent-wizard__footer button:last-child:hover {
+    border-color: var(--aorist-primary-strong);
+    background: var(--aorist-primary-strong);
+    color: #ffffff;
+  }
+
+  .aorist-page {
+    padding: 24px;
+    background: var(--aorist-page-bg);
+  }
+
+  .hero-panel {
+    display: grid;
+    gap: 12px;
+    padding: 20px 24px;
+    border-color: var(--aorist-line);
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: var(--aorist-shadow-soft);
+  }
+
+  .hero-panel::after {
+    display: none;
+  }
+
+  .hero-panel h1 {
+    max-width: 720px;
+    margin: 0;
+    color: var(--aorist-ink);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0;
+  }
+
+  .hero-panel p {
+    max-width: 760px;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    line-height: 1.62;
+  }
+
+  .aorist-stats,
+  .management-stats {
+    gap: 10px;
+  }
+
+  .aorist-stats article,
+  .management-stats article,
+  .aorist-card,
+  .aorist-list article,
+  .agent-card,
+  .automation-card,
+  .media-card,
+  .capability-item,
+  .management-card,
+  .detail-panel,
+  .project-detail-card,
+  .customer-detail-card,
+  .customer-detail-aside section,
+  .project-detail-aside section,
+  :global(.task-composer-card) {
+    border-color: var(--aorist-line);
+    border-radius: 8px;
+    background: var(--aorist-card-bg);
+    box-shadow: var(--aorist-shadow-soft);
+  }
+
+  .aorist-stats article:hover,
+  .management-card:hover,
+  .agent-card:hover,
+  .automation-card:hover,
+  .media-card:hover,
+  .capability-item:hover {
+    border-color: color-mix(in srgb, var(--aorist-primary) 30%, var(--aorist-line));
+    background: #ffffff;
+    box-shadow: var(--aorist-shadow-soft);
+    transform: none;
+  }
+
+  .aorist-stats strong,
+  .management-stats strong {
+    color: var(--aorist-ink);
+    letter-spacing: -0.02em;
+  }
+
+  .aorist-stats span,
+  .aorist-stats em,
+  .management-stats span,
+  .management-stats em,
+  .management-card__body p,
+  .aorist-list p,
+  .agent-card p,
+  .automation-card p,
+  .media-card p,
+  .capability-item p {
+    color: var(--aorist-muted);
+  }
+
+  .management-stats article > :global(svg),
+  .management-card__icon,
+  .agent-card header > span,
+  .team-list-card header > span,
+  .project-detail-row > span,
+  .customer-detail-row > span,
+  .client-avatar {
+    color: var(--aorist-primary-strong);
+    background: var(--aorist-primary-soft);
+  }
+
+  .todo-row,
+  .automation-row,
+  .project-detail-card .project-detail-row,
+  .customer-detail-row,
+  .customer-project-list button {
+    border-color: var(--aorist-line);
+    border-radius: 8px;
+    background: #fafafa;
+  }
+
+  .todo-row:hover,
+  .automation-row:hover,
+  .project-detail-card .project-detail-row:hover,
+  .customer-detail-row:hover,
+  .customer-project-list button:hover {
+    border-color: color-mix(in srgb, var(--aorist-primary) 30%, var(--aorist-line));
+    background: var(--aorist-primary-softer);
+  }
+
+  .todo-row i,
+  .project-progress-line i {
+    background: var(--aorist-primary);
+  }
+
+  .todo-row b,
+  .automation-row b,
+  .aorist-list span,
+  .automation-card span,
+  .media-card span,
+  .capability-item span,
+  .management-badges span:nth-child(2),
+  .project-todo-row b,
+  .project-schedule-list .project-detail-row b,
+  .customer-todo-row b,
+  .customer-schedule-list .customer-detail-row b {
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary-strong);
+  }
+
+  .management-search,
+  .aorist-search,
+  .team-builder-search {
+    background: transparent;
+  }
+
+  .management-search input,
+  .aorist-search input,
+  .team-builder-search input,
+  .team-builder aside input,
+  .config-grid input,
+  .config-grid textarea,
+  .config-grid select,
+  .wizard-form input,
+  .wizard-form textarea,
+  .wizard-form select,
+  .stage__composer :global(textarea),
+  :global(.task-composer-card textarea) {
+    border-color: var(--aorist-line);
+    border-radius: 10px;
+    background: #ffffff;
+  }
+
+  .management-search input:focus,
+  .aorist-search input:focus,
+  .config-grid input:focus,
+  .config-grid textarea:focus,
+  .config-grid select:focus,
+  .wizard-form input:focus,
+  .wizard-form textarea:focus,
+  .wizard-form select:focus {
+    border-color: var(--aorist-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--aorist-primary) 14%, transparent);
+  }
+
+  .detail-tabs,
+  .project-detail-main .detail-tabs,
+  .customer-detail-main .detail-tabs {
+    border-bottom-color: var(--aorist-line);
+  }
+
+  .detail-tabs button,
+  .project-detail-main .detail-tabs button,
+  .customer-detail-main .detail-tabs button {
+    color: var(--aorist-muted);
+  }
+
+  .detail-tabs button.active,
+  .project-detail-main .detail-tabs button.active,
+  .customer-detail-main .detail-tabs button.active {
+    border-color: var(--aorist-primary);
+    color: var(--aorist-primary-strong);
+  }
+
+  .project-detail-risk,
+  .customer-risk-card {
+    border-color: oklch(0.86 0.07 82);
+    background: oklch(0.98 0.03 82);
+  }
+
+  .project-detail-risk h3,
+  .customer-risk-card h3,
+  .customer-risk-card > strong {
+    color: oklch(0.46 0.11 76);
+  }
+
+  .modal-backdrop {
+    background: rgba(26, 38, 33, 0.34);
+    backdrop-filter: none;
+  }
+
+  .config-modal,
+  .agent-wizard,
+  .detail-modal,
+  .user-panel-modal,
+  .capability-create-modal {
+    border-color: var(--aorist-line);
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  }
+
+  .agent-assistant-page {
+    background: var(--aorist-page-bg);
+  }
+
+  .agent-assistant-shell,
+  .agent-assistant-center {
+    color: var(--aorist-ink);
+  }
+
+  .agent-selector__trigger {
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg);
+    box-shadow: var(--aorist-shadow-soft);
+  }
+
+  .agent-selector__avatar,
+  .wizard-avatar,
+  .wizard-preview b {
+    background: var(--aorist-primary);
+    color: #ffffff;
+  }
+
+  .stage__composer {
+    bottom: 24px;
+    width: min(760px, calc(100% - 96px));
+  }
+
+  .home__composer :global(.composer),
+  .stage__composer :global(.composer),
+  :global(.task-composer-card .composer),
+  .agent-compose-card :global(.composer) {
+    min-height: 112px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 12px;
+    background: var(--aorist-card-bg);
+    box-shadow: var(--aorist-shadow-soft);
+    backdrop-filter: none;
+  }
+
+  .home__composer :global(.composer:focus-within),
+  .stage__composer :global(.composer:focus-within),
+  :global(.task-composer-card .composer:focus-within),
+  .agent-compose-card :global(.composer:focus-within) {
+    border-color: color-mix(in srgb, var(--aorist-primary) 36%, var(--aorist-line));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--aorist-primary) 18%, transparent);
+  }
+
+  .home__composer :global(.composer textarea),
+  .stage__composer :global(.composer textarea),
+  :global(.task-composer-card .composer textarea),
+  .agent-compose-card :global(.composer textarea) {
+    min-height: 46px;
+    color: var(--aorist-ink);
+    font-size: 14px;
+    line-height: 1.52;
+    background: transparent;
+  }
+
+  .home__composer :global(.composer__toolbar),
+  .stage__composer :global(.composer__toolbar),
+  :global(.task-composer-card .composer__toolbar),
+  .agent-compose-card :global(.composer__toolbar) {
+    border-top-color: var(--aorist-border-divider);
+  }
+
+  .home__composer :global(.composer__tools button),
+  .home__composer :global(.composer__link-picker),
+  .home__composer :global(.composer__model),
+  .stage__composer :global(.composer__tools button),
+  .stage__composer :global(.composer__link-picker),
+  .stage__composer :global(.composer__model),
+  :global(.task-composer-card .composer__tools button),
+  :global(.task-composer-card .composer__link-picker),
+  :global(.task-composer-card .composer__model),
+  .agent-compose-card :global(.composer__tools button),
+  .agent-compose-card :global(.composer__link-picker),
+  .agent-compose-card :global(.composer__model) {
+    border-color: transparent;
+    border-radius: 10px;
+    background: #f4f4f4;
+    color: var(--aorist-muted);
+  }
+
+  .home__composer :global(.composer__submit),
+  .stage__composer :global(.composer__submit),
+  :global(.task-composer-card .composer__submit),
+  .agent-compose-card :global(.composer__submit) {
+    color: #ffffff;
+    background: var(--aorist-primary);
+    box-shadow: none;
+  }
+
+  .home__composer :global(.composer__submit:hover),
+  .stage__composer :global(.composer__submit:hover),
+  :global(.task-composer-card .composer__submit:hover),
+  .agent-compose-card :global(.composer__submit:hover) {
+    background: var(--aorist-primary-strong);
+  }
+
+  :global(.composer-context-actions > span) {
+    border-color: color-mix(in srgb, var(--aorist-primary) 22%, transparent);
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary);
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [role="button"]:focus-visible {
+    outline-color: color-mix(in srgb, var(--aorist-primary) 48%, transparent);
+  }
+
+  @media (max-width: 720px) {
+    .stage-topbar {
+      min-height: 56px;
+      padding-inline: 12px;
+    }
+
+    .stage-topbar__actions {
+      gap: 6px;
+    }
+
+    .hero-panel h1 {
+      font-size: 28px;
+    }
+  }
+
+  @media (min-width: 560px) and (max-width: 720px) {
+    .shell {
+      --sidebar-width: 220px;
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    }
+
+    .sidebar {
+      display: flex;
+      width: var(--sidebar-width);
+      min-width: var(--sidebar-width);
+    }
+
+    .stage {
+      min-width: 0;
+    }
+
+    .stage__surface {
+      min-width: 0;
+    }
+  }
+
+  /* Accio Work normalization: buttons, forms, typography, and dialogs. */
+  .shell {
+    --aorist-primary: #222222;
+    --aorist-primary-strong: #111111;
+    --aorist-primary-soft: #eeeeee;
+    --aorist-primary-softer: #f7f7f8;
+    --aorist-ink: #222222;
+    --aorist-muted: #767676;
+    --aorist-faint: #8e8e93;
+    --aorist-line: #dddddd;
+    --aorist-line-strong: #d4d4d8;
+    --aorist-border-divider: #e8e8e8;
+    --aorist-card-bg: #ffffff;
+    --aorist-card-bg-soft: #f7f7f8;
+    --aorist-page-bg: #f4f4f4;
+    --aorist-sidebar: #f4f4f4;
+    --aorist-sidebar-hover: #ececec;
+    --aorist-sidebar-active: #e6faf2;
+    --aorist-shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.06);
+    --aorist-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    color: var(--aorist-ink);
+    background: var(--aorist-page-bg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans SC", "Helvetica Neue", sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    letter-spacing: 0;
+  }
+
+  .shell button,
+  .shell input,
+  .shell textarea,
+  .shell select {
+    font: inherit;
+    letter-spacing: 0;
+  }
+
+  .shell button {
+    cursor: default;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      box-shadow 0.15s ease,
+      transform 0.1s ease;
+  }
+
+  .shell button:active:not(:disabled) {
+    transform: scale(0.985);
+  }
+
+  .shell button:disabled {
+    cursor: default;
+    opacity: 0.5;
+    pointer-events: none;
+    transform: none;
+  }
+
+  .stage-topbar strong,
+  .aorist-toolbar strong,
+  .aorist-card header strong,
+  .management-card__body strong,
+  .agent-card strong,
+  .automation-card strong,
+  .media-card strong,
+  .capability-item strong {
+    color: var(--aorist-ink);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: 0;
+  }
+
+  .stage-topbar span,
+  .aorist-toolbar span,
+  .hero-panel span,
+  .workspace-nav h2,
+  .config-grid label,
+  .wizard-form label,
+  .team-builder aside label {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .hero-panel h1 {
+    color: var(--aorist-ink);
+    font-size: 24px;
+    font-weight: 650;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+
+  .hero-panel p,
+  .aorist-list p,
+  .agent-card p,
+  .automation-card p,
+  .media-card p,
+  .capability-item p,
+  .management-card__body p,
+  .project-detail-card p,
+  .customer-detail-card p {
+    color: var(--aorist-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .hero-panel button,
+  .aorist-toolbar button,
+  .management-primary,
+  .project-section-head button,
+  .customer-section-head button,
+  .resource-actions button,
+  .automation-card footer button,
+  .capability-item button,
+  .project-detail-actions button,
+  .project-detail-card button,
+  .project-detail-aside button,
+  .customer-detail-aside button,
+  .team-primary,
+  .team-send,
+  .team-card-meta button,
+  .team-empty-state button,
+  .config-modal footer button,
+  .agent-wizard__footer button,
+  .conversation-header button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 14px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+    box-shadow: none;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .hero-panel button:hover,
+  .aorist-toolbar button:hover,
+  .project-section-head button:hover,
+  .customer-section-head button:hover,
+  .resource-actions button:hover,
+  .automation-card footer button:hover,
+  .capability-item button:hover,
+  .project-detail-actions button:hover,
+  .project-detail-card button:hover,
+  .project-detail-aside button:hover,
+  .customer-detail-aside button:hover,
+  .team-card-meta button:hover,
+  .team-empty-state button:hover,
+  .config-modal footer button:hover,
+  .agent-wizard__footer button:hover,
+  .conversation-header button:hover {
+    border-color: var(--aorist-line-strong);
+    background: var(--aorist-card-bg-soft);
+    color: var(--aorist-ink);
+  }
+
+  .hero-panel button:first-child,
+  .aorist-toolbar button:last-child,
+  .management-primary,
+  .team-primary,
+  .team-send,
+  .team-card-meta button,
+  .config-modal footer button:last-child,
+  .agent-wizard__footer button:last-child {
+    border-color: var(--aorist-primary);
+    background: var(--aorist-primary);
+    color: #ffffff;
+  }
+
+  .hero-panel button:first-child:hover,
+  .aorist-toolbar button:last-child:hover,
+  .management-primary:hover,
+  .team-primary:hover,
+  .team-send:hover,
+  .team-card-meta button:hover,
+  .config-modal footer button:last-child:hover,
+  .agent-wizard__footer button:last-child:hover {
+    border-color: var(--aorist-primary-strong);
+    background: var(--aorist-primary-strong);
+    color: #ffffff;
+  }
+
+  .brand-mode-switch,
+  .sidebar__icon,
+  .workspace-nav .sidebar-project-icon,
+  .workspace-nav .sidebar-project-action,
+  .workspace-nav .sidebar-project-disclosure,
+  .agent-card header button,
+  .team-card-actions button,
+  .team-chat-title button,
+  .team-compose-row > button:not(.team-send),
+  .config-modal header > button,
+  .agent-wizard__header > button,
+  .project-detail-back,
+  .user-panel-modal header button,
+  .capability-create-modal header button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  .brand-mode-switch:hover,
+  .sidebar__icon:hover,
+  .workspace-nav .sidebar-project-icon:hover,
+  .workspace-nav .sidebar-project-action:hover,
+  .workspace-nav .sidebar-project-disclosure:hover,
+  .agent-card header button:hover,
+  .team-card-actions button:hover,
+  .team-chat-title button:hover,
+  .team-compose-row > button:not(.team-send):hover,
+  .config-modal header > button:hover,
+  .agent-wizard__header > button:hover,
+  .project-detail-back:hover,
+  .user-panel-modal header button:hover,
+  .capability-create-modal header button:hover {
+    border-color: transparent;
+    background: var(--aorist-sidebar-hover);
+    color: var(--aorist-ink);
+  }
+
+  .workspace-nav button,
+  .workspace-nav .sidebar-project-dock button {
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .workspace-nav button.active,
+  .workspace-nav .sidebar-conversation-row.active,
+  .sidebar-project-row.active {
+    background: var(--aorist-sidebar-active);
+    color: var(--aorist-primary-strong);
+  }
+
+  .capability-tabs,
+  .management-tabs,
+  .detail-tabs,
+  .wizard-tabs,
+  .team-view-switch {
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .capability-tabs button,
+  .management-tabs button,
+  .detail-tabs button,
+  .wizard-tabs button,
+  .team-view-switch button {
+    min-height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  .capability-tabs button:hover,
+  .management-tabs button:hover,
+  .detail-tabs button:hover,
+  .wizard-tabs button:hover,
+  .team-view-switch button:hover {
+    background: #ffffff;
+    color: var(--aorist-ink);
+  }
+
+  .capability-tabs button.active,
+  .management-tabs button.active,
+  .detail-tabs button.active,
+  .wizard-tabs button.active,
+  .team-view-switch button.active {
+    background: #ffffff;
+    color: var(--aorist-ink);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+
+  .management-search,
+  .aorist-search,
+  .team-builder-search,
+  .sidebar-project-create,
+  :global(.task-composer-card__head) select,
+  .config-grid input,
+  .config-grid textarea,
+  .config-grid select,
+  .wizard-form input,
+  .wizard-form textarea,
+  .wizard-form select,
+  .team-builder aside input,
+  .team-compose-row textarea {
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+    box-shadow: none;
+  }
+
+  .management-search,
+  .aorist-search,
+  .team-builder-search {
+    min-height: 36px;
+    padding: 0 11px;
+  }
+
+  .management-search input,
+  .aorist-search input,
+  .team-builder-search input,
+  .sidebar-project-create input,
+  .config-grid input,
+  .config-grid select,
+  .wizard-form input,
+  .wizard-form select,
+  .team-builder aside input {
+    height: 36px;
+    min-height: 36px;
+    padding: 0 11px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  .management-search input,
+  .aorist-search input,
+  .team-builder-search input,
+  .sidebar-project-create input {
+    height: 30px;
+    min-height: 30px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .config-grid textarea,
+  .wizard-form textarea {
+    min-height: 88px;
+    padding: 10px 11px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .config-grid input::placeholder,
+  .config-grid textarea::placeholder,
+  .wizard-form input::placeholder,
+  .wizard-form textarea::placeholder,
+  .management-search input::placeholder,
+  .aorist-search input::placeholder {
+    color: var(--aorist-faint);
+  }
+
+  .management-search:focus-within,
+  .aorist-search:focus-within,
+  .team-builder-search:focus-within,
+  .sidebar-project-create:focus-within,
+  .config-grid input:focus,
+  .config-grid textarea:focus,
+  .config-grid select:focus,
+  .wizard-form input:focus,
+  .wizard-form textarea:focus,
+  .wizard-form select:focus,
+  .team-builder aside input:focus {
+    border-color: var(--aorist-primary);
+    outline: 0;
+    box-shadow: 0 0 0 3px rgba(34, 34, 34, 0.14);
+  }
+
+  .modal-backdrop {
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(4px);
+  }
+
+  .config-modal,
+  .agent-wizard,
+  .detail-modal,
+  .user-panel-modal,
+  .capability-create-modal {
+    overflow: hidden;
+    border: 1px solid var(--aorist-border-divider);
+    border-radius: 16px;
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.12),
+      0 24px 64px rgba(0, 0, 0, 0.08);
+  }
+
+  .config-modal header,
+  .agent-wizard__header,
+  .user-panel-modal header,
+  .capability-create-modal header,
+  .project-detail-modal > .project-detail-head,
+  .customer-detail-modal > .customer-detail-head {
+    min-height: 56px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--aorist-border-divider);
+    background: var(--aorist-card-bg);
+  }
+
+  .config-modal header strong,
+  .agent-wizard__header strong,
+  .user-panel-modal header strong,
+  .capability-create-modal header strong,
+  .project-detail-head strong,
+  .customer-detail-head strong {
+    color: var(--aorist-ink);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .config-modal header span,
+  .agent-wizard__header span,
+  .user-panel-modal header span,
+  .capability-create-modal header span {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .config-modal footer,
+  .agent-wizard__footer,
+  .user-panel-modal footer,
+  .capability-create-modal footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--aorist-border-divider);
+    background: var(--aorist-card-bg);
+  }
+
+  .aorist-card,
+  .aorist-list article,
+  .management-card,
+  .management-stats article,
+  .agent-card,
+  .automation-card,
+  .media-card,
+  .capability-item,
+  .detail-panel,
+  .project-detail-card,
+  .customer-detail-card,
+  .project-detail-aside section,
+  .customer-detail-aside section,
+  .team-list-card,
+  .team-office-room,
+  :global(.task-composer-card),
+  .agent-compose-card {
+    border: 1px solid var(--aorist-border-divider);
+    border-radius: 12px;
+    background: var(--aorist-card-bg);
+    box-shadow: none;
+  }
+
+  .aorist-card:hover,
+  .management-card:hover,
+  .agent-card:hover,
+  .automation-card:hover,
+  .media-card:hover,
+  .capability-item:hover,
+  .team-list-card:hover {
+    border-color: var(--aorist-line-strong);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transform: none;
+  }
+
+  .home__composer :global(.composer),
+  .stage__composer :global(.composer),
+  :global(.task-composer-card .composer),
+  .agent-compose-card :global(.composer) {
+    border-color: var(--aorist-line);
+    border-radius: 16px;
+    background: var(--aorist-card-bg);
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.06),
+      0 8px 24px rgba(0, 0, 0, 0.08);
+  }
+
+  .home__composer :global(.composer__tools button),
+  .stage__composer :global(.composer__tools button),
+  :global(.task-composer-card .composer__tools button),
+  .agent-compose-card :global(.composer__tools button),
+  .home__composer :global(.composer__link-picker),
+  .stage__composer :global(.composer__link-picker),
+  .agent-compose-card :global(.composer__link-picker),
+  .home__composer :global(.composer__model),
+  .stage__composer :global(.composer__model),
+  .agent-compose-card :global(.composer__model) {
+    min-height: 30px;
+    border-radius: 8px;
+    background: var(--aorist-card-bg-soft);
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .home__composer :global(.composer__submit),
+  .stage__composer :global(.composer__submit),
+  :global(.task-composer-card .composer__submit),
+  .agent-compose-card :global(.composer__submit) {
+    background: var(--aorist-primary);
+    color: #ffffff;
+  }
+
+  .home__composer :global(.composer__submit:hover),
+  .stage__composer :global(.composer__submit:hover),
+  :global(.task-composer-card .composer__submit:hover),
+  .agent-compose-card :global(.composer__submit:hover) {
+    background: var(--aorist-primary-strong);
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 0;
+    box-shadow: 0 0 0 3px rgba(34, 34, 34, 0.18);
+  }
+
+  .shell .management-primary,
+  .shell .hero-panel button,
+  .shell .aorist-toolbar button,
+  .shell .project-section-head button,
+  .shell .customer-section-head button,
+  .shell .resource-actions button,
+  .shell .config-modal footer button,
+  .shell .agent-wizard__footer button,
+  .shell .conversation-header button {
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .shell {
+    --aorist-primary: #222222;
+    --aorist-primary-strong: #111111;
+    --aorist-primary-soft: #eeeeee;
+    --aorist-primary-softer: #f7f7f8;
+    --aorist-ink: #222222;
+    --aorist-muted: #666666;
+    --aorist-faint: #8e8e93;
+    --aorist-line: #dddddd;
+    --aorist-line-strong: #c8c8c8;
+    --aorist-border-divider: #e8e8e8;
+    --aorist-card-bg: #ffffff;
+    --aorist-card-bg-soft: #f7f7f8;
+    --aorist-page-bg: #f4f4f4;
+    --aorist-sidebar: #f4f4f4;
+    --aorist-sidebar-hover: #ececec;
+    --aorist-sidebar-active: #e8e8e8;
+  }
+
+  .brand-mark,
+  .agent-selector__avatar,
+  .wizard-avatar,
+  .wizard-preview b,
+  .hero-panel button:first-child,
+  .aorist-toolbar button:last-child,
+  .management-primary,
+  .team-primary,
+  .team-send,
+  .team-card-meta button,
+  .config-modal footer button:last-child,
+  .agent-wizard__footer button:last-child,
+  .home__composer :global(.composer__submit),
+  .stage__composer :global(.composer__submit),
+  :global(.task-composer-card .composer__submit),
+  .agent-compose-card :global(.composer__submit) {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .hero-panel button:first-child:hover,
+  .aorist-toolbar button:last-child:hover,
+  .management-primary:hover,
+  .team-primary:hover,
+  .team-send:hover,
+  .team-card-meta button:hover,
+  .config-modal footer button:last-child:hover,
+  .agent-wizard__footer button:last-child:hover,
+  .home__composer :global(.composer__submit:hover),
+  .stage__composer :global(.composer__submit:hover),
+  :global(.task-composer-card .composer__submit:hover),
+  .agent-compose-card :global(.composer__submit:hover) {
+    border-color: #111111;
+    background: #111111;
+    color: #ffffff;
+  }
+
+  .workspace-nav button.active,
+  .workspace-nav button.active .nav-icon,
+  .workspace-nav .sidebar-conversation-row.active,
+  .sidebar-project-row.active,
+  :global(.composer-context-actions > span),
+  .todo-row b,
+  .automation-row b,
+  .aorist-list span,
+  .automation-card span,
+  .media-card span,
+  .capability-item span,
+  .management-badges span:nth-child(2),
+  .project-todo-row b,
+  .project-schedule-list .project-detail-row b,
+  .customer-todo-row b,
+  .customer-schedule-list .customer-detail-row b {
+    border-color: #d4d4d8;
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .management-stats article > :global(svg),
+  .management-card__icon,
+  .agent-card header > span,
+  .team-list-card header > span,
+  .project-detail-row > span,
+  .customer-detail-row > span,
+  .client-avatar,
+  .sidebar__avatar,
+  .capability-row__icon,
+  .management-badges .riskHigh,
+  .client-card-side .riskHigh {
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .project-detail-risk,
+  .customer-risk-card {
+    border-color: #dddddd;
+    background: #f7f7f8;
+  }
+
+  .project-detail-risk h3,
+  .customer-risk-card h3,
+  .customer-risk-card > strong {
+    color: #222222;
+  }
+
+  .client-card-title :global(.lucide-triangle-alert),
+  .automation-card footer button:last-child,
+  .capability-state,
+  .capability-state--enabled,
+  .capability-state--auth,
+  .capability-state--pending {
+    border-color: #d4d4d8;
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .management-search:focus-within,
+  .aorist-search:focus-within,
+  .team-builder-search:focus-within,
+  .sidebar-project-create:focus-within,
+  .config-grid input:focus,
+  .config-grid textarea:focus,
+  .config-grid select:focus,
+  .wizard-form input:focus,
+  .wizard-form textarea:focus,
+  .wizard-form select:focus,
+  .team-builder aside input:focus,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [role="button"]:focus-visible {
+    border-color: #222222;
+    outline: 0;
+    box-shadow: 0 0 0 3px rgba(34, 34, 34, 0.14);
+  }
+
+  .aorist-page,
+  .hero-panel {
+    background: #f7f7f8;
+  }
+
+  .brand-mode-switch,
+  .nav-icon,
+  .workspace-nav button em,
+  .workspace-nav button.active em,
+  .aorist-card header button,
+  .todo-row i,
+  .calendar-mini-grid article.today,
+  .calendar-mini-grid span,
+  .calendar-grid article.today,
+  .calendar-grid span,
+  .detail-tabs button.active,
+  .room-layout aside span,
+  .select-list button:hover,
+  .distill-steps button.active,
+  .pill-group button.active,
+  .wizard-card-grid button.active,
+  .wizard-skill-list button.active,
+  .wizard-files button.active,
+  .capability-tabs button.active,
+  :global(.agent-strip button.active),
+  :global(.agent-strip span),
+  :global(.composer-context-actions > span) {
+    border-color: #d4d4d8;
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .brand-mode-switch:hover,
+  .brand-mode-switch.active,
+  .capability-tabs button.active,
+  .workbench-calendar footer button:last-child,
+  .wizard-avatar,
+  .wizard-preview b,
+  .project-progress-fill,
+  .customer-progress-fill {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .agent-card footer b,
+  .aorist-card header button,
+  .detail-tabs button.active,
+  .distill-steps button.active,
+  .pill-group button.active,
+  .wizard-files button.active,
+  .brand-mode-switch,
+  .brand-mode-switch:hover,
+  .brand-mode-switch.active {
+    color: #222222;
+  }
+
+  .wizard-files pre {
+    background: #1f1f1f;
+    color: #f4f4f5;
+  }
+
+  .agent-assistant-page {
+    background: linear-gradient(180deg, #ffffff 0%, #f7f7f8 100%);
+  }
+
+  .agent-selector__avatar {
+    box-shadow:
+      0 16px 36px rgba(0, 0, 0, 0.12),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  }
+
+  .workspace-nav h2 {
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .workspace-nav button {
+    font-size: 12px;
+    font-weight: 450;
+  }
+
+  .workspace-nav button span:nth-child(2),
+  .sidebar__brand strong,
+  .sidebar__user strong {
+    font-size: 12px;
+    font-weight: 520;
+  }
+
+  .brand-copy span,
+  .sidebar__user em {
+    font-size: 10px;
+    font-weight: 450;
+  }
+
+  .sidebar-project-head {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto 24px;
+    align-items: center;
+    gap: 2px;
+    padding: 0 8px 2px 4px;
+  }
+
+  .workspace-nav .sidebar-project-head h2 {
+    padding-left: 4px;
+  }
+
+  .sidebar-project-folder-input {
+    display: none;
+  }
+
+  .workspace-nav .sidebar-project-section-toggle,
+  .workspace-nav .sidebar-project-icon,
+  .workspace-nav .sidebar-project-rename,
+  .workspace-nav .sidebar-project-action {
+    border-radius: 6px;
+    color: #666666;
+  }
+
+  .sidebar-project-section-toggle :global(svg) {
+    transform: rotate(-90deg);
+    transition: transform 0.16s ease;
+  }
+
+  .sidebar-project-section-toggle.expanded :global(svg) {
+    transform: rotate(0deg);
+  }
+
+  .workspace-nav .sidebar-project-sort {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 6px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: #666666;
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .workspace-nav .sidebar-project-sort:hover,
+  .workspace-nav .sidebar-project-section-toggle:hover,
+  .workspace-nav .sidebar-project-icon:hover,
+  .workspace-nav .sidebar-project-rename:hover,
+  .workspace-nav .sidebar-project-action:hover {
+    background: #ececec;
+    color: #222222;
+  }
+
+  .sidebar-project-row {
+    grid-template-columns: 20px minmax(0, 1fr) 22px 22px;
+    min-height: 34px;
+    padding: 1px 2px;
+  }
+
+  .workspace-nav .sidebar-project-disclosure {
+    width: 20px;
+    height: 26px;
+  }
+
+  .workspace-nav .sidebar-project-rename {
+    width: 22px;
+    height: 26px;
+    opacity: 1;
+  }
+
+  .workspace-nav .sidebar-project-open {
+    grid-template-columns: 15px minmax(0, 1fr);
+    gap: 6px;
+    height: 32px;
+  }
+
+  .workspace-nav .sidebar-project-open .sidebar-project-label {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .workspace-nav .sidebar-project-open .sidebar-project-label strong,
+  .workspace-nav .sidebar-conversation-row span {
+    min-width: 0;
+    overflow: hidden;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-nav .sidebar-project-inline-rename {
+    border: 1px solid #d4d4d8;
+    border-radius: 7px;
+    background: #ffffff;
+  }
+
+  .workspace-nav .sidebar-project-inline-rename :global(svg) {
+    color: #52525b;
+  }
+
+  .sidebar-project-inline-rename input {
+    min-width: 0;
+    width: 100%;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #222222;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .workspace-nav .sidebar-conversation-row {
+    min-height: 26px;
+  }
+
+  .workspace-nav .sidebar-project-dock .sidebar-project-row {
+    grid-template-columns: 22px minmax(0, 1fr) 22px 22px;
+    column-gap: 2px;
+  }
+
+  .workspace-nav .sidebar-project-dock .sidebar-project-disclosure,
+  .workspace-nav .sidebar-project-dock .sidebar-project-rename,
+  .workspace-nav .sidebar-project-dock .sidebar-project-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    justify-self: center;
+    width: 22px;
+    height: 28px;
+    min-width: 22px;
+    min-height: 28px;
+    padding: 0;
+  }
+
+  .workspace-nav .sidebar-project-dock .sidebar-project-open {
+    grid-template-columns: 18px minmax(0, 1fr);
+    min-height: 32px;
+    padding: 0;
+  }
+
+  .workspace-nav .sidebar-project-dock .sidebar-project-open > :global(svg),
+  .workspace-nav .sidebar-project-dock .sidebar-conversation-row > :global(svg) {
+    justify-self: center;
+    align-self: center;
+  }
+
+  .workspace-nav .sidebar-project-dock .sidebar-conversation-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    min-height: 26px;
+  }
+
+  .sidebar-project-list {
+    gap: 6px;
+  }
+
+  .sidebar-project-group {
+    gap: 3px;
+  }
+
+  .sidebar-conversation-list {
+    gap: 2px;
+    margin: 3px 8px 8px 34px;
+  }
+
+  .workspace-nav .sidebar-conversation-row em {
+    font-size: 10px;
+    font-weight: 400;
+  }
+
+  .sidebar__user-wrap {
+    display: flex;
+    justify-content: flex-start;
+    padding: 6px 8px 10px;
+  }
+
+  .user-menu {
+    left: 8px;
+    right: auto;
+    bottom: 48px;
+    width: 176px;
+  }
+
+  .sidebar__user-wrap {
+    display: block;
+    padding: 6px 8px 10px;
+  }
+
+  .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+    width: 100%;
+    min-height: 40px;
+    margin: 0;
+    padding: 6px 8px;
+    border: 1px solid #dddddd;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #222222;
+    text-align: left;
+    box-shadow: none;
+  }
+
+  .sidebar__user-wrap .sidebar__user.sidebar__profile:hover,
+  .sidebar__user-wrap .sidebar__user.sidebar__profile:focus-visible {
+    border-color: #c8c8c8;
+    background: #ececec;
+  }
+
+  .sidebar__profile .sidebar__avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 999px;
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .sidebar__profile strong,
+  .sidebar__profile em {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar__profile strong {
+    font-size: 12px;
+    font-weight: 560;
+  }
+
+  .sidebar__profile em {
+    margin-top: 2px;
+    color: #777777;
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 450;
+  }
+
+  .sidebar__profile em[hidden] {
+    display: none;
+  }
+
+  .sidebar__user-wrap .user-menu {
+    right: 8px;
+    width: auto;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap {
+    display: flex;
+    justify-content: center;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    display: inline-flex;
+    justify-content: center;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__profile strong,
+  .shell.is-sidebar-collapsed .sidebar__profile em {
+    display: none;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__profile .sidebar__avatar {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    background: transparent;
+  }
+
+  .automation-console {
+    display: grid;
+    gap: 12px;
+  }
+
+  .automation-overview {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .automation-overview article {
+    border: 1px solid #dddddd;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .automation-overview article {
+    padding: 14px;
+  }
+
+  .automation-overview span,
+  .automation-overview em {
+    display: block;
+    color: #777777;
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .automation-overview strong {
+    display: block;
+    margin: 7px 0 2px;
+    color: #1f1f1f;
+    font-size: 22px;
+    letter-spacing: 0;
+  }
+
+  .automation-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .automation-task-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .automation-task-card {
+    display: grid;
+    gap: 10px;
+    min-height: 248px;
+    padding: 14px;
+  }
+
+  .automation-task-card.active,
+  .automation-task-card:focus-visible {
+    border-color: #222222;
+    box-shadow: 0 0 0 3px rgba(34, 34, 34, 0.08);
+  }
+
+  .automation-task-card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .automation-task-card header span,
+  .automation-task-card header em {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    margin: 0;
+    padding: 0 8px;
+    border: 1px solid #dddddd;
+    border-radius: 999px;
+    background: #f4f4f5;
+    color: #444444;
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .automation-task-card header em {
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .automation-task-card strong {
+    color: #1f1f1f;
+    font-size: 15px;
+    line-height: 1.3;
+  }
+
+  .automation-task-card p {
+    margin: 0;
+    color: #666666;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .automation-task-card dl {
+    display: grid;
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 5px 10px;
+    margin: 0;
+    color: #777777;
+    font-size: 12px;
+  }
+
+  .automation-task-card dd {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: #222222;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .automation-step-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .automation-step-strip b {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 7px;
+    border: 1px solid #e4e4e7;
+    border-radius: 6px;
+    background: #fafafa;
+    color: #52525b;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .automation-task-card footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 7px;
+    margin-top: auto;
+  }
+
+  .automation-config-modal {
+    width: min(780px, calc(100vw - 44px));
+  }
+
+  @media (max-width: 720px) {
+    .automation-overview,
+    .automation-task-list {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .agent-assistant-page {
+    --agent-assistant-content-width: 840px;
+  }
+
+  .agent-assistant-shell {
+    display: grid;
+    grid-template-columns: minmax(0, var(--agent-assistant-content-width));
+    align-content: center;
+    align-items: start;
+    justify-content: center;
+    justify-items: stretch;
+  }
+
+  .agent-assistant-center,
+  .agent-compose-card,
+  .agent-assistant-disclaimer {
+    width: 100%;
+    margin-right: 0;
+    margin-left: 0;
+  }
+
+  .agent-selector__trigger {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .agent-selector__trigger:hover {
+    background: transparent;
+  }
+
+  .agent-compose-card {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .agent-compose-card :global(.composer) {
+    width: 100%;
+    border-color: #d4d4d8;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .agent-compose-card :global(.composer:focus-within) {
+    border-color: #222222;
+    box-shadow: 0 0 0 2px rgba(34, 34, 34, 0.12);
+  }
+
+  .aorist-page:not(.new-task-page) > .aorist-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-height: 36px;
+    margin-bottom: 12px;
+  }
+
+  .aorist-page:not(.new-task-page) > .aorist-toolbar > div:first-child {
+    display: none;
+  }
+
+  .aorist-page:not(.new-task-page) > .aorist-toolbar > div:not(:first-child) {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .capability-console > .capability-hub-header {
+    grid-template-columns: minmax(260px, 1fr) auto;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .capability-console > .capability-hub-header > .capability-hub-header__title {
+    display: none;
+  }
+
+  .capability-console > .capability-hub-header > .capability-search {
+    grid-column: 1;
+  }
+
+  .capability-console > .capability-hub-header > .capability-hub-header__actions {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+
+  @media (max-width: 1080px) {
+    .capability-console > .capability-hub-header {
+      grid-template-columns: 1fr;
+    }
+
+    .capability-console > .capability-hub-header > .capability-hub-header__actions {
+      grid-column: 1;
+      justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .aorist-page:not(.new-task-page) > .aorist-toolbar,
+    .aorist-page:not(.new-task-page) > .aorist-toolbar > div:not(:first-child) {
+      justify-content: flex-start;
+    }
+  }
+
+  .shell {
+    --search-height: 36px;
+    --search-radius: 8px;
+    --search-border: #d4d4d8;
+    --search-bg: #ffffff;
+    --search-icon: #777777;
+    --search-placeholder: #8e8e93;
+    --search-focus: #222222;
+  }
+
+  .management-search,
+  .capability-search,
+  .team-builder-search,
+  .aorist-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: var(--search-height);
+    padding: 0 10px;
+    border: 1px solid var(--search-border);
+    border-radius: var(--search-radius);
+    background: var(--search-bg);
+    color: var(--search-icon);
+    box-shadow: none;
+  }
+
+  .management-search :global(svg),
+  .capability-search :global(svg),
+  .team-builder-search :global(svg),
+  .aorist-search :global(svg) {
+    position: static;
+    flex: 0 0 auto;
+    color: var(--search-icon);
+    pointer-events: none;
+  }
+
+  .management-search input,
+  .capability-search input,
+  .team-builder-search input,
+  .aorist-search input {
+    min-width: 0;
+    width: 100%;
+    height: calc(var(--search-height) - 2px);
+    min-height: calc(var(--search-height) - 2px);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--aorist-ink);
+    box-shadow: none;
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  .aorist-search {
+    max-width: 448px;
+    margin-bottom: 16px;
+  }
+
+  .management-search input::placeholder,
+  .capability-search input::placeholder,
+  .team-builder-search input::placeholder,
+  .aorist-search input::placeholder {
+    color: var(--search-placeholder);
+  }
+
+  .management-search:focus-within,
+  .capability-search:focus-within,
+  .team-builder-search:focus-within,
+  .aorist-search:focus-within {
+    border-color: var(--search-focus);
+    box-shadow: 0 0 0 3px rgba(34, 34, 34, 0.12);
+  }
+
+  .agent-market-modal {
+    width: min(960px, calc(100vw - 44px));
+  }
+
+  .agent-market-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    margin: 14px 0;
+  }
+
+  .agent-market-search {
+    max-width: none;
+    margin: 0;
+  }
+
+  .agent-market-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: #666666;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .agent-market-stats span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid #dddddd;
+    border-radius: 7px;
+    background: #f7f7f8;
+  }
+
+  .agent-market-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    max-height: min(55vh, 520px);
+    overflow: auto;
+    padding-right: 2px;
+  }
+
+  .agent-market-card {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid #dddddd;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .agent-market-card.downloaded {
+    border-color: #c8c8c8;
+    background: #f7f7f8;
+  }
+
+  .agent-market-card header {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 9px;
+    align-items: start;
+  }
+
+  .agent-market-card header > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .agent-market-card strong,
+  .agent-market-empty strong {
+    display: block;
+    color: #222222;
+    font-size: 14px;
+    line-height: 1.25;
+  }
+
+  .agent-market-card em,
+  .agent-market-card p,
+  .agent-market-card small,
+  .agent-market-empty p {
+    margin: 0;
+    color: #666666;
+    font-size: 12px;
+    font-style: normal;
+    line-height: 1.55;
+  }
+
+  .agent-market-card b {
+    padding: 3px 7px;
+    border: 1px solid #dddddd;
+    border-radius: 999px;
+    color: #444444;
+    font-size: 11px;
+  }
+
+  .agent-market-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .agent-market-tags span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 7px;
+    border: 1px solid #e4e4e7;
+    border-radius: 6px;
+    background: #fafafa;
+    color: #52525b;
+    font-size: 11px;
+  }
+
+  .agent-market-card footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .agent-market-card footer button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 11px;
+    border: 1px solid #222222;
+    border-radius: 7px;
+    background: #222222;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .agent-market-card footer button.downloaded {
+    border-color: #d4d4d8;
+    background: #eeeeee;
+    color: #222222;
+  }
+
+  .agent-market-empty {
+    grid-column: 1 / -1;
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    min-height: 180px;
+    border: 1px dashed #d4d4d8;
+    border-radius: 8px;
+    color: #777777;
+    text-align: center;
+  }
+
+  @media (max-width: 760px) {
+    .agent-market-toolbar,
+    .agent-market-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .agent-market-stats {
+      justify-content: flex-start;
     }
   }
 </style>

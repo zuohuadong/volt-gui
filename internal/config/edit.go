@@ -825,12 +825,18 @@ func (c *Config) saveProjectIncremental(path string) error {
 	if tomlBodyHasTopLevelKey(body, "config_version") && !tomlBodyHasTopLevelKey(delta, "config_version") {
 		delta = fmt.Sprintf("config_version = %d\n", configVersion(c)) + delta
 	}
-	if strings.TrimSpace(delta) == "" {
+	removePlugins := len(c.Plugins) == 0 && tomlBodyHasSection(body, "plugins")
+	if strings.TrimSpace(delta) == "" && !removePlugins {
 		return nil // no changes to write
 	}
 
 	// Parse delta into section blocks and merge each into body
-	body = mergeTOMLDelta(body, delta)
+	if strings.TrimSpace(delta) != "" {
+		body = mergeTOMLDelta(body, delta)
+	}
+	if removePlugins {
+		body = removeTOMLSection(body, "plugins")
+	}
 	return writeConfigFile(path, body)
 }
 
@@ -1014,6 +1020,30 @@ func replaceTOMLSection(body, sectionName, newContent string) string {
 	return strings.TrimRight(body, "\n") + "\n\n" + newContent
 }
 
+func removeTOMLSection(body, sectionName string) string {
+	spans := tomlLineSpans(body)
+	for i, span := range spans {
+		name, isArray, ok := tomlEditSectionHeader(span.text)
+		if !ok || name != sectionName {
+			continue
+		}
+		end := len(body)
+		for j := i + 1; j < len(spans); j++ {
+			nextName, nextIsArray, ok := tomlEditSectionHeader(spans[j].text)
+			if !ok {
+				continue
+			}
+			if (isArray && nextIsArray && nextName == sectionName) || strings.HasPrefix(nextName, sectionName+".") {
+				continue
+			}
+			end = spans[j].start
+			break
+		}
+		return strings.TrimRight(body[:span.start], "\n") + "\n" + body[end:]
+	}
+	return body
+}
+
 type tomlLineSpan struct {
 	start int
 	end   int
@@ -1095,6 +1125,16 @@ func tomlBodyHasTopLevelKey(body, key string) bool {
 			return false
 		}
 		if got, ok := tomlTopLevelKey(span.text); ok && got == key {
+			return true
+		}
+	}
+	return false
+}
+
+func tomlBodyHasSection(body, sectionName string) bool {
+	for _, span := range tomlLineSpans(body) {
+		name, _, ok := tomlEditSectionHeader(span.text)
+		if ok && name == sectionName {
 			return true
 		}
 	}

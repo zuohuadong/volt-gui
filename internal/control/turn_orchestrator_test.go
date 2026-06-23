@@ -3,6 +3,8 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,6 +31,17 @@ func TestTurnOrchestratorRunsForegroundUnit(t *testing.T) {
 	if !strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
 		t.Fatalf("orchestrator should compose plan marker before running, got %q", runner.inputs[0])
 	}
+}
+
+type recordingSessionRunner struct {
+	session *agent.Session
+	inputs  []string
+}
+
+func (r *recordingSessionRunner) Run(_ context.Context, input string) error {
+	r.inputs = append(r.inputs, input)
+	r.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	return nil
 }
 
 func TestTurnOrchestratorGoalContinuationRunsStopPerUnit(t *testing.T) {
@@ -126,5 +139,46 @@ func TestTurnOrchestratorApprovedPlanSharesOneStopHook(t *testing.T) {
 	}
 	if stopEvents != 1 {
 		t.Fatalf("Stop hook events = %d, want one for plan + approved execution unit", stopEvents)
+	}
+}
+
+func TestTurnOrchestratorRefTurnRecordsVisibleDisplay(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("referenced evidence"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := agent.NewSession("sys")
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	runner := &recordingSessionRunner{session: sess}
+	events := make(chan event.Event, 4)
+	c := New(Options{
+		WorkspaceRoot: root,
+		Runner:        runner,
+		Executor:      exec,
+		Sink: event.FuncSink(func(e event.Event) {
+			events <- e
+		}),
+	})
+	var gotContent, gotDisplay string
+	c.SetDisplayRecorder(func(content, display string) {
+		gotContent = content
+		gotDisplay = display
+	})
+
+	const visible = "explain @notes.txt"
+	c.runRefTurn(visible, visible)
+	waitForTurnDone(t, events)
+
+	if len(runner.inputs) != 1 {
+		t.Fatalf("runner inputs = %d, want 1", len(runner.inputs))
+	}
+	if !strings.Contains(runner.inputs[0], "Referenced context:") || !strings.Contains(runner.inputs[0], "referenced evidence") {
+		t.Fatalf("model input should include resolved reference context, got %q", runner.inputs[0])
+	}
+	if gotDisplay != visible {
+		t.Fatalf("display recorder display = %q, want visible prompt %q", gotDisplay, visible)
+	}
+	if gotContent != runner.inputs[0] {
+		t.Fatalf("display recorder content = %q, want persisted model input %q", gotContent, runner.inputs[0])
 	}
 }

@@ -1,0 +1,51 @@
+﻿flowchart LR
+    Operator["Marketing operator"] --> DesktopShell["Volt GUI desktop workbench"]
+    Reviewer["Brand/legal reviewer"] --> DesktopShell
+
+    subgraph DesktopShell["Volt GUI desktop workbench"]
+        Work["Existing Work mode"]
+        Code["Existing Code mode"]
+        Marketing["New Marketing module"]
+        Composer["Existing composer and references"]
+        Dock["Existing right dock pattern"]
+        Resources["Typed resource surfaces"]
+    end
+
+    Marketing --> Composer
+    Marketing --> Dock
+    Marketing --> Resources
+
+    Resources --> API["Marketing Hub API"]
+    API --> Auth["Auth and RBAC"]
+    API --> CampaignDB[("Campaign database")]
+    API --> Assets["Object asset store"]
+    API --> Policy["Brand and policy service"]
+    API --> Orchestrator["Workflow orchestrator"]
+
+    Orchestrator --> Queue["Generation queue"]
+    Queue --> PPTWorker["PPT worker"]
+    Queue --> PosterWorker["Poster worker"]
+    Queue --> VideoWorker["Video worker"]
+
+    PPTWorker --> LLM["LLM provider"]
+    PPTWorker --> PPTX["PPTX renderer"]
+    PPTWorker --> Assets
+
+    PosterWorker --> LLM
+    PosterWorker --> ImageModel["Image generation provider"]
+    PosterWorker --> Raster["Poster compositor"]
+    PosterWorker --> Assets
+
+    VideoWorker --> LLM
+    VideoWorker --> VideoModel["Video generation provider"]
+    VideoWorker --> Audio["Speech/music provider"]
+    VideoWorker --> Render["Timeline renderer"]
+    VideoWorker --> Assets
+
+    Policy --> CampaignDB
+    Policy --> Assets
+    Orchestrator --> CampaignDB
+
+    API --> Export["Export package service"]
+    Export --> Assets
+    Marketing --> Export

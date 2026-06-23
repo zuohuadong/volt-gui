@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"voltui/internal/agent"
 	"voltui/internal/event"
@@ -42,12 +43,12 @@ func toolCallTurn(id, name, args string) []provider.Chunk {
 	}
 }
 
-// TestApprovalSubjectEndToEnd drives a full agent turn through the real gate:
+// TestApprovalToolWideEndToEnd drives a full agent turn through the real gate:
 // the model writes two different files, the user answers "allow for this session"
-// on the first, and the second — a different subject — must still prompt.
-// This guards against regression where a session grant accidentally covered
-// every subject of the same tool, lowering the security bar.
-func TestApprovalSubjectEndToEnd(t *testing.T) {
+// on the first, and the second must run without a second prompt. Regression for
+// #3498 / #3520 (a session/persist grant used to pin the exact subject, so every
+// new file/command re-prompted).
+func TestApprovalToolWideEndToEnd(t *testing.T) {
 	writer := &recordingWriter{}
 	reg := tool.NewRegistry()
 	reg.Add(writer)
@@ -74,20 +75,15 @@ func TestApprovalSubjectEndToEnd(t *testing.T) {
 	})
 	c.EnableInteractiveApproval()
 
-	// Answer each prompt with "allow for this session" (allow, session, !persist).
-	// The grant is per-subject, so the second file (b.txt) still prompts.
-	go func() {
-		for i := 0; i < 2; i++ {
-			c.Approve(<-approvalID, true, true, false)
-		}
-	}()
+	// Answer the first prompt with "allow for this session" (allow, session, !persist).
+	go func() { c.Approve(<-approvalID, true, true, false) }()
 
 	if err := c.runTurnWithRaw(context.Background(), "edit the files", "edit the files"); err != nil {
 		t.Fatalf("runTurnWithRaw: %v", err)
 	}
 
-	if prompts != 2 {
-		t.Errorf("approval prompts = %d, want 2 (each distinct subject must prompt; session grant is per-subject, not per-tool)", prompts)
+	if prompts != 1 {
+		t.Errorf("approval prompts = %d, want 1 (the session grant must cover the second file too)", prompts)
 	}
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
@@ -96,49 +92,68 @@ func TestApprovalSubjectEndToEnd(t *testing.T) {
 	}
 }
 
-// TestApprovalSameSubjectSessionGrant verifies that a session grant for the
-// exact same tool+subject is honored on subsequent identical calls.
-func TestApprovalSameSubjectSessionGrant(t *testing.T) {
-	writer := &recordingWriter{}
-	reg := tool.NewRegistry()
-	reg.Add(writer)
-
-	prov := &scriptedTurns{turns: [][]provider.Chunk{
-		toolCallTurn("c1", "write_file", `{"path":"a.txt"}`),
-		toolCallTurn("c2", "write_file", `{"path":"a.txt"}`),
-		textTurn("Done."),
-	}}
-	ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, event.Discard)
-
-	approvalID := make(chan string, 4)
-	prompts := 0
+// TestApprovalTimeoutDeniesWhenUnanswered verifies a positive ApprovalTimeout
+// turns an unanswered prompt into a denial (error) instead of blocking forever
+// (#4626, #4402). Ask shares the same wait context as tool-approval prompts.
+func TestApprovalTimeoutDeniesWhenUnanswered(t *testing.T) {
 	c := New(Options{
-		Runner:   ag,
-		Executor: ag,
-		Policy:   permission.New("ask", nil, nil, nil),
-		Sink: event.FuncSink(func(e event.Event) {
-			if e.Kind == event.ApprovalRequest {
-				prompts++
-				approvalID <- e.Approval.ID
-			}
-		}),
+		Policy:          permission.New("ask", nil, nil, nil),
+		Sink:            event.Discard,
+		ApprovalTimeout: 40 * time.Millisecond,
 	})
 	c.EnableInteractiveApproval()
 
-	// Answer the first prompt with "allow for this session".
-	// The second call to the same file should be covered by the grant.
-	go func() { c.Approve(<-approvalID, true, true, false) }()
+	start := time.Now()
+	_, err := c.Ask(context.Background(), []event.AskQuestion{{ID: "q1", Prompt: "pick one"}})
+	elapsed := time.Since(start)
 
-	if err := c.runTurnWithRaw(context.Background(), "edit the file twice", "edit the file twice"); err != nil {
-		t.Fatalf("runTurnWithRaw: %v", err)
+	if err == nil {
+		t.Fatal("Ask should error when the approval timeout elapses unanswered")
+	}
+	// Must return near the timeout, not hang. Allow generous slack for CI scheduling.
+	if elapsed > 2*time.Second {
+		t.Fatalf("Ask blocked for %v; timeout should have fired near 40ms", elapsed)
+	}
+}
+
+// TestApprovalTimeoutZeroWaitsIndefinitely confirms the default (zero) keeps the
+// interactive behavior: an unanswered Ask blocks rather than timing out, so a
+// human at a terminal is never cut off.
+func TestApprovalTimeoutZeroWaitsIndefinitely(t *testing.T) {
+	c := New(Options{
+		Policy: permission.New("ask", nil, nil, nil),
+		Sink:   event.Discard,
+		// ApprovalTimeout intentionally zero (default).
+	})
+	c.EnableInteractiveApproval()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Ask(context.Background(), []event.AskQuestion{{ID: "q1", Prompt: "pick one"}})
+		done <- err
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("Ask with zero timeout must block until answered, not return on its own")
+	case <-time.After(120 * time.Millisecond):
+		// Good: still blocked, as expected for interactive use.
 	}
 
-	if prompts != 1 {
-		t.Errorf("approval prompts = %d, want 1 (same tool+subject session grant must suppress re-prompt)", prompts)
+	// Clean up so the goroutine doesn't linger: answer the prompt.
+	c.approval.mu.Lock()
+	var ids []string
+	for id := range c.approval.asks {
+		ids = append(ids, id)
 	}
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	if len(writer.paths) != 2 {
-		t.Errorf("executed writes = %d, want 2", len(writer.paths))
+	c.approval.mu.Unlock()
+
+	for _, id := range ids {
+		c.AnswerQuestion(id, []event.AskAnswer{{QuestionID: "q1", Selected: []string{"x"}}})
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ask did not unblock after answering")
 	}
 }

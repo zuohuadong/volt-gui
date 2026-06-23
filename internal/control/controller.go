@@ -14,25 +14,28 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"voltui/internal/agent"
 	"voltui/internal/billing"
 	"voltui/internal/checkpoint"
-	"voltui/internal/codegraph"
 	"voltui/internal/command"
 	"voltui/internal/config"
 	"voltui/internal/diff"
 	"voltui/internal/event"
+	"voltui/internal/evidence"
 	"voltui/internal/hook"
 	"voltui/internal/i18n"
 	"voltui/internal/jobs"
@@ -43,8 +46,19 @@ import (
 	"voltui/internal/provider"
 	"voltui/internal/sandbox"
 	"voltui/internal/skill"
+	"voltui/internal/store"
 	"voltui/internal/tool"
 )
+
+// ErrTurnRunning reports that a caller tried to start a second foreground turn
+// while one is already active in the same Controller.
+var ErrTurnRunning = errors.New("turn already running")
+
+// errNoSessionPath is returned by snapshot when a session has content to persist
+// but no resolved session path — a misconfiguration (e.g. an unresolvable data
+// dir in a bot deployment) that previously dropped conversations silently
+// (#4414). Callers log it and continue; it must never be swallowed quietly.
+var errNoSessionPath = errors.New("session has content but no session path; conversation cannot be persisted")
 
 // Controller drives one chat session. Construct with New; drive with the command
 // methods; observe through the Sink passed in Options.
@@ -55,20 +69,29 @@ type Controller struct {
 	policy   permission.Policy
 
 	label        string
+	modelRef     string
 	systemPrompt string
 	sessionDir   string
-	host         *plugin.Host
-	commands     []command.Command
-	skills       []skill.Skill
-	allSkills    []skill.Skill
-	hooks        *hook.Runner // session hook runner; nil-safe (no hooks configured)
-	mem          *memory.Set
-	cleanup      func()
-	autoPlan     string
-	classifier   autoPlanClassifier
-	startedOnce  bool              // guards the one-shot SessionStart hook on first turn
-	onRemember   func(rule string) // set via Options; invoked when user picks "always allow"
-	goal         goalState
+	commands     atomic.Pointer[[]command.Command]
+	// skills owns the session's discovered skills (enabled subset, full set, and
+	// the reloadable stores) — the skills slice of the Capabilities concern. See
+	// skill.go.
+	skills skillSet
+	hooks  *hook.Runner // session hook runner; nil-safe (no hooks configured)
+	// memory owns the loaded memory snapshot, the pending turn-tail notes queue,
+	// and write serialization behind its own locks, off c.mu — so a memory-panel
+	// save never stalls an approval or status poll. See memory.go.
+	memory            memoryManager
+	cleanup           func()
+	autoPlan          string
+	reasoningLanguage string
+	// disableColdResumePrune skips stale-tool-result elision on cold resume.
+	// Zero value keeps the prune on (the cheaper default).
+	disableColdResumePrune bool
+	shell                  sandbox.Shell // interpreter for user-invoked "!" commands; zero = auto
+	classifier             autoPlanClassifier
+	startedOnce            bool                             // guards the one-shot SessionStart hook on first turn
+	onRemember             func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -82,68 +105,52 @@ type Controller struct {
 	// Close cancels its still-running jobs.
 	jobs *jobs.Manager
 
-	// reg is the live tool registry the executor reads each turn; pluginCtx is the
-	// session-scoped context a hot-added stdio server binds its subprocess to.
-	// Together they let AddMCPServer connect a server mid-session and have its tools
-	// available on the next turn (see AddMCPServer / RemoveMCPServer).
-	reg       *tool.Registry
-	pluginCtx context.Context
+	// mcp owns the session's live tool/plugin surface — the MCP plugin Host, the
+	// tool registry the executor reads each turn, and the session-scoped context a
+	// hot-added stdio server binds its subprocess to — behind its own lock, off
+	// c.mu. The Controller keeps the config-facing orchestration (persisting
+	// voltui.toml on add/remove, building specs from entries). See mcp.go.
+	mcp mcpManager
 
-	// Checkpoints (snapshot-based rewind). cp is the per-session store rebound when
-	// the session path changes; cpRoot is the workspace root used to guard restore
-	// writes. cpTurn is the monotonic turn counter (decoupled from the store so it
-	// never collides after a restructure); cpBound[turn] records len(Session.Messages)
-	// at that turn's start — the truncation boundary for a conversation rewind/fork.
-	// Boundaries are persisted in each checkpoint and rebuilt from the store on
-	// resume (so a reopened session can still rewind conversation / fork), but
-	// dropped after a summarize restructures the log so those operations report
-	// "unavailable" rather than mis-truncating; code rewind (file-based) is unaffected.
-	cp      *checkpoint.Store
-	cpRoot  string
-	cpTurn  int
-	cpBound map[int]int
+	// goals owns the active goal's FSM (status, intercepts, idle/turn counters)
+	// and its persistence, behind its own mutex so a per-turn goal save never
+	// stalls an approval or status poll on c.mu. See goal.go.
+	goals goalMachine
 
-	// promptMu serialises approval prompts so at most one is outstanding at a
-	// time (parallel read-only tool calls don't normally gate, writers run
-	// serially — but this keeps the contract explicit). Held across the blocking
-	// wait, so it must never be taken by the Approve command path.
-	promptMu sync.Mutex
+	// workspaceRoot is the workspace root: the base for resolving @-refs and slash
+	// path refs, the working directory for user "!" shell commands and custom
+	// command discovery, and the guard root for checkpoint restore writes. It is
+	// surfaced to frontends via WorkspaceRoot().
+	workspaceRoot string
 
-	// mu guards the run state and approval bookkeeping; every critical section
-	// under it is short and non-blocking.
-	mu               sync.Mutex
-	cancel           context.CancelFunc
-	running          bool
-	planMode         bool
-	sessionPath      string
-	approvals        map[string]chan approvalReply
-	pendingApprovals map[string]event.Approval
-	asks             map[string]chan []event.AskAnswer
-	pendingAsks      map[string]event.Ask
-	granted          map[string]bool
-	nextID           int
+	// checkpoints owns the snapshot-based rewind bookkeeping (the per-session
+	// store, the monotonic turn counter, and the conversation-rewind boundary map)
+	// behind its own lock, off c.mu — so a boundary read for a rewind/fork never
+	// contends on the run-state lock. The Controller keeps the rewind/fork/summarize
+	// orchestration (truncating the session, restoring code, emitting events). See
+	// checkpoint.go.
+	checkpoints checkpointManager
+
+	// approval owns the approval/ask prompt bookkeeping and the runtime approval
+	// posture (ask/auto/yolo, session grants, the just-approved-plan window)
+	// behind its own locks, off c.mu. The Controller keeps the I/O orchestration
+	// (requestApproval/Ask emit events + fire hooks + rebuild the executor gate).
+	// See approval.go.
+	approval approvalManager
+
+	// mu guards the run state; every critical section under it is short and
+	// non-blocking.
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	running     bool
+	canceling   bool
+	autosaveWG  sync.WaitGroup
+	planMode    bool
+	sessionPath string
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
-	// autoApprove auto-allows writer tool calls without prompting. Set only while
-	// executing a just-approved plan: approving the plan is the go-ahead, so the
-	// model shouldn't re-prompt for every write of the work it just got cleared to
-	// do. Deny rules still bite (those never reach the approver). Reset when the
-	// execution turn returns.
-	autoApprove bool
 
-	// bypass is "YOLO" mode: while set, every approval prompt is auto-allowed for
-	// the rest of the session (writers and bash run without asking). It is a
-	// deliberate, session-scoped opt-in (the --dangerously-skip-permissions flag or
-	// a runtime toggle), never persisted. Deny rules are unaffected — they're
-	// resolved before the approver, so a denied tool is still blocked in YOLO mode.
-	bypass bool
-
-	// pendingMemory holds memory notes added mid-session (via "#" quick-add or a
-	// memory edit) that haven't yet been folded into a turn. Compose drains it
-	// onto the next outgoing turn — never into the cache-stable system prefix — so
-	// a fresh memory takes effect this session without busting the prompt cache;
-	// it joins the prefix naturally on the next session.
-	pendingMemory []string
+	displayRecorder func(content, display string)
 }
 
 type approvalReply struct {
@@ -152,30 +159,79 @@ type approvalReply struct {
 	persist bool // true = write "always allow" rule to config
 }
 
-// cacheColdAfter controls when resuming an older session may prune stale,
-// re-derivable tool results before the next model turn. Tests override it to
-// exercise cold and warm resume paths deterministically.
-var cacheColdAfter = 12 * time.Hour
+type pendingApproval struct {
+	tool      string
+	subject   string
+	autoDrain bool
+	reply     chan approvalReply
+}
+
+// pendingAsk is an in-flight ask question batch. questions is retained so the
+// AskRequest can be re-emitted to a frontend that reconnected after the original
+// event (see ReplayPendingPrompts).
+type pendingAsk struct {
+	questions []event.AskQuestion
+	reply     chan []event.AskAnswer
+}
+
+type plannerSessionResetter interface {
+	ResetPlannerSession()
+}
+
+// RuntimeStatus is the frontend-facing snapshot of foreground turn state. It is
+// intentionally more explicit than the legacy Running bool so UI code can
+// distinguish a cancellable foreground turn from pending prompts and background
+// jobs.
+type RuntimeStatus struct {
+	Running         bool
+	PendingPrompt   bool
+	BackgroundJobs  int
+	CancelRequested bool
+	Cancellable     bool
+}
+
+const (
+	ToolApprovalAsk  = "ask"
+	ToolApprovalAuto = "auto"
+	ToolApprovalYolo = "yolo"
+)
+
+const (
+	memoryRememberTool = "remember"
+	memoryForgetTool   = "forget"
+)
+
+// RememberResult describes what happened when an approval rule was persisted.
+type RememberResult struct {
+	Rule      string
+	Path      string
+	Saved     bool
+	CoveredBy string
+	Err       error
+}
 
 // Options carries the already-built pieces setup assembles. Lifecycle metadata
 // lets the controller mint and rotate session files; Host/Commands are surfaced
 // to frontends that resolve MCP prompts and slash commands.
 type Options struct {
-	Runner       agent.Runner
-	Executor     *agent.Agent
-	Sink         event.Sink
-	Policy       permission.Policy
-	Label        string
-	SystemPrompt string
-	SessionDir   string
-	SessionPath  string
-	Host         *plugin.Host
-	Commands     []command.Command
-	Skills       []skill.Skill
-	AllSkills    []skill.Skill
-	Hooks        *hook.Runner
-	Memory       *memory.Set
-	Cleanup      func()
+	Runner        agent.Runner
+	Executor      *agent.Agent
+	Sink          event.Sink
+	Policy        permission.Policy
+	Label         string
+	ModelRef      string
+	SystemPrompt  string
+	SessionDir    string
+	SessionPath   string
+	Host          *plugin.Host
+	Commands      []command.Command
+	Skills        []skill.Skill
+	AllSkills     []skill.Skill
+	SkillStore    *skill.Store
+	AllSkillStore *skill.Store
+	Hooks         *hook.Runner
+	Memory        *memory.Set
+	Cleanup       func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
 	BalanceURL    string
@@ -191,11 +247,30 @@ type Options struct {
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot string
 	AutoPlan      string
-	Classifier    autoPlanClassifier
+	// ReasoningLanguage controls visible reasoning language preference. Empty/auto
+	// means no transient injection because the stable language policy already
+	// follows the conversation language.
+	ReasoningLanguage string
+	// DisableColdResumePrune skips the stale-tool-result elision that otherwise
+	// runs when a session resumes past the provider cache window. Zero value
+	// keeps the prune on (the cheaper default).
+	DisableColdResumePrune bool
+	// Shell is the interpreter user-invoked "!" commands run under, so /shell
+	// matches the agent's configured [tools.shell] choice. Zero value = auto.
+	Shell      sandbox.Shell
+	Classifier autoPlanClassifier
 	// OnRemember, when set, is invoked with a new allow rule the user chose to
-	// persist to disk (e.g. "bash(go build*)"). The callback is wired into the
+	// persist to disk (e.g. "Bash(go test:*)"). The callback is wired into the
 	// permission Gate on EnableInteractiveApproval.
-	OnRemember func(rule string)
+	OnRemember func(rule string) RememberResult
+	// PlanModeAllowedTools names tools exempt from the plan-mode read-only gate.
+	// Passed through to the executor agent so user-configured exceptions work.
+	PlanModeAllowedTools []string
+	// ApprovalTimeout bounds how long a tool-approval or ask prompt blocks waiting
+	// for a user decision. Zero (default) waits forever — right for an interactive
+	// terminal. Bot/headless frontends set a positive value so an unanswered
+	// prompt can't wedge the session indefinitely (#4626, #4402).
+	ApprovalTimeout time.Duration
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -213,87 +288,106 @@ func New(opts Options) *Controller {
 		pluginCtx = context.Background()
 	}
 	c := &Controller{
-		runner:           opts.Runner,
-		executor:         opts.Executor,
-		sink:             sink,
-		policy:           opts.Policy,
-		label:            opts.Label,
-		systemPrompt:     opts.SystemPrompt,
-		sessionDir:       opts.SessionDir,
-		sessionPath:      opts.SessionPath,
-		host:             opts.Host,
-		commands:         opts.Commands,
-		skills:           opts.Skills,
-		allSkills:        opts.AllSkills,
-		hooks:            opts.Hooks,
-		mem:              opts.Memory,
-		cleanup:          opts.Cleanup,
-		autoPlan:         normalizeAutoPlan(opts.AutoPlan),
-		classifier:       classifier,
-		onRemember:       opts.OnRemember,
-		balanceURL:       opts.BalanceURL,
-		balanceKey:       opts.BalanceKey,
-		balanceClient:    opts.BalanceClient,
-		jobs:             opts.Jobs,
-		reg:              opts.Registry,
-		pluginCtx:        pluginCtx,
-		cpRoot:           opts.WorkspaceRoot,
-		approvals:        map[string]chan approvalReply{},
-		pendingApprovals: map[string]event.Approval{},
-		asks:             map[string]chan []event.AskAnswer{},
-		pendingAsks:      map[string]event.Ask{},
-		granted:          map[string]bool{},
+		runner:                 opts.Runner,
+		executor:               opts.Executor,
+		sink:                   sink,
+		policy:                 opts.Policy,
+		label:                  opts.Label,
+		modelRef:               opts.ModelRef,
+		systemPrompt:           opts.SystemPrompt,
+		sessionDir:             opts.SessionDir,
+		sessionPath:            opts.SessionPath,
+		commands:               atomic.Pointer[[]command.Command]{},
+		skills:                 newSkillSet(opts.Skills, opts.AllSkills, opts.SkillStore, opts.AllSkillStore),
+		hooks:                  opts.Hooks,
+		memory:                 newMemoryManager(opts.Memory),
+		cleanup:                opts.Cleanup,
+		autoPlan:               normalizeAutoPlan(opts.AutoPlan),
+		reasoningLanguage:      config.NormalizeReasoningLanguage(opts.ReasoningLanguage),
+		disableColdResumePrune: opts.DisableColdResumePrune,
+		shell:                  opts.Shell,
+		classifier:             classifier,
+		onRemember:             opts.OnRemember,
+		balanceURL:             opts.BalanceURL,
+		balanceKey:             opts.BalanceKey,
+		balanceClient:          opts.BalanceClient,
+		jobs:                   opts.Jobs,
+		mcp:                    newMcpManager(opts.Host, opts.Registry, pluginCtx),
+		workspaceRoot:          opts.WorkspaceRoot,
+		approval:               newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
+	c.setActiveJobSession(opts.SessionPath)
+	cmdsInit := opts.Commands
+	c.commands.Store(&cmdsInit)
 	if c.executor != nil {
 		c.executor.SetPreEditHook(func(ch diff.Change) {
-			if c.cp != nil {
-				c.cp.Snapshot(ch)
-			}
+			c.checkpoints.snapshot(ch)
 		})
 		c.executor.SetMemoryQueue(c)
 	}
 	return c
 }
 
+// SetDisplayRecorder installs an optional hook used by frontends that persist a
+// shorter user-facing transcript than the fully composed model prompt.
+func (c *Controller) SetDisplayRecorder(fn func(content, display string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.displayRecorder = fn
+}
+
+func (c *Controller) recordDisplay(content, display string) {
+	if strings.TrimSpace(display) == "" || content == display {
+		return
+	}
+	c.mu.Lock()
+	record := c.displayRecorder
+	c.mu.Unlock()
+	if record != nil {
+		record(content, display)
+	}
+}
+
+func (c *Controller) recordDisplayForNewUser(startMessages int, display string) {
+	if strings.TrimSpace(display) == "" {
+		return
+	}
+	msgs := c.History()
+	if startMessages > len(msgs) {
+		startMessages = len(msgs)
+	}
+	for _, m := range msgs[startMessages:] {
+		if m.Role == provider.RoleUser {
+			c.recordDisplay(m.Content, display)
+			return
+		}
+	}
+}
+
 // ckptDir derives a session's checkpoint directory from its file path
 // (…/<id>.jsonl → …/<id>.ckpt). Empty path → empty (in-memory checkpoints).
 func ckptDir(sessionPath string) string {
-	if sessionPath == "" {
-		return ""
-	}
-	return strings.TrimSuffix(sessionPath, ".jsonl") + ".ckpt"
+	return store.SessionCheckpointDir(sessionPath)
 }
 
 // rebindCheckpoints points the store at the (possibly new) session, loading any
 // checkpoints already on disk, and resets the turn boundaries. Called on
 // construction and whenever the session path changes (NewSession/Resume/SetSessionPath).
 func (c *Controller) rebindCheckpoints(sessionPath string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cp = checkpoint.New(ckptDir(sessionPath), c.cpRoot)
-	c.cpTurn = c.cp.NextTurn() // continue numbering past any checkpoints on disk
-	c.cpBound = c.cp.Bounds()  // rebuilt from persisted checkpoints so a resumed
-	if c.cpBound == nil {      // session can still rewind conversation / fork
-		c.cpBound = map[int]int{}
-	}
+	c.goals.setStatePath(goalStatePath(sessionPath))
+	c.checkpoints.rebind(ckptDir(sessionPath), c.workspaceRoot)
 }
 
 // beginCheckpoint opens a checkpoint for the turn about to run, recording the
 // current message count as the conversation-rewind boundary. Called at the top of
 // runTurn, before the user message is appended.
 func (c *Controller) beginCheckpoint(input string) {
-	if c.cp == nil || c.executor == nil {
+	if c.executor == nil {
 		return
 	}
-	c.mu.Lock()
-	turn := c.cpTurn
-	c.cpTurn++
-	msgIndex := len(c.executor.Session().Messages)
-	c.cpBound[turn] = msgIndex
-	c.mu.Unlock()
-	c.cp.Begin(turn, input, msgIndex)
+	c.checkpoints.begin(input, len(c.executor.Session().Messages))
 }
 
 // --- commands (frontend → controller) ---
@@ -311,14 +405,31 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.running = true
+	c.canceling = false
 	c.mu.Unlock()
 
+	c.autosaveWG.Add(1)
+	go func() {
+		defer c.autosaveWG.Done()
+		c.autosaveWhileRunning(ctx)
+	}()
 	go func() {
 		defer cancel()
+		defer func() {
+			if r := recover(); r != nil {
+				c.mu.Lock()
+				c.running = false
+				c.cancel = nil
+				c.canceling = false
+				c.mu.Unlock()
+				c.sink.Emit(event.Event{Kind: event.TurnDone, Err: fmt.Errorf("internal error: %v", r)})
+			}
+		}()
 		err := body(ctx)
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
+		c.canceling = false
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 	}()
@@ -336,7 +447,7 @@ func (c *Controller) Send(input string) {
 // resolved @-reference payloads so referenced file contents cannot inflate the
 // complexity score.
 func (c *Controller) SendWithRaw(input, raw string) {
-	c.runGuarded(func(ctx context.Context) error { return c.runTurnWithRaw(ctx, input, raw) })
+	c.runGuarded(func(ctx context.Context) error { return c.runGoalLoopWithRaw(ctx, input, raw) })
 }
 
 // planApprovalTool is the Tool name on the ApprovalRequest the controller emits
@@ -346,9 +457,9 @@ const planApprovalTool = "exit_plan_mode"
 
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off; you're cleared to make the changes without asking again. Implement the plan now. Keep the task list current with todo_write, preserving its two-level shape (phases at level 0, their sub-steps at level 1): mark the sub-step you start as in_progress, one in_progress at a time. Sign off each finished sub-step with complete_step, attaching the evidence it's done — the verification you ran, the diff/files you changed, or a manual check. Don't claim a step is done without evidence."
+const planApprovedMessage = "Plan approved — plan mode is off; you’re cleared to make the changes without asking again. Implement the plan now. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
 
-// RunTurn runs one model turn, then applies the plan-approval gate. This is the
+// runTurn runs one model turn, then applies the plan-approval gate. This is the
 // single, frontend-agnostic plan flow: in plan mode the model just researches
 // (writers are blocked) and writes its plan as a normal answer — no special tool.
 // When the turn ends with a text proposal, the controller asks the user to
@@ -357,26 +468,67 @@ const planApprovedMessage = "Plan approved — plan mode is off; you're cleared 
 // continues straight into execution; on rejection it stays in plan mode so the
 // next turn can revise. Plan mode is only ever set interactively, so the headless
 // `Run` path (which doesn't call this) never blocks on a prompt.
+func (c *Controller) runTurn(ctx context.Context, input string) error {
+	return c.runGoalLoopWithRaw(ctx, input, input)
+}
+
+// RunTurn executes one foreground turn synchronously through the same lifecycle
+// used by interactive frontends: auto-plan, transient memory/background-job
+// composition, checkpoints, hooks, and plan approval. It is for transports that
+// need a blocking request/response boundary, such as ACP session/prompt.
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
-	return c.runTurnWithRaw(ctx, input, input)
+	ctx, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		cancel()
+		return ErrTurnRunning
+	}
+	c.cancel = cancel
+	c.running = true
+	c.canceling = false
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		c.running = false
+		c.cancel = nil
+		c.canceling = false
+		c.mu.Unlock()
+		cancel()
+	}()
+	return c.runTurn(ctx, input)
 }
 
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
-	return c.runTurnWithRawOptions(ctx, input, raw, runTurnOptions{})
+	return c.runTurnWithRawDisplay(ctx, input, raw, "")
 }
 
-type runTurnOptions struct {
-	skipAutoPlan bool
+func (c *Controller) runGoalLoopWithRaw(ctx context.Context, input, raw string) error {
+	return c.runGoalLoopWithRawDisplay(ctx, input, raw, "")
 }
 
-func (c *Controller) runTurnWithRawOptions(ctx context.Context, input, raw string, opts runTurnOptions) error {
-	c.maybeSessionStart(ctx)
-	if !opts.skipAutoPlan {
-		c.maybeAutoPlan(ctx, raw)
+func (c *Controller) runGoalLoopWithRawDisplay(ctx context.Context, input, raw, display string) error {
+	if err := c.runTurnWithRawDisplay(ctx, input, raw, display); err != nil {
+		if ctx.Err() != nil {
+			c.stopGoal(GoalStatusStopped)
+		}
+		return err
 	}
+	return c.continueGoal(ctx)
+}
+
+func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, display string) error {
+	c.maybeSessionStart(ctx)
+	c.maybeAutoPlan(ctx, raw)
+	parentSession := c.parentSessionID()
+	ctx = agent.WithParentSession(ctx, parentSession)
+	ctx = jobs.WithSession(ctx, parentSession)
+	ctx = agent.WithUserImages(ctx, c.inputImages(input))
 	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
+	defer c.recordDisplayForNewUser(startMessages, display)
 	// Open a checkpoint for this turn before the user message is appended, so the
 	// recorded message boundary precedes it and pre-edit snapshots land here.
 	c.beginCheckpoint(input)
@@ -408,7 +560,7 @@ func (c *Controller) runTurnWithRawOptions(ctx context.Context, input, raw strin
 	}
 	// The plan is already visible as the assistant's answer, so the request
 	// carries no subject — it's purely the gate.
-	allow, _, err := c.requestApproval(ctx, planApprovalTool, "")
+	allow, _, err := c.requestApproval(ctx, planApprovalTool, "", nil)
 	if err != nil {
 		return err
 	}
@@ -416,22 +568,88 @@ func (c *Controller) runTurnWithRawOptions(ctx context.Context, input, raw strin
 		return nil // keep planning; plan mode stays on
 	}
 	c.SetPlanMode(false)
-	seededTodos := c.seedPlanTodos(proposal)
+	todoArgs := c.seedPlanTodos(proposal)
+	execStart := c.sessionMessageCount()
 	// The plan is the go-ahead: don't re-prompt for each write of the approved
-	// work. Auto-approve writers for the duration of this execution turn only.
-	c.mu.Lock()
-	c.autoApprove = true
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		c.autoApprove = false
-		c.mu.Unlock()
-	}()
-	if err := c.runner.Run(ctx, planApprovedMessage); err != nil {
+	// work. Auto-approve writers for the duration of this execution turn only; a
+	// later turn (even "continue") falls back to the normal per-tool approval.
+	c.approval.setPlanAutoApprove(true)
+	defer c.approval.setPlanAutoApprove(false)
+	if err := c.runner.Run(ctx, c.ComposeSynthetic(planApprovedMessage)); err != nil {
 		return err
 	}
-	c.completePlanTodos(seededTodos)
+	if todoArgs != "" && !c.hasTodoUpdateSince(execStart) {
+		c.completePlanTodos(todoArgs)
+	}
 	return nil
+}
+
+func (c *Controller) continueGoal(ctx context.Context) error {
+	for {
+		cont := c.advanceGoalAfterTurn()
+		if !cont {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			c.stopGoal(GoalStatusStopped)
+			return err
+		}
+		turn := goalContinueTurn
+		if msg, ok := c.goals.takeIntercept(); ok {
+			turn = msg
+			c.notice("goal intercept: incomplete todos remain (override with a second [goal:complete])")
+		}
+		if err := c.runTurnWithRawDisplay(ctx, turn, turn, ""); err != nil {
+			if ctx.Err() != nil {
+				c.stopGoal(GoalStatusStopped)
+			}
+			return err
+		}
+	}
+}
+
+func (c *Controller) advanceGoalAfterTurn() bool {
+	// Gather every input the FSM needs off the goal lock: parse the marker,
+	// snapshot the executor's todos + readiness, and check tool activity. None
+	// of these touch goal state, so the machine's critical section stays pure.
+	status, reason, _ := parseGoalStatusMarker(lastAssistantText(c.History()))
+	var readiness string
+	if c.executor != nil {
+		readiness = c.executor.GoalReadinessFailure()
+	}
+	res := c.goals.advance(goalAdvanceInput{
+		status:     status,
+		reason:     reason,
+		toolCalled: c.toolWasCalledLastTurn(),
+		todos:      c.goalTodos(),
+		readiness:  readiness,
+	})
+	c.persistGoalState(res.path, res.data, res.ok)
+	if res.notice != "" {
+		c.notice(res.notice)
+	}
+	return res.cont
+}
+
+// toolWasCalledLastTurn reports whether the most recent assistant message
+// contained any tool calls, indicating the agent made observable progress.
+func (c *Controller) toolWasCalledLastTurn() bool {
+	msgs := c.History()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == provider.RoleAssistant {
+			return len(m.ToolCalls) > 0
+		}
+		if m.Role == provider.RoleUser {
+			return false
+		}
+	}
+	return false
+}
+
+func (c *Controller) stopGoal(status string) {
+	path, data, ok := c.goals.stop(status, c.goalTodos())
+	c.persistGoalState(path, data, ok)
 }
 
 // lastAssistantText returns the content of the most recent assistant message with
@@ -450,11 +668,35 @@ func lastAssistantText(msgs []provider.Message) string {
 // composition — emitting all output as events. The HTTP/SSE server uses this so
 // a browser client only POSTs the typed line.
 //
-// Slash commands route to the matching primitive: /compact and /new run their
-// session op and emit a Notice; /mcp__server__prompt and custom /commands
+// Slash commands route to the matching primitive: /compact, /new, and /clear
+// run their session op and emit a Notice; /mcp__server__prompt and custom /commands
 // resolve to a turn; an unknown slash emits a Notice. Anything else is a normal
 // turn with its @-references resolved first.
 func (c *Controller) Submit(input string) {
+	c.submit(input, "")
+}
+
+// SubmitHTTP accepts input from the unauthenticated localhost HTTP frontend. It
+// deliberately omits the trusted TUI-only "!cmd" shell shortcut and resolves file
+// references only through the controller's workspace root.
+func (c *Controller) SubmitHTTP(input string) {
+	c.submitHTTP(input, "")
+}
+
+// SubmitDisplay runs input as a turn while remembering the user-facing display
+// text for transcript replay when controller-side composition expands input.
+func (c *Controller) SubmitDisplay(display, input string) {
+	c.submit(input, display)
+}
+
+// SubmitUserTurn starts a normal model turn without interpreting shell or slash
+// commands. It still resolves references, so callers can submit trusted
+// user-authored prompt text without expanding the command surface.
+func (c *Controller) SubmitUserTurn(input, display string) {
+	c.runRefTurn(input, display)
+}
+
+func (c *Controller) submit(input, display string) {
 	trimmed := strings.TrimSpace(input)
 	if note, ok := MemoryQuickAddNote(trimmed); ok {
 		c.rememberProjectNote(note)
@@ -464,13 +706,44 @@ func (c *Controller) Submit(input string) {
 		c.rememberProjectNote(note)
 		return
 	}
+	if c.applyGoalCommand(trimmed, display) {
+		return
+	}
 	if strings.HasPrefix(trimmed, "!") {
 		c.RunShell(trimmed[1:])
 		return
 	}
+	c.submitCommandOrTurn(trimmed, input, display, false)
+}
+
+func (c *Controller) submitHTTP(input, display string) {
+	trimmed := strings.TrimSpace(input)
+	if note, ok := MemoryQuickAddNote(trimmed); ok {
+		c.rememberProjectNote(note)
+		return
+	}
+	if note, ok := RememberCommandNote(trimmed); ok {
+		c.rememberProjectNote(note)
+		return
+	}
+	if c.applyGoalCommand(trimmed, display) {
+		return
+	}
+	if strings.HasPrefix(trimmed, "!") {
+		c.notice("shell commands are unavailable from this frontend")
+		return
+	}
+	c.submitCommandOrTurn(trimmed, input, display, true)
+}
+
+func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedRefsOnly bool) {
+	runRefTurn := c.runRefTurn
+	runRefTurnWithRefs := c.runRefTurnWithRefs
+	if scopedRefsOnly {
+		runRefTurn = c.runScopedRefTurn
+		runRefTurnWithRefs = c.runScopedRefTurnWithRefs
+	}
 	switch {
-	case trimmed == "/goal" || strings.HasPrefix(trimmed, "/goal "):
-		c.submitGoalCommand(trimmed)
 	case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
 		go func() {
@@ -491,6 +764,14 @@ func (c *Controller) Submit(input string) {
 				c.notice("new session")
 			}
 		}()
+	case trimmed == "/clear":
+		go func() {
+			if err := c.ClearSession(); err != nil {
+				c.notice("clear context failed: " + err.Error())
+			} else {
+				c.notice("context cleared")
+			}
+		}()
 	case strings.HasPrefix(trimmed, "/mcp__"):
 		c.runGuarded(func(ctx context.Context) error {
 			sent, found, err := c.MCPPrompt(ctx, trimmed)
@@ -501,11 +782,23 @@ func (c *Controller) Submit(input string) {
 				c.notice("unknown command: " + trimmed)
 				return nil
 			}
-			return c.runTurnWithRaw(ctx, sent, sent)
+			return c.runGoalLoopWithRawDisplay(ctx, sent, sent, display)
 		})
+	case strings.HasPrefix(trimmed, "//"):
+		// Double-slash — not a command. Common in code snippets (JS
+		// comments, file:// URLs). Run as a normal turn.
+		runRefTurn(input, display)
 	case strings.HasPrefix(trimmed, "/"):
 		if ref, ok := FileRefLine(trimmed); ok {
-			c.runRefTurn(ref)
+			runRefTurn(ref, display)
+			return
+		}
+		if ref, ok := SlashPathLineRef(trimmed, c.workspaceRoot); ok {
+			runRefTurnWithRefs(input, ref, display)
+			return
+		}
+		if SlashPathLikeLine(trimmed) {
+			runRefTurn(input, display)
 			return
 		}
 		// Read-only management verbs (/model /memory /skills /hooks /mcp) emit a
@@ -547,6 +840,12 @@ func (c *Controller) Submit(input string) {
 				c.notice(err.Error())
 			}
 			return
+		case "/plan-exec":
+			c.applyPlanExec(trimmed, display)
+			return
+		case "/prometheus":
+			c.applyPrometheus(trimmed, display)
+			return
 		}
 		if c.managementNotice(trimmed) {
 			return
@@ -555,20 +854,77 @@ func (c *Controller) Submit(input string) {
 		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runTurnWithRaw(ctx, sent, sent)
+				return c.runGoalLoopWithRawDisplay(ctx, sent, sent, display)
 			})
 			return
 		}
 		if sent, ok := c.RunSkill(trimmed); ok {
 			c.runGuarded(func(ctx context.Context) error {
-				return c.runTurnWithRaw(ctx, sent, sent)
+				return c.runGoalLoopWithRawDisplay(ctx, sent, sent, display)
 			})
 			return
 		}
 		c.notice("unknown command: " + trimmed)
 	default:
-		c.runRefTurn(input)
+		if c.maybeAutoStartResearchGoal(input, display) {
+			return
+		}
+		runRefTurn(input, display)
 	}
+}
+
+func (c *Controller) maybeAutoStartResearchGoal(input, display string) bool {
+	goal, ok := c.autoStartResearchGoalCandidate(input)
+	if !ok {
+		return false
+	}
+	if c.runner != nil {
+		displayText := display
+		if strings.TrimSpace(displayText) == "" {
+			displayText = goal
+		}
+		c.runGuarded(func(ctx context.Context) error {
+			c.SetGoalWithResearchMode(goal, GoalResearchOn)
+			c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(goal)))
+			block, errs := c.ResolveRefs(ctx, goal)
+			for _, e := range errs {
+				c.notice(e)
+			}
+			sent := "Start pursuing the active goal now."
+			if block != "" {
+				sent = "Referenced context:\n\n" + block + "\n\n" + sent
+			}
+			return c.runGoalLoopWithRawDisplay(ctx, sent, goal, displayText)
+		})
+	}
+	return true
+}
+
+// AutoStartResearchGoal upgrades a strong long-horizon ordinary prompt into a
+// Goal + AutoResearch run for frontends that already accepted an idle turn.
+func (c *Controller) AutoStartResearchGoal(input string) (string, bool) {
+	goal, ok := c.autoStartResearchGoalCandidate(input)
+	if !ok {
+		return "", false
+	}
+	c.SetGoalWithResearchMode(goal, GoalResearchOn)
+	c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(goal)))
+	return goal, true
+}
+
+func (c *Controller) autoStartResearchGoalCandidate(input string) (string, bool) {
+	goal := strings.TrimSpace(input)
+	if !shouldAutoStartResearchGoal(goal) {
+		return "", false
+	}
+	c.mu.Lock()
+	plan := c.planMode
+	running := c.running
+	c.mu.Unlock()
+	if plan || running || c.goals.active() {
+		return "", false
+	}
+	return goal, true
 }
 
 func (c *Controller) rememberProjectNote(note string) {
@@ -580,6 +936,146 @@ func (c *Controller) rememberProjectNote(note string) {
 		c.notice("memory: " + err.Error())
 	} else {
 		c.notice("remembered → " + path)
+	}
+}
+
+func (c *Controller) applyGoalCommand(input, display string) bool {
+	cmd, ok := ParseGoalCommand(input)
+	if !ok {
+		return false
+	}
+	switch cmd.Action {
+	case GoalCommandSet:
+		c.SetPlanMode(false)
+		c.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
+		c.GoalStrict(cmd.Strict)
+		c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(cmd.Text)))
+		if c.runner != nil {
+			c.runGuarded(func(ctx context.Context) error {
+				return c.runGoalLoopWithRawDisplay(ctx, "Start pursuing the active goal now.", cmd.Text, display)
+			})
+		}
+	case GoalCommandClear:
+		c.ClearGoal()
+		c.notice(i18n.M.GoalCleared)
+	default:
+		goal := c.Goal()
+		if strings.TrimSpace(goal) == "" {
+			c.notice(i18n.M.GoalEmpty)
+		} else {
+			c.notice(fmt.Sprintf(i18n.M.GoalCurrentFmt, goal))
+		}
+	}
+	return true
+}
+
+// applyPlanExec reads the current canonical todo list and starts a goal that
+// analyzes and dispatches independent steps concurrently via parallel_tasks.
+// Supports --strict flag: /plan-exec --strict enables strict goal mode.
+func (c *Controller) applyPlanExec(input, display string) {
+	todos := c.executor.CanonicalTodoState()
+	if len(todos) == 0 {
+		c.notice("no active plan with todos to execute")
+		return
+	}
+
+	// Parse --strict flag.
+	strict := false
+	fields := strings.Fields(input)
+	for _, f := range fields {
+		if f == "--strict" {
+			strict = true
+			break
+		}
+	}
+
+	// Count completion status.
+	total := len(todos)
+	done := 0
+	for _, t := range todos {
+		if t.Status == "completed" {
+			done++
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("You are the execution conductor. Route each step to the right sub-agent by module.\n\n")
+
+	// Detect project structure for module-aware routing.
+	modules := c.detectProjectModules()
+	if len(modules) > 0 {
+		b.WriteString("## Project modules detected\n\n")
+		for _, m := range modules {
+			fmt.Fprintf(&b, "- %s/", m)
+		}
+		b.WriteString("\n\nRoute steps to the module they belong to. Steps in different modules can run in parallel.\n\n")
+	}
+
+	b.WriteString("## Plan steps\n\n")
+	for _, t := range todos {
+		status := t.Status
+		if status == "" {
+			status = "pending"
+		}
+		mark := " "
+		if status == "completed" {
+			mark = "x"
+		}
+		fmt.Fprintf(&b, "- [%s] %s (%s)\n", mark, t.Content, status)
+	}
+	b.WriteString("\n## Routing rules\n")
+	b.WriteString("1. Group steps by MODULE \u2014 same module = serial, different modules = parallel batches\n")
+	b.WriteString("2. Research/exploration across modules = use parallel_tasks\n")
+	b.WriteString("3. Dispatch each batch via parallel_tasks \u2014 each sub-agent gets one module\u2019s context\n")
+	b.WriteString("4. Verify each batch before the next\n")
+	b.WriteString("5. Failures: fix before moving on\n")
+	b.WriteString("\nGoal: each sub-agent focuses on one module and does not carry irrelevant context.\n")
+	if done > 0 {
+		fmt.Fprintf(&b, "\nNote: %d/%d steps are already completed. Focus on the remaining %d steps.\n", done, total, total-done)
+	}
+	prompt := b.String()
+
+	// Show module preview.
+	if len(modules) > 0 {
+		c.notice(fmt.Sprintf("plan-exec: detected %d modules — %s", len(modules), strings.Join(modules, ", ")))
+	}
+
+	c.SetPlanMode(false)
+	c.SetGoal("execute plan: " + ShortGoalForNotice(todos[0].Content))
+	c.GoalStrict(strict)
+	c.notice(fmt.Sprintf("plan-exec: dispatching %d plan steps (strict=%v)", total, strict))
+	if c.runner != nil {
+		c.runGuarded(func(ctx context.Context) error {
+			return c.runGoalLoopWithRawDisplay(ctx, prompt, prompt, display)
+		})
+	}
+}
+
+// prometheusPrompt is the strategic planner system prompt.
+const prometheusPrompt = "You are Prometheus, a strategic planner. Interview the user one question at a time. Cover: scope, modules, files, constraints, tests. When ready, output a numbered plan with each step tagged by module. End with [goal:complete]. Do not implement.\n\nFor independent research directions, use parallel_tasks before planning."
+
+// applyPrometheus starts an interactive planning interview, inspired by OMO's
+// Prometheus agent. It enters goal mode with a structured interview prompt.
+func (c *Controller) applyPrometheus(input, display string) {
+	args := strings.TrimSpace(strings.TrimPrefix(input, "/prometheus"))
+	if args == "" || args == "--strict" {
+		c.notice("usage: /prometheus <your task description>")
+		return
+	}
+	strict := false
+	if strings.HasPrefix(args, "--strict ") {
+		strict = true
+		args = strings.TrimPrefix(args, "--strict ")
+	}
+	prompt := prometheusPrompt + "\n\n## User request\n\n" + args + "\n\nBegin the interview by asking your first clarifying question."
+	c.SetPlanMode(false)
+	c.SetGoal("plan: " + ShortGoalForNotice(args))
+	c.GoalStrict(strict)
+	c.notice("prometheus: starting planning interview")
+	if c.runner != nil {
+		c.runGuarded(func(ctx context.Context) error {
+			return c.runGoalLoopWithRawDisplay(ctx, prompt, prompt, display)
+		})
 	}
 }
 
@@ -612,7 +1108,10 @@ func (c *Controller) RunShell(command string) {
 		return
 	}
 	c.runGuarded(func(ctx context.Context) error {
-		sh := sandbox.ResolveShell()
+		sh := c.shell
+		if sh.Path == "" {
+			sh = sandbox.ResolveShell("", "", nil)
+		}
 		argv, _ := sandbox.Command(sandbox.Spec{}, sh, command) // false = unsandboxed (user invoked)
 
 		preview := []rune(command)
@@ -636,7 +1135,7 @@ func (c *Controller) RunShell(command string) {
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		setShellKillTree(cmd)
 		cmd.WaitDelay = shellWaitDelay
-		cmd.Dir = c.cpRoot
+		cmd.Dir = c.workspaceRoot
 		var buf bytes.Buffer
 		w := io.MultiWriter(&buf, &shellWriter{emit: func(chunk string) {
 			c.sink.Emit(event.Event{
@@ -646,26 +1145,28 @@ func (c *Controller) RunShell(command string) {
 		}})
 		cmd.Stdout = w
 		cmd.Stderr = w
+		start := time.Now()
 		err := cmd.Run()
+		durationMs := time.Since(start).Milliseconds()
 		out := buf.String()
 
 		if ctx.Err() == context.DeadlineExceeded {
 			c.sink.Emit(event.Event{
 				Kind: event.ToolResult,
-				Tool: event.Tool{ID: id, Name: "bash", Output: out, Err: fmt.Sprintf(i18n.M.ShellExecTimeoutFmt, shellTimeout)},
+				Tool: event.Tool{ID: id, Name: "bash", Output: out, Err: fmt.Sprintf(i18n.M.ShellExecTimeoutFmt, shellTimeout), DurationMs: durationMs},
 			})
 			return nil
 		}
 		if err != nil {
 			c.sink.Emit(event.Event{
 				Kind: event.ToolResult,
-				Tool: event.Tool{ID: id, Name: "bash", Output: out, Err: fmt.Sprintf(i18n.M.ShellExecFailedFmt, err)},
+				Tool: event.Tool{ID: id, Name: "bash", Output: out, Err: fmt.Sprintf(i18n.M.ShellExecFailedFmt, err), DurationMs: durationMs},
 			})
 			return nil
 		}
 		c.sink.Emit(event.Event{
 			Kind: event.ToolResult,
-			Tool: event.Tool{ID: id, Name: "bash", Output: out},
+			Tool: event.Tool{ID: id, Name: "bash", Output: out, DurationMs: durationMs},
 		})
 		return nil
 	})
@@ -673,9 +1174,28 @@ func (c *Controller) RunShell(command string) {
 
 // runRefTurn resolves a line's @references into a context block and starts a
 // turn with it prepended (or the raw line when nothing resolved).
-func (c *Controller) runRefTurn(input string) {
+func (c *Controller) runRefTurn(input, display string) {
+	c.runRefTurnWithRefs(input, input, display)
+}
+
+func (c *Controller) runScopedRefTurn(input, display string) {
+	c.runScopedRefTurnWithRefs(input, input, display)
+}
+
+// runRefTurnWithRefs resolves references from refLine while preserving input as
+// the user's actual prompt text. This lets compiler diagnostics such as
+// "/path/File.kt:12: error" attach @/path/File.kt without rewriting the error.
+func (c *Controller) runRefTurnWithRefs(input, refLine, display string) {
+	c.runRefTurnWithResolver(input, refLine, display, c.ResolveRefs)
+}
+
+func (c *Controller) runScopedRefTurnWithRefs(input, refLine, display string) {
+	c.runRefTurnWithResolver(input, refLine, display, c.ResolveScopedRefs)
+}
+
+func (c *Controller) runRefTurnWithResolver(input, refLine, display string, resolve func(context.Context, string) (string, []string)) {
 	c.runGuarded(func(ctx context.Context) error {
-		block, errs := c.ResolveRefs(ctx, input)
+		block, errs := resolve(ctx, refLine)
 		for _, e := range errs {
 			c.notice(e)
 		}
@@ -683,7 +1203,7 @@ func (c *Controller) runRefTurn(input string) {
 		if block != "" {
 			sent = "Referenced context:\n\n" + block + "\n\n" + input
 		}
-		return c.runTurnWithRaw(ctx, sent, input)
+		return c.runGoalLoopWithRawDisplay(ctx, sent, input, display)
 	})
 }
 
@@ -697,6 +1217,11 @@ func (c *Controller) notice(text string) {
 // just needs the exit status — no TurnDone event, no cancel bookkeeping.
 func (c *Controller) Run(ctx context.Context, input string) error {
 	c.maybeSessionStart(ctx)
+	parentSession := c.parentSessionID()
+	ctx = agent.WithParentSession(ctx, parentSession)
+	ctx = jobs.WithSession(ctx, parentSession)
+	ctx = agent.WithUserImages(ctx, c.inputImages(input))
+	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	if c.hooks.Enabled() {
@@ -714,8 +1239,12 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 func (c *Controller) Cancel() {
 	c.mu.Lock()
 	cancel := c.cancel
+	if cancel != nil {
+		c.canceling = true
+	}
 	c.mu.Unlock()
 	if cancel != nil {
+		c.approval.clearAll()
 		cancel()
 	}
 }
@@ -727,6 +1256,36 @@ func (c *Controller) Running() bool {
 	return c.running
 }
 
+// CancelRequested reports whether Cancel has been requested for the active turn.
+func (c *Controller) CancelRequested() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.canceling
+}
+
+// PendingPrompt reports whether the current turn is blocked waiting for a user
+// approval, plan approval, memory approval, or ask-tool answer.
+func (c *Controller) PendingPrompt() bool {
+	return c.approval.hasPending()
+}
+
+// RuntimeStatus reports the active work owned by the foreground controller.
+func (c *Controller) RuntimeStatus() RuntimeStatus {
+	c.mu.Lock()
+	running := c.running
+	canceling := c.canceling
+	c.mu.Unlock()
+	pending := c.approval.hasPending()
+	backgroundJobs := len(c.Jobs())
+	return RuntimeStatus{
+		Running:         running,
+		PendingPrompt:   pending,
+		BackgroundJobs:  backgroundJobs,
+		CancelRequested: canceling,
+		Cancellable:     running || pending,
+	}
+}
+
 // Turn returns the current turn number (0 before the first submit).
 func (c *Controller) Turn() int {
 	c.mu.Lock()
@@ -735,121 +1294,131 @@ func (c *Controller) Turn() int {
 }
 
 // Approve answers a pending ApprovalRequest by ID: allow runs the call, session
-// also remembers a grant for the rest of the session so the same tool+subject
-// isn't re-prompted. Unknown/expired IDs are ignored.
+// also remembers a grant for the rest of the session so the same approval scope
+// is not re-prompted. Unknown/expired IDs are ignored.
 func (c *Controller) Approve(id string, allow, session, persist bool) {
-	c.mu.Lock()
-	reply := c.approvals[id]
-	delete(c.approvals, id)
-	delete(c.pendingApprovals, id)
-	c.mu.Unlock()
-	if reply != nil {
-		reply <- approvalReply{allow: allow, session: session, persist: persist} // buffered, never blocks
+	pending := c.approval.resolve(id)
+	if pending.reply != nil {
+		pending.reply <- approvalReply{allow: allow, session: session, persist: persist} // buffered, never blocks
 	}
 }
 
-// EnableInteractiveApproval swaps the executor's gate for one that routes "ask"
-// decisions to the frontend via ApprovalRequest events, and wires the controller
-// in as the executor's Asker so the `ask` tool can question the user. Interactive
-// frontends (chat, desktop) call this; the headless run keeps the silent gate and
-// a nil asker from setup.
+// EnableInteractiveApproval swaps the executor's gate for one that routes
+// approval decisions to the frontend via ApprovalRequest events, and wires the
+// controller in as the executor's Asker so the `ask` tool can question the user.
+// Interactive frontends (chat, desktop) call this; the headless run keeps the
+// silent gate and a nil asker from setup.
 func (c *Controller) EnableInteractiveApproval() {
 	if c.executor != nil {
-		gate := permission.NewGate(c.policy, gateApprover{c})
-		gate.OnRemember = c.onRemember // wire "always allow" persistence callback
-		c.executor.SetGate(gate)
+		c.executor.SetGate(c.newInteractiveGate())
 		c.executor.SetAsker(c)
 	}
+}
+
+func (c *Controller) newInteractiveGate() *permission.Gate {
+	policy := c.policy
+	mode := c.approval.mode()
+	switch mode {
+	case ToolApprovalAuto, ToolApprovalYolo:
+		policy.Mode = permission.Allow
+	default:
+		policy.Mode = permission.Ask
+	}
+	policy.Ask = append(policy.Ask,
+		permission.Rule{Tool: memoryRememberTool},
+		permission.Rule{Tool: memoryForgetTool},
+	)
+	gate := permission.NewGate(policy, gateApprover{c})
+	gate.OnRemember = func(rule string) {
+		if c.onRemember != nil {
+			_ = c.onRemember(rule)
+		}
+	}
+	return gate
+}
+
+func (c *Controller) refreshInteractiveGate() {
+	if c.executor != nil {
+		c.executor.SetGate(c.newInteractiveGate())
+	}
+}
+
+// Steer queues mid-turn guidance without interrupting the in-flight request.
+func (c *Controller) Steer(text string) {
+	c.mu.Lock()
+	exec := c.executor
+	running := c.running
+	c.mu.Unlock()
+	if exec == nil {
+		return
+	}
+	if running {
+		exec.Steer(text)
+		return
+	}
+	// Agent not running — frontend's runningRef was stale.
+	// Convert to a new turn so the user gets a response.
+	go func() { c.SubmitDisplay(text, text) }()
+}
+
+// SteerConsumed returns true when the steer queue is empty after the last consume.
+func (c *Controller) SteerConsumed() bool {
+	c.mu.Lock()
+	exec := c.executor
+	c.mu.Unlock()
+	if exec != nil {
+		return exec.SteerConsumed()
+	}
+	return true
 }
 
 // Ask implements agent.Asker: it emits an AskRequest and blocks until
 // AnswerQuestion(ID, …) answers or ctx is cancelled. promptMu serialises it
 // against tool-approval prompts so at most one user prompt is outstanding.
+// Unlike tool-approval gates, Ask is NOT bypassed in YOLO mode — the `ask`
+// tool exists to get a genuine user decision, and YOLO only auto-approves
+// tool calls; it must not answer the user's questions for them.
 func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
-	if c.bypassEnabled() {
-		return recommendedAskAnswers(questions), nil
-	}
+	c.approval.promptMu.Lock()
+	defer c.approval.promptMu.Unlock()
 
-	c.promptMu.Lock()
-	defer c.promptMu.Unlock()
+	id, reply := c.approval.registerAsk(questions)
+	c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: event.Ask{ID: id, Questions: questions}})
 
-	if c.bypassEnabled() {
-		return recommendedAskAnswers(questions), nil
-	}
-
-	c.mu.Lock()
-	c.nextID++
-	id := strconv.Itoa(c.nextID)
-	reply := make(chan []event.AskAnswer, 1)
-	ask := event.Ask{ID: id, Questions: questions}
-	c.asks[id] = reply
-	c.pendingAsks[id] = ask
-	c.mu.Unlock()
-
-	c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: ask})
+	waitCtx, cancelWait := c.approval.waitContext(ctx)
+	defer cancelWait()
 
 	select {
 	case ans := <-reply:
 		return ans, nil
-	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.asks, id)
-		delete(c.pendingAsks, id)
-		c.mu.Unlock()
-		return nil, ctx.Err()
+	case <-waitCtx.Done():
+		c.approval.cancelAsk(id)
+		return nil, waitCtx.Err()
 	}
-}
-
-func (c *Controller) bypassEnabled() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.bypass
-}
-
-func recommendedAskAnswers(questions []event.AskQuestion) []event.AskAnswer {
-	out := make([]event.AskAnswer, len(questions))
-	for i, q := range questions {
-		out[i] = event.AskAnswer{QuestionID: q.ID}
-		if len(q.Options) > 0 {
-			out[i].Selected = []string{q.Options[0].Label}
-		}
-	}
-	return out
 }
 
 // AnswerQuestion resolves a pending AskRequest by ID with the user's selections.
 // Unknown/expired IDs are ignored.
 func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
-	c.mu.Lock()
-	reply := c.asks[id]
-	delete(c.asks, id)
-	delete(c.pendingAsks, id)
-	c.mu.Unlock()
-	if reply != nil {
-		reply <- answers // buffered, never blocks
+	if pending, ok := c.approval.resolveAsk(id); ok {
+		pending.reply <- answers // buffered, never blocks
 	}
 }
 
-// ReplayPendingPrompts re-emits any approval or ask prompt that is currently
-// blocking the controller. Desktop frontends call this after reload/reconnect so
-// the UI can rebuild the modal/card for a still-waiting backend gate.
+// ReplayPendingPrompts re-emits the ApprovalRequest / AskRequest event for every
+// prompt currently blocking the run loop. A frontend that reconnected or reloaded
+// after the original event has no way to rebuild its approval/ask modal otherwise,
+// so the blocked gate goroutine stays stuck forever while the session shows a
+// "waiting" status with no actionable prompt. promptMu serialises Ask and
+// requestApproval, so in practice at most one prompt is outstanding; the loops
+// stay general so a future concurrent prompt would still replay correctly.
 func (c *Controller) ReplayPendingPrompts() {
-	c.mu.Lock()
-	approvals := make([]event.Approval, 0, len(c.pendingApprovals))
-	for _, approval := range c.pendingApprovals {
-		approvals = append(approvals, approval)
+	approvals, asks := c.approval.snapshotPrompts()
+	for _, a := range approvals {
+		c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: a})
 	}
-	asks := make([]event.Ask, 0, len(c.pendingAsks))
-	for _, ask := range c.pendingAsks {
-		asks = append(asks, ask)
-	}
-	c.mu.Unlock()
-
-	for _, approval := range approvals {
-		c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: approval})
-	}
-	for _, ask := range asks {
-		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: ask})
+	for _, a := range asks {
+		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
 	}
 }
 
@@ -863,6 +1432,9 @@ func (c *Controller) SetPlanMode(v bool) {
 	if c.executor != nil {
 		c.executor.SetPlanMode(v)
 	}
+	if setter, ok := c.runner.(interface{ SetPlanMode(bool) }); ok {
+		setter.SetPlanMode(v)
+	}
 }
 
 // SetAutoPlan updates the interactive auto-plan gate for subsequent turns.
@@ -872,12 +1444,58 @@ func (c *Controller) SetAutoPlan(mode string) {
 	c.mu.Unlock()
 }
 
+// SetReasoningLanguage updates the visible reasoning language preference for
+// subsequent turns.
+func (c *Controller) SetReasoningLanguage(lang string) {
+	mode := config.NormalizeReasoningLanguage(lang)
+	c.mu.Lock()
+	c.reasoningLanguage = mode
+	c.mu.Unlock()
+	if setter, ok := c.runner.(interface{ SetReasoningLanguage(string) }); ok {
+		setter.SetReasoningLanguage(mode)
+	} else if c.executor != nil {
+		c.executor.SetReasoningLanguage(mode)
+	}
+}
+
 // PlanMode reports whether outgoing turns currently receive the plan-mode
 // marker. Frontends use it after Compose because auto-plan may flip the mode.
 func (c *Controller) PlanMode() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.planMode
+}
+
+// GoalStrict enables or disables strict goal mode. In strict mode the agent
+// cannot override an incomplete-todo intercept — it must actually finish or
+// update all items before [goal:complete] is accepted.
+func (c *Controller) GoalStrict(strict bool) {
+	path, data, ok := c.goals.setStrict(strict, c.goalTodos())
+	c.persistGoalState(path, data, ok)
+}
+
+// SetGoal stores a session-scoped active goal. Compose injects it into outgoing
+// user turns, not the system prompt or tool schema, so it does not disturb the
+// cache-stable prefix.
+func (c *Controller) SetGoal(goal string) {
+	c.SetGoalWithResearchMode(goal, GoalResearchAuto)
+}
+
+func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
+	path, data, ok := c.goals.set(goal, researchMode, c.goalTodos())
+	c.persistGoalState(path, data, ok)
+}
+
+func (c *Controller) ClearGoal() {
+	c.SetGoal("")
+}
+
+func (c *Controller) Goal() string {
+	return c.goals.goalText()
+}
+
+func (c *Controller) GoalStatus() string {
+	return c.goals.statusForDisplay()
 }
 
 // Compact runs one compaction pass on the executor's session on demand.
@@ -919,13 +1537,118 @@ func (c *Controller) NewSession() error {
 		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
 		c.mu.Unlock()
 	}
+	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.ResetPlannerSession()
 	c.rebindCheckpoints(c.SessionPath())
 	c.mu.Lock()
 	c.startedOnce = true // NewSession fires SessionStart itself; don't re-fire on the next turn
 	c.mu.Unlock()
 	c.hooks.SessionStart(context.Background())
 	return nil
+}
+
+// ClearSession discards the current conversation without preserving it in
+// resume/history, then rotates to a clean session carrying the same system prompt.
+func (c *Controller) ClearSession() error {
+	if c.executor == nil {
+		return nil
+	}
+	c.mu.Lock()
+	running := c.running
+	oldPath := c.sessionPath
+	c.mu.Unlock()
+	if running {
+		return fmt.Errorf("cannot clear while a turn is running")
+	}
+	preMarkedCleanup := c.hasUnfinishedSessionJobs(oldPath)
+	if preMarkedCleanup {
+		if err := agent.MarkCleanupPending(oldPath, "clear"); err != nil {
+			return err
+		}
+	}
+	destroy := c.BeginDestroySession(oldPath)
+	if !destroy.Async {
+		if err := removeSessionArtifacts(oldPath); err != nil {
+			destroy.Finish()
+			return err
+		}
+		destroy.Finish()
+	}
+	c.hooks.SessionEnd(context.Background())
+	if c.sessionDir != "" {
+		c.mu.Lock()
+		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
+		c.mu.Unlock()
+	}
+	c.setActiveJobSession(c.SessionPath())
+	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.ResetPlannerSession()
+	c.rebindCheckpoints(c.SessionPath())
+	c.mu.Lock()
+	c.startedOnce = true
+	c.mu.Unlock()
+	c.hooks.SessionStart(context.Background())
+	if destroy.Async {
+		go func() {
+			result := destroy.Wait()
+			if result.HasTimedOut() && destroy.WaitAll != nil {
+				if err := agent.MarkCleanupPending(oldPath, "clear"); err != nil {
+					c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "mark cleanup pending failed: " + err.Error()})
+				}
+				destroy.WaitAll()
+			}
+			if err := removeSessionArtifacts(oldPath); err != nil {
+				c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "clear session cleanup failed: " + err.Error()})
+			}
+			destroy.Finish()
+		}()
+	}
+	return nil
+}
+
+func (c *Controller) hasUnfinishedSessionJobs(sessionPath string) bool {
+	if c.jobs == nil {
+		return false
+	}
+	return c.jobs.HasUnfinishedForSession(agent.BranchID(sessionPath))
+}
+
+func removeSessionArtifacts(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := jobs.RemoveArtifacts(path); err != nil {
+		return err
+	}
+	for _, p := range []string{path, agent.BranchMetaPath(path)} {
+		if p == "" {
+			continue
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if dir := ckptDir(path); dir != "" {
+		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if err := agent.DeleteSubagentsByParent(filepath.Dir(path), agent.BranchID(path)); err != nil {
+		return err
+	}
+	if err := agent.ClearCleanupPending(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReconcileCleanupPending retries physical cleanup for logically removed
+// sessions that were left behind by a previous process.
+func ReconcileCleanupPending(dir string) error {
+	return agent.ReconcileCleanupPending(dir, func(item agent.CleanupPendingInfo) error {
+		return removeSessionArtifacts(item.SessionPath)
+	})
 }
 
 // RewindScope selects what a Rewind restores.
@@ -939,10 +1662,7 @@ const (
 
 // Checkpoints lists the session's rewind points (one per user turn), oldest first.
 func (c *Controller) Checkpoints() []checkpoint.Meta {
-	if c.cp == nil {
-		return nil
-	}
-	return c.cp.List()
+	return c.checkpoints.list()
 }
 
 // rewindFail emits the error as a Warn notice (so a frontend that swallows the
@@ -960,46 +1680,39 @@ func (c *Controller) rewindFail(err error) error {
 // unavailable for turns inherited from a resumed session (code rewind still works).
 // Frontends re-render their transcript from History after the call.
 func (c *Controller) Rewind(turn int, scope RewindScope) error {
-	if c.cp == nil || c.executor == nil {
+	if !c.checkpoints.enabled() || c.executor == nil {
 		return c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
-	c.mu.Lock()
-	running := c.running
-	boundary, hasBound := c.cpBound[turn]
-	c.mu.Unlock()
-	if running {
+	if c.Running() {
 		return c.rewindFail(fmt.Errorf("cannot rewind while a turn is running"))
 	}
-	if (scope == RewindConversation || scope == RewindBoth) && hasBound && boundary > len(c.executor.Session().Snapshot()) {
-		return c.rewindFail(fmt.Errorf("conversation rewind compacted past turn %d; summarize or fork from a newer turn", turn))
-	}
+	boundary, hasBound := c.checkpoints.boundary(turn)
 
 	if scope == RewindCode || scope == RewindBoth {
-		written, deleted, err := c.cp.RestoreCode(turn)
+		written, deleted, err := c.checkpoints.restoreCode(turn)
 		if err != nil {
 			return c.rewindFail(fmt.Errorf("rewind code: %w", err))
 		}
-		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-			Text: fmt.Sprintf("rewound code to turn %d — %d file(s) restored, %d removed", turn, len(written), len(deleted))})
+		if len(written) > 0 || len(deleted) > 0 {
+			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
+				Text: fmt.Sprintf("rewound code to turn %d — %d file(s) restored, %d removed", turn, len(written), len(deleted))})
+		}
 	}
 	if scope == RewindConversation || scope == RewindBoth {
 		if !hasBound {
 			return c.rewindFail(fmt.Errorf("conversation rewind unavailable for turn %d (resumed session)", turn))
 		}
 		s := c.executor.Session()
-		if boundary <= len(s.Messages) {
-			s.Messages = s.Messages[:boundary]
-			c.mu.Lock()
-			c.cpTurn = turn // renumber future turns from here; later turns are gone
-			for k := range c.cpBound {
-				if k >= turn {
-					delete(c.cpBound, k)
-				}
-			}
-			c.mu.Unlock()
-			if err := c.Snapshot(); err != nil {
-				slog.Warn("controller: snapshot after rewind", "err", err)
-			}
+		// boundary is the message-log index at turn start; compaction shrinks the
+		// log without rewriting boundaries, so a stale boundary past the end means
+		// the turn was compacted away — fail loudly instead of skipping silently.
+		if boundary > len(s.Messages) {
+			return c.rewindFail(fmt.Errorf("conversation rewind unavailable for turn %d: the conversation was compacted past this point", turn))
+		}
+		s.Messages = s.Messages[:boundary]
+		c.checkpoints.truncateFrom(turn) // renumber future turns from here; later turns are gone
+		if err := c.Snapshot(); err != nil {
+			slog.Warn("controller: snapshot after rewind", "err", err)
 		}
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 			Text: fmt.Sprintf("rewound conversation to turn %d", turn)})
@@ -1034,13 +1747,10 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	if c.sessionDir == "" {
 		return "", c.rewindFail(fmt.Errorf("fork needs session persistence, which is disabled"))
 	}
-	c.mu.Lock()
-	running := c.running
-	boundary, hasBound := c.cpBound[turn]
-	c.mu.Unlock()
-	if running {
+	if c.Running() {
 		return "", c.rewindFail(fmt.Errorf("cannot fork while a turn is running"))
 	}
+	boundary, hasBound := c.checkpoints.boundary(turn)
 	if !hasBound {
 		return "", c.rewindFail(fmt.Errorf("fork unavailable for turn %d (resumed session)", turn))
 	}
@@ -1064,19 +1774,25 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	if err := sess.Save(newPath); err != nil {
 		return "", c.rewindFail(err)
 	}
+	forkPreview, forkTurns := agent.SessionPreviewFromMessages(forked)
 	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         turn,
 		ForkMessageIndex: boundary,
+		Preview:          forkPreview,
+		Turns:            forkTurns,
+		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
 	if switchToFork {
 		c.executor.SetSession(sess)
+		c.ResetPlannerSession()
 		c.mu.Lock()
 		c.sessionPath = newPath
 		c.mu.Unlock()
+		c.setActiveJobSession(newPath)
 		c.rebindCheckpoints(newPath)
 	}
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
@@ -1085,10 +1801,14 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 }
 
 func (c *Controller) CheckpointHasBoundary(turn int) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, ok := c.cpBound[turn]
-	return ok
+	boundary, ok := c.checkpoints.boundary(turn)
+	if !ok {
+		return false
+	}
+	// After compaction the key may still exist but the boundary value is
+	// stale (it points past the truncated message log).  Treat those
+	// turns the same as "no boundary" so the UI can disable the button.
+	return boundary <= len(c.executor.Session().Messages)
 }
 
 // Branch copies the current conversation into a child branch and switches to it.
@@ -1123,18 +1843,24 @@ func (c *Controller) Branch(name string) (string, error) {
 	if err := sess.Save(newPath); err != nil {
 		return "", c.rewindFail(err)
 	}
+	branchPreview, branchTurns := agent.SessionPreviewFromMessages(branched)
 	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         -1,
 		ForkMessageIndex: len(branched),
+		Preview:          branchPreview,
+		Turns:            branchTurns,
+		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
 	c.executor.SetSession(sess)
+	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = newPath
 	c.mu.Unlock()
+	c.setActiveJobSession(newPath)
 	c.rebindCheckpoints(newPath)
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("created branch %s", agent.BranchID(newPath))})
@@ -1171,6 +1897,9 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	if err != nil {
 		return agent.BranchInfo{}, c.rewindFail(err)
 	}
+	if !agent.IsVisibleSession(match.Path) {
+		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("branch %q not found", ref))
+	}
 	loaded, err := agent.LoadSession(match.Path)
 	if err != nil {
 		return agent.BranchInfo{}, c.rewindFail(err)
@@ -1178,9 +1907,11 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	if c.executor != nil {
 		c.executor.SetSession(loaded)
 	}
+	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = match.Path
 	c.mu.Unlock()
+	c.setActiveJobSession(match.Path)
 	c.rebindCheckpoints(match.Path)
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("switched to branch %s", branchDisplayName(match))})
@@ -1239,13 +1970,10 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 	if c.executor == nil {
 		return c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
-	c.mu.Lock()
-	running := c.running
-	boundary, hasBound := c.cpBound[turn]
-	c.mu.Unlock()
-	if running {
+	if c.Running() {
 		return c.rewindFail(fmt.Errorf("cannot summarize while a turn is running"))
 	}
+	boundary, hasBound := c.checkpoints.boundary(turn)
 	if !hasBound {
 		return c.rewindFail(fmt.Errorf("summarize unavailable for turn %d (resumed session)", turn))
 	}
@@ -1259,11 +1987,9 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 		return c.rewindFail(err)
 	}
 	// The log was restructured; existing boundaries no longer map. Drop them (keep
-	// cpTurn monotonic so new turns don't collide with the store) — conversation
-	// rewind degrades to "unavailable" until fresh turns rebuild boundaries.
-	c.mu.Lock()
-	c.cpBound = map[int]int{}
-	c.mu.Unlock()
+	// the turn counter monotonic so new turns don't collide with the store) —
+	// conversation rewind degrades to "unavailable" until fresh turns rebuild them.
+	c.checkpoints.clearBounds()
 	if err := c.Snapshot(); err != nil {
 		slog.Warn("controller: post-summarize snapshot", "err", err)
 	}
@@ -1275,38 +2001,70 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(s)
-		if c.shouldPruneColdResume(path) {
-			if _, err := c.executor.PruneStaleToolResults(); err != nil {
-				slog.Warn("controller: prune cold resume", "err", err)
-			} else if err := s.Save(path); err != nil {
-				slog.Warn("controller: save pruned cold resume", "err", err)
-			}
-		}
 	}
+	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = path
 	c.mu.Unlock()
+	c.setActiveJobSession(path)
 	c.rebindCheckpoints(path)
+	c.maybeColdResumePrune(path)
 }
 
-func (c *Controller) shouldPruneColdResume(path string) bool {
-	if path == "" {
-		return false
+// ResetPlannerSession clears the planner's conversation history so the next
+// plan starts fresh. In dual-model (Plan+Execute) mode, this prevents stale
+// planner output from a previous session or tab from contaminating the current
+// executor's handoff. Safe to call on a single-model controller (no-op).
+func (c *Controller) ResetPlannerSession() {
+	runner, ok := c.runner.(plannerSessionResetter)
+	if ok {
+		runner.ResetPlannerSession()
 	}
-	if cacheColdAfter <= 0 {
-		return true
+}
+
+// cacheColdAfter approximates how long the provider keeps a prompt prefix
+// cached. A session idle longer than this resumes against a cold cache, so a
+// history rewrite at that moment costs no extra cache misses — it only shrinks
+// the full-price first request. Deliberately conservative: too small burns a
+// live cache (~4× the miss tokens, measured), too large only forgoes a prune.
+// Tighten from benchmarks/cache-ttl-probe data, never below measured retention.
+var cacheColdAfter = 24 * time.Hour
+
+// maybeColdResumePrune elides stale tool results when a resumed session has
+// been idle past the provider's cache retention, then persists the pruned
+// transcript so the saved file and the prompt stay in sync.
+func (c *Controller) maybeColdResumePrune(path string) {
+	if c.disableColdResumePrune || c.executor == nil || path == "" {
+		return
 	}
-	meta, ok, err := agent.LoadBranchMeta(path)
-	if err != nil || !ok || meta.UpdatedAt.IsZero() {
-		return false
+	// Idle time comes from branch meta only — every session the controller has
+	// ever snapshotted carries one. A meta-less transcript (e.g. a legacy import
+	// not yet saved) skips the prune until its first snapshot creates the meta.
+	m, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || m.UpdatedAt.IsZero() {
+		return
 	}
-	return time.Since(meta.UpdatedAt) >= cacheColdAfter
+	last := m.UpdatedAt
+	if time.Since(last) < cacheColdAfter {
+		return
+	}
+	st, err := c.executor.PruneStaleToolResults()
+	if err != nil || st.Results == 0 {
+		return
+	}
+	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
+		"resumed after %s idle (provider cache expired) — elided %d stale tool results to cheapen the cold restart",
+		time.Since(last).Round(time.Minute), st.Results)})
+	if err := c.Snapshot(); err != nil {
+		slog.Warn("controller: post-prune snapshot", "err", err)
+	}
 }
 
 // Snapshot writes the executor's conversation to the active session file. No-op
-// when persistence is unavailable or the session has never been used (no user
-// interaction). Called after every turn so a crash loses at most one in-flight
-// prompt.
+// when the executor is absent or the session has never been used (no user
+// interaction). Returns errNoSessionPath when there IS content but no resolved
+// path, so a misconfigured deployment surfaces instead of dropping data.
+// Called after every turn so a crash loses at most one in-flight prompt.
 func (c *Controller) Snapshot() error {
 	return c.snapshot(false)
 }
@@ -1319,29 +2077,64 @@ func (c *Controller) SnapshotActivity() error {
 	return c.snapshot(true)
 }
 
+// midTurnSnapshotInterval is atomic (nanoseconds) so a test shrinking it
+// cannot race a previous test's still-parking autosave goroutine.
+var midTurnSnapshotInterval atomic.Int64
+
+func init() { midTurnSnapshotInterval.Store(int64(30 * time.Second)) }
+
+// autosaveWhileRunning snapshots the session periodically while a turn runs,
+// so an abrupt kill (SSH drop, force-quit) loses at most one interval of a
+// long turn instead of all of it (#3772). Session.Save copies under the lock
+// and replaces the file atomically, so racing the turn's appends is safe.
+func (c *Controller) autosaveWhileRunning(ctx context.Context) {
+	t := time.NewTicker(time.Duration(midTurnSnapshotInterval.Load()))
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := c.snapshot(false); err != nil {
+				slog.Warn("controller: mid-turn snapshot", "err", err)
+			}
+		}
+	}
+}
+
 func (c *Controller) snapshot(markActivity bool) error {
 	c.mu.Lock()
 	path := c.sessionPath
+	modelRef := c.modelRef
 	c.mu.Unlock()
-	if c.executor == nil || path == "" {
+	if c.executor == nil {
 		return nil
 	}
 	s := c.executor.Session()
 	if !s.HasContent() {
+		// Nothing to persist yet (e.g. a fresh session with only a system
+		// prompt) — staying quiet here is correct, not a data-loss path.
 		return nil
 	}
-	if !markActivity {
-		if _, err := agent.EnsureBranchMeta(path); err != nil {
-			return err
-		}
+	if path == "" {
+		// There IS content but nowhere to write it: this silently dropped whole
+		// bot conversations (#4414). Surface it loudly instead of returning nil
+		// so the missing session path can be diagnosed and fixed at the source.
+		slog.Warn("controller: session has content but no session path; conversation will not be persisted",
+			"label", c.Label(), "session_dir", c.SessionDir())
+		return errNoSessionPath
 	}
 	if err := s.Save(path); err != nil {
 		return err
 	}
-	if markActivity {
-		return agent.TouchBranchMeta(path)
-	}
-	return nil
+	// Record the listing-only sidecar fields (model, preview, user-turn count)
+	// straight from the in-memory conversation, so the sidebar and resume picker
+	// never have to decode the whole .jsonl just to show them. markActivity bumps
+	// UpdatedAt exactly like the previous TouchBranchMeta did; false preserves it
+	// like SetBranchModelPreserveUpdated. The single write subsumes the old
+	// EnsureBranchMeta / SetBranchModel / TouchBranchMeta sequence.
+	preview, turns := agent.SessionPreviewFromMessages(s.Snapshot())
+	return agent.UpdateSessionMeta(path, modelRef, preview, turns, markActivity)
 }
 
 func (c *Controller) messageCount() int {
@@ -1366,7 +2159,59 @@ func (c *Controller) SetSessionPath(p string) {
 	c.mu.Lock()
 	c.sessionPath = p
 	c.mu.Unlock()
+	c.setActiveJobSession(p)
 	c.rebindCheckpoints(p)
+}
+
+// SessionDestroyHandle separates waiting for cancelled jobs from ending the
+// destroy window, so callers can move/delete persistent artifacts in between.
+type SessionDestroyHandle struct {
+	Wait    func() jobs.TeardownResult
+	WaitAll func()
+	Finish  func()
+	Async   bool
+}
+
+// BeginDestroySession marks a session as leaving active use and cancels its
+// background jobs. Call Wait before moving/deleting artifacts, then Finish after
+// persistent cleanup/move work is complete.
+func (c *Controller) BeginDestroySession(sessionPath string) SessionDestroyHandle {
+	parentSession := agent.BranchID(sessionPath)
+	if c.jobs == nil || parentSession == "" {
+		wait := func() jobs.TeardownResult { return jobs.TeardownResult{} }
+		noop := func() {}
+		return SessionDestroyHandle{Wait: wait, WaitAll: noop, Finish: noop}
+	}
+	teardown := c.jobs.BeginDestroySession(parentSession)
+	return SessionDestroyHandle{
+		Wait: func() jobs.TeardownResult {
+			return c.jobs.WaitTeardown(context.Background(), teardown, c.jobs.TeardownGrace())
+		},
+		WaitAll: func() {
+			for _, ch := range teardown.DoneChannels() {
+				<-ch
+			}
+		},
+		Finish: func() {
+			c.jobs.FinishDestroySession(parentSession)
+		},
+		Async: teardown.Async(),
+	}
+}
+
+// IsDestroyingSession reports whether sessionPath is currently in the destroy
+// window for this controller's job manager.
+func (c *Controller) IsDestroyingSession(sessionPath string) bool {
+	if c.jobs == nil {
+		return false
+	}
+	return c.jobs.IsDestroying(agent.BranchID(sessionPath))
+}
+
+func (c *Controller) setActiveJobSession(sessionPath string) {
+	if c.jobs != nil {
+		c.jobs.SetActiveSessionPath(agent.BranchID(sessionPath), sessionPath)
+	}
 }
 
 // SessionDir reports the directory new session files land in ("" disables
@@ -1379,6 +2224,10 @@ func (c *Controller) SessionPath() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sessionPath
+}
+
+func (c *Controller) parentSessionID() string {
+	return agent.BranchID(c.SessionPath())
 }
 
 // History returns the executor's current message log (for repopulating a
@@ -1431,6 +2280,58 @@ func (c *Controller) SessionCache() (hit, miss int) {
 	return c.executor.SessionCache()
 }
 
+// Todos returns a copy of the canonical task list (the latest todo_write state
+// merged with complete_step advances) so frontends can render a live task panel.
+func (c *Controller) Todos() []evidence.TodoItem {
+	if c.executor == nil {
+		return nil
+	}
+	return c.executor.CanonicalTodoState()
+}
+
+// ToolResultData holds the full arguments and output for one tool call, loaded
+// on demand when a frontend expands a collapsed tool card.
+type ToolResultData struct {
+	Args   string `json:"args"`
+	Output string `json:"output"`
+}
+
+// ToolResult looks up a tool call by its ID in the session history and returns
+// the full arguments + output that were elided from the frontend's items[].
+// Returns nil when the tool ID isn't found (e.g. a sub-agent's tool call that
+// lives in a different session).
+func (c *Controller) ToolResult(toolID string) *ToolResultData {
+	if c.executor == nil {
+		return nil
+	}
+	msgs := c.executor.Session().Snapshot()
+	// Search backwards: tool result first (most recent), then find the args
+	// from the preceding assistant turn.
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != provider.RoleTool || msgs[i].ToolCallID != toolID {
+			continue
+		}
+		out := &ToolResultData{
+			Args:   "",
+			Output: msgs[i].Content,
+		}
+		// Walk back to find the assistant turn that issued this call.
+		for j := i; j >= 0; j-- {
+			if msgs[j].Role != provider.RoleAssistant {
+				continue
+			}
+			for _, tc := range msgs[j].ToolCalls {
+				if tc.ID == toolID {
+					out.Args = tc.Arguments
+					return out
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // Balance queries the active provider's wallet balance, or (nil, nil) when the
 // provider declares no balance_url — so a caller treats "not configured" and
 // "fetched" the same and just omits the readout when nil.
@@ -1445,21 +2346,62 @@ func (c *Controller) Balance(ctx context.Context) (*billing.Balance, error) {
 
 // Host returns the running MCP host (nil when no plugins), for frontends that
 // list servers / resolve MCP prompts.
-func (c *Controller) Host() *plugin.Host { return c.host }
+func (c *Controller) Host() *plugin.Host { return c.mcp.hostRef() }
 
 // Commands returns the loaded custom slash commands.
-func (c *Controller) Commands() []command.Command { return c.commands }
+func (c *Controller) Commands() []command.Command {
+	if p := c.commands.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// ReloadCommands rescans all command directories and hot-swaps the slash_command
+// tool and the internal command slice — no MCP restart, no hook rerun.
+func (c *Controller) ReloadCommands(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	cmds, loadErr := command.Load(config.CommandDirsForRoot(c.workspaceRoot)...)
+	cmdSkills := c.Skills()
+
+	entries := make([]command.SlashEntry, 0, len(cmdSkills)+len(cmds))
+	for _, sk := range cmdSkills {
+		sk := sk
+		entries = append(entries, command.SlashEntry{
+			Name:        sk.Name,
+			Description: sk.Description,
+			Render:      func(args []string) string { return skill.Render(sk, strings.Join(args, " ")) },
+		})
+	}
+	for _, cmd := range cmds {
+		cmd := cmd
+		entries = append(entries, command.SlashEntry{
+			Name:        cmd.Name,
+			Description: cmd.Description,
+			ArgHint:     cmd.ArgHint,
+			Render:      func(args []string) string { return cmd.Render(args) },
+		})
+	}
+	c.mcp.registerTool(command.NewSlashCommandTool(entries))
+	cmdSlice := cmds
+	c.commands.Store(&cmdSlice)
+	return loadErr
+}
 
 // Skills returns the discoverable skills (for the slash menu and `/skills`).
-func (c *Controller) Skills() []skill.Skill { return c.skills }
+// When a live Store is available, scan it on demand so skills installed during
+// this session appear without rewriting the cache-stable system prompt.
+func (c *Controller) Skills() []skill.Skill {
+	return c.skills.list()
+}
 
 // AllSkills returns every discoverable skill, including disabled ones, for
 // management surfaces that need to re-enable a hidden skill.
 func (c *Controller) AllSkills() []skill.Skill {
-	if len(c.allSkills) > 0 {
-		return c.allSkills
-	}
-	return c.skills
+	return c.skills.listAll()
 }
 
 // DisabledSkills returns all discoverable skills that are disabled in config.
@@ -1542,9 +2484,11 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 	return c.connectMCPServer(e)
 }
 
+// connectMCPServer expands an entry's ${VARS}, applies the known-server
+// overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
-	return c.connectMCPSpec(plugin.Spec{
+	return c.mcp.connectSpec(plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:    exp.Name,
 		Type:    exp.Type,
 		Command: exp.Command,
@@ -1552,24 +2496,47 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		Env:     exp.Env,
 		URL:     exp.URL,
 		Headers: exp.Headers,
-	})
+	}, c.WorkspaceRoot()))
 }
 
-func (c *Controller) connectMCPSpec(s plugin.Spec) (int, error) {
-	if c.host == nil {
-		c.host = plugin.NewHost()
+// ImportMCPEntries persists selected MCP entries and attempts to connect them
+// live. A connection failure does not roll back the config import: the user can
+// fix local dependencies and reconnect in a later session.
+func (c *Controller) ImportMCPEntries(entries []config.PluginEntry) (total, added, updated, connected, failed, skipped int, err error) {
+	cfg, lerr := config.Load()
+	if lerr != nil {
+		return 0, 0, 0, 0, 0, 0, lerr
 	}
-	tools, err := c.host.Add(c.pluginCtx, s)
-	if err != nil {
-		return 0, err
+	existing := make(map[string]bool, len(cfg.Plugins))
+	for _, p := range cfg.Plugins {
+		existing[p.Name] = true
 	}
-	if c.reg != nil {
-		c.reg.RemovePrefix(plugin.ToolPrefix(s.Name))
-		for _, t := range tools {
-			c.reg.Add(t)
+	for _, e := range entries {
+		if existing[e.Name] {
+			updated++
+		} else {
+			added++
 		}
+		if err := cfg.UpsertPlugin(e); err != nil {
+			return 0, 0, 0, 0, 0, 0, err
+		}
+		existing[e.Name] = true
 	}
-	return len(tools), nil
+	if err := cfg.Save(); err != nil {
+		return 0, 0, 0, 0, 0, 0, err
+	}
+	for _, e := range entries {
+		if c.mcp.hasServer(e.Name) {
+			skipped++
+			continue
+		}
+		if _, err := c.AddMCPServer(e); err != nil {
+			failed++
+			continue
+		}
+		connected++
+	}
+	return len(entries), added, updated, connected, failed, skipped, nil
 }
 
 func (c *Controller) ConfiguredMCPNames() []string {
@@ -1590,10 +2557,8 @@ func (c *Controller) DisconnectedMCPNames() []string {
 		return nil
 	}
 	connected := map[string]bool{}
-	if c.host != nil {
-		for _, name := range c.host.ServerNames() {
-			connected[name] = true
-		}
+	for _, name := range c.mcp.serverNames() {
+		connected[name] = true
 	}
 	var names []string
 	for _, p := range cfg.Plugins {
@@ -1614,41 +2579,7 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 			return c.connectMCPServer(p)
 		}
 	}
-	if name == "codegraph" {
-		return c.connectCodegraphMCPServer(cfg)
-	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
-}
-
-// ConnectCodegraphMCPServer connects the built-in CodeGraph server using an
-// already-resolved config. Desktop uses this after saving user-level settings so
-// a stale project config cannot override the just-applied choice.
-func (c *Controller) ConnectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	return c.connectCodegraphMCPServer(cfg)
-}
-
-func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) {
-	if !cfg.Codegraph.Enabled {
-		return 0, fmt.Errorf("codegraph is disabled in config")
-	}
-	bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
-	if !ok {
-		return 0, fmt.Errorf("codegraph is not installed")
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return 0, err
-	}
-	if err := codegraph.EnsureInit(c.pluginCtx, bin, cwd); err != nil {
-		return 0, fmt.Errorf("codegraph init: %w", err)
-	}
-	return c.connectMCPSpec(plugin.Spec{
-		Name:              "codegraph",
-		Command:           bin,
-		Args:              []string{"serve", "--mcp"},
-		Dir:               cwd,
-		ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
-	})
 }
 
 // RemoveMCPServer disconnects a live MCP server — its tools vanish from the next
@@ -1657,22 +2588,15 @@ func (c *Controller) connectCodegraphMCPServer(cfg *config.Config) (int, error) 
 // the config save fails). A server declared in .mcp.json disconnects for this
 // session but returns on the next start, since that file isn't ours to edit.
 func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error) {
-	if c.host != nil {
-		if prefix, ok := c.host.Remove(name); ok {
-			disconnected = true
-			if c.reg != nil {
-				c.reg.RemovePrefix(prefix)
-			}
-		}
-	}
+	disconnected = c.mcp.disconnect(name)
 	cfg, lerr := config.Load()
 	if lerr != nil {
 		return disconnected, lerr
 	}
 	inConfig := cfg.RemovePlugin(name)
 	if inConfig {
-		if !disconnected && c.reg != nil {
-			c.reg.RemovePrefix(plugin.ToolPrefix(name))
+		if !disconnected {
+			c.mcp.removeToolPrefix(name)
 		}
 		if serr := cfg.Save(); serr != nil {
 			return disconnected, serr
@@ -1689,36 +2613,91 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 // on the next session start, or now via ConnectConfiguredMCPServer (the "on").
 // Reports whether a live server was actually disconnected.
 func (c *Controller) DisconnectMCPServer(name string) bool {
-	disconnected := false
-	if c.host != nil {
-		if prefix, ok := c.host.Remove(name); ok {
-			disconnected = true
-			if c.reg != nil {
-				c.reg.RemovePrefix(prefix)
-			}
-		}
-	}
+	disconnected := c.mcp.disconnect(name)
 	removedPlaceholder := 0
-	if !disconnected && c.reg != nil {
-		removedPlaceholder = c.reg.RemovePrefix(plugin.ToolPrefix(name))
+	if !disconnected {
+		removedPlaceholder = c.mcp.removeToolPrefix(name)
 	}
 	return disconnected || removedPlaceholder > 0
+}
+
+// UnregisterMCPServerTools hides a shared MCP server from this controller only.
+// The desktop shared-host path uses this for per-tab connector toggles: the
+// shared client stays alive for sibling tabs, while this session's registry drops
+// the server's provider-visible tools before the next turn.
+func (c *Controller) UnregisterMCPServerTools(name string) bool {
+	return c.mcp.suspendToolPrefix(name)
 }
 
 // Label returns the human-readable model label, e.g. "deepseek-flash".
 func (c *Controller) Label() string { return c.label }
 
+// WorkspaceRoot returns the workspace root for this controller's session
+// (the directory that file-writers and @-references are scoped to).
+// Empty means no scoping is in effect.
+func (c *Controller) WorkspaceRoot() string { return c.workspaceRoot }
+
+// InheritLifecycleFrom carries same-session lifecycle state across controller
+// rebuilds, such as model switches that preserve the conversation.
+func (c *Controller) InheritLifecycleFrom(prev *Controller) {
+	if prev == nil {
+		return
+	}
+	prev.mu.Lock()
+	started := prev.startedOnce
+	turn := prev.turn
+	prev.mu.Unlock()
+
+	c.mu.Lock()
+	c.startedOnce = started
+	if c.turn < turn {
+		c.turn = turn
+	}
+	c.mu.Unlock()
+}
+
+// ReleaseResources stops plugin subprocesses and releases resources without
+// firing SessionEnd. Use it only when replacing the controller for the same
+// logical session.
+func (c *Controller) ReleaseResources() {
+	c.close(false, closeJobsWithGrace)
+}
+
 // Close stops plugin subprocesses and releases resources. A session that ever
 // started fires SessionEnd so a teardown hook runs.
 func (c *Controller) Close() {
+	c.close(true, closeJobsWithGrace)
+}
+
+// CloseAfterDestroy releases controller resources after the caller has already
+// begun session-specific job teardown. It avoids a second synchronous job grace
+// wait while still cancelling the manager root and reaping temporary artifacts
+// once every job goroutine finally exits.
+func (c *Controller) CloseAfterDestroy() {
+	c.close(true, closeJobsAsync)
+}
+
+type closeJobsMode int
+
+const (
+	closeJobsWithGrace closeJobsMode = iota
+	closeJobsAsync
+)
+
+func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 	c.mu.Lock()
 	started := c.startedOnce
 	c.mu.Unlock()
-	if started {
+	if fireSessionEnd && started {
 		c.hooks.SessionEnd(context.Background())
 	}
 	if c.jobs != nil {
-		c.jobs.Close() // cancel any still-running background jobs
+		switch jobsMode {
+		case closeJobsAsync:
+			c.jobs.CloseAsync()
+		default:
+			c.jobs.Close() // cancel any still-running background jobs
+		}
 	}
 	if c.cleanup != nil {
 		c.cleanup()
@@ -1731,136 +2710,100 @@ func (c *Controller) Jobs() []jobs.View {
 	if c.jobs == nil {
 		return nil
 	}
-	return c.jobs.Running()
+	return c.jobs.RunningForSession(c.parentSessionID())
 }
 
-// SetBypass turns YOLO/bypass mode on or off for the session: while on, every
-// approval prompt is auto-allowed (writers and bash run without asking). Deny
-// rules still block. Runtime-only — never written to config.
-func (c *Controller) SetBypass(on bool) {
-	var pending []chan approvalReply
-
-	c.mu.Lock()
-	c.bypass = on
-	if on {
-		pending = c.drainApprovalsLocked()
-	}
-	c.mu.Unlock()
-
+// SetToolApprovalMode changes the runtime approval posture for permission-gated
+// tools. It does not answer business asks or plan approval.
+func (c *Controller) SetToolApprovalMode(mode string) {
+	pending := c.approval.setMode(normalizeToolApprovalMode(mode))
+	c.refreshInteractiveGate()
 	for _, reply := range pending {
 		reply <- approvalReply{allow: true}
 	}
 }
 
-// SetMode applies plan (read-only) and bypass (auto-approve) together so a turn
-// submitted right after a composer mode switch can't observe a half-applied
-// gate. Turning bypass on drains any approval already waiting.
-func (c *Controller) SetMode(plan, bypass bool) {
-	var pending []chan approvalReply
+func (c *Controller) ToolApprovalMode() string {
+	return c.approval.mode()
+}
 
+// SetAutoApproveTools turns YOLO/full-access mode on or off for the session:
+// while on, every tool approval request is auto-allowed (writers and bash run
+// without asking). Ask requests and plan approval still reach the user. Deny
+// rules still block. Runtime-only — never written to config.
+func (c *Controller) SetAutoApproveTools(on bool) {
+	if on {
+		c.SetToolApprovalMode(ToolApprovalYolo)
+		return
+	}
+	c.SetToolApprovalMode(ToolApprovalAsk)
+}
+
+// SetBypass is the legacy name for SetAutoApproveTools. Keep it for existing
+// desktop/serve bindings and CLI code that still uses the bypass wording.
+func (c *Controller) SetBypass(on bool) {
+	c.SetAutoApproveTools(on)
+}
+
+// SetMode applies plan (read-only) and tool auto-approval together so a turn
+// submitted right after a composer mode switch can't observe a half-applied
+// gate. Turning tool auto-approval on drains any pending tool approval.
+func (c *Controller) SetMode(plan, autoApproveTools bool) {
 	c.mu.Lock()
 	c.planMode = plan
-	c.bypass = bypass
-	if bypass {
-		pending = c.drainApprovalsLocked()
-	}
 	c.mu.Unlock()
 
 	if c.executor != nil {
 		c.executor.SetPlanMode(plan)
 	}
-	for _, reply := range pending {
-		reply <- approvalReply{allow: true}
+	if autoApproveTools {
+		c.SetToolApprovalMode(ToolApprovalYolo)
+	} else {
+		c.SetToolApprovalMode(ToolApprovalAsk)
 	}
 }
 
-// drainApprovalsLocked removes every pending approval gate and returns their
-// reply channels; caller holds c.mu and sends {allow:true} after unlocking.
-func (c *Controller) drainApprovalsLocked() []chan approvalReply {
-	pending := make([]chan approvalReply, 0, len(c.approvals))
-	for id, reply := range c.approvals {
-		delete(c.approvals, id)
-		delete(c.pendingApprovals, id)
-		pending = append(pending, reply)
-	}
-	return pending
+// AutoApproveTools reports whether YOLO/full-access tool auto-approval is on,
+// for status indicators and mode persistence.
+func (c *Controller) AutoApproveTools() bool {
+	return c.ToolApprovalMode() == ToolApprovalYolo
 }
 
-// Bypass reports whether YOLO/bypass mode is on, for the status-bar indicator.
+// Bypass is the legacy name for AutoApproveTools.
 func (c *Controller) Bypass() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.bypass
+	return c.AutoApproveTools()
 }
 
 // --- memory ---
 //
-// c.mem is treated as an immutable snapshot guarded by c.mu: reads take the lock
-// and return the pointer; writes mutate disk then swap in a freshly discovered
-// snapshot. A turn-tail note is queued for each write so the change applies this
-// session without disturbing the cache-stable system prefix (it folds into the
-// prefix on the next session). All of these are no-ops returning "" when memory
-// is disabled.
+// The memory snapshot, the pending turn-tail notes queue, and write serialization
+// live in c.memory (a memoryManager) behind its own locks, off c.mu — so a
+// memory-panel save never stalls an approval or status poll. These methods are
+// the SessionAPI surface; each is a thin delegation. See memory.go.
 
 // QuickAdd appends a one-line note to the doc-memory file for scope (project
-// VOLTUI.md by default) — the write side of "#<note>". Returns the file written.
+// REASONIX.md by default) — the write side of "#<note>". Returns the file written.
 func (c *Controller) QuickAdd(scope memory.Scope, note string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.mem == nil {
-		return "", nil
-	}
-	path := c.mem.DocPath(scope)
-	if path == "" {
-		return "", fmt.Errorf("no target file for memory scope %q", scope)
-	}
-	if err := memory.AppendDoc(path, note); err != nil {
-		return "", err
-	}
-	c.pendingMemory = append(c.pendingMemory, note)
-	c.refreshMemoryLocked()
-	return path, nil
+	return c.memory.quickAdd(scope, note)
 }
 
 // SaveDoc overwrites a recognized memory doc with body — the save side of the
 // desktop panel's in-place editor. Returns the file written.
 func (c *Controller) SaveDoc(path, body string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.mem == nil {
-		return "", nil
-	}
-	written, err := c.mem.WriteDoc(path, body)
-	if err != nil {
-		return "", err
-	}
-	// Inject the new content once on the next turn: the cached prefix still holds
-	// the pre-edit version this session, so handing the model the current text
-	// avoids a stale-guidance gap until the next session re-folds it into the
-	// prefix. Trimmed to a single tail note (drained by Compose), not per-turn.
-	c.pendingMemory = append(c.pendingMemory,
-		"Memory file "+written+" was just edited. Its current contents:\n"+strings.TrimSpace(body))
-	c.refreshMemoryLocked()
-	return written, nil
+	return c.memory.saveDoc(path, body)
 }
 
-// ForgetMemory deletes a saved auto-memory by name — the panel/TUI delete action,
-// the manual counterpart to the model's `forget` tool. It queues a turn-tail note
-// so the deletion applies this session (the cached prefix still lists the fact
-// until the next session re-folds the index).
+// SaveMemory writes an active auto-memory fact and refreshes the in-session
+// snapshot. It is the explicit user-confirmed counterpart to the model-owned
+// remember tool, used by management surfaces that preview a candidate first.
+func (c *Controller) SaveMemory(m memory.Memory) (string, error) {
+	return c.memory.saveMemory(m)
+}
+
+// ForgetMemory removes a saved auto-memory by name — the panel/TUI forget action,
+// the manual counterpart to the model's `forget` tool.
 func (c *Controller) ForgetMemory(name string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.mem == nil {
-		return nil
-	}
-	if err := c.mem.Store.Delete(name); err != nil {
-		return err
-	}
-	c.pendingMemory = append(c.pendingMemory,
-		"Deleted memory \""+name+"\" — disregard its line still shown in the saved-memories index until next session.")
-	c.refreshMemoryLocked()
-	return nil
+	return c.memory.forget(name)
 }
 
 // QueueMemory implements memory.Queue: when the model runs the remember/forget
@@ -1868,28 +2811,14 @@ func (c *Controller) ForgetMemory(name string) error {
 // applies this session without touching the cache-stable prefix. It also
 // refreshes the snapshot a memory panel reads.
 func (c *Controller) QueueMemory(note string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.pendingMemory = append(c.pendingMemory, note)
-	c.refreshMemoryLocked()
+	c.memory.queue(note)
 }
 
 // Memory returns the loaded memory snapshot (nil when memory is disabled), for
 // frontends that surface a memory panel or the /memory command. The returned
 // *Set is immutable — mutations go through QuickAdd / SaveDoc.
 func (c *Controller) Memory() *memory.Set {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.mem
-}
-
-// refreshMemoryLocked re-discovers memory from disk so a later Memory() reflects
-// a just-applied write. Caller holds c.mu.
-func (c *Controller) refreshMemoryLocked() {
-	if c.mem == nil {
-		return
-	}
-	c.mem = memory.Load(memory.Options{CWD: c.mem.CWD, UserDir: c.mem.UserDir})
+	return c.memory.current()
 }
 
 // --- approval bridge (agent gate → events) ---
@@ -1899,16 +2828,128 @@ func (c *Controller) refreshMemoryLocked() {
 type gateApprover struct{ c *Controller }
 
 func (g gateApprover) Approve(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, error) {
-	// Auto-allow without prompting while executing a just-approved plan (the plan
-	// was the approval) or while YOLO/bypass mode is on. Deny rules already bit
-	// before this point, so they still block.
-	g.c.mu.Lock()
-	auto := g.c.autoApprove || g.c.bypass
-	g.c.mu.Unlock()
-	if auto {
-		return true, false, nil
+	subject = approvalDisplaySubject(tool, subject, args)
+	// requestApproval short-circuits the YOLO / just-approved-plan window and any
+	// session grant before it emits a prompt, so the auto-allow paths need no
+	// special-casing here. Deny rules already bit before this point.
+	return g.c.requestApproval(ctx, tool, subject, args)
+}
+
+func approvalDisplaySubject(tool, subject string, args json.RawMessage) string {
+	switch tool {
+	case memoryRememberTool:
+		return rememberApprovalSubject(subject, args)
+	case memoryForgetTool:
+		return forgetApprovalSubject(subject, args)
+	case "move_file":
+		return moveApprovalSubject(subject, args)
+	default:
+		return subject
 	}
-	return g.c.requestApproval(ctx, tool, subject)
+}
+
+func moveApprovalSubject(fallback string, args json.RawMessage) string {
+	if len(args) == 0 {
+		return fallback
+	}
+	var in struct {
+		SourcePath      string `json:"source_path"`
+		DestinationPath string `json:"destination_path"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return fallback
+	}
+	if in.SourcePath == "" || in.DestinationPath == "" {
+		return fallback
+	}
+	return in.SourcePath + " -> " + in.DestinationPath
+}
+
+func rememberApprovalSubject(fallback string, args json.RawMessage) string {
+	if len(args) == 0 {
+		return fallback
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+		Body        string `json:"body"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return fallback
+	}
+	name := approvalCompactText(firstNonEmpty(in.Name, in.Title))
+	desc := approvalTruncate(approvalCompactText(in.Description), 180)
+	body := approvalTruncate(approvalCompactText(in.Body), 240)
+	typ := string(memory.NormalizeType(in.Type))
+
+	var b strings.Builder
+	b.WriteString("Save/update memory")
+	if name != "" {
+		fmt.Fprintf(&b, " %q", name)
+	}
+	if typ != "" {
+		fmt.Fprintf(&b, " [%s]", typ)
+	}
+	if desc != "" {
+		b.WriteString(": ")
+		b.WriteString(desc)
+	}
+	if body != "" {
+		if desc == "" {
+			b.WriteString(": ")
+		} else {
+			b.WriteString(" | ")
+		}
+		b.WriteString("body: ")
+		b.WriteString(body)
+	}
+	if b.Len() == len("Save/update memory") && fallback != "" {
+		return fallback
+	}
+	return b.String()
+}
+
+func forgetApprovalSubject(fallback string, args json.RawMessage) string {
+	if len(args) == 0 {
+		return fallback
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return fallback
+	}
+	name := approvalCompactText(in.Name)
+	if name == "" {
+		return fallback
+	}
+	return fmt.Sprintf("Archive memory %q", name)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func approvalCompactText(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func approvalTruncate(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 type seedTodo struct {
@@ -1931,7 +2972,19 @@ func (c *Controller) seedPlanTodos(plan string) string {
 	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
 	t.Output = "task list seeded from the approved plan"
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
+	c.seedAgentTodoState(args)
 	return args
+}
+
+func (c *Controller) seedAgentTodoState(args string) {
+	if c.executor == nil {
+		return
+	}
+	todos := agentTodoStateFromArgs(args)
+	if len(todos) == 0 {
+		return
+	}
+	c.executor.SeedTodoState(todos)
 }
 
 func (c *Controller) completePlanTodos(args string) {
@@ -1946,6 +2999,28 @@ func (c *Controller) completePlanTodos(args string) {
 	c.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
 	t.Output = "approved plan finished"
 	c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
+	c.replaceAgentTodoState(done)
+}
+
+func (c *Controller) replaceAgentTodoState(args string) {
+	if c.executor == nil {
+		return
+	}
+	todos := agentTodoStateFromArgs(args)
+	if len(todos) == 0 {
+		return
+	}
+	c.executor.ReplaceTodoState(todos)
+}
+
+func agentTodoStateFromArgs(args string) []evidence.TodoItem {
+	var payload struct {
+		Todos []evidence.TodoItem `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(args), &payload); err != nil {
+		return nil
+	}
+	return payload.Todos
 }
 
 // PlanTodosJSON parses an approved plan's markdown into todo_write-shaped args
@@ -2009,6 +3084,40 @@ func parsePlanTodos(plan string) []seedTodo {
 	return todos
 }
 
+func (c *Controller) sessionMessageCount() int {
+	if c.executor == nil {
+		return 0
+	}
+	return len(c.executor.Session().Messages)
+}
+
+// hasTodoUpdateSince reports whether the model emitted its own todo_write after
+// index start, so the seeded plan todos aren't auto-completed over the model's
+// own bookkeeping.
+func (c *Controller) hasTodoUpdateSince(start int) bool {
+	if c.executor == nil {
+		return false
+	}
+	msgs := c.executor.Session().Messages
+	if start < 0 || start > len(msgs) {
+		start = len(msgs)
+	}
+	_, ok := latestTodoArgsSince(msgs, start)
+	return ok
+}
+
+func latestTodoArgsSince(msgs []provider.Message, start int) (string, bool) {
+	for i := len(msgs) - 1; i >= start; i-- {
+		for j := len(msgs[i].ToolCalls) - 1; j >= 0; j-- {
+			tc := msgs[i].ToolCalls[j]
+			if tc.Name == "todo_write" {
+				return tc.Arguments, true
+			}
+		}
+	}
+	return "", false
+}
+
 // listItem parses a markdown list line ("- x", "* x", "1. x", "2) x") into its
 // task text and a nesting level derived from leading indentation (0 for a
 // top-level item, 1 for an indented sub-step — capped at 1 since the plan is
@@ -2069,9 +3178,6 @@ func listItem(line string) (content string, level int, ok bool) {
 	return s, 0, true
 }
 
-// requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)
-// answers or ctx is cancelled. A prior session grant for the same tool+subject
-// short-circuits. promptMu serialises outstanding prompts.
 // parseRewind parses the arguments after "/rewind". The user may provide:
 //
 //	/rewind              → latest checkpoint, both
@@ -2107,64 +3213,143 @@ func parseRewind(args string, cps []checkpoint.Meta) (int, RewindScope, error) {
 	return turn, scope, nil
 }
 
-func (c *Controller) requestApproval(ctx context.Context, tool, subject string) (bool, bool, error) {
-	key := tool + "\x00" + subject
-
-	c.mu.Lock()
-	// YOLO/bypass and the just-approved-plan window auto-allow every approval
-	// without prompting; the plan gate routes through here too, so this is what
-	// stops a bypass session from blocking on plan approval. Deny rules bit upstream.
-	if c.bypass || c.autoApprove || c.granted[key] {
-		c.mu.Unlock()
+// requestApproval emits an ApprovalRequest and blocks until Approve(ID, …)
+// answers or ctx is cancelled. A prior session grant (or a bypass posture) for
+// the same approval scope short-circuits. The approvalManager's promptMu
+// serialises outstanding prompts; this method keeps the I/O (events, hooks,
+// remember) that the manager deliberately stays out of.
+func (c *Controller) requestApproval(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, error) {
+	// YOLO/full access and the just-approved-plan execution window auto-allow
+	// approval-gated tools without prompting. Plan approval is a user decision,
+	// not a tool permission, so it deliberately stays interactive.
+	if c.approval.preApproved(tool, subject) {
 		return true, false, nil
 	}
-	c.mu.Unlock()
 
-	c.promptMu.Lock()
-	defer c.promptMu.Unlock()
+	c.approval.promptMu.Lock()
+	defer c.approval.promptMu.Unlock()
 
-	// Re-check the grant: a session grant may have landed while we queued behind
-	// another prompt for the same subject.
-	c.mu.Lock()
-	if c.bypass || c.autoApprove || c.granted[key] {
-		c.mu.Unlock()
+	// Re-check: a session grant may have landed while we queued behind another
+	// prompt for the same subject.
+	if c.approval.preApproved(tool, subject) {
 		return true, false, nil
 	}
-	c.nextID++
-	id := strconv.Itoa(c.nextID)
-	reply := make(chan approvalReply, 1)
-	approval := event.Approval{ID: id, Tool: tool, Subject: subject}
-	c.approvals[id] = reply
-	c.pendingApprovals[id] = approval
-	c.mu.Unlock()
+	id, reply := c.approval.register(tool, subject)
 
-	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: approval})
+	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject}})
+	if hookSubject, hookArgs, ok := permissionRequestHookPayload(tool, subject, args); ok {
+		go c.hooks.PermissionRequest(ctx, tool, hookSubject, hookArgs)
+	}
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
-	if subject != "" {
-		go c.hooks.Notification(ctx, "approval needed: "+tool+" "+subject)
-	} else {
-		go c.hooks.Notification(ctx, "approval needed: "+tool)
-	}
+	go c.hooks.Notification(ctx, approvalNotificationText(tool, subject))
+
+	waitCtx, cancelWait := c.approval.waitContext(ctx)
+	defer cancelWait()
 
 	select {
 	case r := <-reply:
 		// Plan approvals are one-shot — never persist a session grant for them, or
 		// every future plan would auto-approve.
-		if r.allow && r.session && tool != planApprovalTool {
-			c.mu.Lock()
-			c.granted[key] = true
-			c.mu.Unlock()
+		if r.allow && r.session && !requiresFreshApprovalTool(tool) {
+			c.approval.grantSession(tool, subject)
 		}
-		// When persist is true, remember=true signals Gate.OnRemember to write
-		// the rule to the on-disk config. Plan approvals are excluded.
-		remember := r.persist && tool != planApprovalTool
-		return r.allow, remember, nil
-	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.approvals, id)
-		delete(c.pendingApprovals, id)
-		c.mu.Unlock()
-		return false, false, ctx.Err()
+		if r.allow && r.persist && !requiresFreshApprovalTool(tool) && c.onRemember != nil {
+			c.emitRememberResult(c.onRemember(permission.RememberRuleForScope(tool, subject)))
+		}
+		return r.allow, false, nil
+	case <-waitCtx.Done():
+		c.approval.cancel(id)
+		return false, false, waitCtx.Err()
 	}
+}
+
+func (c *Controller) emitRememberResult(r RememberResult) {
+	if r.Err != nil {
+		c.sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelWarn,
+			Text:  fmt.Sprintf(i18n.M.PermissionSaveFailedFmt, r.Rule, r.Err),
+		})
+		return
+	}
+	switch {
+	case r.Saved:
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(i18n.M.PermissionSavedFmt, r.Path, r.Rule)})
+	case strings.TrimSpace(r.CoveredBy) != "":
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(i18n.M.PermissionAlreadyAllowedFmt, r.Path, r.CoveredBy)})
+	}
+}
+
+// detectProjectModules scans the workspace root for top-level source directories
+// to enable module-aware task routing in /plan-exec.
+func (c *Controller) detectProjectModules() []string {
+	root := c.sessionDir
+	for i := 0; i < 3 && root != ""; i++ {
+		if hasFile(root, "go.mod") || hasFile(root, "package.json") || hasFile(root, ".git") {
+			return listSourceDirs(root, 2)
+		}
+		root = filepath.Dir(root)
+		if root == filepath.Dir(root) {
+			break
+		}
+	}
+	return nil
+}
+
+func hasFile(dir, name string) bool {
+	_, err := os.Stat(filepath.Join(dir, name))
+	return err == nil
+}
+
+func listSourceDirs(root string, maxDepth int) []string {
+	skip := map[string]bool{
+		".git": true, ".github": true, "node_modules": true,
+		"vendor": true, ".voltui": true, "desktop": true,
+		"dist": true, "build": true, ".cache": true, "bin": true,
+	}
+	var dirs []string
+	walkDir(root, "", skip, maxDepth, &dirs)
+	return dirs
+}
+
+func walkDir(root, rel string, skip map[string]bool, depth int, out *[]string) {
+	if depth <= 0 {
+		return
+	}
+	dir := root
+	if rel != "" {
+		dir = filepath.Join(root, rel)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() || skip[name] || strings.HasPrefix(name, ".") {
+			continue
+		}
+		childRel := name
+		if rel != "" {
+			childRel = rel + "/" + name
+		}
+		if hasSourceFiles(filepath.Join(root, childRel)) {
+			*out = append(*out, childRel)
+		}
+		walkDir(root, childRel, skip, depth-1, out)
+	}
+}
+
+func hasSourceFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			return true
+		}
+	}
+	return false
 }

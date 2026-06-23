@@ -3,16 +3,21 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"voltui/internal/config"
 )
 
 // TestModelRefsFromConfig verifies the /model picker enumerates configured
 // provider/model refs (built-in defaults when no voltui.toml is present), and
 // only those whose provider API key is set.
 func TestModelRefsFromConfig(t *testing.T) {
+	isolateUserConfig(t)
 	t.Chdir(t.TempDir()) // no voltui.toml → built-in default providers
-	// Only DeepSeek keyed → MiMo refs must be filtered out.
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-	t.Setenv("MIMO_API_KEY", "")
+	// Only DeepSeek keyed in VoltUI's credentials store → MiMo refs must be
+	// filtered out.
+	if _, err := config.StoreCredentialLines([]string{"DEEPSEEK_API_KEY=test-key"}); err != nil {
+		t.Fatalf("store credentials: %v", err)
+	}
 	refs := modelRefs()
 	if len(refs) == 0 {
 		t.Fatal("expected default provider/model refs, got none")
@@ -30,9 +35,8 @@ func TestModelRefsFromConfig(t *testing.T) {
 // TestModelRefsSkipsUnconfigured verifies that with no provider keys set, the
 // picker offers nothing rather than listing models the user can't select.
 func TestModelRefsSkipsUnconfigured(t *testing.T) {
+	isolateUserConfig(t)
 	t.Chdir(t.TempDir())
-	t.Setenv("DEEPSEEK_API_KEY", "")
-	t.Setenv("MIMO_API_KEY", "")
 	if refs := modelRefs(); len(refs) != 0 {
 		t.Errorf("no keys set → no refs, got %v", refs)
 	}
@@ -41,8 +45,11 @@ func TestModelRefsSkipsUnconfigured(t *testing.T) {
 // TestModelArgCompletion verifies "/model " completes to the configured refs
 // through the shared completion path.
 func TestModelArgCompletion(t *testing.T) {
+	isolateUserConfig(t)
 	t.Chdir(t.TempDir())
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	if _, err := config.StoreCredentialLines([]string{"DEEPSEEK_API_KEY=test-key"}); err != nil {
+		t.Fatalf("store credentials: %v", err)
+	}
 	m := newTestChatTUI()
 	items, _, ok := m.slashArgItems("/model ")
 	if !ok || len(items) == 0 {

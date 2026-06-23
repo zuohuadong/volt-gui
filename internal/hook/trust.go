@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 )
 
-// Trust gates project hooks. A project's .voltui/settings.json can run
+// Trust gates project hooks. A project's .reasonix/settings.json can run
 // arbitrary shell commands, so cloning a repo must not silently execute its
 // hooks: project hooks load only after the user explicitly trusts that project
-// root. The trust flag lives in user-global state (~/.voltui/trust.json),
+// root. The trust flag lives in user-global state (~/.reasonix/trust.json),
 // NOT in the project file itself — an attacker controls the latter. Global
-// hooks (~/.voltui/settings.json) are the user's own and always run.
+// hooks (~/.reasonix/settings.json) are the user's own and always run.
 
-// TrustFilename is the user-global trust store under ~/.voltui.
+// TrustFilename is the user-global trust store under ~/.reasonix.
 const TrustFilename = "trust.json"
 
 type trustFile struct {
@@ -21,9 +21,10 @@ type trustFile struct {
 	Projects map[string]bool `json:"projects"`
 }
 
-// TrustPath is ~/.voltui/trust.json (homeDir overrides ~).
+// TrustPath is <VoltUI home>/trust.json (homeDir overrides ~ for tests and
+// legacy callers).
 func TrustPath(homeDir string) string {
-	return filepath.Join(home(homeDir), SettingsDirname, TrustFilename)
+	return filepath.Join(reasonixHome(homeDir), TrustFilename)
 }
 
 // IsTrusted reports whether projectRoot has been trusted to run its hooks.
@@ -56,8 +57,17 @@ func absRoot(root string) string {
 
 func readTrust(homeDir string) trustFile {
 	var tf trustFile
-	b, err := os.ReadFile(TrustPath(homeDir))
+	path := TrustPath(homeDir)
+	b, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			if legacy := legacyTrustPath(homeDir); legacy != "" {
+				if legacyBytes, legacyErr := os.ReadFile(legacy); legacyErr == nil {
+					_ = json.Unmarshal(legacyBytes, &tf)
+					return tf
+				}
+			}
+		}
 		return tf
 	}
 	_ = json.Unmarshal(b, &tf) // malformed → empty (untrusted), don't crash

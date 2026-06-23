@@ -38,6 +38,10 @@ var assets embed.FS
 // prompts to update.
 var version = "dev"
 
+// channel is injected by release builds when they need to distinguish stable,
+// beta, or other distribution tracks in telemetry/crash reports.
+var channel = "dev"
+
 func main() {
 	app := NewApp()
 

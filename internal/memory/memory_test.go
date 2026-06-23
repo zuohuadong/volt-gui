@@ -69,6 +69,30 @@ func TestDiscoverPrecedenceOrder(t *testing.T) {
 	}
 }
 
+func TestDiscoverLoadsReasonixUserMemory(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "voltui")
+	legacyUser := filepath.Join(root, "reasonix")
+	proj := filepath.Join(root, "proj")
+	mustMkdir(t, user)
+	mustMkdir(t, legacyUser)
+	mustMkdir(t, proj)
+	mustMkdir(t, filepath.Join(proj, ".git"))
+
+	mustWrite(t, filepath.Join(legacyUser, "REASONIX.md"), "REASONIX USER")
+	mustWrite(t, filepath.Join(user, "VOLTUI.md"), "VOLTUI USER")
+
+	set := Load(Options{CWD: proj, UserDir: user})
+	if len(set.Docs) != 2 {
+		t.Fatalf("want 2 user docs, got %d: %+v", len(set.Docs), set.Docs)
+	}
+	block := set.Block()
+	ir, iv := strings.Index(block, "REASONIX USER"), strings.Index(block, "VOLTUI USER")
+	if !(ir >= 0 && ir < iv) {
+		t.Fatalf("reasonix user memory should load before current user memory: reasonix=%d voltui=%d\n%s", ir, iv, block)
+	}
+}
+
 // TestImportResolution checks "@path" inlining, including a relative import.
 func TestImportResolution(t *testing.T) {
 	proj := t.TempDir()

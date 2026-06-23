@@ -16,6 +16,12 @@ func explainError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if provider.IsStreamInterrupted(err) {
+		return fmt.Errorf("model stream interrupted after recovery attempts: %s. The partial response was kept; retry or ask VoltUI to continue", err.Error())
+	}
+	if provider.IsConnReset(err) {
+		return fmt.Errorf("model stream disconnected before completion after retry attempts: %s. Check the provider/proxy connection, then retry or ask VoltUI to continue", err.Error())
+	}
 	var apiErr *provider.APIError
 	if errors.As(err, &apiErr) {
 		msg := i18n.M.ProviderStatusMessage(apiErr.Status)
@@ -29,11 +35,14 @@ func explainError(err error) error {
 	}
 	var authErr *provider.AuthError
 	if errors.As(err, &authErr) {
-		msg := i18n.M.ProviderStatusMessage(authErr.Status)
-		if msg == "" {
-			return err
+		msg := i18n.M.ProviderErrAuth
+		if authErr.HasKey {
+			msg = i18n.M.ProviderErrAuthRejected
 		}
 		if authErr.KeyEnv != "" {
+			if authErr.KeySource != "" {
+				return fmt.Errorf("%s (%s from %s)", msg, authErr.KeyEnv, authErr.KeySource)
+			}
 			return fmt.Errorf("%s (%s)", msg, authErr.KeyEnv)
 		}
 		return errors.New(msg)

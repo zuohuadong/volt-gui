@@ -2,49 +2,49 @@
   "agents": [
     {
       "id": "designer",
-      "name": "Agent-Team Designer",
-      "responsibility": "Turn the task contract into a compact design artifact with explicit boundaries.",
+      "name": "Designer",
+      "responsibility": "Propose the artifact structure, field semantics, and revisions.",
       "mustChallenge": [
-        "Does this artifact preserve the user's requested scope?",
-        "Can a future executor implement it without guessing?",
-        "Are non-goals and rollback boundaries explicit?"
+        "Can the artifact be implemented from this wording?",
+        "Is each field necessary?",
+        "Does the wording preserve the user's goal?"
       ]
     },
     {
       "id": "critic",
-      "name": "Agent-Team Critic",
-      "responsibility": "Attack ambiguity, hidden assumptions, weak naming, and missing acceptance criteria.",
+      "name": "Critic",
+      "responsibility": "Attack ambiguity, missing boundaries, weak names, hidden assumptions, and acceptance gaps.",
       "mustChallenge": [
-        "What can be misunderstood by an executor?",
-        "Which risks are not backed by evidence?",
-        "Where could scope silently expand?"
+        "What can be misunderstood?",
+        "What breaks under edge cases?",
+        "Which names imply the wrong behavior?"
       ]
     },
     {
       "id": "verifier",
-      "name": "Agent-Team Verifier",
-      "responsibility": "Separate evidence from opinion and connect conclusions to repository facts.",
+      "name": "Verifier",
+      "responsibility": "Separate evidence from opinion and compare the proposal to known systems or references.",
       "mustChallenge": [
-        "Which claim needs a file path, command output, or source?",
-        "What existing project convention should constrain the design?",
-        "Are acceptance criteria testable?"
+        "What claim needs a source?",
+        "What implementation pattern already exists?",
+        "What risk is unsupported by evidence?"
       ]
     },
     {
       "id": "editor",
-      "name": "Agent-Team Editor",
+      "name": "Editor",
       "responsibility": "Compress the final artifact while preserving accepted decisions and unresolved risks.",
       "mustChallenge": [
-        "Can this wording be shorter without losing contract meaning?",
-        "Are field names and task terms used consistently?",
-        "Does the final artifact match the ledger decisions?"
+        "Can a sentence be removed without losing contract meaning?",
+        "Are terms used consistently?",
+        "Does the final text match the decision ledger?"
       ]
     }
   ],
   "artifactSections": [
     "Goal",
     "Non-goals",
-    "Context Evidence",
+    "User Scenario",
     "Core Concepts",
     "Data Model",
     "Field Naming Rationale",

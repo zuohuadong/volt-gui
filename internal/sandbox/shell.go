@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,35 +42,98 @@ type Shell struct {
 	Path string
 }
 
-// ResolveShell picks the interpreter the shell tool runs commands under. It
-// prefers a real bash so the model's POSIX habits work; on Windows, where bash
-// is usually absent from PATH, it probes the Git-for-Windows install locations
-// and only then falls back to PowerShell so the tool still functions.
-func ResolveShell() Shell {
-	return resolveShell(runtime.GOOS, exec.LookPath, fileExists, windowsBashCandidates(), probeBash, isWindowsWSLBash)
+// ResolveShell picks the interpreter the shell tool runs commands under. With
+// prefer "auto"/"" it favours a real bash so the model's POSIX habits work and
+// only falls back to PowerShell on Windows when bash is absent. prefer "bash" or
+// "powershell"/"pwsh" forces that interpreter (path overrides the PATH lookup),
+// warning to warn and falling back to auto-detection if the forced one is
+// missing — so a typo or an uninstalled shell can never leave the tool broken.
+func ResolveShell(prefer, path string, warn io.Writer) Shell {
+	return resolveShell(prefer, path, warn, runtime.GOOS, exec.LookPath, fileExists, windowsBashCandidates(), windowsPowerShellCandidates(), probeBash, isWindowsWSLBash)
 }
 
 // resolveShell is ResolveShell with its environment lookups injected — including
 // the Git-for-Windows bash candidates, which derive from %ProgramFiles% and so
 // are empty off Windows — so the decision table is deterministically testable on
 // any host.
-func resolveShell(goos string, lookPath func(string) (string, error), exists func(string) bool, winBashCandidates []string, probe func(string) bool, isWSL func(string) bool) Shell {
-	if p, err := lookPath("bash"); err == nil && !isWSL(p) && probe(p) {
-		return Shell{Kind: ShellBash, Path: p}
-	}
-	if goos == "windows" {
+func resolveShell(prefer, path string, warn io.Writer, goos string, lookPath func(string) (string, error), exists func(string) bool, winBashCandidates []string, winPowerShellCandidates []string, probe func(string) bool, isWSL func(string) bool) Shell {
+	findBash := func() (Shell, bool) {
+		if p, err := lookPath("bash"); err == nil && !isWSL(p) && probe(p) {
+			return Shell{Kind: ShellBash, Path: p}, true
+		}
 		for _, p := range winBashCandidates {
 			if exists(p) && probe(p) {
-				return Shell{Kind: ShellBash, Path: p}
+				return Shell{Kind: ShellBash, Path: p}, true
 			}
 		}
-		for _, name := range []string{"pwsh", "powershell"} {
-			if p, err := lookPath(name); err == nil {
-				return Shell{Kind: ShellPowerShell, Path: p}
-			}
-		}
+		return Shell{}, false
 	}
-	return Shell{Kind: ShellBash, Path: "bash"}
+	findPowerShell := func(order []string) (Shell, bool) {
+		for _, name := range order {
+			for _, p := range winPowerShellCandidates {
+				base := strings.ToLower(pathBase(p))
+				if base != strings.ToLower(name) && strings.TrimSuffix(base, ".exe") != strings.ToLower(name) {
+					continue
+				}
+				if exists(p) {
+					return Shell{Kind: ShellPowerShell, Path: p}, true
+				}
+			}
+			if p, err := lookPath(name); err == nil {
+				return Shell{Kind: ShellPowerShell, Path: p}, true
+			}
+		}
+		return Shell{}, false
+	}
+	auto := func() Shell {
+		if sh, ok := findBash(); ok {
+			return sh
+		}
+		if goos == "windows" {
+			if sh, ok := findPowerShell([]string{"pwsh", "powershell"}); ok {
+				return sh
+			}
+		}
+		return Shell{Kind: ShellBash, Path: "bash"}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(prefer)) {
+	case "", "auto":
+		return auto()
+	case "bash":
+		if path != "" && exists(path) && probe(path) {
+			return Shell{Kind: ShellBash, Path: path}
+		}
+		if sh, ok := findBash(); ok {
+			return sh
+		}
+		warnMissingShell(warn, prefer)
+		return auto()
+	case "powershell", "pwsh":
+		if path != "" && exists(path) {
+			return Shell{Kind: ShellPowerShell, Path: path}
+		}
+		order := []string{"pwsh", "powershell"}
+		if strings.EqualFold(strings.TrimSpace(prefer), "powershell") {
+			order = []string{"powershell", "pwsh"}
+		}
+		if sh, ok := findPowerShell(order); ok {
+			return sh
+		}
+		warnMissingShell(warn, prefer)
+		return auto()
+	default:
+		if warn != nil {
+			fmt.Fprintf(warn, "warning: [tools.shell] prefer=%q is not recognised (use auto/bash/powershell); using auto-detection\n", prefer)
+		}
+		return auto()
+	}
+}
+
+func warnMissingShell(warn io.Writer, prefer string) {
+	if warn != nil {
+		fmt.Fprintf(warn, "warning: [tools.shell] prefer=%q but that shell was not found; using auto-detection\n", prefer)
+	}
 }
 
 // isWindowsWSLBash reports whether a resolved bash path is the WSL launcher
@@ -111,6 +176,13 @@ func fileExists(p string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+func pathBase(p string) string {
+	if i := strings.LastIndexAny(p, `/\\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
 // windowsBashCandidates lists the bash.exe paths a Git-for-Windows install
 // ships, across the usual program-files roots and a per-user install.
 func windowsBashCandidates() []string {
@@ -129,6 +201,27 @@ func windowsBashCandidates() []string {
 			filepath.Join(r, "Git", "bin", "bash.exe"),
 			filepath.Join(r, "Git", "usr", "bin", "bash.exe"),
 		)
+	}
+	return out
+}
+
+// windowsPowerShellCandidates lists common PowerShell executables that are not
+// always present on PATH, especially PowerShell 7's default MSI install path.
+func windowsPowerShellCandidates() []string {
+	var roots []string
+	for _, env := range []string{"ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"} {
+		if v := os.Getenv(env); v != "" {
+			roots = append(roots, v)
+		}
+	}
+	var out []string
+	for _, r := range roots {
+		out = append(out, filepath.Join(r, "PowerShell", "7", "pwsh.exe"))
+	}
+	if v := os.Getenv("SystemRoot"); v != "" {
+		out = append(out, filepath.Join(v, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+	} else if v := os.Getenv("windir"); v != "" {
+		out = append(out, filepath.Join(v, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
 	}
 	return out
 }
@@ -168,9 +261,6 @@ func (s Shell) SupportsChaining() bool {
 	if s.Kind != ShellPowerShell {
 		return true
 	}
-	base := strings.ToLower(s.Path)
-	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
-		base = base[i+1:] // Windows path; split on either separator off-Windows too
-	}
+	base := strings.ToLower(pathBase(s.Path))
 	return base == "pwsh" || base == "pwsh.exe"
 }

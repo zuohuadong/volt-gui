@@ -26,8 +26,7 @@ import {
 } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import { loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import { clampWorkspaceSplitTreeWidth, initialWorkspaceSplitTreeWidth, workspaceSplitMinWidth } from "../lib/workspaceSplit";
+import { clampWorkspaceSplitTreeWidth, initialWorkspaceSplitTreeWidth } from "../lib/workspaceSplit";
 import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangeView } from "../lib/types";
 import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { cleanGitDiff } from "../lib/diff";
@@ -38,11 +37,10 @@ import { Markdown } from "./Markdown";
 import { Tooltip } from "./Tooltip";
 import { AnchoredPopover } from "./AnchoredPopover";
 
-const WORKSPACE_TREE_MIN_WIDTH = 300;
+const WORKSPACE_TREE_MIN_WIDTH = 140;
 const WORKSPACE_TREE_DEFAULT_WIDTH = 300;
-const WORKSPACE_PREVIEW_MIN_WIDTH = 300;
+const WORKSPACE_PREVIEW_MIN_WIDTH = 140;
 const WORKSPACE_PREVIEW_TARGET_WIDTH = 360;
-export const WORKSPACE_DUAL_PANEL_MIN_WIDTH = workspaceSplitMinWidth(WORKSPACE_TREE_MIN_WIDTH, WORKSPACE_PREVIEW_MIN_WIDTH);
 const WORKSPACE_DUAL_PANEL_TARGET_WIDTH = WORKSPACE_TREE_DEFAULT_WIDTH + WORKSPACE_PREVIEW_TARGET_WIDTH;
 const WORKSPACE_CONTEXT_MENU_FILE_HEIGHT = 136;
 const WORKSPACE_CONTEXT_MENU_REF_HEIGHT = 92;
@@ -61,14 +59,6 @@ function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
     treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
     previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
   });
-}
-
-function loadWorkspaceTreeWidthPreference(): number | null {
-  return loadOptionalLayoutSize("workspaceTreeWidth", clampWorkspaceTreeWidth);
-}
-
-function saveWorkspaceTreeWidth(width: number): void {
-  saveLayoutSize("workspaceTreeWidth", width);
 }
 
 function entryPath(dir: string, entry: DirEntry): string {
@@ -200,7 +190,6 @@ export function WorkspacePanel({
   onClose,
   onToggleMaximized,
   onPreviewModeChange,
-  onFilesSplitModeChange,
   onAddToChat,
   onRequestPanelWidth,
   refreshKey,
@@ -219,7 +208,6 @@ export function WorkspacePanel({
   onClose: () => void;
   onToggleMaximized: () => void;
   onPreviewModeChange?: (active: boolean) => void;
-  onFilesSplitModeChange?: (active: boolean) => void;
   onAddToChat?: (text: string) => void;
   onRequestPanelWidth?: (width: number) => void;
   refreshKey?: number;
@@ -255,8 +243,7 @@ export function WorkspacePanel({
   const [scopedFilePaths, setScopedFilePaths] = useState<string[] | null>(null);
   const [scopedChangeRows, setScopedChangeRows] = useState<WorkspaceChangeListEntry[] | null>(null);
   const [treeVisible, setTreeVisible] = useState(true);
-  const [treeWidthPreference, setTreeWidthPreference] = useState<number | null>(loadWorkspaceTreeWidthPreference);
-  const [treeWidth, setTreeWidth] = useState(() => treeWidthPreference ?? WORKSPACE_TREE_DEFAULT_WIDTH);
+  const [treeWidth, setTreeWidth] = useState(WORKSPACE_TREE_DEFAULT_WIDTH);
   const [treeResizing, setTreeResizing] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
   const lastPreviewModeActiveRef = useRef<boolean | null>(null);
@@ -274,7 +261,6 @@ export function WorkspacePanel({
   const commitDetailRequestIdRef = useRef(0);
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
-  const lastFilesSplitModeActiveRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     openDirsRef.current = openDirs;
@@ -364,6 +350,12 @@ export function WorkspacePanel({
   const selectFile = useCallback(
     (path: string) => {
       onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
+      setTreeWidth(initialWorkspaceSplitTreeWidth({
+        panelWidth,
+        savedTreeWidth: null,
+        treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
+        previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
+      }));
       setSelectedPath(path);
       setScopedFilePaths((current) => {
         if (current) dismissedFileListRequestIdRef.current = lastFileListRequestIdRef.current;
@@ -381,7 +373,7 @@ export function WorkspacePanel({
         if (!entriesByDir[dir]) void loadDir(dir);
       });
     },
-    [entriesByDir, loadDir, onRequestPanelWidth],
+    [entriesByDir, loadDir, onRequestPanelWidth, panelWidth],
   );
 
   useEffect(() => {
@@ -774,19 +766,8 @@ export function WorkspacePanel({
   const previewVisible = changedMode || filePreviewActive;
   const actualTreeVisible = changedMode ? false : treeVisible;
   const previewModeActive = open && (filePreviewActive || changeDetailActive);
-  const filesSplitModeActive = open && !changedMode && previewVisible && actualTreeVisible;
   const embeddedDockMode = !showViewTabs;
   const showFileTools = showViewTabs || filePreviewActive;
-
-  useEffect(() => {
-    if (!filesSplitModeActive || treeWidthPreference !== null) return;
-    setTreeWidth(initialWorkspaceSplitTreeWidth({
-      panelWidth,
-      savedTreeWidth: null,
-      treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
-      previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
-    }));
-  }, [filesSplitModeActive, panelWidth, treeWidthPreference]);
 
   useEffect(() => {
     if (!selectedPath || !actualTreeVisible) return;
@@ -812,12 +793,6 @@ export function WorkspacePanel({
   }, [onPreviewModeChange, previewModeActive]);
 
   useEffect(() => {
-    if (lastFilesSplitModeActiveRef.current === filesSplitModeActive) return;
-    lastFilesSplitModeActiveRef.current = filesSplitModeActive;
-    onFilesSplitModeChange?.(filesSplitModeActive);
-  }, [filesSplitModeActive, onFilesSplitModeChange]);
-
-  useEffect(() => {
     if (open && !treeVisible && !previewVisible) onClose();
   }, [onClose, open, previewVisible, treeVisible]);
 
@@ -828,6 +803,25 @@ export function WorkspacePanel({
       onClose();
     }
   }, [onClose, previewVisible]);
+
+  const showTreeEvenSplit = useCallback(() => {
+    setTreeWidth(initialWorkspaceSplitTreeWidth({
+      panelWidth,
+      savedTreeWidth: null,
+      treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
+      previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
+    }));
+    setTreeVisible(true);
+    onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
+  }, [onRequestPanelWidth, panelWidth]);
+
+  const toggleFileTree = useCallback(() => {
+    if (actualTreeVisible) {
+      setTreeVisible(false);
+      return;
+    }
+    showTreeEvenSplit();
+  }, [actualTreeVisible, showTreeEvenSplit]);
 
   const closePreviewArea = useCallback(() => {
     if (lastRevealRequestIdRef.current === revealPathRequest?.id) {
@@ -849,8 +843,6 @@ export function WorkspacePanel({
     (width: number) => {
       const next = clampWorkspaceTreeWidth(width, panelWidth);
       setTreeWidth(next);
-      setTreeWidthPreference(next);
-      saveWorkspaceTreeWidth(next);
     },
     [panelWidth],
   );
@@ -869,8 +861,6 @@ export function WorkspacePanel({
       };
       const onDone = () => {
         setTreeWidth(nextWidth);
-        setTreeWidthPreference(nextWidth);
-        saveWorkspaceTreeWidth(nextWidth);
         setTreeResizing(false);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onDone);
@@ -1122,18 +1112,17 @@ export function WorkspacePanel({
           </div>
 
           <div className="workspace-preview__window-actions">
-            {!changedMode && !actualTreeVisible && (
-              <Tooltip label={t("workspace.showTree")}>
+            {!changedMode && previewVisible && (
+              <Tooltip label={actualTreeVisible ? t("workspace.hideTree") : t("workspace.showTree")}>
                 <button
-                  className="workspace-iconbtn workspace-iconbtn--on"
+                  className={`workspace-tree-toggle${actualTreeVisible ? " workspace-tree-toggle--active" : ""}`}
                   type="button"
-                  aria-label={t("workspace.showTree")}
-                  onClick={() => {
-                    setTreeVisible(true);
-                    onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
-                  }}
+                  aria-label={actualTreeVisible ? t("workspace.hideTree") : t("workspace.showTree")}
+                  aria-pressed={actualTreeVisible}
+                  onClick={toggleFileTree}
                 >
                   <FolderTree size={15} />
+                  <span>{t("workspace.treeToggle")}</span>
                 </button>
               </Tooltip>
             )}
@@ -1188,8 +1177,7 @@ export function WorkspacePanel({
               className="workspace-crumb"
               onClick={() => {
                 setFilter("");
-                setTreeVisible(true);
-                onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
+                showTreeEvenSplit();
                 setOpenDirs((prev) => new Set([...Array.from(prev), ""]));
               }}
             >
@@ -1207,8 +1195,7 @@ export function WorkspacePanel({
                     className={`workspace-crumb${isLast ? " workspace-crumb--current" : ""}`}
                     onClick={() => {
                       if (isLast) return;
-                      setTreeVisible(true);
-                      onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
+                      showTreeEvenSplit();
                       setFilter("");
                       setOpenDirs((prev) => new Set([...Array.from(prev), ...breadcrumbDirs, dir]));
                       void loadDir(dir);

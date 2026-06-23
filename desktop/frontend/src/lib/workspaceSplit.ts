@@ -1,7 +1,3 @@
-export function workspaceSplitMinWidth(treeMinWidth: number, previewMinWidth: number): number {
-  return Math.round(treeMinWidth) + Math.round(previewMinWidth);
-}
-
 export function clampWorkspaceSplitTreeWidth({
   width,
   panelWidth,

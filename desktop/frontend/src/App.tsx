@@ -49,7 +49,7 @@ import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import type { SettingsInitialFocus } from "./components/SettingsPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ContextPanel } from "./components/ContextPanel";
-import { WorkspacePanel, WORKSPACE_DUAL_PANEL_MIN_WIDTH } from "./components/WorkspacePanel";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import { Tooltip } from "./components/Tooltip";
 import { StartupSplash, shouldShowStartupSplash } from "./components/StartupSplash";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
@@ -927,7 +927,6 @@ export default function App() {
   const [rightDockTreeWidth, setRightDockTreeWidth] = useState(loadRightDockTreeWidth);
   const [rightDockPreviewWidth, setRightDockPreviewWidth] = useState(loadRightDockPreviewWidth);
   const [workspacePreviewActive, setWorkspacePreviewActive] = useState(false);
-  const [filesSplitModeActive, setFilesSplitModeActive] = useState(false);
   // Bump dockRefreshKey after each turn so WorkspacePanel/ContextPanel re-fetch
   // workspace changes, git history, and session metadata after AI tool writes.
   useEffect(() => {
@@ -1144,13 +1143,8 @@ export default function App() {
   const footerRef = useRef<HTMLElement>(null);
   const runningRef = useRef(state.running);
   const rightDockDetailActive = rightDockMode !== "context" && workspacePreviewActive;
-  const fileSplitDockActive = rightDockMode === "files" && filesSplitModeActive;
   const preferredWorkspacePanelWidth = rightDockDetailActive ? rightDockPreviewWidth : rightDockTreeWidth;
-  const workspacePanelMinWidth = fileSplitDockActive
-    ? WORKSPACE_DUAL_PANEL_MIN_WIDTH
-    : rightDockDetailActive
-      ? RIGHT_DOCK_PREVIEW_MIN_WIDTH
-      : RIGHT_DOCK_TREE_MIN_WIDTH;
+  const workspacePanelMinWidth = rightDockDetailActive ? RIGHT_DOCK_PREVIEW_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
   const chatReservedWidth = workspacePanelOpen && !workspacePanelMaximized ? CHAT_COMFORT_MIN_WIDTH : CHAT_MIN_WIDTH;
   const workspacePanelAvailableWidth = availableWorkspacePanelWidth({
     viewportWidth,
@@ -1166,7 +1160,6 @@ export default function App() {
     preferredWidth: preferredWorkspacePanelWidth,
     minWidth: workspacePanelMinWidth,
     availableWidth: workspacePanelAvailableWidth,
-    enforceMinWidth: fileSplitDockActive,
   });
 
   const workspacePanelRenderable =
@@ -1868,7 +1861,6 @@ export default function App() {
       closeTransientOverlays();
       if (mode === "context" || mode !== rightDockMode) {
         setWorkspacePreviewActive(false);
-        setFilesSplitModeActive(false);
       }
       setRightDockMode(mode);
       let nextMaximized = workspacePanelMaximized;
@@ -1919,7 +1911,6 @@ export default function App() {
       if (workspacePreviewActive === active) return;
       closeTransientOverlays();
       setWorkspacePreviewActive(active);
-      if (!active) setFilesSplitModeActive(false);
     },
     [closeTransientOverlays, workspacePreviewActive],
   );
@@ -3288,7 +3279,6 @@ export default function App() {
                     setWorkspacePanelMaximized((value) => !value);
                   }}
                   onPreviewModeChange={handleWorkspacePreviewModeChange}
-                  onFilesSplitModeChange={setFilesSplitModeActive}
                   onAddToChat={addWorkspaceTextToComposer}
                   onRequestPanelWidth={ensureWorkspacePanelWidth}
                   refreshKey={dockRefreshKey}

@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/workspace-split.test.ts
 
-import { initialWorkspaceSplitTreeWidth, workspaceSplitMinWidth } from "../lib/workspaceSplit";
+import { initialWorkspaceSplitTreeWidth } from "../lib/workspaceSplit";
 import { resolveWorkspacePanelWidth } from "../lib/workspaceLayout";
 
 let passed = 0;
@@ -18,8 +18,8 @@ function eq(a: unknown, b: unknown, label: string) {
 
 console.log("\nworkspace file split");
 
-const TREE_MIN_WIDTH = 300;
-const PREVIEW_MIN_WIDTH = 300;
+const TREE_MIN_WIDTH = 140;
+const PREVIEW_MIN_WIDTH = 140;
 
 eq(
   initialWorkspaceSplitTreeWidth({
@@ -35,27 +35,24 @@ eq(
 eq(
   initialWorkspaceSplitTreeWidth({
     panelWidth: 660,
-    savedTreeWidth: 420,
+    savedTreeWidth: 620,
     treeMinWidth: TREE_MIN_WIDTH,
     previewMinWidth: PREVIEW_MIN_WIDTH,
   }),
-  360,
-  "saved tree width is clamped so the preview keeps its minimum width",
+  520,
+  "tree width is clamped so the preview keeps its minimum width",
 );
-
-eq(workspaceSplitMinWidth(TREE_MIN_WIDTH, PREVIEW_MIN_WIDTH), 600, "split minimum is the sum of pane minimums");
 
 eq(
   resolveWorkspacePanelWidth({
     open: true,
     maximized: false,
     preferredWidth: 660,
-    minWidth: workspaceSplitMinWidth(TREE_MIN_WIDTH, PREVIEW_MIN_WIDTH),
-    availableWidth: 520,
-    enforceMinWidth: true,
+    minWidth: 300,
+    availableWidth: 228,
   }),
-  600,
-  "split file area preserves its minimum total width instead of silently compacting",
+  228,
+  "outer file area can still shrink below split target width",
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

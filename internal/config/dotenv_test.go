@@ -6,9 +6,10 @@ import (
 	"testing"
 )
 
-// TestLoadDotEnvIgnoresProjectAndHomeEnv proves provider credentials now come
-// only from Reasonix's global .env, not project or home .env files.
-func TestLoadDotEnvIgnoresProjectAndHomeEnv(t *testing.T) {
+// TestLoadDotEnvReadsProjectEnvForExpansionButIgnoresHomeEnv proves workspace
+// .env values remain available for plugin/MCP expansion, while home .env is not
+// part of Reasonix's provider-key path.
+func TestLoadDotEnvReadsProjectEnvForExpansionButIgnoresHomeEnv(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
 
@@ -34,14 +35,14 @@ func TestLoadDotEnvIgnoresProjectAndHomeEnv(t *testing.T) {
 
 	loadDotEnv()
 
-	if got := os.Getenv("KEY_CWD"); got != "" {
-		t.Errorf("project .env key was loaded: KEY_CWD=%q", got)
+	if got := os.Getenv("KEY_CWD"); got != "from_cwd" {
+		t.Errorf("project .env key was not loaded for expansion: KEY_CWD=%q", got)
 	}
 	if got := os.Getenv("KEY_HOME"); got != "" {
 		t.Errorf("home .env key was loaded: KEY_HOME=%q", got)
 	}
-	if got := os.Getenv("KEY_SHARED"); got != "" {
-		t.Errorf("project/home .env shared key was loaded: KEY_SHARED=%q", got)
+	if got := os.Getenv("KEY_SHARED"); got != "cwd_wins" {
+		t.Errorf("project .env shared key = %q, want cwd_wins", got)
 	}
 }
 
@@ -85,6 +86,46 @@ func TestLoadDotEnvReadsGlobalCredentials(t *testing.T) {
 	}
 	if got := os.Getenv("KEY_SHARED"); got != "global_wins" {
 		t.Errorf("global credentials should win over project .env: KEY_SHARED=%q want global_wins", got)
+	}
+}
+
+func TestLoadForRootExpandsPluginAuthFromProjectDotEnv(t *testing.T) {
+	project := t.TempDir()
+	cfgHome := t.TempDir()
+
+	t.Setenv("HOME", cfgHome)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	t.Setenv("USERPROFILE", cfgHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(cfgHome, ".config"))
+	t.Setenv("AppData", filepath.Join(cfgHome, "AppData"))
+	t.Setenv("STRIPE_KEY", "")
+	os.Unsetenv("STRIPE_KEY")
+
+	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("STRIPE_KEY=project-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".mcp.json"), []byte(`{
+  "mcpServers": {
+    "stripe": {
+      "type": "http",
+      "url": "https://mcp.example.test",
+      "headers": { "Authorization": "Bearer ${STRIPE_KEY}" }
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	if len(cfg.Plugins) != 1 {
+		t.Fatalf("plugins = %+v", cfg.Plugins)
+	}
+	got := cfg.Plugins[0].ExpandedPlugin().Headers["Authorization"]
+	if got != "Bearer project-token" {
+		t.Fatalf("expanded auth header = %q, want project token", got)
 	}
 }
 
@@ -406,6 +447,37 @@ func TestStoreCredentialLinesFileMode(t *testing.T) {
 	}
 	if got := os.Getenv("KEY_FILE_MODE"); got != "from_file_store" {
 		t.Fatalf("process env = %q, want stored value", got)
+	}
+}
+
+func TestRemoveCredentialMarksClearedAndSetRemovesMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+
+	if _, err := SetCredential("KEY_REMOVE_MARKER", "old"); err != nil {
+		t.Fatalf("SetCredential old: %v", err)
+	}
+	if err := RemoveCredential("KEY_REMOVE_MARKER"); err != nil {
+		t.Fatalf("RemoveCredential: %v", err)
+	}
+	if CredentialStored("KEY_REMOVE_MARKER") {
+		t.Fatal("removed key should not be stored")
+	}
+	if !credentialCurrentStoreClearedKey("KEY_REMOVE_MARKER") {
+		t.Fatal("removed key should leave a cleared marker")
+	}
+	if _, err := SetCredential("KEY_REMOVE_MARKER", "new"); err != nil {
+		t.Fatalf("SetCredential new: %v", err)
+	}
+	data, err := os.ReadFile(UserCredentialsPath())
+	if err != nil {
+		t.Fatalf("read credentials: %v", err)
+	}
+	if got := string(data); got != "KEY_REMOVE_MARKER=new\n" {
+		t.Fatalf("credentials after re-set = %q", got)
 	}
 }
 

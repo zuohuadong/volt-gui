@@ -1509,6 +1509,7 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 	}
 
 	// Load config for this tab's workspace root.
+	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		a.mu.Lock()

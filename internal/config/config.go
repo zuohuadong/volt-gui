@@ -2965,6 +2965,26 @@ func (e *ProviderEntry) APIKey() string {
 	return value
 }
 
+// ResolveAPIKeyFromProcessEnvForProbe pins a setup-time, user-entered key onto
+// this entry for an immediate connectivity probe. Normal runtime resolution does
+// not call this; loaded provider entries still resolve only from Reasonix's
+// global .env.
+func (e *ProviderEntry) ResolveAPIKeyFromProcessEnvForProbe() {
+	if e == nil {
+		return
+	}
+	key := strings.TrimSpace(e.APIKeyEnv)
+	if key == "" {
+		return
+	}
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return
+	}
+	e.resolvedAPIKey = value
+	e.resolvedSource = CredentialSource{Kind: CredentialSourceEnvironment, Label: "setup prompt"}
+}
+
 func (e *ProviderEntry) APIKeySourceLabel() string {
 	if e == nil || strings.TrimSpace(e.APIKeyEnv) == "" {
 		return ""

@@ -7,18 +7,32 @@ import (
 	"strings"
 )
 
-// loadDotEnv loads Reasonix's global .env into the process environment.
-// Reasonix-owned credentials intentionally override inherited env vars so a key
-// saved through setup/settings is the key used after restart.
+// loadDotEnv loads project .env values for non-provider expansion, then
+// Reasonix's global .env for provider credentials. Runtime provider resolution
+// still reads only Reasonix's global .env.
 func loadDotEnv() {
 	loadDotEnvForRoot(".")
 }
 
-// loadDotEnvForRoot loads only Reasonix's global .env. The root argument is kept
-// for callers that already pass workspace roots, but provider credentials are no
-// longer resolved from project or home .env files.
+// loadDotEnvForRoot loads a workspace .env for plugin/MCP/proxy expansion, then
+// Reasonix's global .env. Reasonix-owned credentials intentionally override
+// inherited or project env vars so a key saved through setup/settings is the key
+// provider runtime uses after restart.
 func loadDotEnvForRoot(root string) {
+	loadProjectDotEnvForExpansion(root)
 	loadCredentialStoreForRoot(root)
+}
+
+func loadProjectDotEnvForExpansion(root string) {
+	root = resolveRoot(root)
+	path := ".env"
+	if root != "." {
+		path = filepath.Join(root, ".env")
+	}
+	if current := UserCredentialsPath(); current != "" && samePath(path, current) {
+		return
+	}
+	loadDotEnvFileAs(path, CredentialSource{Kind: CredentialSourceProjectEnv, Path: path})
 }
 
 func legacyCredentialsPaths() []string {

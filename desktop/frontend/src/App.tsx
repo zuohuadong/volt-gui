@@ -1195,7 +1195,16 @@ export default function App() {
     const currentTabTurns = Math.max(state.checkpoints.length, visibleUserTurns);
     return currentTabTurns > 0 ? currentTabTurns : activeTopicTurns ?? 0;
   }, [activeTopicTurns, state.checkpoints.length, state.items]);
-  const startupSplashHold = state.meta?.ready !== true && !state.meta?.startupErr;
+  const startupSplashHold = !activeTabId && state.meta?.ready !== true && !state.meta?.startupErr;
+  const hydrateStatusLabel = state.hydrating
+    ? state.hydrateReason === "switch-tab"
+      ? t("status.hydrateSwitch")
+      : state.hydrateReason === "resume-session"
+        ? t("status.hydrateResume")
+        : state.hydrateReason === "new-session"
+          ? t("status.hydrateNewSession")
+          : t("status.hydrateSync")
+    : undefined;
   const backendActiveComposerProfile = useMemo(() => {
     if (state.meta) {
       return composerProfileFromMeta(state.meta, activeTab ? composerProfileMode(composerProfileFromTab(activeTab)) : undefined);
@@ -1919,12 +1928,13 @@ export default function App() {
     setComposerInsertRequest({ id: Date.now(), text });
   }, []);
 
-  const handleTabChange = useCallback(async (id: string) => {
+  const handleTabChange = useCallback((id: string) => {
     closeTransientOverlays();
-    const tabs = await switchTab(id);
-    if (tabs) setTabMetas(tabs);
+    const selected = tabMetas.find((tab) => tab.id === id);
+    setTabMetas((current) => current.map((tab) => ({ ...tab, active: tab.id === id })));
+    void switchTab(id, selected).then(() => refreshTabMetas());
     setTabRevealSignal((signal) => signal + 1);
-  }, [closeTransientOverlays, switchTab]);
+  }, [closeTransientOverlays, refreshTabMetas, switchTab, tabMetas]);
 
   const handleTabClose = useCallback(async (id: string) => {
     closeTransientOverlays();
@@ -1959,7 +1969,9 @@ export default function App() {
       await closeTab(id);
     }
     if (nextActiveTabId && currentIds.includes(nextActiveTabId)) {
-      await switchTab(nextActiveTabId);
+      const selected = tabMetas.find((tab) => tab.id === nextActiveTabId);
+      setTabMetas((current) => current.map((tab) => ({ ...tab, active: tab.id === nextActiveTabId })));
+      void switchTab(nextActiveTabId, selected);
     }
     await refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
@@ -3009,11 +3021,6 @@ export default function App() {
                 onManageAllowlist={() => openBotAllowlistSettings(sidebarImDetailConnection.connectionId)}
                 onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
               />
-            ) : state.meta?.ready === false && !state.meta?.startupErr ? (
-              <div className="loading-screen">
-                <div className="loading-screen__spinner" />
-                <span className="loading-screen__text">{t("common.loading")}</span>
-              </div>
             ) : (
               <Transcript
                 items={displayItems}
@@ -3117,7 +3124,8 @@ export default function App() {
               onSetTokenMode={applyTokenMode}
               insertRequest={composerInsertRequest}
               readOnly={Boolean(activeTab?.readOnly)}
-              disabled={state.meta?.ready === false || rewindCommitting || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+              disabled={rewindCommitting || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+              submitDisabled={state.meta?.ready !== true}
               decisionPending={rewindCommitting || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
               ready={state.meta?.ready === true}
               turnStartAt={state.turnStartAt}
@@ -3145,6 +3153,7 @@ export default function App() {
               workspacePath={state.meta?.workspacePath || state.meta?.workspaceRoot || state.meta?.cwd}
               workspaceName={state.meta?.workspaceName}
               gitBranch={state.meta?.gitBranch}
+              hydrationLabel={hydrateStatusLabel}
             />
           </footer>
           )}

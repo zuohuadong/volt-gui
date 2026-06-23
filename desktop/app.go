@@ -6363,8 +6363,8 @@ func (a *App) NeedsOnboarding() bool {
 	return strings.TrimSpace(os.Getenv(onboardingKeyEnv)) == ""
 }
 
-// ConnectKey validates apiKey against the balance endpoint, persists it to the
-// global credential store, and rebuilds the controller so the new key takes effect.
+// ConnectKey validates apiKey against the balance endpoint, persists it to
+// Reasonix's global .env, and rebuilds the controller so the new key takes effect.
 func (a *App) ConnectKey(apiKey string) (string, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {

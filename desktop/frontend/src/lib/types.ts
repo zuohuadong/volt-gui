@@ -130,6 +130,103 @@ export interface MCPServerInput {
   tier: string;
 }
 
+export interface WorkbenchPlugin {
+  id: string;
+  name: string;
+  kind: string;
+  entry: string;
+  version?: string;
+  capabilities: string[];
+  providerIds?: string[];
+  config?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface WorkbenchProvider {
+  id: string;
+  type: string;
+  server?: string;
+  url?: string;
+  command?: string;
+  args?: string[];
+  capabilities?: string[];
+  headerKeys?: string[];
+  envKeys?: string[];
+  config?: Record<string, string>;
+}
+
+export type WorkbenchJobStatus = "draft" | "running" | "waiting_approval" | "done" | "failed" | "canceled" | string;
+export type WorkbenchStepStatus = "draft" | "running" | "waiting_approval" | "done" | "failed" | string;
+
+export interface CreateWorkbenchStepInput {
+  id?: string;
+  name: string;
+  status?: WorkbenchStepStatus;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+}
+
+export interface CreateWorkbenchJobInput {
+  pluginId?: string;
+  kind: string;
+  scenario: string;
+  templateId?: string;
+  mode?: "manual" | "autopilot" | string;
+  steps?: CreateWorkbenchStepInput[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateWorkbenchStepInput {
+  name?: string;
+  status?: WorkbenchStepStatus;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface WorkbenchArtifactInput {
+  id?: string;
+  kind: string;
+  name: string;
+  path: string;
+  mimeType?: string;
+}
+
+export interface WorkbenchArtifact {
+  id: string;
+  kind: string;
+  name: string;
+  path: string;
+  mimeType?: string;
+  createdAt: string;
+}
+
+export interface WorkbenchStep {
+  id: string;
+  name: string;
+  status: WorkbenchStepStatus;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  updatedAt: string;
+  error?: string;
+}
+
+export interface WorkbenchJob {
+  id: string;
+  pluginId?: string;
+  kind: string;
+  scenario: string;
+  templateId?: string;
+  mode: "manual" | "autopilot" | string;
+  currentStep?: string;
+  steps: WorkbenchStep[];
+  artifacts: WorkbenchArtifact[];
+  status: WorkbenchJobStatus;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PermissionsView {
   mode: string;
   allow: string[];

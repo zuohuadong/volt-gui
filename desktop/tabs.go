@@ -1519,8 +1519,8 @@ func (a *App) buildTabControllerWithLoadedSession(tab *WorkspaceTab, loadedSessi
 		return
 	}
 
-	// A key resolved from this project's .env is project-scoped; lift it into the
-	// global credentials store so it follows the user to every other workspace.
+	// One-time legacy bridge: lift old ~/.env provider keys into Reasonix's
+	// global .env so every workspace observes the same saved credentials.
 	promoteProviderKeysToCredentials(cfg)
 
 	if tab.sink != nil {

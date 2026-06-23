@@ -81,12 +81,12 @@
   const MAX_TRANSCRIPT_ITEMS = 500;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "mockHearing" | "reports" | "regulations" | "library" | "resources" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
   type CapabilityTab = "plugin" | "mcp" | "skill";
-  type ResourceTab = "resources" | "knowledge" | "search" | "ingest";
+  type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
   type AgentCard = { id: string; name: string; role: string; runs: number; status: string; desc: string };
   type AgentMarketItem = AgentCard & { category: string; source: string; version: string; tags: string[]; localPath: string };
-  type SidebarConversation = { id: string; title: string; updatedAt: string };
+  type SidebarConversation = { id: string; title: string; updatedAt: string; archivedAtMs?: number };
   type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
   type SidebarProjectSort = "recent" | "name" | "conversations";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "hearing" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
@@ -108,6 +108,7 @@
   let commands = $state<CommandInfo[]>([]);
   let selectedModel = $state("");
   let linkedProject = $state("");
+  let workPermission = $state("auto-approve");
   let linkedCustomer = $state("");
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
@@ -130,6 +131,8 @@
   let capabilityDetailOpen = $state(false);
   let capabilityCreateOpen = $state(false);
   let resourceTab = $state<ResourceTab>("resources");
+  let resourceSearch = $state("");
+  let collapsedWorkspaceSections = $state<string[]>([]);
   let userMenuOpen = $state(false);
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
@@ -229,6 +232,7 @@
     { title: "运营", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }] },
     { title: "知识库", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }, { label: "资料中心", layer: "resources", icon: "resources" }] },
   ] as { title: string; items: { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string }[] }[];
+  const collapsibleWorkspaceSections = new Set(["运营", "知识库"]);
   const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
   const todoItems = [
     { title: "验证桌面预览加载状态", desc: "确认浏览器模式无需 Wails 绑定也能进入工作台", due: "今天", state: "进行中" },
@@ -366,12 +370,12 @@
     return matchSearch;
   }));
   const newTaskProjectOptions = $derived(projectCards.map((project) => ({ id: project.id, label: project.name })));
-  const newTaskClientOptions = $derived(customerCards.map((customer) => ({ id: customer.id, label: customer.name })));
   const sortedSidebarProjects = $derived([...sidebarProjects].sort((a, b) => {
     if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
-    if (sidebarProjectSort === "conversations") return b.conversations.length - a.conversations.length || a.name.localeCompare(b.name, "zh-Hans-CN");
+    if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
     return b.updatedAtMs - a.updatedAtMs;
   }));
+  const archivedSidebarConversationCount = $derived(sidebarProjects.reduce((sum, project) => sum + archivedSidebarProjectConversations(project).length, 0));
   const capabilityBuckets = {
     plugin: [
       { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建对话", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
@@ -451,6 +455,10 @@
     { title: "客户访谈附件", source: "local", size: "36 files", status: "待清理" },
     { title: "Agent 核心文件", source: "memory", size: "12 files", status: "已挂载" },
   ];
+  const filteredResourceItems = $derived(resourceItems.filter((item) => {
+    const keyword = resourceSearch.trim().toLowerCase();
+    return !keyword || [item.title, item.source, item.size, item.status].some((value) => value.toLowerCase().includes(keyword));
+  }));
   let teamRooms = $state([
     { id: "product-lab", title: "产品研发组", members: 3, active: "2 个 Agent 在线", desc: "围绕桌面端体验、代码质量和发布节奏协作。", leader: "代码审查 Agent", leaderId: "code-review", status: "运行中", topic: "桌面端体验复刻", queue: "3 条任务", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"] },
     { id: "ops-growth", title: "运营增长组", members: 2, active: "3 个任务进行中", desc: "处理客户触达、内容草案和项目跟进。", leader: "资料研究 Agent", leaderId: "research", status: "待配置", topic: "客户运营协同", queue: "5 条任务", memberIds: ["research", "automation"], avatars: ["R", "A"] },
@@ -580,6 +588,10 @@
   }
 
   function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; }
+  function openResourceCenterFromComposer() {
+    openWorkLayer("resources");
+    resourceTab = "resources";
+  }
   function openCodeConversation() {
     activityMode = "code";
     workLayer = "newTask";
@@ -622,6 +634,15 @@
     if (sidebarProjectSort === "name") return "名称";
     if (sidebarProjectSort === "conversations") return "对话";
     return "最近";
+  }
+  function isWorkspaceSectionCollapsed(title: string) {
+    return collapsedWorkspaceSections.includes(title);
+  }
+  function toggleWorkspaceSection(title: string) {
+    if (!collapsibleWorkspaceSections.has(title)) return;
+    collapsedWorkspaceSections = isWorkspaceSectionCollapsed(title)
+      ? collapsedWorkspaceSections.filter((item) => item !== title)
+      : [...collapsedWorkspaceSections, title];
   }
   function cycleSidebarProjectSort() {
     sidebarProjectSort = sidebarProjectSort === "recent" ? "name" : sidebarProjectSort === "name" ? "conversations" : "recent";
@@ -685,16 +706,14 @@
   function openSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
-    const now = Date.now();
     syncSidebarProjectContext(project);
-    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true, updatedAtMs: now } : item);
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true } : item);
   }
   function toggleSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
-    const now = Date.now();
     syncSidebarProjectContext(project);
-    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: !item.expanded, updatedAtMs: now } : item);
+    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: !item.expanded } : item);
   }
   function createSidebarProject() {
     const name = sidebarProjectDraft.trim();
@@ -735,18 +754,41 @@
   function openSidebarConversation(projectId: string, conversationId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
-    const conversation = project.conversations.find((item) => item.id === conversationId);
+    const conversation = project.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, updatedAtMs: Date.now() } : item);
     input = `项目：${project.name}\n${conversation ? `对话：${conversation.title}\n` : ""}`;
     focusNewTask();
   }
+  function sidebarProjectConversations(project: SidebarProject) {
+    return project.conversations.filter((conversation) => !conversation.archivedAtMs);
+  }
+  function archivedSidebarProjectConversations(project: SidebarProject) {
+    return project.conversations.filter((conversation) => conversation.archivedAtMs);
+  }
+  function clearActiveSidebarConversation(conversationId: string) {
+    if (activeSidebarConversationId === conversationId) activeSidebarConversationId = "";
+  }
+  function archiveSidebarConversation(projectId: string, conversationId: string) {
+    const now = Date.now();
+    clearActiveSidebarConversation(conversationId);
+    sidebarProjects = sidebarProjects.map((project) => project.id === projectId
+      ? { ...project, updatedAtMs: now, conversations: project.conversations.map((conversation) => conversation.id === conversationId ? { ...conversation, archivedAtMs: now, updatedAt: "已归档" } : conversation) }
+      : project);
+  }
+  function deleteSidebarConversation(projectId: string, conversationId: string) {
+    const now = Date.now();
+    clearActiveSidebarConversation(conversationId);
+    sidebarProjects = sidebarProjects.map((project) => project.id === projectId
+      ? { ...project, updatedAtMs: now, conversations: project.conversations.filter((conversation) => conversation.id !== conversationId) }
+      : project);
+  }
   function createSidebarConversation(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
     const now = Date.now();
-    const conversation: SidebarConversation = { id: `${projectId}-conversation-${Date.now()}`, title: `新对话 ${project.conversations.length + 1}`, updatedAt: "刚刚" };
+    const conversation: SidebarConversation = { id: `${projectId}-conversation-${Date.now()}`, title: `新对话 ${sidebarProjectConversations(project).length + 1}`, updatedAt: "刚刚" };
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] } : item);
     openSidebarConversation(projectId, conversation.id);
   }
@@ -880,11 +922,6 @@
     selectedProjectId = projectId;
     const project = projectCards.find((item) => item.id === projectId);
     linkedProject = project?.name ?? "";
-  }
-  function linkCustomerById(customerId: string) {
-    selectedCustomerId = customerId || selectedCustomerId;
-    const customer = customerCards.find((item) => item.id === customerId);
-    linkedCustomer = customer?.name ?? "";
   }
   function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; input = `关联项目：${projectName}\n`; focusNewTask(); }
   function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; input = `关联客户：${customerName}\n`; focusNewTask(); }
@@ -1276,9 +1313,32 @@
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
     <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
+      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class="brand-workbench-button" class:active={activityMode === "work" && workLayer === "today"} type="button" aria-label="工作台" title="工作台" onclick={() => openWorkLayer("today")}><LayoutDashboard size={15} /></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
       <nav class="workspace-nav" aria-label="工作台导航">
-        {#each workspaceNav as section (section.title)}<section><h2>{section.title}</h2>{#each section.items as item (item.label)}{@const Icon = navIcon(item.icon)}<button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkLayer(item.layer)}><span class="nav-icon"><Icon size={15} /></span><span>{item.label}</span>{#if item.badge}<em>{item.badge}</em>{/if}</button>{/each}</section>{/each}
+        {#each workspaceNav as section (section.title)}
+          {@const sectionCollapsed = isWorkspaceSectionCollapsed(section.title)}
+          {@const sectionCollapsible = collapsibleWorkspaceSections.has(section.title)}
+          <section>
+            {#if sectionCollapsible}
+              <button class="workspace-nav-section-head" class:collapsed={sectionCollapsed} type="button" aria-expanded={!sectionCollapsed} onclick={() => toggleWorkspaceSection(section.title)}>
+                <ChevronDown size={12} />
+                <span>{section.title}</span>
+              </button>
+            {:else}
+              <h2>{section.title}</h2>
+            {/if}
+            {#if !sectionCollapsed}
+              {#each section.items as item (item.label)}
+                {@const Icon = navIcon(item.icon)}
+                <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkLayer(item.layer)}>
+                  <span class="nav-icon"><Icon size={15} /></span>
+                  <span>{item.label}</span>
+                  {#if item.badge}<em>{item.badge}</em>{/if}
+                </button>
+              {/each}
+            {/if}
+          </section>
+        {/each}
         <section class="sidebar-project-dock" data-sidebar-project-dock>
           <div class="sidebar-project-head">
             <button class="sidebar-project-section-toggle" class:expanded={!sidebarProjectDockCollapsed} type="button" aria-label={sidebarProjectDockCollapsed ? "展开项目" : "收起项目"} aria-expanded={!sidebarProjectDockCollapsed} onclick={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}><ChevronDown size={13} /></button>
@@ -1313,14 +1373,17 @@
                 </div>
                 {#if project.expanded}
                   <div class="sidebar-conversation-list">
-                    {#each project.conversations as conversation (conversation.id)}
-                      <button class="sidebar-conversation-row" class:active={activeSidebarConversationId === conversation.id} type="button" data-sidebar-conversation={conversation.id} onclick={() => openSidebarConversation(project.id, conversation.id)}>
-                        <MessageSquare size={13} />
-                        <span>{conversation.title}</span>
-                        <em>{conversation.updatedAt}</em>
-                      </button>
+                    {#each sidebarProjectConversations(project) as conversation (conversation.id)}
+                      <div class="sidebar-conversation-row" class:active={activeSidebarConversationId === conversation.id} data-sidebar-conversation={conversation.id}>
+                        <button class="sidebar-conversation-open" type="button" title={conversation.title} onclick={() => openSidebarConversation(project.id, conversation.id)}>
+                          <span>{conversation.title}</span>
+                          <em>{conversation.updatedAt}</em>
+                        </button>
+                        <button class="sidebar-conversation-action" type="button" aria-label={`归档 ${conversation.title}`} title="归档" onclick={() => archiveSidebarConversation(project.id, conversation.id)}><Archive size={12} /></button>
+                        <button class="sidebar-conversation-action danger" type="button" aria-label={`删除 ${conversation.title}`} title="删除" onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={12} /></button>
+                      </div>
                     {:else}
-                      <button class="sidebar-conversation-empty" type="button" onclick={() => createSidebarConversation(project.id)}>新建对话</button>
+                      <button class="sidebar-conversation-empty" type="button" onclick={() => createSidebarConversation(project.id)}>新建对话 <Plus size={12} /></button>
                     {/each}
                   </div>
                 {/if}
@@ -1365,7 +1428,7 @@
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench">
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div></div><div class="stage-topbar__actions" aria-hidden="true"></div></header>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div></div></header>
             {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
@@ -1430,9 +1493,9 @@
                       projectOptions={newTaskProjectOptions}
                       selectedProjectId={linkedProject ? selectedProjectId : ""}
                       onProjectChange={linkProjectById}
-                      clientOptions={newTaskClientOptions}
-                      selectedClientId={linkedCustomer ? selectedCustomerId : ""}
-                      onClientChange={linkCustomerById}
+                      {workPermission}
+                      onWorkPermissionChange={(value) => (workPermission = value)}
+                      onOpenResources={openResourceCenterFromComposer}
                       {activityMode}
                       onActivityModeChange={openActivityMode}
                     />
@@ -1490,15 +1553,14 @@
               </section>
             {:else if workLayer === "agents"}
               <section class="aorist-page">
-                <div class="aorist-toolbar">
-                  <div><span>Agent Center</span><strong>Agent 中心</strong></div>
+                <div class="aorist-toolbar agent-center-toolbar">
+                  <label class="aorist-search"><Search size={16} /><input aria-label="搜索 Agent" placeholder="输入 Agent 名称或职责" /></label>
                   <div>
                     <button type="button" onclick={() => { agentMarketSearch = ""; agentMarketOpen = true; }}><Blocks size={15} /> Agent 市场</button>
                     <button type="button" onclick={() => { distillStep = 1; openConfigDialog("distill"); }}>蒸馏 Agent</button>
                     <button type="button" onclick={() => openAgentWizard()}>创建 Agent</button>
                   </div>
                 </div>
-                <label class="aorist-search"><Search size={16} /><input aria-label="搜索 Agent" placeholder="输入 Agent 名称或职责" /></label>
                 <div class="aorist-card-grid agent-grid">
                   {#each agentCards as agent (agent.id)}
                     {@const AgentIcon = agentIcon(agent.id)}
@@ -1581,7 +1643,7 @@
             {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button">同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button"><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
             {:else if workLayer === "mockHearing"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Mock Hearing</span><strong>模拟庭辩</strong></div><div><button type="button" onclick={() => openConfigDialog("hearing")}>创建庭辩</button><button type="button" onclick={() => (selectedHearingTitle = hearingRooms[0]?.title)}>进入庭辩室</button></div></div><div class="aorist-card-grid">{#each hearingRooms as room (room.title)}<button class="agent-card hearing-card" type="button" onclick={() => (selectedHearingTitle = room.title)}><header><span>辩</span><div><strong>{room.title}</strong><em>{room.stage}</em></div></header><p>{room.role}</p><footer><span>{room.next}</span><b>AI 庭辩</b></footer></button>{/each}</div></section>
             {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button">批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
-            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="aorist-toolbar"><div><span>Resource Center</span><strong>资料中心</strong></div><div><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div>{#if resourceTab === "resources"}<div class="aorist-card-grid">{#each resourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div><label class="aorist-search"><Search size={16} /><input aria-label="搜索文书、法规与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文书知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>法规知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文书、法规、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文书、法规检索" placeholder="输入关键词，检索所有工作台内容" /></label><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder="检索标题、来源、状态或文件数量" /></label><span>{filteredResourceItems.length} / {resourceItems.length} 项</span></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="搜索文书、法规与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文书知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>法规知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文书、法规、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文书、法规检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{searchResults.length} 项</span></div><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
                 {#if teamViewMode === "chat"}
@@ -1869,6 +1931,12 @@
                   {models}
                   {selectedModel}
                   onModelChange={switchModel}
+                  projectOptions={newTaskProjectOptions}
+                  selectedProjectId={linkedProject ? selectedProjectId : ""}
+                  onProjectChange={linkProjectById}
+                  {workPermission}
+                  onWorkPermissionChange={(value) => (workPermission = value)}
+                  onOpenResources={openResourceCenterFromComposer}
                   {activityMode}
                   onActivityModeChange={openActivityMode}
                 />
@@ -2471,6 +2539,12 @@
             {models}
             {selectedModel}
             onModelChange={switchModel}
+            projectOptions={newTaskProjectOptions}
+            selectedProjectId={linkedProject ? selectedProjectId : ""}
+            onProjectChange={linkProjectById}
+            {workPermission}
+            onWorkPermissionChange={(value) => (workPermission = value)}
+            onOpenResources={openResourceCenterFromComposer}
             {activityMode}
             onActivityModeChange={openActivityMode}
           />
@@ -3331,7 +3405,7 @@
 
   .select-list,.distill-panel{display:grid;gap:10px;margin-top:16px}.select-list>p,.distill-panel>p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.select-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.select-list button:hover{border-color:#93c5fd;background:#f8fbff}.select-list strong{color:#111827}.select-list span{color:#667085;font-size:12px}.distill-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.distill-steps button{min-height:36px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;color:#5f6774;font-weight:700}.distill-steps button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.distill-preview{padding:0;border:0}.distill-preview div{margin-top:0}@media(max-width:720px){.distill-steps{grid-template-columns:1fr}}
 
-  .resource-center .resource-tabs{margin-top:0;margin-bottom:14px;flex-wrap:wrap}.resource-center .resource-tabs button{min-width:104px}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}
+  .resource-center-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.resource-center .resource-tabs{flex:0 1 auto;min-width:0;margin:0;flex-wrap:wrap}.resource-center .resource-tabs button{min-width:104px}.resource-center-actions{display:flex;flex:0 0 auto;align-items:center;justify-content:flex-end;gap:8px}.resource-center-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#222;font-size:13px;font-weight:700}.resource-center-actions button:last-child{border-color:#222;background:#222;color:#fff}.resource-center-actions button:hover{border-color:#222}.resource-section-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.resource-section-top .aorist-search{flex:1 1 320px;max-width:none;margin-bottom:0}.resource-section-top>span{flex:0 0 auto;color:#7b8494;font-size:12px;font-weight:650;white-space:nowrap}.resource-section-top .resource-actions{flex:0 0 auto;justify-content:flex-end;margin:0}.resource-library-empty,.resource-archive-empty{grid-column:1/-1}.resource-archive-summary{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px;padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.82)}.resource-archive-summary span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.resource-archive-summary strong{display:block;margin-top:4px;color:#111827;font-size:18px}.resource-archive-summary em{color:#7b8494;font-size:12px;font-style:normal}.resource-archive-list{display:grid;gap:12px}.resource-archive-project{padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.resource-archive-project header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.resource-archive-project header strong{display:block;color:#111827;font-size:14px}.resource-archive-project header span,.resource-archive-project header em{color:#7b8494;font-size:11px;font-style:normal}.resource-archive-project>div{display:grid;gap:8px}.resource-archive-project article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#fff}.resource-archive-project article strong{display:block;overflow:hidden;color:#111827;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.resource-archive-project article p{margin:3px 0 0;color:#7b8494;font-size:11px}.resource-archive-project article button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:1px solid #f3d3d3;border-radius:8px;background:#fff;color:#b42318;font-size:12px;font-weight:650}.resource-archive-project article button:hover{background:#fff5f5}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}@media(max-width:920px){.resource-center-topbar{align-items:flex-start;flex-direction:column}.resource-center-actions{justify-content:flex-start}}@media(max-width:720px){.resource-section-top,.resource-archive-summary{align-items:flex-start;flex-direction:column}.resource-section-top .aorist-search{width:100%;max-width:none}.resource-section-top .resource-actions{width:100%;justify-content:flex-start}.resource-archive-project article{grid-template-columns:1fr}}
   .knowledge-stack{display:grid;gap:14px;min-width:0}.knowledge-stack section{padding:14px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.76);box-shadow:0 12px 30px rgba(15,23,42,.04)}.knowledge-stack header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}.knowledge-stack header span{color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.knowledge-stack header strong{color:#0f172a;font-size:17px;letter-spacing:-.03em}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:720px){.knowledge-layout--merged .aorist-card-grid{grid-template-columns:1fr}.knowledge-stack header{display:grid;align-items:start}}
 
   .nav-icon :global(svg),.brand-mark :global(svg),:global(.agent-strip span svg),.agent-card header>span :global(svg),.wizard-avatar :global(svg),.wizard-preview b :global(svg){display:block;stroke-width:2}
@@ -9076,18 +9150,54 @@
 
   .workspace-nav .sidebar-conversation-row {
     display: grid;
-    grid-template-columns: 15px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) 22px 22px;
     align-items: center;
-    gap: 6px;
+    gap: 2px;
     width: 100%;
     min-height: 28px;
-    padding: 0 7px;
+    padding: 0 2px 0 0;
+    border-radius: 7px;
     text-align: left;
+  }
+
+  .workspace-nav .sidebar-conversation-row:hover {
+    background: var(--aorist-sidebar-hover);
   }
 
   .workspace-nav .sidebar-conversation-row.active {
     background: var(--aorist-sidebar-active);
     color: var(--aorist-primary);
+  }
+
+  .workspace-nav .sidebar-conversation-open {
+    display: grid;
+    grid-column: 2;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 26px;
+    padding: 0 6px 0 0;
+    text-align: left;
+  }
+
+  .workspace-nav .sidebar-conversation-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 24px;
+    color: var(--aorist-faint);
+    opacity: 0.72;
+  }
+
+  .workspace-nav .sidebar-conversation-action:hover {
+    color: var(--aorist-ink);
+    opacity: 1;
+  }
+
+  .workspace-nav .sidebar-conversation-action.danger:hover {
+    color: #b42318;
   }
 
   .workspace-nav .sidebar-conversation-row span {
@@ -9110,11 +9220,22 @@
   }
 
   .workspace-nav .sidebar-conversation-empty {
+    display: flex;
+    grid-template-columns: none;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 5px;
     width: 100%;
     min-height: 28px;
     padding: 0 8px;
     color: var(--aorist-faint);
     text-align: left;
+    white-space: nowrap;
+    word-break: keep-all;
+  }
+
+  .workspace-nav .sidebar-conversation-empty :global(svg) {
+    flex: 0 0 auto;
   }
 
   .shell.is-sidebar-collapsed .sidebar-project-dock {
@@ -9160,15 +9281,6 @@
 
   .stage-topbar__leading > div {
     min-width: 0;
-  }
-
-  .stage-topbar__actions {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-left: auto;
   }
 
   .stage-topbar span,
@@ -9497,6 +9609,7 @@
   :global(.task-composer-card .composer),
   .agent-compose-card :global(.composer) {
     min-height: 112px;
+    overflow: visible;
     border: 1px solid var(--aorist-line);
     border-radius: 12px;
     background: var(--aorist-card-bg);
@@ -10122,6 +10235,183 @@
       0 8px 24px rgba(0, 0, 0, 0.08);
   }
 
+  .home__composer :global(.composer.composer--code),
+  .home__composer :global(.composer.composer--work),
+  .stage__composer :global(.composer.composer--code),
+  .stage__composer :global(.composer.composer--work),
+  .agent-compose-card :global(.composer.composer--code),
+  .agent-compose-card :global(.composer.composer--work) {
+    border-color: var(--composer-mode-border);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--composer-mode-soft) 72%, #ffffff), var(--composer-mode-surface) 42%, #ffffff 100%);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--composer-mode-accent) 8%, transparent),
+      0 12px 32px var(--composer-mode-shadow);
+  }
+
+  .home__composer :global(.composer__mode-switch),
+  .stage__composer :global(.composer__mode-switch),
+  .agent-compose-card :global(.composer__mode-switch) {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    width: max-content;
+    margin: 0;
+    padding: 3px;
+    border: 1px solid color-mix(in srgb, var(--composer-mode-accent) 18%, var(--aorist-line));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--composer-mode-soft) 72%, #ffffff);
+  }
+
+  .home__composer :global(.composer__mode-switch button),
+  .stage__composer :global(.composer__mode-switch button),
+  .agent-compose-card :global(.composer__mode-switch button) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 62px;
+    height: 26px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .home__composer :global(.composer__mode-switch button.active),
+  .stage__composer :global(.composer__mode-switch button.active),
+  .agent-compose-card :global(.composer__mode-switch button.active) {
+    background: var(--composer-mode-accent);
+    color: var(--composer-mode-active-text);
+    box-shadow: 0 6px 16px var(--composer-mode-shadow);
+  }
+
+  .home__composer :global(.composer__mode-switch button:not(.active):hover),
+  .stage__composer :global(.composer__mode-switch button:not(.active):hover),
+  .agent-compose-card :global(.composer__mode-switch button:not(.active):hover) {
+    background: color-mix(in srgb, var(--composer-mode-accent) 10%, transparent);
+    color: var(--composer-mode-accent-strong);
+  }
+
+  .home__composer :global(.composer__tools),
+  .stage__composer :global(.composer__tools),
+  .agent-compose-card :global(.composer__tools) {
+    position: relative;
+    overflow: visible;
+  }
+
+  .home__composer :global(.composer__permission-wrap),
+  .stage__composer :global(.composer__permission-wrap),
+  .agent-compose-card :global(.composer__permission-wrap) {
+    position: relative;
+  }
+
+  .home__composer :global(.composer__project-wrap),
+  .stage__composer :global(.composer__project-wrap),
+  .agent-compose-card :global(.composer__project-wrap) {
+    position: relative;
+  }
+
+  .home__composer :global(.composer-plus-menu),
+  .stage__composer :global(.composer-plus-menu),
+  .agent-compose-card :global(.composer-plus-menu) {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 30;
+    display: grid;
+    gap: 1px;
+    width: min(276px, calc(100vw - 40px));
+    max-height: min(300px, calc(100vh - 160px));
+    overflow-y: auto;
+    padding: 8px;
+    border: 1px solid var(--aorist-border-divider);
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+  }
+
+  .home__composer :global(.composer-plus-menu button),
+  .home__composer :global(.composer-plus-menu__select),
+  .stage__composer :global(.composer-plus-menu button),
+  .stage__composer :global(.composer-plus-menu__select),
+  .agent-compose-card :global(.composer-plus-menu button),
+  .agent-compose-card :global(.composer-plus-menu__select) {
+    position: relative;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+  }
+
+  .home__composer :global(.composer-plus-menu button:hover),
+  .home__composer :global(.composer-plus-menu__select:hover),
+  .stage__composer :global(.composer-plus-menu button:hover),
+  .stage__composer :global(.composer-plus-menu__select:hover),
+  .agent-compose-card :global(.composer-plus-menu button:hover),
+  .agent-compose-card :global(.composer-plus-menu__select:hover) {
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .home__composer :global(.composer-plus-menu button.active),
+  .stage__composer :global(.composer-plus-menu button.active),
+  .agent-compose-card :global(.composer-plus-menu button.active) {
+    background: #f1f2f4;
+  }
+
+  .home__composer :global(.composer-plus-menu span),
+  .stage__composer :global(.composer-plus-menu span),
+  .agent-compose-card :global(.composer-plus-menu span) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home__composer :global(.composer-plus-menu__title),
+  .stage__composer :global(.composer-plus-menu__title),
+  .agent-compose-card :global(.composer-plus-menu__title) {
+    padding: 3px 6px 4px;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .home__composer :global(.composer-plus-menu strong),
+  .stage__composer :global(.composer-plus-menu strong),
+  .agent-compose-card :global(.composer-plus-menu strong) {
+    display: block;
+    overflow: hidden;
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home__composer :global(.composer-plus-menu__select select),
+  .stage__composer :global(.composer-plus-menu__select select),
+  .agent-compose-card :global(.composer-plus-menu__select select) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
   .home__composer :global(.composer__tools button),
   .stage__composer :global(.composer__tools button),
   :global(.task-composer-card .composer__tools button),
@@ -10129,15 +10419,133 @@
   .home__composer :global(.composer__link-picker),
   .stage__composer :global(.composer__link-picker),
   .agent-compose-card :global(.composer__link-picker),
+  .home__composer :global(.composer__permission-picker),
+  .stage__composer :global(.composer__permission-picker),
+  .agent-compose-card :global(.composer__permission-picker),
   .home__composer :global(.composer__model),
   .stage__composer :global(.composer__model),
   .agent-compose-card :global(.composer__model) {
     min-height: 30px;
+    width: 108px;
+    max-width: 108px;
+    padding-inline: 8px 22px;
     border-radius: 8px;
     background: var(--aorist-card-bg-soft);
     color: var(--aorist-muted);
     font-size: 12px;
     font-weight: 500;
+    text-overflow: ellipsis;
+  }
+
+  .home__composer :global(.composer__tools .composer__plus-trigger),
+  .stage__composer :global(.composer__tools .composer__plus-trigger),
+  .agent-compose-card :global(.composer__tools .composer__plus-trigger) {
+    flex: 0 0 30px;
+    width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    padding: 0;
+  }
+
+  .home__composer :global(.composer__tools .composer__permission-picker),
+  .stage__composer :global(.composer__tools .composer__permission-picker),
+  .agent-compose-card :global(.composer__tools .composer__permission-picker) {
+    display: inline-flex;
+    justify-content: flex-start;
+    width: 108px;
+    max-width: 108px;
+    min-height: 30px;
+    padding-inline: 8px 10px;
+  }
+
+  .home__composer :global(.composer__tools .composer__link-picker),
+  .stage__composer :global(.composer__tools .composer__link-picker),
+  .agent-compose-card :global(.composer__tools .composer__link-picker) {
+    display: inline-flex;
+    justify-content: flex-start;
+    width: 108px;
+    max-width: 108px;
+    min-height: 30px;
+    padding-inline: 8px 10px;
+  }
+
+  .home__composer :global(.composer__tools .composer-project-menu button),
+  .stage__composer :global(.composer__tools .composer-project-menu button),
+  .agent-compose-card :global(.composer__tools .composer-project-menu button) {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) 16px;
+    width: 100%;
+    max-width: none;
+    min-height: 38px;
+    padding: 5px 7px;
+    background: transparent;
+    color: var(--aorist-ink);
+  }
+
+  .home__composer :global(.composer__tools .composer-permission-menu button),
+  .stage__composer :global(.composer__tools .composer-permission-menu button),
+  .agent-compose-card :global(.composer__tools .composer-permission-menu button) {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) 16px;
+    width: 100%;
+    max-width: none;
+    min-height: 40px;
+    padding: 6px 7px;
+    background: transparent;
+    color: var(--aorist-ink);
+  }
+
+  .home__composer :global(.composer__tools .composer-plus-menu button),
+  .home__composer :global(.composer__tools .composer-plus-menu__select),
+  .stage__composer :global(.composer__tools .composer-plus-menu button),
+  .stage__composer :global(.composer__tools .composer-plus-menu__select),
+  .agent-compose-card :global(.composer__tools .composer-plus-menu button),
+  .agent-compose-card :global(.composer__tools .composer-plus-menu__select) {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    justify-content: start;
+    width: 100%;
+    max-width: none;
+    min-height: 28px;
+    padding: 4px 8px;
+    background: transparent;
+    color: var(--aorist-ink);
+  }
+
+  .home__composer :global(.composer-plus-menu svg),
+  .stage__composer :global(.composer-plus-menu svg),
+  .agent-compose-card :global(.composer-plus-menu svg) {
+    color: #59616d;
+  }
+
+  .home__composer :global(.composer-plus-menu .plugin-docs),
+  .stage__composer :global(.composer-plus-menu .plugin-docs),
+  .agent-compose-card :global(.composer-plus-menu .plugin-docs) {
+    color: #4f7df3;
+  }
+
+  .home__composer :global(.composer-plus-menu .plugin-pdf),
+  .stage__composer :global(.composer-plus-menu .plugin-pdf),
+  .agent-compose-card :global(.composer-plus-menu .plugin-pdf) {
+    color: #ff6b6b;
+  }
+
+  .home__composer :global(.composer-plus-menu .plugin-sheet),
+  .stage__composer :global(.composer-plus-menu .plugin-sheet),
+  .agent-compose-card :global(.composer-plus-menu .plugin-sheet) {
+    color: #4f9b58;
+  }
+
+  .home__composer :global(.composer-plus-menu .plugin-slides),
+  .stage__composer :global(.composer-plus-menu .plugin-slides),
+  .agent-compose-card :global(.composer-plus-menu .plugin-slides) {
+    color: #d7a32e;
+  }
+
+  .home__composer :global(.composer-plus-menu .plugin-template),
+  .stage__composer :global(.composer-plus-menu .plugin-template),
+  .agent-compose-card :global(.composer-plus-menu .plugin-template) {
+    color: #f08aa0;
   }
 
   .home__composer :global(.composer__submit),
@@ -10148,11 +10556,29 @@
     color: #ffffff;
   }
 
+  .home__composer :global(.composer.composer--code .composer__submit),
+  .home__composer :global(.composer.composer--work .composer__submit),
+  .stage__composer :global(.composer.composer--code .composer__submit),
+  .stage__composer :global(.composer.composer--work .composer__submit),
+  .agent-compose-card :global(.composer.composer--code .composer__submit),
+  .agent-compose-card :global(.composer.composer--work .composer__submit) {
+    background: #111111;
+  }
+
   .home__composer :global(.composer__submit:hover),
   .stage__composer :global(.composer__submit:hover),
   :global(.task-composer-card .composer__submit:hover),
   .agent-compose-card :global(.composer__submit:hover) {
     background: var(--aorist-primary-strong);
+  }
+
+  .home__composer :global(.composer.composer--code .composer__submit:hover),
+  .home__composer :global(.composer.composer--work .composer__submit:hover),
+  .stage__composer :global(.composer.composer--code .composer__submit:hover),
+  .stage__composer :global(.composer.composer--work .composer__submit:hover),
+  .agent-compose-card :global(.composer.composer--code .composer__submit:hover),
+  .agent-compose-card :global(.composer.composer--work .composer__submit:hover) {
+    background: #000000;
   }
 
   button:focus-visible,
@@ -10194,6 +10620,26 @@
     --aorist-sidebar: #f4f4f4;
     --aorist-sidebar-hover: #ececec;
     --aorist-sidebar-active: #e8e8e8;
+  }
+
+  .shell[data-mode="code"] {
+    --composer-mode-accent: #111111;
+    --composer-mode-accent-strong: #000000;
+    --composer-mode-soft: #f1f1f1;
+    --composer-mode-surface: #f8f8f8;
+    --composer-mode-border: #d4d4d4;
+    --composer-mode-shadow: rgba(0, 0, 0, 0.14);
+    --composer-mode-active-text: #ffffff;
+  }
+
+  .shell[data-mode="work"] {
+    --composer-mode-accent: #ffffff;
+    --composer-mode-accent-strong: #f4f4f4;
+    --composer-mode-soft: #ffffff;
+    --composer-mode-surface: #ffffff;
+    --composer-mode-border: #dddddd;
+    --composer-mode-shadow: rgba(0, 0, 0, 0.08);
+    --composer-mode-active-text: #111111;
   }
 
   .brand-mark,
@@ -10392,6 +10838,7 @@
   }
 
   .workspace-nav button {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
     font-size: 12px;
     font-weight: 450;
   }
@@ -10401,6 +10848,59 @@
   .sidebar__user strong {
     font-size: 12px;
     font-weight: 520;
+  }
+
+  .workspace-nav > section:not(.sidebar-project-dock) > button > span:nth-child(2) {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: keep-all;
+  }
+
+  .shell.is-sidebar-collapsed .workspace-nav > section:not(.sidebar-project-dock) > button > span:nth-child(2) {
+    display: none;
+  }
+
+  .workspace-nav .workspace-nav-section-head {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+    width: calc(100% - 16px);
+    min-height: 28px;
+    margin: 8px 8px 5px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--aorist-faint);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .workspace-nav .workspace-nav-section-head:hover {
+    background: var(--aorist-sidebar-hover);
+    color: var(--aorist-muted);
+  }
+
+  .workspace-nav .workspace-nav-section-head :global(svg) {
+    transform: rotate(0deg);
+    transition: transform 0.16s ease;
+  }
+
+  .workspace-nav .workspace-nav-section-head.collapsed :global(svg) {
+    transform: rotate(-90deg);
+  }
+
+  .workspace-nav .workspace-nav-section-head span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .brand-copy span,
@@ -10567,7 +11067,7 @@
   }
 
   .workspace-nav .sidebar-project-dock .sidebar-conversation-row {
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(0, 1fr) 22px 22px;
     min-height: 26px;
   }
 
@@ -10911,6 +11411,24 @@
     box-shadow: 0 0 0 2px rgba(34, 34, 34, 0.12);
   }
 
+  .agent-compose-card :global(.composer.composer--code),
+  .agent-compose-card :global(.composer.composer--work) {
+    border-color: var(--composer-mode-border);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--composer-mode-soft) 72%, #ffffff), var(--composer-mode-surface) 42%, #ffffff 100%);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--composer-mode-accent) 8%, transparent),
+      0 12px 32px var(--composer-mode-shadow);
+  }
+
+  .agent-compose-card :global(.composer.composer--code:focus-within),
+  .agent-compose-card :global(.composer.composer--work:focus-within) {
+    border-color: color-mix(in srgb, var(--composer-mode-accent) 56%, var(--composer-mode-border));
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--composer-mode-accent) 18%, transparent),
+      0 14px 34px var(--composer-mode-shadow);
+  }
+
   .aorist-page:not(.new-task-page) > .aorist-toolbar {
     display: flex;
     align-items: center;
@@ -10929,6 +11447,22 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 8px;
+  }
+
+  .aorist-page:not(.new-task-page) > .aorist-toolbar.agent-center-toolbar {
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .agent-center-toolbar > .aorist-search {
+    flex: 1 1 360px;
+    max-width: 448px;
+    margin: 0;
+  }
+
+  .aorist-page:not(.new-task-page) > .agent-center-toolbar > div:not(:first-child) {
+    flex: 0 0 auto;
+    align-items: center;
   }
 
   .capability-console > .capability-hub-header {
@@ -10969,6 +11503,16 @@
     .aorist-page:not(.new-task-page) > .aorist-toolbar,
     .aorist-page:not(.new-task-page) > .aorist-toolbar > div:not(:first-child) {
       justify-content: flex-start;
+    }
+
+    .aorist-page:not(.new-task-page) > .aorist-toolbar.agent-center-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .agent-center-toolbar > .aorist-search {
+      width: 100%;
+      max-width: none;
     }
   }
 
@@ -11218,5 +11762,39 @@
     .agent-market-stats {
       justify-content: flex-start;
     }
+  }
+
+  .sidebar__brand {
+    grid-template-columns: 34px minmax(0, 1fr) auto 30px;
+  }
+
+  .brand-workbench-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    border: 1px solid #222222;
+    border-radius: 11px;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .brand-workbench-button:hover,
+  .brand-workbench-button.active {
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .brand-workbench-button :global(svg) {
+    flex: 0 0 auto;
+    color: currentColor;
+  }
+
+  .shell.is-sidebar-collapsed .brand-workbench-button {
+    display: none;
   }
 </style>

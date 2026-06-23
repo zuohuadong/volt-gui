@@ -11,7 +11,11 @@
 // line prefixes — fragile, and lossy for any frontend richer than a terminal.
 package event
 
-import "voltui/internal/provider"
+import (
+	"voltui/internal/evidence"
+	"voltui/internal/nilutil"
+	"voltui/internal/provider"
+)
 
 // Kind tags an Event. Read the field(s) documented for that kind.
 type Kind int
@@ -79,6 +83,14 @@ const (
 	// event — or TurnDone — clears. Appended last to keep the Kind values before
 	// it wire-stable.
 	Retrying
+	// Steer fires when a mid-turn steer message is consumed from the queue and
+	// injected as a user message. Text carries the raw steer content (without the
+	// wrapper prefix), so a frontend can display it to the user as confirmation.
+	// Frontends use Steer to know a queued message has been delivered.
+	Steer
+	// KindCount is a sentinel one past the last real Kind. New event kinds must
+	// be inserted above it so completeness tests cover them automatically.
+	KindCount
 )
 
 // Level classifies a Notice so sinks can style or filter it.
@@ -89,17 +101,24 @@ const (
 	LevelWarn
 )
 
+// Profile carries the subagent model/effort resolved for this call.
+type Profile struct {
+	Model  string
+	Effort string
+}
+
 // Tool describes a tool call for ToolDispatch / ToolResult events. On dispatch
 // only ID/Name/Args/ReadOnly are set; on result Output/Err/Truncated are filled
 // in. Args is the raw JSON arguments — a sink compacts it for display.
 type Tool struct {
-	ID        string
-	Name      string
-	Args      string
-	Output    string // ToolResult: the result text fed to the model
-	Err       string // ToolResult: non-empty when the call failed or was blocked
-	ReadOnly  bool
-	Truncated bool // ToolResult: Output was head+tailed before display/model
+	ID         string
+	Name       string
+	Args       string
+	Output     string // ToolResult: the result text fed to the model
+	Err        string // ToolResult: non-empty when the call failed or was blocked
+	ReadOnly   bool
+	Truncated  bool  // ToolResult: Output was head+tailed before display/model
+	DurationMs int64 // ToolResult: wall-clock execution time in milliseconds
 	// Partial marks an early ToolDispatch emitted when a call begins (ID/Name set,
 	// Args still streaming) so a frontend can show the card immediately; a second,
 	// full ToolDispatch (Partial false, Args set) follows when the call completes.
@@ -109,6 +128,7 @@ type Tool struct {
 	// them under it. Empty for top-level calls.
 	ParentID string
 	FileDiff
+	Profile *Profile // ToolDispatch: subagent model/effort (set for task/skill calls)
 }
 
 // FileDiff is a previewed change carried on a writer tool's full ToolDispatch
@@ -185,6 +205,15 @@ type CacheDiagnostics struct {
 	CacheHitTokens      int
 }
 
+const (
+	UsageSourceExecutor   = "executor"
+	UsageSourcePlanner    = "planner"
+	UsageSourceSubagent   = "subagent"
+	UsageSourceCompaction = "compaction"
+	UsageSourceClassifier = "classifier"
+	UsageSourceTitle      = "title"
+)
+
 // Event is one increment in a turn's event stream. Read the field(s) documented
 // for Kind; the others are zero.
 type Event struct {
@@ -194,6 +223,7 @@ type Event struct {
 	Tool             Tool              // ToolDispatch / ToolResult
 	Usage            *provider.Usage   // Usage
 	Pricing          *provider.Pricing // Usage: for cost display (nil = omit cost)
+	UsageSource      string            // Usage: billable call source; empty means executor for compatibility
 	CacheDiagnostics *CacheDiagnostics // Usage: cache-churn attribution (nil = N/A)
 	// SessionHit/SessionMiss carry cumulative cache tokens across the whole
 	// session (Usage events only), so a frontend can show the aggregate hit-rate
@@ -208,6 +238,22 @@ type Event struct {
 	Compaction   Compaction // Compaction
 	RetryAttempt int        // Retrying: 1-based attempt about to be made
 	RetryMax     int        // Retrying: total attempts before giving up
+}
+
+// ReadinessAuditSink is an optional sink capability. Sinks that do not care
+// about readiness audit receipts can implement only Sink and will ignore them.
+type ReadinessAuditSink interface {
+	RecordReadinessAudit(evidence.ReadinessAudit)
+}
+
+// RecordReadinessAudit forwards a readiness audit receipt to sinks that opt in.
+func RecordReadinessAudit(s Sink, a evidence.ReadinessAudit) {
+	if nilutil.IsNil(s) {
+		return
+	}
+	if rs, ok := s.(ReadinessAuditSink); ok {
+		rs.RecordReadinessAudit(a)
+	}
 }
 
 // Sink consumes a turn's events. The agent calls Emit serially from its run

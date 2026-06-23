@@ -25,10 +25,14 @@ func (f fakeTool) ReadOnly() bool                                           { re
 func (f fakeTool) Execute(context.Context, json.RawMessage) (string, error) { return "", nil }
 
 func TestProviders(t *testing.T) {
+	t.Setenv("VOLTUI_HOME", t.TempDir())
 	cfg := config.Default()
-	// Default model is deepseek-flash; give its key so KeyReady flips true.
-	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
-	t.Setenv("MIMO_API_KEY", "") // ensure mimo stays not-ready
+	// Default model is deepseek-flash; write its key to VoltUI's credentials
+	// store so KeyReady follows runtime credential resolution rather than the
+	// process environment.
+	if _, err := config.StoreCredentialLines([]string{"DEEPSEEK_API_KEY=sk-test"}); err != nil {
+		t.Fatalf("store credentials: %v", err)
+	}
 
 	got := Providers(cfg)
 	if len(got) == 0 {

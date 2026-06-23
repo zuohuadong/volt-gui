@@ -1,6 +1,3 @@
-//go:build upstream_stall_test
-// +build upstream_stall_test
-
 package openai
 
 import (

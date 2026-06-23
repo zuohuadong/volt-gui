@@ -32,7 +32,7 @@
 - 已有未合并的同主题 PR/MR 时，先审查现有 PR/MR，不要重复创建
 - 出现高风险变更时，暂停自动合并，改为人工确认
 - 高风险或复杂审查使用 `needs_model: gpt-5.5` / `review_class: review-high` 升级给 High-Risk Reviewer
-- 中/高风险、多 subsystem、架构/API/数据/安全/生产或自审任务必须走 Delegation Gate；子智能体请求必须包含 role、scope、ownership、allowed files、verification command、output schema 和 mailbox persistence
+- 中/高风险、多 subsystem、架构/API/数据/安全/生产或自审任务必须走 Delegation Gate；子智能体请求必须包含 role、scope、ownership、allowed files、`verification_command` / verification commands、output schema 和 mailbox persistence
 - 并行写入必须有明确 disjoint ownership；常规 sidecar 默认 `gpt-5.3-codex`，只有高风险/仲裁场景升级 `gpt-5.5` 并写 `escalation_reason`
 - 审查不合格优先退回原 PR/MR 修复
 - 只有原 PR/MR 无法继续，或者问题已经合并进入主线，才创建 follow-up 修复任务
@@ -40,10 +40,12 @@
 
 ## 记录规则
 
-- 更新 `progress.md`
+- 更新 `progress.md` 时只写当前任务的 concise 事实；旧历史通过 `agent-team automation archive-progress . --keep-recent 50` 归档，不保留在默认上下文里。
 - 通过 `.mailbox/` 发送状态变化
 - 使用 `agent-team automation sync-state .` 从 `tasks.md` 同步 `.agents/state/tasks.json`；`agent-team automation claim <task_id> . --owner <owner> --branch <branch>` 会带锁推进 `ready -> running` 并同步状态
-- 使用 `agent-team automation prune-mailbox . --max-bytes 131072` 清理过大的 `done` / `archived` mailbox 消息；pending/alert 消息必须保留
+- 使用 `agent-team automation archive-ledger .` 归档 `done` / `archived` task rows 和 contracts，避免 inactive 历史反复进入当前上下文
+- 使用 `agent-team automation prune-mailbox . --max-bytes 131072 --archive-status done,archived --keep-recent 5` 清理或归档过大的 `done` / `archived` mailbox 消息；pending/alert 消息必须保留
+- `agent-team automation status|doctor .` 会检查 `tasks.md`、`progress.md` 和 mailbox 聚合体积；出现 coordination context warning 时先按建议 archive/prune，再做宽范围 agent 工作
 - 如果启用 `.agents/state/tasks.json`，同步记录 subagent evidence 或 safe skip reason；doctor 仅在该机器可读状态存在时执行缺失证据 warning
 - 中/高风险、长程、多子代理或可恢复任务可写 `.agents/state/runs/<run_id>.json`，按 `.agents/state/run-records.schema.json` 记录 run_id、task_id、子代理隔离、验证命令、证据引用和中断恢复状态
 - 子代理默认上下文隔离，只通过 Task Contract、`.mailbox/`、run record 或命名 artifact 传递证据；子代理中断时先记录恢复动作，再继续执行
@@ -68,10 +70,10 @@
 ## Goal Forge Integration
 
 - `agent-team deploy .` 会创建 `.agents/goal-forge/README.md`、`.agents/goal-forge/goal-forge.config.json` 和 `.agents/goal-forge/runs/`。
-- 默认从项目上级目录寻找 `../goal-forge` source checkout；也可设置 `GOAL_FORGE_PATH` 或 `GOAL_FORGE_HOME` 指向 checkout。Goal Forge 当前不是全局 CLI，不要假设存在 `goal-forge` 命令。
+- Goal Forge runtime 发现顺序：`GOAL_FORGE_BIN`、PATH 中的 `goalforge` / `goal-forge`、`npx -y @goalforge/cli@latest`、最后是 `../goal-forge` / `GOAL_FORGE_PATH` / `GOAL_FORGE_HOME` source checkout。
 - 设计文档、架构/API/数据模型、迁移方案或高风险计划本身是交付物时，可运行 `agent-team goal-forge init . "<goal>"` 创建质证 run；需要实际执行时再运行 `agent-team goal-forge run . <runDir>`。
 - agent-team 仍以 `tasks.md`、`progress.md`、`.mailbox/` 和 Task Contract 为执行源；Goal Forge run/ledger 只作为设计质证证据，在 Task Contract 的 `goal_forge.run_dir` / `goal_forge.ledger_paths` 中引用。
-- `agent-team automation status|doctor .` 会检查 Goal Forge checkout、项目配置和依赖状态；找不到 checkout 是 warning，不阻塞普通实现任务。
+- `agent-team automation status|doctor .` 会检查 Goal Forge runtime、项目配置和可选 checkout fallback；找不到 checkout 不阻塞二进制/package-first 运行。
 
 ## 任务契约模板
 

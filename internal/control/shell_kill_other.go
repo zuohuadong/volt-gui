@@ -7,11 +7,9 @@ import (
 	"syscall"
 )
 
-// setShellKillTree makes a cancelled shell command kill its whole process group,
-// not just the shell leader — otherwise a timed-out pipeline (e.g.
-// !find / -name foo | grep bar) orphans the children. The child gets a new
-// session (and therefore its own process group), so the negative-pid signal
-// reaches every descendant without letting interactive prompts grab the TTY.
+// setShellKillTree makes cancellation kill the whole shell tree. Running the
+// child in a new session also keeps interactive prompts from grabbing the TUI's
+// controlling terminal.
 func setShellKillTree(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error {

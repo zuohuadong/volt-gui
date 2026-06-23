@@ -493,6 +493,8 @@ func isolateUserConfig(t *testing.T) {
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("AppData", filepath.Join(root, "AppData")) // os.UserConfigDir reads AppData on Windows
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("MIMO_API_KEY", "")
 	t.Chdir(root)
 }
 

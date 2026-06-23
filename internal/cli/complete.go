@@ -357,7 +357,7 @@ func (m *chatTUI) fileItems(token string) []compItem {
 	if !strings.Contains(token, "/") {
 		seen := map[string]bool{}
 		for _, it := range items {
-			seen[strings.TrimPrefix(it.insert, "@")] = true
+			seen[strings.TrimSuffix(strings.TrimPrefix(it.insert, "@"), "/")] = true
 		}
 		remaining := maxCompItems - len(items)
 		if remaining > maxFileSearchItems {
@@ -367,11 +367,19 @@ func (m *chatTUI) fileItems(token string) []compItem {
 		if len(results) > remaining {
 			results = results[:remaining]
 		}
-		for _, path := range results {
+		for _, result := range results {
+			path := result.Path
 			if seen[path] {
 				continue
 			}
-			items = append(items, compItem{label: path, insert: "@" + path, hint: "file"})
+			item := compItem{label: path, insert: "@" + path, hint: "file"}
+			if result.IsDir {
+				item.label = path + "/"
+				item.insert = "@" + path + "/"
+				item.hint = "dir"
+				item.descend = true
+			}
+			items = append(items, item)
 			if len(items) >= maxCompItems {
 				break
 			}
@@ -383,9 +391,9 @@ func (m *chatTUI) fileItems(token string) []compItem {
 
 // searchFileRefs memoizes the bounded basename walk so re-rendering the menu
 // for an unchanged @token fragment doesn't re-walk the workspace each keystroke.
-func (m *chatTUI) searchFileRefs(frag string) []string {
+func (m *chatTUI) searchFileRefs(frag string) []fileref.SearchResult {
 	if m.fileSearchCache == nil {
-		m.fileSearchCache = map[string][]string{}
+		m.fileSearchCache = map[string][]fileref.SearchResult{}
 	}
 	if r, ok := m.fileSearchCache[frag]; ok {
 		return r

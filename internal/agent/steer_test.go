@@ -1,6 +1,3 @@
-//go:build upstream_steer
-// +build upstream_steer
-
 package agent
 
 import (

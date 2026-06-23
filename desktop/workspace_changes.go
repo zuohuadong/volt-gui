@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	codediff "voltui/internal/diff"
 	"voltui/internal/proc"
@@ -139,6 +141,13 @@ func workspaceGit(args ...string) *exec.Cmd {
 	return cmd
 }
 
+func workspaceGitCommand(ctx context.Context, args ...string) *exec.Cmd {
+	fullArgs := append([]string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", fullArgs...)
+	proc.HideWindowDetached(cmd)
+	return cmd
+}
+
 func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
 	out := WorkspaceDiffView{Path: normalizeWorkspaceRelPath("", rel)}
 	base, err := a.activeWorkspaceBase()
@@ -229,6 +238,31 @@ func workspaceGitRoot(base string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(topRaw)), nil
+}
+
+func workspaceGitBranch(base string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := workspaceGitCommand(ctx, "-C", base, "branch", "--show-current")
+	raw, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	if branch := strings.TrimSpace(string(raw)); branch != "" {
+		return branch
+	}
+
+	headCmd := workspaceGitCommand(ctx, "-C", base, "rev-parse", "--short", "HEAD")
+	raw, err = headCmd.Output()
+	if err != nil {
+		return ""
+	}
+	short := strings.TrimSpace(string(raw))
+	if short == "" {
+		return ""
+	}
+	return "@" + short
 }
 
 func gitWorkspaceText(repoRoot, base, rel string) (string, error) {

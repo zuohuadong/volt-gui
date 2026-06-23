@@ -17,7 +17,9 @@ require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/yuin/goldmark v1.8.2
+	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/goleak v1.3.0
+	golang.org/x/image v0.43.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
@@ -32,7 +34,9 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect

@@ -1,6 +1,3 @@
-//go:build upstream_search
-// +build upstream_search
-
 package fileref
 
 import (

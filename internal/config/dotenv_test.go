@@ -6,11 +6,7 @@ import (
 	"testing"
 )
 
-// TestLoadDotEnvFallsBackToHome proves the unified-key behaviour: the working
-// directory's .env wins, but a key only present in ~/.env is still picked up —
-// so a key set once in the home .env (the desktop app writes there) reaches the
-// CLI run from any project directory. Existing env vars beat both files.
-func TestLoadDotEnvFallsBackToHome(t *testing.T) {
+func TestLoadDotEnvDoesNotImportProjectOrHomeEnv(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
 
@@ -23,6 +19,7 @@ func TestLoadDotEnvFallsBackToHome(t *testing.T) {
 
 	t.Chdir(cwd)
 	t.Setenv("HOME", home)
+	t.Setenv("VOLTUI_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads HOME on Unix and USERPROFILE on Windows.
 
 	// Start clean so the file values are what land (Setenv auto-restores).
@@ -35,26 +32,27 @@ func TestLoadDotEnvFallsBackToHome(t *testing.T) {
 
 	loadDotEnv()
 
-	if got := os.Getenv("KEY_CWD"); got != "from_cwd" {
-		t.Errorf("cwd-only key not loaded: KEY_CWD=%q", got)
+	if got := os.Getenv("KEY_CWD"); got != "" {
+		t.Errorf("project .env key was imported into process env: KEY_CWD=%q", got)
 	}
-	if got := os.Getenv("KEY_HOME"); got != "from_home" {
-		t.Errorf("~/.env fallback failed: KEY_HOME=%q want from_home", got)
+	if got := os.Getenv("KEY_HOME"); got != "" {
+		t.Errorf("home .env key was loaded: KEY_HOME=%q", got)
 	}
-	if got := os.Getenv("KEY_SHARED"); got != "cwd_wins" {
-		t.Errorf("cwd .env should take precedence over ~/.env: KEY_SHARED=%q want cwd_wins", got)
+	if got := os.Getenv("KEY_SHARED"); got != "" {
+		t.Errorf("project/home .env shared key was imported: KEY_SHARED=%q", got)
 	}
 }
 
 // TestLoadDotEnvReadsGlobalCredentials proves `voltui setup`'s target — the
 // voltui-owned credentials file in the user config dir — is loaded from any
-// working directory, while a project ./.env still wins on a shared key.
+// working directory and wins over a project ./.env on a shared key.
 func TestLoadDotEnvReadsGlobalCredentials(t *testing.T) {
 	cwd := t.TempDir()
 	cfgHome := t.TempDir()
 
 	t.Chdir(cwd)
 	t.Setenv("HOME", cfgHome)
+	t.Setenv("VOLTUI_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", cfgHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(cfgHome, ".config"))
 	t.Setenv("AppData", filepath.Join(cfgHome, "AppData"))
@@ -66,7 +64,7 @@ func TestLoadDotEnvReadsGlobalCredentials(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cred), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cred, []byte("KEY_GLOBAL=from_credentials\nKEY_SHARED=global_loses\n"), 0o600); err != nil {
+	if err := os.WriteFile(cred, []byte("KEY_GLOBAL=from_credentials\nKEY_SHARED=global_wins\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cwd, ".env"), []byte("KEY_SHARED=cwd_wins\n"), 0o600); err != nil {
@@ -83,8 +81,8 @@ func TestLoadDotEnvReadsGlobalCredentials(t *testing.T) {
 	if got := os.Getenv("KEY_GLOBAL"); got != "from_credentials" {
 		t.Errorf("global credentials not loaded: KEY_GLOBAL=%q want from_credentials", got)
 	}
-	if got := os.Getenv("KEY_SHARED"); got != "cwd_wins" {
-		t.Errorf("project .env should win over global credentials: KEY_SHARED=%q want cwd_wins", got)
+	if got := os.Getenv("KEY_SHARED"); got != "global_wins" {
+		t.Errorf("global credentials should win over project .env: KEY_SHARED=%q want global_wins", got)
 	}
 }
 

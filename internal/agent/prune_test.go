@@ -121,7 +121,6 @@ func TestMaybeCompactPruneAvoidsFold(t *testing.T) {
 
 func TestMaybeCompactForceRatioStillFolds(t *testing.T) {
 	prov := &fakeProvider{reply: "summary"}
-	t.Skip("requires upstream partitionFold not yet ported to fork")
 	// A big assistant turn in the foldable region (after the pinned task, before the
 	// recent tail) survives pruning — only tool results prune — so the forced fold
 	// has real content to compact while the task turn stays pinned verbatim.
@@ -153,5 +152,47 @@ func TestMaybeCompactForceRatioStillFolds(t *testing.T) {
 	}
 	if !found {
 		t.Error("no compaction summary in session after forced fold")
+	}
+}
+
+func TestPruneHonorsKeepErrors(t *testing.T) {
+	// KeepErrors must carry error/blocked tool results through pruning verbatim;
+	// eliding here rewrites Content to the [elided ...] marker, so compact()'s
+	// KeepErrors predicate sees only the placeholder and the failure is lost on
+	// the next fold.
+	for _, prefix := range []string{"error:", "blocked:"} {
+		content := prefix + strings.Repeat(" detail", 200)
+		sess := pruneFixture(content)
+		a := New(nil, tool.NewRegistry(), sess, Options{ContextWindow: 1000, RecentKeep: 2, KeepPolicy: KeepErrors}, event.Discard)
+
+		st, err := a.PruneStaleToolResults()
+		if err != nil {
+			t.Fatalf("prune (%s): %v", prefix, err)
+		}
+		if st.Results != 0 {
+			t.Errorf("%s: Results = %d, want 0 (KeepErrors preserves error tool results)", prefix, st.Results)
+		}
+		if got := sess.Snapshot()[3].Content; !strings.HasPrefix(got, prefix) {
+			t.Errorf("%s: error tool result was elided: %.60q", prefix, got)
+		}
+	}
+}
+
+func TestPruneElidesErrorsWithoutKeepPolicy(t *testing.T) {
+	// Without KeepErrors, a large error tool result prunes like any other — a
+	// regression guard for the policy-gated skip.
+	content := "error: build failed\n" + strings.Repeat("x", 5000)
+	sess := pruneFixture(content)
+	a := New(nil, tool.NewRegistry(), sess, Options{ContextWindow: 1000, RecentKeep: 2}, event.Discard)
+
+	st, err := a.PruneStaleToolResults()
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if st.Results != 1 {
+		t.Errorf("Results = %d, want 1 (no keep policy)", st.Results)
+	}
+	if got := sess.Snapshot()[3].Content; !strings.HasPrefix(got, prunedMarker) {
+		t.Errorf("error tool result not elided without keep policy: %.60q", got)
 	}
 }

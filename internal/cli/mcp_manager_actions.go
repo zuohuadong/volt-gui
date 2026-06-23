@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"voltui/internal/codegraph"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/mcpdiag"
@@ -180,7 +181,11 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 			delete(m.mcpDisabled, v.Name)
 		}
 		if tier != "lazy" && m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
-			if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
+			if _, ok := codegraph.Resolve(cfg.Codegraph.Path); !ok {
+				err := fmt.Errorf("codegraph: not installed")
+				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
+				m.notice("saved connection mode, but connect failed: " + err.Error())
+			} else if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
 				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
 				m.notice("saved connection mode, but connect failed: " + err.Error())
 			}
@@ -234,7 +239,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func recordMCPModePluginFailure(ctrl *control.Controller, e config.PluginEntry, err error) {
+func recordMCPModePluginFailure(ctrl control.Capabilities, e config.PluginEntry, err error) {
 	if ctrl == nil || ctrl.Host() == nil || err == nil {
 		return
 	}
@@ -250,7 +255,7 @@ func recordMCPModePluginFailure(ctrl *control.Controller, e config.PluginEntry, 
 	}, err)
 }
 
-func recordMCPModeCodegraphFailure(ctrl *control.Controller, c config.CodegraphConfig, err error) {
+func recordMCPModeCodegraphFailure(ctrl control.Capabilities, c config.CodegraphConfig, err error) {
 	if ctrl == nil || ctrl.Host() == nil || err == nil {
 		return
 	}
@@ -474,7 +479,7 @@ func mcpCanClearAuth(v mcpServerView) bool {
 	return mcpdiag.IsRemoteTransport(v.Transport)
 }
 
-func mcpConnected(ctrl *control.Controller, name string) bool {
+func mcpConnected(ctrl control.Capabilities, name string) bool {
 	if ctrl == nil || ctrl.Host() == nil {
 		return false
 	}

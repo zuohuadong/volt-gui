@@ -2,7 +2,9 @@ package builtin
 
 import (
 	"path/filepath"
+	"time"
 
+	"voltui/internal/netclient"
 	"voltui/internal/sandbox"
 	"voltui/internal/tool"
 )
@@ -19,10 +21,12 @@ import (
 // root, so writes stay inside the project by default. Bash is the OS-sandbox
 // spec for the bash tool (as ConfineBash).
 type Workspace struct {
-	Dir        string
-	WriteRoots []string
-	Bash       sandbox.Spec
-	Search     SearchSpec
+	Dir         string
+	WriteRoots  []string
+	Bash        sandbox.Spec
+	BashTimeout time.Duration
+	Search      SearchSpec
+	ProxySpec   netclient.ProxySpec
 }
 
 // Tools returns the built-in tools bound to the workspace, ready to Add to a
@@ -42,13 +46,15 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		writeFile{workDir: w.Dir, roots: roots},
 		editFile{workDir: w.Dir, roots: roots},
 		multiEdit{workDir: w.Dir, roots: roots},
+		moveFile{workDir: w.Dir, roots: roots},
+		notebookEdit{workDir: w.Dir, roots: roots},
 		deleteRange{workDir: w.Dir, roots: roots},
 		deleteSymbol{workDir: w.Dir, roots: roots},
-		bash{workDir: w.Dir, sb: w.Bash},
+		bash{workDir: w.Dir, sb: w.Bash, timeout: w.BashTimeout},
 		listDir{workDir: w.Dir},
 		globTool{workDir: w.Dir},
 		grepTool{workDir: w.Dir, rg: w.Search.RgPath},
-		webFetch{},
+		webFetch{proxySpec: w.ProxySpec},
 	}
 	if len(enabled) == 0 {
 		return all

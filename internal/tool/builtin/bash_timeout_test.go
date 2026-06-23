@@ -1,5 +1,3 @@
-//go:build upstream_bash_timeout
-
 package builtin
 
 import (

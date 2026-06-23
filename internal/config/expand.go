@@ -31,6 +31,38 @@ func ExpandVars(s string) string {
 	})
 }
 
+func (c *Config) expandVars(s string) string {
+	if !strings.Contains(s, "${") {
+		return s
+	}
+	if c == nil || len(c.expansionEnv) == 0 {
+		return ExpandVars(s)
+	}
+	return varRef.ReplaceAllStringFunc(s, func(m string) string {
+		g := varRef.FindStringSubmatch(m)
+		name, hasDefault, def := g[1], g[2] != "", g[3]
+		if v := strings.TrimSpace(c.expansionEnv[name]); v != "" {
+			return v
+		}
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			return v
+		}
+		if hasDefault {
+			return def
+		}
+		return ""
+	})
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // ExpandedPlugin returns a copy of e with ${VAR} references expanded across the
 // command, args, env values, url, and header values — the fields Claude Code
 // also expands. The entry itself is left untouched.

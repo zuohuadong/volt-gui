@@ -33,7 +33,7 @@ const (
 // beside the old one. VOLTUI_CACHE_DIR overrides the base (relocate the cache,
 // or isolate it in tests). Empty when no cache/config dir resolves.
 func CacheDir() string {
-	base := os.Getenv("VOLTUI_CACHE_DIR")
+	base := firstSetEnv("VOLTUI_CACHE_DIR", "REASONIX_CACHE_DIR")
 	if base == "" {
 		var err error
 		if base, err = os.UserCacheDir(); err != nil {
@@ -44,6 +44,15 @@ func CacheDir() string {
 		base = filepath.Join(base, "voltui")
 	}
 	return filepath.Join(base, "codegraph", Version)
+}
+
+func firstSetEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // cached returns the launcher path inside CacheDir when the bundle is present.

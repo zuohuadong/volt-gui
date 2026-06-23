@@ -39,10 +39,10 @@ const (
 // its source path), so a repo already carrying an AGENTS.md / CLAUDE.md is picked
 // up without renaming. New docs are created as AGENTS.md (the universal
 // convention) — see defaultDocName / Set.DocPath.
-var docNames = []string{"VOLTUI.md", "AGENTS.md", "CLAUDE.md"}
+var docNames = []string{"VOLTUI.md", "REASONIX.md", "AGENTS.md", "CLAUDE.md"}
 
 // localNames are the personal, git-ignored overrides, highest precedence.
-var localNames = []string{"VOLTUI.local.md", "AGENTS.local.md", "CLAUDE.local.md"}
+var localNames = []string{"VOLTUI.local.md", "REASONIX.local.md", "AGENTS.local.md", "CLAUDE.local.md"}
 
 // defaultDocName / defaultLocalName are the filenames a fresh doc is created as
 // when a directory has none yet: AGENTS.md is the widely-shared convention, so a
@@ -73,6 +73,7 @@ func discoverDocs(cwd, userDir string) []Source {
 
 	// 1. User-global memory (lowest precedence).
 	if userDir != "" {
+		out = append(out, loadFrom(legacyUserDir(userDir), docNames, ScopeUser, &seen)...)
 		out = append(out, loadFrom(userDir, docNames, ScopeUser, &seen)...)
 	}
 
@@ -90,6 +91,16 @@ func discoverDocs(cwd, userDir string) []Source {
 	out = append(out, loadFrom(cwd, localNames, ScopeLocal, &seen)...)
 
 	return out
+}
+
+func legacyUserDir(userDir string) string {
+	if userDir == "" {
+		return ""
+	}
+	if filepath.Base(filepath.Clean(userDir)) != "voltui" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(userDir), "reasonix")
 }
 
 // loadFrom loads each present name in dir, in order, expanding @imports relative

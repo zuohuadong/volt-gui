@@ -30,8 +30,9 @@ import (
 // has no Wails dependency so the logic is unit-tested directly; updater_app.go is
 // the thin Wails binding that wires these into App methods and progress events.
 
-// Manifest endpoints. CNB Releases is the source of truth for the 西谷智灯暗涌系统 fork; keep
-// the fallback on the same host so the desktop updater never depends on GitHub.
+// Manifest endpoints. CNB Releases is the source of truth for this downstream
+// fork; keep the fallback on the same host so the desktop updater never depends
+// on GitHub.
 const (
 	manifestPrimary     = "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/latest/downloads/latest.json"
 	manifestFallback    = "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/latest/downloads/latest.json"

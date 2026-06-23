@@ -1,6 +1,3 @@
-//go:build upstream_empty_final
-// +build upstream_empty_final
-
 package agent
 
 import (
@@ -37,6 +34,36 @@ func TestRunRetriesReasoningOnlyFinalAnswer(t *testing.T) {
 	}
 	if !sessionHasUserMessageContaining(a.session, "visible answer") {
 		t.Fatal("missing synthetic visible-answer retry message")
+	}
+}
+
+func TestRunPrefixesReasoningLanguageOnSyntheticRetry(t *testing.T) {
+	prov := &mockProvider{name: "p", streams: [][]provider.Chunk{
+		{
+			{Type: provider.ChunkReasoning, Text: "I should answer the user."},
+			{Type: provider.ChunkDone},
+		},
+		{
+			{Type: provider.ChunkText, Text: "visible reply"},
+			{Type: provider.ChunkDone},
+		},
+	}}
+	a := New(prov, tool.NewRegistry(), NewSession(""), Options{ReasoningLanguage: "zh"}, event.Discard)
+
+	if err := a.Run(context.Background(), "answer me"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(prov.requests) != 2 {
+		t.Fatalf("provider requests = %d, want 2", len(prov.requests))
+	}
+	for i, req := range prov.requests {
+		got := lastUser(req)
+		if !strings.HasPrefix(got, "<reasoning-language>") || !strings.Contains(got, "Simplified Chinese") {
+			t.Fatalf("request %d last user = %q, want reasoning-language prefix", i, got)
+		}
+	}
+	if !strings.Contains(lastUser(prov.requests[1]), "visible answer") {
+		t.Fatalf("retry request last user = %q, want visible-answer retry", lastUser(prov.requests[1]))
 	}
 }
 

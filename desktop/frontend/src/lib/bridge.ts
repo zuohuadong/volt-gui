@@ -44,6 +44,7 @@ interface AppBindings {
   CancelTab(tabID: string): Promise<void>;
   ListTabs(): Promise<TabMeta[]>;
   SetActiveTab(tabID: string): Promise<void>;
+  PickWorkspace(): Promise<string>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   ReorderTabs(tabIDs: string[]): Promise<void>;

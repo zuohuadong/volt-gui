@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, FileText, Folder, Image, Search, Send, Square, X } from "@lucide/svelte";
+  import { AtSign, Check, Code2, FileText, FileType, Folder, FolderKanban, Image, LayoutDashboard, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
-  import type { CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
+  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
 
   let {
     input,
@@ -19,9 +19,11 @@
     projectOptions = [],
     selectedProjectId = "",
     onProjectChange,
-    clientOptions = [],
-    selectedClientId = "",
-    onClientChange,
+    workPermission = "auto-approve",
+    onWorkPermissionChange,
+    onOpenResources,
+    activityMode,
+    onActivityModeChange,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -36,9 +38,11 @@
     projectOptions?: { id: string; label: string }[];
     selectedProjectId?: string;
     onProjectChange?: (value: string) => void;
-    clientOptions?: { id: string; label: string }[];
-    selectedClientId?: string;
-    onClientChange?: (value: string) => void;
+    workPermission?: string;
+    onWorkPermissionChange?: (value: string) => void;
+    onOpenResources?: () => void;
+    activityMode?: ActivityMode;
+    onActivityModeChange?: (mode: ActivityMode) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -48,7 +52,18 @@
   let attachments = $state<ComposerAttachment[]>([]);
   let pendingAttachmentWrites = $state(0);
   let dragOver = $state(false);
+  let plusMenuOpen = $state(false);
+  let projectMenuOpen = $state(false);
+  let permissionMenuOpen = $state(false);
+  let fileAccept = $state("");
   let fileInput: HTMLInputElement | undefined;
+  let textarea: HTMLTextAreaElement | undefined;
+
+  const workPermissionOptions = [
+    { id: "ask", label: "请求批准", mark: "手" },
+    { id: "auto-approve", label: "替我批准", mark: "审" },
+    { id: "full-access", label: "完全访问权限", mark: "!" },
+  ];
 
   const slashQuery = $derived(input.startsWith("/") && !/\s/.test(input) ? input.slice(1).toLowerCase() : null);
   const slashMatches = $derived(slashQuery === null ? [] : commands.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 6));
@@ -130,6 +145,67 @@
     if (fileInput) fileInput.value = "";
   }
 
+  function openFilePicker(accept = "") {
+    fileAccept = accept;
+    plusMenuOpen = false;
+    requestAnimationFrame(() => fileInput?.click());
+  }
+
+  function openResources() {
+    plusMenuOpen = false;
+    onOpenResources?.();
+  }
+
+  function togglePlusMenu() {
+    plusMenuOpen = !plusMenuOpen;
+    if (plusMenuOpen) {
+      projectMenuOpen = false;
+      permissionMenuOpen = false;
+    }
+  }
+
+  function toggleProjectMenu() {
+    projectMenuOpen = !projectMenuOpen;
+    if (projectMenuOpen) {
+      plusMenuOpen = false;
+      permissionMenuOpen = false;
+    }
+  }
+
+  function togglePermissionMenu() {
+    permissionMenuOpen = !permissionMenuOpen;
+    if (permissionMenuOpen) {
+      plusMenuOpen = false;
+      projectMenuOpen = false;
+    }
+  }
+
+  function selectedProjectLabel() {
+    return selectedProjectId ? (projectOptions.find((project) => project.id === selectedProjectId)?.label ?? "归属项目") : "归属项目";
+  }
+
+  function selectedPermissionLabel() {
+    return workPermissionOptions.find((option) => option.id === workPermission)?.label ?? "替我批准";
+  }
+
+  function setWorkPermission(value: string) {
+    onWorkPermissionChange?.(value);
+    permissionMenuOpen = false;
+  }
+
+  function setProject(value: string) {
+    onProjectChange?.(value);
+    projectMenuOpen = false;
+  }
+
+  function insertWorkspaceReference() {
+    plusMenuOpen = false;
+    const next = `${input}${input.endsWith(" ") || input === "" ? "" : " "}@`;
+    onInput(next);
+    requestAnimationFrame(() => textarea?.focus());
+    void refreshFileMatches(next);
+  }
+
   async function attachDroppedPaths(paths: string[]) {
     dragOver = false;
     for (const path of paths) {
@@ -154,7 +230,14 @@
     if (!canSubmit) return;
     const refs = attachments.map((attachment) => `@${attachment.path}`).join(" ");
     const displayText = [text, refs].filter(Boolean).join(text && refs ? " " : "");
-    onSend(displayText, displayText);
+    const projectLabel = selectedProjectId ? selectedProjectLabel() : "";
+    const permissionLabel = selectedPermissionLabel();
+    const contextLines = [
+      projectLabel && `归属项目：${projectLabel}`,
+      `工作权限：${permissionLabel}`,
+    ].filter(Boolean);
+    const submitText = [...contextLines, displayText].filter(Boolean).join("\n");
+    onSend(displayText, submitText);
     attachments = [];
     fileMatches = [];
   }
@@ -261,7 +344,7 @@
 </script>
 
 <form
-  class={["composer", dragOver && "composer--drop"]}
+  class={["composer", activityMode && `composer--${activityMode}`, dragOver && "composer--drop"]}
   style="--wails-drop-target: drop"
   aria-busy={pendingAttachmentWrites > 0}
   onsubmit={(event) => {
@@ -274,6 +357,7 @@
 >
   <div class="composer__input">
     <textarea
+      bind:this={textarea}
       data-composer-input
       data-testid="composer-input"
       value={input}
@@ -289,7 +373,7 @@
       }}
     ></textarea>
 
-    <input bind:this={fileInput} class="composer__file" type="file" multiple onchange={handleFilePicker} />
+    <input bind:this={fileInput} class="composer__file" type="file" accept={fileAccept} multiple onchange={handleFilePicker} />
 
     {#if slashMatches.length}
       <div class="composer-menu">
@@ -362,29 +446,107 @@
 
   <div class="composer__toolbar">
     <div class="composer__tools">
-      <button type="button" aria-label={t.composer.attaching} title={t.composer.attaching} onclick={() => fileInput?.click()}>
-        <AtSign size={16} />
+      <button class="composer__plus-trigger" type="button" aria-label="添加上下文" title="添加上下文" aria-expanded={plusMenuOpen} onclick={togglePlusMenu}>
+        <Plus size={16} />
       </button>
-      <label class="composer__link-picker" aria-label="关联项目">
-        <Folder size={16} />
-        <span>{selectedProjectId ? (projectOptions.find((project) => project.id === selectedProjectId)?.label ?? "关联项目") : "关联项目"}</span>
-        <select value={selectedProjectId} onchange={(event) => onProjectChange?.(event.currentTarget.value)}>
-          <option value="">不关联项目</option>
-          {#each projectOptions as project (project.id)}
-            <option value={project.id}>{project.label}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="composer__link-picker" aria-label="关联客户">
-        <AtSign size={16} />
-        <span>{selectedClientId ? (clientOptions.find((client) => client.id === selectedClientId)?.label ?? "关联客户") : "关联客户"}</span>
-        <select value={selectedClientId} onchange={(event) => onClientChange?.(event.currentTarget.value)}>
-          <option value="">不关联客户</option>
-          {#each clientOptions as client (client.id)}
-            <option value={client.id}>{client.label}</option>
-          {/each}
-        </select>
-      </label>
+      {#if plusMenuOpen}
+        <div class="composer-plus-menu" role="menu">
+          <span class="composer-plus-menu__title">Add</span>
+          <button class="active" type="button" role="menuitem" onclick={() => openFilePicker()}>
+            <Paperclip size={16} />
+            <span><strong>Files and folders</strong></span>
+          </button>
+          <button type="button" role="menuitem" onclick={() => openFilePicker("image/*")}>
+            <Image size={14} />
+            <span><strong>附加 微信</strong></span>
+          </button>
+          <button type="button" role="menuitem" onclick={insertWorkspaceReference}>
+            <Target size={15} />
+            <span><strong>目标</strong></span>
+          </button>
+          <button type="button" role="menuitem" onclick={insertWorkspaceReference}>
+            <ListChecks size={15} />
+            <span><strong>计划模式</strong></span>
+          </button>
+          <span class="composer-plus-menu__title">插件</span>
+          <button type="button" role="menuitem" onclick={() => openFilePicker()}>
+            <FileText class="plugin-docs" size={16} />
+            <span><strong>Documents</strong></span>
+          </button>
+          <button type="button" role="menuitem" onclick={() => openFilePicker(".pdf")}>
+            <FileType class="plugin-pdf" size={16} />
+            <span><strong>PDF</strong></span>
+          </button>
+          <button type="button" role="menuitem" onclick={() => openFilePicker(".xlsx,.xls,.csv,.tsv")}>
+            <Table class="plugin-sheet" size={16} />
+            <span><strong>Spreadsheets</strong></span>
+          </button>
+          <button type="button" role="menuitem" onclick={() => openFilePicker(".ppt,.pptx")}>
+            <Presentation class="plugin-slides" size={16} />
+            <span><strong>Presentations</strong></span>
+          </button>
+          {#if onOpenResources}
+            <button type="button" role="menuitem" onclick={openResources}>
+              <WandSparkles class="plugin-template" size={16} />
+              <span><strong>Template Creator</strong></span>
+            </button>
+          {/if}
+        </div>
+      {/if}
+      {#if projectOptions.length}
+        <div class="composer__project-wrap">
+          <button class="composer__link-picker" type="button" title="归属项目" aria-haspopup="menu" aria-expanded={projectMenuOpen} onclick={toggleProjectMenu}>
+            <Folder size={14} />
+            <span>{selectedProjectLabel()}</span>
+          </button>
+          {#if projectMenuOpen}
+            <div class="composer-project-menu" role="menu">
+              <div class="composer-project-menu__head">
+                <strong>归属项目</strong>
+              </div>
+              <button class:active={!selectedProjectId} type="button" role="menuitem" onclick={() => setProject("")}>
+                <i><Folder size={14} /></i>
+                <span>
+                  <strong>不归属项目</strong>
+                </span>
+                {#if !selectedProjectId}<Check size={16} />{/if}
+              </button>
+              {#each projectOptions as project (project.id)}
+                <button class:active={selectedProjectId === project.id} type="button" role="menuitem" onclick={() => setProject(project.id)}>
+                  <i><FolderKanban size={14} /></i>
+                  <span>
+                    <strong>{project.label}</strong>
+                  </span>
+                  {#if selectedProjectId === project.id}<Check size={16} />{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+      <div class="composer__permission-wrap">
+        <button class="composer__permission-picker" type="button" title="工作权限" aria-haspopup="menu" aria-expanded={permissionMenuOpen} onclick={togglePermissionMenu}>
+          <ShieldCheck size={14} />
+          <span>{selectedPermissionLabel()}</span>
+        </button>
+        {#if permissionMenuOpen}
+          <div class="composer-permission-menu" role="menu">
+            <div class="composer-permission-menu__head">
+              <strong>应如何批准操作？</strong>
+              <span>了解更多</span>
+            </div>
+            {#each workPermissionOptions as option (option.id)}
+              <button class:active={workPermission === option.id} type="button" role="menuitem" onclick={() => setWorkPermission(option.id)}>
+                <i>{option.mark}</i>
+                <span>
+                  <strong>{option.label}</strong>
+                </span>
+                {#if workPermission === option.id}<Check size={16} />{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <div class="composer__actions">
@@ -397,6 +559,18 @@
           <option value="">选择模型</option>
         {/if}
       </select>
+      {#if activityMode && onActivityModeChange}
+        <div class="composer__mode-switch" role="group" aria-label="Work / Code 切换">
+          <button class:active={activityMode === "work"} type="button" aria-pressed={activityMode === "work"} onclick={() => onActivityModeChange("work")}>
+            <LayoutDashboard size={14} />
+            <span>Work</span>
+          </button>
+          <button class:active={activityMode === "code"} type="button" aria-pressed={activityMode === "code"} onclick={() => onActivityModeChange("code")}>
+            <Code2 size={14} />
+            <span>Code</span>
+          </button>
+        </div>
+      {/if}
       {#if sending}
         <button class="composer__submit secondary" type="button" aria-label={t.composer.cancel} title={t.composer.cancel} onclick={onCancel}>
           <Square size={16} />

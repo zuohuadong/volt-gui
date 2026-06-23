@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, Check, Code2, FileText, FileType, Folder, FolderKanban, Hand, Image, LayoutDashboard, ListChecks, Paperclip, Plus, Presentation, Search, Send, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
+  import { AtSign, Check, Code2, FileText, FileType, Folder, FolderKanban, Image, LayoutDashboard, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
   import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
@@ -496,7 +496,7 @@
       {#if projectOptions.length}
         <div class="composer__project-wrap">
           <button class="composer__link-picker" type="button" title="归属项目" aria-haspopup="menu" aria-expanded={projectMenuOpen} onclick={toggleProjectMenu}>
-            <FolderKanban size={14} />
+            <Folder size={14} />
             <span>{selectedProjectLabel()}</span>
           </button>
           {#if projectMenuOpen}
@@ -526,7 +526,7 @@
       {/if}
       <div class="composer__permission-wrap">
         <button class="composer__permission-picker" type="button" title="工作权限" aria-haspopup="menu" aria-expanded={permissionMenuOpen} onclick={togglePermissionMenu}>
-          <Hand size={14} />
+          <ShieldCheck size={14} />
           <span>{selectedPermissionLabel()}</span>
         </button>
         {#if permissionMenuOpen}

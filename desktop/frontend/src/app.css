@@ -942,18 +942,18 @@ button {
   margin-left: auto;
 }
 
-.composer__tools button:first-child {
+.composer__tools .composer__plus-trigger {
   width: 24px;
   padding: 0;
   font-size: 20px;
   font-weight: 360;
 }
 
-.composer__tools button:first-child svg {
+.composer__tools .composer__plus-trigger svg {
   display: none;
 }
 
-.composer__tools button:first-child::before {
+.composer__tools .composer__plus-trigger::before {
   content: "+";
   transform: translateY(-1px);
 }

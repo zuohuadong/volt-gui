@@ -11777,14 +11777,19 @@
     height: 34px;
     min-height: 34px;
     padding: 0;
-    border: 1px solid #222222;
+    border: 1px solid transparent;
     border-radius: 11px;
-    background: #222222;
-    color: #ffffff;
+    background: #f4f4f4;
+    color: #525a66;
   }
 
-  .brand-workbench-button:hover,
+  .brand-workbench-button:hover {
+    background: #eceff3;
+    color: #222222;
+  }
+
   .brand-workbench-button.active {
+    border-color: #222222;
     background: #222222;
     color: #ffffff;
   }

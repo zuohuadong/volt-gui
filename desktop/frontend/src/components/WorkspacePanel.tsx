@@ -27,7 +27,7 @@ import {
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
-import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangeView } from "../lib/types";
+import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangesView } from "../lib/types";
 import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { cleanGitDiff } from "../lib/diff";
 import { CodeViewer } from "./CodeViewer";
@@ -241,7 +241,7 @@ export function WorkspacePanel({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [viewMode, setViewMode] = useState<"files" | "changed">(initialViewMode);
   const [gitHistory, setGitHistory] = useState<GitCommitView[]>([]);
-  const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChangeView[] | null>(null);
+  const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChangesView | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<GitCommitDetailView | null>(null);
@@ -307,11 +307,16 @@ export function WorkspacePanel({
     try {
       const result = await app.WorkspaceChanges(requestTabId);
       if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
-        setWorkspaceChanges(result.files && result.files.length > 0 ? result.files : null);
+        setWorkspaceChanges({
+          files: Array.isArray(result?.files) ? result.files : [],
+          gitAvailable: result?.gitAvailable !== false,
+          gitErr: result?.gitErr,
+          gitBranch: result?.gitBranch,
+        });
       }
     } catch {
       if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
-        setWorkspaceChanges(null);
+        setWorkspaceChanges({ files: [], gitAvailable: false });
       }
     }
   }, [tabId]);
@@ -706,9 +711,12 @@ export function WorkspacePanel({
   const breadcrumbDirs = selectedPath ? parentDirs(selectedPath) : [""];
   const pathParts = selectedPath?.split("/").filter(Boolean) ?? [];
   const sessionChanges = useMemo(
-    () => workspaceChanges?.filter((c) => c.sources.includes("session")) ?? null,
+    () => workspaceChanges?.files.filter((c) => c.sources.includes("session")) ?? null,
     [workspaceChanges],
   );
+  const workspaceGitWarning = workspaceChanges && (!workspaceChanges.gitAvailable || workspaceChanges.gitErr?.trim())
+    ? t("workspace.gitUnavailable")
+    : null;
 
   const changedMode = viewMode === "changed";
   const currentFileName = selectedPath ? basename(selectedPath) : t("workspace.noFile");
@@ -1237,6 +1245,11 @@ export function WorkspacePanel({
             </div>
           ) : viewMode === "changed" && !selectedPath ? (
             <div className="workspace-git-history">
+              {workspaceGitWarning && (
+                <div className="workspace-note workspace-note--warning" role="status">
+                  {workspaceGitWarning}
+                </div>
+              )}
               {sessionChanges && sessionChanges.length > 0 && (
                 <div className="workspace-change-scope">
                   <div className="workspace-change-scope__head">
@@ -1271,7 +1284,7 @@ export function WorkspacePanel({
               {loadingHistory ? (
                 <div className="workspace-empty">{t("workspace.loading")}</div>
               ) : gitHistory.length === 0 && !(sessionChanges && sessionChanges.length > 0) ? (
-                <div className="workspace-empty">{t("workspace.noChanges")}</div>
+                <div className="workspace-empty">{workspaceGitWarning ? t("workspace.gitChangesUnknown") : t("workspace.noChanges")}</div>
               ) : (
                 <div className="workspace-git-history__list">
                   {gitHistory.map((commit) => (

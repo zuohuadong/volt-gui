@@ -979,6 +979,8 @@ export function Composer({
         rememberAttachment(path, key);
         setAttachments((prev) => [...prev, { path, displayName: file.name }]);
       } catch {
+        console.warn("[composer] failed to attach pasted file");
+        showToast(t("composer.attachFileFailed"), "warn");
         // non-fatal: a failed attach must not block normal text input
       } finally {
         setPendingPaste((n) => Math.max(0, n - 1));
@@ -1026,6 +1028,8 @@ export function Composer({
           setAttachments((prev) => [...prev, { path: item.path, previewUrl: item.previewUrl, displayName: baseName(path) }]);
         }
       } catch {
+        console.warn("[composer] failed to attach dropped file");
+        showToast(t("composer.attachDropFailed"), "warn");
         // non-fatal: a failed drop attach must not block normal text input
       } finally {
         setPendingPaste((n) => Math.max(0, n - 1));

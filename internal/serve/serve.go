@@ -233,6 +233,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /tool-approval-mode", s.toolApprovalMode)
 	mux.HandleFunc("POST /auto-approve-tools", s.autoApproveTools)
 	mux.HandleFunc("POST /bypass", s.bypass)
+	mux.HandleFunc("POST /goal", s.goal)
 	mux.HandleFunc("POST /answer", s.answer)
 	mux.HandleFunc("POST /resume", s.resume)
 	mux.HandleFunc("POST /forget", s.forget)
@@ -714,6 +715,28 @@ func (s *Server) toolApprovalMode(w http.ResponseWriter, r *http.Request) {
 // bypass is the legacy HTTP endpoint for YOLO/full-access tool auto-approval.
 func (s *Server) bypass(w http.ResponseWriter, r *http.Request) {
 	s.autoApproveTools(w, r)
+}
+
+// goal sets or clears the active goal. An empty goal string clears it.
+// Setting a non-empty goal disables plan mode (matching the desktop behavior).
+func (s *Server) goal(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Goal string `json:"goal"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	goal := strings.TrimSpace(body.Goal)
+	if goal == "" {
+		s.ctl().ClearGoal()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Disable plan mode before setting the goal, mirroring the desktop.
+	s.ctl().SetPlanMode(false)
+	s.ctl().SetGoal(goal)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // answer responds to an ask_request.

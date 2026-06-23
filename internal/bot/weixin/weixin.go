@@ -279,23 +279,21 @@ func ilinkGET(ctx context.Context, baseURL, endpoint string) (map[string]any, er
 // pollLoop 长轮询获取更新。
 func (a *adapter) pollLoop(ctx context.Context) {
 	// 启动时短暂等待让登录完成
-	select {
-	case <-ctx.Done():
+	if !bot.SleepCtx(ctx, 2*time.Second) {
 		return
-	case <-time.After(2 * time.Second):
 	}
 
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 
 		updates, err := a.getUpdates(ctx)
 		if err != nil {
 			a.logger.Error("getupdates failed", "err", err)
-			time.Sleep(5 * time.Second)
+			if !bot.SleepCtx(ctx, 5*time.Second) {
+				return
+			}
 			continue
 		}
 
@@ -305,7 +303,9 @@ func (a *adapter) pollLoop(ctx context.Context) {
 
 		// 没有更新时短暂等待
 		if len(updates) == 0 {
-			time.Sleep(500 * time.Millisecond)
+			if !bot.SleepCtx(ctx, 500*time.Millisecond) {
+				return
+			}
 		}
 	}
 }
@@ -494,7 +494,7 @@ func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot
 		"msg": map[string]interface{}{
 			"from_user_id":  "",
 			"to_user_id":    msg.ChatID,
-			"client_id":     fmt.Sprintf("reasonix-%d", time.Now().UnixNano()),
+			"client_id":     fmt.Sprintf("voltui-%d", time.Now().UnixNano()),
 			"message_type":  weixinMsgTypeBot,
 			"message_state": weixinMsgStateDone,
 			"item_list": []map[string]interface{}{

@@ -101,7 +101,7 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "ready") {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
-	if !strings.Contains(plain, "(shift+tab to cycle)") {
+	if !strings.Contains(plain, "(shift+tab toggles plan · ctrl+y yolo)") {
 		t.Fatalf("idle status line missing mode-cycle hint:\n%s", plain)
 	}
 	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn"} {
@@ -122,7 +122,7 @@ func TestYoloStatuslineUsesDangerPill(t *testing.T) {
 
 	content := renderStatuslineView(t, true)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "(shift+tab to cycle)") {
+	if !strings.Contains(plain, "YOLO") || !strings.Contains(plain, "approvals skipped") || !strings.Contains(plain, "(shift+tab toggles plan · ctrl+y yolo)") {
 		t.Fatalf("YOLO status line missing warning text:\n%s", plain)
 	}
 	if strings.Contains(plain, "[YOLO]") {
@@ -138,7 +138,7 @@ func TestPlanStatuslineUsesBluePill(t *testing.T) {
 
 	content := renderPlanStatuslineView(t)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "(shift+tab to cycle)") {
+	if !strings.Contains(plain, "Plan") || !strings.Contains(plain, "ready") || !strings.Contains(plain, "(shift+tab toggles plan · ctrl+y yolo)") {
 		t.Fatalf("plan status line missing mode status:\n%s", plain)
 	}
 	if !strings.Contains(content, "\x1b[48;2;37;99;235m") {
@@ -152,10 +152,10 @@ func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
-	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 循环切换)") {
+	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 切换计划 · ctrl+y yolo)") {
 		t.Fatalf("localized mode-cycle hint missing:\n%s", plain)
 	}
-	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab to cycle") {
+	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab toggles plan") {
 		t.Fatalf("localized status line should not fall back to English:\n%s", plain)
 	}
 }
@@ -276,8 +276,10 @@ func renderStatuslineViewWithGitAndEffort(t *testing.T) string {
 func renderStatuslineViewWithCache(t *testing.T) string {
 	t.Helper()
 
-	prov := testutil.NewMock("deepseek-v4-flash", testutil.UsageTurn(900, 100, 50))
-	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 1, ContextWindow: 200_000}, event.Discard)
+	usage := testutil.UsageTurn(900, 100, 50)
+	usage.Text = "done"
+	prov := testutil.NewMock("deepseek-v4-flash", usage)
+	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 2, ContextWindow: 200_000}, event.Discard)
 	if err := exec.Run(context.Background(), "hello"); err != nil {
 		t.Fatalf("seed agent usage: %v", err)
 	}

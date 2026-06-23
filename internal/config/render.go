@@ -73,6 +73,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		} else {
 			b.WriteString("# language = \"zh\"   # desktop UI language; empty/auto = browser/OS auto-detect\n")
 		}
+		fmt.Fprintf(&b, "layout_style = %q   # desktop layout: classic|workbench|creation\n", c.DesktopLayoutStyle())
 		fmt.Fprintf(&b, "theme = %q   # desktop only: auto|dark|light\n", c.DesktopTheme())
 		if style := c.DesktopThemeStyle(); style != "" {
 			fmt.Fprintf(&b, "theme_style = %q   # desktop accent palette\n", style)
@@ -80,8 +81,16 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier\n")
 		}
 		fmt.Fprintf(&b, "close_behavior = %q   # desktop: quit|background when the window close button is clicked\n", c.DesktopCloseBehavior())
+		fmt.Fprintf(&b, "status_bar_style = %q   # desktop: icon|text metric labels in the bottom status bar\n", c.DesktopStatusBarStyle())
+		fmt.Fprintf(&b, "status_bar_items = %s   # desktop: ordered visible bottom status bar items\n", renderStringArray(c.DesktopStatusBarItems()))
+		fmt.Fprintf(&b, "check_updates = %t   # desktop: check for new versions on startup\n", c.DesktopCheckUpdates())
 		fmt.Fprintf(&b, "telemetry = %t   # anonymous startup ping; no prompts, keys, or file data\n", c.DesktopTelemetry())
 		fmt.Fprintf(&b, "metrics = %t   # anonymous aggregate desktop counters; default off\n", c.DesktopMetrics())
+		if len(c.Desktop.ProviderAccess) > 0 {
+			fmt.Fprintf(&b, "provider_access = %s   # desktop settings: providers shown on Settings > Model > Access\n", renderStringArray(c.Desktop.ProviderAccess))
+		}
+		fmt.Fprintf(&b, "expand_thinking = %t   # desktop: show reasoning text expanded by default; false = collapsed\n", c.Desktop.ExpandThinking)
+		fmt.Fprintf(&b, "display_mode = %q   # desktop: standard|compact transcript display mode\n", c.DesktopDisplayMode())
 		b.WriteString("\n")
 	}
 
@@ -177,6 +186,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# system_prompt_file = \"prompts/system.md\"   # overrides system_prompt when set\n")
 	}
 	fmt.Fprintf(&b, "max_steps   = %d\n", c.Agent.MaxSteps)
+	if c.Agent.PlannerMaxSteps > 0 {
+		fmt.Fprintf(&b, "planner_max_steps = %d\n", c.Agent.PlannerMaxSteps)
+	}
 	fmt.Fprintf(&b, "temperature = %s\n", formatFloat(c.Agent.Temperature))
 	autoPlan := c.Agent.AutoPlan
 	switch strings.ToLower(strings.TrimSpace(autoPlan)) {
@@ -204,17 +216,33 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# subagent_model = \"deepseek-pro\"   # optional default for runAs=subagent skills\n")
 	}
+	if c.Agent.SubagentEffort != "" {
+		fmt.Fprintf(&b, "subagent_effort = %q   # default effort for subagent runs\n", c.Agent.SubagentEffort)
+	}
 	if len(c.Agent.SubagentModels) > 0 {
 		fmt.Fprintf(&b, "subagent_models = %s   # per-skill overrides\n", renderStringMap(c.Agent.SubagentModels))
 	} else {
 		b.WriteString("# subagent_models = { review = \"deepseek-pro\", security_review = \"deepseek-pro\" }   # per-skill overrides\n")
+	}
+	if len(c.Agent.SubagentEfforts) > 0 {
+		fmt.Fprintf(&b, "subagent_efforts = %s   # per-skill effort overrides\n", renderStringMap(c.Agent.SubagentEfforts))
 	}
 	if c.Agent.OutputStyle != "" {
 		fmt.Fprintf(&b, "output_style = %q   # persona/tone folded into the prompt\n", c.Agent.OutputStyle)
 	} else {
 		b.WriteString("# output_style = \"explanatory\"   # explanatory | learning | concise | custom; empty = default\n")
 	}
+	if lang := c.ReasoningLanguage(); lang != "auto" {
+		fmt.Fprintf(&b, "reasoning_language = %q   # auto|zh|en visible reasoning language\n", lang)
+	}
+	if c.Agent.ColdResumePrune != nil {
+		fmt.Fprintf(&b, "cold_resume_prune = %t   # elide stale tool results on cold resume\n", c.ColdResumePruneEnabled())
+	}
 	b.WriteString("\n")
+
+	if shouldRenderBot(c, defaults, scope) {
+		renderBotConfig(&b, c.Bot)
+	}
 
 	if shouldRenderProviders(c, defaults, scope) {
 		for _, p := range c.Providers {
@@ -239,6 +267,15 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 			if p.ContextWindow > 0 {
 				fmt.Fprintf(&b, "context_window = %d   # tokens; compaction triggers near this limit\n", p.ContextWindow)
+			}
+			if p.Vision {
+				b.WriteString("vision      = true\n")
+			}
+			if p.VisionModels != nil {
+				fmt.Fprintf(&b, "vision_models = %s\n", renderStringArray(p.VisionModels))
+			}
+			if p.ReasoningProtocol != "" {
+				fmt.Fprintf(&b, "reasoning_protocol = %q\n", p.ReasoningProtocol)
 			}
 			if p.Price != nil {
 				fmt.Fprintf(&b, "price       = { cache_hit = %v, input = %v, output = %v, currency = %q }   # per 1M tokens\n",
@@ -297,6 +334,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "paths = %s   # extra custom skill roots\n", renderStringArray(c.Skills.Paths))
 	} else {
 		b.WriteString("# paths = [\"~/my-skills\", \"../shared/skills\"]   # extra custom skill roots\n")
+	}
+	if len(c.Skills.ExcludedPaths) > 0 {
+		fmt.Fprintf(&b, "excluded_paths = %s   # hide convention or custom skill roots without deleting files\n", renderStringArray(c.Skills.ExcludedPaths))
 	}
 	if disabled := c.DisabledSkillNames(); len(disabled) > 0 {
 		fmt.Fprintf(&b, "disabled_skills = %s   # hidden from the prompt, slash invocation, and skill tools\n\n", renderStringArray(disabled))
@@ -499,11 +539,175 @@ func shouldRenderProviders(c, defaults *Config, scope RenderScope) bool {
 	return !reflect.DeepEqual(c.Providers, defaults.Providers)
 }
 
+func shouldRenderBot(c, defaults *Config, scope RenderScope) bool {
+	if scope != RenderScopeProject {
+		return true
+	}
+	return !reflect.DeepEqual(c.Bot, defaults.Bot)
+}
+
 func shouldRenderSystemPrompt(c, defaults *Config, scope RenderScope) bool {
 	if scope == RenderScopeFull {
 		return true
 	}
 	return strings.TrimSpace(c.Agent.SystemPrompt) != "" && c.Agent.SystemPrompt != defaults.Agent.SystemPrompt
+}
+
+func renderBotConfig(b *strings.Builder, bot BotConfig) {
+	b.WriteString("[bot]\n")
+	fmt.Fprintf(b, "enabled = %t\n", bot.Enabled)
+	if strings.TrimSpace(bot.Model) != "" {
+		fmt.Fprintf(b, "model = %q\n", bot.Model)
+	}
+	if strings.TrimSpace(bot.ToolApprovalMode) != "" {
+		fmt.Fprintf(b, "tool_approval_mode = %q\n", bot.ToolApprovalMode)
+	}
+	if bot.MaxSteps > 0 {
+		fmt.Fprintf(b, "max_steps = %d\n", bot.MaxSteps)
+	}
+	if bot.DebounceMs > 0 {
+		fmt.Fprintf(b, "debounce_ms = %d\n", bot.DebounceMs)
+	}
+	b.WriteString("\n[bot.allowlist]\n")
+	fmt.Fprintf(b, "enabled = %t\n", bot.Allowlist.Enabled)
+	fmt.Fprintf(b, "allow_all = %t\n", bot.Allowlist.AllowAll)
+	fmt.Fprintf(b, "qq_users = %s\n", renderStringArray(bot.Allowlist.QQUsers))
+	fmt.Fprintf(b, "feishu_users = %s\n", renderStringArray(bot.Allowlist.FeishuUsers))
+	fmt.Fprintf(b, "weixin_users = %s\n", renderStringArray(bot.Allowlist.WeixinUsers))
+	fmt.Fprintf(b, "qq_groups = %s\n", renderStringArray(bot.Allowlist.QQGroups))
+	fmt.Fprintf(b, "feishu_groups = %s\n", renderStringArray(bot.Allowlist.FeishuGroups))
+	fmt.Fprintf(b, "weixin_groups = %s\n", renderStringArray(bot.Allowlist.WeixinGroups))
+
+	b.WriteString("\n[bot.qq]\n")
+	fmt.Fprintf(b, "enabled = %t\n", bot.QQ.Enabled)
+	if strings.TrimSpace(bot.QQ.AppID) != "" {
+		fmt.Fprintf(b, "app_id = %q\n", bot.QQ.AppID)
+	}
+	if strings.TrimSpace(bot.QQ.AppSecretEnv) != "" {
+		fmt.Fprintf(b, "app_secret_env = %q\n", bot.QQ.AppSecretEnv)
+	}
+	fmt.Fprintf(b, "sandbox = %t\n", bot.QQ.Sandbox)
+
+	b.WriteString("\n[bot.feishu]\n")
+	fmt.Fprintf(b, "enabled = %t\n", bot.Feishu.Enabled)
+	if strings.TrimSpace(bot.Feishu.Domain) != "" {
+		fmt.Fprintf(b, "domain = %q\n", bot.Feishu.Domain)
+	}
+	if strings.TrimSpace(bot.Feishu.AppID) != "" {
+		fmt.Fprintf(b, "app_id = %q\n", bot.Feishu.AppID)
+	}
+	if strings.TrimSpace(bot.Feishu.AppSecretEnv) != "" {
+		fmt.Fprintf(b, "app_secret_env = %q\n", bot.Feishu.AppSecretEnv)
+	}
+	if strings.TrimSpace(bot.Feishu.VerificationToken) != "" {
+		fmt.Fprintf(b, "verification_token = %q\n", bot.Feishu.VerificationToken)
+	}
+	if strings.TrimSpace(bot.Feishu.Mode) != "" {
+		fmt.Fprintf(b, "mode = %q\n", bot.Feishu.Mode)
+	}
+	if bot.Feishu.WebhookPort > 0 {
+		fmt.Fprintf(b, "webhook_port = %d\n", bot.Feishu.WebhookPort)
+	}
+	fmt.Fprintf(b, "require_mention = %t\n", bot.Feishu.RequireMention)
+
+	b.WriteString("\n[bot.weixin]\n")
+	fmt.Fprintf(b, "enabled = %t\n", bot.Weixin.Enabled)
+	if strings.TrimSpace(bot.Weixin.AccountID) != "" {
+		fmt.Fprintf(b, "account_id = %q\n", bot.Weixin.AccountID)
+	}
+	if strings.TrimSpace(bot.Weixin.TokenEnv) != "" {
+		fmt.Fprintf(b, "token_env = %q\n", bot.Weixin.TokenEnv)
+	}
+	if strings.TrimSpace(bot.Weixin.APIBase) != "" {
+		fmt.Fprintf(b, "api_base = %q\n", bot.Weixin.APIBase)
+	}
+
+	for _, conn := range bot.Connections {
+		b.WriteString("\n[[bot.connections]]\n")
+		fmt.Fprintf(b, "id = %q\n", conn.ID)
+		fmt.Fprintf(b, "provider = %q\n", conn.Provider)
+		if strings.TrimSpace(conn.Domain) != "" {
+			fmt.Fprintf(b, "domain = %q\n", conn.Domain)
+		}
+		if strings.TrimSpace(conn.Label) != "" {
+			fmt.Fprintf(b, "label = %q\n", conn.Label)
+		}
+		fmt.Fprintf(b, "enabled = %t\n", conn.Enabled)
+		if strings.TrimSpace(conn.Status) != "" {
+			fmt.Fprintf(b, "status = %q\n", conn.Status)
+		}
+		if strings.TrimSpace(conn.Model) != "" {
+			fmt.Fprintf(b, "model = %q\n", conn.Model)
+		}
+		if strings.TrimSpace(conn.ToolApprovalMode) != "" {
+			fmt.Fprintf(b, "tool_approval_mode = %q\n", conn.ToolApprovalMode)
+		}
+		if strings.TrimSpace(conn.WorkspaceRoot) != "" {
+			fmt.Fprintf(b, "workspace_root = %q\n", conn.WorkspaceRoot)
+		}
+		if strings.TrimSpace(conn.LastError) != "" {
+			fmt.Fprintf(b, "last_error = %q\n", conn.LastError)
+		}
+		if strings.TrimSpace(conn.CreatedAt) != "" {
+			fmt.Fprintf(b, "created_at = %q\n", conn.CreatedAt)
+		}
+		if strings.TrimSpace(conn.UpdatedAt) != "" {
+			fmt.Fprintf(b, "updated_at = %q\n", conn.UpdatedAt)
+		}
+		if botConnectionCredentialConfigured(conn.Credential) {
+			b.WriteString("[bot.connections.credential]\n")
+			if strings.TrimSpace(conn.Credential.AppID) != "" {
+				fmt.Fprintf(b, "app_id = %q\n", conn.Credential.AppID)
+			}
+			if strings.TrimSpace(conn.Credential.AppSecretEnv) != "" {
+				fmt.Fprintf(b, "app_secret_env = %q\n", conn.Credential.AppSecretEnv)
+			}
+			if strings.TrimSpace(conn.Credential.AccountID) != "" {
+				fmt.Fprintf(b, "account_id = %q\n", conn.Credential.AccountID)
+			}
+			if strings.TrimSpace(conn.Credential.TokenEnv) != "" {
+				fmt.Fprintf(b, "token_env = %q\n", conn.Credential.TokenEnv)
+			}
+		}
+		for _, mapping := range conn.SessionMappings {
+			b.WriteString("[[bot.connections.session_mappings]]\n")
+			if strings.TrimSpace(mapping.RemoteID) != "" {
+				fmt.Fprintf(b, "remote_id = %q\n", mapping.RemoteID)
+			}
+			if strings.TrimSpace(mapping.SessionID) != "" {
+				fmt.Fprintf(b, "session_id = %q\n", mapping.SessionID)
+			}
+			if strings.TrimSpace(mapping.SessionSource) != "" {
+				fmt.Fprintf(b, "session_source = %q\n", mapping.SessionSource)
+			}
+			if strings.TrimSpace(mapping.ChatType) != "" {
+				fmt.Fprintf(b, "chat_type = %q\n", mapping.ChatType)
+			}
+			if strings.TrimSpace(mapping.UserID) != "" {
+				fmt.Fprintf(b, "user_id = %q\n", mapping.UserID)
+			}
+			if strings.TrimSpace(mapping.ThreadID) != "" {
+				fmt.Fprintf(b, "thread_id = %q\n", mapping.ThreadID)
+			}
+			if strings.TrimSpace(mapping.Scope) != "" {
+				fmt.Fprintf(b, "scope = %q\n", mapping.Scope)
+			}
+			if strings.TrimSpace(mapping.WorkspaceRoot) != "" {
+				fmt.Fprintf(b, "workspace_root = %q\n", mapping.WorkspaceRoot)
+			}
+			if strings.TrimSpace(mapping.UpdatedAt) != "" {
+				fmt.Fprintf(b, "updated_at = %q\n", mapping.UpdatedAt)
+			}
+		}
+	}
+	b.WriteString("\n")
+}
+
+func botConnectionCredentialConfigured(cred BotConnectionCredential) bool {
+	return strings.TrimSpace(cred.AppID) != "" ||
+		strings.TrimSpace(cred.AppSecretEnv) != "" ||
+		strings.TrimSpace(cred.AccountID) != "" ||
+		strings.TrimSpace(cred.TokenEnv) != ""
 }
 
 // renderStringArray renders a []string as a TOML inline array.

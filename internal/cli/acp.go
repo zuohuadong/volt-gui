@@ -18,6 +18,7 @@ import (
 	"voltui/internal/i18n"
 	"voltui/internal/permission"
 	"voltui/internal/plugin"
+	"voltui/internal/provider"
 	"voltui/internal/sandbox"
 	"voltui/internal/tool"
 	"voltui/internal/tool/builtin"
@@ -79,6 +80,22 @@ type acpFactory struct {
 	model string
 }
 
+func acpKeepPolicy(keep []string) agent.KeepPolicy {
+	if keep == nil {
+		return agent.KeepErrors
+	}
+	var p agent.KeepPolicy
+	for _, k := range keep {
+		switch strings.TrimSpace(k) {
+		case "errors":
+			p |= agent.KeepErrors
+		case "user_marked":
+			p |= agent.KeepUserMarked
+		}
+	}
+	return p
+}
+
 // NewSession assembles the per-session controller. Resources (MCP subprocesses)
 // are released via the controller's Cleanup, run on ctrl.Close().
 func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*control.Controller, error) {
@@ -138,9 +155,44 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	maxSteps := cfg.Agent.MaxSteps
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 	headlessGate := permission.NewGate(policy, nil)
+	keepPolicy := acpKeepPolicy(cfg.Agent.Keep)
+	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		me := *entry
+		if strings.TrimSpace(modelRef) != "" {
+			resolved, ok := cfg.ResolveModel(modelRef)
+			if !ok {
+				return nil, nil, 0, fmt.Errorf("unknown model %q", modelRef)
+			}
+			me = *resolved
+		}
+		if strings.TrimSpace(effort) != "" {
+			normalized, err := config.NormalizeEffort(&me, effort)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			me.Effort = normalized
+			if me.Kind == "anthropic" && strings.TrimSpace(me.Effort) != "" && strings.TrimSpace(me.Thinking) == "" {
+				me.Thinking = "adaptive"
+			}
+		}
+		p, err := boot.NewProviderWithProxy(&me, proxySpec)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		return p, me.Price, me.ContextWindow, nil
+	}
+	taskModel := cfg.Agent.SubagentModels["task"]
+	if taskModel == "" {
+		taskModel = cfg.Agent.SubagentModel
+	}
+	taskEffort := cfg.Agent.SubagentEfforts["task"]
+	if taskEffort == "" {
+		taskEffort = cfg.Agent.SubagentEffort
+	}
 	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
-		entry.ContextWindow, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
-		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate))
+		entry.ContextWindow, cfg.Agent.RecentKeep, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
+		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
+		keepPolicy, taskModel, taskEffort, resolveSubagentProvider))
 
 	executor := agent.New(execProv, reg, agent.NewSession(sysPrompt), agent.Options{
 		MaxSteps:          maxSteps,
@@ -148,10 +200,12 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		Pricing:           entry.Price,
 		Gate:              headlessGate,
 		ContextWindow:     entry.ContextWindow,
+		RecentKeep:        cfg.Agent.RecentKeep,
 		SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
 		CompactRatio:      cfg.Agent.CompactRatio,
 		CompactForceRatio: cfg.Agent.CompactForceRatio,
 		ArchiveDir:        config.ArchiveDir(),
+		KeepPolicy:        keepPolicy,
 	}, p.Sink)
 
 	cmds, _ := command.Load(config.CommandDirs()...)
@@ -171,7 +225,19 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 				return nil, fmt.Errorf("planner %q: %w", pm, err)
 			}
 			plannerSess := agent.NewSession(agent.DefaultPlannerPrompt)
-			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, executor, cfg.Agent.Temperature, p.Sink, control.TaskWarrantsPlanner)
+			plannerOptions := agent.Options{
+				MaxSteps:          maxSteps,
+				Temperature:       cfg.Agent.Temperature,
+				Gate:              headlessGate,
+				ContextWindow:     pe.ContextWindow,
+				RecentKeep:        cfg.Agent.RecentKeep,
+				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
+				CompactRatio:      cfg.Agent.CompactRatio,
+				CompactForceRatio: cfg.Agent.CompactForceRatio,
+				ArchiveDir:        config.ArchiveDir(),
+				KeepPolicy:        keepPolicy,
+			}
+			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, reg, plannerOptions, executor, cfg.Agent.Temperature, p.Sink, control.TaskWarrantsPlanner)
 			label = entry.Model + " + planner " + pe.Model
 		}
 	}

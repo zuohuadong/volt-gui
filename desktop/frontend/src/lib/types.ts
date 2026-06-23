@@ -320,11 +320,30 @@ export type WireEventKind =
   | "message"
   | "tool_dispatch"
   | "tool_result"
+  | "tool_progress"
   | "approval_request"
   | "ask_request"
   | "usage"
   | "turn_done"
-  | "notice";
+  | "notice"
+  | "phase"
+  | "compaction_started"
+  | "compaction_done"
+  | "mcp_surface_ready"
+  | "retrying"
+  | "steer";
+
+export interface WireCacheDiagnostics {
+  prefixHash: string;
+  prefixChanged: boolean;
+  prefixChangeReasons?: string[];
+  systemHash: string;
+  toolsHash: string;
+  logRewriteVersion: number;
+  toolSchemaTokens: number;
+  cacheMissTokens: number;
+  cacheHitTokens: number;
+}
 
 export interface WireEvent {
   kind: WireEventKind;
@@ -339,7 +358,17 @@ export interface WireEvent {
     output?: string;
     err?: string;
     readOnly?: boolean;
+    truncated?: boolean;
+    durationMs?: number;
+    partial?: boolean;
     parentId?: string;
+    diff?: string;
+    added?: number;
+    removed?: number;
+    profile?: {
+      model?: string;
+      effort?: string;
+    };
   };
   approval?: {
     id: string;
@@ -351,8 +380,31 @@ export interface WireEvent {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
     reasoningTokens?: number;
+    source?: string;
+    cacheDiagnostics?: WireCacheDiagnostics;
+    sessionCacheHitTokens?: number;
+    sessionCacheMissTokens?: number;
+    cost?: number;
+    currency?: string;
+    costUsd?: number;
   };
+  compaction?: {
+    trigger?: string;
+    messages?: number;
+    summary?: string;
+    archive?: string;
+  };
+  err?: string;
+  retryAttempt?: number;
+  retryMax?: number;
+  sessionHitTokens?: number;
+  sessionMissTokens?: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  sessionCostUsd?: number;
 }
 
 export interface TranscriptItem {

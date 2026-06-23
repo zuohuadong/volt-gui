@@ -17,9 +17,9 @@ func isolateCompatConfig(t *testing.T) string {
 	return root
 }
 
-func TestLoadAcceptsReasonixUserConfig(t *testing.T) {
-	root := isolateCompatConfig(t)
-	path := filepath.Join(root, "AppData", "reasonix", "config.toml")
+func TestLoadAcceptsVoltUIUserConfig(t *testing.T) {
+	isolateCompatConfig(t)
+	path := legacyUserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -42,13 +42,13 @@ api_key_env = "LEGACY_KEY"
 		t.Fatalf("default_model = %q, want legacy-provider", cfg.DefaultModel)
 	}
 	if _, ok := cfg.Provider("legacy-provider"); !ok {
-		t.Fatalf("reasonix provider was not loaded: %+v", cfg.Providers)
+		t.Fatalf("voltui provider was not loaded: %+v", cfg.Providers)
 	}
 }
 
-func TestLoadVoltUIOverridesReasonixConfig(t *testing.T) {
-	root := isolateCompatConfig(t)
-	legacy := filepath.Join(root, "AppData", "reasonix", "config.toml")
+func TestLoadVoltUIOverridesVoltUIConfig(t *testing.T) {
+	isolateCompatConfig(t)
+	legacy := legacyUserConfigPath()
 	current := UserConfigPath()
 	for _, path := range []string{legacy, current} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -82,9 +82,9 @@ command = "current-bin"
 	}
 }
 
-func TestLoadAcceptsReasonixProjectConfig(t *testing.T) {
+func TestLoadAcceptsVoltUIProjectConfig(t *testing.T) {
 	isolateCompatConfig(t)
-	if err := os.WriteFile("reasonix.toml", []byte(`default_model = "project-provider"
+	if err := os.WriteFile("voltui.toml", []byte(`default_model = "project-provider"
 [[providers]]
 name = "project-provider"
 kind = "openai"
@@ -102,24 +102,24 @@ api_key_env = "PROJECT_KEY"
 	if cfg.DefaultModel != "project-provider" {
 		t.Fatalf("default_model = %q, want project-provider", cfg.DefaultModel)
 	}
-	if got := SourcePath(); filepath.Base(got) != "reasonix.toml" {
-		t.Fatalf("SourcePath() = %q, want reasonix.toml", got)
+	if got := SourcePath(); filepath.Base(got) != "voltui.toml" {
+		t.Fatalf("SourcePath() = %q, want voltui.toml", got)
 	}
 }
 
-func TestLoadDotEnvAcceptsReasonixCredentials(t *testing.T) {
-	root := isolateCompatConfig(t)
-	path := filepath.Join(root, "AppData", "reasonix", "credentials")
+func TestLoadDotEnvAcceptsVoltUICredentials(t *testing.T) {
+	isolateCompatConfig(t)
+	path := legacyUserCredentialsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("REASONIX_ONLY_KEY=from_reasonix\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("REASONIX_ONLY_KEY=from_voltui\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	os.Unsetenv("REASONIX_ONLY_KEY")
 
 	loadDotEnv()
-	if got := os.Getenv("REASONIX_ONLY_KEY"); got != "from_reasonix" {
-		t.Fatalf("REASONIX_ONLY_KEY = %q, want from_reasonix", got)
+	if got := os.Getenv("REASONIX_ONLY_KEY"); got != "from_voltui" {
+		t.Fatalf("REASONIX_ONLY_KEY = %q, want from_voltui", got)
 	}
 }

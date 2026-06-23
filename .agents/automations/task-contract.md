@@ -45,7 +45,10 @@ updated_at: ""
 ```yaml
 goal_forge:
   enabled: false
-  checkout_path: "../goal-forge | env:GOAL_FORGE_PATH | env:GOAL_FORGE_HOME | unknown"
+  runtime: "binary | npm-package | source-checkout | unavailable"
+  binary_path: "env:GOAL_FORGE_BIN | PATH:goalforge | PATH:goal-forge | unknown"
+  package_spec: "@goalforge/cli@latest | pinned package | none"
+  checkout_path: "../goal-forge | env:GOAL_FORGE_PATH | env:GOAL_FORGE_HOME | none"
   run_dir: ""
   config_path: ".agents/goal-forge/goal-forge.config.json"
   ledger_paths: []
@@ -255,7 +258,7 @@ deployment_profile:
 
 ```yaml
 memory_profile:
-  target: "none | local-file | mem0 | openmemory | blocked"
+  target: "none | sqlite-hybrid | local-file | mem0 | openmemory | tencentdb | blocked"
   decision_source: "user | docs | detected | project-overlay | recommended-fallback | blocked"
   evidence: []
   scope: "global-user | project | task | repo | unknown"
@@ -269,14 +272,16 @@ memory_profile:
     save_check: "agent-team memory save decisions '<compact decision>'"
   non_goals:
     - "do not inject unbounded memory into prompts"
-    - "do not require mem0/OpenMemory unless explicitly configured"
+    - "do not require mem0/OpenMemory/TencentDB unless explicitly configured"
+    - "do not wire TencentDB/OpenClaw L0-L3 into default core"
     - "do not migrate task ledgers, progress logs, or mailbox history into memory unless explicitly requested"
 ```
 
 规则：
 
-- 默认 `target: local-file`，读取 `.agents/state/project-memory.json`，零外部依赖。
-- `mem0` / OpenMemory 是现成 Agent Memory 方案的 opt-in provider，不是默认 provider。
+- 默认 `target: sqlite-hybrid`，使用 `.agents/state/memory/memory.db` 可重建索引；`.agents/state/project-memory.json`、`tasks.md`、`progress.md` 和 `.mailbox/` 仍是事实源。
+- `local-file` 是旧 JSON-only fallback；`mem0` / OpenMemory / TencentDB 是外部 Agent Memory 方案的 opt-in adapter，不是默认 provider。
+- TencentDB/OpenClaw L0-L3 自动记忆管线不进入默认 core；只定期审查 upstream release，并手工移植适合 `MemoryProvider` 抽象的去重、召回评分、保留策略等能力。
 - 外部 provider 必须记录 secrets 策略、scope 边界和 token budget；不得硬编码 API key。
 - `recall` 结果必须受 token budget 限制；记忆召回不能替代读取项目事实源。
 

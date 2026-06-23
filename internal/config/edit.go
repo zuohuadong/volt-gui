@@ -114,6 +114,22 @@ func (c *Config) SetLanguage(lang string) error {
 	return nil
 }
 
+// SetReasoningLanguage pins the preferred language for visible reasoning text.
+// Empty/auto follows the conversation language.
+func (c *Config) SetReasoningLanguage(lang string) error {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "auto", "follow", "conversation", "detect", "default", "model", "model-default", "model_default", "provider":
+		c.Agent.ReasoningLanguage = ""
+	case "zh", "cn", "chinese", "中文":
+		c.Agent.ReasoningLanguage = "zh"
+	case "en", "english":
+		c.Agent.ReasoningLanguage = "en"
+	default:
+		return fmt.Errorf("reasoning language %q: must be auto|zh|en", lang)
+	}
+	return nil
+}
+
 // SetDesktopLanguage pins the desktop UI language. It intentionally does not
 // modify Config.Language, which is used by the CLI/model-facing runtime.
 func (c *Config) SetDesktopLanguage(lang string) error {
@@ -170,9 +186,108 @@ func (c *Config) SetDesktopCloseBehavior(mode string) error {
 	return nil
 }
 
+// SetDesktopDisplayMode sets the transcript display mode. UI-only.
+func (c *Config) SetDesktopDisplayMode(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "compact", "minimal":
+		c.Desktop.DisplayMode = "compact"
+	case "", "standard":
+		c.Desktop.DisplayMode = "standard"
+	default:
+		return fmt.Errorf("display mode %q: must be standard|compact", mode)
+	}
+	return nil
+}
+
+// SetDesktopStatusBarStyle sets the desktop status bar metric label style.
+// UI-only; it must not affect CLI output or provider-visible request data.
+func (c *Config) SetDesktopStatusBarStyle(style string) error {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "icon", "icons":
+		c.Desktop.StatusBarStyle = "icon"
+	case "", "text", "label", "labels":
+		c.Desktop.StatusBarStyle = "text"
+	default:
+		return fmt.Errorf("status bar style %q: must be icon|text", style)
+	}
+	return nil
+}
+
+// SetDesktopStatusBarItems sets the ordered visible desktop status bar items.
+// UI-only; it must not affect CLI output or provider-visible request data.
+func (c *Config) SetDesktopStatusBarItems(items []string) error {
+	out := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	for _, raw := range items {
+		id := strings.TrimSpace(raw)
+		if id == "" || seen[id] {
+			continue
+		}
+		if !knownDesktopStatusBarItems[id] {
+			return fmt.Errorf("status bar item %q: unknown item", id)
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return fmt.Errorf("status bar items: choose at least one item")
+	}
+	c.Desktop.StatusBarItems = out
+	return nil
+}
+
+// SetDesktopLayoutStyle sets the desktop layout style. UI-only; it must not
+// affect CLI output or provider-visible request data.
+func (c *Config) SetDesktopLayoutStyle(style string) error {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "", "classic":
+		c.Desktop.LayoutStyle = "classic"
+	case "workbench", "workspace":
+		c.Desktop.LayoutStyle = "workbench"
+	case "creation":
+		c.Desktop.LayoutStyle = "creation"
+	default:
+		return fmt.Errorf("desktop layout style %q: must be classic|workbench|creation", style)
+	}
+	return nil
+}
+
+// SetDesktopCheckUpdates sets whether the desktop app checks for updates on
+// startup. Manual checks remain available in Settings regardless of this value.
+func (c *Config) SetDesktopCheckUpdates(enabled bool) error {
+	c.Desktop.CheckUpdates = &enabled
+	return nil
+}
+
+// SetColdResumePrune toggles auto-elision of stale tool results on cold resume.
+func (c *Config) SetColdResumePrune(enabled bool) error {
+	c.Agent.ColdResumePrune = &enabled
+	return nil
+}
+
+// SetDesktopTelemetry sets whether the desktop sends the anonymous launch ping.
+func (c *Config) SetDesktopTelemetry(enabled bool) error {
+	c.Desktop.Telemetry = &enabled
+	return nil
+}
+
+// SetDesktopMetrics sets whether the desktop sends aggregate desktop metrics.
+func (c *Config) SetDesktopMetrics(enabled bool) error {
+	c.Desktop.Metrics = &enabled
+	return nil
+}
+
 // SetUICloseBehavior is kept for callers compiled against the old edit API.
 func (c *Config) SetUICloseBehavior(mode string) error {
 	return c.SetDesktopCloseBehavior(mode)
+}
+
+// SetExpandThinking sets whether the desktop reasoning/thinking section is
+// expanded by default. It is desktop-only and must not affect CLI output or
+// provider-visible request data.
+func (c *Config) SetExpandThinking(on bool) error {
+	c.Desktop.ExpandThinking = on
+	return nil
 }
 
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
@@ -364,6 +479,50 @@ func (c *Config) RemoveSkillPath(path string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// RestoreSkillPath removes a pseudo-deleted skill source from excluded_paths.
+func (c *Config) RestoreSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	if want == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	c.removeExcludedSkillPath(want)
+	return nil
+}
+
+// ExcludeSkillPath hides any skill discovery root matching path. This is used by
+// UI remove actions for convention roots that are not stored in paths.
+func (c *Config) ExcludeSkillPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	want := CanonicalSkillPath(path)
+	if want == "" {
+		return fmt.Errorf("skill path: empty path")
+	}
+	for _, existing := range c.Skills.ExcludedPaths {
+		if CanonicalSkillPath(existing) == want {
+			return nil
+		}
+	}
+	c.Skills.ExcludedPaths = append(c.Skills.ExcludedPaths, path)
+	return nil
+}
+
+func (c *Config) removeExcludedSkillPath(want string) {
+	next := c.Skills.ExcludedPaths[:0]
+	for _, existing := range c.Skills.ExcludedPaths {
+		if CanonicalSkillPath(existing) != want {
+			next = append(next, existing)
+		}
+	}
+	c.Skills.ExcludedPaths = next
 }
 
 // SetSkillEnabled persists a per-skill enable/disable preference. Skills are
@@ -564,25 +723,14 @@ func writeConfigFile(path, body string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("save: empty config path")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("save: create dir: %w", err)
+	return fileutil.AtomicWriteFile(path, []byte(body), configFilePerm(path))
+}
+
+func configFilePerm(path string) os.FileMode {
+	if isUserConfigPath(path) {
+		return 0o600
 	}
-	tmp, err := os.CreateTemp(dir, ".voltui.*.toml.tmp")
-	if err != nil {
-		return fmt.Errorf("save: create temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.WriteString(body); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("save: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("save: close temp: %w", err)
-	}
-	return fileutil.ReplaceFile(tmpPath, path)
+	return 0o644
 }
 
 func renderScopeForPath(path string) RenderScope {
@@ -594,16 +742,27 @@ func renderScopeForPath(path string) RenderScope {
 
 func isUserConfigPath(path string) bool {
 	path = strings.TrimSpace(path)
-	uc := strings.TrimSpace(userConfigPath())
-	if path == "" || uc == "" {
+	if path == "" {
 		return false
 	}
 	pathAbs, pathErr := filepath.Abs(path)
-	ucAbs, ucErr := filepath.Abs(uc)
-	if pathErr == nil && ucErr == nil {
-		return filepath.Clean(pathAbs) == filepath.Clean(ucAbs)
+	for _, uc := range userConfigCandidatePaths() {
+		uc = strings.TrimSpace(uc)
+		if uc == "" {
+			continue
+		}
+		ucAbs, ucErr := filepath.Abs(uc)
+		if pathErr == nil && ucErr == nil {
+			if filepath.Clean(pathAbs) == filepath.Clean(ucAbs) {
+				return true
+			}
+			continue
+		}
+		if filepath.Clean(path) == filepath.Clean(uc) {
+			return true
+		}
 	}
-	return filepath.Clean(path) == filepath.Clean(uc)
+	return false
 }
 
 // Save writes the configuration back to the file it was loaded from

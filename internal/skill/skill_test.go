@@ -20,6 +20,18 @@ func writeSkill(t *testing.T, base, rel, content string) string {
 	return full
 }
 
+func writeScript(t *testing.T, base, rel, content string) string {
+	t.Helper()
+	full := filepath.Join(base, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
+
 func find(skills []Skill, name string) (Skill, bool) {
 	for _, s := range skills {
 		if s.Name == name {
@@ -131,6 +143,121 @@ func TestReferencesInlined(t *testing.T) {
 	}
 }
 
+func TestScriptsAppended(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home with spaces")
+	writeSkill(t, home, ".voltui/skills/withscripts/SKILL.md", "---\ndescription: r\n---\nmain body")
+	writeScript(t, home, ".voltui/skills/withscripts/scripts/lint.py", "#!/usr/bin/env python3\nprint('ok')")
+	writeScript(t, home, ".voltui/skills/withscripts/scripts/deploy.sh", "#!/usr/bin/env bash\necho ok")
+
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	sk, ok := st.Read("withscripts")
+	if !ok {
+		t.Fatal("skill not found")
+	}
+	if !strings.Contains(sk.Body, "main body") {
+		t.Error("main body missing")
+	}
+	if !strings.Contains(sk.Body, "## Scripts") {
+		t.Error("scripts section missing")
+	}
+	if !strings.Contains(sk.Body, "lint.py") || !strings.Contains(sk.Body, "deploy.sh") {
+		t.Error("script paths missing from body")
+	}
+	if !strings.Contains(sk.Body, "main body\n\n## Scripts") {
+		t.Errorf("scripts section should be separated from the original body:\n%s", sk.Body)
+	}
+	if !strings.Contains(sk.Body, "quote the path if it contains spaces") {
+		t.Error("scripts guidance should mention quoting paths with spaces")
+	}
+}
+
+func TestScriptsStayOutOfSkillIndex(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/withscripts/SKILL.md", "---\ndescription: cache-safe script skill\n---\nmain body")
+	writeScript(t, home, ".voltui/skills/withscripts/scripts/lint.py", "#!/usr/bin/env python3\nprint('ok')")
+
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	sk, ok := st.Read("withscripts")
+	if !ok {
+		t.Fatal("skill not found")
+	}
+	if !strings.Contains(sk.Body, "## Scripts") || !strings.Contains(sk.Body, "lint.py") {
+		t.Fatal("test setup expected scripts in the on-demand skill body")
+	}
+
+	index := ApplyIndex("BASE", []Skill{sk})
+	if !strings.Contains(index, "withscripts") || !strings.Contains(index, "cache-safe script skill") {
+		t.Fatalf("skill index missing name/description:\n%s", index)
+	}
+	for _, forbidden := range []string{"## Scripts", "lint.py", filepath.Join("scripts", "lint.py")} {
+		if strings.Contains(index, forbidden) {
+			t.Fatalf("skill index should not include on-demand script listing %q:\n%s", forbidden, index)
+		}
+	}
+}
+
+func TestNoScriptsWhenDirAbsent(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/noscripts/SKILL.md", "---\ndescription: r\n---\nmain body")
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	sk, ok := st.Read("noscripts")
+	if !ok {
+		t.Fatal("skill not found")
+	}
+	if strings.Contains(sk.Body, "## Scripts") {
+		t.Error("should not have scripts section when scripts/ missing")
+	}
+}
+
+func TestFlatSkillNoScripts(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/flat.md", "---\ndescription: r\n---\nmain body")
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	sk, ok := st.Read("flat")
+	if !ok {
+		t.Fatal("skill not found")
+	}
+	if strings.Contains(sk.Body, "## Scripts") {
+		t.Error("flat skill should not have scripts section")
+	}
+}
+
+func TestScriptsFilteredByExt(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/scriptscheck/SKILL.md", "---\ndescription: t\n---\nbody")
+	writeScript(t, home, ".voltui/skills/scriptscheck/scripts/lint.py", "#!/usr/bin/env python3\nprint('ok')\n")
+	writeScript(t, home, ".voltui/skills/scriptscheck/scripts/.hidden.py", "")
+	writeScript(t, home, ".voltui/skills/scriptscheck/scripts/readme.md", "# readme")
+	writeScript(t, home, ".voltui/skills/scriptscheck/scripts/deploy", "#!/bin/sh\necho ok")
+	writeScript(t, home, ".voltui/skills/scriptscheck/scripts/legacy.p", "print 'ok'\n")
+	writeScript(t, home, ".voltui/skills/scriptscheck/scripts/.gitkeep", "")
+
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	sk, ok := st.Read("scriptscheck")
+	if !ok {
+		t.Fatal("skill not found")
+	}
+	body := sk.Body
+	if !strings.Contains(body, "lint.py") {
+		t.Error("lint.py should be listed")
+	}
+	if !strings.Contains(body, "deploy") {
+		t.Error("deploy should be listed as bare executable")
+	}
+	if strings.Contains(body, ".hidden.py") {
+		t.Error("hidden files should not be listed")
+	}
+	if strings.Contains(body, "readme.md") {
+		t.Error("non-script extensions should not be listed")
+	}
+	if strings.Contains(body, "legacy.p") {
+		t.Error("partial extension matches should not be listed")
+	}
+	if strings.Contains(body, ".gitkeep") {
+		t.Error(".gitkeep should not be listed")
+	}
+}
+
 func TestBuiltinInitIsInlineSkill(t *testing.T) {
 	// /init must resolve to a built-in inline skill (the model-driven AGENTS.md
 	// bootstrap), present even with no project/user skills on disk.
@@ -150,10 +277,10 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
 	cases := map[string][]string{
-		"explore":         {"read_file", "ls", "glob", "grep"},
-		"research":        {"read_file", "ls", "glob", "grep", "web_fetch"},
-		"review":          {"read_file", "ls", "glob", "grep", "bash"},
-		"security-review": {"read_file", "ls", "glob", "grep", "bash"},
+		"explore":         {"read_file", "ls", "glob", "grep", "code_index"},
+		"research":        {"read_file", "ls", "glob", "grep", "code_index", "web_fetch"},
+		"review":          {"read_file", "ls", "glob", "grep", "code_index", "bash"},
+		"security-review": {"read_file", "ls", "glob", "grep", "code_index", "bash"},
 	}
 	for name, want := range cases {
 		sk, ok := st.Read(name)
@@ -166,7 +293,7 @@ func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 		if !sameStrings(sk.AllowedTools, want) {
 			t.Errorf("%s AllowedTools = %v, want %v", name, sk.AllowedTools, want)
 		}
-		for _, meta := range []string{"task", "run_skill", "install_skill", "explore", "research", "review", "security_review"} {
+		for _, meta := range []string{"task", "run_skill", "install_skill", "install_source", "explore", "research", "review", "security_review"} {
 			if containsString(sk.AllowedTools, meta) {
 				t.Errorf("%s AllowedTools should not include meta-tool %q: %v", name, meta, sk.AllowedTools)
 			}
@@ -186,6 +313,42 @@ func TestBuiltinsPresentAndOverridable(t *testing.T) {
 	ex, _ := st2.Read("explore")
 	if ex.Scope == ScopeBuiltin || ex.Description != "mine" {
 		t.Errorf("user explore should override builtin: scope=%s desc=%q", ex.Scope, ex.Description)
+	}
+}
+
+func TestInstallCapabilityBuiltinIsInlineWithExpectedMetadata(t *testing.T) {
+	st := New(Options{HomeDir: t.TempDir()})
+	sk, ok := st.Read("install-capability")
+	if !ok {
+		t.Fatal("install-capability builtin skill must be registered")
+	}
+	if sk.Scope != ScopeBuiltin {
+		t.Errorf("install-capability scope = %s, want builtin", sk.Scope)
+	}
+	if sk.RunAs != RunInline {
+		t.Errorf("install-capability runAs = %s, want inline (it folds into the parent turn)", sk.RunAs)
+	}
+	if !strings.Contains(sk.Description, "install_source") {
+		t.Errorf("description should mention install_source, got %q", sk.Description)
+	}
+	if !strings.Contains(sk.Description, "uninstall") {
+		t.Errorf("description should advertise op=uninstall, got %q", sk.Description)
+	}
+	if !strings.Contains(sk.Body, "riskLevel") {
+		t.Error("body should mention the per-action riskLevel field so the model reads it")
+	}
+	if !strings.Contains(sk.Body, "planId") {
+		t.Error("body should mention the planId echo requirement on apply=true")
+	}
+}
+
+func TestAutoResearchIsNotSeparateBuiltinSkill(t *testing.T) {
+	st := New(Options{HomeDir: t.TempDir()})
+	if _, listed := find(st.List(), "auto-research"); listed {
+		t.Error("auto-research should be a Goal strategy, not a separate builtin skill")
+	}
+	if _, ok := st.Read("auto-research"); ok {
+		t.Error("auto-research should not be readable as a standalone builtin skill")
 	}
 }
 
@@ -330,7 +493,7 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".voltui", "skills", "mine.md")) {
+	if !strings.HasSuffix(path, filepath.Join(".voltui", "skills", "mine", "SKILL.md")) {
 		t.Errorf("unexpected path %q", path)
 	}
 	if _, err := st.Create("mine", ScopeGlobal); err == nil {

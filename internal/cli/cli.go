@@ -462,6 +462,16 @@ func runServe(args []string) int {
 		}
 	}
 	*model = modelForResumePath(*model, *resume, cfg)
+	// Serve always uses the user's global default_model, ignoring any
+	// project-level override, so the model choice stays consistent across
+	// projects and matches the user's account-level preference.
+	if *model == "" {
+		if uc := config.UserConfigPath(); uc != "" {
+			if userCfg := config.LoadForEdit(uc); userCfg != nil && userCfg.DefaultModel != "" {
+				*model = userCfg.DefaultModel
+			}
+		}
+	}
 	ctrl, err := setup(ctx, *model, *maxSteps, true, bc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)

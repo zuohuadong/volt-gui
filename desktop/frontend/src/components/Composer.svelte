@@ -1,14 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, FileText, Image, Mic, Monitor, Paperclip, Search, Send, Square, Volume2, X, Zap } from "@lucide/svelte";
+  import { AtSign, FileText, Folder, Image, Search, Send, Square, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
-  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, RunMode, SlashArgItem } from "../lib/types";
+  import type { CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
 
   let {
     input,
-    activityMode,
-    runMode,
     commands,
     sending,
     onInput,
@@ -18,10 +16,14 @@
     models = [],
     selectedModel = "",
     onModelChange,
+    projectOptions = [],
+    selectedProjectId = "",
+    onProjectChange,
+    clientOptions = [],
+    selectedClientId = "",
+    onClientChange,
   }: {
     input: string;
-    activityMode: ActivityMode;
-    runMode: RunMode;
     commands: CommandInfo[];
     sending: boolean;
     onInput: (value: string) => void;
@@ -31,6 +33,12 @@
     models?: ModelInfo[];
     selectedModel?: string;
     onModelChange?: (event: Event) => void;
+    projectOptions?: { id: string; label: string }[];
+    selectedProjectId?: string;
+    onProjectChange?: (value: string) => void;
+    clientOptions?: { id: string; label: string }[];
+    selectedClientId?: string;
+    onClientChange?: (value: string) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -269,7 +277,7 @@
       data-composer-input
       data-testid="composer-input"
       value={input}
-      placeholder={t.composer.placeholder}
+      placeholder="与智能助手对话.... (@ 提及文书)"
       rows="3"
       aria-label="Composer input"
       aria-keyshortcuts="Control+K Meta+K Control+Enter Meta+Enter Escape"
@@ -354,35 +362,41 @@
 
   <div class="composer__toolbar">
     <div class="composer__tools">
-      <button type="button" aria-label={t.composer.fileReferences} title={t.composer.fileReferences} onclick={() => onInput(`${input}${input.endsWith(" ") || input === "" ? "" : " "}@`)}>
+      <button type="button" aria-label={t.composer.attaching} title={t.composer.attaching} onclick={() => fileInput?.click()}>
         <AtSign size={16} />
       </button>
-      <button type="button" aria-label={t.composer.attaching} title={t.composer.attaching} onclick={() => fileInput?.click()}>
-        <Paperclip size={16} />
-      </button>
-      <button type="button" aria-label={t.composer.fast} title={t.composer.fast} onclick={() => onInput(`${input}${input.endsWith(" ") || input === "" ? "" : " "}${t.composer.fastPrompt}`)}>
-        <Zap size={16} />
-        <span>{t.composer.fast}</span>
-      </button>
+      <label class="composer__link-picker" aria-label="关联项目">
+        <Folder size={16} />
+        <span>{selectedProjectId ? (projectOptions.find((project) => project.id === selectedProjectId)?.label ?? "关联项目") : "关联项目"}</span>
+        <select value={selectedProjectId} onchange={(event) => onProjectChange?.(event.currentTarget.value)}>
+          <option value="">不关联项目</option>
+          {#each projectOptions as project (project.id)}
+            <option value={project.id}>{project.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="composer__link-picker" aria-label="关联客户">
+        <AtSign size={16} />
+        <span>{selectedClientId ? (clientOptions.find((client) => client.id === selectedClientId)?.label ?? "关联客户") : "关联客户"}</span>
+        <select value={selectedClientId} onchange={(event) => onClientChange?.(event.currentTarget.value)}>
+          <option value="">不关联客户</option>
+          {#each clientOptions as client (client.id)}
+            <option value={client.id}>{client.label}</option>
+          {/each}
+        </select>
+      </label>
     </div>
 
     <div class="composer__actions">
-      {#if models.length}
-        <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange}>
+      <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange} disabled={!models.length}>
+        {#if models.length}
           {#each models as model (model.name)}
             <option value={model.name}>{model.label || model.name}</option>
           {/each}
-        </select>
-      {/if}
-      <button type="button" aria-label={t.composer.local} title={activityMode === "code" ? t.activity.code : t.composer.local}>
-        <Monitor size={16} />
-      </button>
-      <button type="button" aria-label={runMode} title={runMode}>
-        <Volume2 size={16} />
-      </button>
-      <button type="button" aria-label={t.composer.voice} title={t.composer.voice}>
-        <Mic size={16} />
-      </button>
+        {:else}
+          <option value="">选择模型</option>
+        {/if}
+      </select>
       {#if sending}
         <button class="composer__submit secondary" type="button" aria-label={t.composer.cancel} title={t.composer.cancel} onclick={onCancel}>
           <Square size={16} />

@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/workspace-split.test.ts
 
-import { initialWorkspaceSplitTreeWidth } from "../lib/workspaceSplit";
+import { initialWorkspaceSplitTreeWidth, workspaceSplitTreeWidthFromPointer } from "../lib/workspaceSplit";
 import { resolveWorkspacePanelWidth } from "../lib/workspaceLayout";
 
 let passed = 0;
@@ -19,28 +19,57 @@ function eq(a: unknown, b: unknown, label: string) {
 console.log("\nworkspace file split");
 
 const TREE_MIN_WIDTH = 140;
+const TREE_RAIL_WIDTH = 44;
 const PREVIEW_MIN_WIDTH = 140;
 
 eq(
   initialWorkspaceSplitTreeWidth({
     panelWidth: 660,
+    railWidth: TREE_RAIL_WIDTH,
     savedTreeWidth: null,
     treeMinWidth: TREE_MIN_WIDTH,
     previewMinWidth: PREVIEW_MIN_WIDTH,
   }),
-  330,
-  "first split divides the file area evenly without a saved preference",
+  308,
+  "first split divides the file area evenly after reserving the tree rail",
 );
 
 eq(
   initialWorkspaceSplitTreeWidth({
     panelWidth: 660,
+    railWidth: TREE_RAIL_WIDTH,
     savedTreeWidth: 620,
     treeMinWidth: TREE_MIN_WIDTH,
     previewMinWidth: PREVIEW_MIN_WIDTH,
   }),
-  520,
+  476,
   "tree width is clamped so the preview keeps its minimum width",
+);
+
+eq(
+  workspaceSplitTreeWidthFromPointer({
+    clientX: 400,
+    panelLeft: 100,
+    panelWidth: 660,
+    railWidth: TREE_RAIL_WIDTH,
+    treeMinWidth: TREE_MIN_WIDTH,
+    previewMinWidth: PREVIEW_MIN_WIDTH,
+  }),
+  256,
+  "tree resize pointer coordinates start after the tree rail",
+);
+
+eq(
+  workspaceSplitTreeWidthFromPointer({
+    clientX: 700,
+    panelLeft: 100,
+    panelWidth: 660,
+    railWidth: TREE_RAIL_WIDTH,
+    treeMinWidth: TREE_MIN_WIDTH,
+    previewMinWidth: PREVIEW_MIN_WIDTH,
+  }),
+  476,
+  "tree resize pointer clamps against the preview minimum after reserving the rail",
 );
 
 eq(

@@ -1,11 +1,13 @@
 export function clampWorkspaceSplitTreeWidth({
   width,
   panelWidth,
+  railWidth = 0,
   treeMinWidth,
   previewMinWidth,
 }: {
   width: number;
   panelWidth?: number;
+  railWidth?: number;
   treeMinWidth: number;
   previewMinWidth: number;
 }): number {
@@ -14,17 +16,20 @@ export function clampWorkspaceSplitTreeWidth({
   if (typeof panelWidth !== "number" || !Number.isFinite(panelWidth)) {
     return Math.max(min, rounded);
   }
-  const max = Math.max(min, Math.round(panelWidth) - Math.round(previewMinWidth));
+  const splitWidth = Math.max(0, Math.round(panelWidth) - Math.round(railWidth));
+  const max = Math.max(min, splitWidth - Math.round(previewMinWidth));
   return Math.min(max, Math.max(min, rounded));
 }
 
 export function initialWorkspaceSplitTreeWidth({
   panelWidth,
+  railWidth = 0,
   savedTreeWidth,
   treeMinWidth,
   previewMinWidth,
 }: {
   panelWidth?: number;
+  railWidth?: number;
   savedTreeWidth: number | null;
   treeMinWidth: number;
   previewMinWidth: number;
@@ -33,7 +38,31 @@ export function initialWorkspaceSplitTreeWidth({
     savedTreeWidth !== null && Number.isFinite(savedTreeWidth)
       ? savedTreeWidth
       : typeof panelWidth === "number" && Number.isFinite(panelWidth)
-        ? panelWidth / 2
+        ? Math.max(0, panelWidth - railWidth) / 2
         : treeMinWidth;
-  return clampWorkspaceSplitTreeWidth({ width: target, panelWidth, treeMinWidth, previewMinWidth });
+  return clampWorkspaceSplitTreeWidth({ width: target, panelWidth, railWidth, treeMinWidth, previewMinWidth });
+}
+
+export function workspaceSplitTreeWidthFromPointer({
+  clientX,
+  panelLeft,
+  panelWidth,
+  railWidth = 0,
+  treeMinWidth,
+  previewMinWidth,
+}: {
+  clientX: number;
+  panelLeft: number;
+  panelWidth?: number;
+  railWidth?: number;
+  treeMinWidth: number;
+  previewMinWidth: number;
+}): number {
+  return clampWorkspaceSplitTreeWidth({
+    width: clientX - panelLeft - railWidth,
+    panelWidth,
+    railWidth,
+    treeMinWidth,
+    previewMinWidth,
+  });
 }

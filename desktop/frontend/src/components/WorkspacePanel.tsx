@@ -26,7 +26,11 @@ import {
 } from "lucide-react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
-import { clampWorkspaceSplitTreeWidth, initialWorkspaceSplitTreeWidth } from "../lib/workspaceSplit";
+import {
+  clampWorkspaceSplitTreeWidth,
+  initialWorkspaceSplitTreeWidth,
+  workspaceSplitTreeWidthFromPointer,
+} from "../lib/workspaceSplit";
 import type { DirEntry, FilePreview, GitCommitView, GitCommitDetailView, WorkspaceChangeView } from "../lib/types";
 import { formatWorkspaceReference, WORKSPACE_REF_DRAG_TYPE } from "../lib/workspaceDrag";
 import { cleanGitDiff } from "../lib/diff";
@@ -39,6 +43,7 @@ import { AnchoredPopover } from "./AnchoredPopover";
 
 const WORKSPACE_TREE_MIN_WIDTH = 140;
 const WORKSPACE_TREE_DEFAULT_WIDTH = 300;
+const WORKSPACE_TREE_RAIL_WIDTH = 44;
 const WORKSPACE_PREVIEW_MIN_WIDTH = 140;
 const WORKSPACE_PREVIEW_TARGET_WIDTH = 360;
 const WORKSPACE_DUAL_PANEL_TARGET_WIDTH = WORKSPACE_TREE_DEFAULT_WIDTH + WORKSPACE_PREVIEW_TARGET_WIDTH;
@@ -56,6 +61,7 @@ function clampWorkspaceTreeWidth(width: number, panelWidth?: number): number {
   return clampWorkspaceSplitTreeWidth({
     width,
     panelWidth,
+    railWidth: WORKSPACE_TREE_RAIL_WIDTH,
     treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
     previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
   });
@@ -349,9 +355,9 @@ export function WorkspacePanel({
 
   const selectFile = useCallback(
     (path: string) => {
-      onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
       setTreeWidth(initialWorkspaceSplitTreeWidth({
         panelWidth,
+        railWidth: WORKSPACE_TREE_RAIL_WIDTH,
         savedTreeWidth: null,
         treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
         previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
@@ -373,7 +379,7 @@ export function WorkspacePanel({
         if (!entriesByDir[dir]) void loadDir(dir);
       });
     },
-    [entriesByDir, loadDir, onRequestPanelWidth, panelWidth],
+    [entriesByDir, loadDir, panelWidth],
   );
 
   useEffect(() => {
@@ -758,7 +764,7 @@ export function WorkspacePanel({
 
   const effectiveTreeWidth = useMemo(() => clampWorkspaceTreeWidth(treeWidth, panelWidth), [panelWidth, treeWidth]);
   const maxTreeWidthForPanel = useMemo(
-    () => Math.max(WORKSPACE_TREE_MIN_WIDTH, (panelWidth ?? WORKSPACE_DUAL_PANEL_TARGET_WIDTH) - WORKSPACE_PREVIEW_MIN_WIDTH),
+    () => Math.max(WORKSPACE_TREE_MIN_WIDTH, (panelWidth ?? WORKSPACE_DUAL_PANEL_TARGET_WIDTH) - WORKSPACE_TREE_RAIL_WIDTH - WORKSPACE_PREVIEW_MIN_WIDTH),
     [panelWidth],
   );
   const filePreviewActive = openTabs.length > 0 || selectedPath !== null;
@@ -808,13 +814,13 @@ export function WorkspacePanel({
   const showTreeEvenSplit = useCallback(() => {
     setTreeWidth(initialWorkspaceSplitTreeWidth({
       panelWidth,
+      railWidth: WORKSPACE_TREE_RAIL_WIDTH,
       savedTreeWidth: null,
       treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
       previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
     }));
     setTreeVisible(true);
-    onRequestPanelWidth?.(WORKSPACE_DUAL_PANEL_TARGET_WIDTH);
-  }, [onRequestPanelWidth, panelWidth]);
+  }, [panelWidth]);
 
   const toggleTreeRail = useCallback(() => {
     if (actualTreeVisible) {
@@ -857,7 +863,14 @@ export function WorkspacePanel({
       setTreeResizing(true);
       let nextWidth = effectiveTreeWidth;
       const onMove = (moveEvent: PointerEvent) => {
-        nextWidth = clampWorkspaceTreeWidth(moveEvent.clientX - rect.left, rect.width);
+        nextWidth = workspaceSplitTreeWidthFromPointer({
+          clientX: moveEvent.clientX,
+          panelLeft: rect.left,
+          panelWidth: rect.width,
+          railWidth: WORKSPACE_TREE_RAIL_WIDTH,
+          treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
+          previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
+        });
         setTreeWidth(nextWidth);
       };
       const onDone = () => {

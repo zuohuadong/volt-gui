@@ -15,6 +15,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/eventwire"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 )
@@ -58,7 +59,7 @@ func TestServeSubmitRunsAndBroadcastsTurnDone(t *testing.T) {
 	for {
 		select {
 		case data := <-sub:
-			var w wireEvent
+			var w eventwire.Event
 			if err := json.Unmarshal(data, &w); err == nil && w.Kind == "turn_done" {
 				return
 			}

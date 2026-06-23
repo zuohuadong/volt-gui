@@ -336,10 +336,6 @@ func normalizedMCPMigrationRoots(roots []string) []string {
 	return out
 }
 
-func migrateLegacyCredentialsIfNeeded() error {
-	return migrateLegacyCredentialsIfNeededForRoot(".")
-}
-
 func migrateLegacyCredentialsIfNeededForRoot(root string) error {
 	missing := map[string]string{}
 	skip := func(key string) bool {

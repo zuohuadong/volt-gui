@@ -160,7 +160,7 @@ func upgradeCommand(args []string, version string) int {
 		return 1
 	}
 
-	fmt.Printf(i18n.M.UpgradeSuccessFmt+"\n", latest)
+	fmt.Printf(i18n.M.UpgradeSuccessFmt+"\n", cur, latest)
 	return 0
 }
 

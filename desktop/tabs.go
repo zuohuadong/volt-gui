@@ -1108,6 +1108,27 @@ func (a *App) OpenGlobalTab(topicID string) (TabMeta, error) {
 	return a.openTopicTab("global", "", topicID, sessionPath)
 }
 
+// NewConversationThread creates a brand-new topic and opens it as the active
+// tab. It intentionally does not reuse an indexed blank topic: UI "new
+// conversation" actions must get a fresh backend session thread so a running
+// old turn cannot block the next conversation.
+func (a *App) NewConversationThread(scope, workspaceRoot, title string) (TabMeta, error) {
+	scope = strings.TrimSpace(scope)
+	if scope != "project" {
+		scope = "global"
+		workspaceRoot = ""
+	}
+
+	topic, err := a.CreateTopic(scope, workspaceRoot, title)
+	if err != nil {
+		return TabMeta{}, err
+	}
+	if scope == "project" {
+		return a.OpenProjectTab(workspaceRoot, topic.ID)
+	}
+	return a.OpenGlobalTab(topic.ID)
+}
+
 // OpenTopicSession opens a concrete saved session from the sidebar. Unlike
 // OpenProjectTab/OpenGlobalTab, it does not resolve the topic to the latest
 // session first; sessionPath is the runtime identity being selected.
@@ -1801,7 +1822,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	}
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, model)
 	requestedModel := model
-	if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
+	if resolved, fallback, ok := resolveTabStartupModel(cfg, model); ok {
 		if fallback && strings.TrimSpace(tab.model) != "" {
 			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, resolved))
 		}
@@ -1942,6 +1963,31 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	keepBuildContext = true
 	a.mu.Unlock()
 	a.emitReady(wailsCtx)
+}
+
+func resolveTabStartupModel(cfg *config.Config, ref string) (resolvedRef string, fallback bool, ok bool) {
+	if cfg == nil {
+		return "", false, false
+	}
+	if resolved, fallback, ok := cfg.ResolveModelWithFallback(ref); ok {
+		return resolved, fallback, true
+	}
+	ref = strings.TrimSpace(ref)
+	if defaultRef := strings.TrimSpace(cfg.DefaultModel); defaultRef != "" && defaultRef != ref {
+		if entry, found := cfg.ResolveModel(defaultRef); found {
+			return entry.Name + "/" + entry.Model, true, true
+		}
+	}
+	for i := range cfg.Providers {
+		provider := &cfg.Providers[i]
+		if len(provider.ModelList()) == 0 {
+			continue
+		}
+		if entry, found := cfg.ResolveModel(provider.Name); found {
+			return entry.Name + "/" + entry.Model, true, true
+		}
+	}
+	return "", false, false
 }
 
 func (a *App) reconcileTabWithPinnedSessionMeta(tab *WorkspaceTab) {

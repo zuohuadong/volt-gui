@@ -59,6 +59,9 @@
   import { t } from "./lib/i18n";
   import type {
     ActivityMode,
+    AgentInput,
+    AgentView,
+    CapabilitiesView,
     CheckpointMeta,
     CommandInfo,
     ContextPanelInfo,
@@ -71,6 +74,9 @@
     WireApproval,
     WireAsk,
     WireEvent,
+    WorkbenchPluginInput,
+    WorkbenchPlugin,
+    SkillPackageInput,
     WorkspaceDiffView,
     WorkspaceChangesView,
   } from "./lib/types";
@@ -84,10 +90,10 @@
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
-  type AgentCard = { id: string; name: string; role: string; runs: number; status: string; desc: string };
-  type AgentMarketItem = AgentCard & { category: string; source: string; version: string; tags: string[]; localPath: string };
-  type SidebarConversation = { id: string; title: string; updatedAt: string; archivedAtMs?: number };
+  type AgentMarketItem = Pick<AgentView, "id" | "name" | "role" | "runs" | "status" | "desc"> & { category: string; source: string; version: string; tags: string[]; localPath: string };
+  type SidebarConversation = { id: string; title: string; updatedAt: string; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
   type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
+  type SidebarStateSnapshot = { version: 1; projects: SidebarProject[]; activeProjectId: string; activeConversationId: string; sort: SidebarProjectSort; dockCollapsed: boolean };
   type SidebarProjectSort = "recent" | "name" | "conversations";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "hearing" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
@@ -130,6 +136,13 @@
   let selectedCapabilityId = $state("git-panel");
   let capabilityDetailOpen = $state(false);
   let capabilityCreateOpen = $state(false);
+  let capabilityCreateName = $state("新建插件");
+  let capabilityCreateGroup = $state("插件");
+  let capabilityCreateVersion = $state("v0.1");
+  let capabilityCreateScope = $state("desktop/frontend");
+  let capabilityCreateEntry = $state("plugin.json");
+  let capabilityCreateStatus = $state("启用");
+  let capabilityCreateDescription = $state("");
   let resourceTab = $state<ResourceTab>("resources");
   let resourceSearch = $state("");
   let collapsedWorkspaceSections = $state<string[]>([]);
@@ -152,6 +165,10 @@
   let agentMarketSearch = $state("");
   let downloadedMarketAgentIds = $state<string[]>([]);
   let agentWizardTab = $state("identity");
+  let agentWizardMode = $state<"create" | "edit">("edit");
+  let agentWizardDraftName = $state("");
+  let agentWizardDraftDescription = $state("");
+  let agentWizardVibe = $state("");
   let selectedAgentId = $state("code-review");
   let selectedCoreFile = $state("SYSTEM.md");
   let configDialog = $state<ConfigDialog | undefined>();
@@ -172,12 +189,19 @@
   let agentAvatar = $state("C");
   let nowMs = $state(Date.now());
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
+  let newTaskConversationActive = $state(false);
   let restoreDraftOnTurnDone = false;
+  let draftConversationThread: TabMeta | undefined;
+  let draftConversationThreadRequest: Promise<TabMeta | undefined> | undefined;
+  let draftConversationToken = 0;
+  let conversationScrollEl = $state<HTMLDivElement | null>(null);
+  let conversationScrollFrame: number | undefined;
+  let sidebarStateHydrated = false;
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
-  const showActiveTranscript = $derived(showTranscript && !(workLayer === "newTask" && !sending && !pendingApproval && !pendingAsk));
+  const showActiveTranscript = $derived((activityMode === "code" || (workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || activityMode === "code" || newTaskConversationActive));
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
@@ -226,6 +250,7 @@
   function navIcon(layer: WorkLayer) { return navIcons[layer] ?? Puzzle; }
   function agentIcon(agentId: string) { return agentIcons[agentId as keyof typeof agentIcons] ?? Bot; }
   function avatarIcon(avatar: string) { return avatarIcons[avatar as keyof typeof avatarIcons] ?? UserRound; }
+  function modelValue(model?: ModelInfo) { return model?.name || model?.model || model?.ref || model?.label || ""; }
 
   const workspaceNav = [
     { title: "Agent Work", items: [{ label: "新建对话", layer: "newTask", icon: "newTask" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
@@ -246,11 +271,12 @@
     { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", kind: "浏览器验证", owner: "Browser 插件", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", schedule: "预览刷新后", scope: "Vite dev server / 浏览器 DOM", environment: "in-app browser", command: "HTTP 200 / DOM snapshot / console warnings", result: "通过", lastRun: "5 分钟前", nextRun: "下一次页面改动", steps: ["刷新本地预览", "检查关键 DOM", "读取 warn/error 日志"], logs: ["页面可访问", "关键节点存在", "控制台无错误"] },
   ];
   const primaryAutomation = runningAutomations[0];
-  let agentCards = $state<AgentCard[]>([
-    { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。" },
-    { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。" },
-    { id: "automation", name: "自动化 Agent", role: "已蒸馏", runs: 37, status: "已停用", desc: "把重复工作转为可配置的计划任务和监控。" },
-  ]);
+  const defaultAgentCards: AgentView[] = [
+    { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", avatar: "C", provider: "OpenAI", model: "GPT-4o", tools: ["workspace", "git", "terminal"], skills: ["code-review"], coreFiles: ["AGENTS.md"], builtIn: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。", avatar: "R", provider: "OpenAI", model: "GPT-4o", tools: ["web", "workspace"], skills: ["research"], coreFiles: ["references"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: "automation", name: "自动化 Agent", role: "已蒸馏", runs: 37, status: "已停用", desc: "把重复工作转为可配置的计划任务和监控。", avatar: "A", provider: "OpenAI", model: "GPT-4o", tools: ["terminal", "scheduler"], skills: ["workflow"], coreFiles: ["automations"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  ];
+  let agentCards = $state<AgentView[]>(defaultAgentCards);
   const agentMarketItems: AgentMarketItem[] = [
     { id: "requirement-planner", name: "需求拆解 Agent", role: "市场", runs: 0, status: "未下载", category: "产品规划", source: "Agent Market", version: "v1.2", desc: "把模糊需求整理成目标、非目标、验收标准和执行步骤，适合新项目启动。", tags: ["需求", "规划", "验收"], localPath: ".volt/agents/requirement-planner.agent.json" },
     { id: "contract-review", name: "合同审阅 Agent", role: "市场", runs: 0, status: "未下载", category: "文档审查", source: "Agent Market", version: "v1.0", desc: "检查合同、协议和交付条款中的风险点，输出修改建议和待确认清单。", tags: ["合同", "风险", "审阅"], localPath: ".volt/agents/contract-review.agent.json" },
@@ -270,9 +296,9 @@
     { id: "homepage", name: "品牌主页恢复与部署", code: "PRJ-2026-0601", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed", progress: 100, priority: "低", risk: "已关闭", updatedAt: "昨天", nextStep: "仅保留归档和复盘记录", agent: "自动化 Agent", materials: 5, todos: 0, events: 1, reports: 3, timeline: ["历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"] },
   ];
   let sidebarProjects = $state<SidebarProject[]>([
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", localPath: "E:\\workspace\\volt-gui", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚" }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天" }] },
-    { id: "lurefree", name: "Lurefree 小程序发布", localPath: "E:\\workspace\\lurefree", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天" }] },
-    { id: "homepage", name: "品牌主页恢复与部署", localPath: "C:\\Users\\1\\Documents\\HOMEPAGE", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天" }] },
+    { id: "volt-gui", name: "Volt GUI 桌面端重构", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚" }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天" }] },
+    { id: "lurefree", name: "Lurefree 小程序发布", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天" }] },
+    { id: "homepage", name: "品牌主页恢复与部署", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天" }] },
   ]);
   let activeSidebarProjectId = $state("volt-gui");
   let activeSidebarConversationId = $state("volt-gui-review");
@@ -369,14 +395,37 @@
     const matchSearch = !keyword || [customer.name, customer.type, customer.contact, customer.phone, customer.email, customer.risk, customer.industry, customer.status, String(customer.matters)].some((value) => value.toLowerCase().includes(keyword));
     return matchSearch;
   }));
-  const newTaskProjectOptions = $derived(projectCards.map((project) => ({ id: project.id, label: project.name })));
+  const newTaskProjectOptions = $derived([...sidebarProjects]
+    .sort((a, b) => {
+      if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
+      if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
+      return b.updatedAtMs - a.updatedAtMs;
+    })
+    .map((project) => ({ id: project.id, label: project.name })));
   const sortedSidebarProjects = $derived([...sidebarProjects].sort((a, b) => {
     if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
     if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
     return b.updatedAtMs - a.updatedAtMs;
   }));
   const archivedSidebarConversationCount = $derived(sidebarProjects.reduce((sum, project) => sum + archivedSidebarProjectConversations(project).length, 0));
-  const capabilityBuckets = {
+  const activeSidebarConversationTitle = $derived(
+    sidebarProjects
+      .flatMap((project) => project.conversations)
+      .find((conversation) => conversation.id === activeSidebarConversationId)?.title,
+  );
+  const conversationHeaderTitle = $derived(
+    activityMode === "work" && workLayer === "newTask"
+      ? activeSidebarConversationTitle || activeTab?.topicTitle || t.activity.untitled
+      : activeTab?.topicTitle || t.activity.untitled,
+  );
+  const conversationHeaderScope = $derived(
+    activityMode === "work" && workLayer === "newTask"
+      ? linkedProject || activeTab?.workspaceName || t.common.global
+      : activeTab?.workspaceName || t.common.global,
+  );
+  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean };
+  type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
+  const defaultCapabilityBuckets: CapabilityBuckets = {
     plugin: [
       { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建对话", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
       { id: "browser-preview", name: "浏览器预览", desc: "打开本地页面、检查 DOM 状态和控制台错误。", status: "已启用", version: "v1.2", source: "Browser 插件", scope: "本地预览", sync: "5 分钟前", path: "127.0.0.1", permission: "本地页面读取 / 点击验证", enabled: true },
@@ -393,7 +442,7 @@
       { id: "agent-team-automation", name: "agent-team-automation", desc: "把可复用任务契约、执行日志和回调流程打包为团队技能。", status: "待安装", version: "v0.7", source: "Agent Team", scope: "团队协作", sync: "待导入", path: "skills/agent-team", permission: "任务契约 / 进度日志", enabled: false },
     ],
   };
-  type CapabilityItem = typeof capabilityBuckets.plugin[number];
+  let capabilityBuckets = $state<CapabilityBuckets>(defaultCapabilityBuckets);
   const capabilityInstallSteps = [
     { id: "install_files", label: "安装文件", desc: "写入插件包、版本元数据和本地资源清单。" },
     { id: "install_dependencies", label: "安装依赖", desc: "检查 CLI、Skill 文件和运行时依赖是否可用。" },
@@ -414,17 +463,21 @@
   };
   const modelProviders = ["OpenAI", "Claude", "Gemini", "Qwen", "Moonshot", "Zhipu"];
   const modelOptions: Record<string, string[]> = { OpenAI: ["GPT-4o", "GPT-4o-mini", "o3-mini"], Claude: ["Claude Sonnet 4.6", "Claude Opus 4"], Gemini: ["Gemini 2.5 Pro", "Gemini 2.5 Flash"], Qwen: ["Qwen-Max", "Qwen-Plus"], Moonshot: ["Moonshot v1"], Zhipu: ["GLM-4"] };
-  const toolCards = [
-    { id: "files", title: "本地文件与资料", desc: "读取仓库、附件和项目知识库", active: true },
-    { id: "terminal", title: "终端执行", desc: "运行构建、测试和安全命令", active: true },
-    { id: "browser", title: "浏览器预览", desc: "打开本地页面并检查加载状态", active: true },
-    { id: "memory", title: "长期记忆", desc: "复用项目约定和历史决策", active: false },
+  type AgentToolCard = { id: string; title: string; desc: string; active: boolean; available: boolean; reason?: string };
+  const defaultToolCards: AgentToolCard[] = [
+    { id: "files", title: "本地文件与资料", desc: "读取仓库、附件和项目知识库", active: true, available: true },
+    { id: "terminal", title: "终端执行", desc: "运行构建、测试和安全命令", active: true, available: true },
+    { id: "browser", title: "浏览器预览", desc: "打开本地页面并检查加载状态", active: true, available: true },
+    { id: "memory", title: "长期记忆", desc: "复用项目约定和历史决策", active: false, available: false },
   ];
-  const skillCards = [
-    { id: "repo", title: "Repository Context", version: "v1.4", desc: "读取目录、历史和项目规则。", active: true },
-    { id: "frontend", title: "Frontend Polish", version: "v1.8", desc: "重建界面层级、导航和交互。", active: true },
-    { id: "automation", title: "Automation Ops", version: "v0.9", desc: "配置计划任务、监控和运行记录。", active: false },
+  let toolCards = $state<AgentToolCard[]>(defaultToolCards);
+  type AgentSkillCard = { id: string; title: string; version: string; desc: string; active: boolean; available: boolean; reason?: string; source?: string };
+  const defaultSkillCards: AgentSkillCard[] = [
+    { id: "repo", title: "Repository Context", version: "未加载", desc: "读取目录、历史和项目规则。", active: false, available: false },
+    { id: "frontend", title: "Frontend Polish", version: "未加载", desc: "重建界面层级、导航和交互。", active: false, available: false },
+    { id: "automation", title: "Automation Ops", version: "未加载", desc: "配置计划任务、监控和运行记录。", active: false, available: false },
   ];
+  let skillCards = $state<AgentSkillCard[]>(defaultSkillCards);
   const calendarEvents = [
     { day: "09", title: "版本评审会议", time: "09:30", type: "meeting", place: "线上会议室" },
     { day: "12", title: "客户工作流复盘", time: "14:00", type: "deadline", place: "项目群" },
@@ -507,6 +560,137 @@
   ];
 
   const hasWailsBindings = () => typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  const REQUEST_TIMEOUT_MS = 30_000;
+  const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
+
+  function withTimeout<T>(promise: Promise<T>, message: string, ms = REQUEST_TIMEOUT_MS): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  function sanitizeTranscriptRole(role: unknown): TranscriptItem["role"] {
+    if (role === "user" || role === "assistant" || role === "system" || role === "tool" || role === "reasoning" || role === "notice") return role;
+    return "notice";
+  }
+
+  function sanitizeTranscript(items: unknown): TranscriptItem[] | undefined {
+    if (!Array.isArray(items)) return undefined;
+    return items
+      .filter(isRecord)
+      .map((item) => ({
+        id: typeof item.id === "string" ? item.id : `persisted-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        role: sanitizeTranscriptRole(item.role),
+        title: typeof item.title === "string" ? item.title : undefined,
+        body: typeof item.body === "string" ? item.body : "",
+        pending: false,
+        readOnly: Boolean(item.readOnly),
+        parentId: typeof item.parentId === "string" ? item.parentId : undefined,
+        createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : undefined,
+      }))
+      .slice(-MAX_TRANSCRIPT_ITEMS);
+  }
+
+  function sidebarConversationHasContent(conversation: SidebarConversation) {
+    return Boolean(
+      conversation.transcript?.some((item) => item.role !== "system" && item.id !== "system-welcome" && item.body.trim()),
+    );
+  }
+
+  function sanitizeSidebarConversation(value: unknown): SidebarConversation | undefined {
+    if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return undefined;
+    const scope = value.scope === "project" || value.scope === "global" ? value.scope : undefined;
+    const conversation: SidebarConversation = {
+      id: value.id,
+      title: value.title,
+      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "刚刚",
+      archivedAtMs: typeof value.archivedAtMs === "number" ? value.archivedAtMs : undefined,
+      transcript: sanitizeTranscript(value.transcript),
+      tabId: typeof value.tabId === "string" ? value.tabId : undefined,
+      topicId: typeof value.topicId === "string" ? value.topicId : undefined,
+      sessionPath: typeof value.sessionPath === "string" ? value.sessionPath : undefined,
+      scope,
+      workspaceRoot: typeof value.workspaceRoot === "string" ? value.workspaceRoot : undefined,
+    };
+    if (/^新对话\s*\d+$/.test(conversation.title) && !sidebarConversationHasContent(conversation)) return undefined;
+    return conversation;
+  }
+
+  function sanitizeSidebarProject(value: unknown): SidebarProject | undefined {
+    if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return undefined;
+    const conversations = Array.isArray(value.conversations)
+      ? value.conversations.map(sanitizeSidebarConversation).filter((item): item is SidebarConversation => Boolean(item))
+      : [];
+    return {
+      id: value.id,
+      name: value.name,
+      expanded: Boolean(value.expanded),
+      conversations,
+      localPath: typeof value.localPath === "string" ? value.localPath : undefined,
+      updatedAtMs: typeof value.updatedAtMs === "number" ? value.updatedAtMs : Date.now(),
+    };
+  }
+
+  function pruneEmptyDraftSidebarConversations() {
+    let removedActiveConversation = false;
+    sidebarProjects = sidebarProjects.map((project) => {
+      const conversations = project.conversations.filter((conversation) => {
+        const isEmptyDraft = /^新对话\s*\d+$/.test(conversation.title) && !sidebarConversationHasContent(conversation);
+        if (isEmptyDraft && conversation.id === activeSidebarConversationId) removedActiveConversation = true;
+        return !isEmptyDraft;
+      });
+      return conversations.length === project.conversations.length ? project : { ...project, conversations };
+    });
+    if (removedActiveConversation) activeSidebarConversationId = "";
+  }
+
+  function persistSidebarState() {
+    if (typeof window === "undefined" || !sidebarStateHydrated) return;
+    const snapshot: SidebarStateSnapshot = {
+      version: 1,
+      projects: sidebarProjects,
+      activeProjectId: activeSidebarProjectId,
+      activeConversationId: activeSidebarConversationId,
+      sort: sidebarProjectSort,
+      dockCollapsed: sidebarProjectDockCollapsed,
+    };
+    try {
+      window.localStorage.setItem(SIDEBAR_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (error) {
+      console.warn("Failed to persist sidebar conversations", error);
+    }
+  }
+
+  function restoreSidebarState() {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_STATE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.projects)) return;
+      const projects = parsed.projects.map(sanitizeSidebarProject).filter((item): item is SidebarProject => Boolean(item));
+      if (!projects.length) return;
+      sidebarProjects = projects;
+      activeSidebarProjectId = typeof parsed.activeProjectId === "string" && projects.some((project) => project.id === parsed.activeProjectId) ? parsed.activeProjectId : projects[0].id;
+      const activeProject = projects.find((project) => project.id === activeSidebarProjectId) ?? projects[0];
+      activeSidebarConversationId =
+        typeof parsed.activeConversationId === "string" && activeProject.conversations.some((conversation) => conversation.id === parsed.activeConversationId)
+          ? parsed.activeConversationId
+          : activeProject.conversations[0]?.id ?? "";
+      sidebarProjectSort = parsed.sort === "name" || parsed.sort === "conversations" ? parsed.sort : "recent";
+      sidebarProjectDockCollapsed = Boolean(parsed.dockCollapsed);
+    } catch (error) {
+      console.warn("Failed to restore sidebar conversations", error);
+    }
+  }
 
   function hydrateBrowserPreview() {
     const previewTab: TabMeta = {
@@ -528,11 +712,22 @@
       { name: "skill", kind: "builtin", description: "Manage skills" },
       { name: "mcp", kind: "builtin", description: "Manage MCP" },
     ];
+    applyToolAvailability({
+      files: { available: true, reason: "浏览器预览可用" },
+      terminal: { available: true, reason: "浏览器预览可用" },
+      browser: { available: true, reason: "浏览器预览可用" },
+      memory: { available: false, reason: "浏览器预览未连接桌面记忆后端" },
+    });
+    agentCards = defaultAgentCards;
     needsAuth = false;
     loading = false;
   }
 
   onMount(() => {
+    restoreSidebarState();
+    pruneEmptyDraftSidebarConversations();
+    sidebarStateHydrated = true;
+
     if (!hasWailsBindings()) {
       hydrateBrowserPreview();
       const previewTick = window.setInterval(() => {
@@ -560,13 +755,36 @@
     const unsubscribeEvents = onAgentEvent(handleEvent);
     return () => {
       window.clearInterval(tick);
+      if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       unsubscribeEvents();
     };
+  });
+
+  $effect(() => {
+    sidebarProjects;
+    activeSidebarProjectId;
+    activeSidebarConversationId;
+    sidebarProjectSort;
+    sidebarProjectDockCollapsed;
+    persistSidebarState();
   });
 
   // Debounce batch-appends of streaming text events to avoid re-render storms.
   let pendingTextBuffer = "";
   let textFlushScheduled = false;
+
+  function scrollConversationToBottom(behavior: ScrollBehavior = "smooth") {
+    if (typeof window === "undefined") return;
+    void tick().then(() => {
+      const el = conversationScrollEl;
+      if (!el || !showActiveTranscript) return;
+      if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
+      conversationScrollFrame = window.requestAnimationFrame(() => {
+        conversationScrollFrame = undefined;
+        el.scrollTo({ top: el.scrollHeight, behavior });
+      });
+    });
+  }
 
   function scheduleTextFlush() {
     if (textFlushScheduled) return;
@@ -585,9 +803,269 @@
       // Keep the most recent items; drop from the front.
       transcript.splice(0, transcript.length - MAX_TRANSCRIPT_ITEMS);
     }
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom();
   }
 
-  function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; }
+  function removeTranscriptItem(id: string) {
+    const next = transcript.filter((item) => item.id !== id);
+    if (next.length === transcript.length) return;
+    transcript = next;
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom("auto");
+  }
+
+  function updateTranscriptItem(id: string, patch: Partial<TranscriptItem>) {
+    const item = transcript.find((entry) => entry.id === id);
+    if (!item) return;
+    Object.assign(item, patch);
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom();
+  }
+
+  function removeEmptyPendingAssistant() {
+    let index = -1;
+    for (let i = transcript.length - 1; i >= 0; i -= 1) {
+      const item = transcript[i];
+      if (item.role === "assistant" && item.pending && !item.body.trim()) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) return;
+    transcript.splice(index, 1);
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom("auto");
+  }
+
+  function ensurePendingAssistant() {
+    const existing = transcript.some((item) => item.role === "assistant" && item.pending && !item.body.trim());
+    if (existing) return;
+    appendTranscript({ id: `assistant-pending-${Date.now()}`, role: "assistant", title: "assistant", body: "", pending: true, createdAtMs: Date.now() });
+  }
+
+  function cloneTranscriptItems(items: TranscriptItem[]) {
+    return items.map((item) => ({ ...item, pending: false }));
+  }
+
+  function saveActiveSidebarConversationTranscript() {
+    if (!activeSidebarProjectId || !activeSidebarConversationId) return;
+    const snapshot = cloneTranscriptItems(transcript);
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== activeSidebarProjectId) return project;
+      return {
+        ...project,
+        updatedAtMs: Date.now(),
+        conversations: project.conversations.map((conversation) =>
+          conversation.id === activeSidebarConversationId
+            ? { ...conversation, updatedAt: "刚刚", transcript: snapshot }
+            : conversation,
+        ),
+      };
+    });
+  }
+
+  function conversationTitleFromText(text: string) {
+    const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "新对话";
+    return firstLine.length > 20 ? `${firstLine.slice(0, 20)}...` : firstLine;
+  }
+
+  function ensureSidebarConversationForSend(text: string) {
+    if (activityMode !== "work" || workLayer !== "newTask") return;
+    if (activeSidebarConversationId) return;
+    const now = Date.now();
+    const projectId = activeSidebarProjectId || sidebarProjects[0]?.id || `sidebar-project-${now}`;
+    const project = sidebarProjects.find((item) => item.id === projectId);
+    const conversation: SidebarConversation = {
+      id: `${projectId}-conversation-${now}`,
+      title: conversationTitleFromText(text),
+      updatedAt: "刚刚",
+      transcript: welcomeTranscript(),
+    };
+    if (project) {
+      sidebarProjects = sidebarProjects.map((item) =>
+        item.id === projectId
+          ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] }
+          : item,
+      );
+      syncSidebarProjectContext({ ...project, expanded: true, updatedAtMs: now });
+    } else {
+      const fallbackProject: SidebarProject = { id: projectId, name: "未归档任务", updatedAtMs: now, expanded: true, conversations: [conversation] };
+      sidebarProjects = [fallbackProject, ...sidebarProjects];
+      syncSidebarProjectContext(fallbackProject);
+    }
+    activeSidebarConversationId = conversation.id;
+  }
+  void ensureSidebarConversationForSend;
+
+  function activeSidebarProject(projectId = activeSidebarProjectId) {
+    return sidebarProjects.find((item) => item.id === projectId);
+  }
+
+  function sidebarConversation(projectId: string, conversationId: string) {
+    return activeSidebarProject(projectId)?.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
+  }
+
+  function isPlaceholderWorkspacePath(path: string) {
+    const normalized = path.trim().replace(/\//g, "\\").toLowerCase();
+    return normalized.startsWith("e:\\workspace\\") || normalized.startsWith("c:\\users\\1\\documents\\");
+  }
+
+  function sidebarProjectThreadTarget(project?: SidebarProject) {
+    const projectRoot = project?.localPath?.trim() || "";
+    const activeRoot = activeTab?.workspaceRoot?.trim() || activeTab?.cwd?.trim() || "";
+    const canUseActiveRoot =
+      Boolean(activeRoot) &&
+      activeTab?.scope === "project" &&
+      (!project || project.id === selectedProjectId || project.name === activeTab.workspaceName || projectRoot === activeRoot);
+    const workspaceRoot = projectRoot && !isPlaceholderWorkspacePath(projectRoot) ? projectRoot : canUseActiveRoot ? activeRoot : "";
+    if (workspaceRoot) return { scope: "project" as const, workspaceRoot };
+    return { scope: "global" as const, workspaceRoot: "" };
+  }
+
+  function updateSidebarConversationThread(projectId: string, conversationId: string, meta: TabMeta) {
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== projectId) return project;
+      return {
+        ...project,
+        updatedAtMs: Date.now(),
+        conversations: project.conversations.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                tabId: meta.id,
+                topicId: meta.topicId,
+                sessionPath: meta.sessionPath,
+                scope: meta.scope,
+                workspaceRoot: meta.workspaceRoot,
+                updatedAt: "刚刚",
+              }
+            : conversation,
+        ),
+      };
+    });
+  }
+
+  async function syncActiveTabMeta(meta: TabMeta) {
+    tabs = tabs.map((tab) => ({ ...tab, active: tab.id === meta.id }));
+    if (!tabs.some((tab) => tab.id === meta.id)) {
+      tabs = [{ ...meta, active: true }, ...tabs.map((tab) => ({ ...tab, active: false }))];
+    }
+    try {
+      tabs = await app().ListTabs();
+    } catch {
+      // Keep the returned tab meta when the list refresh races with Wails startup.
+    }
+    try {
+      models = await app().ModelsForTab(meta.id);
+      selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
+    } catch {
+      // The controller may still be starting; refresh() will hydrate models later.
+    }
+  }
+
+  async function createBackendConversationThread(project: SidebarProject | undefined, title: string) {
+    const target = sidebarProjectThreadTarget(project);
+    return withTimeout(
+      app().NewConversationThread(target.scope, target.workspaceRoot, title),
+      "新对话创建超时，请稍后重试或重启桌面 dev 窗口。",
+    );
+  }
+
+  const conversationThreadRequests = new Map<string, Promise<TabMeta | undefined>>();
+
+  function conversationThreadKey(projectId: string, conversationId: string) {
+    return `${projectId}::${conversationId}`;
+  }
+
+  function bindSidebarConversationThread(projectId: string, conversationId: string): Promise<TabMeta | undefined> {
+    if (!hasWailsBindings()) return Promise.resolve(activeTab);
+    const key = conversationThreadKey(projectId, conversationId);
+    const existing = conversationThreadRequests.get(key);
+    if (existing) return existing;
+    const request = (async () => {
+      const project = activeSidebarProject(projectId);
+      const conversation = sidebarConversation(projectId, conversationId);
+      if (!conversation) return activeTab;
+      if (conversation.tabId) {
+        await withTimeout(app().SetActiveTab(conversation.tabId), "切换对话超时，请稍后重试。");
+        const current = tabs.find((tab) => tab.id === conversation.tabId) ?? activeTab;
+        if (!current) return undefined;
+        const meta = { ...current, id: conversation.tabId };
+        await syncActiveTabMeta(meta);
+        return tabs.find((tab) => tab.id === conversation.tabId) ?? meta;
+      }
+      const meta = await createBackendConversationThread(project, conversation.title);
+      updateSidebarConversationThread(projectId, conversationId, meta);
+      await syncActiveTabMeta(meta);
+      return meta;
+    })()
+      .catch((error) => {
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", title: "新对话失败", body: formatErrorMessage(error) });
+        return undefined;
+      })
+      .finally(() => conversationThreadRequests.delete(key));
+    conversationThreadRequests.set(key, request);
+    return request;
+  }
+
+  async function ensureConversationThreadForSend(text: string): Promise<TabMeta | undefined> {
+    if (activityMode !== "work" || workLayer !== "newTask") return activeTab;
+    const now = Date.now();
+    const projectId = activeSidebarProjectId || sidebarProjects[0]?.id || `sidebar-project-${now}`;
+    let project = activeSidebarProject(projectId);
+    let conversation = activeSidebarConversationId ? sidebarConversation(projectId, activeSidebarConversationId) : undefined;
+    let createdConversation = false;
+    if (!conversation) {
+      conversation = {
+        id: `${projectId}-conversation-${now}`,
+        title: conversationTitleFromText(text),
+        updatedAt: "刚刚",
+        transcript: welcomeTranscript(),
+      };
+      createdConversation = true;
+      if (project) {
+        sidebarProjects = sidebarProjects.map((item) =>
+          item.id === projectId
+            ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation!, ...item.conversations] }
+            : item,
+        );
+        project = { ...project, expanded: true, updatedAtMs: now };
+        syncSidebarProjectContext(project);
+      } else {
+        project = { id: projectId, name: "未归档任务", updatedAtMs: now, expanded: true, conversations: [conversation] };
+        sidebarProjects = [project, ...sidebarProjects];
+        syncSidebarProjectContext(project);
+      }
+      activeSidebarConversationId = conversation.id;
+    }
+    renameConversationForFirstMessage(projectId, conversation.id, text);
+    if (createdConversation) {
+      const draftThread = draftConversationThread ?? (draftConversationThreadRequest ? await draftConversationThreadRequest : undefined);
+      draftConversationThread = undefined;
+      draftConversationThreadRequest = undefined;
+      if (draftThread) {
+        updateSidebarConversationThread(projectId, conversation.id, draftThread);
+        await syncActiveTabMeta(draftThread);
+        return draftThread;
+      }
+    }
+    return bindSidebarConversationThread(projectId, conversation.id);
+  }
+
+  function clearConversationRuntime() {
+    pendingTextBuffer = "";
+    sending = false;
+    pendingApproval = undefined;
+    pendingAsk = undefined;
+    submittedDraft = undefined;
+    restoreDraftOnTurnDone = false;
+    draftConversationThread = undefined;
+    draftConversationThreadRequest = undefined;
+    draftConversationToken += 1;
+  }
+
+  function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; if (layer === "newTask") newTaskConversationActive = false; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; agentSelectorOpen = false; }
   function openResourceCenterFromComposer() {
     openWorkLayer("resources");
     resourceTab = "resources";
@@ -595,6 +1073,7 @@
   function openCodeConversation() {
     activityMode = "code";
     workLayer = "newTask";
+    newTaskConversationActive = true;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
     userMenuOpen = false;
@@ -606,7 +1085,15 @@
       return;
     }
     openCodeConversation();
+    input = "";
     void tick().then(focusComposer);
+  }
+  function openWorkspaceNavLayer(layer: WorkLayer) {
+    if (layer === "newTask") {
+      startNewConversation();
+      return;
+    }
+    openWorkLayer(layer);
   }
   function openUserPanelDialog(layer: UserPanelDialog) { userPanelDialog = layer; userMenuOpen = false; }
   function userPanelDialogTitle() {
@@ -623,7 +1110,29 @@
     if (userPanelDialog === "operationLog") return "对标 AORISTLAWER 操作记录：保留关键动作、对象、用户和结果。";
     return "用户中心弹窗。";
   }
-  function focusNewTask() { openWorkLayer("newTask"); void tick().then(focusComposer); }
+  function focusNewTask(projectId = activeSidebarProjectId, conversationId = "") {
+    saveActiveSidebarConversationTranscript();
+    const project = projectId ? activeSidebarProject(projectId) : undefined;
+    if (project) syncSidebarProjectContext(project);
+    activityMode = "work";
+    workLayer = "newTask";
+    newTaskConversationActive = false;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    agentSelectorOpen = false;
+    configDialog = undefined;
+    projectDetailOpen = false;
+    customerDetailOpen = false;
+    capabilityCreateOpen = false;
+    agentWizardOpen = false;
+    agentMarketOpen = false;
+    activeSidebarConversationId = conversationId;
+    clearConversationRuntime();
+    transcript = welcomeTranscript();
+    input = "";
+    void tick().then(focusComposer);
+  }
   function syncSidebarProjectContext(project: SidebarProject) {
     activeSidebarProjectId = project.id;
     const linked = projectCards.find((item) => item.id === project.id || item.name === project.name);
@@ -706,8 +1215,16 @@
   function openSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
+    const conversation = sidebarProjectConversations(project)[0];
+    if (conversation) {
+      openSidebarConversation(projectId, conversation.id);
+      return;
+    }
     syncSidebarProjectContext(project);
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true } : item);
+    focusNewTask();
+    input = `项目：${project.name}\n`;
+    void tick().then(focusComposer);
   }
   function toggleSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
@@ -751,15 +1268,55 @@
     if (activeSidebarProjectId === projectId) linkedProject = name;
     cancelRenameSidebarProjectTask();
   }
+
+  function renameConversationForFirstMessage(projectId: string, conversationId: string, text: string) {
+    const title = conversationTitleFromText(text);
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== projectId) return project;
+      return {
+        ...project,
+        updatedAtMs: Date.now(),
+        conversations: project.conversations.map((conversation) => {
+          if (conversation.id !== conversationId) return conversation;
+          const isDefaultTitle = /^新对话\s+\d+$/.test(conversation.title);
+          return isDefaultTitle ? { ...conversation, title, updatedAt: "刚刚" } : { ...conversation, updatedAt: "刚刚" };
+        }),
+      };
+    });
+  }
+
   function openSidebarConversation(projectId: string, conversationId: string) {
+    saveActiveSidebarConversationTranscript();
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
     const conversation = project.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, updatedAtMs: Date.now() } : item);
-    input = `项目：${project.name}\n${conversation ? `对话：${conversation.title}\n` : ""}`;
-    focusNewTask();
+    activityMode = "work";
+    workLayer = "newTask";
+    newTaskConversationActive = true;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    agentSelectorOpen = false;
+    configDialog = undefined;
+    projectDetailOpen = false;
+    customerDetailOpen = false;
+    capabilityCreateOpen = false;
+    agentWizardOpen = false;
+    agentMarketOpen = false;
+    clearConversationRuntime();
+    transcript = conversation?.transcript?.length ? cloneTranscriptItems(conversation.transcript) : welcomeTranscript();
+    if (conversation) {
+      void bindSidebarConversationThread(projectId, conversation.id).then(async (meta) => {
+        if (!meta) return;
+        await hydrateHistory(meta);
+        newTaskConversationActive = true;
+      });
+    }
+    input = "";
+    void tick().then(focusComposer);
   }
   function sidebarProjectConversations(project: SidebarProject) {
     return project.conversations.filter((conversation) => !conversation.archivedAtMs);
@@ -785,13 +1342,31 @@
       : project);
   }
   function createSidebarConversation(projectId: string) {
+    pruneEmptyDraftSidebarConversations();
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
-    const now = Date.now();
-    const conversation: SidebarConversation = { id: `${projectId}-conversation-${Date.now()}`, title: `新对话 ${sidebarProjectConversations(project).length + 1}`, updatedAt: "刚刚" };
-    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] } : item);
-    openSidebarConversation(projectId, conversation.id);
+    focusNewTask(project.id);
   }
+  function startNewConversation(projectId = activeSidebarProjectId || sidebarProjects[0]?.id || "") {
+    pruneEmptyDraftSidebarConversations();
+    const project = projectId ? activeSidebarProject(projectId) : undefined;
+    focusNewTask(project?.id ?? projectId);
+    if (!hasWailsBindings()) return;
+    const token = draftConversationToken + 1;
+    draftConversationToken = token;
+    draftConversationThreadRequest = createBackendConversationThread(project, "新的会话")
+      .then(async (meta) => {
+        if (token !== draftConversationToken) return undefined;
+        draftConversationThread = meta;
+        await syncActiveTabMeta(meta);
+        return meta;
+      })
+      .catch((error) => {
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", title: "新对话失败", body: formatErrorMessage(error) });
+        return undefined;
+      });
+  }
+
   async function openUnifiedCodeTask() {
     openCodeConversation();
     await tick();
@@ -917,13 +1492,19 @@
     if (!projectId) {
       selectedProjectId = "";
       linkedProject = "";
+      activeSidebarProjectId = "";
       return;
     }
-    selectedProjectId = projectId;
-    const project = projectCards.find((item) => item.id === projectId);
-    linkedProject = project?.name ?? "";
+    const sidebarProject = sidebarProjects.find((item) => item.id === projectId);
+    const project = projectCards.find((item) => item.id === projectId || item.name === sidebarProject?.name);
+    selectedProjectId = project?.id ?? "";
+    linkedProject = sidebarProject?.name ?? project?.name ?? "";
+    if (sidebarProject) {
+      activeSidebarProjectId = sidebarProject.id;
+      sidebarProjects = sidebarProjects.map((item) => item.id === sidebarProject.id ? { ...item, expanded: true, updatedAtMs: Date.now() } : item);
+    }
   }
-  function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; input = `关联项目：${projectName}\n`; focusNewTask(); }
+  function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); input = `关联项目：${projectName}\n`; void tick().then(focusComposer); }
   function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; input = `关联客户：${customerName}\n`; focusNewTask(); }
   function useNewTaskPrompt(task: (typeof newTaskQuickTasks)[number]) { selectedAgentId = task.agentId; input = task.prompt; void tick().then(focusComposer); }
   function openConfigDialog(kind: ConfigDialog) { configDialog = kind; }
@@ -947,7 +1528,191 @@
   }
   function formatRuntime(startedAtMs: number) { const m = Math.max(1, Math.floor((nowMs - startedAtMs) / 60000)); const h = Math.floor(m / 60); return h ? `${h} 小时 ${m % 60} 分钟` : `${m} 分钟`; }
   function currentAutomation() { return runningAutomations.find((item) => item.id === automationDialog); }
-  function openAgentWizard(agentId?: string) { selectedAgentId = agentId || selectedAgentId; agentWizardTab = "identity"; agentWizardOpen = true; }
+  function agentWizardName() {
+    return agentWizardDraftName;
+  }
+  function agentWizardDescription() {
+    return agentWizardDraftDescription;
+  }
+  function applyToolAvailability(status: Record<string, { available: boolean; reason: string }>) {
+    toolCards = toolCards.map((tool) => {
+      const next = status[tool.id] ?? { available: tool.available, reason: tool.reason ?? "" };
+      return {
+        ...tool,
+        available: next.available,
+        active: next.available ? tool.active : false,
+        reason: next.reason,
+      };
+    });
+  }
+  function setToolSelectionFromAgent(agent?: AgentView) {
+    const enabled = new Set(agent?.tools ?? defaultToolCards.filter((tool) => tool.active).map((tool) => tool.title));
+    toolCards = toolCards.map((tool) => ({ ...tool, active: tool.available && enabled.has(tool.title) }));
+  }
+  function toggleAgentTool(toolId: string) {
+    toolCards = toolCards.map((tool) => {
+      if (tool.id !== toolId || !tool.available) return tool;
+      return { ...tool, active: !tool.active };
+    });
+  }
+  function skillMatchesCard(skillName: string, cardId: string) {
+    const name = skillName.toLowerCase();
+    if (cardId === "repo") return /repo|repository|context|code|review/.test(name);
+    if (cardId === "frontend") return /front|svelte|ui|design|browser/.test(name);
+    if (cardId === "automation") return /auto|workflow|task|verify|test|ops/.test(name);
+    return false;
+  }
+  function setSkillSelectionFromAgent(agent?: AgentView) {
+    const enabled = new Set(agent?.skills ?? defaultSkillCards.filter((skill) => skill.active).map((skill) => skill.title));
+    skillCards = skillCards.map((skill) => ({ ...skill, active: skill.available && enabled.has(skill.title) }));
+  }
+  function toggleAgentSkill(skillId: string) {
+    skillCards = skillCards.map((skill) => {
+      if (skill.id !== skillId || !skill.available) return skill;
+      return { ...skill, active: !skill.active };
+    });
+  }
+  async function refreshSkillStatus() {
+    if (!hasWailsBindings()) {
+      skillCards = skillCards.map((skill) => ({
+        ...skill,
+        available: false,
+        active: false,
+        version: "未加载",
+        reason: "浏览器预览未连接桌面 Skill 后端",
+      }));
+      return;
+    }
+    try {
+      const capabilities = await app().Capabilities();
+      skillCards = skillCards.map((card) => {
+        const matched = capabilities.skills.find((skill) => skillMatchesCard(skill.name, card.id));
+        if (!matched) {
+          return { ...card, available: false, active: false, version: "未加载", source: undefined, reason: "未发现匹配的真实 Skill" };
+        }
+        const available = Boolean(matched.enabled);
+        return {
+          ...card,
+          available,
+          active: available ? card.active : false,
+          version: matched.scope || "已发现",
+          desc: matched.description || card.desc,
+          source: matched.name,
+          reason: available ? `来源：${matched.name}` : `Skill 已发现但未启用：${matched.name}`,
+        };
+      });
+    } catch {
+      skillCards = skillCards.map((skill) => ({ ...skill, available: false, active: false, version: "未加载", reason: "无法读取 Skill 状态" }));
+    }
+  }
+  async function refreshToolStatus() {
+    if (!hasWailsBindings()) {
+      applyToolAvailability({
+        files: { available: true, reason: "浏览器预览可用" },
+        terminal: { available: true, reason: "浏览器预览可用" },
+        browser: { available: true, reason: "浏览器预览可用" },
+        memory: { available: false, reason: "浏览器预览未连接桌面记忆后端" },
+      });
+      return;
+    }
+    const workspaceReady = Boolean(activeTab?.workspaceRoot || activeTab?.workspaceName);
+    let terminalReady = false;
+    let memoryReady = false;
+    let fileReason = workspaceReady ? "当前工作区已连接" : "尚未打开工作区";
+    let terminalReason = "等待权限配置";
+    let memoryReason = "长期记忆不可用";
+    try {
+      const settings = await app().Settings();
+      terminalReady = settings.permissions.mode !== "read-only" && settings.sandbox.bash !== "none";
+      terminalReason = terminalReady ? `权限模式：${settings.permissions.mode}` : "当前权限或 sandbox 禁止终端执行";
+    } catch {
+      terminalReady = false;
+      terminalReason = "无法读取终端权限配置";
+    }
+    try {
+      const memory = await app().Memory();
+      memoryReady = Boolean(memory.available);
+      memoryReason = memoryReady ? (memory.storeDir ? `记忆目录：${memory.storeDir}` : "长期记忆可用") : "长期记忆后端未启用";
+    } catch {
+      memoryReady = false;
+      memoryReason = "无法读取长期记忆状态";
+    }
+    applyToolAvailability({
+      files: { available: workspaceReady, reason: fileReason },
+      terminal: { available: terminalReady, reason: terminalReason },
+      browser: { available: true, reason: "桌面 WebView 已加载" },
+      memory: { available: memoryReady, reason: memoryReason },
+    });
+  }
+  function openAgentWizard(agentId?: string) {
+    agentWizardMode = agentId ? "edit" : "create";
+    if (agentId) selectedAgentId = agentId;
+    const agent = agentId ? agentCards.find((item) => item.id === agentId) : undefined;
+    agentWizardDraftName = agent?.name ?? "";
+    agentWizardDraftDescription = agent?.desc ?? "";
+    agentWizardVibe = agent?.vibe ?? "";
+    agentWizardTab = "identity";
+    agentAvatar = agent?.avatar ?? "C";
+    agentProvider = agent?.provider ?? "OpenAI";
+    agentModel = agent?.model ?? modelOptions.OpenAI?.[0] ?? "GPT-4o";
+    setToolSelectionFromAgent(agent);
+    setSkillSelectionFromAgent(agent);
+    agentWizardOpen = true;
+    void refreshToolStatus();
+    void refreshSkillStatus();
+  }
+  async function refreshAgents() {
+    if (!hasWailsBindings()) {
+      agentCards = defaultAgentCards;
+      return;
+    }
+    try {
+      const agents = await app().ListAgents();
+      agentCards = agents.length ? agents : defaultAgentCards;
+      if (!agentCards.some((agent) => agent.id === selectedAgentId)) {
+        selectedAgentId = agentCards[0]?.id ?? "";
+      }
+      downloadedMarketAgentIds = agentMarketItems.filter((item) => agentCards.some((agent) => agent.id === item.id)).map((item) => item.id);
+    } catch (error) {
+      console.error("Failed to load agents", error);
+      agentCards = defaultAgentCards;
+    }
+  }
+  async function saveAgentWizard() {
+    const name = agentWizardDraftName.trim();
+    if (!name) return;
+    const current = agentWizardMode === "edit" ? agentCards.find((agent) => agent.id === selectedAgentId) : undefined;
+    const input: AgentInput = {
+      id: current?.id,
+      name,
+      role: current?.role ?? "自定义",
+      status: current?.status ?? "已启用",
+      desc: agentWizardDraftDescription.trim(),
+      avatar: agentAvatar,
+      vibe: agentWizardVibe,
+      provider: agentProvider,
+      model: agentModel,
+      tools: toolCards.filter((tool) => tool.active).map((tool) => tool.title),
+      skills: skillCards.filter((skill) => skill.active).map((skill) => skill.title),
+      coreFiles: current?.coreFiles ?? coreFiles,
+    };
+    if (!hasWailsBindings()) {
+      const now = new Date().toISOString();
+      const localAgent: AgentView = { ...input, id: input.id || `agent-${Date.now()}`, role: input.role || "自定义", status: input.status || "已启用", desc: input.desc || "尚未分配具体职能。", runs: current?.runs ?? 0, tools: input.tools ?? [], skills: input.skills ?? [], coreFiles: input.coreFiles ?? [], builtIn: current?.builtIn ?? false, createdAt: current?.createdAt ?? now, updatedAt: now };
+      agentCards = current ? agentCards.map((agent) => agent.id === current.id ? localAgent : agent) : [localAgent, ...agentCards];
+      selectedAgentId = localAgent.id;
+      agentWizardOpen = false;
+      return;
+    }
+    try {
+      const saved = await app().SaveAgent(input);
+      selectedAgentId = saved.id;
+      await refreshAgents();
+      agentWizardOpen = false;
+    } catch (error) {
+      console.error("Failed to save agent", error);
+    }
+  }
   function filteredAgentMarketItems() {
     const keyword = agentMarketSearch.trim().toLowerCase();
     if (!keyword) return agentMarketItems;
@@ -956,9 +1721,20 @@
   function marketAgentDownloaded(item: AgentMarketItem) {
     return downloadedMarketAgentIds.includes(item.id) || agentCards.some((agent) => agent.id === item.id);
   }
-  function downloadMarketAgent(item: AgentMarketItem) {
+  async function downloadMarketAgent(item: AgentMarketItem) {
     if (!agentCards.some((agent) => agent.id === item.id)) {
-      agentCards = [{ id: item.id, name: item.name, role: item.role, runs: 0, status: "已下载", desc: item.desc }, ...agentCards];
+      const marketAgent: AgentInput = { id: item.id, name: item.name, role: item.role, status: "已下载", desc: item.desc, avatar: item.name.slice(0, 1), provider: "OpenAI", model: modelOptions.OpenAI?.[0] ?? "GPT-4o", tools: [], skills: item.tags, coreFiles: [] };
+      if (hasWailsBindings()) {
+        try {
+          await app().SaveAgent(marketAgent);
+          await refreshAgents();
+        } catch (error) {
+          console.error("Failed to persist market agent", error);
+        }
+      } else {
+        const now = new Date().toISOString();
+        agentCards = [{ ...marketAgent, id: item.id, role: item.role, runs: 0, status: "已下载", desc: item.desc, tools: [], skills: item.tags, coreFiles: [], builtIn: false, createdAt: now, updatedAt: now }, ...agentCards];
+      }
     }
     if (!downloadedMarketAgentIds.includes(item.id)) downloadedMarketAgentIds = [...downloadedMarketAgentIds, item.id];
     selectedAgentId = item.id;
@@ -984,10 +1760,78 @@
     URL.revokeObjectURL(url);
   }
   function capabilityLabel(kind: CapabilityTab) { return kind === "plugin" ? "插件" : kind === "mcp" ? "MCP" : "SKILL"; }
+  function capabilityCreateLabel(kind: CapabilityTab) { return kind === "plugin" ? "创建插件" : kind === "mcp" ? "创建MCP" : "创建SKILL"; }
   function capabilitySubtitle(kind: CapabilityTab) {
     if (kind === "plugin") return "插件市场、安装流程和启用状态";
     if (kind === "mcp") return "MCP Server、连接器和授权状态";
     return "Skill 包、版本来源和 Agent 挂载";
+  }
+  function pluginToCapability(plugin: WorkbenchPlugin): CapabilityItem {
+    return {
+      id: plugin.id,
+      name: plugin.name || plugin.id,
+      desc: plugin.capabilities?.length ? plugin.capabilities.join(" / ") : `${plugin.kind || "plugin"} 工作台插件`,
+      status: plugin.enabled ? "已启用" : "未启用",
+      version: plugin.version || "本地",
+      source: plugin.kind || "Workbench Plugin",
+      scope: plugin.providerIds?.length ? plugin.providerIds.join(" / ") : "workspace",
+      sync: plugin.enabled ? "已加载" : "待启用",
+      path: plugin.entry || plugin.id,
+      permission: plugin.config ? Object.keys(plugin.config).join(" / ") || "按插件配置" : "按插件配置",
+      enabled: plugin.enabled,
+    };
+  }
+  function mcpToCapability(server: CapabilitiesView["servers"][number]): CapabilityItem {
+    const enabled = server.status === "connected" || server.status === "deferred" || server.status === "initializing";
+    const status = server.status === "connected" ? "已连接" : server.status === "disabled" ? "已停用" : server.status === "failed" ? "连接失败" : server.status || "未知";
+    return {
+      id: server.name,
+      name: server.name,
+      desc: `${server.tools} tools · ${server.prompts} prompts · ${server.resources} resources`,
+      status,
+      version: server.transport || "mcp",
+      source: server.builtIn ? "内置 MCP" : server.configured ? "配置 MCP" : "运行时 MCP",
+      scope: server.tier || "workspace",
+      sync: server.error || server.authStatus || status,
+      path: server.command || server.url || server.name,
+      permission: server.envKeys?.length ? `环境变量：${server.envKeys.join(" / ")}` : server.authConfigured ? "已配置授权" : "按 MCP 配置",
+      enabled,
+    };
+  }
+  function skillToCapability(skill: CapabilitiesView["skills"][number]): CapabilityItem {
+    return {
+      id: skill.name,
+      name: skill.name,
+      desc: skill.description || "Skill 工作流",
+      status: skill.enabled ? "已加载" : "未启用",
+      version: skill.scope || "skill",
+      source: skill.runAs || "Codex Skill",
+      scope: skill.scope || "global",
+      sync: skill.enabled ? "可调用" : "待启用",
+      path: skill.name,
+      permission: skill.runAs || "按 Skill 定义",
+      enabled: skill.enabled,
+    };
+  }
+  async function refreshCapabilities() {
+    if (!hasWailsBindings()) {
+      capabilityBuckets = defaultCapabilityBuckets;
+      return;
+    }
+    try {
+      const [plugins, capabilities] = await Promise.all([app().WorkbenchPlugins(), app().Capabilities()]);
+      capabilityBuckets = {
+        plugin: plugins.map(pluginToCapability),
+        mcp: capabilities.servers.map(mcpToCapability),
+        skill: capabilities.skills.map(skillToCapability),
+      };
+      if (!capabilityBuckets[capabilityTab].some((item) => item.id === selectedCapabilityId)) {
+        selectedCapabilityId = capabilityBuckets[capabilityTab][0]?.id || "";
+      }
+    } catch (error) {
+      console.error("Failed to refresh capabilities", error);
+      capabilityBuckets = defaultCapabilityBuckets;
+    }
   }
   function allCapabilities() { return [...capabilityBuckets.plugin, ...capabilityBuckets.mcp, ...capabilityBuckets.skill]; }
   function capabilityEnabledCount() { return allCapabilities().filter((item) => item.enabled).length; }
@@ -1014,8 +1858,38 @@
     const currentIndex = item.status.includes("授权") ? 2 : item.status.includes("配置") ? 1 : 0;
     return index <= currentIndex;
   }
-  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; }
-  function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
+  function resetCapabilityCreateForm(kind: CapabilityTab) {
+    capabilityCreateName = `新建${capabilityLabel(kind)}`;
+    capabilityCreateGroup = capabilityLabel(kind);
+    capabilityCreateVersion = "v0.1";
+    capabilityCreateScope = kind === "mcp" ? "workspace" : kind === "skill" ? "skills" : "desktop/frontend";
+    capabilityCreateEntry = kind === "mcp" ? "npx mcp-server" : kind === "skill" ? "SKILL.md" : "plugin.json";
+    capabilityCreateStatus = "启用";
+    capabilityCreateDescription = `${capabilitySubtitle(kind)}：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。`;
+  }
+  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; if (capabilityCreateOpen) resetCapabilityCreateForm(kind); }
+  function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); resetCapabilityCreateForm(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
+  async function submitCapabilityCreate() {
+    const name = capabilityCreateName.trim();
+    if (!name) return;
+    const enabled = capabilityCreateStatus === "启用";
+    try {
+      if (capabilityTab === "plugin") {
+        const input: WorkbenchPluginInput = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `plugin-${Date.now()}`, name, kind: capabilityCreateGroup.trim() || "native", entry: capabilityCreateEntry.trim() || name, version: capabilityCreateVersion.trim() || "v0.1", capabilities: capabilityCreateDescription.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean), enabled };
+        await app().SaveWorkbenchPlugin(input);
+      } else if (capabilityTab === "mcp") {
+        await app().AddMCPServer({ name, transport: capabilityCreateGroup.trim().toLowerCase() === "http" ? "http" : "stdio", command: capabilityCreateEntry.trim(), args: [], url: capabilityCreateGroup.trim().toLowerCase() === "http" ? capabilityCreateEntry.trim() : "", tier: capabilityCreateScope.trim() || "workspace" });
+      } else {
+        const input: SkillPackageInput = { name, description: capabilityCreateDescription.trim(), runAs: capabilityCreateScope.trim() || "workflow", enabled };
+        await app().CreateSkillPackage(input);
+      }
+      capabilityCreateOpen = false;
+      await refreshCapabilities();
+      await refreshSkillStatus();
+    } catch (error) {
+      console.error("Failed to create capability", error);
+    }
+  }
   function configDialogIntro() {
     if (configDialog === "project") return "对标 CreateMatterDialog：记录项目名称、客户、阶段、负责人和初始任务。";
     if (configDialog === "customer") return "对标 CreateClientDialog：记录客户类型、联系方式、风险等级和关联项目。";
@@ -1029,6 +1903,20 @@
     return "该弹窗对标 AORISTLAWER 的创建、导入和配置流程。";
   }
 
+  function mergeStreamingText(existing: string, incoming: string) {
+    if (!incoming) return existing;
+    if (!existing) return incoming;
+    if (incoming.startsWith(existing)) return incoming;
+    if (existing.endsWith(incoming)) return existing;
+    const maxOverlap = Math.min(existing.length, incoming.length);
+    for (let length = maxOverlap; length > 0; length -= 1) {
+      if (existing.endsWith(incoming.slice(0, length))) {
+        return existing + incoming.slice(length);
+      }
+    }
+    return existing + incoming;
+  }
+
   function updateLastAssistant(text: string) {
     let current: TranscriptItem | undefined;
     for (let index = transcript.length - 1; index >= 0; index -= 1) {
@@ -1039,10 +1927,41 @@
       }
     }
     if (current) {
-      current.body += text;
+      current.body = mergeStreamingText(current.body, text);
+      saveActiveSidebarConversationTranscript();
+      scrollConversationToBottom();
       return;
     }
     appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: text, pending: true });
+  }
+
+  function finishTurnWithError(message: string) {
+    const lastAssistant = [...transcript].reverse().find((item) => item.role === "assistant" && item.pending);
+    if (lastAssistant && !lastAssistant.body.trim()) {
+      lastAssistant.role = "notice";
+      lastAssistant.title = "请求失败";
+      lastAssistant.body = message;
+      lastAssistant.pending = false;
+      saveActiveSidebarConversationTranscript();
+      scrollConversationToBottom();
+      return;
+    }
+    appendTranscript({ id: `error-${Date.now()}`, role: "notice", title: "请求失败", body: message });
+  }
+
+  function isTurnAlreadyRunningError(message: string) {
+    return message.toLowerCase().includes("turn already running");
+  }
+
+  function isCancellationError(message: string) {
+    const normalized = message.trim().toLowerCase();
+    return normalized === "context canceled" || normalized === "context cancelled" || normalized === "operation canceled" || normalized === "operation cancelled" || normalized === "canceled" || normalized === "cancelled";
+  }
+
+  function formatErrorMessage(error: unknown) {
+    if (error instanceof Error && error.message.trim()) return error.message;
+    if (typeof error === "string" && error.trim()) return error;
+    return "发送失败，请检查当前会话是否已启动，或稍后重试。";
   }
 
   function toolTranscriptId(id?: string) {
@@ -1070,23 +1989,27 @@
     transcript = historyToTranscript(history);
     pendingApproval = undefined;
     pendingAsk = undefined;
+    scrollConversationToBottom("auto");
   }
 
   function handleEvent(event: WireEvent) {
     if (event.tabId && activeTab?.id && event.tabId !== activeTab.id) return;
     if (event.kind === "turn_started") {
       sending = true;
+      if (event.tabId) {
+        tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: true } : tab));
+      }
       pendingApproval = undefined;
       pendingAsk = undefined;
-      appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: "", pending: true });
+      ensurePendingAssistant();
     }
     if (event.kind === "reasoning" && event.reasoning) {
       appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: t.transcript.reasoning, body: event.reasoning, pending: true });
     }
     if ((event.kind === "text" || event.kind === "message") && event.text) {
-    pendingTextBuffer += event.text;
-    scheduleTextFlush();
-  }
+      pendingTextBuffer = mergeStreamingText(pendingTextBuffer, event.text);
+      scheduleTextFlush();
+    }
     if (event.kind === "tool_dispatch" && event.tool) {
       const id = toolTranscriptId(event.tool.id);
       const existing = transcript.find((item) => item.id === id);
@@ -1096,6 +2019,7 @@
         existing.pending = true;
         existing.readOnly = event.tool.readOnly;
         existing.parentId = event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined;
+        scrollConversationToBottom();
         return;
       }
       appendTranscript({
@@ -1114,29 +2038,32 @@
         tool.body += event.tool.output ? `\n${event.tool.output}` : "";
         tool.body += event.tool.err ? `\n${event.tool.err}` : "";
         tool.pending = false;
+        scrollConversationToBottom();
       }
     }
     if (event.kind === "approval_request" && event.approval) {
       pendingApproval = event.approval;
       sending = false;
+      scrollConversationToBottom();
     }
     if (event.kind === "ask_request" && event.ask) {
       pendingAsk = event.ask;
       sending = false;
-    }
-    if (event.kind === "usage" && event.usage) {
-      appendTranscript({
-        id: `usage-${Date.now()}`,
-        role: "notice",
-        title: "usage",
-        body: `${event.usage.totalTokens ?? 0} ${t.transcript.tokens}`,
-      });
+      scrollConversationToBottom();
     }
     if (event.kind === "notice" && event.text) {
       appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: event.text });
     }
     if (event.kind === "turn_done") {
       sending = false;
+      if (event.tabId) {
+        tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false } : tab));
+      }
+      if (event.err && isCancellationError(event.err)) {
+        removeEmptyPendingAssistant();
+      } else if (event.err) {
+        finishTurnWithError(event.err);
+      }
       for (const item of transcript) item.pending = false;
       if (restoreDraftOnTurnDone && submittedDraft) {
         if (!input.trim()) input = submittedDraft.display;
@@ -1144,6 +2071,8 @@
       }
       restoreDraftOnTurnDone = false;
       submittedDraft = undefined;
+      saveActiveSidebarConversationTranscript();
+      scrollConversationToBottom();
     }
   }
 
@@ -1153,8 +2082,12 @@
       tabs = await app().ListTabs();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
       models = active ? await app().ModelsForTab(active.id) : [];
-      selectedModel = models.find((model) => model.current)?.name ?? models[0]?.name ?? "";
+      selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
       commands = await app().Commands();
+      await refreshAgents();
+      await refreshToolStatus();
+      await refreshSkillStatus();
+      await refreshCapabilities();
       if (active) await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
     } finally {
@@ -1174,18 +2107,45 @@
     const text = (displayText ?? input).trim();
     const submission = (submitText ?? text).trim();
     if (!text || !submission || !activeTab) return;
+    if (sending) return;
+    if (activityMode === "work" && workLayer === "newTask") newTaskConversationActive = true;
     const draft = { display: text, submission };
+    const userTranscriptId = `user-${Date.now()}`;
     submittedDraft = draft;
     restoreDraftOnTurnDone = false;
+    sending = true;
     input = "";
-    appendTranscript({ id: `user-${Date.now()}`, role: "user", body: text });
+    appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
+    ensurePendingAssistant();
     try {
-      await app().SubmitDisplayToTab(activeTab.id, text, submission);
+      const targetTab = await ensureConversationThreadForSend(text);
+      if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
+      await withTimeout(
+        app().SubmitDisplayToTab(targetTab.id, text, submission),
+        "请求超时：30 秒内未收到桌面后端响应，请稍后重试或重启桌面 dev 窗口。",
+      );
     } catch (error) {
-      input = draft.display;
+      const message = formatErrorMessage(error);
+      input = "";
       submittedDraft = undefined;
       restoreDraftOnTurnDone = false;
-      throw error;
+      if (isTurnAlreadyRunningError(message)) {
+        removeEmptyPendingAssistant();
+        updateTranscriptItem(userTranscriptId, { title: "user · 待发送", pending: true });
+        if (!input.trim()) input = draft.display;
+        sending = true;
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: "上一轮对话仍在运行，这条消息尚未提交给模型。已恢复到输入框；如果超过 2 分钟仍无回复，请点击停止后重新发送。" });
+        return;
+      }
+      if (isCancellationError(message)) {
+        removeTranscriptItem(userTranscriptId);
+        removeEmptyPendingAssistant();
+        sending = false;
+        return;
+      }
+      removeEmptyPendingAssistant();
+      sending = false;
+      finishTurnWithError(message);
     }
   }
 
@@ -1330,7 +2290,7 @@
             {#if !sectionCollapsed}
               {#each section.items as item (item.label)}
                 {@const Icon = navIcon(item.icon)}
-                <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkLayer(item.layer)}>
+                <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkspaceNavLayer(item.layer)}>
                   <span class="nav-icon"><Icon size={15} /></span>
                   <span>{item.label}</span>
                   {#if item.badge}<em>{item.badge}</em>{/if}
@@ -1396,24 +2356,24 @@
       <footer class="sidebar__user-wrap">{#if userMenuOpen}<div class="user-menu" role="menu">{#each userMenuItems as item (item.layer)}<button type="button" role="menuitem" onclick={() => openUserPanelDialog(item.layer)}>{item.label}</button>{/each}</div>{/if}<button class="sidebar__user sidebar__profile" type="button" aria-label="打开用户菜单" title="用户菜单" onclick={() => (userMenuOpen = !userMenuOpen)}><span class="sidebar__avatar"><UserRound size={16} /></span><strong>用户名</strong><em hidden aria-hidden="true"></em></button></footer>
     </aside>
 
-    <section class="stage">
+    <section class="stage" class:stage--conversation={showActiveTranscript}>
       <div class="window-drag-region" aria-hidden="true"></div>
-      <div class="stage__surface">
+      <div class="stage__surface" class:stage__surface--conversation={showActiveTranscript}>
         {#if loading}
           <div class="content__loading">{t.app.loading}</div>
         {:else if showActiveTranscript}
           <section class="conversation-view">
             <header class="conversation-header">
               <div>
-                <strong>{activeTab?.topicTitle || t.activity.untitled}</strong>
-                <span>{activeTab?.workspaceName || t.common.global}</span>
+                <strong>{conversationHeaderTitle}</strong>
+                <span>{conversationHeaderScope}</span>
               </div>
               <button type="button" onclick={openCodeInspector}>
                 <Code2 size={15} />
                 代码状态
               </button>
             </header>
-            <div class="conversation">
+            <div class="conversation" bind:this={conversationScrollEl}>
               <Transcript
                 items={transcript}
                 {loading}
@@ -1425,11 +2385,33 @@
                 onDismissAsk={() => (pendingAsk = undefined)}
               />
             </div>
+            <div class="stage__composer conversation-composer">
+              <Composer
+                {input}
+                {commands}
+                {sending}
+                onInput={(value) => (input = value)}
+                onSend={send}
+                onCancel={cancel}
+                onPreviewFile={previewFile}
+                {models}
+                {selectedModel}
+                onModelChange={switchModel}
+                projectOptions={newTaskProjectOptions}
+                selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
+                onProjectChange={linkProjectById}
+                {workPermission}
+                onWorkPermissionChange={(value) => (workPermission = value)}
+                onOpenResources={openResourceCenterFromComposer}
+                {activityMode}
+                onActivityModeChange={openActivityMode}
+              />
+            </div>
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
-          <section class="workbench aorist-workbench">
+          <section class="workbench aorist-workbench" data-current-work-layer={workLayer}>
             <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div></div></header>
-            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -1491,7 +2473,7 @@
                       {selectedModel}
                       onModelChange={switchModel}
                       projectOptions={newTaskProjectOptions}
-                      selectedProjectId={linkedProject ? selectedProjectId : ""}
+                      selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                       onProjectChange={linkProjectById}
                       {workPermission}
                       onWorkPermissionChange={(value) => (workPermission = value)}
@@ -1824,8 +2806,8 @@
                   </label>
                   <div class="capability-hub-header__actions">
                     <button type="button" onclick={() => openConfigDialog("ingest")}><Upload size={15} /> 导入配置</button>
-                    <button type="button"><RefreshCw size={15} /> 刷新状态</button>
-                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> 创建插件</button>
+                    <button type="button" onclick={() => void refreshCapabilities()}><RefreshCw size={15} /> 刷新状态</button>
+                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> {capabilityCreateLabel(capabilityTab)}</button>
                   </div>
                 </header>
                 <div class="capability-stats">
@@ -1932,7 +2914,7 @@
                   {selectedModel}
                   onModelChange={switchModel}
                   projectOptions={newTaskProjectOptions}
-                  selectedProjectId={linkedProject ? selectedProjectId : ""}
+                  selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                   onProjectChange={linkProjectById}
                   {workPermission}
                   onWorkPermissionChange={(value) => (workPermission = value)}
@@ -2045,8 +3027,13 @@
             <header class="project-detail-head">
               <button class="project-detail-back" type="button" aria-label="返回项目列表" onclick={() => (projectDetailOpen = false)}><ArrowLeft size={16} /></button>
               <div class="project-detail-title">
-                <div><strong>{project.name}</strong><span>{project.code} / {project.category}</span></div>
-                <em>{project.status === "closed" ? "已归档" : "进行中"}</em>
+                <div>
+                  <div class="project-detail-name-row">
+                    <strong>{project.name}</strong>
+                    <em>{project.status === "closed" ? "已归档" : "进行中"}</em>
+                  </div>
+                  <span>{project.code} / {project.category}</span>
+                </div>
               </div>
               <div class="project-detail-actions">
                 <button type="button" onclick={() => linkProjectToTask(project.name)}><Activity size={14} /> 发起项目任务</button>
@@ -2195,11 +3182,13 @@
               </span>
               <div class="customer-detail-title">
                 <div>
-                  <strong>{customer.name}</strong>
+                  <div class="customer-detail-name-row">
+                    <strong>{customer.name}</strong>
+                    <em>{customer.type === "企业" ? "企业客户" : "个人客户"}</em>
+                    <em class="muted">{customer.status}</em>
+                  </div>
                   <span><Phone size={13} />{customer.phone}<Mail size={13} />{customer.email}</span>
                 </div>
-                <em>{customer.type === "企业" ? "企业客户" : "个人客户"}</em>
-                <em class="muted">{customer.status}</em>
               </div>
               <button class="customer-detail-primary" type="button" onclick={() => openConfigDialog("todo")}><Plus size={14} /> 新增待办</button>
             </header>
@@ -2455,7 +3444,7 @@
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
-        <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "创建 Agent"}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input value={agentCards.find((agent) => agent.id === selectedAgentId)?.name || ""} /></label><label>系统设定指示词<textarea rows="4" value={agentCards.find((agent) => agent.id === selectedAgentId)?.desc || ""}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>执业风格</span>{#each vibePresets as vibe (vibe)}<button type="button">{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentCards.find((agent) => agent.id === selectedAgentId)?.desc || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} type="button"><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.active ? "已启用" : "未启用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.active ? "已挂载" : "未挂载"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file (file)}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => (agentWizardOpen = false)}>完成并部署</button></footer></section></div>
+        <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentWizardMode === "create" ? "创建 Agent" : agentWizardName()}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input bind:value={agentWizardDraftName} /></label><label>系统设定指示词<textarea rows="4" bind:value={agentWizardDraftDescription}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>执业风格</span>{#each vibePresets as vibe (vibe)}<button class:active={agentWizardVibe === vibe} type="button" aria-pressed={agentWizardVibe === vibe} onclick={() => (agentWizardVibe = vibe)}>{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentWizardName() || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentWizardDescription() || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} class:unavailable={!tool.available} type="button" disabled={!tool.available} title={tool.reason} onclick={() => toggleAgentTool(tool.id)}><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.available ? (tool.active ? "已启用" : "未启用") : "不可用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} class:unavailable={!skill.available} type="button" disabled={!skill.available} title={skill.reason} onclick={() => toggleAgentSkill(skill.id)}><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.available ? (skill.active ? "已挂载" : "未挂载") : "不可用"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file (file)}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => void saveAgentWizard()}>完成并部署</button></footer></section></div>
       {/if}
       {#if agentMarketOpen}
         <div class="modal-backdrop">
@@ -2507,49 +3496,25 @@
         <div class="modal-backdrop">
           <section class="config-modal capability-create-modal">
             <header><div><span>Capability Create</span><strong>创建{capabilityLabel(capabilityTab)}</strong></div><button type="button" onclick={() => (capabilityCreateOpen = false)}>x</button></header>
-            <div class="capability-tabs capability-create-tabs" role="tablist" aria-label="创建能力类型">
+            <div class="capability-create-tabs" role="tablist" aria-label="创建能力类型">
               <button class:active={capabilityTab === "plugin"} type="button" onclick={() => switchCapabilityTab("plugin")}>插件</button>
               <button class:active={capabilityTab === "mcp"} type="button" onclick={() => switchCapabilityTab("mcp")}>MCP</button>
               <button class:active={capabilityTab === "skill"} type="button" onclick={() => switchCapabilityTab("skill")}>SKILL</button>
             </div>
-            <div class="config-grid">
-              <label>名称<input value={`新建${capabilityLabel(capabilityTab)}`} /></label>
-              <label>分组<input value={capabilityLabel(capabilityTab)} /></label>
-              <label>版本<input value="v0.1" /></label>
-              <label>运行范围<input value={capabilityTab === "mcp" ? "workspace" : capabilityTab === "skill" ? "skills" : "desktop/frontend"} /></label>
-              <label>入口路径<input value={capabilityTab === "mcp" ? "mcp/server.json" : capabilityTab === "skill" ? "SKILL.md" : "plugin.json"} /></label>
-              <label>默认状态<select><option>启用</option><option>待配置</option><option>需授权</option></select></label>
-              <label class="wide">配置说明<textarea rows="4">{capabilitySubtitle(capabilityTab)} 对标 AORISTLAWER 的工具 / 技能配置流程：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。</textarea></label>
+            <div class="config-grid capability-create-form">
+              <label>名称<input bind:value={capabilityCreateName} /></label>
+              <label>分组<input bind:value={capabilityCreateGroup} /></label>
+              <label>版本<input bind:value={capabilityCreateVersion} /></label>
+              <label>运行范围<input bind:value={capabilityCreateScope} /></label>
+              <label>入口路径<input bind:value={capabilityCreateEntry} /></label>
+              <label>默认状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
+              <label class="wide">配置说明<textarea rows="4" bind:value={capabilityCreateDescription}></textarea></label>
             </div>
-            <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => (capabilityCreateOpen = false)}>创建并挂载</button></footer>
+            <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => void submitCapabilityCreate()}>创建并挂载</button></footer>
           </section>
         </div>
       {/if}
 
-      {#if showTranscript}
-        <div class="stage__composer">
-          <Composer
-            {input}
-            {commands}
-            {sending}
-            onInput={(value) => (input = value)}
-            onSend={send}
-            onCancel={cancel}
-            onPreviewFile={previewFile}
-            {models}
-            {selectedModel}
-            onModelChange={switchModel}
-            projectOptions={newTaskProjectOptions}
-            selectedProjectId={linkedProject ? selectedProjectId : ""}
-            onProjectChange={linkProjectById}
-            {workPermission}
-            onWorkPermissionChange={(value) => (workPermission = value)}
-            onOpenResources={openResourceCenterFromComposer}
-            {activityMode}
-            onActivityModeChange={openActivityMode}
-          />
-        </div>
-      {/if}
     </section>
   </main>
 {/if}
@@ -2742,7 +3707,7 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 26px clamp(24px, 5vw, 80px) 196px;
+    padding: 26px clamp(24px, 5vw, 80px) 20px;
   }
 
   .conversation-view {
@@ -9181,25 +10146,6 @@
     text-align: left;
   }
 
-  .workspace-nav .sidebar-conversation-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 24px;
-    color: var(--aorist-faint);
-    opacity: 0.72;
-  }
-
-  .workspace-nav .sidebar-conversation-action:hover {
-    color: var(--aorist-ink);
-    opacity: 1;
-  }
-
-  .workspace-nav .sidebar-conversation-action.danger:hover {
-    color: #b42318;
-  }
-
   .workspace-nav .sidebar-conversation-row span {
     min-width: 0;
     overflow: hidden;
@@ -11801,5 +12747,1048 @@
 
   .shell.is-sidebar-collapsed .brand-workbench-button {
     display: none;
+  }
+
+  /* Workspace spacing and calmer weight */
+  .shell .aorist-workbench {
+    font-weight: 400;
+  }
+
+  .shell .aorist-workbench[data-current-work-layer]:not([data-current-work-layer="today"]) .aorist-page {
+    padding: 28px 48px 46px;
+  }
+
+  .shell .aorist-workbench[data-current-work-layer]:not([data-current-work-layer="today"]) .aorist-toolbar {
+    margin-bottom: 22px;
+    padding: 18px 20px;
+  }
+
+  .shell .aorist-card-grid,
+  .shell .aorist-list,
+  .shell .automation-overview,
+  .shell .automation-task-list {
+    gap: 18px;
+  }
+
+  .shell .management-card,
+  .shell .automation-task-card,
+  .shell .agent-card,
+  .shell .media-card,
+  .shell .capability-item,
+  .shell .aorist-list article,
+  .shell .aorist-card {
+    padding: 18px;
+  }
+
+  .shell .workspace-nav {
+    padding-inline: 10px;
+  }
+
+  .shell .workspace-nav section {
+    margin-bottom: 5px;
+  }
+
+  .shell .workspace-nav button {
+    min-height: 30px;
+    margin: 0 4px;
+    border-radius: 8px;
+  }
+
+  .shell .workspace-nav h2 {
+    padding-top: 4px;
+    padding-bottom: 3px;
+  }
+
+  .shell .workspace-nav .workspace-nav-section-head {
+    min-height: 26px;
+    margin-top: 1px;
+    margin-bottom: 1px;
+  }
+
+  .shell .sidebar-project-dock {
+    margin-top: 4px;
+  }
+
+  .shell .sidebar-project-list {
+    gap: 6px;
+  }
+
+  .shell .sidebar-project-group {
+    gap: 3px;
+  }
+
+  .shell .sidebar-conversation-list {
+    gap: 3px;
+    margin-top: 4px;
+    margin-bottom: 8px;
+  }
+
+  .shell .workspace-nav h2,
+  .shell .stage-topbar span,
+  .shell .aorist-toolbar span,
+  .shell .hero-panel span,
+  .shell .wizard-preview > span {
+    font-weight: 420;
+    letter-spacing: 0.04em;
+  }
+
+  .shell .stage-topbar strong,
+  .shell .aorist-toolbar strong,
+  .shell .aorist-card header strong,
+  .shell .management-card__body strong,
+  .shell .automation-task-card strong,
+  .shell .agent-card header strong,
+  .shell .media-card strong,
+  .shell .capability-item strong,
+  .shell .todo-row strong,
+  .shell .automation-row strong,
+  .shell .project-detail-card h3,
+  .shell .project-detail-aside h3,
+  .shell .customer-detail-card h3,
+  .shell .customer-detail-aside h3 {
+    font-weight: 520;
+  }
+
+  .shell .aorist-stats strong,
+  .shell .hero-panel h1 {
+    font-weight: 560;
+  }
+
+  .shell .aorist-workbench button,
+  .shell .workspace-nav button,
+  .shell .capability-tabs button,
+  .shell .project-detail-actions button,
+  .shell .customer-detail-primary,
+  .shell .customer-detail-card header button,
+  .shell .automation-task-card header em,
+  .shell .aorist-list span,
+  .shell .todo-row b,
+  .shell .automation-row b {
+    font-weight: 480;
+  }
+
+  .shell .aorist-workbench p,
+  .shell .aorist-workbench em,
+  .shell .aorist-workbench span,
+  .shell .project-detail-row p,
+  .shell .management-card__body p {
+    font-weight: 400;
+  }
+
+  @media (max-width: 980px) {
+    .shell .aorist-workbench[data-current-work-layer]:not([data-current-work-layer="today"]) .aorist-page {
+      padding: 22px 28px 40px;
+    }
+  }
+
+  .shell:not(.is-sidebar-collapsed) {
+    --sidebar-width: clamp(240px, 13vw, 280px);
+  }
+
+  .shell:not(.is-sidebar-collapsed) .sidebar--aorist {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+  }
+
+  /* Pin user profile to the lower-left corner */
+  .shell .sidebar--aorist {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-height: 100vh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .sidebar__brand {
+    flex: 0 0 auto;
+  }
+
+  .shell .workspace-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 14px;
+  }
+
+  .shell .sidebar__user-wrap {
+    flex: 0 0 auto;
+    margin-top: auto;
+    padding: 10px 12px 12px;
+    border-top: 1px solid #e4e4e7;
+    background: hsl(220 20% 98%);
+  }
+
+  .shell .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    min-height: 42px;
+  }
+
+  .shell .sidebar__user-wrap .user-menu {
+    left: 12px;
+    right: 12px;
+    bottom: 62px;
+    width: auto;
+  }
+
+  /* Project dock follows the wider desktop sidebar rhythm. */
+  .shell .sidebar-project-dock {
+    margin-top: 6px;
+    padding: 8px 7px 0;
+  }
+
+  .shell .sidebar-project-head {
+    min-height: 24px;
+    padding: 0 4px 4px;
+  }
+
+  .shell .workspace-nav .sidebar-project-head h2 {
+    color: #8a8f86;
+    font-size: 13px;
+    font-weight: 430;
+  }
+
+  .shell .sidebar-project-list {
+    gap: 6px;
+  }
+
+  .shell .sidebar-project-group {
+    gap: 2px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-row {
+    grid-template-columns: 20px minmax(0, 1fr) 24px 24px;
+    column-gap: 4px;
+    min-height: 31px;
+    border-radius: 8px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-open {
+    grid-template-columns: 20px minmax(0, 1fr);
+    min-height: 31px;
+    gap: 6px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-disclosure,
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-rename,
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-action {
+    width: 24px;
+    height: 28px;
+    min-width: 24px;
+    min-height: 28px;
+  }
+
+  .shell .sidebar-conversation-list {
+    gap: 1px;
+    margin: 2px 7px 6px 32px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row {
+    display: grid;
+    position: relative;
+    grid-template-columns: minmax(0, 1fr) 22px 22px;
+    column-gap: 2px;
+    align-items: center;
+    width: 100%;
+    min-height: 26px;
+    padding: 0 2px 0 0;
+    border-radius: 7px;
+    color: inherit;
+    text-align: left;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open {
+    grid-column: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 26px;
+    min-width: 0;
+    margin: 0;
+    padding: 0 6px 0 0;
+    text-align: left;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row > .sidebar-conversation-action:nth-of-type(2) {
+    grid-column: 2;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row > .sidebar-conversation-action:nth-of-type(3) {
+    grid-column: 3;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open span {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.15;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-row em {
+    min-width: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--aorist-faint);
+    font-size: 10px;
+    font-weight: 400;
+    font-style: normal;
+    white-space: nowrap;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 22px;
+    height: 24px;
+    min-width: 22px;
+    padding: 0;
+    border-radius: 6px;
+    color: var(--aorist-faint);
+    opacity: 0.72;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row:hover,
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row:focus-within {
+    background: var(--aorist-sidebar-hover);
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action:hover {
+    background: transparent;
+    color: var(--aorist-ink);
+    opacity: 1;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action.danger:hover {
+    color: #b42318;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap {
+    padding-inline: 8px;
+  }
+
+  /* Customer detail header after upstream refresh */
+  .shell .customer-detail-modal > .customer-detail-head {
+    display: grid;
+    grid-template-columns: 36px 72px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 14px;
+  }
+
+  .shell .customer-detail-modal > .customer-detail-head > .client-avatar--large {
+    justify-self: center;
+  }
+
+  .shell .customer-detail-title {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .shell .customer-detail-title > div {
+    min-width: 0;
+  }
+
+  .shell .customer-detail-name-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .shell .customer-detail-name-row strong {
+    min-width: 0;
+    max-width: min(420px, 46vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 560;
+  }
+
+  .shell .customer-detail-name-row em {
+    flex: 0 0 auto;
+    min-height: 20px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+    font-weight: 520;
+  }
+
+  .shell .customer-detail-primary,
+  .shell .customer-detail-card header button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: auto;
+    min-width: 104px;
+    min-height: 34px;
+    padding: 0 14px;
+    border-radius: 10px;
+    line-height: 1;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+  }
+
+  .shell .customer-detail-primary {
+    justify-self: end;
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .shell .customer-detail-primary :global(svg),
+  .shell .customer-detail-card header button :global(svg) {
+    flex: 0 0 auto;
+  }
+
+  /* Detail headers and action buttons after upstream refresh */
+  .shell .project-detail-modal > .project-detail-head {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 14px;
+  }
+
+  .shell .project-detail-title {
+    display: block;
+    min-width: 0;
+  }
+
+  .shell .project-detail-title > div {
+    min-width: 0;
+  }
+
+  .shell .project-detail-name-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .shell .project-detail-name-row strong {
+    min-width: 0;
+    max-width: min(460px, 44vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 560;
+  }
+
+  .shell .project-detail-name-row em {
+    flex: 0 0 auto;
+    min-height: 20px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+    font-weight: 520;
+  }
+
+  .shell .project-detail-actions {
+    display: flex;
+    justify-self: end;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .shell .project-detail-actions button,
+  .shell .project-section-head button,
+  .shell .project-resource-toolbar button,
+  .shell .customer-section-head button,
+  .shell .customer-resource-toolbar button,
+  .shell .management-primary,
+  .shell .aorist-toolbar button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: auto;
+    min-width: auto;
+    min-height: 32px;
+    padding: 0 11px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+  }
+
+  .shell .project-detail-actions button :global(svg),
+  .shell .project-section-head button :global(svg),
+  .shell .customer-section-head button :global(svg),
+  .shell .management-primary :global(svg),
+  .shell .aorist-toolbar button :global(svg) {
+    flex: 0 0 auto;
+  }
+
+  .shell .project-detail-actions button:first-child {
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+  }
+
+  .shell .project-detail-actions button:last-child,
+  .shell .management-primary {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  /* Detail modal scroll safety */
+  .shell .detail-modal.project-detail-modal,
+  .shell .detail-modal.customer-detail-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(1120px, calc(100vw - 44px));
+    height: min(860px, calc(100vh - 44px));
+    max-height: calc(100vh - 44px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .detail-modal > .project-detail-head,
+  .shell .detail-modal > .customer-detail-head {
+    position: relative;
+    top: auto;
+    z-index: 2;
+    margin: 0;
+  }
+
+  .shell .detail-modal > .detail-panel {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 26px 28px 72px;
+    scroll-padding-bottom: 72px;
+  }
+
+  .shell .detail-modal > .detail-panel::after {
+    content: "";
+    display: block;
+    height: 24px;
+  }
+
+  .shell .customer-detail-body,
+  .shell .project-detail-body {
+    min-height: 0;
+  }
+
+  @media (max-width: 980px) {
+    .shell .detail-modal.project-detail-modal,
+    .shell .detail-modal.customer-detail-modal {
+      width: min(100vw - 24px, 1120px);
+      height: calc(100vh - 28px);
+      max-height: calc(100vh - 28px);
+    }
+
+    .shell .detail-modal > .detail-panel {
+      padding: 20px 18px 64px;
+      scroll-padding-bottom: 64px;
+    }
+  }
+
+  /* Wails desktop click safety */
+  .shell .sidebar--aorist,
+  .shell .sidebar--aorist *,
+  .shell .workspace-nav,
+  .shell .workspace-nav *,
+  .shell .sidebar__user-wrap,
+  .shell .sidebar__user-wrap *,
+  .shell .brand-workbench-button,
+  .shell .sidebar__icon {
+    --wails-draggable: no-drag;
+  }
+
+  /* Capability panel: remove duplicated catalog heading block */
+  .shell .capability-panel.capability-market > header {
+    display: none;
+  }
+
+  :global(.capability-panel.capability-market > header),
+  :global(.capability-market > header) {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+  }
+
+  /* Agent wizard layout safety after upstream tab refresh */
+  .shell .agent-wizard {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(1040px, calc(100vw - 56px));
+    height: min(720px, calc(100vh - 56px));
+    max-height: calc(100vh - 56px);
+    padding: 0;
+    overflow: hidden;
+    border-radius: 16px;
+  }
+
+  .shell .agent-wizard__header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 86px;
+    padding: 18px 24px;
+  }
+
+  .shell .agent-wizard__header .wizard-avatar {
+    flex: 0 0 auto;
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    background: #222222;
+  }
+
+  .shell .agent-wizard__header > div:nth-child(2) {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .shell .agent-wizard__header strong {
+    font-size: 18px;
+    font-weight: 560;
+  }
+
+  .shell .agent-wizard__body {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .agent-wizard .wizard-tabs {
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    min-width: 0;
+    height: 100%;
+    margin: 0;
+    padding: 18px 14px;
+    border: 0;
+    border-right: 1px solid var(--aorist-border-divider);
+    border-radius: 0;
+    background: #f7f8fa;
+    box-shadow: none;
+  }
+
+  .shell .agent-wizard .wizard-tabs button {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    min-height: 36px;
+    margin: 0;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    box-shadow: none;
+  }
+
+  .shell .agent-wizard .wizard-tabs button:hover {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: var(--aorist-ink);
+  }
+
+  .shell .agent-wizard .wizard-tabs button.active {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: var(--aorist-ink);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  }
+
+  .shell .agent-wizard .wizard-panel {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 26px 28px 84px;
+  }
+
+  .shell .agent-wizard .wizard-identity {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 28px;
+    align-items: start;
+  }
+
+  .shell .agent-wizard .wizard-form {
+    gap: 18px;
+  }
+
+  .shell .agent-wizard .pill-group {
+    gap: 8px;
+  }
+
+  .shell .agent-wizard .pill-group button {
+    min-height: 34px;
+    border-radius: 12px;
+    font-weight: 480;
+  }
+
+  .shell .agent-wizard .pill-group button.active {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(34, 34, 34, 0.18);
+  }
+
+  .shell .agent-wizard .wizard-card-grid button.unavailable {
+    cursor: not-allowed;
+    opacity: 0.56;
+  }
+
+  .shell .agent-wizard .wizard-card-grid button.unavailable:hover {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: inherit;
+    box-shadow: none;
+  }
+
+  .shell .agent-wizard .wizard-skill-list button.unavailable {
+    cursor: not-allowed;
+    opacity: 0.56;
+  }
+
+  .shell .agent-wizard .wizard-skill-list button.unavailable:hover {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .shell .capability-create-modal .capability-create-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: min(340px, 100%);
+    gap: 3px;
+    margin: 10px auto 16px;
+    padding: 3px;
+    border: 1px solid #d9dde5;
+    border-radius: 11px;
+    background: #f7f7f8;
+  }
+
+  .shell .capability-create-modal .capability-create-tabs button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #475467;
+    font-size: 12px;
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .shell .capability-create-modal .capability-create-tabs button.active {
+    background: #222222;
+    color: #ffffff;
+    box-shadow: 0 5px 12px rgba(15, 23, 42, 0.12);
+  }
+
+  .shell .agent-wizard .wizard-preview {
+    min-width: 0;
+    padding-left: 28px;
+  }
+
+  .shell .agent-wizard .wizard-preview div {
+    margin-top: 18px;
+    padding: 28px 22px;
+    border-radius: 16px;
+  }
+
+  .shell .agent-wizard .wizard-preview b {
+    background: #222222;
+  }
+
+  .shell .agent-wizard__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    min-height: 70px;
+    padding: 14px 24px;
+  }
+
+  @media (max-width: 900px) {
+    .shell .agent-wizard__body,
+    .shell .agent-wizard .wizard-identity {
+      grid-template-columns: 1fr;
+    }
+
+    .shell .agent-wizard .wizard-tabs {
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
+      overflow-x: auto;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--aorist-border-divider);
+    }
+
+    .shell .agent-wizard .wizard-preview {
+      padding-left: 0;
+      border-left: 0;
+    }
+  }
+
+  /* Final sidebar guard: keep account fixed at lower-left after upstream style refreshes. */
+  .shell:not(.is-sidebar-collapsed) {
+    --sidebar-width: clamp(232px, 13vw, 268px);
+  }
+
+  .shell .sidebar--aorist {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 0;
+    overflow: hidden !important;
+  }
+
+  .shell .sidebar__brand {
+    grid-row: 1;
+    flex: 0 0 auto;
+  }
+
+  .shell .workspace-nav {
+    grid-row: 2;
+    min-height: 0;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 8px 8px 10px;
+  }
+
+  .shell .workspace-nav section {
+    margin-bottom: 6px;
+  }
+
+  .shell .workspace-nav h2 {
+    margin: 6px 8px 4px;
+    font-weight: 430;
+  }
+
+  .shell .workspace-nav button {
+    min-height: 31px;
+    border-radius: 8px;
+    font-weight: 420;
+  }
+
+  .shell .workspace-nav button span:nth-child(2),
+  .shell .workspace-nav .sidebar-project-open .sidebar-project-label strong,
+  .shell .workspace-nav .sidebar-conversation-row span {
+    font-weight: 430;
+  }
+
+  .shell .sidebar__user-wrap {
+    position: sticky;
+    bottom: 0;
+    grid-row: 3;
+    z-index: 30;
+    flex: 0 0 auto;
+    margin-top: 0 !important;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--aorist-border-divider);
+    background: var(--aorist-sidebar);
+  }
+
+  .shell .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
+    min-height: 40px;
+    padding: 7px 8px;
+    border-radius: 8px;
+  }
+
+  .shell .sidebar__profile strong,
+  .shell .sidebar__profile em {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 430;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shell .sidebar__user-wrap .user-menu {
+    left: 12px;
+    right: 12px;
+    bottom: calc(100% + 8px);
+    width: auto;
+  }
+
+  .shell .sidebar-project-dock {
+    margin-top: 4px;
+    padding: 6px 6px 0;
+  }
+
+  .shell .sidebar-project-list,
+  .shell .sidebar-conversation-list {
+    gap: 2px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-row {
+    grid-template-columns: 20px minmax(0, 1fr) 22px 22px;
+    min-height: 29px;
+    column-gap: 3px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row {
+    grid-template-columns: minmax(0, 1fr) 22px 22px;
+    min-height: 25px;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open {
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-width: 0;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-row em {
+    justify-self: end;
+    font-weight: 400;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action {
+    width: 22px;
+    min-width: 22px;
+    height: 24px;
+    padding: 0;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar--aorist {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap {
+    padding: 8px;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    grid-template-columns: 28px;
+    justify-content: center;
+    padding: 7px;
+  }
+
+  .shell .stage.stage--conversation {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .shell .stage.stage--conversation > .stage__surface {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .stage__surface--conversation > .conversation-view {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .stage__surface--conversation .conversation {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 18px;
+    scroll-padding-bottom: 18px;
+  }
+
+  .shell .stage__surface--conversation .conversation :global(.decision-shelf:last-child) {
+    margin-bottom: 18px;
+  }
+
+  .shell .stage__surface--conversation .conversation-view > .stage__composer {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    z-index: 1;
+    flex: 0 0 auto;
+    width: min(760px, calc(100% - 96px));
+    margin: 0 auto;
+    padding: 10px 0 18px;
+    transform: none;
+  }
+
+  @media (max-width: 980px) {
+    .shell .stage__surface--conversation .conversation-view > .stage__composer {
+      width: min(100% - 32px, 760px);
+      padding-bottom: 12px;
+    }
+  }
+
+  .shell .workbench-calendar {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 5px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid article {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    place-items: center;
+    min-width: 0;
+    min-height: 54px;
+    padding: 6px 2px;
+    overflow: hidden;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid b {
+    line-height: 1;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid span {
+    display: block;
+    box-sizing: border-box;
+    width: min(100%, 40px);
+    max-width: 100%;
+    margin: 5px auto 0;
+    padding: 2px 1px;
+    overflow: hidden;
+    color: #475467;
+    background: #eef1f5;
+    border-radius: 8px;
+    font-size: clamp(8px, 0.62vw, 10px);
+    font-weight: 450;
+    line-height: 1.25;
+    text-align: center;
+    white-space: nowrap;
   }
 </style>

@@ -12,6 +12,8 @@ import type {
   GoalInfo,
   CheckpointMeta,
   CapabilitiesView,
+  AgentInput,
+  AgentView,
   HistoryMessage,
   MCPServerInput,
   MemoryView,
@@ -29,8 +31,10 @@ import type {
   UserInfo,
   WorkbenchArtifactInput,
   WorkbenchJob,
+  WorkbenchPluginInput,
   WorkbenchPlugin,
   WorkbenchProvider,
+  SkillPackageInput,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
   WireEvent,
@@ -47,6 +51,7 @@ interface AppBindings {
   PickWorkspace(): Promise<string>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
+  NewConversationThread(scope: string, workspaceRoot: string, title: string): Promise<TabMeta>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
   ListProjectTree(): Promise<ProjectNode[]>;
@@ -88,6 +93,9 @@ interface AppBindings {
   AttachmentDataURL(path: string): Promise<string>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
   Capabilities(): Promise<CapabilitiesView>;
+  ListAgents(): Promise<AgentView[]>;
+  SaveAgent(input: AgentInput): Promise<AgentView>;
+  DeleteAgent(id: string): Promise<void>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
@@ -121,6 +129,8 @@ interface AppBindings {
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
   WorkbenchPlugins(): Promise<WorkbenchPlugin[]>;
+  SaveWorkbenchPlugin(input: WorkbenchPluginInput): Promise<void>;
+  CreateSkillPackage(input: SkillPackageInput): Promise<string>;
   WorkbenchProviders(): Promise<WorkbenchProvider[]>;
   ListWorkbenchJobs(): Promise<WorkbenchJob[]>;
   CreateWorkbenchJob(input: CreateWorkbenchJobInput): Promise<WorkbenchJob>;

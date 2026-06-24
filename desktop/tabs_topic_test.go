@@ -771,6 +771,42 @@ api_key_env = "REASONIX_TEST_KEY"
 	}
 }
 
+func TestBuildTabControllerFallsBackFromStaleTabModelToDefaultModel(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "default-provider/default-model"
+
+[[providers]]
+name = "default-provider"
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+model = "default-model"
+api_key_env = "MISSING_DESKTOP_MODEL_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	app := NewApp()
+	tab := app.createTabEntryWithID("global", globalTabWorkspaceRoot(), "", "tab_stale_model")
+	tab.model = "missing-provider/missing-model"
+	tab.sink = &tabEventSink{tabID: tab.ID, app: app}
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	app.buildTabController(tab)
+	if tab.Ctrl == nil {
+		t.Fatalf("tab controller was not built: %s", tab.StartupErr)
+	}
+	defer tab.Ctrl.Close()
+	if tab.model != "default-provider/default-model" {
+		t.Fatalf("tab model = %q, want default-provider/default-model", tab.model)
+	}
+}
+
 func TestLoadPinnedTabSessionFallsBackToMigratedBasename(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -2063,6 +2099,40 @@ func TestOpenProjectTabSkipsCleanupPendingTopicSession(t *testing.T) {
 		if msg.Content == "pending topic prompt" {
 			t.Fatalf("opened cleanup-pending topic history at path %q: %+v", tab.Ctrl.SessionPath(), tab.Ctrl.History())
 		}
+	}
+}
+
+func TestNewConversationThreadCreatesIndependentProjectSessions(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	first, err := app.NewConversationThread("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("first NewConversationThread: %v", err)
+	}
+	firstTab := waitForTabReady(t, app, first.ID)
+
+	second, err := app.NewConversationThread("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("second NewConversationThread: %v", err)
+	}
+	secondTab := waitForTabReady(t, app, second.ID)
+
+	if first.TopicID == "" || second.TopicID == "" {
+		t.Fatalf("topic ids should be populated: first=%+v second=%+v", first, second)
+	}
+	if first.TopicID == second.TopicID {
+		t.Fatalf("new conversations reused topic %q", first.TopicID)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("new conversations reused tab %q", first.ID)
+	}
+	if firstTab.Ctrl == nil || secondTab.Ctrl == nil {
+		t.Fatalf("controllers should be built: first=%+v second=%+v", firstTab.Ctrl, secondTab.Ctrl)
+	}
+	if got, wantNot := filepath.Clean(firstTab.Ctrl.SessionPath()), filepath.Clean(secondTab.Ctrl.SessionPath()); got == wantNot {
+		t.Fatalf("new conversations reused session path %q", got)
 	}
 }
 

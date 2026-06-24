@@ -51,6 +51,7 @@
 - **Windows 10 优先。** Microsoft Edge（Chromium 内核）是 Win10 自带 —— `browser_navigate` 零配置可用。Windows 路径检测、RDP/VDI 友好。macOS 和 Linux 同样支持。
 - **配置驱动。** Provider、工具、权限、插件全部在 `voltui.toml` 中声明，无硬编码模型。一个文件管一个团队，直接提交到仓库。
 - **插件驱动 (MCP)。** 外部工具通过 stdio JSON-RPC 或 HTTP 运行。兼容 MCP 生态 —— 放一个 `.mcp.json` 即可。
+- **Supauth + QNAP 网络盘规划。** 员工通过 Supauth 登录暗涌，QNAP 继续兜底 SMB 权限，暗涌负责自动挂载与审计。详见 [docs/SUPAUTH_QNAP_MOUNTS.md](docs/SUPAUTH_QNAP_MOUNTS.md)。
 - **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索 (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
 - **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。详见 [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md)。
 - **技能与钩子。** Claude-Code 风格的技能 (`.voltui/skills/`) 和钩子 (`PreToolUse`/`PostToolUse`/`Stop`)，用于工作流自动化。

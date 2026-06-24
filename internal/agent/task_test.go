@@ -434,6 +434,45 @@ func TestTaskToolBackgroundPanicPersistsFailedMetadata(t *testing.T) {
 	}
 }
 
+func TestTaskToolBackgroundResultIncludesReferenceGuidance(t *testing.T) {
+	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "background answer"},
+		{Type: provider.ChunkDone},
+	}}
+	store := NewSubagentStore(t.TempDir())
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	task := NewTaskTool(sub, nil, reg, 20, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(store, t.TempDir(), "base-model", "base-effort")
+
+	jm := jobs.NewManager(event.Discard)
+	defer jm.Close()
+	ctx := testTaskContext()
+	ctx = jobs.WithSession(ctx, "parent-session")
+	ctx = jobs.WithManager(ctx, jm)
+	out, err := task.Execute(ctx, []byte(`{"prompt":"background task","run_in_background":true}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	ref := subagentRefFromOutput(t, out)
+	if !strings.Contains(out, "To continue this same subagent transcript in a later call") {
+		t.Fatalf("start output = %q, want reference guidance", out)
+	}
+	jobID := extractJobID(out)
+	if jobID == "" {
+		t.Fatalf("no background job id in output:\n%s", out)
+	}
+	res := jm.WaitForSession(context.Background(), "parent-session", []string{jobID}, 5)
+	if len(res) != 1 || res[0].Status != jobs.Done {
+		t.Fatalf("background job result = %+v, want succeeded", res)
+	}
+	if !strings.Contains(res[0].Output, "Subagent reference: "+ref) ||
+		!strings.Contains(res[0].Output, "To continue this same subagent transcript in a later call") ||
+		!strings.Contains(res[0].Output, "Final answer:\nbackground answer") {
+		t.Fatalf("job output = %q, want reference guidance and final answer", res[0].Output)
+	}
+}
+
 func TestTaskToolRejectsMismatchedContinuationProfile(t *testing.T) {
 	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "answer"},

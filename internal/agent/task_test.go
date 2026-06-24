@@ -473,6 +473,71 @@ func TestTaskToolBackgroundResultIncludesReferenceGuidance(t *testing.T) {
 	}
 }
 
+func TestTaskToolBackgroundAncestorContinuationIncludesForkGuidance(t *testing.T) {
+	sub := &mockProvider{name: "sub", streams: [][]provider.Chunk{
+		{
+			{Type: provider.ChunkText, Text: "root answer"},
+			{Type: provider.ChunkDone},
+		},
+		{
+			{Type: provider.ChunkText, Text: "child background answer"},
+			{Type: provider.ChunkDone},
+		},
+	}}
+	sessionDir := t.TempDir()
+	store := NewSubagentStore(filepath.Join(sessionDir, "subagents"))
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	task := NewTaskTool(sub, nil, reg, 20, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(store, t.TempDir(), "base-model", "base-effort")
+
+	rootCtx := WithParentSession(context.Background(), "root")
+	rootOut, err := task.Execute(rootCtx, []byte(`{"prompt":"root task"}`))
+	if err != nil {
+		t.Fatalf("root Execute: %v", err)
+	}
+	rootRef := subagentRefFromOutput(t, rootOut)
+	if err := SaveBranchMeta(filepath.Join(sessionDir, "root.jsonl"), BranchMeta{}); err != nil {
+		t.Fatalf("SaveBranchMeta root: %v", err)
+	}
+	if err := SaveBranchMeta(filepath.Join(sessionDir, "child.jsonl"), BranchMeta{ParentID: "root"}); err != nil {
+		t.Fatalf("SaveBranchMeta child: %v", err)
+	}
+
+	jm := jobs.NewManager(event.Discard)
+	defer jm.Close()
+	childCtx := WithParentSession(context.Background(), "child")
+	childCtx = jobs.WithSession(childCtx, "child")
+	childCtx = jobs.WithManager(childCtx, jm)
+	startOut, err := task.Execute(childCtx, []byte(`{"prompt":"child task","continue_from":"`+rootRef+`","run_in_background":true}`))
+	if err != nil {
+		t.Fatalf("child Execute: %v", err)
+	}
+	childRef := subagentRefFromOutput(t, startOut)
+	if childRef == rootRef {
+		t.Fatalf("child ref = source ref %q, want copied ref", childRef)
+	}
+	if !strings.Contains(startOut, "Forked from: "+rootRef) ||
+		!strings.Contains(startOut, "The requested ref resolves to an ancestor conversation transcript") ||
+		strings.Contains(startOut, "Final answer:") {
+		t.Fatalf("start output = %q, want fork guidance without final answer", startOut)
+	}
+	jobID := extractJobID(startOut)
+	if jobID == "" {
+		t.Fatalf("no background job id in output:\n%s", startOut)
+	}
+	res := jm.WaitForSession(context.Background(), "child", []string{jobID}, 5)
+	if len(res) != 1 || res[0].Status != jobs.Done {
+		t.Fatalf("background job result = %+v, want succeeded", res)
+	}
+	if !strings.Contains(res[0].Output, "Subagent reference: "+childRef) ||
+		!strings.Contains(res[0].Output, "Forked from: "+rootRef) ||
+		!strings.Contains(res[0].Output, "The requested ref resolves to an ancestor conversation transcript") ||
+		!strings.Contains(res[0].Output, "Final answer:\nchild background answer") {
+		t.Fatalf("job output = %q, want copied ref guidance and final answer", res[0].Output)
+	}
+}
+
 func TestTaskToolRejectsMismatchedContinuationProfile(t *testing.T) {
 	sub := &mockProvider{name: "sub", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "answer"},

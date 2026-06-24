@@ -5330,16 +5330,6 @@ func topicSessionIndexForDir(dir string) (topicSessionDirIndex, error) {
 	return index, nil
 }
 
-func topicSessionIndexHasTopic(index topicSessionDirIndex, topicID string) bool {
-	matches := index.byTopic[strings.TrimSpace(topicID)]
-	for _, match := range matches {
-		if !agent.IsCleanupPending(match.path) {
-			return true
-		}
-	}
-	return false
-}
-
 func topicSessionIndexHasContentTopic(index topicSessionDirIndex, topicID string) bool {
 	matches := index.byTopic[strings.TrimSpace(topicID)]
 	for _, match := range matches {

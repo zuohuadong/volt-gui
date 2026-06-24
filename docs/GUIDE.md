@@ -383,8 +383,11 @@ memory_compiler = { enabled = false }
 
 Project `reasonix.toml` files cannot override this user/global setting. The CLI
 can use Memory v5 for local turns, but it does not run the desktop aggregate
-metrics upload pipeline, and `reasonix run --metrics` does not include Memory v5
-fields.
+metrics upload pipeline. When `reasonix run --metrics <path>` is used, the JSON
+also includes content-free `memory_compiler_*` summary fields and a
+`memory_compiler_turn_details` array with per-turn injection state, compiled
+token and IR-overhead estimates, referenced-memory/constraint/risk/step counts,
+and current memory-graph counts.
 For implementation details, see
 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md).
 

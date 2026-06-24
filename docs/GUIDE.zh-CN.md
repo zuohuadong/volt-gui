@@ -335,7 +335,10 @@ memory_compiler = { enabled = false }
 ```
 
 项目内的 `reasonix.toml` 不能覆盖这个 user/global 设置。CLI 可以在本地轮次使用 Memory v5，
-但不会运行桌面端的聚合指标上传管线，`reasonix run --metrics` 也不会输出 Memory v5 字段。
+但不会运行桌面端的聚合指标上传管线。使用 `reasonix run --metrics <path>` 时，JSON 还会输出
+内容无关的 `memory_compiler_*` 汇总字段，以及 `memory_compiler_turn_details` 逐轮明细数组，
+包含是否注入、编译后 token 和 IR overhead 估算、引用记忆/constraint/risk/step 数量，以及
+当前记忆图计数。
 技术实现细节见 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md)。
 
 ```markdown

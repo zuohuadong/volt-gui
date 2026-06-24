@@ -5,9 +5,13 @@
 > **格式：** `[时间] [workspace名] [状态] 描述`
 
 ---
+[2026-06-24T15:42:00+0800] [codex] [done:review-merge-origin-pr5-supauth-qnap-mounts] 审查并合并 origin PR #5 `codex/supauth-qnap-mounts`。结论 PASS：变更仅涉及 `README.zh-CN.md`、`docs/SUPAUTH_QNAP_MOUNTS.md`、`progress.md`，属于下游产品文档；内容与刚合入的上游 `docs/ENTERPRISE_MOUNTS.md` 边界互补：上游保留通用桌面挂载生命周期，暗涌 fork 记录 Supauth + QNAP 策略、审计和 SMB 权限兜底。Delegation Decision：safe_skip_reason=低风险文档 PR，验收清楚且不改运行时代码；主线程直接审查并合并。验证：无冲突标记；`git diff --check` 通过；README 链接入口和关键边界文本检查通过。
+
 [2026-06-24T15:34:00+0800] [codex] [done:merge-upstream-2026-06-24-enterprise-mount-docs] 按用户要求继续合并 `upstream/main`=`286e669c24e69b31c459a09a85a65ea8929ed969`，以上游为主接收企业资源挂载平台文档 `docs/ENTERPRISE_MOUNTS.md`、README 企业挂载入口和上游 progress 审查记录；保留西谷智灯暗涌系统 fork 定制层与行业技能入口，包括 `.cnb.yml`、`desktop/cmd/cnbrelease`、`scripts/sync-upstream.sh`、`.voltui/skills/`、`references/private-skills/`、`references/skills/{anyong-brand-config,cnb-ci-cd,xigu-ai-ops}`、`暗涌.md`、`.agents/AGENTS.local.md` 和 README 中的行业技能说明；`.upstream-sync-marker` 更新为 `286e669c24e69b31c459a09a85a65ea8929ed969`。Delegation Decision：实际上游增量仅为文档/日志冲突，safe_skip_reason=低风险文档同步且验收清楚，主线程直接合并并运行本地验证。
 
 [2026-06-24T10:39:29+0800] [codex] [done:review-merge-enterprise-mount-platform] 审查并合并 CNB 分支 `codex/enterprise-mount-platform`（未发现可访问的 CNB pull 页面，按远端待合并分支裁决）。结论 PASS：变更仅涉及 `README.zh-CN.md`、`docs/ENTERPRISE_MOUNTS.md`、`progress.md`，属于低风险文档设计；内容明确 Volt GUI 平台只承载通用桌面挂载生命周期、Windows SMB 适配、Workbench/tray 状态和安全边界，Supauth/QNAP/组织策略留给下游产品，未引入 runtime 代码、secrets、部署或框架变更。Delegation Decision：safe_skip_reason=低风险文档 PR，验收清楚且不改代码；主进程直接审查。验证：基于干净 `origin/main` 的隔离 worktree `git merge --ff-only cnb/codex/enterprise-mount-platform` 成功，`git diff --check HEAD^..HEAD` 通过，README 链接入口和文档关键边界文本检查通过。合并方式：fast-forward `48bfb8c9..34bffd71` 后追加本审查记录提交。
+
+[2026-06-24T10:05:00+0800] [codex] [done:supauth-qnap-mount-integration-design] 新增暗涌 Supauth + QNAP 网络盘集成设计文档，明确员工使用 Supauth，管理员保留 Supauth 或 QNAP 本地账号，QNAP/SMB 继续兜底权限，暗涌负责策略拉取、自动挂载和审计。safe_skip_reason：文档级 PR，不改运行时代码；验证：Markdown 链接入口检查、`git diff --check`。
 
 [2026-06-24T10:05:00+0800] [codex] [done:enterprise-mount-platform-design] 新增企业资源挂载平台设计文档，明确 Volt GUI 只承载通用桌面挂载生命周期、Windows SMB 适配、托盘/Workbench 状态和安全边界；Supauth、QNAP、组织策略等业务集成留给下游产品。safe_skip_reason：文档级 PR，不改运行时代码；验证：Markdown 链接入口检查、`git diff --check`。
 

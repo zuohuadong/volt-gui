@@ -1523,6 +1523,9 @@ export function useController() {
 
   const activateTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath = ""): Promise<TabMeta> => {
     const meta = await app.ActivateTopic(scope, workspaceRoot, topicId, sessionPath);
+    // Save previous tab's items so the new tab can use them as a placeholder
+    // during loading, avoiding a blank/Welcome flash before history arrives.
+    const prevItems = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current)?.items : undefined;
     for (const id of Array.from(statesRef.current.keys())) {
       if (id !== meta.id) statesRef.current.delete(id);
     }
@@ -1530,9 +1533,18 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
+    // Transfer previous items as placeholder so reset (called sync inside
+    // loadSessionDataForTab) preserves them instead of clearing to [].
+    if (prevItems?.length) {
+      const s = statesRef.current.get(meta.id);
+      if (s && !s.items.length) {
+        statesRef.current.set(meta.id, { ...s, items: prevItems });
+        bump();
+      }
+    }
     void loadSessionDataForTab(meta.id, true, "open-topic");
     return meta;
-  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.

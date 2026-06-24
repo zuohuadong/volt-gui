@@ -77,6 +77,22 @@ export function projectTreeTopicOpenRequest(node: ProjectNode): ProjectTreeTopic
   };
 }
 
+type ProjectTreeTopicClickTarget = {
+  rowKey: string;
+  canRename: boolean;
+};
+
+type ProjectTreePendingTopicOpen = ProjectTreeTopicClickTarget & {
+  timer: ReturnType<typeof setTimeout>;
+};
+
+export function projectTreeShouldSuppressOpenForRename(
+  pending: ProjectTreeTopicClickTarget | null,
+  next: ProjectTreeTopicClickTarget,
+): boolean {
+  return Boolean(pending && pending.rowKey === next.rowKey && pending.canRename && next.canRename);
+}
+
 export type ProjectTreeFolderDisclosure = {
   canExpand: boolean;
   isOpen: boolean;
@@ -488,10 +504,10 @@ export function ProjectTree({
   const visibleTopicsCollectorRef = useRef<TopicShortcutEntry[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const creatingRef = useRef(false);
-  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);
   useEffect(() => {
     return () => {
-      if (clickTimerRef.current !== null) clearTimeout(clickTimerRef.current);
+      if (clickTimerRef.current !== null) clearTimeout(clickTimerRef.current.timer);
     };
   }, []);
   const manuallyCollapsedRef = useRef(manuallyCollapsed);
@@ -1086,15 +1102,19 @@ export function ProjectTree({
             title={title}
             style={{ paddingLeft: 14 + depth * 16 }}
             onClick={() => {
-              if (clickTimerRef.current !== null) {
-                clearTimeout(clickTimerRef.current);
+              if (!openRequest) return;
+              const nextClick = { rowKey: key, canRename: !isSessionNode };
+              const pending = clickTimerRef.current;
+              if (pending !== null) {
+                clearTimeout(pending.timer);
                 clickTimerRef.current = null;
-                return;
+                if (projectTreeShouldSuppressOpenForRename(pending, nextClick)) return;
               }
-              clickTimerRef.current = setTimeout(() => {
-                clickTimerRef.current = null;
-                if (openRequest) onOpenTopic(openRequest.scope, openRequest.workspaceRoot, openRequest.topicId, openRequest.sessionPath);
+              const timer = setTimeout(() => {
+                if (clickTimerRef.current?.timer === timer) clickTimerRef.current = null;
+                onOpenTopic(openRequest.scope, openRequest.workspaceRoot, openRequest.topicId, openRequest.sessionPath);
               }, 200);
+              clickTimerRef.current = { ...nextClick, timer };
             }}
             onKeyDown={(event) => {
               if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
@@ -1104,8 +1124,8 @@ export function ProjectTree({
             onDoubleClick={(event) => {
               if (isSessionNode) return;
               event.stopPropagation();
-              if (clickTimerRef.current !== null) {
-                clearTimeout(clickTimerRef.current);
+              if (clickTimerRef.current !== null && clickTimerRef.current.rowKey === key) {
+                clearTimeout(clickTimerRef.current.timer);
                 clickTimerRef.current = null;
               }
               startRenameTopic(node, label);

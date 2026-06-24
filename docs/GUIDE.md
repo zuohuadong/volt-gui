@@ -356,10 +356,35 @@ Agent-initiated `remember` and `forget` calls always ask for fresh approval and
 show a compact preview of the saved or archived memory before they run.
 Retrieval keeps the top BM25 result while trimming weak common-word matches, and
 0-result responses suggest narrower, more distinctive follow-up searches.
-Memory v5 is enabled by default. It records local execution traces and compiler
-state under Reasonix home, then compiles the next user turn into a compact
-execution contract only when prior outcomes produce actionable constraints;
-disable it from Settings → General.
+Memory v5 is enabled by default across the CLI/TUI, `reasonix serve`, and the
+desktop app because they all share the same local controller. It records local,
+project-scoped execution traces and compiler state under Reasonix home, then
+compiles the next user turn into a compact execution contract only when prior
+outcomes produce actionable constraints. Early turns may only write traces and
+inject nothing. Memory v5 never bypasses memory approvals, never uploads memory
+content, and never mutates the cache-stable system prompt, provider prefix, or
+tool schemas.
+
+Desktop users can toggle future turns from Settings → General → Memory v5.
+Settings → Updates → Share aggregate quality metrics controls the optional
+aggregate upload. When enabled, that upload may include only anonymous
+count/size buckets such as injection on/off, compiled-token bucket, IR-overhead
+bucket, memory-reference count, constraint/risk/step counts, and memory-graph
+size buckets. It never includes memory text, prompts, tool outputs, file paths,
+IDs, keys, base URLs, or file contents.
+
+CLI/TUI and `reasonix serve` use the same user/global config. To disable Memory
+v5 without the desktop settings UI, edit the user config under Reasonix home:
+
+```toml
+[agent]
+memory_compiler = { enabled = false }
+```
+
+Project `reasonix.toml` files cannot override this user/global setting. The CLI
+can use Memory v5 for local turns, but it does not run the desktop aggregate
+metrics upload pipeline, and `reasonix run --metrics` does not include Memory v5
+fields.
 For implementation details, see
 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md).
 

@@ -643,22 +643,28 @@ func (a *App) domReady(_ context.Context) {
 
 // Submit runs raw user input as a turn; slash commands and @-references are
 // resolved by the controller. Output arrives asynchronously on eventChannel.
-func (a *App) Submit(input string) {
-	a.SubmitToTab("", input)
+func (a *App) Submit(input string) error {
+	return a.SubmitToTab("", input)
 }
 
-func (a *App) SubmitToTab(tabID, input string) {
-	if a.tabReadOnly(tabID) {
-		return
+func (a *App) SubmitToTab(tabID, input string) error {
+	tab := a.tabByID(tabID)
+	if tab != nil && tab.ReadOnly {
+		return readOnlyChannelErr()
 	}
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
 		a.runEffortCommandForTab(tabID, trimmed)
-		return
+		return nil
 	}
-	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
-		ctrl.SubmitDisplay(input, input)
+	if tab == nil || tab.Ctrl == nil {
+		return workspaceNotReadyErr(tab)
 	}
+	if tab.Ctrl.Running() {
+		return control.ErrTurnRunning
+	}
+	tab.Ctrl.SubmitDisplay(input, input)
+	return nil
 }
 
 func (a *App) submitUserTurnToTab(tabID, input string) bool {
@@ -690,20 +696,25 @@ func (a *App) RunShellForTab(tabID, command string) {
 
 // SubmitDisplay runs input as a turn while recording a shorter UI-only display
 // string for the saved desktop transcript. The model still receives input.
-func (a *App) SubmitDisplay(display, input string) {
-	a.SubmitDisplayToTab("", display, input)
+func (a *App) SubmitDisplay(display, input string) error {
+	return a.SubmitDisplayToTab("", display, input)
 }
 
-func (a *App) SubmitDisplayToTab(tabID, display, input string) {
-	if a.tabReadOnly(tabID) {
-		return
+func (a *App) SubmitDisplayToTab(tabID, display, input string) error {
+	tab := a.tabByID(tabID)
+	if tab != nil && tab.ReadOnly {
+		return readOnlyChannelErr()
 	}
-	ctrl := a.ctrlByTabID(tabID)
-	if ctrl == nil {
-		return
+	if tab == nil || tab.Ctrl == nil {
+		return workspaceNotReadyErr(tab)
+	}
+	ctrl := tab.Ctrl
+	if ctrl.Running() {
+		return control.ErrTurnRunning
 	}
 	a.bindControllerDisplayRecorder(ctrl)
 	ctrl.SubmitDisplay(display, input)
+	return nil
 }
 
 func (a *App) bindControllerDisplayRecorder(ctrl control.SessionAPI) {

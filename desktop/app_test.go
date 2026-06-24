@@ -4083,6 +4083,9 @@ func TestSessionActionsWithoutControllerReturnError(t *testing.T) {
 	if err := app.ClearSession(); err == nil {
 		t.Error("ClearSession with no controller must surface an error")
 	}
+	if err := app.SubmitDisplayToTab("", "hello", "hello"); err == nil {
+		t.Error("SubmitDisplayToTab with no controller must surface an error")
+	}
 
 	app = &App{
 		tabs:        map[string]*WorkspaceTab{"t1": {ID: "t1", StartupErr: "boot exploded"}},
@@ -4092,6 +4095,29 @@ func TestSessionActionsWithoutControllerReturnError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "boot exploded") {
 		t.Errorf("error should carry the tab's startup failure, got %v", err)
 	}
+	err = app.SubmitDisplayToTab("t1", "hello", "hello")
+	if err == nil || !strings.Contains(err.Error(), "boot exploded") {
+		t.Errorf("submit error should carry the tab's startup failure, got %v", err)
+	}
+}
+
+func TestSubmitDisplayToTabReturnsErrorWhenTurnRunning(t *testing.T) {
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: runner})
+	defer ctrl.Close()
+
+	app := &App{
+		tabs:        map[string]*WorkspaceTab{"t1": {ID: "t1", Ctrl: ctrl, Ready: true}},
+		activeTabID: "t1",
+	}
+
+	ctrl.Send("first")
+	<-runner.started
+	err := app.SubmitDisplayToTab("t1", "second", "second")
+	if !errors.Is(err, control.ErrTurnRunning) {
+		t.Fatalf("SubmitDisplayToTab while running error = %v, want ErrTurnRunning", err)
+	}
+	close(runner.release)
 }
 
 // --- Prompt history scanning tests ------------------------------------------

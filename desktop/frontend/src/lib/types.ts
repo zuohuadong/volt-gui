@@ -7,14 +7,28 @@ export interface TabMeta {
   scope: "global" | "project";
   workspaceRoot: string;
   workspaceName: string;
+  workspacePath?: string;
+  gitBranch?: string;
   topicId: string;
   topicTitle: string;
+  sessionPath?: string;
+  readOnly?: boolean;
   projectColor?: string;
   label?: string;
   ready?: boolean;
   active: boolean;
   running: boolean;
+  pendingPrompt?: boolean;
+  backgroundJobs?: number;
+  cancelRequested?: boolean;
+  cancellable?: boolean;
   mode?: BackendMode;
+  collaborationMode?: string;
+  toolApprovalMode?: string;
+  tokenMode?: string;
+  goal?: string;
+  goalStatus?: string;
+  startupErr?: string;
   cwd?: string;
 }
 
@@ -94,6 +108,8 @@ export interface ServerView {
   prompts: number;
   resources: number;
   error?: string;
+  authStatus?: string;
+  authConfigured?: boolean;
 }
 
 export interface SkillView {
@@ -112,6 +128,41 @@ export interface SkillRootView {
   configured: boolean;
   skills: number;
   warning?: string;
+}
+
+export interface AgentView {
+  id: string;
+  name: string;
+  role: string;
+  runs: number;
+  status: string;
+  desc: string;
+  avatar?: string;
+  vibe?: string;
+  provider?: string;
+  model?: string;
+  tools: string[];
+  skills: string[];
+  coreFiles: string[];
+  builtIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+}
+
+export interface AgentInput {
+  id?: string;
+  name: string;
+  role?: string;
+  status?: string;
+  desc: string;
+  avatar?: string;
+  vibe?: string;
+  provider?: string;
+  model?: string;
+  tools?: string[];
+  skills?: string[];
+  coreFiles?: string[];
 }
 
 export interface CapabilitiesView {
@@ -139,6 +190,25 @@ export interface WorkbenchPlugin {
   capabilities: string[];
   providerIds?: string[];
   config?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface WorkbenchPluginInput {
+  id: string;
+  name: string;
+  kind: string;
+  entry: string;
+  version: string;
+  capabilities: string[];
+  providerIds?: string[];
+  config?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface SkillPackageInput {
+  name: string;
+  description: string;
+  runAs: string;
   enabled: boolean;
 }
 
@@ -349,6 +419,7 @@ export interface WireEvent {
   kind: WireEventKind;
   text?: string;
   reasoning?: string;
+  err?: string;
   level?: "info" | "warn";
   tabId?: string;
   tool?: {
@@ -397,7 +468,6 @@ export interface WireEvent {
     summary?: string;
     archive?: string;
   };
-  err?: string;
   retryAttempt?: number;
   retryMax?: number;
   sessionHitTokens?: number;
@@ -413,6 +483,7 @@ export interface TranscriptItem {
   body: string;
   title?: string;
   pending?: boolean;
+  createdAtMs?: number;
   readOnly?: boolean;
   parentId?: string;
 }

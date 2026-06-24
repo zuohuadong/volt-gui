@@ -2167,7 +2167,8 @@ export default function App() {
     } else {
       await openProjectTab(workspaceRoot, topicId);
     }
-    await refreshTabMetas();
+    // Fire refreshTabMetas in background — transcript data loads independently.
+    void refreshTabMetas();
     setTabRevealSignal((signal) => signal + 1);
     setTranscriptRevealSignal((signal) => signal + 1);
   }, [activateTopic, closeTransientOverlays, openGlobalTab, openProjectTab, openTopicSession, refreshTabMetas, singleSurfaceLayout]);

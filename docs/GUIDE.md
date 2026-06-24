@@ -55,6 +55,8 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 max_steps = 0                    # user/global only; executor tool-call rounds; 0 = no limit
 planner_max_steps = 0            # user/global only; planner read-only tool-call rounds; 0 = no limit
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
+# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
+#                                                # does not unlock blocked tools or unsafe bash
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
@@ -99,6 +101,15 @@ command = "reasonix-plugin-example"
 ```
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
+
+`[agent].plan_mode_allowed_tools` is an extra read-only declaration for custom or
+external tools Reasonix cannot classify itself — it is also the escape valve for
+MCP/plugin tools whose read-only flag comes from an untrusted server
+`readOnlyHint`, which plan mode does not trust and so fails closed on until
+declared here (first-party `ReadOnlyToolNames` overrides and built-ins stay
+trusted). It never unlocks known blocked plan-mode tools such as `bash`, `task`,
+writers, installers, or memory mutation tools, and it never bypasses bash's
+plan-mode safety checks.
 
 ## Serve web frontend
 
@@ -451,6 +462,15 @@ do not override `max_steps` or `planner_max_steps`.
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only
 specific skills such as `review` or `security_review`.
+
+Use `read_only_task` when planning needs isolated, deeper research without
+granting write-capable delegation. Use `read_only_skill` when the same need is
+best expressed through an existing skill. Both run ephemeral read-only
+subagents with only read-only research tools plus safe foreground bash, return
+only the final answer, and do not create resumable subagent transcripts. In
+token economy mode, connect only this narrow surface with
+`connect_tool_source(source="read_only_skill")`; the full `skills` source still
+enables writer-capable skill tools and remains blocked in plan mode.
 
 For interactive frontends, plan mode is manual by default. Set
 `agent.auto_plan = "on"` to make complex-looking tasks enter plan mode

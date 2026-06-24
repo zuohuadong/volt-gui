@@ -45,15 +45,27 @@
 
 ## 核心特性
 
-- **多模型支持。** 通义千问、DeepSeek、智谱 GLM、Claude、MiMo、Ollama、vLLM —— 任何 OpenAI 兼容或 Anthropic 端点，一个 `[[providers]]` 配置项即可，无需改代码。双模型协同（执行器 + 规划器）一行配置开启。
-- **离线 / 内网就绪。** 无 npm、无自动下载、无遥测回传，完全在防火墙内运行。浏览器自动化直接用 Windows 10 自带的 Edge。
-- **打包即部署。** 构建时将 API 地址和 Key 嵌入二进制或配置文件 —— 分发一个开箱即用的包给每位开发者，无需配置向导。
-- **Windows 10 优先。** Microsoft Edge（Chromium 内核）是 Win10 自带 —— `browser_navigate` 零配置可用。Windows 路径检测、RDP/VDI 友好。macOS 和 Linux 同样支持。
-- **配置驱动。** Provider、工具、权限、插件全部在 `voltui.toml` 中声明，无硬编码模型。一个文件管一个团队，直接提交到仓库。
-- **插件驱动 (MCP)。** 外部工具通过 stdio JSON-RPC 或 HTTP 运行。兼容 MCP 生态 —— 放一个 `.mcp.json` 即可。
-- **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索 (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
-- **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。详见 [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md)。
-- **技能与钩子。** Claude-Code 风格的技能 (`.voltui/skills/`) 和钩子 (`PreToolUse`/`PostToolUse`/`Stop`)，用于工作流自动化。
+- **多模型支持。** DeepSeek、通义千问、智谱 GLM、Claude、MiMo、Ollama、vLLM —— 任何
+  OpenAI 兼容或 Anthropic 端点，一个 `[[providers]]` 配置项即可，无需改代码。双模型协同
+  （执行器 + 规划器）一行配置开启。
+- **离线 / 内网就绪。** 无 npm、无自动下载、无遥测回传，完全在防火墙内运行。浏览器自动化
+  直接用 Windows 10 自带的 Edge。
+- **打包即部署。** 构建时将 API 地址和 Key 嵌入二进制或配置文件 —— 分发一个开箱即用的包给
+  每位开发者，无需配置向导。
+- **Windows 10 优先。** Microsoft Edge（Chromium 内核）是 Win10 自带 —— `browser_navigate`
+  零配置可用。Windows 路径检测、RDP/VDI 友好。macOS 和 Linux 同样支持。
+- **配置驱动。** Provider、工具、权限、插件全部在 `voltui.toml` 中声明，无硬编码模型。
+  一个文件管一个团队，直接提交到仓库。
+- **插件驱动 (MCP)。** 外部工具通过 stdio JSON-RPC 或 HTTP 运行。兼容 MCP 生态 ——
+  放一个 `.mcp.json` 即可。
+- **企业资源挂载规划。** 桌面端企业网络盘能力按平台/产品边界拆分，通用挂载生命周期留在
+  Volt GUI，业务策略由下游产品提供。详见 [docs/ENTERPRISE_MOUNTS.md](docs/ENTERPRISE_MOUNTS.md)。
+- **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索
+  (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
+- **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。
+  详见 [docs/CHECKPOINTS.md](docs/CHECKPOINTS.md)。
+- **技能与钩子。** Claude-Code 风格的技能 (`.voltui/skills/`) 和钩子
+  (`PreToolUse`/`PostToolUse`/`Stop`)，用于工作流自动化。
 - **规划模式。** 基于证据的步骤签署 (`complete_step`) —— 智能体提议，你审批。
 - **记忆。** `VOLTUI.md` 层级 + 自动记忆存储，折叠进缓存稳定前缀，跨会话保持上下文。
 - **单一静态二进制。** `CGO_ENABLED=0` —— 一个文件、无运行时依赖、交叉编译 6 个平台。

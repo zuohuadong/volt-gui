@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/controlplane"
+	controlgraph "reasonix/internal/controlplane/control_graph"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 )
@@ -27,7 +29,7 @@ const (
 	learningTracesFile = "learning_traces.jsonl"
 	debugTracesFile    = "debug_traces.jsonl"
 	debugTraceEnv      = "REASONIX_MEMORY_COMPILER_DEBUG_TRACE"
-	version            = "v5.5"
+	version            = "v5.6"
 
 	explorationRatePercent    = 10
 	minExplorationRatePercent = 3
@@ -225,6 +227,8 @@ type ControlPolicy struct {
 	Controller             string        `json:"controller"`
 	ExplorationRatePercent int           `json:"exploration_rate_percent"`
 	Gain                   float64       `json:"gain"`
+	ConsensusScore         float64       `json:"consensus_score,omitempty"`
+	Variance               float64       `json:"variance,omitempty"`
 	MutationCooldown       time.Duration `json:"-"`
 	MutationCooldownMs     int64         `json:"mutation_cooldown_ms"`
 	SemanticShift          []string      `json:"semantic_shift,omitempty"`
@@ -237,6 +241,8 @@ type ControlReport struct {
 	Controller             string    `json:"controller"`
 	ExplorationRatePercent int       `json:"exploration_rate_percent"`
 	Gain                   float64   `json:"gain"`
+	ConsensusScore         float64   `json:"consensus_score,omitempty"`
+	Variance               float64   `json:"variance,omitempty"`
 	MutationCooldownMs     int64     `json:"mutation_cooldown_ms"`
 	SemanticShift          []string  `json:"semantic_shift,omitempty"`
 	Reasons                []string  `json:"reasons,omitempty"`
@@ -1170,37 +1176,17 @@ func equilibriumExplorationRatePercent(st state, drift DriftReport) int {
 }
 
 func controlPolicyForState(st state, drift DriftReport) ControlPolicy {
-	semanticShift := semanticShiftSignals(st)
+	decision := controlplane.Decide(controlPlaneSystemState(st, drift))
 	policy := ControlPolicy{
 		Version:                version,
-		Mode:                   "balanced",
-		Controller:             "meta",
-		ExplorationRatePercent: explorationRatePercent,
-		Gain:                   1.0,
-		Reasons:                []string{"balanced control policy"},
-	}
-	switch {
-	case len(semanticShift) > 0:
-		policy.Mode = "stabilize"
-		policy.ExplorationRatePercent = minExplorationRatePercent
-		policy.Gain = 0.45
-		policy.SemanticShift = semanticShift
-		policy.Reasons = []string{"semantic drift monitor requested stabilization"}
-	case equilibriumOscillating(st):
-		policy.Mode = "dampen"
-		policy.ExplorationRatePercent = minExplorationRatePercent
-		policy.Gain = 0.55
-		policy.Reasons = []string{"strategy feedback oscillation damped by meta controller"}
-	case equilibriumUnstable(st, drift):
-		policy.Mode = "stabilize"
-		policy.ExplorationRatePercent = minExplorationRatePercent
-		policy.Gain = 0.70
-		policy.Reasons = []string{"drift or failed learning requested stabilization"}
-	case equilibriumStable(st, drift):
-		policy.Mode = "explore"
-		policy.ExplorationRatePercent = maxExplorationRatePercent
-		policy.Gain = 1.15
-		policy.Reasons = []string{"stable recent learning permits controlled exploration"}
+		Mode:                   string(decision.Action),
+		Controller:             decision.Controller,
+		ExplorationRatePercent: decision.ExplorationRatePercent,
+		Gain:                   decision.Gain,
+		ConsensusScore:         decision.ConsensusScore,
+		Variance:               decision.Variance,
+		SemanticShift:          append([]string(nil), decision.SemanticShift...),
+		Reasons:                append(append([]string(nil), decision.Signals...), decision.Reasons...),
 	}
 	policy.ExplorationRatePercent = clampExplorationRatePercent(policy.ExplorationRatePercent)
 	policy.Gain = roundScore(policy.Gain)
@@ -1209,6 +1195,45 @@ func controlPolicyForState(st state, drift DriftReport) ControlPolicy {
 	policy.SemanticShift = limitStrings(canonicalStrings(policy.SemanticShift), 5)
 	policy.Reasons = limitStrings(canonicalStrings(policy.Reasons), 5)
 	return policy
+}
+
+func controlPlaneSystemState(st state, drift DriftReport) controlgraph.SystemState {
+	recent := recentLearnings(st.Learnings, 6)
+	cp := controlgraph.SystemState{
+		Stable:        equilibriumStable(st, drift),
+		Unstable:      equilibriumUnstable(st, drift),
+		Oscillating:   equilibriumOscillating(st),
+		HasDrift:      hasDrift(drift),
+		SemanticShift: semanticShiftSignals(st),
+	}
+	for _, learning := range recent {
+		if len(learning.GoodPatterns) > 0 {
+			cp.RecentSuccesses++
+		}
+		if len(learning.BadStrategies) > 0 {
+			cp.RecentFailures++
+		}
+		cp.MemoryNoisePatterns += len(learning.MemoryNoisePatterns)
+		cp.CompilerImprovements += len(learning.CompilerImprovements)
+		for _, finding := range learning.CausalFindings {
+			lower := strings.ToLower(finding)
+			if strings.Contains(lower, "semantic variation") {
+				cp.RecentSoftDrifts++
+			}
+			if strings.Contains(lower, "semantic drift") {
+				cp.RecentHardDrifts++
+			}
+			if strings.Contains(lower, "memory ") && strings.Contains(lower, "failed outcome") {
+				cp.MemoryFailureAttributions++
+			}
+		}
+	}
+	for _, mutation := range st.Mutations {
+		if mutation.Applied && mutation.Status != "accepted" && mutation.Status != "rejected" {
+			cp.MutationPressure++
+		}
+	}
+	return cp
 }
 
 func controlMutationCooldown(gain float64) time.Duration {
@@ -1981,12 +2006,12 @@ func defaultControlPolicy() ControlPolicy {
 	policy := ControlPolicy{
 		Version:                version,
 		Mode:                   "balanced",
-		Controller:             "meta",
+		Controller:             "distributed-control-plane",
 		ExplorationRatePercent: explorationRatePercent,
 		Gain:                   1.0,
 		MutationCooldown:       mutationFeedbackCooldown,
 		MutationCooldownMs:     mutationFeedbackCooldown.Milliseconds(),
-		Reasons:                []string{"balanced control policy"},
+		Reasons:                []string{"balanced distributed control policy"},
 	}
 	return policy
 }
@@ -2030,6 +2055,8 @@ func controlReportForTrace(traceID string, policy ControlPolicy, now time.Time) 
 		Controller:             policy.Controller,
 		ExplorationRatePercent: policy.ExplorationRatePercent,
 		Gain:                   policy.Gain,
+		ConsensusScore:         policy.ConsensusScore,
+		Variance:               policy.Variance,
 		MutationCooldownMs:     policy.MutationCooldownMs,
 		SemanticShift:          append([]string(nil), policy.SemanticShift...),
 		Reasons:                append([]string(nil), policy.Reasons...),

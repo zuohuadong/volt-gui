@@ -323,3 +323,78 @@ func TestCausalSignalDynamicsKeepsSharpHierarchy(t *testing.T) {
 		t.Fatalf("sharp hierarchy should not request amplification: %+v", dynamics)
 	}
 }
+
+func TestObserverLoopExcludesCurrentTrace(t *testing.T) {
+	now := time.Now().UTC()
+	relations := []string{"constrained", "influenced", "supported_outcome", "weakened_outcome"}
+	edges := []CausalEdge{}
+	for i := 0; i < 4; i++ {
+		for _, relation := range relations {
+			edges = append(edges, CausalEdge{From: fmt.Sprintf("%s-%d", relation, i), To: "decision:current", Relation: relation})
+		}
+	}
+	report := buildCompressionReport(state{}, ExecutionTrace{
+		ID:          "trace-current-only",
+		Outcome:     "partial_success",
+		CausalEdges: edges,
+		StartedAt:   now,
+		CompletedAt: now.Add(time.Second),
+	}, SystemLearning{}, defaultControlPolicy(), now)
+	if !report.Dynamics.OverRegularized {
+		t.Fatalf("test setup expected current dynamics to be over-regularized: %+v", report.Dynamics)
+	}
+	if !report.ObserverLoop.ReadOnlyProjection || !report.ObserverLoop.CurrentTraceExcluded {
+		t.Fatalf("observer loop is not read-only/current-excluding: %+v", report.ObserverLoop)
+	}
+	if report.ObserverLoop.LaggedSamples != 0 || report.ObserverLoop.FeedbackEligible || len(report.ObserverLoop.FeedbackSignals) != 0 {
+		t.Fatalf("current trace leaked into observer feedback: %+v", report.ObserverLoop)
+	}
+}
+
+func TestObserverLoopUsesLaggedFeedbackOnly(t *testing.T) {
+	now := time.Now().UTC()
+	st := state{CompressionReports: []CompressionReport{{
+		TraceID: "previous-flat",
+		Dynamics: CausalSignalDynamics{
+			OverRegularized:  true,
+			AmplifiedSignals: []string{"supported_outcome"},
+			EntropySpikes:    []string{"rare_relation"},
+		},
+	}}}
+	report := buildCompressionReport(st, ExecutionTrace{
+		ID:          "trace-next",
+		Outcome:     "success",
+		CausalEdges: []CausalEdge{{From: "strong", To: "outcome:trace-next", Relation: "supported_outcome"}},
+		StartedAt:   now,
+		CompletedAt: now.Add(time.Second),
+	}, SystemLearning{}, defaultControlPolicy(), now)
+	if report.ObserverLoop.LaggedSamples != 1 || !report.ObserverLoop.FeedbackEligible {
+		t.Fatalf("lagged feedback was not enabled: %+v", report.ObserverLoop)
+	}
+	if !containsString(report.ObserverLoop.FeedbackSignals, "supported_outcome") || !containsString(report.ObserverLoop.FeedbackSignals, "rare_relation") {
+		t.Fatalf("lagged feedback signals missing: %+v", report.ObserverLoop.FeedbackSignals)
+	}
+	if report.ObserverLoop.Damping.State != "armed" {
+		t.Fatalf("damping state = %q, want armed", report.ObserverLoop.Damping.State)
+	}
+}
+
+func TestObserverLoopDampsOscillatingFeedback(t *testing.T) {
+	st := state{CompressionReports: []CompressionReport{
+		{TraceID: "r1", Dynamics: CausalSignalDynamics{OverRegularized: true, AmplifiedSignals: []string{"supported_outcome"}}},
+		{TraceID: "r2", Dynamics: CausalSignalDynamics{OverRegularized: false}},
+		{TraceID: "r3", Dynamics: CausalSignalDynamics{OverRegularized: true, EntropySpikes: []string{"rare_relation"}}},
+		{TraceID: "r4", Dynamics: CausalSignalDynamics{OverRegularized: false}},
+		{TraceID: "r5", Dynamics: CausalSignalDynamics{OverRegularized: true, AmplifiedSignals: []string{"weakened_outcome"}}},
+	}}
+	report := observerLoopReport(st.CompressionReports)
+	if report.Damping.State != "damped" {
+		t.Fatalf("damping state = %q, want damped: %+v", report.Damping.State, report)
+	}
+	if report.FeedbackEligible || len(report.FeedbackSignals) != 0 {
+		t.Fatalf("damped observer loop still exposes feedback: %+v", report)
+	}
+	if report.Damping.OscillationIndex < 0.5 || len(report.Damping.SuppressedSignals) == 0 {
+		t.Fatalf("missing oscillation damping details: %+v", report.Damping)
+	}
+}

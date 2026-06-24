@@ -29,6 +29,7 @@ type CompressionReport struct {
 	Alignment        CrossGraphAlignment     `json:"alignment,omitempty"`
 	BiasCorrection   CompressionBiasReport   `json:"bias_correction,omitempty"`
 	Dynamics         CausalSignalDynamics    `json:"dynamics,omitempty"`
+	ObserverLoop     ObserverLoopReport      `json:"observer_loop,omitempty"`
 	CompressionRatio float64                 `json:"compression_ratio,omitempty"`
 	CreatedAt        time.Time               `json:"created_at,omitempty"`
 }
@@ -109,6 +110,23 @@ type CausalSignalDynamics struct {
 	OverRegularized   bool     `json:"over_regularized,omitempty"`
 }
 
+type ObserverLoopReport struct {
+	Timeline             string                `json:"timeline,omitempty"`
+	ReadOnlyProjection   bool                  `json:"read_only_projection,omitempty"`
+	CurrentTraceExcluded bool                  `json:"current_trace_excluded,omitempty"`
+	LaggedSamples        int                   `json:"lagged_samples,omitempty"`
+	FeedbackEligible     bool                  `json:"feedback_eligible,omitempty"`
+	FeedbackSignals      []string              `json:"feedback_signals,omitempty"`
+	Damping              GlobalDampingEnvelope `json:"damping,omitempty"`
+}
+
+type GlobalDampingEnvelope struct {
+	State             string   `json:"state,omitempty"`
+	Factor            float64  `json:"factor,omitempty"`
+	OscillationIndex  float64  `json:"oscillation_index,omitempty"`
+	SuppressedSignals []string `json:"suppressed_signals,omitempty"`
+}
+
 func applyCausalCompression(st state, tr ExecutionTrace, learning SystemLearning, policy ControlPolicy, now time.Time) (state, ExecutionTrace) {
 	report := buildCompressionReport(st, tr, learning, policy, now)
 	tr.Compression = &report
@@ -128,6 +146,7 @@ func buildCompressionReport(st state, tr ExecutionTrace, learning SystemLearning
 	memory := compressMemoryGraph(st, now)
 	alignment := crossGraphAlignment(causal, memory)
 	dynamics := causalSignalDynamics(causal, alignment)
+	observer := observerLoopReport(st.CompressionReports)
 	bias := CompressionBiasReport{
 		AnchorBudget:      maxCompressedCausalAnchors,
 		LongTailRetained:  len(causal.LongTailEdges),
@@ -151,6 +170,7 @@ func buildCompressionReport(st state, tr ExecutionTrace, learning SystemLearning
 		Alignment:        alignment,
 		BiasCorrection:   bias,
 		Dynamics:         dynamics,
+		ObserverLoop:     observer,
 		CompressionRatio: ratio,
 		CreatedAt:        now.UTC(),
 	}
@@ -519,6 +539,8 @@ func cloneCompressionReport(in *CompressionReport) *CompressionReport {
 	out.BiasCorrection.LongTailRelations = append([]string(nil), in.BiasCorrection.LongTailRelations...)
 	out.Dynamics.AmplifiedSignals = append([]string(nil), in.Dynamics.AmplifiedSignals...)
 	out.Dynamics.EntropySpikes = append([]string(nil), in.Dynamics.EntropySpikes...)
+	out.ObserverLoop.FeedbackSignals = append([]string(nil), in.ObserverLoop.FeedbackSignals...)
+	out.ObserverLoop.Damping.SuppressedSignals = append([]string(nil), in.ObserverLoop.Damping.SuppressedSignals...)
 	return &out
 }
 
@@ -876,6 +898,86 @@ func amplitudeBand(gradient float64) string {
 	default:
 		return "none"
 	}
+}
+
+func observerLoopReport(history []CompressionReport) ObserverLoopReport {
+	samples := laggedDynamicsSamples(history, maxCompressionStrings)
+	feedbackSignals := laggedFeedbackSignals(samples)
+	damping := globalDampingEnvelope(samples, feedbackSignals)
+	report := ObserverLoopReport{
+		Timeline:             "lagged",
+		ReadOnlyProjection:   true,
+		CurrentTraceExcluded: true,
+		LaggedSamples:        len(samples),
+		FeedbackSignals:      feedbackSignals,
+		Damping:              damping,
+	}
+	report.FeedbackEligible = len(feedbackSignals) > 0 && damping.State != "damped"
+	if damping.State == "damped" {
+		report.FeedbackSignals = nil
+	}
+	return report
+}
+
+func laggedDynamicsSamples(history []CompressionReport, limit int) []CausalSignalDynamics {
+	if limit <= 0 {
+		return nil
+	}
+	start := 0
+	if len(history) > limit {
+		start = len(history) - limit
+	}
+	out := make([]CausalSignalDynamics, 0, len(history)-start)
+	for _, report := range history[start:] {
+		out = append(out, report.Dynamics)
+	}
+	return out
+}
+
+func laggedFeedbackSignals(samples []CausalSignalDynamics) []string {
+	if len(samples) == 0 {
+		return nil
+	}
+	last := samples[len(samples)-1]
+	signals := []string{}
+	if last.OverRegularized {
+		signals = append(signals, last.AmplifiedSignals...)
+		signals = append(signals, last.EntropySpikes...)
+	}
+	return limitStrings(canonicalStrings(signals), maxCompressionStrings)
+}
+
+func globalDampingEnvelope(samples []CausalSignalDynamics, feedbackSignals []string) GlobalDampingEnvelope {
+	oscillation := observerOscillationIndex(samples)
+	state := "passive"
+	factor := 1.0
+	suppressed := []string(nil)
+	if len(samples) >= 4 && oscillation >= 0.5 {
+		state = "damped"
+		factor = 0.5
+		suppressed = append([]string(nil), feedbackSignals...)
+	} else if len(feedbackSignals) > 0 {
+		state = "armed"
+	}
+	return GlobalDampingEnvelope{
+		State:             state,
+		Factor:            factor,
+		OscillationIndex:  oscillation,
+		SuppressedSignals: suppressed,
+	}
+}
+
+func observerOscillationIndex(samples []CausalSignalDynamics) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+	transitions := 0
+	for i := 1; i < len(samples); i++ {
+		if samples[i-1].OverRegularized != samples[i].OverRegularized {
+			transitions++
+		}
+	}
+	return roundScore(float64(transitions) / float64(len(samples)-1))
 }
 
 func memoryEdgePriority(edge MemoryEdge) int {

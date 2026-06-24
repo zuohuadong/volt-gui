@@ -355,16 +355,6 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
        label = ?7,
        error_type = ?8,
        top_frame = ?9,
-       severity = CASE
-         WHEN ?10 = 'low'
-           AND ?2 = 'crash'
-           AND ?6 = 'frontend.global'
-           AND ?7 = 'window.error'
-           AND ?8 = 'string'
-           AND ?9 = ''
-         THEN ?10
-         ELSE severity
-       END,
        last_os = ?11,
        last_arch = ?12,
        last_build_commit = ?13,

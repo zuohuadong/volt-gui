@@ -241,3 +241,85 @@ func TestTruthLockedImportanceDecaysForCompressionPriority(t *testing.T) {
 		t.Fatalf("missing truth-lock decay report: %+v", memory)
 	}
 }
+
+func TestCausalSignalDynamicsDetectsFlattening(t *testing.T) {
+	now := time.Now().UTC()
+	relations := []string{"constrained", "influenced", "supported_outcome", "weakened_outcome"}
+	edges := []CausalEdge{}
+	for i := 0; i < 6; i++ {
+		for _, relation := range relations {
+			edges = append(edges, CausalEdge{
+				From:     fmt.Sprintf("%s-%02d", relation, i),
+				To:       "decision:flat",
+				Relation: relation,
+			})
+		}
+	}
+	report := buildCompressionReport(state{}, ExecutionTrace{
+		ID:           "trace-flat",
+		Outcome:      "partial_success",
+		CausalEdges:  edges,
+		StartedAt:    now,
+		CompletedAt:  now.Add(time.Second),
+		StrategyUsed: []string{"general"},
+	}, SystemLearning{}, defaultControlPolicy(), now)
+	if !report.Dynamics.OverRegularized {
+		t.Fatalf("expected flattened causal dynamics to be flagged: %+v", report.Dynamics)
+	}
+	if report.Dynamics.EntropyBand != "high" || report.Dynamics.AmplitudeBand != "flat" {
+		t.Fatalf("unexpected dynamics bands: %+v", report.Dynamics)
+	}
+	if len(report.Dynamics.AmplifiedSignals) == 0 || len(report.Dynamics.EntropySpikes) == 0 {
+		t.Fatalf("missing hierarchy amplification or entropy spike hints: %+v", report.Dynamics)
+	}
+}
+
+func TestCrossGraphAlignmentCapsOverCoupling(t *testing.T) {
+	causal := compressCausalEdges([]CausalEdge{
+		{From: "memory-1", To: "decision:coupled", Relation: "influenced"},
+		{From: "constraint-1", To: "decision:coupled", Relation: "constrained"},
+	}, nil, maxCompressedCausalAnchors)
+	memory := MemoryGraphCompression{
+		RelationCounts: map[string]int{
+			"supports":   3,
+			"depends_on": 2,
+		},
+	}
+	alignment := crossGraphAlignment(causal, memory)
+	if alignment.RawCouplingStrength != 1 {
+		t.Fatalf("raw coupling = %v, want 1: %+v", alignment.RawCouplingStrength, alignment)
+	}
+	if alignment.CouplingStrength != maxGraphCouplingStrength || !alignment.CouplingCapped {
+		t.Fatalf("coupling was not capped: %+v", alignment)
+	}
+	if alignment.IndependenceStatus != "overcoupled" {
+		t.Fatalf("independence status = %q, want overcoupled", alignment.IndependenceStatus)
+	}
+}
+
+func TestCausalSignalDynamicsKeepsSharpHierarchy(t *testing.T) {
+	edges := []CausalEdge{}
+	for i := 0; i < 30; i++ {
+		edges = append(edges, CausalEdge{
+			From:     fmt.Sprintf("support-%02d", i),
+			To:       "outcome:sharp",
+			Relation: "supported_outcome",
+		})
+	}
+	edges = append(edges, CausalEdge{
+		From:     "rare",
+		To:       "outcome:sharp",
+		Relation: "influenced",
+	})
+	causal := compressCausalEdges(edges, nil, maxCompressedCausalAnchors)
+	dynamics := causalSignalDynamics(causal, CrossGraphAlignment{IndependenceStatus: "independent"})
+	if dynamics.OverRegularized {
+		t.Fatalf("sharp causal hierarchy was misclassified as over-regularized: %+v", dynamics)
+	}
+	if dynamics.AmplitudeBand != "sharp" {
+		t.Fatalf("amplitude band = %q, want sharp: %+v", dynamics.AmplitudeBand, dynamics)
+	}
+	if len(dynamics.AmplifiedSignals) != 0 || len(dynamics.EntropySpikes) != 0 {
+		t.Fatalf("sharp hierarchy should not request amplification: %+v", dynamics)
+	}
+}

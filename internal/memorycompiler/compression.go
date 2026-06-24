@@ -14,6 +14,9 @@ const (
 	maxMemoryGraphEdges        = 600
 	maxCompressionStrings      = 10
 	maxLongTailCausalAnchors   = 3
+	minCausalHierarchyGradient = 0.15
+	maxGraphCouplingStrength   = 0.75
+	highCausalEntropyThreshold = 0.85
 )
 
 type CompressionReport struct {
@@ -25,6 +28,7 @@ type CompressionReport struct {
 	MemoryGraph      MemoryGraphCompression  `json:"memory_graph,omitempty"`
 	Alignment        CrossGraphAlignment     `json:"alignment,omitempty"`
 	BiasCorrection   CompressionBiasReport   `json:"bias_correction,omitempty"`
+	Dynamics         CausalSignalDynamics    `json:"dynamics,omitempty"`
 	CompressionRatio float64                 `json:"compression_ratio,omitempty"`
 	CreatedAt        time.Time               `json:"created_at,omitempty"`
 }
@@ -74,11 +78,15 @@ type MemoryGraphCompression struct {
 }
 
 type CrossGraphAlignment struct {
-	Status            string   `json:"status,omitempty"`
-	AbstractionLevel  string   `json:"abstraction_level,omitempty"`
-	SharedRelations   []string `json:"shared_relations,omitempty"`
-	MissingFromMemory []string `json:"missing_from_memory,omitempty"`
-	MissingFromCausal []string `json:"missing_from_causal,omitempty"`
+	Status              string   `json:"status,omitempty"`
+	AbstractionLevel    string   `json:"abstraction_level,omitempty"`
+	SharedRelations     []string `json:"shared_relations,omitempty"`
+	MissingFromMemory   []string `json:"missing_from_memory,omitempty"`
+	MissingFromCausal   []string `json:"missing_from_causal,omitempty"`
+	RawCouplingStrength float64  `json:"raw_coupling_strength,omitempty"`
+	CouplingStrength    float64  `json:"coupling_strength,omitempty"`
+	IndependenceStatus  string   `json:"independence_status,omitempty"`
+	CouplingCapped      bool     `json:"coupling_capped,omitempty"`
 }
 
 type CompressionBiasReport struct {
@@ -87,6 +95,18 @@ type CompressionBiasReport struct {
 	LongTailRelations []string `json:"long_tail_relations,omitempty"`
 	TruthLocksDecayed int      `json:"truth_locks_decayed,omitempty"`
 	AlignmentStatus   string   `json:"alignment_status,omitempty"`
+}
+
+type CausalSignalDynamics struct {
+	HierarchyGradient float64  `json:"hierarchy_gradient,omitempty"`
+	SignalEntropy     float64  `json:"signal_entropy,omitempty"`
+	EntropyBand       string   `json:"entropy_band,omitempty"`
+	AmplitudeBand     string   `json:"amplitude_band,omitempty"`
+	AmplifiedSignals  []string `json:"amplified_signals,omitempty"`
+	EntropySpikes     []string `json:"entropy_spikes,omitempty"`
+	CouplingStrength  float64  `json:"coupling_strength,omitempty"`
+	Independence      string   `json:"independence,omitempty"`
+	OverRegularized   bool     `json:"over_regularized,omitempty"`
 }
 
 func applyCausalCompression(st state, tr ExecutionTrace, learning SystemLearning, policy ControlPolicy, now time.Time) (state, ExecutionTrace) {
@@ -107,6 +127,7 @@ func buildCompressionReport(st state, tr ExecutionTrace, learning SystemLearning
 	control := compressControlGraph(st, policy)
 	memory := compressMemoryGraph(st, now)
 	alignment := crossGraphAlignment(causal, memory)
+	dynamics := causalSignalDynamics(causal, alignment)
 	bias := CompressionBiasReport{
 		AnchorBudget:      maxCompressedCausalAnchors,
 		LongTailRetained:  len(causal.LongTailEdges),
@@ -129,6 +150,7 @@ func buildCompressionReport(st state, tr ExecutionTrace, learning SystemLearning
 		MemoryGraph:      memory,
 		Alignment:        alignment,
 		BiasCorrection:   bias,
+		Dynamics:         dynamics,
 		CompressionRatio: ratio,
 		CreatedAt:        now.UTC(),
 	}
@@ -373,6 +395,13 @@ func crossGraphAlignment(causal CausalGraphCompression, memory MemoryGraphCompre
 	shared := intersectRelationKeys(causalRelations, memoryRelations)
 	missingFromMemory := relationKeysMissing(causalRelations, memoryRelations)
 	missingFromCausal := relationKeysMissing(memoryRelations, causalRelations)
+	rawCoupling := relationCouplingStrength(causalRelations, memoryRelations)
+	coupling := rawCoupling
+	capped := false
+	if coupling > maxGraphCouplingStrength {
+		coupling = maxGraphCouplingStrength
+		capped = true
+	}
 	status := "aligned"
 	switch {
 	case len(causalRelations) == 0 && len(memoryRelations) == 0:
@@ -389,12 +418,17 @@ func crossGraphAlignment(causal CausalGraphCompression, memory MemoryGraphCompre
 	case "partial":
 		level = "mixed_lattice"
 	}
+	independence := graphIndependenceStatus(rawCoupling, len(causalRelations), len(memoryRelations))
 	return CrossGraphAlignment{
-		Status:            status,
-		AbstractionLevel:  level,
-		SharedRelations:   limitStrings(canonicalStrings(shared), maxCompressionStrings),
-		MissingFromMemory: limitStrings(canonicalStrings(missingFromMemory), maxCompressionStrings),
-		MissingFromCausal: limitStrings(canonicalStrings(missingFromCausal), maxCompressionStrings),
+		Status:              status,
+		AbstractionLevel:    level,
+		SharedRelations:     limitStrings(canonicalStrings(shared), maxCompressionStrings),
+		MissingFromMemory:   limitStrings(canonicalStrings(missingFromMemory), maxCompressionStrings),
+		MissingFromCausal:   limitStrings(canonicalStrings(missingFromCausal), maxCompressionStrings),
+		RawCouplingStrength: rawCoupling,
+		CouplingStrength:    coupling,
+		IndependenceStatus:  independence,
+		CouplingCapped:      capped,
 	}
 }
 
@@ -483,6 +517,8 @@ func cloneCompressionReport(in *CompressionReport) *CompressionReport {
 	out.Alignment.MissingFromMemory = append([]string(nil), in.Alignment.MissingFromMemory...)
 	out.Alignment.MissingFromCausal = append([]string(nil), in.Alignment.MissingFromCausal...)
 	out.BiasCorrection.LongTailRelations = append([]string(nil), in.BiasCorrection.LongTailRelations...)
+	out.Dynamics.AmplifiedSignals = append([]string(nil), in.Dynamics.AmplifiedSignals...)
+	out.Dynamics.EntropySpikes = append([]string(nil), in.Dynamics.EntropySpikes...)
 	return &out
 }
 
@@ -638,6 +674,208 @@ func relationKeysMissing(source, target map[string]bool) []string {
 		}
 	}
 	return out
+}
+
+func causalSignalDynamics(causal CausalGraphCompression, alignment CrossGraphAlignment) CausalSignalDynamics {
+	gradient := causalHierarchyGradient(causal.RelationCounts)
+	entropy := causalSignalEntropy(causal.RelationCounts)
+	dynamics := CausalSignalDynamics{
+		HierarchyGradient: gradient,
+		SignalEntropy:     entropy,
+		EntropyBand:       entropyBand(entropy),
+		AmplitudeBand:     amplitudeBand(gradient),
+		CouplingStrength:  alignment.CouplingStrength,
+		Independence:      alignment.IndependenceStatus,
+	}
+	if entropy >= highCausalEntropyThreshold && gradient < minCausalHierarchyGradient {
+		dynamics.OverRegularized = true
+		dynamics.AmplifiedSignals = amplifiedCausalSignals(causal)
+		dynamics.EntropySpikes = entropySpikeSignals(causal)
+	}
+	return dynamics
+}
+
+func causalHierarchyGradient(counts map[string]int) float64 {
+	values := relationCountValues(counts)
+	if len(values) == 0 {
+		return 0
+	}
+	if len(values) == 1 {
+		return 1
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(values)))
+	total := 0
+	for _, count := range values {
+		total += count
+	}
+	if total == 0 {
+		return 0
+	}
+	top := float64(values[0]) / float64(total)
+	second := float64(values[1]) / float64(total)
+	return roundScore(top - second)
+}
+
+func causalSignalEntropy(counts map[string]int) float64 {
+	values := relationCountValues(counts)
+	if len(values) <= 1 {
+		return 0
+	}
+	total := 0
+	for _, count := range values {
+		total += count
+	}
+	if total == 0 {
+		return 0
+	}
+	entropy := 0.0
+	for _, count := range values {
+		p := float64(count) / float64(total)
+		if p > 0 {
+			entropy -= p * math.Log(p)
+		}
+	}
+	return roundScore(entropy / math.Log(float64(len(values))))
+}
+
+func relationCountValues(counts map[string]int) []int {
+	values := make([]int, 0, len(counts))
+	for _, count := range counts {
+		if count > 0 {
+			values = append(values, count)
+		}
+	}
+	return values
+}
+
+func amplifiedCausalSignals(causal CausalGraphCompression) []string {
+	signals := []string{}
+	anchors := append([]CausalEdge(nil), causal.AnchorEdges...)
+	sortCausalAnchors(anchors)
+	for _, edge := range anchors {
+		if causalEdgePriority(edge) > 3 {
+			continue
+		}
+		signals = append(signals, edge.Relation)
+		if len(signals) >= 3 {
+			break
+		}
+	}
+	if len(signals) == 0 {
+		signals = dominantCausalRelations(causal.RelationCounts, 3)
+	}
+	return limitStrings(canonicalStrings(signals), maxCompressionStrings)
+}
+
+func entropySpikeSignals(causal CausalGraphCompression) []string {
+	signals := []string{}
+	for _, edge := range causal.LongTailEdges {
+		signals = append(signals, edge.Relation)
+	}
+	if len(signals) == 0 {
+		signals = rareCausalRelations(causal.RelationCounts, 3)
+	}
+	return limitStrings(canonicalStrings(signals), maxCompressionStrings)
+}
+
+func dominantCausalRelations(counts map[string]int, limit int) []string {
+	return sortedCausalRelations(counts, limit, func(left, right int) bool { return left > right })
+}
+
+func rareCausalRelations(counts map[string]int, limit int) []string {
+	return sortedCausalRelations(counts, limit, func(left, right int) bool { return left < right })
+}
+
+func sortedCausalRelations(counts map[string]int, limit int, less func(left, right int) bool) []string {
+	if limit <= 0 {
+		return nil
+	}
+	type relationCount struct {
+		relation string
+		count    int
+	}
+	items := make([]relationCount, 0, len(counts))
+	for relation, count := range counts {
+		if strings.TrimSpace(relation) != "" && count > 0 {
+			items = append(items, relationCount{relation: relation, count: count})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].count != items[j].count {
+			return less(items[i].count, items[j].count)
+		}
+		return items[i].relation < items[j].relation
+	})
+	out := make([]string, 0, limit)
+	for _, item := range items {
+		out = append(out, item.relation)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func relationCouplingStrength(left, right map[string]bool) float64 {
+	if len(left) == 0 || len(right) == 0 {
+		return 0
+	}
+	union := map[string]bool{}
+	shared := 0
+	for key := range left {
+		union[key] = true
+		if right[key] {
+			shared++
+		}
+	}
+	for key := range right {
+		union[key] = true
+	}
+	if len(union) == 0 {
+		return 0
+	}
+	return roundScore(float64(shared) / float64(len(union)))
+}
+
+func graphIndependenceStatus(coupling float64, causalRelations, memoryRelations int) string {
+	switch {
+	case causalRelations == 0 && memoryRelations == 0:
+		return "empty"
+	case coupling > maxGraphCouplingStrength:
+		return "overcoupled"
+	case coupling >= 0.5:
+		return "coupled"
+	case coupling > 0:
+		return "partially_independent"
+	default:
+		return "independent"
+	}
+}
+
+func entropyBand(entropy float64) string {
+	switch {
+	case entropy >= highCausalEntropyThreshold:
+		return "high"
+	case entropy >= 0.45:
+		return "medium"
+	case entropy > 0:
+		return "low"
+	default:
+		return "none"
+	}
+}
+
+func amplitudeBand(gradient float64) string {
+	switch {
+	case gradient >= 0.5:
+		return "sharp"
+	case gradient >= minCausalHierarchyGradient:
+		return "balanced"
+	case gradient >= 0:
+		return "flat"
+	default:
+		return "none"
+	}
 }
 
 func memoryEdgePriority(edge MemoryEdge) int {

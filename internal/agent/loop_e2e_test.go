@@ -91,6 +91,35 @@ func TestRunUsesMemoryCompilerContractAsUserTurn(t *testing.T) {
 	}
 }
 
+func TestRunCompilesMemoryGoalFromRawInputBeforeReasoningLanguage(t *testing.T) {
+	rt := memorycompiler.New(t.TempDir())
+	_, seed := rt.StartTurn(context.Background(), "fix a bug", nil)
+	seed.RecordToolResults([]memorycompiler.ToolRecord{
+		{Name: "bash", Error: "exit status 1"},
+		{Name: "bash", Error: "exit status 1"},
+	})
+	seed.Finish(nil)
+
+	mp := testutil.NewMock("m", testutil.Turn{Text: "done"})
+	a := New(mp, echoRegistry(), NewSession(""), Options{MemoryCompiler: rt}, event.Discard)
+	a.SetReasoningLanguage("zh")
+	if err := a.Run(context.Background(), "fix another bug"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	req := mp.Requests()[0]
+	user := req.Messages[len(req.Messages)-1]
+	if !strings.Contains(user.Content, `"source_event":"fix another bug"`) {
+		t.Fatalf("compiled contract did not keep raw source event:\n%s", user.Content)
+	}
+	if strings.Contains(user.Content, `"source_event":"<reasoning-language>`) {
+		t.Fatalf("reasoning language wrapper leaked into source event:\n%s", user.Content)
+	}
+	if !strings.Contains(user.Content, "<reasoning-language>") {
+		t.Fatalf("reasoning language wrapper should still apply to final provider input:\n%s", user.Content)
+	}
+}
+
 // TestRunCancelledMidStreamLeavesResumableSession proves a turn cancelled before
 // the model answered leaves the session well-formed: the user message stands,
 // nothing dangling, and the repaired history is sendable as-is on resume.

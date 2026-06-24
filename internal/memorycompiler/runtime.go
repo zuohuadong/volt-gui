@@ -25,10 +25,12 @@ const (
 	version    = "v5.0"
 )
 
+var runtimeLocks sync.Map
+
 // Runtime owns one project's Memory v5 state.
 type Runtime struct {
 	dir string
-	mu  sync.Mutex
+	mu  *sync.Mutex
 }
 
 // New returns a runtime backed by dir. A blank dir disables persistence and
@@ -37,7 +39,13 @@ func New(dir string) *Runtime {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
-	return &Runtime{dir: dir}
+	dir = filepath.Clean(dir)
+	return &Runtime{dir: dir, mu: runtimeLockForDir(dir)}
+}
+
+func runtimeLockForDir(dir string) *sync.Mutex {
+	actual, _ := runtimeLocks.LoadOrStore(filepath.Clean(dir), &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }
 
 // PlannerIR is the memory-compiled execution plan language embedded in the
@@ -791,12 +799,16 @@ func outcomeFor(records []ToolRecord, err error) string {
 	if len(records) == 0 {
 		return "partial_success"
 	}
-	for _, r := range records {
-		if strings.TrimSpace(r.Error) != "" {
-			return "partial_success"
+	for i := len(records) - 1; i >= 0; i-- {
+		if strings.TrimSpace(records[i].Name) == "" {
+			continue
 		}
+		if strings.TrimSpace(records[i].Error) == "" {
+			return "success"
+		}
+		return "partial_success"
 	}
-	return "success"
+	return "partial_success"
 }
 
 func efficiencyScore(records []ToolRecord, start, end time.Time) float64 {
@@ -1541,14 +1553,15 @@ func (r *Runtime) loadStateLocked() state {
 }
 
 func appendJSONL(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	_ = f.Chmod(0o600)
 	w := bufio.NewWriter(f)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		return err
@@ -1562,5 +1575,5 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	b = append(b, '\n')
-	return fileutil.AtomicWriteFile(path, b, 0o644)
+	return fileutil.AtomicWriteFile(path, b, 0o600)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -195,6 +196,56 @@ func TestMutationEvaluationLoopAcceptsAppliedMutation(t *testing.T) {
 	last := traces[len(traces)-1]
 	if len(last.MutationEvaluations) == 0 {
 		t.Fatalf("expected mutation evaluation in trace: %+v", last)
+	}
+}
+
+func TestRecoveredToolFailureCountsAsSuccessfulOutcome(t *testing.T) {
+	dir := t.TempDir()
+	rt := New(dir)
+	_, turn := rt.StartTurn(context.Background(), "fix a bug", nil)
+	turn.RecordToolResults([]ToolRecord{
+		{Name: "go test", Error: "failed before fix"},
+		{Name: "go test", Output: "ok"},
+	})
+	turn.Finish(nil)
+
+	traces := readTraces(t, dir)
+	if got := traces[len(traces)-1].Outcome; got != "success" {
+		t.Fatalf("outcome = %q, want success for recovered failure", got)
+	}
+	st := readState(t, dir)
+	for _, s := range st.Strategies {
+		if s.ID == "bugfix-reproduce-first" {
+			if s.Successes != 1 || s.Failures != 0 {
+				t.Fatalf("strategy counters = successes:%d failures:%d, want 1/0", s.Successes, s.Failures)
+			}
+			return
+		}
+	}
+	t.Fatalf("bugfix strategy not found: %+v", st.Strategies)
+}
+
+func TestRuntimeStateUsesPrivateFilesAndSharedDirLock(t *testing.T) {
+	dir := t.TempDir()
+	rt1 := New(dir)
+	rt2 := New(dir)
+	if rt1.mu != rt2.mu {
+		t.Fatal("runtimes for the same dir must share a lock")
+	}
+	_, turn := rt1.StartTurn(context.Background(), "fix a bug", nil)
+	turn.RecordToolResults([]ToolRecord{{Name: "go test", Output: "ok"}})
+	turn.Finish(nil)
+	if runtime.GOOS == "windows" {
+		return
+	}
+	for _, name := range []string{stateFile, tracesFile} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s permissions = %o, want 0600", name, info.Mode().Perm())
+		}
 	}
 }
 

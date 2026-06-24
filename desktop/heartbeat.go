@@ -54,17 +54,19 @@ type heartbeatConfig struct {
 // HeartbeatEngine runs scheduled task execution in a background goroutine.
 // It is owned by App and started during App.startup.
 type HeartbeatEngine struct {
-	mu      sync.Mutex
-	tasks   []HeartbeatTask
-	done    chan struct{}
-	running bool
-	app     *App // back-reference for topic creation, tab routing, and prompt submission
+	mu            sync.Mutex
+	tasks         []HeartbeatTask
+	pendingTopics map[string]string // taskID → topicID; in-memory retry safety for NewConversationEachRun
+	done          chan struct{}
+	running       bool
+	app           *App // back-reference for topic creation, tab routing, and prompt submission
 }
 
 func newHeartbeatEngine(app *App) *HeartbeatEngine {
 	return &HeartbeatEngine{
-		app:  app,
-		done: make(chan struct{}),
+		app:           app,
+		done:          make(chan struct{}),
+		pendingTopics: make(map[string]string),
 	}
 }
 
@@ -212,21 +214,48 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		scope = "global"
 	}
 
-	// If newConversationEachRun is set, always create a fresh topic.
-	// Otherwise reuse the existing topicID if available.
-	var topicID = t.TopicID
+	// Determine which topic to use.
+	//
+	// For NewConversationEachRun:
+	//   - If there's a pending topic from a previous failed attempt (tracked
+	//     in-memory via pendingTopics), reuse it for retry safety.
+	//   - Otherwise create a fresh topic.
+	//   - After a successful submit, clear the pending topic so the next run
+	//     creates another fresh topic.
+	//
+	// For the legacy mode:
+	//   - Reuse the persisted topicID if available; create one on first run.
+	var topicID string
 	if t.NewConversationEachRun {
-		topicID = "" // clear so a new topic is always created
-	}
-	if topicID == "" {
-		meta, err := e.app.CreateTopic(scope, workspaceRoot, title)
-		if err != nil {
-			log.Printf("[heartbeat] CreateTopic(%q): %v", t.Title, err)
-			t.LastRunAt = time.Now().UnixMilli()
-			return t
+		e.mu.Lock()
+		topicID = e.pendingTopics[t.ID]
+		e.mu.Unlock()
+		if topicID == "" {
+			// No pending topic — create a fresh one.
+			meta, err := e.app.CreateTopic(scope, workspaceRoot, title)
+			if err != nil {
+				log.Printf("[heartbeat] CreateTopic(%q): %v", t.Title, err)
+				t.LastRunAt = time.Now().UnixMilli()
+				return t
+			}
+			topicID = meta.ID
+			// Save in-memory for retry safety (NOT persisted to disk).
+			e.mu.Lock()
+			e.pendingTopics[t.ID] = topicID
+			e.mu.Unlock()
 		}
-		topicID = meta.ID
-		t.TopicID = topicID
+	} else {
+		topicID = t.TopicID
+		if topicID == "" {
+			meta, err := e.app.CreateTopic(scope, workspaceRoot, title)
+			if err != nil {
+				log.Printf("[heartbeat] CreateTopic(%q): %v", t.Title, err)
+				t.LastRunAt = time.Now().UnixMilli()
+				return t
+			}
+			topicID = meta.ID
+			t.TopicID = topicID
+		}
 	}
 
 	// Open the tab for the topic (creates one if needed) without changing the
@@ -276,6 +305,14 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 	if !e.app.submitUserTurnToTab(tabMeta.ID, t.Prompt) {
 		log.Printf("[heartbeat] submit skipped for %q", t.Title)
 		return t
+	}
+
+	// After a successful submit: for NewConversationEachRun, clear the
+	// pending topic so the next run creates a fresh conversation.
+	if t.NewConversationEachRun {
+		e.mu.Lock()
+		delete(e.pendingTopics, t.ID)
+		e.mu.Unlock()
 	}
 
 	t.LastRunAt = time.Now().UnixMilli()

@@ -155,12 +155,26 @@ func blockKnown(name string) Decision {
 
 func decideBash(args json.RawMessage) Decision {
 	var p struct {
-		Command string `json:"command"`
+		Command                     string `json:"command"`
+		RunInBackground             bool   `json:"run_in_background"`
+		PreserveBackgroundProcesses bool   `json:"preserve_background_processes"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil || strings.TrimSpace(p.Command) == "" {
 		return Decision{
 			Blocked: true,
 			Message: "blocked: bash command in plan mode must include a valid read-only command.",
+		}
+	}
+	if p.RunInBackground {
+		return Decision{
+			Blocked: true,
+			Message: "blocked: bash background execution is not available in plan mode. Use foreground read-only commands while planning.",
+		}
+	}
+	if p.PreserveBackgroundProcesses {
+		return Decision{
+			Blocked: true,
+			Message: "blocked: bash process preservation is not available in plan mode. Use foreground read-only commands while planning.",
 		}
 	}
 	cmd := strings.TrimSpace(p.Command)

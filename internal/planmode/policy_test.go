@@ -47,3 +47,38 @@ func TestDecideStillValidatesBashArgumentsWhenOverridden(t *testing.T) {
 		t.Fatal("bash override must not bypass plan-mode bash safety checks")
 	}
 }
+
+func TestDecideBlocksBashProcessControlArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "background execution",
+			args: map[string]any{"command": "git status", "run_in_background": true},
+			want: "background execution",
+		},
+		{
+			name: "process preservation",
+			args: map[string]any{"command": "git status", "preserve_background_processes": true},
+			want: "process preservation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := json.Marshal(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			decision := (Policy{}).Decide(Call{Name: "bash", ReadOnly: false, Args: args})
+			if !decision.Blocked {
+				t.Fatalf("bash args %v should be blocked in plan mode", tt.args)
+			}
+			if !strings.Contains(decision.Message, tt.want) {
+				t.Fatalf("blocked message = %q, want to mention %q", decision.Message, tt.want)
+			}
+		})
+	}
+}

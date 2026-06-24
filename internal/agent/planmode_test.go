@@ -219,6 +219,36 @@ func TestPlanModeBashBlocked_Metacharacters(t *testing.T) {
 	}
 }
 
+func TestPlanModeBashBlocked_ProcessControlArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want string
+	}{
+		{
+			name: "background execution",
+			args: `{"command":"git status","run_in_background":true}`,
+			want: "background execution",
+		},
+		{
+			name: "process preservation",
+			args: `{"command":"git status","preserve_background_processes":true}`,
+			want: "process preservation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocked, msg := planModeBashBlocked(json.RawMessage(tt.args))
+			if !blocked {
+				t.Fatalf("planModeBashBlocked(%s) = allowed, want blocked", tt.args)
+			}
+			if !strings.Contains(msg, tt.want) {
+				t.Fatalf("blocked message = %q, want %q", msg, tt.want)
+			}
+		})
+	}
+}
+
 func TestPlanModeBashBlocked_WriteCapableSafeCommandArgs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -384,6 +414,22 @@ func TestPlanModeBash_BashToolIntegration(t *testing.T) {
 	})
 	if !strings.HasPrefix(chainResult.output, "blocked:") {
 		t.Errorf("chained command should be blocked in plan mode: %s", chainResult.output)
+	}
+
+	backgroundResult := a.executeOne(context.Background(), provider.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git status","run_in_background":true}`,
+	})
+	if !strings.HasPrefix(backgroundResult.output, "blocked:") {
+		t.Errorf("background bash should be blocked in plan mode: %s", backgroundResult.output)
+	}
+
+	preserveResult := a.executeOne(context.Background(), provider.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git status","preserve_background_processes":true}`,
+	})
+	if !strings.HasPrefix(preserveResult.output, "blocked:") {
+		t.Errorf("process-preserving bash should be blocked in plan mode: %s", preserveResult.output)
 	}
 }
 

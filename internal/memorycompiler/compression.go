@@ -17,6 +17,11 @@ const (
 	minCausalHierarchyGradient = 0.15
 	maxGraphCouplingStrength   = 0.75
 	highCausalEntropyThreshold = 0.85
+	minObserverLagWindow       = 3
+	defaultObserverLagWindow   = 6
+	maxObserverLagWindow       = 10
+	mediumOscillationWarning   = 0.35
+	highOscillationWarning     = 0.55
 )
 
 type CompressionReport struct {
@@ -115,9 +120,30 @@ type ObserverLoopReport struct {
 	ReadOnlyProjection   bool                  `json:"read_only_projection,omitempty"`
 	CurrentTraceExcluded bool                  `json:"current_trace_excluded,omitempty"`
 	LaggedSamples        int                   `json:"lagged_samples,omitempty"`
+	LagWindow            AdaptiveLagWindow     `json:"lag_window,omitempty"`
+	ShadowObserver       ShadowObserverReport  `json:"shadow_observer,omitempty"`
 	FeedbackEligible     bool                  `json:"feedback_eligible,omitempty"`
 	FeedbackSignals      []string              `json:"feedback_signals,omitempty"`
 	Damping              GlobalDampingEnvelope `json:"damping,omitempty"`
+}
+
+type AdaptiveLagWindow struct {
+	Size            int    `json:"size,omitempty"`
+	Basis           string `json:"basis,omitempty"`
+	StabilityBand   string `json:"stability_band,omitempty"`
+	OscillationBand string `json:"oscillation_band,omitempty"`
+}
+
+type ShadowObserverReport struct {
+	Mode                         string   `json:"mode,omitempty"`
+	CurrentTraceObserved         bool     `json:"current_trace_observed,omitempty"`
+	AffectsExecution             bool     `json:"affects_execution"`
+	PredictedOscillationIndex    float64  `json:"predicted_oscillation_index,omitempty"`
+	PredictionHorizon            int      `json:"prediction_horizon,omitempty"`
+	WarningLevel                 string   `json:"warning_level,omitempty"`
+	ObservationOnlySignals       []string `json:"observation_only_signals,omitempty"`
+	FeedbackSignalsSuppressed    bool     `json:"feedback_signals_suppressed,omitempty"`
+	ExecutionInfluenceSuppressed bool     `json:"execution_influence_suppressed"`
 }
 
 type GlobalDampingEnvelope struct {
@@ -146,7 +172,7 @@ func buildCompressionReport(st state, tr ExecutionTrace, learning SystemLearning
 	memory := compressMemoryGraph(st, now)
 	alignment := crossGraphAlignment(causal, memory)
 	dynamics := causalSignalDynamics(causal, alignment)
-	observer := observerLoopReport(st.CompressionReports)
+	observer := observerLoopReport(st.CompressionReports, dynamics, policy)
 	bias := CompressionBiasReport{
 		AnchorBudget:      maxCompressedCausalAnchors,
 		LongTailRetained:  len(causal.LongTailEdges),
@@ -540,6 +566,7 @@ func cloneCompressionReport(in *CompressionReport) *CompressionReport {
 	out.Dynamics.AmplifiedSignals = append([]string(nil), in.Dynamics.AmplifiedSignals...)
 	out.Dynamics.EntropySpikes = append([]string(nil), in.Dynamics.EntropySpikes...)
 	out.ObserverLoop.FeedbackSignals = append([]string(nil), in.ObserverLoop.FeedbackSignals...)
+	out.ObserverLoop.ShadowObserver.ObservationOnlySignals = append([]string(nil), in.ObserverLoop.ShadowObserver.ObservationOnlySignals...)
 	out.ObserverLoop.Damping.SuppressedSignals = append([]string(nil), in.ObserverLoop.Damping.SuppressedSignals...)
 	return &out
 }
@@ -900,15 +927,23 @@ func amplitudeBand(gradient float64) string {
 	}
 }
 
-func observerLoopReport(history []CompressionReport) ObserverLoopReport {
-	samples := laggedDynamicsSamples(history, maxCompressionStrings)
+func observerLoopReport(history []CompressionReport, current CausalSignalDynamics, policy ControlPolicy) ObserverLoopReport {
+	lagWindow := adaptiveObserverLagWindow(policy)
+	samples := laggedDynamicsSamples(history, lagWindow.Size)
 	feedbackSignals := laggedFeedbackSignals(samples)
-	damping := globalDampingEnvelope(samples, feedbackSignals)
+	shadow := shadowObserverReport(samples, current)
+	dampingWindow := lagWindow.Size
+	if dampingWindow < defaultObserverLagWindow {
+		dampingWindow = defaultObserverLagWindow
+	}
+	damping := globalDampingEnvelope(laggedDynamicsSamples(history, dampingWindow), feedbackSignals)
 	report := ObserverLoopReport{
 		Timeline:             "lagged",
 		ReadOnlyProjection:   true,
 		CurrentTraceExcluded: true,
 		LaggedSamples:        len(samples),
+		LagWindow:            lagWindow,
+		ShadowObserver:       shadow,
 		FeedbackSignals:      feedbackSignals,
 		Damping:              damping,
 	}
@@ -917,6 +952,33 @@ func observerLoopReport(history []CompressionReport) ObserverLoopReport {
 		report.FeedbackSignals = nil
 	}
 	return report
+}
+
+func adaptiveObserverLagWindow(policy ControlPolicy) AdaptiveLagWindow {
+	stability := policy.SystemStabilityScore
+	oscillation := policy.OscillationIndex
+	size := defaultObserverLagWindow
+	basis := "default"
+	switch {
+	case oscillation >= 0.5 || (stability > 0 && stability < 0.45):
+		size = maxObserverLagWindow
+		basis = "unstable"
+	case stability >= 0.85 && oscillation < 0.2:
+		size = minObserverLagWindow
+		basis = "stable"
+	case stability >= 0.65:
+		size = defaultObserverLagWindow - 1
+		basis = "balanced"
+	case stability > 0:
+		size = defaultObserverLagWindow + 2
+		basis = "recovering"
+	}
+	return AdaptiveLagWindow{
+		Size:            size,
+		Basis:           basis,
+		StabilityBand:   scoreBand(stability),
+		OscillationBand: scoreBand(oscillation),
+	}
 }
 
 func laggedDynamicsSamples(history []CompressionReport, limit int) []CausalSignalDynamics {
@@ -945,6 +1007,47 @@ func laggedFeedbackSignals(samples []CausalSignalDynamics) []string {
 		signals = append(signals, last.EntropySpikes...)
 	}
 	return limitStrings(canonicalStrings(signals), maxCompressionStrings)
+}
+
+func shadowObserverReport(samples []CausalSignalDynamics, current CausalSignalDynamics) ShadowObserverReport {
+	predicted := predictiveObserverOscillationIndex(samples, current)
+	signals := []string{}
+	if current.OverRegularized {
+		signals = append(signals, current.AmplifiedSignals...)
+		signals = append(signals, current.EntropySpikes...)
+	}
+	if predicted >= mediumOscillationWarning {
+		signals = append(signals, "predicted_observer_oscillation")
+	}
+	level := "none"
+	switch {
+	case predicted >= highOscillationWarning:
+		level = "high"
+	case predicted >= mediumOscillationWarning:
+		level = "medium"
+	case current.OverRegularized:
+		level = "low"
+	}
+	return ShadowObserverReport{
+		Mode:                         "shadow_read_only",
+		CurrentTraceObserved:         true,
+		AffectsExecution:             false,
+		PredictedOscillationIndex:    predicted,
+		PredictionHorizon:            1,
+		WarningLevel:                 level,
+		ObservationOnlySignals:       limitStrings(canonicalStrings(signals), maxCompressionStrings),
+		FeedbackSignalsSuppressed:    len(signals) > 0,
+		ExecutionInfluenceSuppressed: true,
+	}
+}
+
+func predictiveObserverOscillationIndex(samples []CausalSignalDynamics, current CausalSignalDynamics) float64 {
+	predicted := append([]CausalSignalDynamics(nil), samples...)
+	predicted = append(predicted, current)
+	if len(predicted) > maxObserverLagWindow {
+		predicted = predicted[len(predicted)-maxObserverLagWindow:]
+	}
+	return observerOscillationIndex(predicted)
 }
 
 func globalDampingEnvelope(samples []CausalSignalDynamics, feedbackSignals []string) GlobalDampingEnvelope {

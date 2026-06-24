@@ -387,7 +387,7 @@ func TestObserverLoopDampsOscillatingFeedback(t *testing.T) {
 		{TraceID: "r4", Dynamics: CausalSignalDynamics{OverRegularized: false}},
 		{TraceID: "r5", Dynamics: CausalSignalDynamics{OverRegularized: true, AmplifiedSignals: []string{"weakened_outcome"}}},
 	}}
-	report := observerLoopReport(st.CompressionReports)
+	report := observerLoopReport(st.CompressionReports, CausalSignalDynamics{}, defaultControlPolicy())
 	if report.Damping.State != "damped" {
 		t.Fatalf("damping state = %q, want damped: %+v", report.Damping.State, report)
 	}
@@ -396,5 +396,55 @@ func TestObserverLoopDampsOscillatingFeedback(t *testing.T) {
 	}
 	if report.Damping.OscillationIndex < 0.5 || len(report.Damping.SuppressedSignals) == 0 {
 		t.Fatalf("missing oscillation damping details: %+v", report.Damping)
+	}
+}
+
+func TestShadowObserverWarnsWithoutFeedback(t *testing.T) {
+	st := state{CompressionReports: []CompressionReport{{
+		TraceID:  "previous-stable",
+		Dynamics: CausalSignalDynamics{OverRegularized: false},
+	}}}
+	current := CausalSignalDynamics{
+		OverRegularized:  true,
+		AmplifiedSignals: []string{"supported_outcome"},
+		EntropySpikes:    []string{"rare_relation"},
+	}
+	report := observerLoopReport(st.CompressionReports, current, defaultControlPolicy())
+	if !report.ShadowObserver.CurrentTraceObserved || report.ShadowObserver.AffectsExecution {
+		t.Fatalf("shadow observer is not read-only: %+v", report.ShadowObserver)
+	}
+	if report.ShadowObserver.WarningLevel != "high" {
+		t.Fatalf("shadow warning = %q, want high: %+v", report.ShadowObserver.WarningLevel, report.ShadowObserver)
+	}
+	if !containsString(report.ShadowObserver.ObservationOnlySignals, "supported_outcome") ||
+		!containsString(report.ShadowObserver.ObservationOnlySignals, "rare_relation") {
+		t.Fatalf("shadow observer lost current observation-only signals: %+v", report.ShadowObserver)
+	}
+	if report.FeedbackEligible || len(report.FeedbackSignals) != 0 {
+		t.Fatalf("shadow observation leaked into feedback: %+v", report)
+	}
+}
+
+func TestObserverLoopAdaptsLagWindowToSystemStability(t *testing.T) {
+	history := []CompressionReport{}
+	for i := 0; i < 8; i++ {
+		history = append(history, CompressionReport{
+			TraceID:  fmt.Sprintf("r%d", i),
+			Dynamics: CausalSignalDynamics{OverRegularized: i%2 == 0},
+		})
+	}
+	stablePolicy := defaultControlPolicy()
+	stablePolicy.SystemStabilityScore = 0.95
+	stablePolicy.OscillationIndex = 0.1
+	stable := observerLoopReport(history, CausalSignalDynamics{}, stablePolicy)
+	if stable.LagWindow.Size != minObserverLagWindow || stable.LaggedSamples != minObserverLagWindow {
+		t.Fatalf("stable lag window = %+v, samples=%d", stable.LagWindow, stable.LaggedSamples)
+	}
+	unstablePolicy := defaultControlPolicy()
+	unstablePolicy.SystemStabilityScore = 0.2
+	unstablePolicy.OscillationIndex = 0.7
+	unstable := observerLoopReport(history, CausalSignalDynamics{}, unstablePolicy)
+	if unstable.LagWindow.Size != maxObserverLagWindow || unstable.LaggedSamples != len(history) {
+		t.Fatalf("unstable lag window = %+v, samples=%d", unstable.LagWindow, unstable.LaggedSamples)
 	}
 }

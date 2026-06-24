@@ -439,6 +439,80 @@ func TestStrategyExplorationIsDeterministicAndBounded(t *testing.T) {
 	}
 }
 
+func TestEquilibriumExplorationRateAdaptsToLearningState(t *testing.T) {
+	stable := state{Learnings: []SystemLearning{
+		{TraceID: "1", GoodPatterns: []string{"general"}},
+		{TraceID: "2", GoodPatterns: []string{"general"}},
+		{TraceID: "3", GoodPatterns: []string{"general"}},
+	}}
+	if got := equilibriumExplorationRatePercent(stable, DriftReport{}); got != maxExplorationRatePercent {
+		t.Fatalf("stable exploration rate = %d, want %d", got, maxExplorationRatePercent)
+	}
+	unstable := state{Learnings: []SystemLearning{
+		{TraceID: "1", GoodPatterns: []string{"general"}},
+		{TraceID: "2", BadStrategies: []string{"general"}},
+	}}
+	if got := equilibriumExplorationRatePercent(unstable, DriftReport{}); got != minExplorationRatePercent {
+		t.Fatalf("unstable exploration rate = %d, want %d", got, minExplorationRatePercent)
+	}
+	if got := equilibriumExplorationRatePercent(state{}, DriftReport{}); got != explorationRatePercent {
+		t.Fatalf("neutral exploration rate = %d, want %d", got, explorationRatePercent)
+	}
+}
+
+func TestStrategyDebiasRewardsNovelContextFit(t *testing.T) {
+	oldDominant := Strategy{ID: "old-dominant", Successes: 30, Preconditions: []string{"unrelated"}}
+	freshFit := Strategy{ID: "fresh-fit", Preconditions: []string{"latency"}}
+	ranked := rankStrategies("optimize latency", []Strategy{oldDominant, freshFit})
+	if len(ranked) < 2 {
+		t.Fatalf("ranked strategies = %+v", ranked)
+	}
+	if ranked[0].strategy.ID != "fresh-fit" {
+		t.Fatalf("fresh context-fit strategy should outrank old dominant strategy: %+v", ranked)
+	}
+	if !strings.Contains(ranked[0].reason, "novelty bonus") || !strings.Contains(ranked[1].reason, "usage penalty") {
+		t.Fatalf("strategy reasons should expose debias factors: %+v", ranked)
+	}
+}
+
+func TestIRExecutionValidatorRejectsSemanticDrift(t *testing.T) {
+	ir := PlannerIR{
+		Version:     version,
+		Goal:        "fix a bug",
+		SourceEvent: "fix a bug",
+		MemoryReferences: []MemoryRef{
+			{ID: "memory:source", Content: "use source"},
+		},
+		ExecutionSteps: []Step{{ID: "reproduce", Action: "Reproduce the bug."}},
+		StrategySelection: &StrategyPick{
+			Selected:        "bugfix-reproduce-first",
+			Reason:          "matched bugfix",
+			ExplorationRate: 0.1,
+		},
+	}
+	trace := ExecutionTrace{
+		Goal:         "fix a bug",
+		Steps:        []Step{{ID: "patch", Action: "Patch without reproducing."}},
+		StrategyUsed: []string{"general"},
+		MemoryUsed:   []string{},
+		Cost:         CostMetrics{ToolCalls: 7},
+	}
+	got := validateIRExecution(ir, trace)
+	if !got.Reject {
+		t.Fatalf("expected validator to reject semantic drift: %+v", got)
+	}
+	joined := strings.Join(got.Findings, "\n")
+	for _, want := range []string{"selected strategy drift", "execution steps drifted", "memory references drifted", "tool calls exceeded IR step budget"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("validator findings missing %q: %+v", want, got.Findings)
+		}
+	}
+	learning := analyzeTrace(ExecutionTrace{ID: "trace-1", Goal: "fix", Outcome: "partial_success", SemanticDrift: got.Findings}, "general")
+	if len(learning.CompilerImprovements) == 0 || !strings.Contains(strings.Join(learning.CompilerImprovements, "\n"), "enforce IR execution contract") {
+		t.Fatalf("semantic drift did not feed compiler improvements: %+v", learning)
+	}
+}
+
 func TestStrategyExplorationEntropyStaysAboveFloor(t *testing.T) {
 	strategies := ensureBuiltInStrategies(nil)
 	explored := 0

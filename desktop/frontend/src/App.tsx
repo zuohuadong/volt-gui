@@ -88,7 +88,8 @@ import {
   hydrateComposerProfilesFromTabs,
   patchComposerProfile,
   pruneUserPlanModeIntents,
-  shouldRestoreUserPlanMode,
+  resolvePlanRestoreTabId,
+  shouldRestoreUserPlanModeForProfile,
   updateUserPlanModeIntent,
   type ComposerProfile,
   type ComposerProfileField,
@@ -1525,6 +1526,7 @@ export default function App() {
         const displayGoal = stripGoalResearchFlags(arg);
         if (displayGoal && !["status", "clear", "off", "stop", "done"].includes(displayGoal.toLowerCase())) {
           if (hasGoalResearchFlag(arg)) {
+            userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, false);
             patchActiveComposerProfile({
               collaborationMode: "goal",
               goalDraftMode: false,
@@ -1587,7 +1589,7 @@ export default function App() {
       if (goal.trim()) await setControllerGoal(goal);
       commitThenSend(trimmed, submitText.trim());
     },
-    [applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, send, runShell, notice, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, steer, switchModel, t, toolApprovalMode, showToast],
+    [activeTabId, applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, send, runShell, notice, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, steer, switchModel, t, toolApprovalMode, showToast],
   );
 
   const refreshTabMetas = useCallback(async (): Promise<TabMeta[]> => {
@@ -1599,14 +1601,19 @@ export default function App() {
   useEffect(() => {
     const unsub = onEvent((e) => {
       if (e.kind !== "turn_done") return;
-      const turnTabId = activeTabIdRef.current;
+      const turnTabId = resolvePlanRestoreTabId(e.tabId, activeTabIdRef.current);
       window.setTimeout(() => {
         setProjectRevision((value) => value + 1);
         refreshTabMetas().then((tabs) => {
           if (!turnTabId) return;
-          if (!shouldRestoreUserPlanMode(userPlanModeByTabRef.current, turnTabId)) return;
           const tab = tabs.find((item) => item.id === turnTabId);
           const baseProfile = tab ? composerProfileFromTab(tab) : defaultComposerProfile;
+          if (!shouldRestoreUserPlanModeForProfile(userPlanModeByTabRef.current, turnTabId, baseProfile)) {
+            if (baseProfile.goal.trim()) {
+              userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, turnTabId, false);
+            }
+            return;
+          }
           setComposerProfilesByTab((current) => patchComposerProfile(
             current,
             turnTabId,

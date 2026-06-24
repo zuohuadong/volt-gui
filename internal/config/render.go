@@ -759,7 +759,7 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 
 	// [tools]
-	if !reflect.DeepEqual(c.Tools, d.Tools) {
+	if len(c.Tools.Enabled) > 0 || (c.Tools.BashTimeoutSeconds != nil && *c.Tools.BashTimeoutSeconds != 0) {
 		b.WriteString("[tools]\n")
 		if len(c.Tools.Enabled) > 0 {
 			fmt.Fprintf(&b, "enabled = %s\n", renderStringArray(c.Tools.Enabled))
@@ -777,6 +777,18 @@ func RenderTOMLProjectDelta(c *Config) string {
 			fmt.Fprintf(&b, "stalled_warning_seconds = %d\n", *c.Tools.BackgroundJobs.StalledWarningSeconds)
 			b.WriteString("\n")
 		}
+	}
+
+	// [tools.shell]
+	if !reflect.DeepEqual(c.Tools.Shell, d.Tools.Shell) {
+		b.WriteString("[tools.shell]\n")
+		if c.Tools.Shell.Prefer != d.Tools.Shell.Prefer {
+			fmt.Fprintf(&b, "prefer = %q\n", c.Tools.Shell.Prefer)
+		}
+		if c.Tools.Shell.Path != d.Tools.Shell.Path {
+			fmt.Fprintf(&b, "path = %q\n", c.Tools.Shell.Path)
+		}
+		b.WriteString("\n")
 	}
 
 	// [lsp]

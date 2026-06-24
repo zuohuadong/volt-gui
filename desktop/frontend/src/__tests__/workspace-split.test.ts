@@ -241,5 +241,17 @@ eq(
   "workspace filter merges backend deep search results without duplicating loaded rows",
 );
 
+eq(
+  mergeWorkspaceSearchResults(
+    [{ path: "docs/assets/", entry: { name: "assets", isDir: true } }],
+    [
+      { name: "docs/assets", isDir: true },
+      { name: "docs/guides", isDir: true },
+    ],
+  ).map((row) => `${row.path}:${row.entry.name}:${row.entry.isDir}`).join("|"),
+  "docs/assets/:assets:true|docs/guides/:guides:true",
+  "workspace filter normalizes directory search results to tree row paths",
+);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

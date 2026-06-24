@@ -8,7 +8,9 @@ import {
   hydrateComposerProfilesFromTabs,
   patchComposerProfile,
   pruneUserPlanModeIntents,
+  resolvePlanRestoreTabId,
   shouldRestoreUserPlanMode,
+  shouldRestoreUserPlanModeForProfile,
   updateUserPlanModeIntent,
   type ComposerProfilesByTab,
   type UserPlanModeIntents,
@@ -162,6 +164,27 @@ console.log("\ncomposer profile");
 
   eq(shouldRestoreUserPlanMode(intents, "tab-1"), false, "closed tabs lose plan restore intent");
   eq(shouldRestoreUserPlanMode(intents, "tab-2"), true, "open tabs keep plan restore intent");
+}
+
+{
+  eq(resolvePlanRestoreTabId("finished-tab", "active-tab"), "finished-tab", "turn_done plan restore uses the event tab when present");
+  eq(resolvePlanRestoreTabId(undefined, "active-tab"), "active-tab", "turn_done plan restore falls back to the active tab for legacy events");
+}
+
+{
+  let intents: UserPlanModeIntents = {};
+  intents = updateUserPlanModeIntent(intents, "tab-1", true);
+
+  eq(
+    shouldRestoreUserPlanModeForProfile(intents, "tab-1", { goal: "research task" }),
+    false,
+    "active goals block remembered plan restoration",
+  );
+  eq(
+    shouldRestoreUserPlanModeForProfile(intents, "tab-1", { goal: "" }),
+    true,
+    "empty goals still allow remembered plan restoration",
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);

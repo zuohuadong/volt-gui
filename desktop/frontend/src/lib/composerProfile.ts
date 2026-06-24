@@ -236,3 +236,15 @@ export function pruneUserPlanModeIntents(current: UserPlanModeIntents, tabIds: I
 export function shouldRestoreUserPlanMode(current: UserPlanModeIntents, tabId: string | null | undefined): boolean {
   return Boolean(tabId && current[tabId]);
 }
+
+export function resolvePlanRestoreTabId(eventTabId: string | null | undefined, activeTabId: string | null | undefined): string | null {
+  return eventTabId || activeTabId || null;
+}
+
+export function shouldRestoreUserPlanModeForProfile(
+  current: UserPlanModeIntents,
+  tabId: string | null | undefined,
+  profile?: Pick<ComposerProfile, "goal"> | null,
+): boolean {
+  return shouldRestoreUserPlanMode(current, tabId) && !profile?.goal.trim();
+}

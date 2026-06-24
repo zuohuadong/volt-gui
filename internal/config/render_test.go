@@ -538,6 +538,30 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	}
 }
 
+func TestProjectDeltaRendersToolsShellOverrides(t *testing.T) {
+	c := Default()
+	c.Tools.Shell.Prefer = "bash"
+	c.Tools.Shell.Path = "/usr/local/bin/bash"
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[tools.shell]", `prefer = "bash"`, `path = "/usr/local/bin/bash"`} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+	if strings.Contains(delta, "[tools]\n\n") {
+		t.Fatalf("project delta should not emit an empty [tools] block:\n%s", delta)
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if got.Tools.Shell.Prefer != "bash" || got.Tools.Shell.Path != "/usr/local/bin/bash" {
+		t.Fatalf("tools.shell = %+v, want bash with path", got.Tools.Shell)
+	}
+}
+
 func TestProjectRenderPreservesNonDefaultLegacySections(t *testing.T) {
 	c := Default()
 	c.UI.Theme = "light"

@@ -60,6 +60,8 @@
   放一个 `.mcp.json` 即可。
 - **企业资源挂载规划。** 桌面端企业网络盘能力按平台/产品边界拆分，通用挂载生命周期留在
   Volt GUI，业务策略由下游产品提供。详见 [docs/ENTERPRISE_MOUNTS.md](docs/ENTERPRISE_MOUNTS.md)。
+- **Supauth + QNAP 网络盘规划。** 员工通过 Supauth 登录暗涌，QNAP 继续兜底 SMB 权限，
+  暗涌负责自动挂载与审计。详见 [docs/SUPAUTH_QNAP_MOUNTS.md](docs/SUPAUTH_QNAP_MOUNTS.md)。
 - **代码智能 (CodeGraph)。** 基于 tree-sitter 的符号/调用图搜索
   (`codegraph_*` 工具) —— 无需嵌入服务，零 API 成本。首次使用自动下载，后台索引。
 - **检查点与回退。** 基于快照的编辑安全网 —— 按 Esc-Esc 或 `/rewind` 撤销任何改动。

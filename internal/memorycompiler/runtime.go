@@ -27,7 +27,7 @@ const (
 	learningTracesFile = "learning_traces.jsonl"
 	debugTracesFile    = "debug_traces.jsonl"
 	debugTraceEnv      = "REASONIX_MEMORY_COMPILER_DEBUG_TRACE"
-	version            = "v5.3"
+	version            = "v5.4"
 
 	explorationRatePercent    = 10
 	minExplorationRatePercent = 3
@@ -35,6 +35,7 @@ const (
 	mutationMinEvalTrials     = 2
 	mutationAcceptThreshold   = 0.60
 	mutationRegressionMargin  = 0.05
+	mutationFeedbackCooldown  = 30 * time.Minute
 	strategyDecayK            = 10.0
 	staleConfidenceThreshold  = 0.2
 )
@@ -142,6 +143,8 @@ type ExecutionTrace struct {
 	DecisionBranches    []DecisionBranch     `json:"decision_branches,omitempty"`
 	CausalEdges         []CausalEdge         `json:"causal_edges,omitempty"`
 	SemanticDrift       []string             `json:"semantic_drift,omitempty"`
+	SemanticDriftHard   []string             `json:"semantic_drift_hard,omitempty"`
+	SemanticDriftSoft   []string             `json:"semantic_drift_soft,omitempty"`
 	Cost                CostMetrics          `json:"cost,omitempty"`
 	MutationEvaluations []MutationEvaluation `json:"mutation_evaluations,omitempty"`
 	FailureReason       string               `json:"failure_reason,omitempty"`
@@ -206,8 +209,10 @@ type IRExplanation struct {
 }
 
 type IRValidationResult struct {
-	Findings []string
-	Reject   bool
+	Findings     []string
+	HardFindings []string
+	SoftFindings []string
+	Reject       bool
 }
 
 type TraceBundle struct {
@@ -226,6 +231,8 @@ type LearningTrace struct {
 	DecisionBranches     []DecisionBranch     `json:"decision_branches,omitempty"`
 	CausalEdges          []CausalEdge         `json:"causal_edges,omitempty"`
 	SemanticDrift        []string             `json:"semantic_drift,omitempty"`
+	SemanticDriftHard    []string             `json:"semantic_drift_hard,omitempty"`
+	SemanticDriftSoft    []string             `json:"semantic_drift_soft,omitempty"`
 	CausalFindings       []string             `json:"causal_findings,omitempty"`
 	CompilerImprovements []string             `json:"compiler_improvements,omitempty"`
 	MutationEvaluations  []MutationEvaluation `json:"mutation_evaluations,omitempty"`
@@ -588,7 +595,7 @@ func memoryCitationsForIR(ir PlannerIR) []provider.MemoryCitation {
 			ID:     ref.ID,
 			Source: "Memory v5",
 			Note:   note,
-			Kind:   "memory_reference",
+			Kind:   "compiler_reference",
 		})
 	}
 	for _, c := range ir.Constraints {
@@ -1116,6 +1123,9 @@ func clampExplorationRatePercent(rate int) int {
 }
 
 func equilibriumExplorationRatePercent(st state, drift DriftReport) int {
+	if equilibriumOscillating(st) {
+		return minExplorationRatePercent
+	}
 	if equilibriumUnstable(st, drift) {
 		return minExplorationRatePercent
 	}
@@ -1135,6 +1145,37 @@ func equilibriumUnstable(st state, drift DriftReport) bool {
 		}
 	}
 	return false
+}
+
+func equilibriumOscillating(st state) bool {
+	seq := learningStrategySequence(recentLearnings(st.Learnings, 6))
+	if len(seq) < 4 {
+		return false
+	}
+	unique := map[string]bool{}
+	transitions := 0
+	for i, id := range seq {
+		unique[id] = true
+		if i > 0 && id != seq[i-1] {
+			transitions++
+		}
+	}
+	return len(unique) >= 3 && transitions >= len(seq)-2
+}
+
+func learningStrategySequence(learnings []SystemLearning) []string {
+	out := make([]string, 0, len(learnings))
+	for _, learning := range learnings {
+		id := firstNonEmpty(learning.GoodPatterns, "")
+		if id == "" {
+			id = firstNonEmpty(learning.BadStrategies, "")
+		}
+		id = strings.TrimSpace(id)
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func equilibriumStable(st state, drift DriftReport) bool {
@@ -1295,31 +1336,38 @@ func causalEdgesForIR(traceID string, ir PlannerIR) []CausalEdge {
 func validateIRExecution(ir PlannerIR, tr ExecutionTrace) IRValidationResult {
 	ir = canonicalizeIR(ir)
 	result := IRValidationResult{}
-	add := func(reject bool, finding string) {
+	addHard := func(finding string) {
 		finding = strings.TrimSpace(finding)
 		if finding == "" {
 			return
 		}
-		result.Findings = append(result.Findings, finding)
-		if reject {
-			result.Reject = true
+		result.HardFindings = append(result.HardFindings, finding)
+		result.Reject = true
+	}
+	addSoft := func(finding string) {
+		finding = strings.TrimSpace(finding)
+		if finding == "" {
+			return
 		}
+		result.SoftFindings = append(result.SoftFindings, finding)
 	}
 	if selected := selectedStrategy(ir); selected != "" && selected != "general" {
 		if len(tr.StrategyUsed) == 0 || tr.StrategyUsed[0] != selected {
-			add(true, "selected strategy drift: IR="+selected+" trace="+firstNonEmpty(tr.StrategyUsed, ""))
+			addHard("selected strategy drift: IR=" + selected + " trace=" + firstNonEmpty(tr.StrategyUsed, ""))
 		}
 	}
 	if !sameStepIDs(ir.ExecutionSteps, tr.Steps) {
-		add(true, "execution steps drifted from planner IR")
+		addSoft("execution steps varied from planner IR")
 	}
 	if !sameStringSet(memoryRefIDs(ir.MemoryReferences), tr.MemoryUsed) {
-		add(true, "memory references drifted from planner IR")
+		addHard("memory references drifted from planner IR")
 	}
 	if len(ir.ExecutionSteps) > 0 && tr.Cost.ToolCalls > len(ir.ExecutionSteps)+3 && tr.Cost.ToolCalls >= 6 {
-		add(false, fmt.Sprintf("tool calls exceeded IR step budget: steps=%d tool_calls=%d", len(ir.ExecutionSteps), tr.Cost.ToolCalls))
+		addSoft(fmt.Sprintf("tool calls exceeded IR step budget: steps=%d tool_calls=%d", len(ir.ExecutionSteps), tr.Cost.ToolCalls))
 	}
-	result.Findings = limitStrings(canonicalStrings(result.Findings), 5)
+	result.HardFindings = limitStrings(canonicalStrings(result.HardFindings), 5)
+	result.SoftFindings = limitStrings(canonicalStrings(result.SoftFindings), 5)
+	result.Findings = limitStrings(canonicalStrings(append(append([]string(nil), result.HardFindings...), result.SoftFindings...)), 5)
 	return result
 }
 
@@ -1389,9 +1437,11 @@ func (t *Turn) Finish(err error) {
 	t.trace.Cost = finishCostMetrics(t.trace.Cost, t.trace.ToolResults, t.trace.StartedAt, t.trace.CompletedAt)
 	validation := validateIRExecution(t.ir, t.trace)
 	t.trace.SemanticDrift = validation.Findings
+	t.trace.SemanticDriftHard = validation.HardFindings
+	t.trace.SemanticDriftSoft = validation.SoftFindings
 	if validation.Reject && t.trace.Outcome == "success" {
 		t.trace.Outcome = "partial_success"
-		t.trace.FailureReason = "IR validation rejected inconsistent execution: " + strings.Join(validation.Findings, "; ")
+		t.trace.FailureReason = "IR validation rejected inconsistent execution: " + strings.Join(validation.HardFindings, "; ")
 	}
 	for i, rec := range t.trace.ToolResults {
 		toolID := fmt.Sprintf("tool:%s:%d", t.trace.ID, i)
@@ -1536,6 +1586,8 @@ func executionTraceProjection(tr ExecutionTrace) ExecutionTrace {
 		StrategyUsed:        append([]string(nil), tr.StrategyUsed...),
 		MemoryUsed:          append([]string(nil), tr.MemoryUsed...),
 		SemanticDrift:       append([]string(nil), tr.SemanticDrift...),
+		SemanticDriftHard:   append([]string(nil), tr.SemanticDriftHard...),
+		SemanticDriftSoft:   append([]string(nil), tr.SemanticDriftSoft...),
 		Cost:                tr.Cost,
 		FailureReason:       tr.FailureReason,
 		StartedAt:           tr.StartedAt,
@@ -1557,6 +1609,8 @@ func learningTraceFor(tr ExecutionTrace, learning SystemLearning) (LearningTrace
 		DecisionBranches:     append([]DecisionBranch(nil), tr.DecisionBranches...),
 		CausalEdges:          append([]CausalEdge(nil), tr.CausalEdges...),
 		SemanticDrift:        append([]string(nil), tr.SemanticDrift...),
+		SemanticDriftHard:    append([]string(nil), tr.SemanticDriftHard...),
+		SemanticDriftSoft:    append([]string(nil), tr.SemanticDriftSoft...),
 		CausalFindings:       append([]string(nil), learning.CausalFindings...),
 		CompilerImprovements: append([]string(nil), learning.CompilerImprovements...),
 		MutationEvaluations:  append([]MutationEvaluation(nil), tr.MutationEvaluations...),
@@ -1601,9 +1655,17 @@ func analyzeTrace(tr ExecutionTrace, strategyID string) SystemLearning {
 			learning.CausalFindings = append(learning.CausalFindings, "memory "+memoryID+" supported successful outcome")
 		}
 	}
-	for _, finding := range tr.SemanticDrift {
+	hardDrift := tr.SemanticDriftHard
+	softDrift := tr.SemanticDriftSoft
+	if len(hardDrift) == 0 && len(softDrift) == 0 {
+		hardDrift = tr.SemanticDrift
+	}
+	for _, finding := range hardDrift {
 		learning.CausalFindings = append(learning.CausalFindings, "IR execution semantic drift: "+finding)
 		learning.CompilerImprovements = append(learning.CompilerImprovements, "enforce IR execution contract: "+finding)
+	}
+	for _, finding := range softDrift {
+		learning.CausalFindings = append(learning.CausalFindings, "IR execution semantic variation: "+finding)
 	}
 	if tr.Cost.ToolCalls > len(tr.Steps)+3 && tr.Cost.ToolCalls >= 6 {
 		learning.CompilerImprovements = append(learning.CompilerImprovements, "tool call count exceeded plan shape; prefer tighter execution steps")
@@ -1762,7 +1824,7 @@ func mergeMutations(existing []CompilerMutation, next ...CompilerMutation) []Com
 	}
 	for _, m := range next {
 		key := m.Target + "\x00" + m.Change + "\x00" + m.Reason
-		if seen[key] || !validMutation(m) {
+		if seen[key] || !validMutation(m) || mutationFeedbackInCooldown(out, m) {
 			continue
 		}
 		seen[key] = true
@@ -1772,6 +1834,35 @@ func mergeMutations(existing []CompilerMutation, next ...CompilerMutation) []Com
 		out = out[len(out)-50:]
 	}
 	return out
+}
+
+func mutationFeedbackInCooldown(existing []CompilerMutation, next CompilerMutation) bool {
+	if next.CreatedAt.IsZero() {
+		return false
+	}
+	for _, m := range existing {
+		if m.Target != next.Target || m.Change != next.Change {
+			continue
+		}
+		if m.Status == "accepted" || m.Status == "rejected" {
+			continue
+		}
+		ref := m.UpdatedAt
+		if ref.IsZero() {
+			ref = m.CreatedAt
+		}
+		if ref.IsZero() {
+			continue
+		}
+		delta := next.CreatedAt.Sub(ref)
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta < mutationFeedbackCooldown {
+			return true
+		}
+	}
+	return false
 }
 
 func hasLearning(l SystemLearning) bool {

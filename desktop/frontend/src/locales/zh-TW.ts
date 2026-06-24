@@ -904,6 +904,7 @@ export const zhTW: Record<DictKey, string> = {
   "msg.thinkingRunning": "思考中…",
   "msg.thinkingDone": "已完成",
   "msg.memoryCitationsCount": "{n} 條記憶引用",
+  "msg.memoryCompilerCitationsCount": "{n} 條 Memory v5 編譯引用",
   "msg.memoryCitationLine": "第 {line} 行",
   "msg.memoryCitationLineRange": "{start}-{end} 行",
   "msg.copy": "複製",

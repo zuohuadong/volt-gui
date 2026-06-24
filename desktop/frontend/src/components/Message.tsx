@@ -97,7 +97,7 @@ function MemoryCitations({ citations }: { citations?: MemoryCitation[] }) {
         onClick={() => setOpen((value) => !value)}
       >
         <ChevronRight className={`msg-memory-citations__chevron${open ? " msg-memory-citations__chevron--open" : ""}`} size={15} />
-        <span>{t("msg.memoryCitationsCount", { n: clean.length })}</span>
+        <span>{t("msg.memoryCompilerCitationsCount", { n: clean.length })}</span>
       </button>
       {open && (
         <div ref={bodyRef} className="msg-memory-citations__body">
@@ -120,7 +120,9 @@ function MemoryCitations({ citations }: { citations?: MemoryCitation[] }) {
 }
 
 function memoryCitationSource(citation: MemoryCitation): string {
-  return (citation.source || citation.id || "Memory v5").trim();
+  const source = (citation.source || citation.id || "Memory v5").trim();
+  if (citation.kind === "compiler_reference" && source === "Memory v5") return "Memory v5 compiler";
+  return source;
 }
 
 function memoryCitationLines(citation: MemoryCitation, t: ReturnType<typeof useT>): string {

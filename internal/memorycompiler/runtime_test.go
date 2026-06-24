@@ -111,6 +111,9 @@ func TestStartTurnExposesMemoryCitations(t *testing.T) {
 		if c.Source != "Memory v5" {
 			t.Fatalf("citation source = %q, want Memory v5", c.Source)
 		}
+		if c.Kind != "compiler_reference" && c.Kind != "constraint" && c.Kind != "risk_note" {
+			t.Fatalf("citation kind should expose compiler observability semantics: %+v", c)
+		}
 		if strings.Contains(c.Note, "avoid repeating bash") {
 			found = true
 		}
@@ -455,6 +458,15 @@ func TestEquilibriumExplorationRateAdaptsToLearningState(t *testing.T) {
 	if got := equilibriumExplorationRatePercent(unstable, DriftReport{}); got != minExplorationRatePercent {
 		t.Fatalf("unstable exploration rate = %d, want %d", got, minExplorationRatePercent)
 	}
+	oscillating := state{Learnings: []SystemLearning{
+		{TraceID: "1", GoodPatterns: []string{"general"}},
+		{TraceID: "2", GoodPatterns: []string{"low-latency-optimization"}},
+		{TraceID: "3", BadStrategies: []string{"bugfix-reproduce-first"}},
+		{TraceID: "4", GoodPatterns: []string{"general"}},
+	}}
+	if got := equilibriumExplorationRatePercent(oscillating, DriftReport{}); got != minExplorationRatePercent {
+		t.Fatalf("oscillating exploration rate = %d, want damped %d", got, minExplorationRatePercent)
+	}
 	if got := equilibriumExplorationRatePercent(state{}, DriftReport{}); got != explorationRatePercent {
 		t.Fatalf("neutral exploration rate = %d, want %d", got, explorationRatePercent)
 	}
@@ -475,7 +487,7 @@ func TestStrategyDebiasRewardsNovelContextFit(t *testing.T) {
 	}
 }
 
-func TestIRExecutionValidatorRejectsSemanticDrift(t *testing.T) {
+func TestIRExecutionValidatorSplitsHardAndSoftSemanticDrift(t *testing.T) {
 	ir := PlannerIR{
 		Version:     version,
 		Goal:        "fix a bug",
@@ -499,17 +511,33 @@ func TestIRExecutionValidatorRejectsSemanticDrift(t *testing.T) {
 	}
 	got := validateIRExecution(ir, trace)
 	if !got.Reject {
-		t.Fatalf("expected validator to reject semantic drift: %+v", got)
+		t.Fatalf("expected validator to reject hard semantic drift: %+v", got)
+	}
+	hard := strings.Join(got.HardFindings, "\n")
+	for _, want := range []string{"selected strategy drift", "memory references drifted"} {
+		if !strings.Contains(hard, want) {
+			t.Fatalf("validator hard findings missing %q: %+v", want, got.HardFindings)
+		}
+	}
+	soft := strings.Join(got.SoftFindings, "\n")
+	for _, want := range []string{"execution steps varied", "tool calls exceeded IR step budget"} {
+		if !strings.Contains(soft, want) {
+			t.Fatalf("validator soft findings missing %q: %+v", want, got.SoftFindings)
+		}
 	}
 	joined := strings.Join(got.Findings, "\n")
-	for _, want := range []string{"selected strategy drift", "execution steps drifted", "memory references drifted", "tool calls exceeded IR step budget"} {
+	for _, want := range []string{"selected strategy drift", "execution steps varied", "memory references drifted", "tool calls exceeded IR step budget"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("validator findings missing %q: %+v", want, got.Findings)
 		}
 	}
-	learning := analyzeTrace(ExecutionTrace{ID: "trace-1", Goal: "fix", Outcome: "partial_success", SemanticDrift: got.Findings}, "general")
-	if len(learning.CompilerImprovements) == 0 || !strings.Contains(strings.Join(learning.CompilerImprovements, "\n"), "enforce IR execution contract") {
+	learning := analyzeTrace(ExecutionTrace{ID: "trace-1", Goal: "fix", Outcome: "partial_success", SemanticDrift: got.Findings, SemanticDriftHard: got.HardFindings, SemanticDriftSoft: got.SoftFindings}, "general")
+	improvements := strings.Join(learning.CompilerImprovements, "\n")
+	if !strings.Contains(improvements, "enforce IR execution contract") {
 		t.Fatalf("semantic drift did not feed compiler improvements: %+v", learning)
+	}
+	if strings.Contains(improvements, "execution steps varied") {
+		t.Fatalf("soft execution variation should not be enforced as a compiler mutation: %+v", learning)
 	}
 }
 
@@ -562,6 +590,40 @@ func TestTraceSplitterKeepsRuntimeTraceSmall(t *testing.T) {
 	}
 	if bundle.LearningTrace == nil || len(bundle.LearningTrace.CausalFindings) == 0 {
 		t.Fatalf("learning trace missing structured signal: %+v", bundle.LearningTrace)
+	}
+}
+
+func TestMutationFeedbackDampingSkipsCooldownResonance(t *testing.T) {
+	now := time.Now().UTC()
+	existing := []CompilerMutation{{
+		Target:    "strategy_selector",
+		Change:    "add_constraint",
+		Reason:    "first signal",
+		Status:    "testing",
+		Applied:   true,
+		CreatedAt: now.Add(-time.Minute),
+		UpdatedAt: now.Add(-time.Minute),
+	}}
+	next := CompilerMutation{
+		Target:    "strategy_selector",
+		Change:    "add_constraint",
+		Reason:    "second nearby signal",
+		Status:    "testing",
+		Applied:   true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	got := mergeMutations(existing, next)
+	if len(got) != 1 {
+		t.Fatalf("cooldown should damp same target/change resonance, got %+v", got)
+	}
+	later := next
+	later.Reason = "later independent signal"
+	later.CreatedAt = now.Add(mutationFeedbackCooldown + time.Minute)
+	later.UpdatedAt = later.CreatedAt
+	got = mergeMutations(existing, later)
+	if len(got) != 2 {
+		t.Fatalf("cooldown should allow later mutation signal, got %+v", got)
 	}
 }
 

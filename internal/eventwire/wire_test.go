@@ -50,6 +50,8 @@ func TestDesktopWireEventTypeCoversSharedPayloadFields(t *testing.T) {
 	for _, want := range []string{
 		"retryAttempt?: number;",
 		"retryMax?: number;",
+		"memoryCitations?: MemoryCitation[];",
+		"export interface MemoryCitation",
 		"cacheDiagnostics?: WireCacheDiagnostics;",
 		"export interface WireCacheDiagnostics",
 		"prefixHash: string;",
@@ -60,6 +62,35 @@ func TestDesktopWireEventTypeCoversSharedPayloadFields(t *testing.T) {
 		if !strings.Contains(ts, want) {
 			t.Fatalf("desktop WireEvent types are missing %q", want)
 		}
+	}
+}
+
+func TestToWireMessageMemoryCitations(t *testing.T) {
+	w := ToWire(event.Event{
+		Kind: event.Message,
+		Text: "done",
+		MemoryCitations: []provider.MemoryCitation{{
+			ID:        "mem-1",
+			Source:    "MEMORY.md",
+			LineStart: 116,
+			LineEnd:   123,
+			Note:      "reasonix workflow",
+			Kind:      "memory_reference",
+		}},
+	})
+	if len(w.MemoryCitations) != 1 {
+		t.Fatalf("memory citations = %+v, want one citation", w.MemoryCitations)
+	}
+	got := w.MemoryCitations[0]
+	if got.Source != "MEMORY.md" || got.LineStart != 116 || got.LineEnd != 123 || got.Note != "reasonix workflow" {
+		t.Fatalf("citation = %+v, want source/line/note preserved", got)
+	}
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"memoryCitations":[`) {
+		t.Fatalf("wire JSON missing memoryCitations: %s", string(b))
 	}
 }
 

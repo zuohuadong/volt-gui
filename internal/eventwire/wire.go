@@ -1,27 +1,34 @@
 // Package eventwire defines the shared frontend JSON contract for event.Event.
 package eventwire
 
-import "reasonix/internal/event"
+import (
+	"reasonix/internal/event"
+	"reasonix/internal/provider"
+)
 
 // Event is the JSON-friendly form shared by event frontends.
 type Event struct {
-	Kind         string      `json:"kind"`
-	Text         string      `json:"text,omitempty"`
-	Reasoning    string      `json:"reasoning,omitempty"`
-	Level        string      `json:"level,omitempty"`
-	Tool         *Tool       `json:"tool,omitempty"`
-	Usage        *Usage      `json:"usage,omitempty"`
-	Approval     *Approval   `json:"approval,omitempty"`
-	Ask          *Ask        `json:"ask,omitempty"`
-	Compaction   *Compaction `json:"compaction,omitempty"`
-	Err          string      `json:"err,omitempty"`
-	RetryAttempt int         `json:"retryAttempt,omitempty"`
-	RetryMax     int         `json:"retryMax,omitempty"`
+	Kind            string           `json:"kind"`
+	Text            string           `json:"text,omitempty"`
+	Reasoning       string           `json:"reasoning,omitempty"`
+	MemoryCitations []MemoryCitation `json:"memoryCitations,omitempty"`
+	Level           string           `json:"level,omitempty"`
+	Tool            *Tool            `json:"tool,omitempty"`
+	Usage           *Usage           `json:"usage,omitempty"`
+	Approval        *Approval        `json:"approval,omitempty"`
+	Ask             *Ask             `json:"ask,omitempty"`
+	Compaction      *Compaction      `json:"compaction,omitempty"`
+	Err             string           `json:"err,omitempty"`
+	RetryAttempt    int              `json:"retryAttempt,omitempty"`
+	RetryMax        int              `json:"retryMax,omitempty"`
 }
 
 // ToWire converts a typed runtime event into the shared frontend JSON contract.
 func ToWire(e event.Event) Event {
 	w := Event{Kind: kindNames[e.Kind], Text: e.Text, Reasoning: e.Reasoning}
+	if len(e.MemoryCitations) > 0 {
+		w.MemoryCitations = ToWireMemoryCitations(e.MemoryCitations)
+	}
 	switch e.Kind {
 	case event.Notice:
 		if e.Level == event.LevelWarn {
@@ -79,6 +86,35 @@ func ToWire(e event.Event) Event {
 		w.RetryMax = e.RetryMax
 	}
 	return w
+}
+
+// MemoryCitation is the JSON form of provider.MemoryCitation.
+type MemoryCitation struct {
+	ID        string `json:"id,omitempty"`
+	Source    string `json:"source"`
+	LineStart int    `json:"lineStart,omitempty"`
+	LineEnd   int    `json:"lineEnd,omitempty"`
+	Note      string `json:"note,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+}
+
+// ToWireMemoryCitations converts local memory references into frontend JSON.
+func ToWireMemoryCitations(in []provider.MemoryCitation) []MemoryCitation {
+	out := make([]MemoryCitation, 0, len(in))
+	for _, c := range in {
+		if c.Source == "" && c.ID == "" && c.Note == "" {
+			continue
+		}
+		out = append(out, MemoryCitation{
+			ID:        c.ID,
+			Source:    c.Source,
+			LineStart: c.LineStart,
+			LineEnd:   c.LineEnd,
+			Note:      c.Note,
+			Kind:      c.Kind,
+		})
+	}
+	return out
 }
 
 // Compaction is the JSON form of an event.Compaction.

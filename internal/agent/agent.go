@@ -767,6 +767,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 						Content:            text,
 						ReasoningContent:   reasoning,
 						ReasoningSignature: signature,
+						MemoryCitations:    a.memoryCitations(),
 					})
 				}
 				a.session.Add(provider.Message{
@@ -804,6 +805,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			ReasoningContent:   reasoning,
 			ReasoningSignature: signature,
 			ToolCalls:          calls,
+			MemoryCitations:    a.memoryCitations(),
 		})
 
 		if len(calls) == 0 {
@@ -1439,9 +1441,21 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	// styled markdown now that it is complete. Reasoning rides along so the sink
 	// has the full chain if it wants it.
 	if text.Len() > 0 || display != "" {
-		a.sink.Emit(event.Event{Kind: event.Message, Text: StripGoalMarkers(text.String()), Reasoning: display})
+		a.sink.Emit(event.Event{
+			Kind:            event.Message,
+			Text:            StripGoalMarkers(text.String()),
+			Reasoning:       display,
+			MemoryCitations: a.memoryCitations(),
+		})
 	}
 	return text.String(), stored, signature, calls, usage, false, false, nil
+}
+
+func (a *Agent) memoryCitations() []provider.MemoryCitation {
+	if a.compilerTurn == nil {
+		return nil
+	}
+	return a.compilerTurn.MemoryCitations()
 }
 
 func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {

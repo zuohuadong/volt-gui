@@ -111,10 +111,20 @@ export interface QuestionAnswer {
   selected: string[];
 }
 
+export interface MemoryCitation {
+  id?: string;
+  source: string;
+  lineStart?: number;
+  lineEnd?: number;
+  note?: string;
+  kind?: string;
+}
+
 export interface WireEvent {
   kind: EventKind;
   text?: string;
   reasoning?: string;
+  memoryCitations?: MemoryCitation[];
   level?: "info" | "warn";
   tool?: WireTool;
   usage?: WireUsage;
@@ -254,6 +264,7 @@ export interface HistoryMessage {
   submitText?: string;
   createdAt?: number;
   reasoning?: string;
+  memoryCitations?: MemoryCitation[];
   level?: "info" | "warn";
   toolCalls?: HistoryToolCall[];
   toolCallId?: string;

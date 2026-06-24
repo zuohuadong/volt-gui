@@ -91,6 +91,39 @@ func TestFailureTraceCreatesConstraintIR(t *testing.T) {
 	}
 }
 
+func TestStartTurnExposesMemoryCitations(t *testing.T) {
+	dir := t.TempDir()
+	rt := New(dir)
+	_, seed := rt.StartTurn(context.Background(), "fix a bug", nil)
+	seed.RecordToolResults([]ToolRecord{
+		{Name: "bash", Error: "exit status 1"},
+		{Name: "bash", Error: "exit status 1"},
+	})
+	seed.Finish(nil)
+
+	_, turn := rt.StartTurn(context.Background(), "continue", nil)
+	citations := turn.MemoryCitations()
+	if len(citations) == 0 {
+		t.Fatal("expected memory citations for learned compiler state")
+	}
+	found := false
+	for _, c := range citations {
+		if c.Source != "Memory v5" {
+			t.Fatalf("citation source = %q, want Memory v5", c.Source)
+		}
+		if strings.Contains(c.Note, "avoid repeating bash") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected repeated bash learning in citations: %+v", citations)
+	}
+	citations[0].Note = "mutated"
+	if turn.MemoryCitations()[0].Note == "mutated" {
+		t.Fatal("MemoryCitations returned mutable backing slice")
+	}
+}
+
 func TestSuccessTraceFeedsReusableStrategyAndGraph(t *testing.T) {
 	dir := t.TempDir()
 	rt := New(dir)

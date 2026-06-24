@@ -218,13 +218,14 @@ const (
 // for Kind; the others are zero.
 type Event struct {
 	Kind             Kind
-	Text             string            // Reasoning / Text / Message / Notice / Phase
-	Reasoning        string            // Message: the full reasoning chain
-	Tool             Tool              // ToolDispatch / ToolResult
-	Usage            *provider.Usage   // Usage
-	Pricing          *provider.Pricing // Usage: for cost display (nil = omit cost)
-	UsageSource      string            // Usage: billable call source; empty means executor for compatibility
-	CacheDiagnostics *CacheDiagnostics // Usage: cache-churn attribution (nil = N/A)
+	Text             string                    // Reasoning / Text / Message / Notice / Phase
+	Reasoning        string                    // Message: the full reasoning chain
+	MemoryCitations  []provider.MemoryCitation // Message: local memory references displayed by rich frontends
+	Tool             Tool                      // ToolDispatch / ToolResult
+	Usage            *provider.Usage           // Usage
+	Pricing          *provider.Pricing         // Usage: for cost display (nil = omit cost)
+	UsageSource      string                    // Usage: billable call source; empty means executor for compatibility
+	CacheDiagnostics *CacheDiagnostics         // Usage: cache-churn attribution (nil = N/A)
 	// SessionHit/SessionMiss carry cumulative cache tokens across the whole
 	// session (Usage events only), so a frontend can show the aggregate hit-rate
 	// — which doesn't crater on a short turn or after compaction — alongside

@@ -320,9 +320,10 @@ type state struct {
 
 // Turn records one top-level agent turn.
 type Turn struct {
-	rt       *Runtime
-	trace    ExecutionTrace
-	strategy string
+	rt        *Runtime
+	trace     ExecutionTrace
+	strategy  string
+	citations []provider.MemoryCitation
 }
 
 // StartTurn builds a cache-safe execution contract from prior learned state. It
@@ -338,7 +339,8 @@ func (r *Runtime) StartTurn(ctx context.Context, input string, _ []provider.Mess
 	ir := buildIR(goal, input, st)
 	now := time.Now().UTC()
 	t := &Turn{
-		rt: r,
+		rt:        r,
+		citations: memoryCitationsForIR(ir),
 		trace: ExecutionTrace{
 			ID:               traceID(now),
 			IRVersion:        version,
@@ -372,6 +374,15 @@ func (r *Runtime) StartTurn(ctx context.Context, input string, _ []provider.Mess
 		t.trace.Cost.EstimatedIROverheadTokens = t.trace.Cost.EstimatedCompiledTokens - t.trace.Cost.EstimatedInputTokens
 	}
 	return compiled, t
+}
+
+// MemoryCitations returns the local UI references that explain which memories
+// influenced this turn's compiled execution contract.
+func (t *Turn) MemoryCitations() []provider.MemoryCitation {
+	if t == nil || len(t.citations) == 0 {
+		return nil
+	}
+	return append([]provider.MemoryCitation(nil), t.citations...)
 }
 
 func buildIR(goal, sourceEvent string, st state) PlannerIR {
@@ -533,6 +544,62 @@ func explainIR(ir PlannerIR, result *ExecutionTrace) IRExplanation {
 		}
 	}
 	return canonicalizeExplanation(explanation)
+}
+
+func memoryCitationsForIR(ir PlannerIR) []provider.MemoryCitation {
+	ir = canonicalizeIR(ir)
+	out := []provider.MemoryCitation{}
+	seen := map[string]bool{}
+	add := func(c provider.MemoryCitation) {
+		c.ID = strings.TrimSpace(c.ID)
+		c.Source = strings.TrimSpace(c.Source)
+		c.Note = summarizeText(c.Note, 180)
+		c.Kind = strings.TrimSpace(c.Kind)
+		if c.Source == "" {
+			c.Source = "Memory v5"
+		}
+		key := c.Kind + "\x00" + c.ID + "\x00" + c.Source + "\x00" + c.Note
+		if c.Note == "" || seen[key] || len(out) >= 5 {
+			return
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	for _, ref := range ir.MemoryReferences {
+		note := ref.Content
+		if ref.Influence != "" {
+			note = ref.Influence + ": " + note
+		}
+		if ref.Quality != "" {
+			note += " (" + ref.Quality + ")"
+		}
+		add(provider.MemoryCitation{
+			ID:     ref.ID,
+			Source: "Memory v5",
+			Note:   note,
+			Kind:   "memory_reference",
+		})
+	}
+	for _, c := range ir.Constraints {
+		note := c.Type + ": " + c.Text
+		if c.Source != "" {
+			note += " [" + c.Source + "]"
+		}
+		add(provider.MemoryCitation{
+			ID:     c.Source,
+			Source: "Memory v5",
+			Note:   note,
+			Kind:   "constraint",
+		})
+	}
+	for _, note := range ir.RiskNotes {
+		add(provider.MemoryCitation{
+			Source: "Memory v5",
+			Note:   "risk: " + note,
+			Kind:   "risk_note",
+		})
+	}
+	return out
 }
 
 func selectedStrategy(ir PlannerIR) string {

@@ -793,6 +793,28 @@ func TestSetMemoryCompilerDefaultsOnAndPersistsOff(t *testing.T) {
 	}
 }
 
+type memoryCompilerTargetFake struct {
+	calls []bool
+}
+
+func (f *memoryCompilerTargetFake) SetMemoryCompilerEnabled(enabled bool) {
+	f.calls = append(f.calls, enabled)
+}
+
+func TestApplyMemoryCompilerToControllersBroadcastsToAllTargets(t *testing.T) {
+	first := &memoryCompilerTargetFake{}
+	second := &memoryCompilerTargetFake{}
+
+	applyMemoryCompilerToControllers(false, []memoryCompilerTarget{first, nil, second})
+
+	if !reflect.DeepEqual(first.calls, []bool{false}) {
+		t.Fatalf("first calls = %v, want [false]", first.calls)
+	}
+	if !reflect.DeepEqual(second.calls, []bool{false}) {
+		t.Fatalf("second calls = %v, want [false]", second.calls)
+	}
+}
+
 func TestSaveHooksSettingsPreservesUnknownSettingsKeys(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	path := hook.GlobalSettingsPath("")

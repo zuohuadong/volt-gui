@@ -314,8 +314,9 @@ type Agent struct {
 	// memoryCompiler, when non-nil, records execution traces and may compile the
 	// user turn into a compact execution contract. It never mutates the stable
 	// system prompt or tool schema.
-	memoryCompiler *memorycompiler.Runtime
-	compilerTurn   *memorycompiler.Turn
+	memoryCompilerMu sync.RWMutex
+	memoryCompiler   *memorycompiler.Runtime
+	compilerTurn     *memorycompiler.Turn
 
 	// planModeAllowedTools is the set of tool names that are exempt from the
 	// plan-mode gate. When non-empty, these tools bypass the read-only check.
@@ -391,6 +392,28 @@ func (a *Agent) SetReasoningLanguage(lang string) {
 		return
 	}
 	a.reasoningLanguage.Store(NormalizeReasoningLanguage(lang))
+}
+
+// SetMemoryCompiler updates the Memory v5 runtime used for subsequent turns.
+// It is safe for desktop settings to call while other tabs are idle or running;
+// an already-started turn keeps its own Turn handle and future turns observe the
+// new runtime.
+func (a *Agent) SetMemoryCompiler(rt *memorycompiler.Runtime) {
+	if a == nil {
+		return
+	}
+	a.memoryCompilerMu.Lock()
+	a.memoryCompiler = rt
+	a.memoryCompilerMu.Unlock()
+}
+
+func (a *Agent) memoryCompilerRuntime() *memorycompiler.Runtime {
+	if a == nil {
+		return nil
+	}
+	a.memoryCompilerMu.RLock()
+	defer a.memoryCompilerMu.RUnlock()
+	return a.memoryCompiler
 }
 
 // SetGate installs the per-call permission gate. Used by interactive CLI sessions to swap the
@@ -693,9 +716,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	}
 	a.repeatSuccessCounts = nil
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
-	input = a.withReasoningLanguage(input)
-	if a.memoryCompiler != nil {
-		if compiledInput, turn := a.memoryCompiler.StartTurn(ctx, input, a.session.Snapshot()); turn != nil {
+	rawInput := input
+	input = a.withReasoningLanguage(rawInput)
+	if memCompiler := a.memoryCompilerRuntime(); memCompiler != nil {
+		if compiledInput, turn := memCompiler.StartTurn(ctx, rawInput, a.session.Snapshot()); turn != nil {
 			a.compilerTurn = turn
 			defer func() {
 				turn.Finish(runErr)
@@ -704,7 +728,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 				}
 			}()
 			if strings.TrimSpace(compiledInput) != "" {
-				input = compiledInput
+				input = a.withReasoningLanguage(compiledInput)
 			}
 		}
 	}

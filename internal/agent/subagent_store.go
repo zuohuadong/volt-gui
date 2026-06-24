@@ -39,6 +39,7 @@ type SubagentMeta struct {
 	WorkspaceRoot    string         `json:"workspaceRoot"`
 	ParentSession    string         `json:"parentSession,omitempty"`
 	ParentToolCallID string         `json:"parentToolCallId,omitempty"`
+	ForkedFrom       string         `json:"forkedFrom,omitempty"`
 	SystemPromptHash string         `json:"systemPromptHash"`
 	ToolScope        []string       `json:"toolScope"`
 	ToolSchemaHash   string         `json:"toolSchemaHash"`
@@ -267,6 +268,10 @@ func (s *SubagentStore) PrepareContinue(ref string, spec SubagentSpec) (*Subagen
 		release()
 		return nil, err
 	}
+	if strings.TrimSpace(meta.ParentSession) != strings.TrimSpace(spec.ParentSession) {
+		release()
+		return s.PrepareFork(ref, spec)
+	}
 	if err := validateContinueOwner(meta, spec); err != nil {
 		release()
 		return nil, err
@@ -333,6 +338,7 @@ func (s *SubagentStore) PrepareFork(ref string, spec SubagentSpec) (*SubagentRun
 	}
 	now := time.Now().UTC()
 	newMeta := metaFromSpec(newRef, SubagentRunning, now, now, spec)
+	newMeta.ForkedFrom = sourceRef
 	return &SubagentRun{Ref: newRef, Session: sess, Meta: newMeta, store: s, release: newRelease}, nil
 }
 

@@ -195,7 +195,7 @@ func TestRememberBotConnectionRemoteStoresStableScope(t *testing.T) {
 		Label:         "project",
 		Enabled:       true,
 		Status:        "connected",
-		WorkspaceRoot: "/tmp/reasonix-project",
+		WorkspaceRoot: "/tmp/voltui-project",
 	}, nil); err != nil {
 		t.Fatalf("upsert project connection: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestRememberBotConnectionRemoteStoresStableScope(t *testing.T) {
 			projectMapping = conn.SessionMappings[0]
 		}
 	}
-	if projectMapping.Scope != "project" || projectMapping.WorkspaceRoot != "/tmp/reasonix-project" || projectMapping.RemoteID != "wxid_project" {
+	if projectMapping.Scope != "project" || projectMapping.WorkspaceRoot != "/tmp/voltui-project" || projectMapping.RemoteID != "wxid_project" {
 		t.Fatalf("project mapping = %+v, want project scope and workspace", projectMapping)
 	}
 }

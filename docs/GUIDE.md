@@ -1,4 +1,4 @@
-# VoltUI Guide
+# Reasonix Guide
 
 <a href="../README.md">README</a>
 &nbsp;·&nbsp;
@@ -12,6 +12,7 @@
 ## Contents
 
 - [Configuration](#configuration)
+- [Serve web frontend](#serve-web-frontend)
 - [Configuration paths](./CONFIG_PATHS.md)
 - [Reasoning language](./REASONING_LANGUAGE.md)
 - [Keyboard shortcuts](#keyboard-shortcuts)
@@ -23,18 +24,22 @@
 
 ## Configuration
 
-Resolution order: **flag > `./voltui.toml` > the user config file >
-built-in defaults**. Starting with **VoltUI v1.8.1**, the user config lives at
+Resolution order: **flag > `./reasonix.toml` > the user config file >
+built-in defaults**. Starting with **Reasonix v1.8.1**, the user config lives at
 `~/.voltui/config.toml` on macOS/Linux and
-`%AppData%\voltui\config.toml` on Windows; see
+`%AppData%\reasonix\config.toml` on Windows; see
 [Configuration paths](./CONFIG_PATHS.md) for migration and related data paths.
 Fields marked user/global only, including agent step limits, are not overridden
-by `./voltui.toml`.
-Secrets come from the environment via `api_key_env` and are never stored in
-config files. Credentials default to `credentials_store = "auto"`, which prefers
-the OS credential store and falls back to the file under VoltUI home. New keys
-saved by VoltUI are not written to a project `.env`; project `.env` files are
-only read for compatibility and explicit per-project overrides.
+by `./reasonix.toml`.
+Provider entries name secrets with `api_key_env`, while the secret values live in
+Reasonix's global `<Reasonix home>/.env`, shared by CLI and desktop. Project
+`.env`, home `.env`, inherited shell environment variables, legacy credentials,
+and the OS keyring are not provider-key runtime fallbacks; legacy credentials are
+only migration sources. Project `.env` still feeds workspace-scoped,
+non-provider `${VAR}` expansion for MCP/plugin settings without importing
+provider keys or Reasonix control variables. See
+[Configuration paths](./CONFIG_PATHS.md) for the full `config.toml` and `.env`
+structure.
 
 For the desktop and CLI usage of visible reasoning language, see
 [Reasoning language](./REASONING_LANGUAGE.md).
@@ -82,12 +87,62 @@ allow = ["Bash(go test:*)"]                  # never prompted
 # workspace_root = ""          # file-writers confined here; empty = current dir
 # allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit/move_file may touch
 
+[serve]
+auth_mode = "none"             # none|token|password; use auth before binding beyond localhost
+# token = ""                   # optional fixed token; empty token mode generates one at startup
+# password_hash = ""           # bcrypt hash generated with reasonix serve --hash-password --password '...'
+# behind_proxy = false         # true only behind a trusted reverse proxy
+
 [[plugins]]
 name    = "example"
-command = "voltui-plugin-example"
+command = "reasonix-plugin-example"
 ```
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
+
+## Serve web frontend
+
+`reasonix serve` starts the same local engine behind a browser UI. Use it when
+you want a desktop-style surface without installing the desktop app, when running
+Reasonix on a remote development box through a tunnel, or when you want a
+shareable view of a live session.
+
+```bash
+cd your-project
+reasonix serve
+# open http://127.0.0.1:8787
+```
+
+By default it listens on `127.0.0.1:8787` with `auth_mode = "none"`. Keep that
+default for local-only use. If you bind outside loopback, expose it through a
+tunnel, or put it behind a reverse proxy, enable authentication before sharing
+the URL:
+
+```bash
+reasonix serve --auth token
+reasonix serve --addr 0.0.0.0:8787 --auth token
+reasonix serve --auth password --password 'temporary-password'
+```
+
+Token mode prints a share URL with `?token=...`; pass `--token` or set
+`[serve].token` to reuse a stable token. Password mode requires either
+`--password` at startup or a stored bcrypt hash:
+
+```bash
+reasonix serve --hash-password --password 'strong-password'
+
+# ~/.voltui/config.toml
+[serve]
+auth_mode = "password" # none|token|password
+password_hash = "$2a$12$..."
+behind_proxy = true    # only behind a trusted reverse proxy
+```
+
+The web UI exposes chat, tool approvals, session history, rewind/fork/summarize,
+model and reasoning-effort controls, Goal, a live todo panel fed by the
+`todo_write` tool, and provider balance when configured. Use `--model`,
+`--max-steps`, or `--resume` for one-off launches; otherwise `serve` uses the
+user-global `default_model`.
 
 ## Keyboard shortcuts
 
@@ -102,7 +157,7 @@ behavior below is unified across layouts.
 ### Desktop GUI
 
 Desktop shortcuts are managed from **Settings → Shortcuts**. Pick a row, press a
-new key combination, and VoltUI saves it for the desktop app. Conflicting
+new key combination, and Reasonix saves it for the desktop app. Conflicting
 bindings are rejected so one shortcut never triggers two actions. Press `?` or
 use the help button in the topic bar to open the shortcuts sheet; it is generated
 from the same shortcut registry, so it reflects any custom bindings.
@@ -205,10 +260,10 @@ Permissions gate each tool call: `deny` > `ask` > `allow` > fallback. Bash and
 file mutation tools require approval by default; read-only tools generally do
 not. Approvals are stored and matched as permission rules, not button labels:
 for example `Bash(npm run build)`, `Bash(npm run test:*)`, and `Edit(docs/**)`.
-`voltui` can grant Bash as an exact command or as a conservative command
+`reasonix` can grant Bash as an exact command or as a conservative command
 prefix (for example `Bash(go test:*)`), while file-editing tools share session
 edit grants and persist path-scoped rules such as `Edit(src/app.go)`.
-`voltui run` stays autonomous but still honours `deny`.
+`reasonix run` stays autonomous but still honours `deny`.
 
 Permissions are *policy* (which calls to allow / prompt). The **sandbox** is
 *enforcement*: the file-writers (`write_file` / `edit_file` / `multi_edit` / `move_file`)
@@ -223,7 +278,7 @@ Linux support still to come).
 
 ## Plugins (MCP)
 
-VoltUI is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
+Reasonix is an MCP client. A `[[plugins]]` entry's `type` selects the transport:
 `stdio` (default) launches a local subprocess (`command`/`args`/`env`); `http`
 (Streamable HTTP) connects to a remote `url` with optional static `headers`
 (`${VAR}` / `${VAR:-default}` expanded from the environment, so tokens stay out
@@ -234,14 +289,14 @@ reader-default.
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing
 `@<server>:<uri>` in a message; `/mcp` lists connected servers and what each
-exposes. `make build` also produces `bin/voltui-plugin-example` — a runnable
+exposes. `make build` also produces `bin/reasonix-plugin-example` — a runnable
 reference stdio server (`echo`, `wordcount`, a `review` prompt, a style-guide
 resource) you can copy.
 
 ```toml
 [[plugins]]                       # local stdio server
 name    = "example"
-command = "voltui-plugin-example"
+command = "reasonix-plugin-example"
 
 [[plugins]]                       # remote server over Streamable HTTP
 name    = "stripe"
@@ -255,10 +310,10 @@ session begins, so chat stays usable while tools come online. Use `/mcp` or the
 desktop MCP panel to refresh status, reconnect a server, inspect failures, or
 disable a server for the current session.
 
-**Already have an `.mcp.json`?** Drop it in the project root and VoltUI
+**Already have an `.mcp.json`?** Drop it in the project root and Reasonix
 reads it as-is — the `mcpServers` spec (`command`/`args`/`env`, `type`/`url`/
 `headers`, `${VAR}` expansion) maps field-for-field onto `[[plugins]]`. Both
-sources are merged; on a name collision `voltui.toml` wins.
+sources are merged; on a name collision `reasonix.toml` wins.
 
 ```json
 {
@@ -271,21 +326,21 @@ sources are merged; on a name collision `voltui.toml` wins.
 
 **Upgrading from `0.x`?** Your old `~/.voltui/config.json` is still read for its
 `mcpServers` (honouring `mcpDisabled`) as a lowest-priority source, so MCP servers
-keep working — move them into `voltui.toml`'s `[[plugins]]` or a `.mcp.json` when
+keep working — move them into `reasonix.toml`'s `[[plugins]]` or a `.mcp.json` when
 convenient.
 
 ## Slash commands
 
-In an interactive `voltui` session, built-in commands (`/compact`, `/new`, `/clear`, `/rewind`,
+In an interactive `reasonix` session, built-in commands (`/compact`, `/new`, `/clear`, `/rewind`,
 `/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/mcp`, `/skills`, `/hooks`,
-`/memory`, `/goal`, `/output-style`, `/sandbox`, `/language`, `/auto-plan`,
-`/reasoning-language`, `/help`) run
+`/memory`, `/memory-v5`, `/goal`, `/output-style`, `/sandbox`, `/language`,
+`/auto-plan`, `/reasoning-language`, `/help`) run
 locally — `/help` lists them all. `/new` starts a new session while saving the
 previous transcript for history/resume; `/clear` asks for confirmation, then
 discards the current context without saving it. `/tree` shows saved conversation
 branches, `/branch [name]` forks the current conversation tip, `/branch <turn>
 [name]` forks from an earlier checkpointed turn, and `/switch <id|name>` loads
-another branch. **Custom commands** are Markdown files under `.voltui/commands/`
+another branch. **Custom commands** are Markdown files under `.reasonix/commands/`
 (project) or `~/.voltui/commands/` (user) — `review.md` becomes
 `/review`, a subdirectory namespaces it (`git/commit.md` → `/git:commit`). The
 body is a prompt template; invoking the command sends it as a turn.
@@ -301,6 +356,41 @@ Agent-initiated `remember` and `forget` calls always ask for fresh approval and
 show a compact preview of the saved or archived memory before they run.
 Retrieval keeps the top BM25 result while trimming weak common-word matches, and
 0-result responses suggest narrower, more distinctive follow-up searches.
+Memory v5 is enabled by default across the CLI/TUI, `reasonix serve`, and the
+desktop app because they all share the same local controller. It records local,
+project-scoped execution traces and compiler state under Reasonix home, then
+compiles the next user turn into a compact execution contract only when prior
+outcomes produce actionable constraints. Early turns may only write traces and
+inject nothing. Memory v5 never bypasses memory approvals, never uploads memory
+content, and never mutates the cache-stable system prompt, provider prefix, or
+tool schemas.
+
+Toggle future turns with `/memory-v5 off|on|status` inside an interactive
+session, or with `reasonix config memory-v5 off|on|status` from a shell/script.
+Desktop users can also use Settings → General → Memory v5. Settings → Updates →
+Share aggregate quality metrics controls the optional aggregate upload. When
+enabled, that upload may include only anonymous
+count/size buckets such as injection on/off, compiled-token bucket, IR-overhead
+bucket, memory-reference count, constraint/risk/step counts, and memory-graph
+size buckets. It never includes memory text, prompts, tool outputs, file paths,
+IDs, keys, base URLs, or file contents.
+
+CLI/TUI and `reasonix serve` use the same user/global config. Project
+`reasonix.toml` files cannot override this user/global setting. The CLI command
+updates this underlying config; advanced users may also edit it manually under
+Reasonix home:
+
+```toml
+[agent]
+memory_compiler = { enabled = false }
+```
+
+The CLI can use Memory v5 for local turns, but it does not run the desktop
+aggregate metrics upload pipeline. When `reasonix run --metrics <path>` is used,
+the JSON also includes content-free `memory_compiler_*` summary fields and a
+`memory_compiler_turn_details` array with per-turn injection state, compiled token
+and IR-overhead estimates, referenced-memory/constraint/risk/step counts, and
+current memory-graph counts.
 For implementation details, see
 [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md).
 
@@ -318,7 +408,7 @@ MCP prompts also appear here as `/mcp__<server>__<prompt>`.
 ## Goal and AutoResearch
 
 Goal is the unified runtime for long-running objectives. Ordinary `/goal`
-objectives stay lightweight: VoltUI keeps working until the goal is complete,
+objectives stay lightweight: Reasonix keeps working until the goal is complete,
 blocked, or cleared. When a goal is clearly long-horizon, Goal automatically
 enables the AutoResearch strategy instead of requiring a separate
 `/auto-research` skill; `auto-research` is not listed as a standalone built-in
@@ -332,7 +422,7 @@ clear", "do not spin", "run experiments", "verify repeatedly", or "turn this
 into a complete plan". It can also trigger when the objective combines multiple
 phases such as research/diagnosis, implementation/fixing, verification/testing,
 optimization/documentation/release, or when the user names an existing
-`.voltui/autoresearch/<task-id>/` directory. Advanced users can force it with
+`.reasonix/autoresearch/<task-id>/` directory. Advanced users can force it with
 `/goal --research <objective>` or force lightweight Goal with
 `/goal --simple <objective>`. Ordinary-chat auto-upgrade is more conservative
 than `/goal`'s internal classification: standalone phrases such as "long term",
@@ -341,8 +431,8 @@ by themselves.
 
 Once AutoResearch is active, the agent treats the goal as a stateful research
 loop instead of a chat-only continuation. It creates or reuses a project-local
-`.voltui/autoresearch/<task-id>/` directory. For new tasks, the default id
-shape is `YYYYMMDD-HHMMSS-slug`, such as `20260618-224530-cache-audit`; VoltUI
+`.reasonix/autoresearch/<task-id>/` directory. For new tasks, the default id
+shape is `YYYYMMDD-HHMMSS-slug`, such as `20260618-224530-cache-audit`; Reasonix
 checks the project directory first and appends `-2`, `-3`, and so on only if
 that id already exists. The task state includes `task_spec.md`, `progress.json`,
 `findings.jsonl`, `directions_tried.json`, and `iteration_log.jsonl`, records
@@ -355,7 +445,7 @@ tactic.
 Workers and subagents may explore independently, but the orchestrator owns the
 canonical state files. Completion requires a requirement-by-requirement evidence
 audit against `task_spec.md`; a passing narrow check is not treated as proof of a
-broad requirement. Dynamic run state stays in `.voltui/autoresearch/...`, not
+broad requirement. Dynamic run state stays in `.reasonix/autoresearch/...`, not
 in `REASONIX.md`, `AGENTS.md`, project memory, tool schemas, or the cache-stable
 system prompt. Public publishing, destructive operations, credentials, payments,
 and external notifications still follow the normal approval, privacy, and cache
@@ -363,7 +453,7 @@ gates.
 
 ## @ references
 
-Embed `@` references in a message and VoltUI resolves them before sending, as
+Embed `@` references in a message and Reasonix resolves them before sending, as
 tagged context blocks: `@path/to/file` (or `@dir`) injects a local file's
 contents (or a directory listing), and `@<server>:<uri>` injects an MCP
 resource. A local path is only treated as a reference when it actually exists,
@@ -373,7 +463,7 @@ time, descend into folders) plus MCP resources.
 
 ## Two-model collaboration
 
-`voltui setup` keeps first-run minimal: pick provider → keys (every SKU of a
+`reasonix setup` keeps first-run minimal: pick provider → keys (every SKU of a
 chosen provider is enabled). Running two models together (executor + planner,
 separate cache-stable sessions) is a one-line edit afterwards — set
 `planner_model` to any other enabled provider:
@@ -389,7 +479,7 @@ executor. Writer and workflow tools remain executor-only. `max_steps` limits the
 executor; `planner_max_steps` limits only the planner, and either can be set to
 `0` for no round limit.
 
-Keep step-limit preferences in the user config. Project `./voltui.toml` files
+Keep step-limit preferences in the user config. Project `./reasonix.toml` files
 do not override `max_steps` or `planner_max_steps`.
 
 Subagent skills inherit the executor model by default. Set `subagent_model` to
@@ -398,17 +488,19 @@ specific skills such as `review` or `security_review`.
 
 For interactive frontends, plan mode is manual by default. Set
 `agent.auto_plan = "on"` to make complex-looking tasks enter plan mode
-automatically: VoltUI first drafts a read-only plan, then waits for approval
+automatically: Reasonix first drafts a read-only plan, then waits for approval
 before editing or running side-effecting commands. `auto_plan_classifier` can
 name a cheap provider such as `deepseek-flash`; it is only called for borderline
 inputs and falls back to the heuristic if classification fails. Use
-`/auto-plan off|on` inside `voltui` to change the user-level setting, or
-`voltui config auto-plan off|on` from a shell/script. Auto-plan is user-level
-only; `agent.auto_plan` in a project `voltui.toml` is ignored. The visible
+`/auto-plan off|on` inside `reasonix` to change the user-level setting, or
+`reasonix config auto-plan off|on` from a shell/script. Auto-plan is user-level
+only; `agent.auto_plan` in a project `reasonix.toml` is ignored. The visible
 reasoning language uses a similar shape: `/reasoning-language auto|zh|en` in the
-session, or `voltui config reasoning-language auto|zh|en` in a shell/script.
-Pass `--local` to the reasoning-language shell command only when you
-intentionally want a project-local override.
+session, or `reasonix config reasoning-language auto|zh|en` in a shell/script.
+Memory v5 uses `/memory-v5 off|on|status` or
+`reasonix config memory-v5 off|on|status` and is user-level only. Pass `--local`
+to the reasoning-language shell command only when you intentionally want a
+project-local override.
 
 The why behind separate sessions (keeping each model's prefix cache-stable) is in
 [`SPEC.md` §3.5](./SPEC.md#35-two-model-collaboration-coordinator).

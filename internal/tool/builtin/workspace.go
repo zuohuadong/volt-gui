@@ -41,22 +41,29 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 	}
 	roots := realRoots(writeRoots)
 
-	all := []tool.Tool{
-		readFile{workDir: w.Dir},
-		writeFile{workDir: w.Dir, roots: roots},
-		editFile{workDir: w.Dir, roots: roots},
-		multiEdit{workDir: w.Dir, roots: roots},
-		moveFile{workDir: w.Dir, roots: roots},
-		notebookEdit{workDir: w.Dir, roots: roots},
-		deleteRange{workDir: w.Dir, roots: roots},
-		deleteSymbol{workDir: w.Dir, roots: roots},
-		bash{workDir: w.Dir, sb: w.Bash, timeout: w.BashTimeout},
-		listDir{workDir: w.Dir},
-		globTool{workDir: w.Dir},
-		grepTool{workDir: w.Dir, rg: w.Search.RgPath},
-		webFetch{proxySpec: w.ProxySpec},
+	overrides := map[string]tool.Tool{
+		"read_file":     readFile{workDir: w.Dir},
+		"write_file":    writeFile{workDir: w.Dir, roots: roots},
+		"edit_file":     editFile{workDir: w.Dir, roots: roots},
+		"multi_edit":    multiEdit{workDir: w.Dir, roots: roots},
+		"move_file":     moveFile{workDir: w.Dir, roots: roots},
+		"notebook_edit": notebookEdit{workDir: w.Dir, roots: roots},
+		"delete_range":  deleteRange{workDir: w.Dir, roots: roots},
+		"delete_symbol": deleteSymbol{workDir: w.Dir, roots: roots},
+		"code_index":    codeIndex{workDir: w.Dir},
+		"bash":          bash{workDir: w.Dir, sb: w.Bash, timeout: w.BashTimeout},
+		"ls":            listDir{workDir: w.Dir},
+		"glob":          globTool{workDir: w.Dir},
+		"grep":          grepTool{workDir: w.Dir, rg: w.Search.RgPath},
+		"web_fetch":     webFetch{proxySpec: w.ProxySpec},
 	}
+	all := tool.Builtins()
 	if len(enabled) == 0 {
+		for i, t := range all {
+			if bound, ok := overrides[t.Name()]; ok {
+				all[i] = bound
+			}
+		}
 		return all
 	}
 	want := make(map[string]bool, len(enabled))
@@ -66,6 +73,9 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 	out := make([]tool.Tool, 0, len(enabled))
 	for _, t := range all {
 		if want[t.Name()] {
+			if bound, ok := overrides[t.Name()]; ok {
+				t = bound
+			}
 			out = append(out, t)
 		}
 	}

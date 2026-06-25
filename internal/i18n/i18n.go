@@ -37,15 +37,15 @@ type Messages struct {
 	NoKey           string // status dot — no API key set
 	Ready           string // status dot — provider ready
 	GetStarted      string // section title above numbered steps
-	StepScaffold    string // step 1 desc — reasonix setup
+	StepScaffold    string // step 1 desc — voltui setup
 	StepSetKey      string // step 2 command label
 
-	// `reasonix init` — points to the in-session /init skill + setup
+	// `voltui init` — points to the in-session /init skill + setup
 	InitHint       string
 	StepSetKeyHint string // step 2 desc — env var hint
 	StepChatDesc   string // interactive session step desc
-	StepRunDesc    string // reasonix run step desc
-	HelpFooter     string // dim footer linking to reasonix help
+	StepRunDesc    string // voltui run step desc
+	HelpFooter     string // dim footer linking to voltui help
 
 	// chat REPL
 	ChatTip           string // tip line under the chat banner
@@ -179,6 +179,7 @@ type Messages struct {
 	CmdEffort       string // /effort
 	CmdAutoPlan     string // /auto-plan
 	CmdReasonLang   string // /reasoning-language
+	CmdMemoryV5     string // /memory-v5
 	CmdHelp         string // /help
 	CmdTodo         string // /todo
 	CmdQuit         string // /quit (also accepts /exit as hidden alias)
@@ -354,7 +355,7 @@ type Messages struct {
 
 	// top-level / runAgent
 	UnknownCommandFmt         string // "unknown command %q"
-	UsageRunHint              string // "usage: reasonix run [--model NAME] <task>"
+	UsageRunHint              string // "usage: voltui run [--model NAME] <task>"
 	ErrorPrefix               string // "error:" — prefix for fatal-error output
 	ReconfigureOnUnknownModel string // shown when the configured model no longer resolves and setup is re-run
 	WriteConfigErr            string // "write config:" — prefix for write failure
@@ -385,7 +386,7 @@ type Messages struct {
 	ProviderPickLabel    string // label for provider model picker
 	ProviderNoModelsFmt  string // provider has no models
 
-	// `reasonix upgrade` / `reasonix update` — self-update
+	// `voltui upgrade` / `voltui update` — self-update
 	UpgradeChecking            string // "Checking for updates…"
 	UpgradeDevBuild            string // dev builds cannot self-update
 	UpgradeFetchFailed         string // "failed to check for updates: %v"

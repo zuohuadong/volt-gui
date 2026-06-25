@@ -98,14 +98,23 @@ func bashCommandArgs(t *testing.T, cmd string) json.RawMessage {
 // --- planModeBlocked tests ---
 
 func TestPlanModeDeniedToolsBlocked(t *testing.T) {
-	denied := []string{"write_file", "edit_file", "multi_edit", "apply_patch"}
+	denied := []string{
+		"write_file", "edit_file", "multi_edit", "move_file", "apply_patch",
+		"edit_notebook", "notebook_edit", "range_delete", "symbol_delete", "delete_range", "delete_symbol",
+		"complete_step", "task", "parallel_tasks", "run_skill",
+		"explore", "research", "review", "security_review", "security-review",
+		"install_source", "install_skill", "remember", "forget", "kill_shell",
+	}
 	for _, name := range denied {
 		t.Run(name, func(t *testing.T) {
 			blocked, msg := (&Agent{}).planModeBlocked(name, false, nil)
 			if !blocked {
 				t.Errorf("planModeBlocked(%q) = false, want true", name)
 			}
-			if !strings.Contains(msg, "not available in plan mode") {
+			if name == "complete_step" && !strings.Contains(msg, "only available after plan approval") {
+				t.Errorf("unexpected complete_step message: %s", msg)
+			}
+			if name != "complete_step" && !strings.Contains(msg, "not available in plan mode") {
 				t.Errorf("unexpected message: %s", msg)
 			}
 		})
@@ -113,14 +122,16 @@ func TestPlanModeDeniedToolsBlocked(t *testing.T) {
 }
 
 func TestPlanModeReadOnlyToolsAllowed(t *testing.T) {
-	blocked, _ := (&Agent{}).planModeBlocked("read_file", true, nil)
-	if blocked {
-		t.Error("ReadOnly tools should not be blocked in plan mode")
+	for _, name := range []string{"read_file", "read_only_skill"} {
+		blocked, _ := (&Agent{}).planModeBlocked(name, true, nil)
+		if blocked {
+			t.Errorf("ReadOnly tool %q should not be blocked in plan mode", name)
+		}
 	}
 }
 
 func TestPlanModeAllowedToolsOverride(t *testing.T) {
-	a := &Agent{planModeAllowedTools: map[string]bool{"custom_tool": true}}
+	a := &Agent{planModeAllowedTools: []string{"custom_tool"}}
 	blocked, _ := a.planModeBlocked("custom_tool", false, nil)
 	if blocked {
 		t.Error("tool in planModeAllowedTools should not be blocked")
@@ -206,6 +217,36 @@ func TestPlanModeBashBlocked_Metacharacters(t *testing.T) {
 			}
 			if !strings.Contains(msg, "shell operators") {
 				t.Errorf("unexpected message: %s", msg)
+			}
+		})
+	}
+}
+
+func TestPlanModeBashBlocked_ProcessControlArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want string
+	}{
+		{
+			name: "background execution",
+			args: `{"command":"git status","run_in_background":true}`,
+			want: "background execution",
+		},
+		{
+			name: "process preservation",
+			args: `{"command":"git status","preserve_background_processes":true}`,
+			want: "process preservation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocked, msg := planModeBashBlocked(json.RawMessage(tt.args))
+			if !blocked {
+				t.Fatalf("planModeBashBlocked(%s) = allowed, want blocked", tt.args)
+			}
+			if !strings.Contains(msg, tt.want) {
+				t.Fatalf("blocked message = %q, want %q", msg, tt.want)
 			}
 		})
 	}
@@ -327,19 +368,19 @@ func TestPlanModeBashBlocked_BoundaryCheck(t *testing.T) {
 func TestPlanModeBashBlocked_EmptyCommand(t *testing.T) {
 	// Empty/missing command should not crash
 	blocked, _ := planModeBashBlocked(json.RawMessage(`{}`))
-	if blocked {
-		t.Error("empty command should not be blocked")
+	if !blocked {
+		t.Error("missing command should fail closed in plan mode")
 	}
 	blocked, _ = planModeBashBlocked(json.RawMessage(`{"command":""}`))
-	if blocked {
-		t.Error("empty string command should not be blocked")
+	if !blocked {
+		t.Error("empty string command should fail closed in plan mode")
 	}
 }
 
 func TestPlanModeBashBlocked_InvalidJSON(t *testing.T) {
 	blocked, _ := planModeBashBlocked(json.RawMessage(`not json`))
-	if blocked {
-		t.Error("invalid JSON should not be blocked (fail-open)")
+	if !blocked {
+		t.Error("invalid JSON should fail closed in plan mode")
 	}
 }
 
@@ -377,10 +418,25 @@ func TestPlanModeBash_BashToolIntegration(t *testing.T) {
 	if !strings.HasPrefix(chainResult.output, "blocked:") {
 		t.Errorf("chained command should be blocked in plan mode: %s", chainResult.output)
 	}
+
+	backgroundResult := a.executeOne(context.Background(), provider.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git status","run_in_background":true}`,
+	})
+	if !strings.HasPrefix(backgroundResult.output, "blocked:") {
+		t.Errorf("background bash should be blocked in plan mode: %s", backgroundResult.output)
+	}
+
+	preserveResult := a.executeOne(context.Background(), provider.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git status","preserve_background_processes":true}`,
+	})
+	if !strings.HasPrefix(preserveResult.output, "blocked:") {
+		t.Errorf("process-preserving bash should be blocked in plan mode: %s", preserveResult.output)
+	}
 }
 
 func TestPlanMode_BashAllowedToolsOverride(t *testing.T) {
-	// If bash is in planModeAllowedTools, it should bypass the bash validation
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "bash", readOnly: false})
 
@@ -389,13 +445,12 @@ func TestPlanMode_BashAllowedToolsOverride(t *testing.T) {
 	}, event.Discard)
 	a.SetPlanMode(true)
 
-	// Even an unsafe command should pass because bash is in allowedTools
 	result := a.executeOne(context.Background(), provider.ToolCall{
 		Name:      "bash",
 		Arguments: `{"command":"rm -rf /"}`,
 	})
-	if strings.HasPrefix(result.output, "blocked:") {
-		t.Errorf("bash in planModeAllowedTools should bypass validation: %s", result.output)
+	if !strings.HasPrefix(result.output, "blocked:") {
+		t.Errorf("bash in planModeAllowedTools must still validate unsafe commands: %s", result.output)
 	}
 }
 

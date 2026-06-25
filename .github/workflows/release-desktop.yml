@@ -6,9 +6,10 @@ name: Release desktop
 #   git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z
 #
 # Wails cannot cross-compile a CGO/WebKit binary, so build/ fans out to one native
-# runner per platform. Artifacts are minisign-signed (MINISIGN_* secrets), a
-# latest.json manifest is generated, and everything is published to a GitHub
-# release and mirrored to R2 (the updater reads R2 first, GitHub as fallback).
+# runner per platform. A latest.json manifest is generated, and everything is
+# published to a GitHub release and mirrored to R2 (the updater reads R2 first,
+# GitHub as fallback). Release assets are intentionally unsigned: do not produce
+# detached .minisig files in CI.
 on:
   push:
     tags: ["desktop-v*"]
@@ -105,13 +106,6 @@ jobs:
 
       - name: Build and package
         run: scripts/desktop-build.sh "${{ matrix.platform }}" "${{ steps.ver.outputs.version }}"
-
-      - name: Sign artifacts (minisign)
-        working-directory: desktop
-        env:
-          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
-        run: go run ./cmd/sign sign ../dist/*
 
       - uses: actions/upload-artifact@v7
         with:

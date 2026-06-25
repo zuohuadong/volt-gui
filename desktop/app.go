@@ -5201,7 +5201,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 	entry, ok := cfg.ResolveModel(name)
 	if !ok {
-		return fmt.Errorf("unknown model %q", name)
+		return cfg.ResolveModelError(name)
 	}
 	if !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
 		return fmt.Errorf("model %q is not available because provider %q is not added", name, entry.Name)
@@ -5938,11 +5938,11 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	}
 	resolved, _, ok := cfg.ResolveModelWithFallback(ref)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q", ref)
+		return nil, cfg.ResolveModelError(ref)
 	}
 	entry, ok := cfg.ResolveModel(resolved)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q", resolved)
+		return nil, cfg.ResolveModelError(resolved)
 	}
 	if effortOverride != nil {
 		entry.Effort = *effortOverride
@@ -5964,7 +5964,7 @@ func (a *App) resolvedModelForTab(tab *WorkspaceTab) (string, bool, error) {
 	}
 	resolved, fallback, ok := cfg.ResolveModelWithFallback(ref)
 	if !ok {
-		return "", false, fmt.Errorf("unknown model %q", ref)
+		return "", false, cfg.ResolveModelError(ref)
 	}
 	return resolved, fallback, nil
 }

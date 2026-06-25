@@ -941,6 +941,7 @@ type ProviderEntry struct {
 	Models         []string `toml:"models"`     // a vendor's model list (one base_url/key, many models)
 	ModelsURL      string   `toml:"models_url"` // auto-fetch models from this URL on startup
 	Default        string   `toml:"default"`    // default model when Models is set (else Models[0])
+	Priority       int      `toml:"priority"`   // higher wins when a bare model name exists in multiple providers
 	APIKeyEnv      string   `toml:"api_key_env"`
 	resolvedAPIKey string
 	resolvedSource CredentialSource
@@ -3303,7 +3304,9 @@ func (c *Config) Provider(name string) (*ProviderEntry, bool) {
 // selected model string (a copy, so the config's lists stay intact). It accepts:
 //   - "provider/model" — that exact model under that provider;
 //   - a provider name   — the provider's default model;
-//   - a bare model name — the (first) provider that lists it.
+//   - a bare model name — the provider that lists it. If several providers expose
+//     the same bare model, the unique highest provider priority wins; ties are
+//     ambiguous and must be selected as "provider/model".
 //
 // The returned entry is ready to build a provider from (NewProvider reads .Model),
 // so a single "vendor with many models" entry yields one instance per model
@@ -3332,16 +3335,68 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 		cp.applyModelPrice()
 		return &cp, true
 	}
-	// a bare model name → the provider that lists it
-	for i := range c.Providers {
-		if c.Providers[i].HasModel(ref) {
-			cp := c.Providers[i]
-			cp.Model = ref
-			cp.applyModelPrice()
-			return &cp, true
-		}
+	if e, ambiguous := c.resolveBareModel(ref); len(ambiguous) == 0 && e != nil {
+		return e, true
 	}
 	return nil, false
+}
+
+func (c *Config) resolveBareModel(ref string) (*ProviderEntry, []string) {
+	var best ProviderEntry
+	bestPriority := 0
+	found := false
+	ties := []string{}
+	for i := range c.Providers {
+		if !c.Providers[i].HasModel(ref) {
+			continue
+		}
+		priority := c.Providers[i].Priority
+		candidateRef := c.Providers[i].Name + "/" + ref
+		if !found || priority > bestPriority {
+			best = c.Providers[i]
+			bestPriority = priority
+			found = true
+			ties = []string{candidateRef}
+			continue
+		}
+		if priority == bestPriority {
+			ties = append(ties, candidateRef)
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	if len(ties) > 1 {
+		return nil, ties
+	}
+	best.Model = ref
+	best.applyModelPrice()
+	return &best, nil
+}
+
+func (c *Config) AmbiguousModelRefs(ref string) []string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {
+		ref = retargetDesktopOfficialRef(ref, access)
+	}
+	if _, _, ok := strings.Cut(ref, "/"); ok {
+		return nil
+	}
+	if _, found := c.Provider(ref); found {
+		return nil
+	}
+	_, ambiguous := c.resolveBareModel(ref)
+	return ambiguous
+}
+
+func (c *Config) ResolveModelError(ref string) error {
+	if ambiguous := c.AmbiguousModelRefs(ref); len(ambiguous) > 0 {
+		return fmt.Errorf("ambiguous model %q matches %s; use provider/model or set a unique provider priority", ref, strings.Join(ambiguous, ", "))
+	}
+	return fmt.Errorf("unknown model %q (configured: %s)", ref, c.providerNames())
 }
 
 func ModelRefsProvider(ref, provider string) bool {
@@ -3363,12 +3418,18 @@ func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallb
 		if e, found := c.ResolveModel(ref); found {
 			return e.Name + "/" + e.Model, false, true
 		}
+		if ambiguous := c.AmbiguousModelRefs(ref); len(ambiguous) > 0 {
+			return "", false, false
+		}
 	}
 	// Before falling back to the first configured provider (which may not be the
 	// user's preferred choice), try the configured default_model.  Skip when ref
 	// already WAS the DefaultModel (it already failed above, so retrying won't
 	// help) or when the default provider has no API key configured.
 	if ref != c.DefaultModel && c.DefaultModel != "" {
+		if ambiguous := c.AmbiguousModelRefs(c.DefaultModel); len(ambiguous) > 0 {
+			return "", false, false
+		}
 		if e, found := c.ResolveModel(c.DefaultModel); found && e.Configured() {
 			return e.Name + "/" + e.Model, true, true
 		}
@@ -3533,7 +3594,7 @@ func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 func (c *Config) Validate(model string) error {
 	e, ok := c.ResolveModel(model)
 	if !ok {
-		return fmt.Errorf("unknown model %q (configured: %s)", model, c.providerNames())
+		return c.ResolveModelError(model)
 	}
 	if e.Kind == "" {
 		return fmt.Errorf("provider %q: kind is required", model)

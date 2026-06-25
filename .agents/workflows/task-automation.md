@@ -6,7 +6,7 @@ description: 任务自动化 — 从任务契约领取、执行、提 PR/MR
 # Task Automation Workflow
 
 ## 0. Pre-Execution Gate
-- 优先读取 `progress.md`、`.mailbox/`、`tasks.md` 和 Task Contract
+- coordination DB v2 项目优先读取 `agent-team context . --task <id>`、DB-backed Task Contract、recent events 和 pending/conflict mailbox 队列；legacy 项目才读取 `progress.md`、`.mailbox/`、`tasks.md` 和 Task Contract
 - 若任务来源不明确，先看 Task Contract，再回查 provider 原始任务
 - 识别任务相关 skill、项目代码规范、测试约定和提交规范
 - 先看 skill 元数据和索引，命中后再渐进加载完整 `SKILL.md` 与必要引用；若用户或契约显式指定 `/skill-name`，只对本轮激活该 skill
@@ -14,9 +14,9 @@ description: 任务自动化 — 从任务契约领取、执行、提 PR/MR
 - 若任务涉及高风险变更、生产环境、权限、密钥，先停下来澄清
 
 ## 1. Queue Strategy
-- 默认优先级：Task Contract > provider 原始任务 > `tasks.md`
+- 默认优先级：Task Contract > provider 原始任务 > coordination DB / legacy `tasks.md`
 - Provider 只负责任务来源，不决定执行策略
-- 当前项目的 Task Ledger / `tasks.md` 是唯一执行源；全局 dashboard 只能提供索引和总览
+- coordination DB v2 项目的 `.agents/state/coordination.db` 是唯一执行源；legacy 项目的 Task Ledger / `tasks.md` 是唯一执行源；全局 dashboard 只能提供索引和总览
 - 任务由人工或 AI 创建，但必须先标准化为 Task Contract，并写清楚：
   - 目标
   - 非目标
@@ -64,7 +64,7 @@ agent-team subagent status
 2. **Explorer 探索** → `agent-team subagent dispatch explorer "..." --mailbox 0NN-explorer-result.md`
 3. **Executor 实现** → `agent-team subagent dispatch executor "..." --mailbox 0NN-executor-result.md`
 4. **Verifier 验证** → `agent-team subagent dispatch verifier "..." --mailbox 0NN-verifier-result.md`
-5. **Orchestrator 审查所有子代理输出** → 裁决 PASS/FAIL，更新 progress.md 和 tasks.md
+5. **Orchestrator 审查所有子代理输出** → 裁决 PASS/FAIL，更新 coordination DB；legacy 项目才更新 progress.md 和 tasks.md
 
 **低风险单文件修复**（可跳过 Explorer/Critic，但必须仍有独立 Verifier）：
 
@@ -121,7 +121,7 @@ agent-team subagent status
 - 模型优先：`gpt-5.3-codex`
 - 在每个项目内串行循环，直到没有 eligible `ready` 任务
 - 同一时间只领取并持有 1 个任务，避免并发抢占
-- 每完成或阻塞一个任务后，重新读取 `tasks.md`、`progress.md` 和 `.mailbox/` 再决定是否领取下一个
+- 每完成或阻塞一个任务后，coordination DB v2 项目重新读取 `agent-team context` / DB 状态；legacy 项目重新读取 `tasks.md`、`progress.md` 和 `.mailbox/` 再决定是否领取下一个
 - 先创建独立分支或 worktree，再修改代码
 - 实施顺序：
   1. 读取 Task Contract，确认目标和非目标
@@ -144,9 +144,8 @@ agent-team subagent status
 - 若发现契约缺失、任务过大或风险上升，改为 `blocked` 并说明原因
 
 ## 5. 记录要求
-- 每次领取、暂停、完成都要更新 `progress.md`
-- 需要协作时通过 `.mailbox/` 留消息
+- coordination DB v2 项目每次领取、暂停、完成都要写入 DB event / mailbox 队列；legacy 项目才更新 `progress.md` 或通过 `.mailbox/` 留消息
 - 中/高风险、长程、多子代理或可恢复任务建议写入 `.agents/state/runs/<run_id>.json`，按 `.agents/state/run-records.schema.json` 保存证据引用、命令和 redaction 状态
-- 任务完成后只把稳定事实、决策、已知坑、否决方案或回滚约束写入 `.agents/state/project-memory.json`，并先去重；不要把 `tasks.md`、`progress.md` 或 `.mailbox/` 整文件灌入 memory
+- 任务完成后只把稳定事实、决策、已知坑、否决方案或回滚约束写入 `.agents/state/project-memory.json`，并先去重；不要把 coordination DB dump 或 legacy `tasks.md`、`progress.md`、`.mailbox/` 整文件灌入 memory
 - 非显而易见的决策写进 commit body 的 `Rejected:` / `Constraint:` / `Directive:`
 - 任务平台变更时只更新 provider adapter，不改 Task Contract 语义

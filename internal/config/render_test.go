@@ -53,6 +53,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		BaseURL:   "http://localhost:8000/v1",
 		Model:     "render-model",
 		Models:    []string{"render-model"},
+		Priority:  10,
 		APIKeyEnv: "RENDER_MODEL_KEY",
 		Effort:    "max",
 	})
@@ -93,6 +94,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Language != "zh" {
 		t.Errorf("language = %q, want zh", got.Language)
+	}
+	if len(got.Providers) == 0 || got.Providers[len(got.Providers)-1].Priority != 10 {
+		t.Errorf("provider priority did not round-trip: %+v", got.Providers)
 	}
 	if got.UI.Theme != "light" {
 		t.Errorf("ui.theme = %q, want light", got.UI.Theme)

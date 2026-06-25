@@ -258,6 +258,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			} else if p.Model != "" {
 				fmt.Fprintf(&b, "model       = %q\n", p.Model)
 			}
+			if p.Priority != 0 {
+				fmt.Fprintf(&b, "priority    = %d   # higher wins when a bare model name exists in multiple providers\n", p.Priority)
+			}
 			if p.ModelsURL != "" {
 				fmt.Fprintf(&b, "models_url  = %q   # auto-fetch models from this URL on startup\n", p.ModelsURL)
 			}

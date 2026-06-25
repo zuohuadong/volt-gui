@@ -73,6 +73,7 @@ function providerFromData(data: unknown, previous?: BaseRecord): ProviderView {
     baseUrl: String(record.baseUrl ?? record.baseURL ?? ""),
     models: parseList(record.models).length > 0 ? parseList(record.models) : [String(record.default ?? "model").trim()].filter(Boolean),
     default: String(record.default ?? ""),
+    priority: Number(record.priority ?? 0),
     apiKeyEnv: String(record.apiKeyEnv ?? ""),
     keySet: Boolean(record.keySet),
     balanceUrl: String(record.balanceUrl ?? ""),
@@ -312,6 +313,7 @@ export const wailsDataProvider: DataProvider = {
           Boolean(record.network ?? previous.network),
           String(record.workspaceRoot ?? previous.workspaceRoot ?? ""),
           parseList(record.allowWrite ?? previous.allowWrite),
+          String(record.shell ?? previous.shell ?? "auto"),
         );
       }
       return { data: { ...previous, ...record, id } as unknown as TData };

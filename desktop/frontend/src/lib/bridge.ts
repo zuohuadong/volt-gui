@@ -116,7 +116,7 @@ interface AppBindings {
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
   RemovePermissionRule(list: string, rule: string): Promise<void>;
-  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
+  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[], shell: string): Promise<void>;
   NeedsAuth(): Promise<boolean>;
   StartOIDCLogin(): Promise<void>;
   CancelOIDCLogin(): Promise<void>;

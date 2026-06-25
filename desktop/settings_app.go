@@ -37,6 +37,7 @@ type ProviderView struct {
 	VisionModelsSet   bool     `json:"visionModelsConfigured"`
 	ModelsURL         string   `json:"modelsUrl"`
 	Default           string   `json:"default"`
+	Priority          int      `json:"priority"`
 	APIKeyEnv         string   `json:"apiKeyEnv"`
 	APIKeyValue       string   `json:"apiKeyValue,omitempty"` // request-only: used for /models probing before the key is saved
 	KeySet            bool     `json:"keySet"`                // the env var currently resolves to a non-empty value
@@ -318,7 +319,7 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 	requiresKey := p.RequiresAPIKey()
 	return ProviderView{
 		Name: p.Name, BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL,
-		Models: nonNil(models), VisionModels: nonNil(providerVisionModels(models, visionModels)), VisionModelsSet: visionModelsSet, ModelsURL: p.ModelsURL, Default: p.DefaultModel(),
+		Models: nonNil(models), VisionModels: nonNil(providerVisionModels(models, visionModels)), VisionModelsSet: visionModelsSet, ModelsURL: p.ModelsURL, Default: p.DefaultModel(), Priority: p.Priority,
 		APIKeyEnv:         p.APIKeyEnv,
 		KeySet:            key.Set,
 		RequiresKey:       requiresKey,
@@ -1037,7 +1038,7 @@ func (a *App) SetSubagentModel(ref string) error {
 func selectableDesktopModelRef(c *config.Config, ref string) (string, error) {
 	entry, ok := c.ResolveModel(ref)
 	if !ok {
-		return "", fmt.Errorf("unknown model %q", ref)
+		return "", c.ResolveModelError(ref)
 	}
 	if !modelProviderAccessAllowed(providerAccessSet(c.Desktop.ProviderAccess), entry.Name) {
 		return "", fmt.Errorf("model %q is not available because provider %q is not added", ref, entry.Name)
@@ -1228,6 +1229,7 @@ func (a *App) SaveProvider(p ProviderView) error {
 		e.Kind = p.Kind
 		e.BaseURL = p.BaseURL
 		e.ModelsURL = p.ModelsURL
+		e.Priority = p.Priority
 		e.APIKeyEnv = p.APIKeyEnv
 		e.BalanceURL = strings.TrimSpace(p.BalanceURL)
 		e.ContextWindow = p.ContextWindow

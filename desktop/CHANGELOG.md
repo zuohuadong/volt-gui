@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.3.0...desktop-v0.3.1) (2026-06-25)
+
+
+### CI
+
+* **desktop:** stop publishing minisign assets ([b079fe5](https://github.com/zuohuadong/volt-gui/commit/b079fe581d702ab4878a5cb56f6083f655c33543))
+
+
+### Chores
+
+* update Volt desktop icon ([60192d0](https://github.com/zuohuadong/volt-gui/commit/60192d01f23f0f4c0e9e9b3cb989511ba622edae))
+
 ## [0.3.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.2.0...desktop-v0.3.0) (2026-06-25)
 
 

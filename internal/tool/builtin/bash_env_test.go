@@ -26,13 +26,11 @@ func TestBashMergesLoginShellPath(t *testing.T) {
 	if err := os.WriteFile(probe, []byte("#!/bin/sh\nprintf 'shell-path-ok\\n'\n"), 0o755); err != nil {
 		t.Fatalf("write probe: %v", err)
 	}
-	loginShell := filepath.Join(dir, "login-shell")
-	if err := os.WriteFile(loginShell, []byte("#!/bin/sh\nprintf '\\n__REASONIX_BASH_PATH__=%s\\n' '"+bin+":/usr/bin:/bin"+"'\n"), 0o755); err != nil {
-		t.Fatalf("write login shell: %v", err)
-	}
 
-	t.Setenv("SHELL", loginShell)
 	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+	previousShellPATH := bashShellPATH
+	bashShellPATH = func(context.Context) string { return bin + ":/usr/bin:/bin" }
+	t.Cleanup(func() { bashShellPATH = previousShellPATH })
 
 	b := bash{shell: sandbox.Shell{Kind: sandbox.ShellBash, Path: "/bin/sh"}}
 	args, _ := json.Marshal(map[string]string{"command": "voltui-path-probe"})

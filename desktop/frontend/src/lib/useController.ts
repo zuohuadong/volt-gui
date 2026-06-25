@@ -97,6 +97,7 @@ interface State {
   hydrating: boolean;
   hydrateReason?: HydrateReason;
   hydrateError?: string;
+  hydratePlaceholderItems?: Item[];
   backendActivationPending: boolean;
   messageAction?: MessageActionState;
   currentAssistant?: string;
@@ -302,7 +303,7 @@ type Action =
   | { type: "effort"; effort: EffortInfo }
   | { type: "jobs"; jobs: JobView[] }
   | { type: "checkpoints"; checkpoints: CheckpointMeta[] }
-  | { type: "hydrate_start"; reason: HydrateReason }
+  | { type: "hydrate_start"; reason: HydrateReason; placeholderItems?: Item[] }
   | { type: "hydrate_done" }
   | { type: "hydrate_error"; reason: HydrateReason; error: string }
   | { type: "backend_activation_start" }
@@ -755,21 +756,29 @@ export function reducer(s: State, a: Action): State {
     case "effort": return { ...s, effort: a.effort };
     case "jobs": return { ...s, jobs: a.jobs };
     case "checkpoints": return { ...s, checkpoints: a.checkpoints };
-    case "hydrate_start": return { ...s, hydrating: true, hydrateReason: a.reason, hydrateError: undefined };
-    case "hydrate_done": return s.hydrating || s.hydrateReason || s.hydrateError ? { ...s, hydrating: false, hydrateReason: undefined, hydrateError: undefined } : s;
-    case "hydrate_error": return { ...s, hydrating: false, hydrateReason: a.reason, hydrateError: a.error };
+    case "hydrate_start": return {
+      ...s,
+      hydrating: true,
+      hydrateReason: a.reason,
+      hydrateError: undefined,
+      hydratePlaceholderItems: a.placeholderItems?.length ? a.placeholderItems : undefined,
+    };
+    case "hydrate_done": return s.hydrating || s.hydrateReason || s.hydrateError || s.hydratePlaceholderItems
+      ? { ...s, hydrating: false, hydrateReason: undefined, hydrateError: undefined, hydratePlaceholderItems: undefined }
+      : s;
+    case "hydrate_error": return { ...s, hydrating: false, hydrateReason: a.reason, hydrateError: a.error, hydratePlaceholderItems: undefined };
     case "backend_activation_start": return s.backendActivationPending ? s : { ...s, backendActivationPending: true };
     case "backend_activation_done": return s.backendActivationPending ? { ...s, backendActivationPending: false } : s;
     case "message_action_start": return { ...s, messageAction: a.action };
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
-      return { ...s, items: compactArchivedToolItems(items), seq };
+      return { ...s, items: compactArchivedToolItems(items), seq, hydratePlaceholderItems: undefined };
     }
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": return { ...s, approval: undefined, pendingPrompt: false };
     case "clearAsk": return { ...s, ask: undefined, pendingPrompt: false };
-    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs, hydrating: s.hydrating, hydrateReason: s.hydrateReason, hydrateError: s.hydrateError, backendActivationPending: s.backendActivationPending, sessionGen: s.sessionGen + 1, items: s.items };
+    case "reset": return { ...initialState, meta: s.meta, context: { ...s.context, used: 0, sessionTokens: 0 }, balance: s.balance, effort: s.effort, jobs: s.jobs, hydrating: s.hydrating, hydrateReason: s.hydrateReason, hydrateError: s.hydrateError, hydratePlaceholderItems: s.hydratePlaceholderItems, backendActivationPending: s.backendActivationPending, sessionGen: s.sessionGen + 1 };
     case "event": return applyEvent(s, a.e);
     default: return s;
   }
@@ -901,12 +910,12 @@ export function useController() {
     tabId: string,
     reset = false,
     reason: HydrateReason = "startup",
-    options: { skipHistory?: boolean } = {},
+    options: { skipHistory?: boolean; placeholderItems?: Item[] } = {},
   ) => {
     const seq = bumpSessionLoadSeq(tabId);
     const hydrateStartedAt = Date.now();
     addBreadcrumb("tab.hydrate", `start ${reason} ${tabId}`);
-    dispatchTo(tabId, { type: "hydrate_start", reason });
+    dispatchTo(tabId, { type: "hydrate_start", reason, placeholderItems: options.placeholderItems });
     if (reset && sessionLoadCurrent(tabId, seq)) dispatchTo(tabId, { type: "reset" });
 
     const stillCurrent = () => sessionLoadCurrent(tabId, seq);
@@ -1252,6 +1261,7 @@ export function useController() {
     }
     invalidateCache();
     if (tabId) {
+      dispatchTo(tabId, { type: "history", messages: [] });
       dispatchTo(tabId, { type: "hydrate_done" });
       void refreshMetaForTab(tabId, dispatchTo);
       app.ContextUsageForTab(tabId).then((context) => dispatchTo(tabId, { type: "context", context })).catch(() => {});
@@ -1304,7 +1314,7 @@ export function useController() {
     }
     if (!sessionLoadCurrent(targetTabId, seq)) return;
     dispatchTo(targetTabId, { type: "reset" });
-    if (messages.length) dispatchTo(targetTabId, { type: "history", messages });
+    dispatchTo(targetTabId, { type: "history", messages });
     dispatchTo(targetTabId, { type: "hydrate_done" });
     app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
     void refreshCheckpoints(targetTabId);
@@ -1447,7 +1457,7 @@ export function useController() {
 
       const messages = asArray(await app.HistoryForTab(sourceTabId).catch(() => [] as HistoryMessage[]));
       dispatchTo(sourceTabId, { type: "reset" });
-      if (messages.length) dispatchTo(sourceTabId, { type: "history", messages });
+      dispatchTo(sourceTabId, { type: "history", messages });
       dispatchTo(sourceTabId, { type: "context", context: await app.ContextUsageForTab(sourceTabId) });
       dispatchTo(sourceTabId, { type: "checkpoints", checkpoints: asArray(await app.CheckpointsForTab(sourceTabId)) });
       return true;
@@ -1507,17 +1517,11 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    // Transfer previous items as placeholder for new tabs
-    if (isNewTab && prevItems?.length) {
-      const s = statesRef.current.get(meta.id);
-      if (s && !s.items.length) {
-        statesRef.current.set(meta.id, { ...s, items: prevItems });
-        bump();
-      }
-    }
-    void loadSessionDataForTab(meta.id, isNewTab, "open-topic");
+    void loadSessionDataForTab(meta.id, isNewTab, "open-topic", {
+      placeholderItems: isNewTab ? prevItems : undefined,
+    });
     return meta;
-  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const openGlobalTab = useCallback(async (topicId: string): Promise<TabMeta> => {
     const meta = await app.OpenGlobalTab(topicId);
@@ -1527,16 +1531,11 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    if (isNewTab && prevItems?.length) {
-      const s = statesRef.current.get(meta.id);
-      if (s && !s.items.length) {
-        statesRef.current.set(meta.id, { ...s, items: prevItems });
-        bump();
-      }
-    }
-    void loadSessionDataForTab(meta.id, isNewTab, "open-topic");
+    void loadSessionDataForTab(meta.id, isNewTab, "open-topic", {
+      placeholderItems: isNewTab ? prevItems : undefined,
+    });
     return meta;
-  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const openTopicSession = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath: string): Promise<TabMeta> => {
     const meta = await app.OpenTopicSession(scope, workspaceRoot, topicId, sessionPath);
@@ -1546,16 +1545,11 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    if (isNewTab && prevItems?.length) {
-      const s = statesRef.current.get(meta.id);
-      if (s && !s.items.length) {
-        statesRef.current.set(meta.id, { ...s, items: prevItems });
-        bump();
-      }
-    }
-    void loadSessionDataForTab(meta.id, isNewTab, "open-topic");
+    void loadSessionDataForTab(meta.id, isNewTab, "open-topic", {
+      placeholderItems: isNewTab ? prevItems : undefined,
+    });
     return meta;
-  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   const activateTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath = ""): Promise<TabMeta> => {
     const meta = await app.ActivateTopic(scope, workspaceRoot, topicId, sessionPath);
@@ -1569,18 +1563,9 @@ export function useController() {
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    // Transfer previous items as placeholder so reset (called sync inside
-    // loadSessionDataForTab) preserves them instead of clearing to [].
-    if (prevItems?.length) {
-      const s = statesRef.current.get(meta.id);
-      if (s && !s.items.length) {
-        statesRef.current.set(meta.id, { ...s, items: prevItems });
-        bump();
-      }
-    }
-    void loadSessionDataForTab(meta.id, true, "open-topic");
+    void loadSessionDataForTab(meta.id, true, "open-topic", { placeholderItems: prevItems });
     return meta;
-  }, [bump, confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
+  }, [confirmBackendActiveTab, dispatchTo, loadSessionDataForTab]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.

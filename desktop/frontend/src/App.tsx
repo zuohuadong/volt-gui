@@ -2033,11 +2033,18 @@ export default function App() {
   const rewindStateRef = useRef(rewindState);
   rewindStateRef.current = rewindState;
 
+  const hydratePlaceholderActive = Boolean(
+    state.hydrating &&
+    state.items.length === 0 &&
+    state.hydratePlaceholderItems?.length,
+  );
+  const transcriptItems = hydratePlaceholderActive ? state.hydratePlaceholderItems! : state.items;
+
   // Display items: truncated when an optimistic rewind is pending.
   const displayItems = useMemo(() => {
-    if (!rewindState) return state.items;
-    return state.items.slice(0, rewindState.boundaryIdx).filter((it) => it.kind !== "compaction");
-  }, [state.items, rewindState]);
+    if (!rewindState) return transcriptItems;
+    return transcriptItems.slice(0, rewindState.boundaryIdx).filter((it) => it.kind !== "compaction");
+  }, [transcriptItems, rewindState]);
 
   // send wrapper: commits any pending optimistic rewind before sending.
   const commitThenSend = useCallback(async (displayText: string, submitText?: string) => {
@@ -2077,6 +2084,7 @@ export default function App() {
 
   const handleMessageAction = useCallback((turn: number, scope: string) => {
     if (activeTab?.readOnly) return;
+    if (hydratePlaceholderActive) return;
     if (scope === "fork") {
       // Fork still goes through the controller (not optimistic).
       rewind(turn, scope).then((ok) => {
@@ -2140,11 +2148,11 @@ export default function App() {
     setComposerInsertRequest({ id: insertId, text: prompt, mode: "replace" });
 
     setRewindSignal((v) => v + 1);
-  }, [activeTab?.readOnly, state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
+  }, [activeTab?.readOnly, hydratePlaceholderActive, state.items, rewind, refreshTabMetas, setComposerInsertRequest]);
 
   const handleEditPrompt = useCallback(async (turn: number, displayText: string, submitText?: string): Promise<boolean> => {
     const sourceTabId = activeTabId;
-    if (!sourceTabId || activeTab?.readOnly || !controllerReady || rewindStateRef.current || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending) return false;
+    if (!sourceTabId || activeTab?.readOnly || !controllerReady || hydratePlaceholderActive || rewindStateRef.current || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending) return false;
     const next = displayText.trim();
     if (!next) return false;
     const submit = (submitText ?? displayText).trim();
@@ -2153,7 +2161,7 @@ export default function App() {
     setRewindSignal((v) => v + 1);
     sendToTab(sourceTabId, next, submit);
     return true;
-  }, [activeTab?.readOnly, activeTabId, clearContextPending, controllerReady, sendToTab, state.approval, state.ask, state.messageAction, state.running, rewind]);
+  }, [activeTab?.readOnly, activeTabId, clearContextPending, controllerReady, hydratePlaceholderActive, sendToTab, state.approval, state.ask, state.messageAction, state.running, rewind]);
 
   const handleOpenTopic = useCallback(async (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => {
     closeTransientOverlays();
@@ -3072,11 +3080,11 @@ export default function App() {
                 onRewind={handleMessageAction}
                 checkpoints={state.checkpoints}
                 actionPending={state.messageAction != null}
-                rewindDisabled={Boolean(activeTab?.readOnly) || !controllerReady || rewindState != null || rewindCommitting || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+                rewindDisabled={Boolean(activeTab?.readOnly) || !controllerReady || hydratePlaceholderActive || rewindState != null || rewindCommitting || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
                 running={state.running || rewindCommitting}
                 welcomeVariant={sidebarCreation ? "creation" : "default"}
                 creationMode={sidebarCreation}
-                actionHoverMenus={sidebarCreation}
+                actionHoverMenus={sidebarCreation && !hydratePlaceholderActive}
                 rewindSignal={rewindSignal}
                 revealSignal={transcriptRevealSignal}
                 hydrating={state.hydrating}

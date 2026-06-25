@@ -53,6 +53,15 @@ function parseImSourceMessage(text: string): ImSourceMessage | null {
   };
 }
 
+const MEMORY_COMPILER_EXECUTION_RE = /<memory-compiler-execution>[\s\S]*?<\/memory-compiler-execution>\s*/g;
+
+/** Strips the <memory-compiler-execution> block that the Memory v5 compiler
+ *  injects into user turns for model-internal planning. The block is not
+ *  user-facing text and should be hidden from the transcript display. */
+function stripMemoryCompilerExecution(text: string): string {
+  return text.replace(MEMORY_COMPILER_EXECUTION_RE, "").trimStart();
+}
+
 function imSourceLabel(source: ImSourceMessage, t: ReturnType<typeof useT>): string {
   if (source.label.trim()) return source.label.trim();
   const provider = source.provider.trim().toLowerCase();
@@ -166,7 +175,7 @@ export function UserMessage({
 }) {
   const t = useT();
   const imSource = parseImSourceMessage(text);
-  const actionText = imSource?.text ?? text;
+  const actionText = stripMemoryCompilerExecution(imSource?.text ?? text);
   const { text: displayText, attachments } = parseAttachmentRefsForDisplay(actionText);
   const orderedAttachments = sortDisplayAttachments(attachments);
   const sourceLabel = imSource ? imSourceLabel(imSource, t) : "";

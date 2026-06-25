@@ -817,34 +817,6 @@ func hasSuccessfulCompleteStepForTodo(receipts []Receipt, index int, current []T
 	return false
 }
 
-// hasAttemptedCompleteStepForTodo is like hasSuccessfulCompleteStepForTodo but
-// accepts failed complete_step receipts too. A model that attempted to sign off
-// with evidence but hit a technical mismatch (e.g. command quoting) acted in
-// good faith and shouldn't be deadlocked. See #5128.
-func hasAttemptedCompleteStepForTodo(receipts []Receipt, index int, current []TodoItem) bool {
-	for _, r := range receipts {
-		if r.ToolName != "complete_step" || strings.TrimSpace(r.Step) == "" {
-			continue
-		}
-		if r.TodoStep != nil && r.TodoStep.Found {
-			if index < 1 || index > len(current) {
-				continue
-			}
-			if sameTodoMatch(current[index-1], *r.TodoStep) {
-				return true
-			}
-			if !todoContentRelates(current[index-1], *r.TodoStep) {
-				continue
-			}
-		}
-		match := matchTodoStep(r.Step, current)
-		if match.Found && match.Index == index {
-			return true
-		}
-	}
-	return false
-}
-
 func latestTodoStep(step string, receipts []Receipt) TodoStepMatch {
 	for i := len(receipts) - 1; i >= 0; i-- {
 		r := receipts[i]

@@ -2580,6 +2580,9 @@ func (m chatTUI) renderApprovalBanner() string {
 		choices = fmt.Sprintf(i18n.M.BashPrefixChoices, prefixRule, prefixRule)
 	}
 	text := fmt.Sprintf(i18n.M.ToolApprovalPromptFmt, name, subj, detail, choices)
+	if reason := strings.TrimSpace(m.pendingApproval.Reason); reason != "" {
+		text += " · " + truncateSubject(reason, w)
+	}
 	return approvalBannerStyle.Width(w).Render("⏸ " + text)
 }
 
@@ -3116,6 +3119,28 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		}
 		m.finalizeStreamed()
 		m.commitLine(fmt.Sprintf("  %s %s", glyph, e.Text))
+
+	case event.GuardianAssessment:
+		m.finalizeStreamed()
+		g := e.Guardian
+		line := fmt.Sprintf("Guardian %s · %s", g.Outcome, g.Tool)
+		if g.Subject != "" {
+			line += " · " + truncateSubject(g.Subject, m.width)
+		}
+		if g.RiskLevel != "" {
+			line += " · risk=" + g.RiskLevel
+		}
+		if g.UserAuthorization != "" {
+			line += " · authorization=" + g.UserAuthorization
+		}
+		if g.Rationale != "" {
+			line += " · " + g.Rationale
+		}
+		if g.Outcome == "deny" {
+			m.commitLine("  ! " + line)
+		} else {
+			m.commitLine("  · " + line)
+		}
 
 	case event.CompactionStarted:
 		m.finalizeStreamed()

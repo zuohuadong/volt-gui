@@ -24,6 +24,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/guardian"
 	"reasonix/internal/history"
 	"reasonix/internal/hook"
 	"reasonix/internal/installsource"
@@ -1037,6 +1038,26 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},
+	}
+	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
+	// that can auto-allow safe Ask decisions and annotate risky ones before
+	// escalating to the human approval prompt.
+	if guardianModel := cfg.Agent.GuardianModel; guardianModel != "" {
+		ge, ok := cfg.ResolveModel(guardianModel)
+		if !ok {
+			slog.Warn("guardian model is not a configured provider — guardian disabled", "model", guardianModel)
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("guardian_model %q not found — guardian disabled", guardianModel)})
+		} else {
+			pProv, err := NewProviderWithProxy(ge, proxySpec)
+			if err != nil {
+				slog.Warn("guardian provider construction failed — guardian disabled", "model", guardianModel, "err", err)
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("guardian construction failed: %v — guardian disabled", err)})
+			} else {
+				guardianReg := agent.FilterReadOnlyRegistry(reg, agent.SubagentMetaTools()...)
+				ctrlOpts.Guardian = guardian.NewSession(pProv, guardianReg, guardian.PolicyPrompt(), guardianModel, cfg.Agent.GuardianTemperature, ge.Price, sink)
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("guardian enabled · model=%s", ge.Model)})
+			}
+		}
 	}
 	if classifier != nil {
 		ctrlOpts.Classifier = classifier

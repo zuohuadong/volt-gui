@@ -33,6 +33,40 @@ func TestTurnOrchestratorRunsForegroundUnit(t *testing.T) {
 	}
 }
 
+func TestTurnOrchestratorStopHookIgnoresCanceledTurnContext(t *testing.T) {
+	runCtx, cancel := context.WithCancel(context.Background())
+	var stopCalls int
+	var stopErr error
+	hooks := hook.NewRunner([]hook.ResolvedHook{{
+		HookConfig: hook.HookConfig{Command: "record-stop"},
+		Event:      hook.Stop,
+		Scope:      hook.ScopeProject,
+	}}, "", func(ctx context.Context, in hook.SpawnInput) hook.SpawnResult {
+		stopCalls++
+		stopErr = ctx.Err()
+		return hook.SpawnResult{ExitCode: 0}
+	}, nil)
+	c := New(Options{
+		Runner: cancelingRunner{cancel: cancel},
+		Hooks:  hooks,
+	})
+
+	o := newTurnOrchestrator(c)
+	if err := o.runTurnWithRawDisplay(runCtx, "hello", "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if runCtx.Err() != context.Canceled {
+		t.Fatalf("turn context err = %v, want %v", runCtx.Err(), context.Canceled)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("Stop hook calls = %d, want 1", stopCalls)
+	}
+	if stopErr != nil {
+		t.Fatalf("Stop hook context err = %v, want nil", stopErr)
+	}
+}
+
 type recordingSessionRunner struct {
 	session              *agent.Session
 	inputs               []string

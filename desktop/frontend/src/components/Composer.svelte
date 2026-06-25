@@ -435,7 +435,7 @@
       data-composer-input
       data-testid="composer-input"
       value={input}
-      placeholder="与智能助手对话.... (@ 提及文书)"
+      placeholder="与智能助手对话.... (@ 提及文件)"
       rows="3"
       aria-label="Composer input"
       aria-keyshortcuts="Enter Shift+Enter Escape"

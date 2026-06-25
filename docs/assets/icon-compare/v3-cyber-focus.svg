@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="116" fill="#0a0b0f"/>
+  <circle cx="256" cy="256" r="156" fill="none" stroke="#3f3f46" stroke-width="6"/>
+  <!-- Focus brackets mask -->
+  <rect x="220" y="80" width="72" height="352" fill="#0a0b0f"/>
+  <rect x="80" y="220" width="352" height="72" fill="#0a0b0f"/>
+  <polygon points="286,120 180,280 250,280 216,396 332,236 262,236" fill="#06b6d4"/>
+</svg>

@@ -22,6 +22,10 @@ on:
 permissions:
   contents: write # create the release and upload artifacts
 
+concurrency:
+  group: release-desktop-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   cache-guard:
     name: cache hit guard
@@ -154,9 +158,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          args=(--title "VoltUI Desktop ${{ steps.ver.outputs.version }}" --generate-notes)
-          [ "${{ steps.ver.outputs.prerelease }}" = "true" ] && args+=(--prerelease)
-          gh release create "${{ steps.ver.outputs.tag }}" dist/* "${args[@]}"
+          tag="${{ steps.ver.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            args=(--title "VoltUI Desktop ${{ steps.ver.outputs.version }}" --generate-notes)
+            [ "${{ steps.ver.outputs.prerelease }}" = "true" ] && args+=(--prerelease)
+            gh release create "$tag" dist/* "${args[@]}"
+          fi
 
   mirror:
     name: mirror to R2

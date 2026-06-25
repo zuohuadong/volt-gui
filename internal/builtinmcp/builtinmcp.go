@@ -40,7 +40,7 @@ func executablePath() string {
 	if path, err := currentExecutable(); err == nil && path != "" {
 		return path
 	}
-	return "reasonix"
+	return "voltui"
 }
 
 func context7Entry() config.PluginEntry {

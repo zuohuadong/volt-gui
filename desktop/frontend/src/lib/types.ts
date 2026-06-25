@@ -426,7 +426,9 @@ export type WireEventKind =
   | "compaction_done"
   | "mcp_surface_ready"
   | "retrying"
-  | "steer";
+  | "steer"
+  | "memory_compiler_stats"
+  | "guardian_assessment";
 
 export interface WireCacheDiagnostics {
   prefixHash: string;

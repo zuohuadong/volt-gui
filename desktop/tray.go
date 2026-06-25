@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"sync"
 
 	"fyne.io/systray"
@@ -8,6 +9,22 @@ import (
 
 	"voltui/internal/config"
 )
+
+func (a *App) brandIconBytes() []byte {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	path := cfg.BrandIconPath()
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
+}
 
 type desktopTray struct {
 	end      func()

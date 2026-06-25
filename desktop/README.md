@@ -1,13 +1,13 @@
-# VoltUI Desktop (Wails shell)
+# Reasonix Desktop (Wails shell)
 
-A native desktop window around the VoltUI Go kernel. The same
+A native desktop window around the Reasonix Go kernel. The same
 transport-agnostic `control.Controller` that backs the chat TUI and the HTTP/SSE
-server is bound **directly** to a Svelte webview — Go methods in, typed events
+server is bound **directly** to a React webview — Go methods in, typed events
 out, no HTTP hop.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  webview (Svelte 5 + TS, Vite)                                  │
+│  webview (React + TS, Vite)                                  │
 │    bridge.ts ──calls──▶ window.go.main.App.{Submit,Cancel,…} │
 │    bridge.ts ◀─events── window.runtime.EventsOn("agent:event")│
 └───────────────▲───────────────────────────┬─────────────────┘
@@ -25,11 +25,11 @@ out, no HTTP hop.
 
 ## Why a nested module
 
-`desktop/` is its own Go module (`module voltui/desktop`, `replace voltui =>
+`desktop/` is its own Go module (`module reasonix/desktop`, `replace reasonix =>
 ../`). That keeps the CGO + WebKit desktop build entirely separate from the CLI's
 `CGO_ENABLED=0` single-static-binary guarantee: the parent module's `go build /
 vet / test ./...` skip this directory, while the import path stays under
-`voltui/` so it can still import the `voltui/internal/*` kernel.
+`reasonix/` so it can still import the `reasonix/internal/*` kernel.
 
 ## Prerequisites
 
@@ -62,11 +62,23 @@ In a plain browser the native bindings are absent, so `bridge.ts` falls back to 
 exact same event contract — so layout, streaming, markdown, tool cards, and the
 diff seam can all be built without rebuilding Go.
 
+### Frontend UI review checklist
+
+For anchored menus, dropdowns, tooltips, and other portaled UI, review both the
+component code and the CSS positioning contract:
+
+- If a component uses `createPortal` plus `getBoundingClientRect()`, it must
+  handle scrollable ancestors, window resize, and `visualViewport` changes.
+- Add a focused regression test when changing shared positioning primitives such
+  as `AnchoredPopover`, not only the specific menu that exposed the bug.
+- Exercise at least one scrollable container path, such as Settings content, when
+  manually checking dropdown or popover changes.
+
 ## Build
 
 ```sh
 cd desktop
-wails build          # → build/bin/VoltUI(.app/.exe)
+wails build          # → build/bin/Reasonix(.app/.exe)
 ```
 
 **Linux on WebKitGTK 4.1 only** (Fedora 40+, Ubuntu 24.04+, Arch — no
@@ -83,23 +95,13 @@ Fedora deps: `sudo dnf install webkit2gtk4.1-devel gtk3-devel`.
 `.gitkeep` that keeps the Go `//go:embed all:frontend/dist` compilable on a fresh
 checkout). A bare `go build` without a prior `pnpm build` produces a blank window.
 
-The desktop frontend is a Svelte 5 workbench. The build runs `pnpm build`
-(`svelte-check` + `vite build`) directly in `desktop/frontend`, producing
-`frontend/dist` for `main.go` to embed.
-
-```sh
-wails build
-pnpm --dir frontend build
-```
-
 ## Releases & auto-update
 
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`
 tags are the CLI release). Pushing one triggers `.github/workflows/release-desktop.yml`,
 which builds on a native runner per platform (Wails can't cross-compile a
-CGO/WebKit binary), packages each artifact, generates a `latest.json` manifest,
-publishes a GitHub release, and mirrors everything to R2. Release assets are
-unsigned and no detached `.minisig` files are published.
+CGO/WebKit binary), packages each artifact, signs it with minisign, generates a
+`latest.json` manifest, publishes a GitHub release, and mirrors everything to R2.
 The Linux artifact links against WebKitGTK 4.1 (`-tags webkit2_41`), so it needs
 `libwebkit2gtk-4.1-0` at runtime — present by default on Ubuntu 22.04+, Fedora 40+.
 
@@ -111,9 +113,9 @@ The app checks `latest.json` on startup (R2 first, GitHub as fallback) and shows
 an update banner when a newer version is published; **Settings → Software update**
 has a manual check. Self-update behavior by platform:
 
-- **Linux / Windows** — unsigned artifacts are shown as available updates, but
-  the app sends users to the release download page instead of applying them in
-  place.
+- **Linux / Windows** — download, verify the minisign signature, then update in
+  place: Linux replaces the binary and relaunches; Windows runs the per-user NSIS
+  installer (no admin rights needed).
 - **macOS** — *not* self-updating yet. The build is unsigned/un-notarized, so an
   in-place swap would be blocked by Gatekeeper; the banner links to the download
   page for a manual update instead.
@@ -123,17 +125,28 @@ has a manual check. Self-update behavior by platform:
 There are no Apple/Windows code-signing certificates yet, so a downloaded build
 trips the OS gatekeepers on first run:
 
-- **macOS** — open `VoltUI-darwin-universal.dmg` and drag VoltUI into
+- **macOS** — open `Reasonix-darwin-universal.dmg` and drag Reasonix into
   Applications. Gatekeeper may then report the app "is damaged" or is from an
   unidentified developer; clear the quarantine attribute and open it:
   ```sh
-  xattr -dr com.apple.quarantine /Applications/VoltUI.app
+  xattr -dr com.apple.quarantine /Applications/Reasonix.app
   ```
 - **Windows** — SmartScreen shows "Windows protected your PC". Click *More info →
   Run anyway*.
 
 When Developer ID / Authenticode certificates are added, the release workflow's
 `HAS_APPLE_CERT` gate flips to the signed path and these steps go away.
+
+### Verifying a download
+
+Artifacts are signed with minisign (public key ID `AF12CA46F4A9EBB0`). The `.minisig`
+signature sits next to each artifact in the release; verify with the
+[minisign](https://jedisct1.github.io/minisign/) CLI:
+
+```sh
+minisign -Vm Reasonix-darwin-arm64.zip \
+  -P RWSw66n0RsoSr6Zhh6qt5YO95YkpCayTOCMFVDNUQSjJYwxoYngNVBSq
+```
 
 ## Editor seam (Monaco / CodeMirror)
 
@@ -170,18 +183,26 @@ the **native** webview per OS, so the rough edges are platform-specific. What's
 handled here, and what to reach for if a target misbehaves:
 
 - **Linux / WebKitGTK** is the one real pain point — rendering varies by distro &
-  GPU driver. `main.go` sets `WebviewGpuPolicy: OnDemand` to avoid blank/flickering
-  webviews from forced compositing. If artifacts persist, launch with
-  `WEBKIT_DISABLE_COMPOSITING_MODE=1`. Test on at least one GTK target before
-  release; the CSS deliberately avoids `backdrop-filter`/blur (slow & inconsistent
-  there).
+  GPU driver. `main.go` keeps `WebviewGpuPolicy: OnDemand` when a DRI render node
+  is usable, and falls back to `Never` for xrdp/headless/software-rendered sessions
+  that cannot access `/dev/dri`. If artifacts persist, launch with
+  `WEBKIT_DISABLE_COMPOSITING_MODE=1`. Test on at least one GTK target before release;
+  the CSS deliberately avoids `backdrop-filter`/blur (slow & inconsistent there).
+  - **Wayland + NVIDIA**: On KDE Plasma Wayland with NVIDIA GPUs, WebKitGTK can
+    crash at startup (`Error 71: Protocol error`) due to an upstream WebKit
+    explicit-sync bug (WebKit #280210, #317089, NVIDIA/egl-wayland #179).
+    Reasonix automatically sets `__NV_DISABLE_EXPLICIT_SYNC=1` when it detects
+    Wayland + NVIDIA GPU. To opt out, set `__NV_DISABLE_EXPLICIT_SYNC=0`.
+    Alternative fallbacks: `WEBKIT_DISABLE_DMABUF_RENDERER=1` (poor performance)
+    or `GDK_BACKEND=x11` (forces XWayland).
 - **Windows / WebView2** — `Theme: SystemDefault` follows the OS light/dark
-  setting; the runtime must be installed (bundle it for distribution).
+  setting; the installer embeds the WebView2 bootstrapper. Canary builds disable
+  WebView2 GPU acceleration by default to smoke-test blank-window reports; set
+  `REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU=1` or `0` to force the fallback on or
+  off.
 - **macOS / WebKit** — inset/hidden title bar (`TitleBarHiddenInset`); the CSS
   marks the top bar as an OS drag region (`--wails-draggable: drag`) and leaves
-  room for the traffic lights. The native tray is disabled on macOS until it can
-  be initialized on the AppKit main thread; Dock/menu activation remains the
-  supported restore path.
+  room for the traffic lights.
 - **Theming** — colors are CSS variables gated on `prefers-color-scheme`, which all
   three webviews honor, so the UI follows the OS theme without native glue.
 - **Fonts / offline** — system font stack only; no web-font fetches, so first paint
@@ -208,3 +229,31 @@ desktop/
         Markdown, CodeViewer, DiffView
         editors/  PlainCode, PlainDiff   ← editor seam impls (swap targets)
 ```
+
+## Telemetry
+
+The desktop app sends one anonymous ping per launch to `crash.reasonix.io`:
+a random install id (generated locally, tied to nothing), app version, OS,
+arch, and OS version. It exists solely to count active installs. It never
+includes conversations, API keys, file contents, or paths.
+
+Opt out any time: Settings > Updates > "Anonymous usage ping", or set
+`telemetry = false` under `[desktop]` in the global config. Dev builds
+never ping. Crash and performance-pressure reports are separate and only
+ever sent when the user clicks "Send report" on the diagnostic UI.
+
+Aggregate quality metrics are also enabled by default and can be disabled from
+Settings > Updates > "Share aggregate quality metrics", or by setting
+`metrics = false` under `[desktop]`. These metrics are anonymous signal/bucket
+counts and preference buckets; they never include conversations, prompts, keys,
+paths, base URLs, or file contents.
+
+When Memory v5 is enabled, the same aggregate metrics pipeline may include only
+content-free count/size buckets such as injection on/off, compiled-token bucket,
+IR-overhead bucket, memory-reference count, constraint/risk/step counts, and
+memory-graph size buckets. It never uploads memory text, tool outputs, prompts,
+file paths, IDs, keys, base URLs, or file contents. The Memory v5 runtime itself
+is controlled from Settings > General > "Memory v5" and shares the user/global
+`agent.memory_compiler.enabled` setting with the CLI/TUI and `reasonix serve`;
+CLI users can also run `/memory-v5 off|on|status` in a session or
+`reasonix config memory-v5 off|on|status` from a shell.

@@ -16,7 +16,7 @@ const protocolVersion = "2024-11-05"
 // binary. It intentionally writes only MCP JSON-RPC frames to stdout.
 func RunCommand(args []string, in io.Reader, out io.Writer, errOut io.Writer, version string) int {
 	if len(args) != 1 || args[0] != TimeName {
-		fmt.Fprintln(errOut, "usage: reasonix builtin-mcp time")
+		fmt.Fprintln(errOut, "usage: voltui builtin-mcp time")
 		return 2
 	}
 	if serveErr := ServeTimeMCP(in, out, version); serveErr != nil {
@@ -87,7 +87,7 @@ func handleTimeLine(line []byte, w *bufio.Writer, version string) error {
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
 			},
-			"serverInfo": map[string]any{"name": "reasonix-time", "version": version},
+			"serverInfo": map[string]any{"name": "voltui-time", "version": version},
 		}
 	case "tools/list":
 		resp.Result = map[string]any{"tools": timeTools()}

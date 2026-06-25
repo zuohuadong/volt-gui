@@ -8,7 +8,7 @@ var ChineseTraditional = Messages{
 	WelcomeTitleFmt: "歡迎使用 %s",
 	NoConfigYet:     "還沒有設定 — 現在來設定一下吧。",
 	StartingChatFmt: "正在啟動 %s…",
-	SetKeyHint:      "設定好 API key 後執行 `reasonix`。",
+	SetKeyHint:      "設定好 API key 後執行 `voltui`。",
 	ConfigLabel:     "設定",
 	ModelsLabel:     "模型",
 	ConfigNotFound:  "未找到 — 使用內建預設值",
@@ -19,15 +19,15 @@ var ChineseTraditional = Messages{
 	StepScaffold:    "生成 voltui.toml",
 	StepSetKey:      "設定 API key",
 
-	InitHint:       "專案記憶（AGENTS.md）在會話內由模型生成：執行 `reasonix`，然後 `/init` —— 模型會分析程式碼庫並寫入。設定請用 `reasonix setup`。",
-	StepSetKeyHint: "執行 `reasonix setup`，或 export DEEPSEEK_API_KEY=…",
+	InitHint:       "專案記憶（AGENTS.md）在會話內由模型生成：執行 `voltui`，然後 `/init` —— 模型會分析程式碼庫並寫入。設定請用 `voltui setup`。",
+	StepSetKeyHint: "執行 `voltui setup`，或 export DEEPSEEK_API_KEY=…",
 	StepChatDesc:   "互動式會話",
 	StepRunDesc:    "執行單次任務",
-	HelpFooter:     "reasonix help · 檢視全部命令",
+	HelpFooter:     "voltui help · 檢視全部命令",
 
 	ChatTip:           "對話上下文將跨輪保留。輸入 'exit' 或按 Ctrl-D 退出。",
 	TurnCancelled:     "已取消 — 回到提示符",
-	NoSessionToResume: "沒有可恢復的會話 — 用 `reasonix` 開一個新的",
+	NoSessionToResume: "沒有可恢復的會話 — 用 `voltui` 開一個新的",
 	ResumeRequiresTTY: "--resume 需要互動式終端；用 --continue 直接恢復最近一次",
 	PickSessionLabel:  "恢復哪個會話？",
 
@@ -96,7 +96,7 @@ var ChineseTraditional = Messages{
 	SlashUnavailable:   "當前建構不支援該命令",
 	SlashUnknown:       "未知命令",
 	SlashTodoCleared:   "已清除任務清單",
-	SlashHelp:          "命令：/compact · /new（/clear）· /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切換模型）· /effort · /theme · /language · /mcp · /skills · /hooks · /paste-image · /memory · /migrate · /remember · /quit · /help · 以及 skills（/init、/explore …）",
+	SlashHelp:          "命令：/compact · /new（/clear）· /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切換模型）· /effort · /theme · /language · /mcp · /skills · /hooks · /paste-image · /memory · /memory-v5 · /migrate · /remember · /quit · /help · 以及 skills（/init、/explore …）",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d 個可用",
@@ -178,6 +178,7 @@ var ChineseTraditional = Messages{
 	CmdEffort:       "設定推理強度",
 	CmdAutoPlan:     "設定自動計畫模式",
 	CmdReasonLang:   "設定可見思考語言",
+	CmdMemoryV5:     "切換 Memory v5",
 	CmdHelp:         "檢視命令列表",
 	CmdTodo:         "清除任務清單",
 	CmdQuit:         "退出會話",
@@ -210,7 +211,7 @@ var ChineseTraditional = Messages{
 	ListSkillsHeaderFmt: "skills（%d 個）",
 	ListSkillsNone:      "暫無 skill — 呼叫內建的（如 /init），或用 install_skill 建立一個",
 	ListHooksHeaderFmt:  "hooks（生效 %d 個）",
-	ListHooksNone:       "無生效 hooks — 在 .reasonix/settings.json（專案，需信任後）或 ~/.reasonix/settings.json（全域）設定",
+	ListHooksNone:       "無生效 hooks — 在 .voltui/settings.json（專案，需信任後）或 ~/.voltui/settings.json（全域）設定",
 	ListMcpHeader:       "MCP 伺服器",
 	ListMcpNone:         "未連線 MCP 伺服器 — 在 voltui.toml（[[plugins]]）或專案 .mcp.json 中新增",
 
@@ -249,7 +250,7 @@ var ChineseTraditional = Messages{
 	SetupComplete:         "設定完成。",
 	SetupCancelled:        "設定已取消。",
 	TryHintFmt:            "試試: %s",
-	NextHint:              "下一步：設定 API key（執行 `reasonix setup` 或 export DEEPSEEK_API_KEY=...），然後執行 `reasonix run \"你的任務\"`。",
+	NextHint:              "下一步：設定 API key（執行 `voltui setup` 或 export DEEPSEEK_API_KEY=...），然後執行 `voltui run \"你的任務\"`。",
 	ConfirmReconfigureFmt: "%s 已存在。重新設定並覆蓋？",
 	KeepingExisting:       "保留原設定不變。",
 	NotOverwritingFmt:     "%s 已存在，不覆蓋",
@@ -297,14 +298,14 @@ var ChineseTraditional = Messages{
 	AnthropicSelectModelsLabel:     "選擇要啟用的 %s 模型",
 
 	UnknownCommandFmt:         "未知命令 %q",
-	UsageRunHint:              "用法：reasonix run [--model NAME] <task>",
+	UsageRunHint:              "用法：voltui run [--model NAME] <task>",
 	ErrorPrefix:               "錯誤：",
 	ReconfigureOnUnknownModel: "設定的模型已不可用 —— 重新執行引導設定。",
 	WriteConfigErr:            "寫入設定失敗：",
 	WriteEnvErr:               "寫入 .env 失敗：",
 
 	ProviderErrBadRequest:          "請求格式錯誤 (HTTP 400)：請求體被拒絕，通常是程式缺陷。若持續出現請回報。",
-	ProviderErrAuth:                "認證失敗 (HTTP 401)：API key 缺失、錯誤或已過期。請檢查 .env 中的金鑰，或執行 `reasonix setup`。",
+	ProviderErrAuth:                "認證失敗 (HTTP 401)：API key 缺失、錯誤或已過期。請檢查 .env 中的金鑰，或執行 `voltui setup`。",
 	ProviderErrInsufficientBalance: "餘額不足 (HTTP 402)：帳戶餘額不足，請前往儲值後重試。",
 	ProviderErrUnprocessable:       "參數錯誤 (HTTP 422)：某個請求參數被拒絕，通常是程式缺陷。若持續出現請回報。",
 	ProviderErrRateLimited:         "請求速率達到上限 (HTTP 429)：請求過於頻繁 (TPM/RPM)。已退避重試，請放慢速率或稍後再試。",
@@ -314,36 +315,37 @@ var ChineseTraditional = Messages{
 	SelectOneHint:  "(↑/↓ · Enter · q 取消)",
 	SelectManyHint: "(↑/↓ · Space · Enter · q)",
 
-	UsageBody: `reasonix — 由設定和插件驅動的 coding agent（多模型）
+	UsageBody: `voltui — 由設定和插件驅動的 coding agent（多模型）
 
 用法：
-  reasonix [--model NAME] [-c|--continue] [--resume] [--yolo] [--dir PATH]   互動式會話（多輪；-c 恢復最近一次，--resume 選擇一個）
-  reasonix run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] <task>   執行單次任務後退出
-  reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 程式碼審查（基於本機 diff）
-  reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  透過 HTTP+SSE 提供服務（支援可選認證）
-  reasonix acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
-  reasonix setup [path]                                 互動式設定精靈；生成 voltui.toml（及 .env）
-  reasonix config auto-plan [off|on]                    設定自動計畫模式
-  reasonix config reasoning-language [auto|zh|en]        設定可見思考語言
-  reasonix mcp <add|remove|list|import>                 管理 voltui.toml 裡的 MCP 伺服器
-  reasonix init                                         查看如何產生專案記憶（AGENTS.md）
-  reasonix doctor [--json]                              輸出脫敏的本機診斷資訊
-  reasonix bot start|doctor|weixin-login                多管道 IM bot 閘道
-  reasonix upgrade [--check] [--force]                   自更新至最新版本（也可用：reasonix update）
-  reasonix version
-  reasonix help
+  voltui [--model NAME] [-c|--continue] [--resume] [--yolo] [--dir PATH]   互動式會話（多輪；-c 恢復最近一次，--resume 選擇一個）
+  voltui run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] <task>   執行單次任務後退出
+  voltui review [--base BRANCH] [--commit SHA] [--model NAME]  AI 程式碼審查（基於本機 diff）
+  voltui serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  透過 HTTP+SSE 提供服務（支援可選認證）
+  voltui acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：voltui --acp）
+  voltui setup [path]                                 互動式設定精靈；生成 voltui.toml（及 .env）
+  voltui config auto-plan [off|on]                    設定自動計畫模式
+  voltui config memory-v5 [off|on|status]             設定 Memory v5
+  voltui config reasoning-language [auto|zh|en]        設定可見思考語言
+  voltui mcp <add|remove|list|import>                 管理 voltui.toml 裡的 MCP 伺服器
+  voltui init                                         查看如何產生專案記憶（AGENTS.md）
+  voltui doctor [--json]                              輸出脫敏的本機診斷資訊
+  voltui bot start|doctor|weixin-login                多管道 IM bot 閘道
+  voltui upgrade [--check] [--force]                   自更新至最新版本（也可用：voltui update）
+  voltui version
+  voltui help
 
 範例：
-  reasonix
-  reasonix --continue
-  reasonix run "把 main.go 裡的 TODO 實現掉"
-  reasonix run --model mimo-pro "給這個函式補單元測試"
-  echo "解釋這段程式碼" | reasonix run
+  voltui
+  voltui --continue
+  voltui run "把 main.go 裡的 TODO 實現掉"
+  voltui run --model mimo-pro "給這個函式補單元測試"
+  echo "解釋這段程式碼" | voltui run
 
 設定：
-  優先順序：flag > ./voltui.toml > ~/.reasonix/config.toml > 內建預設值
+  優先順序：flag > ./voltui.toml > ~/.voltui/config.toml > 內建預設值
   金鑰透過 api_key_env 從環境變數注入（如 DEEPSEEK_API_KEY）。
-  執行 'reasonix setup' 生成設定；詳見 docs/SPEC.md。
+  執行 'voltui setup' 生成設定；詳見 docs/SPEC.md。
 `,
 	RenameUsage:                "用法：/rename <新名稱>  或  /rename <序號> <新名稱>",
 	RenameNoSession:            "當前沒有活躍會話可重新命名",
@@ -363,7 +365,7 @@ var ChineseTraditional = Messages{
 	GoalCurrentFmt:             "目標：%s",
 	GoalSetFmt:                 "目標已設定 → %s",
 	GoalCleared:                "目標已清除",
-	ProviderErrAuthRejected:    "認證失敗 (HTTP 401)：服務端拒絕了你的 API key。可能是 key 錯誤或已過期，也可能是服務端出現瞬時鑑權/額度問題——已退避重試仍失敗。請稍後再試，或檢查 .env 中的金鑰 / 執行 `reasonix setup`。",
+	ProviderErrAuthRejected:    "認證失敗 (HTTP 401)：服務端拒絕了你的 API key。可能是 key 錯誤或已過期，也可能是服務端出現瞬時鑑權/額度問題——已退避重試仍失敗。請稍後再試，或檢查 .env 中的金鑰 / 執行 `voltui setup`。",
 	SelectMoreAboveFmt:         "  ↑ 上方還有 %d 個",
 	SelectMoreBelowFmt:         "  ↓ 下方還有 %d 個",
 	SelectSearchHint:           "/ 搜尋 · 輸入關鍵詞過濾 · Esc 取消搜尋",

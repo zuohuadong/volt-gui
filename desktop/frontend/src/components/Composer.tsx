@@ -1169,6 +1169,8 @@ export function Composer({
         const path = await app.SavePastedFile(file.name, dataUrl);
         addAttachmentToDraft(sourceDraftKey, { path, displayName: file.name }, key);
       } catch {
+        console.warn("[composer] failed to attach pasted file");
+        showToast(t("composer.attachFileFailed"), "warn");
         // non-fatal: a failed attach must not block normal text input
       } finally {
         setPendingPaste((n) => Math.max(0, n - 1));
@@ -1215,6 +1217,8 @@ export function Composer({
           addAttachmentToDraft(sourceDraftKey, { path: item.path, previewUrl: item.previewUrl, displayName: baseName(path) }, key);
         }
       } catch {
+        console.warn("[composer] failed to attach dropped file");
+        showToast(t("composer.attachDropFailed"), "warn");
         // non-fatal: a failed drop attach must not block normal text input
       } finally {
         setPendingPaste((n) => Math.max(0, n - 1));

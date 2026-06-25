@@ -277,6 +277,40 @@ func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
 	}
 }
 
+func TestFetchProviderModelsUsesDraftAPIKeyValue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer draft-key" {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]string{
+				{"id": "draft-model", "object": "model"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := NewApp().FetchProviderModels(ProviderView{
+		Name:        "custom",
+		BaseURL:     srv.URL,
+		APIKeyEnv:   "UNSAVED_PROVIDER_KEY",
+		APIKeyValue: "draft-key",
+	})
+	if err != nil {
+		t.Fatalf("FetchProviderModels: %v", err)
+	}
+	want := []string{"draft-model"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FetchProviderModels = %v, want %v", got, want)
+	}
+}
+
 func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

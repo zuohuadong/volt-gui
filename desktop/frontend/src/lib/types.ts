@@ -90,6 +90,7 @@ export interface ProviderView {
   modelsUrl?: string;
   default: string;
   apiKeyEnv: string;
+  apiKeyValue?: string;
   keySet: boolean;
   requiresKey?: boolean;
   configured?: boolean;

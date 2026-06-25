@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.4.0...desktop-v0.5.0) (2026-06-25)
+
+
+### Features
+
+* sync upstream changes through 5dac4f6 ([0c59769](https://github.com/zuohuadong/volt-gui/commit/0c597692d3d0035969ebd02af1984b015a68c8f1))
+
 ## [0.4.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.3.1...desktop-v0.4.0) (2026-06-25)
 
 

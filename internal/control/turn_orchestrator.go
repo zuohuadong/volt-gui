@@ -44,7 +44,7 @@ func (o *turnOrchestrator) runTurnWithRawDisplay(ctx context.Context, input, raw
 		if block, _ := c.hooks.PromptSubmit(ctx, input, turn); block {
 			return nil // the hook's notify callback already surfaced the reason
 		}
-		defer func() { c.hooks.Stop(ctx, lastAssistantText(c.History()), turn) }()
+		defer func() { c.hooks.Stop(context.Background(), lastAssistantText(c.History()), turn) }()
 	}
 	if err := c.runner.Run(ctx, input); err != nil {
 		return err

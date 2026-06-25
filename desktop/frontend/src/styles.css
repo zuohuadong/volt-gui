@@ -7391,6 +7391,10 @@ a[href] {
   color: var(--fg-dim);
   font-size: 12px;
 }
+.workspace-note--warning {
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-soft));
+  color: var(--warn);
+}
 .workspace-note--compact {
   margin: 0 10px 8px;
   padding: 6px 8px;

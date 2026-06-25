@@ -81,6 +81,8 @@ export function SettingsPanel({
 }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -96,9 +98,19 @@ export function SettingsPanel({
   const { status, requestClose } = useDeferredClose(onClose, 240);
 
   const reload = useCallback(async () => {
-    const next = normalizeSettingsView(await app.Settings().catch(() => null));
-    setS(next);
-    return next;
+    setLoadingSettings(true);
+    setSettingsLoadFailed(false);
+    try {
+      const next = normalizeSettingsView(await app.Settings());
+      setS(next);
+      return next;
+    } catch {
+      setS(null);
+      setSettingsLoadFailed(true);
+      return null;
+    } finally {
+      setLoadingSettings(false);
+    }
   }, []);
   useEffect(() => {
     void reload();
@@ -179,10 +191,16 @@ export function SettingsPanel({
             ))}
           </nav>
           <main className="settings-center__content">
+            {needsSettings && settingsLoadFailed && (
+              <div className="banner banner--error settings-load-error" role="alert">
+                <span>{t("settings.loadFailed")}</span>
+                <button className="btn btn--small" type="button" onClick={() => void reload()}>{t("common.retry")}</button>
+              </div>
+            )}
             {needsSettings && err && <div className="banner banner--error">{err}</div>}
             {needsSettings && warning && <div className="banner banner--warning">{warning}</div>}
             {needsSettings && !s ? (
-              <div className="empty">{t("settings.loading")}</div>
+              loadingSettings ? <div className="empty">{t("settings.loading")}</div> : null
             ) : (
               <>
                 {tab === "general" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><GeneralSection s={s} busy={busy} apply={apply} agentRunning={agentRunning} /></SettingsPageShell>}

@@ -424,6 +424,15 @@ func (a *App) deleteBotInstall(installID string) {
 	a.mu.Unlock()
 }
 
+func normalizeBotConnectionToolApprovalMode(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "auto", "yolo", "ask":
+		return strings.TrimSpace(strings.ToLower(mode))
+	default:
+		return "ask"
+	}
+}
+
 func normalizeBotInstallTarget(provider, domain string) (string, string) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	domain = strings.ToLower(strings.TrimSpace(domain))

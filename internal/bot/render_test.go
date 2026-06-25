@@ -9,7 +9,7 @@ import (
 )
 
 func TestApprovalCardCarriesChatType(t *testing.T) {
-	card := approvalCard(event.Approval{ID: "approval-1"}, ChatDM)
+	card := approvalCard(event.Approval{ID: "approval-1"}, ChatDM, "")
 	if len(card.Elements) < 2 {
 		t.Fatalf("approval card elements = %d, want at least 2", len(card.Elements))
 	}

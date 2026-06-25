@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"voltui/internal/config"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
-	larknormalize "github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -41,6 +41,8 @@ type textContent struct {
 }
 
 const feishuPendingReactionEmoji = "OnIt"
+
+var markdownLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\s]+)\)`)
 
 // feishuEvent 飞书事件结构。
 type feishuEvent struct {
@@ -494,7 +496,40 @@ func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot
 }
 
 func feishuMarkdownPostContent(text string) (string, error) {
-	return larknormalize.SimpleMarkdownToPost("", text, nil)
+	lines := strings.Split(text, "\n")
+	content := make([][]map[string]string, 0, len(lines))
+	for _, line := range lines {
+		content = append(content, feishuPostParagraph(line))
+	}
+	payload := map[string]any{
+		"zh_cn": map[string]any{
+			"title":   "",
+			"content": content,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func feishuPostParagraph(text string) []map[string]string {
+	var paragraph []map[string]string
+	offset := 0
+	for _, loc := range markdownLinkPattern.FindAllStringSubmatchIndex(text, -1) {
+		if loc[0] > offset {
+			paragraph = append(paragraph, map[string]string{"tag": "text", "text": text[offset:loc[0]]})
+		}
+		label := text[loc[2]:loc[3]]
+		href := text[loc[4]:loc[5]]
+		paragraph = append(paragraph, map[string]string{"tag": "a", "text": label, "href": href})
+		offset = loc[1]
+	}
+	if offset < len(text) || len(paragraph) == 0 {
+		paragraph = append(paragraph, map[string]string{"tag": "text", "text": text[offset:]})
+	}
+	return paragraph
 }
 
 func feishuTextContent(text string) string {

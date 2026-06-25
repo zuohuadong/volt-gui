@@ -97,8 +97,9 @@ pnpm --dir frontend build
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`
 tags are the CLI release). Pushing one triggers `.github/workflows/release-desktop.yml`,
 which builds on a native runner per platform (Wails can't cross-compile a
-CGO/WebKit binary), packages each artifact, signs it with minisign, generates a
-`latest.json` manifest, publishes a GitHub release, and mirrors everything to R2.
+CGO/WebKit binary), packages each artifact, generates a `latest.json` manifest,
+publishes a GitHub release, and mirrors everything to R2. Release assets are
+unsigned and no detached `.minisig` files are published.
 The Linux artifact links against WebKitGTK 4.1 (`-tags webkit2_41`), so it needs
 `libwebkit2gtk-4.1-0` at runtime — present by default on Ubuntu 22.04+, Fedora 40+.
 
@@ -110,9 +111,9 @@ The app checks `latest.json` on startup (R2 first, GitHub as fallback) and shows
 an update banner when a newer version is published; **Settings → Software update**
 has a manual check. Self-update behavior by platform:
 
-- **Linux / Windows** — download, verify the minisign signature, then update in
-  place: Linux replaces the binary and relaunches; Windows runs the per-user NSIS
-  installer (no admin rights needed).
+- **Linux / Windows** — unsigned artifacts are shown as available updates, but
+  the app sends users to the release download page instead of applying them in
+  place.
 - **macOS** — *not* self-updating yet. The build is unsigned/un-notarized, so an
   in-place swap would be blocked by Gatekeeper; the banner links to the download
   page for a manual update instead.
@@ -133,17 +134,6 @@ trips the OS gatekeepers on first run:
 
 When Developer ID / Authenticode certificates are added, the release workflow's
 `HAS_APPLE_CERT` gate flips to the signed path and these steps go away.
-
-### Verifying a download
-
-Artifacts are signed with minisign (public key ID `AF12CA46F4A9EBB0`). The `.minisig`
-signature sits next to each artifact in the release; verify with the
-[minisign](https://jedisct1.github.io/minisign/) CLI:
-
-```sh
-minisign -Vm VoltUI-darwin-arm64.zip \
-  -P RWSw66n0RsoSr6Zhh6qt5YO95YkpCayTOCMFVDNUQSjJYwxoYngNVBSq
-```
 
 ## Editor seam (Monaco / CodeMirror)
 

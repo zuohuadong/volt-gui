@@ -772,3 +772,62 @@ func TestHelperProcess(t *testing.T) {
 		os.Stdout.Write(append(b, '\n'))
 	}
 }
+
+// TestReadOnlyTrustDoesNotChangeModelVisibleSchema locks the cache invariant
+// behind the MCP trust controls: marking a tool trusted read-only changes its
+// execution/approval flags (ReadOnly / PlanModeUntrustedReadOnly) but must not
+// alter the model-visible tool name or input schema. If trust leaked into the
+// provider-visible tool list/schema, every trust toggle would break the stable
+// prompt prefix and drop the prompt-cache hit rate.
+func TestReadOnlyTrustDoesNotChangeModelVisibleSchema(t *testing.T) {
+	startMockEcho := func(spec Spec) (*Host, map[string]tool.Tool) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		t.Cleanup(cancel)
+		spec.Name = "mock"
+		spec.Command = os.Args[0]
+		spec.Args = []string{"-test.run=TestHelperProcess", "--"}
+		spec.Env = map[string]string{"GO_WANT_HELPER_PROCESS": "1"}
+		host, tools, err := StartAll(ctx, []Spec{spec})
+		if err != nil {
+			t.Fatalf("StartAll: %v", err)
+		}
+		t.Cleanup(func() { host.Close() })
+		byName := map[string]tool.Tool{}
+		for _, tl := range tools {
+			byName[tl.Name()] = tl
+		}
+		return host, byName
+	}
+
+	_, untrusted := startMockEcho(Spec{})
+	_, trusted := startMockEcho(Spec{ReadOnlyModelToolNames: map[string]bool{"mcp__mock__echo": true}})
+
+	base, ok := untrusted["mcp__mock__echo"]
+	if !ok {
+		t.Fatalf("mcp__mock__echo missing from untrusted tools %v", untrusted)
+	}
+	trustedEcho, ok := trusted["mcp__mock__echo"]
+	if !ok {
+		t.Fatalf("mcp__mock__echo missing from trusted tools %v", trusted)
+	}
+
+	// The model-visible surface (name + schema bytes) must be byte-identical.
+	if base.Name() != trustedEcho.Name() {
+		t.Fatalf("trust changed model-visible tool name: %q vs %q", base.Name(), trustedEcho.Name())
+	}
+	if got, want := string(trustedEcho.Schema()), string(base.Schema()); got != want {
+		t.Fatalf("trust changed model-visible schema bytes:\n trusted=%s\n   base=%s", got, want)
+	}
+
+	// Trust only flips the execution/approval flags.
+	if base.ReadOnly() {
+		t.Fatal("untrusted echo should not be read-only without a hint")
+	}
+	if !trustedEcho.ReadOnly() {
+		t.Fatal("trusted echo should be marked read-only")
+	}
+	if u, ok := trustedEcho.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
+		t.Fatal("trusted echo should be trusted in plan mode")
+	}
+}

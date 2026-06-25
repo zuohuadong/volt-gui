@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.12.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v1.11.1...desktop-v1.12.0) (2026-06-25)
+## 0.1.0 (2026-06-25)
 
 
 ### Features

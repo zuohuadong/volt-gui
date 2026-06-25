@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.3.1...desktop-v0.4.0) (2026-06-25)
+
+
+### Features
+
+* **desktop:** improve settings and model resolution ([e1cf06f](https://github.com/zuohuadong/volt-gui/commit/e1cf06f39c05643e2e384e97da739f48d23eadce))
+
 ## [0.3.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.3.0...desktop-v0.3.1) (2026-06-25)
 
 

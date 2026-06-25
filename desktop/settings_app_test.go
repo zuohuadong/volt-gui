@@ -327,6 +327,7 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 		},
 		VisionModelsSet: true,
 		Default:         "mimo-v2.5-asr",
+		Priority:        30,
 		APIKeyEnv:       "MIMO_API_KEY",
 	}); err != nil {
 		t.Fatalf("SaveProvider: %v", err)
@@ -346,6 +347,9 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 	if got, want := got.VisionModels, []string{"mimo-v2.5-pro"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("saved provider vision_models = %v, want %v", got, want)
+	}
+	if got.Priority != 30 {
+		t.Errorf("saved provider priority = %d, want 30", got.Priority)
 	}
 	raw, err := os.ReadFile(config.UserConfigPath())
 	if err != nil {
@@ -368,6 +372,9 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 	if !strings.Contains(block, `vision_models = ["mimo-v2.5-pro"]`) {
 		t.Fatalf("saved provider block did not persist filtered vision_models:\n%s", block)
+	}
+	if !strings.Contains(block, `priority    = 30`) {
+		t.Fatalf("saved provider block did not persist priority:\n%s", block)
 	}
 }
 

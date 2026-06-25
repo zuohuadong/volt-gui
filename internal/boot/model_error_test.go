@@ -45,6 +45,43 @@ api_key_env = "VOLTUI_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildAmbiguousBareModelErrorIsActionable(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "same-model"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "provider-a"
+kind = "openai"
+base_url = "https://example.invalid/a"
+model = "same-model"
+api_key_env = "VOLTUI_TEST_KEY_UNSET"
+
+[[providers]]
+name = "provider-b"
+kind = "openai"
+base_url = "https://example.invalid/b"
+model = "same-model"
+api_key_env = "VOLTUI_TEST_KEY_UNSET"
+`)
+
+	_, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err == nil {
+		t.Fatal("expected an error for an ambiguous bare default_model")
+	}
+	msg := err.Error()
+	for _, want := range []string{"ambiguous model", "provider-a/same-model", "provider-b/same-model", "provider/model", "priority"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q should mention %q", msg, want)
+		}
+	}
+}
+
 func TestBuildMigratesLegacyBareMimoModelOverride(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)

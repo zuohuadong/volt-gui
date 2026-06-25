@@ -89,6 +89,7 @@ export interface ProviderView {
   visionModelsConfigured?: boolean;
   modelsUrl?: string;
   default: string;
+  priority?: number;
   apiKeyEnv: string;
   apiKeyValue?: string;
   keySet: boolean;
@@ -320,6 +321,7 @@ export interface SandboxView {
   network: boolean;
   workspaceRoot: string;
   allowWrite: string[];
+  shell?: string;
 }
 
 export interface SettingsView {

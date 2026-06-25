@@ -147,7 +147,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	keepPolicy := agentKeepPolicy(cfg.Agent.Keep)
 	entry, ok := cfg.ResolveModel(modelName)
 	if !ok {
-		return nil, fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `voltui setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
+		return nil, fmt.Errorf("%w: %v; note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `voltui setup` to reconfigure", ErrUnknownModel, cfg.ResolveModelError(modelName))
 	}
 	modelRef := entry.Name + "/" + entry.Model
 	if opts.EffortOverride != nil {

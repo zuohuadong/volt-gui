@@ -98,7 +98,21 @@
   type SidebarProjectSort = "recent" | "name" | "conversations";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
+  type SettingPanel = "general" | "runtime" | "models";
   type ModelCard = { name: string; provider: string; role: string; status: string; ref?: string };
+  type SettingGroup = { id: SettingPanel; title: string; desc: string; status: string };
+  type SettingsDraft = {
+    language: string;
+    theme: string;
+    themeStyle: string;
+    closeBehavior: string;
+    permissionMode: string;
+    sandboxBash: string;
+    sandboxNetwork: boolean;
+    sandboxWorkspaceRoot: string;
+    sandboxAllowWrite: string;
+    sandboxShell: string;
+  };
   type ModelProviderDraft = {
     name: string;
     kind: string;
@@ -108,6 +122,7 @@
     apiKeyEnv: string;
     apiKeyValue: string;
     modelsUrl: string;
+    priority: string;
     fetchedModels: string[];
     selectedFetchedModels: string[];
     contextWindow: string;
@@ -171,6 +186,10 @@
   let modelSettings = $state<SettingsView | undefined>();
   let modelSettingsLoading = $state(false);
   let modelSettingsError = $state("");
+  let settingsPanel = $state<SettingPanel>("general");
+  let settingsDraft = $state<SettingsDraft>(emptySettingsDraft());
+  let settingsSaving = $state(false);
+  let settingsMessage = $state("");
   let modelDraft = $state<ModelProviderDraft>(emptyModelProviderDraft());
   let modelDraftEditing = $state(false);
   let modelDraftSaving = $state(false);
@@ -548,17 +567,8 @@
     return !keyword || [agent.name, agent.role, agent.desc].some((value) => value.toLowerCase().includes(keyword));
   }));
   const providerKindOptions = $derived(modelSettings?.providerKinds?.length ? modelSettings.providerKinds : ["openai", "anthropic"]);
-  const previewModelCards: ModelCard[] = [
-    { name: "GPT-4o", provider: "OpenAI", role: "默认对话模型", status: "已连接" },
-    { name: "Claude Sonnet 4.6", provider: "Claude", role: "长文档分析", status: "备用" },
-    { name: "Qwen-Max", provider: "Qwen", role: "中文任务", status: "可用" },
-  ];
   const modelCards = $derived(modelCardsFromSettings());
-  const settingGroups = [
-    { title: "常规设置", desc: "语言、主题、关闭行为和本地缓存。", status: "已配置" },
-    { title: "局域网运行", desc: "局域网访问、健康检查和服务端口。", status: "运行中" },
-    { title: "模型接口", desc: "Relay、API Key 环境变量和默认模型。", status: "需复核" },
-  ];
+  const settingGroups = $derived(settingGroupsFromSettings());
   const operationLogs = [
     { action: "创建 Agent", target: "代码审查 Agent", user: "我的", time: "刚刚", result: "成功" },
     { action: "更新自动化", target: "桌面前端质量门禁", user: "我的", time: "12 分钟前", result: "成功" },
@@ -586,6 +596,21 @@
   const REQUEST_TIMEOUT_MS = 30_000;
   const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
 
+  function emptySettingsDraft(): SettingsDraft {
+    return {
+      language: "auto",
+      theme: "auto",
+      themeStyle: "graphite",
+      closeBehavior: "background",
+      permissionMode: "ask",
+      sandboxBash: "enforce",
+      sandboxNetwork: false,
+      sandboxWorkspaceRoot: "",
+      sandboxAllowWrite: "",
+      sandboxShell: "auto",
+    };
+  }
+
   function emptyModelProviderDraft(): ModelProviderDraft {
     return {
       name: "",
@@ -596,6 +621,7 @@
       apiKeyEnv: "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: "",
+      priority: "0",
       fetchedModels: [],
       selectedFetchedModels: [],
       contextWindow: "128000",
@@ -627,7 +653,7 @@
   }
 
   function modelCardsFromSettings(): ModelCard[] {
-    if (!hasWailsBindings()) return previewModelCards;
+    if (!hasWailsBindings()) return [];
     return (modelSettings?.providers ?? []).flatMap((provider) => {
       const providerModels = provider.models?.length ? provider.models : provider.default ? [provider.default] : [];
       return providerModels.map((model) => ({
@@ -638,6 +664,136 @@
         ref: providerRef(provider, model),
       }));
     });
+  }
+
+  function settingGroupsFromSettings(): SettingGroup[] {
+    const providerCount = modelSettings?.providers.length ?? modelCards.length;
+    const configuredProviders = modelSettings?.providers.filter((provider) => provider.configured).length ?? 0;
+    return [
+      {
+        id: "general",
+        title: "常规设置",
+        desc: "语言、主题、关闭按钮行为和桌面外观。",
+        status: modelSettings ? `${settingsDraft.theme || "auto"} / ${settingsDraft.closeBehavior || "background"}` : "可配置",
+      },
+      {
+        id: "runtime",
+        title: "权限与沙箱",
+        desc: "工具授权模式、终端沙箱、网络和写入目录。",
+        status: modelSettings ? `${settingsDraft.permissionMode || "ask"} / ${settingsDraft.sandboxBash || "enforce"}` : "可配置",
+      },
+      {
+        id: "models",
+        title: "模型接口",
+        desc: "Provider、API Key 环境变量和默认模型。",
+        status: providerCount ? `${configuredProviders}/${providerCount} 可用` : "待配置",
+      },
+    ];
+  }
+
+  function syncSettingsDraft(view = modelSettings) {
+    const next = emptySettingsDraft();
+    if (view) {
+      next.language = view.desktopLanguage || "auto";
+      next.theme = view.desktopTheme || "auto";
+      next.themeStyle = view.desktopThemeStyle || "graphite";
+      next.closeBehavior = view.closeBehavior || "background";
+      next.permissionMode = view.permissions.mode || "ask";
+      next.sandboxBash = view.sandbox.bash || "enforce";
+      next.sandboxNetwork = Boolean(view.sandbox.network);
+      next.sandboxWorkspaceRoot = view.sandbox.workspaceRoot || "";
+      next.sandboxAllowWrite = (view.sandbox.allowWrite ?? []).join("\n");
+      next.sandboxShell = view.sandbox.shell || "auto";
+    }
+    settingsDraft = next;
+  }
+
+  function splitSettingsLines(value: string): string[] {
+    return value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  async function ensureSettingsLoaded() {
+    if (!hasWailsBindings()) {
+      syncSettingsDraft();
+      return;
+    }
+    if (!modelSettings && !modelSettingsLoading) await refreshModelSettings();
+  }
+
+  function openSettingsPanel(panel: SettingPanel) {
+    settingsPanel = panel;
+    userPanelDialog = "settings";
+    userMenuOpen = false;
+    settingsMessage = "";
+    modelSettingsError = "";
+    void ensureSettingsLoaded();
+  }
+
+  function selectSettingsPanel(panel: SettingPanel) {
+    settingsPanel = panel;
+    settingsMessage = "";
+    modelSettingsError = "";
+  }
+
+  function resetSettingsDraft() {
+    syncSettingsDraft();
+    settingsMessage = "";
+    modelSettingsError = "";
+  }
+
+  function settingsPanelTitle() {
+    if (settingsPanel === "runtime") return "权限与沙箱";
+    if (settingsPanel === "models") return "模型接口";
+    return "常规设置";
+  }
+
+  async function saveSettingsDraft() {
+    if (settingsPanel === "models") {
+      openWorkLayer("models");
+      userPanelDialog = undefined;
+      return;
+    }
+    if (!hasWailsBindings()) {
+      settingsMessage = "浏览器预览已应用草稿；进入桌面运行时后会写入真实配置。";
+      return;
+    }
+    settingsSaving = true;
+    settingsMessage = "";
+    modelSettingsError = "";
+    try {
+      const current = modelSettings ?? await app().Settings();
+      if (settingsPanel === "general") {
+        if ((settingsDraft.language || "auto") !== (current.desktopLanguage || "auto")) {
+          await app().SetDesktopLanguage(settingsDraft.language);
+        }
+        if ((settingsDraft.theme || "auto") !== (current.desktopTheme || "auto") || (settingsDraft.themeStyle || "graphite") !== (current.desktopThemeStyle || "graphite")) {
+          await app().SetDesktopAppearance(settingsDraft.theme, settingsDraft.themeStyle);
+        }
+        if ((settingsDraft.closeBehavior || "background") !== (current.closeBehavior || "background")) {
+          await app().SetCloseBehavior(settingsDraft.closeBehavior);
+        }
+      } else if (settingsPanel === "runtime") {
+        if ((settingsDraft.permissionMode || "ask") !== (current.permissions.mode || "ask")) {
+          await app().SetPermissionMode(settingsDraft.permissionMode);
+        }
+        await app().SetSandbox(
+          settingsDraft.sandboxBash,
+          settingsDraft.sandboxNetwork,
+          settingsDraft.sandboxWorkspaceRoot,
+          splitSettingsLines(settingsDraft.sandboxAllowWrite),
+          settingsDraft.sandboxShell,
+        );
+      }
+      await refreshModelSettings();
+      settingsMessage = "设置已保存。";
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      settingsSaving = false;
+    }
   }
 
   function providerDraftFromView(provider?: ProviderView): ModelProviderDraft {
@@ -651,6 +807,7 @@
       apiKeyEnv: provider.apiKeyEnv || "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: provider.modelsUrl || "",
+      priority: String(provider.priority ?? 0),
       fetchedModels: [],
       selectedFetchedModels: [],
       contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
@@ -665,6 +822,7 @@
     const modelsList = splitModelLines(modelDraft.modelsText);
     const visionModels = splitModelLines(modelDraft.visionModelsText);
     const contextWindow = Number.parseInt(modelDraft.contextWindow.trim(), 10);
+    const priority = Number.parseInt(modelDraft.priority.trim(), 10);
     return {
       name: modelDraft.name.trim(),
       kind: modelDraft.kind.trim() || "openai",
@@ -674,6 +832,7 @@
       visionModelsConfigured: visionModels.length > 0,
       modelsUrl: modelDraft.modelsUrl.trim(),
       default: modelDraft.defaultModel.trim() || modelsList[0] || "",
+      priority: Number.isFinite(priority) ? priority : 0,
       apiKeyEnv: modelDraft.apiKeyEnv.trim(),
       apiKeyValue: modelDraft.apiKeyValue.trim(),
       keySet: false,
@@ -726,6 +885,7 @@
     modelSettingsError = "";
     try {
       modelSettings = await app().Settings();
+      syncSettingsDraft(modelSettings);
     } catch (error) {
       modelSettingsError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -759,7 +919,7 @@
 
   async function saveModelProvider() {
     if (!hasWailsBindings()) {
-      configDialog = undefined;
+      modelDraftError = "当前没有连接桌面后端，无法保存模型渠道。请在 Wails 桌面运行环境中添加渠道。";
       return;
     }
     const provider = providerViewFromDraft();
@@ -779,9 +939,9 @@
       await app().SaveProvider(provider);
       if (key && provider.apiKeyEnv) {
         const warning = await app().SetProviderKey(provider.apiKeyEnv, key);
-        modelDraftMessage = warning || "模型和 Key 已保存。";
+        modelDraftMessage = warning || "渠道、模型和 Key 已保存。";
       } else {
-        modelDraftMessage = "模型配置已保存。";
+        modelDraftMessage = "模型渠道已保存。";
       }
       await refreshModelSettings();
       await refresh();
@@ -1319,7 +1479,16 @@
     draftConversationToken += 1;
   }
 
-  function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; if (layer === "newTask") newTaskConversationActive = false; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; agentSelectorOpen = false; }
+  function openWorkLayer(layer: WorkLayer) {
+    activityMode = "work";
+    workLayer = layer;
+    if (layer === "newTask") newTaskConversationActive = false;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    agentSelectorOpen = false;
+    if (layer === "settings" || layer === "models") void ensureSettingsLoaded();
+  }
   function openResourceCenterFromComposer() {
     openWorkLayer("resources");
     resourceTab = "resources";
@@ -1355,6 +1524,10 @@
       openWorkLayer("models");
       return;
     }
+    if (layer === "settings") {
+      settingsPanel = "general";
+      void ensureSettingsLoaded();
+    }
     userPanelDialog = layer;
   }
   function userPanelDialogTitle() {
@@ -1366,7 +1539,7 @@
   }
   function userPanelDialogIntro() {
     if (userPanelDialog === "models") return "对标 AORISTLAWER 模型管理：集中查看模型状态、供应商和默认用途。";
-    if (userPanelDialog === "settings") return "对标 AORISTLAWER UserPanel：常规设置、局域网运行和模型接口在弹窗内快速配置。";
+    if (userPanelDialog === "settings") return "管理桌面语言、外观、权限沙箱和模型配置入口。";
     if (userPanelDialog === "sync") return "对标 AORISTLAWER 同步面板：展示资料、模型和记忆同步进度。";
     if (userPanelDialog === "operationLog") return "对标 AORISTLAWER 操作记录：保留关键动作、对象、用户和结果。";
     return "用户中心弹窗。";
@@ -1772,7 +1945,7 @@
     if (configDialog === "schedule") return "新建日程";
     if (configDialog === "todo") return "新建待办";
     if (configDialog === "report") return "新建分析报告";
-    if (configDialog === "model") return "添加模型";
+    if (configDialog === "model") return modelDraftEditing ? "编辑模型渠道" : "添加模型渠道";
     if (configDialog === "ingest") return "批量导入";
     if (configDialog === "resource") return "上传资料";
     if (configDialog === "template") return "新建文档模板";
@@ -3045,8 +3218,34 @@
                   {/if}
                 {/if}
               </section>
-            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加模型</button><button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新状态</button></div></div>{#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}<div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>可选模型</em></article><article><span>供应商</span><strong>{modelSettings?.providers.length ?? 0}</strong><em>{hasWailsBindings() ? "真实配置" : "浏览器预览"}</em></article><article><span>密钥状态</span><strong>{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0}</strong><em>可用 provider</em></article></div>{#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取模型配置...</div>{:else if hasWailsBindings() && !(modelSettings?.providers.length)}<article class="detail-empty"><strong>尚未配置模型</strong><p>添加 OpenAI-compatible 或 Anthropic-compatible provider 后，聊天输入框会立即出现可选模型。</p><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加第一个模型</button></article>{:else if hasWailsBindings()}<div class="aorist-card-grid">{#each modelSettings?.providers ?? [] as provider (provider.name)}<article class="capability-item"><span>{provider.configured ? "可用" : provider.requiresKey ? "缺少 Key" : "未启用"}</span><strong>{provider.name}</strong><p>{provider.kind} / {provider.baseUrl || "未配置 Base URL"}</p><p>Key: {provider.apiKeyEnv || "无"} / 上下文: {provider.contextWindow || "-"}</p><div class="model-chip-list">{#each provider.models as model (model)}<button class:active={isDefaultModelRef(provider, model)} type="button" onclick={() => void setDefaultModelProvider(provider, model)}>{model}{#if isDefaultModelRef(provider, model)}<Check size={13} />{/if}</button>{/each}</div><button type="button" onclick={() => openModelProviderDialog(provider)}><Pencil size={14} /> 编辑</button><button type="button" onclick={() => void setDefaultModelProvider(provider)}><Check size={14} /> 设为默认</button><button type="button" onclick={() => void deleteModelProvider(provider)}><Trash2 size={14} /> 删除</button></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each modelCards as model (model.name)}<article class="capability-item"><span>{model.status}</span><strong>{model.name}</strong><p>{model.provider} / {model.role}</p><button type="button">预览模型</button></article>{/each}</div>{/if}</section>
-            {:else if workLayer === "settings"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Settings</span><strong>系统设置</strong></div><button type="button">保存设置</button></div><div class="aorist-card-grid">{#each settingGroups as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div></section>
+            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加渠道</button><button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新状态</button></div></div>{#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}<div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>真实可选模型</em></article><article><span>渠道数量</span><strong>{modelSettings?.providers.length ?? 0}</strong><em>{hasWailsBindings() ? "真实配置" : "未连接桌面后端"}</em></article><article><span>密钥状态</span><strong>{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0}</strong><em>可用渠道</em></article></div>{#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取模型配置...</div>{:else if !hasWailsBindings()}<article class="detail-empty"><strong>未连接桌面后端</strong><p>模型管理只展示真实配置。请在 Wails 桌面运行环境中读取、添加和保存模型渠道。</p></article>{:else if !(modelSettings?.providers.length)}<article class="detail-empty"><strong>尚未配置模型渠道</strong><p>添加 OpenAI-compatible 或 Anthropic-compatible 渠道后，聊天输入框会立即出现可选模型。</p><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加第一个渠道</button></article>{:else}<div class="aorist-card-grid">{#each modelSettings?.providers ?? [] as provider (provider.name)}<article class="capability-item"><span>{provider.configured ? "可用" : provider.requiresKey ? "缺少 Key" : "未启用"}</span><strong>{provider.name}</strong><p>{provider.kind} / {provider.baseUrl || "未配置 Base URL"}</p><p>Key: {provider.apiKeyEnv || "无"} / 上下文: {provider.contextWindow || "-"} / 优先级: {provider.priority ?? 0}</p><div class="model-chip-list">{#each provider.models as model (model)}<button class:active={isDefaultModelRef(provider, model)} type="button" onclick={() => void setDefaultModelProvider(provider, model)}>{model}{#if isDefaultModelRef(provider, model)}<Check size={13} />{/if}</button>{/each}</div><button type="button" onclick={() => openModelProviderDialog(provider)}><Pencil size={14} /> 编辑渠道</button><button type="button" onclick={() => void setDefaultModelProvider(provider)}><Check size={14} /> 设为默认</button><button type="button" onclick={() => void deleteModelProvider(provider)}><Trash2 size={14} /> 删除</button></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "settings"}
+              <section class="aorist-page settings-page">
+                <div class="aorist-toolbar">
+                  <div><span>Settings</span><strong>系统设置</strong></div>
+                  <div>
+                    <button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新</button>
+                    <button type="button" onclick={() => openSettingsPanel("general")}><Settings size={14} /> 打开设置</button>
+                  </div>
+                </div>
+                {#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}
+                {#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取系统设置...</div>{/if}
+                <div class="aorist-stats settings-stats">
+                  <article><span>语言</span><strong>{settingsDraft.language === "auto" ? "自动" : settingsDraft.language.toUpperCase()}</strong><em>桌面 UI</em></article>
+                  <article><span>主题</span><strong>{settingsDraft.theme || "auto"}</strong><em>{settingsDraft.themeStyle || "graphite"}</em></article>
+                  <article><span>权限</span><strong>{settingsDraft.permissionMode || "ask"}</strong><em>{settingsDraft.sandboxBash || "enforce"}</em></article>
+                </div>
+                <div class="aorist-card-grid">
+                  {#each settingGroups as item (item.title)}
+                    <article class="capability-item settings-card">
+                      <span>{item.status}</span>
+                      <strong>{item.title}</strong>
+                      <p>{item.desc}</p>
+                      <button type="button" onclick={() => openSettingsPanel(item.id)}>配置</button>
+                    </article>
+                  {/each}
+                </div>
+              </section>
             {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button">立即同步</button></div><div class="aorist-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
             {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button">导出日志</button></div><div class="aorist-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
             {:else}
@@ -3593,14 +3792,109 @@
             </header>
             <p class="user-panel-modal__intro">{userPanelDialogIntro()}</p>
             {#if userPanelDialog === "settings"}
-              <div class="user-panel-grid">{#each settingGroups as item (item.title)}<article><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div>
-              <div class="config-grid user-panel-form"><label>语言<select><option>中文</option><option>English</option></select></label><label>主题<select><option>浅色</option><option>深色</option><option>跟随系统</option></select></label><label>局域网运行<input value="127.0.0.1:5174" /></label><label>默认模型<input value={selectedModel || agentModel} /></label></div>
+              <div class="settings-dialog-layout">
+                <aside class="settings-dialog-nav" aria-label="系统设置分类">
+                  {#each settingGroups as item (item.title)}
+                    <button class:active={settingsPanel === item.id} type="button" aria-pressed={settingsPanel === item.id} onclick={() => selectSettingsPanel(item.id)}>
+                      <span>{item.status}</span>
+                      <strong>{item.title}</strong>
+                      <em>{item.desc}</em>
+                    </button>
+                  {/each}
+                </aside>
+                <section class="settings-dialog-panel" aria-labelledby="settings-panel-title">
+                  <header class="settings-dialog-panel__head">
+                    <div><span>Settings</span><strong id="settings-panel-title">{settingsPanelTitle()}</strong></div>
+                    {#if modelSettingsLoading}<em><Loader2 size={14} /> 读取中</em>{/if}
+                  </header>
+                  {#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}
+                  {#if settingsMessage}<div class="model-inline-alert"><Check size={15} /> {settingsMessage}</div>{/if}
+                  {#if settingsPanel === "general"}
+                    <div class="config-grid user-panel-form">
+                      <label>语言
+                        <select bind:value={settingsDraft.language}>
+                          <option value="auto">跟随系统</option>
+                          <option value="zh">中文</option>
+                          <option value="en">English</option>
+                        </select>
+                      </label>
+                      <label>主题
+                        <select bind:value={settingsDraft.theme}>
+                          <option value="auto">跟随系统</option>
+                          <option value="light">浅色</option>
+                          <option value="dark">深色</option>
+                        </select>
+                      </label>
+                      <label>主题样式
+                        <select bind:value={settingsDraft.themeStyle}>
+                          <option value="graphite">Graphite</option>
+                          <option value="porcelain">Porcelain</option>
+                          <option value="glacier">Glacier</option>
+                          <option value="aurora">Aurora</option>
+                          <option value="ember">Ember</option>
+                          <option value="midnight">Midnight</option>
+                          <option value="sandstone">Sandstone</option>
+                          <option value="linen">Linen</option>
+                        </select>
+                      </label>
+                      <label>关闭按钮
+                        <select bind:value={settingsDraft.closeBehavior}>
+                          <option value="background">最小化到后台</option>
+                          <option value="quit">退出应用</option>
+                        </select>
+                      </label>
+                    </div>
+                  {:else if settingsPanel === "runtime"}
+                    <div class="config-grid user-panel-form">
+                      <label>授权模式
+                        <select bind:value={settingsDraft.permissionMode}>
+                          <option value="ask">需要确认</option>
+                          <option value="allow">默认允许</option>
+                          <option value="deny">默认拒绝</option>
+                        </select>
+                      </label>
+                      <label>终端沙箱
+                        <select bind:value={settingsDraft.sandboxBash}>
+                          <option value="enforce">强制沙箱</option>
+                          <option value="none">不启用</option>
+                        </select>
+                      </label>
+                      <label>Shell
+                        <input bind:value={settingsDraft.sandboxShell} placeholder="auto / zsh / bash" />
+                      </label>
+                      <label>工作区根目录
+                        <input bind:value={settingsDraft.sandboxWorkspaceRoot} placeholder="留空使用当前工作区" />
+                      </label>
+                      <label class="settings-toggle wide">
+                        <input type="checkbox" bind:checked={settingsDraft.sandboxNetwork} />
+                        <span>允许沙箱内网络访问</span>
+                      </label>
+                      <label class="wide">额外可写目录
+                        <textarea rows="4" bind:value={settingsDraft.sandboxAllowWrite} placeholder="每行一个路径，或用逗号分隔"></textarea>
+                      </label>
+                    </div>
+                  {:else}
+                    <div class="user-panel-list settings-model-list">
+                      <article><div><strong>默认模型</strong><p>{modelSettings?.defaultModel || selectedModel || agentModel}</p><em>在模型管理中修改默认对话模型。</em></div><button type="button" onclick={() => { userPanelDialog = undefined; openWorkLayer("models"); }}>打开模型管理</button></article>
+                      <article><div><strong>模型渠道</strong><p>{modelSettings?.providers.length ?? 0} 个渠道，{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0} 个可用</p><em>可添加 OpenAI-compatible 或 Anthropic-compatible 接口。</em></div><button type="button" onclick={() => openModelProviderDialog()}>添加渠道</button></article>
+                    </div>
+                  {/if}
+                </section>
+              </div>
             {:else if userPanelDialog === "sync"}
               <div class="user-panel-list sync-dialog-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em><i style={`--progress:${job.progress}`}></i></div><span>{job.status}</span></article>{/each}</div>
             {:else}
               <div class="user-panel-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div>
             {/if}
-            <footer><button type="button" onclick={() => (userPanelDialog = undefined)}>关闭</button><button type="button" onclick={() => (userPanelDialog = undefined)}>{userPanelDialog === "operationLog" ? "导出日志" : "保存"}</button></footer>
+            <footer>
+              <button type="button" onclick={() => (userPanelDialog = undefined)}>关闭</button>
+              {#if userPanelDialog === "settings"}
+                <button type="button" onclick={resetSettingsDraft}>重置</button>
+                <button type="button" disabled={settingsSaving || modelSettingsLoading} onclick={() => void saveSettingsDraft()}>{settingsSaving ? "保存中" : settingsPanel === "models" ? "打开模型管理" : `保存${settingsPanelTitle()}`}</button>
+              {:else}
+                <button type="button" onclick={() => (userPanelDialog = undefined)}>{userPanelDialog === "operationLog" ? "导出日志" : "保存"}</button>
+              {/if}
+            </footer>
           </section>
         </div>
       {/if}
@@ -3653,7 +3947,7 @@
         </div>
       {/if}
       {#if configDialog}
-        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"}><header><div><span>{configDialog === "team" ? "Agent Team" : "Aorist Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责推进主流程的 Team Leader。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
+        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"}><header><div><span>{configDialog === "team" ? "Agent Team" : configDialog === "model" ? "Model Channel" : "Aorist Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责推进主流程的 Team Leader。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
   <div class="team-builder">
     <section>
       <label class="team-builder-search">
@@ -3694,7 +3988,7 @@
     </aside>
   </div>{:else if configDialog === "model"}
     <div class="config-grid">
-      <label>Provider 名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label>
+      <label>渠道名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label>
       <label>类型 *<select bind:value={modelDraft.kind}>{#each providerKindOptions as kind (kind)}<option value={kind}>{kind}</option>{/each}</select></label>
       <label class="wide">Base URL *<input bind:value={modelDraft.baseUrl} placeholder="https://api.example.com/v1" /></label>
       <label>API Key 环境变量<input bind:value={modelDraft.apiKeyEnv} placeholder="CUSTOM_API_KEY" /></label>
@@ -3728,6 +4022,7 @@
       </div>
       <label class="wide">模型列表 *<textarea rows="5" bind:value={modelDraft.modelsText} placeholder="每行一个模型，或先自动获取后勾选"></textarea></label>
       <label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label>
+      <label>渠道优先级<input bind:value={modelDraft.priority} inputmode="numeric" placeholder="0" /></label>
       <label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label>
       <label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / responses" /></label>
       <label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label>
@@ -3736,7 +4031,7 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : "确认"}</button></footer></section></div>
+  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -6325,6 +6620,13 @@
     width: min(780px, calc(100vw - 44px));
   }
 
+  .config-modal.user-panel-modal {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    max-height: min(720px, calc(100vh - 44px));
+    padding: 0;
+  }
+
   .user-panel-modal__title {
     display: flex;
     align-items: center;
@@ -6345,13 +6647,116 @@
   }
 
   .user-panel-modal__intro {
-    margin: 14px 0 16px;
+    margin: 0;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--aorist-line);
     color: var(--aorist-muted);
     font-size: 13px;
     line-height: 1.7;
   }
 
-  .user-panel-grid article,
+  .settings-dialog-layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .settings-dialog-nav {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+    border-right: 1px solid var(--aorist-line);
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .settings-dialog-nav button {
+    display: grid;
+    gap: 5px;
+    width: 100%;
+    padding: 12px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-muted);
+    text-align: left;
+  }
+
+  .settings-dialog-nav button:hover,
+  .settings-dialog-nav button.active {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: var(--aorist-ink);
+    box-shadow: var(--aorist-shadow-soft);
+  }
+
+  .settings-dialog-nav button.active {
+    border-color: color-mix(in srgb, var(--aorist-primary) 28%, var(--aorist-line));
+  }
+
+  .settings-dialog-nav span {
+    justify-self: start;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary-strong);
+    font-size: 11px;
+  }
+
+  .settings-dialog-nav strong {
+    color: inherit;
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .settings-dialog-nav em {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-style: normal;
+    line-height: 1.45;
+  }
+
+  .settings-dialog-panel {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px 18px;
+  }
+
+  .settings-dialog-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .settings-dialog-panel__head span {
+    display: block;
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .settings-dialog-panel__head strong {
+    display: block;
+    margin-top: 2px;
+    color: var(--aorist-ink);
+    font-size: 18px;
+    line-height: 1.3;
+  }
+
+  .settings-dialog-panel__head em {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-style: normal;
+  }
+
   .user-panel-list article {
     border: 1px solid var(--aorist-line);
     border-radius: 12px;
@@ -6359,20 +6764,6 @@
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
 
-  .user-panel-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .user-panel-grid article {
-    display: grid;
-    gap: 8px;
-    padding: 14px;
-  }
-
-  .user-panel-grid article > span,
   .user-panel-list article > span {
     justify-self: start;
     padding: 2px 7px;
@@ -6382,13 +6773,11 @@
     font-size: 11px;
   }
 
-  .user-panel-grid strong,
   .user-panel-list strong {
     color: var(--aorist-ink);
     font-size: 14px;
   }
 
-  .user-panel-grid p,
   .user-panel-list p,
   .user-panel-list em {
     margin: 0;
@@ -6396,18 +6785,6 @@
     font-size: 12px;
     line-height: 1.55;
     font-style: normal;
-  }
-
-  .user-panel-grid button {
-    width: fit-content;
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--aorist-line);
-    border-radius: 8px;
-    background: hsl(0 0% 100%);
-    color: var(--aorist-ink);
-    font-size: 12px;
-    font-weight: 600;
   }
 
   .user-panel-list {
@@ -6448,12 +6825,37 @@
   }
 
   .user-panel-form {
-    margin-top: 12px;
+    margin-top: 0;
+  }
+
+  .settings-tabs {
+    margin-bottom: 12px;
+  }
+
+  .settings-toggle {
+    display: flex !important;
+    grid-template-columns: none !important;
+    align-items: center;
+    gap: 9px !important;
+    min-height: 36px;
+    padding: 0 2px;
+  }
+
+  .settings-toggle input {
+    width: 16px !important;
+    height: 16px !important;
+    min-height: 16px !important;
+    padding: 0 !important;
+    accent-color: var(--aorist-primary);
+  }
+
+  .settings-toggle span {
+    color: var(--aorist-ink);
+    font-size: 13px;
   }
 
   @media (max-width: 720px) {
     .user-panel-stats,
-    .user-panel-grid,
     .user-panel-form {
       grid-template-columns: 1fr;
     }
@@ -6461,6 +6863,27 @@
     .user-panel-list article {
       align-items: flex-start;
       flex-direction: column;
+    }
+
+    .settings-dialog-layout {
+      grid-template-columns: 1fr;
+      overflow: auto;
+    }
+
+    .settings-dialog-nav {
+      display: flex;
+      overflow-x: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--aorist-line);
+    }
+
+    .settings-dialog-nav button {
+      width: min(220px, 78vw);
+      flex: 0 0 auto;
+    }
+
+    .settings-dialog-panel {
+      overflow: visible;
     }
   }
 
@@ -14066,6 +14489,183 @@
     border: 1px solid var(--aorist-border-divider, #e2e8f0);
     border-radius: 12px;
     background: var(--aorist-card-bg, #ffffff);
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal),
+  .shell .automation-config-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(860px, calc(100vw - 32px));
+    height: min(680px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .automation-config-modal {
+    width: min(780px, calc(100vw - 32px));
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > .config-grid,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > .select-list,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > .distill-panel,
+  .shell .automation-config-modal > .config-grid {
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > footer,
+  .shell .automation-config-modal > footer {
+    position: relative;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .shell .capability-create-modal {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    width: min(760px, calc(100vw - 32px));
+    height: min(680px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .capability-create-modal > .capability-create-tabs {
+    margin: 10px auto 12px;
+  }
+
+  .shell .capability-create-modal > .config-grid {
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 0 16px 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .shell .capability-create-modal > footer {
+    position: relative;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .shell .agent-market-modal {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    width: min(960px, calc(100vw - 32px));
+    height: min(760px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .agent-market-modal > .agent-market-toolbar {
+    margin: 0;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--aorist-border-divider, #e8e8e8);
+  }
+
+  .shell .agent-market-modal > .agent-market-grid {
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .shell .agent-market-modal > footer {
+    position: relative;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .shell .team-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(680px, calc(100vw - 32px));
+    height: min(720px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .team-modal .team-builder {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .team-modal .team-builder-list,
+  .shell .team-modal .team-selected-list {
+    min-height: 0;
+    max-height: none;
+  }
+
+  @supports not (height: 100dvh) {
+    .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal),
+    .shell .automation-config-modal,
+    .shell .capability-create-modal {
+      height: min(680px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+
+    .shell .agent-market-modal {
+      height: min(760px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+
+    .shell .team-modal {
+      height: min(720px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+  }
+
+  .model-provider-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(860px, calc(100vw - 32px));
+    height: min(760px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+  }
+
+  @supports not (height: 100dvh) {
+    .model-provider-modal {
+      height: min(760px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+  }
+
+  .model-provider-modal header p {
+    margin: 4px 0 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .model-provider-modal > .config-grid {
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .model-provider-modal > footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: 0;
   }
 
   .model-fetch-panel__head {

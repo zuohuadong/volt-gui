@@ -80,14 +80,24 @@ export interface ModelInfo {
 
 export interface ProviderView {
   name: string;
+  builtIn?: boolean;
+  added?: boolean;
   kind: string;
   baseUrl: string;
   models: string[];
+  visionModels?: string[];
+  visionModelsConfigured?: boolean;
+  modelsUrl?: string;
   default: string;
   apiKeyEnv: string;
   keySet: boolean;
+  requiresKey?: boolean;
+  configured?: boolean;
+  keySource?: string;
+  keySourcePath?: string;
   balanceUrl: string;
   contextWindow: number;
+  reasoningProtocol?: string;
   supportedEfforts: string[];
   defaultEffort: string;
 }
@@ -314,16 +324,28 @@ export interface SandboxView {
 export interface SettingsView {
   defaultModel: string;
   plannerModel: string;
+  subagentModel?: string;
+  subagentEffort?: string;
   autoPlan: string;
   providers: ProviderView[];
+  officialProviders?: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
   desktopLanguage: string;
+  desktopLayoutStyle?: string;
   desktopTheme: string;
   desktopThemeStyle: string;
   closeBehavior: string;
+  displayMode?: string;
+  statusBarStyle?: string;
+  statusBarItems?: string[];
+  checkUpdates?: boolean;
+  telemetry?: boolean;
+  metrics?: boolean;
+  expandThinking?: boolean;
   configPath: string;
   providerKinds: string[];
+  autoApproveTools?: boolean;
   bypass: boolean;
 }
 

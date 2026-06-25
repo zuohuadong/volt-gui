@@ -67,7 +67,9 @@
     FilePreview,
     HistoryMessage,
     ModelInfo,
+    ProviderView,
     QuestionAnswer,
+    SettingsView,
     TabMeta,
     TranscriptItem,
     WireApproval,
@@ -96,6 +98,22 @@
   type SidebarProjectSort = "recent" | "name" | "conversations";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
+  type ModelCard = { name: string; provider: string; role: string; status: string; ref?: string };
+  type ModelProviderDraft = {
+    name: string;
+    kind: string;
+    baseUrl: string;
+    modelsText: string;
+    defaultModel: string;
+    apiKeyEnv: string;
+    apiKeyValue: string;
+    modelsUrl: string;
+    contextWindow: string;
+    reasoningProtocol: string;
+    supportedEffortsText: string;
+    defaultEffort: string;
+    visionModelsText: string;
+  };
 
   function welcomeTranscript(): TranscriptItem[] {
     return [
@@ -148,6 +166,15 @@
   let userMenuOpen = $state(false);
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
+  let modelSettings = $state<SettingsView | undefined>();
+  let modelSettingsLoading = $state(false);
+  let modelSettingsError = $state("");
+  let modelDraft = $state<ModelProviderDraft>(emptyModelProviderDraft());
+  let modelDraftEditing = $state(false);
+  let modelDraftSaving = $state(false);
+  let modelDraftFetching = $state(false);
+  let modelDraftMessage = $state("");
+  let modelDraftError = $state("");
   let teamViewMode = $state<"teams" | "office" | "chat">("teams");
   let teamConfigTitle = $state<string | undefined>();
   let teamBuilderName = $state("");
@@ -518,11 +545,13 @@
     const keyword = teamBuilderSearch.trim().toLowerCase();
     return !keyword || [agent.name, agent.role, agent.desc].some((value) => value.toLowerCase().includes(keyword));
   }));
-  const modelCards = [
+  const providerKindOptions = $derived(modelSettings?.providerKinds?.length ? modelSettings.providerKinds : ["openai", "anthropic"]);
+  const previewModelCards: ModelCard[] = [
     { name: "GPT-4o", provider: "OpenAI", role: "默认对话模型", status: "已连接" },
     { name: "Claude Sonnet 4.6", provider: "Claude", role: "长文档分析", status: "备用" },
     { name: "Qwen-Max", provider: "Qwen", role: "中文任务", status: "可用" },
   ];
+  const modelCards = $derived(modelCardsFromSettings());
   const settingGroups = [
     { title: "常规设置", desc: "语言、主题、关闭行为和本地缓存。", status: "已配置" },
     { title: "局域网运行", desc: "局域网访问、健康检查和服务端口。", status: "运行中" },
@@ -549,9 +578,204 @@
     { title: "导入规范样例", source: "manual", status: "失败", total: 1 },
   ];
 
-  const hasWailsBindings = () => typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  function hasWailsBindings() {
+    return typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  }
   const REQUEST_TIMEOUT_MS = 30_000;
   const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
+
+  function emptyModelProviderDraft(): ModelProviderDraft {
+    return {
+      name: "",
+      kind: "openai",
+      baseUrl: "",
+      modelsText: "",
+      defaultModel: "",
+      apiKeyEnv: "CUSTOM_API_KEY",
+      apiKeyValue: "",
+      modelsUrl: "",
+      contextWindow: "128000",
+      reasoningProtocol: "",
+      supportedEffortsText: "",
+      defaultEffort: "",
+      visionModelsText: "",
+    };
+  }
+
+  function splitModelLines(value: string): string[] {
+    return value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function providerDefaultModel(provider: ProviderView) {
+    return provider.default || provider.models?.[0] || "";
+  }
+
+  function providerRef(provider: ProviderView, model = providerDefaultModel(provider)) {
+    return model ? `${provider.name}/${model}` : provider.name;
+  }
+
+  function isDefaultModelRef(provider: ProviderView, model = providerDefaultModel(provider)) {
+    const current = modelSettings?.defaultModel || selectedModel;
+    return current === provider.name || current === providerRef(provider, model) || current === model;
+  }
+
+  function modelCardsFromSettings(): ModelCard[] {
+    if (!hasWailsBindings()) return previewModelCards;
+    return (modelSettings?.providers ?? []).flatMap((provider) => {
+      const providerModels = provider.models?.length ? provider.models : provider.default ? [provider.default] : [];
+      return providerModels.map((model) => ({
+        name: model,
+        provider: provider.name,
+        role: isDefaultModelRef(provider, model) ? "默认对话模型" : `${provider.kind || "provider"} / ${provider.baseUrl || "未配置 endpoint"}`,
+        status: provider.configured ? (provider.keySet ? "已连接" : "免密/本地") : provider.requiresKey ? "缺少 Key" : "未启用",
+        ref: providerRef(provider, model),
+      }));
+    });
+  }
+
+  function providerDraftFromView(provider?: ProviderView): ModelProviderDraft {
+    if (!provider) return emptyModelProviderDraft();
+    return {
+      name: provider.name,
+      kind: provider.kind || "openai",
+      baseUrl: provider.baseUrl || "",
+      modelsText: (provider.models ?? []).join("\n"),
+      defaultModel: provider.default || provider.models?.[0] || "",
+      apiKeyEnv: provider.apiKeyEnv || "CUSTOM_API_KEY",
+      apiKeyValue: "",
+      modelsUrl: provider.modelsUrl || "",
+      contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
+      reasoningProtocol: provider.reasoningProtocol || "",
+      supportedEffortsText: (provider.supportedEfforts ?? []).join(", "),
+      defaultEffort: provider.defaultEffort || "",
+      visionModelsText: (provider.visionModels ?? []).join("\n"),
+    };
+  }
+
+  function providerViewFromDraft(): ProviderView {
+    const modelsList = splitModelLines(modelDraft.modelsText);
+    const visionModels = splitModelLines(modelDraft.visionModelsText);
+    const contextWindow = Number.parseInt(modelDraft.contextWindow.trim(), 10);
+    return {
+      name: modelDraft.name.trim(),
+      kind: modelDraft.kind.trim() || "openai",
+      baseUrl: modelDraft.baseUrl.trim(),
+      models: modelsList,
+      visionModels,
+      visionModelsConfigured: visionModels.length > 0,
+      modelsUrl: modelDraft.modelsUrl.trim(),
+      default: modelDraft.defaultModel.trim() || modelsList[0] || "",
+      apiKeyEnv: modelDraft.apiKeyEnv.trim(),
+      keySet: false,
+      balanceUrl: "",
+      contextWindow: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0,
+      reasoningProtocol: modelDraft.reasoningProtocol.trim(),
+      supportedEfforts: splitModelLines(modelDraft.supportedEffortsText),
+      defaultEffort: modelDraft.defaultEffort.trim(),
+    };
+  }
+
+  function openModelProviderDialog(provider?: ProviderView) {
+    modelDraft = providerDraftFromView(provider);
+    modelDraftEditing = Boolean(provider);
+    modelDraftMessage = "";
+    modelDraftError = "";
+    configDialog = "model";
+    userPanelDialog = undefined;
+  }
+
+  async function refreshModelSettings() {
+    if (!hasWailsBindings()) return;
+    modelSettingsLoading = true;
+    modelSettingsError = "";
+    try {
+      modelSettings = await app().Settings();
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      modelSettingsLoading = false;
+    }
+  }
+
+  async function fetchDraftProviderModels() {
+    if (!hasWailsBindings()) return;
+    modelDraftFetching = true;
+    modelDraftError = "";
+    modelDraftMessage = "";
+    try {
+      const fetched = await app().FetchProviderModels(providerViewFromDraft());
+      if (!fetched.length) {
+        modelDraftMessage = "没有从 /models 发现可用聊天模型，可手动填写模型名。";
+        return;
+      }
+      modelDraft.modelsText = fetched.join("\n");
+      if (!modelDraft.defaultModel || !fetched.includes(modelDraft.defaultModel)) modelDraft.defaultModel = fetched[0];
+      modelDraftMessage = `已拉取 ${fetched.length} 个模型。`;
+    } catch (error) {
+      modelDraftError = error instanceof Error ? error.message : String(error);
+    } finally {
+      modelDraftFetching = false;
+    }
+  }
+
+  async function saveModelProvider() {
+    if (!hasWailsBindings()) {
+      configDialog = undefined;
+      return;
+    }
+    const provider = providerViewFromDraft();
+    if (!provider.name || !provider.kind || !provider.baseUrl || !provider.models.length) {
+      modelDraftError = "请填写名称、类型、Base URL 和至少一个模型。";
+      return;
+    }
+    modelDraftSaving = true;
+    modelDraftError = "";
+    modelDraftMessage = "";
+    try {
+      await app().SaveProvider(provider);
+      const key = modelDraft.apiKeyValue.trim();
+      if (key && provider.apiKeyEnv) {
+        const warning = await app().SetProviderKey(provider.apiKeyEnv, key);
+        modelDraftMessage = warning || "模型和 Key 已保存。";
+      } else {
+        modelDraftMessage = "模型配置已保存。";
+      }
+      await refreshModelSettings();
+      await refresh();
+      configDialog = undefined;
+    } catch (error) {
+      modelDraftError = error instanceof Error ? error.message : String(error);
+    } finally {
+      modelDraftSaving = false;
+    }
+  }
+
+  async function setDefaultModelProvider(provider: ProviderView, model = providerDefaultModel(provider)) {
+    if (!hasWailsBindings()) return;
+    modelSettingsError = "";
+    try {
+      await app().SetDefaultModel(providerRef(provider, model));
+      await refreshModelSettings();
+      await refresh();
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function deleteModelProvider(provider: ProviderView) {
+    if (!hasWailsBindings()) return;
+    modelSettingsError = "";
+    try {
+      await app().DeleteProvider(provider.name);
+      await refreshModelSettings();
+      await refresh();
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    }
+  }
 
   function withTimeout<T>(promise: Promise<T>, message: string, ms = REQUEST_TIMEOUT_MS): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1085,7 +1309,14 @@
     }
     openWorkLayer(layer);
   }
-  function openUserPanelDialog(layer: UserPanelDialog) { userPanelDialog = layer; userMenuOpen = false; }
+  function openUserPanelDialog(layer: UserPanelDialog) {
+    userMenuOpen = false;
+    if (layer === "models") {
+      openWorkLayer("models");
+      return;
+    }
+    userPanelDialog = layer;
+  }
   function userPanelDialogTitle() {
     if (userPanelDialog === "models") return "模型管理";
     if (userPanelDialog === "settings") return "系统设置";
@@ -2071,6 +2302,7 @@
       models = active ? await app().ModelsForTab(active.id) : [];
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
       commands = await app().Commands();
+      await refreshModelSettings();
       await refreshAgents();
       await refreshToolStatus();
       await refreshSkillStatus();
@@ -2773,7 +3005,7 @@
                   {/if}
                 {/if}
               </section>
-            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openConfigDialog("model")}>添加模型</button><button type="button">刷新状态</button></div></div><div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>可选模型</em></article><article><span>远程 LLM</span><strong>ON</strong><em>已允许</em></article><article><span>密钥状态</span><strong>OK</strong><em>环境变量托管</em></article></div><div class="aorist-card-grid">{#each modelCards as model (model.name)}<article class="capability-item"><span>{model.status}</span><strong>{model.name}</strong><p>{model.provider} / {model.role}</p><button type="button">设为默认</button></article>{/each}</div></section>
+            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加模型</button><button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新状态</button></div></div>{#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}<div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>可选模型</em></article><article><span>供应商</span><strong>{modelSettings?.providers.length ?? 0}</strong><em>{hasWailsBindings() ? "真实配置" : "浏览器预览"}</em></article><article><span>密钥状态</span><strong>{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0}</strong><em>可用 provider</em></article></div>{#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取模型配置...</div>{:else if hasWailsBindings() && !(modelSettings?.providers.length)}<article class="detail-empty"><strong>尚未配置模型</strong><p>添加 OpenAI-compatible 或 Anthropic-compatible provider 后，聊天输入框会立即出现可选模型。</p><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加第一个模型</button></article>{:else if hasWailsBindings()}<div class="aorist-card-grid">{#each modelSettings?.providers ?? [] as provider (provider.name)}<article class="capability-item"><span>{provider.configured ? "可用" : provider.requiresKey ? "缺少 Key" : "未启用"}</span><strong>{provider.name}</strong><p>{provider.kind} / {provider.baseUrl || "未配置 Base URL"}</p><p>Key: {provider.apiKeyEnv || "无"} / 上下文: {provider.contextWindow || "-"}</p><div class="model-chip-list">{#each provider.models as model (model)}<button class:active={isDefaultModelRef(provider, model)} type="button" onclick={() => void setDefaultModelProvider(provider, model)}>{model}{#if isDefaultModelRef(provider, model)}<Check size={13} />{/if}</button>{/each}</div><button type="button" onclick={() => openModelProviderDialog(provider)}><Pencil size={14} /> 编辑</button><button type="button" onclick={() => void setDefaultModelProvider(provider)}><Check size={14} /> 设为默认</button><button type="button" onclick={() => void deleteModelProvider(provider)}><Trash2 size={14} /> 删除</button></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each modelCards as model (model.name)}<article class="capability-item"><span>{model.status}</span><strong>{model.name}</strong><p>{model.provider} / {model.role}</p><button type="button">预览模型</button></article>{/each}</div>{/if}</section>
             {:else if workLayer === "settings"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Settings</span><strong>系统设置</strong></div><button type="button">保存设置</button></div><div class="aorist-card-grid">{#each settingGroups as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div></section>
             {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button">立即同步</button></div><div class="aorist-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
             {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button">导出日志</button></div><div class="aorist-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
@@ -3320,10 +3552,7 @@
               <button type="button" onclick={() => (userPanelDialog = undefined)}>x</button>
             </header>
             <p class="user-panel-modal__intro">{userPanelDialogIntro()}</p>
-            {#if userPanelDialog === "models"}
-              <div class="user-panel-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong></article><article><span>默认模型</span><strong>{selectedModel || agentModel}</strong></article><article><span>接口状态</span><strong>OK</strong></article></div>
-              <div class="user-panel-list">{#each modelCards as model (model.name)}<article><div><strong>{model.name}</strong><p>{model.provider} / {model.role}</p></div><span>{model.status}</span></article>{/each}</div>
-            {:else if userPanelDialog === "settings"}
+            {#if userPanelDialog === "settings"}
               <div class="user-panel-grid">{#each settingGroups as item (item.title)}<article><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div>
               <div class="config-grid user-panel-form"><label>语言<select><option>中文</option><option>English</option></select></label><label>主题<select><option>浅色</option><option>深色</option><option>跟随系统</option></select></label><label>局域网运行<input value="127.0.0.1:5174" /></label><label>默认模型<input value={selectedModel || agentModel} /></label></div>
             {:else if userPanelDialog === "sync"}
@@ -3423,7 +3652,7 @@
       </div>
       <label>团队名称 *<input bind:value={teamBuilderName} placeholder="例如 发布验证团队" /></label>
     </aside>
-  </div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "model"}<label>Provider<select>{#each modelProviders as provider (provider)}<option>{provider}</option>{/each}</select></label><label>Base URL<input value="https://api.example.com/v1" /></label>{:else if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => configDialog === "team" ? saveTeamBuilder() : (configDialog = undefined)}>确认</button></footer></section></div>
+  </div>{:else if configDialog === "model"}<div class="config-grid"><label>Provider 名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label><label>类型 *<select bind:value={modelDraft.kind}>{#each providerKindOptions as kind (kind)}<option value={kind}>{kind}</option>{/each}</select></label><label class="wide">Base URL *<input bind:value={modelDraft.baseUrl} placeholder="https://api.example.com/v1" /></label><label>API Key 环境变量<input bind:value={modelDraft.apiKeyEnv} placeholder="CUSTOM_API_KEY" /></label><label>API Key<input bind:value={modelDraft.apiKeyValue} type="password" placeholder={modelDraftEditing ? "留空则不更新 Key" : "可留空，稍后再填"} /></label><label class="wide">模型列表 *<textarea rows="5" bind:value={modelDraft.modelsText} placeholder="每行一个模型"></textarea></label><label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label><label>Models URL<input bind:value={modelDraft.modelsUrl} placeholder="可选，自定义 /models 地址" /></label><label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label><label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / responses" /></label><label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label><label class="wide">支持的 Effort<textarea rows="2" bind:value={modelDraft.supportedEffortsText} placeholder="逗号或换行分隔，例如 high, max"></textarea></label><label class="wide">视觉模型<textarea rows="2" bind:value={modelDraft.visionModelsText} placeholder="可选，只给支持图片输入的模型填写"></textarea></label>{#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}{#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}<div class="wide"><button type="button" onclick={() => void fetchDraftProviderModels()} disabled={modelDraftFetching || !hasWailsBindings()}><RefreshCw size={14} /> {modelDraftFetching ? "拉取中" : "从 /models 拉取"}</button></div></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -6038,40 +6267,12 @@
     line-height: 1.7;
   }
 
-  .user-panel-stats {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .user-panel-stats article,
   .user-panel-grid article,
   .user-panel-list article {
     border: 1px solid var(--aorist-line);
     border-radius: 12px;
     background: hsl(0 0% 100%);
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  }
-
-  .user-panel-stats article {
-    padding: 13px;
-  }
-
-  .user-panel-stats span {
-    display: block;
-    color: var(--aorist-muted);
-    font-size: 12px;
-  }
-
-  .user-panel-stats strong {
-    display: block;
-    margin-top: 5px;
-    overflow: hidden;
-    color: var(--aorist-ink);
-    font-size: 18px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .user-panel-grid {

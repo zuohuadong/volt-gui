@@ -111,7 +111,8 @@ interface AppBindings {
   SetPlannerModel(ref: string): Promise<void>;
   SaveProvider(provider: ProviderView): Promise<void>;
   DeleteProvider(name: string): Promise<void>;
-  SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
+  FetchProviderModels(provider: ProviderView): Promise<string[]>;
+  SetProviderKey(apiKeyEnv: string, value: string): Promise<string>;
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
   RemovePermissionRule(list: string, rule: string): Promise<void>;

@@ -3698,6 +3698,18 @@ a[href] {
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
+.msg-meta__indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-faint);
+  opacity: 0.45;
+  cursor: default;
+  user-select: none;
+  flex-shrink: 0;
+}
 .msg-meta__btn,
 .msg-meta .copybtn {
   display: inline-flex;

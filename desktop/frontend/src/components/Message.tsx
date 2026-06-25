@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
+import { BrainCircuit, ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ProcessBrainIcon } from "./ProcessCard";
@@ -51,6 +51,15 @@ function parseImSourceMessage(text: string): ImSourceMessage | null {
     chat: meta.chat || meta.chat_type || "",
     text: body,
   };
+}
+
+const MEMORY_COMPILER_EXECUTION_RE = /<memory-compiler-execution>[\s\S]*?<\/memory-compiler-execution>\s*/g;
+
+/** Strips the <memory-compiler-execution> block that the Memory v5 compiler
+ *  injects into user turns for model-internal planning. The block is not
+ *  user-facing text and should be hidden from the transcript display. */
+function stripMemoryCompilerExecution(text: string): string {
+  return text.replace(MEMORY_COMPILER_EXECUTION_RE, "").trimStart();
 }
 
 function imSourceLabel(source: ImSourceMessage, t: ReturnType<typeof useT>): string {
@@ -166,7 +175,8 @@ export function UserMessage({
 }) {
   const t = useT();
   const imSource = parseImSourceMessage(text);
-  const actionText = imSource?.text ?? text;
+  const actionText = stripMemoryCompilerExecution(imSource?.text ?? text);
+  const hasMemoryCompiler = Boolean(submitText?.includes("<memory-compiler-execution>"));
   const { text: displayText, attachments } = parseAttachmentRefsForDisplay(actionText);
   const orderedAttachments = sortDisplayAttachments(attachments);
   const sourceLabel = imSource ? imSourceLabel(imSource, t) : "";
@@ -381,6 +391,11 @@ export function UserMessage({
             <time className="msg-meta__time" dateTime={sentAt.toISOString()} title={sentAt.toLocaleString()}>
               {formatMessageTime(sentAt)}
             </time>
+          )}
+          {hasMemoryCompiler && (
+            <span className="msg-meta__indicator" title={t("msg.memoryCompilerApplied")} aria-hidden="true">
+              <BrainCircuit size={14} />
+            </span>
           )}
           <CopyButton text={actionText} label={t("msg.copy")} showInlineLabel={false} className="msg-meta__btn msg-meta__copy" />
           {onEdit && (

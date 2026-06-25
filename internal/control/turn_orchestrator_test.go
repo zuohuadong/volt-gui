@@ -270,3 +270,32 @@ func TestTurnOrchestratorCheckpointBoundaryPrecedesUserMessage(t *testing.T) {
 		t.Fatalf("session messages after rewind = %d, want boundary before user message", len(sess.Messages))
 	}
 }
+
+func TestTurnOrchestratorStopHookCancelledContext(t *testing.T) {
+	prov := &scriptedTurns{turns: [][]provider.Chunk{textTurn("done")}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	var stopCalls int
+	hooks := hook.NewRunner([]hook.ResolvedHook{{
+		HookConfig: hook.HookConfig{Command: "stop"},
+		Event:      hook.Stop,
+		Scope:      hook.ScopeProject,
+	}}, "", func(ctx context.Context, in hook.SpawnInput) hook.SpawnResult {
+		if ctx.Err() != nil {
+			t.Errorf("Stop hook spawner ctx.Err()=%v; want nil", ctx.Err())
+		}
+		var p hook.Payload
+		json.Unmarshal([]byte(in.Stdin), &p)
+		if p.Event == hook.Stop { stopCalls++ }
+		return hook.SpawnResult{ExitCode: 0}
+	}, nil)
+	c := New(Options{Runner: ag, Executor: ag, Hooks: hooks})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	o := newTurnOrchestrator(c)
+	if err := o.runTurnWithRawDisplay(ctx, "test", "test", ""); err != nil && err != context.Canceled {
+		t.Fatal(err)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("Stop hooks called = %d; want 1", stopCalls)
+	}
+}

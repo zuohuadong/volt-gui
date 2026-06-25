@@ -414,9 +414,16 @@ export function normalizeCollaborationMode(mode?: string, goal?: string, legacyM
   return "normal";
 }
 
-export function normalizeToolApprovalMode(mode?: string, legacyMode?: Mode, legacyAutoApproveTools?: boolean): ToolApprovalMode {
-  if (mode === "auto" || mode === "yolo" || mode === "ask") return mode;
+export function normalizeToolApprovalMode(
+  mode?: string,
+  legacyMode?: Mode,
+  legacyAutoApproveTools?: boolean,
+  fallbackMode?: ToolApprovalMode,
+): ToolApprovalMode {
+  const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  if (normalized === "auto" || normalized === "yolo" || normalized === "ask") return normalized as ToolApprovalMode;
   if (legacyAutoApproveTools || (legacyMode && modeHasAutoApproveTools(legacyMode))) return "yolo";
+  if (fallbackMode === "auto" && normalized === "") return "auto";
   return "ask";
 }
 

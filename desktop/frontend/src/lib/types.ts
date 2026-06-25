@@ -20,7 +20,8 @@ export type EventKind =
   | "mcp_surface_ready"
   | "retrying"
   | "steer"
-  | "memory_compiler_stats";
+  | "memory_compiler_stats"
+  | "guardian_assessment";
 
 export interface WireCompaction {
   trigger?: string; // "auto" | "manual"
@@ -86,6 +87,19 @@ export interface WireApproval {
   id: string;
   tool: string;
   subject: string;
+  reason?: string;
+}
+
+export interface WireGuardian {
+  id: string;
+  tool: string;
+  subject: string;
+  outcome: string;
+  risk_level?: string;
+  user_authorization?: string;
+  rationale?: string;
+  duration_ms?: number;
+  usage?: WireUsage;
 }
 
 export interface WireAskOption {
@@ -150,6 +164,7 @@ export interface WireEvent {
   approval?: WireApproval;
   ask?: WireAsk;
   compaction?: WireCompaction;
+  guardian?: WireGuardian;
   err?: string;
   retryAttempt?: number;
   retryMax?: number;

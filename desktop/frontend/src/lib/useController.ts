@@ -8,6 +8,7 @@ import { asArray } from "./array";
 import { addBreadcrumb } from "./breadcrumbs";
 import { app, onEvent, onReady } from "./bridge";
 import { invalidateCache } from "./composerHistory";
+import { formatGuardianAssessmentNotice } from "./guardianEvents";
 import { createRafBatch } from "./rafBatch";
 import { t } from "./i18n";
 import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
@@ -674,6 +675,11 @@ function applyEvent(s: State, e: WireEvent): State {
     case "ask_request": {
       if (s.cancelRequested) return s;
       return { ...s, ask: e.ask, pendingPrompt: true, running: true, turnActive: true, cancellable: true };
+    }
+    case "guardian_assessment": {
+      if (!e.guardian) return s;
+      const level = e.guardian.outcome === "deny" ? "warn" : "info";
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `g${s.seq}`, level, text: formatGuardianAssessmentNotice(e.guardian) }] };
     }
     case "turn_done": {
       if (s.pendingUser !== undefined) s = flushPendingUser(s);

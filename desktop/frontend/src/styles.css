@@ -6758,6 +6758,16 @@ a[href] {
   margin-top: 8px;
   flex-wrap: wrap;
 }
+.approval-reason {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 36%, var(--border-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 10%, var(--bg-soft));
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .approval-subject {
   margin: 0;
   padding: 8px 10px;

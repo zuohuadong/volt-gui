@@ -14,6 +14,7 @@ import (
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/provider"
+	openaiapi "voltui/internal/provider/openai"
 )
 
 // settings_app.go is the desktop Settings panel's command surface: it reads the
@@ -37,7 +38,8 @@ type ProviderView struct {
 	ModelsURL         string   `json:"modelsUrl"`
 	Default           string   `json:"default"`
 	APIKeyEnv         string   `json:"apiKeyEnv"`
-	KeySet            bool     `json:"keySet"` // the env var currently resolves to a non-empty value
+	APIKeyValue       string   `json:"apiKeyValue,omitempty"` // request-only: used for /models probing before the key is saved
+	KeySet            bool     `json:"keySet"`                // the env var currently resolves to a non-empty value
 	RequiresKey       bool     `json:"requiresKey"`
 	Configured        bool     `json:"configured"` // selectable: either key is present or no key is required
 	KeySource         string   `json:"keySource,omitempty"`
@@ -1383,6 +1385,23 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 	}
 	ctx, cancel := context.WithTimeout(a.reqCtx(), 15*time.Second)
 	defer cancel()
+	if key := strings.TrimSpace(p.APIKeyValue); key != "" {
+		urls, err := config.BuildModelFetchURLs(e.BaseURL, e.ModelsURL)
+		if err != nil {
+			return []string{}, err
+		}
+		var lastErr error
+		for _, endpoint := range urls {
+			models, err := openaiapi.FetchModels(ctx, endpoint, key)
+			if err == nil {
+				return nonNil(chatProviderModels(models)), nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return []string{}, lastErr
+		}
+	}
 	models, err := e.FetchModels(ctx)
 	if err != nil {
 		return []string{}, err

@@ -108,6 +108,8 @@
     apiKeyEnv: string;
     apiKeyValue: string;
     modelsUrl: string;
+    fetchedModels: string[];
+    selectedFetchedModels: string[];
     contextWindow: string;
     reasoningProtocol: string;
     supportedEffortsText: string;
@@ -594,6 +596,8 @@
       apiKeyEnv: "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: "",
+      fetchedModels: [],
+      selectedFetchedModels: [],
       contextWindow: "128000",
       reasoningProtocol: "",
       supportedEffortsText: "",
@@ -647,6 +651,8 @@
       apiKeyEnv: provider.apiKeyEnv || "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: provider.modelsUrl || "",
+      fetchedModels: [],
+      selectedFetchedModels: [],
       contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
       reasoningProtocol: provider.reasoningProtocol || "",
       supportedEffortsText: (provider.supportedEfforts ?? []).join(", "),
@@ -669,6 +675,7 @@
       modelsUrl: modelDraft.modelsUrl.trim(),
       default: modelDraft.defaultModel.trim() || modelsList[0] || "",
       apiKeyEnv: modelDraft.apiKeyEnv.trim(),
+      apiKeyValue: modelDraft.apiKeyValue.trim(),
       keySet: false,
       balanceUrl: "",
       contextWindow: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0,
@@ -685,6 +692,32 @@
     modelDraftError = "";
     configDialog = "model";
     userPanelDialog = undefined;
+  }
+
+  function isDraftFetchedModelSelected(model: string) {
+    return modelDraft.selectedFetchedModels.includes(model);
+  }
+
+  function applySelectedDraftModels(models: string[]) {
+    const selected = Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
+    modelDraft.selectedFetchedModels = selected;
+    modelDraft.modelsText = selected.join("\n");
+    if (!selected.includes(modelDraft.defaultModel)) modelDraft.defaultModel = selected[0] || "";
+  }
+
+  function toggleDraftFetchedModel(model: string) {
+    const selected = isDraftFetchedModelSelected(model)
+      ? modelDraft.selectedFetchedModels.filter((item) => item !== model)
+      : [...modelDraft.selectedFetchedModels, model];
+    applySelectedDraftModels(selected);
+  }
+
+  function selectAllDraftFetchedModels() {
+    applySelectedDraftModels(modelDraft.fetchedModels);
+  }
+
+  function clearDraftFetchedModels() {
+    applySelectedDraftModels([]);
   }
 
   async function refreshModelSettings() {
@@ -708,12 +741,15 @@
     try {
       const fetched = await app().FetchProviderModels(providerViewFromDraft());
       if (!fetched.length) {
+        modelDraft.fetchedModels = [];
+        modelDraft.selectedFetchedModels = [];
         modelDraftMessage = "没有从 /models 发现可用聊天模型，可手动填写模型名。";
         return;
       }
-      modelDraft.modelsText = fetched.join("\n");
-      if (!modelDraft.defaultModel || !fetched.includes(modelDraft.defaultModel)) modelDraft.defaultModel = fetched[0];
-      modelDraftMessage = `已拉取 ${fetched.length} 个模型。`;
+      const current = splitModelLines(modelDraft.modelsText).filter((model) => fetched.includes(model));
+      modelDraft.fetchedModels = fetched;
+      applySelectedDraftModels(current.length ? current : fetched);
+      modelDraftMessage = `已拉取 ${fetched.length} 个模型，请选择要添加的模型。`;
     } catch (error) {
       modelDraftError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -731,12 +767,16 @@
       modelDraftError = "请填写名称、类型、Base URL 和至少一个模型。";
       return;
     }
+    const key = modelDraft.apiKeyValue.trim();
+    if (key && !provider.apiKeyEnv) {
+      modelDraftError = "保存 API Key 需要填写环境变量名，或清空 API Key 后保存免密 provider。";
+      return;
+    }
     modelDraftSaving = true;
     modelDraftError = "";
     modelDraftMessage = "";
     try {
       await app().SaveProvider(provider);
-      const key = modelDraft.apiKeyValue.trim();
       if (key && provider.apiKeyEnv) {
         const warning = await app().SetProviderKey(provider.apiKeyEnv, key);
         modelDraftMessage = warning || "模型和 Key 已保存。";
@@ -3652,7 +3692,51 @@
       </div>
       <label>团队名称 *<input bind:value={teamBuilderName} placeholder="例如 发布验证团队" /></label>
     </aside>
-  </div>{:else if configDialog === "model"}<div class="config-grid"><label>Provider 名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label><label>类型 *<select bind:value={modelDraft.kind}>{#each providerKindOptions as kind (kind)}<option value={kind}>{kind}</option>{/each}</select></label><label class="wide">Base URL *<input bind:value={modelDraft.baseUrl} placeholder="https://api.example.com/v1" /></label><label>API Key 环境变量<input bind:value={modelDraft.apiKeyEnv} placeholder="CUSTOM_API_KEY" /></label><label>API Key<input bind:value={modelDraft.apiKeyValue} type="password" placeholder={modelDraftEditing ? "留空则不更新 Key" : "可留空，稍后再填"} /></label><label class="wide">模型列表 *<textarea rows="5" bind:value={modelDraft.modelsText} placeholder="每行一个模型"></textarea></label><label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label><label>Models URL<input bind:value={modelDraft.modelsUrl} placeholder="可选，自定义 /models 地址" /></label><label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label><label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / responses" /></label><label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label><label class="wide">支持的 Effort<textarea rows="2" bind:value={modelDraft.supportedEffortsText} placeholder="逗号或换行分隔，例如 high, max"></textarea></label><label class="wide">视觉模型<textarea rows="2" bind:value={modelDraft.visionModelsText} placeholder="可选，只给支持图片输入的模型填写"></textarea></label>{#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}{#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}<div class="wide"><button type="button" onclick={() => void fetchDraftProviderModels()} disabled={modelDraftFetching || !hasWailsBindings()}><RefreshCw size={14} /> {modelDraftFetching ? "拉取中" : "从 /models 拉取"}</button></div></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : "确认"}</button></footer></section></div>
+  </div>{:else if configDialog === "model"}
+    <div class="config-grid">
+      <label>Provider 名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label>
+      <label>类型 *<select bind:value={modelDraft.kind}>{#each providerKindOptions as kind (kind)}<option value={kind}>{kind}</option>{/each}</select></label>
+      <label class="wide">Base URL *<input bind:value={modelDraft.baseUrl} placeholder="https://api.example.com/v1" /></label>
+      <label>API Key 环境变量<input bind:value={modelDraft.apiKeyEnv} placeholder="CUSTOM_API_KEY" /></label>
+      <label>API Key<input bind:value={modelDraft.apiKeyValue} type="password" placeholder={modelDraftEditing ? "留空则不更新 Key" : "可留空，稍后再填"} /></label>
+      <label>Models URL<input bind:value={modelDraft.modelsUrl} placeholder="可选，自定义 /models 地址" /></label>
+      <div class="model-fetch-panel wide">
+        <div class="model-fetch-panel__head">
+          <div>
+            <strong>自动获取模型</strong>
+            <span>使用当前 Base URL 和 API Key 调用 OpenAI-compatible /models。</span>
+          </div>
+          <button type="button" onclick={() => void fetchDraftProviderModels()} disabled={modelDraftFetching || !hasWailsBindings() || !modelDraft.baseUrl.trim()}>
+            <RefreshCw size={14} /> {modelDraftFetching ? "拉取中" : "自动获取模型"}
+          </button>
+        </div>
+        {#if modelDraft.fetchedModels.length}
+          <div class="model-fetch-actions">
+            <span>已选择 {modelDraft.selectedFetchedModels.length} / {modelDraft.fetchedModels.length}</span>
+            <button type="button" onclick={selectAllDraftFetchedModels}>全选</button>
+            <button type="button" onclick={clearDraftFetchedModels}>清空</button>
+          </div>
+          <div class="model-fetch-list">
+            {#each modelDraft.fetchedModels as model (model)}
+              <label class:active={isDraftFetchedModelSelected(model)}>
+                <input type="checkbox" checked={isDraftFetchedModelSelected(model)} onchange={() => toggleDraftFetchedModel(model)} />
+                <span>{model}</span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <label class="wide">模型列表 *<textarea rows="5" bind:value={modelDraft.modelsText} placeholder="每行一个模型，或先自动获取后勾选"></textarea></label>
+      <label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label>
+      <label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label>
+      <label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / responses" /></label>
+      <label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label>
+      <label class="wide">支持的 Effort<textarea rows="2" bind:value={modelDraft.supportedEffortsText} placeholder="逗号或换行分隔，例如 high, max"></textarea></label>
+      <label class="wide">视觉模型<textarea rows="2" bind:value={modelDraft.visionModelsText} placeholder="可选，只给支持图片输入的模型填写"></textarea></label>
+      {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
+      {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
+    </div>
+  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -13973,5 +14057,121 @@
     line-height: 1.25;
     text-align: center;
     white-space: nowrap;
+  }
+
+  .model-fetch-panel {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--aorist-border-divider, #e2e8f0);
+    border-radius: 12px;
+    background: var(--aorist-card-bg, #ffffff);
+  }
+
+  .model-fetch-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .model-fetch-panel__head strong,
+  .model-fetch-panel__head span {
+    display: block;
+  }
+
+  .model-fetch-panel__head strong {
+    color: var(--aorist-ink, #111827);
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .model-fetch-panel__head span,
+  .model-fetch-actions span {
+    margin-top: 3px;
+    color: var(--aorist-muted, #667085);
+    font-size: 12px;
+  }
+
+  .model-fetch-panel__head button,
+  .model-fetch-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 10px;
+    background: #ffffff;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .model-fetch-panel__head button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .model-fetch-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .model-fetch-actions span {
+    margin-right: auto;
+  }
+
+  .model-fetch-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    max-height: 190px;
+    overflow: auto;
+  }
+
+  .model-fetch-list label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 9px 10px;
+    border: 1px solid var(--aorist-border-divider, #e2e8f0);
+    border-radius: 10px;
+    background: #ffffff;
+    color: var(--aorist-ink, #111827);
+    font-size: 12px;
+  }
+
+  .model-fetch-list label.active {
+    border-color: #222222;
+    background: #f4f4f5;
+  }
+
+  .model-fetch-list input {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+  }
+
+  .model-fetch-list span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 720px) {
+    .model-fetch-panel__head {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .model-fetch-list {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

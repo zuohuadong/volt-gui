@@ -8,7 +8,16 @@ import (
 
 var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs)>.*?</(?:response-language|reasoning-language|memory-update|background-jobs)>\s*\n?`)
 
+const memoryCompilerExecutionOpen = "<memory-compiler-execution>"
+
 var reMemoryCompilerExecution = regexp.MustCompile(`(?s)<memory-compiler-execution>\s*(.*?)\s*</memory-compiler-execution>`)
+
+// ContainsMemoryCompilerExecution reports whether content includes a Memory v5
+// execution contract. Callers that prepare user-facing or replayable text should
+// unwrap it before display and avoid treating the raw contract as user-authored.
+func ContainsMemoryCompilerExecution(content string) bool {
+	return strings.Contains(content, memoryCompilerExecutionOpen)
+}
 
 // StripTransientUserBlocks removes controller-injected transient XML blocks
 // from persisted user messages before deriving display text, previews, or
@@ -50,7 +59,7 @@ func unwrapMemoryCompilerExecution(content string) string {
 	// the transcript (#5361). maxDepth bounds pathological accretion.
 	const maxDepth = 24
 	for range maxDepth {
-		if !strings.Contains(content, "<memory-compiler-execution>") {
+		if !ContainsMemoryCompilerExecution(content) {
 			return content
 		}
 		next := reMemoryCompilerExecution.ReplaceAllStringFunc(content, func(block string) string {
@@ -68,7 +77,7 @@ func unwrapMemoryCompilerExecution(content string) string {
 	// Any residual open tag is a dangling/partial/unparseable block the strict
 	// regex can't complete; drop from the first open tag onward so raw contract
 	// JSON is never surfaced. The user's actual text precedes it.
-	if idx := strings.Index(content, "<memory-compiler-execution>"); idx >= 0 {
+	if idx := strings.Index(content, memoryCompilerExecutionOpen); idx >= 0 {
 		content = strings.TrimRight(content[:idx], " \t\r\n")
 	}
 	return content

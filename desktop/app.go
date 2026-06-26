@@ -3138,7 +3138,7 @@ func historyMessagesWithPlannerDisplays(msgs []provider.Message, resolveUserCont
 		if m.Role == provider.RoleAssistant && len(m.MemoryCitations) > 0 {
 			hm.MemoryCitations = append([]provider.MemoryCitation(nil), m.MemoryCitations...)
 		}
-		if m.Role == provider.RoleUser && content != m.Content {
+		if m.Role == provider.RoleUser && content != m.Content && !agent.ContainsMemoryCompilerExecution(m.Content) {
 			hm.SubmitText = m.Content
 		}
 		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {

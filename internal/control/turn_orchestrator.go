@@ -33,6 +33,11 @@ func (o *turnOrchestrator) runSyntheticTurnWithRawDisplay(ctx context.Context, i
 	return o.runOrchestratedTurn(ctx, orchestratedTurn{input: input, raw: raw, display: display, synthetic: true})
 }
 
+func (o *turnOrchestrator) runComposedSyntheticTurn(ctx context.Context, text string) error {
+	c := o.c
+	return c.runner.Run(agent.WithMemoryCompilerSkip(ctx), c.ComposeSynthetic(text))
+}
+
 func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchestratedTurn) error {
 	c := o.c
 	c.maybeSessionStart(ctx)
@@ -115,7 +120,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	// later turn (even "continue") falls back to the normal per-tool approval.
 	c.approval.setPlanAutoApprove(true)
 	defer c.approval.setPlanAutoApprove(false)
-	if err := c.runner.Run(agent.WithMemoryCompilerSkip(ctx), c.ComposeSynthetic(planApprovedMessage)); err != nil {
+	if err := o.runComposedSyntheticTurn(ctx, planApprovedMessage); err != nil {
 		if errors.Is(err, context.Canceled) && c.CancelRequested() {
 			c.stripTurnMessagesAfter(execStart)
 		}

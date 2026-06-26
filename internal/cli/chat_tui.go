@@ -3542,7 +3542,7 @@ func (m *chatTUI) runExportCommand(input string) {
 			if _, isSteer := agent.SteerText(msg.Content); isSteer {
 				continue
 			}
-			content := control.StripComposePrefixes(msg.Content)
+			content := exportUserContent(msg.Content)
 			if content == "" {
 				continue
 			}
@@ -3582,6 +3582,12 @@ func (m *chatTUI) runExportCommand(input string) {
 		return
 	}
 	m.notice(fmt.Sprintf(i18n.M.SlashExportDoneFmt, path))
+}
+
+func exportUserContent(content string) string {
+	content = control.StripComposePrefixes(content)
+	content = control.StripReferencedContextPrefix(content)
+	return strings.TrimSpace(content)
 }
 
 func (m *chatTUI) echoLocalCommand(input string) {

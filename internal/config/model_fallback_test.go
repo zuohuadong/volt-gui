@@ -67,6 +67,64 @@ func TestResolveModelWithFallbackSkipsKeylessProvider(t *testing.T) {
 	}
 }
 
+func TestResolveBareModelUsesUniqueProviderPriority(t *testing.T) {
+	c := testModelFallbackConfig(t)
+	c.Providers = append(c.Providers, ProviderEntry{
+		Name:           "prov-c",
+		Kind:           "openai",
+		BaseURL:        "https://c.example.com",
+		Model:          "model-a1",
+		Models:         []string{"model-a1"},
+		APIKeyEnv:      "VOLTUI_TEST_KEY",
+		resolvedAPIKey: "sk-test",
+	})
+
+	if _, ok := c.ResolveModel("model-a1"); ok {
+		t.Fatal("bare duplicate model without a unique priority should be ambiguous")
+	}
+	err := c.ResolveModelError("model-a1")
+	for _, want := range []string{"ambiguous model", "prov-a/model-a1", "prov-c/model-a1", "provider/model", "priority"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want mention %q", err, want)
+		}
+	}
+	if got, fallback, ok := c.ResolveModelWithFallback("model-a1"); got != "" || fallback || ok {
+		t.Fatalf("ambiguous explicit ref = (%q, %v, %v), want no fallback", got, fallback, ok)
+	}
+
+	c.Providers[len(c.Providers)-1].Priority = 20
+	got, ok := c.ResolveModel("model-a1")
+	if !ok {
+		t.Fatal("bare duplicate model with unique priority should resolve")
+	}
+	if got.Name != "prov-c" || got.Model != "model-a1" {
+		t.Fatalf("resolved = %s/%s, want prov-c/model-a1", got.Name, got.Model)
+	}
+
+	c.Providers[0].Priority = 20
+	if _, ok := c.ResolveModel("model-a1"); ok {
+		t.Fatal("bare duplicate model with tied top priority should be ambiguous")
+	}
+}
+
+func TestResolveModelWithFallbackDoesNotHideAmbiguousDefault(t *testing.T) {
+	c := testModelFallbackConfig(t)
+	c.DefaultModel = "model-a1"
+	c.Providers = append(c.Providers, ProviderEntry{
+		Name:           "prov-c",
+		Kind:           "openai",
+		BaseURL:        "https://c.example.com",
+		Model:          "model-a1",
+		Models:         []string{"model-a1"},
+		APIKeyEnv:      "VOLTUI_TEST_KEY",
+		resolvedAPIKey: "sk-test",
+	})
+
+	if got, fallback, ok := c.ResolveModelWithFallback(""); got != "" || fallback || ok {
+		t.Fatalf("ambiguous default_model fallback = (%q, %v, %v), want no fallback", got, fallback, ok)
+	}
+}
+
 // TestResolveModelWithFallbackHonorsDefaultModel verifies that when the ref is
 // stale or empty, the function tries c.DefaultModel before iterating providers
 // in order. Without this, the first provider (deepseek, by default) always wins

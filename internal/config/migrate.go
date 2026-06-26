@@ -77,24 +77,32 @@ func (r *MigrationResult) Notice() string {
 // modifies or deletes the legacy files. Returns nil when there is nothing to
 // migrate, or when the current user config already exists.
 func MigrateLegacyIfNeeded() (*MigrationResult, error) {
+	return MigrateLegacyIfNeededForRoot(".")
+}
+
+func MigrateLegacyIfNeededForRoot(root string) (*MigrationResult, error) {
+	credErr := MigrateLegacyCredentialsForRoot(root)
 	dest := userConfigPath()
 	if dest == "" {
-		return nil, nil
+		return nil, credErr
 	}
 	if _, err := os.Stat(dest); err == nil {
-		return nil, nil
+		return nil, credErr
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, nil
+		return nil, credErr
 	}
 	if res, err := migrateLegacyTOMLIfNeeded(dest, home); res != nil || err != nil {
+		if err == nil {
+			err = credErr
+		}
 		return res, err
 	}
 	src := filepath.Join(home, ".voltui", "config.json")
 	data, err := os.ReadFile(src)
 	if err != nil {
-		return nil, nil
+		return nil, credErr
 	}
 	var legacy legacyConfig
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}) // tolerate a UTF-8 BOM (some editors add one)
@@ -140,7 +148,7 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 			return res, fmt.Errorf("write credentials: %w", err)
 		}
 	}
-	return res, nil
+	return res, credErr
 }
 
 // MigrateMCPToUserConfigOnUpgrade runs a one-time best-effort backfill for MCP
@@ -215,7 +223,7 @@ func migrateMCPToUserConfig(projectRoots []string) (*MCPGlobalMigrationResult, e
 	}
 	for _, root := range normalizedMCPMigrationRoots(projectRoots) {
 		addEntries(loadPluginEntriesFromTOML(filepath.Join(root, "voltui.toml")))
-		addEntries(loadPluginEntriesFromTOML(filepath.Join(root, "reasonix.toml")))
+		addEntries(loadPluginEntriesFromTOML(filepath.Join(root, "voltui.toml")))
 		if entries, err := loadMCPJSON(filepath.Join(root, mcpJSONFile)); err == nil {
 			addEntries(entries)
 		}
@@ -357,12 +365,12 @@ func legacyTOMLPaths(dest, home string) []string {
 	paths := []string{
 		legacyUserConfigPath(),
 		filepath.Join(filepath.Dir(dest), "voltui.toml"),
-		filepath.Join(filepath.Dir(dest), "reasonix.toml"),
+		filepath.Join(filepath.Dir(dest), "voltui.toml"),
 	}
 	if home != "" {
 		paths = append(paths, filepath.Join(home, ".voltui", "voltui.toml"))
-		paths = append(paths, filepath.Join(home, ".reasonix", "config.toml"))
-		paths = append(paths, filepath.Join(home, ".reasonix", "reasonix.toml"))
+		paths = append(paths, filepath.Join(home, ".voltui", "config.toml"))
+		paths = append(paths, filepath.Join(home, ".voltui", "voltui.toml"))
 	}
 	return paths
 }

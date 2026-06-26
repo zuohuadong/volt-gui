@@ -2,19 +2,41 @@ export type ActivityMode = "work" | "code";
 export type RunMode = "ask" | "auto" | "yolo" | "plan" | "goal";
 export type BackendMode = "normal" | "plan" | "yolo";
 
+export interface BrandView {
+  name: string;
+  shortName: string;
+  logoPath?: string;
+  wordmarkPath?: string;
+  iconPath?: string;
+}
+
 export interface TabMeta {
   id: string;
   scope: "global" | "project";
   workspaceRoot: string;
   workspaceName: string;
+  workspacePath?: string;
+  gitBranch?: string;
   topicId: string;
   topicTitle: string;
+  sessionPath?: string;
+  readOnly?: boolean;
   projectColor?: string;
   label?: string;
   ready?: boolean;
   active: boolean;
   running: boolean;
+  pendingPrompt?: boolean;
+  backgroundJobs?: number;
+  cancelRequested?: boolean;
+  cancellable?: boolean;
   mode?: BackendMode;
+  collaborationMode?: string;
+  toolApprovalMode?: string;
+  tokenMode?: string;
+  goal?: string;
+  goalStatus?: string;
+  startupErr?: string;
   cwd?: string;
 }
 
@@ -66,14 +88,26 @@ export interface ModelInfo {
 
 export interface ProviderView {
   name: string;
+  builtIn?: boolean;
+  added?: boolean;
   kind: string;
   baseUrl: string;
   models: string[];
+  visionModels?: string[];
+  visionModelsConfigured?: boolean;
+  modelsUrl?: string;
   default: string;
+  priority?: number;
   apiKeyEnv: string;
+  apiKeyValue?: string;
   keySet: boolean;
+  requiresKey?: boolean;
+  configured?: boolean;
+  keySource?: string;
+  keySourcePath?: string;
   balanceUrl: string;
   contextWindow: number;
+  reasoningProtocol?: string;
   supportedEfforts: string[];
   defaultEffort: string;
 }
@@ -94,6 +128,8 @@ export interface ServerView {
   prompts: number;
   resources: number;
   error?: string;
+  authStatus?: string;
+  authConfigured?: boolean;
 }
 
 export interface SkillView {
@@ -112,6 +148,41 @@ export interface SkillRootView {
   configured: boolean;
   skills: number;
   warning?: string;
+}
+
+export interface AgentView {
+  id: string;
+  name: string;
+  role: string;
+  runs: number;
+  status: string;
+  desc: string;
+  avatar?: string;
+  vibe?: string;
+  provider?: string;
+  model?: string;
+  tools: string[];
+  skills: string[];
+  coreFiles: string[];
+  builtIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+}
+
+export interface AgentInput {
+  id?: string;
+  name: string;
+  role?: string;
+  status?: string;
+  desc: string;
+  avatar?: string;
+  vibe?: string;
+  provider?: string;
+  model?: string;
+  tools?: string[];
+  skills?: string[];
+  coreFiles?: string[];
 }
 
 export interface CapabilitiesView {
@@ -139,6 +210,25 @@ export interface WorkbenchPlugin {
   capabilities: string[];
   providerIds?: string[];
   config?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface WorkbenchPluginInput {
+  id: string;
+  name: string;
+  kind: string;
+  entry: string;
+  version: string;
+  capabilities: string[];
+  providerIds?: string[];
+  config?: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface SkillPackageInput {
+  name: string;
+  description: string;
+  runAs: string;
   enabled: boolean;
 }
 
@@ -239,21 +329,34 @@ export interface SandboxView {
   network: boolean;
   workspaceRoot: string;
   allowWrite: string[];
+  shell?: string;
 }
 
 export interface SettingsView {
   defaultModel: string;
   plannerModel: string;
+  subagentModel?: string;
+  subagentEffort?: string;
   autoPlan: string;
   providers: ProviderView[];
+  officialProviders?: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
   desktopLanguage: string;
+  desktopLayoutStyle?: string;
   desktopTheme: string;
   desktopThemeStyle: string;
   closeBehavior: string;
+  displayMode?: string;
+  statusBarStyle?: string;
+  statusBarItems?: string[];
+  checkUpdates?: boolean;
+  telemetry?: boolean;
+  metrics?: boolean;
+  expandThinking?: boolean;
   configPath: string;
   providerKinds: string[];
+  autoApproveTools?: boolean;
   bypass: boolean;
 }
 
@@ -331,7 +434,9 @@ export type WireEventKind =
   | "compaction_done"
   | "mcp_surface_ready"
   | "retrying"
-  | "steer";
+  | "steer"
+  | "memory_compiler_stats"
+  | "guardian_assessment";
 
 export interface WireCacheDiagnostics {
   prefixHash: string;
@@ -349,6 +454,7 @@ export interface WireEvent {
   kind: WireEventKind;
   text?: string;
   reasoning?: string;
+  err?: string;
   level?: "info" | "warn";
   tabId?: string;
   tool?: {
@@ -397,7 +503,6 @@ export interface WireEvent {
     summary?: string;
     archive?: string;
   };
-  err?: string;
   retryAttempt?: number;
   retryMax?: number;
   sessionHitTokens?: number;
@@ -413,6 +518,7 @@ export interface TranscriptItem {
   body: string;
   title?: string;
   pending?: boolean;
+  createdAtMs?: number;
   readOnly?: boolean;
   parentId?: string;
 }

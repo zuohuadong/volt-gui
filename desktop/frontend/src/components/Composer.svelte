@@ -58,6 +58,7 @@
   let fileAccept = $state("");
   let fileInput: HTMLInputElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
+  let composerRoot: HTMLFormElement | undefined;
 
   const workPermissionOptions = [
     { id: "ask", label: "请求批准", mark: "手" },
@@ -70,9 +71,68 @@
   const slashArgMode = $derived(/^\/[^\s]+\s+/.test(input));
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
-  const canSubmit = $derived((input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
+  const canSubmit = $derived(!sending && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
 
-  onMount(() => onFilesDropped((paths) => void attachDroppedPaths(paths)));
+  onMount(() => {
+    const unsubscribeDropped = onFilesDropped((paths) => void attachDroppedPaths(paths));
+    const closeMenusOnOutsidePointer = (event: PointerEvent) => {
+      if (!plusMenuOpen && !projectMenuOpen && !permissionMenuOpen) return;
+      const target = event.target;
+      if (target instanceof Node && composerRoot?.contains(target)) return;
+      closeMenus();
+    };
+    const closeMenusOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (!plusMenuOpen && !projectMenuOpen && !permissionMenuOpen) return;
+      closeMenus();
+      event.stopPropagation();
+    };
+    window.addEventListener("pointerdown", closeMenusOnOutsidePointer, true);
+    window.addEventListener("keydown", closeMenusOnEscape, true);
+    return () => {
+      unsubscribeDropped();
+      window.removeEventListener("pointerdown", closeMenusOnOutsidePointer, true);
+      window.removeEventListener("keydown", closeMenusOnEscape, true);
+    };
+  });
+
+  function closeMenus() {
+    plusMenuOpen = false;
+    projectMenuOpen = false;
+    permissionMenuOpen = false;
+  }
+
+  function modelValue(model: ModelInfo) {
+    return model.name || model.model || model.ref || model.label || "";
+  }
+
+  function modelKey(model: ModelInfo, index: number) {
+    return modelValue(model) || `model-${index}`;
+  }
+
+  function modelLabel(model: ModelInfo, index: number) {
+    return model.label || modelValue(model) || `模型 ${index + 1}`;
+  }
+
+  function commandKey(command: CommandInfo, index: number) {
+    return command.name || `${command.kind || "command"}-${index}`;
+  }
+
+  function slashArgKey(item: SlashArgItem, index: number) {
+    return item.insert || item.label || item.hint || item.description || `slash-arg-${index}`;
+  }
+
+  function fileMatchKey(entry: DirEntry, index: number) {
+    return `${entry.isDir ? "dir" : "file"}:${entry.name || index}`;
+  }
+
+  function attachmentKey(attachment: ComposerAttachment, index: number) {
+    return attachment.path || attachment.previewUrl || `attachment-${index}`;
+  }
+
+  function projectKey(project: { id: string; label: string }, index: number) {
+    return project.id || project.label || `project-${index}`;
+  }
 
   function baseName(path: string): string {
     return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
@@ -181,7 +241,7 @@
   }
 
   function selectedProjectLabel() {
-    return selectedProjectId ? (projectOptions.find((project) => project.id === selectedProjectId)?.label ?? "归属项目") : "归属项目";
+    return selectedProjectId ? (projectOptions.find((project) => project.id === selectedProjectId)?.label ?? "不归属项目") : "不归属项目";
   }
 
   function selectedPermissionLabel() {
@@ -227,7 +287,7 @@
 
   function submitComposer() {
     const text = input.trim();
-    if (!canSubmit) return;
+    if (sending || !canSubmit) return;
     const refs = attachments.map((attachment) => `@${attachment.path}`).join(" ");
     const displayText = [text, refs].filter(Boolean).join(text && refs ? " " : "");
     const projectLabel = selectedProjectId ? selectedProjectLabel() : "";
@@ -240,6 +300,7 @@
     onSend(displayText, submitText);
     attachments = [];
     fileMatches = [];
+    closeMenus();
   }
 
   async function handleInput(event: Event) {
@@ -341,9 +402,22 @@
     if (transfer) transfer.dropEffect = "copy";
     dragOver = true;
   }
+
+  function handleComposerKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && sending) {
+      onCancel();
+      return;
+    }
+    if (event.key !== "Enter") return;
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.shiftKey) return;
+    event.preventDefault();
+    submitComposer();
+  }
 </script>
 
 <form
+  bind:this={composerRoot}
   class={["composer", activityMode && `composer--${activityMode}`, dragOver && "composer--drop"]}
   style="--wails-drop-target: drop"
   aria-busy={pendingAttachmentWrites > 0}
@@ -361,16 +435,15 @@
       data-composer-input
       data-testid="composer-input"
       value={input}
-      placeholder="与智能助手对话.... (@ 提及文书)"
+      placeholder="与智能助手对话.... (@ 提及文件)"
       rows="3"
       aria-label="Composer input"
-      aria-keyshortcuts="Control+K Meta+K Control+Enter Meta+Enter Escape"
+      aria-keyshortcuts="Enter Shift+Enter Escape"
       oninput={handleInput}
       onpaste={handlePaste}
-      onkeydown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submitComposer();
-        if (event.key === "Escape" && sending) onCancel();
-      }}
+      onpointerdown={closeMenus}
+      onfocus={closeMenus}
+      onkeydown={handleComposerKeydown}
     ></textarea>
 
     <input bind:this={fileInput} class="composer__file" type="file" accept={fileAccept} multiple onchange={handleFilePicker} />
@@ -378,7 +451,7 @@
     {#if slashMatches.length}
       <div class="composer-menu">
         <span><Search size={13} /> {t.composer.commands}</span>
-        {#each slashMatches as command (command.name)}
+        {#each slashMatches as command, index (commandKey(command, index))}
           <button type="button" onclick={() => insertCommand(command)}>
             /{command.name}
             <em>{command.description}</em>
@@ -390,7 +463,7 @@
     {#if slashArgMode && slashArgItems.length}
       <div class="composer-menu">
         <span><Search size={13} /> {t.composer.arguments}</span>
-        {#each slashArgItems as item (item.label)}
+        {#each slashArgItems as item, index (slashArgKey(item, index))}
           <button type="button" onclick={() => insertSlashArg(item)}>
             {item.label}
             <em>{item.hint || item.description}</em>
@@ -402,7 +475,7 @@
     {#if atMatch !== null && fileMatches.length}
       <div class="composer-menu">
         <span><AtSign size={13} /> {t.composer.fileReferences}</span>
-        {#each fileMatches as entry (entry.name)}
+        {#each fileMatches as entry, index (fileMatchKey(entry, index))}
           <button type="button" onclick={() => insertFile(entry)}>
             <FileText size={13} />
             {fileMatchLabel(atDir, entry)}
@@ -413,7 +486,7 @@
 
     {#if attachments.length || pendingAttachmentWrites > 0 || dragOver}
       <div class="composer-context" aria-label="Composer attachments">
-        {#each attachments as attachment (attachment.path)}
+        {#each attachments as attachment, index (attachmentKey(attachment, index))}
           <div class={["composer-context__item", attachment.previewUrl && "composer-context__item--image"]}>
             <span title={attachment.path}>
               {#if attachment.previewUrl}
@@ -495,7 +568,7 @@
       {/if}
       {#if projectOptions.length}
         <div class="composer__project-wrap">
-          <button class="composer__link-picker" type="button" title="归属项目" aria-haspopup="menu" aria-expanded={projectMenuOpen} onclick={toggleProjectMenu}>
+          <button class="composer__link-picker" type="button" title={selectedProjectLabel()} aria-haspopup="menu" aria-expanded={projectMenuOpen} onclick={toggleProjectMenu}>
             <Folder size={14} />
             <span>{selectedProjectLabel()}</span>
           </button>
@@ -511,7 +584,7 @@
                 </span>
                 {#if !selectedProjectId}<Check size={16} />{/if}
               </button>
-              {#each projectOptions as project (project.id)}
+              {#each projectOptions as project, index (projectKey(project, index))}
                 <button class:active={selectedProjectId === project.id} type="button" role="menuitem" onclick={() => setProject(project.id)}>
                   <i><FolderKanban size={14} /></i>
                   <span>
@@ -552,8 +625,9 @@
     <div class="composer__actions">
       <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange} disabled={!models.length}>
         {#if models.length}
-          {#each models as model (model.name)}
-            <option value={model.name}>{model.label || model.name}</option>
+          {#each models as model, index (modelKey(model, index))}
+            {@const value = modelValue(model)}
+            <option value={value}>{modelLabel(model, index)}</option>
           {/each}
         {:else}
           <option value="">选择模型</option>

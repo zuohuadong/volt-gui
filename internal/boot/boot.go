@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"voltui/internal/agent"
-	"voltui/internal/codegraph"
 	"voltui/internal/command"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
+	"voltui/internal/guardian"
 	"voltui/internal/history"
 	"voltui/internal/hook"
 	"voltui/internal/installsource"
@@ -36,6 +36,7 @@ import (
 	"voltui/internal/netclient"
 	"voltui/internal/outputstyle"
 	"voltui/internal/permission"
+	"voltui/internal/planmode"
 	"voltui/internal/plugin"
 	"voltui/internal/provider"
 	"voltui/internal/sandbox"
@@ -132,7 +133,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
 	// written config + ~/.env are picked up this same boot. CLI Run also calls this
 	// before config-only commands; this call stays as the shared frontend fallback.
-	migrated, migErr := config.MigrateLegacyIfNeeded()
+	migrated, migErr := config.MigrateLegacyIfNeededForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	keepPolicy := agentKeepPolicy(cfg.Agent.Keep)
 	entry, ok := cfg.ResolveModel(modelName)
 	if !ok {
-		return nil, fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `voltui setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
+		return nil, fmt.Errorf("%w: %v; note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `voltui setup` to reconfigure", ErrUnknownModel, cfg.ResolveModelError(modelName))
 	}
 	modelRef := entry.Name + "/" + entry.Model
 	if opts.EffortOverride != nil {
@@ -168,6 +169,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// outlive a turn and are cancelled by Controller.Close.
 	sink := event.Sync(opts.Sink)
 
+	if ignored := (planmode.Policy{AllowedTools: cfg.Agent.PlanModeAllowedTools}).IgnoredAllowedTools(); len(ignored) > 0 {
+		sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelWarn,
+			Text:  fmt.Sprintf("plan_mode_allowed_tools ignored known blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock known blocked tools or unsafe bash", strings.Join(ignored, ", ")),
+		})
+	}
 	if migErr != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "config migration from ~/.voltui failed: " + migErr.Error()})
 	} else if migrated != nil {
@@ -219,6 +227,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if st, ok := outputstyle.Resolve(cfg.Agent.OutputStyle, outputstyle.Dirs()); ok {
 		sysPrompt = outputstyle.Apply(sysPrompt, st)
 	}
+	sysPrompt += "\n\n" + config.UserDecisionPolicy
 	sysPrompt += "\n\n" + config.LanguagePolicy
 	if tokenEconomy {
 		sysPrompt += "\n\n" + tokenEconomyPrompt
@@ -277,11 +286,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		pluginHost = plugin.NewHost()
 	}
 
-	// Partition configured plugins by tier so eager/lazy/background can each
-	// take the path that fits them. User entries default to background: the
-	// session starts immediately while enabled MCP servers warm up.
+	// Partition configured plugins by tier so eager can block when explicitly
+	// requested while every other enabled MCP warms up in the background.
 	autoStartEntries := cfg.AutoStartPlugins()
-	eagerEntries, lazyEntries, bgEntries := partitionByTier(autoStartEntries)
+	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
 	extraSpecs := applyKnownPluginOverrides(opts.ExtraPlugins, root)
 	onDemandMCPSpecs := map[string]plugin.Spec{}
 	onDemandMCPNames := []string{}
@@ -296,11 +304,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 			onDemandMCPSpecs[name] = spec
 		}
-		eagerEntries, lazyEntries, bgEntries = nil, nil, nil
+		eagerEntries, bgEntries = nil, nil
 	}
 
 	// Auto-demote: any eager plugin that has been chronically slow (recent
-	// samples repeatedly hit the blocking startup budget) drops to lazy
+	// samples repeatedly hit the blocking startup budget) drops to background
 	// for this session. The user keeps eager intent, just doesn't pay for it
 	// on a server that's been misbehaving. A notice surfaces the demotion.
 	var demoteMessages []string
@@ -310,7 +318,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		rec := plugin.Recommend(e.Name, budget, 0)
 		if rec.Demote {
 			demoteMessages = append(demoteMessages, rec.Reason)
-			lazyEntries = append(lazyEntries, e)
+			bgEntries = append(bgEntries, e)
 			continue
 		}
 		kept = append(kept, e)
@@ -318,92 +326,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	eagerEntries = kept
 
 	eagerSpecs := PluginSpecsForRoot(eagerEntries, root)
-	lazySpecs := PluginSpecsForRoot(lazyEntries, root)
 	bgSpecs := PluginSpecsForRoot(bgEntries, root)
-
-	// CodeGraph is a built-in MCP server fetched on first use. When it resolves,
-	// inject it as one more stdio plugin pinned to the project root (it is
-	// cwd-aware); EnsureInit only creates .codegraph/ (fast, size-independent),
-	// serve's daemon then indexes in the background, so startup never blocks even
-	// on a large repo. When it is not yet installed, fetch it in the background
-	// if auto_install is on; otherwise point the user at the explicit install
-	// command. A failed init or fetch is a notice, not fatal.
-	//
-	// CodeGraph follows the same user-selectable tier model as ordinary MCP
-	// servers when a tier is set. With no explicit tier, preserve the historical
-	// startup: warm projects eager so symbol tools are ready on the first turn,
-	// cold projects in the background.
-	if cfg.Codegraph.Enabled {
-		bin, ok := codegraph.Resolve(cfg.Codegraph.Path)
-		switch {
-		case ok:
-			spec := plugin.Spec{
-				Name:              "codegraph",
-				Command:           bin,
-				Args:              []string{"serve", "--mcp"},
-				Dir:               root,
-				ReadOnlyToolNames: codegraph.ReadOnlyToolNames(),
-			}
-			warm := codegraph.Initialized(root)
-			if err := codegraph.EnsureInit(ctx, bin, root); err != nil {
-				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
-					Text: "codegraph: init failed (" + err.Error() + ") — symbol-graph tools disabled this session"})
-				break
-			}
-			bgNotice := func() {
-				if !warm {
-					sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-						Text: "codegraph: preparing code-intelligence tools in the background — tools will appear when ready"})
-				}
-			}
-			if tokenEconomy {
-				name := strings.TrimSpace(spec.Name)
-				if name != "" {
-					if _, exists := onDemandMCPSpecs[name]; !exists {
-						onDemandMCPNames = append(onDemandMCPNames, name)
-					}
-					onDemandMCPSpecs[name] = spec
-				}
-				break
-			}
-			if strings.TrimSpace(cfg.Codegraph.Tier) == "" {
-				if warm {
-					eagerSpecs = append(eagerSpecs, spec)
-				} else {
-					bgSpecs = append(bgSpecs, spec)
-					bgNotice()
-				}
-				break
-			}
-			switch cfg.Codegraph.ResolvedTier() {
-			case "eager":
-				eagerSpecs = append(eagerSpecs, spec)
-			case "background":
-				bgSpecs = append(bgSpecs, spec)
-				bgNotice()
-			default:
-				lazySpecs = append(lazySpecs, spec)
-			}
-		case cfg.Codegraph.AutoInstall:
-			notify := func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg}) }
-			notify("codegraph: fetching code-intelligence runtime in the background (one-time) — symbol-graph tools available next session")
-			codegraphClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
-			if err != nil {
-				notify("codegraph: install skipped (" + err.Error() + ")")
-			} else {
-				go func() {
-					if _, err := codegraph.InstallWithClient(context.WithoutCancel(ctx), codegraphClient, nil); err != nil {
-						notify("codegraph: install failed (" + err.Error() + ") — using grep/glob; retries next session")
-					} else {
-						notify("codegraph: installed — symbol-graph tools available next session")
-					}
-				}()
-			}
-		default:
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-				Text: "codegraph: not installed — run `voltui codegraph install` to enable symbol-graph tools"})
-		}
-	}
 
 	if !tokenEconomy {
 		eagerSpecs = append(eagerSpecs, extraSpecs...)
@@ -413,9 +336,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if opts.Stderr != nil {
 		for i := range eagerSpecs {
 			eagerSpecs[i].Stderr = opts.Stderr
-		}
-		for i := range lazySpecs {
-			lazySpecs[i].Stderr = opts.Stderr
 		}
 		for i := range bgSpecs {
 			bgSpecs[i].Stderr = opts.Stderr
@@ -480,11 +400,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
-	// Lazy / background: register placeholder tools now; the real spawn waits
-	// for either the first model call (lazy) or a goroutine kicked off here
-	// (background). Both share the same pluginHost so /mcp status, hot-add,
-	// and Close see one cohesive set of servers regardless of tier.
-	registerDeferred := func(specs []plugin.Spec, kick bool) {
+	// Background: register placeholder tools now and kick off the real spawn.
+	// Everything shares the same pluginHost so /mcp status, hot-add, and Close
+	// see one cohesive set of servers.
+	registerBackground := func(specs []plugin.Spec) {
 		for _, s := range specs {
 			// Already running on the shared host? Register tools directly.
 			if pluginHost.HasClient(s.Name) {
@@ -497,25 +416,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 			}
 			if opts.SharedHost != nil {
-				// Shared host: register lazy tools WITHOUT kicking so the
-				// subprocess only starts on the first actual tool call.
-				// This avoids spawning MCP processes (e.g. CodeGraph) for
-				// every workspace root on boot — a tab that sits unused for
-				// days never pays the startup cost.
+				// Shared host relies on Host's spawn guard to avoid duplicate
+				// processes across tabs for the same workspace root.
 				cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
-				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, false) {
+				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
 					reg.Add(t)
 				}
 			} else {
 				cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
-				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, kick) {
+				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
 					reg.Add(t)
 				}
 			}
 		}
 	}
-	registerDeferred(lazySpecs, false)
-	registerDeferred(bgSpecs, true)
+	registerBackground(bgSpecs)
 
 	for _, msg := range demoteMessages {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg})
@@ -625,24 +540,43 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	taskToolAdded := false
-	addTaskTool := func() string {
-		if taskToolAdded {
-			return "task tool is already enabled."
-		}
-		taskToolAdded = true
-		tt := agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
+	readOnlyTaskToolAdded := false
+	var taskTool *agent.TaskTool
+	newTaskTool := func() *agent.TaskTool {
+		return agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
 			entry.ContextWindow, cfg.Agent.RecentKeep, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
 			cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
 			keepPolicy,
 			taskModel, taskEffort, resolveSubagentProvider).
 			WithTranscripts(subagentStore, root, modelName, entry.Effort).
 			WithTranscriptIdentityResolver(subagentIdentity)
-		reg.Add(tt)
-		reg.Add(agent.NewParallelTasksTool(tt, reg))
+	}
+	addTaskTool := func() string {
+		if taskToolAdded {
+			return "task tool is already enabled."
+		}
+		taskToolAdded = true
+		if taskTool == nil {
+			taskTool = newTaskTool()
+		}
+		reg.Add(taskTool)
+		reg.Add(agent.NewParallelTasksTool(taskTool, reg))
 		return "enabled task."
+	}
+	addReadOnlyTaskTool := func() string {
+		if readOnlyTaskToolAdded {
+			return "read_only_task tool is already enabled."
+		}
+		readOnlyTaskToolAdded = true
+		if taskTool == nil {
+			taskTool = newTaskTool()
+		}
+		reg.Add(agent.NewReadOnlyTaskTool(taskTool))
+		return "enabled read_only_task."
 	}
 	if !tokenEconomy {
 		addTaskTool()
+		addReadOnlyTaskTool()
 	}
 
 	// The `memory` tool searches/reads saved facts on demand; `remember` persists
@@ -666,12 +600,59 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// has none, so ask resolves to "decide for yourself".
 	reg.Add(agent.NewAskTool())
 
-	// Skill tools: run_skill / install_skill plus the dedicated subagent wrappers
-	// (explore / research / review / security_review). A subagent skill reuses the
-	// sub-agent machinery via this runner — an isolated loop with the skill body
-	// as system prompt, a tool set scoped to the skill's allowed-tools (minus the
-	// task/skill meta-tools, to bar recursion), and an optional per-skill model.
-	// Its tool activity nests under the invoking call, like `task`.
+	// Skill tools: read_only_skill is a narrow plan-mode-safe entry point; the
+	// full skills source adds run_skill / install_skill plus the dedicated
+	// subagent wrappers (explore / research / review / security_review). Read-only
+	// subagent skills run ephemerally with the same registry boundary as
+	// read_only_task, so they cannot write, install, mutate memory, resume/fork
+	// transcripts, or delegate further.
+	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
+		if strings.TrimSpace(runOpts.ContinueFrom) != "" || strings.TrimSpace(runOpts.ForkFrom) != "" {
+			return "", fmt.Errorf("read_only_skill does not support continue_from/fork_from")
+		}
+		sk = skill.WithCodeGraphTools(sk, skill.CodeGraphReadTools(reg))
+		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
+		modelRef := subagentModelRef(cfg, sk)
+		effortRef := subagentEffortRef(cfg, sk)
+		if modelRef != "" || effortRef != "" {
+			p, pr, cw, err := resolveSubagentProvider(modelRef, effortRef)
+			if err != nil {
+				return "", fmt.Errorf("read-only subagent skill %q profile: %w", sk.Name, err)
+			}
+			prov, price, ctxWin = p, pr, cw
+		}
+		subReg := agent.ReadOnlySubagentToolRegistry(reg, sk.AllowedTools)
+		if subReg.Len() == 0 {
+			return "", fmt.Errorf("read_only_skill: skill %q has no read-only tools available", sk.Name)
+		}
+		steps := maxSteps
+		if steps > 0 {
+			if steps /= 2; steps < 5 {
+				steps = 5
+			}
+		}
+		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
+		return agent.RunSubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task, agent.Options{
+			MaxSteps:          steps,
+			Temperature:       cfg.Agent.Temperature,
+			Pricing:           price,
+			UsageSource:       event.UsageSourceSubagent,
+			Gate:              headlessGate,
+			ContextWindow:     ctxWin,
+			RecentKeep:        cfg.Agent.RecentKeep,
+			SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
+			CompactRatio:      cfg.Agent.CompactRatio,
+			CompactForceRatio: cfg.Agent.CompactForceRatio,
+			ArchiveDir:        config.ArchiveDir(),
+			KeepPolicy:        keepPolicy,
+			ReasoningLanguage: agent.ReasoningLanguageFromContext(sctx),
+		}, agent.NestedSink(sctx, event.Discard))
+	}
+	// Writer-capable subagent skills reuse the sub-agent machinery via this
+	// runner: an isolated loop with the skill body as system prompt, a tool set
+	// scoped to the skill's allowed-tools (minus recursive meta-tools), optional
+	// per-skill model, and resumable transcripts when the parent session supports
+	// them. Its tool activity nests under the invoking call, like `task`.
 	skillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
 		sk = skill.WithCodeGraphTools(sk, skill.CodeGraphReadTools(reg))
 		prov, price, ctxWin := execProv, entry.Price, entry.ContextWindow
@@ -833,12 +814,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}))
 		return "enabled install_source."
 	}
+	readOnlySkillToolsAdded := false
+	addReadOnlySkillTools := func() string {
+		if readOnlySkillToolsAdded {
+			return "read_only_skill tool is already enabled.\n\n" + skill.ReadOnlyIndexBlock(skills)
+		}
+		readOnlySkillToolsAdded = true
+		reg.Add(skill.NewReadOnlySkillTool(skillStore, readOnlySkillRunner, skillProfile))
+		return "enabled read_only_skill. Use read_only_skill for inline skills or read-only subagent skills on the next model request.\n\n" + skill.ReadOnlyIndexBlock(skills)
+	}
 	skillToolsAdded := false
 	addSkillTools := func() string {
 		if skillToolsAdded {
 			return "skills are already enabled.\n\n" + skill.IndexBlock(skills)
 		}
 		skillToolsAdded = true
+		addReadOnlySkillTools()
 		reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
 		reg.Add(skill.NewReadSkillTool(skillStore))
 		reg.Add(skill.NewInstallSkillTool(skillStore, nil))
@@ -846,7 +837,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			reg.Add(t)
 		}
 		addSlashCommandTool(true)
-		return "enabled skills. Use run_skill/read_skill or the dedicated skill tools on the next model request.\n\n" + skill.IndexBlock(skills)
+		return "enabled skills. Use run_skill/read_skill/read_only_skill or the dedicated skill tools on the next model request.\n\n" + skill.IndexBlock(skills)
 	}
 	if tokenEconomy {
 		addSlashCommandTool(false)
@@ -861,6 +852,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			},
 			task: func(context.Context) (string, error) {
 				return addTaskTool(), nil
+			},
+			readOnlyTask: func(context.Context) (string, error) {
+				return addReadOnlyTaskTool(), nil
+			},
+			readOnlySkill: func(context.Context) (string, error) {
+				return addReadOnlySkillTools(), nil
 			},
 			install: func(context.Context) (string, error) {
 				return addInstallSourceTool(), nil
@@ -926,7 +923,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 				return fmt.Sprintf("enabled MCP server %q tools: %s.", spec.Name, strings.Join(names, ", ")), nil
 			},
-			mcpNames: onDemandMCPNames,
+			mcpNames:             onDemandMCPNames,
+			planModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
 		})
 	}
 
@@ -1026,6 +1024,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		PluginCtx:              ctx,
 		WorkspaceRoot:          root,
 		AutoPlan:               cfg.Agent.AutoPlan,
+		ResponseLanguage:       cfg.ResponseLanguage(),
 		ReasoningLanguage:      cfg.ReasoningLanguage(),
 		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		Shell:                  shell,
@@ -1034,6 +1033,26 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},
+	}
+	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
+	// that can auto-allow safe Ask decisions and annotate risky ones before
+	// escalating to the human approval prompt.
+	if guardianModel := cfg.Agent.GuardianModel; guardianModel != "" {
+		ge, ok := cfg.ResolveModel(guardianModel)
+		if !ok {
+			slog.Warn("guardian model is not a configured provider — guardian disabled", "model", guardianModel)
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("guardian_model %q not found — guardian disabled", guardianModel)})
+		} else {
+			pProv, err := NewProviderWithProxy(ge, proxySpec)
+			if err != nil {
+				slog.Warn("guardian provider construction failed — guardian disabled", "model", guardianModel, "err", err)
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("guardian construction failed: %v — guardian disabled", err)})
+			} else {
+				guardianReg := agent.FilterReadOnlyRegistry(reg, agent.SubagentMetaTools()...)
+				ctrlOpts.Guardian = guardian.NewSession(pProv, guardianReg, guardian.PolicyPrompt(), guardianModel, cfg.Agent.GuardianTemperature, ge.Price, sink)
+				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("guardian enabled · model=%s", ge.Model)})
+			}
+		}
 	}
 	if classifier != nil {
 		ctrlOpts.Classifier = classifier
@@ -1055,7 +1074,7 @@ func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
 		result.Err = err
 		return result
 	}
-	if err := edit.SaveTo(path); err != nil {
+	if err := config.WritePermissionsSection(path, edit.Permissions.Allow); err != nil {
 		slog.Warn("save config after permission rule", "err", err)
 		result.Err = err
 		return result
@@ -1261,7 +1280,6 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 // NewProviderWithProxy builds a provider.Provider with the configured ordinary
 // network proxy settings.
 func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (provider.Provider, error) {
-	keyResolution := config.ResolveCredential(e.APIKeyEnv)
 	return provider.New(e.Kind, provider.Config{
 		Name:    e.Name,
 		BaseURL: e.BaseURL,
@@ -1272,7 +1290,7 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 		// default_effort when the user has not explicitly selected /effort.
 		Extra: map[string]any{
 			"api_key_env":        e.APIKeyEnv,
-			"api_key_source":     keyResolution.Source.Label,
+			"api_key_source":     e.APIKeySourceLabel(),
 			"thinking":           e.Thinking,
 			"effort":             config.EffectiveEffort(e),
 			"reasoning_protocol": config.ReasoningProtocolForEntry(e),
@@ -1338,23 +1356,19 @@ func builtinToolEnabled(enabled []string, name string) bool {
 	return false
 }
 
-// partitionByTier splits configured plugin entries into the three startup
-// buckets — eager (block boot until ready), lazy (placeholder until first
-// model use), background (placeholder + start spawn now). Entries with an
-// empty tier land in background; unrecognised non-empty tiers land in lazy so a
-// typo never triggers unexpected background work.
-func partitionByTier(entries []config.PluginEntry) (eager, lazy, bg []config.PluginEntry) {
+// partitionByTier splits configured plugin entries into eager (block boot until
+// ready) and background (placeholder + start spawn now). Entries with an empty,
+// legacy lazy, or unrecognised tier land in background.
+func partitionByTier(entries []config.PluginEntry) (eager, bg []config.PluginEntry) {
 	for _, e := range entries {
 		switch e.ResolvedTier() {
 		case "eager":
 			eager = append(eager, e)
-		case "background":
-			bg = append(bg, e)
 		default:
-			lazy = append(lazy, e)
+			bg = append(bg, e)
 		}
 	}
-	return eager, lazy, bg
+	return eager, bg
 }
 
 // PluginSpecs maps configured plugin entries to plugin.Spec, expanding ${VAR}

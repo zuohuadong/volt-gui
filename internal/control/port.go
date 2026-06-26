@@ -126,6 +126,7 @@ type MemoryControl interface {
 	SaveMemory(m memory.Memory) (string, error)
 	ForgetMemory(name string) error
 	QueueMemory(note string)
+	SetMemoryCompilerEnabled(enabled bool)
 }
 
 // Capabilities covers the session's pluggable surface — MCP servers, skills,
@@ -186,6 +187,7 @@ type Input interface {
 
 // Settings covers runtime session settings that don't fit a richer domain.
 type Settings interface {
+	SetResponseLanguage(lang string)
 	SetReasoningLanguage(lang string)
 	SetDisplayRecorder(fn func(content, display string))
 }

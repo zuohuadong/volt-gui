@@ -11,7 +11,7 @@
 
 ## Operating Loop
 
-- Start with repo truth: inspect `git status`, targeted files, the active `tasks.md` row/contract, recent `progress.md` entries, and pending/conflicting `.mailbox/` frontmatter before making project changes.
+- Start with repo truth: inspect `git status` and targeted files. If `.agents/state/coordination.json` exists, use `agent-team context . --task <id>` / coordination DB status for the active task, recent events, and pending mailbox queue; only fall back to `tasks.md`, `progress.md`, and `.mailbox/` in legacy projects that have not been upgraded.
 - Read only the slices needed for the task. Prefer `rg`, `sed`, focused file ranges, and `agent-team memory recall "<query>" --token-budget <n>` over full-file dumps.
 - Keep the live context under budget: if `agent-team automation doctor .` reports coordination context warnings, run the suggested archive/prune command before broad exploration.
 - Make small, scoped edits that follow the existing framework, naming, tests, and directory layout.
@@ -20,9 +20,8 @@
 
 ## Required Context
 
-- `progress.md` is the shared narrative log. Read the newest relevant entries first; use `agent-team automation archive-progress . --keep-recent 50` when old history makes the live file large.
-- `.mailbox/` is the agent coordination channel. Inspect frontmatter first and read only pending/conflicting messages or named evidence; archive old done/archived history with `agent-team automation prune-mailbox . --archive-status done,archived --keep-recent 5`.
-- `tasks.md` is the project Task Ledger and execution source. Read the active table row and current Task Contract; archive inactive done/archived rows with `agent-team automation archive-ledger .`.
+- In coordination DB v2 projects, `.agents/state/coordination.db` is the execution and coordination source. Use bounded DB queries through `agent-team context`, `agent-team automation status`, and task-specific evidence references; do not read historical logs wholesale.
+- In legacy projects only, `progress.md`, `.mailbox/`, and `tasks.md` remain the fallback coordination files. Read only the active task row/contract, newest relevant progress entries, and pending/conflicting mailbox frontmatter; archive old history before broad work.
 - `.agents/state/` contains machine-readable state, run records, and archives.
 - `.agents/workflows/` and `.agents/prompts/` hold detailed procedures. Load only the workflow or role prompt needed by the current assignment.
 
@@ -58,7 +57,7 @@ Use a minimal contract for low-risk local work. Require full Stack/Fullstack/Dat
 
 ## Automation Rules
 
-- Executors handle one eligible `ready` task at a time, then reread the ledger and mailbox.
+- Executors handle one eligible `ready` task at a time, then reread the current execution source and mailbox queue (coordination DB in v2 projects, legacy files otherwise).
 - Reviewers handle `review` tasks only.
 - Health checks watch stuck tasks, auth/CI visibility, and queue drift.
 - Failed review should return to the original PR/MR when possible. Create a follow-up only when the source cannot continue or the issue was already merged; include `parent`, `source`, and `reason`.
@@ -75,6 +74,14 @@ Use a minimal contract for low-risk local work. Require full Stack/Fullstack/Dat
 
 <!-- AGENT:OVERLAY:START -->
 # Volt GUI Project Overlay
+
+## UI Reference Policy
+
+- Volt GUI 的所有 UI 设计、视觉调整、布局重构、交互补齐、组件状态和信息架构调整，必须先参考 `E:\workspace\aoristlawer` 项目的真实源码与运行结构。
+- 首选参考路径包括 `E:\workspace\aoristlawer\apps\desktop\src\index.css`、`layouts\DashboardLayout.tsx`、`pages\*.tsx`、`components\ui\*.tsx` 和相关业务组件。
+- 不要只做颜色或表层风格模仿。应优先对齐 aoristlawer 的页面结构、侧栏/顶栏节奏、卡片密度、按钮层级、标签页样式、弹窗结构、列表行信息组织和空状态方式。
+- 只有当 Volt GUI 的既有技术栈、Svelte/Wails 约束或当前业务目标明确不适配时，才允许偏离；偏离时需要在回复中说明原因。
+- 除非用户明确指定其他参考对象，后续不要再优先使用 Accio、通用模板、截图臆测或新的外部设计系统作为 Volt GUI UI 的第一参考。
 
 本仓库是 Go CLI/TUI + Wails desktop + Astro docs 的混合项目。执行任务时优先保持现有技术栈和目录边界，不引入新的前端或桌面框架。
 

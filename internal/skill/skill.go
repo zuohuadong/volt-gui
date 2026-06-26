@@ -4,7 +4,7 @@
 // a tool result, a "subagent" skill runs in an isolated child loop and returns
 // only its final answer. Project scope wins over global; only names+descriptions
 // enter the cache-stable system-prompt index (see index.go) — bodies load on
-// demand. Discovery scans several conventions (.voltui / .reasonix / .agents / .agent /
+// demand. Discovery scans several conventions (.voltui / .voltui / .agents / .agent /
 // .claude under the project root and the home dir — see config.ConventionDirs) so
 // skills authored for other agent tools migrate in unchanged. Directory skills
 // use <name>/SKILL.md; flat <name>.md files from Claude roots are loaded only
@@ -73,7 +73,7 @@ func IsValidName(name string) bool { return config.IsValidSkillName(name) }
 // Options configure a Store. ProjectRoot "" reads only the global + custom
 // scopes. HomeDir "" resolves to the OS home dir (tests point it at a tmpdir).
 // ReasonixHomeDir overrides the canonical Reasonix home; empty uses
-// config.ReasonixHomeDir(), or HomeDir/.reasonix when HomeDir is explicitly set.
+// config.ReasonixHomeDir(), or HomeDir/.voltui when HomeDir is explicitly set.
 type Options struct {
 	HomeDir         string
 	ReasonixHomeDir string
@@ -180,7 +180,7 @@ type discoveryRoot struct {
 }
 
 // roots returns the discovery directories, highest priority first: the
-// convention dirs (config.ConventionDirs: .voltui / .reasonix / .agents / .agent / .claude)
+// convention dirs (config.ConventionDirs: .voltui / .voltui / .agents / .agent / .claude)
 // under the project root → custom paths → the Reasonix home skills dir → other
 // home-dir convention dirs. A later root never overrides an earlier one.
 func (s *Store) roots() []discoveryRoot {
@@ -569,7 +569,7 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 		if s.projectRoot == "" {
 			return "", fmt.Errorf("project scope requires a workspace — run from a project directory, or use global scope")
 		}
-		root = filepath.Join(s.projectRoot, ".reasonix", SkillsDirname)
+		root = filepath.Join(s.projectRoot, ".voltui", SkillsDirname)
 	default:
 		root = s.globalSkillsRoot()
 	}
@@ -603,7 +603,7 @@ func (s *Store) globalSkillsRoot() string {
 	if s.reasonixHomeDir != "" {
 		return filepath.Join(s.reasonixHomeDir, SkillsDirname)
 	}
-	return filepath.Join(s.homeDir, ".reasonix", SkillsDirname)
+	return filepath.Join(s.homeDir, ".voltui", SkillsDirname)
 }
 
 // loadBodyWithReferences appends a directory-layout skill's sibling

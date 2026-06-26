@@ -5,6 +5,7 @@
 import type {
   CommandInfo,
   ContextPanelInfo,
+  BrandView,
   DirEntry,
   DroppedItem,
   EffortInfo,
@@ -12,6 +13,8 @@ import type {
   GoalInfo,
   CheckpointMeta,
   CapabilitiesView,
+  AgentInput,
+  AgentView,
   HistoryMessage,
   MCPServerInput,
   MemoryView,
@@ -29,8 +32,10 @@ import type {
   UserInfo,
   WorkbenchArtifactInput,
   WorkbenchJob,
+  WorkbenchPluginInput,
   WorkbenchPlugin,
   WorkbenchProvider,
+  SkillPackageInput,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
   WireEvent,
@@ -39,6 +44,7 @@ import type {
 } from "./types";
 
 interface AppBindings {
+  Brand(): Promise<BrandView>;
   SubmitToTab(tabID: string, input: string): Promise<void>;
   SubmitDisplayToTab(tabID: string, display: string, input: string): Promise<void>;
   CancelTab(tabID: string): Promise<void>;
@@ -47,6 +53,7 @@ interface AppBindings {
   PickWorkspace(): Promise<string>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
+  NewConversationThread(scope: string, workspaceRoot: string, title: string): Promise<TabMeta>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
   ListProjectTree(): Promise<ProjectNode[]>;
@@ -88,6 +95,9 @@ interface AppBindings {
   AttachmentDataURL(path: string): Promise<string>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;
   Capabilities(): Promise<CapabilitiesView>;
+  ListAgents(): Promise<AgentView[]>;
+  SaveAgent(input: AgentInput): Promise<AgentView>;
+  DeleteAgent(id: string): Promise<void>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
@@ -103,11 +113,12 @@ interface AppBindings {
   SetPlannerModel(ref: string): Promise<void>;
   SaveProvider(provider: ProviderView): Promise<void>;
   DeleteProvider(name: string): Promise<void>;
-  SetProviderKey(apiKeyEnv: string, value: string): Promise<void>;
+  FetchProviderModels(provider: ProviderView): Promise<string[]>;
+  SetProviderKey(apiKeyEnv: string, value: string): Promise<string>;
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
   RemovePermissionRule(list: string, rule: string): Promise<void>;
-  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[]): Promise<void>;
+  SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[], shell: string): Promise<void>;
   NeedsAuth(): Promise<boolean>;
   StartOIDCLogin(): Promise<void>;
   CancelOIDCLogin(): Promise<void>;
@@ -121,6 +132,8 @@ interface AppBindings {
   Remember(scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
   WorkbenchPlugins(): Promise<WorkbenchPlugin[]>;
+  SaveWorkbenchPlugin(input: WorkbenchPluginInput): Promise<void>;
+  CreateSkillPackage(input: SkillPackageInput): Promise<string>;
   WorkbenchProviders(): Promise<WorkbenchProvider[]>;
   ListWorkbenchJobs(): Promise<WorkbenchJob[]>;
   CreateWorkbenchJob(input: CreateWorkbenchJobInput): Promise<WorkbenchJob>;

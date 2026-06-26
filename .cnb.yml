@@ -1,9 +1,9 @@
 # CNB 云原生构建配置 — 西谷智灯暗涌系统 (西谷 AI fork of VoltUI)
 # 参考: https://docs.cnb.cool/zh/build/configuration.md
 #
-# 本项目只构建桌面版本 (Wails)，CLI 模块不发版。
+# 本项目的 CNB CI 只构建 Windows 桌面版本 (Wails)，CLI/macOS/Linux 产物不发版。
 # CNB CI 当前使用 Linux Docker runner，发布阶段交叉编译 Windows amd64 桌面包，
-# 并用 Linux nsis/makensis 生成安装器。macOS 和 Linux 暂不发布，保留配置注释。
+# 并用 Linux nsis/makensis 生成安装器。
 #
 # Tag 命名空间:
 #   desktop-v* → CNB 自动发布桌面端构建
@@ -18,8 +18,8 @@
 
 main:
   push:
-    # Pipeline 1: 桌面模块编译验证（每次 push 都执行）
-    # Docker 中无法做 CGO/WebKit 完整构建，只验证 desktop Go 模块能编译
+    # Pipeline 1: Windows 桌面发布链路的快速编译验证（每次 push 都执行）
+    # Docker 中无法做完整 Wails/NSIS 打包，只验证 desktop Go 模块与发布辅助命令。
     - docker:
         image: golang:1.26
       env:
@@ -38,7 +38,7 @@ main:
             CGO_ENABLED=0 go vet ./...
             CGO_ENABLED=0 go build ./...
 
-        - name: desktop-test
+        - name: windows-release-tools-test
           script: |
             cd desktop
 
@@ -47,12 +47,7 @@ main:
 
             # Only test sub-packages that don't need Wails runtime
             # (desktop main package requires Wails CGO/WebView — can't run in Docker)
-            go test ./cmd/sign ./internal/update
-
-        - name: kernel-build
-          script: |
-            # Verify the CLI kernel still compiles (it's the desktop's dependency)
-            make build
+            go test ./cmd/sign ./cmd/cnbrelease ./internal/update
 
     # Pipeline 2: 自动发版（仅约定式提交触发）
     # CNB 直接构建 Windows 桌面端、签名、生成 latest.json，并上传 CNB Release 资产
@@ -202,7 +197,7 @@ main:
 
             ---
 
-            CNB 已构建并上传 Windows amd64 桌面端安装包。macOS 和 Linux 产物暂未发布，待确认对应 CNB 构建策略后再启用。"
+            CNB 已构建并上传 Windows amd64 桌面端安装包。macOS、Linux 和 CLI 产物不会由 CNB 构建或发布。"
 
             # 创建 desktop-v* tag，保持版本命名空间一致
             git config user.name "$GIT_COMMITTER_NAME"
@@ -220,7 +215,7 @@ main:
               --prerelease="$PRERELEASE"
 
   # ------------------------------------------------------------------
-  # 合并请求：桌面模块快速检查
+  # 合并请求：Windows 桌面发布链路快速检查
   # ------------------------------------------------------------------
   merge-request:
     - docker:
@@ -235,9 +230,10 @@ main:
             CGO_ENABLED=0 go vet ./...
             CGO_ENABLED=0 go build ./...
 
-        - name: kernel-build-check
+        - name: windows-release-tools-check
           script: |
-            make build
+            cd desktop
+            go test ./cmd/sign ./cmd/cnbrelease ./internal/update
 
   # ------------------------------------------------------------------
   # 定时同步上游 (每天 09:00 CST)

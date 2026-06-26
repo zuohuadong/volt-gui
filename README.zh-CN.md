@@ -140,6 +140,7 @@ name           = "deepseek"
 kind           = "openai"
 base_url       = "http://10.0.1.100:8001/v1"
 models         = ["deepseek-v4-flash", "deepseek-v4-pro"]
+priority       = 10   # 多个渠道暴露同名模型时，裸模型名优先走更高优先级
 api_key_env    = "DEEPSEEK_API_KEY"
 context_window = 1000000
 
@@ -160,6 +161,8 @@ model          = "claude-opus-4-8"
 api_key_env    = "ANTHROPIC_API_KEY"
 context_window = 1000000
 ```
+
+如果多个渠道都暴露同一个模型名，推荐在 UI 中选择完整的 `provider/model`，或给渠道设置不同的 `priority`。裸模型名只有在最高优先级唯一时才会自动解析；并列时会报错并提示改用完整引用，避免静默走错渠道。
 
 ### 打包部署（内置 Key）
 

@@ -104,7 +104,7 @@ delegation:
 - `gpt-5.3-codex` 是默认执行器和 explorer/critic/verifier sidecar。
 - `gpt-5.5` 只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`。
 - 并行 worker 只有在 `allowed_files` 明确互斥时才允许。
-- 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、`.mailbox/` 和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
+- 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、mailbox（v2 为 DB mailbox，legacy 为 `.mailbox/`）和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
 - `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
 - 子代理中断、超时或输出不完整时，先记录 `interruption_recovery`，再决定续跑、重派或阻塞；不要把半截输出当作完成证据。
 - 中/高风险任务进入 `review` / `done` 时，应在机器可读 task state 记录 subagent evidence 或 safe skip reason。
@@ -151,7 +151,7 @@ run_record:
 
 规则：
 
-- `progress.md` 面向人类协作；run record 面向 automation doctor、dashboard 和后续观测工具。
+- v2 项目的 coordination DB events 面向默认协作入口；legacy 项目的 `progress.md` 面向人类协作；run record 面向 automation doctor、dashboard 和后续观测工具。
 - 默认不接入 LangSmith/Langfuse；若未来接入，只引用 run record 的 ID、标签和证据路径，不上传 secrets 或完整 mailbox 历史。
 - 中/高风险、长程、多子代理或需恢复的任务建议开启 run record。
 
@@ -279,7 +279,7 @@ memory_profile:
 
 规则：
 
-- 默认 `target: sqlite-hybrid`，使用 `.agents/state/memory/memory.db` 可重建索引；`.agents/state/project-memory.json`、`tasks.md`、`progress.md` 和 `.mailbox/` 仍是事实源。
+- 默认 `target: sqlite-hybrid`，使用 `.agents/state/memory/memory.db` 可重建索引；coordination DB v2 项目以 `.agents/state/coordination.db` 为执行事实源，legacy 项目才以 `.agents/state/project-memory.json`、`tasks.md`、`progress.md` 和 `.mailbox/` 为源文件。
 - `local-file` 是旧 JSON-only fallback；`mem0` / OpenMemory / TencentDB 是外部 Agent Memory 方案的 opt-in adapter，不是默认 provider。
 - TencentDB/OpenClaw L0-L3 自动记忆管线不进入默认 core；只定期审查 upstream release，并手工移植适合 `MemoryProvider` 抽象的去重、召回评分、保留策略等能力。
 - 外部 provider 必须记录 secrets 策略、scope 边界和 token budget；不得硬编码 API key。

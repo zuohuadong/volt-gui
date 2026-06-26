@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VoltUI
+Comment=VoltUI desktop - a Wails shell around the Go kernel
+Exec=voltui-desktop
+Icon=voltui-desktop
+Categories=Development;Utility;
+Terminal=false
+StartupWMClass=voltui-desktop

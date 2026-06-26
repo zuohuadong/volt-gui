@@ -337,7 +337,7 @@ func startServer(t *testing.T, factory Factory) (*rpcClient, func()) {
 	outR, outW := io.Pipe()
 	done := make(chan struct{})
 	go func() {
-		_ = Serve(context.Background(), inR, outW, factory, AgentInfo{Name: "reasonix-test", Version: "0"})
+		_ = Serve(context.Background(), inR, outW, factory, AgentInfo{Name: "voltui-test", Version: "0"})
 		close(done)
 	}()
 	client := newRPCClient(inW, outR)
@@ -456,14 +456,14 @@ func TestServeLifecycle(t *testing.T) {
 	if ir.AgentCapabilities.PromptCapabilities.Image {
 		t.Errorf("image must not be advertised")
 	}
-	if len(ir.AuthMethods) != 1 || ir.AuthMethods[0].ID != "reasonix-setup" || ir.AuthMethods[0].Type != "terminal" {
-		t.Fatalf("authMethods = %+v, want terminal reasonix setup", ir.AuthMethods)
+	if len(ir.AuthMethods) != 1 || ir.AuthMethods[0].ID != "voltui-setup" || ir.AuthMethods[0].Type != "terminal" {
+		t.Fatalf("authMethods = %+v, want terminal voltui setup", ir.AuthMethods)
 	}
 	if len(ir.AuthMethods[0].Args) != 1 || ir.AuthMethods[0].Args[0] != "setup" {
 		t.Fatalf("auth args = %+v, want [setup]", ir.AuthMethods[0].Args)
 	}
 
-	authResp := client.call(t, "authenticate", AuthenticateParams{MethodID: "reasonix-setup"})
+	authResp := client.call(t, "authenticate", AuthenticateParams{MethodID: "voltui-setup"})
 	if authResp.Error != nil {
 		t.Fatalf("authenticate errored: %+v", authResp.Error)
 	}

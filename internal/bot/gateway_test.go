@@ -1,5 +1,3 @@
-//go:build bot
-
 package bot
 
 import (
@@ -231,17 +229,17 @@ func TestGatewaySessionOptionsUseChannelOverride(t *testing.T) {
 		},
 	}, nil, logger)
 
-	model, root := gw.sessionOptionsForPlatform(PlatformFeishu)
+	model, root, _ := gw.sessionOptionsForMessage(InboundMessage{Platform: PlatformFeishu})
 	if model != "feishu-model" || root != "/feishu" {
 		t.Fatalf("feishu options = %q,%q; want channel override", model, root)
 	}
 
-	model, root = gw.sessionOptionsForPlatform(PlatformWeixin)
+	model, root, _ = gw.sessionOptionsForMessage(InboundMessage{Platform: PlatformWeixin})
 	if model != "global-model" || root != "/weixin" {
 		t.Fatalf("weixin options = %q,%q; want global model and channel root", model, root)
 	}
 
-	model, root = gw.sessionOptionsForPlatform(PlatformQQ)
+	model, root, _ = gw.sessionOptionsForMessage(InboundMessage{Platform: PlatformQQ})
 	if model != "global-model" || root != "/global" {
 		t.Fatalf("qq options = %q,%q; want global defaults", model, root)
 	}

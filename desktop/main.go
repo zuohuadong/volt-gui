@@ -1,4 +1,4 @@
-// Command voltui-desktop is the Wails shell around the VoltUI kernel: a native
+// Command voltui-desktop is the Wails shell around the Reasonix kernel: a native
 // window hosting a webview frontend, with the Go-side control.Controller bound
 // directly to the UI (no HTTP hop — bindings in, runtime events out). It lives in
 // a nested module (voltui/desktop) so the CGO/WebKit desktop build never touches
@@ -8,6 +8,9 @@ package main
 
 import (
 	"embed"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -15,8 +18,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
-
-	"voltui/internal/config"
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/voltui does — boot.Build resolves providers/tools from these registries.
@@ -38,21 +39,57 @@ var assets embed.FS
 // prompts to update.
 var version = "dev"
 
-// channel is injected by release builds when they need to distinguish stable,
-// beta, or other distribution tracks in telemetry/crash reports.
-var channel = "dev"
+// channel selects which updater pointer this build polls, injected via
+// `-X main.channel=canary`. Default "stable" tracks the public release; "canary"
+// tracks the opt-in pre-release line and never crosses over to stable.
+var channel = "stable"
+
+// macSelfUpdate is injected as "true" only for Developer ID signed + notarized
+// macOS release builds. Local/ad-hoc macOS builds keep the manual download path.
+var macSelfUpdate = "false"
+
+const (
+	disableWebview2GPUEnv  = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
+	linuxDRIRenderNodeGlob = "/dev/dri/renderD*"
+)
+
+func macSelfUpdateAllowed() bool {
+	switch strings.ToLower(strings.TrimSpace(macSelfUpdate)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func windowsWebview2GPUDisabled() bool {
+	if raw, ok := os.LookupEnv(disableWebview2GPUEnv); ok {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off", "":
+			return false
+		}
+	}
+	return channel == "canary"
+}
+
+func linuxWebviewGpuPolicy(pattern string) linux.WebviewGpuPolicy {
+	matches, err := filepath.Glob(pattern)
+	if err == nil {
+		for _, path := range matches {
+			f, err := os.OpenFile(path, os.O_RDWR, 0)
+			if err == nil {
+				_ = f.Close()
+				return linux.WebviewGpuPolicyOnDemand
+			}
+		}
+	}
+	return linux.WebviewGpuPolicyNever
+}
 
 func main() {
 	app := NewApp()
-
-	// Resolve brand name for window title and platform identifiers.
-	// The full BrandInfo (including custom logos) is fetched by the frontend
-	// via the Brand() binding; only the name is needed here for the native
-	// window chrome.
-	brandName := "VoltUI"
-	if cfg, err := config.Load(); err == nil {
-		brandName = cfg.BrandName()
-	}
 
 	// Restore saved window size, or fall back to the default.
 	width, height := 1240, 720
@@ -66,7 +103,7 @@ func main() {
 	}
 
 	err := wails.Run(&options.App{
-		Title:     brandName,
+		Title:     "Reasonix",
 		Width:     width,
 		Height:    height,
 		MinWidth:  760,
@@ -74,7 +111,7 @@ func main() {
 		// Match the dark UI shell so the initial webview background doesn't flash
 		// white before CSS loads — particularly visible on WebKitGTK.
 		BackgroundColour:   &options.RGBA{R: 26, G: 26, B: 46, A: 255},
-		AssetServer:        &assetserver.Options{Assets: assets},
+		AssetServer:        &assetserver.Options{Assets: assets, Middleware: app.workspaceMediaMiddleware()},
 		OnStartup:          app.startup,
 		OnDomReady:         app.domReady,
 		OnBeforeClose:      app.beforeClose,
@@ -106,16 +143,18 @@ func main() {
 		Windows: &windows.Options{
 			// Follow the OS theme so the title bar matches light/dark system
 			// preference instead of being locked to dark.
-			Theme: windows.SystemDefault,
+			Theme:                windows.SystemDefault,
+			WebviewGpuIsDisabled: windowsWebview2GPUDisabled(),
 		},
 		Linux: &linux.Options{
-			ProgramName: brandName,
+			ProgramName: "Reasonix",
 			// WebKitGTK GPU compositing is inconsistent across distros/drivers and
 			// is the one real cross-platform rough edge for a Go+webview stack:
 			// "always" can yield blank or flickering webviews on some setups, so
-			// we let the webview decide on demand. Users still hitting artifacts
-			// can fall back to WEBKIT_DISABLE_COMPOSITING_MODE=1 (see README).
-			WebviewGpuPolicy: linux.WebviewGpuPolicyOnDemand,
+			// we let the webview decide on demand when a render node is usable, and
+			// disable acceleration when remote/software-rendered sessions cannot
+			// access /dev/dri.
+			WebviewGpuPolicy: linuxWebviewGpuPolicy(linuxDRIRenderNodeGlob),
 		},
 	})
 	if err != nil {

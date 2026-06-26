@@ -13,20 +13,20 @@ Use Goal Forge when the deliverable is a design artifact, architecture/API/data 
 Create a local review run:
 
 ```bash
-npx -y @goalforge/cli@latest init --goal "<design goal>" --config "/Volumes/Data/workspace/volt-gui-sync/.agents/goal-forge/goal-forge.config.json" --out "/Volumes/Data/workspace/volt-gui-sync/.agents/goal-forge/runs/<run-id>"
+npx -y @goalforge/cli@latest init --goal "<design goal>" --config "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/goal-forge.config.json" --out "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>"
 ```
 
 Run a deterministic local round:
 
 ```bash
-npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui-sync/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter local
-npx -y @goalforge/cli@latest validate "/Volumes/Data/workspace/volt-gui-sync/.agents/goal-forge/runs/<run-id>" --strict
+npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter local
+npx -y @goalforge/cli@latest validate "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --strict
 ```
 
 Run repository-aware verification through the Codex adapter:
 
 ```bash
-npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui-sync/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter codex --repo "/Volumes/Data/workspace/volt-gui-sync" --model gpt-5.3-codex
+npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter codex --repo "/Volumes/Data/workspace/volt-gui" --model gpt-5.3-codex
 ```
 
 Shortcuts from this project:
@@ -38,7 +38,8 @@ agent-team goal-forge init . "<design goal>"
 
 ## Coordination Rules
 
-- Keep `tasks.md`, `progress.md`, and `.mailbox/` as the agent-team execution source.
+- In coordination DB v2 projects, keep `.agents/state/coordination.db` as the execution source and use `agent-team context` / `automation status` / `automation doctor` for bounded reads.
+- In legacy projects only, `tasks.md`, `progress.md`, and `.mailbox/` remain the fallback coordination files until migration.
 - Keep Goal Forge runs under `.agents/goal-forge/runs/` as review evidence for design artifacts.
 - Record the final Goal Forge run path in the Task Contract under `goal_forge.run_dir`.
 - Do not place secrets in Goal Forge config or ledgers.

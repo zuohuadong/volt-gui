@@ -771,6 +771,42 @@ api_key_env = "REASONIX_TEST_KEY"
 	}
 }
 
+func TestBuildTabControllerFallsBackFromStaleTabModelToDefaultModel(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "default-provider/default-model"
+
+[[providers]]
+name = "default-provider"
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+model = "default-model"
+api_key_env = "MISSING_DESKTOP_MODEL_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	app := NewApp()
+	tab := app.createTabEntryWithID("global", globalTabWorkspaceRoot(), "", "tab_stale_model")
+	tab.model = "missing-provider/missing-model"
+	tab.sink = &tabEventSink{tabID: tab.ID, app: app}
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	app.buildTabController(tab)
+	if tab.Ctrl == nil {
+		t.Fatalf("tab controller was not built: %s", tab.StartupErr)
+	}
+	defer tab.Ctrl.Close()
+	if tab.model != "default-provider/default-model" {
+		t.Fatalf("tab model = %q, want default-provider/default-model", tab.model)
+	}
+}
+
 func TestLoadPinnedTabSessionFallsBackToMigratedBasename(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -1747,6 +1783,58 @@ func TestTrashTopicCancelsRunningSessionRuntime(t *testing.T) {
 	}
 }
 
+func TestTrashTopicFallbackCreatesIndexedTopic(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_only"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Only topic"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := writeTopicSession(t, dir, "only-topic.jsonl", topicID, "Only topic", projectRoot)
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: sessionPath, Label: "test", WorkspaceRoot: projectRoot})
+	defer ctrl.Close()
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"only": {
+				ID:            "only",
+				Scope:         "project",
+				WorkspaceRoot: projectRoot,
+				TopicID:       topicID,
+				TopicTitle:    "Only topic",
+				Ctrl:          ctrl,
+				Ready:         true,
+				disabledMCP:   map[string]ServerView{},
+			},
+		},
+		tabOrder:    []string{"only"},
+		activeTabID: "only",
+	}
+
+	if err := app.TrashTopic(topicID); err != nil {
+		t.Fatalf("TrashTopic: %v", err)
+	}
+	if len(app.tabs) != 1 {
+		t.Fatalf("fallback should create exactly one visible tab, got %d", len(app.tabs))
+	}
+	for id, tab := range app.tabs {
+		if strings.TrimSpace(tab.TopicID) == "" {
+			t.Fatalf("fallback tab %q has empty topic ID", id)
+		}
+		f := loadProjectsFile()
+		if len(f.Projects) != 1 || !containsDesktopString(f.Projects[0].Topics, tab.TopicID) {
+			t.Fatalf("fallback topic %q was not indexed in project topics %#v", tab.TopicID, f.Projects)
+		}
+	}
+}
+
 func TestTrashTopicTrashConflictKeepsRunningRuntime(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -1789,21 +1877,81 @@ func TestTrashTopicTrashConflictKeepsRunningRuntime(t *testing.T) {
 	ctrl.Submit("long turn")
 	<-runner.started
 	err := app.TrashTopic(topicID)
-	if err == nil || !strings.Contains(err.Error(), "already exists in trash") {
-		t.Fatalf("TrashTopic conflict error = %v, want trash conflict", err)
+	if err != nil {
+		t.Fatalf("TrashTopic should succeed after cleaning empty trash dir: %v", err)
 	}
-	if _, ok := app.tabs["running"]; !ok {
-		t.Fatalf("running runtime should remain bound after preflight failure")
-	}
-	if !ctrl.Running() {
-		t.Fatalf("running turn should not be cancelled on preflight failure")
-	}
-	if _, err := os.Stat(sessionPath); err != nil {
-		t.Fatalf("session file should remain after preflight failure: %v", err)
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("session file should be moved to trash, stat err = %v", err)
 	}
 
 	close(runner.release)
 	waitNotRunning(t, ctrl)
+}
+
+func TestTrashTopicValidTrashRemovesEmptyLiveStub(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_valid_trash"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Valid trash"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	sessionPath := filepath.Join(dir, "valid-trash.jsonl")
+	if err := os.WriteFile(sessionPath, nil, 0o644); err != nil {
+		t.Fatalf("write live stub: %v", err)
+	}
+	if err := agent.SaveBranchMeta(sessionPath, agent.BranchMeta{
+		CreatedAt:     time.Now().Add(-time.Minute),
+		UpdatedAt:     time.Now(),
+		Scope:         "project",
+		WorkspaceRoot: projectRoot,
+		TopicID:       topicID,
+		TopicTitle:    "Valid trash",
+	}); err != nil {
+		t.Fatalf("save branch meta: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(sessionPath), filepath.Base(sessionPath))
+	if err := os.MkdirAll(filepath.Dir(trashPath), 0o755); err != nil {
+		t.Fatalf("create trash dir: %v", err)
+	}
+	if err := os.WriteFile(trashPath, []byte(`{"role":"user","content":"already trashed"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write trash session: %v", err)
+	}
+
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"stale": {
+				ID:            "stale",
+				Scope:         "project",
+				WorkspaceRoot: projectRoot,
+				TopicID:       topicID,
+				TopicTitle:    "Valid trash",
+				SessionPath:   sessionPath,
+				Ready:         true,
+				disabledMCP:   map[string]ServerView{},
+			},
+			"other": {ID: "other", Scope: "project", WorkspaceRoot: projectRoot, TopicID: "other", Ready: true},
+		},
+		tabOrder:    []string{"stale", "other"},
+		activeTabID: "other",
+	}
+
+	if err := app.TrashTopic(topicID); err != nil {
+		t.Fatalf("TrashTopic should remove stale live stub: %v", err)
+	}
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("live stub should be removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("existing trash should remain authoritative: %v", err)
+	}
 }
 
 func hasHistoryContent(messages []HistoryMessage, content string) bool {
@@ -2063,6 +2211,40 @@ func TestOpenProjectTabSkipsCleanupPendingTopicSession(t *testing.T) {
 		if msg.Content == "pending topic prompt" {
 			t.Fatalf("opened cleanup-pending topic history at path %q: %+v", tab.Ctrl.SessionPath(), tab.Ctrl.History())
 		}
+	}
+}
+
+func TestNewConversationThreadCreatesIndependentProjectSessions(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	app := NewApp()
+	first, err := app.NewConversationThread("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("first NewConversationThread: %v", err)
+	}
+	firstTab := waitForTabReady(t, app, first.ID)
+
+	second, err := app.NewConversationThread("project", projectRoot, "")
+	if err != nil {
+		t.Fatalf("second NewConversationThread: %v", err)
+	}
+	secondTab := waitForTabReady(t, app, second.ID)
+
+	if first.TopicID == "" || second.TopicID == "" {
+		t.Fatalf("topic ids should be populated: first=%+v second=%+v", first, second)
+	}
+	if first.TopicID == second.TopicID {
+		t.Fatalf("new conversations reused topic %q", first.TopicID)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("new conversations reused tab %q", first.ID)
+	}
+	if firstTab.Ctrl == nil || secondTab.Ctrl == nil {
+		t.Fatalf("controllers should be built: first=%+v second=%+v", firstTab.Ctrl, secondTab.Ctrl)
+	}
+	if got, wantNot := filepath.Clean(firstTab.Ctrl.SessionPath()), filepath.Clean(secondTab.Ctrl.SessionPath()); got == wantNot {
+		t.Fatalf("new conversations reused session path %q", got)
 	}
 }
 

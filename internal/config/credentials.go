@@ -18,8 +18,8 @@ const (
 	CredentialsStoreKeyring = "keyring"
 	CredentialsStoreFile    = "file"
 
-	credentialsKeyringService = "reasonix"
-	credentialClearedPrefix   = "# reasonix-cleared "
+	credentialsKeyringService = "voltui"
+	credentialClearedPrefix   = "# voltui-cleared "
 )
 
 const (

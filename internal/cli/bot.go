@@ -174,7 +174,7 @@ func botStart(args []string, version string) int {
 		gw.Stop()
 	}()
 
-	fmt.Fprintf(os.Stderr, "reasonix bot starting (model: %s, channels: %s)...\n", modelName, *channels)
+	fmt.Fprintf(os.Stderr, "voltui bot starting (model: %s, channels: %s)...\n", modelName, *channels)
 	fmt.Fprintf(os.Stderr, "version: %s\n", version)
 
 	if err := gw.Start(ctx); err != nil {
@@ -304,7 +304,7 @@ func botDoctor(args []string) int {
 		} else if weixin.HasSavedAccount(bc.Weixin.AccountID) {
 			addCheck("bot.weixin.token", "ok", "saved iLink account is available")
 		} else {
-			addCheck("bot.weixin.token", "missing", bc.Weixin.TokenEnv+" is not set; run `reasonix bot weixin-login` to save an iLink account")
+			addCheck("bot.weixin.token", "missing", bc.Weixin.TokenEnv+" is not set; run `voltui bot weixin-login` to save an iLink account")
 		}
 	} else {
 		addCheck("bot.weixin", "disabled", "")
@@ -386,12 +386,12 @@ func botWeixinLogin(args []string) int {
 }
 
 func botUsage() {
-	fmt.Print(`reasonix bot — multi-channel IM bot gateway (QQ / Feishu / WeChat)
+	fmt.Print(`voltui bot — multi-channel IM bot gateway (QQ / Feishu / WeChat)
 
 Usage:
-  reasonix bot start   [--channels qq,feishu,weixin] [--dir PATH] [--model NAME]
-  reasonix bot doctor  [--json]
-  reasonix bot weixin-login [--timeout SECONDS]
+  voltui bot start   [--channels qq,feishu,weixin] [--dir PATH] [--model NAME]
+  voltui bot doctor  [--json]
+  voltui bot weixin-login [--timeout SECONDS]
 
 Subcommands:
   start         启动 bot 网关
@@ -399,12 +399,12 @@ Subcommands:
   weixin-login  微信 iLink 二维码登录
 
 Examples:
-  reasonix bot start --channels qq,feishu
-  reasonix bot start --dir /path/to/project --model deepseek-pro
-  reasonix bot doctor --json
+  voltui bot start --channels qq,feishu
+  voltui bot start --dir /path/to/project --model deepseek-pro
+  voltui bot doctor --json
 
 Configuration:
-  Edit reasonix.toml:
+  Edit voltui.toml:
     [bot]           enabled / model / max_steps
     [bot.allowlist]  enabled / qq_users / feishu_users / weixin_users
     [bot.qq]         enabled / app_id / app_secret_env

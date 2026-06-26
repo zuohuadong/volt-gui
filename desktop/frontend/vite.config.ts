@@ -16,6 +16,13 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     target: "es2021",
+    cssMinify: "esbuild",
+    chunkSizeWarningLimit: 650,
+    rolldownOptions: {
+      checks: {
+        pluginTimings: false,
+      },
+    },
   },
   server: {
     host: "127.0.0.1",

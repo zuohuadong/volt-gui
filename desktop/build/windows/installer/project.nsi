@@ -19,6 +19,8 @@ Unicode true
 ##      they had moved the install to a different drive (e.g. D:\Tools\VoltUI);
 ##      the silent auto-updater would re-run with /S into the wrong dir, leaving
 ##      the old install orphaned.
+##   4. Running app processes are closed before install/uninstall so an overwrite
+##      install can replace the old executable instead of failing on a locked file.
 ##
 ## Everything else mirrors Wails' generated default. Defines below override the
 ## ProjectInfo values that wails_tools.nsh would otherwise populate.
@@ -108,6 +110,20 @@ ShowInstDetails show # This will always show the installation details.
     DeleteRegKey HKCU "${UNINST_KEY}"
 !macroend
 
+!macro voltui.closeRunningApp
+    DetailPrint "Closing running ${INFO_PRODUCTNAME} instances..."
+    ; First request a normal close. This gives the Wails process a chance to run
+    ; its shutdown path before the installer has to replace locked files.
+    nsExec::ExecToLog 'taskkill /IM "${PRODUCT_EXECUTABLE}" /T'
+    Pop $0
+    StrCmp $0 "0" 0 +4
+    Sleep 5000
+    ; If an older version is still holding the executable, force it down so
+    ; manual overwrite installs do not fail with "file in use".
+    nsExec::ExecToLog 'taskkill /F /IM "${PRODUCT_EXECUTABLE}" /T'
+    Pop $0
+!macroend
+
 Function .onInit
    !insertmacro wails.checkArchitecture
 
@@ -121,6 +137,7 @@ FunctionEnd
 
 Section
     !insertmacro wails.setShellContext
+    !insertmacro voltui.closeRunningApp
 
     !insertmacro wails.webview2runtime
 
@@ -128,8 +145,8 @@ Section
 
     !insertmacro wails.files
 
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
+    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
@@ -139,6 +156,7 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+    !insertmacro voltui.closeRunningApp
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 

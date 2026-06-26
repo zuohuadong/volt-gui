@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"voltui/internal/config"
 	"voltui/internal/event"
@@ -23,9 +24,10 @@ import (
 // or base URLs; custom provider/model identifiers are normalized into bounded
 // buckets. Gated on config desktop.metrics (default on), dev-skipped.
 
-var metricsEndpoint = "https://crash.reasonix.io/v1/metrics"
+var metricsEndpoint = "https://crash.voltui.io/v1/metrics"
 
 const metricsPendingFile = "metrics-pending.json"
+const metricsPostTimeout = 8 * time.Second
 
 var statusCodePattern = regexp.MustCompile(`status (\d{3})`)
 
@@ -468,6 +470,7 @@ func (a *App) postMetrics(p metricsPayload) bool {
 	if err != nil {
 		return false
 	}
+	c.Timeout = metricsPostTimeout
 	req, err := http.NewRequestWithContext(a.bootContext(), http.MethodPost, metricsEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return false

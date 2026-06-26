@@ -7,6 +7,7 @@ description: 聚合 token 用量报告，基于 ccusage 输出
 - **禁止**读取原始 API 日志文件
 - **必须**使用 `ccusage` 工具/命令获取聚合统计数据
 - 若 ccusage 不可用，报告缺失并停止，不要回退到原始日志
+- 压缩/召回方案变更进入默认路径前，先运行 `agent-team automation promotion-gate .`；`/token-report` 只提供用量趋势，不替代 memory benchmark 的命中率和 token 缩减门禁
 
 ## 步骤
 

@@ -1,0 +1,50 @@
+name: Release Please Desktop
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: release-please-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PAT || github.token }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  trigger-desktop-build:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true' && needs.release-please.outputs.tag_name != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger desktop release build
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const tag = '${{ needs.release-please.outputs.tag_name }}';
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release-desktop.yml',
+              ref: tag,
+              inputs: { tag },
+            });
+            console.log(`Triggered desktop release build for ${tag}`);

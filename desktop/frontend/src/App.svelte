@@ -32,7 +32,6 @@
     Loader2,
     Mail,
     MapPin,
-    MessageSquare,
     PanelLeft,
     Pencil,
     Phone,
@@ -55,22 +54,32 @@
   import Composer from "./components/Composer.svelte";
   import Transcript from "./components/Transcript.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
+  import brandLogo from "./assets/logo-symbol.svg";
   import { app, onAgentEvent } from "./lib/bridge";
   import { t } from "./lib/i18n";
   import type {
     ActivityMode,
+    AgentInput,
+    AgentView,
+    BrandView,
+    CapabilitiesView,
     CheckpointMeta,
     CommandInfo,
     ContextPanelInfo,
     FilePreview,
     HistoryMessage,
     ModelInfo,
+    ProviderView,
     QuestionAnswer,
+    SettingsView,
     TabMeta,
     TranscriptItem,
     WireApproval,
     WireAsk,
     WireEvent,
+    WorkbenchPluginInput,
+    WorkbenchPlugin,
+    SkillPackageInput,
     WorkspaceDiffView,
     WorkspaceChangesView,
   } from "./lib/types";
@@ -79,18 +88,52 @@
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
-  type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "mockHearing" | "reports" | "regulations" | "library" | "resources" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
+  const defaultBrand: BrandView = { name: "西谷智灯暗涌系统", shortName: "暗涌" };
+  type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
   type CapabilityTab = "plugin" | "mcp" | "skill";
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
-  type AgentCard = { id: string; name: string; role: string; runs: number; status: string; desc: string };
-  type AgentMarketItem = AgentCard & { category: string; source: string; version: string; tags: string[]; localPath: string };
-  type SidebarConversation = { id: string; title: string; updatedAt: string; archivedAtMs?: number };
+  type AgentMarketItem = Pick<AgentView, "id" | "name" | "role" | "runs" | "status" | "desc"> & { category: string; source: string; version: string; tags: string[]; localPath: string };
+  type SidebarConversation = { id: string; title: string; updatedAt: string; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
   type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
+  type SidebarStateSnapshot = { version: 1; projects: SidebarProject[]; activeProjectId: string; activeConversationId: string; sort: SidebarProjectSort; dockCollapsed: boolean };
   type SidebarProjectSort = "recent" | "name" | "conversations";
-  type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "hearing" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
+  type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
+  type SettingPanel = "general" | "runtime" | "models";
+  type ModelCard = { name: string; provider: string; role: string; status: string; ref?: string };
+  type SettingGroup = { id: SettingPanel; title: string; desc: string; status: string };
+  type SettingsDraft = {
+    language: string;
+    theme: string;
+    themeStyle: string;
+    closeBehavior: string;
+    permissionMode: string;
+    sandboxBash: string;
+    sandboxNetwork: boolean;
+    sandboxWorkspaceRoot: string;
+    sandboxAllowWrite: string;
+    sandboxShell: string;
+  };
+  type ModelProviderDraft = {
+    name: string;
+    kind: string;
+    baseUrl: string;
+    modelsText: string;
+    defaultModel: string;
+    apiKeyEnv: string;
+    apiKeyValue: string;
+    modelsUrl: string;
+    priority: string;
+    fetchedModels: string[];
+    selectedFetchedModels: string[];
+    contextWindow: string;
+    reasoningProtocol: string;
+    supportedEffortsText: string;
+    defaultEffort: string;
+    visionModelsText: string;
+  };
 
   function welcomeTranscript(): TranscriptItem[] {
     return [
@@ -128,14 +171,35 @@
   let capabilityTab = $state<CapabilityTab>("plugin");
   let capabilitySearch = $state("");
   let selectedCapabilityId = $state("git-panel");
+  let brand = $state<BrandView>(defaultBrand);
   let capabilityDetailOpen = $state(false);
   let capabilityCreateOpen = $state(false);
+  let capabilityCreateName = $state("新建插件");
+  let capabilityCreateGroup = $state("插件");
+  let capabilityCreateVersion = $state("v0.1");
+  let capabilityCreateScope = $state("desktop/frontend");
+  let capabilityCreateEntry = $state("plugin.json");
+  let capabilityCreateStatus = $state("启用");
+  let capabilityCreateDescription = $state("");
   let resourceTab = $state<ResourceTab>("resources");
   let resourceSearch = $state("");
   let collapsedWorkspaceSections = $state<string[]>([]);
   let userMenuOpen = $state(false);
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
+  let modelSettings = $state<SettingsView | undefined>();
+  let modelSettingsLoading = $state(false);
+  let modelSettingsError = $state("");
+  let settingsPanel = $state<SettingPanel>("general");
+  let settingsDraft = $state<SettingsDraft>(emptySettingsDraft());
+  let settingsSaving = $state(false);
+  let settingsMessage = $state("");
+  let modelDraft = $state<ModelProviderDraft>(emptyModelProviderDraft());
+  let modelDraftEditing = $state(false);
+  let modelDraftSaving = $state(false);
+  let modelDraftFetching = $state(false);
+  let modelDraftMessage = $state("");
+  let modelDraftError = $state("");
   let teamViewMode = $state<"teams" | "office" | "chat">("teams");
   let teamConfigTitle = $state<string | undefined>();
   let teamBuilderName = $state("");
@@ -152,6 +216,10 @@
   let agentMarketSearch = $state("");
   let downloadedMarketAgentIds = $state<string[]>([]);
   let agentWizardTab = $state("identity");
+  let agentWizardMode = $state<"create" | "edit">("edit");
+  let agentWizardDraftName = $state("");
+  let agentWizardDraftDescription = $state("");
+  let agentWizardVibe = $state("");
   let selectedAgentId = $state("code-review");
   let selectedCoreFile = $state("SYSTEM.md");
   let configDialog = $state<ConfigDialog | undefined>();
@@ -164,7 +232,6 @@
   let projectStatusFilter = $state<"all" | "active" | "closed">("all");
   let projectDetailOpen = $state(false);
   let customerDetailOpen = $state(false);
-  let selectedHearingTitle = $state<string | undefined>();
   let selectedTeamTitle = $state<string | undefined>();
   let distillStep = $state(1);
   let agentProvider = $state("OpenAI");
@@ -172,12 +239,19 @@
   let agentAvatar = $state("C");
   let nowMs = $state(Date.now());
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
+  let newTaskConversationActive = $state(false);
   let restoreDraftOnTurnDone = false;
+  let draftConversationThread: TabMeta | undefined;
+  let draftConversationThreadRequest: Promise<TabMeta | undefined> | undefined;
+  let draftConversationToken = 0;
+  let conversationScrollEl = $state<HTMLDivElement | null>(null);
+  let conversationScrollFrame: number | undefined;
+  let sidebarStateHydrated = false;
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
-  const showActiveTranscript = $derived(showTranscript && !(workLayer === "newTask" && !sending && !pendingApproval && !pendingAsk));
+  const showActiveTranscript = $derived((activityMode === "code" || (workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || activityMode === "code" || newTaskConversationActive));
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
@@ -199,10 +273,7 @@
     search: Search,
     sync: RefreshCw,
     ingest: Upload,
-    mockHearing: MessageSquare,
     reports: FileText,
-    regulations: BookMarked,
-    library: Archive,
   } as const;
   const agentIcons = {
     "code-review": ShieldCheck,
@@ -226,6 +297,7 @@
   function navIcon(layer: WorkLayer) { return navIcons[layer] ?? Puzzle; }
   function agentIcon(agentId: string) { return agentIcons[agentId as keyof typeof agentIcons] ?? Bot; }
   function avatarIcon(avatar: string) { return avatarIcons[avatar as keyof typeof avatarIcons] ?? UserRound; }
+  function modelValue(model?: ModelInfo) { return model?.name || model?.model || model?.ref || model?.label || ""; }
 
   const workspaceNav = [
     { title: "Agent Work", items: [{ label: "新建对话", layer: "newTask", icon: "newTask" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
@@ -246,14 +318,15 @@
     { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", kind: "浏览器验证", owner: "Browser 插件", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", schedule: "预览刷新后", scope: "Vite dev server / 浏览器 DOM", environment: "in-app browser", command: "HTTP 200 / DOM snapshot / console warnings", result: "通过", lastRun: "5 分钟前", nextRun: "下一次页面改动", steps: ["刷新本地预览", "检查关键 DOM", "读取 warn/error 日志"], logs: ["页面可访问", "关键节点存在", "控制台无错误"] },
   ];
   const primaryAutomation = runningAutomations[0];
-  let agentCards = $state<AgentCard[]>([
-    { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。" },
-    { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。" },
-    { id: "automation", name: "自动化 Agent", role: "已蒸馏", runs: 37, status: "已停用", desc: "把重复工作转为可配置的计划任务和监控。" },
-  ]);
+  const defaultAgentCards: AgentView[] = [
+    { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", avatar: "C", provider: "OpenAI", model: "GPT-4o", tools: ["workspace", "git", "terminal"], skills: ["code-review"], coreFiles: ["AGENTS.md"], builtIn: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。", avatar: "R", provider: "OpenAI", model: "GPT-4o", tools: ["web", "workspace"], skills: ["research"], coreFiles: ["references"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: "automation", name: "自动化 Agent", role: "已蒸馏", runs: 37, status: "已停用", desc: "把重复工作转为可配置的计划任务和监控。", avatar: "A", provider: "OpenAI", model: "GPT-4o", tools: ["terminal", "scheduler"], skills: ["workflow"], coreFiles: ["automations"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  ];
+  let agentCards = $state<AgentView[]>(defaultAgentCards);
   const agentMarketItems: AgentMarketItem[] = [
     { id: "requirement-planner", name: "需求拆解 Agent", role: "市场", runs: 0, status: "未下载", category: "产品规划", source: "Agent Market", version: "v1.2", desc: "把模糊需求整理成目标、非目标、验收标准和执行步骤，适合新项目启动。", tags: ["需求", "规划", "验收"], localPath: ".volt/agents/requirement-planner.agent.json" },
-    { id: "contract-review", name: "合同审阅 Agent", role: "市场", runs: 0, status: "未下载", category: "文档审查", source: "Agent Market", version: "v1.0", desc: "检查合同、协议和交付条款中的风险点，输出修改建议和待确认清单。", tags: ["合同", "风险", "审阅"], localPath: ".volt/agents/contract-review.agent.json" },
+    { id: "delivery-review", name: "交付审查 Agent", role: "市场", runs: 0, status: "未下载", category: "文档审查", source: "Agent Market", version: "v1.0", desc: "检查需求、协议和交付条款中的风险点，输出修改建议和待确认清单。", tags: ["交付", "风险", "审查"], localPath: ".volt/agents/delivery-review.agent.json" },
     { id: "customer-followup", name: "客户跟进 Agent", role: "市场", runs: 0, status: "未下载", category: "客户运营", source: "Agent Market", version: "v1.1", desc: "根据客户状态生成跟进话术、待办和复盘摘要，适合客户管理工作流。", tags: ["客户", "跟进", "运营"], localPath: ".volt/agents/customer-followup.agent.json" },
     { id: "data-analyst", name: "数据分析 Agent", role: "市场", runs: 0, status: "未下载", category: "数据分析", source: "Agent Market", version: "v0.9", desc: "读取表格、日志和指标数据，生成可执行洞察、异常解释和下一步实验。", tags: ["数据", "指标", "分析"], localPath: ".volt/agents/data-analyst.agent.json" },
     { id: "qa-verifier", name: "测试验证 Agent", role: "市场", runs: 0, status: "未下载", category: "质量验证", source: "Agent Market", version: "v1.3", desc: "把检查命令、浏览器验证和失败处理整理成复用门禁，适合提交前验证。", tags: ["测试", "构建", "门禁"], localPath: ".volt/agents/qa-verifier.agent.json" },
@@ -270,9 +343,9 @@
     { id: "homepage", name: "品牌主页恢复与部署", code: "PRJ-2026-0601", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed", progress: 100, priority: "低", risk: "已关闭", updatedAt: "昨天", nextStep: "仅保留归档和复盘记录", agent: "自动化 Agent", materials: 5, todos: 0, events: 1, reports: 3, timeline: ["历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"] },
   ];
   let sidebarProjects = $state<SidebarProject[]>([
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", localPath: "E:\\workspace\\volt-gui", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚" }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天" }] },
-    { id: "lurefree", name: "Lurefree 小程序发布", localPath: "E:\\workspace\\lurefree", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天" }] },
-    { id: "homepage", name: "品牌主页恢复与部署", localPath: "C:\\Users\\1\\Documents\\HOMEPAGE", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天" }] },
+    { id: "volt-gui", name: "Volt GUI 桌面端重构", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚" }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天" }] },
+    { id: "lurefree", name: "Lurefree 小程序发布", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天" }] },
+    { id: "homepage", name: "品牌主页恢复与部署", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天" }] },
   ]);
   let activeSidebarProjectId = $state("volt-gui");
   let activeSidebarConversationId = $state("volt-gui-review");
@@ -369,18 +442,41 @@
     const matchSearch = !keyword || [customer.name, customer.type, customer.contact, customer.phone, customer.email, customer.risk, customer.industry, customer.status, String(customer.matters)].some((value) => value.toLowerCase().includes(keyword));
     return matchSearch;
   }));
-  const newTaskProjectOptions = $derived(projectCards.map((project) => ({ id: project.id, label: project.name })));
+  const newTaskProjectOptions = $derived([...sidebarProjects]
+    .sort((a, b) => {
+      if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
+      if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
+      return b.updatedAtMs - a.updatedAtMs;
+    })
+    .map((project) => ({ id: project.id, label: project.name })));
   const sortedSidebarProjects = $derived([...sidebarProjects].sort((a, b) => {
     if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
     if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
     return b.updatedAtMs - a.updatedAtMs;
   }));
   const archivedSidebarConversationCount = $derived(sidebarProjects.reduce((sum, project) => sum + archivedSidebarProjectConversations(project).length, 0));
-  const capabilityBuckets = {
+  const activeSidebarConversationTitle = $derived(
+    sidebarProjects
+      .flatMap((project) => project.conversations)
+      .find((conversation) => conversation.id === activeSidebarConversationId)?.title,
+  );
+  const conversationHeaderTitle = $derived(
+    activityMode === "work" && workLayer === "newTask"
+      ? activeSidebarConversationTitle || activeTab?.topicTitle || t.activity.untitled
+      : activeTab?.topicTitle || t.activity.untitled,
+  );
+  const conversationHeaderScope = $derived(
+    activityMode === "work" && workLayer === "newTask"
+      ? linkedProject || activeTab?.workspaceName || t.common.global
+      : activeTab?.workspaceName || t.common.global,
+  );
+  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean };
+  type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
+  const defaultCapabilityBuckets: CapabilityBuckets = {
     plugin: [
       { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建对话", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
       { id: "browser-preview", name: "浏览器预览", desc: "打开本地页面、检查 DOM 状态和控制台错误。", status: "已启用", version: "v1.2", source: "Browser 插件", scope: "本地预览", sync: "5 分钟前", path: "127.0.0.1", permission: "本地页面读取 / 点击验证", enabled: true },
-      { id: "resource-ingest", name: "资料导入助手", desc: "把文档、法规、客户资料导入资料中心并建立索引。", status: "待配置", version: "v0.8", source: "工作台插件", scope: "资料中心", sync: "待授权", path: "resources/import", permission: "上传文件 / 建立索引", enabled: false },
+      { id: "resource-ingest", name: "资料导入助手", desc: "把文档、规范、客户资料导入资料中心并建立索引。", status: "待配置", version: "v0.8", source: "工作台插件", scope: "资料中心", sync: "待授权", path: "resources/import", permission: "上传文件 / 建立索引", enabled: false },
     ],
     mcp: [
       { id: "filesystem-mcp", name: "文件系统 MCP", desc: "读取项目文档、源码片段和本地结构化资源。", status: "已连接", version: "v2.1", source: "本地 MCP", scope: "workspace", sync: "在线", path: "E:/workspace/volt-gui", permission: "只读项目文件 / 精确补丁", enabled: true },
@@ -393,7 +489,7 @@
       { id: "agent-team-automation", name: "agent-team-automation", desc: "把可复用任务契约、执行日志和回调流程打包为团队技能。", status: "待安装", version: "v0.7", source: "Agent Team", scope: "团队协作", sync: "待导入", path: "skills/agent-team", permission: "任务契约 / 进度日志", enabled: false },
     ],
   };
-  type CapabilityItem = typeof capabilityBuckets.plugin[number];
+  let capabilityBuckets = $state<CapabilityBuckets>(defaultCapabilityBuckets);
   const capabilityInstallSteps = [
     { id: "install_files", label: "安装文件", desc: "写入插件包、版本元数据和本地资源清单。" },
     { id: "install_dependencies", label: "安装依赖", desc: "检查 CLI、Skill 文件和运行时依赖是否可用。" },
@@ -414,26 +510,25 @@
   };
   const modelProviders = ["OpenAI", "Claude", "Gemini", "Qwen", "Moonshot", "Zhipu"];
   const modelOptions: Record<string, string[]> = { OpenAI: ["GPT-4o", "GPT-4o-mini", "o3-mini"], Claude: ["Claude Sonnet 4.6", "Claude Opus 4"], Gemini: ["Gemini 2.5 Pro", "Gemini 2.5 Flash"], Qwen: ["Qwen-Max", "Qwen-Plus"], Moonshot: ["Moonshot v1"], Zhipu: ["GLM-4"] };
-  const toolCards = [
-    { id: "files", title: "本地文件与资料", desc: "读取仓库、附件和项目知识库", active: true },
-    { id: "terminal", title: "终端执行", desc: "运行构建、测试和安全命令", active: true },
-    { id: "browser", title: "浏览器预览", desc: "打开本地页面并检查加载状态", active: true },
-    { id: "memory", title: "长期记忆", desc: "复用项目约定和历史决策", active: false },
+  type AgentToolCard = { id: string; title: string; desc: string; active: boolean; available: boolean; reason?: string };
+  const defaultToolCards: AgentToolCard[] = [
+    { id: "files", title: "本地文件与资料", desc: "读取仓库、附件和项目知识库", active: true, available: true },
+    { id: "terminal", title: "终端执行", desc: "运行构建、测试和安全命令", active: true, available: true },
+    { id: "browser", title: "浏览器预览", desc: "打开本地页面并检查加载状态", active: true, available: true },
+    { id: "memory", title: "长期记忆", desc: "复用项目约定和历史决策", active: false, available: false },
   ];
-  const skillCards = [
-    { id: "repo", title: "Repository Context", version: "v1.4", desc: "读取目录、历史和项目规则。", active: true },
-    { id: "frontend", title: "Frontend Polish", version: "v1.8", desc: "重建界面层级、导航和交互。", active: true },
-    { id: "automation", title: "Automation Ops", version: "v0.9", desc: "配置计划任务、监控和运行记录。", active: false },
+  let toolCards = $state<AgentToolCard[]>(defaultToolCards);
+  type AgentSkillCard = { id: string; title: string; version: string; desc: string; active: boolean; available: boolean; reason?: string; source?: string };
+  const defaultSkillCards: AgentSkillCard[] = [
+    { id: "repo", title: "Repository Context", version: "未加载", desc: "读取目录、历史和项目规则。", active: false, available: false },
+    { id: "frontend", title: "Frontend Polish", version: "未加载", desc: "重建界面层级、导航和交互。", active: false, available: false },
+    { id: "automation", title: "Automation Ops", version: "未加载", desc: "配置计划任务、监控和运行记录。", active: false, available: false },
   ];
+  let skillCards = $state<AgentSkillCard[]>(defaultSkillCards);
   const calendarEvents = [
     { day: "09", title: "版本评审会议", time: "09:30", type: "meeting", place: "线上会议室" },
     { day: "12", title: "客户工作流复盘", time: "14:00", type: "deadline", place: "项目群" },
-    { day: "18", title: "自动化验收", time: "16:30", type: "hearing", place: "研发工作台" },
-  ];
-  const hearingRooms = [
-    { title: "需求争议模拟庭辩", stage: "准备中", role: "产品方 / 交付方", next: "生成交叉询问提纲" },
-    { title: "代码质量责任复盘", stage: "进行中", role: "审查 Agent / 执行 Agent", next: "进入庭辩室" },
-    { title: "上线风险答辩", stage: "已归档", role: "架构 / 运维", next: "查看总结" },
+    { day: "18", title: "自动化验收", time: "16:30", type: "review", place: "研发工作台" },
   ];
   const reportCards = [
     { title: "项目风险分析报告", status: "已生成", owner: "代码审查 Agent", desc: "覆盖变更风险、测试缺口、回滚建议。" },
@@ -447,7 +542,7 @@
   ];
   const documentItems = [
     { title: "需求澄清记录模板", type: "模板", count: 18, status: "可用" },
-    { title: "项目复盘文书", type: "归档", count: 42, status: "已索引" },
+    { title: "项目复盘记录", type: "归档", count: 42, status: "已索引" },
     { title: "项目自动化配置说明", type: "说明", count: 9, status: "已更新" },
   ];
   const resourceItems = [
@@ -475,16 +570,9 @@
     const keyword = teamBuilderSearch.trim().toLowerCase();
     return !keyword || [agent.name, agent.role, agent.desc].some((value) => value.toLowerCase().includes(keyword));
   }));
-  const modelCards = [
-    { name: "GPT-4o", provider: "OpenAI", role: "默认对话模型", status: "已连接" },
-    { name: "Claude Sonnet 4.6", provider: "Claude", role: "长文档分析", status: "备用" },
-    { name: "Qwen-Max", provider: "Qwen", role: "中文任务", status: "可用" },
-  ];
-  const settingGroups = [
-    { title: "常规设置", desc: "语言、主题、关闭行为和本地缓存。", status: "已配置" },
-    { title: "局域网运行", desc: "局域网访问、健康检查和服务端口。", status: "运行中" },
-    { title: "模型接口", desc: "Relay、API Key 环境变量和默认模型。", status: "需复核" },
-  ];
+  const providerKindOptions = $derived(modelSettings?.providerKinds?.length ? modelSettings.providerKinds : ["openai", "anthropic"]);
+  const modelCards = $derived(modelCardsFromSettings());
+  const settingGroups = $derived(settingGroupsFromSettings());
   const operationLogs = [
     { action: "创建 Agent", target: "代码审查 Agent", user: "我的", time: "刚刚", result: "成功" },
     { action: "更新自动化", target: "桌面前端质量门禁", user: "我的", time: "12 分钟前", result: "成功" },
@@ -503,10 +591,524 @@
   const ingestJobs = [
     { title: "导入项目文档", source: "workspace", status: "完成", total: 128 },
     { title: "导入客户资料", source: "local", status: "排队", total: 36 },
-    { title: "导入法规样例", source: "manual", status: "失败", total: 1 },
+    { title: "导入规范样例", source: "manual", status: "失败", total: 1 },
   ];
 
-  const hasWailsBindings = () => typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  function hasWailsBindings() {
+    return typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  }
+  const REQUEST_TIMEOUT_MS = 30_000;
+  const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
+
+  function emptySettingsDraft(): SettingsDraft {
+    return {
+      language: "auto",
+      theme: "auto",
+      themeStyle: "graphite",
+      closeBehavior: "background",
+      permissionMode: "ask",
+      sandboxBash: "enforce",
+      sandboxNetwork: false,
+      sandboxWorkspaceRoot: "",
+      sandboxAllowWrite: "",
+      sandboxShell: "auto",
+    };
+  }
+
+  function emptyModelProviderDraft(): ModelProviderDraft {
+    return {
+      name: "",
+      kind: "openai",
+      baseUrl: "",
+      modelsText: "",
+      defaultModel: "",
+      apiKeyEnv: "CUSTOM_API_KEY",
+      apiKeyValue: "",
+      modelsUrl: "",
+      priority: "0",
+      fetchedModels: [],
+      selectedFetchedModels: [],
+      contextWindow: "128000",
+      reasoningProtocol: "",
+      supportedEffortsText: "",
+      defaultEffort: "",
+      visionModelsText: "",
+    };
+  }
+
+  function splitModelLines(value: string): string[] {
+    return value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function providerDefaultModel(provider: ProviderView) {
+    return provider.default || provider.models?.[0] || "";
+  }
+
+  function providerRef(provider: ProviderView, model = providerDefaultModel(provider)) {
+    return model ? `${provider.name}/${model}` : provider.name;
+  }
+
+  function isDefaultModelRef(provider: ProviderView, model = providerDefaultModel(provider)) {
+    const current = modelSettings?.defaultModel || selectedModel;
+    return current === provider.name || current === providerRef(provider, model) || current === model;
+  }
+
+  function modelCardsFromSettings(): ModelCard[] {
+    if (!hasWailsBindings()) return [];
+    return (modelSettings?.providers ?? []).flatMap((provider) => {
+      const providerModels = provider.models?.length ? provider.models : provider.default ? [provider.default] : [];
+      return providerModels.map((model) => ({
+        name: model,
+        provider: provider.name,
+        role: isDefaultModelRef(provider, model) ? "默认对话模型" : `${provider.kind || "provider"} / ${provider.baseUrl || "未配置 endpoint"}`,
+        status: provider.configured ? (provider.keySet ? "已连接" : "免密/本地") : provider.requiresKey ? "缺少 Key" : "未启用",
+        ref: providerRef(provider, model),
+      }));
+    });
+  }
+
+  function settingGroupsFromSettings(): SettingGroup[] {
+    const providerCount = modelSettings?.providers.length ?? modelCards.length;
+    const configuredProviders = modelSettings?.providers.filter((provider) => provider.configured).length ?? 0;
+    return [
+      {
+        id: "general",
+        title: "常规设置",
+        desc: "语言、主题、关闭按钮行为和桌面外观。",
+        status: modelSettings ? `${settingsDraft.theme || "auto"} / ${settingsDraft.closeBehavior || "background"}` : "可配置",
+      },
+      {
+        id: "runtime",
+        title: "权限与沙箱",
+        desc: "工具授权模式、终端沙箱、网络和写入目录。",
+        status: modelSettings ? `${settingsDraft.permissionMode || "ask"} / ${settingsDraft.sandboxBash || "enforce"}` : "可配置",
+      },
+      {
+        id: "models",
+        title: "模型接口",
+        desc: "Provider、API Key 环境变量和默认模型。",
+        status: providerCount ? `${configuredProviders}/${providerCount} 可用` : "待配置",
+      },
+    ];
+  }
+
+  function syncSettingsDraft(view = modelSettings) {
+    const next = emptySettingsDraft();
+    if (view) {
+      next.language = view.desktopLanguage || "auto";
+      next.theme = view.desktopTheme || "auto";
+      next.themeStyle = view.desktopThemeStyle || "graphite";
+      next.closeBehavior = view.closeBehavior || "background";
+      next.permissionMode = view.permissions.mode || "ask";
+      next.sandboxBash = view.sandbox.bash || "enforce";
+      next.sandboxNetwork = Boolean(view.sandbox.network);
+      next.sandboxWorkspaceRoot = view.sandbox.workspaceRoot || "";
+      next.sandboxAllowWrite = (view.sandbox.allowWrite ?? []).join("\n");
+      next.sandboxShell = view.sandbox.shell || "auto";
+    }
+    settingsDraft = next;
+  }
+
+  function splitSettingsLines(value: string): string[] {
+    return value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  async function ensureSettingsLoaded() {
+    if (!hasWailsBindings()) {
+      syncSettingsDraft();
+      return;
+    }
+    if (!modelSettings && !modelSettingsLoading) await refreshModelSettings();
+  }
+
+  function openSettingsPanel(panel: SettingPanel) {
+    settingsPanel = panel;
+    userPanelDialog = "settings";
+    userMenuOpen = false;
+    settingsMessage = "";
+    modelSettingsError = "";
+    void ensureSettingsLoaded();
+  }
+
+  function selectSettingsPanel(panel: SettingPanel) {
+    settingsPanel = panel;
+    settingsMessage = "";
+    modelSettingsError = "";
+  }
+
+  function resetSettingsDraft() {
+    syncSettingsDraft();
+    settingsMessage = "";
+    modelSettingsError = "";
+  }
+
+  function settingsPanelTitle() {
+    if (settingsPanel === "runtime") return "权限与沙箱";
+    if (settingsPanel === "models") return "模型接口";
+    return "常规设置";
+  }
+
+  async function saveSettingsDraft() {
+    if (settingsPanel === "models") {
+      openWorkLayer("models");
+      userPanelDialog = undefined;
+      return;
+    }
+    if (!hasWailsBindings()) {
+      settingsMessage = "浏览器预览已应用草稿；进入桌面运行时后会写入真实配置。";
+      return;
+    }
+    settingsSaving = true;
+    settingsMessage = "";
+    modelSettingsError = "";
+    try {
+      const current = modelSettings ?? await app().Settings();
+      if (settingsPanel === "general") {
+        if ((settingsDraft.language || "auto") !== (current.desktopLanguage || "auto")) {
+          await app().SetDesktopLanguage(settingsDraft.language);
+        }
+        if ((settingsDraft.theme || "auto") !== (current.desktopTheme || "auto") || (settingsDraft.themeStyle || "graphite") !== (current.desktopThemeStyle || "graphite")) {
+          await app().SetDesktopAppearance(settingsDraft.theme, settingsDraft.themeStyle);
+        }
+        if ((settingsDraft.closeBehavior || "background") !== (current.closeBehavior || "background")) {
+          await app().SetCloseBehavior(settingsDraft.closeBehavior);
+        }
+      } else if (settingsPanel === "runtime") {
+        if ((settingsDraft.permissionMode || "ask") !== (current.permissions.mode || "ask")) {
+          await app().SetPermissionMode(settingsDraft.permissionMode);
+        }
+        await app().SetSandbox(
+          settingsDraft.sandboxBash,
+          settingsDraft.sandboxNetwork,
+          settingsDraft.sandboxWorkspaceRoot,
+          splitSettingsLines(settingsDraft.sandboxAllowWrite),
+          settingsDraft.sandboxShell,
+        );
+      }
+      await refreshModelSettings();
+      settingsMessage = "设置已保存。";
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      settingsSaving = false;
+    }
+  }
+
+  function providerDraftFromView(provider?: ProviderView): ModelProviderDraft {
+    if (!provider) return emptyModelProviderDraft();
+    return {
+      name: provider.name,
+      kind: provider.kind || "openai",
+      baseUrl: provider.baseUrl || "",
+      modelsText: (provider.models ?? []).join("\n"),
+      defaultModel: provider.default || provider.models?.[0] || "",
+      apiKeyEnv: provider.apiKeyEnv || "CUSTOM_API_KEY",
+      apiKeyValue: "",
+      modelsUrl: provider.modelsUrl || "",
+      priority: String(provider.priority ?? 0),
+      fetchedModels: [],
+      selectedFetchedModels: [],
+      contextWindow: provider.contextWindow ? String(provider.contextWindow) : "",
+      reasoningProtocol: provider.reasoningProtocol || "",
+      supportedEffortsText: (provider.supportedEfforts ?? []).join(", "),
+      defaultEffort: provider.defaultEffort || "",
+      visionModelsText: (provider.visionModels ?? []).join("\n"),
+    };
+  }
+
+  function providerViewFromDraft(): ProviderView {
+    const modelsList = splitModelLines(modelDraft.modelsText);
+    const visionModels = splitModelLines(modelDraft.visionModelsText);
+    const contextWindow = Number.parseInt(modelDraft.contextWindow.trim(), 10);
+    const priority = Number.parseInt(modelDraft.priority.trim(), 10);
+    return {
+      name: modelDraft.name.trim(),
+      kind: modelDraft.kind.trim() || "openai",
+      baseUrl: modelDraft.baseUrl.trim(),
+      models: modelsList,
+      visionModels,
+      visionModelsConfigured: visionModels.length > 0,
+      modelsUrl: modelDraft.modelsUrl.trim(),
+      default: modelDraft.defaultModel.trim() || modelsList[0] || "",
+      priority: Number.isFinite(priority) ? priority : 0,
+      apiKeyEnv: modelDraft.apiKeyEnv.trim(),
+      apiKeyValue: modelDraft.apiKeyValue.trim(),
+      keySet: false,
+      balanceUrl: "",
+      contextWindow: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0,
+      reasoningProtocol: modelDraft.reasoningProtocol.trim(),
+      supportedEfforts: splitModelLines(modelDraft.supportedEffortsText),
+      defaultEffort: modelDraft.defaultEffort.trim(),
+    };
+  }
+
+  function openModelProviderDialog(provider?: ProviderView) {
+    modelDraft = providerDraftFromView(provider);
+    modelDraftEditing = Boolean(provider);
+    modelDraftMessage = "";
+    modelDraftError = "";
+    configDialog = "model";
+    userPanelDialog = undefined;
+  }
+
+  function isDraftFetchedModelSelected(model: string) {
+    return modelDraft.selectedFetchedModels.includes(model);
+  }
+
+  function applySelectedDraftModels(models: string[]) {
+    const selected = Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
+    modelDraft.selectedFetchedModels = selected;
+    modelDraft.modelsText = selected.join("\n");
+    if (!selected.includes(modelDraft.defaultModel)) modelDraft.defaultModel = selected[0] || "";
+  }
+
+  function toggleDraftFetchedModel(model: string) {
+    const selected = isDraftFetchedModelSelected(model)
+      ? modelDraft.selectedFetchedModels.filter((item) => item !== model)
+      : [...modelDraft.selectedFetchedModels, model];
+    applySelectedDraftModels(selected);
+  }
+
+  function selectAllDraftFetchedModels() {
+    applySelectedDraftModels(modelDraft.fetchedModels);
+  }
+
+  function clearDraftFetchedModels() {
+    applySelectedDraftModels([]);
+  }
+
+  async function refreshModelSettings() {
+    if (!hasWailsBindings()) return;
+    modelSettingsLoading = true;
+    modelSettingsError = "";
+    try {
+      modelSettings = await app().Settings();
+      syncSettingsDraft(modelSettings);
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      modelSettingsLoading = false;
+    }
+  }
+
+  async function fetchDraftProviderModels() {
+    if (!hasWailsBindings()) return;
+    modelDraftFetching = true;
+    modelDraftError = "";
+    modelDraftMessage = "";
+    try {
+      const fetched = await app().FetchProviderModels(providerViewFromDraft());
+      if (!fetched.length) {
+        modelDraft.fetchedModels = [];
+        modelDraft.selectedFetchedModels = [];
+        modelDraftMessage = "没有从 /models 发现可用聊天模型，可手动填写模型名。";
+        return;
+      }
+      const current = splitModelLines(modelDraft.modelsText).filter((model) => fetched.includes(model));
+      modelDraft.fetchedModels = fetched;
+      applySelectedDraftModels(current.length ? current : fetched);
+      modelDraftMessage = `已拉取 ${fetched.length} 个模型，请选择要添加的模型。`;
+    } catch (error) {
+      modelDraftError = error instanceof Error ? error.message : String(error);
+    } finally {
+      modelDraftFetching = false;
+    }
+  }
+
+  async function saveModelProvider() {
+    if (!hasWailsBindings()) {
+      modelDraftError = "当前没有连接桌面后端，无法保存模型渠道。请在 Wails 桌面运行环境中添加渠道。";
+      return;
+    }
+    const provider = providerViewFromDraft();
+    if (!provider.name || !provider.kind || !provider.baseUrl || !provider.models.length) {
+      modelDraftError = "请填写名称、类型、Base URL 和至少一个模型。";
+      return;
+    }
+    const key = modelDraft.apiKeyValue.trim();
+    if (key && !provider.apiKeyEnv) {
+      modelDraftError = "保存 API Key 需要填写环境变量名，或清空 API Key 后保存免密 provider。";
+      return;
+    }
+    modelDraftSaving = true;
+    modelDraftError = "";
+    modelDraftMessage = "";
+    try {
+      await app().SaveProvider(provider);
+      if (key && provider.apiKeyEnv) {
+        const warning = await app().SetProviderKey(provider.apiKeyEnv, key);
+        modelDraftMessage = warning || "渠道、模型和 Key 已保存。";
+      } else {
+        modelDraftMessage = "模型渠道已保存。";
+      }
+      await refreshModelSettings();
+      await refresh();
+      configDialog = undefined;
+    } catch (error) {
+      modelDraftError = error instanceof Error ? error.message : String(error);
+    } finally {
+      modelDraftSaving = false;
+    }
+  }
+
+  async function setDefaultModelProvider(provider: ProviderView, model = providerDefaultModel(provider)) {
+    if (!hasWailsBindings()) return;
+    modelSettingsError = "";
+    try {
+      await app().SetDefaultModel(providerRef(provider, model));
+      await refreshModelSettings();
+      await refresh();
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function deleteModelProvider(provider: ProviderView) {
+    if (!hasWailsBindings()) return;
+    modelSettingsError = "";
+    try {
+      await app().DeleteProvider(provider.name);
+      await refreshModelSettings();
+      await refresh();
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  function withTimeout<T>(promise: Promise<T>, message: string, ms = REQUEST_TIMEOUT_MS): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  function sanitizeTranscriptRole(role: unknown): TranscriptItem["role"] {
+    if (role === "user" || role === "assistant" || role === "system" || role === "tool" || role === "reasoning" || role === "notice") return role;
+    return "notice";
+  }
+
+  function sanitizeTranscript(items: unknown): TranscriptItem[] | undefined {
+    if (!Array.isArray(items)) return undefined;
+    return items
+      .filter(isRecord)
+      .map((item) => ({
+        id: typeof item.id === "string" ? item.id : `persisted-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        role: sanitizeTranscriptRole(item.role),
+        title: typeof item.title === "string" ? item.title : undefined,
+        body: typeof item.body === "string" ? item.body : "",
+        pending: false,
+        readOnly: Boolean(item.readOnly),
+        parentId: typeof item.parentId === "string" ? item.parentId : undefined,
+        createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : undefined,
+      }))
+      .slice(-MAX_TRANSCRIPT_ITEMS);
+  }
+
+  function sidebarConversationHasContent(conversation: SidebarConversation) {
+    return Boolean(
+      conversation.transcript?.some((item) => item.role !== "system" && item.id !== "system-welcome" && item.body.trim()),
+    );
+  }
+
+  function sanitizeSidebarConversation(value: unknown): SidebarConversation | undefined {
+    if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return undefined;
+    const scope = value.scope === "project" || value.scope === "global" ? value.scope : undefined;
+    const conversation: SidebarConversation = {
+      id: value.id,
+      title: value.title,
+      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "刚刚",
+      archivedAtMs: typeof value.archivedAtMs === "number" ? value.archivedAtMs : undefined,
+      transcript: sanitizeTranscript(value.transcript),
+      tabId: typeof value.tabId === "string" ? value.tabId : undefined,
+      topicId: typeof value.topicId === "string" ? value.topicId : undefined,
+      sessionPath: typeof value.sessionPath === "string" ? value.sessionPath : undefined,
+      scope,
+      workspaceRoot: typeof value.workspaceRoot === "string" ? value.workspaceRoot : undefined,
+    };
+    if (/^新对话\s*\d+$/.test(conversation.title) && !sidebarConversationHasContent(conversation)) return undefined;
+    return conversation;
+  }
+
+  function sanitizeSidebarProject(value: unknown): SidebarProject | undefined {
+    if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return undefined;
+    const conversations = Array.isArray(value.conversations)
+      ? value.conversations.map(sanitizeSidebarConversation).filter((item): item is SidebarConversation => Boolean(item))
+      : [];
+    return {
+      id: value.id,
+      name: value.name,
+      expanded: Boolean(value.expanded),
+      conversations,
+      localPath: typeof value.localPath === "string" ? value.localPath : undefined,
+      updatedAtMs: typeof value.updatedAtMs === "number" ? value.updatedAtMs : Date.now(),
+    };
+  }
+
+  function pruneEmptyDraftSidebarConversations() {
+    let removedActiveConversation = false;
+    sidebarProjects = sidebarProjects.map((project) => {
+      const conversations = project.conversations.filter((conversation) => {
+        const isEmptyDraft = /^新对话\s*\d+$/.test(conversation.title) && !sidebarConversationHasContent(conversation);
+        if (isEmptyDraft && conversation.id === activeSidebarConversationId) removedActiveConversation = true;
+        return !isEmptyDraft;
+      });
+      return conversations.length === project.conversations.length ? project : { ...project, conversations };
+    });
+    if (removedActiveConversation) activeSidebarConversationId = "";
+  }
+
+  function persistSidebarState() {
+    if (typeof window === "undefined" || !sidebarStateHydrated) return;
+    const snapshot: SidebarStateSnapshot = {
+      version: 1,
+      projects: sidebarProjects,
+      activeProjectId: activeSidebarProjectId,
+      activeConversationId: activeSidebarConversationId,
+      sort: sidebarProjectSort,
+      dockCollapsed: sidebarProjectDockCollapsed,
+    };
+    try {
+      window.localStorage.setItem(SIDEBAR_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (error) {
+      console.warn("Failed to persist sidebar conversations", error);
+    }
+  }
+
+  function restoreSidebarState() {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_STATE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.projects)) return;
+      const projects = parsed.projects.map(sanitizeSidebarProject).filter((item): item is SidebarProject => Boolean(item));
+      if (!projects.length) return;
+      sidebarProjects = projects;
+      activeSidebarProjectId = typeof parsed.activeProjectId === "string" && projects.some((project) => project.id === parsed.activeProjectId) ? parsed.activeProjectId : projects[0].id;
+      const activeProject = projects.find((project) => project.id === activeSidebarProjectId) ?? projects[0];
+      activeSidebarConversationId =
+        typeof parsed.activeConversationId === "string" && activeProject.conversations.some((conversation) => conversation.id === parsed.activeConversationId)
+          ? parsed.activeConversationId
+          : activeProject.conversations[0]?.id ?? "";
+      sidebarProjectSort = parsed.sort === "name" || parsed.sort === "conversations" ? parsed.sort : "recent";
+      sidebarProjectDockCollapsed = Boolean(parsed.dockCollapsed);
+    } catch (error) {
+      console.warn("Failed to restore sidebar conversations", error);
+    }
+  }
 
   function hydrateBrowserPreview() {
     const previewTab: TabMeta = {
@@ -528,11 +1130,22 @@
       { name: "skill", kind: "builtin", description: "Manage skills" },
       { name: "mcp", kind: "builtin", description: "Manage MCP" },
     ];
+    applyToolAvailability({
+      files: { available: true, reason: "浏览器预览可用" },
+      terminal: { available: true, reason: "浏览器预览可用" },
+      browser: { available: true, reason: "浏览器预览可用" },
+      memory: { available: false, reason: "浏览器预览未连接桌面记忆后端" },
+    });
+    agentCards = defaultAgentCards;
     needsAuth = false;
     loading = false;
   }
 
   onMount(() => {
+    restoreSidebarState();
+    pruneEmptyDraftSidebarConversations();
+    sidebarStateHydrated = true;
+
     if (!hasWailsBindings()) {
       hydrateBrowserPreview();
       const previewTick = window.setInterval(() => {
@@ -560,13 +1173,36 @@
     const unsubscribeEvents = onAgentEvent(handleEvent);
     return () => {
       window.clearInterval(tick);
+      if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       unsubscribeEvents();
     };
+  });
+
+  $effect(() => {
+    sidebarProjects;
+    activeSidebarProjectId;
+    activeSidebarConversationId;
+    sidebarProjectSort;
+    sidebarProjectDockCollapsed;
+    persistSidebarState();
   });
 
   // Debounce batch-appends of streaming text events to avoid re-render storms.
   let pendingTextBuffer = "";
   let textFlushScheduled = false;
+
+  function scrollConversationToBottom(behavior: ScrollBehavior = "smooth") {
+    if (typeof window === "undefined") return;
+    void tick().then(() => {
+      const el = conversationScrollEl;
+      if (!el || !showActiveTranscript) return;
+      if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
+      conversationScrollFrame = window.requestAnimationFrame(() => {
+        conversationScrollFrame = undefined;
+        el.scrollTo({ top: el.scrollHeight, behavior });
+      });
+    });
+  }
 
   function scheduleTextFlush() {
     if (textFlushScheduled) return;
@@ -585,9 +1221,278 @@
       // Keep the most recent items; drop from the front.
       transcript.splice(0, transcript.length - MAX_TRANSCRIPT_ITEMS);
     }
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom();
   }
 
-  function openWorkLayer(layer: WorkLayer) { activityMode = "work"; workLayer = layer; codeInspectorOpen = false; sidebarCollapsed = false; userMenuOpen = false; }
+  function removeTranscriptItem(id: string) {
+    const next = transcript.filter((item) => item.id !== id);
+    if (next.length === transcript.length) return;
+    transcript = next;
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom("auto");
+  }
+
+  function updateTranscriptItem(id: string, patch: Partial<TranscriptItem>) {
+    const item = transcript.find((entry) => entry.id === id);
+    if (!item) return;
+    Object.assign(item, patch);
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom();
+  }
+
+  function removeEmptyPendingAssistant() {
+    let index = -1;
+    for (let i = transcript.length - 1; i >= 0; i -= 1) {
+      const item = transcript[i];
+      if (item.role === "assistant" && item.pending && !item.body.trim()) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) return;
+    transcript.splice(index, 1);
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom("auto");
+  }
+
+  function ensurePendingAssistant() {
+    const existing = transcript.some((item) => item.role === "assistant" && item.pending && !item.body.trim());
+    if (existing) return;
+    appendTranscript({ id: `assistant-pending-${Date.now()}`, role: "assistant", title: "assistant", body: "", pending: true, createdAtMs: Date.now() });
+  }
+
+  function cloneTranscriptItems(items: TranscriptItem[]) {
+    return items.map((item) => ({ ...item, pending: false }));
+  }
+
+  function saveActiveSidebarConversationTranscript() {
+    if (!activeSidebarProjectId || !activeSidebarConversationId) return;
+    const snapshot = cloneTranscriptItems(transcript);
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== activeSidebarProjectId) return project;
+      return {
+        ...project,
+        updatedAtMs: Date.now(),
+        conversations: project.conversations.map((conversation) =>
+          conversation.id === activeSidebarConversationId
+            ? { ...conversation, updatedAt: "刚刚", transcript: snapshot }
+            : conversation,
+        ),
+      };
+    });
+  }
+
+  function conversationTitleFromText(text: string) {
+    const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "新对话";
+    return firstLine.length > 20 ? `${firstLine.slice(0, 20)}...` : firstLine;
+  }
+
+  function ensureSidebarConversationForSend(text: string) {
+    if (activityMode !== "work" || workLayer !== "newTask") return;
+    if (activeSidebarConversationId) return;
+    const now = Date.now();
+    const projectId = activeSidebarProjectId || sidebarProjects[0]?.id || `sidebar-project-${now}`;
+    const project = sidebarProjects.find((item) => item.id === projectId);
+    const conversation: SidebarConversation = {
+      id: `${projectId}-conversation-${now}`,
+      title: conversationTitleFromText(text),
+      updatedAt: "刚刚",
+      transcript: welcomeTranscript(),
+    };
+    if (project) {
+      sidebarProjects = sidebarProjects.map((item) =>
+        item.id === projectId
+          ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] }
+          : item,
+      );
+      syncSidebarProjectContext({ ...project, expanded: true, updatedAtMs: now });
+    } else {
+      const fallbackProject: SidebarProject = { id: projectId, name: "未归档任务", updatedAtMs: now, expanded: true, conversations: [conversation] };
+      sidebarProjects = [fallbackProject, ...sidebarProjects];
+      syncSidebarProjectContext(fallbackProject);
+    }
+    activeSidebarConversationId = conversation.id;
+  }
+  void ensureSidebarConversationForSend;
+
+  function activeSidebarProject(projectId = activeSidebarProjectId) {
+    return sidebarProjects.find((item) => item.id === projectId);
+  }
+
+  function sidebarConversation(projectId: string, conversationId: string) {
+    return activeSidebarProject(projectId)?.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
+  }
+
+  function isPlaceholderWorkspacePath(path: string) {
+    const normalized = path.trim().replace(/\//g, "\\").toLowerCase();
+    return normalized.startsWith("e:\\workspace\\") || normalized.startsWith("c:\\users\\1\\documents\\");
+  }
+
+  function sidebarProjectThreadTarget(project?: SidebarProject) {
+    const projectRoot = project?.localPath?.trim() || "";
+    const activeRoot = activeTab?.workspaceRoot?.trim() || activeTab?.cwd?.trim() || "";
+    const canUseActiveRoot =
+      Boolean(activeRoot) &&
+      activeTab?.scope === "project" &&
+      (!project || project.id === selectedProjectId || project.name === activeTab.workspaceName || projectRoot === activeRoot);
+    const workspaceRoot = projectRoot && !isPlaceholderWorkspacePath(projectRoot) ? projectRoot : canUseActiveRoot ? activeRoot : "";
+    if (workspaceRoot) return { scope: "project" as const, workspaceRoot };
+    return { scope: "global" as const, workspaceRoot: "" };
+  }
+
+  function updateSidebarConversationThread(projectId: string, conversationId: string, meta: TabMeta) {
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== projectId) return project;
+      return {
+        ...project,
+        updatedAtMs: Date.now(),
+        conversations: project.conversations.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                tabId: meta.id,
+                topicId: meta.topicId,
+                sessionPath: meta.sessionPath,
+                scope: meta.scope,
+                workspaceRoot: meta.workspaceRoot,
+                updatedAt: "刚刚",
+              }
+            : conversation,
+        ),
+      };
+    });
+  }
+
+  async function syncActiveTabMeta(meta: TabMeta) {
+    tabs = tabs.map((tab) => ({ ...tab, active: tab.id === meta.id }));
+    if (!tabs.some((tab) => tab.id === meta.id)) {
+      tabs = [{ ...meta, active: true }, ...tabs.map((tab) => ({ ...tab, active: false }))];
+    }
+    try {
+      tabs = await app().ListTabs();
+    } catch {
+      // Keep the returned tab meta when the list refresh races with Wails startup.
+    }
+    try {
+      models = await app().ModelsForTab(meta.id);
+      selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
+    } catch {
+      // The controller may still be starting; refresh() will hydrate models later.
+    }
+  }
+
+  async function createBackendConversationThread(project: SidebarProject | undefined, title: string) {
+    const target = sidebarProjectThreadTarget(project);
+    return withTimeout(
+      app().NewConversationThread(target.scope, target.workspaceRoot, title),
+      "新对话创建超时，请稍后重试或重启桌面 dev 窗口。",
+    );
+  }
+
+  const conversationThreadRequests = new Map<string, Promise<TabMeta | undefined>>();
+
+  function conversationThreadKey(projectId: string, conversationId: string) {
+    return `${projectId}::${conversationId}`;
+  }
+
+  function bindSidebarConversationThread(projectId: string, conversationId: string): Promise<TabMeta | undefined> {
+    if (!hasWailsBindings()) return Promise.resolve(activeTab);
+    const key = conversationThreadKey(projectId, conversationId);
+    const existing = conversationThreadRequests.get(key);
+    if (existing) return existing;
+    const request = (async () => {
+      const project = activeSidebarProject(projectId);
+      const conversation = sidebarConversation(projectId, conversationId);
+      if (!conversation) return activeTab;
+      if (conversation.tabId) {
+        await withTimeout(app().SetActiveTab(conversation.tabId), "切换对话超时，请稍后重试。");
+        const current = tabs.find((tab) => tab.id === conversation.tabId) ?? activeTab;
+        if (!current) return undefined;
+        const meta = { ...current, id: conversation.tabId };
+        await syncActiveTabMeta(meta);
+        return tabs.find((tab) => tab.id === conversation.tabId) ?? meta;
+      }
+      const meta = await createBackendConversationThread(project, conversation.title);
+      updateSidebarConversationThread(projectId, conversationId, meta);
+      await syncActiveTabMeta(meta);
+      return meta;
+    })()
+      .catch((error) => {
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", title: "新对话失败", body: formatErrorMessage(error) });
+        return undefined;
+      })
+      .finally(() => conversationThreadRequests.delete(key));
+    conversationThreadRequests.set(key, request);
+    return request;
+  }
+
+  async function ensureConversationThreadForSend(text: string): Promise<TabMeta | undefined> {
+    if (activityMode !== "work" || workLayer !== "newTask") return activeTab;
+    const now = Date.now();
+    const projectId = activeSidebarProjectId || sidebarProjects[0]?.id || `sidebar-project-${now}`;
+    let project = activeSidebarProject(projectId);
+    let conversation = activeSidebarConversationId ? sidebarConversation(projectId, activeSidebarConversationId) : undefined;
+    let createdConversation = false;
+    if (!conversation) {
+      conversation = {
+        id: `${projectId}-conversation-${now}`,
+        title: conversationTitleFromText(text),
+        updatedAt: "刚刚",
+        transcript: welcomeTranscript(),
+      };
+      createdConversation = true;
+      if (project) {
+        sidebarProjects = sidebarProjects.map((item) =>
+          item.id === projectId
+            ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation!, ...item.conversations] }
+            : item,
+        );
+        project = { ...project, expanded: true, updatedAtMs: now };
+        syncSidebarProjectContext(project);
+      } else {
+        project = { id: projectId, name: "未归档任务", updatedAtMs: now, expanded: true, conversations: [conversation] };
+        sidebarProjects = [project, ...sidebarProjects];
+        syncSidebarProjectContext(project);
+      }
+      activeSidebarConversationId = conversation.id;
+    }
+    renameConversationForFirstMessage(projectId, conversation.id, text);
+    if (createdConversation) {
+      const draftThread = draftConversationThread ?? (draftConversationThreadRequest ? await draftConversationThreadRequest : undefined);
+      draftConversationThread = undefined;
+      draftConversationThreadRequest = undefined;
+      if (draftThread) {
+        updateSidebarConversationThread(projectId, conversation.id, draftThread);
+        await syncActiveTabMeta(draftThread);
+        return draftThread;
+      }
+    }
+    return bindSidebarConversationThread(projectId, conversation.id);
+  }
+
+  function clearConversationRuntime() {
+    pendingTextBuffer = "";
+    sending = false;
+    pendingApproval = undefined;
+    pendingAsk = undefined;
+    submittedDraft = undefined;
+    restoreDraftOnTurnDone = false;
+    draftConversationThread = undefined;
+    draftConversationThreadRequest = undefined;
+    draftConversationToken += 1;
+  }
+
+  function openWorkLayer(layer: WorkLayer) {
+    activityMode = "work";
+    workLayer = layer;
+    if (layer === "newTask") newTaskConversationActive = false;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    agentSelectorOpen = false;
+    if (layer === "settings" || layer === "models") void ensureSettingsLoaded();
+  }
   function openResourceCenterFromComposer() {
     openWorkLayer("resources");
     resourceTab = "resources";
@@ -595,6 +1500,7 @@
   function openCodeConversation() {
     activityMode = "code";
     workLayer = "newTask";
+    newTaskConversationActive = true;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
     userMenuOpen = false;
@@ -606,9 +1512,28 @@
       return;
     }
     openCodeConversation();
+    input = "";
     void tick().then(focusComposer);
   }
-  function openUserPanelDialog(layer: UserPanelDialog) { userPanelDialog = layer; userMenuOpen = false; }
+  function openWorkspaceNavLayer(layer: WorkLayer) {
+    if (layer === "newTask") {
+      startNewConversation();
+      return;
+    }
+    openWorkLayer(layer);
+  }
+  function openUserPanelDialog(layer: UserPanelDialog) {
+    userMenuOpen = false;
+    if (layer === "models") {
+      openWorkLayer("models");
+      return;
+    }
+    if (layer === "settings") {
+      settingsPanel = "general";
+      void ensureSettingsLoaded();
+    }
+    userPanelDialog = layer;
+  }
   function userPanelDialogTitle() {
     if (userPanelDialog === "models") return "模型管理";
     if (userPanelDialog === "settings") return "系统设置";
@@ -618,12 +1543,34 @@
   }
   function userPanelDialogIntro() {
     if (userPanelDialog === "models") return "对标 AORISTLAWER 模型管理：集中查看模型状态、供应商和默认用途。";
-    if (userPanelDialog === "settings") return "对标 AORISTLAWER UserPanel：常规设置、局域网运行和模型接口在弹窗内快速配置。";
+    if (userPanelDialog === "settings") return "管理桌面语言、外观、权限沙箱和模型配置入口。";
     if (userPanelDialog === "sync") return "对标 AORISTLAWER 同步面板：展示资料、模型和记忆同步进度。";
     if (userPanelDialog === "operationLog") return "对标 AORISTLAWER 操作记录：保留关键动作、对象、用户和结果。";
     return "用户中心弹窗。";
   }
-  function focusNewTask() { openWorkLayer("newTask"); void tick().then(focusComposer); }
+  function focusNewTask(projectId = activeSidebarProjectId, conversationId = "") {
+    saveActiveSidebarConversationTranscript();
+    const project = projectId ? activeSidebarProject(projectId) : undefined;
+    if (project) syncSidebarProjectContext(project);
+    activityMode = "work";
+    workLayer = "newTask";
+    newTaskConversationActive = false;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    agentSelectorOpen = false;
+    configDialog = undefined;
+    projectDetailOpen = false;
+    customerDetailOpen = false;
+    capabilityCreateOpen = false;
+    agentWizardOpen = false;
+    agentMarketOpen = false;
+    activeSidebarConversationId = conversationId;
+    clearConversationRuntime();
+    transcript = welcomeTranscript();
+    input = "";
+    void tick().then(focusComposer);
+  }
   function syncSidebarProjectContext(project: SidebarProject) {
     activeSidebarProjectId = project.id;
     const linked = projectCards.find((item) => item.id === project.id || item.name === project.name);
@@ -706,8 +1653,16 @@
   function openSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
+    const conversation = sidebarProjectConversations(project)[0];
+    if (conversation) {
+      openSidebarConversation(projectId, conversation.id);
+      return;
+    }
     syncSidebarProjectContext(project);
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true } : item);
+    focusNewTask();
+    input = `项目：${project.name}\n`;
+    void tick().then(focusComposer);
   }
   function toggleSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
@@ -751,15 +1706,55 @@
     if (activeSidebarProjectId === projectId) linkedProject = name;
     cancelRenameSidebarProjectTask();
   }
+
+  function renameConversationForFirstMessage(projectId: string, conversationId: string, text: string) {
+    const title = conversationTitleFromText(text);
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== projectId) return project;
+      return {
+        ...project,
+        updatedAtMs: Date.now(),
+        conversations: project.conversations.map((conversation) => {
+          if (conversation.id !== conversationId) return conversation;
+          const isDefaultTitle = /^新对话\s+\d+$/.test(conversation.title);
+          return isDefaultTitle ? { ...conversation, title, updatedAt: "刚刚" } : { ...conversation, updatedAt: "刚刚" };
+        }),
+      };
+    });
+  }
+
   function openSidebarConversation(projectId: string, conversationId: string) {
+    saveActiveSidebarConversationTranscript();
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
     const conversation = project.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, updatedAtMs: Date.now() } : item);
-    input = `项目：${project.name}\n${conversation ? `对话：${conversation.title}\n` : ""}`;
-    focusNewTask();
+    activityMode = "work";
+    workLayer = "newTask";
+    newTaskConversationActive = true;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    agentSelectorOpen = false;
+    configDialog = undefined;
+    projectDetailOpen = false;
+    customerDetailOpen = false;
+    capabilityCreateOpen = false;
+    agentWizardOpen = false;
+    agentMarketOpen = false;
+    clearConversationRuntime();
+    transcript = conversation?.transcript?.length ? cloneTranscriptItems(conversation.transcript) : welcomeTranscript();
+    if (conversation) {
+      void bindSidebarConversationThread(projectId, conversation.id).then(async (meta) => {
+        if (!meta) return;
+        await hydrateHistory(meta);
+        newTaskConversationActive = true;
+      });
+    }
+    input = "";
+    void tick().then(focusComposer);
   }
   function sidebarProjectConversations(project: SidebarProject) {
     return project.conversations.filter((conversation) => !conversation.archivedAtMs);
@@ -785,13 +1780,31 @@
       : project);
   }
   function createSidebarConversation(projectId: string) {
+    pruneEmptyDraftSidebarConversations();
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
-    const now = Date.now();
-    const conversation: SidebarConversation = { id: `${projectId}-conversation-${Date.now()}`, title: `新对话 ${sidebarProjectConversations(project).length + 1}`, updatedAt: "刚刚" };
-    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] } : item);
-    openSidebarConversation(projectId, conversation.id);
+    focusNewTask(project.id);
   }
+  function startNewConversation(projectId = activeSidebarProjectId || sidebarProjects[0]?.id || "") {
+    pruneEmptyDraftSidebarConversations();
+    const project = projectId ? activeSidebarProject(projectId) : undefined;
+    focusNewTask(project?.id ?? projectId);
+    if (!hasWailsBindings()) return;
+    const token = draftConversationToken + 1;
+    draftConversationToken = token;
+    draftConversationThreadRequest = createBackendConversationThread(project, "新的会话")
+      .then(async (meta) => {
+        if (token !== draftConversationToken) return undefined;
+        draftConversationThread = meta;
+        await syncActiveTabMeta(meta);
+        return meta;
+      })
+      .catch((error) => {
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", title: "新对话失败", body: formatErrorMessage(error) });
+        return undefined;
+      });
+  }
+
   async function openUnifiedCodeTask() {
     openCodeConversation();
     await tick();
@@ -809,7 +1822,6 @@
   function customerSchedules(customer = selectedCustomer()) { return customerScheduleRows.filter((item) => item.customerId === customer.id); }
   function customerTodos(customer = selectedCustomer()) { return customerTodoRows.filter((item) => item.customerId === customer.id); }
   function selectedAgent() { return agentCards.find((agent) => agent.id === selectedAgentId) ?? agentCards[0]; }
-  function selectedHearingRoom() { return hearingRooms.find((room) => room.title === selectedHearingTitle) ?? hearingRooms[0]; }
   function selectedTeamRoom() { return teamRooms.find((team) => team.title === selectedTeamTitle) ?? teamRooms[0]; }
   function teamMembers(team = selectedTeamRoom()) { return (team?.memberIds ?? []).map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
   function teamLeaderId(team = selectedTeamRoom()) { return team?.leaderId || team?.memberIds?.[0] || ""; }
@@ -917,13 +1929,19 @@
     if (!projectId) {
       selectedProjectId = "";
       linkedProject = "";
+      activeSidebarProjectId = "";
       return;
     }
-    selectedProjectId = projectId;
-    const project = projectCards.find((item) => item.id === projectId);
-    linkedProject = project?.name ?? "";
+    const sidebarProject = sidebarProjects.find((item) => item.id === projectId);
+    const project = projectCards.find((item) => item.id === projectId || item.name === sidebarProject?.name);
+    selectedProjectId = project?.id ?? "";
+    linkedProject = sidebarProject?.name ?? project?.name ?? "";
+    if (sidebarProject) {
+      activeSidebarProjectId = sidebarProject.id;
+      sidebarProjects = sidebarProjects.map((item) => item.id === sidebarProject.id ? { ...item, expanded: true, updatedAtMs: Date.now() } : item);
+    }
   }
-  function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; input = `关联项目：${projectName}\n`; focusNewTask(); }
+  function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); input = `关联项目：${projectName}\n`; void tick().then(focusComposer); }
   function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; input = `关联客户：${customerName}\n`; focusNewTask(); }
   function useNewTaskPrompt(task: (typeof newTaskQuickTasks)[number]) { selectedAgentId = task.agentId; input = task.prompt; void tick().then(focusComposer); }
   function openConfigDialog(kind: ConfigDialog) { configDialog = kind; }
@@ -931,13 +1949,12 @@
     if (configDialog === "schedule") return "新建日程";
     if (configDialog === "todo") return "新建待办";
     if (configDialog === "report") return "新建分析报告";
-    if (configDialog === "model") return "添加模型";
+    if (configDialog === "model") return modelDraftEditing ? "编辑模型渠道" : "添加模型渠道";
     if (configDialog === "ingest") return "批量导入";
     if (configDialog === "resource") return "上传资料";
-    if (configDialog === "template") return "新建文书模板";
+    if (configDialog === "template") return "新建文档模板";
     if (configDialog === "project") return "新建项目";
     if (configDialog === "customer") return "新建客户";
-    if (configDialog === "hearing") return "创建模拟庭辩";
     if (configDialog === "team") return teamConfigTitle ? "编辑 Agent 团队" : "配置 Agent 团队";
     if (configDialog === "dossier") return "新建资料卷宗";
     if (configDialog === "selectProject") return "选择项目";
@@ -947,7 +1964,191 @@
   }
   function formatRuntime(startedAtMs: number) { const m = Math.max(1, Math.floor((nowMs - startedAtMs) / 60000)); const h = Math.floor(m / 60); return h ? `${h} 小时 ${m % 60} 分钟` : `${m} 分钟`; }
   function currentAutomation() { return runningAutomations.find((item) => item.id === automationDialog); }
-  function openAgentWizard(agentId?: string) { selectedAgentId = agentId || selectedAgentId; agentWizardTab = "identity"; agentWizardOpen = true; }
+  function agentWizardName() {
+    return agentWizardDraftName;
+  }
+  function agentWizardDescription() {
+    return agentWizardDraftDescription;
+  }
+  function applyToolAvailability(status: Record<string, { available: boolean; reason: string }>) {
+    toolCards = toolCards.map((tool) => {
+      const next = status[tool.id] ?? { available: tool.available, reason: tool.reason ?? "" };
+      return {
+        ...tool,
+        available: next.available,
+        active: next.available ? tool.active : false,
+        reason: next.reason,
+      };
+    });
+  }
+  function setToolSelectionFromAgent(agent?: AgentView) {
+    const enabled = new Set(agent?.tools ?? defaultToolCards.filter((tool) => tool.active).map((tool) => tool.title));
+    toolCards = toolCards.map((tool) => ({ ...tool, active: tool.available && enabled.has(tool.title) }));
+  }
+  function toggleAgentTool(toolId: string) {
+    toolCards = toolCards.map((tool) => {
+      if (tool.id !== toolId || !tool.available) return tool;
+      return { ...tool, active: !tool.active };
+    });
+  }
+  function skillMatchesCard(skillName: string, cardId: string) {
+    const name = skillName.toLowerCase();
+    if (cardId === "repo") return /repo|repository|context|code|review/.test(name);
+    if (cardId === "frontend") return /front|svelte|ui|design|browser/.test(name);
+    if (cardId === "automation") return /auto|workflow|task|verify|test|ops/.test(name);
+    return false;
+  }
+  function setSkillSelectionFromAgent(agent?: AgentView) {
+    const enabled = new Set(agent?.skills ?? defaultSkillCards.filter((skill) => skill.active).map((skill) => skill.title));
+    skillCards = skillCards.map((skill) => ({ ...skill, active: skill.available && enabled.has(skill.title) }));
+  }
+  function toggleAgentSkill(skillId: string) {
+    skillCards = skillCards.map((skill) => {
+      if (skill.id !== skillId || !skill.available) return skill;
+      return { ...skill, active: !skill.active };
+    });
+  }
+  async function refreshSkillStatus() {
+    if (!hasWailsBindings()) {
+      skillCards = skillCards.map((skill) => ({
+        ...skill,
+        available: false,
+        active: false,
+        version: "未加载",
+        reason: "浏览器预览未连接桌面 Skill 后端",
+      }));
+      return;
+    }
+    try {
+      const capabilities = await app().Capabilities();
+      skillCards = skillCards.map((card) => {
+        const matched = capabilities.skills.find((skill) => skillMatchesCard(skill.name, card.id));
+        if (!matched) {
+          return { ...card, available: false, active: false, version: "未加载", source: undefined, reason: "未发现匹配的真实 Skill" };
+        }
+        const available = Boolean(matched.enabled);
+        return {
+          ...card,
+          available,
+          active: available ? card.active : false,
+          version: matched.scope || "已发现",
+          desc: matched.description || card.desc,
+          source: matched.name,
+          reason: available ? `来源：${matched.name}` : `Skill 已发现但未启用：${matched.name}`,
+        };
+      });
+    } catch {
+      skillCards = skillCards.map((skill) => ({ ...skill, available: false, active: false, version: "未加载", reason: "无法读取 Skill 状态" }));
+    }
+  }
+  async function refreshToolStatus() {
+    if (!hasWailsBindings()) {
+      applyToolAvailability({
+        files: { available: true, reason: "浏览器预览可用" },
+        terminal: { available: true, reason: "浏览器预览可用" },
+        browser: { available: true, reason: "浏览器预览可用" },
+        memory: { available: false, reason: "浏览器预览未连接桌面记忆后端" },
+      });
+      return;
+    }
+    const workspaceReady = Boolean(activeTab?.workspaceRoot || activeTab?.workspaceName);
+    let terminalReady = false;
+    let memoryReady = false;
+    let fileReason = workspaceReady ? "当前工作区已连接" : "尚未打开工作区";
+    let terminalReason = "等待权限配置";
+    let memoryReason = "长期记忆不可用";
+    try {
+      const settings = await app().Settings();
+      terminalReady = settings.permissions.mode !== "read-only" && settings.sandbox.bash !== "none";
+      terminalReason = terminalReady ? `权限模式：${settings.permissions.mode}` : "当前权限或 sandbox 禁止终端执行";
+    } catch {
+      terminalReady = false;
+      terminalReason = "无法读取终端权限配置";
+    }
+    try {
+      const memory = await app().Memory();
+      memoryReady = Boolean(memory.available);
+      memoryReason = memoryReady ? (memory.storeDir ? `记忆目录：${memory.storeDir}` : "长期记忆可用") : "长期记忆后端未启用";
+    } catch {
+      memoryReady = false;
+      memoryReason = "无法读取长期记忆状态";
+    }
+    applyToolAvailability({
+      files: { available: workspaceReady, reason: fileReason },
+      terminal: { available: terminalReady, reason: terminalReason },
+      browser: { available: true, reason: "桌面 WebView 已加载" },
+      memory: { available: memoryReady, reason: memoryReason },
+    });
+  }
+  function openAgentWizard(agentId?: string) {
+    agentWizardMode = agentId ? "edit" : "create";
+    if (agentId) selectedAgentId = agentId;
+    const agent = agentId ? agentCards.find((item) => item.id === agentId) : undefined;
+    agentWizardDraftName = agent?.name ?? "";
+    agentWizardDraftDescription = agent?.desc ?? "";
+    agentWizardVibe = agent?.vibe ?? "";
+    agentWizardTab = "identity";
+    agentAvatar = agent?.avatar ?? "C";
+    agentProvider = agent?.provider ?? "OpenAI";
+    agentModel = agent?.model ?? modelOptions.OpenAI?.[0] ?? "GPT-4o";
+    setToolSelectionFromAgent(agent);
+    setSkillSelectionFromAgent(agent);
+    agentWizardOpen = true;
+    void refreshToolStatus();
+    void refreshSkillStatus();
+  }
+  async function refreshAgents() {
+    if (!hasWailsBindings()) {
+      agentCards = defaultAgentCards;
+      return;
+    }
+    try {
+      const agents = await app().ListAgents();
+      agentCards = agents.length ? agents : defaultAgentCards;
+      if (!agentCards.some((agent) => agent.id === selectedAgentId)) {
+        selectedAgentId = agentCards[0]?.id ?? "";
+      }
+      downloadedMarketAgentIds = agentMarketItems.filter((item) => agentCards.some((agent) => agent.id === item.id)).map((item) => item.id);
+    } catch (error) {
+      console.error("Failed to load agents", error);
+      agentCards = defaultAgentCards;
+    }
+  }
+  async function saveAgentWizard() {
+    const name = agentWizardDraftName.trim();
+    if (!name) return;
+    const current = agentWizardMode === "edit" ? agentCards.find((agent) => agent.id === selectedAgentId) : undefined;
+    const input: AgentInput = {
+      id: current?.id,
+      name,
+      role: current?.role ?? "自定义",
+      status: current?.status ?? "已启用",
+      desc: agentWizardDraftDescription.trim(),
+      avatar: agentAvatar,
+      vibe: agentWizardVibe,
+      provider: agentProvider,
+      model: agentModel,
+      tools: toolCards.filter((tool) => tool.active).map((tool) => tool.title),
+      skills: skillCards.filter((skill) => skill.active).map((skill) => skill.title),
+      coreFiles: current?.coreFiles ?? coreFiles,
+    };
+    if (!hasWailsBindings()) {
+      const now = new Date().toISOString();
+      const localAgent: AgentView = { ...input, id: input.id || `agent-${Date.now()}`, role: input.role || "自定义", status: input.status || "已启用", desc: input.desc || "尚未分配具体职能。", runs: current?.runs ?? 0, tools: input.tools ?? [], skills: input.skills ?? [], coreFiles: input.coreFiles ?? [], builtIn: current?.builtIn ?? false, createdAt: current?.createdAt ?? now, updatedAt: now };
+      agentCards = current ? agentCards.map((agent) => agent.id === current.id ? localAgent : agent) : [localAgent, ...agentCards];
+      selectedAgentId = localAgent.id;
+      agentWizardOpen = false;
+      return;
+    }
+    try {
+      const saved = await app().SaveAgent(input);
+      selectedAgentId = saved.id;
+      await refreshAgents();
+      agentWizardOpen = false;
+    } catch (error) {
+      console.error("Failed to save agent", error);
+    }
+  }
   function filteredAgentMarketItems() {
     const keyword = agentMarketSearch.trim().toLowerCase();
     if (!keyword) return agentMarketItems;
@@ -956,9 +2157,20 @@
   function marketAgentDownloaded(item: AgentMarketItem) {
     return downloadedMarketAgentIds.includes(item.id) || agentCards.some((agent) => agent.id === item.id);
   }
-  function downloadMarketAgent(item: AgentMarketItem) {
+  async function downloadMarketAgent(item: AgentMarketItem) {
     if (!agentCards.some((agent) => agent.id === item.id)) {
-      agentCards = [{ id: item.id, name: item.name, role: item.role, runs: 0, status: "已下载", desc: item.desc }, ...agentCards];
+      const marketAgent: AgentInput = { id: item.id, name: item.name, role: item.role, status: "已下载", desc: item.desc, avatar: item.name.slice(0, 1), provider: "OpenAI", model: modelOptions.OpenAI?.[0] ?? "GPT-4o", tools: [], skills: item.tags, coreFiles: [] };
+      if (hasWailsBindings()) {
+        try {
+          await app().SaveAgent(marketAgent);
+          await refreshAgents();
+        } catch (error) {
+          console.error("Failed to persist market agent", error);
+        }
+      } else {
+        const now = new Date().toISOString();
+        agentCards = [{ ...marketAgent, id: item.id, role: item.role, runs: 0, status: "已下载", desc: item.desc, tools: [], skills: item.tags, coreFiles: [], builtIn: false, createdAt: now, updatedAt: now }, ...agentCards];
+      }
     }
     if (!downloadedMarketAgentIds.includes(item.id)) downloadedMarketAgentIds = [...downloadedMarketAgentIds, item.id];
     selectedAgentId = item.id;
@@ -984,10 +2196,78 @@
     URL.revokeObjectURL(url);
   }
   function capabilityLabel(kind: CapabilityTab) { return kind === "plugin" ? "插件" : kind === "mcp" ? "MCP" : "SKILL"; }
+  function capabilityCreateLabel(kind: CapabilityTab) { return kind === "plugin" ? "创建插件" : kind === "mcp" ? "创建MCP" : "创建SKILL"; }
   function capabilitySubtitle(kind: CapabilityTab) {
     if (kind === "plugin") return "插件市场、安装流程和启用状态";
     if (kind === "mcp") return "MCP Server、连接器和授权状态";
     return "Skill 包、版本来源和 Agent 挂载";
+  }
+  function pluginToCapability(plugin: WorkbenchPlugin): CapabilityItem {
+    return {
+      id: plugin.id,
+      name: plugin.name || plugin.id,
+      desc: plugin.capabilities?.length ? plugin.capabilities.join(" / ") : `${plugin.kind || "plugin"} 工作台插件`,
+      status: plugin.enabled ? "已启用" : "未启用",
+      version: plugin.version || "本地",
+      source: plugin.kind || "Workbench Plugin",
+      scope: plugin.providerIds?.length ? plugin.providerIds.join(" / ") : "workspace",
+      sync: plugin.enabled ? "已加载" : "待启用",
+      path: plugin.entry || plugin.id,
+      permission: plugin.config ? Object.keys(plugin.config).join(" / ") || "按插件配置" : "按插件配置",
+      enabled: plugin.enabled,
+    };
+  }
+  function mcpToCapability(server: CapabilitiesView["servers"][number]): CapabilityItem {
+    const enabled = server.status === "connected" || server.status === "deferred" || server.status === "initializing";
+    const status = server.status === "connected" ? "已连接" : server.status === "disabled" ? "已停用" : server.status === "failed" ? "连接失败" : server.status || "未知";
+    return {
+      id: server.name,
+      name: server.name,
+      desc: `${server.tools} tools · ${server.prompts} prompts · ${server.resources} resources`,
+      status,
+      version: server.transport || "mcp",
+      source: server.builtIn ? "内置 MCP" : server.configured ? "配置 MCP" : "运行时 MCP",
+      scope: server.tier || "workspace",
+      sync: server.error || server.authStatus || status,
+      path: server.command || server.url || server.name,
+      permission: server.envKeys?.length ? `环境变量：${server.envKeys.join(" / ")}` : server.authConfigured ? "已配置授权" : "按 MCP 配置",
+      enabled,
+    };
+  }
+  function skillToCapability(skill: CapabilitiesView["skills"][number]): CapabilityItem {
+    return {
+      id: skill.name,
+      name: skill.name,
+      desc: skill.description || "Skill 工作流",
+      status: skill.enabled ? "已加载" : "未启用",
+      version: skill.scope || "skill",
+      source: skill.runAs || "Codex Skill",
+      scope: skill.scope || "global",
+      sync: skill.enabled ? "可调用" : "待启用",
+      path: skill.name,
+      permission: skill.runAs || "按 Skill 定义",
+      enabled: skill.enabled,
+    };
+  }
+  async function refreshCapabilities() {
+    if (!hasWailsBindings()) {
+      capabilityBuckets = defaultCapabilityBuckets;
+      return;
+    }
+    try {
+      const [plugins, capabilities] = await Promise.all([app().WorkbenchPlugins(), app().Capabilities()]);
+      capabilityBuckets = {
+        plugin: plugins.map(pluginToCapability),
+        mcp: capabilities.servers.map(mcpToCapability),
+        skill: capabilities.skills.map(skillToCapability),
+      };
+      if (!capabilityBuckets[capabilityTab].some((item) => item.id === selectedCapabilityId)) {
+        selectedCapabilityId = capabilityBuckets[capabilityTab][0]?.id || "";
+      }
+    } catch (error) {
+      console.error("Failed to refresh capabilities", error);
+      capabilityBuckets = defaultCapabilityBuckets;
+    }
   }
   function allCapabilities() { return [...capabilityBuckets.plugin, ...capabilityBuckets.mcp, ...capabilityBuckets.skill]; }
   function capabilityEnabledCount() { return allCapabilities().filter((item) => item.enabled).length; }
@@ -1014,19 +2294,62 @@
     const currentIndex = item.status.includes("授权") ? 2 : item.status.includes("配置") ? 1 : 0;
     return index <= currentIndex;
   }
-  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; }
-  function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
+  function resetCapabilityCreateForm(kind: CapabilityTab) {
+    capabilityCreateName = `新建${capabilityLabel(kind)}`;
+    capabilityCreateGroup = capabilityLabel(kind);
+    capabilityCreateVersion = "v0.1";
+    capabilityCreateScope = kind === "mcp" ? "workspace" : kind === "skill" ? "skills" : "desktop/frontend";
+    capabilityCreateEntry = kind === "mcp" ? "npx mcp-server" : kind === "skill" ? "SKILL.md" : "plugin.json";
+    capabilityCreateStatus = "启用";
+    capabilityCreateDescription = `${capabilitySubtitle(kind)}：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。`;
+  }
+  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; if (capabilityCreateOpen) resetCapabilityCreateForm(kind); }
+  function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); resetCapabilityCreateForm(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
+  async function submitCapabilityCreate() {
+    const name = capabilityCreateName.trim();
+    if (!name) return;
+    const enabled = capabilityCreateStatus === "启用";
+    try {
+      if (capabilityTab === "plugin") {
+        const input: WorkbenchPluginInput = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `plugin-${Date.now()}`, name, kind: capabilityCreateGroup.trim() || "native", entry: capabilityCreateEntry.trim() || name, version: capabilityCreateVersion.trim() || "v0.1", capabilities: capabilityCreateDescription.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean), enabled };
+        await app().SaveWorkbenchPlugin(input);
+      } else if (capabilityTab === "mcp") {
+        await app().AddMCPServer({ name, transport: capabilityCreateGroup.trim().toLowerCase() === "http" ? "http" : "stdio", command: capabilityCreateEntry.trim(), args: [], url: capabilityCreateGroup.trim().toLowerCase() === "http" ? capabilityCreateEntry.trim() : "", tier: capabilityCreateScope.trim() || "workspace" });
+      } else {
+        const input: SkillPackageInput = { name, description: capabilityCreateDescription.trim(), runAs: capabilityCreateScope.trim() || "workflow", enabled };
+        await app().CreateSkillPackage(input);
+      }
+      capabilityCreateOpen = false;
+      await refreshCapabilities();
+      await refreshSkillStatus();
+    } catch (error) {
+      console.error("Failed to create capability", error);
+    }
+  }
   function configDialogIntro() {
     if (configDialog === "project") return "对标 CreateMatterDialog：记录项目名称、客户、阶段、负责人和初始任务。";
     if (configDialog === "customer") return "对标 CreateClientDialog：记录客户类型、联系方式、风险等级和关联项目。";
     if (configDialog === "schedule") return "对标 CreateScheduleDialog：支持关联项目、客户和提醒时间。";
     if (configDialog === "todo") return "对标 CreateTodoDialog：设置优先级、截止时间和执行 Agent。";
-    if (configDialog === "hearing") return "对标 CreateMockHearingDialog：选择辩题、参与角色和关联资料。";
     if (configDialog === "team") return "对标 CreateTeamModal：选择成员、Agent 和协作目标。";
     if (configDialog === "model") return "对标 AddModelDialog：设置 provider、base URL、API Key 和可用模型。";
     if (configDialog === "ingest") return "对标 BatchImportDialog：选择来源、分类、去重和索引策略。";
     if (configDialog === "distill") return "对标 DistillWizard：从历史任务中提炼新 Agent 的身份、技能和工具。";
     return "该弹窗对标 AORISTLAWER 的创建、导入和配置流程。";
+  }
+
+  function mergeStreamingText(existing: string, incoming: string) {
+    if (!incoming) return existing;
+    if (!existing) return incoming;
+    if (incoming.startsWith(existing)) return incoming;
+    if (existing.endsWith(incoming)) return existing;
+    const maxOverlap = Math.min(existing.length, incoming.length);
+    for (let length = maxOverlap; length > 0; length -= 1) {
+      if (existing.endsWith(incoming.slice(0, length))) {
+        return existing + incoming.slice(length);
+      }
+    }
+    return existing + incoming;
   }
 
   function updateLastAssistant(text: string) {
@@ -1039,10 +2362,41 @@
       }
     }
     if (current) {
-      current.body += text;
+      current.body = mergeStreamingText(current.body, text);
+      saveActiveSidebarConversationTranscript();
+      scrollConversationToBottom();
       return;
     }
     appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: text, pending: true });
+  }
+
+  function finishTurnWithError(message: string) {
+    const lastAssistant = [...transcript].reverse().find((item) => item.role === "assistant" && item.pending);
+    if (lastAssistant && !lastAssistant.body.trim()) {
+      lastAssistant.role = "notice";
+      lastAssistant.title = "请求失败";
+      lastAssistant.body = message;
+      lastAssistant.pending = false;
+      saveActiveSidebarConversationTranscript();
+      scrollConversationToBottom();
+      return;
+    }
+    appendTranscript({ id: `error-${Date.now()}`, role: "notice", title: "请求失败", body: message });
+  }
+
+  function isTurnAlreadyRunningError(message: string) {
+    return message.toLowerCase().includes("turn already running");
+  }
+
+  function isCancellationError(message: string) {
+    const normalized = message.trim().toLowerCase();
+    return normalized === "context canceled" || normalized === "context cancelled" || normalized === "operation canceled" || normalized === "operation cancelled" || normalized === "canceled" || normalized === "cancelled";
+  }
+
+  function formatErrorMessage(error: unknown) {
+    if (error instanceof Error && error.message.trim()) return error.message;
+    if (typeof error === "string" && error.trim()) return error;
+    return "发送失败，请检查当前会话是否已启动，或稍后重试。";
   }
 
   function toolTranscriptId(id?: string) {
@@ -1070,23 +2424,27 @@
     transcript = historyToTranscript(history);
     pendingApproval = undefined;
     pendingAsk = undefined;
+    scrollConversationToBottom("auto");
   }
 
   function handleEvent(event: WireEvent) {
     if (event.tabId && activeTab?.id && event.tabId !== activeTab.id) return;
     if (event.kind === "turn_started") {
       sending = true;
+      if (event.tabId) {
+        tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: true } : tab));
+      }
       pendingApproval = undefined;
       pendingAsk = undefined;
-      appendTranscript({ id: `assistant-${Date.now()}`, role: "assistant", body: "", pending: true });
+      ensurePendingAssistant();
     }
     if (event.kind === "reasoning" && event.reasoning) {
       appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: t.transcript.reasoning, body: event.reasoning, pending: true });
     }
     if ((event.kind === "text" || event.kind === "message") && event.text) {
-    pendingTextBuffer += event.text;
-    scheduleTextFlush();
-  }
+      pendingTextBuffer = mergeStreamingText(pendingTextBuffer, event.text);
+      scheduleTextFlush();
+    }
     if (event.kind === "tool_dispatch" && event.tool) {
       const id = toolTranscriptId(event.tool.id);
       const existing = transcript.find((item) => item.id === id);
@@ -1096,6 +2454,7 @@
         existing.pending = true;
         existing.readOnly = event.tool.readOnly;
         existing.parentId = event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined;
+        scrollConversationToBottom();
         return;
       }
       appendTranscript({
@@ -1114,29 +2473,32 @@
         tool.body += event.tool.output ? `\n${event.tool.output}` : "";
         tool.body += event.tool.err ? `\n${event.tool.err}` : "";
         tool.pending = false;
+        scrollConversationToBottom();
       }
     }
     if (event.kind === "approval_request" && event.approval) {
       pendingApproval = event.approval;
       sending = false;
+      scrollConversationToBottom();
     }
     if (event.kind === "ask_request" && event.ask) {
       pendingAsk = event.ask;
       sending = false;
-    }
-    if (event.kind === "usage" && event.usage) {
-      appendTranscript({
-        id: `usage-${Date.now()}`,
-        role: "notice",
-        title: "usage",
-        body: `${event.usage.totalTokens ?? 0} ${t.transcript.tokens}`,
-      });
+      scrollConversationToBottom();
     }
     if (event.kind === "notice" && event.text) {
       appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: event.text });
     }
     if (event.kind === "turn_done") {
       sending = false;
+      if (event.tabId) {
+        tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false } : tab));
+      }
+      if (event.err && isCancellationError(event.err)) {
+        removeEmptyPendingAssistant();
+      } else if (event.err) {
+        finishTurnWithError(event.err);
+      }
       for (const item of transcript) item.pending = false;
       if (restoreDraftOnTurnDone && submittedDraft) {
         if (!input.trim()) input = submittedDraft.display;
@@ -1144,17 +2506,26 @@
       }
       restoreDraftOnTurnDone = false;
       submittedDraft = undefined;
+      saveActiveSidebarConversationTranscript();
+      scrollConversationToBottom();
     }
   }
 
   async function refresh() {
     loading = true;
     try {
+      const loadedBrand = await app().Brand();
+      brand = loadedBrand.name && loadedBrand.name !== "VoltUI" ? loadedBrand : defaultBrand;
       tabs = await app().ListTabs();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
       models = active ? await app().ModelsForTab(active.id) : [];
-      selectedModel = models.find((model) => model.current)?.name ?? models[0]?.name ?? "";
+      selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
       commands = await app().Commands();
+      await refreshModelSettings();
+      await refreshAgents();
+      await refreshToolStatus();
+      await refreshSkillStatus();
+      await refreshCapabilities();
       if (active) await refreshCodeDock(active);
       if (active) await hydrateHistory(active);
     } finally {
@@ -1174,18 +2545,45 @@
     const text = (displayText ?? input).trim();
     const submission = (submitText ?? text).trim();
     if (!text || !submission || !activeTab) return;
+    if (sending) return;
+    if (activityMode === "work" && workLayer === "newTask") newTaskConversationActive = true;
     const draft = { display: text, submission };
+    const userTranscriptId = `user-${Date.now()}`;
     submittedDraft = draft;
     restoreDraftOnTurnDone = false;
+    sending = true;
     input = "";
-    appendTranscript({ id: `user-${Date.now()}`, role: "user", body: text });
+    appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
+    ensurePendingAssistant();
     try {
-      await app().SubmitDisplayToTab(activeTab.id, text, submission);
+      const targetTab = await ensureConversationThreadForSend(text);
+      if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
+      await withTimeout(
+        app().SubmitDisplayToTab(targetTab.id, text, submission),
+        "请求超时：30 秒内未收到桌面后端响应，请稍后重试或重启桌面 dev 窗口。",
+      );
     } catch (error) {
-      input = draft.display;
+      const message = formatErrorMessage(error);
+      input = "";
       submittedDraft = undefined;
       restoreDraftOnTurnDone = false;
-      throw error;
+      if (isTurnAlreadyRunningError(message)) {
+        removeEmptyPendingAssistant();
+        updateTranscriptItem(userTranscriptId, { title: "user · 待发送", pending: true });
+        if (!input.trim()) input = draft.display;
+        sending = true;
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: "上一轮对话仍在运行，这条消息尚未提交给模型。已恢复到输入框；如果超过 2 分钟仍无回复，请点击停止后重新发送。" });
+        return;
+      }
+      if (isCancellationError(message)) {
+        removeTranscriptItem(userTranscriptId);
+        removeEmptyPendingAssistant();
+        sending = false;
+        return;
+      }
+      removeEmptyPendingAssistant();
+      sending = false;
+      finishTurnWithError(message);
     }
   }
 
@@ -1313,7 +2711,7 @@
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
     <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class="brand-workbench-button" class:active={activityMode === "work" && workLayer === "today"} type="button" aria-label="工作台" title="工作台" onclick={() => openWorkLayer("today")}><LayoutDashboard size={15} /></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
+      <header class="sidebar__brand"><div class="brand-mark"><img src={brandLogo} alt="" /></div><div class="brand-copy"><strong>{brand.name}</strong><span>AI 驱动工作台</span></div><button class="brand-workbench-button" class:active={activityMode === "work" && workLayer === "today"} type="button" aria-label="工作台" title="工作台" onclick={() => openWorkLayer("today")}><LayoutDashboard size={15} /></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
       <nav class="workspace-nav" aria-label="工作台导航">
         {#each workspaceNav as section (section.title)}
           {@const sectionCollapsed = isWorkspaceSectionCollapsed(section.title)}
@@ -1330,7 +2728,7 @@
             {#if !sectionCollapsed}
               {#each section.items as item (item.label)}
                 {@const Icon = navIcon(item.icon)}
-                <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkLayer(item.layer)}>
+                <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkspaceNavLayer(item.layer)}>
                   <span class="nav-icon"><Icon size={15} /></span>
                   <span>{item.label}</span>
                   {#if item.badge}<em>{item.badge}</em>{/if}
@@ -1396,24 +2794,24 @@
       <footer class="sidebar__user-wrap">{#if userMenuOpen}<div class="user-menu" role="menu">{#each userMenuItems as item (item.layer)}<button type="button" role="menuitem" onclick={() => openUserPanelDialog(item.layer)}>{item.label}</button>{/each}</div>{/if}<button class="sidebar__user sidebar__profile" type="button" aria-label="打开用户菜单" title="用户菜单" onclick={() => (userMenuOpen = !userMenuOpen)}><span class="sidebar__avatar"><UserRound size={16} /></span><strong>用户名</strong><em hidden aria-hidden="true"></em></button></footer>
     </aside>
 
-    <section class="stage">
+    <section class="stage" class:stage--conversation={showActiveTranscript}>
       <div class="window-drag-region" aria-hidden="true"></div>
-      <div class="stage__surface">
+      <div class="stage__surface" class:stage__surface--conversation={showActiveTranscript}>
         {#if loading}
           <div class="content__loading">{t.app.loading}</div>
         {:else if showActiveTranscript}
           <section class="conversation-view">
             <header class="conversation-header">
               <div>
-                <strong>{activeTab?.topicTitle || t.activity.untitled}</strong>
-                <span>{activeTab?.workspaceName || t.common.global}</span>
+                <strong>{conversationHeaderTitle}</strong>
+                <span>{conversationHeaderScope}</span>
               </div>
               <button type="button" onclick={openCodeInspector}>
                 <Code2 size={15} />
                 代码状态
               </button>
             </header>
-            <div class="conversation">
+            <div class="conversation" bind:this={conversationScrollEl}>
               <Transcript
                 items={transcript}
                 {loading}
@@ -1425,11 +2823,33 @@
                 onDismissAsk={() => (pendingAsk = undefined)}
               />
             </div>
+            <div class="stage__composer conversation-composer">
+              <Composer
+                {input}
+                {commands}
+                {sending}
+                onInput={(value) => (input = value)}
+                onSend={send}
+                onCancel={cancel}
+                onPreviewFile={previewFile}
+                {models}
+                {selectedModel}
+                onModelChange={switchModel}
+                projectOptions={newTaskProjectOptions}
+                selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
+                onProjectChange={linkProjectById}
+                {workPermission}
+                onWorkPermissionChange={(value) => (workPermission = value)}
+                onOpenResources={openResourceCenterFromComposer}
+                {activityMode}
+                onActivityModeChange={openActivityMode}
+              />
+            </div>
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
-          <section class="workbench aorist-workbench">
+          <section class="workbench aorist-workbench" data-current-work-layer={workLayer}>
             <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div></div></header>
-            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={focusNewTask}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -1491,7 +2911,7 @@
                       {selectedModel}
                       onModelChange={switchModel}
                       projectOptions={newTaskProjectOptions}
-                      selectedProjectId={linkedProject ? selectedProjectId : ""}
+                      selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                       onProjectChange={linkProjectById}
                       {workPermission}
                       onWorkPermissionChange={(value) => (workPermission = value)}
@@ -1597,7 +3017,7 @@
                         <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
                         <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span><em>{project.priority}优先级</em><em class:riskHigh={project.risk === "中风险"}>{project.risk}</em></div>
                         <p>{project.court || project.desc}</p>
-                        <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>委托人：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
+                        <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>客户：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
                         <div class="project-progress-line"><i style={`--progress:${project.progress}%`}></i><span>{project.progress}%</span></div>
                       </div>
                       <b>›</b>
@@ -1641,9 +3061,8 @@
                 </div>
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button">同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button"><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
-            {:else if workLayer === "mockHearing"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Mock Hearing</span><strong>模拟庭辩</strong></div><div><button type="button" onclick={() => openConfigDialog("hearing")}>创建庭辩</button><button type="button" onclick={() => (selectedHearingTitle = hearingRooms[0]?.title)}>进入庭辩室</button></div></div><div class="aorist-card-grid">{#each hearingRooms as room (room.title)}<button class="agent-card hearing-card" type="button" onclick={() => (selectedHearingTitle = room.title)}><header><span>辩</span><div><strong>{room.title}</strong><em>{room.stage}</em></div></header><p>{room.role}</p><footer><span>{room.next}</span><b>AI 庭辩</b></footer></button>{/each}</div></section>
             {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button">批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
-            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder="检索标题、来源、状态或文件数量" /></label><span>{filteredResourceItems.length} / {resourceItems.length} 项</span></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="搜索文书、法规与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文书知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>法规知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文书、法规、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文书、法规检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{searchResults.length} 项</span></div><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder="检索标题、来源、状态或文件数量" /></label><span>{filteredResourceItems.length} / {resourceItems.length} 项</span></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文档知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>规范知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文档、规范、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{searchResults.length} 项</span></div><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
                 {#if teamViewMode === "chat"}
@@ -1805,8 +3224,34 @@
                   {/if}
                 {/if}
               </section>
-            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openConfigDialog("model")}>添加模型</button><button type="button">刷新状态</button></div></div><div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>可选模型</em></article><article><span>远程 LLM</span><strong>ON</strong><em>已允许</em></article><article><span>密钥状态</span><strong>OK</strong><em>环境变量托管</em></article></div><div class="aorist-card-grid">{#each modelCards as model (model.name)}<article class="capability-item"><span>{model.status}</span><strong>{model.name}</strong><p>{model.provider} / {model.role}</p><button type="button">设为默认</button></article>{/each}</div></section>
-            {:else if workLayer === "settings"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Settings</span><strong>系统设置</strong></div><button type="button">保存设置</button></div><div class="aorist-card-grid">{#each settingGroups as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div></section>
+            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加渠道</button><button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新状态</button></div></div>{#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}<div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>真实可选模型</em></article><article><span>渠道数量</span><strong>{modelSettings?.providers.length ?? 0}</strong><em>{hasWailsBindings() ? "真实配置" : "未连接桌面后端"}</em></article><article><span>密钥状态</span><strong>{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0}</strong><em>可用渠道</em></article></div>{#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取模型配置...</div>{:else if !hasWailsBindings()}<article class="detail-empty"><strong>未连接桌面后端</strong><p>模型管理只展示真实配置。请在 Wails 桌面运行环境中读取、添加和保存模型渠道。</p></article>{:else if !(modelSettings?.providers.length)}<article class="detail-empty"><strong>尚未配置模型渠道</strong><p>添加 OpenAI-compatible 或 Anthropic-compatible 渠道后，聊天输入框会立即出现可选模型。</p><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加第一个渠道</button></article>{:else}<div class="aorist-card-grid">{#each modelSettings?.providers ?? [] as provider (provider.name)}<article class="capability-item"><span>{provider.configured ? "可用" : provider.requiresKey ? "缺少 Key" : "未启用"}</span><strong>{provider.name}</strong><p>{provider.kind} / {provider.baseUrl || "未配置 Base URL"}</p><p>Key: {provider.apiKeyEnv || "无"} / 上下文: {provider.contextWindow || "-"} / 优先级: {provider.priority ?? 0}</p><div class="model-chip-list">{#each provider.models as model (model)}<button class:active={isDefaultModelRef(provider, model)} type="button" onclick={() => void setDefaultModelProvider(provider, model)}>{model}{#if isDefaultModelRef(provider, model)}<Check size={13} />{/if}</button>{/each}</div><button type="button" onclick={() => openModelProviderDialog(provider)}><Pencil size={14} /> 编辑渠道</button><button type="button" onclick={() => void setDefaultModelProvider(provider)}><Check size={14} /> 设为默认</button><button type="button" onclick={() => void deleteModelProvider(provider)}><Trash2 size={14} /> 删除</button></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "settings"}
+              <section class="aorist-page settings-page">
+                <div class="aorist-toolbar">
+                  <div><span>Settings</span><strong>系统设置</strong></div>
+                  <div>
+                    <button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新</button>
+                    <button type="button" onclick={() => openSettingsPanel("general")}><Settings size={14} /> 打开设置</button>
+                  </div>
+                </div>
+                {#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}
+                {#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取系统设置...</div>{/if}
+                <div class="aorist-stats settings-stats">
+                  <article><span>语言</span><strong>{settingsDraft.language === "auto" ? "自动" : settingsDraft.language.toUpperCase()}</strong><em>桌面 UI</em></article>
+                  <article><span>主题</span><strong>{settingsDraft.theme || "auto"}</strong><em>{settingsDraft.themeStyle || "graphite"}</em></article>
+                  <article><span>权限</span><strong>{settingsDraft.permissionMode || "ask"}</strong><em>{settingsDraft.sandboxBash || "enforce"}</em></article>
+                </div>
+                <div class="aorist-card-grid">
+                  {#each settingGroups as item (item.title)}
+                    <article class="capability-item settings-card">
+                      <span>{item.status}</span>
+                      <strong>{item.title}</strong>
+                      <p>{item.desc}</p>
+                      <button type="button" onclick={() => openSettingsPanel(item.id)}>配置</button>
+                    </article>
+                  {/each}
+                </div>
+              </section>
             {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button">立即同步</button></div><div class="aorist-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
             {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button">导出日志</button></div><div class="aorist-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
             {:else}
@@ -1824,8 +3269,8 @@
                   </label>
                   <div class="capability-hub-header__actions">
                     <button type="button" onclick={() => openConfigDialog("ingest")}><Upload size={15} /> 导入配置</button>
-                    <button type="button"><RefreshCw size={15} /> 刷新状态</button>
-                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> 创建插件</button>
+                    <button type="button" onclick={() => void refreshCapabilities()}><RefreshCw size={15} /> 刷新状态</button>
+                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> {capabilityCreateLabel(capabilityTab)}</button>
                   </div>
                 </header>
                 <div class="capability-stats">
@@ -1932,7 +3377,7 @@
                   {selectedModel}
                   onModelChange={switchModel}
                   projectOptions={newTaskProjectOptions}
-                  selectedProjectId={linkedProject ? selectedProjectId : ""}
+                  selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                   onProjectChange={linkProjectById}
                   {workPermission}
                   onWorkPermissionChange={(value) => (workPermission = value)}
@@ -2031,9 +3476,6 @@
       {#if automationDialog && currentAutomation()}
         <div class="modal-backdrop"><section class="config-modal automation-config-modal"><header><div><span>Automation Task</span><strong>{currentAutomation()?.title}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>任务类型<input value={currentAutomation()?.kind || ""} /></label><label>运行状态<input value={currentAutomation()?.status || ""} /></label><label>覆盖范围<input value={currentAutomation()?.scope || ""} /></label><label>触发条件<input value={currentAutomation()?.cadence || ""} /></label><label>执行环境<input value={currentAutomation()?.environment || ""} /></label><label>下次运行<input value={currentAutomation()?.nextRun || ""} /></label><label class="wide">验证命令<textarea rows="3" value={currentAutomation()?.command || ""}></textarea></label><label class="wide">任务说明<textarea rows="4" value={currentAutomation()?.desc || ""}></textarea></label><label class="wide">运行步骤<textarea rows="4" value={currentAutomation()?.steps.join("\n") || ""}></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button><button type="button" onclick={() => (automationDialog = undefined)}>保存配置</button></footer></section></div>
       {/if}
-      {#if selectedHearingTitle}
-        <div class="modal-backdrop"><section class="config-modal room-modal"><header><div><span>Mock Hearing Room</span><strong>{selectedHearingRoom()?.title}</strong></div><button type="button" onclick={() => (selectedHearingTitle = undefined)}>x</button></header><div class="room-layout"><aside><span>{selectedHearingRoom()?.stage}</span><strong>{selectedHearingRoom()?.role}</strong><p>{selectedHearingRoom()?.next}</p></aside><main><article class="room-message judge"><b>审判视角</b><p>先核对争议焦点，再进入询问与反询问。</p></article><article class="room-message plaintiff"><b>主张方 Agent</b><p>基于项目记录提炼证据链和责任边界。</p></article><article class="room-message defendant"><b>答辩方 Agent</b><p>按时间线检查对方假设和缺失材料。</p></article></main></div><footer><button type="button" onclick={() => (selectedHearingTitle = undefined)}>暂停</button><button type="button" onclick={() => (selectedHearingTitle = undefined)}>生成总结</button></footer></section></div>
-      {/if}
       {#if projectDetailOpen}
         {@const project = selectedProject()}
         {@const linkedProjectMaterials = projectMaterials(project)}
@@ -2045,8 +3487,13 @@
             <header class="project-detail-head">
               <button class="project-detail-back" type="button" aria-label="返回项目列表" onclick={() => (projectDetailOpen = false)}><ArrowLeft size={16} /></button>
               <div class="project-detail-title">
-                <div><strong>{project.name}</strong><span>{project.code} / {project.category}</span></div>
-                <em>{project.status === "closed" ? "已归档" : "进行中"}</em>
+                <div>
+                  <div class="project-detail-name-row">
+                    <strong>{project.name}</strong>
+                    <em>{project.status === "closed" ? "已归档" : "进行中"}</em>
+                  </div>
+                  <span>{project.code} / {project.category}</span>
+                </div>
               </div>
               <div class="project-detail-actions">
                 <button type="button" onclick={() => linkProjectToTask(project.name)}><Activity size={14} /> 发起项目任务</button>
@@ -2165,7 +3612,7 @@
                 </main>
                 <aside class="project-detail-aside">
                   <section>
-                    <h3>当事人结构</h3>
+                    <h3>客户结构</h3>
                     <div><span>客户方</span><strong>{project.client}</strong></div>
                     <div><span>负责人</span><strong>{project.owner}</strong></div>
                   </section>
@@ -2195,11 +3642,13 @@
               </span>
               <div class="customer-detail-title">
                 <div>
-                  <strong>{customer.name}</strong>
+                  <div class="customer-detail-name-row">
+                    <strong>{customer.name}</strong>
+                    <em>{customer.type === "企业" ? "企业客户" : "个人客户"}</em>
+                    <em class="muted">{customer.status}</em>
+                  </div>
                   <span><Phone size={13} />{customer.phone}<Mail size={13} />{customer.email}</span>
                 </div>
-                <em>{customer.type === "企业" ? "企业客户" : "个人客户"}</em>
-                <em class="muted">{customer.status}</em>
               </div>
               <button class="customer-detail-primary" type="button" onclick={() => openConfigDialog("todo")}><Plus size={14} /> 新增待办</button>
             </header>
@@ -2232,7 +3681,7 @@
                   {:else if customerDetailTab === "projects"}
                     <section class="customer-detail-card customer-tab-panel">
                       <header class="customer-section-head">
-                        <div><h3><FolderKanban size={15} /> 关联项目</h3><p>对标 AORISTLAWER 的关联案件列表，点击后进入项目详情。</p></div>
+                        <div><h3><FolderKanban size={15} /> 关联项目</h3><p>对标工作台的关联项目列表，点击后进入项目详情。</p></div>
                         <button type="button" onclick={() => openConfigDialog("project")}><Plus size={13} /> 新建项目</button>
                       </header>
                       {#if linkedCustomerProjects.length}
@@ -2348,18 +3797,110 @@
               <button type="button" onclick={() => (userPanelDialog = undefined)}>x</button>
             </header>
             <p class="user-panel-modal__intro">{userPanelDialogIntro()}</p>
-            {#if userPanelDialog === "models"}
-              <div class="user-panel-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong></article><article><span>默认模型</span><strong>{selectedModel || agentModel}</strong></article><article><span>接口状态</span><strong>OK</strong></article></div>
-              <div class="user-panel-list">{#each modelCards as model (model.name)}<article><div><strong>{model.name}</strong><p>{model.provider} / {model.role}</p></div><span>{model.status}</span></article>{/each}</div>
-            {:else if userPanelDialog === "settings"}
-              <div class="user-panel-grid">{#each settingGroups as item (item.title)}<article><span>{item.status}</span><strong>{item.title}</strong><p>{item.desc}</p><button type="button">配置</button></article>{/each}</div>
-              <div class="config-grid user-panel-form"><label>语言<select><option>中文</option><option>English</option></select></label><label>主题<select><option>浅色</option><option>深色</option><option>跟随系统</option></select></label><label>局域网运行<input value="127.0.0.1:5174" /></label><label>默认模型<input value={selectedModel || agentModel} /></label></div>
+            {#if userPanelDialog === "settings"}
+              <div class="settings-dialog-layout">
+                <aside class="settings-dialog-nav" aria-label="系统设置分类">
+                  {#each settingGroups as item (item.title)}
+                    <button class:active={settingsPanel === item.id} type="button" aria-pressed={settingsPanel === item.id} onclick={() => selectSettingsPanel(item.id)}>
+                      <span>{item.status}</span>
+                      <strong>{item.title}</strong>
+                      <em>{item.desc}</em>
+                    </button>
+                  {/each}
+                </aside>
+                <section class="settings-dialog-panel" aria-labelledby="settings-panel-title">
+                  <header class="settings-dialog-panel__head">
+                    <div><span>Settings</span><strong id="settings-panel-title">{settingsPanelTitle()}</strong></div>
+                    {#if modelSettingsLoading}<em><Loader2 size={14} /> 读取中</em>{/if}
+                  </header>
+                  {#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}
+                  {#if settingsMessage}<div class="model-inline-alert"><Check size={15} /> {settingsMessage}</div>{/if}
+                  {#if settingsPanel === "general"}
+                    <div class="config-grid user-panel-form">
+                      <label>语言
+                        <select bind:value={settingsDraft.language}>
+                          <option value="auto">跟随系统</option>
+                          <option value="zh">中文</option>
+                          <option value="en">English</option>
+                        </select>
+                      </label>
+                      <label>主题
+                        <select bind:value={settingsDraft.theme}>
+                          <option value="auto">跟随系统</option>
+                          <option value="light">浅色</option>
+                          <option value="dark">深色</option>
+                        </select>
+                      </label>
+                      <label>主题样式
+                        <select bind:value={settingsDraft.themeStyle}>
+                          <option value="graphite">Graphite</option>
+                          <option value="porcelain">Porcelain</option>
+                          <option value="glacier">Glacier</option>
+                          <option value="aurora">Aurora</option>
+                          <option value="ember">Ember</option>
+                          <option value="midnight">Midnight</option>
+                          <option value="sandstone">Sandstone</option>
+                          <option value="linen">Linen</option>
+                        </select>
+                      </label>
+                      <label>关闭按钮
+                        <select bind:value={settingsDraft.closeBehavior}>
+                          <option value="background">最小化到后台</option>
+                          <option value="quit">退出应用</option>
+                        </select>
+                      </label>
+                    </div>
+                  {:else if settingsPanel === "runtime"}
+                    <div class="config-grid user-panel-form">
+                      <label>授权模式
+                        <select bind:value={settingsDraft.permissionMode}>
+                          <option value="ask">需要确认</option>
+                          <option value="allow">默认允许</option>
+                          <option value="deny">默认拒绝</option>
+                        </select>
+                      </label>
+                      <label>终端沙箱
+                        <select bind:value={settingsDraft.sandboxBash}>
+                          <option value="enforce">强制沙箱</option>
+                          <option value="none">不启用</option>
+                        </select>
+                      </label>
+                      <label>Shell
+                        <input bind:value={settingsDraft.sandboxShell} placeholder="auto / zsh / bash" />
+                      </label>
+                      <label>工作区根目录
+                        <input bind:value={settingsDraft.sandboxWorkspaceRoot} placeholder="留空使用当前工作区" />
+                      </label>
+                      <label class="settings-toggle wide">
+                        <input type="checkbox" bind:checked={settingsDraft.sandboxNetwork} />
+                        <span>允许沙箱内网络访问</span>
+                      </label>
+                      <label class="wide">额外可写目录
+                        <textarea rows="4" bind:value={settingsDraft.sandboxAllowWrite} placeholder="每行一个路径，或用逗号分隔"></textarea>
+                      </label>
+                    </div>
+                  {:else}
+                    <div class="user-panel-list settings-model-list">
+                      <article><div><strong>默认模型</strong><p>{modelSettings?.defaultModel || selectedModel || agentModel}</p><em>在模型管理中修改默认对话模型。</em></div><button type="button" onclick={() => { userPanelDialog = undefined; openWorkLayer("models"); }}>打开模型管理</button></article>
+                      <article><div><strong>模型渠道</strong><p>{modelSettings?.providers.length ?? 0} 个渠道，{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0} 个可用</p><em>可添加 OpenAI-compatible 或 Anthropic-compatible 接口。</em></div><button type="button" onclick={() => openModelProviderDialog()}>添加渠道</button></article>
+                    </div>
+                  {/if}
+                </section>
+              </div>
             {:else if userPanelDialog === "sync"}
               <div class="user-panel-list sync-dialog-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em><i style={`--progress:${job.progress}`}></i></div><span>{job.status}</span></article>{/each}</div>
             {:else}
               <div class="user-panel-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div>
             {/if}
-            <footer><button type="button" onclick={() => (userPanelDialog = undefined)}>关闭</button><button type="button" onclick={() => (userPanelDialog = undefined)}>{userPanelDialog === "operationLog" ? "导出日志" : "保存"}</button></footer>
+            <footer>
+              <button type="button" onclick={() => (userPanelDialog = undefined)}>关闭</button>
+              {#if userPanelDialog === "settings"}
+                <button type="button" onclick={resetSettingsDraft}>重置</button>
+                <button type="button" disabled={settingsSaving || modelSettingsLoading} onclick={() => void saveSettingsDraft()}>{settingsSaving ? "保存中" : settingsPanel === "models" ? "打开模型管理" : `保存${settingsPanelTitle()}`}</button>
+              {:else}
+                <button type="button" onclick={() => (userPanelDialog = undefined)}>{userPanelDialog === "operationLog" ? "导出日志" : "保存"}</button>
+              {/if}
+            </footer>
           </section>
         </div>
       {/if}
@@ -2412,7 +3953,7 @@
         </div>
       {/if}
       {#if configDialog}
-        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"}><header><div><span>{configDialog === "team" ? "Agent Team" : "Aorist Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责推进主流程的 Team Leader。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
+        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"}><header><div><span>{configDialog === "team" ? "Agent Team" : configDialog === "model" ? "Model Channel" : "Aorist Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责推进主流程的 Team Leader。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
   <div class="team-builder">
     <section>
       <label class="team-builder-search">
@@ -2449,13 +3990,58 @@
           <p>请在左侧添加至少一个智能体。</p>
         {/each}
       </div>
-      <label>团队名称 *<input bind:value={teamBuilderName} placeholder="例如 庭审突击团队" /></label>
+      <label>团队名称 *<input bind:value={teamBuilderName} placeholder="例如 发布验证团队" /></label>
     </aside>
-  </div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "model"}<label>Provider<select>{#each modelProviders as provider (provider)}<option>{provider}</option>{/each}</select></label><label>Base URL<input value="https://api.example.com/v1" /></label>{:else if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else if configDialog === "hearing"}<label>庭辩角色<select><option>产品方 / 交付方</option><option>主张方 / 答辩方</option></select></label><label>争议焦点<input value="需求边界与交付责任" /></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => configDialog === "team" ? saveTeamBuilder() : (configDialog = undefined)}>确认</button></footer></section></div>
+  </div>{:else if configDialog === "model"}
+    <div class="config-grid">
+      <label>渠道名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label>
+      <label>类型 *<select bind:value={modelDraft.kind}>{#each providerKindOptions as kind (kind)}<option value={kind}>{kind}</option>{/each}</select></label>
+      <label class="wide">Base URL *<input bind:value={modelDraft.baseUrl} placeholder="https://api.example.com/v1" /></label>
+      <label>API Key 环境变量<input bind:value={modelDraft.apiKeyEnv} placeholder="CUSTOM_API_KEY" /></label>
+      <label>API Key<input bind:value={modelDraft.apiKeyValue} type="password" placeholder={modelDraftEditing ? "留空则不更新 Key" : "可留空，稍后再填"} /></label>
+      <label>Models URL<input bind:value={modelDraft.modelsUrl} placeholder="可选，自定义 /models 地址" /></label>
+      <div class="model-fetch-panel wide">
+        <div class="model-fetch-panel__head">
+          <div>
+            <strong>自动获取模型</strong>
+            <span>使用当前 Base URL 和 API Key 调用 OpenAI-compatible /models。</span>
+          </div>
+          <button type="button" onclick={() => void fetchDraftProviderModels()} disabled={modelDraftFetching || !hasWailsBindings() || !modelDraft.baseUrl.trim()}>
+            <RefreshCw size={14} /> {modelDraftFetching ? "拉取中" : "自动获取模型"}
+          </button>
+        </div>
+        {#if modelDraft.fetchedModels.length}
+          <div class="model-fetch-actions">
+            <span>已选择 {modelDraft.selectedFetchedModels.length} / {modelDraft.fetchedModels.length}</span>
+            <button type="button" onclick={selectAllDraftFetchedModels}>全选</button>
+            <button type="button" onclick={clearDraftFetchedModels}>清空</button>
+          </div>
+          <div class="model-fetch-list">
+            {#each modelDraft.fetchedModels as model (model)}
+              <label class:active={isDraftFetchedModelSelected(model)}>
+                <input type="checkbox" checked={isDraftFetchedModelSelected(model)} onchange={() => toggleDraftFetchedModel(model)} />
+                <span>{model}</span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <label class="wide">模型列表 *<textarea rows="5" bind:value={modelDraft.modelsText} placeholder="每行一个模型，或先自动获取后勾选"></textarea></label>
+      <label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label>
+      <label>渠道优先级<input bind:value={modelDraft.priority} inputmode="numeric" placeholder="0" /></label>
+      <label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label>
+      <label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / responses" /></label>
+      <label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label>
+      <label class="wide">支持的 Effort<textarea rows="2" bind:value={modelDraft.supportedEffortsText} placeholder="逗号或换行分隔，例如 high, max"></textarea></label>
+      <label class="wide">视觉模型<textarea rows="2" bind:value={modelDraft.visionModelsText} placeholder="可选，只给支持图片输入的模型填写"></textarea></label>
+      {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
+      {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
+    </div>
+  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
-        <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "创建 Agent"}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input value={agentCards.find((agent) => agent.id === selectedAgentId)?.name || ""} /></label><label>系统设定指示词<textarea rows="4" value={agentCards.find((agent) => agent.id === selectedAgentId)?.desc || ""}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>执业风格</span>{#each vibePresets as vibe (vibe)}<button type="button">{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentCards.find((agent) => agent.id === selectedAgentId)?.name || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentCards.find((agent) => agent.id === selectedAgentId)?.desc || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} type="button"><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.active ? "已启用" : "未启用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.active ? "已挂载" : "未挂载"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file (file)}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => (agentWizardOpen = false)}>完成并部署</button></footer></section></div>
+        <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentWizardMode === "create" ? "创建 Agent" : agentWizardName()}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input bind:value={agentWizardDraftName} /></label><label>系统设定指示词<textarea rows="4" bind:value={agentWizardDraftDescription}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>协作风格</span>{#each vibePresets as vibe (vibe)}<button class:active={agentWizardVibe === vibe} type="button" aria-pressed={agentWizardVibe === vibe} onclick={() => (agentWizardVibe = vibe)}>{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentWizardName() || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentWizardDescription() || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} class:unavailable={!tool.available} type="button" disabled={!tool.available} title={tool.reason} onclick={() => toggleAgentTool(tool.id)}><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.available ? (tool.active ? "已启用" : "未启用") : "不可用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} class:unavailable={!skill.available} type="button" disabled={!skill.available} title={skill.reason} onclick={() => toggleAgentSkill(skill.id)}><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.available ? (skill.active ? "已挂载" : "未挂载") : "不可用"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file (file)}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => void saveAgentWizard()}>完成并部署</button></footer></section></div>
       {/if}
       {#if agentMarketOpen}
         <div class="modal-backdrop">
@@ -2507,49 +4093,25 @@
         <div class="modal-backdrop">
           <section class="config-modal capability-create-modal">
             <header><div><span>Capability Create</span><strong>创建{capabilityLabel(capabilityTab)}</strong></div><button type="button" onclick={() => (capabilityCreateOpen = false)}>x</button></header>
-            <div class="capability-tabs capability-create-tabs" role="tablist" aria-label="创建能力类型">
+            <div class="capability-create-tabs" role="tablist" aria-label="创建能力类型">
               <button class:active={capabilityTab === "plugin"} type="button" onclick={() => switchCapabilityTab("plugin")}>插件</button>
               <button class:active={capabilityTab === "mcp"} type="button" onclick={() => switchCapabilityTab("mcp")}>MCP</button>
               <button class:active={capabilityTab === "skill"} type="button" onclick={() => switchCapabilityTab("skill")}>SKILL</button>
             </div>
-            <div class="config-grid">
-              <label>名称<input value={`新建${capabilityLabel(capabilityTab)}`} /></label>
-              <label>分组<input value={capabilityLabel(capabilityTab)} /></label>
-              <label>版本<input value="v0.1" /></label>
-              <label>运行范围<input value={capabilityTab === "mcp" ? "workspace" : capabilityTab === "skill" ? "skills" : "desktop/frontend"} /></label>
-              <label>入口路径<input value={capabilityTab === "mcp" ? "mcp/server.json" : capabilityTab === "skill" ? "SKILL.md" : "plugin.json"} /></label>
-              <label>默认状态<select><option>启用</option><option>待配置</option><option>需授权</option></select></label>
-              <label class="wide">配置说明<textarea rows="4">{capabilitySubtitle(capabilityTab)} 对标 AORISTLAWER 的工具 / 技能配置流程：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。</textarea></label>
+            <div class="config-grid capability-create-form">
+              <label>名称<input bind:value={capabilityCreateName} /></label>
+              <label>分组<input bind:value={capabilityCreateGroup} /></label>
+              <label>版本<input bind:value={capabilityCreateVersion} /></label>
+              <label>运行范围<input bind:value={capabilityCreateScope} /></label>
+              <label>入口路径<input bind:value={capabilityCreateEntry} /></label>
+              <label>默认状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
+              <label class="wide">配置说明<textarea rows="4" bind:value={capabilityCreateDescription}></textarea></label>
             </div>
-            <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => (capabilityCreateOpen = false)}>创建并挂载</button></footer>
+            <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => void submitCapabilityCreate()}>创建并挂载</button></footer>
           </section>
         </div>
       {/if}
 
-      {#if showTranscript}
-        <div class="stage__composer">
-          <Composer
-            {input}
-            {commands}
-            {sending}
-            onInput={(value) => (input = value)}
-            onSend={send}
-            onCancel={cancel}
-            onPreviewFile={previewFile}
-            {models}
-            {selectedModel}
-            onModelChange={switchModel}
-            projectOptions={newTaskProjectOptions}
-            selectedProjectId={linkedProject ? selectedProjectId : ""}
-            onProjectChange={linkProjectById}
-            {workPermission}
-            onWorkPermissionChange={(value) => (workPermission = value)}
-            onOpenResources={openResourceCenterFromComposer}
-            {activityMode}
-            onActivityModeChange={openActivityMode}
-          />
-        </div>
-      {/if}
     </section>
   </main>
 {/if}
@@ -2742,7 +4304,7 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 26px clamp(24px, 5vw, 80px) 196px;
+    padding: 26px clamp(24px, 5vw, 80px) 20px;
   }
 
   .conversation-view {
@@ -3041,7 +4603,7 @@
 
 
   .sidebar--aorist{padding:0;background:hsl(220 20% 98%);border-right:1px solid hsl(220 20% 90%)}
-  .sidebar__brand{--wails-draggable:drag;display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:56px;padding:0 12px;border-bottom:1px solid #e5e7eb}.brand-mark,.nav-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;color:#1f5fbf;background:#eaf2ff}.sidebar__brand strong,.sidebar__brand span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar__brand strong{font-size:14px;color:#111827}.sidebar__brand span{margin-top:2px;color:#6b7280;font-size:11px}
+  .sidebar__brand{--wails-draggable:drag;display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:56px;padding:0 12px;border-bottom:1px solid #e5e7eb}.brand-mark,.nav-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;color:#1f5fbf;background:#eaf2ff}.brand-mark img{display:block;width:22px;height:22px;object-fit:contain}.sidebar__brand strong,.sidebar__brand span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar__brand strong{font-size:14px;color:#111827}.sidebar__brand span{margin-top:2px;color:#6b7280;font-size:11px}
   .workspace-nav{flex:1;min-height:0;overflow:auto;padding:10px 8px}.workspace-nav section{margin-bottom:10px}.workspace-nav h2{margin:8px 8px 5px;color:#8b95a1;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.workspace-nav button{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;min-height:36px;padding:4px 8px;color:#5f6774;background:transparent;border:0;border-radius:10px;text-align:left;font:inherit}.workspace-nav button:hover,.workspace-nav button.active{color:#1f2937;background:hsl(220 20% 94%)}.workspace-nav button span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:620}.workspace-nav button em{min-width:18px;padding:1px 5px;border-radius:999px;background:#e6eefc;color:#1f5fbf;font-size:10px;font-style:normal;text-align:center}
   .sidebar__user-wrap{position:relative;padding:0 8px 10px}.sidebar__user-wrap .sidebar__user{width:100%;display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid #e5e7eb;border-radius:13px;background:#fff;text-align:left;font:inherit}.user-menu{position:absolute;left:8px;right:8px;bottom:58px;z-index:40;display:grid;gap:4px;padding:6px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;box-shadow:0 18px 38px rgba(15,23,42,.16)}.user-menu button{width:100%;padding:9px 10px;border:0;border-radius:9px;color:#344054;background:transparent;text-align:left;font-size:13px}.user-menu button:hover{background:#f3f6fb;color:#111827}
   .stage-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:0 18px;border-bottom:1px solid #e5e7eb;background:rgba(255,255,255,.76);backdrop-filter:blur(16px)}.stage-topbar span,.aorist-toolbar span,.hero-panel span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.stage-topbar strong{display:block;margin-top:2px;font-size:17px;color:#111827}.stage-topbar__actions,.aorist-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hero-panel button,.aorist-toolbar button,:global(.composer-context-actions button),.automation-card footer button,.capability-item button,.config-modal footer button,.agent-wizard__footer button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:650}.hero-panel button:first-child,.aorist-toolbar button:last-child,.config-modal footer button:last-child,.agent-wizard__footer button:last-child{border-color:#1f5fbf;background:#1f5fbf;color:#fff}
@@ -3399,7 +4961,7 @@
 
   .calendar-board{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,.6fr);gap:14px;margin-top:14px}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.calendar-grid article{min-height:92px;padding:10px;border:1px solid rgba(226,232,240,.88);border-radius:14px;background:rgba(255,255,255,.78);box-shadow:0 10px 24px rgba(15,23,42,.04)}.calendar-grid article.today{border-color:#93c5fd;background:linear-gradient(135deg,#eff6ff,#fff)}.calendar-grid b{display:block;margin-bottom:8px;color:#0f172a}.calendar-grid span{display:block;margin-top:4px;padding:4px 6px;border-radius:8px;background:#eef4ff;color:#1d4ed8;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.knowledge-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.55fr);gap:14px}.knowledge-preview{padding:18px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.82);box-shadow:0 14px 34px rgba(15,23,42,.055)}.knowledge-preview span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.knowledge-preview strong{display:block;margin-top:12px;color:#0f172a;font-size:18px}.knowledge-preview p{color:#5f6774;line-height:1.7;font-size:13px}@media(max-width:980px){.calendar-board,.knowledge-layout{grid-template-columns:1fr}.calendar-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
-  .detail-panel{padding:18px;border:1px solid rgba(226,232,240,.9);border-radius:20px;background:rgba(255,255,255,.82);box-shadow:0 18px 42px rgba(15,23,42,.06)}.detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.detail-panel header span{color:#7b8494;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.detail-panel header strong{display:block;margin-top:6px;color:#0f172a;font-size:22px;line-height:1.18;letter-spacing:-.035em}.detail-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}.detail-summary article{padding:12px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.detail-summary span{display:block;color:#7b8494;font-size:11px}.detail-summary strong{display:block;margin-top:6px;color:#111827;font-size:13px}.detail-tabs{display:flex;gap:7px;margin:16px 0 10px}.detail-tabs button{height:30px;padding:0 10px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#5f6774;font-size:12px}.detail-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.detail-timeline{display:grid;gap:10px}.detail-timeline article{padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.detail-timeline b{display:block;color:#111827}.detail-timeline p{margin:6px 0;color:#5f6774;font-size:13px;line-height:1.6}.detail-timeline em{color:#7b8494;font-size:11px;font-style:normal}.room-modal{width:min(940px,calc(100vw - 44px))}.room-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-top:16px}.room-layout aside{padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc}.room-layout aside span{display:inline-block;margin-bottom:8px;padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.room-layout aside strong{display:block;color:#111827}.room-layout aside p{color:#5f6774;font-size:13px;line-height:1.6}.room-layout main{display:grid;align-content:start;gap:10px;max-height:420px;overflow:auto;padding:6px}.room-message{padding:12px 14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.room-message.judge{margin-inline:28px;background:#fffbeb}.room-message.plaintiff{margin-right:64px;background:#eff6ff}.room-message.defendant{margin-left:64px;background:#f8fafc}.room-message b{display:block;color:#111827;font-size:13px}.room-message p{margin:6px 0 0;color:#5f6774;font-size:13px;line-height:1.6}.hearing-card,.team-card{cursor:pointer;text-align:left}.hearing-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.team-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.config-grid select{height:36px;padding:0 10px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}.config-grid textarea,.config-grid input{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}@media(max-width:980px){.room-layout{grid-template-columns:1fr}.detail-summary{grid-template-columns:1fr}}
+  .detail-panel{padding:18px;border:1px solid rgba(226,232,240,.9);border-radius:20px;background:rgba(255,255,255,.82);box-shadow:0 18px 42px rgba(15,23,42,.06)}.detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.detail-panel header span{color:#7b8494;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.detail-panel header strong{display:block;margin-top:6px;color:#0f172a;font-size:22px;line-height:1.18;letter-spacing:-.035em}.detail-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}.detail-summary article{padding:12px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.detail-summary span{display:block;color:#7b8494;font-size:11px}.detail-summary strong{display:block;margin-top:6px;color:#111827;font-size:13px}.detail-tabs{display:flex;gap:7px;margin:16px 0 10px}.detail-tabs button{height:30px;padding:0 10px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#5f6774;font-size:12px}.detail-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.detail-timeline{display:grid;gap:10px}.detail-timeline article{padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.detail-timeline b{display:block;color:#111827}.detail-timeline p{margin:6px 0;color:#5f6774;font-size:13px;line-height:1.6}.detail-timeline em{color:#7b8494;font-size:11px;font-style:normal}.team-card{cursor:pointer;text-align:left}.team-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.config-grid select{height:36px;padding:0 10px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}.config-grid textarea,.config-grid input{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}@media(max-width:980px){.detail-summary{grid-template-columns:1fr}}
 
   .detail-empty{padding:18px;border:1px dashed #cbd5e1;border-radius:16px;background:rgba(248,250,252,.78);color:#5f6774}.detail-empty strong{display:block;color:#111827}.detail-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}.detail-modal{width:min(840px,calc(100vw - 44px));padding:18px}.detail-modal>.detail-panel{margin-top:14px;background:rgba(255,255,255,.88)}
 
@@ -5064,6 +6626,13 @@
     width: min(780px, calc(100vw - 44px));
   }
 
+  .config-modal.user-panel-modal {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    max-height: min(720px, calc(100vh - 44px));
+    padding: 0;
+  }
+
   .user-panel-modal__title {
     display: flex;
     align-items: center;
@@ -5084,21 +6653,116 @@
   }
 
   .user-panel-modal__intro {
-    margin: 14px 0 16px;
+    margin: 0;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--aorist-line);
     color: var(--aorist-muted);
     font-size: 13px;
     line-height: 1.7;
   }
 
-  .user-panel-stats {
+  .settings-dialog-layout {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .user-panel-stats article,
-  .user-panel-grid article,
+  .settings-dialog-nav {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px;
+    border-right: 1px solid var(--aorist-line);
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .settings-dialog-nav button {
+    display: grid;
+    gap: 5px;
+    width: 100%;
+    padding: 12px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-muted);
+    text-align: left;
+  }
+
+  .settings-dialog-nav button:hover,
+  .settings-dialog-nav button.active {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: var(--aorist-ink);
+    box-shadow: var(--aorist-shadow-soft);
+  }
+
+  .settings-dialog-nav button.active {
+    border-color: color-mix(in srgb, var(--aorist-primary) 28%, var(--aorist-line));
+  }
+
+  .settings-dialog-nav span {
+    justify-self: start;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--aorist-primary-soft);
+    color: var(--aorist-primary-strong);
+    font-size: 11px;
+  }
+
+  .settings-dialog-nav strong {
+    color: inherit;
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .settings-dialog-nav em {
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-style: normal;
+    line-height: 1.45;
+  }
+
+  .settings-dialog-panel {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px 18px;
+  }
+
+  .settings-dialog-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .settings-dialog-panel__head span {
+    display: block;
+    color: var(--aorist-muted);
+    font-size: 12px;
+  }
+
+  .settings-dialog-panel__head strong {
+    display: block;
+    margin-top: 2px;
+    color: var(--aorist-ink);
+    font-size: 18px;
+    line-height: 1.3;
+  }
+
+  .settings-dialog-panel__head em {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--aorist-muted);
+    font-size: 12px;
+    font-style: normal;
+  }
+
   .user-panel-list article {
     border: 1px solid var(--aorist-line);
     border-radius: 12px;
@@ -5106,40 +6770,6 @@
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
 
-  .user-panel-stats article {
-    padding: 13px;
-  }
-
-  .user-panel-stats span {
-    display: block;
-    color: var(--aorist-muted);
-    font-size: 12px;
-  }
-
-  .user-panel-stats strong {
-    display: block;
-    margin-top: 5px;
-    overflow: hidden;
-    color: var(--aorist-ink);
-    font-size: 18px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .user-panel-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .user-panel-grid article {
-    display: grid;
-    gap: 8px;
-    padding: 14px;
-  }
-
-  .user-panel-grid article > span,
   .user-panel-list article > span {
     justify-self: start;
     padding: 2px 7px;
@@ -5149,13 +6779,11 @@
     font-size: 11px;
   }
 
-  .user-panel-grid strong,
   .user-panel-list strong {
     color: var(--aorist-ink);
     font-size: 14px;
   }
 
-  .user-panel-grid p,
   .user-panel-list p,
   .user-panel-list em {
     margin: 0;
@@ -5163,18 +6791,6 @@
     font-size: 12px;
     line-height: 1.55;
     font-style: normal;
-  }
-
-  .user-panel-grid button {
-    width: fit-content;
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--aorist-line);
-    border-radius: 8px;
-    background: hsl(0 0% 100%);
-    color: var(--aorist-ink);
-    font-size: 12px;
-    font-weight: 600;
   }
 
   .user-panel-list {
@@ -5215,12 +6831,37 @@
   }
 
   .user-panel-form {
-    margin-top: 12px;
+    margin-top: 0;
+  }
+
+  .settings-tabs {
+    margin-bottom: 12px;
+  }
+
+  .settings-toggle {
+    display: flex !important;
+    grid-template-columns: none !important;
+    align-items: center;
+    gap: 9px !important;
+    min-height: 36px;
+    padding: 0 2px;
+  }
+
+  .settings-toggle input {
+    width: 16px !important;
+    height: 16px !important;
+    min-height: 16px !important;
+    padding: 0 !important;
+    accent-color: var(--aorist-primary);
+  }
+
+  .settings-toggle span {
+    color: var(--aorist-ink);
+    font-size: 13px;
   }
 
   @media (max-width: 720px) {
     .user-panel-stats,
-    .user-panel-grid,
     .user-panel-form {
       grid-template-columns: 1fr;
     }
@@ -5228,6 +6869,27 @@
     .user-panel-list article {
       align-items: flex-start;
       flex-direction: column;
+    }
+
+    .settings-dialog-layout {
+      grid-template-columns: 1fr;
+      overflow: auto;
+    }
+
+    .settings-dialog-nav {
+      display: flex;
+      overflow-x: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--aorist-line);
+    }
+
+    .settings-dialog-nav button {
+      width: min(220px, 78vw);
+      flex: 0 0 auto;
+    }
+
+    .settings-dialog-panel {
+      overflow: visible;
     }
   }
 
@@ -9181,25 +10843,6 @@
     text-align: left;
   }
 
-  .workspace-nav .sidebar-conversation-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 24px;
-    color: var(--aorist-faint);
-    opacity: 0.72;
-  }
-
-  .workspace-nav .sidebar-conversation-action:hover {
-    color: var(--aorist-ink);
-    opacity: 1;
-  }
-
-  .workspace-nav .sidebar-conversation-action.danger:hover {
-    color: #b42318;
-  }
-
   .workspace-nav .sidebar-conversation-row span {
     min-width: 0;
     overflow: hidden;
@@ -10776,7 +12419,6 @@
   .calendar-grid article.today,
   .calendar-grid span,
   .detail-tabs button.active,
-  .room-layout aside span,
   .select-list button:hover,
   .distill-steps button.active,
   .pill-group button.active,
@@ -11801,5 +13443,1341 @@
 
   .shell.is-sidebar-collapsed .brand-workbench-button {
     display: none;
+  }
+
+  /* Workspace spacing and calmer weight */
+  .shell .aorist-workbench {
+    font-weight: 400;
+  }
+
+  .shell .aorist-workbench[data-current-work-layer]:not([data-current-work-layer="today"]) .aorist-page {
+    padding: 28px 48px 46px;
+  }
+
+  .shell .aorist-workbench[data-current-work-layer]:not([data-current-work-layer="today"]) .aorist-toolbar {
+    margin-bottom: 22px;
+    padding: 18px 20px;
+  }
+
+  .shell .aorist-card-grid,
+  .shell .aorist-list,
+  .shell .automation-overview,
+  .shell .automation-task-list {
+    gap: 18px;
+  }
+
+  .shell .management-card,
+  .shell .automation-task-card,
+  .shell .agent-card,
+  .shell .media-card,
+  .shell .capability-item,
+  .shell .aorist-list article,
+  .shell .aorist-card {
+    padding: 18px;
+  }
+
+  .shell .workspace-nav {
+    padding-inline: 10px;
+  }
+
+  .shell .workspace-nav section {
+    margin-bottom: 5px;
+  }
+
+  .shell .workspace-nav button {
+    min-height: 30px;
+    margin: 0 4px;
+    border-radius: 8px;
+  }
+
+  .shell .workspace-nav h2 {
+    padding-top: 4px;
+    padding-bottom: 3px;
+  }
+
+  .shell .workspace-nav .workspace-nav-section-head {
+    min-height: 26px;
+    margin-top: 1px;
+    margin-bottom: 1px;
+  }
+
+  .shell .sidebar-project-dock {
+    margin-top: 4px;
+  }
+
+  .shell .sidebar-project-list {
+    gap: 6px;
+  }
+
+  .shell .sidebar-project-group {
+    gap: 3px;
+  }
+
+  .shell .sidebar-conversation-list {
+    gap: 3px;
+    margin-top: 4px;
+    margin-bottom: 8px;
+  }
+
+  .shell .workspace-nav h2,
+  .shell .stage-topbar span,
+  .shell .aorist-toolbar span,
+  .shell .hero-panel span,
+  .shell .wizard-preview > span {
+    font-weight: 420;
+    letter-spacing: 0.04em;
+  }
+
+  .shell .stage-topbar strong,
+  .shell .aorist-toolbar strong,
+  .shell .aorist-card header strong,
+  .shell .management-card__body strong,
+  .shell .automation-task-card strong,
+  .shell .agent-card header strong,
+  .shell .media-card strong,
+  .shell .capability-item strong,
+  .shell .todo-row strong,
+  .shell .automation-row strong,
+  .shell .project-detail-card h3,
+  .shell .project-detail-aside h3,
+  .shell .customer-detail-card h3,
+  .shell .customer-detail-aside h3 {
+    font-weight: 520;
+  }
+
+  .shell .aorist-stats strong,
+  .shell .hero-panel h1 {
+    font-weight: 560;
+  }
+
+  .shell .aorist-workbench button,
+  .shell .workspace-nav button,
+  .shell .capability-tabs button,
+  .shell .project-detail-actions button,
+  .shell .customer-detail-primary,
+  .shell .customer-detail-card header button,
+  .shell .automation-task-card header em,
+  .shell .aorist-list span,
+  .shell .todo-row b,
+  .shell .automation-row b {
+    font-weight: 480;
+  }
+
+  .shell .aorist-workbench p,
+  .shell .aorist-workbench em,
+  .shell .aorist-workbench span,
+  .shell .project-detail-row p,
+  .shell .management-card__body p {
+    font-weight: 400;
+  }
+
+  @media (max-width: 980px) {
+    .shell .aorist-workbench[data-current-work-layer]:not([data-current-work-layer="today"]) .aorist-page {
+      padding: 22px 28px 40px;
+    }
+  }
+
+  .shell:not(.is-sidebar-collapsed) {
+    --sidebar-width: clamp(240px, 13vw, 280px);
+  }
+
+  .shell:not(.is-sidebar-collapsed) .sidebar--aorist {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+  }
+
+  /* Pin user profile to the lower-left corner */
+  .shell .sidebar--aorist {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-height: 100vh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .sidebar__brand {
+    flex: 0 0 auto;
+  }
+
+  .shell .workspace-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 14px;
+  }
+
+  .shell .sidebar__user-wrap {
+    flex: 0 0 auto;
+    margin-top: auto;
+    padding: 10px 12px 12px;
+    border-top: 1px solid #e4e4e7;
+    background: hsl(220 20% 98%);
+  }
+
+  .shell .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    min-height: 42px;
+  }
+
+  .shell .sidebar__user-wrap .user-menu {
+    left: 12px;
+    right: 12px;
+    bottom: 62px;
+    width: auto;
+  }
+
+  /* Project dock follows the wider desktop sidebar rhythm. */
+  .shell .sidebar-project-dock {
+    margin-top: 6px;
+    padding: 8px 7px 0;
+  }
+
+  .shell .sidebar-project-head {
+    min-height: 24px;
+    padding: 0 4px 4px;
+  }
+
+  .shell .workspace-nav .sidebar-project-head h2 {
+    color: #8a8f86;
+    font-size: 13px;
+    font-weight: 430;
+  }
+
+  .shell .sidebar-project-list {
+    gap: 6px;
+  }
+
+  .shell .sidebar-project-group {
+    gap: 2px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-row {
+    grid-template-columns: 20px minmax(0, 1fr) 24px 24px;
+    column-gap: 4px;
+    min-height: 31px;
+    border-radius: 8px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-open {
+    grid-template-columns: 20px minmax(0, 1fr);
+    min-height: 31px;
+    gap: 6px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-disclosure,
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-rename,
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-action {
+    width: 24px;
+    height: 28px;
+    min-width: 24px;
+    min-height: 28px;
+  }
+
+  .shell .sidebar-conversation-list {
+    gap: 1px;
+    margin: 2px 7px 6px 32px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row {
+    display: grid;
+    position: relative;
+    grid-template-columns: minmax(0, 1fr) 22px 22px;
+    column-gap: 2px;
+    align-items: center;
+    width: 100%;
+    min-height: 26px;
+    padding: 0 2px 0 0;
+    border-radius: 7px;
+    color: inherit;
+    text-align: left;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open {
+    grid-column: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 26px;
+    min-width: 0;
+    margin: 0;
+    padding: 0 6px 0 0;
+    text-align: left;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row > .sidebar-conversation-action:nth-of-type(2) {
+    grid-column: 2;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row > .sidebar-conversation-action:nth-of-type(3) {
+    grid-column: 3;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open span {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.15;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-row em {
+    min-width: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--aorist-faint);
+    font-size: 10px;
+    font-weight: 400;
+    font-style: normal;
+    white-space: nowrap;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 22px;
+    height: 24px;
+    min-width: 22px;
+    padding: 0;
+    border-radius: 6px;
+    color: var(--aorist-faint);
+    opacity: 0.72;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row:hover,
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row:focus-within {
+    background: var(--aorist-sidebar-hover);
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action:hover {
+    background: transparent;
+    color: var(--aorist-ink);
+    opacity: 1;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action.danger:hover {
+    color: #b42318;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap {
+    padding-inline: 8px;
+  }
+
+  /* Customer detail header after upstream refresh */
+  .shell .customer-detail-modal > .customer-detail-head {
+    display: grid;
+    grid-template-columns: 36px 72px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 14px;
+  }
+
+  .shell .customer-detail-modal > .customer-detail-head > .client-avatar--large {
+    justify-self: center;
+  }
+
+  .shell .customer-detail-title {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .shell .customer-detail-title > div {
+    min-width: 0;
+  }
+
+  .shell .customer-detail-name-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .shell .customer-detail-name-row strong {
+    min-width: 0;
+    max-width: min(420px, 46vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 560;
+  }
+
+  .shell .customer-detail-name-row em {
+    flex: 0 0 auto;
+    min-height: 20px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+    font-weight: 520;
+  }
+
+  .shell .customer-detail-primary,
+  .shell .customer-detail-card header button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: auto;
+    min-width: 104px;
+    min-height: 34px;
+    padding: 0 14px;
+    border-radius: 10px;
+    line-height: 1;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+  }
+
+  .shell .customer-detail-primary {
+    justify-self: end;
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .shell .customer-detail-primary :global(svg),
+  .shell .customer-detail-card header button :global(svg) {
+    flex: 0 0 auto;
+  }
+
+  /* Detail headers and action buttons after upstream refresh */
+  .shell .project-detail-modal > .project-detail-head {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 14px;
+  }
+
+  .shell .project-detail-title {
+    display: block;
+    min-width: 0;
+  }
+
+  .shell .project-detail-title > div {
+    min-width: 0;
+  }
+
+  .shell .project-detail-name-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .shell .project-detail-name-row strong {
+    min-width: 0;
+    max-width: min(460px, 44vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 560;
+  }
+
+  .shell .project-detail-name-row em {
+    flex: 0 0 auto;
+    min-height: 20px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+    font-weight: 520;
+  }
+
+  .shell .project-detail-actions {
+    display: flex;
+    justify-self: end;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .shell .project-detail-actions button,
+  .shell .project-section-head button,
+  .shell .project-resource-toolbar button,
+  .shell .customer-section-head button,
+  .shell .customer-resource-toolbar button,
+  .shell .management-primary,
+  .shell .aorist-toolbar button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: auto;
+    min-width: auto;
+    min-height: 32px;
+    padding: 0 11px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+  }
+
+  .shell .project-detail-actions button :global(svg),
+  .shell .project-section-head button :global(svg),
+  .shell .customer-section-head button :global(svg),
+  .shell .management-primary :global(svg),
+  .shell .aorist-toolbar button :global(svg) {
+    flex: 0 0 auto;
+  }
+
+  .shell .project-detail-actions button:first-child {
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg);
+    color: var(--aorist-ink);
+  }
+
+  .shell .project-detail-actions button:last-child,
+  .shell .management-primary {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  /* Detail modal scroll safety */
+  .shell .detail-modal.project-detail-modal,
+  .shell .detail-modal.customer-detail-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(1120px, calc(100vw - 44px));
+    height: min(860px, calc(100vh - 44px));
+    max-height: calc(100vh - 44px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .detail-modal > .project-detail-head,
+  .shell .detail-modal > .customer-detail-head {
+    position: relative;
+    top: auto;
+    z-index: 2;
+    margin: 0;
+  }
+
+  .shell .detail-modal > .detail-panel {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 26px 28px 72px;
+    scroll-padding-bottom: 72px;
+  }
+
+  .shell .detail-modal > .detail-panel::after {
+    content: "";
+    display: block;
+    height: 24px;
+  }
+
+  .shell .customer-detail-body,
+  .shell .project-detail-body {
+    min-height: 0;
+  }
+
+  @media (max-width: 980px) {
+    .shell .detail-modal.project-detail-modal,
+    .shell .detail-modal.customer-detail-modal {
+      width: min(100vw - 24px, 1120px);
+      height: calc(100vh - 28px);
+      max-height: calc(100vh - 28px);
+    }
+
+    .shell .detail-modal > .detail-panel {
+      padding: 20px 18px 64px;
+      scroll-padding-bottom: 64px;
+    }
+  }
+
+  /* Wails desktop click safety */
+  .shell .sidebar--aorist,
+  .shell .sidebar--aorist *,
+  .shell .workspace-nav,
+  .shell .workspace-nav *,
+  .shell .sidebar__user-wrap,
+  .shell .sidebar__user-wrap *,
+  .shell .brand-workbench-button,
+  .shell .sidebar__icon {
+    --wails-draggable: no-drag;
+  }
+
+  /* Capability panel: remove duplicated catalog heading block */
+  .shell .capability-panel.capability-market > header {
+    display: none;
+  }
+
+  :global(.capability-panel.capability-market > header),
+  :global(.capability-market > header) {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+  }
+
+  /* Agent wizard layout safety after upstream tab refresh */
+  .shell .agent-wizard {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(1040px, calc(100vw - 56px));
+    height: min(720px, calc(100vh - 56px));
+    max-height: calc(100vh - 56px);
+    padding: 0;
+    overflow: hidden;
+    border-radius: 16px;
+  }
+
+  .shell .agent-wizard__header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 86px;
+    padding: 18px 24px;
+  }
+
+  .shell .agent-wizard__header .wizard-avatar {
+    flex: 0 0 auto;
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+    background: #222222;
+  }
+
+  .shell .agent-wizard__header > div:nth-child(2) {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .shell .agent-wizard__header strong {
+    font-size: 18px;
+    font-weight: 560;
+  }
+
+  .shell .agent-wizard__body {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .agent-wizard .wizard-tabs {
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    min-width: 0;
+    height: 100%;
+    margin: 0;
+    padding: 18px 14px;
+    border: 0;
+    border-right: 1px solid var(--aorist-border-divider);
+    border-radius: 0;
+    background: #f7f8fa;
+    box-shadow: none;
+  }
+
+  .shell .agent-wizard .wizard-tabs button {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    min-height: 36px;
+    margin: 0;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-muted);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    box-shadow: none;
+  }
+
+  .shell .agent-wizard .wizard-tabs button:hover {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: var(--aorist-ink);
+  }
+
+  .shell .agent-wizard .wizard-tabs button.active {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: var(--aorist-ink);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  }
+
+  .shell .agent-wizard .wizard-panel {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 26px 28px 84px;
+  }
+
+  .shell .agent-wizard .wizard-identity {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 28px;
+    align-items: start;
+  }
+
+  .shell .agent-wizard .wizard-form {
+    gap: 18px;
+  }
+
+  .shell .agent-wizard .pill-group {
+    gap: 8px;
+  }
+
+  .shell .agent-wizard .pill-group button {
+    min-height: 34px;
+    border-radius: 12px;
+    font-weight: 480;
+  }
+
+  .shell .agent-wizard .pill-group button.active {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(34, 34, 34, 0.18);
+  }
+
+  .shell .agent-wizard .wizard-card-grid button.unavailable {
+    cursor: not-allowed;
+    opacity: 0.56;
+  }
+
+  .shell .agent-wizard .wizard-card-grid button.unavailable:hover {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    color: inherit;
+    box-shadow: none;
+  }
+
+  .shell .agent-wizard .wizard-skill-list button.unavailable {
+    cursor: not-allowed;
+    opacity: 0.56;
+  }
+
+  .shell .agent-wizard .wizard-skill-list button.unavailable:hover {
+    border-color: var(--aorist-line);
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .shell .capability-create-modal .capability-create-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: min(340px, 100%);
+    gap: 3px;
+    margin: 10px auto 16px;
+    padding: 3px;
+    border: 1px solid #d9dde5;
+    border-radius: 11px;
+    background: #f7f7f8;
+  }
+
+  .shell .capability-create-modal .capability-create-tabs button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #475467;
+    font-size: 12px;
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .shell .capability-create-modal .capability-create-tabs button.active {
+    background: #222222;
+    color: #ffffff;
+    box-shadow: 0 5px 12px rgba(15, 23, 42, 0.12);
+  }
+
+  .shell .agent-wizard .wizard-preview {
+    min-width: 0;
+    padding-left: 28px;
+  }
+
+  .shell .agent-wizard .wizard-preview div {
+    margin-top: 18px;
+    padding: 28px 22px;
+    border-radius: 16px;
+  }
+
+  .shell .agent-wizard .wizard-preview b {
+    background: #222222;
+  }
+
+  .shell .agent-wizard__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    min-height: 70px;
+    padding: 14px 24px;
+  }
+
+  @media (max-width: 900px) {
+    .shell .agent-wizard__body,
+    .shell .agent-wizard .wizard-identity {
+      grid-template-columns: 1fr;
+    }
+
+    .shell .agent-wizard .wizard-tabs {
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
+      overflow-x: auto;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--aorist-border-divider);
+    }
+
+    .shell .agent-wizard .wizard-preview {
+      padding-left: 0;
+      border-left: 0;
+    }
+  }
+
+  /* Final sidebar guard: keep account fixed at lower-left after upstream style refreshes. */
+  .shell:not(.is-sidebar-collapsed) {
+    --sidebar-width: clamp(232px, 13vw, 268px);
+  }
+
+  .shell .sidebar--aorist {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 0;
+    overflow: hidden !important;
+  }
+
+  .shell .sidebar__brand {
+    grid-row: 1;
+    flex: 0 0 auto;
+  }
+
+  .shell .workspace-nav {
+    grid-row: 2;
+    min-height: 0;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 8px 8px 10px;
+  }
+
+  .shell .workspace-nav section {
+    margin-bottom: 6px;
+  }
+
+  .shell .workspace-nav h2 {
+    margin: 6px 8px 4px;
+    font-weight: 430;
+  }
+
+  .shell .workspace-nav button {
+    min-height: 31px;
+    border-radius: 8px;
+    font-weight: 420;
+  }
+
+  .shell .workspace-nav button span:nth-child(2),
+  .shell .workspace-nav .sidebar-project-open .sidebar-project-label strong,
+  .shell .workspace-nav .sidebar-conversation-row span {
+    font-weight: 430;
+  }
+
+  .shell .sidebar__user-wrap {
+    position: sticky;
+    bottom: 0;
+    grid-row: 3;
+    z-index: 30;
+    flex: 0 0 auto;
+    margin-top: 0 !important;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--aorist-border-divider);
+    background: var(--aorist-sidebar);
+  }
+
+  .shell .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
+    min-height: 40px;
+    padding: 7px 8px;
+    border-radius: 8px;
+  }
+
+  .shell .sidebar__profile strong,
+  .shell .sidebar__profile em {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 430;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shell .sidebar__user-wrap .user-menu {
+    left: 12px;
+    right: 12px;
+    bottom: calc(100% + 8px);
+    width: auto;
+  }
+
+  .shell .sidebar-project-dock {
+    margin-top: 4px;
+    padding: 6px 6px 0;
+  }
+
+  .shell .sidebar-project-list,
+  .shell .sidebar-conversation-list {
+    gap: 2px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-project-row {
+    grid-template-columns: 20px minmax(0, 1fr) 22px 22px;
+    min-height: 29px;
+    column-gap: 3px;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-row {
+    grid-template-columns: minmax(0, 1fr) 22px 22px;
+    min-height: 25px;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open {
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-width: 0;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-open span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shell .workspace-nav .sidebar-conversation-row em {
+    justify-self: end;
+    font-weight: 400;
+  }
+
+  .shell .workspace-nav .sidebar-project-dock .sidebar-conversation-action {
+    width: 22px;
+    min-width: 22px;
+    height: 24px;
+    padding: 0;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar--aorist {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap {
+    padding: 8px;
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__user-wrap .sidebar__user.sidebar__profile {
+    grid-template-columns: 28px;
+    justify-content: center;
+    padding: 7px;
+  }
+
+  .shell .stage.stage--conversation {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .shell .stage.stage--conversation > .stage__surface {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .stage__surface--conversation > .conversation-view {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .stage__surface--conversation .conversation {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 18px;
+    scroll-padding-bottom: 18px;
+  }
+
+  .shell .stage__surface--conversation .conversation :global(.decision-shelf:last-child) {
+    margin-bottom: 18px;
+  }
+
+  .shell .stage__surface--conversation .conversation-view > .stage__composer {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    z-index: 1;
+    flex: 0 0 auto;
+    width: min(760px, calc(100% - 96px));
+    margin: 0 auto;
+    padding: 10px 0 18px;
+    transform: none;
+  }
+
+  @media (max-width: 980px) {
+    .shell .stage__surface--conversation .conversation-view > .stage__composer {
+      width: min(100% - 32px, 760px);
+      padding-bottom: 12px;
+    }
+  }
+
+  .shell .workbench-calendar {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 5px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid article {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    place-items: center;
+    min-width: 0;
+    min-height: 54px;
+    padding: 6px 2px;
+    overflow: hidden;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid b {
+    line-height: 1;
+  }
+
+  .shell .workbench-calendar .calendar-mini-grid span {
+    display: block;
+    box-sizing: border-box;
+    width: min(100%, 40px);
+    max-width: 100%;
+    margin: 5px auto 0;
+    padding: 2px 1px;
+    overflow: hidden;
+    color: #475467;
+    background: #eef1f5;
+    border-radius: 8px;
+    font-size: clamp(8px, 0.62vw, 10px);
+    font-weight: 450;
+    line-height: 1.25;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .model-fetch-panel {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--aorist-border-divider, #e2e8f0);
+    border-radius: 12px;
+    background: var(--aorist-card-bg, #ffffff);
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal),
+  .shell .automation-config-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(860px, calc(100vw - 32px));
+    height: min(680px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .automation-config-modal {
+    width: min(780px, calc(100vw - 32px));
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > .config-grid,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > .select-list,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > .distill-panel,
+  .shell .automation-config-modal > .config-grid {
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal) > footer,
+  .shell .automation-config-modal > footer {
+    position: relative;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .shell .capability-create-modal {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    width: min(760px, calc(100vw - 32px));
+    height: min(680px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .capability-create-modal > .capability-create-tabs {
+    margin: 10px auto 12px;
+  }
+
+  .shell .capability-create-modal > .config-grid {
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 0 16px 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .shell .capability-create-modal > footer {
+    position: relative;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .shell .agent-market-modal {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    width: min(960px, calc(100vw - 32px));
+    height: min(760px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .agent-market-modal > .agent-market-toolbar {
+    margin: 0;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--aorist-border-divider, #e8e8e8);
+  }
+
+  .shell .agent-market-modal > .agent-market-grid {
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .shell .agent-market-modal > footer {
+    position: relative;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .shell .team-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(680px, calc(100vw - 32px));
+    height: min(720px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .team-modal .team-builder {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shell .team-modal .team-builder-list,
+  .shell .team-modal .team-selected-list {
+    min-height: 0;
+    max-height: none;
+  }
+
+  @supports not (height: 100dvh) {
+    .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal),
+    .shell .automation-config-modal,
+    .shell .capability-create-modal {
+      height: min(680px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+
+    .shell .agent-market-modal {
+      height: min(760px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+
+    .shell .team-modal {
+      height: min(720px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+  }
+
+  .model-provider-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(860px, calc(100vw - 32px));
+    height: min(760px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+  }
+
+  @supports not (height: 100dvh) {
+    .model-provider-modal {
+      height: min(760px, calc(100vh - 32px));
+      max-height: calc(100vh - 32px);
+    }
+  }
+
+  .model-provider-modal header p {
+    margin: 4px 0 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .model-provider-modal > .config-grid {
+    min-height: 0;
+    margin-top: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    scrollbar-gutter: stable;
+    scroll-padding-bottom: 88px;
+  }
+
+  .model-provider-modal > footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: 0;
+  }
+
+  .model-fetch-panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .model-fetch-panel__head strong,
+  .model-fetch-panel__head span {
+    display: block;
+  }
+
+  .model-fetch-panel__head strong {
+    color: var(--aorist-ink, #111827);
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .model-fetch-panel__head span,
+  .model-fetch-actions span {
+    margin-top: 3px;
+    color: var(--aorist-muted, #667085);
+    font-size: 12px;
+  }
+
+  .model-fetch-panel__head button,
+  .model-fetch-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 10px;
+    background: #ffffff;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .model-fetch-panel__head button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .model-fetch-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .model-fetch-actions span {
+    margin-right: auto;
+  }
+
+  .model-fetch-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    max-height: 190px;
+    overflow: auto;
+  }
+
+  .model-fetch-list label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 9px 10px;
+    border: 1px solid var(--aorist-border-divider, #e2e8f0);
+    border-radius: 10px;
+    background: #ffffff;
+    color: var(--aorist-ink, #111827);
+    font-size: 12px;
+  }
+
+  .model-fetch-list label.active {
+    border-color: #222222;
+    background: #f4f4f5;
+  }
+
+  .model-fetch-list input {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+  }
+
+  .model-fetch-list span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 720px) {
+    .model-fetch-panel__head {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .model-fetch-list {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

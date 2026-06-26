@@ -29,12 +29,20 @@ const (
 	listDeny  = "deny"
 )
 
-// SetDefaultModel points default_model at an existing provider. It errors if no
-// provider by that name is configured, so a UI can't strand the config on a
-// model that doesn't exist.
+// SetDefaultModel points default_model at an existing model. It accepts both
+// forms used by the runtime resolver:
+//   - "provider"          — the provider's own default model;
+//   - "provider/model"    — that specific model under that provider.
+//
+// Either is rejected when the target does not exist, so a UI can't strand
+// the config on a model that doesn't exist.
 func (c *Config) SetDefaultModel(name string) error {
-	if _, ok := c.Provider(name); !ok {
-		return fmt.Errorf("set default: no provider %q (configured: %s)", name, c.providerNames())
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("set default: empty name")
+	}
+	if _, ok := c.ResolveModel(name); !ok {
+		return fmt.Errorf("set default: no such model %q (configured: %s)", name, c.providerNames())
 	}
 	c.DefaultModel = name
 	return nil
@@ -69,9 +77,60 @@ func (c *Config) SetAutoPlan(mode string) error {
 	return nil
 }
 
+func SaveMinimalProjectAutoPlan(path, mode string) (string, error) {
+	cfg := Default()
+	if err := cfg.SetAutoPlan(mode); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create config dir: %w", err)
+	}
+	data := []byte(fmt.Sprintf("[agent]\nauto_plan = %q\n", cfg.Agent.AutoPlan))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("write %s: %w", path, err)
+	}
+	return cfg.Agent.AutoPlan, nil
+}
+
+// SetDesktopDefaultToolApprovalMode sets the Ask/Auto/YOLO posture used only
+// for newly-created desktop sessions.
+func (c *Config) SetDesktopDefaultToolApprovalMode(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "ask":
+		c.Desktop.DefaultToolApprovalMode = "ask"
+	case "auto":
+		c.Desktop.DefaultToolApprovalMode = "auto"
+	case "yolo", "full", "full-access", "bypass":
+		c.Desktop.DefaultToolApprovalMode = "yolo"
+	default:
+		return fmt.Errorf("default_tool_approval_mode %q: must be ask|auto|yolo", mode)
+	}
+	return nil
+}
+
+// SetMemoryCompilerEnabled toggles the v5 execution-memory compiler.
+func (c *Config) SetMemoryCompilerEnabled(enabled bool) error {
+	c.Agent.MemoryCompiler.Enabled = &enabled
+	return nil
+}
+
+// SetUIShortcutLayout selects the CLI keyboard shortcut layout. "classic" keeps
+// historical behavior; "desktop" enables the two-axis desktop-style shortcuts.
+func (c *Config) SetUIShortcutLayout(layout string) error {
+	switch strings.ToLower(strings.TrimSpace(layout)) {
+	case "", "classic", "default", "legacy", "off":
+		c.UI.ShortcutLayout = "classic"
+	case "desktop", "dual", "dual-axis", "dual_axis":
+		c.UI.ShortcutLayout = "desktop"
+	default:
+		return fmt.Errorf("shortcut_layout %q: must be classic|desktop", layout)
+	}
+	return nil
+}
+
 // UpsertProvider adds e, or replaces an existing provider with the same name
-// (preserving its position). Required fields (name, kind, base_url, model) are
-// validated; whether the kind is actually registered and the key resolves is
+// (preserving its position). Required fields (name, kind, base_url, model/models)
+// are validated; whether the kind is actually registered and the key resolves is
 // checked later by provider.New / Validate, which give actionable errors.
 func (c *Config) UpsertProvider(e ProviderEntry) error {
 	normalizeProviderEffortFields(&e)
@@ -92,14 +151,14 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 func (c *Config) SetProviderEffort(name, effort string) error {
 	for i := range c.Providers {
 		if c.Providers[i].Name == name {
-			c.Providers[i].Effort = strings.ToLower(strings.TrimSpace(effort))
+			c.Providers[i].Effort = normalizeStoredEffort(effort)
 			return nil
 		}
 	}
 	return fmt.Errorf("set provider effort: no provider %q", name)
 }
 
-// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to VOLTUI_LANG / locale.
+// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to REASONIX_LANG / locale.
 func (c *Config) SetLanguage(lang string) error {
 	switch strings.ToLower(strings.TrimSpace(lang)) {
 	case "", "auto":
@@ -111,6 +170,7 @@ func (c *Config) SetLanguage(lang string) error {
 	default:
 		return fmt.Errorf("language %q: must be auto|en|zh", lang)
 	}
+	c.ApplyDeepSeekOfficialDefaultPricing()
 	return nil
 }
 
@@ -143,6 +203,7 @@ func (c *Config) SetDesktopLanguage(lang string) error {
 	default:
 		return fmt.Errorf("desktop language %q: must be auto|en|zh", lang)
 	}
+	c.ApplyDeepSeekOfficialDefaultPricing()
 	return nil
 }
 
@@ -165,9 +226,25 @@ func (c *Config) SetDesktopAppearance(theme, style string) error {
 	}
 	normalized := normalizeThemeStyle(style)
 	if normalized == "" {
-		return fmt.Errorf("desktop theme style %q: must be graphite|ember|aurora|midnight|sandstone|porcelain|linen|glacier", style)
+		return fmt.Errorf("desktop theme style %q: must be graphite|aurora|slate|carbon|nocturne|amber", style)
 	}
 	c.Desktop.ThemeStyle = normalized
+	return nil
+}
+
+// SetDesktopLayoutStyle sets the desktop layout style. UI-only; it must not
+// affect CLI output or provider-visible request data.
+func (c *Config) SetDesktopLayoutStyle(style string) error {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "", "classic":
+		c.Desktop.LayoutStyle = "classic"
+	case "workbench", "workspace":
+		c.Desktop.LayoutStyle = "workbench"
+	case "creation":
+		c.Desktop.LayoutStyle = "creation"
+	default:
+		return fmt.Errorf("desktop layout style %q: must be classic|workbench|creation", style)
+	}
 	return nil
 }
 
@@ -226,29 +303,13 @@ func (c *Config) SetDesktopStatusBarItems(items []string) error {
 		if !knownDesktopStatusBarItems[id] {
 			return fmt.Errorf("status bar item %q: unknown item", id)
 		}
-		seen[id] = true
 		out = append(out, id)
+		seen[id] = true
 	}
 	if len(out) == 0 {
-		return fmt.Errorf("status bar items: choose at least one item")
+		out = DefaultDesktopStatusBarItems()
 	}
 	c.Desktop.StatusBarItems = out
-	return nil
-}
-
-// SetDesktopLayoutStyle sets the desktop layout style. UI-only; it must not
-// affect CLI output or provider-visible request data.
-func (c *Config) SetDesktopLayoutStyle(style string) error {
-	switch strings.ToLower(strings.TrimSpace(style)) {
-	case "", "classic":
-		c.Desktop.LayoutStyle = "classic"
-	case "workbench", "workspace":
-		c.Desktop.LayoutStyle = "workbench"
-	case "creation":
-		c.Desktop.LayoutStyle = "creation"
-	default:
-		return fmt.Errorf("desktop layout style %q: must be classic|workbench|creation", style)
-	}
 	return nil
 }
 
@@ -290,6 +351,15 @@ func (c *Config) SetExpandThinking(on bool) error {
 	return nil
 }
 
+// SetShowReasoning sets the CLI's default verbose-reasoning preference. When
+// true, thinking text is shown in the chat TUI on startup; when false (the
+// default), it stays collapsed until the user toggles it with Ctrl+O or
+// /verbose.
+func (c *Config) SetShowReasoning(on bool) error {
+	c.UI.ShowReasoning = on
+	return nil
+}
+
 // SetProviderThinking updates a provider's provider-specific thinking mode knob.
 func (c *Config) SetProviderThinking(name, thinking string) error {
 	for i := range c.Providers {
@@ -315,10 +385,37 @@ func (c *Config) SetNetwork(n NetworkConfig) error {
 	return netclient.Validate(c.NetworkProxySpec())
 }
 
-// RemoveProvider deletes the named provider and migrates dangling model refs to
-// the next configured fallback. Required refs such as default_model block removal
-// when no fallback exists; optional planner/subagent refs are cleared.
+// ModelRefsProvider reports whether ref targets the named provider. It matches
+// both bare provider names ("deepseek") and "provider/model" refs.
+func ModelRefsProvider(ref, name string) bool {
+	ref = strings.TrimSpace(ref)
+	name = strings.TrimSpace(name)
+	if ref == "" || name == "" {
+		return false
+	}
+	if ref == name {
+		return true
+	}
+	prov, _, ok := strings.Cut(ref, "/")
+	return ok && prov == name
+}
+
+func (c *Config) modelRefTargetsProvider(ref, name string) bool {
+	if ModelRefsProvider(ref, name) {
+		return true
+	}
+	if e, ok := c.ResolveModel(ref); ok {
+		return e.Name == name
+	}
+	return false
+}
+
+// RemoveProvider deletes the named provider. References to the removed provider
+// are migrated to the first remaining configured provider when possible. The
+// default model is required, so removal is refused when no fallback exists;
+// optional planner/subagent refs are cleared instead of being left dangling.
 func (c *Config) RemoveProvider(name string) error {
+	name = strings.TrimSpace(name)
 	idx := -1
 	for i := range c.Providers {
 		if c.Providers[i].Name == name {
@@ -329,41 +426,55 @@ func (c *Config) RemoveProvider(name string) error {
 	if idx < 0 {
 		return fmt.Errorf("remove provider: no provider %q", name)
 	}
-	removed := c.Providers[idx]
-	remaining := *c
-	remaining.Providers = append(append([]ProviderEntry(nil), c.Providers[:idx]...), c.Providers[idx+1:]...)
-	fallback, _, hasFallback := remaining.ResolveModelWithFallback("")
-	if providerRefersToModel(c.DefaultModel, &removed) && !hasFallback {
-		return fmt.Errorf("remove provider: %q is used by default_model and no configured fallback exists", name)
+
+	defaultRefsProvider := c.modelRefTargetsProvider(c.DefaultModel, name)
+	plannerRefsProvider := c.modelRefTargetsProvider(c.Agent.PlannerModel, name)
+	subagentRefsProvider := c.modelRefTargetsProvider(c.Agent.SubagentModel, name)
+	subagentModelRefsProvider := map[string]bool{}
+	for skill, ref := range c.Agent.SubagentModels {
+		if c.modelRefTargetsProvider(ref, name) {
+			subagentModelRefsProvider[skill] = true
+		}
 	}
-	c.Providers = remaining.Providers
-	if providerRefersToModel(c.DefaultModel, &removed) {
-		c.DefaultModel = fallbackProviderRef(fallback)
+
+	fallback := ""
+	if defaultRefsProvider || plannerRefsProvider || subagentRefsProvider || len(subagentModelRefsProvider) > 0 {
+		fallback = c.providerRemovalFallback(name)
 	}
-	if providerRefersToModel(c.Agent.PlannerModel, &removed) {
-		c.Agent.PlannerModel = fallbackProviderRef(fallback)
+	if defaultRefsProvider && fallback == "" {
+		return fmt.Errorf("remove provider: %q is referenced by default_model and no other configured provider exists", name)
 	}
-	if providerRefersToModel(c.Agent.SubagentModel, &removed) {
-		c.Agent.SubagentModel = fallbackProviderRef(fallback)
+
+	c.Providers = append(c.Providers[:idx], c.Providers[idx+1:]...)
+
+	if defaultRefsProvider {
+		c.DefaultModel = fallback
 	}
-	for key, ref := range c.Agent.SubagentModels {
-		if providerRefersToModel(ref, &removed) {
-			if hasFallback {
-				c.Agent.SubagentModels[key] = fallbackProviderRef(fallback)
-			} else {
-				delete(c.Agent.SubagentModels, key)
-			}
+	if plannerRefsProvider {
+		c.Agent.PlannerModel = fallback
+	}
+	if subagentRefsProvider {
+		c.Agent.SubagentModel = fallback
+	}
+	for skill := range subagentModelRefsProvider {
+		if fallback != "" {
+			c.Agent.SubagentModels[skill] = fallback
+		} else {
+			delete(c.Agent.SubagentModels, skill)
 		}
 	}
 	return nil
 }
 
-func fallbackProviderRef(ref string) string {
-	provider, _, ok := strings.Cut(strings.TrimSpace(ref), "/")
-	if ok {
-		return provider
+func (c *Config) providerRemovalFallback(name string) string {
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if p.Name == name || !p.Configured() || len(p.ModelList()) == 0 {
+			continue
+		}
+		return p.Name
 	}
-	return strings.TrimSpace(ref)
+	return ""
 }
 
 // validateProvider checks the fields a provider can't function without.
@@ -375,10 +486,22 @@ func validateProvider(e ProviderEntry) error {
 		return fmt.Errorf("provider %q: kind is required", e.Name)
 	case strings.TrimSpace(e.BaseURL) == "":
 		return fmt.Errorf("provider %q: base_url is required", e.Name)
-	case strings.TrimSpace(e.Model) == "":
+	case !providerHasAnyModel(e):
 		return fmt.Errorf("provider %q: model is required", e.Name)
 	}
 	return nil
+}
+
+func providerHasAnyModel(e ProviderEntry) bool {
+	if strings.TrimSpace(e.Model) != "" {
+		return true
+	}
+	for _, m := range e.Models {
+		if strings.TrimSpace(m) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // SetPermissionMode sets the writer-fallback mode. Accepts "ask", "allow", or
@@ -455,6 +578,7 @@ func (c *Config) AddSkillPath(path string) error {
 		return fmt.Errorf("skill path: empty path")
 	}
 	want := CanonicalSkillPath(path)
+	c.removeExcludedSkillPath(want)
 	for _, existing := range c.Skills.Paths {
 		if CanonicalSkillPath(existing) == want {
 			return nil
@@ -496,7 +620,7 @@ func (c *Config) RestoreSkillPath(path string) error {
 }
 
 // ExcludeSkillPath hides any skill discovery root matching path. This is used by
-// UI remove actions for convention roots that are not stored in paths.
+// UI "remove source" actions for convention roots that are not stored in paths.
 func (c *Config) ExcludeSkillPath(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -583,6 +707,7 @@ func CanonicalSkillPath(path string) string {
 // position). The transport-specific required fields are validated: stdio needs
 // a command, http/sse need a url.
 func (c *Config) UpsertPlugin(e PluginEntry) error {
+	e, _ = NormalizePluginCommandLine(e)
 	if err := validatePlugin(e); err != nil {
 		return err
 	}
@@ -652,7 +777,8 @@ func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, 
 }
 
 func pluginTOMLSourcePath(name string) string {
-	for _, path := range []string{"voltui.toml", userConfigPath()} {
+	paths := append([]string{"voltui.toml"}, userConfigCandidatePaths()...)
+	for _, path := range paths {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
@@ -690,8 +816,17 @@ func validatePlugin(e PluginEntry) error {
 // writes a sibling temp file then renames, so a crash mid-write can't leave a
 // half-written voltui.toml that fails to parse on next load. Parent directories
 // are created as needed.
+//
+// For project configs (./voltui.toml) the write is incremental: only sections
+// and fields that differ from built-in defaults are written, so the file never
+// accumulates fields that override the user's global config. User configs still
+// write the full annotated template since they are the user's own settings store.
 func (c *Config) SaveTo(path string) error {
-	return c.SaveToScope(path, renderScopeForPath(path))
+	scope := renderScopeForPath(path)
+	if scope == RenderScopeProject {
+		return c.saveProjectIncremental(path)
+	}
+	return c.SaveToScope(path, scope)
 }
 
 func (c *Config) SaveToScope(path string, scope RenderScope) error {
@@ -701,22 +836,133 @@ func (c *Config) SaveToScope(path string, scope RenderScope) error {
 	return writeConfigFile(path, RenderTOMLForScope(c, scope))
 }
 
-// SaveMinimalProjectAutoPlan writes a new project config that only overrides
-// [agent].auto_plan. It is intentionally minimal so toggling a project-local
-// auto-plan preference in an otherwise unconfigured workspace does not pin
-// default_model or providers from built-in defaults.
-func SaveMinimalProjectAutoPlan(path, mode string) (string, error) {
+// saveProjectIncremental merges only the delta (non-default sections/fields)
+// into the existing project config file, preserving all other content verbatim.
+func (c *Config) saveProjectIncremental(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("save: empty config path")
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		raw = nil
+	}
+
+	body := string(raw)
+	isNew := body == ""
+
+	if isNew {
+		return writeConfigFile(path, RenderTOMLForScope(c, RenderScopeProject))
+	}
+
+	delta := RenderTOMLProjectDelta(c)
+	if tomlBodyHasTopLevelKey(body, "config_version") && !tomlBodyHasTopLevelKey(delta, "config_version") {
+		delta = fmt.Sprintf("config_version = %d\n", configVersion(c)) + delta
+	}
+	removePlugins := len(c.Plugins) == 0 && tomlBodyHasSection(body, "plugins")
+	if strings.TrimSpace(delta) == "" && !removePlugins {
+		return nil // no changes to write
+	}
+
+	// Parse delta into section blocks and merge each into body
+	if strings.TrimSpace(delta) != "" {
+		body = mergeTOMLDelta(body, delta)
+	}
+	if removePlugins {
+		body = removeTOMLSection(body, "plugins")
+	}
+	return writeConfigFile(path, body)
+}
+
+// mergeTOMLDelta parses delta into named TOML blocks and merges each into body
+// via replaceTOMLSection. Consecutive array-of-tables entries ([[plugins]],
+// [[providers]]) with the same name are merged into a single block so the
+// replacement doesn't lose entries.
+func mergeTOMLDelta(body, delta string) string {
+	lines := strings.Split(delta, "\n")
+	type section struct {
+		name    string
+		content string
+		isArray bool
+	}
+	var topLevel strings.Builder
+	var sections []section
+	var curName string
+	var curBuf strings.Builder
+	curIsArray := false
+
+	flush := func() {
+		if curName == "" {
+			return
+		}
+		content := curBuf.String()
+		if curIsArray && len(sections) > 0 && sections[len(sections)-1].isArray && sections[len(sections)-1].name == curName {
+			sections[len(sections)-1].content += content
+		} else {
+			sections = append(sections, section{curName, content, curIsArray})
+		}
+		curBuf.Reset()
+	}
+
+	for _, line := range lines {
+		if name, isArray, ok := tomlEditSectionHeader(line); ok {
+			flush()
+			curName = name
+			curIsArray = isArray
+			curBuf.WriteString(line + "\n")
+			continue
+		}
+		if curName != "" {
+			curBuf.WriteString(line + "\n")
+			continue
+		}
+		if strings.TrimSpace(line) != "" {
+			topLevel.WriteString(line + "\n")
+		}
+	}
+	flush()
+
+	if top := strings.TrimSpace(topLevel.String()); top != "" {
+		body = mergeTOMLTopLevelFields(body, top+"\n")
+	}
+	for _, s := range sections {
+		body = replaceTOMLSection(body, s.name, s.content)
+	}
+	return body
+}
+
+func mergeTOMLTopLevelFields(body, fields string) string {
+	for _, line := range strings.Split(fields, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, ok := tomlTopLevelKey(line)
+		if !ok {
+			continue
+		}
+		body = replaceTOMLTopLevelField(body, key, line+"\n")
+	}
+	return body
+}
+
+// SaveMinimalProjectReasoningLanguage writes a new project config that only
+// overrides [agent].reasoning_language.
+func SaveMinimalProjectReasoningLanguage(path, lang string) (string, error) {
 	cfg := Default()
-	if err := cfg.SetAutoPlan(mode); err != nil {
+	if err := cfg.SetReasoningLanguage(lang); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf(`# VoltUI project configuration.
+	body := fmt.Sprintf(`# Reasonix project configuration.
 # Project-local overrides are merged over the user config.
 
 [agent]
-auto_plan = %q
-`, cfg.Agent.AutoPlan)
-	return cfg.Agent.AutoPlan, writeConfigFile(path, body)
+reasoning_language = %q
+`, cfg.ReasoningLanguage())
+	return cfg.ReasoningLanguage(), writeConfigFile(path, body)
 }
 
 func writeConfigFile(path, body string) error {
@@ -733,6 +979,205 @@ func configFilePerm(path string) os.FileMode {
 	return 0o644
 }
 
+// WritePermissionsSection replaces or creates the [permissions] section in a
+// TOML file, preserving all other sections verbatim. When the file doesn't
+// exist yet, it creates one containing only the permissions section.
+func WritePermissionsSection(path string, allow []string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("write permissions: empty config path")
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		raw = nil
+	}
+
+	newBlock := fmt.Sprintf("[permissions]\nallow = %s\n", renderStringArray(allow))
+
+	body := string(raw)
+	if body == "" {
+		return writeConfigFile(path, newBlock)
+	}
+
+	body = replaceTOMLSection(body, "permissions", newBlock)
+	return writeConfigFile(path, body)
+}
+
+// replaceTOMLSection replaces the content of a named TOML section (including
+// its header line) with newContent. It handles both [section] and [[section]]
+// array-of-tables headers. If the section doesn't exist, newContent is appended
+// at the end.
+func replaceTOMLSection(body, sectionName, newContent string) string {
+	spans := tomlLineSpans(body)
+	arrayIdx := -1
+	for i, span := range spans {
+		name, isArray, ok := tomlEditSectionHeader(span.text)
+		if ok && isArray && name == sectionName {
+			arrayIdx = i
+			break
+		}
+	}
+	if arrayIdx >= 0 {
+		start := spans[arrayIdx].start
+		end := len(body)
+		for i := arrayIdx + 1; i < len(spans); i++ {
+			name, isArray, ok := tomlEditSectionHeader(spans[i].text)
+			if !ok {
+				continue
+			}
+			if (isArray && name == sectionName) || strings.HasPrefix(name, sectionName+".") {
+				continue
+			}
+			end = spans[i].start
+			break
+		}
+		return body[:start] + strings.TrimRight(newContent, "\n") + "\n" + body[end:]
+	}
+
+	for _, span := range spans {
+		name, isArray, ok := tomlEditSectionHeader(span.text)
+		if !ok || isArray || name != sectionName {
+			continue
+		}
+		end := len(body)
+		for _, next := range spans {
+			if next.start <= span.start {
+				continue
+			}
+			if _, _, ok := tomlEditSectionHeader(next.text); ok {
+				end = next.start
+				break
+			}
+		}
+		return body[:span.start] + newContent + body[end:]
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + newContent
+}
+
+func removeTOMLSection(body, sectionName string) string {
+	spans := tomlLineSpans(body)
+	for i, span := range spans {
+		name, isArray, ok := tomlEditSectionHeader(span.text)
+		if !ok || name != sectionName {
+			continue
+		}
+		end := len(body)
+		for j := i + 1; j < len(spans); j++ {
+			nextName, nextIsArray, ok := tomlEditSectionHeader(spans[j].text)
+			if !ok {
+				continue
+			}
+			if (isArray && nextIsArray && nextName == sectionName) || strings.HasPrefix(nextName, sectionName+".") {
+				continue
+			}
+			end = spans[j].start
+			break
+		}
+		return strings.TrimRight(body[:span.start], "\n") + "\n" + body[end:]
+	}
+	return body
+}
+
+type tomlLineSpan struct {
+	start int
+	end   int
+	text  string
+}
+
+func tomlLineSpans(body string) []tomlLineSpan {
+	if body == "" {
+		return nil
+	}
+	var spans []tomlLineSpan
+	for start := 0; start < len(body); {
+		end := len(body)
+		if idx := strings.IndexByte(body[start:], '\n'); idx >= 0 {
+			end = start + idx + 1
+		}
+		spans = append(spans, tomlLineSpan{start: start, end: end, text: body[start:end]})
+		start = end
+	}
+	return spans
+}
+
+func tomlEditSectionHeader(line string) (string, bool, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", false, false
+	}
+	if before, _, ok := strings.Cut(trimmed, "#"); ok {
+		trimmed = strings.TrimSpace(before)
+	}
+	if strings.HasPrefix(trimmed, "[[") && strings.HasSuffix(trimmed, "]]") {
+		name := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+		return name, true, name != ""
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		name := strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		return name, false, name != ""
+	}
+	return "", false, false
+}
+
+func replaceTOMLTopLevelField(body, key, newLine string) string {
+	spans := tomlLineSpans(body)
+	insertAt := len(body)
+	for _, span := range spans {
+		if _, _, ok := tomlEditSectionHeader(span.text); ok {
+			insertAt = span.start
+			break
+		}
+		if got, ok := tomlTopLevelKey(span.text); ok && got == key {
+			return body[:span.start] + newLine + body[span.end:]
+		}
+	}
+	return body[:insertAt] + newLine + body[insertAt:]
+}
+
+func tomlTopLevelKey(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", false
+	}
+	if before, _, ok := strings.Cut(trimmed, "#"); ok {
+		trimmed = strings.TrimSpace(before)
+	}
+	key, _, ok := strings.Cut(trimmed, "=")
+	if !ok {
+		return "", false
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || strings.Contains(key, ".") {
+		return "", false
+	}
+	return key, true
+}
+
+func tomlBodyHasTopLevelKey(body, key string) bool {
+	for _, span := range tomlLineSpans(body) {
+		if _, _, ok := tomlEditSectionHeader(span.text); ok {
+			return false
+		}
+		if got, ok := tomlTopLevelKey(span.text); ok && got == key {
+			return true
+		}
+	}
+	return false
+}
+
+func tomlBodyHasSection(body, sectionName string) bool {
+	for _, span := range tomlLineSpans(body) {
+		name, _, ok := tomlEditSectionHeader(span.text)
+		if ok && name == sectionName {
+			return true
+		}
+	}
+	return false
+}
+
 func renderScopeForPath(path string) RenderScope {
 	if isUserConfigPath(path) {
 		return RenderScopeUser
@@ -745,12 +1190,12 @@ func isUserConfigPath(path string) bool {
 	if path == "" {
 		return false
 	}
-	pathAbs, pathErr := filepath.Abs(path)
 	for _, uc := range userConfigCandidatePaths() {
 		uc = strings.TrimSpace(uc)
 		if uc == "" {
 			continue
 		}
+		pathAbs, pathErr := filepath.Abs(path)
 		ucAbs, ucErr := filepath.Abs(uc)
 		if pathErr == nil && ucErr == nil {
 			if filepath.Clean(pathAbs) == filepath.Clean(ucAbs) {
@@ -776,8 +1221,9 @@ func (c *Config) Save() error {
 	return c.SaveTo(path)
 }
 
-// SaveForRoot saves the config to root's voltui.toml, falling back to the
-// user's global config when root has no existing voltui.toml.
+// SaveForRoot saves root's project config when it exists, falling back to the
+// user's global config when root has no voltui.toml. Existing project files
+// are edited from their own TOML only, never from a runtime user+project merge.
 func (c *Config) SaveForRoot(root string) error {
 	root = resolveRoot(root)
 	projectTOML := "voltui.toml"
@@ -785,7 +1231,8 @@ func (c *Config) SaveForRoot(root string) error {
 		projectTOML = filepath.Join(root, "voltui.toml")
 	}
 	if _, err := os.Stat(projectTOML); err == nil {
-		return c.SaveTo(projectTOML)
+		projectCfg := LoadForEditWithoutCredentials(projectTOML)
+		return projectCfg.SaveTo(projectTOML)
 	}
 	if uc := userConfigPath(); uc != "" {
 		if err := os.MkdirAll(filepath.Dir(uc), 0o755); err != nil {

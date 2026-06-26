@@ -92,8 +92,18 @@ func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
 	if len(report.Providers) == 0 {
 		t.Fatal("expected built-in providers in report")
 	}
-	if report.Providers[0].KeyPresent {
-		t.Fatal("provider key should be reported missing when env is empty")
+	var deepseek *ProviderReport
+	for i := range report.Providers {
+		if report.Providers[i].Name == "deepseek-flash" {
+			deepseek = &report.Providers[i]
+			break
+		}
+	}
+	if deepseek == nil {
+		t.Fatalf("deepseek-flash provider missing from report: %+v", report.Providers)
+	}
+	if deepseek.KeyPresent {
+		t.Fatal("deepseek key should be reported missing when env is empty")
 	}
 	if !strings.Contains(text, "voltui 1.2.3 doctor") {
 		t.Fatalf("text report missing header:\n%s", text)

@@ -439,6 +439,7 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	migratedMimo := normalizeLegacyMimoCustomProviders(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
+	normalizeOfficialDeepSeekModels(cfg)
 	applyDeepSeekOfficialDefaultPricing(cfg)
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
@@ -677,12 +678,27 @@ func normalizeOfficialDeepSeekModels(c *Config) {
 		}
 		switch strings.TrimSpace(p.Name) {
 		case "deepseek":
+			normalizeInheritedDeepSeekDefaults(p)
 			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, "deepseek-v4-flash")
 		case "deepseek-flash":
+			normalizeInheritedDeepSeekDefaults(p)
 			ensureProviderModels(p, []string{"deepseek-v4-flash"}, "deepseek-v4-flash")
 		case "deepseek-pro":
+			normalizeInheritedDeepSeekDefaults(p)
 			ensureProviderModels(p, []string{"deepseek-v4-pro"}, "deepseek-v4-pro")
 		}
+	}
+}
+
+func normalizeInheritedDeepSeekDefaults(p *ProviderEntry) {
+	if p == nil {
+		return
+	}
+	if p.Model != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.Model)), "deepseek-") {
+		p.Model = ""
+	}
+	if len(p.Models) == 0 && p.ContextWindow == 131_072 {
+		p.ContextWindow = 1_000_000
 	}
 }
 

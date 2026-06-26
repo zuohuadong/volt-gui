@@ -32,13 +32,20 @@ func TestModelRefsFromConfig(t *testing.T) {
 	}
 }
 
-// TestModelRefsSkipsUnconfigured verifies that with no provider keys set, the
-// picker offers nothing rather than listing models the user can't select.
+// TestModelRefsSkipsUnconfigured verifies that with no external provider keys
+// set, the picker still offers private-network defaults but filters keyed
+// external providers the user can't select.
 func TestModelRefsSkipsUnconfigured(t *testing.T) {
 	isolateUserConfig(t)
 	t.Chdir(t.TempDir())
-	if refs := modelRefs(); len(refs) != 0 {
-		t.Errorf("no keys set → no refs, got %v", refs)
+	refs := modelRefs()
+	if len(refs) == 0 {
+		t.Fatal("no keys set should still expose private-network refs")
+	}
+	for _, ref := range refs {
+		if strings.HasPrefix(ref, "deepseek") || strings.HasPrefix(ref, "mimo") {
+			t.Errorf("external unconfigured ref %q should be filtered out; refs=%v", ref, refs)
+		}
 	}
 }
 

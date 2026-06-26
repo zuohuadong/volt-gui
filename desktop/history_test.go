@@ -66,6 +66,26 @@ func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 	}
 }
 
+func TestHistoryMessagesDoNotReplayMemoryCompilerContract(t *testing.T) {
+	raw := historyMemoryCompilerContract(t, "ship the refactor")
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: raw},
+		{Role: provider.RoleAssistant, Content: "done"},
+	}
+
+	got := historyMessages(msgs, control.StripComposePrefixes)
+	if len(got) != 2 {
+		t.Fatalf("history length = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].Content != "ship the refactor" {
+		t.Fatalf("visible user content = %q, want source_event", got[0].Content)
+	}
+	if got[0].SubmitText != "" {
+		t.Fatalf("raw Memory v5 contract should not be replay submitText, got %q", got[0].SubmitText)
+	}
+	assertNoHistoryMemoryContract(t, got[0].Content)
+}
+
 func TestHistoryForTabRestoresPlannerDisplayAfterReload(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
@@ -125,6 +145,30 @@ func TestHistoryForTabRestoresPlannerDisplayAfterReload(t *testing.T) {
 	}
 	if got[4].Role != "assistant" || got[4].Content != "executor kept working" {
 		t.Fatalf("executor answer missing after reload: %+v", got[4])
+	}
+}
+
+func historyMemoryCompilerContract(t *testing.T, sourceEvent string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"type": "memory_v5_execution_contract",
+		"planner_ir": map[string]any{
+			"source_event": sourceEvent,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "<memory-compiler-execution>\n" + string(body) + "\n</memory-compiler-execution>"
+}
+
+func assertNoHistoryMemoryContract(t *testing.T, text string) {
+	t.Helper()
+	if strings.Contains(text, "<memory-compiler-execution>") ||
+		strings.Contains(text, "</memory-compiler-execution>") ||
+		strings.Contains(text, "memory_v5_execution_contract") ||
+		strings.Contains(text, "planner_ir") {
+		t.Fatalf("history leaked Memory v5 contract content: %q", text)
 	}
 }
 

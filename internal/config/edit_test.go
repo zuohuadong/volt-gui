@@ -649,18 +649,28 @@ func TestRemoveProvider(t *testing.T) {
 	c.Agent.PlannerModel = "deepseek-pro"
 
 	// Cannot remove the default model when no configured fallback is available.
+	c.Providers = []ProviderEntry{{
+		Name:      c.DefaultModel,
+		Kind:      "openai",
+		BaseURL:   "https://api.example.com/v1",
+		Model:     "model-a",
+		APIKeyEnv: "EMPTY_TEST_KEY",
+	}}
 	for i := range c.Providers {
 		c.Providers[i].APIKeyEnv = ""
 	}
 	if err := c.RemoveProvider(c.DefaultModel); err == nil {
 		t.Error("expected error removing the default model")
 	}
+
+	c = Default()
+	c.Agent.PlannerModel = "deepseek-pro"
 	// Removing the planner provider clears planner_model.
 	if err := c.RemoveProvider("deepseek-pro"); err != nil {
 		t.Fatalf("remove planner provider: %v", err)
 	}
-	if c.Agent.PlannerModel != "" {
-		t.Errorf("planner should be cleared, got %q", c.Agent.PlannerModel)
+	if c.Agent.PlannerModel != c.DefaultModel {
+		t.Errorf("planner should fall back to default, got %q want %q", c.Agent.PlannerModel, c.DefaultModel)
 	}
 	if _, ok := c.Provider("deepseek-pro"); ok {
 		t.Error("provider not actually removed")

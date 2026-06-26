@@ -1051,12 +1051,13 @@ func TestSettingsInfersConfiguredBuiltInsWithoutConfigFile(t *testing.T) {
 
 func TestSettingsDoesNotInferBuiltInsWithoutKeys(t *testing.T) {
 	isolateDesktopUserDirs(t)
+	t.Setenv("XIGU_API_KEY", "")
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("MIMO_API_KEY", "")
 
 	got := NewApp().Settings()
 	for _, p := range got.Providers {
-		if p.Added {
+		if (p.Name == "deepseek" || strings.HasPrefix(p.Name, "mimo")) && p.Added {
 			t.Fatalf("provider %+v should not be inferred as added without a configured key", p)
 		}
 	}
@@ -1957,6 +1958,22 @@ func TestSetTokenModeKeepsControllerWhenRebuildFails(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("MIMO_API_KEY", "")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "external-only"
+
+[[providers]]
+name = "external-only"
+kind = "openai"
+base_url = "https://api.example.com/v1"
+model = "model-a"
+api_key_env = "EXTERNAL_ONLY_API_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("EXTERNAL_ONLY_API_KEY", "")
 
 	app := NewApp()
 	app.ctx = context.Background()

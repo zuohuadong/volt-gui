@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"time"
 	"voltui/internal/agent"
 	"voltui/internal/boot"
 	"voltui/internal/config"
@@ -27,7 +28,6 @@ import (
 	"voltui/internal/provider"
 	"voltui/internal/provider/openai"
 	"voltui/internal/serve"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"golang.org/x/term"
@@ -1015,6 +1015,8 @@ type providerFamily struct {
 
 func familyOf(name string) providerFamily {
 	switch {
+	case strings.HasPrefix(name, "qwen-gpu") || strings.HasPrefix(name, "glm-") || strings.HasPrefix(name, "image-gpu"):
+		return providerFamily{key: "xigu", name: "西谷内网", desc: "internal model gateway"}
 	case strings.HasPrefix(name, "deepseek"):
 		return providerFamily{key: "deepseek", name: "DeepSeek", desc: "fast & cheap, plus a stronger Pro SKU"}
 	case strings.HasPrefix(name, "mimo"):

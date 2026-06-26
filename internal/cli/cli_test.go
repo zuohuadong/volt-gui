@@ -231,21 +231,25 @@ func TestConfigureKeys(t *testing.T) {
 	// making the assertion below noisy.
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("MIMO_API_KEY", "")
+	t.Setenv("XIGU_API_KEY", "")
 
-	selected := config.Default().Providers // deepseek-flash, deepseek-pro, mimo-pro, mimo-flash
+	selected := config.Default().Providers
 
-	// Two distinct keys to enter: DEEPSEEK_API_KEY, then MIMO_API_KEY.
-	input := "ds-key\nmi-key\n"
+	// Three distinct keys to enter: XIGU_API_KEY, DEEPSEEK_API_KEY, then MIMO_API_KEY.
+	input := "xigu-key\nds-key\nmi-key\n"
 	env := configureKeys(selected, strings.NewReader(input), io.Discard)
 
-	if len(env) != 2 {
-		t.Fatalf("env = %v (want 2: DeepSeek asked once + MiMo asked once)", env)
+	if len(env) != 3 {
+		t.Fatalf("env = %v (want 3: Xigu asked once + DeepSeek asked once + MiMo asked once)", env)
 	}
-	if env[0] != "DEEPSEEK_API_KEY=ds-key" {
+	if env[0] != "XIGU_API_KEY=xigu-key" {
 		t.Errorf("env[0] = %q", env[0])
 	}
-	if env[1] != "MIMO_API_KEY=mi-key" {
-		t.Errorf("env[1] = %q", env)
+	if env[1] != "DEEPSEEK_API_KEY=ds-key" {
+		t.Errorf("env[1] = %q", env[1])
+	}
+	if env[2] != "MIMO_API_KEY=mi-key" {
+		t.Errorf("env[2] = %q", env)
 	}
 }
 
@@ -258,20 +262,24 @@ func TestConfigureKeys(t *testing.T) {
 // re-runs of setup.
 func TestConfigureKeysReusesExistingEnv(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "preset-ds-key")
+	t.Setenv("XIGU_API_KEY", "")
 	t.Setenv("MIMO_API_KEY", "") // ask for this one
 
 	selected := config.Default().Providers
 	var output bytes.Buffer
-	env := configureKeys(selected, strings.NewReader("mi-key-from-input\n"), &output)
+	env := configureKeys(selected, strings.NewReader("xigu-key-from-input\nmi-key-from-input\n"), &output)
 
-	if len(env) != 2 {
-		t.Fatalf("env = %v (want 2: DeepSeek reused + MiMo entered)", env)
+	if len(env) != 3 {
+		t.Fatalf("env = %v (want 3: Xigu entered + DeepSeek reused + MiMo entered)", env)
 	}
-	if env[0] != "DEEPSEEK_API_KEY=preset-ds-key" {
-		t.Errorf("env[0] = %q, want re-pinned existing value", env[0])
+	if env[0] != "XIGU_API_KEY=xigu-key-from-input" {
+		t.Errorf("env[0] = %q, want typed value", env[0])
 	}
-	if env[1] != "MIMO_API_KEY=mi-key-from-input" {
-		t.Errorf("env[1] = %q, want typed value", env[1])
+	if env[1] != "DEEPSEEK_API_KEY=preset-ds-key" {
+		t.Errorf("env[1] = %q, want re-pinned existing value", env[1])
+	}
+	if env[2] != "MIMO_API_KEY=mi-key-from-input" {
+		t.Errorf("env[2] = %q, want typed value", env[2])
 	}
 	if !strings.Contains(output.String(), "DEEPSEEK_API_KEY") {
 		t.Errorf("expected a 'reusing' confirmation for DEEPSEEK_API_KEY, got:\n%s", output.String())
@@ -283,13 +291,14 @@ func TestConfigureKeysReusesExistingEnv(t *testing.T) {
 // the input — critical for the first-time-setup flow, where the URL-fetch
 // step has already collected all keys and configureKeys is a no-op.
 func TestConfigureKeysAllSetSkipsInput(t *testing.T) {
+	t.Setenv("XIGU_API_KEY", "xigu")
 	t.Setenv("DEEPSEEK_API_KEY", "ds")
 	t.Setenv("MIMO_API_KEY", "mi")
 
 	selected := config.Default().Providers
 	env := configureKeys(selected, strings.NewReader("should-not-be-consumed\n"), io.Discard)
-	if len(env) != 2 {
-		t.Errorf("env = %v, want 2 (both reused)", env)
+	if len(env) != 3 {
+		t.Errorf("env = %v, want 3 (all reused)", env)
 	}
 }
 
@@ -331,22 +340,25 @@ func TestAppendEnvUpsertHandlesExportPrefix(t *testing.T) {
 }
 
 // TestGroupByFamily verifies the wizard groups the default preset into
-// "deepseek" (flash + pro) and "mimo" (pro + flash), preserving the order
-// each family first appears in.
+// "xigu" (internal gateway), "deepseek" (flash + pro), and "mimo" (pro + flash),
+// preserving the order each family first appears in.
 func TestGroupByFamily(t *testing.T) {
 	order, members, info := groupByFamily(config.Default().Providers)
 
-	if got := order; !reflect.DeepEqual(got, []string{"deepseek", "mimo"}) {
-		t.Fatalf("family order = %v, want [deepseek mimo]", got)
+	if got := order; !reflect.DeepEqual(got, []string{"xigu", "deepseek", "mimo"}) {
+		t.Fatalf("family order = %v, want [xigu deepseek mimo]", got)
 	}
-	if got := members["deepseek"]; !reflect.DeepEqual(got, []int{0, 1}) {
-		t.Errorf("deepseek members = %v, want [0 1]", got)
+	if got := members["xigu"]; !reflect.DeepEqual(got, []int{0, 1, 2, 3}) {
+		t.Errorf("xigu members = %v, want [0 1 2 3]", got)
 	}
-	if got := members["mimo"]; !reflect.DeepEqual(got, []int{2, 3}) {
-		t.Errorf("mimo members = %v, want [2 3]", got)
+	if got := members["deepseek"]; !reflect.DeepEqual(got, []int{4, 5}) {
+		t.Errorf("deepseek members = %v, want [4 5]", got)
 	}
-	if info["deepseek"].name != "DeepSeek" || info["mimo"].name != "MiMo (Xiaomi)" {
-		t.Errorf("display names = %q / %q", info["deepseek"].name, info["mimo"].name)
+	if got := members["mimo"]; !reflect.DeepEqual(got, []int{6, 7}) {
+		t.Errorf("mimo members = %v, want [6 7]", got)
+	}
+	if info["xigu"].name != "西谷内网" || info["deepseek"].name != "DeepSeek" || info["mimo"].name != "MiMo (Xiaomi)" {
+		t.Errorf("display names = %q / %q / %q", info["xigu"].name, info["deepseek"].name, info["mimo"].name)
 	}
 }
 

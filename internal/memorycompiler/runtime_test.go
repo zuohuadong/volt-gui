@@ -854,16 +854,6 @@ func assertNode(t *testing.T, nodes []MemoryNode, pred func(MemoryNode) bool, de
 	t.Fatalf("missing node: %s\nnodes=%+v", desc, nodes)
 }
 
-func assertCausalEdge(t *testing.T, edges []CausalEdge, pred func(CausalEdge) bool, desc string) {
-	t.Helper()
-	for _, e := range edges {
-		if pred(e) {
-			return
-		}
-	}
-	t.Fatalf("missing causal edge: %s\nedges=%+v", desc, edges)
-}
-
 func assertEdge(t *testing.T, edges []MemoryEdge, relation string) {
 	t.Helper()
 	for _, e := range edges {

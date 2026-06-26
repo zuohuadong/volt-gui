@@ -1877,17 +1877,6 @@ func (r *Runtime) writeTraceAndLearn(tr ExecutionTrace, strategyID string) {
 	_ = writeJSON(filepath.Join(r.dir, stateFile), st)
 }
 
-func cloneNoisyRefs(in map[string]int) map[string]int {
-	if len(in) == 0 {
-		return map[string]int{}
-	}
-	out := make(map[string]int, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
 func splitTrace(tr ExecutionTrace, learning SystemLearning, includeDebug bool) TraceBundle {
 	bundle := TraceBundle{RuntimeTrace: executionTraceProjection(tr)}
 	if lt, ok := learningTraceFor(tr, learning); ok {

@@ -160,7 +160,7 @@ func TestProfileNetworkAndRoots(t *testing.T) {
 	if !strings.Contains(with, `(subpath "/work/proj")`) {
 		t.Errorf("profile missing the write-root subpath:\n%s", with)
 	}
-	if !strings.Contains(with, `(subpath "/etc/ssh")`) {
+	if !strings.Contains(with, `(subpath "/home/user/.ssh")`) {
 		t.Errorf("profile missing the forbid-read subpath:\n%s", with)
 	}
 	without := seatbeltProfile(Spec{Mode: "enforce", Network: false})

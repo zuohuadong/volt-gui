@@ -43,16 +43,35 @@ func StripTransientUserBlocks(content string) string {
 // contract without a recoverable source_event collapses to empty, matching the
 // prior "strip the block" behavior only as a last resort.
 func unwrapMemoryCompilerExecution(content string) string {
-	if !strings.Contains(content, "<memory-compiler-execution>") {
-		return content
-	}
-	return reMemoryCompilerExecution.ReplaceAllStringFunc(content, func(block string) string {
-		m := reMemoryCompilerExecution.FindStringSubmatch(block)
-		if len(m) < 2 {
-			return ""
+	// Unwrap to a fixpoint. A long goal loop (the #5342 bug) could re-compile an
+	// echoed contract many times, so source_event nests another full
+	// <memory-compiler-execution> block; each pass peels the outermost layer and
+	// exposes the next. A single (or fixed two) pass leaves raw contract JSON in
+	// the transcript (#5361). maxDepth bounds pathological accretion.
+	const maxDepth = 24
+	for range maxDepth {
+		if !strings.Contains(content, "<memory-compiler-execution>") {
+			return content
 		}
-		return memoryCompilerSourceEvent(m[1])
-	})
+		next := reMemoryCompilerExecution.ReplaceAllStringFunc(content, func(block string) string {
+			m := reMemoryCompilerExecution.FindStringSubmatch(block)
+			if len(m) < 2 {
+				return ""
+			}
+			return memoryCompilerSourceEvent(m[1])
+		})
+		if next == content {
+			break // no complete block matched (e.g. a dangling/truncated tag)
+		}
+		content = next
+	}
+	// Any residual open tag is a dangling/partial/unparseable block the strict
+	// regex can't complete; drop from the first open tag onward so raw contract
+	// JSON is never surfaced. The user's actual text precedes it.
+	if idx := strings.Index(content, "<memory-compiler-execution>"); idx >= 0 {
+		content = strings.TrimRight(content[:idx], " \t\r\n")
+	}
+	return content
 }
 
 // memoryCompilerSourceEvent pulls the original user prompt out of a compiled

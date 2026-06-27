@@ -56,17 +56,22 @@ type heartbeatConfig struct {
 type HeartbeatEngine struct {
 	mu            sync.Mutex
 	tasks         []HeartbeatTask
-	pendingTopics map[string]string // taskID → topicID; in-memory retry safety for NewConversationEachRun
+	pendingTopics map[string]heartbeatPendingTopic // in-memory retry/in-flight safety for NewConversationEachRun
 	done          chan struct{}
 	running       bool
 	app           *App // back-reference for topic creation, tab routing, and prompt submission
+}
+
+type heartbeatPendingTopic struct {
+	TopicID   string
+	Submitted bool
 }
 
 func newHeartbeatEngine(app *App) *HeartbeatEngine {
 	return &HeartbeatEngine{
 		app:           app,
 		done:          make(chan struct{}),
-		pendingTopics: make(map[string]string),
+		pendingTopics: make(map[string]heartbeatPendingTopic),
 	}
 }
 
@@ -217,19 +222,24 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 	// Determine which topic to use.
 	//
 	// For NewConversationEachRun:
-	//   - If there's a pending topic from a previous failed attempt (tracked
-	//     in-memory via pendingTopics), reuse it for retry safety.
-	//   - Otherwise create a fresh topic.
-	//   - After a successful submit, clear the pending topic so the next run
-	//     creates another fresh topic.
+	//   - Reuse a pending topic from a failed pre-submit attempt.
+	//   - Re-check a submitted topic until its controller is idle, so a long
+	//     previous run cannot overlap with the next scheduled fresh topic.
+	//   - Once the submitted topic is idle and due again, clear it and create a
+	//     fresh topic.
+	//   - topicId is always updated to the latest conversation so the task list
+	//     always points to the most recent session regardless of mode switch.
 	//
 	// For the legacy mode:
 	//   - Reuse the persisted topicID if available; create one on first run.
 	var topicID string
+	var pendingSubmitted bool
 	if t.NewConversationEachRun {
 		e.mu.Lock()
-		topicID = e.pendingTopics[t.ID]
+		pending := e.pendingTopics[t.ID]
 		e.mu.Unlock()
+		topicID = pending.TopicID
+		pendingSubmitted = pending.Submitted
 		if topicID == "" {
 			// No pending topic — create a fresh one.
 			meta, err := e.app.CreateTopic(scope, workspaceRoot, title)
@@ -239,9 +249,13 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 				return t
 			}
 			topicID = meta.ID
+			t.TopicID = topicID // always persist the latest topic
 			// Save in-memory for retry safety (NOT persisted to disk).
 			e.mu.Lock()
-			e.pendingTopics[t.ID] = topicID
+			if e.pendingTopics == nil {
+				e.pendingTopics = make(map[string]heartbeatPendingTopic)
+			}
+			e.pendingTopics[t.ID] = heartbeatPendingTopic{TopicID: topicID}
 			e.mu.Unlock()
 		}
 	} else {
@@ -291,6 +305,14 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		log.Printf("[heartbeat] controller busy for %q, skipping", t.Title)
 		return t // don't change approval mode for an existing turn — retry next tick
 	}
+	if t.NewConversationEachRun && pendingSubmitted {
+		e.mu.Lock()
+		if pending := e.pendingTopics[t.ID]; pending.TopicID == topicID && pending.Submitted {
+			delete(e.pendingTopics, t.ID)
+		}
+		e.mu.Unlock()
+		return e.executeTask(t)
+	}
 
 	// Set the task's approval mode only after confirming the controller is idle.
 	// SetToolApprovalModeForTab may drain pending approvals for auto/yolo modes,
@@ -307,11 +329,12 @@ func (e *HeartbeatEngine) executeTask(t HeartbeatTask) HeartbeatTask {
 		return t
 	}
 
-	// After a successful submit: for NewConversationEachRun, clear the
-	// pending topic so the next run creates a fresh conversation.
 	if t.NewConversationEachRun {
 		e.mu.Lock()
-		delete(e.pendingTopics, t.ID)
+		if e.pendingTopics == nil {
+			e.pendingTopics = make(map[string]heartbeatPendingTopic)
+		}
+		e.pendingTopics[t.ID] = heartbeatPendingTopic{TopicID: topicID, Submitted: true}
 		e.mu.Unlock()
 	}
 
@@ -336,6 +359,7 @@ func (e *HeartbeatEngine) ReloadTasks() []HeartbeatTask {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tasks = e.loadTasks()
+	e.prunePendingTopicsLocked(e.tasks)
 	out := make([]HeartbeatTask, len(e.tasks))
 	copy(out, e.tasks)
 	return out
@@ -346,7 +370,25 @@ func (e *HeartbeatEngine) ReplaceTasks(tasks []HeartbeatTask) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tasks = tasks
+	e.prunePendingTopicsLocked(tasks)
 	return e.saveTasks(tasks)
+}
+
+func (e *HeartbeatEngine) prunePendingTopicsLocked(tasks []HeartbeatTask) {
+	if len(e.pendingTopics) == 0 {
+		return
+	}
+	keep := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		if task.NewConversationEachRun {
+			keep[task.ID] = true
+		}
+	}
+	for id := range e.pendingTopics {
+		if !keep[id] {
+			delete(e.pendingTopics, id)
+		}
+	}
 }
 
 // TriggerNow runs a single task immediately by ID.

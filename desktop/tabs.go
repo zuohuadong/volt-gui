@@ -670,6 +670,9 @@ func (s *tabEventSink) Emit(e event.Event) {
 				m.persist()
 			}
 		}
+		if e.Kind == event.TurnDone {
+			s.flushPlannerDisplay()
+		}
 	}
 	s.emitRuntimeEvent(eventChannel, toWireTab(e, s.tabID))
 	if s.app != nil {
@@ -689,7 +692,6 @@ func (s *tabEventSink) Emit(e event.Event) {
 	}
 	// Persist after each turn so a force-kill loses at most the in-flight prompt.
 	if e.Kind == event.TurnDone && s.app != nil {
-		s.flushPlannerDisplay()
 		s.app.scheduleTabSnapshot(s.tabID)
 	}
 }

@@ -129,6 +129,13 @@ type Controller struct {
 	// surfaced to frontends via WorkspaceRoot().
 	workspaceRoot string
 
+	// externalFolderRefs maps session-generated @ tokens to user-dropped
+	// directories outside workspaceRoot. It is intentionally per-controller:
+	// dragging a folder authorizes that folder for this chat session only, without
+	// widening scoped @ resolution to arbitrary absolute paths.
+	externalFolderRefsMu sync.RWMutex
+	externalFolderRefs   map[string]string
+
 	// checkpoints owns the snapshot-based rewind bookkeeping (the per-session
 	// store, the monotonic turn counter, and the conversation-rewind boundary map)
 	// behind its own lock, off c.mu — so a boundary read for a rewind/fork never

@@ -3,7 +3,9 @@ package control
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,16 +46,20 @@ const (
 
 // ref is a resolved @reference found in a submitted line.
 type ref struct {
-	kind   refKind
-	server string // refResource
-	uri    string // refResource
-	path   string // refFile
-	raw    string // the original token after '@', for labelling
+	kind        refKind
+	server      string // refResource
+	uri         string // refResource
+	path        string // refFile, relative to baseDir when baseDir is set
+	baseDir     string // refFile override for session-authorized external roots
+	displayPath string // refFile label/path exposed in the resolved context block
+	raw         string // the original token after '@', for labelling
 }
 
 // refTokenRe matches an @reference token: '@' then a run of non-space chars.
 var refTokenRe = regexp.MustCompile(`@([^\s]+)`)
 var pathLocationSuffixRe = regexp.MustCompile(`:\d+(?::\d+)?:?$`)
+
+const externalFolderRefPrefix = "__reasonix_external_folder"
 
 // parseRefTokens extracts the deduped, punctuation-trimmed tokens following '@'
 // in a line. Pure: classification (server? file?) happens in classifyRef.
@@ -103,6 +109,108 @@ func isImageAttachmentRef(token string) bool {
 	return false
 }
 
+// RegisterExternalFolderRef authorizes one dropped directory outside the
+// workspace as a structured @reference for this controller session. The returned
+// token is path-like and whitespace-free so it survives the existing @ token
+// parser even when the real directory path contains spaces or Windows drive
+// punctuation.
+func (c *Controller) RegisterExternalFolderRef(path string) (token, displayPath string, err error) {
+	if c == nil {
+		return "", "", fmt.Errorf("controller is not ready")
+	}
+	abs, err := normalizeExternalFolderRoot(path)
+	if err != nil {
+		return "", "", err
+	}
+	token = externalFolderRefToken(abs)
+	c.externalFolderRefsMu.Lock()
+	if c.externalFolderRefs == nil {
+		c.externalFolderRefs = map[string]string{}
+	}
+	c.externalFolderRefs[token] = abs
+	c.externalFolderRefsMu.Unlock()
+	return token, filepath.ToSlash(abs), nil
+}
+
+func normalizeExternalFolderRoot(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", os.ErrInvalid
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = filepath.Clean(resolved)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", path)
+	}
+	return abs, nil
+}
+
+func externalFolderRefToken(abs string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
+	hash := hex.EncodeToString(sum[:])[:12]
+	name := safeExternalFolderRefComponent(filepath.Base(abs))
+	return externalFolderRefPrefix + "/" + hash + "/" + name
+}
+
+func safeExternalFolderRefComponent(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "folder"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), ".-")
+	if out == "" {
+		return "folder"
+	}
+	return out
+}
+
+func normalizeExternalFolderRefToken(token string) string {
+	token = strings.TrimSpace(token)
+	token = strings.TrimPrefix(token, "@")
+	token = filepath.ToSlash(token)
+	token = strings.TrimRight(token, "/")
+	return token
+}
+
+func (c *Controller) externalFolderRef(token string) (ref, bool) {
+	key := normalizeExternalFolderRefToken(token)
+	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") {
+		return ref{}, false
+	}
+	c.externalFolderRefsMu.RLock()
+	abs, ok := c.externalFolderRefs[key]
+	c.externalFolderRefsMu.RUnlock()
+	if !ok {
+		return ref{}, false
+	}
+	displayPath := filepath.ToSlash(abs)
+	return ref{kind: refFile, path: ".", baseDir: abs, displayPath: displayPath, raw: token}, true
+}
+
 // detectRefs finds the @references in a line: MCP resources for connected
 // servers, and local paths that exist on disk.
 func (c *Controller) detectRefs(line string) []ref {
@@ -119,6 +227,10 @@ func (c *Controller) detectRefsMode(line string, scopedOnly bool) []ref {
 	for _, tok := range parseRefTokens(line) {
 		if i := strings.Index(tok, ":"); i > 0 && i+1 < len(tok) && known[tok[:i]] {
 			refs = append(refs, ref{kind: refResource, server: tok[:i], uri: tok[i+1:], raw: tok})
+			continue
+		}
+		if r, ok := c.externalFolderRef(tok); ok {
+			refs = append(refs, r)
 			continue
 		}
 		if c.workspaceRoot != "" {
@@ -446,7 +558,11 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 			}
 			appendRefBlock(&b, "resource", `ref="@`+r.raw+`"`, text)
 		case refFile:
-			text, isDir, err := readFileRef(r.path, c.workspaceRoot)
+			baseDir := c.workspaceRoot
+			if r.baseDir != "" {
+				baseDir = r.baseDir
+			}
+			text, isDir, err := readFileRef(r.path, baseDir)
 			if err != nil {
 				errs = append(errs, "@"+r.raw+" — "+err.Error())
 				continue
@@ -455,7 +571,11 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 			if isDir {
 				tag = "dir"
 			}
-			appendRefBlock(&b, tag, `path="`+r.path+`"`, text)
+			displayPath := r.path
+			if r.displayPath != "" {
+				displayPath = r.displayPath
+			}
+			appendRefBlock(&b, tag, `path="`+displayPath+`"`, text)
 		case refImage:
 			appendRefBlock(&b, "image", `path="`+r.path+`"`, "[image attachment available at @"+r.path+"; sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]")
 		}
@@ -509,7 +629,7 @@ func readFileRef(path, baseDir string) (content string, isDir bool, err error) {
 	if info.IsDir() {
 		var b strings.Builder
 		n := 0
-		err := walkRootDir(root, rel, &b, &n, 0)
+		err := walkRootDir(root, rel, rel, &b, &n, 0)
 		if n >= maxDirEntries {
 			b.WriteString("\n…[truncated; directory has more entries]…")
 		}
@@ -633,9 +753,9 @@ func imageFileRefNote(displayPath, mime string, size int64, attached bool) strin
 }
 
 // walkRootDir walks a directory under a sandboxed *os.Root and writes each
-// entry (skipping noisy ones like .git and node_modules) into b until n hits
-// maxDirEntries.
-func walkRootDir(root *os.Root, dir string, b *strings.Builder, n *int, depth int) error {
+// entry relative to base (skipping noisy ones like .git and node_modules) into b
+// until n hits maxDirEntries.
+func walkRootDir(root *os.Root, dir, base string, b *strings.Builder, n *int, depth int) error {
 	if depth > 16 || *n >= maxDirEntries {
 		return nil
 	}
@@ -653,7 +773,11 @@ func walkRootDir(root *os.Root, dir string, b *strings.Builder, n *int, depth in
 			return nil
 		}
 		name := e.Name()
+		child := filepath.ToSlash(filepath.Join(dir, name))
 		entry := name
+		if rel, err := filepath.Rel(base, child); err == nil && filepath.IsLocal(rel) {
+			entry = filepath.ToSlash(rel)
+		}
 		if e.IsDir() {
 			switch name {
 			case ".git", "node_modules", ".DS_Store", "__pycache__", ".idea", ".vscode":
@@ -665,8 +789,7 @@ func walkRootDir(root *os.Root, dir string, b *strings.Builder, n *int, depth in
 		b.WriteByte('\n')
 		*n++
 		if e.IsDir() {
-			child := filepath.ToSlash(filepath.Join(dir, name))
-			if err := walkRootDir(root, child, b, n, depth+1); err != nil {
+			if err := walkRootDir(root, child, base, b, n, depth+1); err != nil {
 				return err
 			}
 		}

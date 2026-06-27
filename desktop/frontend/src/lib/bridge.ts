@@ -2321,6 +2321,11 @@ function makeMockApp(): AppBindings {
     },
     async AttachDropped(path: string) {
       const name = path.split(/[/\\]/).filter(Boolean).pop() ?? path;
+      const hasExt = /\.\w{1,6}$/i.test(name);
+      if (!hasExt) {
+        const tokenName = name.replace(/[^\w.-]+/g, "-") || "folder";
+        return { kind: "workspace" as const, path: `__reasonix_external_folder/mock/${tokenName}`, isDir: true, displayPath: path };
+      }
       return { kind: "attachment" as const, path: `.reasonix/attachments/mock-${name}` };
     },
     async AttachmentDataURL(_path: string) {

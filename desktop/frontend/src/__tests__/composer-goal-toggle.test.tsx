@@ -87,9 +87,11 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
   const root = createRoot(rootEl);
   const calls: {
     send: string[];
+    submit: (string | undefined)[];
     setCollaborationMode: CollaborationMode[];
   } = {
     send: [],
+    submit: [],
     setCollaborationMode: [],
   };
   let currentProps: Parameters<typeof Composer>[0] = {
@@ -100,8 +102,9 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
     goal: "",
     cwd: "/repo",
     modelLabel: "DeepSeek-R1",
-    onSend: (displayText) => {
+    onSend: (displayText, submitText) => {
       calls.send.push(displayText);
+      calls.submit.push(submitText);
     },
     onCancel: () => undefined,
     onCycleMode: () => {},
@@ -333,6 +336,53 @@ console.log("\ncomposer goal toggle");
   await waitFor("dropped file attachment", () => document.body.textContent?.includes("report.pdf") === true);
 
   ok(document.body.textContent?.includes("report.pdf") === true, "successful dropped file attach still renders the attachment");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  let droppedCallback: ((x: number, y: number, paths: string[]) => void) | undefined;
+  window.runtime = {
+    EventsOn: () => () => {},
+    BrowserOpenURL: () => {},
+    OnFileDrop: (cb) => {
+      droppedCallback = cb;
+    },
+    OnFileDropOff: () => {},
+  };
+  mockApp({
+    AttachDropped: async () => ({
+      kind: "workspace",
+      path: "__reasonix_external_folder/mock/Folder-With-Spaces",
+      isDir: true,
+      displayPath: "/Users/example/Folder With Spaces",
+    }),
+  });
+  const { root, calls, rerender } = await renderComposer();
+  await rerender({ insertRequest: { id: 4, text: "inspect", mode: "replace" } });
+  if (!droppedCallback) throw new Error("native file drop handler did not register");
+
+  await act(async () => {
+    droppedCallback?.(0, 0, ["/Users/example/Folder With Spaces"]);
+    await flushTimers();
+  });
+  await waitFor("dropped external folder chip", () => document.body.textContent?.includes("Folder With Spaces/") === true);
+
+  ok(document.body.textContent?.includes("Folder With Spaces/") === true, "dropped external folder renders as a folder context chip");
+
+  const sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
+  if (!sendButton) throw new Error("composer send button did not render");
+  await act(async () => {
+    sendButton.click();
+    await flushTimers();
+  });
+
+  eq(calls.send.join(","), "inspect @/Users/example/Folder With Spaces/", "external folder display text uses the real folder path");
+  eq(calls.submit.join(","), "inspect @__reasonix_external_folder/mock/Folder-With-Spaces/", "external folder submit text uses the session ref token");
 
   await act(async () => {
     root.unmount();

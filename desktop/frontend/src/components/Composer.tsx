@@ -42,6 +42,7 @@ interface AttachmentDedupKey {
 interface WorkspaceReference {
   path: string;
   isDir?: boolean;
+  displayPath?: string;
 }
 
 const LONG_PASTE_MIN_CHARS = 2000;
@@ -1118,7 +1119,7 @@ export function Composer({
         ...orderedAttachments.map((a) => `@${a.path}`),
       ].join(" ");
       const displayRefs = [
-        ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.path, ref.isDir)),
+        ...workspaceRefs.map((ref) => formatWorkspaceReference(ref.displayPath || ref.path, ref.isDir)),
         ...orderedAttachments.map(formatAttachmentDisplayReference),
       ].join(" ");
       const displayText = [trimmedText, displayRefs].filter(Boolean).join(trimmedText && displayRefs ? " " : "");
@@ -1226,7 +1227,7 @@ export function Composer({
         if (attachmentSeenInDraft(sourceDraftKey, key)) continue;
         const item = await app.AttachDropped(path);
         if (item.kind === "workspace") {
-          addWorkspaceReferenceToDraft(sourceDraftKey, { path: item.path, isDir: item.isDir });
+          addWorkspaceReferenceToDraft(sourceDraftKey, { path: item.path, isDir: item.isDir, displayPath: item.displayPath });
         } else {
           addAttachmentToDraft(sourceDraftKey, { path: item.path, previewUrl: item.previewUrl, displayName: baseName(path) }, key);
         }
@@ -2154,11 +2155,11 @@ export function Composer({
             <ComposerContextCard
               key={workspaceReferenceKey(ref)}
               variant="workspace"
-              tooltipLabel={formatWorkspaceReference(ref.path, ref.isDir)}
+              tooltipLabel={ref.displayPath ? formatWorkspaceReference(ref.displayPath, ref.isDir) : formatWorkspaceReference(ref.path, ref.isDir)}
               removeLabel={t("composer.removeReference")}
               onRemove={() => removeWorkspaceReference(ref)}
               folder={Boolean(ref.isDir)}
-              label={ref.isDir ? `${baseName(ref.path)}/` : baseName(ref.path)}
+              label={ref.isDir ? `${baseName(ref.displayPath || ref.path)}/` : baseName(ref.displayPath || ref.path)}
             />
           ))}
           {sessionRefs.map((ref) => (

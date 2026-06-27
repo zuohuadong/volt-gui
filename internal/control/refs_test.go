@@ -527,6 +527,67 @@ func TestDetectRefsUsesWorkspaceRootNotProcessCWD(t *testing.T) {
 	}
 }
 
+func TestScopedRefsRequireExternalFolderRegistration(t *testing.T) {
+	workspace := t.TempDir()
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "outside.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Controller{workspaceRoot: workspace}
+	block, errs := c.ResolveScopedRefs(context.Background(), "see @"+external)
+	if block != "" || len(errs) != 0 {
+		t.Fatalf("unregistered external dir should not resolve, block=%q errs=%v", block, errs)
+	}
+}
+
+func TestRegisterExternalFolderRefResolvesScopedDir(t *testing.T) {
+	workspace := t.TempDir()
+	parent := t.TempDir()
+	external := filepath.Join(parent, "Folder With Spaces")
+	if err := os.MkdirAll(filepath.Join(external, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "sub", "outside.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectedExternal := external
+	if resolved, err := filepath.EvalSymlinks(external); err == nil {
+		expectedExternal = resolved
+	}
+	expectedDisplayPath := filepath.ToSlash(expectedExternal)
+
+	c := &Controller{workspaceRoot: workspace}
+	token, displayPath, err := c.RegisterExternalFolderRef(external)
+	if err != nil {
+		t.Fatalf("RegisterExternalFolderRef: %v", err)
+	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		t.Fatalf("external folder token must be whitespace-free, got %q", token)
+	}
+	if displayPath != expectedDisplayPath {
+		t.Fatalf("display path = %q, want %q", displayPath, expectedDisplayPath)
+	}
+
+	refs := c.detectRefs("see @" + token + "/")
+	if len(refs) != 1 {
+		t.Fatalf("detectRefs registered external folder = %+v, want 1 ref", refs)
+	}
+	if refs[0].path != "." || refs[0].baseDir != expectedExternal || refs[0].displayPath != expectedDisplayPath {
+		t.Fatalf("external ref = %+v, want path '.' baseDir/displayPath for external folder", refs[0])
+	}
+
+	block, errs := c.ResolveScopedRefs(context.Background(), "see @"+token+"/")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveScopedRefs errors = %v", errs)
+	}
+	if !strings.Contains(block, `<dir path="`+expectedDisplayPath+`">`) ||
+		!strings.Contains(block, "sub/") ||
+		!strings.Contains(block, "sub/outside.txt") {
+		t.Fatalf("registered external folder should resolve as a dir listing:\n%s", block)
+	}
+}
+
 func TestResolveRefsWithWorkspaceRootStoresRelativePath(t *testing.T) {
 	workspace := t.TempDir()
 	absPath := filepath.Join(workspace, "docs", "note.txt")

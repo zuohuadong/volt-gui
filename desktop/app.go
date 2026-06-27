@@ -5815,8 +5815,11 @@ func providerEffortTargetNames(cfg *config.Config, entry *config.ProviderEntry) 
 
 // DirEntry is one entry in the "@" file-reference menu.
 type DirEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"isDir"`
+	Name        string `json:"name"`
+	Path        string `json:"path,omitempty"`
+	IsDir       bool   `json:"isDir"`
+	DisplayName string `json:"displayName,omitempty"`
+	DisplayPath string `json:"displayPath,omitempty"`
 }
 
 // FilePreview is a bounded, read-only file payload for the workspace side panel.
@@ -5980,6 +5983,11 @@ func workspacePathForBase(base, rel string) (string, bool, error) {
 // tab workspace. The menu navigates one level at a time, never recursively —
 // bounded for huge trees.
 func (a *App) ListDir(rel string) []DirEntry {
+	if browser := a.externalFolderRefBrowser(); browser != nil {
+		if entries, handled := browser.ListExternalFolderRefDir(rel); handled {
+			return externalFolderDirEntries(entries)
+		}
+	}
 	base, err := a.activeWorkspaceBase()
 	if err != nil {
 		return []DirEntry{}
@@ -6028,13 +6036,55 @@ func (a *App) SearchFileRefs(query string) []DirEntry {
 	for _, r := range results {
 		out = append(out, DirEntry{Name: r.Path, IsDir: r.IsDir})
 	}
+	if browser := a.externalFolderRefBrowser(); browser != nil {
+		out = append(out, externalFolderDirEntries(browser.SearchExternalFolderRefs(query, fileRefSearchLimit))...)
+	}
 	return out
 }
 
-// ReadFile returns a small text preview for a file under the current workspace.
+type externalFolderRefBrowser interface {
+	ListExternalFolderRefDir(tokenPath string) ([]control.ExternalFolderRefEntry, bool)
+	SearchExternalFolderRefs(query string, limit int) []control.ExternalFolderRefEntry
+	ExternalFolderRefLocalPath(tokenPath string) (path, displayPath string, ok bool)
+}
+
+func (a *App) externalFolderRefBrowser() externalFolderRefBrowser {
+	if ctrl := a.activeCtrl(); ctrl != nil {
+		if browser, ok := ctrl.(externalFolderRefBrowser); ok {
+			return browser
+		}
+	}
+	return nil
+}
+
+func externalFolderDirEntries(entries []control.ExternalFolderRefEntry) []DirEntry {
+	out := make([]DirEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, DirEntry{
+			Name:        e.Name,
+			Path:        e.Path,
+			IsDir:       e.IsDir,
+			DisplayName: e.DisplayName,
+			DisplayPath: e.DisplayPath,
+		})
+	}
+	return out
+}
+
+func (a *App) workspaceOrExternalPath(rel string) (string, bool, error) {
+	if browser := a.externalFolderRefBrowser(); browser != nil {
+		if path, _, ok := browser.ExternalFolderRefLocalPath(rel); ok {
+			return path, true, nil
+		}
+	}
+	return a.workspacePath(rel)
+}
+
+// ReadFile returns a small text preview for a file under the current workspace
+// or a session-authorized external folder ref.
 func (a *App) ReadFile(rel string) FilePreview {
 	out := FilePreview{Path: rel}
-	path, ok, err := a.workspacePath(rel)
+	path, ok, err := a.workspaceOrExternalPath(rel)
 	if err != nil || !ok {
 		out.Err = "invalid path"
 		return out
@@ -6116,18 +6166,20 @@ func (a *App) ReadFile(rel string) FilePreview {
 	return out
 }
 
-// OpenWorkspacePath opens a file or folder from the workspace in the OS default app.
+// OpenWorkspacePath opens a workspace or authorized external-ref file/folder in
+// the OS default app.
 func (a *App) OpenWorkspacePath(rel string) error {
-	path, ok, err := a.workspacePath(rel)
+	path, ok, err := a.workspaceOrExternalPath(rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
 	return openWorkspacePath(path)
 }
 
-// RevealWorkspacePath shows a workspace file in the native file manager.
+// RevealWorkspacePath shows a workspace or authorized external-ref file in the
+// native file manager.
 func (a *App) RevealWorkspacePath(rel string) error {
-	path, ok, err := a.workspacePath(rel)
+	path, ok, err := a.workspaceOrExternalPath(rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}

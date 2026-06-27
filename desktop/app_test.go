@@ -2422,6 +2422,59 @@ func TestFileRefsUseActiveTabWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
+	workspace := robustTempDir(t)
+	external := filepath.Join(robustTempDir(t), "Folder With Spaces")
+	if err := os.MkdirAll(filepath.Join(external, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "src", "outside.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectedExternal := external
+	if resolved, err := filepath.EvalSymlinks(external); err == nil {
+		expectedExternal = resolved
+	}
+	expectedDisplayPath := filepath.ToSlash(expectedExternal)
+
+	ctrl := &control.Controller{}
+	token, _, err := ctrl.RegisterExternalFolderRef(external)
+	if err != nil {
+		t.Fatalf("RegisterExternalFolderRef: %v", err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: workspace, Ctrl: ctrl},
+		},
+		activeTabID: "project",
+	}
+
+	listed := app.ListDir(token + "/src/")
+	if len(listed) != 1 ||
+		listed[0].Name != "outside.txt" ||
+		listed[0].Path != token+"/src/outside.txt" ||
+		listed[0].DisplayPath != expectedDisplayPath+"/src/outside.txt" {
+		t.Fatalf("ListDir external src = %+v, want outside token/display path", listed)
+	}
+
+	found := app.SearchFileRefs("outside")
+	var externalHit *DirEntry
+	for i := range found {
+		if found[i].Path == token+"/src/outside.txt" {
+			externalHit = &found[i]
+			break
+		}
+	}
+	if externalHit == nil || externalHit.DisplayName != "Folder With Spaces/src/outside.txt" || externalHit.DisplayPath != expectedDisplayPath+"/src/outside.txt" {
+		t.Fatalf("SearchFileRefs external hit = %+v, all results %+v", externalHit, found)
+	}
+
+	preview := app.ReadFile(token + "/src/outside.txt")
+	if preview.Err != "" || preview.Body != "outside" {
+		t.Fatalf("ReadFile external token preview = %+v, want outside file body", preview)
+	}
+}
+
 func TestDeleteSessionCancelsActiveRuntime(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

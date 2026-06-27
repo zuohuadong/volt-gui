@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { Composer } from "../components/Composer";
+import { Composer, composerPickFileEntry } from "../components/Composer";
 import { LocaleProvider } from "../lib/i18n";
 import { ToastProvider } from "../lib/toast";
 import type { AppBindings } from "../lib/bridge";
@@ -388,6 +388,27 @@ console.log("\ncomposer goal toggle");
     root.unmount();
   });
   dom.window.close();
+}
+
+{
+  const externalToken = "__reasonix_external_folder/mock/Folder-With-Spaces/src/outside.txt";
+  const externalDisplayPath = "/Users/example/Folder With Spaces/src/outside.txt";
+  const picked = composerPickFileEntry("ask @outside", "outside", "", {
+    name: "src/outside.txt",
+    path: externalToken,
+    isDir: false,
+    displayName: "Folder With Spaces/src/outside.txt",
+    displayPath: externalDisplayPath,
+  });
+  eq(picked.text, "ask ", "external search selection removes the token fragment from the draft");
+  eq(picked.workspaceRef?.path, externalToken, "external search selection submits the session ref token");
+  eq(picked.workspaceRef?.displayPath, externalDisplayPath, "external search selection keeps the real display path");
+
+  const localFile = composerPickFileEntry("ask @src/mai", "src/mai", "src/", { name: "main.go", isDir: false });
+  eq(localFile.text, "ask @src/main.go ", "local file selection still completes inline text");
+
+  const localDir = composerPickFileEntry("ask @sr", "sr", "", { name: "src", isDir: true });
+  eq(localDir.text, "ask @src/", "local dir selection still keeps the menu-open slash");
 }
 
 {

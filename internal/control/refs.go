@@ -13,9 +13,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"reasonix/internal/fileref"
 	"reasonix/internal/proc"
 )
 
@@ -53,6 +55,17 @@ type ref struct {
 	baseDir     string // refFile override for session-authorized external roots
 	displayPath string // refFile label/path exposed in the resolved context block
 	raw         string // the original token after '@', for labelling
+}
+
+// ExternalFolderRefEntry is a session-authorized entry under a dropped external
+// folder. Path is the opaque @ token path to submit; display fields are safe for
+// UI labels and transcripts.
+type ExternalFolderRefEntry struct {
+	Name        string
+	Path        string
+	DisplayName string
+	DisplayPath string
+	IsDir       bool
 }
 
 // refTokenRe matches an @reference token: '@' then a run of non-space chars.
@@ -197,18 +210,216 @@ func normalizeExternalFolderRefToken(token string) string {
 }
 
 func (c *Controller) externalFolderRef(token string) (ref, bool) {
-	key := normalizeExternalFolderRefToken(token)
-	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") {
-		return ref{}, false
-	}
-	c.externalFolderRefsMu.RLock()
-	abs, ok := c.externalFolderRefs[key]
-	c.externalFolderRefsMu.RUnlock()
+	_, rel, abs, ok := c.externalFolderRefTarget(token)
 	if !ok {
 		return ref{}, false
 	}
-	displayPath := filepath.ToSlash(abs)
-	return ref{kind: refFile, path: ".", baseDir: abs, displayPath: displayPath, raw: token}, true
+	displayPath := externalFolderDisplayPath(abs, rel)
+	return ref{kind: refFile, path: rel, baseDir: abs, displayPath: displayPath, raw: token}, true
+}
+
+func (c *Controller) externalFolderRefTarget(token string) (rootToken, rel, abs string, ok bool) {
+	key := normalizeExternalFolderRefToken(token)
+	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") {
+		return "", "", "", false
+	}
+	c.externalFolderRefsMu.RLock()
+	defer c.externalFolderRefsMu.RUnlock()
+	if abs, ok := c.externalFolderRefs[key]; ok {
+		return key, ".", abs, true
+	}
+	for registered, abs := range c.externalFolderRefs {
+		if !strings.HasPrefix(key, registered+"/") {
+			continue
+		}
+		sub, ok := cleanExternalFolderSubpath(strings.TrimPrefix(key, registered+"/"))
+		if !ok {
+			return "", "", "", false
+		}
+		return registered, sub, abs, true
+	}
+	return "", "", "", false
+}
+
+func cleanExternalFolderSubpath(sub string) (string, bool) {
+	sub = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(sub)), "/")
+	if sub == "" || sub == "." {
+		return ".", true
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(sub))
+	if cleaned == "." {
+		return ".", true
+	}
+	if !filepath.IsLocal(cleaned) {
+		return "", false
+	}
+	return filepath.ToSlash(cleaned), true
+}
+
+func externalFolderDisplayPath(abs, rel string) string {
+	if rel == "" || rel == "." {
+		return filepath.ToSlash(abs)
+	}
+	return filepath.ToSlash(filepath.Join(abs, filepath.FromSlash(rel)))
+}
+
+func externalFolderDisplayName(abs, rel string) string {
+	name := filepath.Base(abs)
+	if rel != "" && rel != "." {
+		name = filepath.ToSlash(filepath.Join(name, filepath.FromSlash(rel)))
+	}
+	return name
+}
+
+// ListExternalFolderRefDir lists one directory level under a registered
+// external folder token. handled is true only when tokenPath targets a
+// registered external folder; callers can fall back to workspace listing when it
+// is false.
+func (c *Controller) ListExternalFolderRefDir(tokenPath string) (entries []ExternalFolderRefEntry, handled bool) {
+	rootToken, rel, abs, ok := c.externalFolderRefTarget(tokenPath)
+	if !ok {
+		return nil, false
+	}
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, true
+	}
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil || !info.IsDir() {
+		return nil, true
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, true
+	}
+	dirEntries, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		return nil, true
+	}
+	dirs, files := []ExternalFolderRefEntry{}, []ExternalFolderRefEntry{}
+	for _, e := range dirEntries {
+		name := e.Name()
+		if skipRefDirEntry(name, e.IsDir()) {
+			continue
+		}
+		childRel := name
+		if rel != "." {
+			childRel = filepath.ToSlash(filepath.Join(rel, name))
+		}
+		item := ExternalFolderRefEntry{
+			Name:        name,
+			Path:        rootToken + "/" + childRel,
+			DisplayName: name,
+			DisplayPath: externalFolderDisplayPath(abs, childRel),
+			IsDir:       e.IsDir(),
+		}
+		if e.IsDir() {
+			dirs = append(dirs, item)
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		files = append(files, item)
+	}
+	sortExternalFolderRefEntries(dirs)
+	sortExternalFolderRefEntries(files)
+	return append(dirs, files...), true
+}
+
+// SearchExternalFolderRefs finds entries under all registered external folders.
+// Returned Path values are opaque token paths, so selecting one stays within the
+// current session's authorization boundary.
+func (c *Controller) SearchExternalFolderRefs(query string, limit int) []ExternalFolderRefEntry {
+	query = strings.TrimSpace(query)
+	if limit <= 0 || len(query) < 2 || strings.ContainsAny(query, `/\`) {
+		return nil
+	}
+	c.externalFolderRefsMu.RLock()
+	roots := make([]struct {
+		token string
+		abs   string
+	}, 0, len(c.externalFolderRefs))
+	for token, abs := range c.externalFolderRefs {
+		roots = append(roots, struct {
+			token string
+			abs   string
+		}{token: token, abs: abs})
+	}
+	c.externalFolderRefsMu.RUnlock()
+	sort.Slice(roots, func(i, j int) bool {
+		return externalFolderDisplayPath(roots[i].abs, ".") < externalFolderDisplayPath(roots[j].abs, ".")
+	})
+	out := make([]ExternalFolderRefEntry, 0, limit)
+	queryLower := strings.ToLower(query)
+	for _, root := range roots {
+		if len(out) >= limit {
+			break
+		}
+		if info, err := os.Stat(root.abs); err != nil || !info.IsDir() {
+			continue
+		}
+		if strings.Contains(strings.ToLower(filepath.Base(root.abs)), queryLower) {
+			out = append(out, ExternalFolderRefEntry{
+				Name:        filepath.Base(root.abs),
+				Path:        root.token,
+				DisplayName: externalFolderDisplayName(root.abs, "."),
+				DisplayPath: externalFolderDisplayPath(root.abs, "."),
+				IsDir:       true,
+			})
+			if len(out) >= limit {
+				break
+			}
+		}
+		for _, result := range fileref.Search(root.abs, query, limit-len(out)) {
+			rel := filepath.ToSlash(result.Path)
+			out = append(out, ExternalFolderRefEntry{
+				Name:        rel,
+				Path:        root.token + "/" + rel,
+				DisplayName: externalFolderDisplayName(root.abs, rel),
+				DisplayPath: externalFolderDisplayPath(root.abs, rel),
+				IsDir:       result.IsDir,
+			})
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// ExternalFolderRefLocalPath resolves a registered external-folder token path to
+// the local filesystem path authorized for this controller session.
+func (c *Controller) ExternalFolderRefLocalPath(tokenPath string) (path, displayPath string, ok bool) {
+	_, rel, abs, ok := c.externalFolderRefTarget(tokenPath)
+	if !ok {
+		return "", "", false
+	}
+	return filepath.Join(abs, filepath.FromSlash(rel)), externalFolderDisplayPath(abs, rel), true
+}
+
+func sortExternalFolderRefEntries(entries []ExternalFolderRefEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].DisplayName) < strings.ToLower(entries[j].DisplayName)
+	})
+}
+
+func skipRefDirEntry(name string, isDir bool) bool {
+	switch name {
+	case ".DS_Store":
+		return true
+	}
+	if !isDir {
+		return false
+	}
+	switch name {
+	case ".git", "node_modules", "__pycache__", ".idea", ".vscode":
+		return true
+	}
+	return false
 }
 
 // detectRefs finds the @references in a line: MCP resources for connected
@@ -271,7 +482,11 @@ func (c *Controller) inputImages(line string) []string {
 	}
 	var urls []string
 	for _, r := range c.detectRefs(line) {
-		if url, err := visionRefImageDataURL(r, c.workspaceRoot); err == nil {
+		baseDir := c.workspaceRoot
+		if r.baseDir != "" {
+			baseDir = r.baseDir
+		}
+		if url, err := visionRefImageDataURL(r, baseDir); err == nil {
 			urls = append(urls, url)
 		}
 	}
@@ -778,11 +993,10 @@ func walkRootDir(root *os.Root, dir, base string, b *strings.Builder, n *int, de
 		if rel, err := filepath.Rel(base, child); err == nil && filepath.IsLocal(rel) {
 			entry = filepath.ToSlash(rel)
 		}
+		if skipRefDirEntry(name, e.IsDir()) {
+			continue
+		}
 		if e.IsDir() {
-			switch name {
-			case ".git", "node_modules", ".DS_Store", "__pycache__", ".idea", ".vscode":
-				continue
-			}
 			entry += "/"
 		}
 		b.WriteString(entry)

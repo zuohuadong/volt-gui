@@ -586,6 +586,75 @@ func TestRegisterExternalFolderRefResolvesScopedDir(t *testing.T) {
 		!strings.Contains(block, "sub/outside.txt") {
 		t.Fatalf("registered external folder should resolve as a dir listing:\n%s", block)
 	}
+
+	block, errs = c.ResolveScopedRefs(context.Background(), "read @"+token+"/sub/outside.txt")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveScopedRefs child errors = %v", errs)
+	}
+	if !strings.Contains(block, `<file path="`+expectedDisplayPath+`/sub/outside.txt">`) ||
+		!strings.Contains(block, "outside") {
+		t.Fatalf("registered external child should resolve as file content:\n%s", block)
+	}
+
+	block, errs = c.ResolveScopedRefs(context.Background(), "escape @"+token+"/../secret.txt")
+	if block != "" || len(errs) != 0 {
+		t.Fatalf("external folder ref must not resolve escaping subpaths, block=%q errs=%v", block, errs)
+	}
+}
+
+func TestExternalFolderRefListAndSearch(t *testing.T) {
+	parent := t.TempDir()
+	external := filepath.Join(parent, "Folder With Spaces")
+	if err := os.MkdirAll(filepath.Join(external, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "src", "outside.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(external, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "node_modules", "outside.txt"), []byte("noise"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectedExternal := external
+	if resolved, err := filepath.EvalSymlinks(external); err == nil {
+		expectedExternal = resolved
+	}
+	expectedDisplayPath := filepath.ToSlash(expectedExternal)
+
+	c := &Controller{}
+	token, _, err := c.RegisterExternalFolderRef(external)
+	if err != nil {
+		t.Fatalf("RegisterExternalFolderRef: %v", err)
+	}
+
+	rootEntries, handled := c.ListExternalFolderRefDir(token + "/")
+	if !handled {
+		t.Fatal("ListExternalFolderRefDir should handle the registered root token")
+	}
+	if len(rootEntries) != 1 || rootEntries[0].Name != "src" || !rootEntries[0].IsDir {
+		t.Fatalf("root entries = %+v, want src/ and skipped node_modules", rootEntries)
+	}
+
+	srcEntries, handled := c.ListExternalFolderRefDir(token + "/src/")
+	if !handled {
+		t.Fatal("ListExternalFolderRefDir should handle registered child dirs")
+	}
+	if len(srcEntries) != 1 ||
+		srcEntries[0].Name != "outside.txt" ||
+		srcEntries[0].Path != token+"/src/outside.txt" ||
+		srcEntries[0].DisplayPath != expectedDisplayPath+"/src/outside.txt" {
+		t.Fatalf("src entries = %+v, want outside.txt token/display path", srcEntries)
+	}
+
+	results := c.SearchExternalFolderRefs("outside", 10)
+	if len(results) != 1 ||
+		results[0].Path != token+"/src/outside.txt" ||
+		results[0].DisplayName != "Folder With Spaces/src/outside.txt" ||
+		results[0].DisplayPath != expectedDisplayPath+"/src/outside.txt" {
+		t.Fatalf("search results = %+v, want external outside.txt with token and display paths", results)
+	}
 }
 
 func TestResolveRefsWithWorkspaceRootStoresRelativePath(t *testing.T) {

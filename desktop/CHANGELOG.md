@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.5.0...desktop-v0.5.1) (2026-06-27)
+
+
+### Chores
+
+* **deps:** bump github.com/larksuite/oapi-sdk-go/v3 in the go group ([#18](https://github.com/zuohuadong/volt-gui/issues/18)) ([a4bec11](https://github.com/zuohuadong/volt-gui/commit/a4bec1172bc5321ba8692de1982dbcc275184285))
+* sync upstream main-v2 updates ([8d409af](https://github.com/zuohuadong/volt-gui/commit/8d409af22692402c2f30e96a5c7325e47aee6685))
+
 ## [0.5.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.4.0...desktop-v0.5.0) (2026-06-25)
 
 

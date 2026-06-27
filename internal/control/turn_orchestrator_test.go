@@ -67,6 +67,49 @@ func TestTurnOrchestratorSkipsMemoryCompilerForSyntheticTurns(t *testing.T) {
 	}
 }
 
+func TestTurnOrchestratorTypedSyntheticTurnDoesNotDependOnPrefix(t *testing.T) {
+	runner := &fakeTurnRunner{}
+	c := New(Options{AutoPlan: "on", Runner: runner})
+	o := newTurnOrchestrator(c)
+
+	turn := "Controller-created follow-up with a brand-new synthetic wording:\n- inspect\n- edit\n- verify"
+	if IsSyntheticUserMessage(turn) {
+		t.Fatalf("test setup: %q unexpectedly matched the legacy synthetic prefix list", turn)
+	}
+	if err := o.runSyntheticTurnWithRawDisplay(context.Background(), turn, turn, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runner.inputs) != 1 {
+		t.Fatalf("runner inputs = %d, want 1", len(runner.inputs))
+	}
+	if strings.HasPrefix(runner.inputs[0], PlanModeMarker) {
+		t.Fatalf("typed synthetic turn should not be auto-planned, got %q", runner.inputs[0])
+	}
+	if len(runner.memoryCompilerSkips) != 1 || !runner.memoryCompilerSkips[0] {
+		t.Fatalf("typed synthetic turn was not marked skip-compile: %+v", runner.memoryCompilerSkips)
+	}
+	if len(runner.memoryCompilerInputs) != 0 {
+		t.Fatalf("typed synthetic turn supplied Memory v5 source input: %+v", runner.memoryCompilerInputs)
+	}
+}
+
+func TestTurnOrchestratorLegacySyntheticPrefixStillSkipsMemoryCompiler(t *testing.T) {
+	runner := &fakeTurnRunner{}
+	c := New(Options{Runner: runner})
+	o := newTurnOrchestrator(c)
+
+	if err := o.runTurnWithRawDisplay(context.Background(), goalContinueTurn, goalContinueTurn, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.memoryCompilerSkips) != 1 || !runner.memoryCompilerSkips[0] {
+		t.Fatalf("legacy synthetic prefix was not marked skip-compile: %+v", runner.memoryCompilerSkips)
+	}
+	if len(runner.memoryCompilerInputs) != 0 {
+		t.Fatalf("legacy synthetic prefix supplied Memory v5 source input: %+v", runner.memoryCompilerInputs)
+	}
+}
+
 func TestTurnOrchestratorStopHookIgnoresCanceledTurnContext(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	var stopCalls int
@@ -302,6 +345,40 @@ func TestTurnOrchestratorCheckpointBoundaryPrecedesUserMessage(t *testing.T) {
 	}
 	if len(sess.Messages) != 1 {
 		t.Fatalf("session messages after rewind = %d, want boundary before user message", len(sess.Messages))
+	}
+}
+
+func TestTurnOrchestratorSyntheticTurnDoesNotCreateCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	sess := agent.NewSession("sys")
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	runner := &recordingSessionRunner{session: sess}
+	c := New(Options{
+		Runner:      runner,
+		Executor:    exec,
+		SessionDir:  dir,
+		SessionPath: path,
+		Label:       "test",
+	})
+	o := newTurnOrchestrator(c)
+	if err := o.runTurnWithRawDisplay(context.Background(), "real prompt", "real prompt", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.runSyntheticTurnWithRawDisplay(context.Background(), "hidden follow-up", "hidden follow-up", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	cps := c.Checkpoints()
+	if len(cps) != 1 {
+		t.Fatalf("checkpoints = %+v, want exactly the visible user turn", cps)
+	}
+	if cps[0].Turn != 0 || cps[0].Prompt != "real prompt" {
+		t.Fatalf("checkpoint = %+v, want turn 0 real prompt", cps[0])
+	}
+	turns := c.CheckpointTurnsByMessageIndex()
+	if len(turns) != 1 || turns[1] != 0 {
+		t.Fatalf("checkpoint turns by message index = %v, want {1:0}", turns)
 	}
 }
 

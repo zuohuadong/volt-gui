@@ -506,7 +506,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# name    = \"example\"\n")
 		b.WriteString("# command = \"reasonix-plugin-example\"\n")
 		b.WriteString("# call_timeout_seconds = 600   # optional per-call timeout for stdio MCP tools; 0 = built-in default\n")
-		b.WriteString("# trusted_read_only_tools = [\"search\"]   # raw MCP tool names trusted for planner/read-only research\n")
+		b.WriteString("# trusted_read_only_tools = [\"search\"]   # optional pre-seeded MCP read-only trust\n")
 		b.WriteString("# [[plugins]]                                  # a remote server over Streamable HTTP\n")
 		b.WriteString("# name    = \"stripe\"\n")
 		b.WriteString("# type    = \"http\"\n")
@@ -539,7 +539,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "call_timeout_seconds = %d\n", pl.CallTimeoutSeconds)
 			}
 			if len(pl.TrustedReadOnlyTools) > 0 {
-				b.WriteString("# raw MCP tool names trusted for planner/read-only research\n")
+				b.WriteString("# optional pre-seeded MCP read-only trust; the approval prompt can also remember this\n")
 				fmt.Fprintf(&b, "trusted_read_only_tools = %s\n", renderStringArray(pl.TrustedReadOnlyTools))
 			}
 			if pl.AutoStart != nil {
@@ -910,7 +910,7 @@ func RenderTOMLProjectDelta(c *Config) string {
 			fmt.Fprintf(&b, "call_timeout_seconds = %d\n", pl.CallTimeoutSeconds)
 		}
 		if len(pl.TrustedReadOnlyTools) > 0 {
-			b.WriteString("# raw MCP tool names trusted for planner/read-only research\n")
+			b.WriteString("# optional pre-seeded MCP read-only trust; the approval prompt can also remember this\n")
 			fmt.Fprintf(&b, "trusted_read_only_tools = %s\n", renderStringArray(pl.TrustedReadOnlyTools))
 		}
 		if pl.AutoStart != nil {

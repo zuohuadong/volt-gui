@@ -71,6 +71,8 @@ func builtinHelpItems() []compItem {
 		{label: "/language", hint: i18n.M.CmdLanguage},
 		{label: "/auto-plan", hint: i18n.M.CmdAutoPlan},
 		{label: "/help", hint: i18n.M.CmdHelp},
+		{label: "/copy", hint: i18n.M.CmdCopy},
+		{label: "/export", hint: i18n.M.CmdExport},
 	}
 }
 

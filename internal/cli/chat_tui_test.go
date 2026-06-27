@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,18 +25,47 @@ import (
 
 type blockingTurnRunner struct{ started chan struct{} }
 
+type stubbornTurnRunner struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+const tinyPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+func TestMain(m *testing.M) {
+	old := detectTermuxTerminal
+	detectTermuxTerminal = func() bool { return false }
+	code := m.Run()
+	detectTermuxTerminal = old
+	os.Exit(code)
+}
+
 func (r *blockingTurnRunner) Run(ctx context.Context, _ string) error {
 	close(r.started)
 	<-ctx.Done()
 	return ctx.Err()
 }
 
-type recordingTurnRunner struct {
-	inputs []string
+func (r *stubbornTurnRunner) Run(ctx context.Context, _ string) error {
+	close(r.started)
+	<-r.release
+	return ctx.Err()
 }
 
-func (r *recordingTurnRunner) Run(_ context.Context, input string) error {
+type recordingTurnRunner struct {
+	inputs               []string
+	memoryCompilerInputs []string
+}
+
+func (r *recordingTurnRunner) Run(ctx context.Context, input string) error {
 	r.inputs = append(r.inputs, input)
+	// The memory compiler's source_event is set by the orchestrator from the
+	// controller's `raw` value. Capture it so we can prove the CLI passes the
+	// EXPANDED paste (not the folded label) — the label would starve the model
+	// of the pasted content once the compiler's contract replaces the user turn.
+	if source, ok := agent.MemoryCompilerSourceInputFromContext(ctx); ok {
+		r.memoryCompilerInputs = append(r.memoryCompilerInputs, source)
+	}
 	return nil
 }
 
@@ -52,6 +82,32 @@ func waitForCLIEvent(t *testing.T, ch <-chan event.Event, kind event.Kind) {
 			t.Fatalf("timed out waiting for event %v", kind)
 		}
 	}
+}
+
+func writeTUIImageCapabilityConfig(t *testing.T, root string) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/text-only"
+	cfg.Providers = []config.ProviderEntry{{
+		Name:         "custom",
+		Kind:         "openai",
+		BaseURL:      "https://example.invalid/v1",
+		Models:       []string{"text-only", "vision-pro"},
+		VisionModels: []string{"vision-pro"},
+	}}
+	if err := cfg.SaveTo(filepath.Join(root, "voltui.toml")); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+}
+
+func saveTestImageAttachment(t *testing.T, root string) string {
+	t.Helper()
+	t.Chdir(root)
+	path, err := control.SaveImageDataURL("data:image/png;base64," + tinyPNGBase64)
+	if err != nil {
+		t.Fatalf("SaveImageDataURL: %v", err)
+	}
+	return path
 }
 
 // TestEscCancelsRunningTurnWithCompletionOpen reproduces the report that Esc
@@ -473,6 +529,165 @@ func TestInsertNewlineKeyBinding(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("newChatTUI InsertNewline should include shift+enter, got %v", keys)
+	}
+}
+
+func TestCtrlHomeEndScrollKeyBindings(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 8})
+	for i := 0; i < 12; i++ {
+		cur = adv(cur, notice)
+	}
+	// Viewport should be at the bottom after output.
+	if !cur.viewport.AtBottom() {
+		t.Fatal("viewport should start at the bottom after streaming output")
+	}
+
+	// Ctrl+Home should scroll to the top.
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl})
+	if !cur.viewport.AtTop() {
+		t.Fatalf("ctrl+home should scroll to top, AtTop=%v, YOffset=%d", cur.viewport.AtTop(), cur.viewport.YOffset())
+	}
+
+	// Ctrl+End should scroll back to the bottom.
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if !cur.viewport.AtBottom() {
+		t.Fatalf("ctrl+end should scroll to bottom, AtBottom=%v, YOffset=%d", cur.viewport.AtBottom(), cur.viewport.YOffset())
+	}
+}
+
+func TestMouseWheelAndPageKeysScrollTranscript(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	if !cur.viewport.AtBottom() {
+		t.Fatal("viewport should start at bottom after overflowing output")
+	}
+	bottom := cur.viewport.YOffset()
+	if bottom <= cur.viewport.Height()+3 {
+		t.Fatalf("test transcript did not overflow enough: bottom=%d height=%d", bottom, cur.viewport.Height())
+	}
+
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if got, want := cur.viewport.YOffset(), bottom-3; got != want {
+		t.Fatalf("wheel-up YOffset = %d, want %d", got, want)
+	}
+
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if got := cur.viewport.YOffset(); got != bottom {
+		t.Fatalf("wheel-down should return by one wheel step, YOffset=%d want bottom=%d", got, bottom)
+	}
+
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	pageUp := cur.viewport.YOffset()
+	if got, want := pageUp, bottom-cur.viewport.Height(); got != want {
+		t.Fatalf("PageUp YOffset = %d, want %d", got, want)
+	}
+
+	cur = adv(cur, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if got := cur.viewport.YOffset(); got != bottom {
+		t.Fatalf("PageDown should return to bottom from one page up, YOffset=%d want %d", got, bottom)
+	}
+}
+
+func TestRunningStreamPreservesScrolledReadingPosition(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	cur.state = tuiRunning
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	readOffset := cur.viewport.YOffset()
+	if cur.viewport.AtBottom() {
+		t.Fatal("wheel-up should leave the bottom before streaming output arrives")
+	}
+
+	cur = adv(cur, agentEventMsg(event.Event{Kind: event.Text, Text: "streamed paragraph\n\n"}))
+	if cur.viewport.AtBottom() {
+		t.Fatal("streaming output must not yank a scrolled-up reader back to bottom")
+	}
+	if got := cur.viewport.YOffset(); got != readOffset {
+		t.Fatalf("streaming output should preserve reading offset, got %d want %d", got, readOffset)
+	}
+
+	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if got, want := cur.viewport.YOffset(), readOffset+3; got != want {
+		t.Fatalf("wheel-down while running should move one wheel step, got %d want %d", got, want)
+	}
+	if cur.viewport.AtBottom() {
+		t.Fatal("one wheel-down step from the reading position should not jump straight to bottom")
+	}
+}
+
+func TestTranscriptScrollbarClickAndDrag(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := m.Update(msg)
+		return n.(chatTUI)
+	}
+
+	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 10})
+	for i := 0; i < 40; i++ {
+		cur = adv(cur, notice)
+	}
+	cur.viewport.GotoTop()
+	barX := cur.viewport.Width()
+	bottomRow := cur.viewport.Height() - 1
+
+	cur = adv(cur, tea.MouseClickMsg{X: barX, Y: 0, Button: tea.MouseLeft})
+	if cur.sel.active {
+		t.Fatal("clicking the scrollbar must not start transcript selection")
+	}
+	if !cur.scrollbarDrag {
+		t.Fatal("left-click on scrollbar should start scrollbar drag")
+	}
+
+	cur = adv(cur, tea.MouseMotionMsg{X: barX, Y: bottomRow, Button: tea.MouseLeft})
+	if !cur.viewport.AtBottom() {
+		t.Fatalf("dragging scrollbar to bottom should reach bottom, YOffset=%d", cur.viewport.YOffset())
+	}
+	if cur.sel.active {
+		t.Fatal("dragging the scrollbar must not leave a transcript selection")
+	}
+
+	cur = adv(cur, tea.MouseReleaseMsg{X: barX, Y: bottomRow, Button: tea.MouseLeft})
+	if cur.scrollbarDrag {
+		t.Fatal("mouse release should end scrollbar drag")
+	}
+	if cur.sel.active {
+		t.Fatal("scrollbar release must not create a text selection")
+	}
+
+	cur.viewport.GotoTop()
+	cur = adv(cur, tea.MouseClickMsg{X: barX - 1, Y: 0, Button: tea.MouseLeft})
+	if !cur.sel.active {
+		t.Fatal("clicking the transcript content column next to the scrollbar should still start selection")
 	}
 }
 
@@ -930,8 +1145,9 @@ func TestQueueIndicatorHiddenWhenIdle(t *testing.T) {
 }
 
 // TestViewAltScreenFillsHeight proves the switch to alt-screen: View requests
-// the alt buffer without mouse reporting, and the frame is exactly the terminal
-// height (the transcript viewport pads to fill above the pinned bottom region).
+// the alt buffer with mouse reporting for wheel scrolling and in-app text
+// selection, and the frame is exactly the terminal height (the transcript
+// viewport pads to fill above the pinned bottom region).
 func TestViewAltScreenFillsHeight(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
@@ -941,8 +1157,8 @@ func TestViewAltScreenFillsHeight(t *testing.T) {
 	if !v.AltScreen {
 		t.Error("View must request alt-screen so resize repaints the whole grid")
 	}
-	if v.MouseMode != tea.MouseModeNone {
-		t.Error("View must leave terminal mouse selection available by default")
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Error("View must enable mouse so the wheel scrolls the transcript")
 	}
 	if lines := strings.Count(v.Content, "\n") + 1; lines != 24 {
 		t.Errorf("alt-screen frame = %d lines, want 24 (full terminal height)", lines)
@@ -1000,6 +1216,167 @@ func TestFoldedPasteUsesPlaceholderAndExpandsOnSend(t *testing.T) {
 		if !strings.Contains(sent, want) {
 			t.Fatalf("expanded paste missing %q in:\n%s", want, sent)
 		}
+	}
+}
+
+func TestTextOnlyModelSendsPastedImageRefsForToolUse(t *testing.T) {
+	workspace := t.TempDir()
+	writeTUIImageCapabilityConfig(t, workspace)
+	path := saveTestImageAttachment(t, workspace)
+
+	runner := &recordingTurnRunner{}
+	events := make(chan event.Event, 8)
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{
+		Runner: runner,
+		Sink: event.FuncSink(func(e event.Event) {
+			events <- e
+		}),
+		WorkspaceRoot: workspace,
+		ModelRef:      "custom/text-only",
+	})
+	m.pastedBlocks = []pastedBlock{{label: "[image #1]", text: "@" + path, image: true}}
+	m.input.SetValue("describe [image #1] please")
+
+	model, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = model.(chatTUI)
+	if cmd == nil {
+		t.Fatal("text-only image ref send should resolve refs before starting the turn")
+	}
+	msg := cmd()
+	if _, ok := msg.(refsResolvedMsg); !ok {
+		t.Fatalf("enter cmd = %T, want refsResolvedMsg", msg)
+	}
+	model, _ = m.Update(msg)
+	m = model.(chatTUI)
+	waitForCLIEvent(t, events, event.TurnDone)
+
+	if len(runner.inputs) != 1 {
+		t.Fatalf("text-only model should send the image ref for tool use, inputs=%q", runner.inputs)
+	}
+	if !strings.Contains(runner.inputs[0], "@"+path) {
+		t.Fatalf("runner input should retain the image ref context, got %q", runner.inputs[0])
+	}
+	if !strings.Contains(runner.inputs[0], "OCR/image/vision tool") {
+		t.Fatalf("runner input should mention tool-based image handling, got %q", runner.inputs[0])
+	}
+	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "will not receive images directly") {
+		t.Fatalf("text-only model should not block image refs that tools can read, transcript=%q", got)
+	}
+}
+
+func TestVisionModelAllowsSendingPastedImageRefs(t *testing.T) {
+	workspace := t.TempDir()
+	writeTUIImageCapabilityConfig(t, workspace)
+	path := saveTestImageAttachment(t, workspace)
+
+	runner := &recordingTurnRunner{}
+	events := make(chan event.Event, 8)
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{
+		Runner: runner,
+		Sink: event.FuncSink(func(e event.Event) {
+			events <- e
+		}),
+		WorkspaceRoot: workspace,
+		ModelRef:      "custom/vision-pro",
+	})
+	m.pastedBlocks = []pastedBlock{{label: "[image #1]", text: "@" + path, image: true}}
+	m.input.SetValue("describe [image #1] please")
+
+	model, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = model.(chatTUI)
+	if cmd == nil {
+		t.Fatal("vision model send should resolve refs before starting the turn")
+	}
+	msg := cmd()
+	if _, ok := msg.(refsResolvedMsg); !ok {
+		t.Fatalf("enter cmd = %T, want refsResolvedMsg", msg)
+	}
+	model, _ = m.Update(msg)
+	m = model.(chatTUI)
+	waitForCLIEvent(t, events, event.TurnDone)
+
+	if len(runner.inputs) != 1 {
+		t.Fatalf("vision model should send exactly one turn, inputs=%q", runner.inputs)
+	}
+	if !strings.Contains(runner.inputs[0], "@"+path) {
+		t.Fatalf("runner input should retain the image ref context, got %q", runner.inputs[0])
+	}
+	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "will not receive images directly") {
+		t.Fatalf("vision-capable model should not warn about image input, transcript=%q", got)
+	}
+}
+
+// TestPasteFoldExpandOnSubmit verifies that a folded paste is fully expanded
+// before being sent to the controller (the LLM sees the actual content, not just
+// the placeholder label).
+func TestPasteFoldExpandOnSubmit(t *testing.T) {
+	r := &recordingTurnRunner{}
+	events := make(chan event.Event, 64)
+	ctrl := control.New(control.Options{
+		Runner:     r,
+		Sink:       event.FuncSink(func(e event.Event) { events <- e }),
+		SessionDir: t.TempDir(),
+		Label:      "test",
+	})
+
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.eventCh = make(chan event.Event, 64)
+
+	// Simulate a multi-line paste that meets the fold threshold (≥5 lines).
+	pasted := strings.Repeat("line of pasted content\n", 10)
+	model, _ := m.Update(tea.PasteMsg{Content: pasted})
+	m = model.(chatTUI)
+
+	display := m.input.Value()
+	if !strings.Contains(display, "[Pasted text #1") {
+		t.Fatalf("paste should be folded, got: %q", display)
+	}
+	if len(m.pastedBlocks) != 1 {
+		t.Fatalf("expected 1 pastedBlock, got %d", len(m.pastedBlocks))
+	}
+
+	// Simulate pressing Enter to submit.
+	// NOTE: in a real terminal KeyEnter has empty Text, so String() returns "enter".
+	model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = model.(chatTUI)
+
+	waitForCLIEvent(t, events, event.TurnDone)
+
+	if len(r.inputs) == 0 {
+		t.Fatal("runner.Run was not called — the paste was never submitted")
+	}
+	sentToRunner := r.inputs[0]
+	t.Logf("sent to runner (%d bytes):\n%s", len(sentToRunner), sentToRunner)
+
+	// The runner must receive the FULL expanded paste, not just the label.
+	if !strings.Contains(sentToRunner, "line of pasted content") {
+		t.Fatalf("runner received only the placeholder label, not the expanded paste content.\nGot: %q", sentToRunner)
+	}
+	// Verify the expanded markers are present.
+	if !strings.Contains(sentToRunner, "--- Begin [Pasted text #1") {
+		t.Fatalf("missing Begin marker in runner input.\nGot: %q", sentToRunner)
+	}
+	if !strings.Contains(sentToRunner, "--- End [Pasted text #1") {
+		t.Fatalf("missing End marker in runner input.\nGot: %q", sentToRunner)
+	}
+
+	// The memory compiler (enabled by default) replaces the user turn with an
+	// execution contract whose source_event is the controller's `raw` value.
+	// If `raw` were the folded label, the model would only ever see
+	// "[Pasted text #1 · N lines]" and never the pasted content. Assert the
+	// source_event carries the EXPANDED content.
+	if len(r.memoryCompilerInputs) == 0 {
+		t.Fatal("memory compiler source input was not set on the context")
+	}
+	mcSource := r.memoryCompilerInputs[0]
+	if strings.Contains(mcSource, "[Pasted text #1") && !strings.Contains(mcSource, "line of pasted content") {
+		t.Fatalf("memory compiler source_event has the folded label but not the expanded content:\n%q", mcSource)
+	}
+	if !strings.Contains(mcSource, "line of pasted content") {
+		t.Fatalf("memory compiler source_event must contain the expanded paste content, got:\n%q", mcSource)
 	}
 }
 
@@ -1072,6 +1449,54 @@ func TestSlashQuitExit(t *testing.T) {
 	}
 }
 
+func TestSlashMigrateShowsProgress(t *testing.T) {
+	isolateCLIConfigHome(t)
+	m := newTestChatTUI()
+
+	if cmd := m.runSlashCommand("/migrate"); cmd != nil {
+		t.Fatal("/migrate should run locally without returning a command")
+	}
+	out := strings.Join(m.transcript, "\n")
+	for _, want := range []string{
+		"/migrate",
+		"migration rescue: checking legacy config and credentials",
+		"migration rescue: scanning legacy memory",
+		"migration rescue: scanning legacy sessions",
+		"migration rescue complete:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in transcript:\n%s", want, out)
+		}
+	}
+}
+
+func TestSlashMigrateFromImportsExplicitSessions(t *testing.T) {
+	home := isolateCLIConfigHome(t)
+	legacySessions := filepath.Join(home, "Old Reasonix", "sessions")
+	if err := os.MkdirAll(legacySessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacySessions, "old-chat.jsonl"), []byte(`{"role":"user","content":"hello from old install"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestChatTUI()
+
+	input := `/migrate --from "` + filepath.Dir(legacySessions) + `"`
+	if cmd := m.runSlashCommand(input); cmd != nil {
+		t.Fatal("/migrate --from should run locally without returning a command")
+	}
+	out := strings.Join(m.transcript, "\n")
+	for _, want := range []string{
+		input,
+		"migration rescue: scanning explicit legacy sessions from " + filepath.Dir(legacySessions),
+		"imported 1 past session(s) from " + legacySessions,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in transcript:\n%s", want, out)
+		}
+	}
+}
+
 // TestDoubleCtrlCQuit verifies that Ctrl+C while idle requires a double-press
 // within the 1.5s window to actually quit. A single press shows a hint; a
 // second press within the window returns tea.Quit.
@@ -1114,6 +1539,88 @@ func TestDoubleCtrlCQuit(t *testing.T) {
 	// lastCtrlCAt should be refreshed to now.
 	if time.Since(m4.lastCtrlCAt) > time.Second {
 		t.Error("expired Ctrl+C should refresh lastCtrlCAt")
+	}
+}
+
+func TestSecondCtrlCQuitsAfterCancelIsAlreadyRequested(t *testing.T) {
+	r := &stubbornTurnRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: r, Sink: event.Discard, SessionDir: t.TempDir(), Label: "test"})
+	ctrl.Send("hi")
+	<-r.started
+	defer close(r.release)
+
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.state = tuiRunning
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+
+	_, firstCmd := m.Update(ctrlC)
+	if firstCmd != nil {
+		t.Fatal("first Ctrl+C while running should request cancel, not quit")
+	}
+	if st := ctrl.RuntimeStatus(); !st.Running || !st.CancelRequested {
+		t.Fatalf("first Ctrl+C status = %+v, want running cancel requested", st)
+	}
+
+	_, secondCmd := m.Update(ctrlC)
+	if secondCmd == nil {
+		t.Fatal("second Ctrl+C after cancel request should quit")
+	}
+	if msg := secondCmd(); msg != (tea.QuitMsg{}) {
+		t.Fatalf("second Ctrl+C command = %T, want tea.QuitMsg", msg)
+	}
+}
+
+func TestRunningStatusShowsCancelRequested(t *testing.T) {
+	r := &stubbornTurnRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: r, Sink: event.Discard, SessionDir: t.TempDir(), Label: "test"})
+	ctrl.Send("hi")
+	<-r.started
+	defer close(r.release)
+
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.state = tuiRunning
+	m.width = 80
+	m.height = 24
+	ctrl.Cancel()
+
+	view := ansi.Strip(m.View().Content)
+	if !strings.Contains(view, "stopping") {
+		t.Fatalf("running status after cancel should show stopping feedback:\n%s", view)
+	}
+}
+
+func TestCtrlZResetsMouseTrackingBeforeSuspend(t *testing.T) {
+	m := newTestChatTUI()
+	ctrlZ := tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}
+
+	_, cmd := m.Update(ctrlZ)
+	if cmd == nil {
+		t.Fatal("expected Ctrl+Z to return a suspend sequence")
+	}
+	msg := cmd()
+	seq := reflect.ValueOf(msg)
+	if seq.Kind() != reflect.Slice || seq.Len() != 2 {
+		t.Fatalf("expected Ctrl+Z to return a two-command sequence, got %T", msg)
+	}
+	first, ok := seq.Index(0).Interface().(tea.Cmd)
+	if !ok {
+		t.Fatalf("first sequence item is %T, want tea.Cmd", seq.Index(0).Interface())
+	}
+	raw, ok := first().(tea.RawMsg)
+	if !ok {
+		t.Fatalf("first Ctrl+Z command = %T, want tea.RawMsg", first())
+	}
+	if got := fmt.Sprint(raw.Msg); got != resetMouseTracking {
+		t.Fatalf("Ctrl+Z mouse reset = %q, want %q", got, resetMouseTracking)
+	}
+	second, ok := seq.Index(1).Interface().(tea.Cmd)
+	if !ok {
+		t.Fatalf("second sequence item is %T, want tea.Cmd", seq.Index(1).Interface())
+	}
+	if msg := second(); msg != (tea.SuspendMsg{}) {
+		t.Fatalf("second Ctrl+Z command = %T, want tea.SuspendMsg", msg)
 	}
 }
 

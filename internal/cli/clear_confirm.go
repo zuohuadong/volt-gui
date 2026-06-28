@@ -58,6 +58,7 @@ func (m *chatTUI) resetFreshContextView(clearTranscript bool) {
 		m.transcript = nil
 		m.wrappedLines = nil
 		m.viewport.SetContent("")
+		m.sessionSwitch = true
 	} else {
 		m.commitLine("")
 	}

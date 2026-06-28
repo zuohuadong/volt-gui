@@ -4530,6 +4530,7 @@ type topicTrashTarget struct {
 }
 
 func (a *App) topicTrashTargets(topicID string) ([]topicTrashTarget, error) {
+	topicID = strings.TrimSpace(topicID)
 	var targets []topicTrashTarget
 	seen := map[string]bool{}
 	addTarget := func(dir, path string) error {
@@ -4549,15 +4550,15 @@ func (a *App) topicTrashTargets(topicID string) ([]topicTrashTarget, error) {
 		return nil
 	}
 	for _, dir := range a.knownSessionDirs() {
-		infos, err := agent.ListSessions(dir)
+		index, err := topicSessionIndexForDir(dir)
 		if err != nil {
 			return nil, err
 		}
-		for _, info := range infos {
-			if info.TopicID != topicID {
+		for _, match := range index.byTopic[topicID] {
+			if agent.IsCleanupPending(match.path) {
 				continue
 			}
-			if err := addTarget(dir, info.Path); err != nil {
+			if err := addTarget(dir, match.path); err != nil {
 				return nil, err
 			}
 		}
@@ -5126,7 +5127,7 @@ func currentTabCollaborationMode(tab *WorkspaceTab) string {
 	if tab == nil {
 		return "normal"
 	}
-	if tab.Ctrl != nil && tab.Ctrl.PlanMode() {
+	if tabModeHasPlan(currentTabMode(tab)) {
 		return "plan"
 	}
 	if strings.TrimSpace(currentTabGoal(tab)) != "" && currentTabGoalStatus(tab) == control.GoalStatusRunning {

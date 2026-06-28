@@ -861,6 +861,7 @@ func (c *Config) IsSkillDisabled(name string) bool {
 type SandboxConfig struct {
 	WorkspaceRoot string   `toml:"workspace_root"`
 	AllowWrite    []string `toml:"allow_write"`
+	ForbidRead    []string `toml:"forbid_read"`
 	// Bash is the OS-sandbox mode for the bash tool: "enforce" (default) jails
 	// each command, "off" runs it unconfined. Phase 1; macOS only for now, with
 	// a graceful fallback elsewhere (see internal/sandbox).
@@ -897,6 +898,35 @@ func (c *Config) WriteRootsForRoot(fallbackRoot string) []string {
 	roots := []string{root}
 	for _, d := range c.Sandbox.AllowWrite {
 		if d = c.expandVars(d); d != "" {
+			roots = append(roots, d)
+		}
+	}
+	return roots
+}
+
+// ForbidReadRoots returns directories the agent may not read or list, with
+// environment expansions resolved. Relative paths resolve against cwd.
+func (c *Config) ForbidReadRoots() []string {
+	return c.ForbidReadRootsForRoot(".")
+}
+
+// ForbidReadRootsForRoot is like ForbidReadRoots but uses fallbackRoot for
+// relative entries, which lets desktop tabs pass their project root.
+func (c *Config) ForbidReadRootsForRoot(fallbackRoot string) []string {
+	root := fallbackRoot
+	if root == "" || root == "." {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		} else {
+			root = "."
+		}
+	}
+	roots := make([]string, 0, len(c.Sandbox.ForbidRead))
+	for _, d := range c.Sandbox.ForbidRead {
+		if d = c.expandVars(d); d != "" {
+			if !filepath.IsAbs(d) {
+				d = filepath.Join(root, d)
+			}
 			roots = append(roots, d)
 		}
 	}
@@ -1255,13 +1285,16 @@ type PermissionsConfig struct {
 // fields mirror Claude Code's mcpServers spec, so entries can come from either
 // voltui.toml's [[plugins]] or a project-root .mcp.json (see loadMCPJSON).
 type PluginEntry struct {
-	Name    string            `toml:"name"`
-	Type    string            `toml:"type"` // "stdio" (default) | "http" | "sse"
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	URL     string            `toml:"url"`
-	Headers map[string]string `toml:"headers"`
+	Name                 string            `toml:"name"`
+	Type                 string            `toml:"type"` // "stdio" (default) | "http" | "sse"
+	Command              string            `toml:"command"`
+	Args                 []string          `toml:"args"`
+	Env                  map[string]string `toml:"env"`
+	URL                  string            `toml:"url"`
+	Headers              map[string]string `toml:"headers"`
+	CallTimeoutSeconds   int               `toml:"call_timeout_seconds"`
+	ToolTimeoutSeconds   map[string]int    `toml:"tool_timeout_seconds"`
+	TrustedReadOnlyTools []string          `toml:"trusted_read_only_tools"`
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`

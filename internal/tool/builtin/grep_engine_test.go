@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"voltui/internal/sandbox"
 )
 
 func TestResolveSearch(t *testing.T) {
@@ -37,7 +39,7 @@ func TestResolveSearch(t *testing.T) {
 }
 
 func TestConfineSearch(t *testing.T) {
-	g, ok := ConfineSearch(SearchSpec{RgPath: "/path/to/rg"}).(grepTool)
+	g, ok := ConfineSearch(SearchSpec{RgPath: "/path/to/rg"}, sandbox.Spec{}, nil).(grepTool)
 	if !ok || g.rg != "/path/to/rg" {
 		t.Fatalf("ConfineSearch must bind the rg path, got %+v ok=%v", g, ok)
 	}
@@ -65,5 +67,32 @@ func TestGrepRipgrepEngine(t *testing.T) {
 
 	if _, err := g.Execute(context.Background(), argsJSON(t, map[string]any{"pattern": "(unclosed", "path": dir})); err == nil {
 		t.Fatal("an invalid regex must surface ripgrep's error")
+	}
+}
+
+func TestGrepRipgrepFallsBackWhenForbidReadIsNotSandboxed(t *testing.T) {
+	rg, err := exec.LookPath("rg")
+	if err != nil {
+		t.Skip("ripgrep not installed")
+	}
+	root := t.TempDir()
+	forbidDir := filepath.Join(root, "secret")
+	if err := os.MkdirAll(forbidDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "allowed.txt"), []byte("needle allowed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(forbidDir, "secret.txt"), []byte("needle secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := grepTool{workDir: root, rg: rg, forbidRoots: realRoots([]string{forbidDir}), sb: sandbox.Spec{Mode: "off"}}
+	out := runTool(t, g, map[string]any{"pattern": "needle", "path": "."})
+	if !strings.Contains(out, "allowed.txt") {
+		t.Fatalf("fallback grep should still find allowed matches, got:\n%s", out)
+	}
+	if strings.Contains(out, "secret") {
+		t.Fatalf("fallback grep leaked forbidden matches:\n%s", out)
 	}
 }

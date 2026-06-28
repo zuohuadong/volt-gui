@@ -21,6 +21,9 @@ type Spec struct {
 	// plus any configured extras). Temp dirs and common toolchain caches are
 	// added automatically so builds and package managers keep working.
 	WriteRoots []string
+	// ForbidReadRoots are directories the command may not read from when
+	// confined. The OS sandbox denies access to these paths where supported.
+	ForbidReadRoots []string
 	// Network allows network egress from inside the sandbox. Off blocks it so a
 	// command cannot exfiltrate or fetch; many dev commands (module/package
 	// downloads) need it, so it defaults on at the config layer.

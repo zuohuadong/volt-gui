@@ -234,11 +234,9 @@ func TestRunDoesNotInjectMemoryCompilerContractForGreeting(t *testing.T) {
 	if user.Content != "hello" {
 		t.Fatalf("greeting should stay raw user input, got:\n%s", user.Content)
 	}
-	if len(stats) != 1 {
-		t.Fatalf("memory compiler stats events = %d, want 1", len(stats))
-	}
-	if stats[0].Injected || !stats[0].UsefulIR || stats[0].CompiledTokens != 0 {
-		t.Fatalf("greeting should keep useful Memory v5 observation without prompt injection: %+v", stats[0])
+	// 更新后的行为：聊天输入完全跳过 Memory v5，所以不会有 stats 事件
+	if len(stats) != 0 {
+		t.Fatalf("memory compiler stats events = %d, want 0 (chat inputs skip Memory v5 entirely)", len(stats))
 	}
 }
 
@@ -472,5 +470,74 @@ func TestRunWellFormedToolLoopRoundTrips(t *testing.T) {
 	before := len(msgs)
 	if after := len(provider.SanitizeToolPairing(msgs)); after != before {
 		t.Errorf("repair mutated a well-formed session: %d -> %d", before, after)
+	}
+}
+
+// TestClassifierSkipsMemoryV5ForChat 验证聊天输入跳过 Memory v5
+func TestClassifierSkipsMemoryV5ForChat(t *testing.T) {
+	rt := memorycompiler.New(t.TempDir())
+	mp := testutil.NewMock("m", testutil.Turn{Text: "hello back"})
+	var stats []event.MemoryCompilerStats
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.MemoryCompilerStatsEvent && e.MemoryCompiler != nil {
+			stats = append(stats, *e.MemoryCompiler)
+		}
+	})
+	// 使用默认启发式分类器（UseMemoryCompilerLLMClassification = false）
+	a := New(mp, echoRegistry(), NewSession(""), Options{MemoryCompiler: rt}, sink)
+
+	// 发送聊天输入
+	if err := a.Run(context.Background(), "hello"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// 验证 Memory v5 完全没有启动
+	if len(stats) != 0 {
+		t.Fatalf("chat input should completely skip Memory v5, got %d stats events", len(stats))
+	}
+
+	// 验证用户输入未被修改
+	reqs := mp.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	user := lastUserMessageFromRequest(t, reqs[0])
+	if user.Content != "hello" {
+		t.Errorf("chat input should be unchanged, got: %s", user.Content)
+	}
+}
+
+// TestClassifierUsesMemoryV5ForTask 验证任务输入使用 Memory v5
+func TestClassifierUsesMemoryV5ForTask(t *testing.T) {
+	rt := memorycompiler.New(t.TempDir())
+	// 预先种入一些记忆让 Memory v5 有内容可编译
+	_, seed := rt.StartTurn(context.Background(), "fix a bug", nil)
+	seed.RecordToolResults([]memorycompiler.ToolRecord{
+		{Name: "bash", Output: "test passed"},
+	})
+	seed.Finish(nil)
+
+	mp := testutil.NewMock("m", testutil.Turn{Text: "fixed"})
+	var stats []event.MemoryCompilerStats
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.MemoryCompilerStatsEvent && e.MemoryCompiler != nil {
+			stats = append(stats, *e.MemoryCompiler)
+		}
+	})
+	a := New(mp, echoRegistry(), NewSession(""), Options{MemoryCompiler: rt}, sink)
+
+	// 发送任务输入
+	if err := a.Run(context.Background(), "fix the auth bug"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// 验证 Memory v5 启动了
+	if len(stats) != 1 {
+		t.Fatalf("task input should start Memory v5, got %d stats events", len(stats))
+	}
+
+	// 验证 stats 正常
+	if !stats[0].UsefulIR {
+		t.Errorf("task should produce useful IR: %+v", stats[0])
 	}
 }

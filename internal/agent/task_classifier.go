@@ -142,7 +142,7 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 		"hello", "hi", "hey", "你好", "您好", "nihao",
 		"thanks", "thank you", "谢谢", "谢了",
 		"ok", "okay", "好的", "嗯", "行",
-		"got it", "i see", "明白", "了解",
+		"got it", "i see", "明白", "了解", "收到", "我知道了", "先不用",
 	}
 
 	words := strings.Fields(normalized)
@@ -158,7 +158,8 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 	// task ("thanks for fixing") but should stay conversational.
 	chatPhrases := []string{
 		"thanks for", "thank you for", "i'll check later", "i will check later",
-		"that test was helpful", "the test was helpful", "谢谢你", "辛苦了",
+		"i'll test it later", "i will test it later", "that test was helpful", "the test was helpful",
+		"谢谢你", "辛苦了",
 	}
 	for _, phrase := range chatPhrases {
 		if strings.Contains(normalized, phrase) {
@@ -179,6 +180,7 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 		"not working", "isn't working", "doesn't work", "dont work", "don't work",
 		"can you help", "help with", "broken", "error", "bug", "issue", "failed", "failing", "crash", "cannot", "can't",
 		"问题", "不工作", "无法", "不能", "报错", "错误", "失败", "崩溃", "异常",
+		"卡住", "卡住了", "没反应", "不生效", "异常退出",
 	}
 	for _, phrase := range taskPhrases {
 		if strings.Contains(normalized, phrase) {
@@ -194,6 +196,7 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 		"continue work", "continue the", "continue this",
 		"修复", "调试", "解决", "复现", "创建", "新建", "添加", "编写", "编辑", "修改", "更新",
 		"删除", "移除", "重命名", "评审", "检查", "分析", "测试", "运行", "构建", "实现", "重构", "继续处理",
+		"看看", "看下", "帮我看", "帮我看下", "处理下", "处理一下", "排查", "定位",
 	}
 
 	for _, needle := range actionNeedles {

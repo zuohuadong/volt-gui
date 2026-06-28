@@ -325,6 +325,14 @@ export interface HistoryToolCall {
   argumentsArchived?: boolean;
 }
 
+export interface HistoryPage {
+  messages: HistoryMessage[];
+  startTurn: number;
+  endTurn: number;
+  totalTurns: number;
+  hasOlder: boolean;
+}
+
 export interface PromptHistoryEntry {
   text: string;
   at: number;          // unix ms
@@ -412,6 +420,7 @@ export interface Meta {
   workspaceRoot?: string;
   workspaceName?: string;
   workspacePath?: string;
+  sessionPath?: string;
   gitBranch?: string;
   imageInputEnabled?: boolean;
   autoApproveTools?: boolean;

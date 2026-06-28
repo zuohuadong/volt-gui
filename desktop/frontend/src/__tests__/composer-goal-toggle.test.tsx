@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { Composer } from "../components/Composer";
+import { Composer, composerPickFileEntry } from "../components/Composer";
 import { LocaleProvider } from "../lib/i18n";
 import { ToastProvider } from "../lib/toast";
 import type { AppBindings } from "../lib/bridge";
@@ -87,9 +87,11 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
   const root = createRoot(rootEl);
   const calls: {
     send: string[];
+    submit: (string | undefined)[];
     setCollaborationMode: CollaborationMode[];
   } = {
     send: [],
+    submit: [],
     setCollaborationMode: [],
   };
   let currentProps: Parameters<typeof Composer>[0] = {
@@ -100,8 +102,9 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
     goal: "",
     cwd: "/repo",
     modelLabel: "DeepSeek-R1",
-    onSend: (displayText) => {
+    onSend: (displayText, submitText) => {
       calls.send.push(displayText);
+      calls.submit.push(submitText);
     },
     onCancel: () => undefined,
     onCycleMode: () => {},
@@ -338,6 +341,74 @@ console.log("\ncomposer goal toggle");
     root.unmount();
   });
   dom.window.close();
+}
+
+{
+  const dom = installDom();
+  let droppedCallback: ((x: number, y: number, paths: string[]) => void) | undefined;
+  window.runtime = {
+    EventsOn: () => () => {},
+    BrowserOpenURL: () => {},
+    OnFileDrop: (cb) => {
+      droppedCallback = cb;
+    },
+    OnFileDropOff: () => {},
+  };
+  mockApp({
+    AttachDropped: async () => ({
+      kind: "workspace",
+      path: "__reasonix_external_folder/mock/Folder-With-Spaces",
+      isDir: true,
+      displayPath: "/Users/example/Folder With Spaces",
+    }),
+  });
+  const { root, calls, rerender } = await renderComposer();
+  await rerender({ insertRequest: { id: 4, text: "inspect", mode: "replace" } });
+  if (!droppedCallback) throw new Error("native file drop handler did not register");
+
+  await act(async () => {
+    droppedCallback?.(0, 0, ["/Users/example/Folder With Spaces"]);
+    await flushTimers();
+  });
+  await waitFor("dropped external folder chip", () => document.body.textContent?.includes("Folder With Spaces/") === true);
+
+  ok(document.body.textContent?.includes("Folder With Spaces/") === true, "dropped external folder renders as a folder context chip");
+
+  const sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
+  if (!sendButton) throw new Error("composer send button did not render");
+  await act(async () => {
+    sendButton.click();
+    await flushTimers();
+  });
+
+  eq(calls.send.join(","), "inspect @/Users/example/Folder With Spaces/", "external folder display text uses the real folder path");
+  eq(calls.submit.join(","), "inspect @__reasonix_external_folder/mock/Folder-With-Spaces/", "external folder submit text uses the session ref token");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const externalToken = "__reasonix_external_folder/mock/Folder-With-Spaces/src/outside.txt";
+  const externalDisplayPath = "/Users/example/Folder With Spaces/src/outside.txt";
+  const picked = composerPickFileEntry("ask @outside", "outside", "", {
+    name: "src/outside.txt",
+    path: externalToken,
+    isDir: false,
+    displayName: "Folder With Spaces/src/outside.txt",
+    displayPath: externalDisplayPath,
+  });
+  eq(picked.text, "ask ", "external search selection removes the token fragment from the draft");
+  eq(picked.workspaceRef?.path, externalToken, "external search selection submits the session ref token");
+  eq(picked.workspaceRef?.displayPath, externalDisplayPath, "external search selection keeps the real display path");
+
+  const localFile = composerPickFileEntry("ask @src/mai", "src/mai", "src/", { name: "main.go", isDir: false });
+  eq(localFile.text, "ask @src/main.go ", "local file selection still completes inline text");
+
+  const localDir = composerPickFileEntry("ask @sr", "sr", "", { name: "src", isDir: true });
+  eq(localDir.text, "ask @src/", "local dir selection still keeps the menu-open slash");
 }
 
 {

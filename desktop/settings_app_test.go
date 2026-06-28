@@ -258,6 +258,8 @@ func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
 				{"id": "mimo-v2.5-pro", "object": "model"},
 				{"id": "mimo-v2.5-asr", "object": "model"},
 				{"id": "mimo-v2.5-tts", "object": "model"},
+				{"id": "agnes-image-2.1-flash", "object": "model"},
+				{"id": "agnes-video-v2.0", "object": "model"},
 			},
 		})
 	}))
@@ -319,11 +321,13 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 		Name:    "mimo-api",
 		Kind:    "openai",
 		BaseURL: "https://api.xiaomimimo.com/v1",
-		Models:  []string{"mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts"},
+		Models:  []string{"mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts", "agnes-image-2.1-flash", "agnes-video-v2.0"},
 		VisionModels: []string{
 			"mimo-v2.5-asr",
 			"mimo-v2.5-pro",
 			"mimo-v2.5-tts",
+			"agnes-image-2.1-flash",
+			"agnes-video-v2.0",
 		},
 		VisionModelsSet: true,
 		Default:         "mimo-v2.5-asr",

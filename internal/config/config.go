@@ -1090,6 +1090,7 @@ func IsLikelyChatModel(model string) bool {
 	var nonChatTokens = map[string]bool{
 		"asr": true, "stt": true, "tts": true,
 		"whisper": true, "embedding": true,
+		"image": true, "video": true,
 		"moderation": true, "rerank": true, "dall": true,
 		"transcription": true,
 	}

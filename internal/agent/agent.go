@@ -840,7 +840,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		if isTask {
 			if compiledInput, turn := memCompiler.StartTurn(ctx, memoryCompilerInput, a.session.Snapshot()); turn != nil {
 				injected := strings.TrimSpace(compiledInput) != "" &&
-					shouldInjectMemoryCompilerContractForInput(memoryCompilerInput) &&
 					a.tryMarkMemoryCompilerInjected(time.Now())
 				if !injected {
 					turn.SuppressInjection()

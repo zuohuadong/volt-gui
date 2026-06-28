@@ -526,8 +526,8 @@ func TestClassifierUsesMemoryV5ForTask(t *testing.T) {
 	})
 	a := New(mp, echoRegistry(), NewSession(""), Options{MemoryCompiler: rt}, sink)
 
-	// 发送任务输入
-	if err := a.Run(context.Background(), "fix the auth bug"); err != nil {
+	// 发送没有命令式动词但明显需要处理的问题描述
+	if err := a.Run(context.Background(), "the auth isn't working"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -539,5 +539,46 @@ func TestClassifierUsesMemoryV5ForTask(t *testing.T) {
 	// 验证 stats 正常
 	if !stats[0].UsefulIR {
 		t.Errorf("task should produce useful IR: %+v", stats[0])
+	}
+	reqs := mp.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	user := lastUserMessageFromRequest(t, reqs[0])
+	if !strings.Contains(user.Content, "<memory-compiler-execution>") {
+		t.Fatalf("task input was not replaced by Memory v5 contract:\n%s", user.Content)
+	}
+}
+
+type fixedTaskClassifier struct {
+	isTask bool
+}
+
+func (f fixedTaskClassifier) IsTask(context.Context, string) (bool, error) {
+	return f.isTask, nil
+}
+
+func TestTaskClassifierResultControlsMemoryV5Injection(t *testing.T) {
+	rt := memorycompiler.New(t.TempDir())
+	_, seed := rt.StartTurn(context.Background(), "fix a bug", nil)
+	seed.RecordToolResults([]memorycompiler.ToolRecord{
+		{Name: "bash", Output: "test passed"},
+	})
+	seed.Finish(nil)
+
+	mp := testutil.NewMock("m", testutil.Turn{Text: "done"})
+	a := New(mp, echoRegistry(), NewSession(""), Options{MemoryCompiler: rt}, event.Discard)
+	a.classifier = fixedTaskClassifier{isTask: true}
+
+	if err := a.Run(context.Background(), "please look into this"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reqs := mp.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	user := lastUserMessageFromRequest(t, reqs[0])
+	if !strings.Contains(user.Content, "<memory-compiler-execution>") {
+		t.Fatalf("task classifier result did not allow Memory v5 injection:\n%s", user.Content)
 	}
 }

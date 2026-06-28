@@ -32,17 +32,15 @@ func TestHeuristicClassifier_IsTask(t *testing.T) {
 		{"修复问题", "修复这个问题", true},
 		{"run tests", "run tests", true},
 
-		// False positive 场景（当前关键词方法会失败）
-		// TODO: 这些是已知的 false positives，LLM 分类器应该修复
-		{"thanks for fixing", "thanks for fixing that!", true}, // 包含 "fixing" - heuristic 会误判为 task
-		{"check later", "I'll check later", true},              // 包含 "check" - heuristic 会误判为 task
-		{"test was helpful", "that test was helpful", true},    // 包含 "test" - heuristic 会误判为 task
+		// Conversational acknowledgements that contain task words.
+		{"thanks for fixing", "thanks for fixing that!", false},
+		{"check later", "I'll check later", false},
+		{"test was helpful", "that test was helpful", false},
 
-		// False negative 场景（当前关键词方法会失败）
-		// TODO: 这些是已知的 false negatives，LLM 分类器应该修复
-		{"auth not working", "the auth isn't working", false},  // 无动作词 - heuristic 会误判为 chat
-		{"help with login", "can you help with login?", false}, // 无动作词 - heuristic 会误判为 chat
-		{"问题严重", "这个问题很严重", false},                             // 无动作词 - heuristic 会误判为 chat
+		// Actionable problem descriptions without imperative verbs.
+		{"auth not working", "the auth isn't working", true},
+		{"help with login", "can you help with login?", true},
+		{"问题严重", "这个问题很严重", true},
 
 		// 文件引用
 		{"file reference", "what about @auth.go", true},

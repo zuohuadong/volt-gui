@@ -154,14 +154,39 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 		}
 	}
 
-	// 2. 文件引用检测（任务的强信号）
+	// 2. Polite acknowledgements can contain action words from the completed
+	// task ("thanks for fixing") but should stay conversational.
+	chatPhrases := []string{
+		"thanks for", "thank you for", "i'll check later", "i will check later",
+		"that test was helpful", "the test was helpful", "谢谢你", "辛苦了",
+	}
+	for _, phrase := range chatPhrases {
+		if strings.Contains(normalized, phrase) {
+			return false, nil
+		}
+	}
+
+	// 3. 文件引用检测（任务的强信号）
 	if strings.Contains(trimmed, "@") || strings.Contains(trimmed, ".go") ||
 		strings.Contains(trimmed, ".js") || strings.Contains(trimmed, ".py") ||
 		strings.Contains(trimmed, ".ts") {
 		return true, nil
 	}
 
-	// 3. 动作关键词检测
+	// 4. Failure/help descriptions are actionable even when phrased without an
+	// imperative verb, e.g. "the auth isn't working".
+	taskPhrases := []string{
+		"not working", "isn't working", "doesn't work", "dont work", "don't work",
+		"can you help", "help with", "broken", "error", "bug", "issue", "failed", "failing", "crash", "cannot", "can't",
+		"问题", "不工作", "无法", "不能", "报错", "错误", "失败", "崩溃", "异常",
+	}
+	for _, phrase := range taskPhrases {
+		if strings.Contains(normalized, phrase) {
+			return true, nil
+		}
+	}
+
+	// 5. 动作关键词检测
 	actionNeedles := []string{
 		"fix", "debug", "repair", "resolve", "reproduce",
 		"create", "add", "write", "edit", "update", "change", "delete", "remove", "rename",
@@ -172,7 +197,7 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 	}
 
 	for _, needle := range actionNeedles {
-		if strings.Contains(normalized, needle) {
+		if containsTaskNeedle(normalized, needle) {
 			return true, nil
 		}
 	}
@@ -181,6 +206,32 @@ func (h *heuristicClassifier) IsTask(ctx context.Context, input string) (bool, e
 	// 理由：false negative（任务→聊天）比 false positive（聊天→任务）更严重
 	// 短的模糊输入 → 聊天；长的输入 → 任务
 	return len(words) > 5, nil
+}
+
+func containsTaskNeedle(input, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	if containsNonASCII(needle) || strings.Contains(needle, " ") {
+		return strings.Contains(input, needle)
+	}
+	for _, word := range strings.FieldsFunc(input, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '_'
+	}) {
+		if word == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func containsNonASCII(s string) bool {
+	for _, r := range s {
+		if r > 127 {
+			return true
+		}
+	}
+	return false
 }
 
 // newClassificationCache 创建新的分类缓存

@@ -22,6 +22,7 @@ import (
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
+	"voltui/internal/i18n"
 	"voltui/internal/jobs"
 	"voltui/internal/memory"
 	"voltui/internal/plugin"
@@ -109,6 +110,38 @@ func isolateDesktopUserDirs(t *testing.T) string {
 func setDesktopTestCredential(t *testing.T, key, value string) {
 	t.Helper()
 	t.Setenv(key, value)
+}
+
+func writeKeylessSubmitProviderConfig(t *testing.T, ref string) {
+	t.Helper()
+	providerName := "test-provider"
+	modelName := strings.TrimSpace(ref)
+	if before, after, ok := strings.Cut(ref, "/"); ok {
+		providerName = strings.TrimSpace(before)
+		modelName = strings.TrimSpace(after)
+	}
+	if modelName == "" {
+		modelName = "test-model"
+	}
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	body := fmt.Sprintf(`
+default_model = "%[1]s/%[2]s"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "%[1]s"
+kind = "openai"
+base_url = "http://127.0.0.1:9"
+models = ["%[2]s"]
+default = "%[2]s"
+`, providerName, modelName)
+	if err := os.WriteFile(config.UserConfigPath(), []byte(body), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 }
 
 func providerNamesFromView(providers []ProviderView) []string {
@@ -3317,6 +3350,7 @@ func (r *appendingDesktopRunner) Run(_ context.Context, input string) error {
 
 func TestSubmitToTabHistoryDisplaysRawInputAfterMemoryCompose(t *testing.T) {
 	isolateDesktopUserDirs(t)
+	writeKeylessSubmitProviderConfig(t, "deepseek/test")
 	dir := config.SessionDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -3341,7 +3375,9 @@ func TestSubmitToTabHistoryDisplaysRawInputAfterMemoryCompose(t *testing.T) {
 	ctrl.QueueMemory(`Saved memory "voltui-contributions": contribution count updated`)
 
 	const prompt = "不要，删了"
-	app.SubmitToTab("test", prompt)
+	if err := app.SubmitToTab("test", prompt); err != nil {
+		t.Fatalf("SubmitToTab: %v", err)
+	}
 	composed := <-runner.started
 	waitNotRunning(t, ctrl)
 
@@ -4528,6 +4564,105 @@ func TestSubmitDisplayToTabReturnsErrorWhenTurnRunning(t *testing.T) {
 		t.Fatalf("SubmitDisplayToTab while running error = %v, want ErrTurnRunning", err)
 	}
 	close(runner.release)
+}
+
+func TestSubmitDisplayToTabRejectsMissingProviderKeyBeforeTurn(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	os.Unsetenv("DEEPSEEK_API_KEY")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "deepseek/deepseek-v4-flash"
+
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+models = ["deepseek-v4-flash"]
+default = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	ctrl := control.New(control.Options{Runner: runner})
+	defer ctrl.Close()
+
+	app := &App{}
+	app.setTestCtrl(ctrl, "deepseek/deepseek-v4-flash")
+
+	err := app.SubmitDisplayToTab("test", "hello", "hello")
+	if err == nil {
+		t.Fatal("SubmitDisplayToTab with missing provider key returned nil")
+	}
+	if msg := err.Error(); !strings.Contains(msg, i18n.M.ProviderErrAuth) || !strings.Contains(msg, "DEEPSEEK_API_KEY") {
+		t.Fatalf("missing-key error = %q, want auth guidance naming DEEPSEEK_API_KEY", msg)
+	}
+	select {
+	case <-runner.started:
+		t.Fatal("runner started despite missing provider key")
+	default:
+	}
+}
+
+func TestEnsureTabModelReadyFallsBackFromKeylessRestoredModel(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	os.Unsetenv("DEEPSEEK_API_KEY")
+	t.Setenv("THIRD_PARTY_OPENAI_KEY", "sk-third-party")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "deepseek/deepseek-v4-flash"
+
+[desktop]
+provider_access = ["deepseek", "thirdparty"]
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+models = ["deepseek-v4-flash"]
+default = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[[providers]]
+name = "thirdparty"
+kind = "openai"
+base_url = "https://example.invalid"
+models = ["agnes-1"]
+default = "agnes-1"
+api_key_env = "THIRD_PARTY_OPENAI_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	oldCtrl := control.New(control.Options{Runner: &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}})
+	defer oldCtrl.Close()
+	app := NewApp()
+	app.ctx = context.Background()
+	app.setTestCtrl(oldCtrl, "deepseek/deepseek-v4-flash")
+
+	if err := app.ensureTabModelReadyForSubmit("test"); err != nil {
+		t.Fatalf("ensureTabModelReadyForSubmit: %v", err)
+	}
+	tab := app.tabs["test"]
+	if tab.model != "thirdparty/agnes-1" {
+		t.Fatalf("tab model = %q, want thirdparty/agnes-1", tab.model)
+	}
+	if tab.Ctrl == oldCtrl {
+		t.Fatal("controller was not rebuilt onto the configured third-party provider")
+	}
+	if tab.Ctrl != nil {
+		defer tab.Ctrl.Close()
+	}
 }
 
 // --- Prompt history scanning tests ------------------------------------------

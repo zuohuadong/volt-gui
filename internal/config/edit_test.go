@@ -655,7 +655,7 @@ func TestRemoveProvider(t *testing.T) {
 	if err := c.RemoveProvider(c.DefaultModel); err == nil {
 		t.Error("expected error removing the default model")
 	}
-	// Removing the planner provider clears planner_model.
+	// Removing the planner provider clears planner_model when there is no fallback.
 	if err := c.RemoveProvider("deepseek-pro"); err != nil {
 		t.Fatalf("remove planner provider: %v", err)
 	}
@@ -665,6 +665,19 @@ func TestRemoveProvider(t *testing.T) {
 	if _, ok := c.Provider("deepseek-pro"); ok {
 		t.Error("provider not actually removed")
 	}
+
+	withFallback := Default()
+	withFallback.Agent.PlannerModel = "deepseek-pro"
+	for i := range withFallback.Providers {
+		withFallback.Providers[i].resolvedAPIKey = "sk-test"
+	}
+	if err := withFallback.RemoveProvider("deepseek-pro"); err != nil {
+		t.Fatalf("remove planner provider with fallback: %v", err)
+	}
+	if withFallback.Agent.PlannerModel != "deepseek-flash" {
+		t.Errorf("planner should move to fallback, got %q", withFallback.Agent.PlannerModel)
+	}
+
 	// Unknown name errors.
 	if err := c.RemoveProvider("ghost"); err == nil {
 		t.Error("expected error for unknown provider")

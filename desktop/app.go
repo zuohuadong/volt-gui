@@ -675,6 +675,13 @@ func (a *App) SubmitToTab(tabID, input string) error {
 	if ctrl.Running() {
 		return control.ErrTurnRunning
 	}
+	if err := a.ensureTabModelReadyForSubmit(tabID); err != nil {
+		return err
+	}
+	_, ctrl = a.tabAndCtrlByID(tabID)
+	if ctrl == nil {
+		return workspaceNotReadyErr(tab)
+	}
 	ctrl.SubmitDisplay(input, input)
 	return nil
 }
@@ -726,9 +733,113 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) error {
 	if ctrl.Running() {
 		return control.ErrTurnRunning
 	}
+	if err := a.ensureTabModelReadyForSubmit(tabID); err != nil {
+		return err
+	}
+	ctrl = tab.Ctrl
 	a.bindControllerDisplayRecorder(ctrl)
 	ctrl.SubmitDisplay(display, input)
 	return nil
+}
+
+func (a *App) ensureTabModelReadyForSubmit(tabID string) error {
+	entry, targetRef, switchModel, err := a.submitProviderEntryForTab(tabID)
+	if err != nil {
+		return err
+	}
+	if switchModel {
+		if err := a.SetModelForTab(tabID, targetRef); err != nil {
+			return err
+		}
+		entry, err = a.currentProviderEntryForTab(tabID)
+		if err != nil {
+			return err
+		}
+	}
+	if entry == nil || !entry.RequiresAPIKey() || entry.APIKey() != "" {
+		return nil
+	}
+	if strings.TrimSpace(entry.APIKeyEnv) == "" {
+		return errors.New(i18n.M.ProviderErrAuth)
+	}
+	if source := strings.TrimSpace(entry.APIKeySourceLabel()); source != "" {
+		return fmt.Errorf("%s (%s from %s)", i18n.M.ProviderErrAuth, entry.APIKeyEnv, source)
+	}
+	return fmt.Errorf("%s (%s)", i18n.M.ProviderErrAuth, entry.APIKeyEnv)
+}
+
+func (a *App) submitProviderEntryForTab(tabID string) (*config.ProviderEntry, string, bool, error) {
+	a.mu.RLock()
+	ref := ""
+	workspaceRoot := ""
+	effortOverride := (*string)(nil)
+	if tab := a.tabByIDLocked(tabID); tab != nil {
+		ref = tab.model
+		workspaceRoot = tab.WorkspaceRoot
+		effortOverride = cloneStringPtr(tab.effort)
+	}
+	a.mu.RUnlock()
+	cfg, err := config.LoadForRoot(workspaceRoot)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if strings.TrimSpace(ref) == "" {
+		ref = cfg.DefaultModel
+	}
+	access := providerAccessSet(cfg.Desktop.ProviderAccess)
+	entry, ok := cfg.ResolveModel(ref)
+	if ok {
+		canonical := entry.Name + "/" + entry.Model
+		if modelProviderAccessAllowed(access, entry.Name) && entry.Configured() {
+			applySubmitEffortOverride(entry, effortOverride)
+			return entry, canonical, false, nil
+		}
+		if fallback, fallbackRef, found := configuredSubmitFallback(cfg, access, canonical, effortOverride); found {
+			return fallback, fallbackRef, fallbackRef != canonical, nil
+		}
+		applySubmitEffortOverride(entry, effortOverride)
+		return entry, canonical, false, nil
+	}
+	if fallback, fallbackRef, found := configuredSubmitFallback(cfg, access, "", effortOverride); found {
+		return fallback, fallbackRef, true, nil
+	}
+	return nil, "", false, cfg.ResolveModelError(ref)
+}
+
+func configuredSubmitFallback(cfg *config.Config, access map[string]bool, excludeRef string, effortOverride *string) (*config.ProviderEntry, string, bool) {
+	tryRef := func(ref string) (*config.ProviderEntry, string, bool) {
+		entry, ok := cfg.ResolveModel(ref)
+		if !ok || !modelProviderAccessAllowed(access, entry.Name) || !entry.Configured() {
+			return nil, "", false
+		}
+		canonical := entry.Name + "/" + entry.Model
+		if canonical == excludeRef {
+			return nil, "", false
+		}
+		applySubmitEffortOverride(entry, effortOverride)
+		return entry, canonical, true
+	}
+	if strings.TrimSpace(cfg.DefaultModel) != "" {
+		if entry, ref, ok := tryRef(cfg.DefaultModel); ok {
+			return entry, ref, true
+		}
+	}
+	for i := range cfg.Providers {
+		providerEntry := &cfg.Providers[i]
+		if !modelProviderAccessAllowed(access, providerEntry.Name) || !providerEntry.Configured() || len(providerEntry.ModelList()) == 0 {
+			continue
+		}
+		if entry, ref, ok := tryRef(providerEntry.Name + "/" + providerEntry.DefaultModel()); ok {
+			return entry, ref, true
+		}
+	}
+	return nil, "", false
+}
+
+func applySubmitEffortOverride(entry *config.ProviderEntry, effortOverride *string) {
+	if entry != nil && effortOverride != nil {
+		entry.Effort = *effortOverride
+	}
 }
 
 func (a *App) bindControllerDisplayRecorder(ctrl control.SessionAPI) {

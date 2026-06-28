@@ -80,9 +80,17 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 }
 
 func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("VOLTUI_DOCTOR_TEST_MISSING_KEY", "")
 
 	cfg := config.Default()
+	cfg.DefaultModel = "missing-key"
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "missing-key",
+		Kind:      "openai",
+		BaseURL:   "https://api.example.com/v1",
+		Model:     "model-a",
+		APIKeyEnv: "VOLTUI_DOCTOR_TEST_MISSING_KEY",
+	}}
 	report := Collect(Options{Version: "1.2.3", Config: cfg})
 	text := RenderText(report)
 

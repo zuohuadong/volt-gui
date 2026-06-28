@@ -77,7 +77,8 @@ delegation:
   required: false
   subagents:
     - role: "explorer | critic | verifier | worker"
-      model: "gpt-5.3-codex | gpt-5.5"
+      model: "gpt-5.3-codex-spark | gpt-5.3-codex | gpt-5.5 | glm-5.2 | claude-opus-4-8 | sonnet | gemini-3-flash-agent | gemini-pro-agent | grok-4 | mistral-large-latest | custom gateway alias"
+      model_profile: "routine | high-risk | ui-design-generation | ui-aesthetic-review | custom"
       escalation_reason: ""
       scope: ""
       ownership: "read-only | write"
@@ -101,8 +102,10 @@ delegation:
 
 规则：
 
-- `gpt-5.3-codex` 是默认执行器和 explorer/critic/verifier sidecar。
-- `gpt-5.5` 只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`。
+- 低风险执行器和 explorer/critic/verifier sidecar 默认走候选链：`gpt-5.3-codex-spark`、`gpt-5.3-codex`、`sonnet`，`gemini-3-flash-agent` 只作为低优先级兜底；可通过 `--model`、`AGENT_TEAM_<ROLE>_MODEL(S)`、`AGENT_TEAM_SUBAGENT_MODEL(S)`、`AGENT_TEAM_LOW_RISK_MODELS` / `AGENT_TEAM_ROUTINE_MODELS`、`AGENT_TEAM_REVIEW_LOOP_MODEL` 或项目级 `.agents/agent-team.config.json` 覆盖。
+- `gpt-5.5` 是默认高风险升级标记和兜底，只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`；实际仲裁运行模型可通过 `--model`、`AGENT_TEAM_HIGH_RISK_MODEL` / `AGENT_TEAM_HIGH_RISK_MODELS`、`AGENT_TEAM_ARBITER_MODEL` / `AGENT_TEAM_ARBITER_MODELS` 或项目配置覆盖，候选链会识别国产强模型、Codex/OpenAI、Claude Code、Zed 或第三方网关常见模型名。
+- UI 设计生成使用独立 `ui-design-generation` 候选链：Gemini/GLM/Qwen/Kimi 优先，GPT/Codex 作为落地兜底；审美评审使用 `ui-aesthetic-review` 候选链：Claude/Sonnet 优先，Gemini/GLM 次之。UI 任务的验收必须包含视觉截图证据、响应式检查、文本不溢出/不重叠、交互控件状态和审美 rubric 评审结论。
+- Goal Forge 深度设计/质证循环用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；Scheduler 和新建任务默认模型分别用 `models.scheduler` / `models.task_default` 覆盖。
 - 并行 worker 只有在 `allowed_files` 明确互斥时才允许。
 - 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、mailbox（v2 为 DB mailbox，legacy 为 `.mailbox/`）和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
 - `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
@@ -227,6 +230,39 @@ fullstack_profile:
     runtime_or_preview: ""
   non_goals:
     - "do not migrate fullstack framework unless explicitly requested"
+```
+
+浏览器自动化任务补充：
+
+```yaml
+browser_automation_profile:
+  mode: "auto | builtin-browser | bun-webview | playwright | chrome-cdp | none"
+  intent: "auto | local-preview | light-smoke | ci-e2e | authenticated | cdp-debug"
+  task: ""
+  selected_mode: ""
+  decision_source: "agent-team automation browser-profile --task | agent-team automation browser-profile --intent | user | task-contract | unavailable"
+  evidence:
+    command: "agent-team automation browser-profile . --task '<task>' --json"
+    choice: {}
+    task_analysis: {}
+    capabilities: []
+    fallback_chain: []
+  priority_rules:
+    - "avoid a browser when direct API/CLI/log evidence is enough"
+    - "builtin-browser for Codex-local preview, visible interaction, screenshots, and handoff"
+    - "bun-webview for lightweight CLI smoke and simple page-state capture; treat as experimental"
+    - "playwright for durable CI/E2E, traces, cross-browser checks, and regression coverage"
+    - "chrome-cdp only for real Chrome profile, login state, extensions, or DevTools protocol evidence"
+  safety:
+    - "do not inspect cookies, passwords, local storage, or browser profiles unless explicitly authorized"
+    - "confirm before submitting forms, changing permissions, uploading files, or causing external side effects"
+  verification:
+    profile_check: "agent-team automation browser-profile . --intent <intent> --json"
+    task_profile_check: "agent-team automation browser-profile . --task '<task>' --json"
+    runtime_smoke: "agent-team automation browser-profile . --task '<task>' --verify --json"
+  non_goals:
+    - "do not make Bun.WebView the only browser backend while it remains experimental"
+    - "do not use the user's Chrome profile as a default fallback"
 ```
 
 部署或托管目标任务补充：
@@ -361,6 +397,32 @@ mpx:
   preserve_style_units: true
   rn_style_compat_required: false
 ```
+
+## Completion Evidence
+
+> 任务进入 `done` 或 `review` 前必须填写。没有证据只能标 `partial` 或 `blocked`。
+
+```yaml
+completion_evidence:
+  status: "pending | partial | verified | blocked"
+  evidence_items:
+    - kind: "test-command | ci-run | git-diff-check | build-log | screenshot | deploy-url | health-check | db-query | log-line | other"
+      description: ""
+      ref: ""
+      fresh: true
+  verifier_reviewed: false
+  verifier_ref: ""
+  orchestrator_confirmed: false
+  notes: ""
+```
+
+规则：
+
+- `evidence_items` 至少 1 条，`ref` 必须指向本轮执行的证据（命令输出、CI URL、文件路径、截图路径等）。
+- `fresh: true` 表示是本轮执行产出；引用旧 PR 或上次运行的证据视为无效。
+- 中/高风险任务必须 `verifier_reviewed: true` 并引用 verifier mailbox/ref。
+- orchestrator 亲自运行验收命令确认后可标 `orchestrator_confirmed: true`，替代独立 verifier。
+- 纯文档/格式化任务也必须引用 `git diff --check` 或类型检查/构建通过的证据。
 
 ## Required Skills and Conventions
 

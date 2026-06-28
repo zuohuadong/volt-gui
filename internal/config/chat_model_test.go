@@ -48,6 +48,7 @@ func TestIsLikelyChatModel_FiltersNonChatKeywords(t *testing.T) {
 		"text-moderation-stable",
 		"rerank-v1",
 		"dall-e-3",
+		"agnes-image-2.1-flash", "agnes-video-v2.0",
 		"text-to-speech-v1", "speech-to-text-v2",
 	} {
 		if IsLikelyChatModel(model) {
@@ -91,6 +92,7 @@ func TestChatModelList_FiltersNonChatModels(t *testing.T) {
 			"mimo-v2.5", "mimo-v2.5-pro",
 			"mimo-v2.5-asr", "mimo-v2.5-tts", "mimo-v2.5-tts-voice",
 			"mimo-v2-tts-voiceclone", "mimo-v2-tts-voicedesign",
+			"agnes-image-2.0-flash", "agnes-video-v2.0",
 		},
 	}
 	got := p.ChatModelList()

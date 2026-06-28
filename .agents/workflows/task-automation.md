@@ -48,13 +48,15 @@ agent-team subagent status
 
 | 角色 | 模型 | 用途 | 沙箱 |
 |------|------|------|------|
-| Orchestrator / Arbiter | `gpt-5.5` | 任务拆解、风险分类、最终裁决、高风险审查、分歧仲裁 | — |
-| Executor | `gpt-5.3-codex` | 实现、测试、修复、本地验证、提交准备 | workspace-write |
-| Explorer | `gpt-5.3-codex` | 代码探索、根因分析、竞品调研 | read-only |
-| Critic | `gpt-5.3-codex` | 计划审查、方案评审 | read-only |
-| Verifier | `gpt-5.3-codex` | 完成验证、证据审查 | read-only |
+| Orchestrator / Arbiter | `gpt-5.5` 升级标记 / 高风险候选链 | 任务拆解、风险分类、最终裁决、高风险审查、分歧仲裁 | — |
+| Executor | 低风险候选链（默认 `gpt-5.3-codex-spark`，回退候选 `gpt-5.3-codex` / `sonnet` / `gemini-3-flash-agent`） | 实现、测试、修复、本地验证、提交准备 | workspace-write |
+| Explorer | 低风险候选链 | 代码探索、根因分析、竞品调研 | read-only |
+| Critic | 低风险候选链 | 计划审查、方案评审 | read-only |
+| Verifier | 低风险候选链 | 完成验证、证据审查 | read-only |
 
-只有安全、数据、生产、不可逆决策或 reviewer 分歧无法收敛时升级到 `gpt-5.5`，并记录 `escalation_reason`。
+低风险执行层优先使用 Codex/GPT 系列和 Claude Sonnet；`gemini-3-flash-agent` 只适合低风险、可重试的短任务兜底。国产模型默认不拆低风险专用型号，`glm` profile 会让常规执行和高风险裁决都使用 `glm-5.2`，但仍可通过 `--model`、`AGENT_TEAM_<ROLE>_MODEL(S)`、`AGENT_TEAM_LOW_RISK_MODELS` / `AGENT_TEAM_ROUTINE_MODELS` 或项目级 `models.routine_subagent_candidates` / `models.<role>_candidates` 覆盖。只有安全、数据、生产、不可逆决策或 reviewer 分歧无法收敛时才标记 `needs_model: gpt-5.5`，并记录 `escalation_reason`。`gpt-5.5` 是默认升级标记和兜底；实际运行模型可通过 `--model`、项目级 `.agents/agent-team.config.json`、`AGENT_TEAM_HIGH_RISK_MODEL` / `AGENT_TEAM_HIGH_RISK_MODELS` 或 `AGENT_TEAM_ARBITER_MODEL` / `AGENT_TEAM_ARBITER_MODELS` 覆盖，候选链会识别国产模型族以及 Codex/OpenAI、Claude Code、Zed/第三方网关常见模型名，包括 Claude、Gemini、Grok/xAI 和 Mistral；`gemini-pro-agent` 高风险优先级最低，只在更强候选不可用时尝试。
+UI 设计生成、审美改版或视觉质量修复不走普通 routine 排序：生成链默认 `gemini-3-flash-agent` / `gemini-3.5-flash` / `glm-5.2` / `qwen3-max` / `kimi-k2.7-code` 优先，GPT/Codex 只作落地兜底；审美评审链默认 `claude-sonnet-4-6` / `claude-opus-4-8` 优先。UI 任务必须把 `model_profile` 记录为 `ui-design-generation` 或 `ui-aesthetic-review`，并提供截图证据、响应式检查、无重叠/无溢出检查和审美 rubric 评审结论。
+`automation review-loop-run` 可用 `--model`、`AGENT_TEAM_REVIEW_LOOP_MODEL` 或 `models.review_loop` 覆盖整轮评审；Goal Forge 深度设计/质证循环可用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；Scheduler 和新建任务默认模型分别使用 `models.scheduler` / `models.task_default`。
 
 ### 默认执行流程
 
@@ -142,6 +144,18 @@ agent-team subagent status
 - PR/MR 描述必须引用 Task Contract，并逐条列出验收证据、使用的 skill 和遵循的代码规范
 - PR/MR 描述必须说明 Delegation Gate 结果：使用了哪些子智能体，或为什么安全跳过
 - 若发现契约缺失、任务过大或风险上升，改为 `blocked` 并说明原因
+
+## 4.5. Evidence Gate (Hard Gate)
+
+任务进入 `done` 或 `review` 前，必须满足以下硬约束：
+
+- 至少引用一条新鲜证据：测试命令及退出码、CI run URL、`git diff --check` 输出、构建日志、截图、部署 URL/健康检查、DB 查询结果或日志行之一
+- 证据必须是本轮执行的，不接受引用上次运行或上一个 PR 的旧证据
+- 没有证据只能标 `partial` 或 `blocked`，不能标 `done`
+- 中/高风险任务的证据必须由独立 verifier 子智能体复核，或由 orchestrator 亲自运行验收命令确认
+- 纯文档/格式化任务也必须引用 `git diff --check` 或构建/类型检查通过的证据
+
+此规则适用于所有完成路径，包括 `/dev`、`/task-automation` 和 `/pr-review-merge`。
 
 ## 5. 记录要求
 - coordination DB v2 项目每次领取、暂停、完成都要写入 DB event / mailbox 队列；legacy 项目才更新 `progress.md` 或通过 `.mailbox/` 留消息

@@ -328,13 +328,13 @@
     { title: "整理 Agent 创建模板", desc: "补齐工具、技能、核心文件与模型配置", due: "16:00", state: "待处理" },
     { title: "复核项目与客户关联", desc: "检查新建对话中的关联入口", due: "明天", state: "待处理" },
   ];
-  const runningAutomations = [
+  let runningAutomations = $state([
     { id: "preflight-validation", title: "提交前验证自动化", desc: "参考 Codex 自动化，把前端门禁、构建、空白检查和浏览器日志验证串成一个可复用的自动化任务。", status: "运行中", kind: "验证自动化", owner: "自动化 Agent", startedAtMs: Date.now() - 5400000, cadence: "每次 UI 改动后", schedule: "手动触发 / 提交前", scope: "desktop/frontend", environment: "local workspace", command: "autofixer -> npm run check -> npm run build -> browser logs", result: "最近一次通过", lastRun: "刚刚", nextRun: "等待下一次改动", steps: ["Svelte autofixer", "类型检查", "生产构建", "浏览器 DOM / 控制台验证"], logs: ["0 errors / 0 warnings", "构建通过，保留已知 @theme warning", "浏览器 warn/error 为空"] },
     { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", kind: "质量门禁", owner: "代码审查 Agent", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", schedule: "改动后手动复跑", scope: "desktop/frontend", environment: "local workspace", command: "npm run check / npm run build / git diff --check", result: "通过", lastRun: "12 分钟前", nextRun: "下一次前端改动", steps: ["npm run check", "npm run build", "git diff --check"], logs: ["svelte-check 通过", "Vite build 通过", "无空白错误"] },
     { id: "wails-go-gate", title: "Wails 与 Go 模块门禁", desc: "分别检查根 Go CLI/TUI 与 desktop Wails 模块，避免桌面端改动影响 CLI、绑定层或嵌入资源。", status: "待配置", kind: "工程验证", owner: "代码审查 Agent", startedAtMs: Date.now() - 3120000, cadence: "涉及 Go 或 Wails 绑定时", schedule: "按需触发", scope: "go.mod / desktop/go.mod", environment: "local workspace", command: "go test ./... / cd desktop && go test ./...", result: "待接入", lastRun: "未运行", nextRun: "绑定层改动后", steps: ["根模块 go test", "desktop 模块 go test", "Wails 绑定检查"], logs: ["等待启用"] },
     { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", kind: "浏览器验证", owner: "Browser 插件", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", schedule: "预览刷新后", scope: "Vite dev server / 浏览器 DOM", environment: "in-app browser", command: "HTTP 200 / DOM snapshot / console warnings", result: "通过", lastRun: "5 分钟前", nextRun: "下一次页面改动", steps: ["刷新本地预览", "检查关键 DOM", "读取 warn/error 日志"], logs: ["页面可访问", "关键节点存在", "控制台无错误"] },
-  ];
-  const primaryAutomation = runningAutomations[0];
+  ]);
+  const primaryAutomation = $derived(runningAutomations[0]);
   const defaultAgentCards: AgentView[] = [
     { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", avatar: "C", provider: "OpenAI", model: "GPT-4o", tools: ["workspace", "git", "terminal"], skills: ["code-review"], coreFiles: ["AGENTS.md"], builtIn: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
     { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。", avatar: "R", provider: "OpenAI", model: "GPT-4o", tools: ["web", "workspace"], skills: ["research"], coreFiles: ["references"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -503,7 +503,7 @@
     skill: [
       { id: "frontend-design", name: "frontend-design", desc: "高质量前端界面重构，约束视觉层级、动效与响应式。", status: "已安装", version: "v1.8", source: "Codex Skill", scope: "UI 重构", sync: "已加载", path: "skills/frontend-design", permission: "读取设计约定 / 修改前端文件", enabled: true },
       { id: "webapp-testing", name: "webapp-testing", desc: "本地预览、浏览器验证和控制台错误检查。", status: "可用", version: "v1.1", source: "Testing Skill", scope: "质量验证", sync: "可调用", path: "skills/webapp-testing", permission: "浏览器只读检查 / 交互验证", enabled: true },
-      { id: "agent-team-automation", name: "agent-team-automation", desc: "把可复用任务契约、执行日志和回调流程打包为团队技能。", status: "待安装", version: "v0.7", source: "Agent Team", scope: "团队协作", sync: "待导入", path: "skills/agent-team", permission: "任务契约 / 进度日志", enabled: false },
+      { id: "team-run-automation", name: "team-run-automation", desc: "把协作任务、执行日志、人工确认和结果归档打包为团队运行技能。", status: "待安装", version: "v0.7", source: "本地技能", scope: "团队协作", sync: "待导入", path: "skills/team-run", permission: "任务运行 / 进度日志", enabled: false },
     ],
   };
   let capabilityBuckets = $state<CapabilityBuckets>(defaultCapabilityBuckets);
@@ -571,18 +571,50 @@
     const keyword = resourceSearch.trim().toLowerCase();
     return !keyword || [item.title, item.source, item.size, item.status].some((value) => value.toLowerCase().includes(keyword));
   }));
-  let teamRooms = $state([
-    { id: "product-lab", title: "产品研发组", members: 3, active: "2 个 Agent 在线", desc: "围绕桌面端体验、代码质量和发布节奏协作。", leader: "代码审查 Agent", leaderId: "code-review", status: "运行中", topic: "桌面端体验复刻", queue: "3 条任务", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"] },
-    { id: "ops-growth", title: "运营增长组", members: 2, active: "3 个任务进行中", desc: "处理客户触达、内容草案和项目跟进。", leader: "资料研究 Agent", leaderId: "research", status: "待配置", topic: "客户运营协同", queue: "5 条任务", memberIds: ["research", "automation"], avatars: ["R", "A"] },
-    { id: "delivery-review", title: "交付审查组", members: 3, active: "1 个报告待审", desc: "审查项目风险、交付记录和验收标准。", leader: "自动化 Agent", leaderId: "automation", status: "已启用", topic: "项目验收复盘", queue: "2 条任务", memberIds: ["automation", "code-review", "research"], avatars: ["A", "C", "R"] },
+  type TeamRunStep = { id: string; title: string; owner: string; status: string; detail: string };
+  type TeamRunStatus = "draft" | "running" | "paused" | "stopped" | "completed";
+  type TeamRunEvent = { id: string; time: string; actor: string; type: string; detail: string };
+  type TeamRunArtifact = { id: string; title: string; type: string; status: string };
+  type TeamRun = {
+    id: string;
+    teamId: string;
+    title: string;
+    status: TeamRunStatus;
+    task: string;
+    createdAt: string;
+    updatedAt: string;
+    currentStepId: string;
+    events: TeamRunEvent[];
+    artifacts: TeamRunArtifact[];
+  };
+  type TeamRoom = {
+    id: string; title: string; members: number; active: string; desc: string; leader: string; leaderId: string; status: string; topic: string; queue: string; memberIds: string[]; avatars: string[];
+    mode: string; sharedContext: string; runState: string; nextCheckpoint: string; outcome: string; controls: string[]; artifacts: string[]; steps: TeamRunStep[];
+  };
+  let teamRooms = $state<TeamRoom[]>([
+    { id: "product-lab", title: "产品研发组", members: 3, active: "模板已就绪", desc: "围绕桌面端体验、代码质量和发布节奏组织多 Agent 协作。", leader: "代码审查 Agent", leaderId: "code-review", status: "模板", topic: "桌面端体验复核", queue: "0 个运行节点", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"], mode: "协调者编排", sharedContext: "项目资料库 / 当前变更", runState: "待运行", nextCheckpoint: "发送任务后生成运行草稿", outcome: "等待首次运行", controls: ["暂停", "继续", "终止", "重新分配"], artifacts: ["报告草稿", "待办清单", "资料归档"], steps: [
+      { id: "triage", title: "拆解目标", owner: "代码审查 Agent", status: "待运行", detail: "明确目标、非目标、验收标准和风险边界。" },
+      { id: "research", title: "补充资料", owner: "资料研究 Agent", status: "待运行", detail: "读取关联资料并给出可引用依据。" },
+      { id: "verify", title: "验证闭环", owner: "自动化 Agent", status: "待运行", detail: "生成检查命令、产物路径和失败处理建议。" },
+    ] },
+    { id: "ops-growth", title: "运营增长组", members: 2, active: "需补上下文", desc: "处理客户触达、内容草案和项目跟进，适合从资料到待办的轻量协作。", leader: "资料研究 Agent", leaderId: "research", status: "待补充", topic: "客户运营协同", queue: "0 个运行节点", memberIds: ["research", "automation"], avatars: ["R", "A"], mode: "串行交接", sharedContext: "客户资料 / 报告模板", runState: "未启动", nextCheckpoint: "绑定客户或项目资料", outcome: "等待配置资料", controls: ["暂停", "继续", "终止"], artifacts: ["跟进话术", "待办清单"], steps: [
+      { id: "brief", title: "整理背景", owner: "资料研究 Agent", status: "待补充", detail: "收集客户状态、历史沟通和当前目标。" },
+      { id: "actions", title: "生成行动", owner: "自动化 Agent", status: "待运行", detail: "把建议转为待办、日程和跟进记录。" },
+    ] },
+    { id: "delivery-review", title: "交付审查组", members: 3, active: "可创建审查运行", desc: "审查项目风险、交付记录和验收标准，输出可归档的审查结论。", leader: "自动化 Agent", leaderId: "automation", status: "模板", topic: "项目验收复盘", queue: "0 个运行节点", memberIds: ["automation", "code-review", "research"], avatars: ["A", "C", "R"], mode: "审查后汇总", sharedContext: "项目记录 / 验收报告", runState: "待运行", nextCheckpoint: "选择交付对象", outcome: "等待审查任务", controls: ["暂停", "继续", "终止", "批准高风险工具"], artifacts: ["审查报告", "风险清单", "归档记录"], steps: [
+      { id: "collect", title: "收集证据", owner: "资料研究 Agent", status: "待运行", detail: "汇总交付文档、记录和待确认项。" },
+      { id: "risk", title: "风险审查", owner: "代码审查 Agent", status: "待运行", detail: "识别缺失验证、范围漂移和回滚风险。" },
+      { id: "archive", title: "归档结果", owner: "自动化 Agent", status: "待运行", detail: "形成报告、待办和后续跟踪入口。" },
+    ] },
   ]);
   type TeamChatMessage = { id: string; teamId: string; role: "user" | "agent"; agentId?: string; agentName?: string; agentAvatar?: string; content: string };
   let teamChatMessages = $state<TeamChatMessage[]>([
-    { id: "product-lab-system-1", teamId: "product-lab", role: "agent", agentId: "code-review", agentName: "代码审查 Agent", agentAvatar: "C", content: "我会先拆解当前桌面端体验问题，再把验证点分配给资料研究和自动化 Agent。" },
-    { id: "product-lab-system-2", teamId: "product-lab", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "已整理 AORISTLAWER 参考路径，建议优先同步 TeamsPage、CreateTeamModal 和 TeamChatPage 的交互结构。" },
-    { id: "ops-growth-system-1", teamId: "ops-growth", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "客户触达素材已汇总，下一步可以生成项目跟进话术和执行清单。" },
-    { id: "delivery-review-system-1", teamId: "delivery-review", role: "agent", agentId: "automation", agentName: "自动化 Agent", agentAvatar: "A", content: "验收流程已准备：构建、检查、预览、残留文案扫描会按顺序执行。" },
+    { id: "product-lab-system-1", teamId: "product-lab", role: "agent", agentId: "code-review", agentName: "代码审查 Agent", agentAvatar: "C", content: "当前是协作组模板预览。发送任务后会生成运行草稿，真实执行需要接入 Agent runtime。" },
+    { id: "product-lab-system-2", teamId: "product-lab", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "我会在运行中负责资料依据、上下文摘要和待确认问题，不再引用未验证的外部页面结构。" },
+    { id: "ops-growth-system-1", teamId: "ops-growth", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "请先绑定客户或项目资料，协作运行会基于真实上下文生成跟进建议。" },
+    { id: "delivery-review-system-1", teamId: "delivery-review", role: "agent", agentId: "automation", agentName: "自动化 Agent", agentAvatar: "A", content: "审查组会把验证、报告和归档拆成可观察节点，目前展示的是运行计划而非已执行结果。" },
   ]);
+  let teamRuns = $state<TeamRun[]>([]);
   const filteredTeamBuilderAgents = $derived(agentCards.filter((agent) => {
     const keyword = teamBuilderSearch.trim().toLowerCase();
     return !keyword || [agent.name, agent.role, agent.desc].some((value) => value.toLowerCase().includes(keyword));
@@ -610,9 +642,95 @@
     { title: "导入客户资料", source: "local", status: "排队", total: 36 },
     { title: "导入规范样例", source: "manual", status: "失败", total: 1 },
   ];
+  let workbenchNotice = $state("");
+  let knowledgePreviewTitle = $state(regulationItems[0]?.title ?? "知识库预览");
+  let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，避免在工作台中拆出重复入口。");
+  let capabilityAgentBindings = $state<Record<string, string[]>>({});
+  let workbenchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 
   function hasWailsBindings() {
     return typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  }
+  function showWorkbenchNotice(message: string) {
+    workbenchNotice = message;
+    if (workbenchNoticeTimer) clearTimeout(workbenchNoticeTimer);
+    if (typeof window === "undefined") return;
+    workbenchNoticeTimer = window.setTimeout(() => {
+      if (workbenchNotice === message) workbenchNotice = "";
+    }, 2800);
+  }
+  function syncWorkbench(scope = "工作台") {
+    if (hasWailsBindings()) void refreshModelSettings();
+    showWorkbenchNotice(`${scope}已触发同步，最新状态会回写到同步中心。`);
+  }
+  function exportOperationLog() {
+    showWorkbenchNotice(`已生成 ${operationLogs.length} 条操作记录导出。`);
+  }
+  function exportReports() {
+    openWorkLayer("operationLog");
+    showWorkbenchNotice(`已将 ${reportCards.length} 份报告加入导出队列。`);
+  }
+  function openCalendarEvent(event: (typeof calendarEvents)[number]) {
+    openConfigDialog("schedule");
+    showWorkbenchNotice(`正在查看日程：${event.title}`);
+  }
+  function openKnowledgeDocument(item: (typeof documentItems)[number]) {
+    knowledgePreviewTitle = item.title;
+    knowledgePreviewDescription = `${item.type}知识包含 ${item.count} 份文档，状态：${item.status}。`;
+    showWorkbenchNotice(`已打开文档知识：${item.title}`);
+  }
+  function showFailedIngestJobs() {
+    resourceTab = "ingest";
+    const failed = ingestJobs.filter((job) => job.status === "失败");
+    showWorkbenchNotice(failed.length ? `已筛出 ${failed.length} 条失败导入任务。` : "当前没有失败导入任务。");
+  }
+  function toggleAutomationTask(taskId: string) {
+    let nextStatus = "";
+    runningAutomations = runningAutomations.map((item) => {
+      if (item.id !== taskId) return item;
+      const isRunning = item.status === "运行中";
+      nextStatus = isRunning ? "已暂停" : "运行中";
+      return { ...item, status: nextStatus, result: isRunning ? "已暂停" : "已启动", lastRun: "刚刚", nextRun: isRunning ? "等待手动恢复" : item.nextRun };
+    });
+    const task = runningAutomations.find((item) => item.id === taskId);
+    if (task) showWorkbenchNotice(`${task.title}已${nextStatus === "运行中" ? "启动" : "暂停"}。`);
+  }
+  function deleteAutomationTask(taskId: string) {
+    if (runningAutomations.length <= 1) {
+      showWorkbenchNotice("至少保留一个自动化任务。");
+      return;
+    }
+    const task = runningAutomations.find((item) => item.id === taskId);
+    runningAutomations = runningAutomations.filter((item) => item.id !== taskId);
+    if (automationDialog === taskId) automationDialog = undefined;
+    showWorkbenchNotice(task ? `${task.title}已删除。` : "自动化任务已删除。");
+  }
+  function selectDistillSample(item: (typeof todoItems)[number]) {
+    distillStep = 2;
+    showWorkbenchNotice(`已选择样本：${item.title}`);
+  }
+  function toggleDistillSkill(skillId: string) {
+    let nextTitle = "";
+    let enabled = false;
+    skillCards = skillCards.map((skill) => {
+      if (skill.id !== skillId) return skill;
+      nextTitle = skill.title;
+      enabled = !skill.active;
+      return { ...skill, active: enabled };
+    });
+    if (nextTitle) showWorkbenchNotice(`${nextTitle}已${enabled ? "加入" : "移出"}蒸馏能力。`);
+  }
+  function capabilityAgentBindingList(item: CapabilityItem) {
+    return capabilityAgentBindings[item.id] ?? (item.enabled ? agentCards.slice(0, 2).map((agent) => agent.id) : []);
+  }
+  function isCapabilityAgentBound(item: CapabilityItem, agentId: string) {
+    return capabilityAgentBindingList(item).includes(agentId);
+  }
+  function toggleCapabilityAgentBinding(item: CapabilityItem, agent: AgentView) {
+    const current = capabilityAgentBindingList(item);
+    const next = current.includes(agent.id) ? current.filter((id) => id !== agent.id) : [...current, agent.id];
+    capabilityAgentBindings = { ...capabilityAgentBindings, [item.id]: next };
+    showWorkbenchNotice(`${agent.name}已${next.includes(agent.id) ? "绑定到" : "从"}${item.name}${next.includes(agent.id) ? "" : "解绑"}。`);
   }
   const REQUEST_TIMEOUT_MS = 30_000;
   const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
@@ -1846,6 +1964,128 @@
   function teamLeader(team = selectedTeamRoom()) { return agentCards.find((agent) => agent.id === teamLeaderId(team)) ?? teamMembers(team)[0]; }
   function selectedTeamChatMessages() { return teamChatMessages.filter((message) => message.teamId === selectedTeamRoom()?.id); }
   function selectedTeamBuilderMembers() { return teamBuilderMemberIds.map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
+  function activeTeamRun(team = selectedTeamRoom()) {
+    return [...teamRuns].reverse().find((run) => run.teamId === team?.id);
+  }
+  function teamRunStatusLabel(status?: TeamRunStatus) {
+    if (status === "draft") return "草稿";
+    if (status === "running") return "运行中";
+    if (status === "paused") return "已暂停";
+    if (status === "stopped") return "已终止";
+    if (status === "completed") return "已完成";
+    return "未创建";
+  }
+  function teamRunControlList(team = selectedTeamRoom()) {
+    const run = activeTeamRun(team);
+    if (!run) return ["创建运行"];
+    if (run.status === "draft") return ["启动", "终止", "重新分配"];
+    if (run.status === "running") {
+      const reservedControls = team.controls.filter((control) => !["暂停", "继续", "终止", "重新分配"].includes(control));
+      return ["暂停", "终止", "重新分配", ...reservedControls, "完成"];
+    }
+    if (run.status === "paused") return ["继续", "终止", "重新分配"];
+    return ["查看结果"];
+  }
+  function teamRunArtifacts(team = selectedTeamRoom()) {
+    const run = activeTeamRun(team);
+    if (run) return run.artifacts;
+    return (team?.artifacts ?? []).map((title) => ({ id: title, title, type: "预留产物", status: "待生成" }));
+  }
+  function teamRunEvents(team = selectedTeamRoom()) {
+    return activeTeamRun(team)?.events ?? [];
+  }
+  function addTeamRunEvent(runId: string, actor: string, type: string, detail: string) {
+    const event: TeamRunEvent = { id: `${runId}-${Date.now()}`, time: "刚刚", actor, type, detail };
+    teamRuns = teamRuns.map((run) => run.id === runId ? { ...run, updatedAt: "刚刚", events: [...run.events, event] } : run);
+  }
+  function applyTeamRunControl(control: string, team = selectedTeamRoom()) {
+    if (!team) return;
+    const run = activeTeamRun(team);
+    if (!run) {
+      if (control === "创建运行") openTeamChat(team.title);
+      return;
+    }
+    const leaderName = teamLeader(team)?.name ?? "协调者";
+    const currentIndex = Math.max(0, team.steps.findIndex((step) => step.id === run.currentStepId));
+    const nextStep = team.steps[Math.min(currentIndex + 1, team.steps.length - 1)];
+    let nextStatus: TeamRunStatus = run.status;
+    let runState = team.runState;
+    let nextCheckpoint = team.nextCheckpoint;
+    let outcome = team.outcome;
+    let eventType = control;
+    let eventDetail = "";
+    let nextCurrentStepId = run.currentStepId;
+
+    if (control === "启动" || control === "继续") {
+      nextStatus = "running";
+      runState = "运行中";
+      nextCheckpoint = "等待成员输出或人工确认";
+      outcome = "运行中";
+      eventDetail = control === "启动" ? "运行草稿已启动，开始按节点推进。" : "暂停的运行已继续。";
+    } else if (control === "暂停") {
+      nextStatus = "paused";
+      runState = "已暂停";
+      nextCheckpoint = "继续、重新分配或终止";
+      outcome = "等待人工处理";
+      eventDetail = "运行已暂停，后续节点不会继续推进。";
+    } else if (control === "终止") {
+      nextStatus = "stopped";
+      runState = "已终止";
+      nextCheckpoint = "查看已有结果或重新创建运行";
+      outcome = "已终止";
+      eventDetail = "运行已终止，未完成节点标记为跳过。";
+    } else if (control === "重新分配") {
+      nextStatus = run.status === "paused" ? "paused" : "running";
+      runState = nextStatus === "paused" ? "已暂停" : "运行中";
+      nextCheckpoint = `已重新分配给 ${nextStep.owner}`;
+      nextCurrentStepId = nextStep.id;
+      outcome = "重新分配中";
+      eventDetail = `当前节点已重新分配给 ${nextStep.owner}。`;
+    } else if (control === "批准高风险工具") {
+      nextStatus = "running";
+      runState = "等待工具结果";
+      nextCheckpoint = "等待工具结果回写";
+      outcome = "人工已批准";
+      eventDetail = "高风险工具调用已人工批准，等待执行结果回写。";
+    } else if (control === "完成") {
+      nextStatus = "completed";
+      runState = "已完成";
+      nextCheckpoint = "归档报告、待办或资料";
+      outcome = "已生成可沉淀结果";
+      eventDetail = "运行已完成，可以沉淀报告、待办和资料记录。";
+    } else if (control === "查看结果") {
+      showWorkbenchNotice(`${team.title} 当前结果：${run.artifacts.map((item) => `${item.title}(${item.status})`).join("、")}`);
+      return;
+    }
+
+    teamRuns = teamRuns.map((item) => item.id === run.id ? { ...item, status: nextStatus, updatedAt: "刚刚", currentStepId: nextCurrentStepId } : item);
+    teamRooms = teamRooms.map((item) => item.id === team.id ? {
+      ...item,
+      status: teamRunStatusLabel(nextStatus),
+      active: nextStatus === "running" ? "运行中" : teamRunStatusLabel(nextStatus),
+      runState,
+      nextCheckpoint,
+      outcome,
+      steps: item.steps.map((step) => {
+        if (nextStatus === "stopped" && step.status !== "已完成") return { ...step, status: "已跳过" };
+        if (step.id === nextCurrentStepId) return { ...step, status: nextStatus === "paused" ? "已暂停" : nextStatus === "completed" ? "已完成" : "执行中" };
+        return step;
+      }),
+    } : item);
+    addTeamRunEvent(run.id, leaderName, eventType, eventDetail);
+    showWorkbenchNotice(`${team.title}：${eventDetail}`);
+  }
+  function archiveTeamRunArtifact(artifactId: string, team = selectedTeamRoom()) {
+    const run = activeTeamRun(team);
+    if (!run) return;
+    teamRuns = teamRuns.map((item) => item.id === run.id ? {
+      ...item,
+      artifacts: item.artifacts.map((artifact) => artifact.id === artifactId ? { ...artifact, status: "已归档" } : artifact),
+    } : item);
+    const artifact = run.artifacts.find((item) => item.id === artifactId);
+    addTeamRunEvent(run.id, "工作台", "归档", `${artifact?.title ?? "运行产物"}已沉淀到工作台。`);
+    showWorkbenchNotice(`${artifact?.title ?? "运行产物"}已标记为归档。`);
+  }
   function openTeamBuilder(teamTitle?: string) {
     const team = teamRooms.find((item) => item.title === teamTitle);
     teamConfigTitle = teamTitle;
@@ -1884,7 +2124,7 @@
   }
   function addTeamChatAttachment() {
     const nextIndex = teamChatAttachments.length + 1;
-    teamChatAttachments = [...teamChatAttachments, `团队材料-${nextIndex}.md`];
+    teamChatAttachments = [...teamChatAttachments, `待关联材料-${nextIndex}.md`];
   }
   function removeTeamChatAttachment(index: number) {
     teamChatAttachments = teamChatAttachments.filter((_, itemIndex) => itemIndex !== index);
@@ -1896,8 +2136,50 @@
     const members = teamMembers(team);
     const responders = members.length ? members.slice(0, Math.min(3, members.length)) : agentCards.slice(0, 2);
     const now = Date.now();
+    const runTopic = text.length > 28 ? `${text.slice(0, 28)}...` : text;
+    const runId = `${team.id}-run-${now}`;
+    const runArtifacts: TeamRunArtifact[] = (team.artifacts.length ? team.artifacts : ["报告草稿", "待办清单", "资料归档"]).map((title, index) => ({
+      id: `${runId}-artifact-${index}`,
+      title,
+      type: index === 0 ? "报告" : index === 1 ? "待办" : "资料",
+      status: "待生成",
+    }));
+    const runEvents: TeamRunEvent[] = [
+      { id: `${runId}-created`, time: "刚刚", actor: "用户", type: "创建运行", detail: `发起任务：${text}` },
+      { id: `${runId}-plan`, time: "刚刚", actor: teamLeader(team)?.name ?? "协调者", type: "生成计划", detail: `按「${team.mode}」生成 ${team.steps.length} 个运行节点。` },
+    ];
     teamChatInput = "";
     teamChatSending = true;
+    teamRuns = [
+      ...teamRuns,
+      {
+        id: runId,
+        teamId: team.id,
+        title: runTopic,
+        status: "draft",
+        task: text,
+        createdAt: "刚刚",
+        updatedAt: "刚刚",
+        currentStepId: team.steps[0]?.id ?? "",
+        events: runEvents,
+        artifacts: runArtifacts,
+      },
+    ];
+    teamRooms = teamRooms.map((item) => item.id === team.id ? {
+      ...item,
+      active: "运行草稿已创建",
+      status: "草稿",
+      topic: runTopic,
+      queue: `${responders.length} 个待执行节点`,
+      runState: "等待 runtime 执行",
+      nextCheckpoint: "确认分工并启动真实运行",
+      outcome: "运行草稿",
+      artifacts: item.artifacts.length ? item.artifacts : ["报告草稿", "待办清单", "资料归档"],
+      steps: item.steps.map((step, index) => ({
+        ...step,
+        status: index === 0 ? "已生成草稿" : "待执行",
+      })),
+    } : item);
     teamChatMessages = [
       ...teamChatMessages,
       { id: `${team.id}-user-${now}`, teamId: team.id, role: "user" as const, content: text },
@@ -1909,8 +2191,8 @@
         agentName: agent.name,
         agentAvatar: agent.name.slice(0, 1),
         content: index === 0
-          ? `收到任务。我会作为 Team Leader 先拆解目标：${text}。接下来同步分工、风险点和验证步骤。`
-          : `我会补充 ${agent.role} 视角，围绕资料、执行和验收输出可落地建议。`,
+          ? `已创建协作运行草稿 #${runId.split("-").pop()}：${text}。下一步可以在运行台启动、暂停、重新分配或终止。`
+          : `${agent.name} 已加入待执行节点。当前先生成本地 teamRun，后续可接入模型、工具和日志回写。`,
       })),
     ];
     window.setTimeout(() => {
@@ -1927,15 +2209,29 @@
       id: teamConfigTitle ? (teamRooms.find((team) => team.title === teamConfigTitle)?.id ?? `team-${Date.now()}`) : `team-${Date.now()}`,
       title: name,
       members: memberAgents.length,
-      active: `${Math.min(memberAgents.length, 3)} 个 Agent 在线`,
+      active: "模板已创建",
       desc: memberAgents.map((agent) => agent.name).join("、") || "新配置的 Agent 团队。",
-      leader: leaderAgent?.name ?? "Team Leader",
+      leader: leaderAgent?.name ?? "协调者",
       leaderId,
-      status: "已配置",
-      topic: "团队协作任务",
-      queue: "0 条任务",
+      status: "模板",
+      topic: "待分配任务",
+      queue: "0 个运行节点",
       memberIds: [...teamBuilderMemberIds],
       avatars: memberAgents.map((agent) => agent.name.slice(0, 1)).slice(0, 3),
+      mode: "协调者编排",
+      sharedContext: "未绑定资料",
+      runState: "未启动",
+      nextCheckpoint: "发送任务后生成运行草稿",
+      outcome: "等待首次运行",
+      controls: ["暂停", "继续", "终止", "重新分配"],
+      artifacts: ["报告草稿", "待办清单", "资料归档"],
+      steps: memberAgents.map((agent, index) => ({
+        id: `${agent.id}-${index}`,
+        title: index === 0 ? "拆解目标" : "执行分工",
+        owner: agent.name,
+        status: "待运行",
+        detail: index === 0 ? "确认目标、约束和验收标准。" : "按角色补充上下文、建议和验证结果。",
+      })),
     };
     teamRooms = teamConfigTitle ? teamRooms.map((team) => team.title === teamConfigTitle ? nextTeam : team) : [nextTeam, ...teamRooms];
     selectedTeamTitle = nextTeam.title;
@@ -2349,11 +2645,11 @@
     if (configDialog === "customer") return "对标 CreateClientDialog：记录客户类型、联系方式、风险等级和关联项目。";
     if (configDialog === "schedule") return "对标 CreateScheduleDialog：支持关联项目、客户和提醒时间。";
     if (configDialog === "todo") return "对标 CreateTodoDialog：设置优先级、截止时间和执行 Agent。";
-    if (configDialog === "team") return "对标 CreateTeamModal：选择成员、Agent 和协作目标。";
+    if (configDialog === "team") return "配置协作组：选择成员、协调者、共享上下文和运行目标。";
     if (configDialog === "model") return "对标 AddModelDialog：设置 provider、base URL、API Key 和可用模型。";
     if (configDialog === "ingest") return "对标 BatchImportDialog：选择来源、分类、去重和索引策略。";
     if (configDialog === "distill") return "对标 DistillWizard：从历史任务中提炼新 Agent 的身份、技能和工具。";
-    return "该弹窗对标 AORISTLAWER 的创建、导入和配置流程。";
+    return "在工作台中创建、导入或配置资源。";
   }
 
   function mergeStreamingText(existing: string, incoming: string) {
@@ -2865,6 +3161,7 @@
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer}>
             <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workLayerLabels[workLayer]}</strong></div></div></header>
+            {#if workbenchNotice}<div class="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
@@ -2940,7 +3237,7 @@
                   <p class="agent-assistant-disclaimer">Volt GUI 由 AI 驱动生成，请结合构建、测试和人工复核采纳执行建议。</p>
                 </div>
               </section>
-            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button">新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.desc}</p><em>{item.due}</em></div><span>{item.state}</span></article>{/each}</div></section>
+            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button" onclick={() => openConfigDialog("todo")}>新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.desc}</p><em>{item.due}</em></div><span>{item.state}</span></article>{/each}</div></section>
             {:else if workLayer === "automations"}
               <section class="aorist-page">
                 <div class="aorist-toolbar">
@@ -2976,9 +3273,9 @@
                             {/each}
                           </div>
                           <footer role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
-                            <button type="button">{isRunning ? "暂停" : "开始"}</button>
+                            <button type="button" onclick={() => toggleAutomationTask(item.id)}>{isRunning ? "暂停" : "开始"}</button>
                             <button type="button" onclick={() => (automationDialog = item.id)}>编辑</button>
-                            <button type="button">删除</button>
+                            <button type="button" onclick={() => deleteAutomationTask(item.id)}>删除</button>
                           </footer>
                         </div>
                       {/each}
@@ -3076,9 +3373,9 @@
                   {/each}
                 </div>
               </section>
-            {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button">同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button"><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
-            {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button">批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
-            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder="检索标题、来源、状态或文件数量" /></label><span>{filteredResourceItems.length} / {resourceItems.length} 项</span></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button">同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文档知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button">打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>规范知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{regulationItems[0].title}</strong><p>统一承载文档、规范、资料、检索与导入任务，避免在工作台中拆出重复入口。</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{searchResults.length} 项</span></div><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button">查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
+            {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" onclick={exportReports}>批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
+            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder="检索标题、来源、状态或文件数量" /></label><span>{filteredResourceItems.length} / {resourceItems.length} 项</span></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.title)}<article class="media-card"><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></article>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文档知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button" onclick={() => openKnowledgeDocument(item)}>打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>规范知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{knowledgePreviewTitle}</strong><p>{knowledgePreviewDescription}</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{searchResults.length} 项</span></div><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button" onclick={showFailedIngestJobs}>查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>导入队列</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
                 {#if teamViewMode === "chat"}
@@ -3088,7 +3385,7 @@
                       <div class="team-chat-title">
                         <button type="button" aria-label="返回团队大厅" onclick={() => (teamViewMode = "teams")}><ArrowLeft size={16} /></button>
                         <span><UsersRound size={16} /></span>
-                        <strong>{activeTeam?.title || "Agent Team"}</strong>
+                        <strong>{activeTeam?.title || "协作运行"}</strong>
                         <button type="button" title="编辑团队" onclick={() => openTeamBuilder(activeTeam?.title)}><Pencil size={14} /></button>
                       </div>
                       <div class="team-member-bar">
@@ -3097,7 +3394,7 @@
                           <span class:leader={agent.id === teamLeaderId(activeTeam)}>
                             <i><AgentIcon size={12} /></i>
                             {agent.name}
-                            {#if agent.id === teamLeaderId(activeTeam)}<b>Team Leader</b>{/if}
+                            {#if agent.id === teamLeaderId(activeTeam)}<b>协调者</b>{/if}
                           </span>
                         {/each}
                       </div>
@@ -3111,8 +3408,8 @@
                               <span><AgentIcon size={18} /></span>
                             {/each}
                           </div>
-                          <strong>团队已就绪</strong>
-                          <p>发送任务指令后，{teamMembers(activeTeam).length} 位 Agent 会依次协作输出。</p>
+                          <strong>协作组已就绪</strong>
+                          <p>发送任务后会创建运行草稿，真实执行需接入 Agent runtime。</p>
                         </div>
                       {/if}
                       {#each selectedTeamChatMessages() as message (message.id)}
@@ -3121,7 +3418,7 @@
                           <span><MessageIcon size={16} /></span>
                           <div>
                             {#if message.role === "agent"}
-                              <header>{message.agentName || "Agent"}{#if message.agentId === teamLeaderId(activeTeam)}<b><Crown size={11} />Team Leader</b>{/if}</header>
+                              <header>{message.agentName || "Agent"}{#if message.agentId === teamLeaderId(activeTeam)}<b><Crown size={11} />协调者</b>{/if}</header>
                             {/if}
                             <p>{message.content}</p>
                           </div>
@@ -3130,7 +3427,7 @@
                       {#if teamChatSending}
                         <article class="team-message team-message--loading">
                           <span><Loader2 size={16} /></span>
-                          <div><header>Agent Team</header><p><Activity size={13} />团队成员处理中...</p></div>
+                          <div><header>协作运行</header><p><Activity size={13} />正在生成本地运行草稿...</p></div>
                         </article>
                       {/if}
                     </main>
@@ -3149,7 +3446,7 @@
                             <option value={model.name}>{model.name}</option>
                           {/each}
                         </select>
-                        <textarea bind:value={teamChatInput} rows="1" placeholder="向 Agent Team 发送任务..." onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendTeamChat(); } }}></textarea>
+                        <textarea bind:value={teamChatInput} rows="1" placeholder="向协作组发送任务..." onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendTeamChat(); } }}></textarea>
                         <button class="team-send" type="button" disabled={!teamChatInput.trim() || teamChatSending} onclick={sendTeamChat}>发送</button>
                       </div>
                     </footer>
@@ -3157,19 +3454,21 @@
                 {:else}
                   <div class="team-page-head">
                     <div>
-                      <h1><UsersRound size={30} />Agent 团队协作</h1>
-                      <p>配置并管理多 Agent 工作小组，也可以在 Office 视图中查看团队状态、席位和任务流。</p>
+                      <h1><UsersRound size={30} />Agent 协作运行台</h1>
+                      <p>配置多 Agent 工作小组，查看团队模板、共享上下文、运行节点和人工检查点。</p>
                     </div>
                     <div class="team-head-actions">
                       <div class="team-view-switch" role="tablist" aria-label="团队视图">
-                        <button class:active={teamViewMode === "teams"} type="button" onclick={() => (teamViewMode = "teams")}><UsersRound size={15} />团队列表</button>
-                        <button class:active={teamViewMode === "office"} type="button" onclick={() => (teamViewMode = "office")}><BriefcaseBusiness size={15} />Agent Office</button>
+                        <button class:active={teamViewMode === "teams"} type="button" onclick={() => (teamViewMode = "teams")}><UsersRound size={15} />团队模板</button>
+                        <button class:active={teamViewMode === "office"} type="button" onclick={() => (teamViewMode = "office")}><BriefcaseBusiness size={15} />运行台</button>
                       </div>
                       <button class="team-primary" type="button" onclick={() => openTeamBuilder()}><Plus size={15} />配置新组</button>
                     </div>
                   </div>
 
                   {#if teamViewMode === "office"}
+                    {@const runningTeam = selectedTeamRoom()}
+                    {@const currentTeamRun = activeTeamRun(runningTeam)}
                     <div class="team-office-shell">
                       <div class="team-office-toolbar">
                         <select value={selectedTeamTitle || teamRooms[0]?.title || ""} onchange={(event) => (selectedTeamTitle = (event.currentTarget as HTMLSelectElement).value)}>
@@ -3177,13 +3476,19 @@
                             <option value={team.title}>{team.title}</option>
                           {/each}
                         </select>
-                        <button type="button" onclick={() => (selectedTeamTitle = selectedTeamTitle || teamRooms[0]?.title)}><RefreshCw size={13} />重载办公室</button>
+                        <button type="button" onclick={() => (selectedTeamTitle = selectedTeamTitle || teamRooms[0]?.title)}><RefreshCw size={13} />刷新运行态</button>
                       </div>
                       <div class="team-office-stage">
                         <div class="team-office-status">
-                          <span>{selectedTeamRoom()?.status}</span>
-                          <strong>{selectedTeamRoom()?.title} Office</strong>
-                          <p>{teamLeader()?.name}: 正在推进 {selectedTeamRoom()?.topic}</p>
+                          <span>{teamRunStatusLabel(currentTeamRun?.status)}</span>
+                          <strong>{currentTeamRun?.title ?? runningTeam?.title} 运行台</strong>
+                          <p>{teamLeader(runningTeam)?.name}: 协调当前主题「{runningTeam?.topic}」</p>
+                        </div>
+                        <div class="team-run-summary">
+                          <article><span>协作策略</span><strong>{runningTeam?.mode}</strong></article>
+                          <article><span>共享上下文</span><strong>{runningTeam?.sharedContext}</strong></article>
+                          <article><span>运行状态</span><strong>{currentTeamRun ? teamRunStatusLabel(currentTeamRun.status) : runningTeam?.runState}</strong></article>
+                          <article><span>下一检查点</span><strong>{runningTeam?.nextCheckpoint}</strong></article>
                         </div>
                         <div class="team-office-grid">
                           {#each teamMembers() as agent (agent.id)}
@@ -3191,14 +3496,58 @@
                             <article class:leader={agent.id === teamLeaderId()}>
                               <span><AgentIcon size={18} /></span>
                               <strong>{agent.name}</strong>
-                              <em>{agent.id === teamLeaderId() ? "Team Leader" : "Agent Seat"}</em>
-                              <p>{agent.id === teamLeaderId() ? "正在拆解任务和同步结论" : agent.desc}</p>
+                              <em>{agent.id === teamLeaderId() ? "协调者" : "执行成员"}</em>
+                              <p>{agent.id === teamLeaderId() ? "负责拆解目标、分配节点和汇总结论。" : agent.desc}</p>
                             </article>
                           {/each}
                         </div>
                         <div class="team-office-memo">
-                          <strong>Office Memo</strong>
-                          <p>{selectedTeamRoom()?.title} 已接入团队协作协议，成员状态、任务流和会话记录会同步到工作台。</p>
+                          <strong>运行说明</strong>
+                          <p>{currentTeamRun ? `当前 teamRun 创建于 ${currentTeamRun.createdAt}，最近更新 ${currentTeamRun.updatedAt}。` : `${runningTeam?.title} 当前展示本地协作计划。真实模型调用、工具执行和日志回写需要后端 runtime 接入。`}</p>
+                        </div>
+                        <div class="team-run-steps">
+                          <header><strong>运行节点</strong><span>{runningTeam?.outcome}</span></header>
+                          {#each runningTeam?.steps ?? [] as step (step.id)}
+                            <article>
+                              <b>{step.status}</b>
+                              <div><strong>{step.title}</strong><p>{step.detail}</p></div>
+                              <span>{step.owner}</span>
+                            </article>
+                          {/each}
+                        </div>
+                        <div class="team-run-timeline">
+                          <header><strong>执行观察</strong><span>{teamRunEvents(runningTeam).length} 条</span></header>
+                          {#if teamRunEvents(runningTeam).length}
+                            {#each teamRunEvents(runningTeam) as event (event.id)}
+                              <article>
+                                <b>{event.time}</b>
+                                <div><strong>{event.type}</strong><p>{event.detail}</p></div>
+                                <span>{event.actor}</span>
+                              </article>
+                            {/each}
+                          {:else}
+                            <article><b>等待</b><div><strong>尚未创建运行</strong><p>从团队模板进入会话并发送任务后，会在这里显示执行时间线。</p></div><span>工作台</span></article>
+                          {/if}
+                        </div>
+                        <div class="team-run-footer">
+                          <section>
+                            <strong>人工控制</strong>
+                            <div>
+                              {#each teamRunControlList(runningTeam) as control (control)}
+                                <button type="button" onclick={() => applyTeamRunControl(control, runningTeam)}>{control}</button>
+                              {/each}
+                            </div>
+                          </section>
+                          <section>
+                            <strong>沉淀结果</strong>
+                            <div>
+                              {#each teamRunArtifacts(runningTeam) as artifact (artifact.id)}
+                                <button type="button" disabled={!currentTeamRun || artifact.status === "已归档"} onclick={() => archiveTeamRunArtifact(artifact.id, runningTeam)}>
+                                  {artifact.title}<em>{artifact.status}</em>
+                                </button>
+                              {/each}
+                            </div>
+                          </section>
                         </div>
                       </div>
                     </div>
@@ -3227,7 +3576,7 @@
                               {#if team.members > 3}<i class="team-avatar-more">+{team.members - 3}</i>{/if}
                             </div>
                           </footer>
-                          <div class="team-card-meta"><em>{team.active}</em><b>{team.queue}</b><button type="button">进入会话</button></div>
+                          <div class="team-card-meta"><em>{team.mode}</em><b>{team.runState}</b><button type="button" onclick={(event) => { event.stopPropagation(); openTeamChat(team.title); }}>创建运行</button></div>
                         </div>
                       {:else}
                         <div class="team-empty-state">
@@ -3268,8 +3617,8 @@
                   {/each}
                 </div>
               </section>
-            {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button">立即同步</button></div><div class="aorist-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
-            {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button">导出日志</button></div><div class="aorist-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
+            {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button" onclick={() => syncWorkbench("同步中心")}>立即同步</button></div><div class="aorist-list">{#each syncJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
+            {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button" onclick={exportOperationLog}>导出日志</button></div><div class="aorist-list">{#each operationLogs as log (log.time)}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
             {:else}
               {@const selectedCapability = currentCapability()}
               <section class="aorist-page capability-manager capability-console">
@@ -3913,8 +4262,10 @@
               {#if userPanelDialog === "settings"}
                 <button type="button" onclick={resetSettingsDraft}>重置</button>
                 <button type="button" disabled={settingsSaving || modelSettingsLoading} onclick={() => void saveSettingsDraft()}>{settingsSaving ? "保存中" : settingsPanel === "models" ? "打开模型管理" : `保存${settingsPanelTitle()}`}</button>
+              {:else if userPanelDialog === "operationLog"}
+                <button type="button" onclick={exportOperationLog}>导出日志</button>
               {:else}
-                <button type="button" onclick={() => (userPanelDialog = undefined)}>{userPanelDialog === "operationLog" ? "导出日志" : "保存"}</button>
+                <button type="button" onclick={() => syncWorkbench("同步中心")}>立即同步</button>
               {/if}
             </footer>
           </section>
@@ -3949,9 +4300,10 @@
               <section class="capability-agent-binding">
                 <header><Zap size={16} /><strong>绑定 Agent</strong></header>
                 {#each agentCards.slice(0, 3) as agent (agent.id)}
-                  <button type="button" aria-pressed={selectedCapability.enabled}>
+                  {@const isBound = isCapabilityAgentBound(selectedCapability, agent.id)}
+                  <button type="button" aria-pressed={isBound} onclick={() => toggleCapabilityAgentBinding(selectedCapability, agent)}>
                     <span><strong>{agent.name}</strong><em>{agent.role} / {agent.status}</em></span>
-                    <i class:enabled={selectedCapability.enabled}><u></u></i>
+                    <i class:enabled={isBound}><u></u></i>
                   </button>
                 {/each}
               </section>
@@ -3969,7 +4321,7 @@
         </div>
       {/if}
       {#if configDialog}
-        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"}><header><div><span>{configDialog === "team" ? "Agent Team" : configDialog === "model" ? "Model Channel" : "Aorist Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责推进主流程的 Team Leader。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button"><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button"><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
+        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"}><header><div><span>{configDialog === "team" ? "协作组" : configDialog === "model" ? "Model Channel" : "Workbench Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责拆解、分配和汇总的协调者。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button" onclick={() => selectDistillSample(item)}><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button" onclick={() => toggleDistillSkill(skill.id)}><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
   <div class="team-builder">
     <section>
       <label class="team-builder-search">
@@ -4623,6 +4975,7 @@
   .workspace-nav{flex:1;min-height:0;overflow:auto;padding:10px 8px}.workspace-nav section{margin-bottom:10px}.workspace-nav h2{margin:8px 8px 5px;color:#8b95a1;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.workspace-nav button{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;min-height:36px;padding:4px 8px;color:#5f6774;background:transparent;border:0;border-radius:10px;text-align:left;font:inherit}.workspace-nav button:hover,.workspace-nav button.active{color:#1f2937;background:hsl(220 20% 94%)}.workspace-nav button span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:620}.workspace-nav button em{min-width:18px;padding:1px 5px;border-radius:999px;background:#e6eefc;color:#1f5fbf;font-size:10px;font-style:normal;text-align:center}
   .sidebar__user-wrap{position:relative;padding:0 8px 10px}.sidebar__user-wrap .sidebar__user{width:100%;display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid #e5e7eb;border-radius:13px;background:#fff;text-align:left;font:inherit}.user-menu{position:absolute;left:8px;right:8px;bottom:58px;z-index:40;display:grid;gap:4px;padding:6px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;box-shadow:0 18px 38px rgba(15,23,42,.16)}.user-menu button{width:100%;padding:9px 10px;border:0;border-radius:9px;color:#344054;background:transparent;text-align:left;font-size:13px}.user-menu button:hover{background:#f3f6fb;color:#111827}
   .stage-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:0 18px;border-bottom:1px solid #e5e7eb;background:rgba(255,255,255,.76);backdrop-filter:blur(16px)}.stage-topbar span,.aorist-toolbar span,.hero-panel span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.stage-topbar strong{display:block;margin-top:2px;font-size:17px;color:#111827}.stage-topbar__actions,.aorist-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hero-panel button,.aorist-toolbar button,:global(.composer-context-actions button),.automation-card footer button,.capability-item button,.config-modal footer button,.agent-wizard__footer button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:650}.hero-panel button:first-child,.aorist-toolbar button:last-child,.config-modal footer button:last-child,.agent-wizard__footer button:last-child{border-color:#1f5fbf;background:#1f5fbf;color:#fff}
+  .workbench-notice{position:absolute;top:68px;right:24px;z-index:20;display:inline-flex;align-items:center;gap:7px;max-width:min(420px,calc(100% - 48px));min-height:34px;padding:0 12px;border:1px solid #bfdbfe;border-radius:10px;background:rgba(239,246,255,.96);color:#1d4ed8;font-size:12px;font-weight:700;box-shadow:0 12px 28px rgba(15,23,42,.12)}.workbench-notice :global(svg){flex:0 0 auto}
   .aorist-workbench{padding:0;overflow:hidden}.aorist-page{min-height:0;height:100%;overflow:auto;padding:18px;background:radial-gradient(circle at 18% 0%,rgba(31,95,191,.1),transparent 32%),#f7f8fb}.hero-panel{padding:28px;border:1px solid #dfe5ef;border-radius:22px;background:linear-gradient(135deg,#fff 0%,#eef4ff 100%);box-shadow:0 16px 34px rgba(15,23,42,.08)}.hero-panel h1{max-width:760px;margin:10px 0;color:#111827;font-size:clamp(28px,4vw,46px);line-height:1.05;letter-spacing:-.04em}.hero-panel p{max-width:680px;margin:0 0 18px;color:#5f6774;line-height:1.7}.hero-panel div{display:flex;gap:10px;flex-wrap:wrap}.aorist-stats,.aorist-card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.aorist-stats article,.aorist-card,.aorist-list article,.agent-card,.automation-card,.media-card,.capability-item,:global(.task-composer-card){border:1px solid #e2e8f0;border-radius:16px;background:rgba(255,255,255,.92);box-shadow:0 8px 22px rgba(15,23,42,.05)}.aorist-stats article{padding:16px}.aorist-stats span,.aorist-stats em{display:block;color:#7b8494;font-size:12px;font-style:normal}.aorist-stats strong{display:block;margin:8px 0 3px;color:#111827;font-size:28px;letter-spacing:-.04em}.aorist-split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);gap:12px;margin-top:14px}.aorist-card{padding:14px}.aorist-card header,.aorist-toolbar,.agent-card header,:global(.task-composer-card__head),.config-modal header,.agent-wizard__header,.agent-wizard__footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.aorist-card header strong,.aorist-toolbar strong{color:#111827;font-size:16px}.aorist-card header button{border:0;background:transparent;color:#1f5fbf;font-size:12px}.todo-row,.automation-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;width:100%;gap:10px;margin-top:8px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff;text-align:left}.automation-row{grid-template-columns:minmax(0,1fr) auto}.todo-row i{width:8px;height:8px;border-radius:999px;background:#1f5fbf}.todo-row strong,.automation-row strong{display:block;color:#1f2937;font-size:13px}.todo-row em,.automation-row em{display:block;margin-top:3px;color:#7b8494;font-size:11px;font-style:normal}.todo-row b,.automation-row b{color:#1f5fbf;font-size:11px}
   :global(.agent-strip){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}:global(.agent-strip button){display:grid;grid-template-columns:34px minmax(0,1fr);gap:9px;align-items:center;padding:12px;border:1px solid #e2e8f0;border-radius:15px;background:#fff;text-align:left}:global(.agent-strip button.active){border-color:#1f5fbf;background:#eef4ff}:global(.agent-strip span){grid-row:span 2;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;background:#1f5fbf;color:#fff}:global(.agent-strip strong){color:#111827;font-size:13px}:global(.agent-strip em){color:#7b8494;font-size:11px;font-style:normal}:global(.task-composer-card){padding:14px}:global(.task-composer-card__head){margin-bottom:12px}:global(.task-composer-card__head) strong{display:block;color:#111827;font-size:18px}:global(.task-composer-card__head) select,.config-grid input,.config-grid textarea,.aorist-search input,.wizard-form input,.wizard-form textarea,.wizard-form select{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}:global(.task-composer-card__head) select{height:34px;padding:0 10px}:global(.composer-context-actions){display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}:global(.composer-context-actions > span){display:inline-flex;align-items:center;min-height:32px;padding:0 10px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1f5fbf;font-size:12px;font-weight:650}
   .aorist-toolbar{margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.aorist-search{display:block;max-width:420px;margin-bottom:12px}.aorist-search input{width:100%;height:38px;padding:0 12px}.aorist-list{display:grid;gap:10px}.aorist-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px;cursor:pointer}.aorist-list strong{color:#111827}.aorist-list p{margin:4px 0;color:#5f6774;font-size:13px}.aorist-list em{color:#7b8494;font-size:12px;font-style:normal}.aorist-list span{padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:12px;white-space:nowrap}.aorist-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.automation-card,.agent-card,.media-card,.capability-item{padding:15px;cursor:pointer}.automation-card span,.media-card span,.capability-item span{display:inline-block;margin-bottom:9px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.automation-card strong,.media-card strong,.capability-item strong{display:block;color:#111827;font-size:15px}.automation-card p,.media-card p,.capability-item p{color:#5f6774;font-size:13px;line-height:1.6}.automation-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;color:#7b8494;font-size:12px}.automation-card dd{margin:0;color:#111827}.automation-card footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}.automation-card footer button:last-child{color:#b42318}.agent-card header{align-items:flex-start}.agent-card header>span{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:#eef4ff;color:#1f5fbf}.agent-card header div{flex:1;min-width:0}.agent-card header strong{display:block;color:#111827}.agent-card header em{display:inline-block;margin-top:4px;color:#7b8494;font-size:11px;font-style:normal}.agent-card header button{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#98a2b3;opacity:0}.agent-card:hover header button{opacity:1}.agent-card p{color:#5f6774;line-height:1.6;font-size:13px}.agent-card footer{display:flex;align-items:center;justify-content:space-between;color:#7b8494;font-size:12px}.agent-card footer span{display:inline-flex;align-items:center;gap:4px}.agent-card footer b{color:#1f5fbf;font-size:12px}.capability-tabs{display:flex;gap:8px;margin:0 0 12px;padding:4px;width:max-content;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.capability-tabs button{min-width:92px;height:32px;border:0;border-radius:9px;background:transparent;color:#5f6774;font-weight:700}.capability-tabs button.active{background:#1f5fbf;color:#fff}
@@ -9705,6 +10058,45 @@
     line-height: 1.6;
   }
 
+  .team-run-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .team-run-summary article,
+  .team-run-steps article,
+  .team-run-timeline article {
+    border: 1px solid hsl(0 0% 100% / 0.1);
+    border-radius: 13px;
+    color: hsl(210 20% 92%);
+    background: hsl(0 0% 100% / 0.06);
+  }
+
+  .team-run-summary article {
+    min-height: 64px;
+    padding: 10px 12px;
+  }
+
+  .team-run-summary span,
+  .team-run-steps span,
+  .team-run-timeline span {
+    display: block;
+    color: hsl(215 20% 72%);
+    font-size: 11px;
+  }
+
+  .team-run-summary strong {
+    display: block;
+    margin-top: 6px;
+    overflow: hidden;
+    color: hsl(210 20% 94%);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .team-office-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -9755,6 +10147,130 @@
     color: hsl(215 20% 72%);
     font-size: 12px;
     line-height: 1.5;
+  }
+
+  .team-run-steps,
+  .team-run-timeline {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .team-run-steps header,
+  .team-run-timeline header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: hsl(210 20% 92%);
+  }
+
+  .team-run-steps header strong,
+  .team-run-timeline header strong {
+    font-size: 14px;
+  }
+
+  .team-run-steps header span,
+  .team-run-timeline header span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    color: hsl(213 94% 78%);
+    background: hsl(213 94% 68% / 0.14);
+  }
+
+  .team-run-steps article,
+  .team-run-timeline article {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr) minmax(120px, auto);
+    gap: 12px;
+    align-items: center;
+    min-height: 58px;
+    padding: 10px 12px;
+  }
+
+  .team-run-steps b,
+  .team-run-timeline b {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    color: hsl(213 94% 78%);
+    background: hsl(213 94% 68% / 0.14);
+    font-size: 11px;
+  }
+
+  .team-run-steps strong,
+  .team-run-timeline strong {
+    color: hsl(210 20% 94%);
+    font-size: 13px;
+  }
+
+  .team-run-steps p,
+  .team-run-timeline p {
+    margin: 3px 0 0;
+    color: hsl(215 20% 72%);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .team-run-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .team-run-footer section {
+    padding: 12px;
+    border: 1px solid hsl(0 0% 100% / 0.1);
+    border-radius: 13px;
+    background: hsl(0 0% 100% / 0.06);
+  }
+
+  .team-run-footer strong {
+    display: block;
+    margin-bottom: 9px;
+    color: hsl(210 20% 94%);
+    font-size: 13px;
+  }
+
+  .team-run-footer div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
+  .team-run-footer button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 26px;
+    padding: 0 9px;
+    border: 1px solid hsl(0 0% 100% / 0.12);
+    border-radius: 999px;
+    color: hsl(210 20% 86%);
+    background: hsl(0 0% 100% / 0.07);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .team-run-footer button:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+
+  .team-run-footer button:not(:disabled):hover {
+    border-color: hsl(213 94% 68% / 0.4);
+    color: hsl(210 20% 96%);
+    background: hsl(213 94% 68% / 0.16);
+  }
+
+  .team-run-footer button em {
+    color: hsl(215 20% 72%);
+    font-size: 10px;
+    font-style: normal;
   }
 
   .team-modal {
@@ -9999,8 +10515,16 @@
     }
 
     .team-card-grid,
-    .team-office-grid {
+    .team-office-grid,
+    .team-run-summary,
+    .team-run-footer {
       grid-template-columns: 1fr;
+    }
+
+    .team-run-steps article,
+    .team-run-timeline article {
+      grid-template-columns: 1fr;
+      align-items: start;
     }
 
     .team-chat-header {

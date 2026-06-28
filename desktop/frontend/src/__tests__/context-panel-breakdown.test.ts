@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/context-panel-breakdown.test.ts
 
-import { contextBreakdown, contextCostDisplay, formatCacheHitRate } from "../components/ContextPanel";
+import { contextBreakdown, contextCostDisplay, formatCacheHitRate, formatMetricTokens } from "../components/ContextPanel";
 import { currencySymbol, formatMoney, formatMoneyLocalized } from "../lib/money";
 
 let passed = 0;
@@ -118,6 +118,16 @@ console.log("\ncontext panel cache rate");
 eq(formatCacheHitRate(99_950, 50), "99.95%", "cache hit rate preserves two decimal places");
 eq(formatCacheHitRate(0, 10_000), "0.00%", "cache hit rate shows zero when usage data exists");
 eq(formatCacheHitRate(0, 0), "-", "cache hit rate stays empty before usage data exists");
+
+console.log("\ncontext panel metric token labels");
+
+const exactMetric = formatMetricTokens(999_999, "en");
+eq(exactMetric.display, "999,999", "sub-million metric tokens keep exact comma formatting");
+eq(exactMetric.exact, "999,999", "sub-million exact metric title matches the display");
+
+const largeMetric = formatMetricTokens(123_456_789, "en");
+eq(largeMetric.display, "123,456,789", "large metric tokens keep exact comma formatting");
+eq(largeMetric.exact, "123,456,789", "large metric exact title matches the display");
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);

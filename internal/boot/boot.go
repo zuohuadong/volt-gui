@@ -262,7 +262,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	reg := tool.NewRegistry()
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: cfg.WriteRootsForRoot(root), Network: cfg.Sandbox.Network}
+	writeRoots := cfg.WriteRootsForRoot(root)
+	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)
+	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Network: cfg.Sandbox.Network}
 	shell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, stderr)
 	bashSpec.Shell = shell
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
@@ -277,7 +279,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if tokenEconomy {
 		enabledBuiltins = tokenEconomyBuiltins(enabledBuiltins)
 	}
-	addBuiltins(reg, enabledBuiltins, cfg.WriteRootsForRoot(root), bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec)
+	addBuiltins(reg, enabledBuiltins, writeRoots, forbidReadRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -867,12 +869,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 					return "web_fetch is disabled by [tools].enabled.", nil
 				}
 				names := addTools(reg, builtin.Workspace{
-					Dir:         root,
-					WriteRoots:  cfg.WriteRootsForRoot(root),
-					Bash:        bashSpec,
-					BashTimeout: bashTimeout,
-					Search:      searchSpec,
-					ProxySpec:   proxySpec,
+					Dir:             root,
+					WriteRoots:      writeRoots,
+					ForbidReadRoots: forbidReadRoots,
+					Bash:            bashSpec,
+					BashTimeout:     bashTimeout,
+					Search:          searchSpec,
+					ProxySpec:       proxySpec,
 				}.Tools("web_fetch"))
 				if len(names) == 0 {
 					return "web_fetch is already enabled or unavailable.", nil
@@ -1307,12 +1310,12 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 // instance bound to writeRoots (preserving registry order).
 // When workDir is non-empty, tools resolve relative paths against it instead of
 // the process cwd, enabling concurrent multi-project sessions.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots, forbidReadRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec) {
 	// If a workspace directory is set, use workspace-bound tools that resolve
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
 	if workDir != "" {
-		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec}
+		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec}
 		for _, t := range ws.Tools(enabled...) {
 			reg.Add(t)
 		}
@@ -1335,7 +1338,7 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	// Replace the unconfined defaults with confined instances (registry order is
 	// preserved on replace): file-writers bound to the workspace, bash to the OS
 	// sandbox, web_fetch to the proxy. Only replace tools actually enabled/present.
-	confined := append(builtin.ConfineWriters(writeRoots), builtin.ConfineBash(bashSpec, bashTimeout), builtin.ConfineSearch(searchSpec), builtin.ConfineWebFetch(proxySpec))
+	confined := append(builtin.ConfineWriters(writeRoots), builtin.ConfineBash(bashSpec, bashTimeout), builtin.ConfineSearch(searchSpec, bashSpec, forbidReadRoots), builtin.ConfineWebFetch(proxySpec))
 	for _, t := range confined {
 		if _, ok := reg.Get(t.Name()); ok {
 			reg.Add(t)

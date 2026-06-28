@@ -74,9 +74,6 @@ func legacyCredentialsPaths() []string {
 		seen[path] = true
 		paths = append(paths, path)
 	}
-	if dir := legacyVoltUIOSConfigDir(); dir != "" {
-		add(filepath.Join(dir, "credentials"))
-	}
 	if dir := legacyOSSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
 	}

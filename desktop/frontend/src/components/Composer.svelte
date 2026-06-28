@@ -103,7 +103,7 @@
   }
 
   function modelValue(model: ModelInfo) {
-    return model.name || model.model || model.ref || model.label || "";
+    return model.ref || model.name || model.model || model.label || "";
   }
 
   function modelKey(model: ModelInfo, index: number) {
@@ -111,7 +111,7 @@
   }
 
   function modelLabel(model: ModelInfo, index: number) {
-    return model.label || modelValue(model) || `模型 ${index + 1}`;
+    return model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
   }
 
   function commandKey(command: CommandInfo, index: number) {

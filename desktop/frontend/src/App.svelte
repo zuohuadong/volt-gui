@@ -293,14 +293,35 @@
   function navIcon(layer: WorkLayer) { return navIcons[layer] ?? Puzzle; }
   function agentIcon(agentId: string) { return agentIcons[agentId as keyof typeof agentIcons] ?? Bot; }
   function avatarIcon(avatar: string) { return avatarIcons[avatar as keyof typeof avatarIcons] ?? UserRound; }
-  function modelValue(model?: ModelInfo) { return model?.name || model?.model || model?.ref || model?.label || ""; }
+  function modelValue(model?: ModelInfo) { return model?.ref || model?.name || model?.model || model?.label || ""; }
 
   const workspaceNav = [
-    { title: "Agent Work", items: [{ label: "新建对话", layer: "newTask", icon: "newTask" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
+    { title: "Agent Work", items: [{ label: "新建对话", layer: "newTask", icon: "newTask" }, { label: "待办事项", layer: "todos", icon: "todos" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
     { title: "运营", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }] },
+    { title: "协作", items: [{ label: "日程日历", layer: "calendar", icon: "calendar" }, { label: "报告中心", layer: "reports", icon: "reports" }, { label: "团队协作", layer: "teams", icon: "teams" }] },
     { title: "知识库", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }, { label: "资料中心", layer: "resources", icon: "resources" }] },
   ] as { title: string; items: { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string }[] }[];
-  const collapsibleWorkspaceSections = new Set(["运营", "知识库"]);
+  const workLayerLabels: Record<WorkLayer, string> = {
+    today: "工作台",
+    newTask: "新建对话",
+    todos: "待办事项",
+    automations: "自动化",
+    agents: "Agent 中心",
+    projects: "项目管理",
+    customers: "客户管理",
+    calendar: "日历日程",
+    reports: "报告中心",
+    resources: "资料中心",
+    teams: "团队协作",
+    models: "模型管理",
+    settings: "系统设置",
+    operationLog: "操作记录",
+    search: "搜索",
+    sync: "同步中心",
+    ingest: "导入资料",
+    capabilities: "能力中心",
+  };
+  const collapsibleWorkspaceSections = new Set(["运营", "协作", "知识库"]);
   const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
   const todoItems = [
     { title: "验证桌面预览加载状态", desc: "确认浏览器模式无需 Wails 绑定也能进入工作台", due: "今天", state: "进行中" },
@@ -633,10 +654,10 @@
   }
 
   function splitModelLines(value: string): string[] {
-    return value
+    return Array.from(new Set(value
       .split(/[\n,]/)
       .map((item) => item.trim())
-      .filter(Boolean);
+      .filter(Boolean)));
   }
 
   function providerDefaultModel(provider: ProviderView) {
@@ -900,16 +921,17 @@
     modelDraftMessage = "";
     try {
       const fetched = await app().FetchProviderModels(providerViewFromDraft());
-      if (!fetched.length) {
+      const fetchedModels = Array.from(new Set(fetched.map((model) => model.trim()).filter(Boolean)));
+      if (!fetchedModels.length) {
         modelDraft.fetchedModels = [];
         modelDraft.selectedFetchedModels = [];
         modelDraftMessage = "没有从 /models 发现可用聊天模型，可手动填写模型名。";
         return;
       }
-      const current = splitModelLines(modelDraft.modelsText).filter((model) => fetched.includes(model));
-      modelDraft.fetchedModels = fetched;
-      applySelectedDraftModels(current.length ? current : fetched);
-      modelDraftMessage = `已拉取 ${fetched.length} 个模型，请选择要添加的模型。`;
+      const current = splitModelLines(modelDraft.modelsText).filter((model) => fetchedModels.includes(model));
+      modelDraft.fetchedModels = fetchedModels;
+      applySelectedDraftModels(current.length ? current : fetchedModels);
+      modelDraftMessage = `已拉取 ${fetchedModels.length} 个模型，请选择要添加的模型。`;
     } catch (error) {
       modelDraftError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -2842,7 +2864,7 @@
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer}>
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workspaceNav.flatMap((section) => section.items).find((item) => item.layer === workLayer)?.label || "工作台"}</strong></div></div></header>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workLayerLabels[workLayer]}</strong></div></div></header>
             {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
@@ -3123,7 +3145,7 @@
                       <div class="team-compose-row">
                         <button type="button" aria-label="上传文件" onclick={addTeamChatAttachment}><Plus size={16} /></button>
                         <select bind:value={teamChatModel} aria-label="选择模型">
-                          {#each modelCards as model (model.name)}
+                          {#each modelCards as model (model.ref)}
                             <option value={model.name}>{model.name}</option>
                           {/each}
                         </select>
@@ -4031,7 +4053,7 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.name)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}

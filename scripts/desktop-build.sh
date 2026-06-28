@@ -76,6 +76,7 @@ darwin)
 	dmgsrc=$(mktemp -d)
 	cp -R "$app" "$dmgsrc/${APPNAME}.app"
 	dmg="$ROOT/dist/${APPNAME}-darwin-universal.dmg"
+	rm -f "$dmg"
 	create-dmg \
 		--volname "$APPNAME" \
 		--window-size 540 380 \
@@ -84,6 +85,10 @@ darwin)
 		--app-drop-link 390 190 \
 		--no-internet-enable \
 		"$dmg" "$dmgsrc" || true
+	if [ ! -f "$dmg" ]; then
+		echo "create-dmg did not produce $dmg; falling back to hdiutil" >&2
+		hdiutil create -volname "$APPNAME" -srcfolder "$dmgsrc" -ov -format UDZO "$dmg"
+	fi
 	[ -f "$dmg" ] || { echo "create-dmg did not produce $dmg" >&2; exit 1; }
 	rm -rf "$staging" "$dmgsrc"
 	;;

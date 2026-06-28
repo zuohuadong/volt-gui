@@ -78,6 +78,7 @@ func (r *streamingDesktopRunner) Run(_ context.Context, input string) error {
 func newSmokeApp(t *testing.T) (*App, *WorkspaceTab, *captureSink, *streamingDesktopRunner) {
 	t.Helper()
 	isolateDesktopUserDirs(t)
+	writeKeylessSubmitProviderConfig(t, "deepseek-flash/deepseek-v4-flash")
 
 	sessionDir := config.SessionDir()
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {

@@ -129,6 +129,14 @@ type Controller struct {
 	// surfaced to frontends via WorkspaceRoot().
 	workspaceRoot string
 
+	// externalFolderRefs maps session-generated @ tokens to user-dropped
+	// directories outside workspaceRoot. It is intentionally per-controller:
+	// dragging a folder authorizes that folder for this chat session only, without
+	// widening scoped @ resolution to arbitrary absolute paths.
+	externalFolderRefsMu   sync.RWMutex
+	externalFolderRefs     map[string]string
+	externalFolderToolRefs externalFolderToolRefs
+
 	// checkpoints owns the snapshot-based rewind bookkeeping (the per-session
 	// store, the monotonic turn counter, and the conversation-rewind boundary map)
 	// behind its own lock, off c.mu — so a boundary read for a rewind/fork never
@@ -229,6 +237,10 @@ type MCPReadOnlyTrustResult struct {
 	Err       error
 }
 
+type externalFolderToolRefs interface {
+	RegisterReadRoot(token, root string)
+}
+
 // Options carries the already-built pieces setup assembles. Lifecycle metadata
 // lets the controller mint and rotate session files; Host/Commands are surfaced
 // to frontends that resolve MCP prompts and slash commands.
@@ -265,8 +277,9 @@ type Options struct {
 	PluginCtx context.Context
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
-	WorkspaceRoot string
-	AutoPlan      string
+	WorkspaceRoot          string
+	ExternalFolderToolRefs externalFolderToolRefs
+	AutoPlan               string
 	// ResponseLanguage controls final-answer language preference. Empty/auto
 	// means no transient injection because the stable language policy follows the
 	// current user turn.
@@ -346,6 +359,7 @@ func New(opts Options) *Controller {
 		jobs:                       opts.Jobs,
 		mcp:                        newMcpManager(opts.Host, opts.Registry, pluginCtx),
 		workspaceRoot:              opts.WorkspaceRoot,
+		externalFolderToolRefs:     opts.ExternalFolderToolRefs,
 		approval:                   newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.

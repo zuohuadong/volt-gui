@@ -69,6 +69,7 @@ func init() { tool.RegisterBuiltin(grepTool{}) }
 // directories invisible to ripgrep instead of checking them in-process.
 type grepTool struct {
 	workDir     string
+	paths       *PathResolver
 	rg          string
 	forbidRoots []string
 	sb          sandbox.Spec
@@ -89,6 +90,12 @@ func (grepTool) Schema() json.RawMessage {
 
 func (grepTool) ReadOnly() bool { return true }
 
+// SnipHint keeps a long head of matches and a short tail: the first matches are
+// the ones the model usually acts on, the tail just confirms scope.
+func (grepTool) SnipHint() tool.SnipHint {
+	return tool.SnipHint{Head: 80, Tail: 8, HeadChars: 10000, TailChars: 1000}
+}
+
 func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
 		Pattern        string `json:"pattern"`
@@ -104,7 +111,8 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if p.Path == "" {
 		p.Path = "."
 	}
-	p.Path = resolveIn(g.workDir, p.Path)
+	rp := resolveReadablePath(g.workDir, p.Path, g.paths)
+	p.Path = rp.Path
 
 	to := grepTimeout(p.TimeoutSeconds)
 	ctx, cancel := context.WithTimeout(ctx, to)
@@ -112,17 +120,24 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 
 	info, err := os.Stat(p.Path)
 	if err != nil {
-		return "", fmt.Errorf("grep %s: %w", p.Path, err)
+		if rp.External {
+			return "", fmt.Errorf("grep %s: %s", rp.DisplayPath, rp.ErrorText(err))
+		}
+		return "", fmt.Errorf("grep %s: %w", rp.DisplayPath, err)
 	}
 	if confineRead(g.forbidRoots, p.Path) {
 		if info.IsDir() {
 			return formatGrep(ctx, nil, false, to), nil
 		}
-		return "", &os.PathError{Op: "stat", Path: p.Path, Err: os.ErrNotExist}
+		err := &os.PathError{Op: "stat", Path: p.Path, Err: os.ErrNotExist}
+		if rp.External {
+			return "", fmt.Errorf("grep %s: %s", rp.DisplayPath, rp.ErrorText(err))
+		}
+		return "", err
 	}
 
 	if g.rg != "" {
-		out, wrapped, err := g.runRipgrep(ctx, p.Pattern, p.Path, to)
+		out, wrapped, err := g.runRipgrep(ctx, p.Pattern, p.Path, to, rp)
 		if len(g.forbidRoots) == 0 || wrapped {
 			return out, err
 		}
@@ -130,10 +145,10 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		// back to the native scanner, which prunes those roots in-process.
 	}
 
-	return g.runNative(ctx, p.Pattern, p.Path, info, to)
+	return g.runNative(ctx, p.Pattern, p.Path, info, to, rp)
 }
 
-func (g grepTool) runNative(ctx context.Context, pattern, path string, info os.FileInfo, to time.Duration) (string, error) {
+func (g grepTool) runNative(ctx context.Context, pattern, path string, info os.FileInfo, to time.Duration, rp ResolvedPath) (string, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", fmt.Errorf("invalid pattern: %w", err)
@@ -216,7 +231,7 @@ func (g grepTool) runNative(ctx context.Context, pattern, path string, info os.F
 				return nil // looks binary, skip the file
 			}
 			if re.MatchString(line) {
-				out = append(out, fmt.Sprintf("%s:%d:%s", file, ln, line))
+				out = append(out, fmt.Sprintf("%s:%d:%s", rp.DisplayFor(file), ln, line))
 				if len(out) >= grepMaxMatches {
 					truncated = true
 					return io.EOF
@@ -262,7 +277,7 @@ func (g grepTool) runNative(ctx context.Context, pattern, path string, info os.F
 // capped at grepMaxMatches so a flood of hits can't blow up memory.
 // The ripgrep subprocess is wrapped in the OS sandbox so forbid-read
 // directories are invisible to it.
-func (g grepTool) runRipgrep(ctx context.Context, pattern, path string, to time.Duration) (string, bool, error) {
+func (g grepTool) runRipgrep(ctx context.Context, pattern, path string, to time.Duration, rp ResolvedPath) (string, bool, error) {
 	// Build the ripgrep argv and wrap it in the OS sandbox so forbid-read
 	// directories are invisible to the ripgrep subprocess.
 	argv, wrapped := sandbox.CommandArgs(g.sb, []string{
@@ -292,7 +307,7 @@ func (g grepTool) runRipgrep(ctx context.Context, pattern, path string, to time.
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
-		out = append(out, sc.Text())
+		out = append(out, displayRipgrepLine(sc.Text(), rp))
 		if len(out) >= grepMaxMatches {
 			truncated = true
 			break
@@ -308,10 +323,33 @@ func (g grepTool) runRipgrep(ctx context.Context, pattern, path string, to time.
 		// ripgrep exits 1 with no output for "no matches"; a real failure (bad
 		// pattern, unreadable path) writes a message to stderr.
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			if rp.External {
+				msg = rp.ErrorText(fmt.Errorf("%s", msg))
+			}
 			return "", wrapped, fmt.Errorf("ripgrep: %s", msg)
 		}
 	}
 	return formatGrep(ctx, out, truncated, to), wrapped, nil
+}
+
+func displayRipgrepLine(line string, rp ResolvedPath) string {
+	if !rp.External || !strings.HasPrefix(line, rp.Root) {
+		return line
+	}
+	for i := len(rp.Root); i < len(line); i++ {
+		if line[i] != ':' || i+1 >= len(line) || line[i+1] < '0' || line[i+1] > '9' {
+			continue
+		}
+		j := i + 1
+		for j < len(line) && line[j] >= '0' && line[j] <= '9' {
+			j++
+		}
+		if j >= len(line) || line[j] != ':' {
+			continue
+		}
+		return rp.DisplayFor(line[:i]) + line[i:]
+	}
+	return line
 }
 
 // SearchSpec configures the grep tool's engine. A non-empty RgPath makes grep

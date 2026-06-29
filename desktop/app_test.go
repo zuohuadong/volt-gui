@@ -471,6 +471,82 @@ func TestBackgroundCloseHideStrategyByPlatform(t *testing.T) {
 	}
 }
 
+func TestBackgroundCloseRequiresRestorePath(t *testing.T) {
+	tests := []struct {
+		name        string
+		goos        string
+		trayStarted bool
+		trayReady   bool
+		want        bool
+	}{
+		{name: "macOS restores from Dock", goos: "darwin", trayStarted: false, trayReady: false, want: true},
+		{name: "Windows tray ready", goos: "windows", trayStarted: true, trayReady: true, want: true},
+		{name: "Windows tray started but not ready", goos: "windows", trayStarted: true, trayReady: false, want: false},
+		{name: "Linux tray ready", goos: "linux", trayStarted: true, trayReady: true, want: true},
+		{name: "Linux tray started but not ready", goos: "linux", trayStarted: true, trayReady: false, want: false},
+		{name: "Linux no tray", goos: "linux", trayStarted: false, trayReady: false, want: false},
+		{name: "other Unix no tray", goos: "freebsd", trayStarted: false, trayReady: false, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := backgroundCloseHasRestorePathFor(tt.goos, tt.trayStarted, tt.trayReady); got != tt.want {
+				t.Fatalf("backgroundCloseHasRestorePathFor(%q, %v, %v) = %v, want %v", tt.goos, tt.trayStarted, tt.trayReady, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBackgroundCloseReadySignalRequiresCurrentReadyState(t *testing.T) {
+	app := NewApp()
+	tray := newDesktopTray()
+	app.mu.Lock()
+	app.tray = tray
+	app.mu.Unlock()
+
+	if app.waitForTrayReady(0) {
+		t.Fatal("tray should not be ready before its ready signal")
+	}
+
+	tray.markReady()
+	if app.waitForTrayReady(0) {
+		t.Fatal("closed ready signal should not count without the current ready state")
+	}
+
+	app.mu.Lock()
+	app.trayReady = true
+	app.mu.Unlock()
+	if !app.waitForTrayReady(0) {
+		t.Fatal("ready state should be accepted after the tray is marked ready")
+	}
+
+	app.mu.Lock()
+	app.trayReady = false
+	app.mu.Unlock()
+	if app.waitForTrayReady(0) {
+		t.Fatal("stale ready signal should not count after the tray exits")
+	}
+}
+
+func TestBackgroundCloseWaitsForTrayReadySignal(t *testing.T) {
+	app := NewApp()
+	tray := newDesktopTray()
+	app.mu.Lock()
+	app.tray = tray
+	app.mu.Unlock()
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		app.mu.Lock()
+		app.trayReady = true
+		app.mu.Unlock()
+		tray.markReady()
+	}()
+
+	if !app.waitForTrayReady(200 * time.Millisecond) {
+		t.Fatal("waitForTrayReady should observe the tray becoming ready")
+	}
+}
+
 func TestBackgroundRestoreMaximiseStrategy(t *testing.T) {
 	tests := []struct {
 		goos      string
@@ -2423,6 +2499,59 @@ func TestFileRefsUseActiveTabWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
+	workspace := robustTempDir(t)
+	external := filepath.Join(robustTempDir(t), "Folder With Spaces")
+	if err := os.MkdirAll(filepath.Join(external, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "src", "outside.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectedExternal := external
+	if resolved, err := filepath.EvalSymlinks(external); err == nil {
+		expectedExternal = resolved
+	}
+	expectedDisplayPath := filepath.ToSlash(expectedExternal)
+
+	ctrl := &control.Controller{}
+	token, _, err := ctrl.RegisterExternalFolderRef(external)
+	if err != nil {
+		t.Fatalf("RegisterExternalFolderRef: %v", err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: workspace, Ctrl: ctrl},
+		},
+		activeTabID: "project",
+	}
+
+	listed := app.ListDir(token + "/src/")
+	if len(listed) != 1 ||
+		listed[0].Name != "outside.txt" ||
+		listed[0].Path != token+"/src/outside.txt" ||
+		listed[0].DisplayPath != expectedDisplayPath+"/src/outside.txt" {
+		t.Fatalf("ListDir external src = %+v, want outside token/display path", listed)
+	}
+
+	found := app.SearchFileRefs("outside")
+	var externalHit *DirEntry
+	for i := range found {
+		if found[i].Path == token+"/src/outside.txt" {
+			externalHit = &found[i]
+			break
+		}
+	}
+	if externalHit == nil || externalHit.DisplayName != "Folder With Spaces/src/outside.txt" || externalHit.DisplayPath != expectedDisplayPath+"/src/outside.txt" {
+		t.Fatalf("SearchFileRefs external hit = %+v, all results %+v", externalHit, found)
+	}
+
+	preview := app.ReadFile(token + "/src/outside.txt")
+	if preview.Err != "" || preview.Body != "outside" {
+		t.Fatalf("ReadFile external token preview = %+v, want outside file body", preview)
+	}
+}
+
 func TestDeleteSessionCancelsActiveRuntime(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -3077,6 +3206,52 @@ func TestListSessionsMarksAutoBotSessionAsChannel(t *testing.T) {
 	got := sessions[0]
 	if got.Kind != "channel" || got.Channel != "weixin" || got.ChannelLabel != "微信" || got.RemoteID != "wx-chat-1" || got.SessionSource != "auto" {
 		t.Fatalf("channel session meta = %+v", got)
+	}
+}
+
+func TestDeleteSessionClearsAutoBotSessionMapping(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	path := filepath.Join(dir, "bot-channel.jsonl")
+	if err := os.WriteFile(path, []byte(`{"role":"user","content":"from channel"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+	other := filepath.Join(dir, "other-channel.jsonl")
+	cfg := config.Default()
+	cfg.Bot.Connections = []config.BotConnectionConfig{{
+		ID: "weixin-weixin", Provider: "weixin", Domain: "weixin", Label: "微信", Enabled: true, Status: "connected",
+		SessionMappings: []config.BotConnectionSessionMapping{
+			{RemoteID: "remove-auto", SessionID: "path:" + path, SessionSource: "auto"},
+			{RemoteID: "keep-explicit", SessionID: "path:" + path},
+			{RemoteID: "keep-other-auto", SessionID: "path:" + other, SessionSource: "auto"},
+		},
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := NewApp()
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: filepath.Join(dir, "active.jsonl"), Label: "test"})
+	app.setTestCtrl(ctrl, "")
+	defer app.activeCtrl().Close()
+
+	if err := app.DeleteSession(path); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	got := config.LoadForEdit(config.UserConfigPath())
+	mappings := got.Bot.Connections[0].SessionMappings
+	if len(mappings) != 2 {
+		t.Fatalf("session mappings = %+v, want explicit and other auto mappings preserved", mappings)
+	}
+	for _, mapping := range mappings {
+		if mapping.RemoteID == "remove-auto" {
+			t.Fatalf("deleted session auto mapping was preserved: %+v", mappings)
+		}
 	}
 }
 

@@ -35,6 +35,10 @@ func newDesktopBotRuntime() *desktopBotRuntime {
 	return &desktopBotRuntime{status: BotRuntimeStatusView{Status: "stopped", Message: "bot runtime is not started"}}
 }
 
+func forgetAutoSessionMappingsForPath(sessionPath string) error {
+	return botruntime.ForgetAutoSessionMappingsForPath(sessionPath)
+}
+
 func (a *App) refreshBotRuntimeAsync() {
 	if a.ctx == nil {
 		return
@@ -243,4 +247,20 @@ func (r *desktopBotRuntime) snapshot() BotRuntimeStatusView {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.status
+}
+
+// updateConnectionToolApprovalMode updates a connection's tool approval mode
+// on the running gateway without restarting. Returns true if updated, false if
+// the gateway is not running or the connection is unknown.
+func (r *desktopBotRuntime) updateConnectionToolApprovalMode(connID, mode string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gw == nil {
+		return false
+	}
+	mode = normalizeBotConnectionToolApprovalMode(mode)
+	// Update ConnectionChannels in the internal GatewayConfig so new sessions
+	// pick up the mode. Existing sessions are updated by the gateway directly.
+	r.gw.UpdateConnectionToolApprovalMode(connID, mode)
+	return true
 }

@@ -129,6 +129,14 @@ type Controller struct {
 	// surfaced to frontends via WorkspaceRoot().
 	workspaceRoot string
 
+	// externalFolderRefs maps session-generated @ tokens to user-dropped
+	// directories outside workspaceRoot. It is intentionally per-controller:
+	// dragging a folder authorizes that folder for this chat session only, without
+	// widening scoped @ resolution to arbitrary absolute paths.
+	externalFolderRefsMu   sync.RWMutex
+	externalFolderRefs     map[string]string
+	externalFolderToolRefs externalFolderToolRefs
+
 	// checkpoints owns the snapshot-based rewind bookkeeping (the per-session
 	// store, the monotonic turn counter, and the conversation-rewind boundary map)
 	// behind its own lock, off c.mu — so a boundary read for a rewind/fork never
@@ -229,6 +237,10 @@ type MCPReadOnlyTrustResult struct {
 	Err       error
 }
 
+type externalFolderToolRefs interface {
+	RegisterReadRoot(token, root string)
+}
+
 // Options carries the already-built pieces setup assembles. Lifecycle metadata
 // lets the controller mint and rotate session files; Host/Commands are surfaced
 // to frontends that resolve MCP prompts and slash commands.
@@ -265,8 +277,9 @@ type Options struct {
 	PluginCtx context.Context
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
-	WorkspaceRoot string
-	AutoPlan      string
+	WorkspaceRoot          string
+	ExternalFolderToolRefs externalFolderToolRefs
+	AutoPlan               string
 	// ResponseLanguage controls final-answer language preference. Empty/auto
 	// means no transient injection because the stable language policy follows the
 	// current user turn.
@@ -346,6 +359,7 @@ func New(opts Options) *Controller {
 		jobs:                       opts.Jobs,
 		mcp:                        newMcpManager(opts.Host, opts.Registry, pluginCtx),
 		workspaceRoot:              opts.WorkspaceRoot,
+		externalFolderToolRefs:     opts.ExternalFolderToolRefs,
 		approval:                   newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
@@ -1067,6 +1081,13 @@ func (c *Controller) RunShell(command string) {
 		durationMs := time.Since(start).Milliseconds()
 		out := buf.String()
 
+		if ctx.Err() == context.Canceled {
+			c.sink.Emit(event.Event{
+				Kind: event.ToolResult,
+				Tool: event.Tool{ID: id, Name: "bash", Output: out, Err: i18n.M.TurnCancelled, DurationMs: durationMs},
+			})
+			return nil
+		}
 		if ctx.Err() == context.DeadlineExceeded {
 			c.sink.Emit(event.Event{
 				Kind: event.ToolResult,
@@ -1151,6 +1172,8 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 		}
 		defer func() { c.hooks.Stop(context.Background(), lastAssistantText(c.History()), c.turn) }()
 	}
+	c.markInFlightTurn(startMessages, true)
+	defer c.clearInFlightTurn()
 	return c.runner.Run(ctx, input)
 }
 
@@ -1166,6 +1189,10 @@ func (c *Controller) Cancel() {
 	if cancel != nil {
 		c.approval.clearAll()
 		cancel()
+		return
+	}
+	if c.goals.active() {
+		c.stopGoal(GoalStatusStopped)
 	}
 }
 
@@ -1981,6 +2008,7 @@ func (c *Controller) Resume(s *agent.Session, path string) {
 	c.setActiveJobSession(path)
 	c.rebindCheckpoints(path)
 	c.loadGuardianSession()
+	c.recoverInterruptedTurn(path)
 	c.maybeColdResumePrune(path)
 }
 
@@ -2140,12 +2168,58 @@ func (c *Controller) messageCount() int {
 	return len(c.executor.Session().Snapshot())
 }
 
+func (c *Controller) markInFlightTurn(startMessageIndex int, preserveUser bool) {
+	path := c.SessionPath()
+	if path == "" {
+		return
+	}
+	if err := agent.MarkSessionInFlightTurn(path, startMessageIndex, preserveUser); err != nil {
+		slog.Warn("controller: mark in-flight turn", "err", err)
+	}
+}
+
+func (c *Controller) clearInFlightTurn() {
+	path := c.SessionPath()
+	if path == "" {
+		return
+	}
+	if err := agent.ClearSessionInFlightTurn(path); err != nil {
+		slog.Warn("controller: clear in-flight turn", "err", err)
+	}
+}
+
+func (c *Controller) recoverInterruptedTurn(path string) {
+	if c.executor == nil || path == "" {
+		return
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.InFlightTurn == nil {
+		if err != nil {
+			slog.Warn("controller: load in-flight turn marker", "err", err)
+		}
+		return
+	}
+	marker := meta.InFlightTurn
+	msgs := c.executor.Session().Snapshot()
+	changed := marker.StartMessageIndex >= 0 && len(msgs) > marker.StartMessageIndex
+	if changed {
+		if marker.PreserveUser {
+			c.stripCancelledVisibleTurnMessagesAfter(marker.StartMessageIndex)
+		} else {
+			c.stripTurnMessagesAfter(marker.StartMessageIndex)
+		}
+		if err := c.snapshot(false); err != nil {
+			slog.Warn("controller: post-interrupted-turn snapshot", "err", err)
+		}
+	}
+	if err := agent.ClearSessionInFlightTurn(path); err != nil {
+		slog.Warn("controller: clear stale in-flight turn", "err", err)
+	}
+}
+
 // stripTurnMessagesAfter truncates the executor's session to keep only messages
-// before the given index, discarding an incomplete turn (the user prompt plus
-// every assistant / tool message that followed).  It is called when the user
-// explicitly cancels a turn so the next prompt starts clean — the model won't
-// see leftover in-progress todo items or partial tool calls and re-execute
-// interrupted work.
+// before the given index, discarding an incomplete synthetic turn (the synthetic
+// user prompt plus every assistant/tool message that followed).
 func (c *Controller) stripTurnMessagesAfter(idx int) {
 	if c.executor == nil {
 		return
@@ -2154,7 +2228,38 @@ func (c *Controller) stripTurnMessagesAfter(idx int) {
 	if len(msgs) <= idx {
 		return
 	}
-	c.executor.Session().Replace(msgs[:idx])
+	c.replaceSessionAfterCancel(msgs[:idx])
+}
+
+// stripCancelledVisibleTurnMessagesAfter removes assistant/tool remnants from a
+// cancelled visible turn while preserving the real user prompt that started it.
+func (c *Controller) stripCancelledVisibleTurnMessagesAfter(idx int) {
+	if c.executor == nil {
+		return
+	}
+	msgs := c.executor.Session().Snapshot()
+	if len(msgs) <= idx {
+		return
+	}
+	next := append([]provider.Message{}, msgs[:idx]...)
+	for _, m := range msgs[idx:] {
+		if m.Role != provider.RoleUser {
+			continue
+		}
+		if IsSyntheticUserMessage(m.Content) {
+			continue
+		}
+		if _, ok := agent.SteerText(m.Content); ok {
+			continue
+		}
+		next = append(next, m)
+		break
+	}
+	c.replaceSessionAfterCancel(next)
+}
+
+func (c *Controller) replaceSessionAfterCancel(msgs []provider.Message) {
+	c.executor.Session().Replace(append([]provider.Message(nil), msgs...))
 	// Rebuild canonical todo state from the truncated transcript so
 	// Controller.Todos(), goal readiness, and the task panel no longer see
 	// the in_progress items written by the cancelled turn.
@@ -2271,8 +2376,10 @@ func (c *Controller) History() []provider.Message {
 	return c.executor.Session().Snapshot() // copy — a turn may be appending concurrently
 }
 
-// ContextSnapshot returns (promptTokens, contextWindow) from the most recent
+// ContextSnapshot returns (usedTokens, contextWindow) from the most recent
 // turn. Both zero means no data yet — a gauge hides itself.
+// usedTokens is promptTokens + completionTokens so the GUI breakdown and
+// gauge reflect the full token usage, not just the prompt fill.
 func (c *Controller) ContextSnapshot() (int, int) {
 	if c.executor == nil {
 		return 0, 0
@@ -2281,7 +2388,7 @@ func (c *Controller) ContextSnapshot() (int, int) {
 	if u == nil {
 		return 0, c.executor.ContextWindow()
 	}
-	return u.PromptTokens, c.executor.ContextWindow()
+	return u.PromptTokens + u.CompletionTokens, c.executor.ContextWindow()
 }
 
 // CompactRatio returns the auto-compaction threshold as a fraction of the window

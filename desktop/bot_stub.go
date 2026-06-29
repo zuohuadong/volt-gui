@@ -5,10 +5,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"voltui/internal/config"
 )
+
+var botStubSessionMappingMu sync.Mutex
 
 type BotConnectionCredentialView struct {
 	AppID        string `json:"appId"`
@@ -86,6 +91,66 @@ type botInstallSession struct{}
 
 func newDesktopBotRuntime() *desktopBotRuntime { return &desktopBotRuntime{} }
 
+func (r *desktopBotRuntime) updateConnectionToolApprovalMode(connID, mode string) bool {
+	return false
+}
+
+func forgetAutoSessionMappingsForPath(sessionPath string) error {
+	target := normalizedBotSessionPath(sessionPath)
+	if target == "" {
+		return nil
+	}
+	userPath := config.UserConfigPath()
+	if strings.TrimSpace(userPath) == "" {
+		return nil
+	}
+	botStubSessionMappingMu.Lock()
+	defer botStubSessionMappingMu.Unlock()
+
+	cfg := config.LoadForEdit(userPath)
+	now := time.Now().UTC().Format(time.RFC3339)
+	changed := false
+	for i := range cfg.Bot.Connections {
+		conn := &cfg.Bot.Connections[i]
+		next := conn.SessionMappings[:0]
+		removed := false
+		for _, mapping := range conn.SessionMappings {
+			if strings.TrimSpace(mapping.SessionSource) == "auto" && normalizedBotSessionPath(mapping.SessionID) == target {
+				removed = true
+				continue
+			}
+			next = append(next, mapping)
+		}
+		if !removed {
+			continue
+		}
+		conn.SessionMappings = next
+		conn.UpdatedAt = now
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return cfg.SaveTo(userPath)
+}
+
+func normalizedBotSessionPath(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(sessionID), "path:") {
+		sessionID = strings.TrimSpace(sessionID[5:])
+	}
+	if sessionID == "" {
+		return ""
+	}
+	if !(strings.HasSuffix(sessionID, ".jsonl") || strings.Contains(sessionID, "/") || strings.Contains(sessionID, `\`) || strings.HasPrefix(sessionID, "~")) {
+		return ""
+	}
+	return filepath.Clean(sessionID)
+}
+
 func (a *App) refreshBotRuntimeAsync() {}
 
 func (a *App) refreshBotRuntime() {}
@@ -136,6 +201,21 @@ func normalizeBotConnectionToolApprovalMode(mode string) string {
 	default:
 		return "ask"
 	}
+}
+
+func botConnectionRuntimeID(conn config.BotConnectionConfig) string {
+	if id := strings.TrimSpace(conn.ID); id != "" {
+		return id
+	}
+	provider := strings.TrimSpace(conn.Provider)
+	domain := strings.TrimSpace(conn.Domain)
+	if provider == "" {
+		return ""
+	}
+	if domain == "" {
+		return provider
+	}
+	return provider + "-" + domain
 }
 
 func botConnectionView(conn config.BotConnectionConfig) BotConnectionView {

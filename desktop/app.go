@@ -382,6 +382,9 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		cfg = config.LoadForEdit(config.UserConfigPath())
 	}
 	if cfg.DesktopCloseBehavior() == "background" {
+		if !a.backgroundCloseHasRestorePath() {
+			return false
+		}
 		a.backgroundMaximised.Store(runtime.WindowIsMaximised(ctx))
 		a.saveWindowStateSync()
 		a.snapshotAllTabs()
@@ -389,6 +392,59 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		return true
 	}
 	return false
+}
+
+const backgroundCloseTrayReadyTimeout = 500 * time.Millisecond
+
+func (a *App) backgroundCloseHasRestorePath() bool {
+	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
+		return backgroundCloseHasRestorePathFor(goruntime.GOOS, false, false)
+	}
+	if !a.startTray() {
+		return false
+	}
+	return backgroundCloseHasRestorePathFor(goruntime.GOOS, true, a.waitForTrayReady(backgroundCloseTrayReadyTimeout))
+}
+
+func (a *App) waitForTrayReady(timeout time.Duration) bool {
+	if a.isTrayReady() {
+		return true
+	}
+	ready := a.trayReadySignal()
+	if ready == nil {
+		return false
+	}
+	if timeout <= 0 {
+		select {
+		case <-ready:
+			return a.isTrayReady()
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return a.isTrayReady()
+	case <-timer.C:
+		return a.isTrayReady()
+	}
+}
+
+func (a *App) isTrayReady() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.trayReady
+}
+
+func (a *App) trayReadySignal() <-chan struct{} {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.tray == nil {
+		return nil
+	}
+	return a.tray.ready
 }
 
 func (a *App) showMainWindow() {
@@ -433,6 +489,10 @@ func showFromBackground(ctx context.Context, wasMaximised bool) {
 
 func backgroundCloseUsesApplicationHide(goos string) bool {
 	return goos == "darwin"
+}
+
+func backgroundCloseHasRestorePathFor(goos string, trayStarted, trayReady bool) bool {
+	return backgroundCloseUsesApplicationHide(goos) || (trayStarted && trayReady)
 }
 
 type backgroundRestorePlan struct {
@@ -1231,7 +1291,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	oldSink := tab.sink
 	if oldSink != nil {
 		oldSink.tabID = detachedRuntimeTabID(oldPath)
-		oldSink.ctx = nil
+		oldSink.clearContext()
 	}
 	if oldCtrl.RuntimeStatus().Cancellable {
 		oldCtrl.Cancel()
@@ -1271,7 +1331,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		}
 		if oldSink != nil {
 			oldSink.tabID = tab.ID
-			oldSink.ctx = a.ctx
+			oldSink.setContext(a.ctx)
 		}
 		return err
 	}
@@ -1835,6 +1895,9 @@ func (a *App) DeleteSession(path string) error {
 		}
 	}
 	a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
+	if err := forgetAutoSessionMappingsForPath(sessionPath); err != nil {
+		slog.Warn("desktop: failed to clear auto bot session mapping", "err", err)
+	}
 	if fallback.needs {
 		fallback = a.sessionDeleteFallbackTarget(fallback)
 		if err := a.openFallbackRuntime(fallback); err != nil {
@@ -1992,7 +2055,7 @@ func tabMatchesSession(tab *WorkspaceTab, dir, sessionPath string) bool {
 func (a *App) prepareRemovedSessionRuntimes(removed []removedSessionRuntime) error {
 	for _, item := range removed {
 		if item.sink != nil {
-			item.sink.ctx = nil
+			item.sink.clearContext()
 		}
 		if item.ctrl == nil {
 			continue
@@ -2293,6 +2356,33 @@ func (a *App) ResumeSession(path string) ([]HistoryMessage, error) {
 	return a.ResumeSessionForTab("", path)
 }
 
+func (a *App) ResumeSessionPage(path string, limit int) (HistoryPage, error) {
+	return a.ResumeSessionPageForTab("", path, limit)
+}
+
+func (a *App) ResumeSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	tab := a.tabByID(tabID)
+	if tab == nil || tab.Ctrl == nil {
+		return HistoryPage{}, fmt.Errorf("tab is not ready")
+	}
+	ctrl := tab.Ctrl
+	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	loaded, err := loadResumableSession(sessionPath)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(sessionPath) {
+		if err := a.rebindTabToLoadedSessionPath(tab, sessionPath, loaded); err != nil {
+			return HistoryPage{}, err
+		}
+	}
+	a.setTabReadOnly(tab.ID, false)
+	return a.HistoryPageForTab(tab.ID, 0, limit), nil
+}
+
 // ResumeSessionForTab is the tab-scoped form of ResumeSession. A saved session
 // path is a runtime identity, so changing to a different path must replace the
 // tab's controller binding rather than mutating the current controller in place.
@@ -2343,6 +2433,29 @@ func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, er
 	}
 	a.setTabReadOnly(tab.ID, true)
 	return a.HistoryForTab(tab.ID), nil
+}
+
+func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	tab := a.tabByID(tabID)
+	if tab == nil || tab.Ctrl == nil {
+		return HistoryPage{}, fmt.Errorf("tab is not ready")
+	}
+	ctrl := tab.Ctrl
+	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	loaded, err := loadResumableSession(sessionPath)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(sessionPath) {
+		if err := a.rebindTabToLoadedSessionPath(tab, sessionPath, loaded); err != nil {
+			return HistoryPage{}, err
+		}
+	}
+	a.setTabReadOnly(tab.ID, true)
+	return a.HistoryPageForTab(tab.ID, 0, limit), nil
 }
 
 func (a *App) setTabReadOnly(tabID string, readOnly bool) {
@@ -3209,15 +3322,141 @@ type HistoryToolCall struct {
 	ArgumentsArchived bool   `json:"argumentsArchived,omitempty"`
 }
 
+const (
+	defaultHistoryPageTurns = 60
+	maxHistoryPageTurns     = 200
+)
+
+type HistoryPage struct {
+	Messages   []HistoryMessage `json:"messages"`
+	StartTurn  int              `json:"startTurn"`
+	EndTurn    int              `json:"endTurn"`
+	TotalTurns int              `json:"totalTurns"`
+	HasOlder   bool             `json:"hasOlder"`
+}
+
 // History returns the session's message log.
 func (a *App) History() []HistoryMessage {
 	return a.HistoryForTab("")
 }
 
-func (a *App) HistoryForTab(tabID string) []HistoryMessage {
-	ctrl := a.ctrlByTabID(tabID)
+func (a *App) HistoryPage(beforeTurn, limit int) HistoryPage {
+	return a.HistoryPageForTab("", beforeTurn, limit)
+}
+
+func (a *App) HistoryPageForTab(tabID string, beforeTurn, limit int) HistoryPage {
+	a.mu.RLock()
+	tab := a.tabByIDLocked(tabID)
+	var ctrl control.SessionAPI
+	var sessionDir, sessionPath string
+	if tab != nil {
+		ctrl = tab.Ctrl
+		sessionDir = tabSessionDir(tab)
+		sessionPath = tab.currentSessionPath()
+	}
+	a.mu.RUnlock()
 	if ctrl == nil {
-		return []HistoryMessage{}
+		if strings.TrimSpace(sessionPath) == "" {
+			return HistoryPage{Messages: []HistoryMessage{}}
+		}
+		page, err := previewSessionPage(sessionDir, sessionPath, beforeTurn, limit)
+		if err != nil {
+			return HistoryPage{Messages: []HistoryMessage{}}
+		}
+		return page
+	}
+	msgs := ctrl.History()
+	dir := controllerSessionDir(ctrl)
+	path := ctrl.SessionPath()
+	return historyPageFromProviderMessages(
+		msgs,
+		sessionDisplayResolver(dir, path),
+		sessionPlannerDisplayTurns(dir, path),
+		ctrl.CheckpointTurnsByMessageIndex(),
+		beforeTurn,
+		limit,
+	)
+}
+
+func normalizeHistoryPageLimit(limit int) int {
+	if limit <= 0 {
+		return defaultHistoryPageTurns
+	}
+	if limit > maxHistoryPageTurns {
+		return maxHistoryPageTurns
+	}
+	return limit
+}
+
+func historyPageFromMessages(messages []HistoryMessage, beforeTurn, limit int) HistoryPage {
+	limit = normalizeHistoryPageLimit(limit)
+	totalTurns := 0
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			totalTurns++
+		}
+	}
+	if beforeTurn <= 0 || beforeTurn > totalTurns {
+		beforeTurn = totalTurns
+	}
+	startTurn := beforeTurn - limit
+	if startTurn < 0 {
+		startTurn = 0
+	}
+	page := HistoryPage{
+		StartTurn:  startTurn,
+		EndTurn:    beforeTurn,
+		TotalTurns: totalTurns,
+		HasOlder:   startTurn > 0,
+	}
+	if len(messages) == 0 || startTurn >= beforeTurn {
+		page.Messages = []HistoryMessage{}
+		return page
+	}
+	page.Messages = historyMessagesForTurnRange(messages, startTurn, beforeTurn)
+	return page
+}
+
+func historyMessagesForTurnRange(messages []HistoryMessage, startTurn, endTurn int) []HistoryMessage {
+	out := make([]HistoryMessage, 0, len(messages))
+	turn := -1
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			turn++
+		}
+		if turn < 0 {
+			if startTurn == 0 {
+				out = append(out, msg)
+			}
+			continue
+		}
+		if turn >= startTurn && turn < endTurn {
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+func (a *App) HistoryForTab(tabID string) []HistoryMessage {
+	a.mu.RLock()
+	tab := a.tabByIDLocked(tabID)
+	var ctrl control.SessionAPI
+	var sessionDir, sessionPath string
+	if tab != nil {
+		ctrl = tab.Ctrl
+		sessionDir = tabSessionDir(tab)
+		sessionPath = tab.currentSessionPath()
+	}
+	a.mu.RUnlock()
+	if ctrl == nil {
+		if strings.TrimSpace(sessionPath) == "" {
+			return []HistoryMessage{}
+		}
+		messages, err := previewSessionMessages(sessionDir, sessionPath)
+		if err != nil {
+			return []HistoryMessage{}
+		}
+		return messages
 	}
 	msgs := ctrl.History()
 	dir := controllerSessionDir(ctrl)
@@ -3230,14 +3469,64 @@ func (a *App) HistoryForTab(tabID string) []HistoryMessage {
 	)
 }
 
+func (a *App) HistoryCheckpointTurnsForTab(tabID string) []int {
+	a.mu.RLock()
+	tab := a.tabByIDLocked(tabID)
+	var ctrl control.SessionAPI
+	if tab != nil {
+		ctrl = tab.Ctrl
+	}
+	a.mu.RUnlock()
+	if ctrl == nil {
+		return []int{}
+	}
+	return historyCheckpointTurns(
+		ctrl.History(),
+		sessionDisplayResolver(controllerSessionDir(ctrl), ctrl.SessionPath()),
+		ctrl.CheckpointTurnsByMessageIndex(),
+	)
+}
+
+func historyCheckpointTurns(msgs []provider.Message, resolveUserContent func(string) string, checkpointTurns map[int]int) []int {
+	out := make([]int, 0)
+	for index, msg := range msgs {
+		if msg.Role != provider.RoleUser {
+			continue
+		}
+		if _, isSteer := agent.SteerText(msg.Content); isSteer {
+			continue
+		}
+		if control.IsSyntheticUserMessage(resolveUserContent(msg.Content)) {
+			continue
+		}
+		turn, ok := checkpointTurns[index]
+		if !ok {
+			turn = -1
+		}
+		out = append(out, turn)
+	}
+	return out
+}
+
 func historyMessages(msgs []provider.Message, resolveUserContent func(string) string) []HistoryMessage {
 	return historyMessagesWithPlannerDisplays(msgs, resolveUserContent, nil, nil)
 }
 
 func historyMessagesWithPlannerDisplays(msgs []provider.Message, resolveUserContent func(string) string, plannerTurns []plannerDisplayTurn, checkpointTurns map[int]int) []HistoryMessage {
-	out := make([]HistoryMessage, 0, len(msgs))
 	replayedTodoArgs := historyTodoArgsWithCompleteSteps(msgs)
 	toolResults := historyToolResultsByID(msgs)
+	return historyMessagesWithPlannerDisplaysAndLookups(msgs, resolveUserContent, plannerTurns, checkpointTurns, replayedTodoArgs, toolResults)
+}
+
+func historyMessagesWithPlannerDisplaysAndLookups(
+	msgs []provider.Message,
+	resolveUserContent func(string) string,
+	plannerTurns []plannerDisplayTurn,
+	checkpointTurns map[int]int,
+	replayedTodoArgs map[string]string,
+	toolResults map[string]provider.Message,
+) []HistoryMessage {
+	out := make([]HistoryMessage, 0, len(msgs))
 	plannerByUserHash := plannerTurnsByUserHash(plannerTurns)
 	for index, m := range msgs {
 		content := m.Content
@@ -3296,6 +3585,100 @@ func historyMessagesWithPlannerDisplays(msgs []provider.Message, resolveUserCont
 				out = append(out, cloneHistoryMessages(turns[0].Messages)...)
 				plannerByUserHash[messageDisplayKey(m.Content)] = turns[1:]
 			}
+		}
+	}
+	return out
+}
+
+func historyPageFromProviderMessages(
+	msgs []provider.Message,
+	resolveUserContent func(string) string,
+	plannerTurns []plannerDisplayTurn,
+	checkpointTurns map[int]int,
+	beforeTurn, limit int,
+) HistoryPage {
+	limit = normalizeHistoryPageLimit(limit)
+	totalTurns := visibleHistoryUserTurns(msgs, resolveUserContent)
+	if beforeTurn <= 0 || beforeTurn > totalTurns {
+		beforeTurn = totalTurns
+	}
+	startTurn := beforeTurn - limit
+	if startTurn < 0 {
+		startTurn = 0
+	}
+	page := HistoryPage{
+		StartTurn:  startTurn,
+		EndTurn:    beforeTurn,
+		TotalTurns: totalTurns,
+		HasOlder:   startTurn > 0,
+	}
+	if len(msgs) == 0 || startTurn >= beforeTurn {
+		page.Messages = []HistoryMessage{}
+		return page
+	}
+	pageMessages, originalIndexes := providerMessagesForVisibleTurnRange(msgs, resolveUserContent, startTurn, beforeTurn)
+	page.Messages = historyMessagesWithPlannerDisplaysAndLookups(
+		pageMessages,
+		resolveUserContent,
+		plannerTurns,
+		checkpointTurnsForProviderWindow(checkpointTurns, originalIndexes),
+		historyTodoArgsWithCompleteSteps(msgs),
+		historyToolResultsByID(msgs),
+	)
+	return page
+}
+
+func visibleHistoryUserTurns(msgs []provider.Message, resolveUserContent func(string) string) int {
+	total := 0
+	for _, msg := range msgs {
+		if isVisibleHistoryUser(msg, resolveUserContent) {
+			total++
+		}
+	}
+	return total
+}
+
+func isVisibleHistoryUser(msg provider.Message, resolveUserContent func(string) string) bool {
+	if msg.Role != provider.RoleUser {
+		return false
+	}
+	if _, isSteer := agent.SteerText(msg.Content); isSteer {
+		return false
+	}
+	return !control.IsSyntheticUserMessage(resolveUserContent(msg.Content))
+}
+
+func providerMessagesForVisibleTurnRange(msgs []provider.Message, resolveUserContent func(string) string, startTurn, endTurn int) ([]provider.Message, []int) {
+	out := make([]provider.Message, 0, len(msgs))
+	indexes := make([]int, 0, len(msgs))
+	turn := -1
+	for index, msg := range msgs {
+		if isVisibleHistoryUser(msg, resolveUserContent) {
+			turn++
+		}
+		if turn < 0 {
+			if startTurn == 0 {
+				out = append(out, msg)
+				indexes = append(indexes, index)
+			}
+			continue
+		}
+		if turn >= startTurn && turn < endTurn {
+			out = append(out, msg)
+			indexes = append(indexes, index)
+		}
+	}
+	return out, indexes
+}
+
+func checkpointTurnsForProviderWindow(checkpointTurns map[int]int, originalIndexes []int) map[int]int {
+	if len(checkpointTurns) == 0 || len(originalIndexes) == 0 {
+		return nil
+	}
+	out := map[int]int{}
+	for pageIndex, originalIndex := range originalIndexes {
+		if turn, ok := checkpointTurns[originalIndex]; ok {
+			out[pageIndex] = turn
 		}
 	}
 	return out
@@ -3402,6 +3785,8 @@ func historyToolSubject(name, args string) string {
 		subject = historyArgString(a, "url")
 	case "task":
 		subject = firstNonEmpty(historyArgString(a, "description"), historyArgString(a, "prompt"))
+	case "run_skill":
+		subject = historyArgString(a, "name")
 	case "move_file":
 		src := historyArgString(a, "source_path")
 		dst := historyArgString(a, "destination_path")
@@ -3643,6 +4028,31 @@ func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
 		sessionDisplayResolver(sessionDir, sessionPath),
 		sessionPlannerDisplayTurns(sessionDir, sessionPath),
 		nil,
+	), nil
+}
+
+func previewSessionPage(sessionDir, path string, beforeTurn, limit int) (HistoryPage, error) {
+	sessionPath, _, err := validateSessionPath(sessionDir, path)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if out, ok, err := previewEventSessionMessages(sessionPath); ok || err != nil {
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		return historyPageFromMessages(out, beforeTurn, limit), nil
+	}
+	loaded, err := agent.LoadSession(sessionPath)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	return historyPageFromProviderMessages(
+		loaded.Snapshot(),
+		sessionDisplayResolver(sessionDir, sessionPath),
+		sessionPlannerDisplayTurns(sessionDir, sessionPath),
+		nil,
+		beforeTurn,
+		limit,
 	), nil
 }
 
@@ -4228,33 +4638,35 @@ type SkillsSettingsView struct {
 // the connection error), "initializing" (background startup in progress), or
 // "disabled".
 type ServerView struct {
-	Name           string     `json:"name"`
-	Transport      string     `json:"transport"`
-	Status         string     `json:"status"`
-	StartIntent    string     `json:"startIntent,omitempty"`
-	RuntimeState   string     `json:"runtimeState,omitempty"`
-	BuiltIn        bool       `json:"builtIn,omitempty"`
-	Configured     bool       `json:"configured,omitempty"`
-	AutoStart      bool       `json:"autoStart"`
-	Tier           string     `json:"tier,omitempty"`
-	Command        string     `json:"command,omitempty"`
-	Args           []string   `json:"args,omitempty"`
-	URL            string     `json:"url,omitempty"`
-	EnvKeys        []string   `json:"envKeys,omitempty"`
-	HeaderKeys     []string   `json:"headerKeys,omitempty"`
-	Tools          int        `json:"tools"`
-	Prompts        int        `json:"prompts"`
-	Resources      int        `json:"resources"`
-	Error          string     `json:"error,omitempty"`
-	ToolList       []ToolView `json:"toolList,omitempty"`
-	AuthStatus     string     `json:"authStatus,omitempty"`
-	AuthURL        string     `json:"authUrl,omitempty"`
-	AuthConfigured bool       `json:"authConfigured,omitempty"`
+	Name                 string     `json:"name"`
+	Transport            string     `json:"transport"`
+	Status               string     `json:"status"`
+	StartIntent          string     `json:"startIntent,omitempty"`
+	RuntimeState         string     `json:"runtimeState,omitempty"`
+	BuiltIn              bool       `json:"builtIn,omitempty"`
+	Configured           bool       `json:"configured,omitempty"`
+	AutoStart            bool       `json:"autoStart"`
+	Tier                 string     `json:"tier,omitempty"`
+	Command              string     `json:"command,omitempty"`
+	Args                 []string   `json:"args,omitempty"`
+	URL                  string     `json:"url,omitempty"`
+	EnvKeys              []string   `json:"envKeys,omitempty"`
+	HeaderKeys           []string   `json:"headerKeys,omitempty"`
+	Tools                int        `json:"tools"`
+	Prompts              int        `json:"prompts"`
+	Resources            int        `json:"resources"`
+	Error                string     `json:"error,omitempty"`
+	ToolList             []ToolView `json:"toolList,omitempty"`
+	TrustedReadOnlyTools []string   `json:"trustedReadOnlyTools,omitempty"`
+	AuthStatus           string     `json:"authStatus,omitempty"`
+	AuthURL              string     `json:"authUrl,omitempty"`
+	AuthConfigured       bool       `json:"authConfigured,omitempty"`
 }
 
 type ToolView struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	ReadOnlyHint bool   `json:"readOnlyHint,omitempty"`
 }
 
 // SkillView is one discoverable skill for the drawer.
@@ -4503,6 +4915,7 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.Command = p.Command
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
+	v.TrustedReadOnlyTools = uniqueStrings(p.TrustedReadOnlyTools)
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -4878,13 +5291,14 @@ func skillDisplayRoot(sk skill.Skill, roots []skill.Root) string {
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command
 // + Args + Env) or "http"/"sse" (URL). Mirrors config.PluginEntry's writable shape.
 type MCPServerInput struct {
-	Name      string            `json:"name"`
-	Transport string            `json:"transport"`
-	Command   string            `json:"command"`
-	Args      []string          `json:"args"`
-	URL       string            `json:"url"`
-	Env       map[string]string `json:"env"`
-	Headers   map[string]string `json:"headers"`
+	Name                 string            `json:"name"`
+	Transport            string            `json:"transport"`
+	Command              string            `json:"command"`
+	Args                 []string          `json:"args"`
+	URL                  string            `json:"url"`
+	Env                  map[string]string `json:"env"`
+	Headers              map[string]string `json:"headers"`
+	TrustedReadOnlyTools []string          `json:"trustedReadOnlyTools"`
 }
 
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
@@ -4898,13 +5312,14 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		return 0, rebuildControllerActiveWorkError("MCP server")
 	}
 	entry := config.PluginEntry{
-		Name:    in.Name,
-		Type:    normalizeMCPTransport(in.Transport),
-		Command: in.Command,
-		Args:    in.Args,
-		URL:     in.URL,
-		Env:     in.Env,
-		Headers: in.Headers,
+		Name:                 in.Name,
+		Type:                 normalizeMCPTransport(in.Transport),
+		Command:              in.Command,
+		Args:                 in.Args,
+		URL:                  in.URL,
+		Env:                  in.Env,
+		Headers:              in.Headers,
+		TrustedReadOnlyTools: uniqueStrings(in.TrustedReadOnlyTools),
 	}
 	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
@@ -4943,6 +5358,9 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if in.Headers != nil {
 		updated.Headers = in.Headers
+	}
+	if in.TrustedReadOnlyTools != nil {
+		updated.TrustedReadOnlyTools = uniqueStrings(in.TrustedReadOnlyTools)
 	}
 	updated, _ = config.NormalizePluginCommandLine(updated)
 	if updated.Type == "stdio" {
@@ -5054,6 +5472,94 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 		h.ClearFailure(name)
 	}
 	return nil
+}
+
+func (a *App) updateMCPServerTrustedReadOnlyTools(name string, update func([]string) []string) error {
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	if controllerHasActiveRuntimeWork(ctrl) {
+		return rebuildControllerActiveWorkError("MCP server")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("MCP server name is required")
+	}
+	updated, found, err := a.desktopMCPServerForEdit(name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no configured MCP server named %q", name)
+	}
+	trusted := uniqueStrings(updated.TrustedReadOnlyTools)
+	next := uniqueStrings(update(trusted))
+	if sameStringList(trusted, next) {
+		updated.TrustedReadOnlyTools = trusted
+		return nil
+	}
+	updated.TrustedReadOnlyTools = next
+	if err := a.saveDesktopMCPServer(updated); err != nil {
+		return err
+	}
+
+	a.mu.RLock()
+	tab := a.activeTabLocked()
+	sessionDisabled := false
+	if tab != nil {
+		_, sessionDisabled = tab.disabledMCP[name]
+	}
+	a.mu.RUnlock()
+	if !mcpConnected(ctrl, name) {
+		return nil
+	}
+	ctrl.DisconnectMCPServer(name)
+	if h := ctrl.Host(); h != nil {
+		h.ClearFailure(name)
+	}
+	if !sessionDisabled {
+		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
+			recordMCPFailure(ctrl, updated, err)
+			return nil
+		}
+	}
+	return nil
+}
+
+// TrustMCPServerTool marks one raw MCP tool name as trusted read-only and
+// refreshes the live connection so plan mode can use the updated trust boundary.
+func (a *App) TrustMCPServerTool(name, toolName string) error {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return fmt.Errorf("MCP tool name is required")
+	}
+	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
+		return append(trusted, toolName)
+	})
+}
+
+// TrustMCPServerTools marks multiple raw MCP tool names as trusted read-only in
+// one config write and one live reconnect.
+func (a *App) TrustMCPServerTools(name string, toolNames []string) error {
+	if len(uniqueStrings(toolNames)) == 0 {
+		return fmt.Errorf("at least one MCP tool name is required")
+	}
+	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
+		return append(trusted, toolNames...)
+	})
+}
+
+// UntrustMCPServerTool removes one raw MCP tool name from the trusted read-only
+// list and refreshes the live connection.
+func (a *App) UntrustMCPServerTool(name, toolName string) error {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return fmt.Errorf("MCP tool name is required")
+	}
+	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
+		return removeString(trusted, toolName)
+	})
 }
 
 // SetMCPServerEnabled is the connector toggle: on reconnects a configured server
@@ -5368,9 +5874,21 @@ func pluginToolsToView(tools []plugin.ToolInfo) []ToolView {
 	}
 	out := make([]ToolView, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, ToolView{Name: t.Name, Description: t.Description})
+		out = append(out, ToolView{Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint})
 	}
 	return out
+}
+
+func sameStringList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func orderServerViews(servers []ServerView, order []string) []ServerView {
@@ -5826,8 +6344,11 @@ func providerEffortTargetNames(cfg *config.Config, entry *config.ProviderEntry) 
 
 // DirEntry is one entry in the "@" file-reference menu.
 type DirEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"isDir"`
+	Name        string `json:"name"`
+	Path        string `json:"path,omitempty"`
+	IsDir       bool   `json:"isDir"`
+	DisplayName string `json:"displayName,omitempty"`
+	DisplayPath string `json:"displayPath,omitempty"`
 }
 
 // FilePreview is a bounded, read-only file payload for the workspace side panel.
@@ -6008,6 +6529,11 @@ func workspacePathForBase(base, rel string) (string, bool, error) {
 // tab workspace. The menu navigates one level at a time, never recursively —
 // bounded for huge trees.
 func (a *App) ListDir(rel string) []DirEntry {
+	if browser := a.externalFolderRefBrowser(); browser != nil {
+		if entries, handled := browser.ListExternalFolderRefDir(rel); handled {
+			return externalFolderDirEntries(entries)
+		}
+	}
 	base, err := a.activeWorkspaceBase()
 	if err != nil {
 		return []DirEntry{}
@@ -6056,13 +6582,55 @@ func (a *App) SearchFileRefs(query string) []DirEntry {
 	for _, r := range results {
 		out = append(out, DirEntry{Name: r.Path, IsDir: r.IsDir})
 	}
+	if browser := a.externalFolderRefBrowser(); browser != nil {
+		out = append(out, externalFolderDirEntries(browser.SearchExternalFolderRefs(query, fileRefSearchLimit))...)
+	}
 	return out
 }
 
-// ReadFile returns a small text preview for a file under the current workspace.
+type externalFolderRefBrowser interface {
+	ListExternalFolderRefDir(tokenPath string) ([]control.ExternalFolderRefEntry, bool)
+	SearchExternalFolderRefs(query string, limit int) []control.ExternalFolderRefEntry
+	ExternalFolderRefLocalPath(tokenPath string) (path, displayPath string, ok bool)
+}
+
+func (a *App) externalFolderRefBrowser() externalFolderRefBrowser {
+	if ctrl := a.activeCtrl(); ctrl != nil {
+		if browser, ok := ctrl.(externalFolderRefBrowser); ok {
+			return browser
+		}
+	}
+	return nil
+}
+
+func externalFolderDirEntries(entries []control.ExternalFolderRefEntry) []DirEntry {
+	out := make([]DirEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, DirEntry{
+			Name:        e.Name,
+			Path:        e.Path,
+			IsDir:       e.IsDir,
+			DisplayName: e.DisplayName,
+			DisplayPath: e.DisplayPath,
+		})
+	}
+	return out
+}
+
+func (a *App) workspaceOrExternalPath(rel string) (string, bool, error) {
+	if browser := a.externalFolderRefBrowser(); browser != nil {
+		if path, _, ok := browser.ExternalFolderRefLocalPath(rel); ok {
+			return path, true, nil
+		}
+	}
+	return a.workspacePath(rel)
+}
+
+// ReadFile returns a small text preview for a file under the current workspace
+// or a session-authorized external folder ref.
 func (a *App) ReadFile(rel string) FilePreview {
 	out := FilePreview{Path: rel}
-	path, ok, err := a.workspacePath(rel)
+	path, ok, err := a.workspaceOrExternalPath(rel)
 	if err != nil || !ok {
 		out.Err = "invalid path"
 		return out
@@ -6144,18 +6712,20 @@ func (a *App) ReadFile(rel string) FilePreview {
 	return out
 }
 
-// OpenWorkspacePath opens a file or folder from the workspace in the OS default app.
+// OpenWorkspacePath opens a workspace or authorized external-ref file/folder in
+// the OS default app.
 func (a *App) OpenWorkspacePath(rel string) error {
-	path, ok, err := a.workspacePath(rel)
+	path, ok, err := a.workspaceOrExternalPath(rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
 	return openWorkspacePath(path)
 }
 
-// RevealWorkspacePath shows a workspace file in the native file manager.
+// RevealWorkspacePath shows a workspace or authorized external-ref file in the
+// native file manager.
 func (a *App) RevealWorkspacePath(rel string) error {
-	path, ok, err := a.workspacePath(rel)
+	path, ok, err := a.workspaceOrExternalPath(rel)
 	if err != nil || !ok {
 		return os.ErrInvalid
 	}
@@ -6424,18 +6994,21 @@ func (a *App) AttachmentDataURL(path string) (string, error) {
 
 // DroppedItem is one OS-dropped file resolved into a composer context entry: an
 // in-tree file becomes a workspace @reference (read in place, no copy), while an
-// image or out-of-tree file is copied into .voltui/attachments.
+// outside directory becomes a session-scoped workspace @reference; an image or
+// out-of-tree file is copied into .voltui/attachments.
 type DroppedItem struct {
-	Kind       string `json:"kind"` // "workspace" | "attachment"
-	Path       string `json:"path"`
-	IsDir      bool   `json:"isDir,omitempty"`
-	PreviewURL string `json:"previewUrl,omitempty"`
+	Kind        string `json:"kind"` // "workspace" | "attachment"
+	Path        string `json:"path"`
+	IsDir       bool   `json:"isDir,omitempty"`
+	DisplayPath string `json:"displayPath,omitempty"`
+	PreviewURL  string `json:"previewUrl,omitempty"`
 }
 
 // AttachDropped turns an absolute path from the native file-drop bridge into a
 // composer context entry. Images are stored as attachments so the chip shows a
-// thumbnail; other in-workspace files are referenced relatively (no copy); files
-// outside the workspace are copied into .voltui/attachments.
+// thumbnail; in-workspace files are referenced relatively (no copy); directories
+// outside the workspace are registered as current-session folder references;
+// files outside the workspace are copied into .voltui/attachments.
 func (a *App) AttachDropped(path string) (DroppedItem, error) {
 	var item DroppedItem
 	err := a.withActiveWorkspaceDo(func() error {
@@ -6455,7 +7028,16 @@ func (a *App) AttachDropped(path string) (DroppedItem, error) {
 			return nil
 		}
 		if info.IsDir() {
-			return fmt.Errorf("can only attach files from outside the workspace")
+			ctrl := a.activeCtrl()
+			if ctrl == nil {
+				return fmt.Errorf("workspace is not ready")
+			}
+			token, displayPath, err := ctrl.RegisterExternalFolderRef(path)
+			if err != nil {
+				return err
+			}
+			item = DroppedItem{Kind: "workspace", Path: token, IsDir: true, DisplayPath: displayPath}
+			return nil
 		}
 		rel, err := control.SaveAttachmentFile(path)
 		if err != nil {
@@ -6495,14 +7077,6 @@ func workspaceRelativeIn(path, workspaceRoot string) (string, bool) {
 		return "", false
 	}
 	return filepath.ToSlash(rel), true
-}
-
-func workspaceRelative(path string) (string, bool) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", false
-	}
-	return workspaceRelativeIn(path, cwd)
 }
 
 // --- memory panel (frontend ⇄ controller) ---

@@ -433,6 +433,21 @@ func normalizeBotConnectionToolApprovalMode(mode string) string {
 	}
 }
 
+func botConnectionRuntimeID(conn config.BotConnectionConfig) string {
+	if id := strings.TrimSpace(conn.ID); id != "" {
+		return id
+	}
+	provider := strings.TrimSpace(conn.Provider)
+	domain := strings.TrimSpace(conn.Domain)
+	if provider == "" {
+		return ""
+	}
+	if domain == "" {
+		return provider
+	}
+	return provider + "-" + domain
+}
+
 func normalizeBotInstallTarget(provider, domain string) (string, string) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	domain = strings.ToLower(strings.TrimSpace(domain))

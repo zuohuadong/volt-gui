@@ -6,14 +6,14 @@
 &nbsp;·&nbsp;
 <a href="./GUIDE.md">General guide</a>
 
-> For desktop users. This guide explains how to connect Feishu, Lark, and WeChat
+> For desktop users. This guide explains how to connect Feishu, Lark, WeChat, and QQ
 > bots, how to use Reasonix from IM, and how approvals, Ask questions, YOLO, and
 > bot commands work.
 
 ## Contents
 
 - [What the bot does](#what-the-bot-does)
-- [Connect the three channels](#connect-the-three-channels)
+- [Connect the four channels](#connect-the-four-channels)
 - [Run the bot headlessly](#run-the-bot-headlessly)
 - [Usage flow](#usage-flow)
 - [Channel interaction differences](#channel-interaction-differences)
@@ -37,7 +37,7 @@ Common uses:
 - Open the matching desktop IM session to inspect context, cost, tokens, and tool
   traces.
 
-## Connect the three channels
+## Connect the four channels
 
 Open the Reasonix desktop app and go to **Settings -> Bots**. In **Add IM Bot**,
 choose a channel and scan the QR code.
@@ -50,11 +50,13 @@ flowchart LR
   D --> E["Scan with Feishu to create a PersonalAgent"]
   D --> F["Scan with Lark to create a PersonalAgent"]
   D --> G["Scan with WeChat to sign in Bot Assistant"]
-  E --> H["Connection is saved locally"]
-  F --> H
-  G --> H
-  H --> I["Send the first IM message"]
-  I --> J["Desktop creates the matching session"]
+  D --> H["Scan with QQ to sign in Bot Assistant"]
+  E --> I["Connection is saved locally"]
+  F --> I
+  G --> I
+  H --> I
+  I --> J["Send the first IM message"]
+  J --> K["Desktop creates the matching session"]
 ```
 
 ### Feishu
@@ -87,6 +89,19 @@ approval modes.
 
 WeChat does not provide interactive card buttons here, so approvals and Ask
 questions are handled through text commands.
+
+### QQ
+
+1. In **Settings -> Bots -> Add IM Bot**, choose **QQ**.
+2. Generate a QR code.
+3. Scan it with QQ and finish authorization.
+4. Wait until the page shows the connection as connected.
+5. Send the QQ bot a message.
+
+QQ Bot uses the official QQ Bot platform API. It supports interactive card
+buttons for approvals and Ask questions, similar to Feishu and Lark. When a
+card button expires or the platform reports a card action failure, copy the
+ID shown in the card and send the equivalent text command.
 
 ## Run the bot headlessly
 
@@ -133,7 +148,7 @@ rules as local desktop or CLI turns.
 ```mermaid
 sequenceDiagram
   participant U as "User"
-  participant IM as "Feishu / Lark / WeChat"
+  participant IM as "Feishu / Lark / WeChat / QQ"
   participant R as "Reasonix desktop"
   participant T as "Local tools and model"
 
@@ -170,20 +185,23 @@ without exposing real account IDs, local paths, or private chat content.
 
 ![WeChat text command example](./assets/bot-weixin-text-commands.svg)
 
+![QQ approval card example](./assets/bot-qq-approval.svg)
+
 | Channel | Connection | Approval | Ask questions | Best for |
 | --- | --- | --- | --- | --- |
 | Feishu | Scan to create a PersonalAgent | Interactive card buttons, or commands | Interactive card buttons, or commands | Feishu workspaces, DMs, and groups |
 | Lark | Scan to create a PersonalAgent | Interactive card buttons, or commands | Interactive card buttons, or commands | International Lark workspaces |
 | WeChat | Scan with WeChat | Reply `1` / `2`, or commands | Single-choice questions can use a number, or commands | Lightweight personal/mobile testing |
+| QQ | Scan with QQ | Interactive card buttons, or commands | Interactive card buttons, or commands | QQ groups, DMs, and official QQ Bot platform |
 
 Feishu and Lark card buttons are converted into commands such as
-`/approve <id>`, `/deny <id>`, or `/answer <id> <option>`. If a button expires
-or the platform reports a card action failure, copy the ID shown in the card and
-send the equivalent text command.
+`/approve <id>`, `/deny <id>`, or `/answer <id> <option>`. QQ card buttons
+work the same way. If a button expires or the platform reports a card action
+failure, copy the ID shown in the card and send the equivalent text command.
 
 ## Command quick reference
 
-These commands work in Feishu, Lark, and WeChat.
+These commands work in Feishu, Lark, WeChat, and QQ.
 
 | Command | Purpose | Example |
 | --- | --- | --- |
@@ -275,7 +293,9 @@ You may need to bind again if:
 | QR code says the link expired | Generate a new QR code in Settings; QR codes expire. |
 | Connected but no reply | Make sure the Reasonix desktop app is running, the bot connection is enabled, and the sender ID is allowlisted or access is open. |
 | Feishu or Lark button action fails | Send the text command from the card, such as `/approve <id>` or `/deny <id>`. |
+| QQ button action fails | Same as Feishu/Lark — send the text command from the card, such as `/approve <id>` or `/deny <id>`. |
 | WeChat reply `1` does nothing | Numeric shortcuts only work when an approval or single-choice Ask is pending; use the full command if needed. |
+| QQ reply `1` does nothing | Same as WeChat — numeric shortcuts only work when an approval or single-choice Ask is pending; use the full command if needed. |
 | Need to confirm the current mode | Send `/status` or `/yolo status`. |
 | Need a fresh context | Send `/new` or `/reset`. |
 | Need to stop the current task | Send `/stop`. |

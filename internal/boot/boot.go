@@ -32,6 +32,7 @@ import (
 	"voltui/internal/jobs"
 	"voltui/internal/lsp"
 	"voltui/internal/memory"
+	"voltui/internal/memorycompiler"
 	"voltui/internal/migration"
 	"voltui/internal/netclient"
 	"voltui/internal/outputstyle"
@@ -148,7 +149,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	keepPolicy := agentKeepPolicy(cfg.Agent.Keep)
 	entry, ok := cfg.ResolveModel(modelName)
 	if !ok {
-		return nil, fmt.Errorf("%w: %v; note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `voltui setup` to reconfigure", ErrUnknownModel, cfg.ResolveModelError(modelName))
+		if ambiguous := cfg.AmbiguousModelRefs(modelName); len(ambiguous) > 0 {
+			return nil, cfg.ResolveModelError(modelName)
+		}
+		return nil, fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `voltui setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
 	}
 	modelRef := entry.Name + "/" + entry.Model
 	if opts.EffortOverride != nil {
@@ -279,7 +283,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if tokenEconomy {
 		enabledBuiltins = tokenEconomyBuiltins(enabledBuiltins)
 	}
-	addBuiltins(reg, enabledBuiltins, writeRoots, forbidReadRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec)
+	readPathResolver := builtin.NewPathResolver()
+	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, readPathResolver)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -290,13 +295,20 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	// Partition configured plugins by tier so eager can block when explicitly
 	// requested while every other enabled MCP warms up in the background.
+	pluginSpecOptions := PluginSpecOptions{
+		DefaultCallTimeout:   time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
+		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
+	}
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
-	extraSpecs := applyKnownPluginOverrides(opts.ExtraPlugins, root)
+	extraSpecs := applyDefaultMCPCallTimeout(
+		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(opts.ExtraPlugins, root), cfg.Agent.PlanModeAllowedTools),
+		pluginSpecOptions.DefaultCallTimeout,
+	)
 	onDemandMCPSpecs := map[string]plugin.Spec{}
 	onDemandMCPNames := []string{}
 	if tokenEconomy {
-		for _, spec := range append(PluginSpecsForRoot(autoStartEntries, root), extraSpecs...) {
+		for _, spec := range append(PluginSpecsForRootWithOptions(autoStartEntries, root, pluginSpecOptions), extraSpecs...) {
 			name := strings.TrimSpace(spec.Name)
 			if name == "" {
 				continue
@@ -308,6 +320,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		eagerEntries, bgEntries = nil, nil
 	}
+	trustedMCPServers := planModeTrustedMCPServers(onDemandMCPSpecs)
 
 	// Auto-demote: any eager plugin that has been chronically slow (recent
 	// samples repeatedly hit the blocking startup budget) drops to background
@@ -327,8 +340,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	eagerEntries = kept
 
-	eagerSpecs := PluginSpecsForRoot(eagerEntries, root)
-	bgSpecs := PluginSpecsForRoot(bgEntries, root)
+	eagerSpecs := PluginSpecsForRootWithOptions(eagerEntries, root, pluginSpecOptions)
+	bgSpecs := PluginSpecsForRootWithOptions(bgEntries, root, pluginSpecOptions)
 
 	if !tokenEconomy {
 		eagerSpecs = append(eagerSpecs, extraSpecs...)
@@ -668,9 +681,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			prov, price, ctxWin = p, pr, cw
 		}
 		subReg := agent.SubagentToolRegistry(reg, sk.AllowedTools)
-		continueFrom, forkFrom := strings.TrimSpace(runOpts.ContinueFrom), strings.TrimSpace(runOpts.ForkFrom)
-		if continueFrom != "" && forkFrom != "" {
-			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive")
+		continueFrom := strings.TrimSpace(runOpts.ContinueFrom)
+		legacyForkFrom := strings.TrimSpace(runOpts.ForkFrom)
+		if continueFrom != "" && legacyForkFrom != "" {
+			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 		}
 		parentID, _, _, _ := agent.CallContext(sctx)
 		parentSession := agent.ParentSession(sctx)
@@ -678,10 +692,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if subagentStore == nil || parentSession == "" {
 			// Headless runs (e.g. `voltui run`) have no persistent session to
 			// own a transcript. Run the skill sub-agent ephemerally, as before
-			// persisted transcripts existed, instead of failing. Continuation and
-			// fork need a persisted owner, so they error here.
-			if continueFrom != "" || forkFrom != "" {
-				return "", fmt.Errorf("continue_from/fork_from require a persisted session; none is active in this run")
+			// persisted transcripts existed, instead of failing. Continuation needs
+			// a persisted owner, so it errors here.
+			if continueFrom != "" || legacyForkFrom != "" {
+				return "", fmt.Errorf("subagent continuation requires a persisted session; none is active in this run")
 			}
 			run = agent.EphemeralSubagentRun(sk.Body)
 		} else {
@@ -698,12 +712,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				Effort:           identityEffort,
 			}
 			var prepErr error
-			switch {
-			case continueFrom != "":
+			if continueFrom != "" {
 				run, prepErr = subagentStore.PrepareContinue(continueFrom, spec)
-			case forkFrom != "":
-				run, prepErr = subagentStore.PrepareFork(forkFrom, spec)
-			default:
+			} else if legacyForkFrom != "" {
+				run, prepErr = subagentStore.PrepareLegacyForkFrom(legacyForkFrom, spec)
+			} else {
 				run, prepErr = subagentStore.PrepareFresh(spec)
 			}
 			if prepErr != nil {
@@ -735,7 +748,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if err := subagentStore.SaveCompleted(run); err != nil {
 			return "", errors.Join(err, subagentStore.SaveFailed(run))
 		}
-		return agent.FormatSubagentResult(answer, run.Ref, false), nil
+		return agent.FormatSubagentRunResult(answer, run, false), nil
 	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
 		model, effort := subagentModelRef(cfg, sk), subagentEffortRef(cfg, sk)
@@ -782,7 +795,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			ProjectRoot: root,
 			HTTPClient:  balanceClient,
 			ConnectMCP: func(e config.PluginEntry) (installsource.MCPConnectResult, error) {
-				spec := pluginSpecFromEntry(e, root)
+				spec := pluginSpecFromEntryWithOptions(e, root, pluginSpecOptions)
 				if opts.Stderr != nil {
 					spec.Stderr = opts.Stderr
 				}
@@ -876,6 +889,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 					BashTimeout:     bashTimeout,
 					Search:          searchSpec,
 					ProxySpec:       proxySpec,
+					ReadPaths:       readPathResolver,
 				}.Tools("web_fetch"))
 				if len(names) == 0 {
 					return "web_fetch is already enabled or unavailable.", nil
@@ -926,29 +940,36 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 				return fmt.Sprintf("enabled MCP server %q tools: %s.", spec.Name, strings.Join(names, ", ")), nil
 			},
-			mcpNames:             onDemandMCPNames,
-			planModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
+			mcpNames:                 onDemandMCPNames,
+			planModeAllowedTools:     cfg.Agent.PlanModeAllowedTools,
+			planModeTrustedMCPServer: trustedMCPServers,
 		})
 	}
 
 	execSess := agent.NewSession(sysPrompt)
+	var memCompiler *memorycompiler.Runtime
+	if cfg.MemoryCompilerEnabled() {
+		memCompiler = memorycompiler.New(config.MemoryCompilerDir(root))
+	}
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:             maxSteps,
-		Temperature:          cfg.Agent.Temperature,
-		Pricing:              entry.Price,
-		Gate:                 headlessGate,
-		Hooks:                hookRunner,
-		Jobs:                 jm,
-		ProjectChecks:        projectChecks,
-		ContextWindow:        entry.ContextWindow,
-		SoftCompactRatio:     cfg.Agent.SoftCompactRatio,
-		CompactRatio:         cfg.Agent.CompactRatio,
-		CompactForceRatio:    cfg.Agent.CompactForceRatio,
-		RecentKeep:           cfg.Agent.RecentKeep,
-		ArchiveDir:           config.ArchiveDir(),
-		KeepPolicy:           keepPolicy,
-		ReasoningLanguage:    cfg.ReasoningLanguage(),
-		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
+		MaxSteps:                           maxSteps,
+		Temperature:                        cfg.Agent.Temperature,
+		Pricing:                            entry.Price,
+		Gate:                               headlessGate,
+		Hooks:                              hookRunner,
+		Jobs:                               jm,
+		ProjectChecks:                      projectChecks,
+		ContextWindow:                      entry.ContextWindow,
+		SoftCompactRatio:                   cfg.Agent.SoftCompactRatio,
+		CompactRatio:                       cfg.Agent.CompactRatio,
+		CompactForceRatio:                  cfg.Agent.CompactForceRatio,
+		RecentKeep:                         cfg.Agent.RecentKeep,
+		ArchiveDir:                         config.ArchiveDir(),
+		KeepPolicy:                         keepPolicy,
+		ReasoningLanguage:                  cfg.ReasoningLanguage(),
+		PlanModeAllowedTools:               cfg.Agent.PlanModeAllowedTools,
+		MemoryCompiler:                     memCompiler,
+		UseMemoryCompilerLLMClassification: strings.TrimSpace(os.Getenv("REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION")) == "true",
 	}, sink)
 
 	var runner agent.Runner = executor
@@ -1026,6 +1047,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Registry:               reg,
 		PluginCtx:              ctx,
 		WorkspaceRoot:          root,
+		ExternalFolderToolRefs: readPathResolver,
 		AutoPlan:               cfg.Agent.AutoPlan,
 		ResponseLanguage:       cfg.ResponseLanguage(),
 		ReasoningLanguage:      cfg.ReasoningLanguage(),
@@ -1035,6 +1057,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ApprovalTimeout:        opts.ApprovalTimeout,
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
+		},
+		OnRememberMCPReadOnlyTrust: func(serverName, rawToolName string) control.MCPReadOnlyTrustResult {
+			return rememberMCPReadOnlyTrust(root, serverName, rawToolName)
 		},
 	}
 	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
@@ -1096,6 +1121,25 @@ func rememberPermissionConfigPath(workspaceRoot string) string {
 		path = "voltui.toml" // match Config.Save() fallback
 	}
 	return path
+}
+
+func rememberMCPReadOnlyTrust(workspaceRoot, serverName, rawToolName string) control.MCPReadOnlyTrustResult {
+	serverName = strings.TrimSpace(serverName)
+	rawToolName = strings.TrimSpace(rawToolName)
+	result := control.MCPReadOnlyTrustResult{Server: serverName, Tool: rawToolName}
+	_, changed, path, err := config.TrustPluginReadOnlyToolInSourceForRoot(workspaceRoot, serverName, rawToolName)
+	result.Path = path
+	if err != nil {
+		slog.Warn("persist MCP read-only trust", "server", serverName, "tool", rawToolName, "err", err)
+		result.Err = err
+		return result
+	}
+	if changed {
+		result.Saved = true
+		return result
+	}
+	result.CoveredBy = rawToolName
+	return result
 }
 
 func coveredPermissionRule(rules []string, rule string) string {
@@ -1310,12 +1354,13 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 // instance bound to writeRoots (preserving registry order).
 // When workDir is non-empty, tools resolve relative paths against it instead of
 // the process cwd, enabling concurrent multi-project sessions.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots, forbidReadRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, readPathResolver *builtin.PathResolver) {
+	forbidReadRoots := bashSpec.ForbidReadRoots
 	// If a workspace directory is set, use workspace-bound tools that resolve
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
 	if workDir != "" {
-		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec}
+		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, ReadPaths: readPathResolver}
 		for _, t := range ws.Tools(enabled...) {
 			reg.Add(t)
 		}
@@ -1384,30 +1429,167 @@ func PluginSpecs(entries []config.PluginEntry) []plugin.Spec {
 // PluginSpecsForRoot maps configured plugin entries to plugin.Spec and applies
 // workspace-aware compatibility overrides for known cwd-sensitive servers.
 func PluginSpecsForRoot(entries []config.PluginEntry, workspaceRoot string) []plugin.Spec {
-	specs := make([]plugin.Spec, len(entries))
-	for i, e := range entries {
-		specs[i] = pluginSpecFromEntry(e, workspaceRoot)
-	}
-	return specs
+	return PluginSpecsForRootWithPlanModeAllowedTools(entries, workspaceRoot, nil)
 }
 
-func pluginSpecFromEntry(e config.PluginEntry, workspaceRoot string) plugin.Spec {
+// PluginSpecOptions carries runtime policy that is not stored on each plugin
+// entry but still needs to reach plugin.Spec.
+type PluginSpecOptions struct {
+	DefaultCallTimeout   time.Duration
+	PlanModeAllowedTools []string
+}
+
+// PluginSpecsForRootWithPlanModeAllowedTools also promotes model-visible MCP
+// names declared in agent.plan_mode_allowed_tools to trusted read-only model
+// names for their matching server. This keeps the planner/read-only research
+// trust path aligned with the plan-mode execution escape valve.
+func PluginSpecsForRootWithPlanModeAllowedTools(entries []config.PluginEntry, workspaceRoot string, allowedTools []string) []plugin.Spec {
+	return PluginSpecsForRootWithOptions(entries, workspaceRoot, PluginSpecOptions{
+		PlanModeAllowedTools: allowedTools,
+	})
+}
+
+// PluginSpecsForRootWithOptions maps configured plugin entries to plugin.Spec
+// and injects runtime policy such as the global MCP call timeout.
+func PluginSpecsForRootWithOptions(entries []config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) []plugin.Spec {
+	specs := make([]plugin.Spec, len(entries))
+	for i, e := range entries {
+		specs[i] = pluginSpecFromEntryWithOptions(e, workspaceRoot, opts)
+	}
+	return applyPlanModeAllowedMCPToolTrust(specs, opts.PlanModeAllowedTools)
+}
+
+func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) plugin.Spec {
 	e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
 	return plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:    e.Name,
-		Type:    e.Type,
-		Command: e.Command,
-		Args:    e.Args,
-		Env:     e.Env,
-		URL:     e.URL,
-		Headers: e.Headers,
+		Name:               e.Name,
+		Type:               e.Type,
+		Command:            e.Command,
+		Args:               e.Args,
+		Env:                e.Env,
+		URL:                e.URL,
+		Headers:            e.Headers,
+		DefaultCallTimeout: opts.DefaultCallTimeout,
+		CallTimeout:        secondsDuration(e.CallTimeoutSeconds),
+		ToolTimeouts:       toolTimeoutDurations(e.ToolTimeoutSeconds),
+		ReadOnlyToolNames:  trustedRawReadOnlyToolNames(e.TrustedReadOnlyTools),
 	}, workspaceRoot)
+}
+
+func secondsDuration(seconds int) time.Duration {
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func toolTimeoutDurations(seconds map[string]int) map[string]time.Duration {
+	if len(seconds) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Duration, len(seconds))
+	for name, sec := range seconds {
+		name = strings.TrimSpace(name)
+		if name == "" || sec <= 0 {
+			continue
+		}
+		out[name] = time.Duration(sec) * time.Second
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func applyKnownPluginOverrides(specs []plugin.Spec, workspaceRoot string) []plugin.Spec {
 	out := make([]plugin.Spec, len(specs))
 	for i, spec := range specs {
 		out[i] = plugin.ApplyKnownOverrides(spec, workspaceRoot)
+	}
+	return out
+}
+
+func applyDefaultMCPCallTimeout(specs []plugin.Spec, timeout time.Duration) []plugin.Spec {
+	if len(specs) == 0 || timeout <= 0 {
+		return specs
+	}
+	out := make([]plugin.Spec, len(specs))
+	for i, spec := range specs {
+		out[i] = spec
+		if out[i].DefaultCallTimeout <= 0 {
+			out[i].DefaultCallTimeout = timeout
+		}
+	}
+	return out
+}
+
+func applyPlanModeAllowedMCPToolTrust(specs []plugin.Spec, allowedTools []string) []plugin.Spec {
+	if len(specs) == 0 || len(allowedTools) == 0 {
+		return specs
+	}
+	out := make([]plugin.Spec, len(specs))
+	for i, spec := range specs {
+		out[i] = spec
+		prefix := plugin.ToolPrefix(spec.Name)
+		clonedModelNames := false
+		for _, name := range allowedTools {
+			name = strings.TrimSpace(name)
+			if !strings.HasPrefix(name, prefix) || len(name) <= len(prefix) {
+				continue
+			}
+			if out[i].ReadOnlyModelToolNames == nil {
+				out[i].ReadOnlyModelToolNames = map[string]bool{}
+				clonedModelNames = true
+			} else if !clonedModelNames {
+				out[i].ReadOnlyModelToolNames = cloneBoolMap(spec.ReadOnlyModelToolNames)
+				clonedModelNames = true
+			}
+			out[i].ReadOnlyModelToolNames[name] = true
+		}
+	}
+	return out
+}
+
+func trustedRawReadOnlyToolNames(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func planModeTrustedMCPServers(specs map[string]plugin.Spec) map[string]bool {
+	if len(specs) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for name, spec := range specs {
+		if len(spec.ReadOnlyToolNames) > 0 || len(spec.ReadOnlyModelToolNames) > 0 {
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneBoolMap(in map[string]bool) map[string]bool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(in))
+	for k, v := range in {
+		out[k] = v
 	}
 	return out
 }

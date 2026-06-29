@@ -1,27 +1,25 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"voltui/internal/control"
 )
 
-func TestWorkspaceRelative(t *testing.T) {
-	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+const desktopTinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
+func TestWorkspaceRelativeIn(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	cwd, _ := os.Getwd()
 
-	if rel, ok := workspaceRelative(filepath.Join(cwd, "sub", "file.go")); !ok || rel != "sub/file.go" {
+	if rel, ok := workspaceRelativeIn(filepath.Join(root, "sub", "file.go"), root); !ok || rel != "sub/file.go" {
 		t.Fatalf("in-tree = (%q, %v), want (sub/file.go, true)", rel, ok)
 	}
-	if _, ok := workspaceRelative(filepath.Join(filepath.Dir(cwd), "sibling.txt")); ok {
+	if _, ok := workspaceRelativeIn(filepath.Join(filepath.Dir(root), "sibling.txt"), root); ok {
 		t.Fatal("a path above the workspace must not resolve as in-tree")
 	}
 }
@@ -36,6 +34,123 @@ func TestIsImageExt(t *testing.T) {
 		if isImageExt(p) {
 			t.Errorf("%q should not be an image extension", p)
 		}
+	}
+}
+
+func TestSavePastedImageUsesActiveWorkspaceRoot(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, _ = os.Getwd()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+
+	got, err := app.SavePastedImage("data:image/png;base64," + desktopTinyPNG)
+	if err != nil {
+		t.Fatalf("SavePastedImage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(got))); err != nil {
+		t.Fatalf("pasted image should be saved under active workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(got))); !os.IsNotExist(err) {
+		t.Fatalf("pasted image should not be saved under launch root, stat err=%v", err)
+	}
+	preview, err := app.AttachmentDataURL(got)
+	if err != nil {
+		t.Fatalf("AttachmentDataURL: %v", err)
+	}
+	if !strings.HasPrefix(preview, "data:image/png;base64,") {
+		t.Fatalf("preview = %q, want png data URL", preview)
+	}
+}
+
+func TestAttachDroppedUsesActiveWorkspaceRoot(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(projectRoot); err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, _ = os.Getwd()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(projectRoot, "sub", "notes.txt")
+	if err := os.WriteFile(target, []byte("body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := app.AttachDropped(target)
+	if err != nil {
+		t.Fatalf("AttachDropped: %v", err)
+	}
+	if got.Kind != "workspace" || got.Path != "sub/notes.txt" {
+		t.Fatalf("got %+v, want workspace ref sub/notes.txt", got)
+	}
+}
+
+func TestAttachDroppedImageUsesActiveWorkspaceRoot(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+	raw, err := base64.StdEncoding.DecodeString(desktopTinyPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(outside, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := app.AttachDropped(outside)
+	if err != nil {
+		t.Fatalf("AttachDropped: %v", err)
+	}
+	if got.Kind != "attachment" || !strings.HasSuffix(got.Path, ".png") {
+		t.Fatalf("got %+v, want png attachment", got)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(got.Path))); err != nil {
+		t.Fatalf("dropped image should be saved under active workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(got.Path))); !os.IsNotExist(err) {
+		t.Fatalf("dropped image should not be saved under launch root, stat err=%v", err)
+	}
+	if !strings.HasPrefix(got.PreviewURL, "data:image/png;base64,") {
+		t.Fatalf("preview = %q, want png data URL", got.PreviewURL)
 	}
 }
 
@@ -114,51 +229,56 @@ func TestAttachDroppedImageStoresThumbnail(t *testing.T) {
 	}
 }
 
-func TestWailsAttachmentBindingsCoverPasteAndDrop(t *testing.T) {
+func TestAttachDroppedOutsideWorkspaceDirRegistersWorkspaceRef(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)
 
-	root := t.TempDir()
-	if err := os.Chdir(root); err != nil {
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "Folder With Spaces")
+	if err := os.MkdirAll(filepath.Join(outside, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	app := &App{}
-
-	fileData := "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte("notes"))
-	fileRef, err := app.SavePastedFile("notes.txt", fileData)
-	if err != nil {
-		t.Fatalf("SavePastedFile: %v", err)
-	}
-	if !strings.HasPrefix(fileRef, ".voltui/attachments/") || !strings.HasSuffix(fileRef, ".txt") {
-		t.Fatalf("file ref = %q, want .voltui txt attachment", fileRef)
-	}
-	if b, err := os.ReadFile(filepath.FromSlash(fileRef)); err != nil || string(b) != "notes" {
-		t.Fatalf("saved pasted file = %q/%v, want notes", string(b), err)
-	}
-
-	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 64)...)
-	imageData := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
-	imageRef, err := app.SavePastedImage(imageData)
-	if err != nil {
-		t.Fatalf("SavePastedImage: %v", err)
-	}
-	preview, err := app.AttachmentDataURL(imageRef)
-	if err != nil {
-		t.Fatalf("AttachmentDataURL: %v", err)
-	}
-	if !strings.HasPrefix(preview, "data:image/png;base64,") {
-		t.Fatalf("preview = %q, want png data URL", preview)
-	}
-
-	outside := filepath.Join(t.TempDir(), "report.pdf")
-	if err := os.WriteFile(outside, []byte("%PDF body"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outside, "sub", "notes.txt"), []byte("notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dropped, err := app.AttachDropped(outside)
+	expectedOutside := outside
+	if resolved, err := filepath.EvalSymlinks(outside); err == nil {
+		expectedOutside = resolved
+	}
+	expectedDisplayPath := filepath.ToSlash(expectedOutside)
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := control.New(control.Options{WorkspaceRoot: workspace})
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: workspace, Ctrl: ctrl},
+		},
+		activeTabID: "project",
+	}
+
+	got, err := app.AttachDropped(outside)
 	if err != nil {
 		t.Fatalf("AttachDropped: %v", err)
 	}
-	if dropped.Kind != "attachment" || !strings.HasPrefix(dropped.Path, ".voltui/attachments/") || !strings.HasSuffix(dropped.Path, ".pdf") {
-		t.Fatalf("dropped = %+v, want copied pdf attachment", dropped)
+	if got.Kind != "workspace" || !got.IsDir {
+		t.Fatalf("got %+v, want workspace directory ref", got)
+	}
+	if !strings.HasPrefix(got.Path, "__reasonix_external_folder/") || strings.ContainsAny(got.Path, " \t\r\n") {
+		t.Fatalf("external folder path token = %q, want whitespace-free external token", got.Path)
+	}
+	if got.DisplayPath != expectedDisplayPath {
+		t.Fatalf("display path = %q, want %q", got.DisplayPath, expectedDisplayPath)
+	}
+
+	block, errs := ctrl.ResolveScopedRefs(context.Background(), "inspect @"+got.Path+"/")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveScopedRefs errors = %v", errs)
+	}
+	if !strings.Contains(block, `<dir path="`+expectedDisplayPath+`">`) ||
+		!strings.Contains(block, "sub/") ||
+		!strings.Contains(block, "sub/notes.txt") {
+		t.Fatalf("external dropped folder should resolve as dir context:\n%s", block)
 	}
 }

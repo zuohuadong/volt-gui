@@ -12,6 +12,7 @@
 ## Contents
 
 - [Configuration](#configuration)
+- [Environment variables](#environment-variables)
 - [Serve web frontend](#serve-web-frontend)
 - [Configuration paths](./CONFIG_PATHS.md)
 - [Reasoning language](./REASONING_LANGUAGE.md)
@@ -55,6 +56,8 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 max_steps = 0                    # user/global only; executor tool-call rounds; 0 = no limit
 planner_max_steps = 0            # user/global only; planner read-only tool-call rounds; 0 = no limit
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
+# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
+#                                                # does not unlock blocked tools or unsafe bash
 # planner_model = "deepseek-pro"      # optional low-frequency planner
 # subagent_model = "deepseek-pro"     # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
@@ -72,6 +75,7 @@ api_key_env = "DEEPSEEK_API_KEY"
 [tools]
 enabled = []   # omit/empty = all built-ins
 bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local cap
+mcp_call_timeout_seconds = 300   # default MCP call safety cap; per-plugin/tool overrides may raise it
 
 [skills]
 # paths = ["~/my-skills", "../shared/skills"]   # extra custom skill roots
@@ -86,6 +90,7 @@ allow = ["Bash(go test:*)"]                  # never prompted
 [sandbox]
 # workspace_root = ""          # file-writers confined here; empty = current dir
 # allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit/move_file may touch
+# forbid_read    = ["${HOME}/.ssh"]   # dirs the agent must not read or list
 
 [serve]
 auth_mode = "none"             # none|token|password; use auth before binding beyond localhost
@@ -96,9 +101,51 @@ auth_mode = "none"             # none|token|password; use auth before binding be
 [[plugins]]
 name    = "example"
 command = "reasonix-plugin-example"
+call_timeout_seconds = 600   # optional per-server MCP call timeout
+tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool names
 ```
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
+
+`[agent].plan_mode_allowed_tools` is an extra read-only declaration for custom or
+external tools Reasonix cannot classify itself. For MCP/plugin tools, a concrete
+model-visible name such as `mcp__github__issue_read` also promotes that tool to a
+trusted read-only reader for planner and read-only research surfaces. Prefer the
+one-time MCP read-only trust prompt, or plugin-level `trusted_read_only_tools`
+when you want to pre-seed audited tools; keep `plan_mode_allowed_tools` as the
+compatibility escape valve. It never unlocks known blocked plan-mode tools such
+as `bash`, `task`, writers, installers, or memory mutation tools, and it never
+bypasses bash's plan-mode safety checks.
+
+### Environment variables
+
+Most day-to-day settings belong in `config.toml` or the global Reasonix `.env`
+described above. The variables below are process-level advanced switches; set
+them before launching Reasonix. Project `.env` files are not a runtime source for
+Reasonix control variables.
+
+`REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true` enables the optional LLM
+task/chat classifier for Memory v5. By default it is disabled, and Reasonix uses
+the local heuristic classifier without extra provider calls. When enabled, cache
+misses may send a small classifier request through the configured provider before
+deciding whether a user input is task-like or conversational; this can add a
+little latency, provider usage, and token cost. The classifier result is cached
+per session for a short time. Only the exact trimmed value `true` enables it;
+unset, `false`, `1`, and `TRUE` keep the default heuristic path.
+
+```bash
+REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true reasonix
+```
+
+For development runs, prefix the command that starts the process, for example:
+
+```bash
+REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION=true wails dev -forcebuild
+```
+
+Packaged desktop apps launched from the OS app launcher may not inherit variables
+from your interactive terminal; start the app from an environment-managed launcher
+when you intentionally want this advanced switch enabled.
 
 ## Serve web frontend
 
@@ -213,7 +260,8 @@ Chat and transcript shortcuts:
 | `Ctrl+Home` / `Ctrl+End` | Jumps to the top or bottom of the transcript | Useful after long tool output. |
 | `Esc` | Backs out of the current action | It un-sends a just-submitted turn before any reply, cancels a running turn, or clears non-empty input. |
 | Double `Esc` on an empty idle composer | Opens the rewind picker | Same entry point as `/rewind`. |
-| `Ctrl+C` / `Meta+C` / `Super+C` | Copies an active transcript selection | Without a selection it cancels a running turn, clears non-empty input, or quits on a second empty-composer press. |
+| Terminal native selection | Copies transcript text | Reasonix does not enable mouse reporting by default, so terminal selection/copy remains available. |
+| `Ctrl+C` | Cancels, clears, or quits | Cancels a running turn, clears non-empty input, or quits on a second empty-composer press. |
 | `Ctrl+D` | Quits the TUI | Immediate quit. |
 | `Ctrl+V`, `Ctrl+Shift+V`, `Meta+V`, or `Super+V` | Pastes clipboard content | The CLI tries an image first, then falls back to text or file references. |
 | `/paste-image` | Pastes a clipboard image | Use it when you want image-only paste or the terminal handles text paste itself. |
@@ -227,7 +275,7 @@ Mode and display shortcuts:
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |
-| `Ctrl+B` | Expands or collapses long shell output | Same action as clicking the collapsed shell-output hint. |
+| `Ctrl+B` | Expands or collapses long shell output | Works with terminal-native text selection because the TUI does not enable mouse reporting by default. |
 | Ask / Auto | No keyboard cycle | Ask is the default interactive base. Auto is not entered through `Shift+Tab`; use clients or APIs that expose the tool approval posture directly. |
 | `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch. Ordinary prompts with strong AutoResearch signals are also upgraded into Goal. |
 | `/migrate`, `/migrate --from <legacy-dir>` | Retries legacy migration or imports sessions from a chosen v0.x source | Use `--from` for custom Windows v0.52 install/data directories; it imports sessions only. See [Configuration paths](./CONFIG_PATHS.md). |
@@ -270,10 +318,14 @@ Permissions are *policy* (which calls to allow / prompt). The **sandbox** is
 *enforcement*: the file-writers (`write_file` / `edit_file` / `multi_edit` / `move_file`)
 refuse any path outside `[sandbox] workspace_root` (default: the current dir, so
 edits stay in the project), resolving symlinks and `..` so a link can't tunnel
-out. Reads are unrestricted. `bash` is itself jailed on macOS by default
-(`[sandbox] bash`, Seatbelt): commands may write only those same roots (plus
-temp and toolchain caches) and reach the network only when `[sandbox] network`
-is set. Other platforms fall back to running unconfined for now (see
+out. `forbid_read` optionally hides sensitive directories from the agent's
+read/list/search tools; use absolute paths or `${HOME}` / `${VAR}` references,
+not `~`, because config expansion is environment-variable based. `bash` is
+itself jailed on macOS by default (`[sandbox] bash`, Seatbelt): commands may
+write only those same roots (plus temp and toolchain caches), cannot read
+configured `forbid_read` roots while the OS sandbox is active, and reach the
+network only when `[sandbox] network` is set. Other platforms fall back to
+running unconfined when no OS sandbox is available (see
 [`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope) for the escape-prompt and
 Linux support still to come).
 
@@ -321,6 +373,8 @@ resource) you can copy.
 [[plugins]]                       # local stdio server
 name    = "example"
 command = "reasonix-plugin-example"
+# call_timeout_seconds = 600       # optional per-server MCP call timeout
+# tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool names
 
 [[plugins]]                       # remote server over Streamable HTTP
 name    = "stripe"
@@ -509,6 +563,15 @@ do not override `max_steps` or `planner_max_steps`.
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only
 specific skills such as `review` or `security_review`.
+
+Use `read_only_task` when planning needs isolated, deeper research without
+granting write-capable delegation. Use `read_only_skill` when the same need is
+best expressed through an existing skill. Both run ephemeral read-only
+subagents with only read-only research tools plus safe foreground bash, return
+only the final answer, and do not create resumable subagent transcripts. In
+token economy mode, connect only this narrow surface with
+`connect_tool_source(source="read_only_skill")`; the full `skills` source still
+enables writer-capable skill tools and remains blocked in plan mode.
 
 For interactive frontends, plan mode is manual by default. Set
 `agent.auto_plan = "on"` to make complex-looking tasks enter plan mode

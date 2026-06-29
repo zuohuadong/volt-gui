@@ -777,7 +777,15 @@ func ClearPluginAuthenticationInSource(name string) (PluginEntry, bool, string, 
 }
 
 func pluginTOMLSourcePath(name string) string {
-	paths := append([]string{"voltui.toml"}, userConfigCandidatePaths()...)
+	return pluginTOMLSourcePathForRoot(".", name)
+}
+
+func pluginTOMLSourcePathForRoot(root, name string) string {
+	projectTOML := "voltui.toml"
+	if resolved := resolveRoot(root); resolved != "." {
+		projectTOML = filepath.Join(resolved, "voltui.toml")
+	}
+	paths := append([]string{projectTOML}, userConfigCandidatePaths()...)
 	for _, path := range paths {
 		if strings.TrimSpace(path) == "" {
 			continue
@@ -792,10 +800,89 @@ func pluginTOMLSourcePath(name string) string {
 	return ""
 }
 
+// TrustPluginReadOnlyTool records one trusted read-only MCP tool on a configured
+// plugin entry. It reports changed=false when the tool was already trusted.
+func (c *Config) TrustPluginReadOnlyTool(name, toolName string) (PluginEntry, bool, error) {
+	name = strings.TrimSpace(name)
+	toolName = strings.TrimSpace(toolName)
+	if name == "" || toolName == "" {
+		return PluginEntry{}, false, fmt.Errorf("plugin and tool name are required")
+	}
+	for i := range c.Plugins {
+		if c.Plugins[i].Name != name {
+			continue
+		}
+		for _, existing := range c.Plugins[i].TrustedReadOnlyTools {
+			if strings.TrimSpace(existing) == toolName {
+				return c.Plugins[i], false, nil
+			}
+		}
+		c.Plugins[i].TrustedReadOnlyTools = append(c.Plugins[i].TrustedReadOnlyTools, toolName)
+		return c.Plugins[i], true, nil
+	}
+	return PluginEntry{}, false, fmt.Errorf("plugin %q not found", name)
+}
+
+// TrustPluginReadOnlyToolInSourceForRoot persists one trusted MCP read-only tool
+// into the file that owns the server for root. TOML declarations win over
+// .mcp.json, matching LoadForRoot merge precedence.
+func TrustPluginReadOnlyToolInSourceForRoot(root, name, toolName string) (PluginEntry, bool, string, error) {
+	if path := pluginTOMLSourcePathForRoot(root, name); path != "" {
+		cfg := LoadForEdit(path)
+		updated, changed, err := cfg.TrustPluginReadOnlyTool(name, toolName)
+		if err != nil {
+			return PluginEntry{}, false, path, err
+		}
+		if changed {
+			if err := cfg.SaveTo(path); err != nil {
+				return PluginEntry{}, false, path, err
+			}
+		}
+		return updated, changed, path, nil
+	}
+	mcpPath := mcpJSONFile
+	if resolved := resolveRoot(root); resolved != "." {
+		mcpPath = filepath.Join(resolved, mcpJSONFile)
+	}
+	updated, ok, err := LoadMCPJSONPlugin(mcpPath, name)
+	if err != nil {
+		return PluginEntry{}, false, mcpPath, err
+	}
+	if !ok {
+		return PluginEntry{}, false, mcpPath, fmt.Errorf("plugin %q not found", name)
+	}
+	toolName = strings.TrimSpace(toolName)
+	for _, existing := range updated.TrustedReadOnlyTools {
+		if strings.TrimSpace(existing) == toolName {
+			return updated, false, mcpPath, nil
+		}
+	}
+	updated.TrustedReadOnlyTools = append(updated.TrustedReadOnlyTools, toolName)
+	if _, err := UpsertMCPJSONPlugin(mcpPath, updated); err != nil {
+		return PluginEntry{}, false, mcpPath, err
+	}
+	return updated, true, mcpPath, nil
+}
+
+func TrustPluginReadOnlyToolInSource(name, toolName string) (PluginEntry, bool, string, error) {
+	return TrustPluginReadOnlyToolInSourceForRoot(".", name, toolName)
+}
+
 // validatePlugin checks a plugin entry by transport. An empty Type means stdio.
 func validatePlugin(e PluginEntry) error {
 	if strings.TrimSpace(e.Name) == "" {
 		return fmt.Errorf("plugin: name is required")
+	}
+	if e.CallTimeoutSeconds < 0 {
+		return fmt.Errorf("plugin %q: call_timeout_seconds must be >= 0", e.Name)
+	}
+	for name, sec := range e.ToolTimeoutSeconds {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("plugin %q: tool_timeout_seconds contains an empty tool name", e.Name)
+		}
+		if sec < 0 {
+			return fmt.Errorf("plugin %q: tool_timeout_seconds[%q] must be >= 0", e.Name, name)
+		}
 	}
 	switch strings.ToLower(strings.TrimSpace(e.Type)) {
 	case "", "stdio":

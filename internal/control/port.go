@@ -185,6 +185,7 @@ type Input interface {
 	ResolveRefs(ctx context.Context, line string) (block string, errs []string)
 	HasRefs(line string) bool
 	ImageInputEnabled() bool
+	RegisterExternalFolderRef(path string) (token, displayPath string, err error)
 }
 
 // Settings covers runtime session settings that don't fit a richer domain.

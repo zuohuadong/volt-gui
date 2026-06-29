@@ -38,6 +38,14 @@ type Spec struct {
 	Env     map[string]string
 	URL     string
 	Headers map[string]string
+	// DefaultCallTimeout is the global MCP call cap for this server. Zero keeps
+	// VoltUI's built-in defaultCallTimeout.
+	DefaultCallTimeout time.Duration
+	// CallTimeout overrides DefaultCallTimeout for all calls to this server.
+	// Zero falls back to DefaultCallTimeout.
+	CallTimeout time.Duration
+	// ToolTimeouts overrides the per-call deadline for raw MCP tool names.
+	ToolTimeouts map[string]time.Duration
 	// Dir, when set, is the working directory of a stdio subprocess. Empty means
 	// inherit voltui's cwd (the default for user-configured plugins). It exists
 	// for cwd-aware servers like CodeGraph, which detect the project from the
@@ -509,8 +517,9 @@ func (c *Client) auxiliaryClient(ctx context.Context) (*Client, context.Context,
 
 // ToolInfo is the human-facing metadata returned by MCP tools/list for one tool.
 type ToolInfo struct {
-	Name        string
-	Description string
+	Name         string
+	Description  string
+	ReadOnlyHint bool
 }
 
 // ServerStatus summarises one connected server for the /mcp command.
@@ -939,14 +948,56 @@ func newTransport(ctx context.Context, s Spec) (transport, error) {
 }
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	res, err := c.t.call(ctx, method, params)
+	callCtx, cancel, _ := c.contextWithCallTimeout(ctx, method, params)
+	if cancel != nil {
+		defer cancel()
+	}
+	res, err := c.t.call(callCtx, method, params)
 	if err == nil || method == "initialize" || !isHTTPSessionExpired(err) {
 		return res, err
 	}
 	if initErr := c.initializeSession(ctx, false); initErr != nil {
 		return nil, fmt.Errorf("%w; reinitialize failed: %v", err, initErr)
 	}
-	return c.t.call(ctx, method, params)
+	return c.t.call(callCtx, method, params)
+}
+
+func (c *Client) contextWithCallTimeout(ctx context.Context, method string, params any) (context.Context, context.CancelFunc, time.Duration) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, nil, 0
+	}
+	timeout := c.callTimeout(method, params)
+	if timeout <= 0 {
+		timeout = defaultCallTimeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	return callCtx, cancel, timeout
+}
+
+func (c *Client) callTimeout(method string, params any) time.Duration {
+	if method == "tools/call" {
+		if raw := rawToolNameFromCallParams(params); raw != "" {
+			if timeout := c.spec.ToolTimeouts[raw]; timeout > 0 {
+				return timeout
+			}
+		}
+	}
+	if c.spec.CallTimeout > 0 {
+		return c.spec.CallTimeout
+	}
+	if c.spec.DefaultCallTimeout > 0 {
+		return c.spec.DefaultCallTimeout
+	}
+	return defaultCallTimeout
+}
+
+func rawToolNameFromCallParams(params any) string {
+	m, ok := params.(map[string]any)
+	if !ok {
+		return ""
+	}
+	raw, _ := m["name"].(string)
+	return strings.TrimSpace(raw)
 }
 
 func (c *Client) notify(ctx context.Context, method string, params any) error {
@@ -1031,14 +1082,15 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 		if c.spec.StripRawPrefix != "" {
 			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
 		}
-		toolInfos = append(toolInfos, ToolInfo{Name: t.Name, Description: t.Description})
+		readOnly := c.spec.toolReadOnly(t.Name, visibleName, hinted)
+		toolInfos = append(toolInfos, ToolInfo{Name: t.Name, Description: t.Description, ReadOnlyHint: readOnly})
 		tools = append(tools, &remoteTool{
 			client:          c,
 			name:            toolName(c.name, visibleName),
 			rawName:         t.Name,
 			desc:            t.Description,
 			schema:          canonicalizeSchema(t.InputSchema),
-			readOnly:        c.spec.toolReadOnly(t.Name, visibleName, hinted),
+			readOnly:        readOnly,
 			readOnlyTrusted: c.spec.ReadOnlyToolNames[t.Name] || c.spec.ReadOnlyModelToolNames[toolName(c.spec.Name, visibleName)],
 		})
 	}

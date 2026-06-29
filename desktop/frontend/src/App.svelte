@@ -87,6 +87,8 @@
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
+  type CodeWorkbenchAction = "conversation" | "overview" | "workspace" | "context" | "changes" | "checkpoints" | "models" | "settings";
+  type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
   type CapabilityTab = "plugin" | "mcp" | "skill";
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
@@ -164,7 +166,9 @@
   let sending = $state(false);
   let sidebarCollapsed = $state(false);
   let codeInspectorOpen = $state(false);
+  let codeWorkbenchPanel = $state<CodeWorkbenchPanel>("overview");
   let workLayer = $state<WorkLayer>("today");
+  let lastWorkLayer = $state<WorkLayer>("today");
   let capabilityTab = $state<CapabilityTab>("plugin");
   let capabilitySearch = $state("");
   let selectedCapabilityId = $state("git-panel");
@@ -247,7 +251,7 @@
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
-  const showActiveTranscript = $derived((activityMode === "code" || (workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || activityMode === "code" || newTaskConversationActive));
+  const showActiveTranscript = $derived(((activityMode === "code" && newTaskConversationActive) || (activityMode === "work" && workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || newTaskConversationActive));
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
@@ -296,11 +300,25 @@
   function modelValue(model?: ModelInfo) { return model?.ref || model?.name || model?.model || model?.label || ""; }
 
   const workspaceNav = [
-    { title: "Agent Work", items: [{ label: "新建对话", layer: "newTask", icon: "newTask" }, { label: "待办事项", layer: "todos", icon: "todos" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
-    { title: "运营", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }] },
-    { title: "协作", items: [{ label: "日程日历", layer: "calendar", icon: "calendar" }, { label: "报告中心", layer: "reports", icon: "reports" }, { label: "团队协作", layer: "teams", icon: "teams" }] },
-    { title: "知识库", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }, { label: "资料中心", layer: "resources", icon: "resources" }] },
+    { title: "工作处理", items: [{ label: "今日概览", layer: "today", icon: "today" }, { label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "待办事项", layer: "todos", icon: "todos" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
+    { title: "业务资料", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }, { label: "资料中心", layer: "resources", icon: "resources" }] },
+    { title: "协作交付", items: [{ label: "团队协作", layer: "teams", icon: "teams" }, { label: "日程日历", layer: "calendar", icon: "calendar" }, { label: "报告中心", layer: "reports", icon: "reports" }] },
+    { title: "Agent 能力", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }] },
   ] as { title: string; items: { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string }[] }[];
+  const codeWorkspaceNav = [
+    { title: "代码工作台", items: [
+      { label: "代码对话", desc: "面向工程问题的 Agent 会话", action: "conversation", icon: "newTask" },
+      { label: "总览", desc: "模型、权限、仓库和变更概况", action: "overview", icon: "today" },
+      { label: "Workspace", desc: "文件树、预览和当前工作区", action: "workspace", icon: "projects" },
+      { label: "上下文窗口", desc: "查看 token、缓存命中和读写文件", action: "context", icon: "reports" },
+      { label: "变更审查", desc: "聚焦 diff、预览和回滚范围", action: "changes", icon: "projects" },
+      { label: "检查点", desc: "按会话或代码范围回退", action: "checkpoints", icon: "automations" },
+    ] },
+    { title: "代码配置", items: [
+      { label: "模型渠道", desc: "选择 coding 模型与 provider", action: "models", icon: "models" },
+      { label: "权限沙箱", desc: "终端、网络和写入边界", action: "settings", icon: "settings" },
+    ] },
+  ] as { title: string; items: { label: string; desc: string; action: CodeWorkbenchAction; icon: WorkLayer }[] }[];
   const workLayerLabels: Record<WorkLayer, string> = {
     today: "工作台",
     newTask: "新建对话",
@@ -321,7 +339,19 @@
     ingest: "导入资料",
     capabilities: "能力中心",
   };
-  const collapsibleWorkspaceSections = new Set(["运营", "协作", "知识库"]);
+  const workbenchModeCopy: Record<ActivityMode, { title: string; eyebrow: string; desc: string }> = {
+    work: {
+      title: "Work 工作台",
+      eyebrow: "Projects / Agents / Operations",
+      desc: "面向业务、项目、客户、资料和团队协作，把 Agent 当成可编排的生产力成员。",
+    },
+    code: {
+      title: "Code 工作台",
+      eyebrow: "Code / Diff / Context",
+      desc: "面向研发和代码变更，围绕仓库上下文、diff、检查点、权限和模型选择组织界面。",
+    },
+  };
+  const collapsibleWorkspaceSections = new Set(["业务资料", "协作交付", "Agent 能力"]);
   const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
   const todoItems = [
     { title: "验证桌面预览加载状态", desc: "确认浏览器模式无需 Wails 绑定也能进入工作台", due: "今天", state: "进行中" },
@@ -1622,6 +1652,7 @@
   function openWorkLayer(layer: WorkLayer) {
     activityMode = "work";
     workLayer = layer;
+    lastWorkLayer = layer;
     if (layer === "newTask") newTaskConversationActive = false;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
@@ -1629,27 +1660,104 @@
     agentSelectorOpen = false;
     if (layer === "settings" || layer === "models") void ensureSettingsLoaded();
   }
+
+  function openWorkWorkspace() {
+    openWorkLayer(lastWorkLayer || "today");
+  }
+
+  function rememberWorkLayerBeforeCode() {
+    if (activityMode !== "work") return;
+    lastWorkLayer = workLayer;
+  }
   function openResourceCenterFromComposer() {
     openWorkLayer("resources");
     resourceTab = "resources";
   }
   function openCodeConversation() {
+    rememberWorkLayerBeforeCode();
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = true;
+    codeWorkbenchPanel = "overview";
     codeInspectorOpen = false;
     sidebarCollapsed = false;
     userMenuOpen = false;
   }
-  function openActivityMode(mode: ActivityMode) {
-    if (mode === "work") {
-      if (activityMode === "work" && workLayer === "newTask") return;
-      openWorkLayer("newTask");
+
+  function openCodeWorkbench(panel: CodeWorkbenchPanel = "overview") {
+    rememberWorkLayerBeforeCode();
+    activityMode = "code";
+    workLayer = "newTask";
+    newTaskConversationActive = false;
+    codeWorkbenchPanel = panel;
+    codeInspectorOpen = false;
+    sidebarCollapsed = false;
+    userMenuOpen = false;
+    void tick().then(() => {
+      if (hasWailsBindings()) void refreshCodeDock();
+    });
+  }
+
+  function openCodeWorkbenchAction(action: CodeWorkbenchAction) {
+    if (action === "models") {
+      rememberWorkLayerBeforeCode();
+      activityMode = "code";
+      workLayer = "newTask";
+      newTaskConversationActive = false;
+      codeWorkbenchPanel = "overview";
+      settingsPanel = "models";
+      userPanelDialog = "settings";
+      userMenuOpen = false;
+      void ensureSettingsLoaded();
       return;
     }
-    openCodeConversation();
-    input = "";
-    void tick().then(focusComposer);
+    if (action === "settings") {
+      rememberWorkLayerBeforeCode();
+      settingsPanel = "runtime";
+      userPanelDialog = "settings";
+      userMenuOpen = false;
+      activityMode = "code";
+      workLayer = "newTask";
+      newTaskConversationActive = false;
+      codeWorkbenchPanel = "overview";
+      void ensureSettingsLoaded();
+      return;
+    }
+    if (action === "conversation") {
+      openCodeConversation();
+      void tick().then(focusComposer);
+      return;
+    }
+    if (action === "overview") openCodeWorkbench("overview");
+    if (action === "workspace") openCodeWorkbench("workspace");
+    if (action === "context") openCodeWorkbench("context");
+    if (action === "changes") openCodeWorkbench("changes");
+    if (action === "checkpoints") openCodeWorkbench("checkpoints");
+    if (action === "workspace") showWorkbenchNotice("已切到 Code 工作台的 Workspace，可查看文件树、预览和当前工作区。");
+    if (action === "context") showWorkbenchNotice("已切到 Code 工作台的上下文窗口，可查看 token、缓存和读写文件。");
+    if (action === "changes") showWorkbenchNotice("已切到 Code 工作台的变更审查，可查看 diff、文件预览和回滚范围。");
+    if (action === "checkpoints") showWorkbenchNotice("已切到 Code 工作台的检查点视图，可按会话或代码范围回退。");
+  }
+
+  function isCodeWorkspaceActionActive(action: CodeWorkbenchAction) {
+    if (activityMode !== "code") return false;
+    if (action === "conversation") return newTaskConversationActive;
+    if (action === "overview") return !newTaskConversationActive && codeWorkbenchPanel === "overview";
+    if (action === "workspace") return !newTaskConversationActive && codeWorkbenchPanel === "workspace";
+    if (action === "context") return !newTaskConversationActive && codeWorkbenchPanel === "context";
+    if (action === "changes") return !newTaskConversationActive && codeWorkbenchPanel === "changes";
+    if (action === "checkpoints") return !newTaskConversationActive && codeWorkbenchPanel === "checkpoints";
+    if (action === "models") return userPanelDialog === "settings" && settingsPanel === "models";
+    if (action === "settings") return userPanelDialog === "settings" && settingsPanel === "runtime";
+    return false;
+  }
+
+  function openActivityMode(mode: ActivityMode) {
+    if (mode === "work") {
+      openWorkWorkspace();
+      return;
+    }
+    openCodeWorkbench("overview");
   }
   function openWorkspaceNavLayer(layer: WorkLayer) {
     if (layer === "newTask") {
@@ -1942,10 +2050,9 @@
   }
 
   async function openUnifiedCodeTask() {
-    openCodeConversation();
+    openCodeWorkbench("overview");
     await tick();
     if (hasWailsBindings()) await refreshCodeDock();
-    focusComposer();
   }
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
   function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
@@ -2859,6 +2966,11 @@
     if (!text || !submission || !activeTab) return;
     if (sending) return;
     if (activityMode === "work" && workLayer === "newTask") newTaskConversationActive = true;
+    if (activityMode === "code") {
+      newTaskConversationActive = true;
+      codeWorkbenchPanel = "overview";
+      codeInspectorOpen = false;
+    }
     const draft = { display: text, submission };
     const userTranscriptId = `user-${Date.now()}`;
     submittedDraft = draft;
@@ -2867,6 +2979,14 @@
     input = "";
     appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
     ensurePendingAssistant();
+    if (!hasWailsBindings()) {
+      updateLastAssistant("浏览器预览已收到这条消息。真实模型调用、工具执行和文件写入需要在 Wails 桌面运行环境中完成。");
+      for (const item of transcript) item.pending = false;
+      sending = false;
+      submittedDraft = undefined;
+      saveActiveSidebarConversationTranscript();
+      return;
+    }
     try {
       const targetTab = await ensureConversationThreadForSend(text);
       if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
@@ -2980,16 +3100,22 @@
   async function previewFile(path: string) {
     filePreview = await app().ReadFile(path);
     diffPreview = undefined;
-    openCodeConversation();
-    codeInspectorOpen = true;
+    activityMode = "code";
+    workLayer = "newTask";
+    newTaskConversationActive = false;
+    codeWorkbenchPanel = "workspace";
+    codeInspectorOpen = false;
   }
 
   async function previewChange(path: string) {
     const [diff, preview] = await Promise.all([app().WorkspaceDiff(path), app().ReadFile(path)]);
     diffPreview = diff;
     filePreview = preview;
-    openCodeConversation();
-    codeInspectorOpen = true;
+    activityMode = "code";
+    workLayer = "newTask";
+    newTaskConversationActive = false;
+    codeWorkbenchPanel = "changes";
+    codeInspectorOpen = false;
   }
 
   async function rewind(turn: number, scope: string) {
@@ -3023,32 +3149,53 @@
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
     <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>Volt GUI</strong><span>AI 驱动工作台</span></div><button class="brand-workbench-button" class:active={activityMode === "work" && workLayer === "today"} type="button" aria-label="工作台" title="工作台" onclick={() => openWorkLayer("today")}><LayoutDashboard size={15} /></button><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
+      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>{workbenchModeCopy[activityMode].title}</strong><span>{workbenchModeCopy[activityMode].eyebrow}</span></div><div class="brand-workspace-switch" role="group" aria-label="切换工作台"><button class="brand-workbench-button" class:active={activityMode === "work"} type="button" aria-label="Work 工作台" title="Work 工作台" onclick={openWorkWorkspace}><BriefcaseBusiness size={15} /></button><button class="brand-code-button" class:active={activityMode === "code"} type="button" aria-label="Code 工作台" title="Code 工作台" onclick={() => void openUnifiedCodeTask()}><Code2 size={15} /></button></div><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
       <nav class="workspace-nav" aria-label="工作台导航">
-        {#each workspaceNav as section (section.title)}
-          {@const sectionCollapsed = isWorkspaceSectionCollapsed(section.title)}
-          {@const sectionCollapsible = collapsibleWorkspaceSections.has(section.title)}
-          <section>
-            {#if sectionCollapsible}
-              <button class="workspace-nav-section-head" class:collapsed={sectionCollapsed} type="button" aria-expanded={!sectionCollapsed} onclick={() => toggleWorkspaceSection(section.title)}>
-                <ChevronDown size={12} />
-                <span>{section.title}</span>
-              </button>
-            {:else}
+        {#if activityMode === "code"}
+          <section class="code-repo-dock" aria-label="当前代码工作区">
+            <span>Repository</span>
+            <strong>{activeTab?.workspaceName || t.common.global}</strong>
+            <p>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"} / {context ? `${contextPercent}% context` : "context 未加载"}</p>
+          </section>
+          {#each codeWorkspaceNav as section (section.title)}
+            <section class="code-workspace-nav-section">
               <h2>{section.title}</h2>
-            {/if}
-            {#if !sectionCollapsed}
-              {#each section.items as item (item.label)}
+              {#each section.items as item (item.action)}
                 {@const Icon = navIcon(item.icon)}
-                <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkspaceNavLayer(item.layer)}>
+                <button class="code-workspace-nav-item" class:active={isCodeWorkspaceActionActive(item.action)} type="button" onclick={() => openCodeWorkbenchAction(item.action)}>
                   <span class="nav-icon"><Icon size={15} /></span>
-                  <span>{item.label}</span>
-                  {#if item.badge}<em>{item.badge}</em>{/if}
+                  <span><strong>{item.label}</strong><em>{item.desc}</em></span>
                 </button>
               {/each}
-            {/if}
-          </section>
-        {/each}
+            </section>
+          {/each}
+        {:else}
+          {#each workspaceNav as section (section.title)}
+            {@const sectionCollapsed = isWorkspaceSectionCollapsed(section.title)}
+            {@const sectionCollapsible = collapsibleWorkspaceSections.has(section.title)}
+            <section>
+              {#if sectionCollapsible}
+                <button class="workspace-nav-section-head" class:collapsed={sectionCollapsed} type="button" aria-expanded={!sectionCollapsed} onclick={() => toggleWorkspaceSection(section.title)}>
+                  <ChevronDown size={12} />
+                  <span>{section.title}</span>
+                </button>
+              {:else}
+                <h2>{section.title}</h2>
+              {/if}
+              {#if !sectionCollapsed}
+                {#each section.items as item (item.label)}
+                  {@const Icon = navIcon(item.icon)}
+                  <button class:active={activityMode === "work" && workLayer === item.layer} type="button" onclick={() => openWorkspaceNavLayer(item.layer)}>
+                    <span class="nav-icon"><Icon size={15} /></span>
+                    <span>{item.label}</span>
+                    {#if item.badge}<em>{item.badge}</em>{/if}
+                  </button>
+                {/each}
+              {/if}
+            </section>
+          {/each}
+        {/if}
+        {#if activityMode === "work"}
         <section class="sidebar-project-dock" data-sidebar-project-dock>
           <div class="sidebar-project-head">
             <button class="sidebar-project-section-toggle" class:expanded={!sidebarProjectDockCollapsed} type="button" aria-label={sidebarProjectDockCollapsed ? "展开项目" : "收起项目"} aria-expanded={!sidebarProjectDockCollapsed} onclick={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}><ChevronDown size={13} /></button>
@@ -3102,6 +3249,7 @@
           </div>
           {/if}
         </section>
+        {/if}
       </nav>
       <footer class="sidebar__user-wrap">{#if userMenuOpen}<div class="user-menu" role="menu">{#each userMenuItems as item (item.layer)}<button type="button" role="menuitem" onclick={() => openUserPanelDialog(item.layer)}>{item.label}</button>{/each}</div>{/if}<button class="sidebar__user sidebar__profile" type="button" aria-label="打开用户菜单" title="用户菜单" onclick={() => (userMenuOpen = !userMenuOpen)}><span class="sidebar__avatar"><UserRound size={16} /></span><strong>用户名</strong><em hidden aria-hidden="true"></em></button></footer>
     </aside>
@@ -3155,14 +3303,111 @@
                 onOpenResources={openResourceCenterFromComposer}
                 {activityMode}
                 onActivityModeChange={openActivityMode}
+                showActivityModeSwitch={activityMode === "work"}
               />
             </div>
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
-          <section class="workbench aorist-workbench" data-current-work-layer={workLayer}>
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{activityMode === "code" ? "Code" : "Workbench"}</span><strong>{activityMode === "code" ? "新建对话" : workLayerLabels[workLayer]}</strong></div></div></header>
+          <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined}>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchModeCopy[activityMode].eyebrow}</span><strong>{activityMode === "code" ? "Code 工作台" : workLayerLabels[workLayer]}</strong></div><p>{activityMode === "code" ? "面向研发用户的代码上下文、diff、检查点和执行权限控制台。" : workbenchModeCopy.work.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> 代码状态</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
             {#if workbenchNotice}<div class="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
-            {#if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            {#if activityMode === "code"}
+              <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
+                <div class="code-workbench-shell">
+                  <section class="code-workbench-hero" aria-label="Code 工作台总览">
+                    <div>
+                      <span>Code Agent Workspace</span>
+                      <strong>面向研发的代码工作台</strong>
+                      <p>把会话、仓库上下文、变更预览、检查点和模型权限放在同一个工程界面里；Work 工作台继续服务项目、客户和团队协作。</p>
+                    </div>
+                    <div class="code-workbench-actions">
+                      <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={15} /> 开始代码对话</button>
+                      <button type="button" onclick={() => openCodeWorkbenchAction("changes")}><GitBranch size={15} /> 审查变更</button>
+                      <button type="button" onclick={() => openCodeWorkbenchAction("context")}><Gauge size={15} /> 查看上下文</button>
+                    </div>
+                  </section>
+
+                  <div class="code-workbench-status-grid" aria-label="Code 工作台状态">
+                    <button type="button" onclick={() => openCodeWorkbenchAction("models")}>
+                      <BrainCircuit size={16} />
+                      <span><strong>{selectedModel || modelSettings?.defaultModel || agentModel}</strong><em>{modelSettings ? `${modelSettings.providers.filter((provider) => provider.configured).length}/${modelSettings.providers.length} 个渠道可用` : "模型渠道未连接桌面后端"}</em></span>
+                    </button>
+                    <button type="button" onclick={() => openCodeWorkbenchAction("settings")}>
+                      <ShieldCheck size={16} />
+                      <span><strong>{settingsDraft.permissionMode || "ask"} / {settingsDraft.sandboxBash || "enforce"}</strong><em>{settingsDraft.sandboxNetwork ? "沙箱网络已允许" : "沙箱网络默认关闭"}</em></span>
+                    </button>
+                    <button type="button" onclick={() => openCodeWorkbench("workspace")}>
+                      <Folder size={16} />
+                      <span><strong>{activeTab?.workspaceName || t.common.global}</strong><em>Workspace / Preview</em></span>
+                    </button>
+                    <button type="button" onclick={() => openCodeWorkbench("changes")}>
+                      <GitBranch size={16} />
+                      <span><strong>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"}</strong><em>Diff / 回滚范围</em></span>
+                    </button>
+                  </div>
+
+                  <div class="code-workbench-command-row" role="group" aria-label="Code 工作台面板">
+                    <button class:active={codeWorkbenchPanel === "overview"} type="button" onclick={() => openCodeWorkbench("overview")}><LayoutDashboard size={14} /> 总览</button>
+                    <button class:active={codeWorkbenchPanel === "workspace"} type="button" onclick={() => openCodeWorkbench("workspace")}><Folder size={14} /> Workspace / Preview</button>
+                    <button class:active={codeWorkbenchPanel === "context"} type="button" onclick={() => openCodeWorkbench("context")}><Gauge size={14} /> Context</button>
+                    <button class:active={codeWorkbenchPanel === "changes"} type="button" onclick={() => openCodeWorkbench("changes")}><GitBranch size={14} /> Diff</button>
+                    <button class:active={codeWorkbenchPanel === "checkpoints"} type="button" onclick={() => openCodeWorkbench("checkpoints")}><RotateCcw size={14} /> Checkpoints</button>
+                  </div>
+
+                  <div class="code-workbench-main">
+                    <section class="code-workbench-chat" aria-label="代码对话入口">
+                      <header>
+                        <div><span>Code Chat</span><strong>{conversationHeaderTitle}</strong><p>{activeTab?.workspaceName || t.common.global}</p></div>
+                        <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={14} /> 打开会话</button>
+                      </header>
+                      <div class="code-workbench-chat__prompts">
+                        {#each t.home.code.quick as quick (quick.label)}
+                          <button type="button" onclick={() => { useQuickPrompt(quick.prompt); openCodeConversation(); void tick().then(focusComposer); }}>
+                            <strong>{quick.label}</strong>
+                            <span>{quick.prompt}</span>
+                          </button>
+                        {/each}
+                      </div>
+                      <Composer
+                        {input}
+                        {commands}
+                        {sending}
+                        onInput={(value) => (input = value)}
+                        onSend={send}
+                        onCancel={cancel}
+                        onPreviewFile={previewFile}
+                        {models}
+                        {selectedModel}
+                        onModelChange={switchModel}
+                        projectOptions={newTaskProjectOptions}
+                        selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
+                        onProjectChange={linkProjectById}
+                        {workPermission}
+                        onWorkPermissionChange={(value) => (workPermission = value)}
+                        onOpenResources={openResourceCenterFromComposer}
+                        {activityMode}
+                        onActivityModeChange={openActivityMode}
+                        showActivityModeSwitch={false}
+                      />
+                    </section>
+
+                    <CodeDashboard
+                      {context}
+                      {changes}
+                      {checkpoints}
+                      {filePreview}
+                      {diffPreview}
+                      variant="workbench"
+                      focus={codeWorkbenchPanel}
+                      onPreviewFile={previewFile}
+                      onPreviewChange={previewChange}
+                      onRewind={rewind}
+                      onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+                    />
+                  </div>
+                </div>
+              </section>
+            {:else if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -15319,5 +15564,498 @@
     .model-fetch-list {
       grid-template-columns: 1fr;
     }
+  }
+
+  .sidebar__brand {
+    grid-template-columns: 28px minmax(0, 1fr) auto 30px;
+  }
+
+  .brand-workspace-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 10px;
+    background: #ffffff;
+  }
+
+  .brand-code-button,
+  .brand-workbench-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--aorist-muted, #667085);
+  }
+
+  .brand-code-button:hover,
+  .brand-workbench-button:hover,
+  .brand-code-button.active,
+  .brand-workbench-button.active {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .code-repo-dock {
+    display: grid;
+    gap: 4px;
+    margin: 8px 8px 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 10px;
+    background: #ffffff;
+  }
+
+  .code-repo-dock > span {
+    overflow: hidden;
+    color: var(--aorist-faint, #98a2b3);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .code-repo-dock strong {
+    overflow: hidden;
+    color: var(--aorist-ink, #111827);
+    font-size: 13px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .code-repo-dock p {
+    margin: 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .code-workspace-nav-section {
+    margin-bottom: 12px;
+  }
+
+  .workspace-nav .code-workspace-nav-item {
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: flex-start;
+    min-height: 54px;
+    padding-block: 8px;
+  }
+
+  .code-workspace-nav-item > span:nth-child(2) {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .code-workspace-nav-item strong,
+  .code-workspace-nav-item em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .code-workspace-nav-item strong {
+    color: inherit;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .code-workspace-nav-item em {
+    color: var(--aorist-muted, #667085);
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 450;
+  }
+
+  .stage-topbar__leading p {
+    max-width: 760px;
+    margin: 4px 0 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .code-workbench-page {
+    padding: 16px;
+    background: #f6f8fc;
+  }
+
+  .code-workbench-shell {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 12px;
+    min-height: 100%;
+  }
+
+  .code-workbench-hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .code-workbench-hero > div:first-child {
+    min-width: 0;
+  }
+
+  .code-workbench-hero span,
+  .code-workbench-chat header span {
+    display: block;
+    color: var(--aorist-faint, #98a2b3);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .code-workbench-hero strong,
+  .code-workbench-chat header strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--aorist-ink, #111827);
+    font-size: 20px;
+    font-weight: 560;
+    line-height: 1.2;
+  }
+
+  .code-workbench-hero p,
+  .code-workbench-chat header p {
+    max-width: 720px;
+    margin: 6px 0 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .code-workbench-actions,
+  .code-workbench-command-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .code-workbench-actions {
+    justify-content: flex-end;
+    min-width: min(420px, 42%);
+  }
+
+  .code-workbench-actions button,
+  .code-workbench-command-row button,
+  .code-workbench-chat header button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--aorist-ink, #111827);
+    font-size: 12px;
+    font-weight: 520;
+    white-space: nowrap;
+  }
+
+  .code-workbench-actions button:first-child,
+  .code-workbench-command-row button.active {
+    border-color: #2563eb;
+    background: #2563eb;
+    color: #ffffff;
+  }
+
+  .code-workbench-status-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .code-workbench-status-grid button {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 58px;
+    padding: 10px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--aorist-ink, #111827);
+    text-align: left;
+  }
+
+  .code-workbench-status-grid button:hover {
+    border-color: #2563eb;
+    box-shadow: 0 8px 22px rgba(37, 99, 235, 0.08);
+  }
+
+  .code-workbench-status-grid button > :global(svg) {
+    color: #2563eb;
+  }
+
+  .code-workbench-status-grid span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .code-workbench-status-grid strong,
+  .code-workbench-status-grid em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .code-workbench-status-grid strong {
+    color: var(--aorist-ink, #111827);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .code-workbench-status-grid em {
+    color: var(--aorist-muted, #667085);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .code-workbench-command-row {
+    padding: 4px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .code-workbench-main {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.36fr) minmax(0, 1fr);
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .code-workbench-chat {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, auto);
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--aorist-line, #d9dee8);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .code-workbench-chat header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .code-workbench-chat header > div {
+    min-width: 0;
+  }
+
+  .code-workbench-chat__prompts {
+    display: grid;
+    gap: 8px;
+  }
+
+  .code-workbench-chat__prompts button {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid #eef2f7;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: var(--aorist-ink, #111827);
+    text-align: left;
+  }
+
+  .code-workbench-chat__prompts strong,
+  .code-workbench-chat__prompts span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .code-workbench-chat__prompts strong {
+    font-size: 13px;
+    font-weight: 560;
+    white-space: nowrap;
+  }
+
+  .code-workbench-chat__prompts span {
+    color: var(--aorist-muted, #667085);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .code-workbench-chat :global(.composer) {
+    min-height: 170px;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  .code-workbench-chat :global(.composer textarea) {
+    min-height: 68px;
+  }
+
+  .code-workbench-page :global(.code-layout--workbench) {
+    min-width: 0;
+  }
+
+  @media (max-width: 1120px) {
+    .code-workbench-status-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .code-workbench-main {
+      grid-template-columns: 1fr;
+    }
+
+    .code-workbench-chat {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .shell {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    .shell .sidebar--aorist {
+      grid-row: 1;
+      width: 100%;
+      min-width: 0;
+      height: auto;
+      max-height: min(42dvh, 360px);
+      border-right: 0;
+      border-bottom: 1px solid var(--aorist-line, #d9dee8);
+    }
+
+    .shell .sidebar__brand {
+      min-height: 52px;
+    }
+
+    .shell .workspace-nav {
+      max-height: calc(min(42dvh, 360px) - 112px);
+      padding-bottom: 8px;
+    }
+
+    .shell .sidebar__user-wrap {
+      position: relative;
+      z-index: 3;
+      padding: 8px 12px;
+    }
+
+    .shell .stage {
+      grid-row: 2;
+      min-height: 0;
+      padding: 8px;
+      overflow: hidden;
+    }
+
+    .shell .stage__surface {
+      min-height: 0;
+    }
+
+    .shell .aorist-page,
+    .shell .code-workbench-page {
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+    }
+
+    .shell .modal-backdrop {
+      z-index: 90;
+    }
+
+    .shell .code-inspector {
+      top: 12px;
+      right: 12px;
+      bottom: 12px;
+      left: 12px;
+      width: auto;
+      min-width: 0;
+    }
+
+    .code-workbench-page {
+      padding: 12px;
+    }
+
+    .brand-copy strong,
+    .brand-copy span,
+    .code-repo-dock > span,
+    .code-repo-dock strong,
+    .code-workspace-nav-item strong,
+    .code-workspace-nav-item em {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-nav .code-workspace-nav-item {
+      min-height: auto;
+    }
+
+    .code-workbench-hero,
+    .code-workbench-chat header {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .code-workbench-actions {
+      justify-content: flex-start;
+      min-width: 0;
+    }
+
+    .code-workbench-command-row button {
+      flex: 1 1 140px;
+    }
+
+    .code-workbench-status-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .code-workbench-status-grid strong,
+    .code-workbench-status-grid em {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+  }
+
+  .shell.is-sidebar-collapsed .sidebar__brand {
+    grid-template-columns: 30px;
+  }
+
+  .shell.is-sidebar-collapsed .brand-workspace-switch,
+  .shell.is-sidebar-collapsed .code-repo-dock,
+  .shell.is-sidebar-collapsed .code-workspace-nav-item em,
+  .shell.is-sidebar-collapsed .code-workspace-nav-item strong {
+    display: none;
   }
 </style>

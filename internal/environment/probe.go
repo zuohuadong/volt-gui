@@ -18,7 +18,26 @@ import (
 
 const ProbeTimeout = 2 * time.Second
 
+const probeCacheTTL = 5 * time.Minute
+
 const maxRenderedTools = 24
+
+type probeCacheEntry struct {
+	storedAt time.Time
+	results  []ProbeResult
+}
+
+type probeInflight struct {
+	done    chan struct{}
+	results []ProbeResult
+}
+
+var (
+	probeCacheMu       sync.Mutex
+	probeCache         = map[string]probeCacheEntry{}
+	probeInflightCalls = map[string]*probeInflight{}
+	probeNow           = time.Now
+)
 
 type ProbeResult struct {
 	Command string
@@ -49,6 +68,21 @@ func RunProbes(ctx context.Context, commands []string) []ProbeResult {
 }
 
 func RunProbesWithOverrides(ctx context.Context, commands []string, overrides map[string]string) []ProbeResult {
+	key := probeFingerprint(commands, overrides)
+	now := probeNow()
+	if results, ok := cachedProbeResults(key, now); ok {
+		return results
+	}
+	if call, ok := beginProbe(key); ok {
+		<-call.done
+		return cloneProbeResults(call.results)
+	}
+	results := runProbesUncached(ctx, commands, overrides)
+	finishProbe(key, results, probeNow())
+	return cloneProbeResults(results)
+}
+
+func runProbesUncached(ctx context.Context, commands []string, overrides map[string]string) []ProbeResult {
 	results := make([]ProbeResult, len(commands))
 	var wg sync.WaitGroup
 	for i, command := range commands {
@@ -61,6 +95,64 @@ func RunProbesWithOverrides(ctx context.Context, commands []string, overrides ma
 	wg.Wait()
 	sortResults(results)
 	return results
+}
+
+func cachedProbeResults(key string, now time.Time) ([]ProbeResult, bool) {
+	probeCacheMu.Lock()
+	defer probeCacheMu.Unlock()
+	entry, ok := probeCache[key]
+	if !ok || now.Sub(entry.storedAt) >= probeCacheTTL {
+		if ok {
+			delete(probeCache, key)
+		}
+		return nil, false
+	}
+	return cloneProbeResults(entry.results), true
+}
+
+func beginProbe(key string) (*probeInflight, bool) {
+	probeCacheMu.Lock()
+	defer probeCacheMu.Unlock()
+	if call, ok := probeInflightCalls[key]; ok {
+		return call, true
+	}
+	probeInflightCalls[key] = &probeInflight{done: make(chan struct{})}
+	return nil, false
+}
+
+func finishProbe(key string, results []ProbeResult, now time.Time) {
+	probeCacheMu.Lock()
+	defer probeCacheMu.Unlock()
+	cached := cloneProbeResults(results)
+	probeCache[key] = probeCacheEntry{storedAt: now, results: cached}
+	if call, ok := probeInflightCalls[key]; ok {
+		call.results = cached
+		delete(probeInflightCalls, key)
+		close(call.done)
+	}
+}
+
+func probeFingerprint(commands []string, overrides map[string]string) string {
+	var b strings.Builder
+	b.WriteString("v1")
+	for _, command := range commands {
+		b.WriteByte('\x00')
+		b.WriteString(strings.TrimSpace(command))
+	}
+	for _, name := range sortedMapKeys(overrides) {
+		b.WriteByte('\x00')
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(expandHome(overrides[name]))
+	}
+	return b.String()
+}
+
+func cloneProbeResults(results []ProbeResult) []ProbeResult {
+	if results == nil {
+		return nil
+	}
+	return append([]ProbeResult(nil), results...)
 }
 
 func runOne(ctx context.Context, command string, overrides map[string]string) ProbeResult {

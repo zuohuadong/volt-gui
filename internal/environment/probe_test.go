@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFormatSectionSortsAndRedacts(t *testing.T) {
@@ -54,14 +55,7 @@ func TestRunProbesReportsMissingCommand(t *testing.T) {
 func TestRunProbesUsesOverridePathAndFirstLine(t *testing.T) {
 	dir := t.TempDir()
 	toolPath := filepath.Join(dir, "mytool")
-	body := "#!/bin/sh\nprintf 'custom version\\nignored\\n'\n"
-	if runtime.GOOS == "windows" {
-		toolPath += ".bat"
-		body = "@echo custom version\r\n@echo ignored\r\n"
-	}
-	if err := os.WriteFile(toolPath, []byte(body), 0o755); err != nil {
-		t.Fatalf("write tool: %v", err)
-	}
+	toolPath = writeProbeTool(t, toolPath, "custom version\nignored")
 
 	results := RunProbesWithOverrides(context.Background(), []string{"mytool --version"}, map[string]string{"mytool": toolPath})
 	if len(results) != 1 {
@@ -99,6 +93,63 @@ func TestRunProbesReportsTimeout(t *testing.T) {
 	}
 }
 
+func TestRunProbesCachesByFingerprint(t *testing.T) {
+	resetProbeCacheForTest(t, time.Unix(100, 0))
+	dir := t.TempDir()
+	toolPath := filepath.Join(dir, "cachedtool")
+	toolPath = writeProbeTool(t, toolPath, "version one")
+
+	results := RunProbesWithOverrides(context.Background(), []string{"cachedtool --version"}, map[string]string{"cachedtool": toolPath})
+	if got := results[0].Output; got != "version one" {
+		t.Fatalf("first Output = %q, want version one", got)
+	}
+	results[0].Output = "mutated"
+	toolPath = writeProbeTool(t, toolPath, "version two")
+
+	results = RunProbesWithOverrides(context.Background(), []string{"cachedtool --version"}, map[string]string{"cachedtool": toolPath})
+	if got := results[0].Output; got != "version one" {
+		t.Fatalf("cached Output = %q, want version one", got)
+	}
+}
+
+func TestRunProbesCacheExpires(t *testing.T) {
+	now := time.Unix(200, 0)
+	resetProbeCacheForTest(t, now)
+	dir := t.TempDir()
+	toolPath := filepath.Join(dir, "expiringtool")
+	toolPath = writeProbeTool(t, toolPath, "version one")
+
+	results := RunProbesWithOverrides(context.Background(), []string{"expiringtool --version"}, map[string]string{"expiringtool": toolPath})
+	if got := results[0].Output; got != "version one" {
+		t.Fatalf("first Output = %q, want version one", got)
+	}
+	toolPath = writeProbeTool(t, toolPath, "version two")
+	setProbeNowForTest(now.Add(probeCacheTTL + time.Second))
+
+	results = RunProbesWithOverrides(context.Background(), []string{"expiringtool --version"}, map[string]string{"expiringtool": toolPath})
+	if got := results[0].Output; got != "version two" {
+		t.Fatalf("expired Output = %q, want version two", got)
+	}
+}
+
+func TestRunProbesCacheSeparatesOverrides(t *testing.T) {
+	resetProbeCacheForTest(t, time.Unix(300, 0))
+	dir := t.TempDir()
+	toolOne := filepath.Join(dir, "override-one")
+	toolTwo := filepath.Join(dir, "override-two")
+	toolOne = writeProbeTool(t, toolOne, "version one")
+	toolTwo = writeProbeTool(t, toolTwo, "version two")
+
+	results := RunProbesWithOverrides(context.Background(), []string{"overridetool --version"}, map[string]string{"overridetool": toolOne})
+	if got := results[0].Output; got != "version one" {
+		t.Fatalf("first override Output = %q, want version one", got)
+	}
+	results = RunProbesWithOverrides(context.Background(), []string{"overridetool --version"}, map[string]string{"overridetool": toolTwo})
+	if got := results[0].Output; got != "version two" {
+		t.Fatalf("second override Output = %q, want version two", got)
+	}
+}
+
 func TestFormatSectionLimitsToolOutput(t *testing.T) {
 	overrides := map[string]string{}
 	var results []ProbeResult
@@ -119,4 +170,42 @@ func TestFormatSectionLimitsToolOutput(t *testing.T) {
 			t.Fatalf("section missing %q:\n%s", want, section)
 		}
 	}
+}
+
+func writeProbeTool(t *testing.T, path, output string) string {
+	t.Helper()
+	body := "#!/bin/sh\nprintf '%s\\n'\n"
+	body = fmt.Sprintf(body, strings.ReplaceAll(output, "'", "'\\''"))
+	if runtime.GOOS == "windows" {
+		if !strings.HasSuffix(path, ".bat") {
+			path += ".bat"
+		}
+		body = "@echo " + strings.ReplaceAll(output, "\n", "\r\n@echo ") + "\r\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write tool: %v", err)
+	}
+	return path
+}
+
+func resetProbeCacheForTest(t *testing.T, now time.Time) {
+	t.Helper()
+	setProbeNowForTest(now)
+	probeCacheMu.Lock()
+	probeCache = map[string]probeCacheEntry{}
+	probeInflightCalls = map[string]*probeInflight{}
+	probeCacheMu.Unlock()
+	t.Cleanup(func() {
+		probeCacheMu.Lock()
+		probeCache = map[string]probeCacheEntry{}
+		probeInflightCalls = map[string]*probeInflight{}
+		probeNow = time.Now
+		probeCacheMu.Unlock()
+	})
+}
+
+func setProbeNowForTest(now time.Time) {
+	probeCacheMu.Lock()
+	probeNow = func() time.Time { return now }
+	probeCacheMu.Unlock()
 }

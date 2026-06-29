@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.5.1...desktop-v0.6.0) (2026-06-28)
+
+
+### Features
+
+* 过滤 image/video 非聊天模型, 完善团队运行状态与工作台交互 ([7c9fded](https://github.com/zuohuadong/volt-gui/commit/7c9fdeda078eff572e9a61056ca6e296c2b8bc51))
+
+
+### Bug Fixes
+
+* **desktop:** harden production smoke flows ([28585ab](https://github.com/zuohuadong/volt-gui/commit/28585ab6ca75461e9b916c3247d23888273a9b39))
+
 ## [0.5.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.5.0...desktop-v0.5.1) (2026-06-27)
 
 

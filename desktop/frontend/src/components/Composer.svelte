@@ -24,6 +24,7 @@
     onOpenResources,
     activityMode,
     onActivityModeChange,
+    showActivityModeSwitch = true,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -43,6 +44,7 @@
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
     onActivityModeChange?: (mode: ActivityMode) => void;
+    showActivityModeSwitch?: boolean;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -633,7 +635,7 @@
           <option value="">选择模型</option>
         {/if}
       </select>
-      {#if activityMode && onActivityModeChange}
+      {#if showActivityModeSwitch && activityMode && onActivityModeChange}
         <div class="composer__mode-switch" role="group" aria-label="Work / Code 切换">
           <button class:active={activityMode === "work"} type="button" aria-pressed={activityMode === "work"} onclick={() => onActivityModeChange("work")}>
             <LayoutDashboard size={14} />

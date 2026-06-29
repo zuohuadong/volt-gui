@@ -68,6 +68,62 @@
     }
   }
 
+  function extractLeadingJsonObject(value: string) {
+    const start = value.search(/\S/);
+    if (start < 0 || value[start] !== "{") return undefined;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < value.length; index += 1) {
+      const char = value[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+      } else if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          return { json: value.slice(start, index + 1), rest: value.slice(index + 1) };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function isMarkdownPath(path: string) {
+    return /\.(md|mdx|markdown)$/i.test(path.trim());
+  }
+
+  function markdownWriteResult(item: TranscriptItem) {
+    if (item.role !== "tool" || (item.title ?? "").toLowerCase() !== "write_file") return undefined;
+    const extracted = extractLeadingJsonObject(item.body);
+    if (!extracted) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(extracted.json);
+    } catch {
+      return undefined;
+    }
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const record = parsed as Record<string, unknown>;
+    const content = typeof record.content === "string" ? record.content : "";
+    const path = typeof record.path === "string" ? record.path : "";
+    if (!content || !isMarkdownPath(path)) return undefined;
+    const result = /(?:^|\n)\s*wrote\s+(\d+)\s+bytes\s+to\s+(.+?)\s*$/i.exec(extracted.rest);
+    if (!result) return undefined;
+    return { content, path, bytes: result[1], writtenPath: result[2] };
+  }
+
   function pendingLabel(item: TranscriptItem) {
     if (item.role === "tool") return "正在执行工具";
     if (item.role === "reasoning") return "正在整理思路";
@@ -100,7 +156,19 @@
             <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可能卡住了，可点击停止后重试" : "结果会自动显示"}</em>
           </div>
         {:else}
-          <MarkdownView text={item.body} />
+          {@const renderedWrite = markdownWriteResult(item)}
+          {#if renderedWrite}
+            <div class="tool-document-result">
+              <MarkdownView text={renderedWrite.content} />
+              <footer>
+                <strong>已写入 Markdown 文件</strong>
+                <span>{renderedWrite.bytes} bytes</span>
+                <code>{renderedWrite.writtenPath || renderedWrite.path}</code>
+              </footer>
+            </div>
+          {:else}
+            <MarkdownView text={item.body} />
+          {/if}
         {/if}
         {#if item.role === "tool" && subcallsByParent.get(item.id)?.length}
           <div class="tool-subcalls" aria-label={`Subcalls for ${item.title || item.id}`}>
@@ -112,7 +180,19 @@
                     <strong>{pendingLabel(child)}</strong>
                   </div>
                 {:else}
-                  <MarkdownView text={child.body} />
+                  {@const renderedChildWrite = markdownWriteResult(child)}
+                  {#if renderedChildWrite}
+                    <div class="tool-document-result">
+                      <MarkdownView text={renderedChildWrite.content} />
+                      <footer>
+                        <strong>已写入 Markdown 文件</strong>
+                        <span>{renderedChildWrite.bytes} bytes</span>
+                        <code>{renderedChildWrite.writtenPath || renderedChildWrite.path}</code>
+                      </footer>
+                    </div>
+                  {:else}
+                    <MarkdownView text={child.body} />
+                  {/if}
                 {/if}
               </article>
             {/each}
@@ -235,6 +315,49 @@
 
   .pending-status--compact {
     font-size: 13px;
+  }
+
+  .tool-document-result {
+    display: grid;
+    gap: 12px;
+  }
+
+  .tool-document-result :global(.md) {
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  .tool-document-result footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    color: #64748b;
+    font-size: 12px;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  .tool-document-result footer strong {
+    color: #334155;
+    font-weight: 650;
+  }
+
+  .tool-document-result footer span {
+    color: #64748b;
+  }
+
+  .tool-document-result footer code {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    padding: 2px 6px;
+    border: 1px solid #dbe3ee;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #475569;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
   }
 
   @keyframes pending-spin {

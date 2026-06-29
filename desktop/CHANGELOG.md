@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.6.0...desktop-v0.7.0) (2026-06-29)
+
+
+### Features
+
+* **desktop:** separate work and code workbenches ([c9cb5e1](https://github.com/zuohuadong/volt-gui/commit/c9cb5e13bb7b45e44999227b360463ec3dcfcc71))
+
 ## [0.6.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.5.1...desktop-v0.6.0) (2026-06-28)
 
 

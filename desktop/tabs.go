@@ -52,6 +52,7 @@ type WorkspaceTab struct {
 	buildCancel     context.CancelFunc // cancels in-flight boot for tabs removed before Ready
 	buildGeneration uint64             // identifies the current in-flight build
 	removed         bool               // set when the visible tab is pruned/closed before build completes
+	reconcileMu     sync.Mutex         // serializes stale controller workspace repair for this tab
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 

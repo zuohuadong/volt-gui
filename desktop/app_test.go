@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1690,13 +1691,17 @@ func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
 type staleWorkspaceBindingFixture struct {
 	app          *App
 	tab          *WorkspaceTab
-	oldCtrl      *control.Controller
+	oldCtrl      control.SessionAPI
 	projectA     string
 	sessionDirA  string
 	sessionPathA string
 }
 
 func newStaleWorkspaceBindingFixture(t *testing.T, suffix string) staleWorkspaceBindingFixture {
+	return newStaleWorkspaceBindingFixtureWithLayout(t, suffix, "")
+}
+
+func newStaleWorkspaceBindingFixtureWithLayout(t *testing.T, suffix, layoutStyle string) staleWorkspaceBindingFixture {
 	t.Helper()
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "TEST_MODEL_KEY", "sk-test")
@@ -1706,6 +1711,11 @@ func newStaleWorkspaceBindingFixture(t *testing.T, suffix string) staleWorkspace
 	cfg.Desktop.ProviderAccess = []string{"test"}
 	cfg.Providers = []config.ProviderEntry{
 		{Name: "test", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "test-model", APIKeyEnv: "TEST_MODEL_KEY"},
+	}
+	if strings.TrimSpace(layoutStyle) != "" {
+		if err := cfg.SetDesktopLayoutStyle(layoutStyle); err != nil {
+			t.Fatalf("set desktop layout style: %v", err)
+		}
 	}
 	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
 		t.Fatalf("save config: %v", err)
@@ -1802,6 +1812,55 @@ func assertTabRebuiltToPinnedWorkspace(t *testing.T, f staleWorkspaceBindingFixt
 	}
 }
 
+type blockingSnapshotCtrl struct {
+	control.SessionAPI
+
+	firstSnapshotStarted  chan struct{}
+	secondSnapshotStarted chan struct{}
+	releaseSnapshot       chan struct{}
+	firstOnce             sync.Once
+	secondOnce            sync.Once
+	snapshotCount         atomic.Int32
+	closeCount            atomic.Int32
+}
+
+func newBlockingSnapshotCtrl(ctrl control.SessionAPI) *blockingSnapshotCtrl {
+	return &blockingSnapshotCtrl{
+		SessionAPI:            ctrl,
+		firstSnapshotStarted:  make(chan struct{}),
+		secondSnapshotStarted: make(chan struct{}),
+		releaseSnapshot:       make(chan struct{}),
+	}
+}
+
+func (c *blockingSnapshotCtrl) Snapshot() error {
+	count := c.snapshotCount.Add(1)
+	if count == 1 {
+		c.firstOnce.Do(func() { close(c.firstSnapshotStarted) })
+	} else if count == 2 {
+		c.secondOnce.Do(func() { close(c.secondSnapshotStarted) })
+	}
+	<-c.releaseSnapshot
+	if c.SessionAPI == nil {
+		return nil
+	}
+	return c.SessionAPI.Snapshot()
+}
+
+func (c *blockingSnapshotCtrl) Close() {
+	c.closeCount.Add(1)
+	if c.SessionAPI != nil {
+		c.SessionAPI.Close()
+	}
+}
+
+func (f *staleWorkspaceBindingFixture) installBlockingSnapshotController() *blockingSnapshotCtrl {
+	ctrl := newBlockingSnapshotCtrl(f.tab.Ctrl)
+	f.tab.Ctrl = ctrl
+	f.oldCtrl = ctrl
+	return ctrl
+}
+
 func TestEnsureTabControllerWorkspaceRebuildsStaleWorkspace(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "rebuild_workspace")
 
@@ -1827,6 +1886,87 @@ func TestCompactReconcilesStaleWorkspaceBeforeCompaction(t *testing.T) {
 	if err := f.app.Compact(); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
+	assertTabRebuiltToPinnedWorkspace(t, f)
+}
+
+func TestClassicLayoutQuickClicksSerializeWorkspaceRebuild(t *testing.T) {
+	runQuickClickWorkspaceReconcileTest(t, "classic")
+}
+
+func TestWorkbenchLayoutQuickClicksSerializeWorkspaceRebuild(t *testing.T) {
+	runQuickClickWorkspaceReconcileTest(t, "workbench")
+}
+
+func TestCreationLayoutQuickClicksSerializeWorkspaceRebuild(t *testing.T) {
+	runQuickClickWorkspaceReconcileTest(t, "creation")
+}
+
+func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
+	t.Helper()
+	f := newStaleWorkspaceBindingFixtureWithLayout(t, "quick_click_"+layoutStyle, layoutStyle)
+	if got, want := f.app.singleSurfaceLayoutEnabled(), singleSurfaceLayoutStyle(layoutStyle); got != want {
+		t.Fatalf("singleSurfaceLayoutEnabled(%q) = %v, want %v", layoutStyle, got, want)
+	}
+	blockingCtrl := f.installBlockingSnapshotController()
+
+	type quickAction struct {
+		name string
+		run  func() error
+	}
+	actions := []quickAction{
+		{name: "submit", run: func() error { return f.app.SubmitToTab(f.tab.ID, "/unknown-command") }},
+		{name: "steer", run: func() error { return f.app.SteerForTab(f.tab.ID, "/unknown-command") }},
+		{name: "compact", run: func() error { return f.app.Compact() }},
+		{name: "submit-display", run: func() error { return f.app.SubmitDisplayToTab(f.tab.ID, "/unknown display", "/unknown-command") }},
+	}
+
+	start := make(chan struct{})
+	ready := make(chan struct{}, len(actions))
+	errs := make(chan error, len(actions))
+	var wg sync.WaitGroup
+	for _, action := range actions {
+		action := action
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ready <- struct{}{}
+			<-start
+			if err := action.run(); err != nil {
+				errs <- fmt.Errorf("%s: %w", action.name, err)
+			}
+		}()
+	}
+	for range actions {
+		<-ready
+	}
+	close(start)
+
+	select {
+	case <-blockingCtrl.firstSnapshotStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first stale controller snapshot")
+	}
+	select {
+	case <-blockingCtrl.secondSnapshotStarted:
+		t.Fatal("workspace rebuild was not serialized: second stale snapshot started before the first rebuild finished")
+	case <-time.After(75 * time.Millisecond):
+	}
+	close(blockingCtrl.releaseSnapshot)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+	if got := blockingCtrl.snapshotCount.Load(); got != 1 {
+		t.Fatalf("stale snapshot count = %d, want 1", got)
+	}
+	if got := blockingCtrl.closeCount.Load(); got != 1 {
+		t.Fatalf("stale close count = %d, want 1", got)
+	}
+	waitNotRunning(t, f.tab.Ctrl)
 	assertTabRebuiltToPinnedWorkspace(t, f)
 }
 

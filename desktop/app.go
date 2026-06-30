@@ -923,6 +923,11 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 	if tab == nil || tab.Ctrl == nil || tab.ReadOnly {
 		return nil
 	}
+	tab.reconcileMu.Lock()
+	defer tab.reconcileMu.Unlock()
+	if tab.Ctrl == nil || tab.ReadOnly {
+		return nil
+	}
 	if tab.hasActiveRuntimeWork() {
 		return nil
 	}

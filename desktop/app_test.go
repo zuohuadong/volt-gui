@@ -1616,6 +1616,77 @@ func TestSetModelForTabRejectsProviderOutsideAccess(t *testing.T) {
 	}
 }
 
+func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
+	setDesktopTestCredential(t, "NEW_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "old/old-model"
+	cfg.Desktop.ProviderAccess = []string{"old", "new"}
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "old", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "old-model", APIKeyEnv: "OLD_MODEL_KEY"},
+		{Name: "new", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "new-model", APIKeyEnv: "NEW_MODEL_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	if err := os.MkdirAll(config.MemoryUserDir(), 0o755); err != nil {
+		t.Fatalf("mkdir memory dir: %v", err)
+	}
+	const freshRule = "Fresh global AGENTS rule for model switch"
+	if err := os.WriteFile(filepath.Join(config.MemoryUserDir(), "AGENTS.md"), []byte(freshRule), 0o644); err != nil {
+		t.Fatalf("write global AGENTS.md: %v", err)
+	}
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	oldSession := agent.NewSession("old system prompt without memory")
+	oldSession.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	oldExec := agent.New(nil, nil, oldSession, agent.Options{}, event.Discard)
+	oldPath := filepath.Join(dir, "old.jsonl")
+	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: oldPath, Label: "old", Sink: event.Discard})
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := &WorkspaceTab{
+		ID:          "tab_a",
+		Scope:       "global",
+		Ready:       true,
+		model:       "old/old-model",
+		Ctrl:        oldCtrl,
+		sink:        &tabEventSink{tabID: "tab_a", app: app},
+		disabledMCP: map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+	})
+
+	if err := app.SetModelForTab(tab.ID, "new/new-model"); err != nil {
+		t.Fatalf("SetModelForTab: %v", err)
+	}
+	history := tab.Ctrl.History()
+	if len(history) < 2 {
+		t.Fatalf("history length = %d, want system + user", len(history))
+	}
+	if history[0].Role != provider.RoleSystem {
+		t.Fatalf("first message role = %s, want system", history[0].Role)
+	}
+	if !strings.Contains(history[0].Content, freshRule) {
+		t.Fatalf("refreshed system prompt missing global AGENTS rule:\n%s", history[0].Content)
+	}
+	if history[1].Role != provider.RoleUser || history[1].Content != "hello" {
+		t.Fatalf("carried user message changed: %+v", history[1])
+	}
+}
+
 func TestSetDefaultModelRejectsProviderWithoutKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("MIMO_API_KEY", "")

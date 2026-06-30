@@ -63,6 +63,11 @@ var planModeDeniedTools = map[string]bool{
 	"kill_shell":      true,
 }
 
+const (
+	MemoryCompilerVerbosityObserve = "observe"
+	MemoryCompilerVerbosityCompact = "compact"
+)
+
 // planModeBashMetachars defines shell metacharacters that indicate command
 // chaining, redirection, or substitution. When any of these appear in a bash
 // command during plan mode, the command is blocked — even if the command prefix
@@ -362,7 +367,10 @@ type Agent struct {
 	// system prompt or tool schema.
 	memoryCompilerMu sync.RWMutex
 	memoryCompiler   *memorycompiler.Runtime
-	compilerTurn     *memorycompiler.Turn
+	// observe is the default: Memory v5 writes traces without adding a
+	// provider-visible execution contract. compact preserves the old injection.
+	memoryCompilerVerbosity string
+	compilerTurn            *memorycompiler.Turn
 
 	// compilerInjectionMu bounds how often Memory v5 may replace a visible user
 	// turn with an execution contract. The runtime can still observe throttled
@@ -474,6 +482,16 @@ func (a *Agent) SetMemoryCompiler(rt *memorycompiler.Runtime) {
 	a.resetMemoryCompilerInjectionGate()
 }
 
+func (a *Agent) SetMemoryCompilerVerbosity(verbosity string) {
+	if a == nil {
+		return
+	}
+	a.memoryCompilerMu.Lock()
+	a.memoryCompilerVerbosity = normalizeMemoryCompilerVerbosity(verbosity)
+	a.memoryCompilerMu.Unlock()
+	a.resetMemoryCompilerInjectionGate()
+}
+
 func (a *Agent) memoryCompilerRuntime() *memorycompiler.Runtime {
 	if a == nil {
 		return nil
@@ -481,6 +499,24 @@ func (a *Agent) memoryCompilerRuntime() *memorycompiler.Runtime {
 	a.memoryCompilerMu.RLock()
 	defer a.memoryCompilerMu.RUnlock()
 	return a.memoryCompiler
+}
+
+func (a *Agent) memoryCompilerShouldInject() bool {
+	if a == nil {
+		return false
+	}
+	a.memoryCompilerMu.RLock()
+	defer a.memoryCompilerMu.RUnlock()
+	return normalizeMemoryCompilerVerbosity(a.memoryCompilerVerbosity) == MemoryCompilerVerbosityCompact
+}
+
+func normalizeMemoryCompilerVerbosity(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "compact", "inject", "injected", "contract", "on":
+		return MemoryCompilerVerbosityCompact
+	default:
+		return MemoryCompilerVerbosityObserve
+	}
 }
 
 // clearClassifierCache 清除 LLM 分类器的缓存（在会话边界调用）
@@ -790,6 +826,9 @@ type Options struct {
 	// MemoryCompiler enables Memory v5 execution trace writeback and cache-safe
 	// execution-contract compilation.
 	MemoryCompiler *memorycompiler.Runtime
+	// MemoryCompilerVerbosity controls provider-visible injection. Empty defaults
+	// to observe; compact restores execution-contract user-turn injection.
+	MemoryCompilerVerbosity string
 
 	// UseMemoryCompilerLLMClassification 启用 LLM 分类来判断任务 vs 聊天
 	// 默认 false 时使用启发式分类器
@@ -833,30 +872,31 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		maxStepsKey = "agent.max_steps"
 	}
 	a := &Agent{
-		prov:                  prov,
-		tools:                 tools,
-		session:               session,
-		maxSteps:              opts.MaxSteps,
-		maxStepsKey:           maxStepsKey,
-		temperature:           opts.Temperature,
-		pricing:               opts.Pricing,
-		usageSource:           usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-		sink:                  sink,
-		gate:                  gate,
-		planModeReadOnlyTrust: planModeReadOnlyTrust,
-		hooks:                 hooks,
-		jobs:                  opts.Jobs,
-		evidence:              evidence.NewLedger(),
-		projectChecks:         append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		contextWindow:         opts.ContextWindow,
-		softCompactRatio:      opts.SoftCompactRatio,
-		compactRatio:          opts.CompactRatio,
-		compactForceRatio:     opts.CompactForceRatio,
-		recentKeep:            opts.RecentKeep,
-		archiveDir:            opts.ArchiveDir,
-		keepPolicy:            opts.KeepPolicy,
-		planModeAllowedTools:  append([]string(nil), opts.PlanModeAllowedTools...),
-		memoryCompiler:        opts.MemoryCompiler,
+		prov:                    prov,
+		tools:                   tools,
+		session:                 session,
+		maxSteps:                opts.MaxSteps,
+		maxStepsKey:             maxStepsKey,
+		temperature:             opts.Temperature,
+		pricing:                 opts.Pricing,
+		usageSource:             usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+		sink:                    sink,
+		gate:                    gate,
+		planModeReadOnlyTrust:   planModeReadOnlyTrust,
+		hooks:                   hooks,
+		jobs:                    opts.Jobs,
+		evidence:                evidence.NewLedger(),
+		projectChecks:           append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		contextWindow:           opts.ContextWindow,
+		softCompactRatio:        opts.SoftCompactRatio,
+		compactRatio:            opts.CompactRatio,
+		compactForceRatio:       opts.CompactForceRatio,
+		recentKeep:              opts.RecentKeep,
+		archiveDir:              opts.ArchiveDir,
+		keepPolicy:              opts.KeepPolicy,
+		planModeAllowedTools:    append([]string(nil), opts.PlanModeAllowedTools...),
+		memoryCompiler:          opts.MemoryCompiler,
+		memoryCompilerVerbosity: normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
 	}
 	// 初始化分类器
 	if opts.UseMemoryCompilerLLMClassification && prov != nil {
@@ -918,6 +958,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		if isTask {
 			if compiledInput, turn := memCompiler.StartTurn(ctx, memoryCompilerInput, a.session.Snapshot()); turn != nil {
 				injected := strings.TrimSpace(compiledInput) != "" &&
+					a.memoryCompilerShouldInject() &&
 					a.tryMarkMemoryCompilerInjected(time.Now())
 				if !injected {
 					turn.SuppressInjection()

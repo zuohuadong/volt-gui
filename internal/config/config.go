@@ -54,6 +54,7 @@ type Config struct {
 	Permissions      PermissionsConfig   `toml:"permissions"`
 	Sandbox          SandboxConfig       `toml:"sandbox"`
 	Network          NetworkConfig       `toml:"network"`
+	Environment      EnvironmentConfig   `toml:"environment"`
 	Plugins          []PluginEntry       `toml:"plugins"`
 	Workbench        WorkbenchConfig     `toml:"workbench"`
 	Skills           SkillsConfig        `toml:"skills"`
@@ -83,6 +84,7 @@ type UIConfig struct {
 	ShortcutLayout string `toml:"shortcut_layout"` // classic|desktop; accepted for compatibility
 	CloseBehavior  string `toml:"close_behavior"`  // legacy desktop close behavior; prefer desktop.close_behavior
 	ShowReasoning  bool   `toml:"show_reasoning"`  // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
+	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to underline
 }
 
 // DesktopConfig controls desktop-only UI preferences. It is intentionally
@@ -210,6 +212,20 @@ type NotificationsConfig struct {
 	AskRequest      bool `toml:"ask_request"`
 }
 
+// EnvironmentConfig controls the stable startup environment block injected into
+// the model-facing prompt. Enabled nil means the default is enabled; Tools maps a
+// tool name to an explicit executable path when PATH probing is not enough.
+type EnvironmentConfig struct {
+	Enabled *bool             `toml:"enabled"`
+	Tools   map[string]string `toml:"tools"`
+}
+
+// EnvironmentEnabled reports whether startup environment probing should feed the
+// cache-stable system prompt.
+func (c *Config) EnvironmentEnabled() bool {
+	return c == nil || c.Environment.Enabled == nil || *c.Environment.Enabled
+}
+
 // UITheme normalizes ui.theme to a supported value.
 func (c *Config) UITheme() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.Theme)) {
@@ -237,6 +253,19 @@ func (c *Config) UIShortcutLayout() string {
 		return "desktop"
 	default:
 		return "classic"
+	}
+}
+
+// UICursorShape normalizes ui.cursor_shape. Defaults to "underline" to avoid
+// block-cursor visual corruption with CJK wide characters in terminal textareas.
+func (c *Config) UICursorShape() string {
+	switch strings.ToLower(strings.TrimSpace(c.UI.CursorShape)) {
+	case "block":
+		return "block"
+	case "bar":
+		return "bar"
+	default:
+		return "underline"
 	}
 }
 
@@ -977,9 +1006,10 @@ type AgentConfig struct {
 	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
-	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
-	CompactRatio      float64 `toml:"compact_ratio"`
-	CompactForceRatio float64 `toml:"compact_force_ratio"`
+	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`
+	ToolResultSnipRatio float64 `toml:"tool_result_snip_ratio"`
+	CompactRatio        float64 `toml:"compact_ratio"`
+	CompactForceRatio   float64 `toml:"compact_force_ratio"`
 	// Keep controls which compactable messages stay verbatim beyond the current
 	// user-fact/digest floor and recent tail. Empty uses the conservative default
 	// of keeping error tool results.
@@ -999,8 +1029,14 @@ type AgentConfig struct {
 
 // MemoryCompilerConfig controls the v5 execution-memory compiler.
 type MemoryCompilerConfig struct {
-	Enabled *bool `toml:"enabled"`
+	Enabled   *bool  `toml:"enabled"`
+	Verbosity string `toml:"verbosity"`
 }
+
+const (
+	MemoryCompilerVerbosityObserve = "observe"
+	MemoryCompilerVerbosityCompact = "compact"
+)
 
 // MemoryCompilerEnabled reports whether the v5 execution-memory compiler should
 // participate in future turns. Missing config defaults to true.
@@ -1011,6 +1047,29 @@ func (c *Config) MemoryCompilerEnabled() bool {
 	return *c.Agent.MemoryCompiler.Enabled
 }
 
+// MemoryCompilerVerbosity reports how much Memory v5 state should be injected
+// into model-facing turns. The default observes and learns without prompt
+// injection, so Memory v5 IR is not provider-visible unless opted in.
+func (c *Config) MemoryCompilerVerbosity() string {
+	if c == nil {
+		return MemoryCompilerVerbosityObserve
+	}
+	return NormalizeMemoryCompilerVerbosity(c.Agent.MemoryCompiler.Verbosity)
+}
+
+// NormalizeMemoryCompilerVerbosity accepts current and legacy spellings for the
+// Memory v5 injection mode.
+func NormalizeMemoryCompilerVerbosity(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "observe", "observed", "silent", "minimal", "none":
+		return MemoryCompilerVerbosityObserve
+	case "compact", "inject", "injected", "contract", "on":
+		return MemoryCompilerVerbosityCompact
+	default:
+		return MemoryCompilerVerbosityObserve
+	}
+}
+
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
 // token budget; the harness compacts older history as a turn's prompt approaches
 // it (see agent compaction). 0 disables compaction for the instance.
@@ -1018,6 +1077,7 @@ type ProviderEntry struct {
 	Name           string   `toml:"name"`
 	Kind           string   `toml:"kind"`
 	BaseURL        string   `toml:"base_url"`
+	ChatURL        string   `toml:"chat_url"`
 	Model          string   `toml:"model"`      // a single model (back-compat)
 	Models         []string `toml:"models"`     // a vendor's model list (one base_url/key, many models)
 	ModelsURL      string   `toml:"models_url"` // auto-fetch models from this URL on startup
@@ -1440,12 +1500,13 @@ func Default() *Config {
 			// the user cancels, or the provider errors. Context stays bounded by
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
-			MaxSteps:          0,
-			PlannerMaxSteps:   0,
-			AutoPlan:          "off",
-			SoftCompactRatio:  0.5,
-			CompactRatio:      0.8,
-			CompactForceRatio: 0.9,
+			MaxSteps:            0,
+			PlannerMaxSteps:     0,
+			AutoPlan:            "off",
+			SoftCompactRatio:    0.5,
+			ToolResultSnipRatio: 0.6,
+			CompactRatio:        0.8,
+			CompactForceRatio:   0.9,
 		},
 		// Mode "ask" with no rules keeps `voltui run` autonomous (no TTY → ask
 		// resolves to allow) while `voltui` prompts before writers. Users add

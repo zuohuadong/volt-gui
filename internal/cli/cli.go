@@ -134,8 +134,10 @@ func migrateLegacyConfigForCLI() {
 func configureCLIThemeFromConfig() {
 	if cfg, err := config.Load(); err == nil {
 		configureCLIThemeWithStyle(cfg.UITheme(), cfg.UIThemeStyle())
+		cliCursorShape = cfg.UICursorShape()
 	} else {
 		configureCLITheme("auto")
+		cliCursorShape = ""
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"voltui/internal/config"
@@ -94,6 +95,7 @@ var (
 		{name: "glacier", mode: "light", accent: cliColor{"#357fa8", 74}, description: "cool blue light accent"},
 	}
 	activeCLITheme                  = applyCLIThemeStyle(cliDarkTheme, cliThemeStyles[0])
+	cliCursorShape                  string
 	queryTerminalBackgroundForTheme = queryTerminalBackground
 )
 
@@ -432,7 +434,19 @@ func applyTextareaTheme(ti *textarea.Model) {
 	} else {
 		styles.Cursor.Color = nil
 	}
+	styles.Cursor.Shape = resolveCLICursorShape(cliCursorShape)
 	ti.SetStyles(styles)
+}
+
+func resolveCLICursorShape(shape string) tea.CursorShape {
+	switch strings.ToLower(strings.TrimSpace(shape)) {
+	case "block":
+		return tea.CursorBlock
+	case "bar":
+		return tea.CursorBar
+	default:
+		return tea.CursorUnderline
+	}
 }
 
 func (m *chatTUI) runThemeSubcommand(input string) {

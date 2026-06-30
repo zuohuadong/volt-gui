@@ -1829,33 +1829,105 @@ func TestForceGotoBottomScrollsWithoutTranscriptChange(t *testing.T) {
 	ctrl := control.New(control.Options{})
 	ch := make(chan event.Event, 1)
 	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
-	adv := func(m chatTUI, msg tea.Msg) chatTUI {
-		n, _ := m.Update(msg)
-		return n.(chatTUI)
+	adv := func(m chatTUI, msg tea.Msg) (chatTUI, tea.Cmd) {
+		n, cmd := m.Update(msg)
+		return n.(chatTUI), cmd
+	}
+	next := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := adv(m, msg)
+		return n
 	}
 
-	cur := adv(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 8})
+	cur := next(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 8})
 	for i := 0; i < 12; i++ {
-		cur = adv(cur, notice)
+		cur = next(cur, notice)
 	}
 	if !cur.viewport.AtBottom() {
 		t.Fatal("new output while pinned should keep the viewport at the bottom")
 	}
 
-	cur = adv(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	cur = next(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	if cur.viewport.AtBottom() {
 		t.Fatal("wheel-up should break the bottom pin")
 	}
 
 	cur.forceGotoBottom = true
 	cur.transcriptDirty = false
-	cur = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 8})
+	cur, cmd := adv(cur, tea.WindowSizeMsg{Width: 80, Height: 8})
 
 	if !cur.viewport.AtBottom() {
 		t.Fatalf("forceGotoBottom should scroll without transcript changes, YOffset=%d", cur.viewport.YOffset())
 	}
 	if cur.forceGotoBottom {
 		t.Fatal("forceGotoBottom should be cleared after scrolling")
+	}
+	if cmd == nil {
+		t.Fatal("regular forceGotoBottom scroll jump should request ClearScreen")
+	}
+}
+
+func TestSessionSwitchSuppressesOneClearScreen(t *testing.T) {
+	ctrl := control.New(control.Options{})
+	ch := make(chan event.Event, 1)
+	notice := agentEventMsg(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "line"})
+	adv := func(m chatTUI, msg tea.Msg) (chatTUI, tea.Cmd) {
+		n, cmd := m.Update(msg)
+		return n.(chatTUI), cmd
+	}
+	next := func(m chatTUI, msg tea.Msg) chatTUI {
+		n, _ := adv(m, msg)
+		return n
+	}
+
+	cur := next(newChatTUI(ctrl, "", ch, 80), tea.WindowSizeMsg{Width: 80, Height: 8})
+	for i := 0; i < 12; i++ {
+		cur = next(cur, notice)
+	}
+	cur = next(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if cur.viewport.AtBottom() {
+		t.Fatal("wheel-up should break the bottom pin")
+	}
+
+	cur.sessionSwitch = true
+	cur.forceGotoBottom = true
+	cur.transcriptDirty = false
+	cur, cmd := adv(cur, tea.WindowSizeMsg{Width: 80, Height: 8})
+
+	if cmd != nil {
+		t.Fatal("session switch rebuild should suppress the ClearScreen scroll-jump workaround once")
+	}
+	if cur.sessionSwitch {
+		t.Fatal("sessionSwitch should be cleared after one Update")
+	}
+	if !cur.viewport.AtBottom() {
+		t.Fatalf("session switch should still land at bottom, YOffset=%d", cur.viewport.YOffset())
+	}
+
+	cur = next(cur, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	cur.forceGotoBottom = true
+	cur, cmd = adv(cur, tea.WindowSizeMsg{Width: 80, Height: 8})
+	if cmd == nil {
+		t.Fatal("later scroll jumps must still request ClearScreen")
+	}
+	if cur.sessionSwitch {
+		t.Fatal("sessionSwitch should remain false after the suppressed cycle")
+	}
+}
+
+func TestReplayActiveBranchClearsPlanModeAndMarksSessionSwitch(t *testing.T) {
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{})
+	m.planMode = true
+	m.ctrl.SetPlanMode(true)
+	m.sessionSwitch = false
+
+	m.replayActiveBranch("switched branch")
+
+	if m.planMode || m.ctrl.PlanMode() {
+		t.Fatalf("replay should clear plan mode on both TUI and controller, tui=%v controller=%v", m.planMode, m.ctrl.PlanMode())
+	}
+	if !m.sessionSwitch {
+		t.Fatal("replay should mark the next Update as a session switch")
 	}
 }
 

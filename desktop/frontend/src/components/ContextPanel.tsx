@@ -69,16 +69,9 @@ function fmtTurns(turns: number | undefined, t: Translator): string {
 
 function fmtUsageCacheRate(usage?: WireUsage): string {
   if (!usage) return "-";
-  const denom = usage.cacheHitTokens + usage.cacheMissTokens || usage.promptTokens;
+  const denom = usage.cacheHitTokens + usage.cacheMissTokens;
   if (denom <= 0) return "-";
   return `${((usage.cacheHitTokens / denom) * 100).toFixed(2)}%`;
-}
-
-function fmtSessionCacheRate(usage?: WireUsage): string {
-  if (!usage) return "-";
-  const denom = usage.sessionCacheHitTokens + usage.sessionCacheMissTokens;
-  if (denom <= 0) return "-";
-  return `${((usage.sessionCacheHitTokens / denom) * 100).toFixed(2)}%`;
 }
 
 export function formatCacheHitRate(hitTokens: number, missTokens: number): string {
@@ -225,11 +218,31 @@ function sourceCost(stats: UsageSourceStats): number {
   return stats.sessionCost && stats.sessionCost > 0 ? stats.sessionCost : stats.sessionCostUsd ?? 0;
 }
 
-function sourceRows(info: ContextPanelInfo | null, sessionCurrency?: string): Array<{ source: string; label: string; cost: number; currency?: string; requests: number }> {
+export interface ContextSourceRow {
+  source: string;
+  label: string;
+  promptTokens: number;
+  completionTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  totalTokens: number;
+  cost: number;
+  currency?: string;
+  requests: number;
+}
+
+export function contextSourceRows(info: ContextPanelInfo | null, sessionCurrency?: string): ContextSourceRow[] {
   const entries = Object.entries(info?.sources ?? {});
   if (entries.length === 0) return [];
   return entries
-    .filter(([, stats]) => (stats.requestCount ?? 0) > 0 || sourceCost(stats) > 0)
+    .filter(([, stats]) =>
+      (stats.requestCount ?? 0) > 0 ||
+      (stats.promptTokens ?? 0) > 0 ||
+      (stats.completionTokens ?? 0) > 0 ||
+      (stats.cacheHitTokens ?? 0) > 0 ||
+      (stats.cacheMissTokens ?? 0) > 0 ||
+      sourceCost(stats) > 0
+    )
     .sort(([a], [b]) => {
       const ia = SOURCE_ORDER.indexOf(a);
       const ib = SOURCE_ORDER.indexOf(b);
@@ -239,6 +252,11 @@ function sourceRows(info: ContextPanelInfo | null, sessionCurrency?: string): Ar
     .map(([source, stats]) => ({
       source,
       label: source,
+      promptTokens: stats.promptTokens ?? 0,
+      completionTokens: stats.completionTokens ?? 0,
+      cacheHitTokens: stats.cacheHitTokens ?? 0,
+      cacheMissTokens: stats.cacheMissTokens ?? 0,
+      totalTokens: stats.totalTokens ?? 0,
       cost: sourceCost(stats),
       currency: stats.sessionCurrency || sessionCurrency || info?.sessionCurrency,
       requests: stats.requestCount ?? 0,
@@ -321,8 +339,8 @@ export function ContextPanel({
   const sessionCompletionMetric = formatMetricTokens(sessionCompletion, locale);
   const totalTokensMetric = formatMetricTokens(totalTokens, locale);
   const cost = contextCostDisplay({ info, sessionCost, sessionCurrency, usage });
-  const costSources = sourceRows(info, sessionCurrency);
-  const showCostSources = costSources.some((row) => row.source !== "executor") || costSources.length > 1;
+  const sourceUsageRows = contextSourceRows(info, sessionCurrency);
+  const showSourceUsageRows = sourceUsageRows.length > 0;
   const readFiles = asArray(info?.readFiles);
   const changedFiles = asArray(info?.changedFiles);
 
@@ -374,7 +392,7 @@ export function ContextPanel({
             </div>
             <div className="context-panel__summary-rows">
               <MiniStat label={t("status.compactLabel")} value={compactPct > 0 ? `${compactPct}%` : "-"} />
-              <MiniStat label={t("status.cacheAvgLabel")} value={fmtSessionCacheRate(usage)} />
+              <MiniStat label={t("status.cacheAvgLabel")} value={formatCacheHitRate(sessionCacheHit, sessionCacheMiss)} />
               <MiniStat label={t("context.sessionCost")} value={sessionCostLabel} />
               <MiniStat label={t("status.sessionTurnsLabel")} value={fmtTurns(sessionTurns, t)} />
             </div>
@@ -414,15 +432,33 @@ export function ContextPanel({
               <MetricCard label={t("context.cacheHit")} value={cachePctDisplay} tone="accent" />
               <MetricCard label={t("context.sessionCost")} value={formatMoneyLocalized(cost.amount, cost.currency, { locale, empty: "dash" })} />
             </div>
-            {showCostSources && (
-              <div className="context-panel__source-list" aria-label={t("context.costBreakdown")}>
-                {costSources.map((row) => (
-                  <div className="context-panel__source-row" key={row.source}>
-                    <span>{sourceLabel(row.label, t)}</span>
-                    <strong>{formatMoneyLocalized(row.cost, row.currency, { locale, empty: "dash" })}</strong>
-                    <em>{t("context.sourceRequests", { count: row.requests })}</em>
-                  </div>
-                ))}
+            {showSourceUsageRows && (
+              <div className="context-panel__source-list" aria-label={t("context.sourceBreakdown")}>
+                {sourceUsageRows.map((row) => {
+                  const inputMetric = formatMetricTokens(row.promptTokens, locale);
+                  const outputMetric = formatMetricTokens(row.completionTokens, locale);
+                  const hitMetric = formatMetricTokens(row.cacheHitTokens, locale);
+                  const missMetric = formatMetricTokens(row.cacheMissTokens, locale);
+                  const cacheReported = row.cacheHitTokens + row.cacheMissTokens > 0;
+                  const cacheRate = cacheReported ? formatCacheHitRate(row.cacheHitTokens, row.cacheMissTokens) : t("context.cacheNotReported");
+                  const costLabel = formatMoneyLocalized(row.cost, row.currency, { locale, empty: "dash" });
+                  return (
+                    <div className="context-panel__source-row" key={row.source}>
+                      <div className="context-panel__source-head">
+                        <span>{sourceLabel(row.label, t)}</span>
+                        <em>{t("context.sourceRequests", { count: row.requests })}</em>
+                      </div>
+                      <div className="context-panel__source-metrics">
+                        <SourceMetric label={t("context.sourceInput")} value={inputMetric.display} title={inputMetric.exact} />
+                        <SourceMetric label={t("context.sourceOutput")} value={outputMetric.display} title={outputMetric.exact} />
+                        <SourceMetric label={t("context.sourceCacheHit")} value={hitMetric.display} title={hitMetric.exact} />
+                        <SourceMetric label={t("context.sourceCacheMiss")} value={missMetric.display} title={missMetric.exact} />
+                        <SourceMetric label={t("context.sourceCacheRate")} value={cacheRate} />
+                        <SourceMetric label={t("context.sourceCost")} value={costLabel} />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -474,6 +510,16 @@ function MetricCard({ label, value, valueTitle, tone, wide }: { label: string; v
   const exactTitle = valueTitle && valueTitle !== value ? valueTitle : undefined;
   return (
     <div className={`context-panel__metric${toneClass}${wideClass}`} aria-label={exactTitle ? `${label}: ${exactTitle}` : undefined}>
+      <span>{label}</span>
+      <strong title={exactTitle}>{value}</strong>
+    </div>
+  );
+}
+
+function SourceMetric({ label, value, title }: { label: string; value: string; title?: string }) {
+  const exactTitle = title && title !== value ? title : undefined;
+  return (
+    <div className="context-panel__source-metric" aria-label={exactTitle ? `${label}: ${exactTitle}` : undefined}>
       <span>{label}</span>
       <strong title={exactTitle}>{value}</strong>
     </div>

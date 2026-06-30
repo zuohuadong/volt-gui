@@ -40,6 +40,9 @@ const (
 	mutationFeedbackCooldown  = 30 * time.Minute
 	strategyDecayK            = 10.0
 	staleConfidenceThreshold  = 0.2
+
+	compilerIROverheadSelfFeedback = "compiled IR overhead exceeded budget; reduce memory references before injection"
+	planModeBlockedToolError       = "blocked: plan mode is read-only"
 )
 
 var runtimeLocks sync.Map
@@ -559,6 +562,9 @@ func buildIRWithPolicy(goal, sourceEvent string, st state) (PlannerIR, ControlPo
 	}
 	ir.StrategySelection = &strategyPick
 	for _, c := range st.ExecutionState.ActiveConstraints {
+		if isCompilerFeedbackNoise(c.Text) {
+			continue
+		}
 		ir.Constraints = appendConstraint(ir.Constraints, c)
 	}
 	for _, failed := range st.ExecutionState.FailedStrategies {
@@ -574,10 +580,10 @@ func buildIRWithPolicy(goal, sourceEvent string, st state) (PlannerIR, ControlPo
 	}
 	ir.RiskNotes = append(ir.RiskNotes, driftRiskNotes(drift)...)
 	for _, node := range usableSubgraphNodes(st.Nodes, st.Edges, now) {
-		if node.Constraint != nil {
+		if node.Constraint != nil && !isCompilerFeedbackNoise(node.Constraint.Text) {
 			ir.Constraints = appendConstraint(ir.Constraints, *node.Constraint)
 		}
-		if node.Quality == QualityHighSignal || node.Type == "tool_result" {
+		if (node.Quality == QualityHighSignal || node.Type == "tool_result") && !isCompilerFeedbackNoise(node.Content) {
 			ir.MemoryReferences = append(ir.MemoryReferences, MemoryRef{
 				ID:        node.ID,
 				Content:   node.Content,
@@ -591,6 +597,9 @@ func buildIRWithPolicy(goal, sourceEvent string, st state) (PlannerIR, ControlPo
 	}
 	for _, m := range st.Mutations {
 		if !m.Applied {
+			continue
+		}
+		if isCompilerFeedbackNoise(m.Reason) {
 			continue
 		}
 		switch m.Change {
@@ -1967,9 +1976,13 @@ func analyzeTrace(tr ExecutionTrace, strategyID string) SystemLearning {
 		}
 		parts := strings.SplitN(sig, "\x00", 2)
 		toolName := parts[0]
+		errLine := firstLine(parts[1])
+		if isCompilerFeedbackNoise(errLine) {
+			continue
+		}
 		learning.BadStrategies = append(learning.BadStrategies, strategyID)
-		learning.MemoryNoisePatterns = append(learning.MemoryNoisePatterns, fmt.Sprintf("%s repeated error: %s", toolName, firstLine(parts[1])))
-		learning.CompilerImprovements = append(learning.CompilerImprovements, fmt.Sprintf("avoid repeating %s after repeated error: %s", toolName, firstLine(parts[1])))
+		learning.MemoryNoisePatterns = append(learning.MemoryNoisePatterns, fmt.Sprintf("%s repeated error: %s", toolName, errLine))
+		learning.CompilerImprovements = append(learning.CompilerImprovements, fmt.Sprintf("avoid repeating %s after repeated error: %s", toolName, errLine))
 	}
 	if tr.Outcome == "failure" {
 		learning.BadStrategies = append(learning.BadStrategies, strategyID)
@@ -1999,10 +2012,20 @@ func analyzeTrace(tr ExecutionTrace, strategyID string) SystemLearning {
 	if tr.Cost.ToolCalls > len(tr.Steps)+3 && tr.Cost.ToolCalls >= 6 {
 		learning.CompilerImprovements = append(learning.CompilerImprovements, "tool call count exceeded plan shape; prefer tighter execution steps")
 	}
-	if tr.Cost.EstimatedIROverheadTokens > 800 {
-		learning.CompilerImprovements = append(learning.CompilerImprovements, "compiled IR overhead exceeded budget; reduce memory references before injection")
-	}
 	return dedupeLearning(learning)
+}
+
+func isCompilerFeedbackNoise(s string) bool {
+	normalized := strings.Join(strings.Fields(s), " ")
+	if normalized == compilerIROverheadSelfFeedback {
+		return true
+	}
+	lower := strings.ToLower(normalized)
+	if lower == planModeBlockedToolError {
+		return true
+	}
+	return strings.Contains(lower, planModeBlockedToolError) &&
+		(strings.Contains(lower, "repeated error") || strings.Contains(lower, "avoid repeating"))
 }
 
 func mutationsFromLearning(learning SystemLearning, baseline float64) []CompilerMutation {

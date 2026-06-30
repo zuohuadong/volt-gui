@@ -984,6 +984,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ReasoningLanguage:                  cfg.ReasoningLanguage(),
 		PlanModeAllowedTools:               cfg.Agent.PlanModeAllowedTools,
 		MemoryCompiler:                     memCompiler,
+		MemoryCompilerVerbosity:            cfg.MemoryCompilerVerbosity(),
 		UseMemoryCompilerLLMClassification: strings.TrimSpace(os.Getenv("REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION")) == "true",
 	}, sink)
 

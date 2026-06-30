@@ -58,6 +58,7 @@ import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 
 const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "memory", "hooks", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
 export type SettingsInitialFocus = { target: "bot-allowlist"; connectionId?: string };
+type DesktopPlatform = "darwin" | "windows" | "linux";
 
 const MCPServersSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.MCPServersSettingsPage })));
 const SkillsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.SkillsSettingsPage })));
@@ -73,12 +74,14 @@ export function SettingsPanel({
   initialTab,
   initialFocus,
   agentRunning = false,
+  desktopPlatform,
 }: {
   onClose: () => void;
   onChanged: (settings?: SettingsView | null) => void;
   initialTab?: SettingsTab;
   initialFocus?: SettingsInitialFocus;
   agentRunning?: boolean;
+  desktopPlatform: DesktopPlatform;
 }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
@@ -222,6 +225,7 @@ export function SettingsPanel({
                       theme={theme}
                       themeStyle={themeStyle}
                       textSize={textSize}
+                      showDisplayZoom={desktopPlatform === "windows"}
                       zoomPct={zoomPct}
                       fontFamily={fontFamily}
                       monoFontFamily={monoFontFamily}
@@ -5205,6 +5209,7 @@ function AppearanceSection({
   theme,
   themeStyle,
   textSize,
+  showDisplayZoom,
   zoomPct,
   fontFamily,
   monoFontFamily,
@@ -5222,6 +5227,7 @@ function AppearanceSection({
   theme: Theme;
   themeStyle: ThemeStyle;
   textSize: TextSize;
+  showDisplayZoom: boolean;
   zoomPct: number;
   fontFamily: FontFamily;
   monoFontFamily: MonoFontFamily;
@@ -5302,35 +5308,37 @@ function AppearanceSection({
           ))}
         </div>
       </SettingsField>
-      <SettingsField label={t("settings.displayZoom")}>
-        <div className="zoom-slider-wrap">
-          <div className="zoom-slider__value">{zoomPct}%</div>
-          <div className="zoom-slider-row">
-            <span className="zoom-slider__label">50%</span>
-            <div className="slider-track">
-              <div className="slider-track__bg" />
-              <div
-                className="slider-track__fill"
-                style={{ width: `calc(${((zoomPct - 50) / 150) * 100}% + 15px)` }}
-              />
-              <div className="slider-thumb" style={{ left: `${((zoomPct - 50) / 150) * 100}%` }}>
-                <div className="slider-thumb__left" />
-                <div className="slider-thumb__mid" />
-                <div className="slider-thumb__right" />
+      {showDisplayZoom && (
+        <SettingsField label={t("settings.displayZoom")}>
+          <div className="zoom-slider-wrap">
+            <div className="zoom-slider__value">{zoomPct}%</div>
+            <div className="zoom-slider-row">
+              <span className="zoom-slider__label">50%</span>
+              <div className="slider-track">
+                <div className="slider-track__bg" />
+                <div
+                  className="slider-track__fill"
+                  style={{ width: `calc(${((zoomPct - 50) / 150) * 100}% + 15px)` }}
+                />
+                <div className="slider-thumb" style={{ left: `${((zoomPct - 50) / 150) * 100}%` }}>
+                  <div className="slider-thumb__left" />
+                  <div className="slider-thumb__mid" />
+                  <div className="slider-thumb__right" />
+                </div>
+                <input
+                  type="range"
+                  min={50}
+                  max={200}
+                  step={5}
+                  value={zoomPct}
+                  onChange={(e) => onRestartZoom(Number(e.target.value) / 100)}
+                />
               </div>
-              <input
-                type="range"
-                min={50}
-                max={200}
-                step={5}
-                value={zoomPct}
-                onChange={(e) => onRestartZoom(Number(e.target.value) / 100)}
-              />
+              <span className="zoom-slider__label">200%</span>
             </div>
-            <span className="zoom-slider__label">200%</span>
           </div>
-        </div>
-      </SettingsField>
+        </SettingsField>
+      )}
       <SettingsField label={t("settings.fontFamily")}>
         <div className="set-seg">
           {availableFontFamilies.map((font) => (

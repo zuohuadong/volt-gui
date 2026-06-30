@@ -818,6 +818,33 @@ func TestTraceSplitterKeepsRuntimeTraceSmall(t *testing.T) {
 	}
 }
 
+func TestAppendBoundedJSONLPrunesOldLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), learningTracesFile)
+	for i := 0; i < 5; i++ {
+		if err := appendBoundedJSONL(path, map[string]int{"i": i}, 3); err != nil {
+			t.Fatalf("appendBoundedJSONL(%d): %v", i, err)
+		}
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want 3:\n%s", len(lines), string(b))
+	}
+	for idx, line := range lines {
+		var got map[string]int
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatalf("line %d json: %v", idx, err)
+		}
+		if want := idx + 2; got["i"] != want {
+			t.Fatalf("line %d i = %d, want %d", idx, got["i"], want)
+		}
+	}
+}
+
 func TestMutationFeedbackDampingSkipsCooldownResonance(t *testing.T) {
 	now := time.Now().UTC()
 	existing := []CompilerMutation{{

@@ -1523,6 +1523,13 @@ func (c *Controller) SetMemoryCompilerEnabled(enabled bool) {
 	c.executor.SetMemoryCompiler(rt)
 }
 
+func (c *Controller) SetMemoryCompilerVerbosity(verbosity string) {
+	if c == nil || c.executor == nil {
+		return
+	}
+	c.executor.SetMemoryCompilerVerbosity(verbosity)
+}
+
 // PlanMode reports whether outgoing turns currently receive the plan-mode
 // marker. Frontends use it after Compose because auto-plan may flip the mode.
 func (c *Controller) PlanMode() bool {

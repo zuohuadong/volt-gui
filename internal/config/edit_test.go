@@ -379,6 +379,31 @@ func TestSetMemoryCompilerEnabled(t *testing.T) {
 	}
 }
 
+func TestSetMemoryCompilerVerbosity(t *testing.T) {
+	c := Default()
+	if err := c.SetMemoryCompilerVerbosity("compact"); err != nil {
+		t.Fatalf("SetMemoryCompilerVerbosity(compact): %v", err)
+	}
+	if got := c.MemoryCompilerVerbosity(); got != MemoryCompilerVerbosityCompact {
+		t.Fatalf("memory compiler verbosity = %q, want compact", got)
+	}
+	if err := c.SetMemoryCompilerVerbosity("on"); err != nil {
+		t.Fatalf("SetMemoryCompilerVerbosity(on): %v", err)
+	}
+	if got := c.MemoryCompilerVerbosity(); got != MemoryCompilerVerbosityCompact {
+		t.Fatalf("memory compiler verbosity after on = %q, want compact", got)
+	}
+	if err := c.SetMemoryCompilerVerbosity("observe"); err != nil {
+		t.Fatalf("SetMemoryCompilerVerbosity(observe): %v", err)
+	}
+	if got := c.MemoryCompilerVerbosity(); got != MemoryCompilerVerbosityObserve {
+		t.Fatalf("memory compiler verbosity = %q, want observe", got)
+	}
+	if err := c.SetMemoryCompilerVerbosity("verbose"); err == nil {
+		t.Fatal("expected error for invalid memory compiler verbosity")
+	}
+}
+
 func TestSetUIShortcutLayout(t *testing.T) {
 	c := Default()
 	if got := c.UIShortcutLayout(); got != "classic" {

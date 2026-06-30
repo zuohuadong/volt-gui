@@ -5,6 +5,7 @@ package memorycompiler
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,10 @@ const (
 
 	compilerIROverheadSelfFeedback = "compiled IR overhead exceeded budget; reduce memory references before injection"
 	planModeBlockedToolError       = "blocked: plan mode is read-only"
+
+	maxRuntimeTraceJSONLLines  = 500
+	maxLearningTraceJSONLLines = 100
+	maxDebugTraceJSONLLines    = 100
 )
 
 var runtimeLocks sync.Map
@@ -131,6 +136,7 @@ type ToolRecord struct {
 	Output     string `json:"output,omitempty"`
 	Error      string `json:"error,omitempty"`
 	ReadOnly   bool   `json:"read_only"`
+	Blocked    bool   `json:"blocked,omitempty"`
 	DurationMs int64  `json:"duration_ms,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
 }
@@ -1782,12 +1788,22 @@ func outcomeFor(records []ToolRecord, err error) string {
 		if strings.TrimSpace(records[i].Name) == "" {
 			continue
 		}
+		if isPlanModeBlockedToolRecord(records[i]) {
+			continue
+		}
 		if strings.TrimSpace(records[i].Error) == "" {
 			return "success"
 		}
 		return "partial_success"
 	}
-	return "partial_success"
+	return "success"
+}
+
+func isPlanModeBlockedToolRecord(rec ToolRecord) bool {
+	if !rec.Blocked {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(rec.Error), planModeBlockedToolError)
 }
 
 func efficiencyScore(records []ToolRecord, start, end time.Time) float64 {
@@ -1872,12 +1888,12 @@ func (r *Runtime) writeTraceAndLearn(tr ExecutionTrace, strategyID string) {
 	st, tr = applyCausalCompression(st, tr, learning, policy, now)
 	st.UpdatedAt = now
 	bundle := splitTrace(tr, learning, debugTraceEnabled())
-	_ = appendJSONL(filepath.Join(r.dir, tracesFile), bundle.RuntimeTrace)
+	_ = appendBoundedJSONL(filepath.Join(r.dir, tracesFile), bundle.RuntimeTrace, maxRuntimeTraceJSONLLines)
 	if bundle.LearningTrace != nil {
-		_ = appendJSONL(filepath.Join(r.dir, learningTracesFile), *bundle.LearningTrace)
+		_ = appendBoundedJSONL(filepath.Join(r.dir, learningTracesFile), *bundle.LearningTrace, maxLearningTraceJSONLLines)
 	}
 	if bundle.DebugTrace != nil {
-		_ = appendJSONL(filepath.Join(r.dir, debugTracesFile), *bundle.DebugTrace)
+		_ = appendBoundedJSONL(filepath.Join(r.dir, debugTracesFile), *bundle.DebugTrace, maxDebugTraceJSONLLines)
 	}
 	_ = writeJSON(filepath.Join(r.dir, stateFile), st)
 }
@@ -2889,6 +2905,34 @@ func appendJSONL(path string, v any) error {
 		return err
 	}
 	return w.Flush()
+}
+
+func appendBoundedJSONL(path string, v any, maxLines int) error {
+	if maxLines <= 0 {
+		return appendJSONL(path, v)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	line, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var lines [][]byte
+	if trimmed := bytes.TrimRight(existing, "\n"); len(trimmed) > 0 {
+		lines = bytes.Split(trimmed, []byte("\n"))
+	}
+	lines = append(lines, line)
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	out := bytes.Join(lines, []byte("\n"))
+	out = append(out, '\n')
+	return fileutil.AtomicWriteFile(path, out, 0o600)
 }
 
 func writeJSON(path string, v any) error {

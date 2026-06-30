@@ -1848,9 +1848,10 @@ func configMemoryV5Command(args []string) int {
 			return 1
 		}
 		fmt.Printf("memory_compiler.enabled = %v\n", cfg.MemoryCompilerEnabled())
+		fmt.Printf("memory_compiler.verbosity = %q\n", cfg.MemoryCompilerVerbosity())
 		return 0
 	}
-	enabled, err := parseCLIMemoryV5Mode(rest[0])
+	setting, err := parseCLIMemoryV5Setting(rest[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
@@ -1861,15 +1862,22 @@ func configMemoryV5Command(args []string) int {
 		return 1
 	}
 	cfg := config.LoadForEdit(path)
-	if err := cfg.SetMemoryCompilerEnabled(enabled); err != nil {
+	if err := cfg.SetMemoryCompilerEnabled(setting.enabled); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
+	}
+	if setting.setVerbosity {
+		if err := cfg.SetMemoryCompilerVerbosity(setting.verbosity); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+			return 2
+		}
 	}
 	if err := cfg.SaveTo(path); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	fmt.Printf("memory_compiler.enabled = %v (%s)\n", cfg.MemoryCompilerEnabled(), displayPath(path))
+	fmt.Printf("memory_compiler.enabled = %v\n", cfg.MemoryCompilerEnabled())
+	fmt.Printf("memory_compiler.verbosity = %q (%s)\n", cfg.MemoryCompilerVerbosity(), displayPath(path))
 	return 0
 }
 
@@ -1936,7 +1944,7 @@ func configReasoningLanguageCommand(args []string) int {
 func configUsage() {
 	fmt.Print(`Usage:
   reasonix config auto-plan [off|on]
-  reasonix config memory-v5 [off|on|status]
+  reasonix config memory-v5 [off|observe|compact|on|status]
   reasonix config reasoning-language [--local] [auto|zh|en]
 `)
 }
@@ -1949,7 +1957,7 @@ func configAutoPlanUsage() {
 
 func configMemoryV5Usage() {
 	fmt.Print(`Usage:
-  reasonix config memory-v5 [off|on|status]
+  reasonix config memory-v5 [off|observe|compact|on|status]
 `)
 }
 

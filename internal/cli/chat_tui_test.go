@@ -1332,7 +1332,7 @@ func TestMemoryV5CommandWritesUserConfigNotProjectConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read user config: %v", err)
 	}
-	if !strings.Contains(string(userBody), `memory_compiler = { enabled = false }`) {
+	if !strings.Contains(string(userBody), `memory_compiler = { enabled = false, verbosity = "observe" }`) {
 		t.Fatalf("user config missing memory_compiler off:\n%s", userBody)
 	}
 	projectBody, err := os.ReadFile(projectPath)

@@ -39,8 +39,8 @@ TypeScript tests, and the running Wails app was smoke-tested through `./dev`.
 | Summary includes last heartbeat | `Summary`; `TestAppendHeartbeatRecordsDurableTurnStatus` | Verified |
 | Completion is intercepted when readiness fails | `autoResearchReadinessFailure`; `TestResearchGoalCompletionIsInterceptedWhenReadinessFails` | Verified |
 | Completion/blocked goal updates AutoResearch status | `finalizeAutoResearchTask`; `TestResearchGoalCompletionMarksAutoResearchTaskComplete`, `TestResearchGoalBlockedMarksAutoResearchTaskBlocked` | Verified |
-| Host tool records structured evidence | `autoresearch_record_evidence`; `TestAutoResearchRecordEvidenceToolWritesHostManagedState` | Verified |
-| Tool is model-visible through provider schema | `Registry.Schemas()` assertion in `TestAutoResearchRecordEvidenceToolWritesHostManagedState` | Verified |
+| Host controller records structured evidence | `RecordAutoResearchEvidence`; `TestControllerRecordsAutoResearchEvidence` | Verified |
+| AutoResearch evidence recording does not alter the default provider-visible tool surface | `TestAutoResearchEvidenceDoesNotChangeDefaultToolSurface`; boot tool contract tests | Verified |
 | Desktop API exposes current/status/list/findings/open/record evidence | `desktop/app.go`; `TestAutoResearchStatusSurfaceForActiveTab`, `TestAutoResearchFindingsAreLoadedOnDemand`, `TestAutoResearchListReturnsWorkspaceTasks`, `TestAutoResearchOpenTaskRevealsTaskDirectory`, `TestAutoResearchRecordEvidenceThroughDesktopAPI` | Verified |
 | Tab metadata includes compact summary only | `compactAutoResearch`; `TestAutoResearchStatusSurfaceForActiveTab` | Verified |
 | Findings load on demand and cap by limit | `AutoResearchFindings`; `TestAutoResearchFindingsAreLoadedOnDemand` | Verified |

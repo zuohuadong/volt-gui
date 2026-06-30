@@ -1219,7 +1219,7 @@ func TestAddOfficialProviderAccessRejectsBackgroundJobsBeforeSavingKey(t *testin
 	os.Unsetenv("DEEPSEEK_API_KEY")
 
 	app := NewApp()
-	app.ctx = context.Background()
+	app.readyHook = func() {}
 	app.setTestCtrl(newBackgroundJobController(t, "provider-access-job"), "deepseek-flash/deepseek-v4-flash")
 
 	_, err := app.AddOfficialProviderAccess("deepseek", "sk-test")
@@ -1684,6 +1684,164 @@ func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
 	}
 	if history[1].Role != provider.RoleUser || history[1].Content != "hello" {
 		t.Fatalf("carried user message changed: %+v", history[1])
+	}
+}
+
+func TestEnsureTabControllerWorkspaceRebuildsStaleWorkspace(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "TEST_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "test/test-model"
+	cfg.Desktop.ProviderAccess = []string{"test"}
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "test", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "test-model", APIKeyEnv: "TEST_MODEL_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	if err := addProject(projectA, "Project A"); err != nil {
+		t.Fatalf("add project A: %v", err)
+	}
+	if err := addProject(projectB, "Project B"); err != nil {
+		t.Fatalf("add project B: %v", err)
+	}
+
+	topicID := "topic_rebuild_workspace"
+	topicTitle := "Rebuild workspace"
+	sessionDirA := desktopSessionDir(projectA)
+	sessionDirB := desktopSessionDir(projectB)
+	if err := os.MkdirAll(sessionDirA, 0o755); err != nil {
+		t.Fatalf("mkdir project A sessions: %v", err)
+	}
+	if err := os.MkdirAll(sessionDirB, 0o755); err != nil {
+		t.Fatalf("mkdir project B sessions: %v", err)
+	}
+	sessionPathA := writeTopicSessionWithPrompt(t, sessionDirA, "project-a.jsonl", topicID, topicTitle, projectA, "project A prompt", time.Now())
+	sessionPathB := filepath.Join(sessionDirB, "wrong.jsonl")
+
+	oldSession := agent.NewSession("old system prompt")
+	oldSession.Add(provider.Message{Role: provider.RoleUser, Content: "carry me"})
+	oldExec := agent.New(nil, nil, oldSession, agent.Options{}, event.Discard)
+	oldCtrl := control.New(control.Options{
+		Executor:      oldExec,
+		SessionDir:    sessionDirB,
+		SessionPath:   sessionPathB,
+		Label:         "test/test-model",
+		ModelRef:      "test/test-model",
+		WorkspaceRoot: projectB,
+		Sink:          event.Discard,
+	})
+
+	app := NewApp()
+	app.readyHook = func() {}
+	tab := &WorkspaceTab{
+		ID:            "tab_stale_workspace",
+		Scope:         "project",
+		WorkspaceRoot: projectB,
+		TopicID:       topicID,
+		TopicTitle:    topicTitle,
+		SessionPath:   sessionPathA,
+		Ready:         true,
+		model:         "test/test-model",
+		Ctrl:          oldCtrl,
+		sink:          &tabEventSink{tabID: "tab_stale_workspace", app: app},
+		disabledMCP:   map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+	})
+
+	if err := app.ensureTabControllerWorkspace(tab); err != nil {
+		t.Fatalf("ensureTabControllerWorkspace: %v", err)
+	}
+	if tab.Ctrl == nil {
+		t.Fatal("controller was not rebuilt")
+	}
+	if tab.Ctrl == oldCtrl {
+		t.Fatal("stale controller was reused")
+	}
+	if got := normalizeProjectRoot(tab.WorkspaceRoot); got != normalizeProjectRoot(projectA) {
+		t.Fatalf("tab workspace root = %q, want project A %q", got, normalizeProjectRoot(projectA))
+	}
+	if got := normalizeProjectRoot(tab.Ctrl.WorkspaceRoot()); got != normalizeProjectRoot(projectA) {
+		t.Fatalf("controller workspace root = %q, want project A %q", got, normalizeProjectRoot(projectA))
+	}
+	if !sameDesktopPath(tab.Ctrl.SessionDir(), sessionDirA) {
+		t.Fatalf("controller session dir = %q, want %q", tab.Ctrl.SessionDir(), sessionDirA)
+	}
+	if !sameDesktopPath(tab.Ctrl.SessionPath(), sessionPathA) {
+		t.Fatalf("controller session path = %q, want %q", tab.Ctrl.SessionPath(), sessionPathA)
+	}
+}
+
+func TestListSessionsUsesPinnedSessionOwnerBeforeStaleRuntimeDir(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	if err := addProject(projectA, "Project A"); err != nil {
+		t.Fatalf("add project A: %v", err)
+	}
+	if err := addProject(projectB, "Project B"); err != nil {
+		t.Fatalf("add project B: %v", err)
+	}
+	sessionDirA := desktopSessionDir(projectA)
+	sessionDirB := desktopSessionDir(projectB)
+	if err := os.MkdirAll(sessionDirA, 0o755); err != nil {
+		t.Fatalf("mkdir project A sessions: %v", err)
+	}
+	if err := os.MkdirAll(sessionDirB, 0o755); err != nil {
+		t.Fatalf("mkdir project B sessions: %v", err)
+	}
+	sessionPathA := writeTopicSessionWithPrompt(t, sessionDirA, "project-a.jsonl", "topic_project_a", "Project A topic", projectA, "project A prompt", time.Now())
+	sessionPathB := writeTopicSessionWithPrompt(t, sessionDirB, "project-b.jsonl", "topic_project_b", "Project B topic", projectB, "project B prompt", time.Now().Add(time.Minute))
+
+	app := NewApp()
+	oldCtrl := control.New(control.Options{
+		SessionDir:    sessionDirB,
+		SessionPath:   sessionPathB,
+		WorkspaceRoot: projectB,
+		Sink:          event.Discard,
+	})
+	tab := &WorkspaceTab{
+		ID:            "tab_stale_runtime_dir",
+		Scope:         "project",
+		WorkspaceRoot: projectB,
+		TopicID:       "topic_project_a",
+		TopicTitle:    "Project A topic",
+		SessionPath:   sessionPathA,
+		Ready:         true,
+		Ctrl:          oldCtrl,
+		disabledMCP:   map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(oldCtrl.Close)
+
+	sessions := app.ListSessions()
+	if len(sessions) == 0 {
+		t.Fatal("ListSessions() returned no sessions")
+	}
+	if filepath.Clean(sessions[0].Path) != filepath.Clean(sessionPathA) {
+		t.Fatalf("ListSessions()[0].Path = %q, want pinned project A session %q", sessions[0].Path, sessionPathA)
+	}
+	for _, item := range sessions {
+		if filepath.Clean(item.Path) == filepath.Clean(sessionPathB) {
+			t.Fatalf("ListSessions() included stale project B runtime session: %+v", sessions)
+		}
+	}
+	if got := normalizeProjectRoot(tab.WorkspaceRoot); got != normalizeProjectRoot(projectA) {
+		t.Fatalf("tab workspace root = %q, want project A %q", got, normalizeProjectRoot(projectA))
 	}
 }
 

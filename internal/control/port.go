@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"voltui/internal/agent"
+	"voltui/internal/autoresearch"
 	"voltui/internal/billing"
 	"voltui/internal/checkpoint"
 	"voltui/internal/command"
@@ -48,6 +49,7 @@ type Lifecycle interface {
 type TurnControl interface {
 	Submit(input string)
 	SubmitDisplay(display, input string)
+	SubmitEditedDisplay(display, input, original string)
 	SubmitHTTP(input string)
 	SubmitUserTurn(input, display string)
 	Send(input string)
@@ -92,6 +94,10 @@ type Goals interface {
 	SetGoalWithResearchMode(goal string, researchMode GoalResearchMode)
 	GoalStrict(strict bool)
 	ClearGoal()
+	AutoResearchSummary() (*autoresearch.Summary, bool)
+	AutoResearchList() ([]autoresearch.Summary, bool)
+	AutoResearchFindings(limit int) ([]autoresearch.Finding, bool)
+	RecordAutoResearchEvidence(criterionID string, input AutoResearchEvidenceInput) error
 	AutoStartResearchGoal(input string) (string, bool)
 	ResetPlannerSession()
 	PlanMode() bool
@@ -128,6 +134,7 @@ type MemoryControl interface {
 	ForgetMemory(name string) error
 	QueueMemory(note string)
 	SetMemoryCompilerEnabled(enabled bool)
+	SetMemoryCompilerVerbosity(verbosity string)
 }
 
 // Capabilities covers the session's pluggable surface — MCP servers, skills,

@@ -602,10 +602,11 @@ func TestMCPEditConfigLaunchUsesSystemDefaultLast(t *testing.T) {
 	}
 }
 
-func TestApplyMCPModePersistsTier(t *testing.T) {
+func TestApplyMCPModePersistsAutoStart(t *testing.T) {
 	isolateUserConfig(t)
 	cfg := config.Default()
-	cfg.Plugins = []config.PluginEntry{{Name: "github", Command: "npx", Args: []string{"server"}, Tier: "lazy"}}
+	off := false
+	cfg.Plugins = []config.PluginEntry{{Name: "github", Command: "npx", Args: []string{"server"}, AutoStart: &off}}
 	if err := cfg.SaveTo("voltui.toml"); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -615,7 +616,7 @@ func TestApplyMCPModePersistsTier(t *testing.T) {
 		stage: mcpStageMode,
 		name:  "github",
 		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
-			Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy",
+			Name: "github", Transport: "stdio", Status: "disabled", Configured: true, AutoStart: false, Tier: "lazy",
 		}}},
 	}
 	_, _ = m.applyMCPMode("background")
@@ -624,8 +625,11 @@ func TestApplyMCPModePersistsTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if len(loaded.Plugins) != 1 || loaded.Plugins[0].Tier != "background" {
-		t.Fatalf("tier not persisted, plugins=%+v", loaded.Plugins)
+	if len(loaded.Plugins) != 1 || loaded.Plugins[0].AutoStart == nil || !*loaded.Plugins[0].AutoStart {
+		t.Fatalf("auto_start not persisted, plugins=%+v", loaded.Plugins)
+	}
+	if loaded.Plugins[0].Tier != "" {
+		t.Fatalf("legacy tier should not persist, plugins=%+v", loaded.Plugins)
 	}
 }
 

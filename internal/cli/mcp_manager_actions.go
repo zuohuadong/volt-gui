@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"unicode"
@@ -53,14 +54,14 @@ func (m chatTUI) connectSelectedMCP(v mcpServerView) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if v.BuiltIn && v.Name == "codegraph" {
-		cfg, err := config.Load()
+		cfg, cfgPath, err := m.loadEditableMCPConfig()
 		if err != nil {
 			m.notice("mcp connect: " + err.Error())
 			return m, nil
 		}
 		if !cfg.Codegraph.Enabled {
 			cfg.Codegraph.Enabled = true
-			if err := cfg.Save(); err != nil {
+			if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
 				m.notice("mcp connect: " + err.Error())
 				return m, nil
 			}
@@ -94,13 +95,13 @@ func (m chatTUI) disableSelectedMCP(v mcpServerView) (tea.Model, tea.Cmd) {
 	}
 	persisted := false
 	if v.BuiltIn && v.Name == "codegraph" {
-		cfg, err := config.Load()
+		cfg, cfgPath, err := m.loadEditableMCPConfig()
 		if err != nil {
 			m.notice("mcp disable: " + err.Error())
 			return m, nil
 		}
 		cfg.Codegraph.Enabled = false
-		if err := cfg.Save(); err != nil {
+		if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
 			m.notice("mcp disable: " + err.Error())
 			return m, nil
 		}
@@ -166,7 +167,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	cfg, err := config.Load()
+	cfg, cfgPath, err := m.loadEditableMCPConfig()
 	if err != nil {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
@@ -174,7 +175,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	if v.BuiltIn && v.Name == "codegraph" {
 		cfg.Codegraph.Enabled = true
 		cfg.Codegraph.Tier = normalizeMCPTierForCLI(tier)
-		if err := cfg.Save(); err != nil {
+		if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
 			m.notice("mcp mode: " + err.Error())
 			return m, nil
 		}
@@ -217,7 +218,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 		m.notice(fmt.Sprintf("mcp mode: no configured MCP server named %q", v.Name))
 		return m, nil
 	}
-	if err := cfg.Save(); err != nil {
+	if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
 	}
@@ -385,6 +386,32 @@ func mcpConfigLocation() string {
 		return path
 	}
 	return "voltui.toml"
+}
+
+func (m chatTUI) loadEditableMCPConfig() (*config.Config, string, error) {
+	path := ""
+	if m.mcp != nil {
+		path = strings.TrimSpace(m.mcp.snapshot.configPath)
+	}
+	if path == "" {
+		path = mcpConfigLocation()
+	}
+	if isTOMLConfigPath(path) {
+		return config.LoadForEditWithoutCredentials(path), path, nil
+	}
+	cfg, err := config.Load()
+	return cfg, "", err
+}
+
+func saveEditableMCPConfig(cfg *config.Config, path string) error {
+	if strings.TrimSpace(path) != "" {
+		return cfg.SaveTo(path)
+	}
+	return cfg.Save()
+}
+
+func isTOMLConfigPath(path string) bool {
+	return strings.EqualFold(filepath.Ext(strings.TrimSpace(path)), ".toml")
 }
 
 type mcpEditConfigLaunch struct {

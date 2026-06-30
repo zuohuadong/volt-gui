@@ -149,7 +149,7 @@ func (c *Controller) Compose(text string) string {
 	reasoningLanguage := c.reasoningLanguage
 	c.mu.Unlock()
 	notes := c.memory.drainPending()
-	goal, goalStatus, goalResearchMode := c.goals.snapshot()
+	goal, goalStatus, goalResearchMode, _ := c.goals.snapshot()
 
 	if strings.TrimSpace(goal) != "" && goalStatus == GoalStatusRunning {
 		text = activeGoalBlock(goal, goalResearchMode) + "\n\n" + text

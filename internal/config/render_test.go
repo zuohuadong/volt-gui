@@ -98,6 +98,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.UI.Theme = "light"
 	orig.UI.ThemeStyle = "glacier"
 	orig.UI.ShortcutLayout = "desktop"
+	orig.UI.CursorShape = "bar"
 	orig.Desktop.Language = "en"
 	orig.Desktop.LayoutStyle = "workbench"
 	orig.Desktop.Theme = "dark"
@@ -184,6 +185,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
+	mm.ChatURL = "http://localhost:8000/v1/chat/completions"
+	mm.ModelsURL = "http://localhost:8000/v1/models"
 	mm.ReasoningProtocol = "openai"
 	ds, _ := orig.Provider("deepseek-flash")
 	ds.Effort = "max"
@@ -212,6 +215,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.UI.ShortcutLayout != "desktop" {
 		t.Errorf("ui.shortcut_layout = %q, want desktop", got.UI.ShortcutLayout)
+	}
+	if got.UICursorShape() != "bar" {
+		t.Errorf("ui.cursor_shape = %q, want bar", got.UICursorShape())
 	}
 	if got.Desktop.Language != "en" {
 		t.Errorf("desktop.language = %q, want en", got.Desktop.Language)
@@ -325,8 +331,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Tools.Shell.Path != "/usr/local/bin/bash" {
 		t.Errorf("tools.shell.path = %q, want /usr/local/bin/bash", got.Tools.Shell.Path)
 	}
-	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" || g.ReasoningProtocol != "openai" {
-		t.Errorf("mimo-pro base_url not preserved: %+v", g)
+	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" || g.ChatURL != "http://localhost:8000/v1/chat/completions" || g.ModelsURL != "http://localhost:8000/v1/models" || g.ReasoningProtocol != "openai" {
+		t.Errorf("mimo-pro endpoint fields not preserved: %+v", g)
 	}
 	if g, _ := got.Provider("deepseek-flash"); g == nil || g.Effort != "max" {
 		t.Errorf("deepseek-flash effort not preserved: %+v", g)
@@ -585,6 +591,26 @@ func TestProjectDeltaRendersToolsShellOverrides(t *testing.T) {
 	}
 	if got.Tools.Shell.Prefer != "bash" || got.Tools.Shell.Path != "/usr/local/bin/bash" {
 		t.Fatalf("tools.shell = %+v, want bash with path", got.Tools.Shell)
+	}
+}
+
+func TestProjectDeltaRendersUICursorShape(t *testing.T) {
+	c := Default()
+	c.UI.CursorShape = "block"
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", `cursor_shape = "block"`} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if got.UICursorShape() != "block" {
+		t.Fatalf("ui.cursor_shape = %q, want block", got.UICursorShape())
 	}
 }
 

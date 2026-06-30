@@ -481,12 +481,17 @@ desktop app because they all share the same local controller. It records local,
 project-scoped execution traces and compiler state under Reasonix home, then
 compiles the next user turn into a compact execution contract only when prior
 outcomes produce actionable constraints. Early turns may only write traces and
-inject nothing. Memory v5 never bypasses memory approvals, never uploads memory
-content, and never mutates the cache-stable system prompt, provider prefix, or
-tool schemas.
+inject nothing. The default `verbosity = "observe"` keeps this as local learning
+and content-free metrics only; it does not send `<memory-compiler-execution>` to
+the provider-visible user turn. Opt into `verbosity = "compact"` (or the legacy
+`on` command) when you explicitly want compact execution-contract injection,
+including selected compact memory references in the provider-visible user turn.
+Memory v5 never bypasses memory approvals and never mutates the cache-stable
+system prompt, provider prefix, or tool schemas.
 
-Toggle future turns with `/memory-v5 off|on|status` inside an interactive
-session, or with `reasonix config memory-v5 off|on|status` from a shell/script.
+Toggle future turns with `/memory-v5 off|observe|compact|on|status` inside an
+interactive session, or with `reasonix config memory-v5 off|observe|compact|on|status`
+from a shell/script.
 Desktop users can also use Settings → General → Memory v5. Settings → Updates →
 Share aggregate quality metrics controls the optional aggregate upload. When
 enabled, that upload may include only anonymous
@@ -502,7 +507,7 @@ Reasonix home:
 
 ```toml
 [agent]
-memory_compiler = { enabled = false }
+memory_compiler = { enabled = true, verbosity = "observe" }
 ```
 
 The CLI can use Memory v5 for local turns, but it does not run the desktop
@@ -626,8 +631,8 @@ inputs and falls back to the heuristic if classification fails. Use
 only; `agent.auto_plan` in a project `reasonix.toml` is ignored. The visible
 reasoning language uses a similar shape: `/reasoning-language auto|zh|en` in the
 session, or `reasonix config reasoning-language auto|zh|en` in a shell/script.
-Memory v5 uses `/memory-v5 off|on|status` or
-`reasonix config memory-v5 off|on|status` and is user-level only. Pass `--local`
+Memory v5 uses `/memory-v5 off|observe|compact|on|status` or
+`reasonix config memory-v5 off|observe|compact|on|status` and is user-level only. Pass `--local`
 to the reasoning-language shell command only when you intentionally want a
 project-local override.
 

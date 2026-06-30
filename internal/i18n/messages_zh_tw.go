@@ -336,7 +336,7 @@ var ChineseTraditional = Messages{
   reasonix acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
   reasonix setup [path]                                 互動式設定精靈；生成 reasonix.toml（及 .env）
   reasonix config auto-plan [off|on]                    設定自動計畫模式
-  reasonix config memory-v5 [off|on|status]             設定 Memory v5
+  reasonix config memory-v5 [off|observe|compact|on|status]  設定 Memory v5
   reasonix config reasoning-language [auto|zh|en]        設定可見思考語言
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 裡的 MCP 伺服器
   reasonix init                                         查看如何產生專案記憶（AGENTS.md）

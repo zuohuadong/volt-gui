@@ -378,7 +378,6 @@ func New(opts Options) *Controller {
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
 	}
-	c.registerAutoResearchTools(opts.Registry)
 	// Checkpoints: bind a store to the session and route writer pre-edits into it.
 	c.rebindCheckpoints(opts.SessionPath)
 	c.setActiveJobSession(opts.SessionPath)
@@ -1693,83 +1692,6 @@ func (c *Controller) RecordAutoResearchEvidence(criterionID string, input AutoRe
 		CreatedAt: time.Now().UTC(),
 	}
 	return c.autoResearch.RecordEvidence(taskID, criterionID, finding)
-}
-
-func (c *Controller) registerAutoResearchTools(reg *tool.Registry) {
-	if reg == nil || c.autoResearch == nil {
-		return
-	}
-	reg.Add(autoResearchRecordEvidenceTool{controller: c})
-}
-
-type autoResearchRecordEvidenceTool struct {
-	controller *Controller
-}
-
-type autoResearchRecordEvidenceArgs struct {
-	CriterionID string   `json:"criterion_id"`
-	ID          string   `json:"id"`
-	Kind        string   `json:"kind"`
-	Summary     string   `json:"summary"`
-	Source      string   `json:"source"`
-	Command     string   `json:"command"`
-	Paths       []string `json:"paths"`
-	Accepted    bool     `json:"accepted"`
-}
-
-func (autoResearchRecordEvidenceTool) Name() string { return "autoresearch_record_evidence" }
-
-func (autoResearchRecordEvidenceTool) Description() string {
-	return "Record accepted or rejected AutoResearch evidence for the active research task using the host-managed task store."
-}
-
-func (autoResearchRecordEvidenceTool) Schema() json.RawMessage {
-	return json.RawMessage(`{
-		"type":"object",
-		"additionalProperties":false,
-		"properties":{
-			"criterion_id":{"type":"string","description":"Success criterion id this evidence supports."},
-			"id":{"type":"string","description":"Stable evidence id. Leave empty to let the host generate one."},
-			"kind":{"type":"string","enum":["command","file","test","benchmark","manual","review"],"description":"Evidence kind."},
-			"summary":{"type":"string","description":"Concise finding summary."},
-			"source":{"type":"string","enum":["command","file","manual"],"description":"Where the evidence came from."},
-			"command":{"type":"string","description":"Command that produced the evidence, when source is command."},
-			"paths":{"type":"array","items":{"type":"string"},"description":"Relevant workspace paths."},
-			"accepted":{"type":"boolean","description":"Whether this evidence should count toward readiness."}
-		},
-		"required":["criterion_id","kind","summary","source","accepted"]
-	}`)
-}
-
-func (autoResearchRecordEvidenceTool) ReadOnly() bool { return false }
-
-func (t autoResearchRecordEvidenceTool) Execute(_ context.Context, raw json.RawMessage) (string, error) {
-	if t.controller == nil {
-		return "", errors.New("autoresearch: controller unavailable")
-	}
-	var args autoResearchRecordEvidenceArgs
-	if err := json.Unmarshal(raw, &args); err != nil {
-		return "", fmt.Errorf("parse autoresearch evidence args: %w", err)
-	}
-	if strings.TrimSpace(args.CriterionID) == "" {
-		return "", errors.New("criterion_id is required")
-	}
-	if strings.TrimSpace(args.Summary) == "" {
-		return "", errors.New("summary is required")
-	}
-	err := t.controller.RecordAutoResearchEvidence(args.CriterionID, AutoResearchEvidenceInput{
-		ID:       args.ID,
-		Kind:     args.Kind,
-		Summary:  args.Summary,
-		Source:   args.Source,
-		Command:  args.Command,
-		Paths:    append([]string(nil), args.Paths...),
-		Accepted: args.Accepted,
-	})
-	if err != nil {
-		return "", err
-	}
-	return "recorded AutoResearch evidence for criterion " + strings.TrimSpace(args.CriterionID), nil
 }
 
 func (c *Controller) ClearGoal() {

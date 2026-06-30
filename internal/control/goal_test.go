@@ -557,92 +557,20 @@ func TestControllerRecordsAutoResearchEvidence(t *testing.T) {
 	}
 }
 
-func TestAutoResearchRecordEvidenceToolWritesHostManagedState(t *testing.T) {
+func TestAutoResearchEvidenceDoesNotChangeDefaultToolSurface(t *testing.T) {
 	root := t.TempDir()
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
 	reg := tool.NewRegistry()
-	c := New(Options{WorkspaceRoot: root, Registry: reg})
-	tl, ok := reg.Get("autoresearch_record_evidence")
-	if !ok {
-		t.Fatalf("autoresearch_record_evidence tool was not registered; tools=%v", reg.Names())
+	New(Options{WorkspaceRoot: root, Registry: reg})
+	if _, ok := reg.Get("autoresearch_record_evidence"); ok {
+		t.Fatalf("autoresearch_record_evidence should not be registered in the default provider-visible tool surface; tools=%v", reg.Names())
 	}
-	if tl.ReadOnly() {
-		t.Fatal("autoresearch_record_evidence mutates task state and must not be read-only")
-	}
-	foundSchema := false
 	for _, schema := range reg.Schemas() {
-		if schema.Name != "autoresearch_record_evidence" {
-			continue
+		if schema.Name == "autoresearch_record_evidence" {
+			t.Fatalf("autoresearch_record_evidence should not appear in provider schemas: %+v", reg.Schemas())
 		}
-		foundSchema = true
-		raw := string(schema.Parameters)
-		for _, want := range []string{"criterion_id", "kind", "summary", "accepted"} {
-			if !strings.Contains(raw, want) {
-				t.Fatalf("autoresearch_record_evidence provider schema = %s, missing %q", raw, want)
-			}
-		}
-	}
-	if !foundSchema {
-		t.Fatalf("autoresearch_record_evidence missing from provider schemas: %+v", reg.Schemas())
-	}
-
-	c.SetGoalWithResearchMode("verify with tool evidence", GoalResearchOn)
-	taskID := c.goals.currentAutoResearchTaskID()
-	if taskID == "" {
-		t.Fatal("expected autoresearch task id")
-	}
-	specPath := filepath.Join(root, ".reasonix", "autoresearch", taskID, "state", "task_spec.json")
-	var spec struct {
-		TaskID            string   `json:"task_id"`
-		Goal              string   `json:"goal"`
-		Scope             []string `json:"scope"`
-		NonGoals          []string `json:"non_goals"`
-		AllowedOperations struct {
-			Write   bool `json:"write"`
-			Network bool `json:"network"`
-			Publish bool `json:"publish"`
-		} `json:"allowed_operations"`
-		SuccessCriteria []struct {
-			ID          string   `json:"id"`
-			Description string   `json:"description"`
-			Required    bool     `json:"required"`
-			EvidenceIDs []string `json:"evidence_ids"`
-		} `json:"success_criteria"`
-	}
-	readJSONFileForTest(t, specPath, &spec)
-	spec.SuccessCriteria = append(spec.SuccessCriteria, struct {
-		ID          string   `json:"id"`
-		Description string   `json:"description"`
-		Required    bool     `json:"required"`
-		EvidenceIDs []string `json:"evidence_ids"`
-	}{ID: "tool_verified", Description: "Tool evidence recorded", Required: true})
-	writeJSONFileForTest(t, specPath, spec)
-
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{
-		"criterion_id":"tool_verified",
-		"id":"tool-finding-1",
-		"kind":"test",
-		"summary":"targeted tests passed",
-		"source":"command",
-		"command":"go test ./internal/control",
-		"paths":["internal/control/goal_test.go"],
-		"accepted":true
-	}`))
-	if err != nil {
-		t.Fatalf("autoresearch_record_evidence Execute: %v", err)
-	}
-	if !strings.Contains(out, "recorded AutoResearch evidence") {
-		t.Fatalf("tool output = %q, want confirmation", out)
-	}
-
-	report, err := c.autoResearch.Readiness(taskID)
-	if err != nil {
-		t.Fatalf("Readiness: %v", err)
-	}
-	if !report.Ready {
-		t.Fatalf("readiness = %+v, want ready after tool evidence", report)
 	}
 }
 

@@ -5995,11 +5995,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	newCtrl.SetGoal(tab.goal)
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
-	if len(carried) > 0 {
-		newCtrl.Resume(&agent.Session{Messages: carried}, path)
-	} else if path != "" {
-		newCtrl.SetSessionPath(path)
-	}
+	resumeWithFreshSystemPrompt(newCtrl, carried, path)
 	a.persistTabSessionPath(tab, path)
 	return nil
 }
@@ -6095,11 +6091,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
 	newCtrl.SetGoal(tab.goal)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
-	if len(carried) > 0 {
-		newCtrl.Resume(&agent.Session{Messages: carried}, path)
-	} else if path != "" {
-		newCtrl.SetSessionPath(path)
-	}
+	resumeWithFreshSystemPrompt(newCtrl, carried, path)
 	a.persistTabSessionPath(tab, path)
 	return nil
 }
@@ -6173,11 +6165,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	applyTabToolApprovalModeToController(newCtrl, tab.toolApprovalMode)
 	newCtrl.SetGoal(tab.goal)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
-	if len(carried) > 0 {
-		newCtrl.Resume(&agent.Session{Messages: carried}, path)
-	} else if path != "" {
-		newCtrl.SetSessionPath(path)
-	}
+	resumeWithFreshSystemPrompt(newCtrl, carried, path)
 	a.persistTabSessionPath(tab, path)
 	return nil
 }

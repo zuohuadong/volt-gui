@@ -2195,7 +2195,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		// topicId and could pick the wrong session when one topic had multiple files.
 		if loaded, pinnedPath, ok := loadPinnedTabSessionWithPreload(dir, tab.SessionPath, loadedSession); ok {
 			if loaded != nil {
-				ctrl.Resume(loaded, pinnedPath)
+				ctrl.Resume(sessionWithFreshSystemPrompt(loaded, systemPromptFrom(ctrl.History())), pinnedPath)
 			} else {
 				ctrl.SetSessionPath(pinnedPath)
 			}
@@ -2205,7 +2205,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			existingPath := findTopicSession(dir, tab.TopicID)
 			if existingPath != "" {
 				if loaded, err := loadResumableSession(existingPath); err == nil {
-					ctrl.Resume(loaded, existingPath)
+					ctrl.Resume(sessionWithFreshSystemPrompt(loaded, systemPromptFrom(ctrl.History())), existingPath)
 					path = existingPath
 				}
 			}
@@ -5201,6 +5201,9 @@ func loadPinnedTabSessionWithPreload(dir, sessionPath string, preloaded loadedTa
 		return nil, "", false
 	}
 	if preloaded.matches(path) {
+		if preloaded.Session != nil && len(preloaded.Session.Snapshot()) == 0 {
+			return nil, path, true
+		}
 		return preloaded.Session, path, true
 	}
 	loaded, err := agent.LoadSession(path)

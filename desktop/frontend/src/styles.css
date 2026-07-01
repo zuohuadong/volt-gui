@@ -24224,12 +24224,6 @@ body > .mermaid-diagram--fullscreen {
   transform: translateY(-50%) translateX(0);
 }
 
-.sidebar--workbench .project-tree__topic--unread:hover .project-tree__topic-actions,
-.sidebar--workbench .project-tree__topic--unread:focus-within .project-tree__topic-actions {
-  opacity: 0;
-  pointer-events: none;
-}
-
 .sidebar--workbench .project-tree__topic:hover .project-tree__topic-side,
 .sidebar--workbench .project-tree__topic:focus-within .project-tree__topic-side,
 .sidebar--workbench .project-tree__topic--menu-open .project-tree__topic-side,

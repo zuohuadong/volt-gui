@@ -1752,13 +1752,6 @@
     return false;
   }
 
-  function openActivityMode(mode: ActivityMode) {
-    if (mode === "work") {
-      openWorkWorkspace();
-      return;
-    }
-    openCodeWorkbench("overview");
-  }
   function openWorkspaceNavLayer(layer: WorkLayer) {
     if (layer === "newTask") {
       startNewConversation();
@@ -3302,8 +3295,6 @@
                 onWorkPermissionChange={(value) => (workPermission = value)}
                 onOpenResources={openResourceCenterFromComposer}
                 {activityMode}
-                onActivityModeChange={openActivityMode}
-                showActivityModeSwitch={activityMode === "work"}
               />
             </div>
           </section>
@@ -3386,8 +3377,6 @@
                         onWorkPermissionChange={(value) => (workPermission = value)}
                         onOpenResources={openResourceCenterFromComposer}
                         {activityMode}
-                        onActivityModeChange={openActivityMode}
-                        showActivityModeSwitch={false}
                       />
                     </section>
 
@@ -3475,7 +3464,6 @@
                       onWorkPermissionChange={(value) => (workPermission = value)}
                       onOpenResources={openResourceCenterFromComposer}
                       {activityMode}
-                      onActivityModeChange={openActivityMode}
                     />
                   </section>
 
@@ -3993,7 +3981,6 @@
                   onWorkPermissionChange={(value) => (workPermission = value)}
                   onOpenResources={openResourceCenterFromComposer}
                   {activityMode}
-                  onActivityModeChange={openActivityMode}
                 />
                 <div class="home__context">
                   <button type="button" onclick={focusComposer}>
@@ -12677,53 +12664,6 @@
       0 12px 32px var(--composer-mode-shadow);
   }
 
-  .home__composer :global(.composer__mode-switch),
-  .stage__composer :global(.composer__mode-switch),
-  .agent-compose-card :global(.composer__mode-switch) {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    width: max-content;
-    margin: 0;
-    padding: 3px;
-    border: 1px solid color-mix(in srgb, var(--composer-mode-accent) 18%, var(--aorist-line));
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--composer-mode-soft) 72%, #ffffff);
-  }
-
-  .home__composer :global(.composer__mode-switch button),
-  .stage__composer :global(.composer__mode-switch button),
-  .agent-compose-card :global(.composer__mode-switch button) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    min-width: 62px;
-    height: 26px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--aorist-muted);
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .home__composer :global(.composer__mode-switch button.active),
-  .stage__composer :global(.composer__mode-switch button.active),
-  .agent-compose-card :global(.composer__mode-switch button.active) {
-    background: var(--composer-mode-accent);
-    color: var(--composer-mode-active-text);
-    box-shadow: 0 6px 16px var(--composer-mode-shadow);
-  }
-
-  .home__composer :global(.composer__mode-switch button:not(.active):hover),
-  .stage__composer :global(.composer__mode-switch button:not(.active):hover),
-  .agent-compose-card :global(.composer__mode-switch button:not(.active):hover) {
-    background: color-mix(in srgb, var(--composer-mode-accent) 10%, transparent);
-    color: var(--composer-mode-accent-strong);
-  }
-
   .home__composer :global(.composer__tools),
   .stage__composer :global(.composer__tools),
   .agent-compose-card :global(.composer__tools) {
@@ -14059,6 +13999,7 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+    align-items: start;
     max-height: min(55vh, 520px);
     overflow: auto;
     padding-right: 2px;
@@ -14066,6 +14007,7 @@
 
   .agent-market-card {
     display: grid;
+    align-self: start;
     gap: 10px;
     padding: 14px;
     border: 1px solid #dddddd;
@@ -14139,6 +14081,7 @@
     background: #fafafa;
     color: #52525b;
     font-size: 11px;
+    white-space: nowrap;
   }
 
   .agent-market-card footer {
@@ -14160,6 +14103,7 @@
     color: #ffffff;
     font-size: 12px;
     font-weight: 650;
+    white-space: nowrap;
   }
 
   .agent-market-card footer button.downloaded {

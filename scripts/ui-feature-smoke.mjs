@@ -87,6 +87,14 @@ async function fillFirst(page, selector, value, label = selector) {
   await page.waitForTimeout(50);
 }
 
+async function submitComposer(page) {
+  const activeComposer = page.locator('form.composer:has([data-testid="composer-input"])').first();
+  const sendButton = activeComposer.locator('button[type="submit"]').first();
+  await sendButton.waitFor({ state: 'visible', timeout: 90000 });
+  await sendButton.click({ timeout: 5000 });
+  await page.waitForTimeout(100);
+}
+
 async function assertText(page, text, label = text) {
   const count = await visibleCount(page.getByText(text, { exact: false }));
   if (count < 1) throw new Error(`${label} not visible`);
@@ -297,8 +305,14 @@ async function smokeAgents(page) {
   await clickButton(page, 'Agent 市场');
   await assertText(page, 'Agent 市场');
   await fillFirst(page, 'input[aria-label="搜索 Agent 市场"]', '审查', 'agent market search');
-  const download = page.getByRole('button', { name: /下载|已下载/, exact: false }).first();
-  if (await download.isVisible().catch(() => false)) await download.click();
+  const marketModal = page.locator('.agent-market-modal').first();
+  await marketModal.waitFor({ state: 'visible', timeout: 5000 });
+  const download = marketModal.getByRole('button', { name: /下载到本地/, exact: false }).first();
+  if (await download.isVisible().catch(() => false)) {
+    await download.click();
+  } else {
+    await firstVisible(marketModal.getByRole('button', { name: /已下载/, exact: false }), 'downloaded market agent');
+  }
   await closeOverlays(page);
   await clickButton(page, '蒸馏 Agent');
   for (const step of ['2. 提炼能力', '3. 生成 Agent', '1. 选择样本']) await clickButton(page, step);
@@ -339,7 +353,7 @@ async function smokeComposer(page) {
   const plus = page.locator('.composer button').filter({ hasText: /^$/ }).first();
   if (await plus.isVisible().catch(() => false)) await plus.click().catch(() => {});
   await page.keyboard.press('Escape').catch(() => {});
-  await page.locator('.composer__submit:not(.secondary)').click();
+  await submitComposer(page);
   await assertText(page, '检查所有功能是否可点击');
 }
 
@@ -361,13 +375,14 @@ async function smokeCodeWorkbench(page) {
   await clickButton(page, '开始代码对话');
   const input = page.getByTestId('composer-input');
   await input.fill('解释当前 diff');
-  await page.locator('.composer__submit:not(.secondary)').click();
+  await submitComposer(page);
   await assertText(page, '解释当前 diff');
   await clickButton(page, 'Work 工作台');
   await assertText(page, '今日概览');
 }
 
 async function smokeVisibleProbe(page) {
+  await clickButton(page, 'Work 工作台').catch(() => {});
   await clickButton(page, '今日概览');
   const before = await collectVisibleControls(page);
   const safePatterns = [/^查看全部$/, /^管理$/, /^新建待办$/, /^新建日程$/, /^进入 Agent 中心$/, /^Work$/, /^Code$/];

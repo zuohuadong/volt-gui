@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, Check, Code2, FileText, FileType, Folder, FolderKanban, Image, LayoutDashboard, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
+  import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
   import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
@@ -23,8 +23,6 @@
     onWorkPermissionChange,
     onOpenResources,
     activityMode,
-    onActivityModeChange,
-    showActivityModeSwitch = true,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -43,8 +41,6 @@
     onWorkPermissionChange?: (value: string) => void;
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
-    onActivityModeChange?: (mode: ActivityMode) => void;
-    showActivityModeSwitch?: boolean;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -635,18 +631,6 @@
           <option value="">选择模型</option>
         {/if}
       </select>
-      {#if showActivityModeSwitch && activityMode && onActivityModeChange}
-        <div class="composer__mode-switch" role="group" aria-label="Work / Code 切换">
-          <button class:active={activityMode === "work"} type="button" aria-pressed={activityMode === "work"} onclick={() => onActivityModeChange("work")}>
-            <LayoutDashboard size={14} />
-            <span>Work</span>
-          </button>
-          <button class:active={activityMode === "code"} type="button" aria-pressed={activityMode === "code"} onclick={() => onActivityModeChange("code")}>
-            <Code2 size={14} />
-            <span>Code</span>
-          </button>
-        </div>
-      {/if}
       {#if sending}
         <button class="composer__submit secondary" type="button" aria-label={t.composer.cancel} title={t.composer.cancel} onclick={onCancel}>
           <Square size={16} />

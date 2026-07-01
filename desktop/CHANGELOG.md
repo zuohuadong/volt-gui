@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.7.0...desktop-v0.8.0) (2026-07-01)
+
+
+### Features
+
+* **desktop:** refine workbench composer flow ([e988e63](https://github.com/zuohuadong/volt-gui/commit/e988e635f1b4dcff4cb23eee571702de0d64b51c))
+
+
+### Bug Fixes
+
+* **desktop:** stabilize workbench conversations ([7e43e18](https://github.com/zuohuadong/volt-gui/commit/7e43e18f800fc79af06037aa8a55bbbcb65cb47e))
+
 ## [0.7.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.6.0...desktop-v0.7.0) (2026-06-29)
 
 

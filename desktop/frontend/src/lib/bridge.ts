@@ -35,6 +35,8 @@ import type {
   WorkbenchPlugin,
   WorkbenchProvider,
   SkillPackageInput,
+  WorkbenchTodo,
+  WorkbenchTodoInput,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
   WireEvent,
@@ -96,6 +98,9 @@ interface AppBindings {
   ListAgents(): Promise<AgentView[]>;
   SaveAgent(input: AgentInput): Promise<AgentView>;
   DeleteAgent(id: string): Promise<void>;
+  ListTodos(): Promise<WorkbenchTodo[]>;
+  SaveTodo(input: WorkbenchTodoInput): Promise<WorkbenchTodo>;
+  DeleteTodo(id: string): Promise<void>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
@@ -157,6 +162,7 @@ declare global {
 
 const EVENT_CHANNEL = "agent:event";
 const PROJECT_TREE_CHANNEL = "project-tree:changed";
+const AGENT_READY_CHANNEL = "agent:ready";
 
 function bindings(): AppBindings {
   const real = typeof window === "undefined" ? undefined : window.go?.main?.App;
@@ -188,6 +194,12 @@ export function onProjectTreeChanged(cb: () => void): () => void {
   const runtime = typeof window === "undefined" ? undefined : window.runtime;
   if (!runtime) return () => {};
   return runtime.EventsOn(PROJECT_TREE_CHANNEL, () => cb());
+}
+
+export function onWorkspaceReady(cb: () => void): () => void {
+  const runtime = typeof window === "undefined" ? undefined : window.runtime;
+  if (!runtime) return () => {};
+  return runtime.EventsOn(AGENT_READY_CHANNEL, () => cb());
 }
 
 export function onFilesDropped(cb: (paths: string[]) => void): () => void {

@@ -5,11 +5,13 @@
 1. **Task Contract**：每个任务先标准化为契约，再进入自动化队列
 2. **Provider Adapter**：GitHub、CNB、GitLab 和本地 `tasks.md` 只负责映射任务来源，不参与核心决策
 3. **Skill & Convention Gate**：领取前识别相关 skill、项目代码规范、测试约定和提交规范
-4. **Scheduler**：默认只创建 1 个常规可见定时任务，使用 `gpt-5.3-codex` 每 6 小时扫描并处理低/中风险流程；它不是最终仲裁者
-5. **High-Risk Reviewer / Arbiter**：只创建 1 个高风险审查/仲裁定时任务，每 6 小时处理 `needs_model: gpt-5.5` / `review_class: review-high`、生产/安全/数据/不可逆决策和 reviewer 分歧；`needs_model: gpt-5.5` 是升级标记，实际运行模型走高风险候选链，并可用 `AGENT_TEAM_HIGH_RISK_MODEL`、`AGENT_TEAM_HIGH_RISK_MODELS`、`AGENT_TEAM_ARBITER_MODEL` 或项目配置覆盖
-6. **内部流程**：执行器、低风险审查、健康检查和 smoke 都作为 Orchestrator 内部流程，不再推荐创建独立可见 automation
-7. **工作方式**：每个任务单独分支或 worktree，避免相互污染
-8. **分层原则**：全局只存规则、模板、skills 和 adapter 规范，项目级 ledger 才是执行源；空队列只输出 `NOOP`，不展开无任务对话
+4. **AgentCard**：`agent-team agent list . --json` 输出可查询的 runtime 能力档案；`--write` 可持久化到 coordination DB 的 `agent_registry`
+5. **Matter / Taste**：`matter list|show|draft|advance|review` 呈现交付现场；`taste save|recall` 沉淀验收偏好，但不能覆盖测试、事实、安全边界或用户最新指令
+6. **Scheduler**：默认只创建 1 个常规可见定时任务，使用 `gpt-5.3-codex` 每 6 小时扫描并处理低/中风险流程；它不是最终仲裁者
+7. **High-Risk Reviewer / Arbiter**：只创建 1 个高风险审查/仲裁定时任务，每 6 小时处理 `needs_model: gpt-5.5` / `review_class: review-high`、生产/安全/数据/不可逆决策和 reviewer 分歧；`needs_model: gpt-5.5` 是升级标记，实际运行模型走高风险候选链，并可用 `AGENT_TEAM_HIGH_RISK_MODEL`、`AGENT_TEAM_HIGH_RISK_MODELS`、`AGENT_TEAM_ARBITER_MODEL` 或项目配置覆盖
+8. **内部流程**：执行器、低风险审查、健康检查和 smoke 都作为 Orchestrator 内部流程，不再推荐创建独立可见 automation
+9. **工作方式**：每个任务单独分支或 worktree，避免相互污染
+10. **分层原则**：全局只存规则、模板、skills 和 adapter 规范，项目级 ledger 才是执行源；空队列只输出 `NOOP`，不展开无任务对话
 
 ## Provider 检查
 
@@ -48,13 +50,16 @@
 - legacy 项目更新 `progress.md` 时只写当前任务的 concise 事实；旧历史通过 `agent-team automation archive-progress . --keep-recent 50` 归档，不保留在默认上下文里。
 - legacy 项目通过 `.mailbox/` 发送状态变化，并使用 `agent-team automation sync-state .` 从 `tasks.md` 同步 `.agents/state/tasks.json`；`agent-team automation claim <task_id> . --owner <owner> --branch <branch>` 会带锁推进 `ready -> running` 并同步状态
 - 使用 `agent-team automation loop-strategy . --task <id> --domain auto` 先判断该任务应走 fanout、goal、micro-loop、macro-loop 还是 human-loop；只有机器验收或交付 QC 这类 `goal` / `micro-loop` 任务才适合自动评审闭环
+- `loop-strategy` 同时给出 `parallelism` 建议：delivery/goal 默认 `read-only-fanout`，可并行 explorer/critic/verifier；fixed-list fanout 只有 Task Contract 为每个 executor 填写互斥 `allowed_files` 后才允许 `disjoint-writers`；marketing/demand/business 默认 `human-gated`，不得从指标或 agent score 直接启动写入型 agent
 - 使用 `agent-team automation loop-trigger . --task <id> --source manual|schedule|doctor|mailbox|ci|metrics --event-key <key>` 记录触发信号；`manual` / `schedule` 是主动触发，只有显式 `--execute` 才能生成 review-loop 计划；`doctor` / `mailbox` / `ci` / `metrics` 是被动触发，只入队/记录，不能直接自动开 agent loop
 - 使用 `agent-team automation review-loop . --task <id> --domain delivery --panels contract,tests,runtime --max-rounds 3` 生成有界计划；coordination DB v2 项目写入 `review_loops` 表，legacy 项目才生成 `.agents/state/review-loops/<task>.json`。该命令不自动启动模型，panel 执行仍走 `agent-team subagent dispatch`
-- `review-loop` 最多 6 个 panel、5 轮；agent score 只是代理指标，不是 CTR/CVR、付费、留存或生产真相。需求发现、营销获客和商业方向必须接真实世界数据或人工裁决，不能用 agent judge 自嗨
+- `review-loop-run` 会在 `parallelism.mode=read-only-fanout` 时并发运行同一轮只读 panel，以缩短审查墙钟时间；run record 和 mailbox 仍按 panel 单独记录，写入型 executor 不随 review-loop 自动并发
+- 使用 `agent-team automation loop-health . --json` 做闭环体检：汇总 runtime timeout/error mailbox、review-loop/Goal Forge run evidence 和 context snapshot 膨胀风险，并列出 runtime-health、trace-eval、context-hygiene、TCB sidecar、human approval、macro product signal、Taste、skill evolution 等受控入口。
+- `review-loop` / `evaluator-optimizer` 最多 6 个 panel、5 轮；agent score 只是代理指标，不是 CTR/CVR、付费、留存或生产真相。需求发现、营销获客和商业方向必须用 `agent-team automation product-signal` 记录真实世界数据或人工裁决；生产、secret、破坏性 git、迁移和发布必须走 `agent-team approval request|approve|reject`；同类失败出现 2-3 次时用 `agent-team automation skill-evolution --write` 生成 Matter 草案，不能自动改 skill/runbook
 - 使用 `agent-team automation archive-ledger .` 归档 `done` / `archived` task rows 和 contracts，避免 inactive 历史反复进入当前上下文
 - 使用 `agent-team automation prune-mailbox . --max-bytes 131072 --archive-status done,archived,error --keep-recent 5` 清理或归档过大的 `done` / `archived` / reviewed-error mailbox 消息；先运行 `review-mailbox-errors --all` 登记已审阅的 error 后才能归档 error 文件；仍被 Task Contract 或 `.agents/state/tasks.json` 引用的 evidence mailbox 会被保留，pending/alert 消息必须保留
 - `agent-team automation status|doctor .` 在 coordination DB v2 项目读取 DB 状态，在 legacy 项目检查 `tasks.md`、`progress.md` 和 mailbox 聚合体积；出现 coordination context warning 时先按建议 archive/prune 或升级到 coordination DB v2，再做宽范围 agent 工作
-- 如果启用 `.agents/state/tasks.json`，同步记录 subagent evidence 或 safe skip reason；doctor 仅在该机器可读状态存在时执行缺失证据 warning，并会检查被引用的 `.mailbox/*.md` evidence 文件是否仍存在
+- 如果启用 `.agents/state/tasks.json`，同步记录 subagent evidence 或 accepted safe skip reason；doctor 仅在该机器可读状态存在时执行缺失证据 warning，并会检查被引用的 `.mailbox/*.md` evidence 文件是否仍存在。行动型任务默认启用 agent-team delegation，不需要每次向用户请求子代理授权；宿主工具策略、`create_thread` / parallel-agent 限制、或用户未明确要求并行代理不是 accepted safe skip reason，应记录为 runtime/interruption/blocker evidence
 - 中/高风险、长程、多子代理或可恢复任务可写 `.agents/state/runs/<run_id>.json`，按 `.agents/state/run-records.schema.json` 记录 run_id、task_id、子代理隔离、验证命令、证据引用和中断恢复状态
 - 子代理默认上下文隔离，只通过 Task Contract、`.mailbox/`、run record 或命名 artifact 传递证据；子代理中断时先记录恢复动作，再继续执行
 - 非显而易见决策写入 commit trailer
@@ -119,7 +124,7 @@ agent-team automation capability-benchmark . --suite full --write
 - `agent-team deploy .` 会创建 `.agents/goal-forge/README.md`、`.agents/goal-forge/goal-forge.config.json` 和 `.agents/goal-forge/runs/`。
 - Goal Forge runtime 发现顺序：`GOAL_FORGE_BIN`、PATH 中的 `goalforge` / `goal-forge`、`npx -y @goalforge/cli@latest`、最后是 `../goal-forge` / `GOAL_FORGE_PATH` / `GOAL_FORGE_HOME` source checkout。
 - 设计文档、架构/API/数据模型、迁移方案或高风险计划本身是交付物时，可运行 `agent-team goal-forge init . "<goal>"` 创建质证 run；需要实际执行时再运行 `agent-team goal-forge run . <runDir>`。
-- coordination DB v2 项目以 `.agents/state/coordination.db` 为执行源；legacy 项目才以 `tasks.md`、`progress.md`、`.mailbox/` 和 Task Contract 为执行源。Goal Forge run/ledger 只作为设计质证证据，在 Task Contract 的 `goal_forge.run_dir` / `goal_forge.ledger_paths` 中引用。
+- coordination DB v2 项目以 `.agents/state/coordination.db` 为执行源；legacy 项目才以 `tasks.md`、`progress.md`、`.mailbox/` 和 Task Contract 为执行源。Goal Forge run/ledger 作为设计质证证据，在 Task Contract 的 `goal_forge.run_dir` / `goal_forge.ledger_paths` 中引用；v2 项目中 strict validate 通过的 `goal-forge run` 会写入 `run_records`，供 `loop-health` 和 trace evidence 使用。
 - `agent-team automation status|doctor .` 会检查 Goal Forge runtime、项目配置和可选 checkout fallback；找不到 checkout 不阻塞二进制/package-first 运行。
 
 ## 任务契约模板
@@ -132,7 +137,7 @@ deploy 会生成 `.agents/automations/codex-automations.md`，记录当前推荐
 
 `templates/automations/recipes/codex-self-update-automations.md` 提供针对单一仓库（dogfooding 场景）的可粘贴 automation 配方，含覆盖工作区、Scheduler/Arbiter prompt 和创建后验证步骤，适合先在一个项目上跑通 loop engineering 闭环再推广。
 
-`agent-team automation codex-schedule --project <path> --write` 会生成 Scheduler 和 High-Risk Reviewer / Arbiter 两个 Codex automation 定义到 `.agents/state/codex-automations.json`。在 Codex app 环境中可据此创建或更新真实 cron automation；不要再创建 executor/reviewer/health/smoke 四个分散的可见定时任务。
+`agent-team automation codex-schedule --project <path> --write` 会生成 Scheduler 和 High-Risk Reviewer / Arbiter 两个 Codex automation 定义到 `.agents/state/codex-automations.json`。在 Codex app 环境中加 `--sync-global` 会同步真实 `~/.codex/automations/*/automation.toml` cron automation，避免全局调度仍使用旧模型或旧 prompt；不要再创建 executor/reviewer/health/smoke 四个分散的可见定时任务。
 
 需要接入 PR/MR 级 CI 审查时，显式加 `--ci-mode comment|merge` 生成第三个 CI reviewer 定义。`comment` 只评论不合并；`merge` 也必须经过 merge-bypass、自修改、CI、身份、风险和契约门禁后才允许自动合并。详细接线见 `ci-review-mode.md`，可参考 SupaCloud 的 AI Review & Auto-Merge 机制，但不要把 provider 不可用或模型失败当作允许合并的信号。
 

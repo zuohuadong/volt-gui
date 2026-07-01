@@ -74,3 +74,4 @@ CLAUDE.md
 # Local Playwright artifacts and test output
 output/
 .playwright-cli/
+CODEBUDDY.md

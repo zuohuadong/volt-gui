@@ -83,6 +83,13 @@ func TestUserPreviewTextPreservesCompiledTurnPrompt(t *testing.T) {
 	}
 }
 
+func TestUserPreviewTextStripsWorkbenchContext(t *testing.T) {
+	in := "归属项目：kiro-test\n工作权限：替我批准\n分析项目需求"
+	if got := UserPreviewText(in); got != "分析项目需求" {
+		t.Fatalf("UserPreviewText = %q, want visible prompt", got)
+	}
+}
+
 // TestSessionPreviewFromMessagesPreservesCompiledFirstTurn proves the end-to-end
 // preview path (used for the picker/sidebar) recovers the prompt when the first
 // persisted user turn is a compiled contract.

@@ -1,8 +1,8 @@
 # Goal Forge Integration
 
-Selected runtime: npm package (@goalforge/cli@latest)
+Selected runtime: bundled (in-binary)
 
-Source checkout fallback: /Volumes/Data/workspace/goal-forge
+Source checkout fallback not detected. Optional: place it at ../goal-forge, or set GOAL_FORGE_PATH / GOAL_FORGE_HOME for local development templates.
 
 This directory is managed by `agent-team deploy`. It connects the project Task Contract / design-review workflow to Goal Forge without vendoring Goal Forge into this project. Runtime discovery prefers an explicit/local binary first, then the latest published npm package, and keeps a sibling source checkout as a development fallback.
 
@@ -13,20 +13,20 @@ Use Goal Forge when the deliverable is a design artifact, architecture/API/data 
 Create a local review run:
 
 ```bash
-npx -y @goalforge/cli@latest init --goal "<design goal>" --config "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/goal-forge.config.json" --out "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>"
+agmesh goal-forge <command> init --goal <design goal> --config D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\goal-forge.config.json --out D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id>
 ```
 
 Run a deterministic local round:
 
 ```bash
-npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter local
-npx -y @goalforge/cli@latest validate "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --strict
+agmesh goal-forge <command> run D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id> --rounds 1 --adapter local
+agmesh goal-forge <command> validate D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id> --strict
 ```
 
 Run repository-aware verification through the Codex adapter:
 
 ```bash
-npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter codex --repo "/Volumes/Data/workspace/volt-gui" --model gpt-5.3-codex
+agmesh goal-forge <command> run D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id> --rounds 1 --adapter codex --repo D:\项目\西谷AI\volt-gui\.upstream-latest --model gpt-5.3-codex
 ```
 
 Shortcuts from this project:
@@ -46,4 +46,4 @@ agent-team goal-forge init . "<design goal>"
 
 ## Development Fallback
 
-When working on Goal Forge itself, a source checkout at `/Volumes/Data/workspace/goal-forge` can still provide config templates and a fallback runtime when no binary/package runner is available.
+When working on Goal Forge itself, a source checkout at `<path-to-sibling-goal-forge>` can still provide config templates and a fallback runtime when no binary/package runner is available.

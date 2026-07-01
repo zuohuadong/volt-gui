@@ -15,6 +15,8 @@
     onPreviewFile,
     models = [],
     selectedModel = "",
+    disabled = false,
+    disabledReason = "",
     onModelChange,
     projectOptions = [],
     selectedProjectId = "",
@@ -33,6 +35,8 @@
     onPreviewFile: (path: string) => void;
     models?: ModelInfo[];
     selectedModel?: string;
+    disabled?: boolean;
+    disabledReason?: string;
     onModelChange?: (event: Event) => void;
     projectOptions?: { id: string; label: string }[];
     selectedProjectId?: string;
@@ -69,7 +73,7 @@
   const slashArgMode = $derived(/^\/[^\s]+\s+/.test(input));
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
-  const canSubmit = $derived(!sending && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
+  const canSubmit = $derived(!sending && !disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
 
   onMount(() => {
     const unsubscribeDropped = onFilesDropped((paths) => void attachDroppedPaths(paths));
@@ -285,7 +289,7 @@
 
   function submitComposer() {
     const text = input.trim();
-    if (sending || !canSubmit) return;
+    if (sending || disabled || !canSubmit) return;
     const refs = attachments.map((attachment) => `@${attachment.path}`).join(" ");
     const displayText = [text, refs].filter(Boolean).join(text && refs ? " " : "");
     const projectLabel = selectedProjectId ? selectedProjectLabel() : "";
@@ -621,6 +625,9 @@
     </div>
 
     <div class="composer__actions">
+      {#if disabledReason}
+        <span class="composer__status" aria-live="polite">{disabledReason}</span>
+      {/if}
       <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange} disabled={!models.length}>
         {#if models.length}
           {#each models as model, index (modelKey(model, index))}
@@ -636,7 +643,7 @@
           <Square size={16} />
         </button>
       {:else}
-        <button class="composer__submit" type="submit" aria-label={t.composer.send} title={t.composer.send} disabled={!canSubmit}>
+        <button class="composer__submit" type="submit" aria-label={t.composer.send} title={disabledReason || t.composer.send} disabled={!canSubmit}>
           <Send size={16} />
           <span>{t.composer.send}</span>
         </button>

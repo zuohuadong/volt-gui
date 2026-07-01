@@ -48,6 +48,7 @@ func StripComposePrefixes(content string) string {
 	s := agent.StripTransientUserBlocks(content)
 	s = stripComposeMarker(s, PlanModeMarker)
 	s = stripComposeMarker(s, legacyPlanModeMarker)
+	s = agent.StripWorkbenchContextPrefix(s)
 	s = strings.TrimSpace(s)
 	return s
 }

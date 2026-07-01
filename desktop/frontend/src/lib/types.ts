@@ -177,6 +177,47 @@ export interface AgentInput {
   coreFiles?: string[];
 }
 
+export type TodoStatus = "pending" | "in_progress" | "done" | "blocked" | string;
+
+export interface WorkbenchTodo {
+  id: string;
+  title: string;
+  description: string;
+  projectId?: string;
+  projectName?: string;
+  customerId?: string;
+  customerName?: string;
+  agentId?: string;
+  agentName?: string;
+  model?: string;
+  priority: string;
+  dueAt?: string;
+  dueLabel: string;
+  status: TodoStatus;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface WorkbenchTodoInput {
+  id?: string;
+  title: string;
+  description: string;
+  projectId?: string;
+  projectName?: string;
+  customerId?: string;
+  customerName?: string;
+  agentId?: string;
+  agentName?: string;
+  model?: string;
+  priority: string;
+  dueAt?: string;
+  dueLabel: string;
+  status?: TodoStatus;
+  source?: string;
+}
+
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];

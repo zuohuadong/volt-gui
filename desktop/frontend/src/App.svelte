@@ -54,7 +54,7 @@
   import Composer from "./components/Composer.svelte";
   import Transcript from "./components/Transcript.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
-  import { app, onAgentEvent } from "./lib/bridge";
+  import { app, onAgentEvent, onWorkspaceReady } from "./lib/bridge";
   import { t } from "./lib/i18n";
   import type {
     ActivityMode,
@@ -77,6 +77,8 @@
     WireEvent,
     WorkbenchPluginInput,
     WorkbenchPlugin,
+    WorkbenchTodo,
+    WorkbenchTodoInput,
     SkillPackageInput,
     WorkspaceDiffView,
     WorkspaceChangesView,
@@ -94,7 +96,7 @@
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
   type AgentMarketItem = Pick<AgentView, "id" | "name" | "role" | "runs" | "status" | "desc"> & { category: string; source: string; version: string; tags: string[]; localPath: string };
-  type SidebarConversation = { id: string; title: string; updatedAt: string; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
+  type SidebarConversation = { id: string; title: string; updatedAt: string; updatedAtMs?: number; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
   type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
   type SidebarStateSnapshot = { version: 1; projects: SidebarProject[]; activeProjectId: string; activeConversationId: string; sort: SidebarProjectSort; dockCollapsed: boolean };
   type SidebarProjectSort = "recent" | "name" | "conversations";
@@ -103,6 +105,11 @@
   type SettingPanel = "general" | "runtime" | "models";
   type ModelCard = { name: string; provider: string; role: string; status: string; ref?: string };
   type SettingGroup = { id: SettingPanel; title: string; desc: string; status: string };
+  type TodoPersistenceBindings = {
+    ListTodos?: () => Promise<WorkbenchTodo[]>;
+    SaveTodo?: (input: WorkbenchTodoInput) => Promise<WorkbenchTodo>;
+    DeleteTodo?: (id: string) => Promise<void>;
+  };
   type SettingsDraft = {
     language: string;
     theme: string;
@@ -244,11 +251,18 @@
   let draftConversationThread: TabMeta | undefined;
   let draftConversationThreadRequest: Promise<TabMeta | undefined> | undefined;
   let draftConversationToken = 0;
+  let activeConversationTabId = $state("");
   let conversationScrollEl = $state<HTMLDivElement | null>(null);
   let conversationScrollFrame: number | undefined;
   let sidebarStateHydrated = false;
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
+  const currentComposerTab = $derived(activeConversationTabId ? tabs.find((tab) => tab.id === activeConversationTabId) ?? activeTab : activeTab);
+  const composerDisabledReason = $derived(
+    hasWailsBindings() && currentComposerTab && currentComposerTab.ready === false
+      ? "工作区正在准备中，请稍后发送"
+      : "",
+  );
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
   const showActiveTranscript = $derived(((activityMode === "code" && newTaskConversationActive) || (activityMode === "work" && workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || newTaskConversationActive));
@@ -353,11 +367,16 @@
   };
   const collapsibleWorkspaceSections = new Set(["业务资料", "协作交付", "Agent 能力"]);
   const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
-  const todoItems = [
-    { title: "验证桌面预览加载状态", desc: "确认浏览器模式无需 Wails 绑定也能进入工作台", due: "今天", state: "进行中" },
-    { title: "整理 Agent 创建模板", desc: "补齐工具、技能、核心文件与模型配置", due: "16:00", state: "待处理" },
-    { title: "复核项目与客户关联", desc: "检查新建对话中的关联入口", due: "明天", state: "待处理" },
-  ];
+  let todoItems = $state<WorkbenchTodo[]>([
+    { id: "todo-preview-load", title: "验证桌面预览加载状态", description: "确认浏览器模式无需 Wails 绑定也能进入工作台", dueLabel: "今天", status: "in_progress", priority: "中", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "seed" },
+    { id: "todo-agent-template", title: "整理 Agent 创建模板", description: "补齐工具、技能、核心文件与模型配置", dueLabel: "16:00", status: "pending", priority: "中", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "seed" },
+    { id: "todo-link-review", title: "复核项目与客户关联", description: "检查新建对话中的关联入口", dueLabel: "明天", status: "pending", priority: "中", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "seed" },
+  ]);
+  let todoDraftTitle = $state("");
+  let todoDraftProjectId = $state("");
+  let todoDraftPriority = $state("中");
+  let todoDraftDue = $state("");
+  let todoDraftDesc = $state("");
   let runningAutomations = $state([
     { id: "preflight-validation", title: "提交前验证自动化", desc: "参考 Codex 自动化，把前端门禁、构建、空白检查和浏览器日志验证串成一个可复用的自动化任务。", status: "运行中", kind: "验证自动化", owner: "自动化 Agent", startedAtMs: Date.now() - 5400000, cadence: "每次 UI 改动后", schedule: "手动触发 / 提交前", scope: "desktop/frontend", environment: "local workspace", command: "autofixer -> npm run check -> npm run build -> browser logs", result: "最近一次通过", lastRun: "刚刚", nextRun: "等待下一次改动", steps: ["Svelte autofixer", "类型检查", "生产构建", "浏览器 DOM / 控制台验证"], logs: ["0 errors / 0 warnings", "构建通过，保留已知 @theme warning", "浏览器 warn/error 为空"] },
     { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", kind: "质量门禁", owner: "代码审查 Agent", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", schedule: "改动后手动复跑", scope: "desktop/frontend", environment: "local workspace", command: "npm run check / npm run build / git diff --check", result: "通过", lastRun: "12 分钟前", nextRun: "下一次前端改动", steps: ["npm run check", "npm run build", "git diff --check"], logs: ["svelte-check 通过", "Vite build 通过", "无空白错误"] },
@@ -390,9 +409,9 @@
     { id: "homepage", name: "品牌主页恢复与部署", code: "PRJ-2026-0601", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed", progress: 100, priority: "低", risk: "已关闭", updatedAt: "昨天", nextStep: "仅保留归档和复盘记录", agent: "自动化 Agent", materials: 5, todos: 0, events: 1, reports: 3, timeline: ["历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"] },
   ];
   let sidebarProjects = $state<SidebarProject[]>([
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚" }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天" }] },
-    { id: "lurefree", name: "Lurefree 小程序发布", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天" }] },
-    { id: "homepage", name: "品牌主页恢复与部署", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天" }] },
+    { id: "volt-gui", name: "Volt GUI 桌面端重构", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚", updatedAtMs: Date.now() }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天", updatedAtMs: Date.now() - 2 * 60 * 60 * 1000 }] },
+    { id: "lurefree", name: "Lurefree 小程序发布", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天", updatedAtMs: Date.now() - 24 * 60 * 60 * 1000 }] },
+    { id: "homepage", name: "品牌主页恢复与部署", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天", updatedAtMs: Date.now() - 26 * 60 * 60 * 1000 }] },
   ]);
   let activeSidebarProjectId = $state("volt-gui");
   let activeSidebarConversationId = $state("volt-gui-review");
@@ -430,7 +449,7 @@
     { projectId: "lurefree", title: "增长任务周报", type: "周报", status: "草稿", owner: "运营 Agent", updatedAt: "今天", summary: "整理触达节奏和下一轮任务。" },
     { projectId: "homepage", title: "恢复复盘报告", type: "归档报告", status: "已归档", owner: "自动化 Agent", updatedAt: "昨天", summary: "总结恢复来源、构建验证和后续维护边界。" },
   ];
-  const projectTodoRows = [
+  let projectTodoRows = $state([
     { projectId: "volt-gui", title: "补齐项目详情五个标签页", due: "今天", priority: "高", state: "进行中", desc: "让资料、日程、报告、待办都具备可见内容和操作入口。" },
     { projectId: "volt-gui", title: "执行 Svelte autofixer", due: "今天", priority: "中", state: "待处理", desc: "确认新增模板满足 Svelte 5 语法。" },
     { projectId: "volt-gui", title: "运行前端构建门禁", due: "今天", priority: "中", state: "待处理", desc: "执行 check、build 和 diff 空白检查。" },
@@ -438,7 +457,7 @@
     { projectId: "volt-gui", title: "整理交付说明", due: "明天", priority: "低", state: "待处理", desc: "记录本次参考 AORISTLAWER 的落地范围。" },
     { projectId: "lurefree", title: "复核发布资料", due: "今天", priority: "高", state: "进行中", desc: "确认发布前材料和验收证据。" },
     { projectId: "lurefree", title: "同步上线排期", due: "06-22", priority: "中", state: "待处理", desc: "更新客户与运营团队的提醒。" },
-  ];
+  ]);
   const customerCards = [
     { id: "internal", name: "内部研发团队", type: "企业", contact: "产品负责人", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", matters: 4, materials: 12, events: 3, todos: 5, risk: "低风险", riskLevel: "low", status: "active", createdAt: "2026-06-01", lastContact: "28 分钟前", address: "局域网本地客户档案", note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", projectIds: ["volt-gui", "homepage"] },
     { id: "ops", name: "运营增长团队", type: "企业", contact: "增长负责人", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", matters: 3, materials: 8, events: 2, todos: 4, risk: "中风险", riskLevel: "medium", status: "active", createdAt: "2026-06-08", lastContact: "2 小时前", address: "运营项目群", note: "负责客户触达、发布材料和小程序增长相关任务，需保留交付前验证记录。", projectIds: ["lurefree"] },
@@ -463,7 +482,7 @@
     { customerId: "ops", title: "增长任务同步", date: "06-22", time: "11:00", place: "线上会议", state: "已排期", desc: "同步地图、包体和发布排期风险。" },
     { customerId: "founder", title: "需求边界确认", date: "06-20", time: "18:00", place: "远程会议", state: "待确认", desc: "确认任务进入执行前的范围冻结条件。" },
   ];
-  const customerTodoRows = [
+  let customerTodoRows = $state([
     { customerId: "internal", title: "补齐客户详情五个标签页", due: "今天", priority: "高", state: "进行中", desc: "对照 AORISTLAWER 的客户详情结构补足面板内容。" },
     { customerId: "internal", title: "运行 Svelte autofixer", due: "今天", priority: "中", state: "待处理", desc: "确认新增模板满足 Svelte 5 语法。" },
     { customerId: "internal", title: "执行前端构建门禁", due: "今天", priority: "中", state: "待处理", desc: "运行 check、build 和 diff 空白检查。" },
@@ -475,7 +494,7 @@
     { customerId: "ops", title: "更新客户周报", due: "06-23", priority: "低", state: "待处理", desc: "同步项目状态、资料清理和下一步。" },
     { customerId: "founder", title: "确认需求边界", due: "今天", priority: "高", state: "待确认", desc: "进入执行前冻结范围、交付物和验收标准。" },
     { customerId: "founder", title: "补齐风险说明", due: "明天", priority: "中", state: "待处理", desc: "记录频繁变更带来的排期和交付风险。" },
-  ];
+  ]);
   const filteredProjects = $derived(projectCards.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
     const matchSearch = !keyword || [project.name, project.code, project.client, project.owner, project.stage, project.desc, project.category, project.court, project.priority, project.risk, project.agent].some((value) => value.toLowerCase().includes(keyword));
@@ -507,6 +526,30 @@
       .flatMap((project) => project.conversations)
       .find((conversation) => conversation.id === activeSidebarConversationId)?.title,
   );
+
+  function latestTranscriptUpdatedAtMs(items?: TranscriptItem[]) {
+    const times = (items ?? []).map((item) => item.createdAtMs).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return times.length ? Math.max(...times) : undefined;
+  }
+
+  function relativeSidebarTimeLabel(timestamp: number) {
+    const diffMs = Math.max(0, nowMs - timestamp);
+    const minute = 60 * 1000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+    if (diffMs < minute) return "刚刚";
+    if (diffMs < hour) return `${Math.floor(diffMs / minute)} 分钟前`;
+    if (diffMs < day) return `${Math.floor(diffMs / hour)} 小时前`;
+    if (diffMs < 2 * day) return "昨天";
+    const date = new Date(timestamp);
+    return `${date.getMonth() + 1}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function sidebarConversationTimeLabel(conversation: SidebarConversation) {
+    if (conversation.archivedAtMs) return "已归档";
+    const timestamp = conversation.updatedAtMs ?? latestTranscriptUpdatedAtMs(conversation.transcript);
+    return typeof timestamp === "number" ? relativeSidebarTimeLabel(timestamp) : conversation.updatedAt;
+  }
   const conversationHeaderTitle = $derived(
     activityMode === "work" && workLayer === "newTask"
       ? activeSidebarConversationTitle || activeTab?.topicTitle || t.activity.untitled
@@ -681,6 +724,9 @@
   function hasWailsBindings() {
     return typeof window !== "undefined" && Boolean(window.go?.main?.App);
   }
+  function todoPersistenceBindings(): TodoPersistenceBindings | undefined {
+    return typeof window === "undefined" ? undefined : window.go?.main?.App as TodoPersistenceBindings | undefined;
+  }
   function showWorkbenchNotice(message: string) {
     workbenchNotice = message;
     if (workbenchNoticeTimer) clearTimeout(workbenchNoticeTimer);
@@ -688,6 +734,42 @@
     workbenchNoticeTimer = window.setTimeout(() => {
       if (workbenchNotice === message) workbenchNotice = "";
     }, 2800);
+  }
+  function todoStatusLabel(status: string) {
+    if (status === "in_progress") return "进行中";
+    if (status === "done") return "已完成";
+    if (status === "blocked") return "阻塞";
+    return "待处理";
+  }
+  function todoDescription(todo: WorkbenchTodo) {
+    return todo.description || "待补充执行说明。";
+  }
+  function todoDue(todo: WorkbenchTodo) {
+    return todo.dueLabel || todo.dueAt || "无截止时间";
+  }
+  function formatTodoDueLabel(value: string) {
+    if (!value) return "";
+    const [date = "", time = ""] = value.split("T");
+    const [year = "", month = "", day = ""] = date.split("-");
+    const hourMinute = time.slice(0, 5);
+    if (!year || !month || !day || !hourMinute) return value;
+    return `${year}-${month}-${day} ${hourMinute}`;
+  }
+  function defaultTodoProjectId() {
+    const linked = projectCards.find((item) => item.name === linkedProject);
+    if (linked) return linked.id;
+    if (projectDetailOpen && projectCards.some((item) => item.id === selectedProjectId)) return selectedProjectId;
+    return "";
+  }
+  function todoProjectRows(projectId: string) {
+    return todoItems
+      .filter((todo) => todo.projectId === projectId)
+      .map((todo) => ({ projectId, title: todo.title, due: todoDue(todo), priority: todo.priority, state: todoStatusLabel(todo.status), desc: todoDescription(todo) }));
+  }
+  function todoCustomerRows(customerId: string) {
+    return todoItems
+      .filter((todo) => todo.customerId === customerId)
+      .map((todo) => ({ customerId, title: todo.title, due: todoDue(todo), priority: todo.priority, state: todoStatusLabel(todo.status), desc: todoDescription(todo) }));
   }
   function syncWorkbench(scope = "工作台") {
     if (hasWailsBindings()) void refreshModelSettings();
@@ -1166,38 +1248,56 @@
     return "notice";
   }
 
+  function stripComposerContextPrefix(value: string) {
+    const lines = value.trimStart().split(/\r?\n/);
+    let index = 0;
+    while (index < lines.length && /^(归属项目|所属项目|工作权限)\s*[:：]/.test(lines[index].trim())) {
+      index += 1;
+    }
+    return index > 0 ? lines.slice(index).join("\n").trimStart() : value;
+  }
+
   function sanitizeTranscript(items: unknown): TranscriptItem[] | undefined {
     if (!Array.isArray(items)) return undefined;
     return items
       .filter(isRecord)
-      .map((item) => ({
-        id: typeof item.id === "string" ? item.id : `persisted-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        role: sanitizeTranscriptRole(item.role),
-        title: typeof item.title === "string" ? item.title : undefined,
-        body: typeof item.body === "string" ? item.body : "",
-        pending: false,
-        readOnly: Boolean(item.readOnly),
-        parentId: typeof item.parentId === "string" ? item.parentId : undefined,
-        createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : undefined,
-      }))
+      .map((item) => {
+        const role = sanitizeTranscriptRole(item.role);
+        const body = typeof item.body === "string" ? item.body : "";
+        return {
+          id: typeof item.id === "string" ? item.id : `persisted-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          role,
+          title: typeof item.title === "string" ? item.title : undefined,
+          body: role === "user" ? stripComposerContextPrefix(body) : body,
+          pending: false,
+          readOnly: Boolean(item.readOnly),
+          parentId: typeof item.parentId === "string" ? item.parentId : undefined,
+          createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : undefined,
+        };
+      })
       .slice(-MAX_TRANSCRIPT_ITEMS);
   }
 
+  function transcriptHasContent(items?: TranscriptItem[]) {
+    return Boolean(items?.some((item) => item.role !== "system" && item.id !== "system-welcome" && item.body.trim()));
+  }
+
   function sidebarConversationHasContent(conversation: SidebarConversation) {
-    return Boolean(
-      conversation.transcript?.some((item) => item.role !== "system" && item.id !== "system-welcome" && item.body.trim()),
-    );
+    return transcriptHasContent(conversation.transcript);
   }
 
   function sanitizeSidebarConversation(value: unknown): SidebarConversation | undefined {
     if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return undefined;
     const scope = value.scope === "project" || value.scope === "global" ? value.scope : undefined;
+    const transcript = sanitizeTranscript(value.transcript);
+    const title = conversationTitleFromText(value.title);
     const conversation: SidebarConversation = {
       id: value.id,
-      title: value.title,
+      title,
       updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "刚刚",
+      updatedAtMs: typeof value.updatedAtMs === "number" ? value.updatedAtMs : latestTranscriptUpdatedAtMs(transcript),
       archivedAtMs: typeof value.archivedAtMs === "number" ? value.archivedAtMs : undefined,
-      transcript: sanitizeTranscript(value.transcript),
+      transcript,
       tabId: typeof value.tabId === "string" ? value.tabId : undefined,
       topicId: typeof value.topicId === "string" ? value.topicId : undefined,
       sessionPath: typeof value.sessionPath === "string" ? value.sessionPath : undefined,
@@ -1337,10 +1437,12 @@
       nowMs = Date.now();
     }, 1000);
     const unsubscribeEvents = onAgentEvent(handleEvent);
+    const unsubscribeReady = onWorkspaceReady(() => void refresh());
     return () => {
       window.clearInterval(tick);
       if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       unsubscribeEvents();
+      unsubscribeReady();
     };
   });
 
@@ -1355,7 +1457,30 @@
 
   // Debounce batch-appends of streaming text events to avoid re-render storms.
   let pendingTextBuffer = "";
+  let pendingTextTabId = "";
   let textFlushScheduled = false;
+
+  function currentTranscriptTabId() {
+    if (activityMode === "work" && workLayer === "newTask") return activeConversationTabId;
+    if (activityMode === "code" && newTaskConversationActive) return activeConversationTabId || activeTab?.id || "";
+    return activeTab?.id || "";
+  }
+
+  function shouldDisplayWireEvent(event: WireEvent) {
+    if (!event.tabId) return true;
+    const targetTabId = currentTranscriptTabId();
+    return Boolean(targetTabId) && event.tabId === targetTabId;
+  }
+
+  function updateEventTabRunning(event: WireEvent) {
+    if (!event.tabId) return;
+    if (event.kind === "turn_started") {
+      tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: true } : tab));
+    }
+    if (event.kind === "turn_done") {
+      tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false } : tab));
+    }
+  }
 
   function scrollConversationToBottom(behavior: ScrollBehavior = "smooth") {
     if (typeof window === "undefined") return;
@@ -1376,8 +1501,14 @@
     queueMicrotask(() => {
       textFlushScheduled = false;
       if (!pendingTextBuffer) return;
+      if (pendingTextTabId && pendingTextTabId !== currentTranscriptTabId()) {
+        pendingTextBuffer = "";
+        pendingTextTabId = "";
+        return;
+      }
       updateLastAssistant(pendingTextBuffer);
       pendingTextBuffer = "";
+      pendingTextTabId = "";
     });
   }
 
@@ -1434,15 +1565,16 @@
 
   function saveActiveSidebarConversationTranscript() {
     if (!activeSidebarProjectId || !activeSidebarConversationId) return;
+    const now = Date.now();
     const snapshot = cloneTranscriptItems(transcript);
     sidebarProjects = sidebarProjects.map((project) => {
       if (project.id !== activeSidebarProjectId) return project;
       return {
         ...project,
-        updatedAtMs: Date.now(),
+        updatedAtMs: now,
         conversations: project.conversations.map((conversation) =>
           conversation.id === activeSidebarConversationId
-            ? { ...conversation, updatedAt: "刚刚", transcript: snapshot }
+            ? { ...conversation, updatedAt: "刚刚", updatedAtMs: now, transcript: snapshot }
             : conversation,
         ),
       };
@@ -1450,7 +1582,7 @@
   }
 
   function conversationTitleFromText(text: string) {
-    const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "新对话";
+    const firstLine = stripComposerContextPrefix(text).split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "新对话";
     return firstLine.length > 20 ? `${firstLine.slice(0, 20)}...` : firstLine;
   }
 
@@ -1464,6 +1596,7 @@
       id: `${projectId}-conversation-${now}`,
       title: conversationTitleFromText(text),
       updatedAt: "刚刚",
+      updatedAtMs: now,
       transcript: welcomeTranscript(),
     };
     if (project) {
@@ -1508,11 +1641,12 @@
   }
 
   function updateSidebarConversationThread(projectId: string, conversationId: string, meta: TabMeta) {
+    const now = Date.now();
     sidebarProjects = sidebarProjects.map((project) => {
       if (project.id !== projectId) return project;
       return {
         ...project,
-        updatedAtMs: Date.now(),
+        updatedAtMs: now,
         conversations: project.conversations.map((conversation) =>
           conversation.id === conversationId
             ? {
@@ -1523,11 +1657,38 @@
                 scope: meta.scope,
                 workspaceRoot: meta.workspaceRoot,
                 updatedAt: "刚刚",
+                updatedAtMs: now,
               }
             : conversation,
         ),
       };
     });
+  }
+
+  function clearSidebarConversationThread(projectId: string, conversationId: string) {
+    sidebarProjects = sidebarProjects.map((project) => {
+      if (project.id !== projectId) return project;
+      return {
+        ...project,
+        conversations: project.conversations.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                tabId: undefined,
+                topicId: undefined,
+                sessionPath: undefined,
+                scope: undefined,
+                workspaceRoot: undefined,
+              }
+            : conversation,
+        ),
+      };
+    });
+  }
+
+  function isMissingTabError(error: unknown) {
+    const message = formatErrorMessage(error).toLowerCase();
+    return message.includes("tab ") && message.includes(" not found");
   }
 
   async function syncActiveTabMeta(meta: TabMeta) {
@@ -1572,16 +1733,19 @@
       const conversation = sidebarConversation(projectId, conversationId);
       if (!conversation) return activeTab;
       if (conversation.tabId) {
-        await withTimeout(app().SetActiveTab(conversation.tabId), "切换对话超时，请稍后重试。");
-        const current = tabs.find((tab) => tab.id === conversation.tabId) ?? activeTab;
-        if (!current) return undefined;
-        const meta = { ...current, id: conversation.tabId };
-        await syncActiveTabMeta(meta);
-        return tabs.find((tab) => tab.id === conversation.tabId) ?? meta;
+        try {
+          await withTimeout(app().SetActiveTab(conversation.tabId), "切换对话超时，请稍后重试。");
+          const current = tabs.find((tab) => tab.id === conversation.tabId) ?? activeTab;
+          if (!current) return undefined;
+          const meta = { ...current, id: conversation.tabId };
+          return tabs.find((tab) => tab.id === conversation.tabId) ?? meta;
+        } catch (error) {
+          if (!isMissingTabError(error)) throw error;
+          clearSidebarConversationThread(projectId, conversationId);
+        }
       }
       const meta = await createBackendConversationThread(project, conversation.title);
       updateSidebarConversationThread(projectId, conversationId, meta);
-      await syncActiveTabMeta(meta);
       return meta;
     })()
       .catch((error) => {
@@ -1605,6 +1769,7 @@
         id: `${projectId}-conversation-${now}`,
         title: conversationTitleFromText(text),
         updatedAt: "刚刚",
+        updatedAtMs: now,
         transcript: welcomeTranscript(),
       };
       createdConversation = true;
@@ -1630,15 +1795,22 @@
       draftConversationThreadRequest = undefined;
       if (draftThread) {
         updateSidebarConversationThread(projectId, conversation.id, draftThread);
+        activeConversationTabId = draftThread.id;
         await syncActiveTabMeta(draftThread);
         return draftThread;
       }
     }
-    return bindSidebarConversationThread(projectId, conversation.id);
+    const meta = await bindSidebarConversationThread(projectId, conversation.id);
+    if (meta) {
+      activeConversationTabId = meta.id;
+      await syncActiveTabMeta(meta);
+    }
+    return meta;
   }
 
   function clearConversationRuntime() {
     pendingTextBuffer = "";
+    pendingTextTabId = "";
     sending = false;
     pendingApproval = undefined;
     pendingAsk = undefined;
@@ -1803,6 +1975,7 @@
     agentWizardOpen = false;
     agentMarketOpen = false;
     activeSidebarConversationId = conversationId;
+    activeConversationTabId = "";
     clearConversationRuntime();
     transcript = welcomeTranscript();
     input = "";
@@ -1946,15 +2119,16 @@
 
   function renameConversationForFirstMessage(projectId: string, conversationId: string, text: string) {
     const title = conversationTitleFromText(text);
+    const now = Date.now();
     sidebarProjects = sidebarProjects.map((project) => {
       if (project.id !== projectId) return project;
       return {
         ...project,
-        updatedAtMs: Date.now(),
+        updatedAtMs: now,
         conversations: project.conversations.map((conversation) => {
           if (conversation.id !== conversationId) return conversation;
           const isDefaultTitle = /^新对话\s+\d+$/.test(conversation.title);
-          return isDefaultTitle ? { ...conversation, title, updatedAt: "刚刚" } : { ...conversation, updatedAt: "刚刚" };
+          return isDefaultTitle ? { ...conversation, title, updatedAt: "刚刚", updatedAtMs: now } : { ...conversation, updatedAt: "刚刚", updatedAtMs: now };
         }),
       };
     });
@@ -1967,6 +2141,7 @@
     const conversation = project.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
+    activeConversationTabId = conversation?.tabId ?? "";
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, updatedAtMs: Date.now() } : item);
     activityMode = "work";
     workLayer = "newTask";
@@ -1986,7 +2161,11 @@
     if (conversation) {
       void bindSidebarConversationThread(projectId, conversation.id).then(async (meta) => {
         if (!meta) return;
-        await hydrateHistory(meta);
+        if (activeSidebarProjectId !== projectId || activeSidebarConversationId !== conversation.id) return;
+        if (activityMode !== "work" || workLayer !== "newTask") return;
+        activeConversationTabId = meta.id;
+        await syncActiveTabMeta(meta);
+        await hydrateHistory(meta, { preserveLocalWhenEmpty: true });
         newTaskConversationActive = true;
       });
     }
@@ -2006,7 +2185,7 @@
     const now = Date.now();
     clearActiveSidebarConversation(conversationId);
     sidebarProjects = sidebarProjects.map((project) => project.id === projectId
-      ? { ...project, updatedAtMs: now, conversations: project.conversations.map((conversation) => conversation.id === conversationId ? { ...conversation, archivedAtMs: now, updatedAt: "已归档" } : conversation) }
+      ? { ...project, updatedAtMs: now, conversations: project.conversations.map((conversation) => conversation.id === conversationId ? { ...conversation, archivedAtMs: now, updatedAt: "已归档", updatedAtMs: now } : conversation) }
       : project);
   }
   function deleteSidebarConversation(projectId: string, conversationId: string) {
@@ -2033,6 +2212,7 @@
       .then(async (meta) => {
         if (token !== draftConversationToken) return undefined;
         draftConversationThread = meta;
+        activeConversationTabId = meta.id;
         await syncActiveTabMeta(meta);
         return meta;
       })
@@ -2051,12 +2231,12 @@
   function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
   function projectSchedules(project = selectedProject()) { return projectScheduleRows.filter((item) => item.projectId === project.id); }
   function projectReports(project = selectedProject()) { return projectReportRows.filter((item) => item.projectId === project.id); }
-  function projectTodos(project = selectedProject()) { return projectTodoRows.filter((item) => item.projectId === project.id); }
+  function projectTodos(project = selectedProject()) { return [...todoProjectRows(project.id), ...projectTodoRows.filter((item) => item.projectId === project.id)]; }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
   function customerProjects(customer = selectedCustomer()) { return projectCards.filter((project) => customer.projectIds.includes(project.id)); }
   function customerMaterials(customer = selectedCustomer()) { return customerMaterialRows.filter((item) => item.customerId === customer.id); }
   function customerSchedules(customer = selectedCustomer()) { return customerScheduleRows.filter((item) => item.customerId === customer.id); }
-  function customerTodos(customer = selectedCustomer()) { return customerTodoRows.filter((item) => item.customerId === customer.id); }
+  function customerTodos(customer = selectedCustomer()) { return [...todoCustomerRows(customer.id), ...customerTodoRows.filter((item) => item.customerId === customer.id)]; }
   function selectedAgent() { return agentCards.find((agent) => agent.id === selectedAgentId) ?? agentCards[0]; }
   function selectedTeamRoom() { return teamRooms.find((team) => team.title === selectedTeamTitle) ?? teamRooms[0]; }
   function teamMembers(team = selectedTeamRoom()) { return (team?.memberIds ?? []).map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
@@ -2358,7 +2538,63 @@
   function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); input = `关联项目：${projectName}\n`; void tick().then(focusComposer); }
   function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; input = `关联客户：${customerName}\n`; focusNewTask(); }
   function useNewTaskPrompt(task: (typeof newTaskQuickTasks)[number]) { selectedAgentId = task.agentId; input = task.prompt; void tick().then(focusComposer); }
-  function openConfigDialog(kind: ConfigDialog) { configDialog = kind; }
+  function resetTodoDraft() {
+    todoDraftTitle = "";
+    todoDraftProjectId = defaultTodoProjectId();
+    todoDraftPriority = "中";
+    todoDraftDue = "";
+    todoDraftDesc = configDialog === "todo" ? configDialogIntro() : "";
+  }
+  function openConfigDialog(kind: ConfigDialog) {
+    configDialog = kind;
+    if (kind === "todo") resetTodoDraft();
+  }
+  async function submitTodoDraft() {
+    const title = todoDraftTitle.trim() || "新建待办";
+    const dueAt = todoDraftDue.trim();
+    const dueLabel = formatTodoDueLabel(dueAt);
+    const priority = todoDraftPriority.trim() || "中";
+    const desc = todoDraftDesc.trim() || "待补充执行说明。";
+    const project = todoDraftProjectId ? projectCards.find((item) => item.id === todoDraftProjectId) : undefined;
+    const agent = agentCards.find((item) => item.id === selectedAgentId);
+    const projectId = project?.id ?? "";
+    const input: WorkbenchTodoInput = {
+      title,
+      description: desc,
+      dueAt,
+      dueLabel,
+      status: "pending",
+      priority,
+      projectId,
+      projectName: project?.name ?? "",
+      customerId: "",
+      customerName: "",
+      agentId: agent?.id ?? selectedAgentId,
+      agentName: agent?.name ?? "",
+      model: selectedModel || agentModel,
+      source: "workbench",
+    };
+    try {
+      const saveTodo = todoPersistenceBindings()?.SaveTodo;
+      const persisted = typeof saveTodo === "function";
+      const saved = persisted
+        ? await saveTodo(input)
+        : { ...input, id: `todo-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: input.status ?? "pending" } as WorkbenchTodo;
+      todoItems = [saved, ...todoItems.filter((todo) => todo.id !== saved.id)];
+      configDialog = undefined;
+      workLayer = "todos";
+      showWorkbenchNotice(persisted ? `已新增待办：${title}` : `已新增待办：${title}。重启桌面 dev 窗口后会启用持久化。`);
+    } catch (error) {
+      console.error("Failed to save todo", error);
+      showWorkbenchNotice("新增待办失败，请稍后重试。");
+    }
+  }
+  function confirmConfigDialog() {
+    if (configDialog === "team") return saveTeamBuilder();
+    if (configDialog === "model") return void saveModelProvider();
+    if (configDialog === "todo") return void submitTodoDraft();
+    configDialog = undefined;
+  }
   function configDialogTitle() {
     if (configDialog === "schedule") return "新建日程";
     if (configDialog === "todo") return "新建待办";
@@ -2526,6 +2762,16 @@
     } catch (error) {
       console.error("Failed to load agents", error);
       agentCards = defaultAgentCards;
+    }
+  }
+  async function refreshTodos() {
+    const todoApi = todoPersistenceBindings();
+    if (typeof todoApi?.ListTodos !== "function") return;
+    try {
+      const todos = await todoApi.ListTodos();
+      todoItems = Array.isArray(todos) ? todos : [];
+    } catch (error) {
+      console.error("Failed to load todos", error);
     }
   }
   async function saveAgentWizard() {
@@ -2802,6 +3048,10 @@
     return message.toLowerCase().includes("turn already running");
   }
 
+  function isWorkspaceStillStartingError(message: string) {
+    return message.toLowerCase().includes("workspace is still starting");
+  }
+
   function isCancellationError(message: string) {
     const normalized = message.trim().toLowerCase();
     return normalized === "context canceled" || normalized === "context cancelled" || normalized === "operation canceled" || normalized === "operation cancelled" || normalized === "canceled" || normalized === "cancelled";
@@ -2827,14 +3077,26 @@
     return visible.map((message, index) => ({
       id: `history-${index}`,
       role: message.role === "user" ? "user" : "assistant",
-      body: message.content,
+      body: message.role === "user" ? stripComposerContextPrefix(message.content) : message.content,
       title: message.reasoning ? "assistant + reasoning" : undefined,
       pending: false,
     }));
   }
 
-  async function hydrateHistory(tab: TabMeta) {
+  function historyHasVisibleContent(messages: HistoryMessage[]) {
+    return messages.some((message) => {
+      const hasContent = message.content.trim() !== "";
+      const hasReasoning = (message.reasoning ?? "").trim() !== "";
+      return (message.role === "user" && hasContent) || (message.role === "assistant" && (hasContent || hasReasoning));
+    });
+  }
+
+  async function hydrateHistory(tab: TabMeta, options: { preserveLocalWhenEmpty?: boolean } = {}) {
     const history = await app().HistoryForTab(tab.id);
+    if (options.preserveLocalWhenEmpty && !historyHasVisibleContent(history) && transcriptHasContent(transcript)) {
+      scrollConversationToBottom("auto");
+      return;
+    }
     transcript = historyToTranscript(history);
     pendingApproval = undefined;
     pendingAsk = undefined;
@@ -2842,7 +3104,8 @@
   }
 
   function handleEvent(event: WireEvent) {
-    if (event.tabId && activeTab?.id && event.tabId !== activeTab.id) return;
+    updateEventTabRunning(event);
+    if (!shouldDisplayWireEvent(event)) return;
     if (event.kind === "turn_started") {
       sending = true;
       if (event.tabId) {
@@ -2856,6 +3119,8 @@
       appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: t.transcript.reasoning, body: event.reasoning, pending: true });
     }
     if ((event.kind === "text" || event.kind === "message") && event.text) {
+      if (pendingTextTabId && event.tabId && pendingTextTabId !== event.tabId) pendingTextBuffer = "";
+      pendingTextTabId = event.tabId ?? "";
       pendingTextBuffer = mergeStreamingText(pendingTextBuffer, event.text);
       scheduleTextFlush();
     }
@@ -2935,6 +3200,7 @@
       commands = await app().Commands();
       await refreshModelSettings();
       await refreshAgents();
+      await refreshTodos();
       await refreshToolStatus();
       await refreshSkillStatus();
       await refreshCapabilities();
@@ -2958,6 +3224,11 @@
     const submission = (submitText ?? text).trim();
     if (!text || !submission || !activeTab) return;
     if (sending) return;
+    if (composerDisabledReason) {
+      appendTranscript({ id: `workspace-starting-${Date.now()}`, role: "notice", body: composerDisabledReason });
+      focusComposer();
+      return;
+    }
     if (activityMode === "work" && workLayer === "newTask") newTaskConversationActive = true;
     if (activityMode === "code") {
       newTaskConversationActive = true;
@@ -2983,6 +3254,7 @@
     try {
       const targetTab = await ensureConversationThreadForSend(text);
       if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
+      activeConversationTabId = targetTab.id;
       await withTimeout(
         app().SubmitDisplayToTab(targetTab.id, text, submission),
         "请求超时：30 秒内未收到桌面后端响应，请稍后重试或重启桌面 dev 窗口。",
@@ -2992,6 +3264,16 @@
       input = "";
       submittedDraft = undefined;
       restoreDraftOnTurnDone = false;
+      if (isWorkspaceStillStartingError(message)) {
+        removeTranscriptItem(userTranscriptId);
+        removeEmptyPendingAssistant();
+        input = draft.display;
+        sending = false;
+        appendTranscript({ id: `workspace-starting-${Date.now()}`, role: "notice", body: "工作区正在准备中，请稍后发送" });
+        void refresh();
+        void tick().then(focusComposer);
+        return;
+      }
       if (isTurnAlreadyRunningError(message)) {
         removeEmptyPendingAssistant();
         updateTranscriptItem(userTranscriptId, { title: "user · 待发送", pending: true });
@@ -3227,7 +3509,7 @@
                       <div class="sidebar-conversation-row" class:active={activeSidebarConversationId === conversation.id} data-sidebar-conversation={conversation.id}>
                         <button class="sidebar-conversation-open" type="button" title={conversation.title} onclick={() => openSidebarConversation(project.id, conversation.id)}>
                           <span>{conversation.title}</span>
-                          <em>{conversation.updatedAt}</em>
+                          <em>{sidebarConversationTimeLabel(conversation)}</em>
                         </button>
                         <button class="sidebar-conversation-action" type="button" aria-label={`归档 ${conversation.title}`} title="归档" onclick={() => archiveSidebarConversation(project.id, conversation.id)}><Archive size={12} /></button>
                         <button class="sidebar-conversation-action danger" type="button" aria-label={`删除 ${conversation.title}`} title="删除" onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={12} /></button>
@@ -3281,6 +3563,8 @@
                 {input}
                 {commands}
                 {sending}
+                disabled={Boolean(composerDisabledReason)}
+                disabledReason={composerDisabledReason}
                 onInput={(value) => (input = value)}
                 onSend={send}
                 onCancel={cancel}
@@ -3363,6 +3647,8 @@
                         {input}
                         {commands}
                         {sending}
+                        disabled={Boolean(composerDisabledReason)}
+                        disabledReason={composerDisabledReason}
                         onInput={(value) => (input = value)}
                         onSend={send}
                         onCancel={cancel}
@@ -3396,7 +3682,7 @@
                   </div>
                 </div>
               </section>
-            {:else if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.title)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{item.desc}</em></span><b>{item.state}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            {:else if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todoItems as item (item.id)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{todoDescription(item)}</em></span><b>{todoStatusLabel(item.status)}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => (automationDialog = item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
@@ -3450,6 +3736,8 @@
                       {input}
                       {commands}
                       {sending}
+                      disabled={Boolean(composerDisabledReason)}
+                      disabledReason={composerDisabledReason}
                       onInput={(value) => (input = value)}
                       onSend={send}
                       onCancel={cancel}
@@ -3470,7 +3758,7 @@
                   <p class="agent-assistant-disclaimer">Volt GUI 由 AI 驱动生成，请结合构建、测试和人工复核采纳执行建议。</p>
                 </div>
               </section>
-            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button" onclick={() => openConfigDialog("todo")}>新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.desc}</p><em>{item.due}</em></div><span>{item.state}</span></article>{/each}</div></section>
+            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button" onclick={() => openConfigDialog("todo")}>新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.id)}<article><div><strong>{item.title}</strong><p>{todoDescription(item)}</p><em>{todoDue(item)}</em></div><span>{todoStatusLabel(item.status)}</span></article>{/each}</div></section>
             {:else if workLayer === "automations"}
               <section class="aorist-page">
                 <div class="aorist-toolbar">
@@ -3967,6 +4255,8 @@
                   {input}
                   {commands}
                   {sending}
+                  disabled={Boolean(composerDisabledReason)}
+                  disabledReason={composerDisabledReason}
                   onInput={(value) => (input = value)}
                   onSend={send}
                   onCancel={cancel}
@@ -4349,7 +4639,7 @@
                             <b>{todo.state}</b>
                           </button>
                         {:else}
-                          <article class="detail-empty"><strong>暂无客户待办</strong><p>新建待办后会自动出现在当前客户档案中。</p></article>
+                          <article class="detail-empty"><strong>暂无客户待办</strong><p>新建待办时可在关联对象中选择所属项目。</p></article>
                         {/each}
                       </div>
                     </section>
@@ -4553,7 +4843,7 @@
         </div>
       {/if}
       {#if configDialog}
-        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"}><header><div><span>{configDialog === "team" ? "协作组" : configDialog === "model" ? "Model Channel" : "Workbench Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责拆解、分配和汇总的协调者。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.title)}<button type="button" onclick={() => selectDistillSample(item)}><div><strong>{item.title}</strong><p>{item.desc}</p></div><em>{item.state}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button" onclick={() => toggleDistillSkill(skill.id)}><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
+        <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"}><header><div><span>{configDialog === "team" ? "协作组" : configDialog === "model" ? "Model Channel" : "Workbench Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责拆解、分配和汇总的协调者。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.id)}<button type="button" onclick={() => selectDistillSample(item)}><div><strong>{item.title}</strong><p>{todoDescription(item)}</p></div><em>{todoStatusLabel(item.status)}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button" onclick={() => toggleDistillSkill(skill.id)}><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
   <div class="team-builder">
     <section>
       <label class="team-builder-search">
@@ -4637,7 +4927,7 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={() => configDialog === "team" ? saveTeamBuilder() : configDialog === "model" ? void saveModelProvider() : (configDialog = undefined)}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label>{#if configDialog === "ingest"}<label>导入来源<select><option>workspace</option><option>local files</option><option>manual</option></select></label><label>索引策略<select><option>自动分类并去重</option><option>仅入库</option></select></label>{:else}<label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label>{/if}<label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -12074,6 +12364,19 @@
     border-radius: 10px;
     background: #f4f4f4;
     color: var(--aorist-muted);
+  }
+
+  .home__composer :global(.composer__status),
+  .stage__composer :global(.composer__status),
+  .agent-compose-card :global(.composer__status),
+  :global(.task-composer-card .composer__status) {
+    max-width: 180px;
+    overflow: hidden;
+    color: #8a5a00;
+    font-size: 11px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .home__composer :global(.composer__submit),

@@ -60,8 +60,24 @@ func TestSaveTodoPersistsWorkbenchTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadTodos: %v", err)
 	}
-	if len(reloaded) == 0 || reloaded[0].ID != saved.ID {
-		t.Fatalf("saved todo not persisted at top: %+v", reloaded)
+	if len(reloaded) == 0 {
+		t.Fatalf("saved todos not persisted: %+v", reloaded)
+	}
+	foundSaved := false
+	foundOptional := false
+	for _, todo := range reloaded {
+		if todo.ID == saved.ID {
+			foundSaved = true
+			if todo.ProjectID != "homepage" || todo.CustomerID != "internal" || todo.Priority != "高" {
+				t.Fatalf("reloaded saved todo lost structured fields: %+v", todo)
+			}
+		}
+		if todo.ID == optional.ID {
+			foundOptional = true
+		}
+	}
+	if !foundSaved || !foundOptional {
+		t.Fatalf("saved todos not persisted: foundSaved=%v foundOptional=%v todos=%+v", foundSaved, foundOptional, reloaded)
 	}
 
 	if err := app.DeleteTodo(saved.ID); err != nil {

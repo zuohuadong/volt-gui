@@ -66,7 +66,7 @@ for c in $COMMITS; do
           # For non-divergent files, accept upstream and fix branding
           echo "  MERGE (theirs + branding): $f"
           git checkout --theirs "$f" 2>/dev/null || true
-          sed -i 's|reasonix/|voltui/|g' "$f" 2>/dev/null || true
+          perl -0pi -e 's|reasonix/|voltui/|g' "$f" 2>/dev/null || true
         fi
         git add "$f" 2>/dev/null || true
       done
@@ -75,8 +75,7 @@ done
 
 # Global brand replacement (Go files only)
 echo "=== Fixing brand references ==="
-find . -name '*.go' -not -path './vendor/*' -exec sed -i 's|reasonix/|voltui/|g' {} + 2>/dev/null || true
-find . -name '*.go' -not -path './vendor/*' -exec sed -i 's|reasonix\b|voltui|g' {} + 2>/dev/null || true
+find . -name '*.go' -not -path './vendor/*' -exec perl -0pi -e 's|reasonix/|voltui/|g; s|\breasonix\b|voltui|g' {} + 2>/dev/null || true
 
 # Update sync marker
 echo "$UPSTREAM_HEAD" > "$MARKER_FILE"

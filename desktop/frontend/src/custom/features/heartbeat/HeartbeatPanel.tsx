@@ -990,25 +990,25 @@ function TaskEditor({
 
         {/* Push to bot channels */}
         <div className="heartbeat-editor__field" style={{ flex: "1 1 45%", minWidth: "200px", textAlign: "left" }}>
-          <label>推送到机器人 <span className="heartbeat-editor__optional">可选</span></label>
+          <label>{t("heartbeat.notifyChannels")} <span className="heartbeat-editor__optional">{t("heartbeat.optional")}</span></label>
           <div className="set-seg" style={{ alignSelf: "flex-start" }}>
             <button
               className={`set-seg__btn${draft.notifyChannels === true ? " set-seg__btn--on" : ""}`}
               onClick={() => setDraft((prev) => ({ ...prev, notifyChannels: true }))}
             >
-              开启
+              {t("heartbeat.notifyChannelsOn")}
             </button>
             <button
               className={`set-seg__btn${draft.notifyChannels !== true ? " set-seg__btn--on" : ""}`}
               onClick={() => setDraft((prev) => ({ ...prev, notifyChannels: false }))}
             >
-              关闭
+              {t("heartbeat.notifyChannelsOff")}
             </button>
           </div>
           <span className="heartbeat-editor__mode-hint">
             {draft.notifyChannels === true
-              ? "AI 输出会实时推送到已连接的飞书/QQ 机器人"
-              : "只创建桌面对话，不推送到机器人"}
+              ? t("heartbeat.notifyChannelsOnHint")
+              : t("heartbeat.notifyChannelsOffHint")}
           </span>
         </div>
       </div>

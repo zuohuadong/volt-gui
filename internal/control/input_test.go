@@ -155,6 +155,13 @@ func TestComposeReasoningLanguagePreference(t *testing.T) {
 	}
 }
 
+func TestStripComposePrefixesStripsWorkbenchContext(t *testing.T) {
+	in := "<response-language>zh</response-language>\n\n归属项目：kiro-test\n工作权限：替我批准\n分析项目需求"
+	if got := StripComposePrefixes(in); got != "分析项目需求" {
+		t.Fatalf("StripComposePrefixes = %q, want visible prompt", got)
+	}
+}
+
 func TestRunComposesResponseLanguagePreference(t *testing.T) {
 	runner := &fakeTurnRunner{}
 	c := New(Options{ResponseLanguage: "en", Runner: runner})

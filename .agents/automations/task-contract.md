@@ -15,6 +15,9 @@ model: "gpt-5.3-codex"
 needs_model: ""
 review_class: "" # review-low | review-high
 escalation_reason: ""
+collaboration:
+  mode: "solo" # solo | roundtable | critic | pipeline | split | swarm
+  rationale: ""
 branch: ""
 change_request_url: ""
 created_at: ""
@@ -38,6 +41,79 @@ updated_at: ""
 
 - 预计修改的模块、文件或目录
 
+## Matter
+
+> Matter 是 Task Contract 的交付现场视图；coordination DB v2 项目可用 `agent-team matter list|show` 查看当前阶段、验收、证据和最终结论。
+
+```yaml
+matter:
+  brief: ""
+  deliverables: []
+  current_stage: "draft | ready | running | review | blocked | done"
+  decision_log_refs: []
+  handoff_artifacts: []
+  final_verdict:
+    status: "pending | partial | pass | fail | blocked"
+    evidence_refs: []
+```
+
+规则：
+
+- `matter` 不创建第二套执行事实源；状态仍以 coordination DB `tasks` / legacy Task Ledger 为准。
+- `agent-team matter draft` 只生成或写入可编辑 Task Contract 草案；`matter advance` / `matter review` 必须留下 event 和 evidence ref。
+- final verdict 必须引用测试、构建、CI、浏览器、部署健康检查、DB 查询或 live read-back 等证据。
+
+## Taste Feedback
+
+```yaml
+taste_feedback:
+  scope: "general | cli | docs | ui | release | code"
+  verdict: "accepted | rejected | partial"
+  reason: ""
+  source: "human-review | cli | pr-review | release-review"
+  permission_boundary: "taste affects ranking and prompts only; it never overrides facts, tests, safety, or the latest user instruction"
+```
+
+规则：
+
+- `agent-team taste save` 将人类验收、打回原因和风格取舍写入结构化反馈；`taste recall` 按 scope 召回。
+- Taste 只能影响候选排序、提示和文案偏好，不能作为权限、生产确认、测试通过或安全例外。
+- 被打回的方案不应在同一任务中继续作为默认推荐，除非 Task Contract 明确记录新的证据或用户最新指令覆盖。
+
+## Loop Control
+
+```yaml
+loop_control:
+  trace_eval:
+    run_ref: "review_loops:<task-id> | run_records:<run-id> | none"
+    graders: ["tool_choice", "handoff_quality", "safety_contract", "improvement_signal"]
+  context_hygiene:
+    capsule_ref: ".agents/state/context-packs/<id>.json | none"
+    large_payload_policy: "store evidence path + capsule, never raw base64"
+  runtime_health:
+    latest_mailbox_error: ".mailbox/<file>.md | coordination-db:mailbox_messages:<id> | none"
+    retry_policy: "narrow prompt, inspect error mailbox, disable fallback when validating one model"
+  tcb:
+    command: "agent-team automation tcb . --json"
+    policy: "read Thread Control Blocks before loading full sidecar context"
+  approval:
+    required_for: ["production", "secret", "destructive-git", "data-migration", "publish", "irreversible-decision"]
+    command: "agent-team approval request . --task <id> --reason <reason> --risk <risk> --rollback <plan>"
+  product_signal:
+    command: "agent-team automation product-signal . --task <id> --hypothesis <text> --artifact <ref> --metric <metric> --value <value> --decision inconclusive"
+    proxy_policy: "agent_score requires --proxy and is non-decisive"
+  skill_evolution:
+    command: "agent-team automation skill-evolution . --task <id> --source runtime|context|ci|review --reason <reason> --write"
+    auto_apply: false
+```
+
+规则：
+
+- `review-loop` / `evaluator-optimizer` 只适合机器验收、交付 QC、文档/CLI 文案和迁移方案等有明确验收标准的任务。
+- `automation product-signal` 只记录真实互动、留资、付费、留存、访谈或人工裁决；agent score 不能作为生产或市场真相。
+- `approval request` 会暂停任务，`approve --resume` 只恢复执行资格，不替代测试、发布门禁或 completion evidence。
+- `skill-evolution --write` 只生成 Matter 草案；改 skill、runbook 或 workflow 前仍需人审和独立验证。
+
 ## Goal Forge
 
 > 当设计文档、架构/API/数据模型、迁移方案或高风险计划本身是交付物时填写；普通实现任务可保持 disabled。
@@ -54,10 +130,12 @@ goal_forge:
   ledger_paths: []
   adapter: "local | codex | openai | none"
   evidence_summary: ""
+  run_record_ref: "run_records:goal-forge:<run-id> | .agents/state/runs/<id>.json | none"
   verification:
     status_check: "agent-team goal-forge status ."
     init_check: "agent-team goal-forge init . '<goal>'"
     run_check: "agent-team goal-forge run . '<runDir>' --adapter local"
+    loop_health_check: "agent-team automation loop-health . --json"
   non_goals:
     - "do not vendor Goal Forge into this project"
     - "do not require model-backed Goal Forge runs during deploy"
@@ -75,6 +153,20 @@ delegation:
     external_research: false
     review_of_own_work: false
   required: false
+  parallelism:
+    mode: "serial | read-only-fanout | disjoint-writers | human-gated"
+    max_agents: 1
+    writer_policy: "single writer; parallel write blocked unless allowed_files are disjoint"
+    merge_policy: "orchestrator owns merge order and conflict resolution"
+    lanes:
+      - id: ""
+        role: "explorer | executor | critic | verifier"
+        scope: ""
+        ownership: "read-only | write"
+        parallel: false
+        allowed_files: []
+        start_after: []
+    warnings: []
   subagents:
     - role: "explorer | critic | verifier | worker"
       model: "gpt-5.3-codex-spark | gpt-5.3-codex | gpt-5.5 | glm-5.2 | claude-opus-4-8 | sonnet | gemini-3-flash-agent | gemini-pro-agent | grok-4 | mistral-large-latest | custom gateway alias"
@@ -102,15 +194,19 @@ delegation:
 
 规则：
 
+- `collaboration.mode` 定义任务的协作形态：`solo` 为单执行器；`roundtable` 为多方只读讨论后由 orchestrator 收束；`critic` 为做审分离；`pipeline` 为串行交接；`split` 为按互斥文件/模块分头执行后合并；`swarm` 为多方案竞选。未填写时按 `solo` 处理。`agent-team automation orchestrate --json` 会把该字段展开成 `collaboration_plan`。
+- `collaboration.mode` 不替代 Delegation Gate。中/高风险、跨边界、生产/安全/数据/不可逆、UI/E2E 或需要审查自己完成声明的任务，仍必须按 Delegation Gate 派发 explorer/executor/verifier 或记录 `safe_skip_reason`。
 - 低风险执行器和 explorer/critic/verifier sidecar 默认走候选链：`gpt-5.3-codex-spark`、`gpt-5.3-codex`、`sonnet`，`gemini-3-flash-agent` 只作为低优先级兜底；可通过 `--model`、`AGENT_TEAM_<ROLE>_MODEL(S)`、`AGENT_TEAM_SUBAGENT_MODEL(S)`、`AGENT_TEAM_LOW_RISK_MODELS` / `AGENT_TEAM_ROUTINE_MODELS`、`AGENT_TEAM_REVIEW_LOOP_MODEL` 或项目级 `.agents/agent-team.config.json` 覆盖。
 - `gpt-5.5` 是默认高风险升级标记和兜底，只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`；实际仲裁运行模型可通过 `--model`、`AGENT_TEAM_HIGH_RISK_MODEL` / `AGENT_TEAM_HIGH_RISK_MODELS`、`AGENT_TEAM_ARBITER_MODEL` / `AGENT_TEAM_ARBITER_MODELS` 或项目配置覆盖，候选链会识别国产强模型、Codex/OpenAI、Claude Code、Zed 或第三方网关常见模型名。
 - UI 设计生成使用独立 `ui-design-generation` 候选链：Gemini/GLM/Qwen/Kimi 优先，GPT/Codex 作为落地兜底；审美评审使用 `ui-aesthetic-review` 候选链：Claude/Sonnet 优先，Gemini/GLM 次之。UI 任务的验收必须包含视觉截图证据、响应式检查、文本不溢出/不重叠、交互控件状态和审美 rubric 评审结论。
-- Goal Forge 深度设计/质证循环用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；Scheduler 和新建任务默认模型分别用 `models.scheduler` / `models.task_default` 覆盖。
-- 并行 worker 只有在 `allowed_files` 明确互斥时才允许。
+- Goal Forge 深度设计/质证循环用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；v2 项目中 `goal-forge run` strict validate 通过后会写入 `run_records`，作为 `loop-health` / trace evidence 的一部分；Scheduler 和新建任务默认模型分别用 `models.scheduler` / `models.task_default` 覆盖。
+- 不得以宿主工具策略、`create_thread` / parallel-agent 限制、或用户未明确要求并行代理作为 `safe_skip_reason`。行动型任务默认启用 agent-team delegation，不需要每次向用户请求子代理授权；agent-team 子代理以 `agent-team subagent dispatch` 或 `agent_team_dispatch_subagent` 为准。若 Delegation Gate 要求子代理但 runtime 不可派发，应记录 runtime 证据和 `interruption_recovery`，并标记 `blocked` / `PARTIAL`，不能把 runtime 不可用改写成安全跳过。
+- 推荐先用 `agent-team automation loop-strategy . --task <id> --domain auto` 生成 `parallelism` 建议：delivery/goal 默认只并行 read-only sidecar，fixed-list fanout 只有拆出互斥 `allowed_files` 后才允许并行 executor，marketing/demand/business 默认 human-gated。
+- 并行 worker 只有在 `allowed_files` 明确互斥时才允许；未能证明互斥时，`parallelism.mode` 必须降级为 `read-only-fanout` 或 `serial`。
 - 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、mailbox（v2 为 DB mailbox，legacy 为 `.mailbox/`）和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
 - `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
 - 子代理中断、超时或输出不完整时，先记录 `interruption_recovery`，再决定续跑、重派或阻塞；不要把半截输出当作完成证据。
-- 中/高风险任务进入 `review` / `done` 时，应在机器可读 task state 记录 subagent evidence 或 safe skip reason。
+- 中/高风险任务进入 `review` / `done` 时，应在机器可读 task state 记录 subagent evidence 或 accepted safe skip reason。
 
 ## Skill Loading
 
@@ -340,6 +436,31 @@ database_profile:
   non_goals:
     - "do not migrate database unless explicitly requested"
 ```
+
+生产数据或线上内容写入任务补充：
+
+```yaml
+production_data_gate:
+  applies: false
+  user_confirmed_endpoint: ""
+  write_target: "database | storage | api | cms | search-index | other | unknown"
+  affected_records: []
+  pre_write_snapshot_ref: ""
+  write_command_or_change_ref: ""
+  live_readback_command: ""
+  live_readback_expected: []
+  live_readback_evidence_ref: ""
+  rollback_command_or_plan: ""
+  completion_rule: "do not mark done before live read-back passes against the user-confirmed production endpoint"
+```
+
+规则：
+
+- 任何会修改生产数据库、生产对象存储、线上 CMS/KB、搜索索引或外部 API 状态的任务，必须设置 `applies: true`。
+- `user_confirmed_endpoint` 必须来自用户、项目配置或现场探测确认；如果发现候选域名冲突，先阻塞或询问，不能沿用旧记忆。
+- 写入前必须记录 `pre_write_snapshot_ref`；写入后必须运行 `live_readback_command`，并把输出或文件路径写入 `live_readback_evidence_ref`。
+- `live_readback_expected` 至少覆盖被修记录 ID、关键字段、反向断言（例如不再包含旧错误片段）和更新时间/版本信号。
+- read-back 未通过或没有证据时，任务只能标 `partial` 或 `blocked`，不能标 `done`、`PASS` 或“已修复”。
 
 桌面应用任务补充：
 

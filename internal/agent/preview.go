@@ -106,7 +106,36 @@ func memoryCompilerSourceEvent(body string) string {
 // UserPreviewText returns the user-authored part of a persisted user message.
 func UserPreviewText(content string) string {
 	s := StripTransientUserBlocks(content)
+	s = StripWorkbenchContextPrefix(s)
 	s = HandoffTask(s)
 	s = StripTransientUserBlocks(s)
+	s = StripWorkbenchContextPrefix(s)
 	return strings.TrimSpace(s)
+}
+
+// StripWorkbenchContextPrefix removes desktop composer metadata that is sent to
+// the model for context but should not appear in chat history or session lists.
+func StripWorkbenchContextPrefix(content string) string {
+	lines := strings.Split(strings.TrimLeft(content, " \t\r\n"), "\n")
+	if len(lines) == 0 {
+		return content
+	}
+	index := 0
+	for index < len(lines) && isWorkbenchContextLine(lines[index]) {
+		index++
+	}
+	if index == 0 {
+		return content
+	}
+	return strings.TrimLeft(strings.Join(lines[index:], "\n"), " \t\r\n")
+}
+
+func isWorkbenchContextLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "归属项目：") ||
+		strings.HasPrefix(trimmed, "归属项目:") ||
+		strings.HasPrefix(trimmed, "所属项目：") ||
+		strings.HasPrefix(trimmed, "所属项目:") ||
+		strings.HasPrefix(trimmed, "工作权限：") ||
+		strings.HasPrefix(trimmed, "工作权限:")
 }

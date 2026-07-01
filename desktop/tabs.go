@@ -16,8 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"voltui/internal/agent"
 	"voltui/internal/boot"
@@ -2893,9 +2895,32 @@ func normalizeProjectRoot(root string) string {
 		return ""
 	}
 	if abs, err := filepath.Abs(root); err == nil {
-		return abs
+		root = abs
+	}
+	if info, err := os.Stat(root); err == nil && info.IsDir() {
+		return root
+	}
+	if repaired := repairGBKMojibakePath(root); repaired != "" {
+		if abs, err := filepath.Abs(repaired); err == nil {
+			repaired = abs
+		}
+		if info, err := os.Stat(repaired); err == nil && info.IsDir() {
+			return repaired
+		}
 	}
 	return root
+}
+
+func repairGBKMojibakePath(path string) string {
+	encoded, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(path))
+	if err != nil || !utf8.Valid(encoded) {
+		return ""
+	}
+	repaired := string(encoded)
+	if repaired == path {
+		return ""
+	}
+	return repaired
 }
 
 func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {

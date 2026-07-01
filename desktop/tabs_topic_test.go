@@ -2356,3 +2356,21 @@ func TestEnsureTopicIndexedConcurrentRunsHaveNoLostProjectUpdates(t *testing.T) 
 		}
 	}
 }
+
+func TestNormalizeProjectRootRepairsGBKMojibakePath(t *testing.T) {
+	projectRoot := filepath.Join(t.TempDir(), "项目", "西谷AI", "volt-gui")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mojibakeRoot := strings.ReplaceAll(projectRoot, "项目", "椤圭洰")
+	mojibakeRoot = strings.ReplaceAll(mojibakeRoot, "西谷AI", "瑗胯胺AI")
+
+	got := normalizeProjectRoot(mojibakeRoot)
+	want, err := filepath.Abs(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("normalizeProjectRoot(%q) = %q, want %q", mojibakeRoot, got, want)
+	}
+}

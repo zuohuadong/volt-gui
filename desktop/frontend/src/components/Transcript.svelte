@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Check, HelpCircle, LoaderCircle, ShieldAlert, X } from "@lucide/svelte";
+  import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, Wrench, X } from "@lucide/svelte";
   import MarkdownView from "./MarkdownView.svelte";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
@@ -124,6 +124,59 @@
     return { content, path, bytes: result[1], writtenPath: result[2] };
   }
 
+  function parseLeadingToolArgs(item: TranscriptItem) {
+    const extracted = extractLeadingJsonObject(item.body);
+    if (!extracted) return { args: undefined as Record<string, unknown> | undefined, output: item.body.trim() };
+    try {
+      const parsed = JSON.parse(extracted.json);
+      const args = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : undefined;
+      return { args, output: extracted.rest.trim() };
+    } catch {
+      return { args: undefined as Record<string, unknown> | undefined, output: item.body.trim() };
+    }
+  }
+
+  function shortToolName(name: string) {
+    return name.replace(/^functions\./, "").replace(/^tool_/, "").replace(/_/g, " ").trim() || "工具";
+  }
+
+  function commandAction(command: string) {
+    const normalized = command.toLowerCase();
+    if (normalized.includes("git status")) return "检查仓库状态";
+    if (normalized.includes("git diff")) return "查看代码差异";
+    if (normalized.includes("git log")) return "读取最近提交";
+    if (normalized.includes("git show")) return "查看提交内容";
+    if (/\brg\b|ripgrep/.test(normalized)) return "搜索代码内容";
+    if (normalized.includes("pnpm") || normalized.includes("npm run") || normalized.includes("yarn")) return "运行前端检查";
+    if (normalized.includes("go test")) return "运行 Go 测试";
+    if (normalized.includes("go build")) return "构建桌面模块";
+    return "执行终端命令";
+  }
+
+  function compactCommand(command: string) {
+    return command.replace(/\s+/g, " ").trim();
+  }
+
+  function toolDisplay(item: TranscriptItem) {
+    const name = item.title ?? "tool";
+    const { args, output } = parseLeadingToolArgs(item);
+    const command = typeof args?.command === "string" ? args.command : "";
+    const path = typeof args?.path === "string" ? args.path : typeof args?.file === "string" ? args.file : "";
+    const query = typeof args?.query === "string" ? args.query : typeof args?.pattern === "string" ? args.pattern : "";
+    const fallback = shortToolName(name);
+    const action = command ? commandAction(command) : path ? `${fallback}文件` : query ? `${fallback}：${query}` : fallback;
+    const detail = command ? compactCommand(command) : path || query || "";
+    const status = item.pending ? "正在执行" : output ? "已完成" : "已记录";
+    return {
+      action,
+      detail,
+      output,
+      status,
+      tool: shortToolName(name),
+      readOnly: item.readOnly,
+    };
+  }
+
   function pendingLabel(item: TranscriptItem) {
     if (item.role === "tool") return "正在执行工具";
     if (item.role === "reasoning") return "正在整理思路";
@@ -155,6 +208,47 @@
             <strong>{pendingLabel(item)}</strong>
             <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可能卡住了，可点击停止后重试" : "结果会自动显示"}</em>
           </div>
+        {:else if item.role === "tool"}
+          {@const tool = toolDisplay(item)}
+          <details class="thinking-card tool-call-card" open={item.pending}>
+            <summary>
+              <span class="thinking-card__icon"><Terminal size={16} /></span>
+              <div>
+                <strong>{tool.action}</strong>
+                <em>{tool.tool}{item.pending ? " · 正在执行" : ""}</em>
+              </div>
+              <ChevronDown class="thinking-card__chevron" size={16} />
+            </summary>
+            <div class="thinking-card__body">
+              <div class="thinking-step">
+                <span></span>
+                <div>
+                  <strong>Thought</strong>
+                  <p>{tool.action}{tool.readOnly ? " · 只读" : ""}</p>
+                  {#if tool.detail}<code>{tool.detail}</code>{/if}
+                  {#if tool.output}<pre>{tool.output}</pre>{/if}
+                </div>
+              </div>
+            </div>
+          </details>
+        {:else if item.role === "reasoning"}
+          <details class="thinking-card reasoning-card" open={item.pending}>
+            <summary>
+              <span class="thinking-card__icon"><BrainCircuit size={16} /></span>
+              <div>
+                <strong>思考过程</strong>
+              </div>
+              <ChevronDown class="thinking-card__chevron" size={16} />
+            </summary>
+            <div class="thinking-card__body">
+              <div class="thinking-step">
+                <span></span>
+                <div>
+                  <MarkdownView text={item.body} />
+                </div>
+              </div>
+            </div>
+          </details>
         {:else}
           {@const renderedWrite = markdownWriteResult(item)}
           {#if renderedWrite}
@@ -168,6 +262,13 @@
             </div>
           {:else}
             <MarkdownView text={item.body} />
+            {#if item.pending && item.role === "assistant"}
+              <div class="pending-inline-status" role="status" aria-live="polite">
+                <LoaderCircle size={13} />
+                <span>{isLikelyStalled(item) ? "处理时间较长" : "正在继续处理"}</span>
+                <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可点击停止后重试" : "后续内容会自动更新"}</em>
+              </div>
+            {/if}
           {/if}
         {/if}
         {#if item.role === "tool" && subcallsByParent.get(item.id)?.length}
@@ -179,6 +280,29 @@
                     <LoaderCircle size={14} />
                     <strong>{pendingLabel(child)}</strong>
                   </div>
+                {:else if child.role === "tool"}
+                  {@const childTool = toolDisplay(child)}
+                  <details class="thinking-card tool-call-card tool-call-card--sub" open={child.pending}>
+                    <summary>
+                      <span class="thinking-card__icon"><Wrench size={15} /></span>
+                      <div>
+                        <strong>{childTool.action}</strong>
+                        <em>{childTool.tool}{child.pending ? " · 正在执行" : ""}</em>
+                      </div>
+                      <ChevronDown class="thinking-card__chevron" size={15} />
+                    </summary>
+                    <div class="thinking-card__body">
+                      <div class="thinking-step">
+                        <span></span>
+                        <div>
+                          <strong>Thought</strong>
+                          <p>{childTool.action}{childTool.readOnly ? " · 只读" : ""}</p>
+                          {#if childTool.detail}<code>{childTool.detail}</code>{/if}
+                          {#if childTool.output}<pre>{childTool.output}</pre>{/if}
+                        </div>
+                      </div>
+                    </div>
+                  </details>
                 {:else}
                   {@const renderedChildWrite = markdownWriteResult(child)}
                   {#if renderedChildWrite}
@@ -282,9 +406,23 @@
     background: #f8fafc;
   }
 
+  .message--reasoning,
+  .message--tool {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0 0 0 22px;
+  }
+
   .message.is-pending {
     border-color: #dfe5f2;
     background: #fbfcff;
+  }
+
+  .message--reasoning.is-pending,
+  .message--tool.is-pending {
+    border-color: transparent;
+    background: transparent;
   }
 
   .pending-status {
@@ -315,6 +453,36 @@
 
   .pending-status--compact {
     font-size: 13px;
+  }
+
+  .pending-inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    min-height: 24px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    background: #f4f6f8;
+    color: #5f6673;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .pending-inline-status :global(svg) {
+    flex: 0 0 auto;
+    color: #64748b;
+    animation: pending-spin 1s linear infinite;
+  }
+
+  .pending-inline-status span {
+    font-weight: 500;
+  }
+
+  .pending-inline-status em {
+    color: #858b95;
+    font-size: 11px;
+    font-style: normal;
   }
 
   .tool-document-result {
@@ -358,6 +526,182 @@
     color: #475569;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 11px;
+  }
+
+  .thinking-card {
+    position: relative;
+    color: #4b5565;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  .thinking-card::before {
+    display: none;
+  }
+
+  .thinking-card summary {
+    display: grid;
+    grid-template-columns: 22px minmax(0, max-content) 14px;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    max-width: 100%;
+    min-height: 30px;
+    cursor: pointer;
+    list-style: none;
+    color: #3f4652;
+  }
+
+  .thinking-card summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .thinking-card__icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, #b895ff, #d5c2ff);
+    color: #1f2937;
+  }
+
+  .thinking-card__icon::before {
+    display: none;
+  }
+
+  .thinking-card summary strong {
+    display: block;
+    overflow: hidden;
+    color: #2f3540;
+    font-size: 14px;
+    font-weight: 560;
+    letter-spacing: 0;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thinking-card summary em {
+    display: block;
+    margin-top: 1px;
+    overflow: hidden;
+    color: #7c828c;
+    font-size: 11px;
+    font-style: normal;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thinking-card__chevron {
+    color: #4b5563;
+    transition: transform 0.18s ease;
+  }
+
+  .thinking-card__body {
+    display: grid;
+    gap: 8px;
+    margin: 8px 0 0 14px;
+    padding: 6px 0 4px 30px;
+    border-left: 1px solid #c8d3e4;
+  }
+
+  .thinking-step {
+    position: relative;
+    display: block;
+    padding: 1px 0 6px;
+  }
+
+  .thinking-step > span {
+    display: none;
+  }
+
+  .thinking-step strong {
+    display: block;
+    margin-bottom: 8px;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 480;
+  }
+
+  .thinking-step p {
+    position: relative;
+    margin: 0 0 8px;
+    color: #5f6673;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .thinking-step p::before {
+    content: "›";
+    margin-right: 8px;
+    color: #6b7280;
+    font-weight: 600;
+  }
+
+  .thinking-step code,
+  .thinking-step pre {
+    display: block;
+    width: 100%;
+    margin: 6px 0 0;
+    border: 0;
+    border-radius: 6px;
+    background: #f5f6f8;
+    color: #5f6673;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .thinking-step code {
+    padding: 6px 8px;
+  }
+
+  .thinking-step pre {
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px 9px;
+  }
+
+  .reasoning-card .thinking-step :global(.md) {
+    color: #5f6774;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  .reasoning-card summary {
+    grid-template-columns: 14px minmax(0, max-content);
+    gap: 6px;
+    min-height: 28px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    background: #eef0f3;
+  }
+
+  .reasoning-card .thinking-card__icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 0;
+    background: transparent;
+    color: #4b5563;
+  }
+
+  .reasoning-card summary strong {
+    color: #3f4652;
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .reasoning-card .thinking-card__chevron {
+    display: none;
+  }
+
+  .tool-call-card--sub {
+    margin-left: 8px;
   }
 
   @keyframes pending-spin {

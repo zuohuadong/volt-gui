@@ -75,6 +75,27 @@ The command writes to coordination DB in v2 projects, or to
 launch agents by itself. The plan lists panel commands that can be dispatched
 through the normal `agent-team subagent dispatch` runtime.
 
+Run and inspect trace evidence:
+
+```bash
+agent-team automation review-loop-run . --task <task_id> --json
+agent-team automation loop-health . --json
+```
+
+`review-loop-run --json` includes `trace_eval` with pass/fail counts, an
+advisory score, grader dimensions, and the next action. `loop-health` summarizes
+runtime timeout/error mailbox state, review-loop/Goal Forge run evidence,
+context snapshot pressure, and the gated loop entry points:
+
+- `agent-team automation tcb . --json` for Thread Control Blocks instead of full sidecar context.
+- `agent-team approval request|approve|reject` for production, secret, destructive git, migration, publish, or irreversible choices.
+- `agent-team automation product-signal` for real-world macro-product evidence; `agent_score` is proxy-only.
+- `agent-team automation skill-evolution --write` for human-reviewed skill/playbook Matter drafts.
+
+These commands record evidence or pause/resume eligibility. They must not
+auto-create product, marketing, skill rewrite, production, or approval
+execution loops.
+
 Hard limits:
 
 - maximum 6 panels

@@ -8,6 +8,7 @@ import {
   projectTreeShouldSuppressOpenForRename,
   projectTreeReadActivityKey,
   projectTreeTopicHasUnreadActivity,
+  projectTreeShouldRenderTopicActions,
 } from "../components/ProjectTree";
 import type { ProjectNode } from "../lib/types";
 
@@ -138,6 +139,24 @@ eq(
   projectTreeTopicHasUnreadActivity({ ...completedTopic, status: "streaming", running: true }, { [completedTopicKey]: 1000 }, "project", "/repo", "other-topic"),
   false,
   "running topic keeps runtime status instead of completed-unread attention",
+);
+
+eq(
+  projectTreeShouldRenderTopicActions(false, true, false),
+  true,
+  "read workbench topic renders hover actions",
+);
+
+eq(
+  projectTreeShouldRenderTopicActions(false, true, true),
+  false,
+  "unread workbench topic omits hover actions from the keyboard tab order",
+);
+
+eq(
+  projectTreeShouldRenderTopicActions(true, true, false),
+  false,
+  "runtime session rows do not render topic hover actions",
 );
 
 eq(

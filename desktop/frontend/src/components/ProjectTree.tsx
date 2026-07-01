@@ -192,6 +192,10 @@ export function projectTreeTopicHasUnreadActivity(
   return Boolean(key && activityAt > 0 && (readActivity[key] ?? 0) < activityAt);
 }
 
+export function projectTreeShouldRenderTopicActions(isSessionNode: boolean, compactTopics: boolean, unread: boolean): boolean {
+  return !isSessionNode && compactTopics && !unread;
+}
+
 function topicActivityLabel(ms: number, t: Translator, compact = false): string {
   if (ms <= 0) return "";
   const delta = Date.now() - ms;
@@ -1292,7 +1296,7 @@ export function ProjectTree({
             )}
           </button>
           {unread && <span className="project-tree__topic-unread-dot" aria-hidden="true" />}
-          {!isSessionNode && compactTopics && (
+          {projectTreeShouldRenderTopicActions(isSessionNode, compactTopics, unread) && (
             <span className="project-tree__topic-actions" aria-label={t("projectTree.topicActions")}>
               <Tooltip label={pinLabel} side="top" className="project-tree__topic-action-slot">
                 <button

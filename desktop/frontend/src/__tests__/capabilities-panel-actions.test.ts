@@ -354,6 +354,7 @@ console.log("capabilities panel plugin actions");
     await flush();
   });
   await waitFor("superpowers plugin row", () => Boolean(document.querySelector(".cap-row__name")?.textContent?.includes("superpowers")));
+  ok(Boolean(document.querySelector(".cap-plugin-form-grid .cap-plugin-fields--local")), "local plugin install mode uses the shared form grid");
 
   const chooseFolder = findButton("Choose plugin folder");
   if (!chooseFolder) throw new Error("missing plugin folder picker button");
@@ -370,6 +371,7 @@ console.log("capabilities panel plugin actions");
     gitMode.click();
     await flush();
   });
+  ok(Boolean(document.querySelector(".cap-plugin-form-grid .cap-plugin-fields--git")), "Git plugin install mode uses the shared form grid");
   const sourceInput = document.querySelector<HTMLInputElement>('input[aria-label="Git repository URL"]');
   if (!sourceInput) throw new Error("missing plugin git source input");
   await act(async () => {

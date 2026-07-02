@@ -1764,62 +1764,69 @@ export function PluginsSettingsPage() {
 						</button>
 					</div>
 				</div>
-				{installMode === "local" ? (
-					<div className="cap-plugin-local">
-						<button className="btn btn--small" disabled={actionBusy} type="button" onClick={pickPluginFolder}>
-							{t("caps.pluginChooseLocalFolder")}
-						</button>
-						<div
-							className={`cap-plugin-path${localSource ? "" : " cap-plugin-path--empty"}`}
-							aria-label={t("caps.pluginLocalFolder")}
-						>
-							{localSource || t("caps.pluginNoLocalFolder")}
+				<div className="cap-plugin-form-grid">
+					{installMode === "local" ? (
+						<div className="cap-plugin-fields cap-plugin-fields--local">
+							<div className="cap-plugin-folder-field">
+								<button className="btn btn--small" disabled={actionBusy} type="button" onClick={pickPluginFolder}>
+									{t("caps.pluginChooseLocalFolder")}
+								</button>
+								<div
+									className={`cap-plugin-path${localSource ? "" : " cap-plugin-path--empty"}`}
+									aria-label={t("caps.pluginLocalFolder")}
+								>
+									{localSource || t("caps.pluginNoLocalFolder")}
+								</div>
+							</div>
 						</div>
-					</div>
-				) : (
-					<div className="cap-plugin-git">
-						<input
-							className="mem-input"
-							aria-label={t("caps.pluginGitSource")}
-							placeholder={t("caps.pluginSourcePlaceholder")}
-							value={gitSource}
-							onInput={(e) => updateGitSource(e.currentTarget.value)}
-							onChange={(e) => updateGitSource(e.target.value)}
-						/>
-						<input
-							className="mem-input"
-							aria-label={t("caps.pluginNameOverride")}
-							placeholder={t("caps.pluginNamePlaceholder")}
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-						/>
-					</div>
-				)}
-				<div className="cap-plugin-installer__options">
-					{installMode === "local" && (
-						<div className="cap-plugin-option-block">
-							<label className="cap-plugin-option">
-								<input type="checkbox" checked={link} disabled={actionBusy} onChange={(e) => setLink(e.target.checked)} />
-								<span>{t("caps.pluginLink")}</span>
-							</label>
-							<div className="cap-plugin-option-hint">{t("caps.pluginLinkHint")}</div>
+					) : (
+						<div className="cap-plugin-fields cap-plugin-fields--git">
+							<input
+								className="mem-input"
+								aria-label={t("caps.pluginGitSource")}
+								placeholder={t("caps.pluginSourcePlaceholder")}
+								value={gitSource}
+								onInput={(e) => updateGitSource(e.currentTarget.value)}
+								onChange={(e) => updateGitSource(e.target.value)}
+							/>
+							<div className="cap-plugin-field">
+								<input
+									className="mem-input"
+									aria-label={t("caps.pluginInstallName")}
+									placeholder={t("caps.pluginInstallNamePlaceholder")}
+									value={name}
+									onChange={(e) => setName(e.target.value)}
+								/>
+								<div className="cap-plugin-field-hint">{t("caps.pluginInstallNameHint")}</div>
+							</div>
 						</div>
 					)}
-					<div className="cap-plugin-option-block">
-						<label className="cap-plugin-option">
-							<input type="checkbox" checked={replace} disabled={actionBusy} onChange={(e) => setReplace(e.target.checked)} />
-							<span>{t("caps.pluginReplace")}</span>
-						</label>
-						<div className="cap-plugin-option-hint">{t("caps.pluginReplaceHint")}</div>
+					<div className="cap-plugin-installer__options">
+						{installMode === "local" && (
+							<div className="cap-plugin-option-block">
+								<label className="cap-plugin-option">
+									<input type="checkbox" checked={link} disabled={actionBusy} onChange={(e) => setLink(e.target.checked)} />
+									<span>{t("caps.pluginLink")}</span>
+								</label>
+								<div className="cap-plugin-option-hint">{t("caps.pluginLinkHint")}</div>
+							</div>
+						)}
+						<div className="cap-plugin-option-block">
+							<label className="cap-plugin-option">
+								<input type="checkbox" checked={replace} disabled={actionBusy} onChange={(e) => setReplace(e.target.checked)} />
+								<span>{t("caps.pluginReplace")}</span>
+							</label>
+							<div className="cap-plugin-option-hint">{t("caps.pluginReplaceHint")}</div>
+						</div>
 					</div>
-				</div>
-				<div className="cap-plugin-installer__actions">
-					<button className="btn btn--small" type="button" disabled={!canPlan} onClick={previewInstall}>
-						{t("caps.pluginPreview")}
-					</button>
-					<button className="btn btn--primary btn--small" type="button" disabled={!canPlan} onClick={install}>
-						{t("caps.pluginInstall")}
-					</button>
+					<div className="cap-plugin-installer__actions">
+						<button className="btn btn--small" type="button" disabled={!canPlan} onClick={previewInstall}>
+							{t("caps.pluginPreview")}
+						</button>
+						<button className="btn btn--primary btn--small" type="button" disabled={!canPlan} onClick={install}>
+							{t("caps.pluginInstall")}
+						</button>
+					</div>
 				</div>
 			</div>
 			{plan && <PluginPlanPreview plan={plan} />}

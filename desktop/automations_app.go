@@ -1,0 +1,653 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
+)
+
+const automationsFile = "automations.json"
+
+const (
+	automationStatusPending = "\u5f85\u914d\u7f6e"
+	automationStatusRunning = "\u8fd0\u884c\u4e2d"
+	automationStatusPaused  = "\u5df2\u6682\u505c"
+	automationStatusFailed  = "\u5931\u8d25"
+	automationStatusDone    = "\u5df2\u5b8c\u6210"
+	automationKindDefault   = "\u81ea\u5b9a\u4e49\u81ea\u52a8\u5316"
+	automationOwnerDefault  = "\u81ea\u52a8\u5316 Agent"
+	automationResultPending = "\u5f85\u8fd0\u884c"
+	automationLastRunNever  = "\u672a\u8fd0\u884c"
+	automationNextConfigure = "\u7b49\u5f85\u914d\u7f6e"
+)
+
+type WorkbenchAutomationView struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Desc         string   `json:"desc"`
+	Status       string   `json:"status"`
+	Kind         string   `json:"kind"`
+	Owner        string   `json:"owner"`
+	StartedAtMs  int64    `json:"startedAtMs"`
+	Cadence      string   `json:"cadence"`
+	Schedule     string   `json:"schedule"`
+	ScheduleMode string   `json:"scheduleMode,omitempty"`
+	Scope        string   `json:"scope"`
+	Environment  string   `json:"environment"`
+	Command      string   `json:"command"`
+	NextRunAt    string   `json:"nextRunAt,omitempty"`
+	Result       string   `json:"result"`
+	LastRun      string   `json:"lastRun"`
+	NextRun      string   `json:"nextRun"`
+	Steps        []string `json:"steps"`
+	Logs         []string `json:"logs"`
+	CreatedAt    string   `json:"createdAt"`
+	UpdatedAt    string   `json:"updatedAt"`
+}
+
+type WorkbenchAutomationInput struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Desc         string   `json:"desc"`
+	Status       string   `json:"status"`
+	Kind         string   `json:"kind"`
+	Owner        string   `json:"owner"`
+	StartedAtMs  int64    `json:"startedAtMs"`
+	Cadence      string   `json:"cadence"`
+	Schedule     string   `json:"schedule"`
+	ScheduleMode string   `json:"scheduleMode"`
+	Scope        string   `json:"scope"`
+	Environment  string   `json:"environment"`
+	Command      string   `json:"command"`
+	NextRunAt    string   `json:"nextRunAt"`
+	Result       string   `json:"result"`
+	LastRun      string   `json:"lastRun"`
+	NextRun      string   `json:"nextRun"`
+	Steps        []string `json:"steps"`
+	Logs         []string `json:"logs"`
+}
+
+type automationsDiskFile struct {
+	Automations []WorkbenchAutomationView `json:"automations"`
+}
+
+type automationCommandSpec struct {
+	Label   string
+	WorkDir string
+	Name    string
+	Args    []string
+}
+
+type AutomationScheduler struct {
+	app     *App
+	done    chan struct{}
+	running bool
+	mu      sync.Mutex
+}
+
+func newAutomationScheduler(app *App) *AutomationScheduler {
+	return &AutomationScheduler{app: app, done: make(chan struct{})}
+}
+
+func (s *AutomationScheduler) Start() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		return
+	}
+	s.running = true
+	go s.loop()
+}
+
+func (s *AutomationScheduler) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.running {
+		return
+	}
+	s.running = false
+	close(s.done)
+}
+
+func (s *AutomationScheduler) loop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			_ = runDueAutomations(time.Now())
+		}
+	}
+}
+
+func (a *App) ListAutomations() ([]WorkbenchAutomationView, error) {
+	automations, err := loadAutomations()
+	if err != nil {
+		return nil, err
+	}
+	return automations, nil
+}
+
+func (a *App) SaveAutomation(input WorkbenchAutomationInput) (WorkbenchAutomationView, error) {
+	return saveAutomationInput(input)
+}
+
+func (a *App) DeleteAutomation(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("automation id is required")
+	}
+	automations, err := loadAutomations()
+	if err != nil {
+		return err
+	}
+	next := automations[:0]
+	for _, automation := range automations {
+		if automation.ID == id {
+			continue
+		}
+		next = append(next, automation)
+	}
+	return saveAutomations(next)
+}
+
+func (a *App) RunAutomationNow(id string) (WorkbenchAutomationView, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return WorkbenchAutomationView{}, errors.New("automation id is required")
+	}
+	automations, err := loadAutomations()
+	if err != nil {
+		return WorkbenchAutomationView{}, err
+	}
+	for i, automation := range automations {
+		if automation.ID != id {
+			continue
+		}
+		updated := executeAutomation(automation, time.Now(), false)
+		automations[i] = updated
+		sortAutomations(automations)
+		if err := saveAutomations(automations); err != nil {
+			return WorkbenchAutomationView{}, err
+		}
+		return updated, nil
+	}
+	return WorkbenchAutomationView{}, errors.New("automation not found")
+}
+
+func saveAutomationInput(input WorkbenchAutomationInput) (WorkbenchAutomationView, error) {
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return WorkbenchAutomationView{}, errors.New("automation title is required")
+	}
+	rawCommand := strings.TrimSpace(input.Command)
+	command := normalizeAutomationCommand(rawCommand)
+	if rawCommand != "" && command == "" && !isBrowserOnlyLegacyAutomationCommand(rawCommand) {
+		return WorkbenchAutomationView{}, fmt.Errorf("unsupported automation command %q", rawCommand)
+	}
+	if command != "" {
+		if _, ok := automationCommandSpecFor(command); !ok {
+			return WorkbenchAutomationView{}, fmt.Errorf("unsupported automation command %q", command)
+		}
+	}
+	scheduleMode := normalizeAutomationScheduleMode(input.ScheduleMode)
+	nextRunAt := strings.TrimSpace(input.NextRunAt)
+	if scheduleMode != "manual" {
+		if command == "" {
+			return WorkbenchAutomationView{}, errors.New("scheduled automation requires a command")
+		}
+		if _, err := parseAutomationTime(nextRunAt); err != nil {
+			return WorkbenchAutomationView{}, errors.New("scheduled automation requires a valid next run time")
+		}
+	}
+	automations, err := loadAutomations()
+	if err != nil {
+		return WorkbenchAutomationView{}, err
+	}
+	now := time.Now().Format(time.RFC3339)
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		id = uniqueAutomationID(slugifyAgentID(title), automations)
+	}
+	startedAtMs := input.StartedAtMs
+	if startedAtMs <= 0 {
+		startedAtMs = time.Now().UnixMilli()
+	}
+	next := WorkbenchAutomationView{
+		ID:           id,
+		Title:        title,
+		Desc:         strings.TrimSpace(input.Desc),
+		Status:       normalizeAutomationStatus(input.Status),
+		Kind:         defaultString(strings.TrimSpace(input.Kind), automationKindDefault),
+		Owner:        defaultString(strings.TrimSpace(input.Owner), automationOwnerDefault),
+		StartedAtMs:  startedAtMs,
+		Cadence:      strings.TrimSpace(input.Cadence),
+		Schedule:     defaultString(strings.TrimSpace(input.Schedule), automationScheduleLabel(scheduleMode)),
+		ScheduleMode: scheduleMode,
+		Scope:        strings.TrimSpace(input.Scope),
+		Environment:  defaultString(strings.TrimSpace(input.Environment), "local workspace"),
+		Command:      command,
+		NextRunAt:    nextRunAt,
+		Result:       defaultString(strings.TrimSpace(input.Result), automationResultPending),
+		LastRun:      defaultString(strings.TrimSpace(input.LastRun), automationLastRunNever),
+		NextRun:      defaultString(strings.TrimSpace(input.NextRun), automationNextRunLabel(scheduleMode, nextRunAt)),
+		Steps:        cleanAutomationLines(input.Steps),
+		Logs:         cleanAutomationLines(input.Logs),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if next.Desc == "" {
+		next.Desc = "\u5f85\u8865\u5145\u81ea\u52a8\u5316\u4efb\u52a1\u8bf4\u660e\u3002"
+	}
+	replaced := false
+	for i, existing := range automations {
+		if existing.ID != id {
+			continue
+		}
+		next.CreatedAt = defaultString(existing.CreatedAt, now)
+		automations[i] = next
+		replaced = true
+		break
+	}
+	if !replaced {
+		automations = append([]WorkbenchAutomationView{next}, automations...)
+	}
+	sortAutomations(automations)
+	if err := saveAutomations(automations); err != nil {
+		return WorkbenchAutomationView{}, err
+	}
+	return next, nil
+}
+
+func runDueAutomations(now time.Time) error {
+	automations, err := loadAutomations()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i, automation := range automations {
+		if !automationIsDue(automation, now) {
+			continue
+		}
+		automations[i] = executeAutomation(automation, now, true)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	sortAutomations(automations)
+	return saveAutomations(automations)
+}
+
+func automationIsDue(automation WorkbenchAutomationView, now time.Time) bool {
+	if !isAutomationRunning(automation.Status) || strings.TrimSpace(automation.Command) == "" {
+		return false
+	}
+	if normalizeAutomationScheduleMode(automation.ScheduleMode) == "manual" {
+		return false
+	}
+	next, err := parseAutomationTime(automation.NextRunAt)
+	return err == nil && !next.After(now)
+}
+
+func executeAutomation(automation WorkbenchAutomationView, now time.Time, scheduled bool) WorkbenchAutomationView {
+	automation.Command = normalizeAutomationCommand(automation.Command)
+	spec, ok := automationCommandSpecFor(automation.Command)
+	if !ok {
+		automation.Status = automationStatusFailed
+		automation.Result = "Unsupported command"
+		automation.LastRun = "just now"
+		automation.UpdatedAt = now.Format(time.RFC3339)
+		automation.Logs = appendAutomationLog(automation.Logs, "Unsupported command: "+automation.Command)
+		return automation
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, spec.Name, spec.Args...)
+	cmd.Dir = spec.WorkDir
+	out, err := cmd.CombinedOutput()
+	output := truncateAutomationOutput(strings.TrimSpace(string(out)), 1200)
+	if err != nil {
+		automation.Status = automationStatusFailed
+		automation.Result = "Failed: " + err.Error()
+		automation.Logs = appendAutomationLog(automation.Logs, fmt.Sprintf("%s failed: %s\n%s", spec.Label, err.Error(), output))
+	} else {
+		automation.Result = "Passed"
+		automation.Logs = appendAutomationLog(automation.Logs, fmt.Sprintf("%s passed\n%s", spec.Label, output))
+		if normalizeAutomationScheduleMode(automation.ScheduleMode) == "once" {
+			automation.Status = automationStatusDone
+		}
+	}
+	automation.LastRun = "just now"
+	automation.UpdatedAt = now.Format(time.RFC3339)
+	if scheduled {
+		automation.NextRunAt = nextAutomationRunAt(automation, now)
+		automation.NextRun = automationNextRunLabel(normalizeAutomationScheduleMode(automation.ScheduleMode), automation.NextRunAt)
+	}
+	return automation
+}
+
+func automationCommandSpecFor(command string) (automationCommandSpec, bool) {
+	command = normalizeAutomationCommand(command)
+	desktopDir := automationDesktopDir()
+	repoRoot := filepath.Dir(desktopDir)
+	pnpm := "pnpm"
+	if runtime.GOOS == "windows" {
+		pnpm = "pnpm.cmd"
+	}
+	specs := map[string]automationCommandSpec{
+		"frontend-check":  {Label: "frontend check", WorkDir: filepath.Join(desktopDir, "frontend"), Name: pnpm, Args: []string{"check"}},
+		"frontend-build":  {Label: "frontend build", WorkDir: filepath.Join(desktopDir, "frontend"), Name: pnpm, Args: []string{"build"}},
+		"diff-check":      {Label: "git diff check", WorkDir: repoRoot, Name: "git", Args: []string{"diff", "--check"}},
+		"desktop-go-test": {Label: "desktop go test", WorkDir: desktopDir, Name: "go", Args: []string{"test", "./..."}},
+		"root-go-test":    {Label: "root go test", WorkDir: repoRoot, Name: "go", Args: []string{"test", "./..."}},
+	}
+	spec, ok := specs[command]
+	return spec, ok
+}
+
+func normalizeAutomationCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	switch command {
+	case "frontend-check", "frontend-build", "diff-check", "desktop-go-test", "root-go-test":
+		return command
+	}
+	lower := strings.ToLower(command)
+	if strings.Contains(lower, "http 200") || strings.Contains(lower, "dom snapshot") || strings.Contains(lower, "console warning") {
+		return ""
+	}
+	if strings.Contains(lower, "go test") && strings.Contains(lower, "desktop") {
+		return "desktop-go-test"
+	}
+	if strings.Contains(lower, "go test") {
+		return "root-go-test"
+	}
+	if strings.Contains(lower, "diff --check") {
+		return "diff-check"
+	}
+	if strings.Contains(lower, "build") {
+		return "frontend-build"
+	}
+	if strings.Contains(lower, "check") || strings.Contains(lower, "autofixer") {
+		return "frontend-check"
+	}
+	return ""
+}
+
+func isBrowserOnlyLegacyAutomationCommand(command string) bool {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	return strings.Contains(lower, "http 200") || strings.Contains(lower, "dom snapshot") || strings.Contains(lower, "console warning")
+}
+
+func automationDesktopDir() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	if filepath.Base(wd) == "desktop" {
+		return wd
+	}
+	if _, err := os.Stat(filepath.Join(wd, "desktop", "go.mod")); err == nil {
+		return filepath.Join(wd, "desktop")
+	}
+	return wd
+}
+
+func nextAutomationRunAt(automation WorkbenchAutomationView, now time.Time) string {
+	mode := normalizeAutomationScheduleMode(automation.ScheduleMode)
+	if mode == "once" || mode == "manual" {
+		return ""
+	}
+	next, err := parseAutomationTime(automation.NextRunAt)
+	if err != nil {
+		next = now
+	}
+	step := 24 * time.Hour
+	if mode == "weekly" {
+		step = 7 * 24 * time.Hour
+	}
+	for !next.After(now) {
+		next = next.Add(step)
+	}
+	return next.Format(time.RFC3339)
+}
+
+func parseAutomationTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, errors.New("empty time")
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	return time.ParseInLocation("2006-01-02T15:04", value, time.Local)
+}
+
+func automationsPath() (string, error) {
+	userConfig := config.UserConfigPath()
+	if strings.TrimSpace(userConfig) == "" {
+		return "", errors.New("user config dir is unavailable")
+	}
+	return filepath.Join(filepath.Dir(userConfig), automationsFile), nil
+}
+
+func loadAutomations() ([]WorkbenchAutomationView, error) {
+	path, err := automationsPath()
+	if err != nil {
+		return defaultAutomations(), nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return defaultAutomations(), nil
+		}
+		return nil, err
+	}
+	var disk automationsDiskFile
+	if err := json.Unmarshal(b, &disk); err != nil {
+		return nil, err
+	}
+	automations := make([]WorkbenchAutomationView, 0, len(disk.Automations))
+	for _, automation := range disk.Automations {
+		automation = normalizeAutomation(automation)
+		if automation.ID != "" {
+			automations = append(automations, automation)
+		}
+	}
+	if len(automations) == 0 {
+		return defaultAutomations(), nil
+	}
+	sortAutomations(automations)
+	return automations, nil
+}
+
+func saveAutomations(automations []WorkbenchAutomationView) error {
+	path, err := automationsPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(automationsDiskFile{Automations: automations}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".automations.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return fileutil.ReplaceFile(tmpPath, path)
+}
+
+func defaultAutomations() []WorkbenchAutomationView {
+	now := time.Now()
+	createdAt := now.Format(time.RFC3339)
+	return []WorkbenchAutomationView{
+		{ID: "preflight-validation", Title: "\u63d0\u4ea4\u524d\u9a8c\u8bc1\u81ea\u52a8\u5316", Desc: "\u5c06\u524d\u7aef\u95e8\u7981\u3001\u6784\u5efa\u3001\u7a7a\u767d\u68c0\u67e5\u548c\u6d4f\u89c8\u5668\u65e5\u5fd7\u9a8c\u8bc1\u4e32\u6210\u53ef\u590d\u7528\u4efb\u52a1\u3002", Status: automationStatusRunning, Kind: "\u9a8c\u8bc1\u81ea\u52a8\u5316", Owner: automationOwnerDefault, StartedAtMs: now.Add(-90 * time.Minute).UnixMilli(), Cadence: "\u6bcf\u6b21 UI \u6539\u52a8\u540e", Schedule: "\u624b\u52a8\u89e6\u53d1 / \u63d0\u4ea4\u524d", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "\u6700\u8fd1\u4e00\u6b21\u901a\u8fc7", LastRun: "\u521a\u521a", NextRun: "\u7b49\u5f85\u4e0b\u4e00\u6b21\u6539\u52a8", Steps: []string{"Svelte check", "build", "browser verification"}, Logs: []string{"0 errors / 0 warnings"}, CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "desktop-frontend-gate", Title: "\u684c\u9762\u524d\u7aef\u8d28\u91cf\u95e8\u7981", Desc: "\u9488\u5bf9 desktop/frontend \u6267\u884c Svelte \u7c7b\u578b\u68c0\u67e5\u3001Vite \u6784\u5efa\u548c\u5dee\u5f02\u7a7a\u767d\u68c0\u67e5\u3002", Status: automationStatusRunning, Kind: "\u8d28\u91cf\u95e8\u7981", Owner: "\u4ee3\u7801\u5ba1\u67e5 Agent", StartedAtMs: now.Add(-198 * time.Minute).UnixMilli(), Cadence: "\u6bcf\u6b21\u524d\u7aef\u6539\u52a8\u540e", Schedule: "\u6539\u52a8\u540e\u624b\u52a8\u590d\u8dd1", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "\u901a\u8fc7", LastRun: "12 \u5206\u949f\u524d", NextRun: "\u4e0b\u4e00\u6b21\u524d\u7aef\u6539\u52a8", Steps: []string{"pnpm check", "pnpm build", "git diff --check"}, Logs: []string{"svelte-check passed"}, CreatedAt: createdAt, UpdatedAt: createdAt},
+	}
+}
+
+func normalizeAutomation(automation WorkbenchAutomationView) WorkbenchAutomationView {
+	automation.ID = strings.TrimSpace(automation.ID)
+	automation.Title = strings.TrimSpace(automation.Title)
+	if automation.Title == "" {
+		return WorkbenchAutomationView{}
+	}
+	if automation.ID == "" {
+		automation.ID = slugifyAgentID(automation.Title)
+	}
+	automation.Desc = defaultString(strings.TrimSpace(automation.Desc), "\u5f85\u8865\u5145\u81ea\u52a8\u5316\u4efb\u52a1\u8bf4\u660e\u3002")
+	automation.Status = normalizeAutomationStatus(automation.Status)
+	automation.Kind = defaultString(strings.TrimSpace(automation.Kind), automationKindDefault)
+	automation.Owner = defaultString(strings.TrimSpace(automation.Owner), automationOwnerDefault)
+	if automation.StartedAtMs <= 0 {
+		automation.StartedAtMs = time.Now().UnixMilli()
+	}
+	automation.Cadence = strings.TrimSpace(automation.Cadence)
+	automation.ScheduleMode = normalizeAutomationScheduleMode(automation.ScheduleMode)
+	automation.Schedule = defaultString(strings.TrimSpace(automation.Schedule), automationScheduleLabel(automation.ScheduleMode))
+	automation.Scope = strings.TrimSpace(automation.Scope)
+	automation.Environment = defaultString(strings.TrimSpace(automation.Environment), "local workspace")
+	automation.Command = normalizeAutomationCommand(automation.Command)
+	automation.NextRunAt = strings.TrimSpace(automation.NextRunAt)
+	automation.Result = defaultString(strings.TrimSpace(automation.Result), automationResultPending)
+	automation.LastRun = defaultString(strings.TrimSpace(automation.LastRun), automationLastRunNever)
+	automation.NextRun = defaultString(strings.TrimSpace(automation.NextRun), automationNextRunLabel(automation.ScheduleMode, automation.NextRunAt))
+	automation.Steps = cleanAutomationLines(automation.Steps)
+	automation.Logs = cleanAutomationLines(automation.Logs)
+	now := time.Now().Format(time.RFC3339)
+	automation.CreatedAt = defaultString(automation.CreatedAt, now)
+	automation.UpdatedAt = defaultString(automation.UpdatedAt, automation.CreatedAt)
+	return automation
+}
+
+func normalizeAutomationStatus(value string) string {
+	switch strings.TrimSpace(value) {
+	case automationStatusRunning, "running":
+		return automationStatusRunning
+	case automationStatusPaused, "paused":
+		return automationStatusPaused
+	case automationStatusFailed, "failed":
+		return automationStatusFailed
+	case automationStatusDone, "done", "completed":
+		return automationStatusDone
+	default:
+		return automationStatusPending
+	}
+}
+
+func isAutomationRunning(value string) bool {
+	return normalizeAutomationStatus(value) == automationStatusRunning
+}
+
+func normalizeAutomationScheduleMode(value string) string {
+	switch strings.TrimSpace(value) {
+	case "once", "daily", "weekly":
+		return strings.TrimSpace(value)
+	default:
+		return "manual"
+	}
+}
+
+func automationScheduleLabel(mode string) string {
+	switch normalizeAutomationScheduleMode(mode) {
+	case "once":
+		return "\u4e00\u6b21\u6027\u5b9a\u65f6"
+	case "daily":
+		return "\u6bcf\u5929"
+	case "weekly":
+		return "\u6bcf\u5468"
+	default:
+		return "\u624b\u52a8\u89e6\u53d1"
+	}
+}
+
+func automationNextRunLabel(mode, nextRunAt string) string {
+	if normalizeAutomationScheduleMode(mode) == "manual" {
+		return "\u624b\u52a8\u89e6\u53d1"
+	}
+	next, err := parseAutomationTime(nextRunAt)
+	if err != nil {
+		return automationNextConfigure
+	}
+	return next.Local().Format("2006-01-02 15:04")
+}
+
+func cleanAutomationLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return nonNil(out)
+}
+
+func appendAutomationLog(logs []string, entry string) []string {
+	logs = append(cleanAutomationLines(logs), strings.TrimSpace(entry))
+	if len(logs) > 20 {
+		logs = logs[len(logs)-20:]
+	}
+	return logs
+}
+
+func truncateAutomationOutput(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max] + "\n..."
+}
+
+func sortAutomations(automations []WorkbenchAutomationView) {
+	sort.SliceStable(automations, func(i, j int) bool {
+		return automations[i].UpdatedAt > automations[j].UpdatedAt
+	})
+}
+
+func uniqueAutomationID(base string, automations []WorkbenchAutomationView) string {
+	base = defaultString(strings.TrimSpace(base), "automation")
+	seen := map[string]struct{}{}
+	for _, automation := range automations {
+		seen[automation.ID] = struct{}{}
+	}
+	if _, ok := seen[base]; !ok {
+		return base
+	}
+	for i := 2; ; i++ {
+		id := base + "-" + strconv.Itoa(i)
+		if _, ok := seen[id]; !ok {
+			return id
+		}
+	}
+}

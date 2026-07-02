@@ -154,6 +154,8 @@ type App struct {
 	authCancel context.CancelFunc
 
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+
+	automationScheduler *AutomationScheduler
 }
 
 type skillRootsCache struct {
@@ -365,6 +367,8 @@ func (a *App) startup(ctx context.Context) {
 
 	a.heartbeat = newHeartbeatEngine(a)
 	a.heartbeat.Start()
+	a.automationScheduler = newAutomationScheduler(a)
+	a.automationScheduler.Start()
 
 	go a.restoreOrBuildTabs()
 	a.goSafe("refreshBotRuntime", a.refreshBotRuntime)
@@ -643,6 +647,9 @@ func (a *App) snapshotAllTabs() {
 func (a *App) shutdown(context.Context) {
 	if a.heartbeat != nil {
 		a.heartbeat.Stop()
+	}
+	if a.automationScheduler != nil {
+		a.automationScheduler.Stop()
 	}
 	a.stopBotRuntime()
 	a.stopTray()

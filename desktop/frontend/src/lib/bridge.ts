@@ -37,6 +37,13 @@ import type {
   SkillPackageInput,
   WorkbenchTodo,
   WorkbenchTodoInput,
+  WorkbenchProject,
+  WorkbenchProjectInput,
+  WorkbenchProjectMaterial,
+  WorkbenchProjectMaterialBatchInput,
+  WorkbenchProjectMaterialInput,
+  WorkbenchAutomation,
+  WorkbenchAutomationInput,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
   WireEvent,
@@ -87,6 +94,7 @@ interface AppBindings {
   ReadFile(rel: string): Promise<FilePreview>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
+  RevealPath(path: string): Promise<void>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   SavePastedImage(dataUrl: string): Promise<string>;
@@ -101,6 +109,17 @@ interface AppBindings {
   ListTodos(): Promise<WorkbenchTodo[]>;
   SaveTodo(input: WorkbenchTodoInput): Promise<WorkbenchTodo>;
   DeleteTodo(id: string): Promise<void>;
+  ListWorkbenchProjects(): Promise<WorkbenchProject[]>;
+  SaveWorkbenchProject(input: WorkbenchProjectInput): Promise<WorkbenchProject>;
+  DeleteWorkbenchProject(id: string): Promise<void>;
+  ListProjectMaterials(): Promise<WorkbenchProjectMaterial[]>;
+  SaveProjectMaterial(input: WorkbenchProjectMaterialInput): Promise<WorkbenchProjectMaterial>;
+  SaveProjectMaterialsBatch(input: WorkbenchProjectMaterialBatchInput): Promise<WorkbenchProjectMaterial[]>;
+  DeleteProjectMaterial(id: string): Promise<void>;
+  ListAutomations(): Promise<WorkbenchAutomation[]>;
+  SaveAutomation(input: WorkbenchAutomationInput): Promise<WorkbenchAutomation>;
+  DeleteAutomation(id: string): Promise<void>;
+  RunAutomationNow(id: string): Promise<WorkbenchAutomation>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;

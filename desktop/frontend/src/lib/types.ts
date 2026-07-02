@@ -218,6 +218,140 @@ export interface WorkbenchTodoInput {
   source?: string;
 }
 
+export interface WorkbenchProject {
+  id: string;
+  name: string;
+  code: string;
+  client: string;
+  stage: string;
+  owner: string;
+  desc: string;
+  category: string;
+  court: string;
+  budget: string;
+  acceptedAt: string;
+  status: "active" | "closed" | string;
+  progress: number;
+  priority: string;
+  risk: string;
+  updatedAt: string;
+  nextStep: string;
+  agent: string;
+  materials: number;
+  todos: number;
+  events: number;
+  reports: number;
+  timeline: string[];
+  createdAt?: string;
+  updatedISO?: string;
+}
+
+export interface WorkbenchProjectInput {
+  id?: string;
+  name: string;
+  code?: string;
+  client?: string;
+  stage?: string;
+  owner?: string;
+  desc?: string;
+  category?: string;
+  court?: string;
+  budget?: string;
+  acceptedAt?: string;
+  status?: "active" | "closed" | string;
+  progress?: number;
+  priority?: string;
+  risk?: string;
+  nextStep?: string;
+  agent?: string;
+  materials?: number;
+  todos?: number;
+  events?: number;
+  reports?: number;
+  timeline?: string[];
+}
+
+export interface WorkbenchProjectMaterial {
+  id: string;
+  projectId: string;
+  projectName?: string;
+  title: string;
+  category: string;
+  source: string;
+  status: string;
+  updatedAt: string;
+  desc: string;
+  fileName?: string;
+  filePath?: string;
+  fileSize?: number;
+  mimeType?: string;
+  createdAt?: string;
+  updatedISO?: string;
+}
+
+export interface WorkbenchProjectMaterialInput {
+  id?: string;
+  projectId: string;
+  projectName?: string;
+  title: string;
+  category?: string;
+  source?: string;
+  status?: string;
+  desc?: string;
+  fileName?: string;
+  filePath?: string;
+  fileSize?: number;
+  mimeType?: string;
+}
+
+export type WorkbenchProjectMaterialBatchInput = WorkbenchProjectMaterialInput[];
+
+export interface WorkbenchAutomation {
+  id: string;
+  title: string;
+  desc: string;
+  status: string;
+  kind: string;
+  owner: string;
+  startedAtMs: number;
+  cadence: string;
+  schedule: string;
+  scheduleMode?: string;
+  scope: string;
+  environment: string;
+  command: string;
+  nextRunAt?: string;
+  result: string;
+  lastRun: string;
+  nextRun: string;
+  steps: string[];
+  logs: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchAutomationInput {
+  id?: string;
+  title: string;
+  desc: string;
+  status?: string;
+  kind?: string;
+  owner?: string;
+  startedAtMs?: number;
+  cadence?: string;
+  schedule?: string;
+  scheduleMode?: string;
+  scope?: string;
+  environment?: string;
+  command?: string;
+  nextRunAt?: string;
+  result?: string;
+  lastRun?: string;
+  nextRun?: string;
+  steps?: string[];
+  logs?: string[];
+}
+
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];

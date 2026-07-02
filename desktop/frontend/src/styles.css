@@ -10302,6 +10302,7 @@ body > .mermaid-diagram--fullscreen {
   min-height: 68px;
 }
 .cap-plugin-folder-field {
+  grid-column: 1 / -1;
   min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

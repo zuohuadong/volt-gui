@@ -1811,7 +1811,7 @@ export function PluginsSettingsPage() {
 								<div className="cap-plugin-option-hint">{t("caps.pluginLinkHint")}</div>
 							</div>
 						)}
-						<div className="cap-plugin-option-block">
+						<div className="cap-plugin-option-block cap-plugin-option-block--replace">
 							<label className="cap-plugin-option">
 								<input type="checkbox" checked={replace} disabled={actionBusy} onChange={(e) => setReplace(e.target.checked)} />
 								<span>{t("caps.pluginReplace")}</span>

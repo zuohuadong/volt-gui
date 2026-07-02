@@ -10247,6 +10247,7 @@ body > .mermaid-diagram--fullscreen {
   flex: 0 0 auto;
 }
 .cap-plugin-installer {
+  --cap-plugin-side: minmax(240px, 280px);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -10256,10 +10257,10 @@ body > .mermaid-diagram--fullscreen {
 }
 .cap-plugin-installer__head {
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--cap-plugin-side);
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  column-gap: 16px;
 }
 .cap-plugin-installer__copy,
 .cap-server-section__copy {
@@ -10280,24 +10281,27 @@ body > .mermaid-diagram--fullscreen {
   line-height: 1.4;
 }
 .cap-plugin-installer__mode {
-  width: min(280px, 100%);
-  flex: 0 0 auto;
+  width: 100%;
 }
 .cap-plugin-form-grid {
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--cap-plugin-side);
   gap: 10px;
 }
 .cap-plugin-fields,
 .cap-plugin-installer__options {
+  grid-column: 1 / -1;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.66fr);
+  grid-template-columns: minmax(0, 1fr) var(--cap-plugin-side);
   gap: 10px 16px;
   align-items: flex-start;
 }
+.cap-plugin-fields {
+  min-height: 68px;
+}
 .cap-plugin-folder-field {
-  grid-column: 1 / -1;
   min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -10338,13 +10342,20 @@ body > .mermaid-diagram--fullscreen {
   color: var(--fg-faint);
   font-family: inherit;
 }
+.cap-plugin-installer__options {
+  min-height: 48px;
+}
 .cap-plugin-option-block {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
+.cap-plugin-option-block--replace {
+  grid-column: 2;
+}
 .cap-plugin-installer__actions {
+  grid-column: 2;
   display: inline-flex;
   justify-content: flex-end;
   justify-self: flex-end;
@@ -10877,10 +10888,16 @@ body > .mermaid-diagram--fullscreen {
     justify-content: flex-start;
   }
 
+  .cap-plugin-form-grid,
   .cap-plugin-fields,
   .cap-plugin-installer__options,
   .cap-plugin-folder-field {
     grid-template-columns: 1fr;
+  }
+
+  .cap-plugin-option-block--replace,
+  .cap-plugin-installer__actions {
+    grid-column: auto;
   }
 
   .cap-plugin-installer__actions {

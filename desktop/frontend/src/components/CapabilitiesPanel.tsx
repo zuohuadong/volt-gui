@@ -1612,6 +1612,8 @@ type PluginInstallPlanView = {
   error?: string;
 };
 
+type PluginInstallMode = "local" | "git";
+
 // PluginsSettingsPage is the desktop plugin package manager embedded inside
 // Settings. It mirrors the MCP/Skills density: install planning on top, package
 // rows below, and diagnostics/details only when a row is expanded.
@@ -1621,7 +1623,9 @@ export function PluginsSettingsPage() {
 	const [plugins, setPlugins] = useState<PluginView[] | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
-	const [source, setSource] = useState("");
+	const [installMode, setInstallMode] = useState<PluginInstallMode>("local");
+	const [localSource, setLocalSource] = useState("");
+	const [gitSource, setGitSource] = useState("");
 	const [name, setName] = useState("");
 	const [link, setLink] = useState(false);
 	const [replace, setReplace] = useState(false);
@@ -1670,12 +1674,12 @@ export function PluginsSettingsPage() {
 		}
 	};
 
-	const sourceValue = source.trim();
+	const sourceValue = (installMode === "local" ? localSource : gitSource).trim();
 	const installOptions = (): PluginInstallOptions => ({
 		dryRun: false,
-		link,
+		link: installMode === "local" ? link : false,
 		replace,
-		name: name.trim() || undefined,
+		name: installMode === "git" ? name.trim() || undefined : undefined,
 	});
 	const actionBusy = busy || !snapshotKey || !plugins;
 	const canPlan = sourceValue.length > 0 && !actionBusy;
@@ -1683,6 +1687,10 @@ export function PluginsSettingsPage() {
 	const togglePlugin = useCallback((pluginName: string) => {
 		setExpanded((prev) => { const next = new Set(prev); if (next.has(pluginName)) next.delete(pluginName); else next.add(pluginName); return next; });
 	}, []);
+	const setMode = (mode: PluginInstallMode) => {
+		setInstallMode(mode);
+		setPlan(null);
+	};
 	const previewInstall = () => {
 		if (!sourceValue) return;
 		void run(async () => {
@@ -1709,14 +1717,21 @@ export function PluginsSettingsPage() {
 			});
 		}, false);
 	};
-	const updateSource = (value: string) => {
-		setSource(value);
+	const updateLocalSource = (value: string) => {
+		setLocalSource(value);
+		setPlan(null);
+	};
+	const updateGitSource = (value: string) => {
+		setGitSource(value);
 		setPlan(null);
 	};
 	const pickPluginFolder = () => {
 		void run(async () => {
 			const path = await app.PickPluginFolder();
-			if (path) updateSource(path);
+			if (path) {
+				setInstallMode("local");
+				updateLocalSource(path);
+			}
 		}, false);
 	};
 
@@ -1724,40 +1739,69 @@ export function PluginsSettingsPage() {
 		<section className="mem-section">
 			{err && <div className="banner banner--error">{err}</div>}
 			{notice && !err && <div className="banner banner--success">{notice}</div>}
-			<div className="cap-mcp-toolbar">
-				{plugins && plugins.length > 0 ? <div className="drawer__summary">{summary}</div> : <span />}
-				<div className="cap-mcp-toolbar__actions">
-					<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void reload()}>
-						{t("caps.pluginRefresh")}
-					</button>
-				</div>
-			</div>
 			<div className="cap-plugin-installer">
-				<div className="cap-plugin-installer__fields">
-					<input
-						className="mem-input"
-						aria-label={t("caps.pluginSource")}
-						placeholder={t("caps.pluginSourcePlaceholder")}
-						value={source}
-						onInput={(e) => updateSource(e.currentTarget.value)}
-						onChange={(e) => updateSource(e.target.value)}
-					/>
-					<button className="btn btn--small" disabled={actionBusy} type="button" onClick={pickPluginFolder}>
-						{t("caps.pluginPickFolder")}
-					</button>
-					<input
-						className="mem-input"
-						aria-label={t("caps.pluginNameOverride")}
-						placeholder={t("caps.pluginNamePlaceholder")}
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-					/>
+				<div className="cap-plugin-installer__head">
+					<div className="cap-plugin-installer__copy">
+						<div className="cap-plugin-installer__title">{t("caps.pluginInstallTitle")}</div>
+						<div className="cap-plugin-installer__hint">{t("caps.pluginInstallHint")}</div>
+					</div>
+					<div className="cap-tabs cap-plugin-installer__mode" role="group" aria-label={t("caps.pluginInstallMethod")}>
+						<button
+							className={`cap-tab${installMode === "local" ? " cap-tab--active" : ""}`}
+							type="button"
+							aria-pressed={installMode === "local"}
+							onClick={() => setMode("local")}
+						>
+							{t("caps.pluginInstallLocal")}
+						</button>
+						<button
+							className={`cap-tab${installMode === "git" ? " cap-tab--active" : ""}`}
+							type="button"
+							aria-pressed={installMode === "git"}
+							onClick={() => setMode("git")}
+						>
+							{t("caps.pluginInstallGit")}
+						</button>
+					</div>
 				</div>
+				{installMode === "local" ? (
+					<div className="cap-plugin-local">
+						<button className="btn btn--small" disabled={actionBusy} type="button" onClick={pickPluginFolder}>
+							{t("caps.pluginChooseLocalFolder")}
+						</button>
+						<div
+							className={`cap-plugin-path${localSource ? "" : " cap-plugin-path--empty"}`}
+							aria-label={t("caps.pluginLocalFolder")}
+						>
+							{localSource || t("caps.pluginNoLocalFolder")}
+						</div>
+					</div>
+				) : (
+					<div className="cap-plugin-git">
+						<input
+							className="mem-input"
+							aria-label={t("caps.pluginGitSource")}
+							placeholder={t("caps.pluginSourcePlaceholder")}
+							value={gitSource}
+							onInput={(e) => updateGitSource(e.currentTarget.value)}
+							onChange={(e) => updateGitSource(e.target.value)}
+						/>
+						<input
+							className="mem-input"
+							aria-label={t("caps.pluginNameOverride")}
+							placeholder={t("caps.pluginNamePlaceholder")}
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+						/>
+					</div>
+				)}
 				<div className="cap-plugin-installer__options">
-					<label className="cap-plugin-option">
-						<input type="checkbox" checked={link} disabled={actionBusy} onChange={(e) => setLink(e.target.checked)} />
-						<span>{t("caps.pluginLink")}</span>
-					</label>
+					{installMode === "local" && (
+						<label className="cap-plugin-option">
+							<input type="checkbox" checked={link} disabled={actionBusy} onChange={(e) => setLink(e.target.checked)} />
+							<span>{t("caps.pluginLink")}</span>
+						</label>
+					)}
 					<label className="cap-plugin-option">
 						<input type="checkbox" checked={replace} disabled={actionBusy} onChange={(e) => setReplace(e.target.checked)} />
 						<span>{t("caps.pluginReplace")}</span>
@@ -1768,23 +1812,29 @@ export function PluginsSettingsPage() {
 						{t("caps.pluginPreview")}
 					</button>
 					<button className="btn btn--primary btn--small" type="button" disabled={!canPlan} onClick={install}>
-						{t("caps.pluginInstall")}
+						{installMode === "local" ? t("caps.pluginAddLocal") : t("caps.pluginInstall")}
 					</button>
 				</div>
 			</div>
 			{plan && <PluginPlanPreview plan={plan} />}
-			{!plugins ? (
-				<div className="mem-empty">{t("caps.loading")}</div>
-			) : plugins.length === 0 ? (
-				<div className="mem-empty mem-empty--cta">
-					<strong>{t("caps.noPluginsTitle")}</strong>
-					<span>{t("caps.noPluginsHint")}</span>
-				</div>
-			) : (
-				<div className="cap-server-section cap-plugin-section">
-					<div className="cap-server-section__head">
+			<div className="cap-server-section cap-plugin-section">
+				<div className="cap-server-section__head">
+					<div className="cap-server-section__copy">
 						<div className="cap-server-section__title">{t("caps.installedPlugins")}</div>
+						{plugins && plugins.length > 0 && <div className="drawer__summary">{summary}</div>}
 					</div>
+					<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void reload()}>
+						{t("caps.pluginRefresh")}
+					</button>
+				</div>
+				{!plugins ? (
+					<div className="mem-empty">{t("caps.loading")}</div>
+				) : plugins.length === 0 ? (
+					<div className="mem-empty mem-empty--cta">
+						<strong>{t("caps.noPluginsTitle")}</strong>
+						<span>{t("caps.noPluginsHint")}</span>
+					</div>
+				) : (
 					<div className="cap-server-group">
 						{plugins.map((plugin) => (
 							<PluginRow
@@ -1801,8 +1851,8 @@ export function PluginsSettingsPage() {
 							/>
 						))}
 					</div>
-				</div>
-			)}
+				)}
+			</div>
 		</section>
 	);
 }

@@ -275,6 +275,8 @@ console.log("capabilities panel plugin actions");
   let doctorCalls = 0;
   let removeCalls = 0;
   let pickFolderCalls = 0;
+  const plannedSources: string[] = [];
+  const installedSources: string[] = [];
   let plugins: PluginView[] = [{
     name: "superpowers",
     version: "0.1.0",
@@ -295,7 +297,7 @@ console.log("capabilities panel plugin actions");
         Plugins: async () => plugins.map((plugin) => ({ ...plugin, warnings: [...(plugin.warnings ?? [])] })),
         PlanPluginInstall: async (source: string, options: PluginInstallOptions) => {
           planCalls += 1;
-          ok(source === "git:github.com/obra/superpowers", "plugin preview receives the entered source");
+          plannedSources.push(source);
           ok(options.dryRun === true, "plugin preview asks for dry-run planning");
           return JSON.stringify({
             ok: true,
@@ -306,6 +308,7 @@ console.log("capabilities panel plugin actions");
         },
         InstallPlugin: async (source: string, _options: PluginInstallOptions) => {
           installCalls += 1;
+          installedSources.push(source);
           const next: PluginView = {
             name: "superpowers",
             version: "0.1.1",
@@ -352,17 +355,23 @@ console.log("capabilities panel plugin actions");
   });
   await waitFor("superpowers plugin row", () => Boolean(document.querySelector(".cap-row__name")?.textContent?.includes("superpowers")));
 
-  const sourceInput = document.querySelector<HTMLInputElement>('input[aria-label="Plugin source"]');
-  if (!sourceInput) throw new Error("missing plugin source input");
-  const chooseFolder = findButton("Choose folder");
+  const chooseFolder = findButton("Choose plugin folder");
   if (!chooseFolder) throw new Error("missing plugin folder picker button");
   await act(async () => {
     chooseFolder.click();
     await flush();
   });
-  await waitFor("picked plugin folder source", () => sourceInput.value === "/tmp/superpowers-plugin");
+  await waitFor("picked plugin folder source", () => document.body.textContent?.includes("/tmp/superpowers-plugin") ?? false);
   ok(pickFolderCalls === 1, "clicking Choose folder invokes the plugin folder picker once");
 
+  const gitMode = findButton("Git repository");
+  if (!gitMode) throw new Error("missing Git repository install mode");
+  await act(async () => {
+    gitMode.click();
+    await flush();
+  });
+  const sourceInput = document.querySelector<HTMLInputElement>('input[aria-label="Git repository URL"]');
+  if (!sourceInput) throw new Error("missing plugin git source input");
   await act(async () => {
     setInputValue(sourceInput, "git:github.com/obra/superpowers");
     await flush();
@@ -377,6 +386,7 @@ console.log("capabilities panel plugin actions");
   });
   await waitFor("plugin install plan", () => document.body.textContent?.includes("install_plugin_package") ?? false);
   ok(planCalls === 1, "clicking Preview invokes plugin install planning once");
+  ok(plannedSources[0] === "git:github.com/obra/superpowers", "plugin preview receives the entered Git source");
 
   const install = findButton("Install");
   if (!install) throw new Error("missing plugin install button");
@@ -385,6 +395,7 @@ console.log("capabilities panel plugin actions");
     await flush();
   });
   await waitFor("plugin install result", () => installCalls === 1 && plugins[0]?.version === "0.1.1");
+  ok(installedSources[0] === "git:github.com/obra/superpowers", "plugin install receives the entered Git source");
 
   const disclosure = document.querySelector<HTMLButtonElement>(".cap-plugin-entry .cap-disclosure");
   if (!disclosure) throw new Error("missing plugin disclosure");

@@ -315,6 +315,7 @@ export const en = {
   "caps.pluginRefresh": "Refresh plugins",
   "caps.pluginSource": "Plugin source",
   "caps.pluginSourcePlaceholder": "git:github.com/obra/superpowers",
+  "caps.pluginPickFolder": "Choose folder",
   "caps.pluginNameOverride": "Plugin name override",
   "caps.pluginNamePlaceholder": "name override (optional)",
   "caps.pluginLink": "Link local folder",

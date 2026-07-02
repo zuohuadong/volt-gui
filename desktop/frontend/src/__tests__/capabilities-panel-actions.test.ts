@@ -274,6 +274,7 @@ console.log("capabilities panel plugin actions");
   let updateCalls = 0;
   let doctorCalls = 0;
   let removeCalls = 0;
+  let pickFolderCalls = 0;
   let plugins: PluginView[] = [{
     name: "superpowers",
     version: "0.1.0",
@@ -337,6 +338,10 @@ console.log("capabilities panel plugin actions");
           removeCalls += 1;
           plugins = plugins.filter((plugin) => plugin.name !== name);
         },
+        PickPluginFolder: async () => {
+          pickFolderCalls += 1;
+          return "/tmp/superpowers-plugin";
+        },
       } as Partial<AppBindings> as AppBindings,
     },
   };
@@ -349,6 +354,15 @@ console.log("capabilities panel plugin actions");
 
   const sourceInput = document.querySelector<HTMLInputElement>('input[aria-label="Plugin source"]');
   if (!sourceInput) throw new Error("missing plugin source input");
+  const chooseFolder = findButton("Choose folder");
+  if (!chooseFolder) throw new Error("missing plugin folder picker button");
+  await act(async () => {
+    chooseFolder.click();
+    await flush();
+  });
+  await waitFor("picked plugin folder source", () => sourceInput.value === "/tmp/superpowers-plugin");
+  ok(pickFolderCalls === 1, "clicking Choose folder invokes the plugin folder picker once");
+
   await act(async () => {
     setInputValue(sourceInput, "git:github.com/obra/superpowers");
     await flush();

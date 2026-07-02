@@ -1713,6 +1713,12 @@ export function PluginsSettingsPage() {
 		setSource(value);
 		setPlan(null);
 	};
+	const pickPluginFolder = () => {
+		void run(async () => {
+			const path = await app.PickPluginFolder();
+			if (path) updateSource(path);
+		}, false);
+	};
 
 	return (
 		<section className="mem-section">
@@ -1736,6 +1742,9 @@ export function PluginsSettingsPage() {
 						onInput={(e) => updateSource(e.currentTarget.value)}
 						onChange={(e) => updateSource(e.target.value)}
 					/>
+					<button className="btn btn--small" disabled={actionBusy} type="button" onClick={pickPluginFolder}>
+						{t("caps.pluginPickFolder")}
+					</button>
 					<input
 						className="mem-input"
 						aria-label={t("caps.pluginNameOverride")}

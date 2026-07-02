@@ -10352,9 +10352,6 @@ body > .mermaid-diagram--fullscreen {
   flex-direction: column;
   gap: 3px;
 }
-.cap-plugin-option-block--replace {
-  grid-column: 2;
-}
 .cap-plugin-installer__actions {
   grid-column: 2;
   display: inline-flex;
@@ -10896,7 +10893,6 @@ body > .mermaid-diagram--fullscreen {
     grid-template-columns: 1fr;
   }
 
-  .cap-plugin-option-block--replace,
   .cap-plugin-installer__actions {
     grid-column: auto;
   }

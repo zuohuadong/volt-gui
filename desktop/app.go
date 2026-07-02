@@ -5607,6 +5607,27 @@ func (a *App) PickSkillFolder() (string, error) {
 	return normalizeSkillPath(dir), nil
 }
 
+// PickPluginFolder opens a directory picker for choosing a local plugin package
+// source. It returns the selected directory path; plugin install/plan performs
+// manifest validation and decides whether to copy or link the package.
+func (a *App) PickPluginFolder() (string, error) {
+	if a.ctx == nil {
+		return "", nil
+	}
+	cur := a.activeWorkspaceRoot()
+	if strings.TrimSpace(cur) == "" {
+		cur, _ = os.Getwd()
+	}
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Choose plugin folder",
+		DefaultDirectory: dialogDefaultDirectory(cur),
+	})
+	if err != nil || dir == "" {
+		return "", err
+	}
+	return filepath.Clean(dir), nil
+}
+
 // AddSkillPath adds a custom skill root to the user config and rebuilds the
 // controller so the skills index and slash menu reflect it immediately.
 func (a *App) AddSkillPath(path string) error {

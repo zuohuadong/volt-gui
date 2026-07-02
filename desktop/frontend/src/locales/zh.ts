@@ -316,6 +316,7 @@ export const zh: Record<DictKey, string> = {
   "caps.pluginRefresh": "刷新插件",
   "caps.pluginSource": "插件来源",
   "caps.pluginSourcePlaceholder": "git:github.com/obra/superpowers",
+  "caps.pluginPickFolder": "选择目录",
   "caps.pluginNameOverride": "插件名覆盖",
   "caps.pluginNamePlaceholder": "覆盖名称（可选）",
   "caps.pluginLink": "链接本地目录",

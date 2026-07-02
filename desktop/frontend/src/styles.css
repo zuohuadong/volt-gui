@@ -10258,7 +10258,7 @@ body > .mermaid-diagram--fullscreen {
 .cap-plugin-installer__fields {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+  grid-template-columns: minmax(0, 1fr) auto minmax(160px, 220px);
   gap: 8px;
 }
 .cap-plugin-installer__options {

@@ -231,6 +231,7 @@ export const zhTW: Record<DictKey, string> = {
   "caps.pluginRefresh": "重新整理插件",
   "caps.pluginSource": "插件來源",
   "caps.pluginSourcePlaceholder": "git:github.com/obra/superpowers",
+  "caps.pluginPickFolder": "選擇目錄",
   "caps.pluginNameOverride": "插件名覆寫",
   "caps.pluginNamePlaceholder": "覆寫名稱（可選）",
   "caps.pluginLink": "連結本機目錄",

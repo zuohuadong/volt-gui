@@ -76,10 +76,11 @@ type BotGateway struct {
 	sessions *SessionManager
 	startErr []error
 
-	mu             sync.Mutex
-	controllers    map[string]*sessionState // session key -> active state
-	allowlist      map[Platform]map[string]bool
-	groupAllowlist map[Platform]map[string]bool
+	mu                      sync.Mutex
+	controllers             map[string]*sessionState // session key -> active state
+	pendingReactionCleanups map[string][]func()
+	allowlist               map[Platform]map[string]bool
+	groupAllowlist          map[Platform]map[string]bool
 
 	logger *slog.Logger
 }
@@ -106,7 +107,6 @@ type sessionState struct {
 	lastAskID        string
 	createdAt        time.Time
 	lastActive       time.Time
-	pendingReactionCleanups []func()
 }
 
 type sessionEventSink struct {
@@ -152,13 +152,14 @@ func NewGatewayWithAdapterBindings(cfg GatewayConfig, adapters []AdapterBinding,
 		cfg.Debounce = 1500 * time.Millisecond
 	}
 	gw := &BotGateway{
-		cfg:            cfg,
-		adapters:       normalizeAdapterBindings(adapters),
-		sessions:       NewSessionManager(cfg.Debounce),
-		controllers:    make(map[string]*sessionState),
-		allowlist:      make(map[Platform]map[string]bool),
-		groupAllowlist: make(map[Platform]map[string]bool),
-		logger:         logger.With("component", "bot_gateway"),
+		cfg:                     cfg,
+		adapters:                normalizeAdapterBindings(adapters),
+		sessions:                NewSessionManager(cfg.Debounce),
+		controllers:             make(map[string]*sessionState),
+		pendingReactionCleanups: make(map[string][]func()),
+		allowlist:               make(map[Platform]map[string]bool),
+		groupAllowlist:          make(map[Platform]map[string]bool),
+		logger:                  logger.With("component", "bot_gateway"),
 	}
 	gw.buildAllowlist()
 	return gw
@@ -358,26 +359,39 @@ func (gw *BotGateway) storeReactionCleanup(key string, cleanup func()) {
 	}
 	gw.mu.Lock()
 	defer gw.mu.Unlock()
-	if state := gw.controllers[key]; state != nil {
-		state.pendingReactionCleanups = append(state.pendingReactionCleanups, cleanup)
-	}
+	gw.pendingReactionCleanups[key] = append(gw.pendingReactionCleanups[key], cleanup)
 }
 
 func (gw *BotGateway) flushReactionCleanups(key string, cleanup func()) {
-	gw.mu.Lock()
-	state := gw.controllers[key]
-	if state != nil && len(state.pendingReactionCleanups) > 0 {
-		stored := state.pendingReactionCleanups
-		state.pendingReactionCleanups = nil
-		gw.mu.Unlock()
-		for _, c := range stored {
-			c()
-		}
-	} else {
-		gw.mu.Unlock()
-	}
+	stored := gw.takeReactionCleanups(key)
+	runReactionCleanups(stored)
 	if cleanup != nil {
 		cleanup()
+	}
+}
+
+func (gw *BotGateway) takeReactionCleanups(key string) []func() {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	stored := gw.pendingReactionCleanups[key]
+	delete(gw.pendingReactionCleanups, key)
+	return stored
+}
+
+func runReactionCleanups(cleanups []func()) {
+	for _, cleanup := range cleanups {
+		if cleanup != nil {
+			cleanup()
+		}
+	}
+}
+
+func makeReactionCleanup(cleanups []func()) func() {
+	if len(cleanups) == 0 {
+		return nil
+	}
+	return func() {
+		runReactionCleanups(cleanups)
 	}
 }
 
@@ -812,12 +826,16 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	defer func() {
 		// 检查是否有等待队列中的消息
 		next := gw.sessions.Release(key)
-		gw.flushReactionCleanups(key, cleanup)
 		if next != nil {
+			if cleanup != nil {
+				cleanup()
+			}
+			nextCleanup := makeReactionCleanup(gw.takeReactionCleanups(key))
 			gw.logger.Info("bot pending message released", "platform", next.Platform, "chat_type", next.ChatType, "chat", hashID(next.ChatID), "session", key[:8])
-			gw.runTurn(ctx, adapter, key, *next, nil)
+			gw.runTurn(ctx, adapter, key, *next, nextCleanup)
 			return
 		}
+		gw.flushReactionCleanups(key, cleanup)
 	}()
 
 	// 构建输入文本：群聊中在消息前加上发送者名

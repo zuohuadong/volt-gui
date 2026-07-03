@@ -1131,7 +1131,7 @@ func promptCustomProviderFromURL() ([]config.ProviderEntry, error) {
 	fmt.Printf("  %s\n", dim(fmt.Sprintf(i18n.M.FetchingModelsFmt, "custom")))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	models, err := openai.FetchModels(ctx, baseURL+"/models", apiKey)
+	models, err := openai.FetchModels(ctx, baseURL+"/models", apiKey, nil)
 	if err != nil || len(models) == 0 {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.FetchModelsFailedFmt, "custom", err)))
@@ -1237,7 +1237,7 @@ func promptAnthropicProviderFromURL() ([]config.ProviderEntry, error) {
 	fmt.Printf("  %s\n", dim(fmt.Sprintf(i18n.M.AnthropicFetchingModelsFmt, "anthropic")))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	models, err := openai.FetchModels(ctx, baseURL+"/models", apiKey)
+	models, err := openai.FetchModels(ctx, baseURL+"/models", apiKey, nil)
 	if err != nil || len(models) == 0 {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.AnthropicFetchModelsFailedFmt, "anthropic", err)))

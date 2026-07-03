@@ -1127,7 +1127,22 @@ type ProviderEntry struct {
 	DefaultEffort string `toml:"default_effort"`
 	// NoProxy reaches this provider's base_url directly, never through the proxy.
 	// For China-only endpoints a foreign-exit proxy resets the TLS handshake (#2803).
-	NoProxy bool `toml:"no_proxy"`
+	NoProxy bool              `toml:"no_proxy"`
+	Headers map[string]string `toml:"headers"` // optional extra HTTP headers for OpenAI-compatible gateways; secrets should stay in api_key_env.
+	// ModelOverrides customizes capability metadata after ResolveModel selects a
+	// concrete model from a multi-model provider. Use it when a gateway exposes
+	// mixed DeepSeek/OpenAI/no-reasoning or mixed vision/text models under one
+	// base_url/key.
+	ModelOverrides map[string]ProviderModelOverride `toml:"model_overrides"`
+	visionOverride *bool
+}
+
+// ProviderModelOverride customizes per-model capabilities within a multi-model provider.
+type ProviderModelOverride struct {
+	ReasoningProtocol string   `toml:"reasoning_protocol"`
+	SupportedEfforts  []string `toml:"supported_efforts"`
+	DefaultEffort     string   `toml:"default_effort"`
+	Vision            *bool    `toml:"vision"`
 }
 
 // ModelList returns the models this provider exposes: the explicit `models` list,
@@ -1252,6 +1267,44 @@ func (e *ProviderEntry) applyModelPrice() {
 		return
 	}
 	e.Price = e.PriceForModel(e.Model)
+}
+
+func (e *ProviderEntry) applyModelOverride() {
+	if e == nil || len(e.ModelOverrides) == 0 {
+		return
+	}
+	ov, ok := e.modelOverrideForModel(e.Model)
+	if !ok {
+		return
+	}
+	if ov.ReasoningProtocol != "" {
+		e.ReasoningProtocol = ov.ReasoningProtocol
+	}
+	if ov.SupportedEfforts != nil {
+		e.SupportedEfforts = append([]string(nil), ov.SupportedEfforts...)
+	}
+	if ov.DefaultEffort != "" || ov.SupportedEfforts != nil {
+		e.DefaultEffort = ov.DefaultEffort
+	}
+	if ov.Vision != nil {
+		e.visionOverride = ov.Vision
+	}
+}
+
+func (e *ProviderEntry) modelOverrideForModel(model string) (ProviderModelOverride, bool) {
+	model = strings.TrimSpace(model)
+	if e == nil || model == "" || len(e.ModelOverrides) == 0 {
+		return ProviderModelOverride{}, false
+	}
+	if ov, ok := e.ModelOverrides[model]; ok {
+		return ov, true
+	}
+	for k, ov := range e.ModelOverrides {
+		if strings.EqualFold(strings.TrimSpace(k), model) {
+			return ov, true
+		}
+	}
+	return ProviderModelOverride{}, false
 }
 
 func clonePricing(p *provider.Pricing) *provider.Pricing {
@@ -1583,6 +1636,7 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 			cp := *e
 			cp.Model = model
 			cp.applyModelPrice()
+			cp.applyModelOverride()
 			return &cp, true
 		}
 	}
@@ -1591,6 +1645,7 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 		cp := *e
 		cp.Model = e.DefaultModel()
 		cp.applyModelPrice()
+		cp.applyModelOverride()
 		return &cp, true
 	}
 	if e, ambiguous := c.resolveBareModel(ref); len(ambiguous) == 0 && e != nil {
@@ -1629,6 +1684,7 @@ func (c *Config) resolveBareModel(ref string) (*ProviderEntry, []string) {
 	}
 	best.Model = ref
 	best.applyModelPrice()
+	best.applyModelOverride()
 	return &best, nil
 }
 

@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"voltui/internal/pluginpkg"
 )
 
 func writeSettings(t *testing.T, dir, json string) {
@@ -17,6 +19,16 @@ func writeSettings(t *testing.T, dir, json string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(d, SettingsFilename), []byte(json), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeHookTestFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -57,7 +69,43 @@ func TestLoadPermissionRequestHook(t *testing.T) {
 	}
 }
 
-func TestVoltUIHomeOverridesGlobalHookPaths(t *testing.T) {
+func TestLoadIncludesPluginSessionStartHook(t *testing.T) {
+	home := t.TempDir()
+	reasonixHome := filepath.Join(home, ".voltui")
+	root := filepath.Join(reasonixHome, "plugins", "superpowers")
+	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo global"}]}}`)
+	writeHookTestFile(t, filepath.Join(root, pluginpkg.CodexManifest), `{
+  "name": "superpowers",
+  "version": "6.1.0",
+  "skills": "./skills/"
+}`)
+	writeHookTestFile(t, filepath.Join(root, "hooks", "session-start-codex"), "#!/usr/bin/env bash\necho ok\n")
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name:         "superpowers",
+		Root:         "plugins/superpowers",
+		Version:      "6.1.0",
+		ManifestKind: "codex",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Load(LoadOptions{HomeDir: home, ProjectRoot: "/workspace", Trusted: true})
+	if len(got) != 2 {
+		t.Fatalf("hooks = %+v, want plugin + global", got)
+	}
+	if got[0].Scope != ScopePlugin || got[0].Event != SessionStart {
+		t.Fatalf("first hook = %+v, want plugin SessionStart", got[0])
+	}
+	if got[0].Env["REASONIX_PLUGIN_NAME"] != "superpowers" || got[0].Env["REASONIX_WORKSPACE_ROOT"] != "/workspace" {
+		t.Fatalf("plugin env = %#v", got[0].Env)
+	}
+	if got[1].Scope != ScopeGlobal {
+		t.Fatalf("second hook = %+v, want global", got[1])
+	}
+}
+
+func TestReasonixHomeOverridesGlobalHookPaths(t *testing.T) {
 	home := t.TempDir()
 	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
 	t.Setenv("HOME", home)
@@ -72,18 +120,18 @@ func TestVoltUIHomeOverridesGlobalHookPaths(t *testing.T) {
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo old"}]}}`)
 
 	if got := GlobalSettingsPath(""); got != filepath.Join(reasonixHome, SettingsFilename) {
-		t.Fatalf("GlobalSettingsPath = %q, want VoltUI home", got)
+		t.Fatalf("GlobalSettingsPath = %q, want Reasonix home", got)
 	}
 	if got := TrustPath(""); got != filepath.Join(reasonixHome, TrustFilename) {
-		t.Fatalf("TrustPath = %q, want VoltUI home", got)
+		t.Fatalf("TrustPath = %q, want Reasonix home", got)
 	}
 	hooks := Load(LoadOptions{})
 	if len(hooks) != 1 || hooks[0].Command != "echo rx" {
-		t.Fatalf("Load hooks = %+v, want VoltUI home hook only", hooks)
+		t.Fatalf("Load hooks = %+v, want Reasonix home hook only", hooks)
 	}
 }
 
-func TestVoltUIHomeFallsBackToLegacyGlobalHooksAndTrust(t *testing.T) {
+func TestReasonixHomeFallsBackToLegacyGlobalHooksAndTrust(t *testing.T) {
 	home := t.TempDir()
 	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
 	proj := t.TempDir()
@@ -119,7 +167,7 @@ func TestVoltUIHomeFallsBackToLegacyGlobalHooksAndTrust(t *testing.T) {
 		t.Fatalf("Trust: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(reasonixHome, TrustFilename)); err != nil {
-		t.Fatalf("Trust should write current VoltUI home trust file: %v", err)
+		t.Fatalf("Trust should write current Reasonix home trust file: %v", err)
 	}
 }
 
@@ -201,6 +249,46 @@ func TestDecideOutcome(t *testing.T) {
 		if got := decideOutcome(c.event, c.r); got != c.want {
 			t.Errorf("%s: decideOutcome = %s, want %s", c.name, got, c.want)
 		}
+	}
+}
+
+func TestParseOutputSessionStartJSONAdditionalContext(t *testing.T) {
+	out, warnings := ParseOutput(SessionStart, `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Load conventions."}}`)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	if out.AdditionalContext != "Load conventions." {
+		t.Fatalf("AdditionalContext = %q, want context", out.AdditionalContext)
+	}
+}
+
+func TestParseOutputSessionStartPlainText(t *testing.T) {
+	out, warnings := ParseOutput(SessionStart, "  Load workspace notes.  ")
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	if out.AdditionalContext != "Load workspace notes." {
+		t.Fatalf("AdditionalContext = %q, want plain text", out.AdditionalContext)
+	}
+}
+
+func TestParseOutputRejectsMismatchedEvent(t *testing.T) {
+	out, warnings := ParseOutput(SessionStart, `{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"wrong"}}`)
+	if out.AdditionalContext != "" {
+		t.Fatalf("AdditionalContext = %q, want empty", out.AdditionalContext)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one warning", warnings)
+	}
+}
+
+func TestParseOutputInvalidJSONWarns(t *testing.T) {
+	out, warnings := ParseOutput(SessionStart, `{"hookSpecificOutput":`)
+	if out.AdditionalContext != "" {
+		t.Fatalf("AdditionalContext = %q, want empty", out.AdditionalContext)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one warning", warnings)
 	}
 }
 

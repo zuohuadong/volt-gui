@@ -10,7 +10,7 @@
 # 4. Global brand replacement: reasonix -> voltui
 set -euo pipefail
 
-UPSTREAM_URL="https://github.com/esengine/DeepSeek-Reasonix.git"
+UPSTREAM_URL="git@github.com:esengine/DeepSeek-Reasonix.git"
 UPSTREAM_BRANCH="main-v2"
 MARKER_FILE=".upstream-sync-marker"
 

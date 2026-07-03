@@ -161,6 +161,9 @@ export async function logAction(env: Env, actor: User, action: string, target = 
 }
 
 export function userNav(user: User): string {
-  const admin = user.role === "admin" ? `<a class="navlink" href="/admin">Admin</a>` : "";
+  const admin =
+    user.role === "admin"
+      ? `<a class="navlink" href="/community">Community</a><a class="navlink" href="/admin">Admin</a>`
+      : "";
   return `<span class="chip"><span class="badge ${user.role}">${user.role}</span>${esc(user.email)}</span><a class="navlink" href="/account">Account</a>${admin}<form method="post" action="/logout" class="inline"><button class="btn ghost sm">Sign out</button></form>`;
 }

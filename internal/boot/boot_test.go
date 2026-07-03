@@ -1989,10 +1989,59 @@ model = "x"
 			if strings.Contains(notice.Text, "custom_reader") {
 				t.Fatalf("warning should name ignored entries only, got %q", notice.Text)
 			}
+			if !strings.Contains(notice.Text, "plan_mode_read_only_commands") || !strings.Contains(notice.Text, "read_only_task/read_only_skill") {
+				t.Fatalf("warning should suggest plan-mode migration paths, got %q", notice.Text)
+			}
 			return
 		}
 	}
 	t.Fatalf("missing ignored plan_mode_allowed_tools warning; got %+v", notices)
+}
+
+func TestBuildWarnsIgnoredPlanModeReadOnlyCommands(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("plan-mode-read-only-commands", testutil.Turn{Text: "done"})
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+plan_mode_read_only_commands = ["bash", "gh issue view"]
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	var notices []event.Event
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice {
+			notices = append(notices, e)
+		}
+	})
+
+	ctrl, err := Build(context.Background(), Options{Sink: sink})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	for _, notice := range notices {
+		if notice.Level == event.LevelWarn && strings.Contains(notice.Text, "plan_mode_read_only_commands") && strings.Contains(notice.Text, "bash") {
+			ignoredList := strings.TrimSpace(strings.SplitN(strings.TrimPrefix(notice.Text, "plan_mode_read_only_commands ignored unsafe entries:"), ";", 2)[0])
+			if ignoredList != "bash" {
+				t.Fatalf("warning should name ignored command prefixes only, got %q from %q", ignoredList, notice.Text)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing ignored plan_mode_read_only_commands warning; got %+v", notices)
 }
 
 func TestBuildTokenEconomyWebFetchConnectorHonorsDisabledBuiltin(t *testing.T) {
@@ -2575,9 +2624,69 @@ allow = ["Bash(go test ./...)", "Bash(go build ./...)"]
 	}
 }
 
+func TestRememberPlanModeReadOnlyCommandUsesWorkspaceRoot(t *testing.T) {
+	home := robustTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+
+	cwd := robustTempDir(t)
+	workspace := robustTempDir(t)
+	t.Chdir(cwd)
+	writeFile(t, cwd, "reasonix.toml", `
+[agent]
+plan_mode_read_only_commands = ["cwd query"]
+`)
+	writeFile(t, workspace, "reasonix.toml", `
+[agent]
+plan_mode_read_only_commands = ["workspace query"]
+`)
+
+	res := rememberPlanModeReadOnlyCommand(workspace, "gh issue view")
+	if !res.Saved || res.Path != filepath.Join(workspace, "reasonix.toml") {
+		t.Fatalf("remember result = %+v, want saved to workspace config", res)
+	}
+
+	cwdCfg := config.LoadForEdit(filepath.Join(cwd, "reasonix.toml"))
+	if hasPlanModeReadOnlyCommand(cwdCfg.Agent.PlanModeReadOnlyCommands, "gh issue view") {
+		t.Fatalf("remembered command was written to cwd config: %v", cwdCfg.Agent.PlanModeReadOnlyCommands)
+	}
+	workspaceCfg := config.LoadForEdit(filepath.Join(workspace, "reasonix.toml"))
+	if !hasPlanModeReadOnlyCommand(workspaceCfg.Agent.PlanModeReadOnlyCommands, "gh issue view") {
+		t.Fatalf("remembered command missing from workspace config: %v", workspaceCfg.Agent.PlanModeReadOnlyCommands)
+	}
+}
+
+func TestRememberPlanModeReadOnlyCommandSkipsCoveredPrefix(t *testing.T) {
+	workspace := robustTempDir(t)
+	writeFile(t, workspace, "reasonix.toml", `
+[agent]
+plan_mode_read_only_commands = ["gh issue view"]
+`)
+
+	res := rememberPlanModeReadOnlyCommand(workspace, "gh issue view 5867")
+	if res.Saved || res.CoveredBy != "gh issue view" {
+		t.Fatalf("remember result = %+v, want already covered", res)
+	}
+	cfg := config.LoadForEdit(filepath.Join(workspace, "reasonix.toml"))
+	if len(cfg.Agent.PlanModeReadOnlyCommands) != 1 || cfg.Agent.PlanModeReadOnlyCommands[0] != "gh issue view" {
+		t.Fatalf("plan-mode read-only commands = %v, want only existing prefix", cfg.Agent.PlanModeReadOnlyCommands)
+	}
+}
+
 func hasPermissionRule(rules []string, want string) bool {
 	for _, rule := range rules {
 		if rule == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPlanModeReadOnlyCommand(commands []string, want string) bool {
+	for _, cmd := range commands {
+		if strings.TrimSpace(cmd) == want {
 			return true
 		}
 	}

@@ -228,6 +228,22 @@ model list manually.
 **Full URL** still uses the OpenAI-compatible chat request body. It does not
 switch the request schema to the OpenAI Responses API.
 
+Some OpenAI-compatible gateways require non-standard top-level request body
+fields. Add them with `extra_body` on the provider entry:
+
+```toml
+[[providers]]
+name        = "spark"
+kind        = "openai"
+base_url    = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"
+models      = ["xopglm52"]
+api_key_env = "SPARK_API_KEY"
+extra_body  = { enable_thinking = true }
+```
+
+`extra_body` is merged into the chat JSON request body. Reasonix keeps core
+fields such as `model`, `messages`, `tools`, and `stream` under its own control.
+
 ## Desktop hooks
 
 Desktop hooks run local commands at lifecycle events such as `SessionStart`,
@@ -238,6 +254,11 @@ next real user turn as `<hook-context event="SessionStart">...</hook-context>`.
 This is intended for plugin or workflow bootstrap context, including
 Superpowers-style startup instructions, without baking that workflow into
 Reasonix's system prompt.
+
+Plugin packages can provide this startup context through
+`hooks/session-start-codex` or a plugin-root `CLAUDE.md`. Claude-style
+`.claude/settings.json` command hooks are also mapped to matching Reasonix hook
+events.
 
 The injected hook context is dynamic current-turn context. It does not change
 the stable system prompt, memory prefix, or tool schema, though dynamic content

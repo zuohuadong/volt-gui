@@ -700,8 +700,31 @@ export interface PluginView {
   skills: number;
   hooks: number;
   mcpServers: number;
+  skillDetails?: PluginSkillView[];
+  hookDetails?: PluginHookView[];
+  mcpServerDetails?: PluginMCPServerView[];
   warnings?: string[];
   error?: string;
+}
+export interface PluginSkillView {
+  name: string;
+  description?: string;
+  path?: string;
+  invocation?: string;
+  runAs?: string;
+}
+export interface PluginHookView {
+  event: string;
+  match?: string;
+  command?: string;
+  contextFile?: string;
+  description?: string;
+}
+export interface PluginMCPServerView {
+  name: string;
+  transport?: string;
+  command?: string;
+  url?: string;
 }
 export interface PluginInstallOptions {
   dryRun?: boolean;
@@ -829,6 +852,7 @@ export interface ProviderView {
   default: string;
   apiKeyEnv: string;
   headers?: Record<string, string> | null; // optional extra request headers for compatible gateways
+  extraBody?: Record<string, unknown> | null; // optional extra top-level request body fields for compatible gateways
   keySet: boolean; // the env var currently resolves to a value
   requiresKey?: boolean; // false for explicit no-auth providers
   configured?: boolean; // selectable: key is set or no key is required

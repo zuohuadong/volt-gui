@@ -13468,6 +13468,9 @@ body > .mermaid-diagram--fullscreen {
 .provider-template-card--name-conflict {
   background: color-mix(in srgb, var(--bg-elev-1) 82%, var(--bg) 18%);
 }
+.provider-template-card--name-conflict {
+  cursor: default;
+}
 .provider-template-card--similar-existing {
   border-color: color-mix(in srgb, var(--warning, #b7791f) 34%, var(--border));
   background: color-mix(in srgb, var(--warning-soft, #fff7ed) 24%, var(--bg-elev-1) 76%);
@@ -13499,6 +13502,35 @@ body > .mermaid-diagram--fullscreen {
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+.provider-template-card--name-conflict > span {
+  -webkit-line-clamp: 1;
+}
+.provider-template-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: auto;
+  min-width: 0;
+}
+.provider-template-card__actions .btn {
+  height: 24px;
+  min-width: 0;
+  padding: 0 7px;
+  font-size: var(--text-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-template-card__actions .inline-confirm {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 4px;
+  max-width: none;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: initial;
 }
 .provider-access-card {
   display: flex;

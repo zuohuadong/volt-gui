@@ -1691,6 +1691,43 @@ func (a *App) AddProviderPresetAccess(id, key string) (string, error) {
 	return keyWarning, nil
 }
 
+// ResetProviderPresetAccess intentionally overwrites same-name provider entries
+// with the curated preset template. It only mutates config; provider secrets stay
+// in Reasonix home .env under whichever api_key_env the resulting preset uses.
+func (a *App) ResetProviderPresetAccess(id string) error {
+	preset, ok := config.CuratedProviderPreset(id)
+	if !ok {
+		return fmt.Errorf("unknown provider preset %q", id)
+	}
+	if len(preset.Entries) == 0 {
+		return fmt.Errorf("provider preset %q has no provider entries", id)
+	}
+	if err := a.ensureActiveTabRebuildAllowed("provider access"); err != nil {
+		return err
+	}
+	cfg, _, err := a.loadDesktopUserConfigForEdit()
+	if err != nil {
+		return err
+	}
+	if existing := existingProviderNames(cfg, preset.Entries); len(existing) == 0 {
+		return providerPresetNoExistingProviderError(preset.ID)
+	}
+	return a.applyConfigChange(func(c *config.Config) error {
+		if existing := existingProviderNames(c, preset.Entries); len(existing) == 0 {
+			return providerPresetNoExistingProviderError(preset.ID)
+		}
+		names := make([]string, 0, len(preset.Entries))
+		for _, e := range preset.Entries {
+			if err := c.UpsertProvider(e); err != nil {
+				return err
+			}
+			names = append(names, e.Name)
+		}
+		addProviderAccess(c, names...)
+		return nil
+	})
+}
+
 func existingProviderNames(c *config.Config, entries []config.ProviderEntry) []string {
 	if c == nil || len(entries) == 0 {
 		return nil
@@ -1710,6 +1747,10 @@ func existingProviderNames(c *config.Config, entries []config.ProviderEntry) []s
 
 func providerPresetAlreadyAddedError(id string, names []string) error {
 	return fmt.Errorf("provider preset %q cannot be added because provider name(s) already exist: %s; edit, rename, or remove the existing provider before adding it again", id, strings.Join(names, ", "))
+}
+
+func providerPresetNoExistingProviderError(id string) error {
+	return fmt.Errorf("provider preset %q cannot be reset because no same-name provider exists; add the preset instead", id)
 }
 
 // FetchProviderModels probes the provider's OpenAI-compatible model-list

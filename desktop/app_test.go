@@ -1467,6 +1467,71 @@ func TestAddProviderPresetAccessDoesNotOverwriteExistingProvider(t *testing.T) {
 	}
 }
 
+func TestResetProviderPresetAccessOverwritesSameNameProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	t.Setenv("MIMO_API_KEY", "")
+	os.Unsetenv("MIMO_API_KEY")
+	setDesktopTestCredential(t, "MIMO_API_KEY", "sk-original")
+
+	cfg := config.Default()
+	custom := config.ProviderEntry{
+		Name:      "mimo-api",
+		Kind:      "openai",
+		BaseURL:   "https://custom.example/v1",
+		Models:    []string{"custom-model"},
+		Default:   "custom-model",
+		APIKeyEnv: "MIMO_API_KEY",
+		Headers:   map[string]string{"X-Custom": "remove-me"},
+	}
+	if err := cfg.UpsertProvider(custom); err != nil {
+		t.Fatalf("upsert custom provider: %v", err)
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	if err := NewApp().ResetProviderPresetAccess("mimo-api"); err != nil {
+		t.Fatalf("ResetProviderPresetAccess: %v", err)
+	}
+
+	cfg = config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("mimo-api")
+	if !ok {
+		t.Fatal("mimo-api provider missing after reset")
+	}
+	if got.BaseURL != "https://api.xiaomimimo.com/v1" || got.DefaultModel() != "mimo-v2.5-pro" || got.PresetID != "mimo-api" || got.PresetVersion != config.ProviderPresetVersion {
+		t.Fatalf("mimo-api provider after reset = %+v, want preset template", got)
+	}
+	if len(got.Headers) != 0 {
+		t.Fatalf("mimo-api headers after reset = %+v, want preset headers", got.Headers)
+	}
+	if !providerAccessSet(cfg.Desktop.ProviderAccess)["mimo-api"] {
+		t.Fatalf("provider_access missing mimo-api after reset: %+v", cfg.Desktop.ProviderAccess)
+	}
+	data, err := os.ReadFile(config.UserCredentialsPath())
+	if err != nil {
+		t.Fatalf("read saved credentials: %v", err)
+	}
+	if !strings.Contains(string(data), "MIMO_API_KEY=sk-original") {
+		t.Fatalf("credentials changed after reset:\n%s", data)
+	}
+
+	presetView := providerPresetViewByID(t, NewApp().Settings(), "mimo-api")
+	if !presetView.Added || presetView.Status != providerPresetStatusInstalled {
+		t.Fatalf("mimo-api preset view = %+v, want installed after reset", presetView)
+	}
+}
+
+func TestResetProviderPresetAccessRejectsMissingSameNameProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	if err := NewApp().ResetProviderPresetAccess("mimo-api"); err == nil {
+		t.Fatal("ResetProviderPresetAccess unexpectedly reset a missing provider")
+	} else if !strings.Contains(err.Error(), "no same-name provider exists") {
+		t.Fatalf("ResetProviderPresetAccess error = %v, want missing same-name provider guard", err)
+	}
+}
+
 func TestAddEveryProviderPresetAccessInstallsTemplate(t *testing.T) {
 	for _, preset := range config.CuratedProviderPresets() {
 		preset := preset

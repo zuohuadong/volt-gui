@@ -247,21 +247,6 @@ func AdapterBindings(cfg *config.Config, enabled map[bot.Platform]bool, feishuDo
 	return bindings
 }
 
-func ConnectionRuntimeID(conn config.BotConnectionConfig) string {
-	if id := strings.TrimSpace(conn.ID); id != "" {
-		return id
-	}
-	provider := strings.TrimSpace(conn.Provider)
-	domain := strings.TrimSpace(conn.Domain)
-	if provider == "" {
-		return ""
-	}
-	if domain == "" {
-		return provider
-	}
-	return provider + "-" + domain
-}
-
 func ModelName(cfg *config.Config, override string) string {
 	if strings.TrimSpace(override) != "" {
 		return strings.TrimSpace(override)

@@ -181,6 +181,7 @@ type chatTUI struct {
 	// column. It is separate from text selection so the visual thumb is not a
 	// dead target and dragging it never leaves a transcript selection behind.
 	scrollbarDrag       bool
+	mouseCaptureOff     bool
 	scrollbarGrabOffset int
 
 	// The user bubble is echoed to scrollback immediately on Enter (bubbleStartIdx
@@ -280,6 +281,12 @@ type chatTUI struct {
 	// fileSearchCache memoizes fileref.Search by query so the bounded walk runs
 	// once per @token fragment, not on every keystroke that re-renders the menu.
 	fileSearchCache map[string][]fileref.SearchResult
+
+	// copyNoticeText is a transient "copied to clipboard" hint shown on the status
+	// line after a mouse-selection copy. copyNoticeSeq guards its expiry tick so
+	// an older copy's timer cannot clobber a newer hint.
+	copyNoticeText string
+	copyNoticeSeq  int
 }
 
 type tuiState int
@@ -796,10 +803,14 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.autoScroll = 0 // stop edge auto-scroll
-		if msg.Button == tea.MouseLeft && m.sel.active && m.sel.empty() {
-			m.sel = selection{}
+		if msg.Button == tea.MouseLeft && m.sel.active {
+			if m.sel.empty() {
+				m.sel = selection{}
+			} else {
+				cmds = append(cmds, m.copySelectionWithNotice(m.selectedText()))
+			}
 		}
-		return m, nil
+		return m, finalize(m, cmds)
 
 	case tea.PasteMsg:
 		if m.state != tuiRunning && m.attachPastedImages(msg.Content) {
@@ -1329,6 +1340,11 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.growInputToFit()
 			m.updateCompletion()
 			return m, finalize(m, cmds)
+		}
+
+	case copyNoticeExpireMsg:
+		if msg.seq == m.copyNoticeSeq {
+			m.copyNoticeText = ""
 		}
 
 	case elapsedTickMsg:
@@ -2147,6 +2163,11 @@ func (m chatTUI) View() tea.View {
 			cur.Y += m.viewport.Height() + rowsAboveBox + 1
 			v.Cursor = cur
 		}
+	}
+	if m.mouseCaptureOff {
+		v.MouseMode = tea.MouseModeNone
+	} else {
+		v.MouseMode = tea.MouseModeCellMotion
 	}
 	return v
 }
@@ -3021,7 +3042,7 @@ func (m *chatTUI) runExportCommand(input string) {
 	}
 
 	var b strings.Builder
-	b.WriteString("# reasonix session\n\n")
+	b.WriteString("# voltui session\n\n")
 	lastRole := provider.Role("")
 	exportedMessages := 0
 	for _, msg := range msgs {
@@ -3191,6 +3212,28 @@ func (m *chatTUI) showMCPStatus() {
 }
 
 // notice queues a dim informational line to scrollback.
+// mouseTag is a persistent status-line marker while mouseCaptureOff is on.
+func (m chatTUI) mouseTag() string {
+	if !m.mouseCaptureOff {
+		return ""
+	}
+	return dim(i18n.M.MouseCaptureTag)
+}
+
+// toggleMouseCapture flips mouse-capture mode: when off, the terminal handles
+// selection/scroll natively; when on, in-app drag-select/scrollbar/wheel are active.
+func (m *chatTUI) toggleMouseCapture() {
+	m.mouseCaptureOff = !m.mouseCaptureOff
+	m.sel = selection{}
+	m.scrollbarDrag = false
+	m.autoScroll = 0
+	if m.mouseCaptureOff {
+		m.notice(i18n.M.MouseCaptureOffHint)
+	} else {
+		m.notice(i18n.M.MouseCaptureOnHint)
+	}
+}
+
 func (m *chatTUI) notice(note string) {
 	m.commitLine(dim("  · " + note))
 }

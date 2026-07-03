@@ -343,7 +343,7 @@ func TestMCPEditConfigLaunchEditorWithArgs(t *testing.T) {
 	t.Setenv("VISUAL", "code --wait")
 	t.Setenv("EDITOR", "")
 
-	path := "/tmp/reasonix.toml"
+	path := "/tmp/voltui.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
@@ -366,7 +366,7 @@ func TestMCPEditConfigLaunchEditorWithArgs(t *testing.T) {
 }
 
 func TestMCPEditConfigLaunchEditorParsesShellStyleQuotes(t *testing.T) {
-	path := "/tmp/reasonix.toml"
+	path := "/tmp/voltui.toml"
 	cases := []struct {
 		name       string
 		editor     string
@@ -429,7 +429,7 @@ func TestMCPEditConfigLaunchEditorRejectsUnterminatedQuote(t *testing.T) {
 	t.Setenv("VISUAL", `code --wait "unterminated`)
 	t.Setenv("EDITOR", "")
 
-	_, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
+	_, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
 	})
@@ -446,7 +446,7 @@ func TestMCPEditConfigLaunchEditorRejectsShellMetachars(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "vim; rm -rf /tmp/should-not-exist")
 
-	path := "/tmp/reasonix.toml"
+	path := "/tmp/voltui.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when EDITOR is set")
 		return "", errors.New("unexpected lookup")
@@ -477,7 +477,7 @@ func TestMCPEditConfigLaunchEditorExpandsEnvVar(t *testing.T) {
 	t.Setenv("VISUAL", "$REASONIX_TEST_EDITOR_BIN --flag")
 	t.Setenv("EDITOR", "")
 
-	path := "/tmp/reasonix.toml"
+	path := "/tmp/voltui.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
@@ -515,7 +515,7 @@ func TestMCPEditConfigLaunchEditorExpandsTilde(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("VISUAL", c.editor+" --wait")
 			t.Setenv("EDITOR", "")
-			launch, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
+			launch, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
 				t.Fatal("lookPath should not be called when VISUAL is set")
 				return "", errors.New("unexpected lookup")
 			})
@@ -539,7 +539,7 @@ func TestMCPEditConfigLaunchEditorTildeNotInPayload(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "vim; rm -rf ~/should-not-exist")
 
-	launch, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
+	launch, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
 		t.Fatal("lookPath should not be called when EDITOR is set")
 		return "", errors.New("unexpected lookup")
 	})

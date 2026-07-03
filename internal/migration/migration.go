@@ -504,8 +504,8 @@ func explicitLegacySessionSources(root string) ([]explicitSessionSource, error) 
 	}
 	candidates := []string{
 		filepath.Join(root, "sessions"),
-		filepath.Join(root, ".reasonix", "sessions"),
-		filepath.Join(root, "reasonix", "sessions"),
+		filepath.Join(root, ".voltui", "sessions"),
+		filepath.Join(root, "voltui", "sessions"),
 	}
 	var out []explicitSessionSource
 	seen := map[string]bool{}

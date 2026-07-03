@@ -13437,18 +13437,18 @@ body > .mermaid-diagram--fullscreen {
 .provider-template-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
-  grid-auto-rows: 112px;
+  grid-auto-rows: 92px;
   align-items: stretch;
-  gap: 10px;
+  gap: 8px;
 }
 .provider-template-card {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
+  gap: 4px;
   height: 100%;
   min-width: 0;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev-1);
@@ -13470,11 +13470,11 @@ body > .mermaid-diagram--fullscreen {
   display: -webkit-box;
   max-width: 100%;
   overflow: hidden;
-  line-height: 1.25;
+  line-height: 1.2;
   font-size: var(--font-control);
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 .provider-template-card span {
   display: -webkit-box;
@@ -13482,7 +13482,7 @@ body > .mermaid-diagram--fullscreen {
   overflow: hidden;
   color: var(--fg-dim);
   font-size: var(--font-control-small);
-  line-height: 1.4;
+  line-height: 1.35;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

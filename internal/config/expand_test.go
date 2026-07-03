@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -74,5 +75,27 @@ func TestForbidReadRootsForRootResolvesRelativePathsAndScopedEnv(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("root %d = %q, want %q (all roots: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestWriteRootsForRootExpandsMavenAllowWrite(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := Default()
+	cfg.Sandbox.AllowWrite = []string{
+		"${HOME}/.m2",
+		"${HOME}/.m2/repository",
+	}
+
+	got := cfg.WriteRootsForRoot(project)
+	want := []string{
+		project,
+		filepath.Join(home, ".m2"),
+		filepath.Join(home, ".m2", "repository"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WriteRootsForRoot() = %v, want %v", got, want)
 	}
 }

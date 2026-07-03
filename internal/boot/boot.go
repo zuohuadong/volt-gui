@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -237,6 +238,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	sysPrompt += "\n\n" + config.UserDecisionPolicy
 	sysPrompt += "\n\n" + config.LanguagePolicy
+	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
+		sysPrompt += "\n\n" + workspaceLine
+	}
 	if tokenEconomy {
 		sysPrompt += "\n\n" + tokenEconomyPrompt
 	}
@@ -1270,6 +1274,13 @@ func subagentModelKeys(name string) []string {
 		}
 	}
 	return keys
+}
+
+func currentWorkspacePromptLine(root string) string {
+	if root == "" {
+		return ""
+	}
+	return "Current workspace: " + strconv.Quote(root)
 }
 
 func resolveWorkspaceRoot(explicit string) string {

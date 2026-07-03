@@ -57,6 +57,9 @@ func TestCuratedProviderPresetsCoverRequestedProviders(t *testing.T) {
 			if entry.APIKeyEnv == "" {
 				t.Fatalf("preset %q entry %q has no api_key_env", preset.ID, entry.Name)
 			}
+			if entry.PresetID != preset.ID || entry.PresetVersion != ProviderPresetVersion {
+				t.Fatalf("preset %q entry %q metadata = %q/%d, want %q/%d", preset.ID, entry.Name, entry.PresetID, entry.PresetVersion, preset.ID, ProviderPresetVersion)
+			}
 			var cfg Config
 			if err := cfg.UpsertProvider(entry); err != nil {
 				t.Fatalf("preset %q entry %q failed validation: %v", preset.ID, entry.Name, err)
@@ -77,6 +80,7 @@ func TestCuratedProviderPresetReturnsDeepCopy(t *testing.T) {
 	}
 	preset.Entries[0].Models[0] = "mutated"
 	preset.Entries[0].ExtraBody["reasoning_split"] = false
+	preset.Entries[0].PresetID = "mutated"
 
 	fresh, ok := CuratedProviderPreset("minimax-cn-api")
 	if !ok {
@@ -87,6 +91,9 @@ func TestCuratedProviderPresetReturnsDeepCopy(t *testing.T) {
 	}
 	if got, _ := fresh.Entries[0].ExtraBody["reasoning_split"].(bool); !got {
 		t.Fatalf("fresh minimax reasoning_split = %v, want true", fresh.Entries[0].ExtraBody["reasoning_split"])
+	}
+	if got := fresh.Entries[0].PresetID; got != "minimax-cn-api" {
+		t.Fatalf("fresh minimax preset_id = %q, want minimax-cn-api", got)
 	}
 }
 

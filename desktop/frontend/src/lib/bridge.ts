@@ -833,6 +833,8 @@ function mockProviderPresetViews(): ProviderPresetView[] {
     providerNames: [template.provider.name],
     models: [...template.provider.models],
     added: false,
+    status: "available",
+    statusProviderNames: [],
     keySet: false,
     requiresKey: true,
     configured: false,
@@ -2935,6 +2937,8 @@ function makeMockApp(): AppBindings {
       if (i >= 0) settings.providers[i] = { ...settings.providers[i], ...next, keySet: next.keySet || settings.providers[i].keySet };
       else settings.providers.push(next);
       preset.added = true;
+      preset.status = "installed";
+      preset.statusProviderNames = [...preset.providerNames];
       preset.keySet = preset.keySet || !!key.trim();
       preset.configured = !preset.requiresKey || preset.keySet;
       return "";

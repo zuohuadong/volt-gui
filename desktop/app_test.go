@@ -1254,6 +1254,17 @@ func TestSettingsSurfacesCuratedProviderPresets(t *testing.T) {
 	}
 }
 
+func providerPresetViewByID(t *testing.T, view SettingsView, id string) ProviderPresetView {
+	t.Helper()
+	for _, preset := range view.ProviderPresets {
+		if preset.ID == id {
+			return preset
+		}
+	}
+	t.Fatalf("Settings().ProviderPresets missing %q: %+v", id, view.ProviderPresets)
+	return ProviderPresetView{}
+}
+
 func TestSettingsMarksPresetAddedWhenSameNameProviderExistsWithoutAccess(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
@@ -1275,15 +1286,9 @@ api_key_env = "MIMO_API_KEY"
 	}
 
 	view := NewApp().Settings()
-	var presetView *ProviderPresetView
-	for i := range view.ProviderPresets {
-		if view.ProviderPresets[i].ID == "mimo-api" {
-			presetView = &view.ProviderPresets[i]
-			break
-		}
-	}
-	if presetView == nil || !presetView.Added {
-		t.Fatalf("mimo-api preset view = %+v, want added because a same-name provider exists", presetView)
+	presetView := providerPresetViewByID(t, view, "mimo-api")
+	if !presetView.Added || presetView.Status != providerPresetStatusNameConflict || !reflect.DeepEqual(presetView.StatusProviderNames, []string{"mimo-api"}) {
+		t.Fatalf("mimo-api preset view = %+v, want name-conflict because a different same-name provider exists", presetView)
 	}
 
 	var providerView *ProviderView
@@ -1298,6 +1303,55 @@ api_key_env = "MIMO_API_KEY"
 	}
 	if providerView.Added {
 		t.Fatalf("mimo-api provider Added = true, want false until provider_access explicitly enables it")
+	}
+}
+
+func TestSettingsMarksLegacyEquivalentPresetAsInstalled(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	preset, ok := config.CuratedProviderPreset("mimo-api")
+	if !ok || len(preset.Entries) == 0 {
+		t.Fatal("missing mimo-api preset")
+	}
+	legacy := preset.Entries[0]
+	legacy.PresetID = ""
+	legacy.PresetVersion = 0
+	cfg := config.Default()
+	if err := cfg.UpsertProvider(legacy); err != nil {
+		t.Fatalf("upsert legacy provider: %v", err)
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	view := NewApp().Settings()
+	presetView := providerPresetViewByID(t, view, "mimo-api")
+	if !presetView.Added || presetView.Status != providerPresetStatusInstalled || !reflect.DeepEqual(presetView.StatusProviderNames, []string{"mimo-api"}) {
+		t.Fatalf("mimo-api preset view = %+v, want installed for legacy equivalent config", presetView)
+	}
+}
+
+func TestSettingsMarksSimilarProviderPresetWithoutBlockingAdd(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	preset, ok := config.CuratedProviderPreset("mimo-api")
+	if !ok || len(preset.Entries) == 0 {
+		t.Fatal("missing mimo-api preset")
+	}
+	similar := preset.Entries[0]
+	similar.Name = "my-mimo"
+	similar.PresetID = ""
+	similar.PresetVersion = 0
+	cfg := config.Default()
+	if err := cfg.UpsertProvider(similar); err != nil {
+		t.Fatalf("upsert similar provider: %v", err)
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	view := NewApp().Settings()
+	presetView := providerPresetViewByID(t, view, "mimo-api")
+	if presetView.Added || presetView.Status != providerPresetStatusSimilarExisting || !reflect.DeepEqual(presetView.StatusProviderNames, []string{"my-mimo"}) {
+		t.Fatalf("mimo-api preset view = %+v, want non-blocking similar-existing status", presetView)
 	}
 }
 
@@ -1319,6 +1373,9 @@ func TestAddProviderPresetAccessSavesEditableProviderAndKey(t *testing.T) {
 	}
 	if p.Kind != "openai" || p.BaseURL != "https://api.xiaomimimo.com/v1" || p.Default != "mimo-v2.5-pro" {
 		t.Fatalf("mimo-api provider after preset add = %+v", p)
+	}
+	if p.PresetID != "mimo-api" || p.PresetVersion != config.ProviderPresetVersion {
+		t.Fatalf("mimo-api preset metadata = %q/%d, want mimo-api/%d", p.PresetID, p.PresetVersion, config.ProviderPresetVersion)
 	}
 	if !p.NoProxy {
 		t.Fatal("mimo-api preset should save no_proxy = true")
@@ -1353,8 +1410,8 @@ func TestAddProviderPresetAccessSavesEditableProviderAndKey(t *testing.T) {
 			providerView = &view.Providers[i]
 		}
 	}
-	if presetView == nil || !presetView.Added || !presetView.KeySet {
-		t.Fatalf("mimo-api preset view = %+v, want added and key-set", presetView)
+	if presetView == nil || !presetView.Added || presetView.Status != providerPresetStatusInstalled || !presetView.KeySet {
+		t.Fatalf("mimo-api preset view = %+v, want installed/key-set", presetView)
 	}
 	if providerView == nil || providerView.BuiltIn || !providerView.Added || !providerView.KeySet {
 		t.Fatalf("mimo provider view = %+v, want editable added custom provider with key", providerView)
@@ -1387,8 +1444,8 @@ func TestAddProviderPresetAccessDoesNotOverwriteExistingProvider(t *testing.T) {
 
 	if warning, err := NewApp().AddProviderPresetAccess("mimo-api", "sk-new"); err == nil {
 		t.Fatal("AddProviderPresetAccess unexpectedly overwrote an existing provider")
-	} else if !strings.Contains(err.Error(), "already added") {
-		t.Fatalf("AddProviderPresetAccess error = %v, want already-added guard", err)
+	} else if !strings.Contains(err.Error(), "provider name(s) already exist") {
+		t.Fatalf("AddProviderPresetAccess error = %v, want name-exists guard", err)
 	} else if warning != "" {
 		t.Fatalf("AddProviderPresetAccess warning = %q, want none on rejected add", warning)
 	}
@@ -1435,6 +1492,9 @@ func TestAddEveryProviderPresetAccessInstallsTemplate(t *testing.T) {
 				if got.Kind != entry.Kind || got.BaseURL != entry.BaseURL || got.DefaultModel() != entry.DefaultModel() || got.APIKeyEnv != entry.APIKeyEnv || got.AuthHeader != entry.AuthHeader || got.NoProxy != entry.NoProxy {
 					t.Fatalf("provider %q core fields = %+v, want template %+v", entry.Name, got, entry)
 				}
+				if got.PresetID != preset.ID || got.PresetVersion != config.ProviderPresetVersion {
+					t.Fatalf("provider %q preset metadata = %q/%d, want %q/%d", entry.Name, got.PresetID, got.PresetVersion, preset.ID, config.ProviderPresetVersion)
+				}
 				if got.ContextWindow != entry.ContextWindow || got.Thinking != entry.Thinking || got.DefaultEffort != entry.DefaultEffort || got.ReasoningProtocol != entry.ReasoningProtocol {
 					t.Fatalf("provider %q capability fields = %+v, want template %+v", entry.Name, got, entry)
 				}
@@ -1454,8 +1514,8 @@ func TestAddEveryProviderPresetAccessInstallsTemplate(t *testing.T) {
 					break
 				}
 			}
-			if presetView == nil || !presetView.Added || !presetView.KeySet || !presetView.Configured {
-				t.Fatalf("preset view for %q = %+v, want added/key-set/configured", preset.ID, presetView)
+			if presetView == nil || !presetView.Added || presetView.Status != providerPresetStatusInstalled || !presetView.KeySet || !presetView.Configured {
+				t.Fatalf("preset view for %q = %+v, want installed/key-set/configured", preset.ID, presetView)
 			}
 		})
 	}

@@ -59,19 +59,28 @@ type ProviderView struct {
 }
 
 type ProviderPresetView struct {
-	ID            string   `json:"id"`
-	Label         string   `json:"label"`
-	Description   string   `json:"description"`
-	KeyEnv        string   `json:"keyEnv"`
-	ProviderNames []string `json:"providerNames"`
-	Models        []string `json:"models"`
-	Added         bool     `json:"added"`
-	KeySet        bool     `json:"keySet"`
-	RequiresKey   bool     `json:"requiresKey"`
-	Configured    bool     `json:"configured"`
-	KeySource     string   `json:"keySource,omitempty"`
-	KeySourcePath string   `json:"keySourcePath,omitempty"`
+	ID                  string   `json:"id"`
+	Label               string   `json:"label"`
+	Description         string   `json:"description"`
+	KeyEnv              string   `json:"keyEnv"`
+	ProviderNames       []string `json:"providerNames"`
+	Models              []string `json:"models"`
+	Added               bool     `json:"added"`
+	Status              string   `json:"status"`
+	StatusProviderNames []string `json:"statusProviderNames"`
+	KeySet              bool     `json:"keySet"`
+	RequiresKey         bool     `json:"requiresKey"`
+	Configured          bool     `json:"configured"`
+	KeySource           string   `json:"keySource,omitempty"`
+	KeySourcePath       string   `json:"keySourcePath,omitempty"`
 }
+
+const (
+	providerPresetStatusAvailable       = "available"
+	providerPresetStatusInstalled       = "installed"
+	providerPresetStatusNameConflict    = "name_conflict"
+	providerPresetStatusSimilarExisting = "similar_existing"
+)
 
 type ProviderModelOverrideView struct {
 	Model             string   `json:"model"`
@@ -477,7 +486,7 @@ func officialProviderViewsForRootWithResolver(added map[string]bool, pricingLang
 	return out
 }
 
-func providerPresetViewsForRootWithResolver(added map[string]bool, root string, resolver *config.CredentialResolver) []ProviderPresetView {
+func providerPresetViewsForRootWithResolver(cfg *config.Config, root string, resolver *config.CredentialResolver) []ProviderPresetView {
 	if resolver == nil {
 		resolver = config.NewCredentialResolverForRoot(root)
 	}
@@ -489,7 +498,6 @@ func providerPresetViewsForRootWithResolver(added map[string]bool, root string, 
 		models := make([]string, 0)
 		modelSeen := map[string]bool{}
 		requiresKey := false
-		addedAny := false
 		for _, entry := range preset.Entries {
 			if keyEnv == "" {
 				keyEnv = strings.TrimSpace(entry.APIKeyEnv)
@@ -500,7 +508,6 @@ func providerPresetViewsForRootWithResolver(added map[string]bool, root string, 
 			name := strings.TrimSpace(entry.Name)
 			if name != "" {
 				names = append(names, name)
-				addedAny = addedAny || added[name]
 			}
 			for _, model := range chatProviderModels(entry.ChatModelList()) {
 				if modelSeen[model] {
@@ -514,34 +521,135 @@ func providerPresetViewsForRootWithResolver(added map[string]bool, root string, 
 		if keyEnv != "" {
 			key = resolver.ResolveGlobalFirst(keyEnv)
 		}
+		status, statusNames := classifyProviderPresetStatus(cfg, preset)
+		added := status == providerPresetStatusInstalled || status == providerPresetStatusNameConflict
 		out = append(out, ProviderPresetView{
-			ID:            preset.ID,
-			Label:         preset.Label,
-			Description:   preset.Description,
-			KeyEnv:        keyEnv,
-			ProviderNames: nonNil(names),
-			Models:        nonNil(models),
-			Added:         addedAny,
-			KeySet:        key.Set,
-			RequiresKey:   requiresKey,
-			Configured:    !requiresKey || key.Set,
-			KeySource:     key.Source.Label,
-			KeySourcePath: key.Source.Path,
+			ID:                  preset.ID,
+			Label:               preset.Label,
+			Description:         preset.Description,
+			KeyEnv:              keyEnv,
+			ProviderNames:       nonNil(names),
+			Models:              nonNil(models),
+			Added:               added,
+			Status:              status,
+			StatusProviderNames: nonNil(statusNames),
+			KeySet:              key.Set,
+			RequiresKey:         requiresKey,
+			Configured:          !requiresKey || key.Set,
+			KeySource:           key.Source.Label,
+			KeySourcePath:       key.Source.Path,
 		})
 	}
 	return out
 }
 
-func configuredProviderSet(cfg *config.Config) map[string]bool {
-	out := map[string]bool{}
+func classifyProviderPresetStatus(cfg *config.Config, preset config.ProviderPreset) (string, []string) {
 	if cfg == nil {
-		return out
+		return providerPresetStatusAvailable, nil
+	}
+	installed := make([]string, 0)
+	conflicts := make([]string, 0)
+	similar := make([]string, 0)
+	presetID := strings.TrimSpace(preset.ID)
+	for _, entry := range preset.Entries {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+		existing, ok := cfg.Provider(name)
+		if !ok {
+			continue
+		}
+		if providerEntryMatchesPreset(*existing, entry, presetID) {
+			installed = append(installed, name)
+		} else {
+			conflicts = append(conflicts, name)
+		}
+	}
+	if len(conflicts) > 0 {
+		return providerPresetStatusNameConflict, uniqueNonEmptyStrings(conflicts)
+	}
+	if len(installed) > 0 {
+		return providerPresetStatusInstalled, uniqueNonEmptyStrings(installed)
 	}
 	for i := range cfg.Providers {
-		name := strings.TrimSpace(cfg.Providers[i].Name)
-		if name != "" {
-			out[name] = true
+		existing := cfg.Providers[i]
+		existingName := strings.TrimSpace(existing.Name)
+		if existingName == "" {
+			continue
 		}
+		for _, entry := range preset.Entries {
+			if existingName == strings.TrimSpace(entry.Name) {
+				continue
+			}
+			if providerEntrySimilarToPreset(existing, entry, presetID) {
+				similar = append(similar, existingName)
+				break
+			}
+		}
+	}
+	if len(similar) > 0 {
+		return providerPresetStatusSimilarExisting, uniqueNonEmptyStrings(similar)
+	}
+	return providerPresetStatusAvailable, nil
+}
+
+func providerEntryMatchesPreset(existing, preset config.ProviderEntry, presetID string) bool {
+	if presetID != "" && strings.TrimSpace(existing.PresetID) == presetID {
+		return true
+	}
+	if strings.TrimSpace(existing.PresetID) != "" {
+		return false
+	}
+	return providerEntryCoreMatches(existing, preset)
+}
+
+func providerEntrySimilarToPreset(existing, preset config.ProviderEntry, presetID string) bool {
+	if presetID != "" && strings.TrimSpace(existing.PresetID) == presetID {
+		return true
+	}
+	return providerEntryCoreMatches(existing, preset)
+}
+
+func providerEntryCoreMatches(existing, preset config.ProviderEntry) bool {
+	return strings.EqualFold(strings.TrimSpace(existing.Kind), strings.TrimSpace(preset.Kind)) &&
+		normalizeProviderURL(existing.BaseURL) == normalizeProviderURL(preset.BaseURL) &&
+		strings.TrimSpace(existing.ChatURL) == strings.TrimSpace(preset.ChatURL) &&
+		strings.TrimSpace(existing.APIKeyEnv) == strings.TrimSpace(preset.APIKeyEnv) &&
+		existing.AuthHeader == preset.AuthHeader
+}
+
+func normalizeProviderURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err == nil && u.Scheme != "" && u.Host != "" {
+		u.Scheme = strings.ToLower(u.Scheme)
+		u.Host = strings.ToLower(u.Host)
+		u.Path = strings.TrimRight(u.Path, "/")
+		u.RawPath = ""
+		u.RawQuery = ""
+		u.Fragment = ""
+		return strings.TrimRight(u.String(), "/")
+	}
+	return strings.TrimRight(raw, "/")
+}
+
+func uniqueNonEmptyStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
 	}
 	return out
 }
@@ -608,7 +716,7 @@ func (a *App) Settings() SettingsView {
 		return SettingsView{
 			Providers:         []ProviderView{},
 			OfficialProviders: officialProviderViews(map[string]bool{}, ""),
-			ProviderPresets:   providerPresetViewsForRootWithResolver(map[string]bool{}, a.activeWorkspaceRoot(), nil),
+			ProviderPresets:   providerPresetViewsForRootWithResolver(nil, a.activeWorkspaceRoot(), nil),
 			ProviderKinds:     nonNil(provider.Kinds()),
 			Permissions: PermissionsView{
 				Mode:  "ask",
@@ -707,7 +815,7 @@ func (a *App) Settings() SettingsView {
 	added := providerAccessSet(cfg.Desktop.ProviderAccess)
 	resolver := config.NewCredentialResolverForRoot(root)
 	v.OfficialProviders = officialProviderViewsForRootWithResolver(officialProviderAddedSet(cfg), cfg.DeepSeekOfficialPricingLanguage(), root, resolver)
-	v.ProviderPresets = providerPresetViewsForRootWithResolver(configuredProviderSet(cfg), root, resolver)
+	v.ProviderPresets = providerPresetViewsForRootWithResolver(cfg, root, resolver)
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		v.Providers = append(v.Providers, providerViewFromEntryForRootWithResolver(*p, isOfficialBuiltInProvider(*p), added[p.Name], root, resolver))
@@ -1601,7 +1709,7 @@ func existingProviderNames(c *config.Config, entries []config.ProviderEntry) []s
 }
 
 func providerPresetAlreadyAddedError(id string, names []string) error {
-	return fmt.Errorf("provider preset %q is already added as %s; edit or remove the existing provider before adding it again", id, strings.Join(names, ", "))
+	return fmt.Errorf("provider preset %q cannot be added because provider name(s) already exist: %s; edit, rename, or remove the existing provider before adding it again", id, strings.Join(names, ", "))
 }
 
 // FetchProviderModels probes the provider's OpenAI-compatible model-list

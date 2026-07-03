@@ -2523,7 +2523,7 @@ func (c *Controller) maybeColdResumePrune(path string) {
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
 		"resumed after %s idle (provider cache expired) — elided %d stale tool results to cheapen the cold restart",
 		time.Since(last).Round(time.Minute), st.Results)})
-	if err := c.Snapshot(); err != nil {
+	if err := c.SnapshotRewrite(); err != nil {
 		slog.Warn("controller: post-prune snapshot", "err", err)
 	}
 }
@@ -2613,7 +2613,7 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 	}
 	var err error
 	if forceRewrite {
-		err = s.Save(path)
+		err = s.SaveRewrite(path)
 	} else {
 		err = s.SaveSnapshot(path)
 	}
@@ -2743,16 +2743,16 @@ func (c *Controller) replaceSessionAfterCancel(msgs []provider.Message) {
 	// the in_progress items written by the cancelled turn.
 	c.executor.RebuildTodoState()
 	// The mid-turn autosave may have already written a partial transcript to
-	// disk.  snapshotActivityIfChanged skips the write when messageCount()
-	// returns to startMessages, so force a flush here to overwrite the stale
-	// file.  We call Session.Save directly to cover the edge case where the
-	// strip leaves only a system message (HasContent() == false), which would
-	// cause snapshot() to return early without writing.
+	// disk. snapshotActivityIfChanged skips the write when messageCount()
+	// returns to startMessages, so flush the cleaned transcript here. SaveRewrite
+	// still checks that this controller owns the current on-disk baseline before
+	// overwriting it, and also covers the edge case where the strip leaves only a
+	// system message (HasContent() == false).
 	c.mu.Lock()
 	path := c.sessionPath
 	c.mu.Unlock()
 	if path != "" {
-		if err := c.executor.Session().Save(path); err != nil {
+		if err := c.executor.Session().SaveRewrite(path); err != nil {
 			slog.Warn("controller: post-cancel transcript flush", "err", err)
 		}
 	}

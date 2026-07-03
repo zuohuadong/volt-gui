@@ -2214,6 +2214,7 @@ function makeMockApp(): AppBindings {
         skills: 1,
         hooks: 0,
         mcpServers: 0,
+        skillDetails: [{ name: "plan", description: "Plan work before implementation", invocation: "/plan", runAs: "inline" }],
       };
       if (existing >= 0) capPlugins[existing] = view;
       else capPlugins.push(view);

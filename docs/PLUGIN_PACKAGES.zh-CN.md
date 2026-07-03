@@ -77,6 +77,12 @@ reasonix plugin list
 reasonix plugin show superpowers
 ```
 
+如果能读取到能力明细，`show` 也会输出具体清单：
+
+- **skills** 会展示建议的 `/<skill>` 调用方式和描述。
+- **hooks** 会展示生命周期事件、matcher、命令或上下文文件。
+- **mcpServers** 会展示服务器名称、传输方式和启动目标。
+
 检查 manifest 和 skill roots 是否可读：
 
 ```bash
@@ -99,6 +105,20 @@ reasonix plugin remove superpowers --yes
 `remove` 也可以写成 `uninstall`。它需要 `--yes`，
 因为会写入状态并删除复制安装的插件内容。如果是链接模式安装的本地插件，
 外部源目录会保留。
+
+### 在 CLI 中使用已安装插件
+
+已安装插件不会打开一个独立聊天界面。插件启用后，Reasonix 会把它的能力加载到普通交互会话里：
+
+- **Skills** 会出现在 `/skills` 中。可以用 `/<skill> [args]` 直接调用，
+  也可以自然描述任务，让 agent 按 description 选择匹配的 skill。
+- **Hooks** 会在配置的生命周期事件里自动运行，例如 `SessionStart`、
+  `UserPromptSubmit`、`PreToolUse` 或 `PostToolUse`。
+- **MCP servers** 会进入正常 MCP/工具流程。用户只需要描述任务，
+  Reasonix 会在相关时调用插件提供的工具。
+
+如果是在另一个终端里安装、启用、禁用或更新插件，而当前已有 `reasonix` 会话正在运行，
+建议开启新会话，或重新打开 `/skills` 确认当前会话能看到预期技能。
 
 ## 桌面端设置
 
@@ -136,9 +156,20 @@ reasonix plugin remove superpowers --yes
 展开插件行后可以：
 
 - 启用或禁用插件。
+- 查看 **使用方法**，了解该插件导出的 skills、hooks 和 MCP servers。
 - 使用 **更新** 拉取或刷新具备更新来源的插件。
 - 使用 **诊断** 检查插件 manifest，并查看警告或诊断信息。
 - 使用 **移除插件**，确认后卸载该插件包。
+
+### 在桌面端使用已安装插件
+
+桌面端设置页和 CLI 使用同一套运行模型：
+
+- 展开已安装插件，可以看到 **使用方法** 区域。
+- Skills 会展示建议的直接命令，例如 `/plan`；在会话中也可以通过 `/skills` 浏览。
+- Hooks 和 MCP servers 作为透明能力清单展示。它们不需要单独的“运行”按钮：
+  启用的 hooks 会自动触发，MCP 工具会通过普通工具调用流程可用。
+- 如果当前打开的会话没有反映插件变更，刷新插件列表并开启新会话。
 
 ## 原生 Manifest
 

@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"reasonix/internal/frontmatter"
 )
 
 const (
@@ -32,6 +34,35 @@ type Package struct {
 	Root         string
 	ManifestKind string
 	Manifest     Manifest
+}
+
+type Inventory struct {
+	Skills     []SkillRef
+	Hooks      []HookRef
+	MCPServers []MCPServerRef
+}
+
+type SkillRef struct {
+	Name        string
+	Description string
+	Path        string
+	Invocation  string
+	RunAs       string
+}
+
+type HookRef struct {
+	Event       string
+	Match       string
+	Command     string
+	ContextFile string
+	Description string
+}
+
+type MCPServerRef struct {
+	Name      string
+	Transport string
+	Command   string
+	URL       string
 }
 
 // Manifest is the normalized manifest shape used by Reasonix.
@@ -567,10 +598,196 @@ func (p Package) SkillRoots() []string {
 }
 
 func (p Package) CapabilityCounts() (skills, hooks, mcp int) {
-	skills = len(p.Manifest.Skills)
+	skills = len(p.skillRefs())
 	for _, hs := range p.Manifest.Hooks {
 		hooks += len(hs)
 	}
 	mcp = len(p.Manifest.MCPServers)
 	return
+}
+
+func (p Package) Inventory() Inventory {
+	return Inventory{
+		Skills:     p.skillRefs(),
+		Hooks:      p.hookRefs(),
+		MCPServers: p.mcpServerRefs(),
+	}
+}
+
+func (p Package) skillRefs() []SkillRef {
+	var out []SkillRef
+	seen := map[string]bool{}
+	for _, rel := range p.Manifest.Skills {
+		root := filepath.Join(p.Root, filepath.FromSlash(rel))
+		p.scanSkillPath(root, 1, map[string]bool{}, &out)
+	}
+	filtered := out[:0]
+	for _, sk := range out {
+		key := sk.Path
+		if key == "" {
+			key = sk.Name
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		filtered = append(filtered, sk)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].Name != filtered[j].Name {
+			return filtered[i].Name < filtered[j].Name
+		}
+		return filtered[i].Path < filtered[j].Path
+	})
+	return filtered
+}
+
+func (p Package) scanSkillPath(path string, depth int, seen map[string]bool, out *[]SkillRef) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if !info.IsDir() {
+		if info.Mode().IsRegular() && strings.EqualFold(filepath.Ext(path), ".md") {
+			if sk, ok := parseSkillRef(path, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))); ok {
+				*out = append(*out, sk)
+			}
+		}
+		return
+	}
+
+	key := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		key = filepath.Clean(resolved)
+	}
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+
+	if sk, ok := parseSkillRef(filepath.Join(path, "SKILL.md"), filepath.Base(path)); ok {
+		*out = append(*out, sk)
+		return
+	}
+	if depth >= 5 {
+		return
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if shouldSkipSkillScanDir(name) {
+			continue
+		}
+		full := filepath.Join(path, name)
+		if entry.IsDir() {
+			p.scanSkillPath(full, depth+1, seen, out)
+			continue
+		}
+		if entry.Type().IsRegular() && strings.EqualFold(filepath.Ext(name), ".md") {
+			if sk, ok := parseSkillRef(full, strings.TrimSuffix(name, filepath.Ext(name))); ok {
+				*out = append(*out, sk)
+			}
+		}
+	}
+}
+
+func shouldSkipSkillScanDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "assets", "node_modules", "references", "scripts":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseSkillRef(path, stem string) (SkillRef, bool) {
+	if !IsValidName(stem) {
+		return SkillRef{}, false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return SkillRef{}, false
+	}
+	content := strings.TrimPrefix(strings.ReplaceAll(string(b), "\r\n", "\n"), "\uFEFF")
+	fm, _ := frontmatter.Split(content)
+	name := stem
+	if v := strings.TrimSpace(fm["name"]); IsValidName(v) {
+		name = v
+	}
+	return SkillRef{
+		Name:        name,
+		Description: strings.TrimSpace(fm["description"]),
+		Path:        filepath.Clean(path),
+		Invocation:  "/" + name,
+		RunAs:       pluginSkillRunMode(fm),
+	}, true
+}
+
+func pluginSkillRunMode(fm map[string]string) string {
+	if strings.TrimSpace(fm["runas"]) == "subagent" {
+		return "subagent"
+	}
+	if strings.EqualFold(strings.TrimSpace(fm["context"]), "fork") {
+		return "subagent"
+	}
+	if strings.TrimSpace(fm["agent"]) != "" {
+		return "subagent"
+	}
+	return "inline"
+}
+
+func (p Package) hookRefs() []HookRef {
+	events := make([]string, 0, len(p.Manifest.Hooks))
+	for event := range p.Manifest.Hooks {
+		events = append(events, event)
+	}
+	sort.Strings(events)
+	var out []HookRef
+	for _, event := range events {
+		for _, hook := range p.Manifest.Hooks[event] {
+			out = append(out, HookRef{
+				Event:       event,
+				Match:       hook.Match,
+				Command:     hook.Command,
+				ContextFile: hook.ContextFile,
+				Description: hook.Description,
+			})
+		}
+	}
+	return out
+}
+
+func (p Package) mcpServerRefs() []MCPServerRef {
+	names := make([]string, 0, len(p.Manifest.MCPServers))
+	for name := range p.Manifest.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]MCPServerRef, 0, len(names))
+	for _, name := range names {
+		server := p.Manifest.MCPServers[name]
+		out = append(out, MCPServerRef{
+			Name:      name,
+			Transport: pluginMCPTransport(server),
+			Command:   strings.TrimSpace(server.Command),
+			URL:       strings.TrimSpace(server.URL),
+		})
+	}
+	return out
+}
+
+func pluginMCPTransport(server MCPServer) string {
+	if typ := strings.TrimSpace(server.Type); typ != "" {
+		return typ
+	}
+	if strings.TrimSpace(server.URL) != "" {
+		return "http"
+	}
+	return "stdio"
 }

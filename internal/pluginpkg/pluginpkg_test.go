@@ -14,6 +14,7 @@ func TestParseCodexSuperpowersManifest(t *testing.T) {
 	  "description": "Planning workflows",
 	  "skills": "./skills/"
 	}`)
+	writeTestFile(t, filepath.Join(root, "skills", "plan", "SKILL.md"), "---\ndescription: Plan work\n---\nbody")
 	writeTestFile(t, filepath.Join(root, "hooks", "session-start-codex"), "#!/usr/bin/env bash\n")
 
 	pkg, warnings, err := ParseDir(root)
@@ -31,6 +32,13 @@ func TestParseCodexSuperpowersManifest(t *testing.T) {
 	}
 	if hooks := pkg.Manifest.Hooks["SessionStart"]; len(hooks) != 1 || hooks[0].Command != filepath.Join(root, "hooks", "session-start-codex") {
 		t.Fatalf("SessionStart hooks = %+v", hooks)
+	}
+	inv := pkg.Inventory()
+	if len(inv.Skills) != 1 || inv.Skills[0].Name != "plan" || inv.Skills[0].Invocation != "/plan" {
+		t.Fatalf("Inventory().Skills = %+v", inv.Skills)
+	}
+	if skills, hooks, _ := pkg.CapabilityCounts(); skills != 1 || hooks != 1 {
+		t.Fatalf("CapabilityCounts skills=%d hooks=%d", skills, hooks)
 	}
 }
 

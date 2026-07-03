@@ -227,6 +227,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	mm.ChatURL = "http://localhost:8000/v1/chat/completions"
 	mm.ModelsURL = "http://localhost:8000/v1/models"
 	mm.ReasoningProtocol = "openai"
+	mm.PresetID = "mimo-api"
+	mm.PresetVersion = ProviderPresetVersion
 	ds, _ := orig.Provider("deepseek-flash")
 	ds.Effort = "max"
 
@@ -384,6 +386,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" || g.ChatURL != "http://localhost:8000/v1/chat/completions" || g.ModelsURL != "http://localhost:8000/v1/models" || g.ReasoningProtocol != "openai" {
 		t.Errorf("mimo-pro endpoint fields not preserved: %+v", g)
+	}
+	if g, _ := got.Provider("mimo-pro"); g == nil || g.PresetID != "mimo-api" || g.PresetVersion != ProviderPresetVersion {
+		t.Errorf("mimo-pro preset metadata not preserved: %+v", g)
 	}
 	if g, _ := got.Provider("deepseek-flash"); g == nil || g.Effort != "max" {
 		t.Errorf("deepseek-flash effort not preserved: %+v", g)

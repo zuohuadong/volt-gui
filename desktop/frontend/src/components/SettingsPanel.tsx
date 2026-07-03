@@ -974,9 +974,17 @@ function normalizeProviderView(p: ProviderView): ProviderView {
   };
 }
 
+type ProviderPresetStatus = NonNullable<ProviderPresetView["status"]>;
+
+function normalizeProviderPresetStatus(status: ProviderPresetView["status"] | undefined, added: boolean): ProviderPresetStatus {
+  if (status === "installed" || status === "name_conflict" || status === "similar_existing") return status;
+  return added ? "installed" : "available";
+}
+
 function normalizeProviderPresetView(p: ProviderPresetView): ProviderPresetView {
   const requiresKey = Boolean(p.requiresKey ?? p.keyEnv);
   const configured = Boolean(p.configured ?? (!requiresKey || p.keySet));
+  const status = normalizeProviderPresetStatus(p.status, Boolean(p.added));
   return {
     ...p,
     id: String(p.id ?? "").trim(),
@@ -985,7 +993,9 @@ function normalizeProviderPresetView(p: ProviderPresetView): ProviderPresetView 
     keyEnv: String(p.keyEnv ?? "").trim(),
     providerNames: asArray(p.providerNames),
     models: asArray(p.models),
-    added: Boolean(p.added),
+    added: Boolean(p.added || status === "installed" || status === "name_conflict"),
+    status,
+    statusProviderNames: asArray(p.statusProviderNames),
     keySet: Boolean(p.keySet),
     requiresKey,
     configured,
@@ -3976,7 +3986,33 @@ const OFFICIAL_PROVIDER_CHOICES: Array<{ kind: OfficialProviderKind; labelKey: D
 
 type ProviderTemplateChoice =
   | { id: string; source: "official"; kind: OfficialProviderKind; label: string; description: string; keyEnv: string; added: boolean; keySet: boolean }
-  | { id: string; source: "preset"; presetID: string; label: string; description: string; keyEnv: string; added: boolean; keySet: boolean };
+  | { id: string; source: "preset"; presetID: string; label: string; description: string; keyEnv: string; added: boolean; status: ProviderPresetStatus; statusProviderNames: string[]; keySet: boolean };
+
+function providerTemplateCanAdd(choice: ProviderTemplateChoice | undefined): boolean {
+  if (!choice) return false;
+  if (choice.source === "official") return !choice.added;
+  return choice.status !== "installed" && choice.status !== "name_conflict";
+}
+
+function providerTemplateStatusBadge(choice: ProviderTemplateChoice, t: ReturnType<typeof useT>): string {
+  if (choice.source === "official") return choice.added ? t("settings.addProvider.addedBadge") : "";
+  if (choice.status === "installed") return t("settings.addProvider.addedBadge");
+  if (choice.status === "name_conflict") return t("settings.addProvider.nameConflictBadge");
+  if (choice.status === "similar_existing") return t("settings.addProvider.similarExistingBadge");
+  return "";
+}
+
+function providerTemplateActionLabel(choice: ProviderTemplateChoice | undefined, t: ReturnType<typeof useT>): string {
+  if (!choice) return t("settings.addProvider.confirm");
+  if (choice.source === "preset" && choice.status === "name_conflict") return t("settings.addProvider.nameConflictAction");
+  if (!providerTemplateCanAdd(choice)) return t("settings.addProvider.alreadyAddedAction");
+  return t("settings.addProvider.confirm");
+}
+
+function providerTemplateStatusClass(choice: ProviderTemplateChoice): string {
+  if (choice.source !== "preset" || choice.status === "available") return "";
+  return ` provider-template-card--${choice.status.split("_").join("-")}`;
+}
 
 function providerPresetDescription(preset: ProviderPresetView, t: ReturnType<typeof useT>): string {
   switch (preset.id) {
@@ -4104,16 +4140,18 @@ function AddProviderPanel({
       description: providerPresetDescription(preset, t),
       keyEnv: preset.keyEnv,
       added: preset.added,
+      status: normalizeProviderPresetStatus(preset.status, preset.added),
+      statusProviderNames: asArray(preset.statusProviderNames),
       keySet: preset.keySet,
     })),
   ], [providerPresets, t]);
   const [templateID, setTemplateID] = useState("official:deepseek");
   const [key, setKey] = useState("");
-  const firstAvailableTemplateID = templateChoices.find((choice) => !choice.added)?.id ?? templateChoices[0]?.id ?? "";
+  const firstAvailableTemplateID = templateChoices.find(providerTemplateCanAdd)?.id ?? templateChoices[0]?.id ?? "";
   const selected = templateChoices.find((choice) => choice.id === templateID) ?? templateChoices.find((choice) => choice.id === firstAvailableTemplateID) ?? templateChoices[0];
   useEffect(() => {
     const current = templateChoices.find((choice) => choice.id === templateID);
-    if (firstAvailableTemplateID && (!current || (current.added && firstAvailableTemplateID !== templateID))) {
+    if (firstAvailableTemplateID && (!current || (!providerTemplateCanAdd(current) && firstAvailableTemplateID !== templateID))) {
       setTemplateID(firstAvailableTemplateID);
     }
   }, [firstAvailableTemplateID, templateChoices, templateID]);
@@ -4161,21 +4199,25 @@ function AddProviderPanel({
         {modeSwitch}
         <div className="provider-add-panel__hint">{t("settings.addProvider.officialHint")}</div>
         <div className="provider-template-grid">
-          {templateChoices.map((choice) => (
-            <button
-              key={choice.id}
-              type="button"
-              className={`provider-template-card${selected?.id === choice.id ? " provider-template-card--active" : ""}${choice.added ? " provider-template-card--added" : ""}`}
-              disabled={busy || choice.added}
-              onClick={() => setTemplateID(choice.id)}
-            >
-              <strong>
-                {choice.label}
-                {choice.added ? ` · ${t("settings.addProvider.addedBadge")}` : ""}
-              </strong>
-              <span>{choice.description}</span>
-            </button>
-          ))}
+          {templateChoices.map((choice) => {
+            const canAdd = providerTemplateCanAdd(choice);
+            const badge = providerTemplateStatusBadge(choice, t);
+            return (
+              <button
+                key={choice.id}
+                type="button"
+                className={`provider-template-card${selected?.id === choice.id ? " provider-template-card--active" : ""}${providerTemplateStatusClass(choice)}`}
+                disabled={busy || !canAdd}
+                onClick={() => setTemplateID(choice.id)}
+              >
+                <strong>
+                  {choice.label}
+                  {badge ? ` · ${badge}` : ""}
+                </strong>
+                <span>{choice.description}</span>
+              </button>
+            );
+          })}
         </div>
         <label className="set-label">{t("settings.providerKeyOptional")}</label>
         <input
@@ -4183,7 +4225,7 @@ function AddProviderPanel({
           type="password"
           placeholder={selected ? t("settings.setKey", { env: selected.keyEnv }) : ""}
           value={key}
-          disabled={busy || Boolean(selected?.added)}
+          disabled={busy || !providerTemplateCanAdd(selected)}
           onChange={(e) => setKey(e.target.value)}
         />
         <div className="prov-card__actions">
@@ -4193,14 +4235,14 @@ function AddProviderPanel({
           <button
             type="button"
             className="btn btn--primary btn--small"
-            disabled={busy || !selected || selected.added}
+            disabled={busy || !providerTemplateCanAdd(selected)}
             onClick={() => {
-              if (!selected || selected.added) return;
+              if (!providerTemplateCanAdd(selected)) return;
               if (selected.source === "official") void onAddOfficial(selected.kind, key.trim());
               else void onAddPreset(selected.presetID, key.trim());
             }}
           >
-            {selected?.added ? t("settings.addProvider.alreadyAddedAction") : t("settings.addProvider.confirm")}
+            {providerTemplateActionLabel(selected, t)}
           </button>
         </div>
       </div>

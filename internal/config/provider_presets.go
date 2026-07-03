@@ -16,6 +16,8 @@ type ProviderPreset struct {
 	Entries     []ProviderEntry
 }
 
+const ProviderPresetVersion = 1
+
 // CuratedProviderPresets returns one-click provider templates for common
 // OpenAI-compatible and Anthropic-compatible coding-plan services. These are
 // intentionally editable after installation; they reduce setup friction without
@@ -748,6 +750,10 @@ func cloneProviderPresets(in []ProviderPreset) []ProviderPreset {
 
 func cloneProviderPreset(p ProviderPreset) ProviderPreset {
 	p.Entries = cloneProviderEntries(p.Entries)
+	for i := range p.Entries {
+		p.Entries[i].PresetID = p.ID
+		p.Entries[i].PresetVersion = ProviderPresetVersion
+	}
 	return p
 }
 

@@ -901,6 +901,8 @@ export interface ProviderPresetView {
   providerNames: string[];
   models: string[];
   added: boolean;
+  status?: "available" | "installed" | "name_conflict" | "similar_existing";
+  statusProviderNames?: string[];
   keySet: boolean;
   requiresKey?: boolean;
   configured?: boolean;

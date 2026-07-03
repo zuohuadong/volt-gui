@@ -13463,8 +13463,14 @@ body > .mermaid-diagram--fullscreen {
   cursor: default;
   opacity: 0.68;
 }
-.provider-template-card--added {
+.provider-template-card--added,
+.provider-template-card--installed,
+.provider-template-card--name-conflict {
   background: color-mix(in srgb, var(--bg-elev-1) 82%, var(--bg) 18%);
+}
+.provider-template-card--similar-existing {
+  border-color: color-mix(in srgb, var(--warning, #b7791f) 34%, var(--border));
+  background: color-mix(in srgb, var(--warning-soft, #fff7ed) 24%, var(--bg-elev-1) 76%);
 }
 .provider-template-card--active {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));

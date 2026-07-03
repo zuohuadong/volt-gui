@@ -67,7 +67,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	} else {
 		ctx = agent.WithMemoryCompilerSourceInput(ctx, turn.raw)
 	}
-	input := c.compose(turn.input, !turn.synthetic)
+	input := c.compose(turn.input, turn.raw, !turn.synthetic)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	defer c.recordDisplayForNewUser(startMessages, turn.display)

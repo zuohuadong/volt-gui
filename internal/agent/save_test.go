@@ -199,7 +199,7 @@ func TestSaveSnapshotRejectsStalePrefixAfterSystemPromptRefresh(t *testing.T) {
 	}
 }
 
-func TestSaveSnapshotAllowsOwnedNonPrefixRewrite(t *testing.T) {
+func TestSaveSnapshotRejectsOwnedNonPrefixRewrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	s := NewSession("sys")
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
@@ -212,8 +212,37 @@ func TestSaveSnapshotAllowsOwnedNonPrefixRewrite(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "sys"},
 		{Role: provider.RoleUser, Content: "summarized first"},
 	})
-	if err := s.SaveSnapshot(path); err != nil {
-		t.Fatalf("SaveSnapshot owned rewrite: %v", err)
+	if err := s.SaveSnapshot(path); !errors.Is(err, ErrSessionSnapshotConflict) {
+		t.Fatalf("SaveSnapshot owned rewrite err = %v, want ErrSessionSnapshotConflict", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if got := len(loaded.Messages); got != 3 {
+		t.Fatalf("message count after rejected snapshot rewrite = %d, want 3", got)
+	}
+	if got := loaded.Messages[2].Content; got != "one" {
+		t.Fatalf("last message after rejected snapshot rewrite = %q, want %q", got, "one")
+	}
+}
+
+func TestSaveRewriteAllowsOwnedNonPrefixRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	if err := s.Save(path); err != nil {
+		t.Fatalf("Save base: %v", err)
+	}
+
+	s.Replace([]provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "summarized first"},
+	})
+	if err := s.SaveRewrite(path); err != nil {
+		t.Fatalf("SaveRewrite owned rewrite: %v", err)
 	}
 
 	loaded, err := LoadSession(path)
@@ -225,6 +254,34 @@ func TestSaveSnapshotAllowsOwnedNonPrefixRewrite(t *testing.T) {
 	}
 	if got := loaded.Messages[1].Content; got != "summarized first" {
 		t.Fatalf("rewritten content = %q, want %q", got, "summarized first")
+	}
+}
+
+func TestSaveRewriteRejectsStalePrefixOverwrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	current := NewSession("sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "second"})
+	if err := current.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	stale := NewSession("sys")
+	stale.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	if err := stale.SaveRewrite(path); !errors.Is(err, ErrSessionSnapshotConflict) {
+		t.Fatalf("SaveRewrite stale err = %v, want ErrSessionSnapshotConflict", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if got := len(loaded.Messages); got != 4 {
+		t.Fatalf("message count after stale rewrite = %d, want 4", got)
+	}
+	if got := loaded.Messages[3].Content; got != "second" {
+		t.Fatalf("last message after stale rewrite = %q, want %q", got, "second")
 	}
 }
 

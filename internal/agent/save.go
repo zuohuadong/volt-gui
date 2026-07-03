@@ -34,23 +34,38 @@ type sessionPersistState struct {
 	ok      bool
 }
 
+type sessionSaveMode int
+
+const (
+	sessionSaveForce sessionSaveMode = iota
+	sessionSaveSnapshot
+	sessionSaveRewrite
+)
+
 // Save writes the session's messages to path in JSONL — one provider.Message
 // per line — so a user can resume the conversation later. The file is
 // rewritten in full on every save: chat sessions are small (kilobytes), and
 // append-only would have to be reconciled with the compaction pass that
 // mutates the middle of session.Messages.
 func (s *Session) Save(path string) error {
-	return s.save(path, false)
+	return s.save(path, sessionSaveForce)
 }
 
 // SaveSnapshot writes a normal autosave/snapshot only when doing so cannot hide
-// a newer transcript already on disk. Explicit history rewrites such as rewind
-// and cancel recovery should call Save instead.
+// a newer transcript already on disk. Explicit history rewrites such as rewind,
+// compaction, and cancel recovery should call SaveRewrite instead.
 func (s *Session) SaveSnapshot(path string) error {
-	return s.save(path, true)
+	return s.save(path, sessionSaveSnapshot)
 }
 
-func (s *Session) save(path string, protectSnapshot bool) error {
+// SaveRewrite writes an intentional non-append history rewrite only while this
+// Session still owns the current on-disk transcript baseline. It prevents a
+// stale controller from force-rewinding a newer transcript written elsewhere.
+func (s *Session) SaveRewrite(path string) error {
+	return s.save(path, sessionSaveRewrite)
+}
+
+func (s *Session) save(path string, mode sessionSaveMode) error {
 	if path == "" {
 		return fmt.Errorf("empty session path")
 	}
@@ -64,8 +79,8 @@ func (s *Session) save(path string, protectSnapshot bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
-	if protectSnapshot {
-		if err := s.checkSnapshotWrite(path, msgs, digest, version); err != nil {
+	if mode != sessionSaveForce {
+		if err := s.checkSnapshotWrite(path, msgs, digest, version, mode == sessionSaveRewrite); err != nil {
 			return err
 		}
 	}
@@ -103,7 +118,7 @@ func writeSessionMessages(path string, msgs []provider.Message) error {
 	return nil
 }
 
-func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextDigest [sha256.Size]byte, nextVersion uint64) error {
+func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextDigest [sha256.Size]byte, nextVersion uint64, allowOwnedRewrite bool) error {
 	current, err := LoadSession(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -119,15 +134,20 @@ func (s *Session) checkSnapshotWrite(path string, next []provider.Message, nextD
 	if bytes.Equal(existingDigest[:], nextDigest[:]) || messagesHavePrefix(next, existing) || messagesHavePrefixWithCompatibleSystem(next, existing) {
 		return nil
 	}
+	if allowOwnedRewrite && s.ownsPersistedState(path, existingDigest, nextVersion) {
+		return nil
+	}
 	if messagesHavePrefix(existing, next) || messagesHavePrefixWithCompatibleSystem(existing, next) {
 		return fmt.Errorf("%w: %s has %d messages; stale snapshot has %d",
 			ErrSessionSnapshotConflict, path, len(existing), len(next))
 	}
-	if state := s.persistState(path); state.ok && state.version <= nextVersion && bytes.Equal(existingDigest[:], state.digest[:]) {
-		return nil
-	}
 	return fmt.Errorf("%w: %s diverged on disk (%d messages) from snapshot (%d messages)",
 		ErrSessionSnapshotConflict, path, len(existing), len(next))
+}
+
+func (s *Session) ownsPersistedState(path string, existingDigest [sha256.Size]byte, nextVersion uint64) bool {
+	state := s.persistState(path)
+	return state.ok && state.version <= nextVersion && bytes.Equal(existingDigest[:], state.digest[:])
 }
 
 func (s *Session) persistState(path string) sessionPersistState {

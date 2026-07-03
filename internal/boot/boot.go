@@ -177,11 +177,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// outlive a turn and are cancelled by Controller.Close.
 	sink := event.Sync(opts.Sink)
 
-	if ignored := (planmode.Policy{AllowedTools: cfg.Agent.PlanModeAllowedTools}).IgnoredAllowedTools(); len(ignored) > 0 {
+	planModePolicy := planmode.Policy{
+		AllowedTools:     cfg.Agent.PlanModeAllowedTools,
+		ReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
+	}
+	if ignored := planModePolicy.IgnoredAllowedTools(); len(ignored) > 0 {
 		sink.Emit(event.Event{
 			Kind:  event.Notice,
 			Level: event.LevelWarn,
-			Text:  fmt.Sprintf("plan_mode_allowed_tools ignored known blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock known blocked tools or unsafe bash", strings.Join(ignored, ", ")),
+			Text:  fmt.Sprintf("plan_mode_allowed_tools ignored known blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock known blocked tools or unsafe bash. For shell exploration, declare concrete read-only prefixes in plan_mode_read_only_commands (for example \"gh issue view\"); use read_only_task/read_only_skill instead of task/run_skill while planning.", strings.Join(ignored, ", ")),
+		})
+	}
+	if ignored := planModePolicy.IgnoredReadOnlyCommands(); len(ignored) > 0 {
+		sink.Emit(event.Event{
+			Kind:  event.Notice,
+			Level: event.LevelWarn,
+			Text:  fmt.Sprintf("plan_mode_read_only_commands ignored unsafe entries: %s; declare concrete read-only commands such as \"gh issue view\", not shell interpreters, overly broad prefixes, malformed prefixes, or writer-capable command verbs", strings.Join(ignored, ", ")),
 		})
 	}
 	if migErr != nil {
@@ -1006,6 +1017,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		KeepPolicy:                         keepPolicy,
 		ReasoningLanguage:                  cfg.ReasoningLanguage(),
 		PlanModeAllowedTools:               cfg.Agent.PlanModeAllowedTools,
+		PlanModeReadOnlyCommands:           cfg.Agent.PlanModeReadOnlyCommands,
 		SubagentDepth:                      0,
 		MaxSubagentDepth:                   maxSubagentDepth,
 		MemoryCompiler:                     memCompiler,
@@ -1047,18 +1059,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
-				MaxSteps:            cfg.Agent.PlannerMaxSteps,
-				MaxStepsKey:         "agent.planner_max_steps",
-				Gate:                headlessGate,
-				ContextWindow:       pe.ContextWindow,
-				SoftCompactRatio:    cfg.Agent.SoftCompactRatio,
-				ToolResultSnipRatio: cfg.Agent.ToolResultSnipRatio,
-				CompactRatio:        cfg.Agent.CompactRatio,
-				CompactForceRatio:   cfg.Agent.CompactForceRatio,
-				RecentKeep:          cfg.Agent.RecentKeep,
-				ArchiveDir:          config.ArchiveDir(),
-				KeepPolicy:          keepPolicy,
-				ReasoningLanguage:   cfg.ReasoningLanguage(),
+				MaxSteps:                 cfg.Agent.PlannerMaxSteps,
+				MaxStepsKey:              "agent.planner_max_steps",
+				Gate:                     headlessGate,
+				ContextWindow:            pe.ContextWindow,
+				SoftCompactRatio:         cfg.Agent.SoftCompactRatio,
+				ToolResultSnipRatio:      cfg.Agent.ToolResultSnipRatio,
+				CompactRatio:             cfg.Agent.CompactRatio,
+				CompactForceRatio:        cfg.Agent.CompactForceRatio,
+				RecentKeep:               cfg.Agent.RecentKeep,
+				ArchiveDir:               config.ArchiveDir(),
+				KeepPolicy:               keepPolicy,
+				ReasoningLanguage:        cfg.ReasoningLanguage(),
+				PlanModeReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
 			}, executor, cfg.Agent.Temperature, sink, control.NewPlannerGate(classifier))
 			label = entry.Model + " + planner " + pe.Model
 		}
@@ -1102,6 +1115,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		},
 		OnRememberMCPReadOnlyTrust: func(serverName, rawToolName string) control.MCPReadOnlyTrustResult {
 			return rememberMCPReadOnlyTrust(root, serverName, rawToolName)
+		},
+		OnRememberPlanModeReadOnlyCommand: func(prefix string) control.PlanModeReadOnlyCommandTrustResult {
+			return rememberPlanModeReadOnlyCommand(root, prefix)
 		},
 		SessionRecoveryMeta: opts.SessionRecoveryMeta,
 		OnSessionRecovered:  opts.OnSessionRecovered,
@@ -1184,6 +1200,53 @@ func rememberMCPReadOnlyTrust(workspaceRoot, serverName, rawToolName string) con
 	}
 	result.CoveredBy = rawToolName
 	return result
+}
+
+func rememberPlanModeReadOnlyCommand(workspaceRoot, prefix string) control.PlanModeReadOnlyCommandTrustResult {
+	prefix = strings.TrimSpace(prefix)
+	path := rememberPermissionConfigPath(workspaceRoot)
+	edit := config.LoadForEdit(path)
+	result := control.PlanModeReadOnlyCommandTrustResult{Prefix: prefix, Path: path}
+	if prefix == "" {
+		result.Err = fmt.Errorf("empty plan-mode read-only command prefix")
+		return result
+	}
+	if coveredBy := coveredPlanModeReadOnlyCommand(edit.Agent.PlanModeReadOnlyCommands, prefix); coveredBy != "" {
+		result.CoveredBy = coveredBy
+		return result
+	}
+	edit.Agent.PlanModeReadOnlyCommands = append(edit.Agent.PlanModeReadOnlyCommands, prefix)
+	if err := edit.SaveTo(path); err != nil {
+		slog.Warn("persist plan-mode read-only command trust", "prefix", prefix, "err", err)
+		result.Err = err
+		return result
+	}
+	result.Saved = true
+	return result
+}
+
+func coveredPlanModeReadOnlyCommand(existing []string, candidate string) string {
+	candidateFields := strings.Fields(strings.TrimSpace(candidate))
+	if len(candidateFields) == 0 {
+		return ""
+	}
+	for _, item := range existing {
+		itemFields := strings.Fields(strings.TrimSpace(item))
+		if len(itemFields) == 0 || len(itemFields) > len(candidateFields) {
+			continue
+		}
+		matches := true
+		for i, field := range itemFields {
+			if candidateFields[i] != field {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return strings.Join(itemFields, " ")
+		}
+	}
+	return ""
 }
 
 func coveredPermissionRule(rules []string, rule string) string {

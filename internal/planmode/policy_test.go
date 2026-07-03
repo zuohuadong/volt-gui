@@ -2,6 +2,7 @@ package planmode
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -117,6 +118,88 @@ func TestDecideStillValidatesBashArgumentsWhenOverridden(t *testing.T) {
 	decision := p.Decide(Call{Name: "bash", ReadOnly: false, Args: args})
 	if !decision.Blocked {
 		t.Fatal("bash override must not bypass plan-mode bash safety checks")
+	}
+}
+
+func TestDecideAllowsDeclaredReadOnlyBashCommandPrefix(t *testing.T) {
+	p := Policy{ReadOnlyCommands: []string{"gh issue view", "internal-report --read"}}
+	args, err := json.Marshal(map[string]any{"command": "gh issue view 4572 --json title,body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decision := p.Decide(Call{Name: "bash", Args: args}); decision.Blocked {
+		t.Fatalf("declared read-only command should be allowed in plan mode: %s", decision.Message)
+	}
+
+	args, err = json.Marshal(map[string]any{"command": "internal-report --read service-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision := p.Decide(Call{Name: "bash", Args: args}); decision.Blocked {
+		t.Fatalf("declared read-only command with flags should be allowed in plan mode: %s", decision.Message)
+	}
+}
+
+func TestDecideDeclaredReadOnlyBashCommandStillBlocksShellSyntax(t *testing.T) {
+	p := Policy{ReadOnlyCommands: []string{"gh issue view"}}
+	args, err := json.Marshal(map[string]any{"command": "gh issue view 4572 && rm -rf /"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decision := p.Decide(Call{Name: "bash", Args: args}); !decision.Blocked {
+		t.Fatal("declared read-only command must not bypass shell syntax checks")
+	}
+}
+
+func TestDecideDeclaredReadOnlyBashCommandIgnoresShellInterpreters(t *testing.T) {
+	p := Policy{ReadOnlyCommands: []string{"bash", "gh", "gh issue", "gh issue close"}}
+	args, err := json.Marshal(map[string]any{"command": "bash run-anything"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decision := p.Decide(Call{Name: "bash", Args: args}); !decision.Blocked {
+		t.Fatal("plan_mode_read_only_commands must not reopen shell interpreters")
+	}
+	want := []string{"bash", "gh", "gh issue", "gh issue close"}
+	if got := p.IgnoredReadOnlyCommands(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("IgnoredReadOnlyCommands() = %v, want %v", got, want)
+	}
+}
+
+func TestDecideUnknownBashReadOnlyCommandCanAskForTrust(t *testing.T) {
+	args, err := json.Marshal(map[string]any{"command": "gh issue view 4572 --json title"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := (Policy{}).Decide(Call{Name: "bash", Args: args})
+	if !decision.Blocked || decision.ReadOnlyCommandTrust == nil {
+		t.Fatalf("unknown query should be blocked with trust candidate, got %+v", decision)
+	}
+	if decision.ReadOnlyCommandTrust.Prefix != "gh issue view" {
+		t.Fatalf("trust prefix = %q, want gh issue view", decision.ReadOnlyCommandTrust.Prefix)
+	}
+}
+
+func TestDecideUnsafeUnknownBashCommandDoesNotAskForTrust(t *testing.T) {
+	for _, cmd := range []string{
+		"gh issue close 4572",
+		"gh pr merge 5867",
+		"aws s3 rm s3://bucket/key",
+		"bash -lc 'gh issue view 1'",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			args, err := json.Marshal(map[string]any{"command": cmd})
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision := (Policy{}).Decide(Call{Name: "bash", Args: args})
+			if decision.ReadOnlyCommandTrust != nil {
+				t.Fatalf("unsafe command should not ask for trust, got %+v", decision.ReadOnlyCommandTrust)
+			}
+		})
 	}
 }
 

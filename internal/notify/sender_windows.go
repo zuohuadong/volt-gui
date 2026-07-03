@@ -2,15 +2,34 @@
 
 package notify
 
-import "os/exec"
+import (
+	"os/exec"
 
-// PlatformSender delivers notifications through the host OS.
+	"git.sr.ht/~jackmordaunt/go-toast/v2"
+)
+
+// PlatformSender delivers notifications through the Windows Toast API.
 type PlatformSender struct{}
 
 // NewPlatformSender returns the best-effort sender for the current platform.
-func NewPlatformSender() PlatformSender { return PlatformSender{} }
+func NewPlatformSender() PlatformSender {
+	_ = toast.SetAppData(toast.AppData{AppID: "Reasonix"})
+	return PlatformSender{}
+}
 
 func (PlatformSender) Send(m Message) error {
+	notification := toast.Notification{
+		AppID: "Reasonix",
+		Title: m.Title,
+		Body:  m.Body,
+	}
+	if err := notification.Push(); err == nil {
+		return nil
+	}
+	return sendPowerShellFallback(m)
+}
+
+func sendPowerShellFallback(m Message) error {
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", `
 if (Get-Command New-BurntToastNotification -ErrorAction SilentlyContinue) {
   New-BurntToastNotification -Text $args[0], $args[1]

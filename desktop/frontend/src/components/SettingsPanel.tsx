@@ -3694,10 +3694,19 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
   const defaultProvider = toRef(s.defaultModel, s).split("/")[0];
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState<AddProviderMode>(null);
+  const [revealedProvider, setRevealedProvider] = useState<string | null>(null);
   const [fetchingProvider, setFetchingProvider] = useState<string | null>(null);
   const [fetchResults, setFetchResults] = useState<Record<string, ProviderFetchResult>>({});
   const [modelDrafts, setModelDrafts] = useState<Record<string, ProviderModelDraft>>({});
-  const groups = useMemo(() => providerAccessGroups(s.providers.filter((p) => p.added), t), [s.providers, t]);
+  const visibleProviders = useMemo(() => s.providers.filter((p) => p.added || p.name === revealedProvider), [s.providers, revealedProvider]);
+  const groups = useMemo(() => providerAccessGroups(visibleProviders, t), [visibleProviders, t]);
+
+  useEffect(() => {
+    if (revealedProvider && !s.providers.some((p) => p.name === revealedProvider)) {
+      setRevealedProvider(null);
+      if (editing === revealedProvider) setEditing(null);
+    }
+  }, [editing, revealedProvider, s.providers]);
 
   const setGroupFetchResult = (groupID: string, result: ProviderFetchResult | null) => {
     setFetchResults((prev) => {
@@ -3907,6 +3916,12 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
             onCancel={() => setAdding(null)}
             onAddOfficial={(kind, key) => apply(() => app.AddOfficialProviderAccess(kind, key)).then(() => setAdding(null))}
             onAddPreset={(id, key) => apply(() => app.AddProviderPresetAccess(id, key)).then(() => setAdding(null))}
+            onViewPresetConflict={(providerName) => {
+              setRevealedProvider(providerName);
+              setEditing(providerName);
+              setAdding(null);
+            }}
+            onResetPreset={(id) => apply(() => app.ResetProviderPresetAccess(id)).then(() => setAdding(null))}
             onAddCustom={(pv) => apply(() => app.SaveProvider(pv)).then(() => setAdding(null))}
           />
         )}
@@ -3940,7 +3955,12 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
             onSaveDraftModels={() => void saveModelDraft(group)}
             onSaveEditorKey={(env, value) => group.builtIn ? saveProviderKey(group, env, value) : saveKeyEnvAndAutoRefresh(group, env, value)}
             onClearEditorKey={clearProviderKey}
-            onDelete={(p) => apply(() => app.RemoveProviderAccess(p.name))}
+            onDelete={(p) => apply(() => app.RemoveProviderAccess(p.name)).then(() => {
+              if (revealedProvider === p.name) {
+                setRevealedProvider(null);
+                setEditing(null);
+              }
+            })}
           />
         ))}
       </div>
@@ -4012,6 +4032,11 @@ function providerTemplateActionLabel(choice: ProviderTemplateChoice | undefined,
 function providerTemplateStatusClass(choice: ProviderTemplateChoice): string {
   if (choice.source !== "preset" || choice.status === "available") return "";
   return ` provider-template-card--${choice.status.split("_").join("-")}`;
+}
+
+function providerTemplateConflictProviderName(choice: ProviderTemplateChoice): string {
+  if (choice.source !== "preset" || choice.status !== "name_conflict") return "";
+  return choice.statusProviderNames[0] ?? "";
 }
 
 function providerPresetDescription(preset: ProviderPresetView, t: ReturnType<typeof useT>): string {
@@ -4108,6 +4133,8 @@ function AddProviderPanel({
   onCancel,
   onAddOfficial,
   onAddPreset,
+  onViewPresetConflict,
+  onResetPreset,
   onAddCustom,
 }: {
   mode: AddProviderMode;
@@ -4118,6 +4145,8 @@ function AddProviderPanel({
   onCancel: () => void;
   onAddOfficial: (kind: OfficialProviderKind, key: string) => Promise<void>;
   onAddPreset: (id: string, key: string) => Promise<void>;
+  onViewPresetConflict: (providerName: string) => void;
+  onResetPreset: (id: string) => Promise<void>;
   onAddCustom: (p: ProviderView) => void | Promise<void>;
 }) {
   const t = useT();
@@ -4202,6 +4231,39 @@ function AddProviderPanel({
           {templateChoices.map((choice) => {
             const canAdd = providerTemplateCanAdd(choice);
             const badge = providerTemplateStatusBadge(choice, t);
+            const conflictProviderName = providerTemplateConflictProviderName(choice);
+            if (choice.source === "preset" && choice.status === "name_conflict") {
+              return (
+                <div
+                  key={choice.id}
+                  className={`provider-template-card${providerTemplateStatusClass(choice)}`}
+                >
+                  <strong>
+                    {choice.label}
+                    {badge ? ` · ${badge}` : ""}
+                  </strong>
+                  <span>{choice.description}</span>
+                  <div className="provider-template-card__actions">
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      disabled={busy || !conflictProviderName}
+                      onClick={() => onViewPresetConflict(conflictProviderName)}
+                    >
+                      {t("settings.addProvider.viewConflictProvider")}
+                    </button>
+                    <InlineConfirmButton
+                      label={t("settings.addProvider.resetPreset")}
+                      confirmLabel={t("settings.addProvider.confirmResetPreset")}
+                      cancelLabel={t("common.cancel")}
+                      disabled={busy}
+                      danger
+                      onConfirm={() => onResetPreset(choice.presetID)}
+                    />
+                  </div>
+                </div>
+              );
+            }
             return (
               <button
                 key={choice.id}

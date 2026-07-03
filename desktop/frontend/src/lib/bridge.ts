@@ -296,6 +296,7 @@ export interface AppBindings {
   SaveProvider(p: ProviderView): Promise<void>;
   AddOfficialProviderAccess(kind: string, key: string): Promise<string>;
   AddProviderPresetAccess(id: string, key: string): Promise<string>;
+  ResetProviderPresetAccess(id: string): Promise<void>;
   FetchProviderModels(p: ProviderView): Promise<string[]>;
   DeleteProvider(name: string): Promise<void>;
   RemoveProviderAccess(name: string): Promise<void>;
@@ -611,7 +612,7 @@ function bridgeBreadcrumb(method: string): string {
     return `model ${method}`;
   if (/^(SetDesktop|SetCloseBehavior|SetDisplayMode|SetStatusBar|SetExpandThinking|SetAutoPlan|SetDefaultToolApprovalMode|SetMemoryCompilerEnabled|SetReasoningLanguage)/.test(method))
     return `settings ${method}`;
-  if (/^(SaveProvider|AddOfficialProviderAccess|AddProviderPresetAccess|RemoveProviderAccess|DeleteProvider|SetProviderKey|ClearProviderKey|FetchProviderModels|ConnectKey)/.test(method))
+  if (/^(SaveProvider|AddOfficialProviderAccess|AddProviderPresetAccess|ResetProviderPresetAccess|RemoveProviderAccess|DeleteProvider|SetProviderKey|ClearProviderKey|FetchProviderModels|ConnectKey)/.test(method))
     return `provider ${method}`;
   if (/^(CheckUpdate|DownloadUpdate|InstallUpdate|ApplyUpdate|OpenDownloadPage)/.test(method)) return `update ${method}`;
   if (/^(AddMCPServer|UpdateMCPServer|RemoveMCPServer|ReconnectMCPServer|ClearMCPServerAuthentication|TrustMCPServerTool|TrustMCPServerTools|UntrustMCPServerTool|SetMCPServer)/.test(method))
@@ -2942,6 +2943,25 @@ function makeMockApp(): AppBindings {
       preset.keySet = preset.keySet || !!key.trim();
       preset.configured = !preset.requiresKey || preset.keySet;
       return "";
+    },
+    async ResetProviderPresetAccess(id: string) {
+      const preset = settings.providerPresets.find((p) => p.id === id);
+      if (!preset) throw new Error(`unknown provider preset ${id}`);
+      const next = cloneMockProviderTemplate(id, "");
+      if (!next) throw new Error(`unknown provider preset ${id}`);
+      const i = settings.providers.findIndex((x) => x.name === next.name);
+      if (i < 0) throw new Error(`provider preset ${id} cannot be reset because no same-name provider exists`);
+      const existing = settings.providers[i];
+      settings.providers[i] = {
+        ...next,
+        added: true,
+        keySet: existing.apiKeyEnv === next.apiKeyEnv ? existing.keySet : next.keySet,
+      };
+      preset.added = true;
+      preset.status = "installed";
+      preset.statusProviderNames = [...preset.providerNames];
+      preset.keySet = preset.keySet || settings.providers[i].keySet;
+      preset.configured = !preset.requiresKey || preset.keySet;
     },
     async FetchProviderModels(p: ProviderView) {
       if (!p.baseUrl.trim()) throw new Error(t("settings.fetchModelsMissingBaseUrl"));

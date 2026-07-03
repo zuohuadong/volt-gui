@@ -171,6 +171,16 @@ func runInstallSourceJSON(body map[string]any) int {
 		return 1
 	}
 	fmt.Println(out)
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if !resp.OK {
+		return 1
+	}
 	return 0
 }
 

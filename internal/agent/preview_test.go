@@ -68,6 +68,18 @@ func TestStripTransientUserBlocksUnwrapsMemoryCompilerExecution(t *testing.T) {
 			in:   "<hook-context event=\"SessionStart\">\nLoad conventions.\n</hook-context>\n\nship it",
 			want: "ship it",
 		},
+		{
+			name: "active goal prefix is stripped",
+			in:   "<active-goal>\nFix all bugs\n</active-goal>\n\nfix the auth bug",
+			want: "fix the auth bug",
+		},
+		{
+			name: "active goal after other transient prefixes is stripped",
+			in: "<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" +
+				"<memory-update>\n- note\n</memory-update>\n\n" +
+				"<active-goal>\nDo X\n</active-goal>\n\nhelp me",
+			want: "help me",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

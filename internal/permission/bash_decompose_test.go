@@ -95,6 +95,49 @@ func TestDecomposeBashCommand(t *testing.T) {
 			in:   "cd /tmp\nls",
 			want: []string{"cd /tmp", "ls"},
 		},
+		{
+			name: "heredoc bails to nil (known out-of-scope)",
+			in:   "cat <<EOF && ls\nline1\nEOF",
+			want: nil,
+		},
+		{
+			name: "leading && is malformed, returns nil",
+			in:   "&& ls",
+			want: nil,
+		},
+		{
+			name: "leading || is malformed, returns nil",
+			in:   "|| echo hi",
+			want: nil,
+		},
+		{
+			name: "leading ; is malformed, returns nil",
+			in:   "; ls",
+			want: nil,
+		},
+		{
+			name: "leading | is malformed, returns nil",
+			in:   "| grep foo",
+			want: nil,
+		},
+		{
+			name: "process substitution <(cmd) is opaque, operators inside don't split",
+			in:   "diff <(git log -1 | head) <(git show HEAD | head) && ls",
+			want: []string{
+				"diff <(git log -1 | head) <(git show HEAD | head)",
+				"ls",
+			},
+		},
+		{
+			name: "process substitution >(cmd) is opaque",
+			in:   "tee >(gzip | tar) && date",
+			want: []string{"tee >(gzip | tar)", "date"},
+		},
+		{
+			name: "single < is redirect, stays with segment",
+			in:   "sort < input.txt && ls",
+			want: []string{"sort < input.txt", "ls"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

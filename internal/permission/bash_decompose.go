@@ -15,27 +15,45 @@ import (
 //
 // It splits on the shell control operators `;`, `&`, `&&`, `|`, `||`, and
 // newlines. Quoting (single, double, backslash-escapes inside double quotes)
-// and $(...) / `...` command substitutions are treated as opaque — operators
-// inside them do NOT split the outer command. File-descriptor duplication
-// like `2>&1` is recognized (the `&` following an unquoted `>` does not
-// split).
+// and $(...) / <(...) / >(...) / `...` command / process substitutions are
+// treated as opaque — operators inside them do NOT split the outer command.
+// File-descriptor duplication like `2>&1` is recognized (the `&` following an
+// unquoted `>` does not split).
+//
+// Known out-of-scope shapes — the parser refuses to decompose these to keep
+// downstream matching safe, so callers fall back to whole-string matching:
+//   - heredocs (`cat <<EOF … EOF`): the delimiter body isn't shell syntax,
+//     but tokenizing it as one is wrong; we bail on any unquoted `<<`.
+//   - leading operator (`&& ls`, `; ls`): malformed shell.
+//   - unbalanced quotes, `$(...)`, `<(...)`, `>(...)`, or backticks.
 //
 // Returns nil when the input has no control operator to split on, or when the
-// parser encounters unbalanced quotes/parentheses/backticks — callers are
-// expected to fall back to whole-string matching in that case so no compound
-// gets silently mis-decomposed. Redirect fragments (`2>/dev/null`, `> file`)
-// are left attached to the simple command they annotate; stripping those is
-// out of scope for this pass.
+// parser encounters one of the above out-of-scope shapes. Redirect fragments
+// (`2>/dev/null`, `> file`) are left attached to the simple command they
+// annotate; stripping those is out of scope for this pass.
+//
+// The tokenizer is hand-rolled to avoid pulling in a full shell parser (e.g.
+// `mvdan.cc/sh`) for what is otherwise a small piece of permission-layer
+// logic. If a maintainer prefers the dep, swapping is straightforward — the
+// only contract this function exposes is `[]string` of trimmed simple-command
+// text, or `nil` for "fall back to exact match".
 func DecomposeBashCommand(cmd string) []string {
 	if !shellsafe.ContainsShellSyntax(cmd) {
 		return nil
+	}
+	// Malformed shell: leading control operator with nothing before it.
+	trimmed := strings.TrimLeft(cmd, " \t\n\r")
+	for _, op := range []string{"&&", "||", ";", "|", "&"} {
+		if strings.HasPrefix(trimmed, op) {
+			return nil
+		}
 	}
 
 	var (
 		out        []string
 		buf        strings.Builder
 		quote      byte // 0, '\'', or '"'
-		parenDepth int  // depth of $(...)
+		parenDepth int  // depth of $(...) / <(...) / >(...)
 		backtick   bool
 		split      bool // did we actually hit any splitter?
 	)
@@ -94,6 +112,31 @@ func DecomposeBashCommand(cmd string) []string {
 				i++
 			}
 		case '$':
+			if i+1 < len(cmd) && cmd[i+1] == '(' {
+				parenDepth = 1
+				buf.WriteByte(c)
+				buf.WriteByte('(')
+				i++
+				continue
+			}
+			buf.WriteByte(c)
+		case '<':
+			// Heredoc (`<<EOF ... EOF`) can't be safely decomposed —
+			// its body isn't shell syntax but tokenizing it as one is wrong.
+			if i+1 < len(cmd) && cmd[i+1] == '<' {
+				return nil
+			}
+			// Process substitution `<(cmd)`: track as opaque like `$(...)`.
+			if i+1 < len(cmd) && cmd[i+1] == '(' {
+				parenDepth = 1
+				buf.WriteByte(c)
+				buf.WriteByte('(')
+				i++
+				continue
+			}
+			buf.WriteByte(c)
+		case '>':
+			// Process substitution `>(cmd)`: track as opaque like `$(...)`.
 			if i+1 < len(cmd) && cmd[i+1] == '(' {
 				parenDepth = 1
 				buf.WriteByte(c)

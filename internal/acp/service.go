@@ -565,14 +565,7 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 	defer func() {
 		sess.sink.clearTurnContext()
 		sess.finish()
-		if err := s.applyPendingSessionConfig(ctx, sess); err != nil {
-			sess.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "session config switch failed after turn: " + err.Error()})
-			if isSessionConfigActiveWorkError(err) {
-				if current, stateErr := s.configStateForSession(ctx, sess); stateErr == nil {
-					sess.sink.send(configOptionUpdate{SessionUpdate: "config_option_update", ConfigOptions: current.ConfigOptions})
-				}
-			}
-		}
+		s.reportPendingSessionConfigError(ctx, sess, s.applyPendingSessionConfig(ctx, sess), "after turn")
 		cancel()
 	}()
 	runErr := sess.ctrl.RunTurn(runCtx, text)
@@ -684,7 +677,7 @@ func (s *service) switchSessionEffort(ctx context.Context, sess *acpSession, eff
 	return cfgState, nil
 }
 
-func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState SessionConfigState) error {
+func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState SessionConfigState) (retErr error) {
 	sess.mu.Lock()
 	if sess.deleted {
 		sess.mu.Unlock()
@@ -716,7 +709,12 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 	maintenanceDone := make(chan struct{})
 	sess.maintenanceDone = maintenanceDone
 	sess.mu.Unlock()
-	defer sess.finishMaintenance(maintenanceDone)
+	defer func() {
+		sess.finishMaintenance(maintenanceDone)
+		if retErr == nil {
+			s.reportPendingSessionConfigError(ctx, sess, s.applyPendingSessionConfig(ctx, sess), "after maintenance")
+		}
+	}()
 
 	if err := cur.Snapshot(); err != nil {
 		return &RPCError{Code: ErrInternal, Message: "session config: snapshot before switch: " + err.Error()}
@@ -794,6 +792,18 @@ func (s *service) applyPendingSessionConfig(ctx context.Context, sess *acpSessio
 		return err
 	}
 	return nil
+}
+
+func (s *service) reportPendingSessionConfigError(ctx context.Context, sess *acpSession, err error, when string) {
+	if err == nil || sess == nil || sess.sink == nil {
+		return
+	}
+	sess.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "session config switch failed " + when + ": " + err.Error()})
+	if isSessionConfigActiveWorkError(err) {
+		if current, stateErr := s.configStateForSession(ctx, sess); stateErr == nil {
+			sess.sink.send(configOptionUpdate{SessionUpdate: "config_option_update", ConfigOptions: current.ConfigOptions})
+		}
+	}
 }
 
 type activeSessionConfigWorkError struct {

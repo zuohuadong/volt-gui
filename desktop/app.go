@@ -947,13 +947,6 @@ func (a *App) snapshotTab(tab *WorkspaceTab) error {
 	return ctrl.Snapshot()
 }
 
-func snapshotTabDirect(tab *WorkspaceTab) error {
-	if tab == nil || tab.ReadOnly || tab.Ctrl == nil {
-		return nil
-	}
-	return tab.Ctrl.Snapshot()
-}
-
 func (a *App) snapshotTabForAction(tab *WorkspaceTab, action string) error {
 	if err := a.snapshotTab(tab); err != nil {
 		a.reportTabSnapshotError(tab, action, err)
@@ -3512,7 +3505,7 @@ func (a *App) RemoveWorkspace(dir string) error {
 	for _, candidate := range candidates {
 		id, tab := candidate.id, candidate.tab
 		snapshotted[id] = tab
-		if err := snapshotTabDirect(tab); err != nil {
+		if err := a.snapshotTab(tab); err != nil {
 			slog.Warn("desktop: snapshot before removing workspace failed", "tab", id, "workspace", dir, "err", err)
 			return fmt.Errorf("save current session before removing workspace: %w", err)
 		}

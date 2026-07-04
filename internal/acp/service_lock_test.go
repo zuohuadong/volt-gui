@@ -98,3 +98,78 @@ func TestACPRebuildSessionSnapshotsWithoutSessionLock(t *testing.T) {
 		t.Fatalf("session model = %q, want pro", sess.model)
 	}
 }
+
+type blockingConfigFactory struct {
+	configurableFactory
+	started      chan string
+	releaseFirst chan struct{}
+}
+
+func (f *blockingConfigFactory) NewSession(ctx context.Context, p SessionParams) (*control.Controller, error) {
+	select {
+	case f.started <- p.Model:
+	default:
+	}
+	f.mu.Lock()
+	buildNumber := len(f.builds) + 1
+	f.mu.Unlock()
+	if buildNumber == 1 {
+		select {
+		case <-f.releaseFirst:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return f.configurableFactory.NewSession(ctx, p)
+}
+
+func TestACPRebuildSessionAppliesPendingConfigAfterMaintenance(t *testing.T) {
+	sink := newUpdateSink(&fakeNotifier{}, "sess-lock")
+	sess := &acpSession{
+		id:    "sess-lock",
+		sink:  sink,
+		cwd:   t.TempDir(),
+		model: "fast",
+		ctrl:  control.New(control.Options{}),
+	}
+	factory := &blockingConfigFactory{
+		started:      make(chan string, 2),
+		releaseFirst: make(chan struct{}),
+	}
+	svc := &service{
+		factory:  factory,
+		sessions: map[string]*acpSession{sess.id: sess},
+	}
+
+	errs := make(chan error, 1)
+	go func() {
+		errs <- svc.rebuildSession(context.Background(), sess, SessionConfigState{Model: "pro"})
+	}()
+	select {
+	case got := <-factory.started:
+		if got != "pro" {
+			t.Fatalf("first rebuild model = %q, want pro", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first rebuild did not start")
+	}
+
+	if err := svc.rebuildSession(context.Background(), sess, SessionConfigState{Model: "fast"}); err != nil {
+		t.Fatalf("queue pending rebuild: %v", err)
+	}
+	close(factory.releaseFirst)
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Fatalf("first rebuild: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first rebuild did not finish")
+	}
+	if sess.model != "fast" {
+		t.Fatalf("session model = %q, want pending fast", sess.model)
+	}
+	if got := factory.buildCount(); got != 2 {
+		t.Fatalf("factory builds = %d, want 2", got)
+	}
+}

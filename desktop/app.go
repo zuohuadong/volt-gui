@@ -1047,6 +1047,7 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 	ctrl.Close()
 
 	a.mu.Lock()
+	var hostKey string
 	if current := a.tabs[tab.ID]; current == tab {
 		tab.Ctrl = nil
 		tab.Ready = false
@@ -1055,10 +1056,13 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 		if tab.sink == nil {
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 		}
-		a.releaseTabSharedHost(tab)
+		hostKey = takeTabSharedHostKey(tab)
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	if hostKey != "" {
+		a.releaseSharedHost(hostKey)
+	}
 
 	a.buildTabController(tab)
 	if tab.Ctrl == nil {
@@ -1469,6 +1473,12 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	if tab == nil || oldCtrl == nil {
 		return fmt.Errorf("workspace is still starting")
 	}
+	// This path destroys the old session's files (removeDesktopSessionArtifacts);
+	// serialize with DeleteSession/TrashTopic/workspace removal so they never
+	// trash or restore the same files mid-clear.
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
+
 	a.reconciledSessionPathForTab(tab)
 	oldPath := oldCtrl.SessionPath()
 	oldSink := tab.sink
@@ -2607,6 +2617,10 @@ func (a *App) RestoreSession(path string) error {
 	if err != nil {
 		return err
 	}
+	// The destroying/open checks and the trash-entry move must not interleave
+	// with DeleteSession/TrashTopic trashing the same entry.
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
 	target := filepath.Join(dir, key)
 	if a.sessionDestroying(dir, target) {
 		return fmt.Errorf("session cleanup is still in progress: %s", key)
@@ -2864,7 +2878,7 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 		return err
 	}
 	if oldPath := a.reconciledSessionPathForTab(tab); oldPath != "" {
-		if err := saveTabSessionMeta(tab, oldPath); err != nil {
+		if err := a.saveTabSessionMeta(tab, oldPath); err != nil {
 			return fmt.Errorf("save current session metadata before switching sessions: %w", err)
 		}
 	}
@@ -6771,17 +6785,26 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return userFacingSessionLeaseError("model", err)
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
-	if oldCtrl != nil {
-		oldCtrl.Close()
-	}
-	a.persistTabSessionPath(tab, path)
 	a.mu.Lock()
+	if current := a.tabs[tab.ID]; current != tab {
+		// The tab was closed/replaced while we built the new controller off-lock;
+		// adopting it now would leak the runtime onto an orphaned tab and pin the
+		// session lease forever.
+		a.mu.Unlock()
+		newCtrl.Close()
+		tab.releaseSessionLease()
+		return fmt.Errorf("tab %q changed while switching model; retry", tab.ID)
+	}
 	tab.Ctrl = newCtrl
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	if oldCtrl != nil {
+		oldCtrl.Close()
+	}
+	a.persistTabSessionPath(tab, path)
 	return nil
 }
 
@@ -6843,15 +6866,15 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		return err
 	}
 	var carried []provider.Message
-	if tab.Ctrl != nil {
+	if oldCtrl := a.controllerForTab(tab); oldCtrl != nil {
 		if prevPath == "" {
-			prevPath = tab.Ctrl.SessionPath()
+			prevPath = oldCtrl.SessionPath()
 		}
 		if err := a.snapshotTabForAction(tab, "changing effort"); err != nil {
 			return err
 		}
-		carried = tab.Ctrl.History()
-		tab.Ctrl.Close()
+		carried = oldCtrl.History()
+		oldCtrl.Close()
 	}
 	sharedHost := a.lookupSharedHost(tab.SharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
@@ -6883,8 +6906,13 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
-	a.persistTabSessionPath(tab, path)
 	a.mu.Lock()
+	if current := a.tabs[tab.ID]; current != tab {
+		a.mu.Unlock()
+		newCtrl.Close()
+		tab.releaseSessionLease()
+		return fmt.Errorf("tab %q changed while switching effort; retry", tab.ID)
+	}
 	tab.Ctrl = newCtrl
 	tab.model = modelRef
 	tab.effort = &effort
@@ -6893,6 +6921,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	tab.Ready = true
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	a.persistTabSessionPath(tab, path)
 	return nil
 }
 
@@ -6929,7 +6958,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	}
 
 	var carried []provider.Message
-	oldCtrl := tab.Ctrl
+	oldCtrl := a.controllerForTab(tab)
 	if oldCtrl != nil {
 		if prevPath == "" {
 			prevPath = oldCtrl.SessionPath()
@@ -6967,11 +6996,13 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
-	if oldCtrl != nil {
-		oldCtrl.Close()
-	}
-	a.persistTabSessionPath(tab, path)
 	a.mu.Lock()
+	if current := a.tabs[tab.ID]; current != tab {
+		a.mu.Unlock()
+		newCtrl.Close()
+		tab.releaseSessionLease()
+		return fmt.Errorf("tab %q changed while switching token mode; retry", tab.ID)
+	}
 	tab.Ctrl = newCtrl
 	tab.model = modelRef
 	tab.tokenMode = mode
@@ -6980,6 +7011,10 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	tab.Ready = true
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	if oldCtrl != nil {
+		oldCtrl.Close()
+	}
+	a.persistTabSessionPath(tab, path)
 	return nil
 }
 

@@ -5665,10 +5665,17 @@ function ProviderEditor({
 
   const save = async () => {
     if (extraBodyInvalid) return;
+    setFetchStatus(null);
+    setFetchFallback(null);
     const ms = parseProviderListInput(models);
     const vms = parseProviderListInput(visionModels).filter((model) => ms.includes(model));
     const effectiveApiKeyEnv = providerApiKeyEnvForSave(name, apiKeyEnv, keyDraft);
-    if (keyDraft.trim()) await app.SetProviderKey(effectiveApiKeyEnv, keyDraft.trim());
+    try {
+      if (keyDraft.trim()) await app.SetProviderKey(effectiveApiKeyEnv, keyDraft.trim());
+    } catch (e) {
+      setFetchFallback(String((e as Error)?.message ?? e));
+      return;
+    }
     onSave({
       name: name.trim(),
       builtIn: initial?.builtIn ?? false,

@@ -3482,109 +3482,125 @@ func (a *App) RemoveWorkspace(dir string) error {
 	}
 	dir = normalizeProjectRoot(dir)
 
-	a.sessionRemovalMu.Lock()
-	defer a.sessionRemovalMu.Unlock()
-
-	type workspaceTabCandidate struct {
-		id  string
-		tab *WorkspaceTab
-	}
-
-	var closeTabs []*WorkspaceTab
-	var closeDetached []*WorkspaceTab
 	var fallback *WorkspaceTab
-	a.mu.Lock()
-	for _, tab := range a.tabs {
-		if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-			a.mu.Unlock()
-			return fmt.Errorf("workspace has running sessions; stop them before removing")
-		}
-	}
-	for _, tab := range a.detachedSessions {
-		if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-			a.mu.Unlock()
-			return fmt.Errorf("workspace has running sessions; stop them before removing")
-		}
-	}
-	candidates := make([]workspaceTabCandidate, 0)
-	for id, tab := range a.tabs {
-		if !tabInWorkspace(tab, dir) {
-			continue
-		}
-		candidates = append(candidates, workspaceTabCandidate{id: id, tab: tab})
-	}
-	a.mu.Unlock()
+	// sessionRemovalMu covers every step that can still touch this workspace's
+	// session files: snapshotting, unlinking the tab/runtime bindings, and
+	// closing the unlinked runtimes (quiescing autosave). Once a runtime is
+	// unlinked from a.tabs/detachedSessions it is invisible to
+	// DeleteSession/TrashTopic/RestoreSession, so it must stop writing before
+	// the lock is released. Project bookkeeping, the fallback controller build,
+	// and notifications run after release.
+	if err := func() error {
+		a.sessionRemovalMu.Lock()
+		defer a.sessionRemovalMu.Unlock()
 
-	snapshotted := make(map[string]*WorkspaceTab, len(candidates))
-	for _, candidate := range candidates {
-		id, tab := candidate.id, candidate.tab
-		snapshotted[id] = tab
-		if err := a.snapshotTab(tab); err != nil {
-			slog.Warn("desktop: snapshot before removing workspace failed", "tab", id, "workspace", dir, "err", err)
-			return fmt.Errorf("save current session before removing workspace: %w", err)
+		type workspaceTabCandidate struct {
+			id  string
+			tab *WorkspaceTab
 		}
+
+		var closeTabs []*WorkspaceTab
+		var closeDetached []*WorkspaceTab
+		a.mu.Lock()
+		for _, tab := range a.tabs {
+			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
+				a.mu.Unlock()
+				return fmt.Errorf("workspace has running sessions; stop them before removing")
+			}
+		}
+		for _, tab := range a.detachedSessions {
+			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
+				a.mu.Unlock()
+				return fmt.Errorf("workspace has running sessions; stop them before removing")
+			}
+		}
+		candidates := make([]workspaceTabCandidate, 0)
+		for id, tab := range a.tabs {
+			if !tabInWorkspace(tab, dir) {
+				continue
+			}
+			candidates = append(candidates, workspaceTabCandidate{id: id, tab: tab})
+		}
+		a.mu.Unlock()
+
+		snapshotted := make(map[string]*WorkspaceTab, len(candidates))
+		for _, candidate := range candidates {
+			id, tab := candidate.id, candidate.tab
+			snapshotted[id] = tab
+			if err := a.snapshotTab(tab); err != nil {
+				slog.Warn("desktop: snapshot before removing workspace failed", "tab", id, "workspace", dir, "err", err)
+				return fmt.Errorf("save current session before removing workspace: %w", err)
+			}
+		}
+
+		a.mu.Lock()
+		for _, tab := range a.tabs {
+			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
+				a.mu.Unlock()
+				return fmt.Errorf("workspace has running sessions; stop them before removing")
+			}
+		}
+		for _, tab := range a.detachedSessions {
+			if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
+				a.mu.Unlock()
+				return fmt.Errorf("workspace has running sessions; stop them before removing")
+			}
+		}
+		for id, tab := range a.tabs {
+			if tabInWorkspace(tab, dir) && snapshotted[id] != tab {
+				a.mu.Unlock()
+				return fmt.Errorf("workspace tabs changed while removing; retry")
+			}
+		}
+		for _, candidate := range candidates {
+			id, tab := candidate.id, candidate.tab
+			if tab == nil || a.tabs[id] != tab || !tabInWorkspace(tab, dir) {
+				continue
+			}
+			a.markTabRemovedLocked(tab)
+			closeTabs = append(closeTabs, tab)
+			delete(a.tabs, id)
+			a.removeTabOrderLocked(id)
+			if a.activeTabID == id {
+				a.activeTabID = ""
+			}
+		}
+		for key, tab := range a.detachedSessions {
+			if !tabInWorkspace(tab, dir) {
+				continue
+			}
+			closeDetached = append(closeDetached, tab)
+			delete(a.detachedSessions, key)
+		}
+		if len(a.tabs) == 0 {
+			fallback = a.createTabEntry("global", globalTabWorkspaceRoot(), "")
+			fallback.TopicTitle = "Global"
+			fallback.sink = &tabEventSink{tabID: fallback.ID, app: a, ctx: a.ctx}
+			a.tabs[fallback.ID] = fallback
+			a.tabOrder = append(a.tabOrder, fallback.ID)
+			a.activeTabID = fallback.ID
+		} else if a.activeTabID == "" {
+			if ordered := a.orderedTabIDsLocked(); len(ordered) > 0 {
+				a.activeTabID = ordered[0]
+			}
+		}
+		a.saveTabsLocked()
+		a.mu.Unlock()
+
+		for _, tab := range closeTabs {
+			a.closeTabRuntime(tab)
+		}
+		for _, tab := range closeDetached {
+			a.closeTabRuntime(tab)
+		}
+		return nil
+	}(); err != nil {
+		return err
 	}
 
-	a.mu.Lock()
-	for _, tab := range a.tabs {
-		if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-			a.mu.Unlock()
-			return fmt.Errorf("workspace has running sessions; stop them before removing")
-		}
-	}
-	for _, tab := range a.detachedSessions {
-		if tabInWorkspace(tab, dir) && tab.hasActiveRuntimeWork() {
-			a.mu.Unlock()
-			return fmt.Errorf("workspace has running sessions; stop them before removing")
-		}
-	}
-	for id, tab := range a.tabs {
-		if tabInWorkspace(tab, dir) && snapshotted[id] != tab {
-			a.mu.Unlock()
-			return fmt.Errorf("workspace tabs changed while removing; retry")
-		}
-	}
-	for _, candidate := range candidates {
-		id, tab := candidate.id, candidate.tab
-		if tab == nil || a.tabs[id] != tab || !tabInWorkspace(tab, dir) {
-			continue
-		}
-		a.markTabRemovedLocked(tab)
-		closeTabs = append(closeTabs, tab)
-		delete(a.tabs, id)
-		a.removeTabOrderLocked(id)
-		if a.activeTabID == id {
-			a.activeTabID = ""
-		}
-	}
-	for key, tab := range a.detachedSessions {
-		if !tabInWorkspace(tab, dir) {
-			continue
-		}
-		closeDetached = append(closeDetached, tab)
-		delete(a.detachedSessions, key)
-	}
-	if len(a.tabs) == 0 {
-		fallback = a.createTabEntry("global", globalTabWorkspaceRoot(), "")
-		fallback.TopicTitle = "Global"
-		fallback.sink = &tabEventSink{tabID: fallback.ID, app: a, ctx: a.ctx}
-		a.tabs[fallback.ID] = fallback
-		a.tabOrder = append(a.tabOrder, fallback.ID)
-		a.activeTabID = fallback.ID
-	} else if a.activeTabID == "" {
-		if ordered := a.orderedTabIDsLocked(); len(ordered) > 0 {
-			a.activeTabID = ordered[0]
-		}
-	}
-	a.saveTabsLocked()
-	a.mu.Unlock()
-
-	for _, tab := range closeTabs {
-		a.closeTabRuntime(tab)
-	}
-	for _, tab := range closeDetached {
-		a.closeTabRuntime(tab)
-	}
+	// The fallback tab is already linked into a.tabs; its controller build is
+	// asynchronous and does not touch removed session files, so it does not
+	// need the removal lock.
 	if fallback != nil {
 		a.startTabControllerBuild(fallback)
 	}

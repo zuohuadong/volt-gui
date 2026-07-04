@@ -1724,7 +1724,14 @@ func blankTabSessionPathHasNoContent(tab *WorkspaceTab) bool {
 	if strings.TrimSpace(tab.SessionPath) == "" {
 		return true
 	}
-	path, ok := pinnedTabSessionPath(tabSessionDir(tab), tab.SessionPath)
+	return sessionPathHasNoContent(tabSessionDir(tab), tab.SessionPath)
+}
+
+func sessionPathHasNoContent(sessionDir, sessionPath string) bool {
+	if strings.TrimSpace(sessionPath) == "" {
+		return true
+	}
+	path, ok := pinnedTabSessionPath(sessionDir, sessionPath)
 	if !ok {
 		return false
 	}
@@ -1925,11 +1932,11 @@ func (a *App) CloseTab(tabID string) error {
 	// snapshot recovery can re-enter App and acquire a.mu. sessionRemovalMu keeps
 	// DeleteSession/topic/workspace removal from trashing the same files while
 	// this save is in flight.
-	if err := snapshotTabDirect(tab); err != nil {
+	if err := a.snapshotTab(tab); err != nil {
 		slog.Warn("desktop: snapshot before closing tab failed", "tab", tabID, "err", err)
 		return fmt.Errorf("save current session before closing tab: %w", err)
 	}
-	if err := saveTabSessionMetaForCurrentSession(tab); err != nil {
+	if err := a.saveTabSessionMetaForCurrentSession(tab); err != nil {
 		slog.Warn("desktop: session metadata before closing tab failed", "tab", tabID, "err", err)
 		return fmt.Errorf("save current session metadata before closing tab: %w", err)
 	}
@@ -2035,11 +2042,11 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 	for _, candidate := range candidates {
 		id, tab := candidate.id, candidate.tab
 		snapshotted[id] = tab
-		if err := snapshotTabDirect(tab); err != nil {
+		if err := a.snapshotTab(tab); err != nil {
 			slog.Warn("desktop: snapshot before pruning hidden tab failed", "tab", id, "err", err)
 			return TabMeta{}, fmt.Errorf("save current session before switching tabs: %w", err)
 		}
-		if err := saveTabSessionMetaForCurrentSession(tab); err != nil {
+		if err := a.saveTabSessionMetaForCurrentSession(tab); err != nil {
 			slog.Warn("desktop: session metadata before pruning hidden tab failed", "tab", id, "err", err)
 			return TabMeta{}, fmt.Errorf("save current session metadata before switching tabs: %w", err)
 		}
@@ -6311,38 +6318,162 @@ func saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 	return nil
 }
 
-func tabSessionMetaPathForCurrentSession(tab *WorkspaceTab) string {
+type tabSessionMetaSnapshot struct {
+	path             string
+	scope            string
+	workspaceRoot    string
+	topicID          string
+	topicTitle       string
+	tokenMode        string
+	mode             string
+	toolApprovalMode string
+	goal             string
+}
+
+func (a *App) saveTabSessionMetaForCurrentSession(tab *WorkspaceTab) error {
+	snap, ok := a.tabSessionMetaSnapshotForCurrentSession(tab)
+	if !ok {
+		return nil
+	}
+	return saveTabSessionMetaSnapshot(snap)
+}
+
+func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSessionMetaSnapshot, bool) {
 	if tab == nil {
-		return ""
+		return tabSessionMetaSnapshot{}, false
 	}
-	path := strings.TrimSpace(tab.currentSessionPath())
+	a.mu.RLock()
+	if tab.ID != "" && a.tabs[tab.ID] != tab {
+		a.mu.RUnlock()
+		return tabSessionMetaSnapshot{}, false
+	}
+	readOnly := tab.ReadOnly
+	ctrl := tab.Ctrl
+	storedPath := strings.TrimSpace(tab.SessionPath)
+	scope := tab.Scope
+	workspaceRoot := tab.WorkspaceRoot
+	topicID := tab.TopicID
+	topicTitle := tab.TopicTitle
+	tokenMode := boot.NormalizeTokenMode(tab.tokenMode)
+	mode := normalizeTabMode(tab.mode)
+	toolApprovalMode := normalizeToolApprovalMode(tab.toolApprovalMode)
+	goal := strings.TrimSpace(tab.goal)
+	a.mu.RUnlock()
+	if readOnly {
+		return tabSessionMetaSnapshot{}, false
+	}
+
+	ctrlPath := ""
+	ctrlDir := ""
+	activeWork := false
+	if ctrl != nil {
+		ctrlPath = strings.TrimSpace(ctrl.SessionPath())
+		if dir, ok := safeControllerSessionDir(ctrl); ok {
+			ctrlDir = strings.TrimSpace(dir)
+		}
+		status := ctrl.RuntimeStatus()
+		activeWork = status.Running || status.PendingPrompt || status.BackgroundJobs > 0
+		mode = tabModeFromAxes(ctrl.PlanMode(), ctrl.AutoApproveTools())
+		toolApprovalMode = normalizeToolApprovalMode(ctrl.ToolApprovalMode())
+		if ctrl.GoalStatus() == control.GoalStatusRunning {
+			goal = strings.TrimSpace(ctrl.Goal())
+		} else {
+			goal = ""
+		}
+	}
+
+	currentPath := ctrlPath
+	if currentPath == "" {
+		currentPath = storedPath
+	}
+	if currentPath == "" {
+		return tabSessionMetaSnapshot{}, false
+	}
+
+	sessionDir := desktopSessionDir("")
+	if workspaceRoot != "" {
+		sessionDir = desktopSessionDir(workspaceRoot)
+	} else if ctrlDir != "" {
+		sessionDir = ctrlDir
+	}
+	runtimeDir := sessionDir
+	if ctrlDir != "" {
+		if _, _, err := validateSessionPath(ctrlDir, currentPath); err == nil {
+			runtimeDir = ctrlDir
+		}
+	}
+	if topicID == "" && !activeWork && storedPath != "" && sessionPathHasNoContent(sessionDir, storedPath) {
+		return tabSessionMetaSnapshot{}, false
+	}
+	path := tabSessionMetaPathForSession(runtimeDir, sessionDir, currentPath)
 	if path == "" {
+		return tabSessionMetaSnapshot{}, false
+	}
+	return tabSessionMetaSnapshot{
+		path:             path,
+		scope:            scope,
+		workspaceRoot:    workspaceRoot,
+		topicID:          topicID,
+		topicTitle:       topicTitle,
+		tokenMode:        tokenMode,
+		mode:             mode,
+		toolApprovalMode: toolApprovalMode,
+		goal:             goal,
+	}, true
+}
+
+func saveTabSessionMetaSnapshot(snap tabSessionMetaSnapshot) error {
+	if strings.TrimSpace(snap.path) == "" {
+		return nil
+	}
+	m, err := agent.EnsureBranchMeta(snap.path)
+	if err != nil {
+		return err
+	}
+	scope := snap.scope
+	workspaceRoot := snap.workspaceRoot
+	if ownerScope, ownerRoot, _, ok := legacyMigrationTargetForDir(filepath.Dir(snap.path)); ok {
+		if ownerScope == "project" {
+			scope = ownerScope
+			workspaceRoot = ownerRoot
+		}
+	}
+	if scope == "project" {
+		workspaceRoot = normalizeProjectRoot(workspaceRoot)
+	} else {
+		scope = "global"
+		workspaceRoot = ""
+	}
+	m.Scope = scope
+	m.WorkspaceRoot = workspaceRoot
+	m.TopicID = snap.topicID
+	m.TopicTitle = snap.topicTitle
+	m.TokenMode = persistedTabTokenMode(snap.tokenMode)
+	m.Mode = persistedTabMode(snap.mode)
+	m.ToolApprovalMode = persistedToolApprovalMode(snap.toolApprovalMode)
+	m.Goal = strings.TrimSpace(snap.goal)
+	if err := agent.SaveBranchMetaPreserveUpdated(snap.path, m); err != nil {
+		return err
+	}
+	invalidateTopicSessionIndexForPath(snap.path)
+	return nil
+}
+
+func tabSessionMetaPathForSession(runtimeDir, sessionDir, sessionPath string) string {
+	sessionPath = strings.TrimSpace(sessionPath)
+	if sessionPath == "" {
 		return ""
 	}
-	for _, dir := range []string{tabRuntimeSessionDir(tab), tabSessionDir(tab)} {
-		if resolved, ok := pinnedTabSessionPath(dir, path); ok {
+	for _, dir := range []string{runtimeDir, sessionDir} {
+		if resolved, ok := pinnedTabSessionPath(dir, sessionPath); ok {
 			return resolved
 		}
 	}
-	path = canonicalTabSessionPath(path)
+	path := canonicalTabSessionPath(sessionPath)
 	if filepath.IsAbs(path) {
 		return path
 	}
 	return ""
-}
-
-func saveTabSessionMetaForCurrentSession(tab *WorkspaceTab) error {
-	if tab == nil || tab.ReadOnly {
-		return nil
-	}
-	if _, discard := transientBlankSessionArtifactPath(tab); discard {
-		return nil
-	}
-	path := tabSessionMetaPathForCurrentSession(tab)
-	if path == "" {
-		return nil
-	}
-	return saveTabSessionMeta(tab, path)
 }
 
 type tabSessionProfile struct {

@@ -1071,20 +1071,30 @@ func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
 	if err := a.ensureActiveTabRebuildAllowed("settings"); err != nil {
 		return err
 	}
-	cfg, path, err := a.loadDesktopUserConfigForEdit()
-	if err != nil {
-		return err
-	}
-	if err := mutate(cfg); err != nil {
-		return err
-	}
-	if err := cfg.SaveTo(path); err != nil {
+	if err := func() error {
+		// Serialize the load-modify-save against other in-process config editors
+		// (bot auto-session persistence, applyConfigOnly) so neither drops the
+		// other's fields. rebuild() runs after unlocking — it does slow work and
+		// must not hold the config edit lock.
+		unlock := config.LockUserConfigEdits()
+		defer unlock()
+		cfg, path, err := a.loadDesktopUserConfigForEdit()
+		if err != nil {
+			return err
+		}
+		if err := mutate(cfg); err != nil {
+			return err
+		}
+		return cfg.SaveTo(path)
+	}(); err != nil {
 		return err
 	}
 	return a.rebuild()
 }
 
 func (a *App) applyConfigOnly(mutate func(*config.Config) error) error {
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
 	cfg, path, err := a.loadDesktopUserConfigForEdit()
 	if err != nil {
 		return err
@@ -1103,7 +1113,7 @@ func (a *App) ensureActiveTabRebuildAllowed(setting string) error {
 		}
 		return fmt.Errorf("no active tab")
 	}
-	if controllerHasActiveRuntimeWork(tab.Ctrl) {
+	if controllerHasActiveRuntimeWork(a.controllerForTab(tab)) {
 		return rebuildControllerActiveWorkError(setting)
 	}
 	return nil
@@ -1372,7 +1382,7 @@ func (a *App) rebuild() error {
 	if tab == nil {
 		return fmt.Errorf("no active tab")
 	}
-	if controllerHasActiveRuntimeWork(tab.Ctrl) {
+	if controllerHasActiveRuntimeWork(a.controllerForTab(tab)) {
 		return rebuildControllerActiveWorkError("settings")
 	}
 	if err := a.ensureTabControllerWorkspace(tab); err != nil {
@@ -1380,15 +1390,15 @@ func (a *App) rebuild() error {
 	}
 	prevPath := a.reconciledSessionPathForTab(tab)
 	var carried []provider.Message
-	if tab.Ctrl != nil {
+	if oldCtrl := a.controllerForTab(tab); oldCtrl != nil {
 		if prevPath == "" {
-			prevPath = tab.Ctrl.SessionPath()
+			prevPath = oldCtrl.SessionPath()
 		}
 		if err := a.snapshotTabForAction(tab, "rebuilding settings"); err != nil {
 			return err
 		}
-		carried = tab.Ctrl.History()
-		tab.Ctrl.Close()
+		carried = oldCtrl.History()
+		oldCtrl.Close()
 	}
 	model := tab.model
 	if cfg, err := config.LoadForRoot(tab.WorkspaceRoot); err == nil {
@@ -1445,6 +1455,12 @@ func (a *App) rebuild() error {
 	}
 	a.persistTabSessionPath(tab, path)
 	a.mu.Lock()
+	if current := a.tabs[tab.ID]; current != tab {
+		a.mu.Unlock()
+		ctrl.Close()
+		tab.releaseSessionLease()
+		return fmt.Errorf("tab %q changed while rebuilding settings; retry", tab.ID)
+	}
 	tab.Ctrl = ctrl
 	tab.model = model
 	tab.Label = ctrl.Label()
@@ -1462,18 +1478,26 @@ func (a *App) SetDefaultModel(ref string) error {
 	if tab == nil {
 		return fmt.Errorf("no active tab")
 	}
+	// applyConfigChange ends in rebuild(), which reads tab.model to pick the
+	// runtime model — the new ref must be visible on the tab before that runs.
+	a.mu.Lock()
 	prev := tab.model
 	tab.model = ref
+	a.mu.Unlock()
 	if err := a.applyConfigChange(func(c *config.Config) error {
 		resolved, err := selectableDesktopModelRef(c, ref)
 		if err != nil {
 			return err
 		}
 		c.DefaultModel = resolved
+		a.mu.Lock()
 		tab.model = resolved
+		a.mu.Unlock()
 		return nil
 	}); err != nil {
+		a.mu.Lock()
 		tab.model = prev
+		a.mu.Unlock()
 		return err
 	}
 	return nil
@@ -2104,6 +2128,11 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 		if tab == nil {
 			continue
 		}
+		if tab.Ctrl != item.ctrl {
+			// The tab swapped controllers while we worked off-lock; nil-ing the
+			// replacement would leak it. Leave the new runtime alone.
+			continue
+		}
 		tab.Ctrl = nil
 		tab.model = fallbackRef
 		tab.Label = fallbackRef
@@ -2193,6 +2222,11 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	for _, item := range affected {
 		tab := a.tabs[item.id]
 		if tab == nil {
+			continue
+		}
+		if tab.Ctrl != item.ctrl {
+			// The tab swapped controllers while we worked off-lock; nil-ing the
+			// replacement would leak it. Leave the new runtime alone.
 			continue
 		}
 		tab.Ctrl = nil

@@ -2417,15 +2417,21 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	if err != nil {
 		a.mu.Lock()
 		if tab.removed || a.tabs[tab.ID] != tab {
-			a.releaseTabSharedHost(tab)
+			hostKey := takeTabSharedHostKey(tab)
 			a.mu.Unlock()
+			if hostKey != "" {
+				a.releaseSharedHost(hostKey)
+			}
 			return
 		}
 		tab.StartupErr = err.Error()
 		tab.Ready = true
-		a.releaseTabSharedHost(tab)
+		hostKey := takeTabSharedHostKey(tab)
 		tab.releaseSessionLease()
 		a.mu.Unlock()
+		if hostKey != "" {
+			a.releaseSharedHost(hostKey)
+		}
 		a.emitReady(wailsCtx, tab.ID)
 		return
 	}
@@ -2487,17 +2493,23 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			if err := tab.ensureSessionLease(path); err != nil {
 				a.mu.Lock()
 				if tab.removed || a.tabs[tab.ID] != tab {
+					hostKey := takeTabSharedHostKey(tab)
 					a.mu.Unlock()
 					ctrl.Close()
-					a.releaseTabSharedHost(tab)
+					if hostKey != "" {
+						a.releaseSharedHost(hostKey)
+					}
 					return
 				}
 				tab.StartupErr = err.Error()
 				tab.Ready = true
-				a.releaseTabSharedHost(tab)
+				hostKey := takeTabSharedHostKey(tab)
 				tab.releaseSessionLease()
 				a.mu.Unlock()
 				ctrl.Close()
+				if hostKey != "" {
+					a.releaseSharedHost(hostKey)
+				}
 				a.emitReady(wailsCtx, tab.ID)
 				return
 			}
@@ -4306,27 +4318,47 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 		if tab == nil {
 			return agent.BranchMeta{Name: agent.RecoveryBranchDefaultName}
 		}
+		// This runs on the snapshot-recovery path, which can fire from the
+		// controller's autosave goroutine; snapshot the tab fields under a.mu so
+		// we don't read them mid-mutation. Recovery callbacks never hold a.mu, so
+		// taking it here can't deadlock. Controller reads happen off-lock.
+		a.mu.RLock()
+		ctrl := tab.Ctrl
 		scope := strings.TrimSpace(tab.Scope)
+		workspaceRoot := strings.TrimSpace(tab.WorkspaceRoot)
+		topicTitle := tab.TopicTitle
+		model := strings.TrimSpace(tab.model)
+		tokenMode := persistedTabTokenMode(boot.NormalizeTokenMode(tab.tokenMode))
+		mode := normalizeTabMode(tab.mode)
+		toolApprovalMode := normalizeToolApprovalMode(tab.toolApprovalMode)
+		goal := strings.TrimSpace(tab.goal)
+		a.mu.RUnlock()
+		if ctrl != nil {
+			mode = tabModeFromAxes(ctrl.PlanMode(), ctrl.AutoApproveTools())
+			toolApprovalMode = normalizeToolApprovalMode(ctrl.ToolApprovalMode())
+			if g := strings.TrimSpace(ctrl.Goal()); g != "" && ctrl.GoalStatus() == control.GoalStatusRunning {
+				goal = g
+			} else {
+				goal = ""
+			}
+		}
 		if scope != "project" {
 			scope = "global"
 		}
-		workspaceRoot := strings.TrimSpace(tab.WorkspaceRoot)
 		if scope == "global" {
 			workspaceRoot = ""
 		}
-		topicID := newTopicID()
-		topicTitle := recoveryTopicTitle(tab.TopicTitle)
 		return agent.BranchMeta{
 			Name:             agent.RecoveryBranchDefaultName,
 			Scope:            scope,
 			WorkspaceRoot:    workspaceRoot,
-			TopicID:          topicID,
-			TopicTitle:       topicTitle,
-			Model:            strings.TrimSpace(tab.model),
-			TokenMode:        persistedTabTokenMode(currentTabTokenMode(tab)),
-			Mode:             persistedTabMode(currentTabMode(tab)),
-			ToolApprovalMode: persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
-			Goal:             persistedTabGoal(tab),
+			TopicID:          newTopicID(),
+			TopicTitle:       recoveryTopicTitle(topicTitle),
+			Model:            model,
+			TokenMode:        tokenMode,
+			Mode:             persistedTabMode(mode),
+			ToolApprovalMode: persistedToolApprovalMode(toolApprovalMode),
+			Goal:             goal,
 		}
 	}
 }
@@ -6281,41 +6313,38 @@ func pinnedTabSessionPath(dir, sessionPath string) (string, bool) {
 	return path, true
 }
 
-func saveTabSessionMeta(tab *WorkspaceTab, path string) error {
+// saveTabSessionMeta persists the tab's scope/topic/mode fields into the
+// session's branch-meta sidecar at path. Tab fields are snapshotted under a.mu
+// (controller reads happen off-lock) so a concurrent tab mutation can't tear
+// the persisted record.
+func (a *App) saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 	if tab == nil || strings.TrimSpace(path) == "" {
 		return nil
 	}
-	m, err := agent.EnsureBranchMeta(path)
-	if err != nil {
-		return err
+	a.mu.RLock()
+	ctrl := tab.Ctrl
+	snap := tabSessionMetaSnapshot{
+		path:             path,
+		scope:            tab.Scope,
+		workspaceRoot:    tab.WorkspaceRoot,
+		topicID:          tab.TopicID,
+		topicTitle:       tab.TopicTitle,
+		tokenMode:        boot.NormalizeTokenMode(tab.tokenMode),
+		mode:             normalizeTabMode(tab.mode),
+		toolApprovalMode: normalizeToolApprovalMode(tab.toolApprovalMode),
+		goal:             strings.TrimSpace(tab.goal),
 	}
-	scope := tab.Scope
-	workspaceRoot := tab.WorkspaceRoot
-	if ownerScope, ownerRoot, _, ok := legacyMigrationTargetForDir(filepath.Dir(path)); ok {
-		if ownerScope == "project" {
-			scope = ownerScope
-			workspaceRoot = ownerRoot
+	a.mu.RUnlock()
+	if ctrl != nil {
+		snap.mode = tabModeFromAxes(ctrl.PlanMode(), ctrl.AutoApproveTools())
+		snap.toolApprovalMode = normalizeToolApprovalMode(ctrl.ToolApprovalMode())
+		if goal := strings.TrimSpace(ctrl.Goal()); goal != "" && ctrl.GoalStatus() == control.GoalStatusRunning {
+			snap.goal = goal
+		} else {
+			snap.goal = ""
 		}
 	}
-	if scope == "project" {
-		workspaceRoot = normalizeProjectRoot(workspaceRoot)
-	} else {
-		scope = "global"
-		workspaceRoot = ""
-	}
-	m.Scope = scope
-	m.WorkspaceRoot = workspaceRoot
-	m.TopicID = tab.TopicID
-	m.TopicTitle = tab.TopicTitle
-	m.TokenMode = persistedTabTokenMode(currentTabTokenMode(tab))
-	m.Mode = persistedTabMode(currentTabMode(tab))
-	m.ToolApprovalMode = persistedToolApprovalMode(currentTabToolApprovalMode(tab))
-	m.Goal = persistedTabGoal(tab)
-	if err := agent.SaveBranchMetaPreserveUpdated(path, m); err != nil {
-		return err
-	}
-	invalidateTopicSessionIndexForPath(path)
-	return nil
+	return saveTabSessionMetaSnapshot(snap)
 }
 
 type tabSessionMetaSnapshot struct {
@@ -6426,6 +6455,11 @@ func saveTabSessionMetaSnapshot(snap tabSessionMetaSnapshot) error {
 	if strings.TrimSpace(snap.path) == "" {
 		return nil
 	}
+	// Read-modify-write on the branch-meta sidecar: hold the per-path meta lock
+	// so agent-side writers (autosave UpdateSessionMeta, in-flight markers)
+	// can't interleave and drop fields.
+	unlock := agent.LockSessionMetaPath(snap.path)
+	defer unlock()
 	m, err := agent.EnsureBranchMeta(snap.path)
 	if err != nil {
 		return err
@@ -6598,7 +6632,7 @@ func (a *App) persistTabSessionPath(tab *WorkspaceTab, path string) {
 	if reconciled, ok := a.reconcileTabWithSessionPath(tab, path); ok {
 		path = canonicalTabSessionPath(reconciled)
 	}
-	_ = saveTabSessionMeta(tab, path)
+	_ = a.saveTabSessionMeta(tab, path)
 	a.rememberTabSessionPath(tab, path)
 }
 

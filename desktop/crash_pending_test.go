@@ -67,6 +67,30 @@ func TestWritePendingCrashCaps(t *testing.T) {
 	}
 }
 
+func TestWritePendingReportCanAvoidOverwritingExistingCrash(t *testing.T) {
+	t.Cleanup(func() { os.Remove(pendingCrashPath()) })
+	writePendingCrash("panic", "boom", []byte("stack"))
+	before, ok := readPending(t)
+	if !ok {
+		t.Fatal("expected initial pending crash")
+	}
+
+	hang := baseCrashReport("performance")
+	hang.Source = "native.watchdog"
+	hang.Label = "mac.main_thread.hang"
+	hang.Message = "hang"
+	if writePendingReport(hang, false) {
+		t.Fatal("writePendingReport overwrite=false should not replace existing report")
+	}
+	after, ok := readPending(t)
+	if !ok {
+		t.Fatal("expected pending crash after skipped write")
+	}
+	if after.Label != before.Label || after.Message != before.Message {
+		t.Fatalf("pending crash was overwritten: before=%+v after=%+v", before, after)
+	}
+}
+
 func TestWritePendingCrashScrubsSensitiveText(t *testing.T) {
 	t.Cleanup(func() { os.Remove(pendingCrashPath()) })
 	apiKey := "sk-proj-" + "abcdefghijklmnopqrstuvwxyz1234567890"

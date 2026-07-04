@@ -65,6 +65,10 @@ func (s *Session) Snapshot() []provider.Message {
 // persistence baseline of the source session. Resume paths use this when they
 // need to adjust loaded history before a rewrite; dropping persisted would make
 // CAS treat the first legitimate rewrite as a stale-runtime conflict.
+//
+// Callers that are handed history from outside this Session should prefer
+// CloneWithMessagesIfCompatible, so stale carried history cannot borrow a newer
+// on-disk baseline.
 func (s *Session) CloneWithMessages(msgs []provider.Message) *Session {
 	if s == nil {
 		return nil
@@ -82,6 +86,32 @@ func (s *Session) CloneWithMessages(msgs []provider.Message) *Session {
 		persisted:       s.persisted,
 		normalizedDirty: s.normalizedDirty,
 	}
+}
+
+// CloneWithMessagesIfCompatible preserves the persistence baseline only when
+// msgs is the same persisted history, optionally with a refreshed leading system
+// prompt. Other history changes must happen after Resume so SaveRewrite can
+// still detect genuine stale-controller conflicts.
+func (s *Session) CloneWithMessagesIfCompatible(msgs []provider.Message) (*Session, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !messagesCompatibleForStorageBaseline(s.Messages, msgs) {
+		return nil, false
+	}
+	version := s.version
+	if !messagesEqualForStorageList(s.Messages, msgs) {
+		version++
+	}
+	return &Session{
+		Messages:        append([]provider.Message(nil), msgs...),
+		version:         version,
+		rewriteVersion:  s.rewriteVersion,
+		persisted:       s.persisted,
+		normalizedDirty: s.normalizedDirty,
+	}, true
 }
 
 func (s *Session) snapshotWithVersion() ([]provider.Message, uint64) {

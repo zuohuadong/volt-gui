@@ -58,8 +58,10 @@ func resumeWithFreshSystemPrompt(ctrl interface {
 		next := withFreshSystemPrompt(messages, systemPromptFrom(ctrl.History()))
 		if path != "" {
 			if loaded, err := agent.LoadSession(path); err == nil && loaded != nil {
-				ctrl.Resume(loaded.CloneWithMessages(next), path)
-				return
+				if resumed, ok := loaded.CloneWithMessagesIfCompatible(next); ok {
+					ctrl.Resume(resumed, path)
+					return
+				}
 			}
 		}
 		ctrl.Resume(agent.NewSession("").CloneWithMessages(next), path)

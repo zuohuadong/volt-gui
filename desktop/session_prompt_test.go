@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,5 +110,39 @@ func TestResumeWithFreshSystemPromptPreservesLoadedRewriteBaseline(t *testing.T)
 	}
 	if matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
 		t.Fatalf("recovery branches after resume rewrite = %v err=%v, want none", matches, err)
+	}
+}
+
+func TestResumeWithFreshSystemPromptRejectsStaleCarriedHistoryBaseline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	current := agent.NewSession("old sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "disk second"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk two"})
+	if err := current.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	stale := []provider.Message{
+		{Role: provider.RoleSystem, Content: "old sys"},
+		{Role: provider.RoleUser, Content: "first"},
+		{Role: provider.RoleAssistant, Content: "one"},
+	}
+	ctrl := &promptResumeCtrl{history: []provider.Message{{Role: provider.RoleSystem, Content: "new sys"}}}
+	resumeWithFreshSystemPrompt(ctrl, stale, path)
+	if ctrl.resumed == nil {
+		t.Fatalf("Resume was not called")
+	}
+	if err := ctrl.resumed.SaveRewrite(path); !errors.Is(err, agent.ErrSessionSnapshotConflict) {
+		t.Fatalf("SaveRewrite stale carried history err = %v, want ErrSessionSnapshotConflict", err)
+	}
+
+	reloaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession current: %v", err)
+	}
+	if got := reloaded.Messages[len(reloaded.Messages)-1].Content; got != "disk two" {
+		t.Fatalf("original tail after stale resume rewrite = %q, want disk two", got)
 	}
 }

@@ -559,6 +559,13 @@ func messagesEqualForStorageList(a, b []provider.Message) bool {
 	return true
 }
 
+func messagesCompatibleForStorageBaseline(a, b []provider.Message) bool {
+	if messagesEqualForStorageList(a, b) {
+		return true
+	}
+	return messagesEqualForStorageList(messagesWithoutLeadingSystem(a), messagesWithoutLeadingSystem(b))
+}
+
 func lockSessionSavePath(path string) func() {
 	key := canonicalSessionSavePath(path)
 	v, _ := sessionSaveLocks.LoadOrStore(key, &sync.Mutex{})

@@ -771,11 +771,13 @@ func TestAdoptHistoryPreservesRewriteBaseline(t *testing.T) {
 	}
 	msgs := loaded.Snapshot()
 	msgs[0].Content = "new sys"
-	msgs[3].Content = "[elided tool result]"
 
 	exec := agent.New(nil, nil, agent.NewSession("new sys"), agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, SessionDir: dir, Label: "test", DisableColdResumePrune: true})
 	c.AdoptHistory(msgs, path)
+	rewrite := exec.Session().Snapshot()
+	rewrite[3].Content = "[elided tool result]"
+	exec.Session().Replace(rewrite)
 	if err := c.SnapshotRewrite(); err != nil {
 		t.Fatalf("SnapshotRewrite adopted history: %v", err)
 	}
@@ -795,6 +797,46 @@ func TestAdoptHistoryPreservesRewriteBaseline(t *testing.T) {
 	}
 	if matches, err := filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
 		t.Fatalf("recovery branches after adopted rewrite = %v err=%v, want none", matches, err)
+	}
+}
+
+func TestAdoptHistoryRejectsStaleCarriedHistoryBaseline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	current := agent.NewSession("sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "disk second"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk two"})
+	if err := current.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	stale := []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "first"},
+		{Role: provider.RoleAssistant, Content: "one"},
+	}
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, Label: "test", DisableColdResumePrune: true})
+	c.AdoptHistory(stale, path)
+	if err := c.SnapshotRewrite(); err != nil {
+		t.Fatalf("SnapshotRewrite stale adopted history: %v", err)
+	}
+
+	if got := c.SessionPath(); got != path {
+		t.Fatalf("SessionPath after stale adopted rewrite = %q, want original path", got)
+	}
+	reloaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession original: %v", err)
+	}
+	if got := reloaded.Messages[len(reloaded.Messages)-1].Content; got != "disk two" {
+		t.Fatalf("original tail after stale adopted rewrite = %q, want disk two", got)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
+		t.Fatalf("recovery branches after prefix stale adopted rewrite = %v err=%v, want none", matches, err)
 	}
 }
 

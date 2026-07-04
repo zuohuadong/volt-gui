@@ -387,6 +387,32 @@ func TestCloneWithMessagesPreservesRewriteBaseline(t *testing.T) {
 	}
 }
 
+func TestCloneWithMessagesIfCompatibleRejectsHistoryChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("old sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	if err := s.Save(path); err != nil {
+		t.Fatalf("Save base: %v", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	systemOnly := loaded.Snapshot()
+	systemOnly[0].Content = "new sys"
+	if _, ok := loaded.CloneWithMessagesIfCompatible(systemOnly); !ok {
+		t.Fatal("system-only change should be compatible")
+	}
+
+	changed := loaded.Snapshot()
+	changed[2].Content = "rewritten assistant"
+	if _, ok := loaded.CloneWithMessagesIfCompatible(changed); ok {
+		t.Fatal("non-system history change should not preserve baseline")
+	}
+}
+
 func TestSaveRewriteRejectsStalePrefixOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	current := NewSession("sys")

@@ -937,12 +937,12 @@ func ReconcileSessionSidecars(dir string) error {
 		switch {
 		case strings.HasSuffix(name, sessionLeaseInfoSidecarSuffix):
 			base := filepath.Join(dir, strings.TrimSuffix(name, ".lease.json"))
-			if err := removeStaleSessionLeaseSidecar(base, sidecarPath); err != nil {
+			if err := removeStaleSessionLeaseInfoSidecar(base, sidecarPath); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", sidecarPath, err))
 			}
 		case strings.HasSuffix(name, sessionLeaseLockSidecarSuffix):
 			base := filepath.Join(dir, strings.TrimSuffix(name, ".lease.lock"))
-			if err := removeStaleSessionLeaseSidecar(base, sidecarPath); err != nil {
+			if err := removeStaleSessionLeaseLockSidecar(base, sidecarPath); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", sidecarPath, err))
 			}
 		case strings.HasSuffix(name, sessionLockSidecarSuffix):
@@ -960,29 +960,42 @@ func removeStaleSessionLockSidecar(basePath, sidecarPath string) error {
 	if sessionLeaseHeldLocally(basePath) || SessionLeaseHeldByOtherRuntime(basePath) {
 		return nil
 	}
-	unlock, err := tryLockSessionFile(basePath)
+	lock, err := tryTakeSessionLockFile(sidecarPath)
 	if err != nil {
 		if errors.Is(err, errSessionFileLockHeld) {
 			return nil
 		}
 		return err
 	}
-	// Unlink before releasing the flock. Dropping the lock first opens a
-	// window where a concurrent saver locks this inode, the file disappears
-	// under it, and the next opener creates a fresh inode whose "exclusive"
-	// lock the first saver cannot see. Holding the lock across the unlink
-	// narrows that to openers already parked on the old inode.
-	removeErr := os.Remove(sidecarPath)
-	if unlock != nil {
-		unlock()
-	}
-	if removeErr != nil && !os.IsNotExist(removeErr) {
-		return removeErr
-	}
-	return nil
+	// The removal is atomic with the release (unlink-under-flock on Unix,
+	// delete-disposition on the held handle on Windows), so a concurrent
+	// saver can never acquire a lock file that is being deleted under it.
+	return lock.RemoveAndUnlock()
 }
 
-func removeStaleSessionLeaseSidecar(basePath, sidecarPath string) error {
+// removeStaleSessionLeaseLockSidecar retires a leftover .lease.lock. The file
+// is the lease lock itself, so taking it non-blocking proves no runtime holds
+// the lease, and RemoveAndUnlock deletes it atomically with the release.
+func removeStaleSessionLeaseLockSidecar(basePath, sidecarPath string) error {
+	basePath = canonicalSessionSavePath(basePath)
+	if sessionLeaseHeldLocally(basePath) {
+		return nil
+	}
+	lock, err := tryTakeSessionLockFile(sidecarPath)
+	if err != nil {
+		if errors.Is(err, errSessionFileLockHeld) {
+			return nil
+		}
+		return err
+	}
+	return lock.RemoveAndUnlock()
+}
+
+// removeStaleSessionLeaseInfoSidecar retires a leftover .lease.json while
+// holding the lease lock, so no runtime can adopt the info file mid-removal.
+// The info file itself is never held open by anyone, so a plain remove under
+// the lock is safe on every platform.
+func removeStaleSessionLeaseInfoSidecar(basePath, sidecarPath string) error {
 	basePath = canonicalSessionSavePath(basePath)
 	if sessionLeaseHeldLocally(basePath) {
 		return nil
@@ -996,9 +1009,6 @@ func removeStaleSessionLeaseSidecar(basePath, sidecarPath string) error {
 			}
 			return err
 		}
-		// Same unlink-under-lock ordering as removeStaleSessionLockSidecar:
-		// while we hold the lease flock no runtime can acquire this lease, so
-		// the sidecar cannot be adopted between the check and the removal.
 		removeErr := os.Remove(sidecarPath)
 		if unlock != nil {
 			unlock()
@@ -1111,16 +1121,16 @@ func renameOverlongSession(oldPath string) (string, error) {
 	if sessionLeaseSidecarFits(oldPath) && SessionLeaseHeldByOtherRuntime(oldPath) {
 		return "", nil
 	}
-	var unlockFile func()
+	var lockFile *sessionLockFile
 	if sessionLockSidecarFits(oldPath) {
-		unlock, err := tryLockSessionFile(oldPath)
+		lock, err := tryTakeSessionLockFile(oldPath + ".lock")
 		if err != nil {
 			if errors.Is(err, errSessionFileLockHeld) {
 				return "", nil
 			}
 			return "", err
 		}
-		unlockFile = unlock
+		lockFile = lock
 	}
 	renameErr := func() error {
 		if err := os.Rename(oldPath, newPath); err != nil {
@@ -1128,13 +1138,8 @@ func renameOverlongSession(oldPath string) (string, error) {
 		}
 		return migrateSessionSidecars(oldPath, newPath, newID)
 	}()
-	// Retire the old disposable sidecars while the file lock is still held,
-	// mirroring removeStaleSessionLockSidecar's unlink-under-lock ordering.
-	if sessionLockSidecarFits(oldPath) {
-		if err := os.Remove(oldPath + ".lock"); err != nil && !os.IsNotExist(err) && renameErr == nil {
-			renameErr = err
-		}
-	}
+	// Retire the old disposable lease sidecars: any holder was ruled out
+	// above, and nothing keeps these files open, so a plain remove is safe.
 	if sessionLeaseSidecarFits(oldPath) {
 		for _, stale := range []string{oldPath + ".lease.lock", oldPath + ".lease.json"} {
 			if err := os.Remove(stale); err != nil && !os.IsNotExist(err) && renameErr == nil {
@@ -1142,8 +1147,11 @@ func renameOverlongSession(oldPath string) (string, error) {
 			}
 		}
 	}
-	if unlockFile != nil {
-		unlockFile()
+	// The old .lock goes atomically with the release of the lock we hold on it.
+	if lockFile != nil {
+		if err := lockFile.RemoveAndUnlock(); err != nil && renameErr == nil {
+			renameErr = err
+		}
 	}
 	if renameErr != nil {
 		return "", renameErr

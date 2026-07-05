@@ -1156,7 +1156,13 @@ func (a *App) deferredRebuildWarning(setting string, err error) (string, bool) {
 	userErr := userFacingSessionLeaseError(setting, err)
 	warning := fmt.Sprintf("%s saved, but the current session could not refresh yet: %s", setting, userErr.Error())
 	slog.Warn("desktop: deferred settings rebuild", "setting", setting, "err", err)
-	a.warningForActiveTab(warning)
+	// Bind both the warning and the retry to the tab whose refresh failed (the
+	// rebuild acts on the active tab), so a tab switch right after the failure
+	// cannot misroute the notice or the deferred rebuild.
+	if tab := a.activeTab(); tab != nil {
+		a.warnForTab(tab.ID, warning)
+		a.scheduleDeferredRebuild(tab.ID, setting)
+	}
 	return warning, true
 }
 
@@ -1478,6 +1484,21 @@ func (a *App) rebuildSetting(setting string) error {
 	if a.ctx == nil {
 		return nil
 	}
+	// Serialize with SetModelForTab and the deferred-rebuild retry loop: two
+	// concurrent build+swap sequences on the same tab leak the first-swapped
+	// controller and double-close the old one.
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
+	return a.rebuildSettingLocked(setting)
+}
+
+// rebuildSettingLocked is rebuildSetting's body; callers must already hold
+// runtimeRebuildMu. The deferred-rebuild retry loop calls this directly because
+// it takes the lock across its lease probe.
+func (a *App) rebuildSettingLocked(setting string) error {
+	if a.ctx == nil {
+		return nil
+	}
 	tab := a.activeTab()
 	if tab == nil {
 		return fmt.Errorf("no active tab")
@@ -1585,6 +1606,7 @@ func (a *App) rebuildSetting(setting string) error {
 	tab.Ready = true
 	a.saveTabsLocked()
 	a.mu.Unlock()
+	a.clearDeferredRebuild(tab.ID)
 	a.emitReady(a.ctx)
 	return nil
 }
@@ -1736,7 +1758,12 @@ func (a *App) SetAutoPlan(mode string) error {
 	}
 	a.applyAutoPlanToLiveControllers(cfg.Agent.AutoPlan)
 	if desktopAutoPlanMode(cfg.Agent.AutoPlan) == "on" && strings.TrimSpace(cfg.Agent.AutoPlanClassifier) != "" {
-		return a.rebuild()
+		if err := a.rebuild(); err != nil {
+			if _, ok := a.deferredRebuildWarning("auto-plan", err); ok {
+				return nil
+			}
+			return err
+		}
 	}
 	return nil
 }
@@ -2317,7 +2344,13 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 		return err
 	}
 	if len(affected) == 0 {
-		return a.rebuild()
+		if err := a.rebuild(); err != nil {
+			if _, ok := a.deferredRebuildWarning("provider access", err); ok {
+				return nil
+			}
+			return err
+		}
+		return nil
 	}
 	for _, item := range affected {
 		if item.ctrl != nil {
@@ -2426,7 +2459,13 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	}
 
 	if len(affected) == 0 {
-		return a.rebuild()
+		if err := a.rebuild(); err != nil {
+			if _, ok := a.deferredRebuildWarning("provider", err); ok {
+				return nil
+			}
+			return err
+		}
+		return nil
 	}
 	for _, item := range affected {
 		if item.ctrl != nil {
@@ -2600,7 +2639,15 @@ func (a *App) ReloadSettings() error {
 	if err := a.ensureActiveTabRebuildAllowed("settings"); err != nil {
 		return err
 	}
-	return a.rebuild()
+	if err := a.rebuild(); err != nil {
+		// The on-disk config already diverged from the runtime; retry the
+		// refresh once the other window releases the session lease.
+		if _, ok := a.deferredRebuildWarning("settings", err); ok {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // SetSandbox updates the bash sandbox mode, network egress, and write roots.

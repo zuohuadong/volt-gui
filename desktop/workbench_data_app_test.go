@@ -140,6 +140,124 @@ func TestWorkbenchExportsWriteFiles(t *testing.T) {
 	}
 }
 
+func TestWorkbenchDeleteCustomerRemovesRecord(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	saved, err := app.SaveCustomer(WorkbenchCustomerInput{Name: "待删除客户"})
+	if err != nil {
+		t.Fatalf("SaveCustomer: %v", err)
+	}
+	if err := app.DeleteCustomer(saved.ID); err != nil {
+		t.Fatalf("DeleteCustomer: %v", err)
+	}
+	reloaded, err := app.ListWorkbenchData()
+	if err != nil {
+		t.Fatalf("ListWorkbenchData: %v", err)
+	}
+	if containsCustomer(reloaded.Customers, saved.ID) {
+		t.Fatalf("deleted customer still present: %+v", reloaded.Customers)
+	}
+}
+
+func TestWorkbenchTeamRoomAndChatPersist(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	room, err := app.SaveTeamRoom(WorkbenchTeamRoomView{Title: "测试协作组", MemberIDs: []string{"a", "b"}, Avatars: []string{"A", "B"}})
+	if err != nil {
+		t.Fatalf("SaveTeamRoom: %v", err)
+	}
+	if room.ID == "" || room.Members != 2 {
+		t.Fatalf("SaveTeamRoom returned unexpected room: %+v", room)
+	}
+	msg, err := app.SaveTeamChatMessage(WorkbenchTeamChatMessageView{TeamID: room.ID, Role: "user", Content: "测试消息"})
+	if err != nil {
+		t.Fatalf("SaveTeamChatMessage: %v", err)
+	}
+	if msg.ID == "" {
+		t.Fatalf("SaveTeamChatMessage returned empty ID: %+v", msg)
+	}
+	reloaded, err := app.ListWorkbenchData()
+	if err != nil {
+		t.Fatalf("ListWorkbenchData: %v", err)
+	}
+	if !containsTeamRoom(reloaded.TeamRooms, room.ID) {
+		t.Fatalf("team room not persisted: %+v", reloaded.TeamRooms)
+	}
+	if !containsTeamChatMessage(reloaded.TeamChatMessages, msg.ID) {
+		t.Fatalf("team chat message not persisted: %+v", reloaded.TeamChatMessages)
+	}
+}
+
+func TestWorkbenchDistillAgentFromTodo(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	agent, err := app.DistillAgentFromTodo(WorkbenchTodoInput{Title: "蒸馏测试", Description: "从任务蒸馏 Agent"}, []string{"技能 A"})
+	if err != nil {
+		t.Fatalf("DistillAgentFromTodo: %v", err)
+	}
+	if agent.ID == "" || agent.Name != "蒸馏测试 Agent" {
+		t.Fatalf("DistillAgentFromTodo returned unexpected agent: %+v", agent)
+	}
+	if agent.Role != "已蒸馏" || agent.Status != "已启用" {
+		t.Fatalf("DistillAgentFromTodo role/status mismatch: %+v", agent)
+	}
+}
+
+func TestWorkbenchEmptyDataStaysEmpty(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	// Save then delete all customers to get an empty-but-initialized store
+	cust, err := app.SaveCustomer(WorkbenchCustomerInput{Name: "临时客户"})
+	if err != nil {
+		t.Fatalf("SaveCustomer: %v", err)
+	}
+	_ = app.DeleteCustomer(cust.ID)
+
+	// Write an initialized-but-empty data file directly
+	data, err := loadWorkbenchData()
+	if err != nil {
+		t.Fatalf("loadWorkbenchData: %v", err)
+	}
+	data.Customers = nil
+	data.CalendarEvents = nil
+	data.Reports = nil
+	data.KnowledgeDocuments = nil
+	data.TeamRooms = nil
+	if err := saveWorkbenchData(data); err != nil {
+		t.Fatalf("saveWorkbenchData: %v", err)
+	}
+
+	reloaded, err := loadWorkbenchData()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(reloaded.Customers) != 0 || !reloaded.Initialized {
+		t.Fatalf("empty data was re-seeded instead of staying empty: %+v", reloaded)
+	}
+}
+
+func containsTeamRoom(items []WorkbenchTeamRoomView, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTeamChatMessage(items []WorkbenchTeamChatMessageView, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func containsCustomer(items []WorkbenchCustomerView, id string) bool {
 	for _, item := range items {
 		if item.ID == id {

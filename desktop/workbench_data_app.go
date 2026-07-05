@@ -27,6 +27,7 @@ type WorkbenchDataView struct {
 	TeamRooms          []WorkbenchTeamRoomView          `json:"teamRooms"`
 	TeamRuns           []WorkbenchTeamRunView           `json:"teamRuns"`
 	TeamChatMessages   []WorkbenchTeamChatMessageView   `json:"teamChatMessages"`
+	Initialized        bool                             `json:"initialized,omitempty"`
 }
 
 type WorkbenchCustomerView struct {
@@ -430,7 +431,9 @@ func (a *App) ExportWorkbenchReports() (string, error) {
 		return "", err
 	}
 	appendOperationLog(&data, "导出报告", "分析报告", "我的", "成功")
-	_ = saveWorkbenchData(data)
+	if err := saveWorkbenchData(data); err != nil {
+		return "", err
+	}
 	return writeWorkbenchExport("reports", data.Reports)
 }
 
@@ -563,7 +566,7 @@ func writeWorkbenchExport(name string, payload any) (string, error) {
 
 func defaultWorkbenchData() WorkbenchDataView {
 	now := time.Now().Format(time.RFC3339)
-	return normalizeWorkbenchData(WorkbenchDataView{
+	return WorkbenchDataView{
 		Customers: []WorkbenchCustomerView{
 			{ID: "internal", Name: "内部研发团队", Type: "企业", Contact: "产品负责人", Phone: "internal", Email: "dev@example.com", Risk: "低风险", RiskLevel: "low", Status: "active", Owner: "产品工作台", Stage: "活跃", Industry: "研发", Region: "本地", Address: "局域网本地客户档案", Note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", Desc: "Volt GUI 研发与验证主体。", ProjectIDs: []string{"volt-gui", "homepage"}, Matters: 2, Materials: 4, Events: 2, Todos: 5, Reports: 2, LastTouch: "刚刚", LastContact: "刚刚", NextAction: "继续验证工作台功能", Tags: []string{"内部", "研发"}, CreatedAt: now, UpdatedAt: now},
 			{ID: "ops", Name: "运营增长团队", Type: "企业", Contact: "增长负责人", Phone: "ops", Email: "ops@example.com", Risk: "中风险", RiskLevel: "medium", Status: "active", Owner: "增长项目", Stage: "跟进中", Industry: "运营", Region: "本地", Address: "运营项目群", Note: "负责发布材料、增长活动和客户触达。", Desc: "负责发布材料、增长活动和客户触达。", ProjectIDs: []string{"lurefree"}, Matters: 1, Materials: 2, Events: 1, Todos: 4, Reports: 1, LastTouch: "今天", LastContact: "今天", NextAction: "复核发布素材", Tags: []string{"运营", "增长"}, CreatedAt: now, UpdatedAt: now},
@@ -603,7 +606,8 @@ func defaultWorkbenchData() WorkbenchDataView {
 			{ID: "product-lab-system-1", TeamID: "product-lab", Role: "agent", AgentID: "code-review", AgentName: "代码审查 Agent", AgentAvatar: "C", Content: "当前是协作组模板预览。发送任务后会生成运行草稿。", CreatedAt: now},
 			{ID: "ops-growth-system-1", TeamID: "ops-growth", Role: "agent", AgentID: "research", AgentName: "资料研究 Agent", AgentAvatar: "R", Content: "请先绑定客户或项目资料，协作运行会基于真实上下文生成跟进建议。", CreatedAt: now},
 		},
-	})
+		Initialized: true,
+	}
 }
 
 func defaultTeamRooms(now string) []WorkbenchTeamRoomView {
@@ -614,9 +618,12 @@ func defaultTeamRooms(now string) []WorkbenchTeamRoomView {
 }
 
 func normalizeWorkbenchData(data WorkbenchDataView) WorkbenchDataView {
-	if len(data.Customers) == 0 && len(data.CalendarEvents) == 0 && len(data.Reports) == 0 && len(data.KnowledgeDocuments) == 0 && len(data.TeamRooms) == 0 {
-		return defaultWorkbenchData()
+	if !data.Initialized && len(data.Customers) == 0 && len(data.CalendarEvents) == 0 && len(data.Reports) == 0 && len(data.KnowledgeDocuments) == 0 && len(data.TeamRooms) == 0 {
+		seeded := defaultWorkbenchData()
+		seeded.Initialized = true
+		return seeded
 	}
+	data.Initialized = true
 	data.Customers = normalizeCustomers(data.Customers)
 	data.CalendarEvents = normalizeCalendarEvents(data.CalendarEvents)
 	data.Reports = normalizeReports(data.Reports)
@@ -750,8 +757,9 @@ func saveTeamRunInto(data *WorkbenchDataView, input WorkbenchTeamRunView) (Workb
 	input.ID = defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(slugifyAgentID(title), teamRunIDs(data.TeamRuns)))
 	input.Title = title
 	input.Status = defaultString(strings.TrimSpace(input.Status), "draft")
-	input.CreatedAt = defaultString(input.CreatedAt, "刚刚")
-	input.UpdatedAt = "刚刚"
+	now := time.Now().Format(time.RFC3339)
+	input.CreatedAt = defaultString(input.CreatedAt, now)
+	input.UpdatedAt = now
 	if len(input.Events) == 0 {
 		input.Events = []WorkbenchTeamRunEventView{{ID: input.ID + "-created", Time: "刚刚", Actor: "用户", Type: "创建运行", Detail: defaultString(input.Task, title)}}
 	}
@@ -771,6 +779,9 @@ func saveTeamChatMessageInto(data *WorkbenchDataView, input WorkbenchTeamChatMes
 	input.Role = defaultString(strings.TrimSpace(input.Role), "user")
 	input.CreatedAt = defaultString(input.CreatedAt, now)
 	data.TeamChatMessages = append(data.TeamChatMessages, input)
+	if len(data.TeamChatMessages) > 500 {
+		data.TeamChatMessages = data.TeamChatMessages[len(data.TeamChatMessages)-500:]
+	}
 	return input, nil
 }
 
@@ -995,12 +1006,17 @@ func normalizeTeamRuns(items []WorkbenchTeamRunView) []WorkbenchTeamRunView {
 }
 
 func normalizeTeamChatMessages(items []WorkbenchTeamChatMessageView) []WorkbenchTeamChatMessageView {
+	existing := make([]string, 0, len(items))
+	for _, item := range items {
+		existing = append(existing, item.ID)
+	}
 	out := make([]WorkbenchTeamChatMessageView, 0, len(items))
 	for _, item := range items {
 		if strings.TrimSpace(item.TeamID) == "" || strings.TrimSpace(item.Content) == "" {
 			continue
 		}
-		item.ID = defaultString(strings.TrimSpace(item.ID), "team-message")
+		item.ID = defaultString(strings.TrimSpace(item.ID), uniqueWorkbenchDataID("team-message", existing))
+		existing = append(existing, item.ID)
 		item.Role = defaultString(strings.TrimSpace(item.Role), "user")
 		out = append(out, item)
 	}

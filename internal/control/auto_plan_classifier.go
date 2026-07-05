@@ -48,7 +48,7 @@ func (c *ProviderAutoPlanClassifier) NeedsPlan(ctx context.Context, input string
 			{Role: provider.RoleSystem, Content: autoPlanClassifierPrompt},
 			{Role: provider.RoleUser, Content: fmt.Sprintf("heuristic_score=%d\n\nUSER_REQUEST:\n%s", score, input)},
 		},
-		Temperature: 0,
+		Temperature: nil,
 		MaxTokens:   80,
 	})
 	if err != nil {

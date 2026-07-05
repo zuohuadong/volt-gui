@@ -89,7 +89,7 @@ func TestDiscoverLoadsReasonixUserMemory(t *testing.T) {
 	block := set.Block()
 	ir, iv := strings.Index(block, "REASONIX USER"), strings.Index(block, "VOLTUI USER")
 	if !(ir >= 0 && ir < iv) {
-		t.Fatalf("reasonix user memory should load before current user memory: reasonix=%d voltui=%d\n%s", ir, iv, block)
+		t.Fatalf("voltui user memory should load before current user memory: voltui=%d voltui=%d\n%s", ir, iv, block)
 	}
 }
 

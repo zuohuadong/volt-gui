@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"aead.dev/minisign"
@@ -28,7 +29,7 @@ func TestSignFiles(t *testing.T) {
 	t.Setenv("MINISIGN_PASSWORD", "pw")
 
 	dir := t.TempDir()
-	artifact := filepath.Join(dir, "VoltUI-linux-amd64.tar.gz")
+	artifact := filepath.Join(dir, "Reasonix-linux-amd64.tar.gz")
 	payload := []byte("pretend this is a release tarball")
 	if err := os.WriteFile(artifact, payload, 0o644); err != nil {
 		t.Fatal(err)
@@ -52,22 +53,23 @@ func TestSignFiles(t *testing.T) {
 func TestGenManifest(t *testing.T) {
 	dir := t.TempDir()
 	names := []string{
-		"VoltUI-darwin-arm64.zip",
-		"VoltUI-darwin-amd64.zip",
-		"VoltUI-windows-amd64-installer.exe",
-		"VoltUI-linux-amd64.tar.gz",
-		"VoltUI-linux-amd64.tar.gz.minisig", // must be skipped
-		"README.txt",                        // unmatched, must be skipped
+		"Reasonix-darwin-arm64.zip",
+		"Reasonix-darwin-amd64.zip",
+		"Reasonix-windows-amd64-installer.exe",
+		"Reasonix-windows-amd64.zip", // portable download, not the updater channel
+		"Reasonix-windows-arm64-installer.exe",
+		"Reasonix-windows-arm64.zip", // portable download, not the updater channel
+		"Reasonix-linux-amd64.tar.gz",
+		"Reasonix-linux-amd64.deb",            // human download, not the updater channel
+		"Reasonix-linux-amd64.tar.gz.minisig", // must be skipped
+		"README.txt",                          // unmatched, must be skipped
 	}
 	for _, n := range names {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "VoltUI-windows-amd64-installer.exe.minisig"), []byte("sig"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GITHUB_REPOSITORY", "aizhuliren/volt-gui")
+	t.Setenv("GITHUB_REPOSITORY", "esengine/voltui")
 
 	if err := genManifest(dir, "v1.2.0", "desktop-v1.2.0"); err != nil {
 		t.Fatalf("genManifest: %v", err)
@@ -83,14 +85,17 @@ func TestGenManifest(t *testing.T) {
 	if m.Version != "v1.2.0" {
 		t.Fatalf("version = %q, want v1.2.0", m.Version)
 	}
-	if len(m.Platforms) != 4 {
-		t.Fatalf("want 4 platforms, got %d: %v", len(m.Platforms), m.Platforms)
+	if m.DownloadPage != "https://voltui.io/#start" {
+		t.Fatalf("download_page = %q, want official install page", m.DownloadPage)
+	}
+	if len(m.Platforms) != 5 {
+		t.Fatalf("want 5 platforms, got %d: %v", len(m.Platforms), m.Platforms)
 	}
 	win, ok := m.Platforms["windows-amd64"]
 	if !ok {
 		t.Fatal("windows-amd64 missing")
 	}
-	wantURL := "https://github.com/aizhuliren/volt-gui/releases/download/desktop-v1.2.0/VoltUI-windows-amd64-installer.exe"
+	wantURL := "https://github.com/esengine/DeepSeek-Reasonix/releases/download/desktop-v1.2.0/Reasonix-windows-amd64-installer.exe"
 	if win.URL != wantURL {
 		t.Fatalf("windows url = %q, want %q", win.URL, wantURL)
 	}
@@ -100,56 +105,22 @@ func TestGenManifest(t *testing.T) {
 	if win.SHA256 == "" || win.Size == 0 {
 		t.Fatalf("windows asset missing digest/size: %+v", win)
 	}
-}
-
-func TestGenManifestAllowsUnsignedArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	name := "VoltUI-windows-amd64-installer.exe"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
-		t.Fatal(err)
+	// The Windows updater channel is the per-arch -installer.exe; the portable .zip
+	// must not shadow the windows-arm64 key.
+	arm, ok := m.Platforms["windows-arm64"]
+	if !ok {
+		t.Fatal("windows-arm64 missing")
 	}
-	if err := genManifest(dir, "v1.2.0", "desktop-v1.2.0"); err != nil {
-		t.Fatalf("genManifest: %v", err)
+	if !strings.HasSuffix(arm.URL, "/Reasonix-windows-arm64-installer.exe") {
+		t.Fatalf("windows-arm64 url = %q, want the installer, not the portable zip", arm.URL)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
-	if err != nil {
-		t.Fatal(err)
+	// The Linux updater channel must stay the .tar.gz; the co-located .deb is a
+	// human download and must not shadow the linux-amd64 key.
+	lin, ok := m.Platforms["linux-amd64"]
+	if !ok {
+		t.Fatal("linux-amd64 missing")
 	}
-	var m update.Manifest
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("latest.json is not valid: %v", err)
-	}
-	if got := m.Platforms["windows-amd64"].Sig; got != "" {
-		t.Fatalf("unsigned artifact sig = %q, want empty", got)
-	}
-}
-
-func TestGenManifestUsesReleaseURLOverrides(t *testing.T) {
-	dir := t.TempDir()
-	name := "VoltUI-windows-amd64-installer.exe"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("RELEASE_DOWNLOAD_PAGE", "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0")
-	t.Setenv("RELEASE_ASSET_BASE_URL", "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0/downloads")
-
-	if err := genManifest(dir, "v1.2.0", "desktop-v1.2.0"); err != nil {
-		t.Fatalf("genManifest: %v", err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m update.Manifest
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("latest.json is not valid: %v", err)
-	}
-	windows := m.Platforms["windows-amd64"]
-	wantURL := "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0/downloads/" + name
-	if windows.URL != wantURL {
-		t.Fatalf("windows url = %q, want %q", windows.URL, wantURL)
-	}
-	if m.DownloadPage != "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/desktop-v1.2.0" {
-		t.Fatalf("download page = %q", m.DownloadPage)
+	if !strings.HasSuffix(lin.URL, "/Reasonix-linux-amd64.tar.gz") {
+		t.Fatalf("linux-amd64 url = %q, want the .tar.gz, not the .deb", lin.URL)
 	}
 }

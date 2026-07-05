@@ -11,9 +11,9 @@
 //	                             (decrypted with $MINISIGN_PASSWORD).
 //
 //	manifest <dir> <ver> <tag>   Scan <dir> for the per-platform artifacts, compute
-//	                             size + sha256, and write <dir>/latest.json with release
-//	                             download URLs. RELEASE_ASSET_BASE_URL overrides GitHub
-//	                             URLs for CNB or mirror-hosted releases.
+//	                             size + sha256, and write <dir>/latest.json with GitHub
+//	                             release download URLs. The R2 mirror step rewrites those
+//	                             URLs to the CDN afterwards (url + sig fields together).
 package main
 
 import (
@@ -33,9 +33,9 @@ import (
 )
 
 // platforms are the manifest keys we publish. A built artifact is matched to a key
-// by substring (file names embed the brand name, e.g. MyCorp-darwin-arm64.zip),
-// so the generator and the updater agree on update.PlatformKey output.
-var platforms = []string{"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
+// by substring (file names embed the key, e.g. Reasonix-darwin-arm64.zip), so the
+// generator and the updater agree on update.PlatformKey output.
+var platforms = []string{"darwin-arm64", "darwin-amd64", "windows-amd64", "windows-arm64", "linux-amd64"}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -151,7 +151,7 @@ func signFiles(files []string) error {
 			return err
 		}
 		sig := minisign.SignWithComments(priv, data,
-			"file:"+filepath.Base(f), "desktop release")
+			"file:"+filepath.Base(f), "Reasonix desktop release")
 		out := f + ".minisig"
 		if err := os.WriteFile(out, sig, 0o644); err != nil {
 			return err
@@ -162,13 +162,16 @@ func signFiles(files []string) error {
 }
 
 // genManifest scans dir for the per-platform artifacts and writes dir/latest.json.
-// version is the semver compared by the updater (e.g. "v1.1.0"); tag is the
+// version is the semver compared by the updater (e.g. "v1.1.0"); tag is the GitHub
 // release tag used in download URLs (e.g. "desktop-v1.1.0").
 func genManifest(dir, version, tag string) error {
-	downloadPage, assetBase := releaseURLs(tag)
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if repo == "" || repo == "esengine/voltui" {
+		repo = "esengine/DeepSeek-Reasonix"
+	}
 	m := update.Manifest{
 		Version:      version,
-		DownloadPage: downloadPage,
+		DownloadPage: "https://voltui.io/#start",
 		Platforms:    map[string]update.Asset{},
 	}
 	entries, err := os.ReadDir(dir)
@@ -188,14 +191,8 @@ func genManifest(dir, version, tag string) error {
 		if err != nil {
 			return err
 		}
-		assetURL := assetBase + "/" + name
-		asset := update.Asset{URL: assetURL, Size: size, SHA256: sum}
-		if _, err := os.Stat(filepath.Join(dir, name+".minisig")); err == nil {
-			asset.Sig = assetURL + ".minisig"
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		m.Platforms[key] = asset
+		url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, tag, name)
+		m.Platforms[key] = update.Asset{URL: url, Sig: url + ".minisig", Size: size, SHA256: sum}
 		fmt.Printf("manifest: %s -> %s (%d bytes)\n", key, name, size)
 	}
 	if len(m.Platforms) == 0 {
@@ -208,32 +205,18 @@ func genManifest(dir, version, tag string) error {
 	return os.WriteFile(filepath.Join(dir, "latest.json"), append(b, '\n'), 0o644)
 }
 
-func releaseURLs(tag string) (downloadPage, assetBase string) {
-	if page := strings.TrimRight(os.Getenv("RELEASE_DOWNLOAD_PAGE"), "/"); page != "" {
-		downloadPage = page
-	}
-	if base := strings.TrimRight(os.Getenv("RELEASE_ASSET_BASE_URL"), "/"); base != "" {
-		assetBase = base
-	}
-	if downloadPage != "" && assetBase != "" {
-		return downloadPage, assetBase
-	}
-
-	repo := os.Getenv("GITHUB_REPOSITORY")
-	if repo == "" {
-		repo = "aizhuliren/volt-gui"
-	}
-	if downloadPage == "" {
-		downloadPage = fmt.Sprintf("https://github.com/%s/releases/latest", repo)
-	}
-	if assetBase == "" {
-		assetBase = fmt.Sprintf("https://github.com/%s/releases/download/%s", repo, tag)
-	}
-	return downloadPage, assetBase
-}
-
 // matchPlatform returns the platform key embedded in a file name, or "" if none.
 func matchPlatform(name string) string {
+	// The .deb is a human-download package (like the macOS .dmg); the Linux updater
+	// channel is the .tar.gz. Skip it so it doesn't shadow the tarball's linux-amd64 key.
+	if strings.HasSuffix(name, ".deb") {
+		return ""
+	}
+	// The Windows updater channel is the per-arch -installer.exe; the portable .zip
+	// is a human download, so skip it or it would shadow the installer's key.
+	if strings.Contains(name, "windows-") && !strings.HasSuffix(name, "-installer.exe") {
+		return ""
+	}
 	for _, p := range platforms {
 		if strings.Contains(name, p) {
 			return p

@@ -16,8 +16,6 @@ import (
 	"voltui/internal/config"
 )
 
-var rememberPersistMu sync.Mutex
-
 // EnabledPlatforms resolves the requested channel list against the saved config.
 // "lark" is a domain alias for the Feishu adapter platform.
 func EnabledPlatforms(cfg *config.Config, channels []string) (map[bot.Platform]bool, []string) {
@@ -163,16 +161,95 @@ func ConnectionChannelConfigs(connections []config.BotConnectionConfig, includeM
 		}
 		if includeWorkspaceRoot {
 			channel.WorkspaceRoot = strings.TrimSpace(conn.WorkspaceRoot)
+			channel.SessionMappings = botSessionMappings(conn.SessionMappings)
 		}
 		if value := normalizeToolApprovalMode(conn.ToolApprovalMode); value != "" {
 			channel.ToolApprovalMode = value
 		}
-		if channel.Model != "" || channel.WorkspaceRoot != "" || channel.ToolApprovalMode != "" {
+		if channel.Model != "" || channel.WorkspaceRoot != "" || channel.ToolApprovalMode != "" || len(channel.SessionMappings) > 0 {
 			out[id] = channel
 		}
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func ConnectionAccessConfigs(cfg *config.Config) map[string]bot.AccessConfig {
+	if cfg == nil {
+		return nil
+	}
+	out := make(map[string]bot.AccessConfig)
+	if BotAccessActive(cfg.Bot.QQ.Access) {
+		out[string(bot.PlatformQQ)] = botAccessConfig(cfg.Bot.QQ.Access)
+	}
+	for _, conn := range cfg.Bot.Connections {
+		if !conn.Enabled {
+			continue
+		}
+		id := ConnectionRuntimeID(conn)
+		if id == "" || !BotAccessActive(conn.Access) {
+			continue
+		}
+		out[id] = botAccessConfig(conn.Access)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func BotAccessActive(access config.BotAccessConfig) bool {
+	return access.Enabled ||
+		access.AllowAll ||
+		access.PairingEnabled ||
+		len(access.Users) > 0 ||
+		len(access.Groups) > 0 ||
+		len(access.Approvers) > 0 ||
+		len(access.Admins) > 0
+}
+
+func botAccessConfig(access config.BotAccessConfig) bot.AccessConfig {
+	return bot.AccessConfig{
+		Enabled:        access.Enabled,
+		AllowAll:       access.AllowAll,
+		PairingEnabled: access.PairingEnabled,
+		Users:          trimStringSlice(access.Users),
+		Groups:         trimStringSlice(access.Groups),
+		Approvers:      trimStringSlice(access.Approvers),
+		Admins:         trimStringSlice(access.Admins),
+	}
+}
+
+func trimStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func botSessionMappings(mappings []config.BotConnectionSessionMapping) []bot.SessionMapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+	out := make([]bot.SessionMapping, 0, len(mappings))
+	for _, mapping := range mappings {
+		out = append(out, bot.SessionMapping{
+			RemoteID:      strings.TrimSpace(mapping.RemoteID),
+			ChatType:      strings.TrimSpace(mapping.ChatType),
+			UserID:        strings.TrimSpace(mapping.UserID),
+			ThreadID:      strings.TrimSpace(mapping.ThreadID),
+			Scope:         strings.TrimSpace(mapping.Scope),
+			WorkspaceRoot: strings.TrimSpace(mapping.WorkspaceRoot),
+		})
 	}
 	return out
 }
@@ -264,6 +341,25 @@ func AllowlistUserCount(a config.BotAllowlist) int {
 	return len(a.QQUsers) + len(a.FeishuUsers) + len(a.WeixinUsers)
 }
 
+func BotAccessUserCount(access config.BotAccessConfig) int {
+	return len(access.Users) + len(access.Groups) + len(access.Approvers) + len(access.Admins)
+}
+
+func BotConfigHasAccessControl(bc config.BotConfig) bool {
+	if bc.Allowlist.AllowAll || bc.Pairing.Enabled || (bc.Allowlist.Enabled && AllowlistUserCount(bc.Allowlist) > 0) {
+		return true
+	}
+	if BotAccessActive(bc.QQ.Access) {
+		return true
+	}
+	for _, conn := range bc.Connections {
+		if conn.Enabled && BotAccessActive(conn.Access) {
+			return true
+		}
+	}
+	return false
+}
+
 func NewRemoteRememberer(logger *slog.Logger) func(bot.InboundMessage) {
 	var mu sync.Mutex
 	seen := make(map[string]bool)
@@ -331,8 +427,8 @@ func ForgetAutoSessionMappingsForPath(sessionPath string) error {
 	if strings.TrimSpace(userPath) == "" {
 		return nil
 	}
-	rememberPersistMu.Lock()
-	defer rememberPersistMu.Unlock()
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
 
 	cfg := config.LoadForEdit(userPath)
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -368,8 +464,8 @@ func rememberInbound(msg bot.InboundMessage, sessionID string, actualWorkspaceRo
 	if userPath == "" || remoteID == "" {
 		return nil
 	}
-	rememberPersistMu.Lock()
-	defer rememberPersistMu.Unlock()
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
 
 	cfg := config.LoadForEdit(userPath)
 	now := time.Now().UTC().Format(time.RFC3339)

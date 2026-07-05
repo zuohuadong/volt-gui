@@ -517,6 +517,7 @@ func resolveSubagentProvider(tt *TaskTool, modelRef, effortRef string) (provider
 	}
 	// Use the task tool's own defaults.
 	return tt.prov, tt.pricing, tt.contextWindow, nil
+
 }
 
 func extractJobID(msg string) string {

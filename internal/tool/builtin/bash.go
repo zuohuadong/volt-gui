@@ -142,7 +142,10 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 
 	// Wrap in the OS sandbox when configured; otherwise argv is just the shell.
-	argv, _ := sandbox.Command(b.sb, sh, p.Command)
+	argv, wrapped := sandbox.Command(b.sb, sh, p.Command)
+	if b.sb.Enforce() && !wrapped {
+		return "", fmt.Errorf("bash sandbox requested but unavailable on this platform; refusing to run unconfined")
+	}
 	cmdEnv := bashCommandEnv(ctx)
 
 	if p.RunInBackground {
@@ -250,6 +253,7 @@ type trackedShellProcess struct {
 	cmd    *exec.Cmd
 	mu     sync.Mutex
 	job    uintptr
+	tree   *proc.TreeTracker
 	killed bool
 }
 
@@ -276,6 +280,7 @@ func runShellProcess(ctx context.Context, cmd *exec.Cmd, track bool) (*trackedSh
 		return tracked, err
 	}
 	tracked.setJob(job)
+	tracked.setTree(proc.TrackTree(cmd))
 	return tracked, waitForTrackedShellProcess(ctx, tracked, cmd.Wait, bashWaitDelay+time.Second)
 }
 
@@ -285,6 +290,7 @@ func waitForTrackedShellProcess(ctx context.Context, tracked *trackedShellProces
 
 	select {
 	case err := <-waitCh:
+		tracked.stopTracking()
 		return err
 	case <-ctx.Done():
 	}
@@ -294,8 +300,10 @@ func waitForTrackedShellProcess(ctx context.Context, tracked *trackedShellProces
 	// process-tree edge, do not keep the foreground turn hostage after Stop.
 	select {
 	case err := <-waitCh:
+		tracked.stopTracking()
 		return canceledShellWaitError{cause: context.Cause(ctx), waitErr: err}
 	case <-time.After(grace):
+		go tracked.retryKillUntilWait(waitCh, 5*time.Second)
 		return context.Cause(ctx)
 	}
 }
@@ -351,20 +359,72 @@ func (p *trackedShellProcess) setJob(job uintptr) {
 	}
 }
 
+func (p *trackedShellProcess) setTree(tree *proc.TreeTracker) {
+	if p == nil || tree == nil {
+		return
+	}
+	p.mu.Lock()
+	killed := p.killed
+	if !killed {
+		p.tree = tree
+	}
+	p.mu.Unlock()
+	if killed {
+		tree.Kill()
+		tree.Stop()
+	}
+}
+
+func (p *trackedShellProcess) stopTracking() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	tree := p.tree
+	p.tree = nil
+	p.mu.Unlock()
+	if tree != nil {
+		tree.Stop()
+	}
+}
+
 func (p *trackedShellProcess) kill() {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
-	if p.killed {
-		p.mu.Unlock()
-		return
-	}
+	firstKill := !p.killed
 	p.killed = true
 	job := p.job
 	p.job = 0
+	tree := p.tree
 	p.mu.Unlock()
+	if !firstKill {
+		job = 0
+	}
 	proc.KillTracked(p.cmd, job)
+	if tree != nil {
+		tree.Kill()
+		tree.Stop()
+	}
+}
+
+func (p *trackedShellProcess) retryKillUntilWait(waitCh <-chan error, max time.Duration) {
+	defer p.stopTracking()
+	deadline := time.NewTimer(max)
+	defer deadline.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-waitCh:
+			return
+		case <-ticker.C:
+			p.kill()
+		case <-deadline.C:
+			return
+		}
+	}
 }
 
 // progressWriter forwards each chunk the command writes to a tool.ProgressFunc,

@@ -33,6 +33,12 @@ type BranchMeta struct {
 	Mode             string    `json:"mode,omitempty"`
 	ToolApprovalMode string    `json:"tool_approval_mode,omitempty"`
 	Goal             string    `json:"goal,omitempty"`
+	Recovered        bool      `json:"recovered,omitempty"`
+	RecoveryReason   string    `json:"recovery_reason,omitempty"`
+	RecoveryDigest   string    `json:"recovery_digest,omitempty"`
+	Revision         int64     `json:"revision,omitempty"`
+	ContentDigest    string    `json:"content_digest,omitempty"`
+	WriterID         string    `json:"writer_id,omitempty"`
 	// SchemaVersion records the BranchMeta version that last wrote the listing
 	// fields (Turns/Preview) FROM the session's content. It is stamped only by the
 	// writers that actually derive those counts — Controller.snapshot's
@@ -147,6 +153,9 @@ func saveBranchMeta(sessionPath string, m BranchMeta, touchUpdated bool) error {
 	if touchUpdated || m.UpdatedAt.IsZero() {
 		m.UpdatedAt = now
 	}
+	if existing, ok, err := LoadBranchMeta(sessionPath); err == nil && ok {
+		preserveBranchMetaPersistence(&m, existing)
+	}
 	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
 		return err
 	}
@@ -176,6 +185,26 @@ func saveBranchMeta(sessionPath string, m BranchMeta, touchUpdated bool) error {
 	return nil
 }
 
+func preserveBranchMetaPersistence(next *BranchMeta, existing BranchMeta) {
+	if next == nil {
+		return
+	}
+	if existing.Revision > next.Revision {
+		next.Revision = existing.Revision
+		next.ContentDigest = existing.ContentDigest
+		next.WriterID = existing.WriterID
+		return
+	}
+	if existing.Revision == next.Revision {
+		if strings.TrimSpace(next.ContentDigest) == "" {
+			next.ContentDigest = existing.ContentDigest
+		}
+		if strings.TrimSpace(next.WriterID) == "" {
+			next.WriterID = existing.WriterID
+		}
+	}
+}
+
 func EnsureBranchMeta(sessionPath string) (BranchMeta, error) {
 	if sessionPath == "" {
 		return BranchMeta{}, fmt.Errorf("empty session path")
@@ -196,6 +225,8 @@ func EnsureBranchMeta(sessionPath string) (BranchMeta, error) {
 }
 
 func TouchBranchMeta(sessionPath string) error {
+	unlock := lockSessionSavePath(sessionPath)
+	defer unlock()
 	m, err := EnsureBranchMeta(sessionPath)
 	if err != nil {
 		return err
@@ -208,6 +239,11 @@ func MarkSessionInFlightTurn(sessionPath string, startMessageIndex int, preserve
 	if startMessageIndex < 0 {
 		startMessageIndex = 0
 	}
+	// The sidecar is read-modify-write; the per-path save lock keeps concurrent
+	// writers (autosave's UpdateSessionMeta, listing backfill) from dropping
+	// each other's fields.
+	unlock := lockSessionSavePath(sessionPath)
+	defer unlock()
 	m, err := EnsureBranchMeta(sessionPath)
 	if err != nil {
 		return err
@@ -221,6 +257,8 @@ func MarkSessionInFlightTurn(sessionPath string, startMessageIndex int, preserve
 }
 
 func ClearSessionInFlightTurn(sessionPath string) error {
+	unlock := lockSessionSavePath(sessionPath)
+	defer unlock()
 	m, ok, err := LoadBranchMeta(sessionPath)
 	if err != nil || !ok {
 		return err
@@ -323,6 +361,8 @@ func SetBranchModelPreserveUpdated(sessionPath, model string) error {
 	if sessionPath == "" {
 		return fmt.Errorf("empty session path")
 	}
+	unlock := lockSessionSavePath(sessionPath)
+	defer unlock()
 	meta, err := EnsureBranchMeta(sessionPath)
 	if err != nil {
 		return err
@@ -340,6 +380,8 @@ func UpdateSessionMeta(sessionPath, model, preview string, turns int, markActivi
 	if sessionPath == "" {
 		return fmt.Errorf("empty session path")
 	}
+	unlock := lockSessionSavePath(sessionPath)
+	defer unlock()
 	m, err := EnsureBranchMeta(sessionPath)
 	if err != nil {
 		return err

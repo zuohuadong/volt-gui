@@ -494,21 +494,13 @@ func isMessageFormat(path string) bool {
 	return strings.HasPrefix(s, `{"role":`)
 }
 
+// isNativeSessionEventLog reports whether the file at an .events.jsonl path is
+// a native session event log (as opposed to a legacy v0.x event transcript
+// that happens to share the suffix).
 func isNativeSessionEventLog(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	var rec struct {
-		SchemaVersion int    `json:"schema_version"`
-		Type          string `json:"type"`
-	}
-	if err := json.NewDecoder(f).Decode(&rec); err != nil {
-		return false
-	}
-	return rec.SchemaVersion == sessionEventSchemaVersion &&
-		(rec.Type == sessionEventTypeReplace || rec.Type == sessionEventTypeAppend)
+	sessionPath := strings.TrimSuffix(path, ".events.jsonl") + ".jsonl"
+	probe, err := probeSessionEventLog(sessionPath)
+	return err == nil && probe.native && probe.size > 0
 }
 
 func saveNativeSessionCopy(src, dst string) error {

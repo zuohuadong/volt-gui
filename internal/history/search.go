@@ -356,10 +356,16 @@ func listJSONL(dir, source string, visible func(string) bool) []sourceFile {
 		if visible != nil && !visible(path) {
 			continue
 		}
+		// Recency must track the event log too: the .jsonl checkpoint's mtime
+		// only moves at checkpoints.
+		mod := info.ModTime()
+		if contentMod := agent.SessionContentModTime(path); !contentMod.IsZero() {
+			mod = contentMod
+		}
 		out = append(out, sourceFile{
 			path:   path,
 			source: source,
-			mod:    info.ModTime().UnixNano(),
+			mod:    mod.UnixNano(),
 		})
 	}
 	return out

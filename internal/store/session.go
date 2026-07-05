@@ -17,11 +17,14 @@ package store
 import "strings"
 
 // IsSessionTranscriptName reports whether name is a primary session transcript
-// file. Append-only event logs also end in .jsonl, so callers that discover
-// sessions by directory scan must use this helper instead of filepath.Ext.
+// file. Append-only event logs and guardian sidecars also end in .jsonl, so
+// callers that discover sessions by directory scan must use this helper instead
+// of filepath.Ext.
 func IsSessionTranscriptName(name string) bool {
 	name = strings.TrimSpace(name)
-	return strings.HasSuffix(name, ".jsonl") && !strings.HasSuffix(name, ".events.jsonl")
+	return strings.HasSuffix(name, ".jsonl") &&
+		!strings.HasSuffix(name, ".events.jsonl") &&
+		!strings.HasSuffix(name, ".guardian.jsonl")
 }
 
 // sessionStem strips the .jsonl suffix so a sidecar sits beside the session as
@@ -115,4 +118,24 @@ func SessionCleanupPending(sessionPath string) string {
 		return ""
 	}
 	return sessionStem(sessionPath) + ".cleanup-pending.json"
+}
+
+// SessionSidecarFiles returns every regular-file sidecar owned by a session
+// transcript: branch meta, goal state, the event log, and the event index.
+// Every surface that deletes a session (desktop trash, /clear, serve, ACP)
+// must remove all of these — the event log is the authoritative transcript, so
+// leaving it behind both leaks the "deleted" conversation and lets LoadSession
+// resurrect it. Directory artifacts (checkpoints, jobs) and ephemeral
+// lock/lease files have their own lifecycles and are intentionally not listed.
+func SessionSidecarFiles(sessionPath string) []string {
+	sessionPath = strings.TrimSpace(sessionPath)
+	if sessionPath == "" {
+		return nil
+	}
+	return []string{
+		SessionMeta(sessionPath),
+		SessionGoalState(sessionPath),
+		SessionEventLog(sessionPath),
+		SessionEventIndex(sessionPath),
+	}
 }

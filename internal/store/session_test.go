@@ -57,6 +57,8 @@ func TestIsSessionTranscriptName(t *testing.T) {
 	}{
 		{"session.jsonl", true},
 		{"session.events.jsonl", false},
+		{"session.guardian.jsonl", false},
+		{"session.guardian.events.jsonl", false},
 		{"session.jsonl.meta", false},
 		{"notes.txt", false},
 		{"", false},
@@ -65,5 +67,27 @@ func TestIsSessionTranscriptName(t *testing.T) {
 		if got := IsSessionTranscriptName(c.name); got != c.want {
 			t.Errorf("IsSessionTranscriptName(%q) = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestSessionSidecarFiles(t *testing.T) {
+	const p = "/home/u/.reasonix/sessions/abc.jsonl"
+	got := SessionSidecarFiles(p)
+	want := []string{
+		p + ".meta",
+		"/home/u/.reasonix/sessions/abc.goal-state.json",
+		"/home/u/.reasonix/sessions/abc.events.jsonl",
+		"/home/u/.reasonix/sessions/abc.event-index.json",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("SessionSidecarFiles = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("SessionSidecarFiles[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if SessionSidecarFiles("") != nil {
+		t.Error("SessionSidecarFiles(\"\") should be nil")
 	}
 }

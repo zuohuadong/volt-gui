@@ -15,6 +15,12 @@ location.
 Set `REASONIX_HOME` to override Reasonix home for tests, CI, or portable
 installations. Normal users should not need it.
 
+Advanced test and portable setups may set `REASONIX_STATE_HOME` to move runtime
+state such as sessions, archives, and memory. It does not move global config or
+provider credentials: those remain under `REASONIX_HOME`. If an older build wrote
+provider keys to `REASONIX_STATE_HOME/.env`, Reasonix imports those keys
+non-destructively when `<Reasonix home>/.env` is missing them.
+
 ## What Lives There
 
 | Data | Path |
@@ -26,9 +32,12 @@ installations. Normal users should not need it.
 | Global skills | `<Reasonix home>/skills/` |
 | Global hooks | `<Reasonix home>/settings.json` |
 | Hook trust store | `<Reasonix home>/trust.json` |
-| Sessions | `<Reasonix home>/sessions/` |
-| Archives | `<Reasonix home>/archive/` |
-| Memory | `<Reasonix home>/memory/` and `<Reasonix home>/projects/` |
+| Sessions | `<state root>/sessions/` |
+| Archives | `<state root>/archive/` |
+| Memory | `<state root>/memory/` and `<state root>/projects/` |
+
+`<state root>` defaults to `<Reasonix home>`. It only differs when
+`REASONIX_STATE_HOME` is set.
 
 The global user config is named `config.toml`. Project-local config files keep
 the name `reasonix.toml`. If someone says "global reasonix.toml", they usually

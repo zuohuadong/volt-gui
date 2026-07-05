@@ -122,6 +122,17 @@ type App struct {
 	// topic/workspace removal trash the same files while it is in flight.
 	sessionRemovalMu sync.Mutex
 
+	// runtimeRebuildMu serializes controller rebuilds (build + swap) across
+	// rebuildSetting, SetModelForTab, and the deferred-rebuild retry loop. Two
+	// concurrent rebuilds of the same tab both pass the tab-identity check at
+	// swap time (the tab pointer is unchanged), so the loser's controller
+	// would replace the winner's and leak it without Close.
+	runtimeRebuildMu sync.Mutex
+
+	// deferredRebuild tracks tabs whose settings were saved but whose runtime
+	// could not refresh because the session lease was held by another process.
+	deferredRebuild deferredRebuildState
+
 	// detachedSessions keeps live session runtimes whose visible tab was closed.
 	// It is process-local by design: shutdown closes every detached controller.
 	detachedSessions map[string]*WorkspaceTab
@@ -369,6 +380,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	installSystemQuitHook()
 	a.startTray()
+	a.enableDeferredRebuildRetry()
 
 	if cfg, err := config.Load(); err == nil && cfg.DesktopMetrics() && version != "dev" {
 		a.metrics.Store(newMetricsAggregator(config.MemoryUserDir()))
@@ -657,6 +669,7 @@ func (a *App) snapshotAllTabs() {
 
 // shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
+	a.stopDeferredRebuildRetry()
 	a.stopMainThreadWatchdog()
 	if a.heartbeat != nil {
 		a.heartbeat.Stop()
@@ -5813,7 +5826,15 @@ func (a *App) RemoveSkillPath(path string) error {
 // discovery, the system prompt index, and slash completions.
 func (a *App) RefreshSkills() error {
 	a.invalidateSkillRootsCache()
-	return a.rebuild()
+	if err := a.rebuild(); err != nil {
+		// The skill cache is already invalidated; refresh the runtime once the
+		// other window releases the session lease.
+		if _, ok := a.deferredRebuildWarning("skills", err); ok {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // ReloadCommands rescans command directories and hot-swaps without restarting
@@ -6676,8 +6697,17 @@ func controllerHasActiveRuntimeWork(ctrl control.SessionAPI) bool {
 	return status.Running || status.PendingPrompt || status.BackgroundJobs > 0
 }
 
+// rebuildBusyError reports a rebuild rejected because the controller still has
+// a running turn, pending prompt, or background jobs. Typed so the
+// deferred-rebuild retry loop can keep waiting instead of giving up.
+type rebuildBusyError struct{ setting string }
+
+func (e *rebuildBusyError) Error() string {
+	return fmt.Sprintf("finish or cancel the current turn, answer pending prompts, and stop background jobs before changing %s", e.setting)
+}
+
 func rebuildControllerActiveWorkError(setting string) error {
-	return fmt.Errorf("finish or cancel the current turn, answer pending prompts, and stop background jobs before changing %s", setting)
+	return &rebuildBusyError{setting: setting}
 }
 
 type sessionLeaseBusyError struct {
@@ -6772,6 +6802,11 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if name == tab.model {
 		return nil
 	}
+	// Same build+swap shape as rebuildSetting; hold the same lock so a settings
+	// rebuild (manual or from the deferred-rebuild retry loop) and a model
+	// switch cannot interleave on one tab.
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
 	prevPath := a.reconciledSessionPathForTab(tab)
 	if prevPath == "" {
 		prevPath = strings.TrimSpace(tab.currentSessionPath())
@@ -6886,6 +6921,8 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if oldCtrl != nil {
 		oldCtrl.Close()
 	}
+	// The runtime now reflects the on-disk config; drop any deferred refresh.
+	a.clearDeferredRebuild(tab.ID)
 	a.persistTabSessionPath(tab, path)
 	return nil
 }
@@ -6930,6 +6967,11 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		}
 		return fmt.Errorf("tab %q not found", tabID)
 	}
+	// Build+swap path; serialize with the other rebuild paths (see
+	// runtimeRebuildMu). The tab==nil branch above goes through
+	// applyProviderEffortConfig → rebuildSetting, which takes the lock itself.
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
 	prevPath := a.reconciledSessionPathForTab(tab)
 	if prevPath == "" {
 		prevPath = strings.TrimSpace(tab.currentSessionPath())
@@ -7027,6 +7069,8 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	if oldCtrl != nil {
 		oldCtrl.Close()
 	}
+	// The rebuilt runtime reflects the on-disk config; drop any deferred refresh.
+	a.clearDeferredRebuild(tab.ID)
 	a.persistTabSessionPath(tab, path)
 	return nil
 }
@@ -7047,6 +7091,9 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	if mode == currentTabTokenMode(tab) {
 		return nil
 	}
+	// Build+swap path; serialize with the other rebuild paths (see runtimeRebuildMu).
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
 	prevPath := a.reconciledSessionPathForTab(tab)
 	if prevPath == "" {
 		prevPath = strings.TrimSpace(tab.currentSessionPath())
@@ -7143,6 +7190,8 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	if oldCtrl != nil {
 		oldCtrl.Close()
 	}
+	// The rebuilt runtime reflects the on-disk config; drop any deferred refresh.
+	a.clearDeferredRebuild(tab.ID)
 	a.persistTabSessionPath(tab, path)
 	return nil
 }
@@ -7614,6 +7663,13 @@ func (a *App) noticeForTab(tabID, text string) {
 	tab := a.tabByID(tabID)
 	if tab != nil && tab.sink != nil {
 		tab.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: text})
+	}
+}
+
+func (a *App) warnForTab(tabID, text string) {
+	tab := a.tabByID(tabID)
+	if tab != nil && tab.sink != nil {
+		tab.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
 	}
 }
 
@@ -8236,13 +8292,10 @@ func (a *App) ConnectKey(apiKey string) (string, error) {
 		return "", fmt.Errorf("save: %w", err)
 	}
 	if err := a.rebuildSetting("provider key"); err != nil {
-		// Key is persisted. Keep the current session usable and let a later
-		// rebuild pick up the credential.
-		slog.Warn("desktop: connect key rebuild failed", "err", err)
-		if strings.TrimSpace(warning) == "" {
-			warning = err.Error()
+		if rebuildWarning, ok := a.deferredRebuildWarning("provider key", err); ok {
+			warning = appendSettingsWarning(warning, rebuildWarning)
 		} else {
-			warning = warning + "\n" + err.Error()
+			return "", err
 		}
 	}
 	return warning, nil

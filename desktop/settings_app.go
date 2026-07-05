@@ -1605,6 +1605,9 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	tab.Label = ctrl.Label()
 	tab.StartupErr = ""
 	tab.Ready = true
+	// Supersede any in-flight startup build: it would otherwise finish later,
+	// pass its generation check, and overwrite the controller just installed.
+	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
 	a.mu.Unlock()
 	a.clearDeferredRebuild(tab.ID)
@@ -2372,6 +2375,10 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 			continue
 		}
 		tab.Ctrl = nil
+		// Supersede any in-flight startup build: it was planned against the
+		// removed provider and would otherwise finish later, pass its
+		// generation check, and reinstall a controller for it.
+		a.supersedeTabBuildLocked(tab)
 		tab.model = fallbackRef
 		tab.Label = fallbackRef
 		tab.StartupErr = ""
@@ -2487,6 +2494,10 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 			continue
 		}
 		tab.Ctrl = nil
+		// Supersede any in-flight startup build: it was planned against the
+		// removed provider and would otherwise finish later, pass its
+		// generation check, and reinstall a controller for it.
+		a.supersedeTabBuildLocked(tab)
 		tab.model = fallbackRef
 		tab.Label = fallbackRef
 		tab.StartupErr = ""

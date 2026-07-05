@@ -1582,7 +1582,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	snap := a.tabRuntimeSnapshot(tab)
 	oldSink := snap.sink
 	if oldSink != nil {
-		oldSink.setBinding(detachedRuntimeTabID(oldPath), nil)
+		// Rebind under the runtime key, matching the id cloneDetachedRuntimeTab
+		// derives — a raw path here would hash to a different detached id on
+		// Windows where keys are case-folded.
+		oldSink.setBinding(detachedRuntimeTabID(sessionRuntimeKey(oldPath)), nil)
 		oldSink.clearContext()
 	}
 	if oldCtrl.RuntimeStatus().Cancellable {
@@ -1652,15 +1655,28 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newCtrl.SetSessionPath(path)
 
 	a.mu.Lock()
-	if current := a.tabs[tab.ID]; current == tab {
-		tab.Ctrl = newCtrl
-		tab.sink = newSink
-		tab.SessionPath = path
-		tab.Label = newCtrl.Label()
-		tab.Ready = true
-		tab.StartupErr = ""
-		a.saveTabsLocked()
+	if current := a.tabs[tab.ID]; current != tab {
+		a.mu.Unlock()
+		// The old session is already destroyed either way; release what this
+		// clear acquired for the replaced tab (fresh controller and its
+		// lease) so neither leaks, and still finish the old runtime teardown.
+		newCtrl.Close()
+		tab.releaseSessionLease()
+		oldCtrl.CloseAfterDestroy()
+		a.emitProjectTreeChanged()
+		return fmt.Errorf("tab %q changed while clearing the session", tab.ID)
 	}
+	tab.Ctrl = newCtrl
+	tab.sink = newSink
+	tab.SessionPath = path
+	tab.Label = newCtrl.Label()
+	tab.Ready = true
+	tab.StartupErr = ""
+	// Supersede any in-flight startup build: the session it was resuming
+	// was just destroyed, and finishing later would pass the generation
+	// check and overwrite this controller.
+	a.supersedeTabBuildLocked(tab)
+	a.saveTabsLocked()
 	a.mu.Unlock()
 	oldCtrl.CloseAfterDestroy()
 	a.emitProjectTreeChanged()
@@ -7155,6 +7171,9 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
+	// Supersede any in-flight startup build: it would otherwise finish later,
+	// overwrite this controller, and release/steal the tab's session lease.
+	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
 	a.mu.Unlock()
 	if oldCtrl != nil {
@@ -7304,6 +7323,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	tab.Label = newCtrl.Label()
 	tab.StartupErr = ""
 	tab.Ready = true
+	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
 	a.mu.Unlock()
 	if oldCtrl != nil {
@@ -7429,6 +7449,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	tab.Label = newCtrl.Label()
 	tab.StartupErr = ""
 	tab.Ready = true
+	a.supersedeTabBuildLocked(tab)
 	a.saveTabsLocked()
 	a.mu.Unlock()
 	if oldCtrl != nil {

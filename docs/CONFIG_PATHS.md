@@ -32,9 +32,12 @@ non-destructively when `<Reasonix home>/.env` is missing them.
 | Global skills | `<Reasonix home>/skills/` |
 | Global hooks | `<Reasonix home>/settings.json` |
 | Hook trust store | `<Reasonix home>/trust.json` |
-| Sessions | `<Reasonix home>/sessions/` |
-| Archives | `<Reasonix home>/archive/` |
-| Memory | `<Reasonix home>/memory/` and `<Reasonix home>/projects/` |
+| Sessions | `<state root>/sessions/` |
+| Archives | `<state root>/archive/` |
+| Memory | `<state root>/memory/` and `<state root>/projects/` |
+
+`<state root>` defaults to `<Reasonix home>`. It only differs when
+`REASONIX_STATE_HOME` is set.
 
 The global user config is named `config.toml`. Project-local config files keep
 the name `reasonix.toml`. If someone says "global reasonix.toml", they usually

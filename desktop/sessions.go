@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -160,6 +161,17 @@ func sessionEphemeralArtifactPaths(sessionPath string) []string {
 	}
 }
 
+// errSessionBusyElsewhere is the sanitized error surfaced when a destructive
+// session operation is blocked by a live external owner. It intentionally
+// carries no writer id, hostname, or path.
+var errSessionBusyElsewhere = errors.New("session is in use by another Reasonix window or process")
+
+// sessionLeaseBusyCheck guards deletion of a session and its lease files: a
+// live external owner holds the lease lock on an open handle, and unlinking
+// the lock file would let a third runtime lock a fresh inode — two owners.
+// Swappable for tests.
+var sessionLeaseBusyCheck = agent.SessionLeaseHeldByOtherRuntime
+
 func sessionOwnedArtifactPaths(sessionPath string) []string {
 	key := filepath.Base(sessionPath)
 	artifacts := sessionTrashArtifacts(sessionPath, key)
@@ -192,6 +204,9 @@ func reconcileDesktopCleanupPending(dir string) error {
 }
 
 func reconcileDesktopTrashSessionArtifacts(dir, sessionPath, key string) error {
+	if sessionLeaseBusyCheck(sessionPath) {
+		return errSessionBusyElsewhere
+	}
 	itemDir := filepath.Join(sessionTrashPath(dir), key)
 	if err := os.MkdirAll(itemDir, 0o755); err != nil {
 		return err
@@ -330,18 +345,17 @@ func liveSessionDiscardable(sessionPath string) (bool, error) {
 }
 
 func trashSessionMatchesLive(sessionPath, trashPath string) (bool, error) {
-	live, err := os.ReadFile(sessionPath)
-	if err != nil {
+	if _, err := os.Stat(sessionPath); err != nil {
 		if os.IsNotExist(err) {
 			return true, nil
 		}
 		return false, err
 	}
-	trashed, err := os.ReadFile(trashPath)
-	if err != nil {
-		return false, err
-	}
-	return string(live) == string(trashed), nil
+	// Compare decoded transcripts, not .jsonl bytes: the checkpoint only
+	// changes at checkpoints, so two byte-identical .jsonl files can hide
+	// diverged event logs — and treating them as duplicates would delete the
+	// live session's newer history.
+	return agent.SessionsShareContent(sessionPath, trashPath)
 }
 
 func sessionFileHasConversationContent(sessionPath string) bool {
@@ -360,6 +374,9 @@ func sessionFileHasConversationContent(sessionPath string) bool {
 }
 
 func trashSessionArtifactsBeforeMove(dir, sessionPath, key string, beforeMove func()) error {
+	if sessionLeaseBusyCheck(sessionPath) {
+		return errSessionBusyElsewhere
+	}
 	if err := validateSessionTrashTarget(dir, sessionPath, key); err != nil {
 		return err
 	}
@@ -645,11 +662,15 @@ func trashSubagentArtifacts(dir, sessionPath, itemDir string) error {
 	}
 	trashSubagentDir := filepath.Join(itemDir, "subagents")
 	for _, artifact := range artifacts {
-		if err := movePathIfExists(artifact.SessionPath, filepath.Join(trashSubagentDir, filepath.Base(artifact.SessionPath))); err != nil {
-			return err
-		}
-		if err := movePathIfExists(artifact.MetaPath, filepath.Join(trashSubagentDir, filepath.Base(artifact.MetaPath))); err != nil {
-			return err
+		paths := []string{artifact.SessionPath, artifact.MetaPath}
+		paths = append(paths, store.SessionSidecarFiles(artifact.SessionPath)...)
+		for _, src := range paths {
+			if strings.TrimSpace(src) == "" {
+				continue
+			}
+			if err := movePathIfExists(src, filepath.Join(trashSubagentDir, filepath.Base(src))); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -175,8 +175,8 @@ func TestSaveSnapshotAppendsToEventLogWithoutChangingCheckpoint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	base := NewSession("sys")
 	base.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
-	if err := base.Save(path); err != nil {
-		t.Fatalf("Save base: %v", err)
+	if err := base.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot base: %v", err)
 	}
 	checkpointBefore, err := os.ReadFile(path)
 	if err != nil {
@@ -218,17 +218,13 @@ func TestSaveSnapshotAppendsToEventLogWithoutChangingCheckpoint(t *testing.T) {
 	}
 }
 
-func TestSaveRewriteAppendsReplaceEventWithoutChangingCheckpoint(t *testing.T) {
+func TestSaveRewriteAppendsReplaceEventAndRefreshesCheckpoint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	base := NewSession("sys")
 	base.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
 	base.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
-	if err := base.Save(path); err != nil {
-		t.Fatalf("Save base: %v", err)
-	}
-	checkpointBefore, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile checkpoint before rewrite: %v", err)
+	if err := base.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot base: %v", err)
 	}
 
 	loaded, err := LoadSession(path)
@@ -242,12 +238,14 @@ func TestSaveRewriteAppendsReplaceEventWithoutChangingCheckpoint(t *testing.T) {
 	if err := loaded.SaveRewrite(path); err != nil {
 		t.Fatalf("SaveRewrite: %v", err)
 	}
-	checkpointAfter, err := os.ReadFile(path)
+	// Rewrites refresh the compatibility checkpoint so direct .jsonl readers
+	// and older binaries stay bounded-stale instead of frozen at first save.
+	anchor, err := loadSessionMessagesFromJSONL(path)
 	if err != nil {
-		t.Fatalf("ReadFile checkpoint after rewrite: %v", err)
+		t.Fatalf("read checkpoint after rewrite: %v", err)
 	}
-	if string(checkpointAfter) != string(checkpointBefore) {
-		t.Fatalf("checkpoint changed after rewrite event:\nbefore=%s\nafter=%s", checkpointBefore, checkpointAfter)
+	if len(anchor) != 2 || anchor[1].Content != "rewound" {
+		t.Fatalf("checkpoint after rewrite = %+v, want refreshed rewound transcript", anchor)
 	}
 	events := readSessionEventsForTest(t, path)
 	if len(events) != 2 || events[1].Type != sessionEventTypeReplace || events[1].Reason != "rewrite" {

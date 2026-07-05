@@ -1132,6 +1132,7 @@ export function ProjectTree({
       const accentStyle = projectAccentStyle(node.projectColor, scope === "global" ? "var(--project-tree-global-accent)" : undefined);
       const active = topicIsActive(node, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath);
       const label = (node.label || node.topicId || "Untitled").replace(/^●\s*/, "");
+      const conflictCopyLabel = isSessionNode && node.recovered ? t("recovery.badge") : "";
       const activityAt = node.lastActivityAt || node.createdAt || 0;
       const sideTimeVisible = compactTopics || creationTopics;
       const timeLabel = sideTimeVisible ? (activityAt ? topicActivityLabel(activityAt, t, true) : topicUnknownTimeLabel(node, t)) : "";
@@ -1146,7 +1147,8 @@ export function ProjectTree({
       const imSourceLabel = imSource?.label || "";
       const imSourceTitle = imSourceLabel ? t("msg.fromIm", { source: imSourceLabel }) : "";
       const imSourcePlatform = (imSource?.platform || "im").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "im";
-      const title = [label, imSourceTitle, statusLabel, meta, exactTimeLabel].filter(Boolean).join(" · ");
+      const conflictCopyTitle = isSessionNode && node.recovered ? t("recovery.branch") : "";
+      const title = [label, conflictCopyTitle, imSourceTitle, statusLabel, meta, exactTimeLabel].filter(Boolean).join(" · ");
       const topicMenuOpen = !isSessionNode && menuTopic === topicId;
       const pinned = Boolean(node.pinned);
       const pinLabel = t(pinned ? "projectTree.unpinTopic" : "projectTree.pinTopic");
@@ -1265,7 +1267,7 @@ export function ProjectTree({
           >
             <span className="project-tree__topic-copy">
               <span className="project-tree__topic-heading">
-                <span className="project-tree__topic-label">{label}</span>
+                <span className="project-tree__topic-label">{conflictCopyLabel ? `${label} · ${conflictCopyLabel}` : label}</span>
                 {imSource && (
                   <span
                     className={`project-tree__topic-im project-tree__topic-im--${imSourcePlatform}`}

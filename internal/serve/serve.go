@@ -1009,9 +1009,11 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		}
 		name := strings.TrimSuffix(e.Name(), ".jsonl")
 		entry := sessionEntry{Name: name, Path: path, Current: filepath.Clean(path) == current}
-		if first, turns := previewSessionFile(path); turns > 0 {
+		// Event-log aware: reading the .jsonl checkpoint directly would freeze
+		// turn counts and titles at the last checkpoint write.
+		if first, turns := agent.SessionPreview(path); turns > 0 {
 			entry.Turns = turns
-			entry.Title = s.sessionTitle(r.Context(), e.Name(), first, fileModNano(e))
+			entry.Title = s.sessionTitle(r.Context(), e.Name(), first, agent.SessionContentModTime(path).UnixNano())
 		}
 		out = append(out, entry)
 	}
@@ -1113,8 +1115,14 @@ func delayedSessionDelete(absDir, abs string, destroy control.SessionDestroyHand
 }
 
 func removeSessionFiles(absDir, abs string) error {
-	if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
-		return err
+	remove := append([]string{abs}, store.SessionSidecarFiles(abs)...)
+	for _, p := range remove {
+		if p == "" {
+			continue
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	if err := agent.DeleteSubagentsByParent(absDir, agent.BranchID(abs)); err != nil {
 		return err
@@ -1144,42 +1152,6 @@ func previewTitle(first string) string {
 		return string(r[:47]) + "..."
 	}
 	return first
-}
-
-func fileModNano(e os.DirEntry) int64 {
-	info, err := e.Info()
-	if err != nil {
-		return 0
-	}
-	return info.ModTime().UnixNano()
-}
-
-// previewSessionFile reads the first user message and turn count from a JSONL session file.
-func previewSessionFile(path string) (string, int) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0
-	}
-	defer f.Close()
-	dec := json.NewDecoder(f)
-	first := ""
-	turns := 0
-	for {
-		var m struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		if err := dec.Decode(&m); err != nil {
-			break
-		}
-		if m.Role == "user" {
-			turns++
-			if first == "" {
-				first = agent.UserPreviewText(m.Content)
-			}
-		}
-	}
-	return first, turns
 }
 
 // skills lists discoverable skills.

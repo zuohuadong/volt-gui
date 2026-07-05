@@ -86,7 +86,26 @@
     WorkbenchProjectMaterialInput,
     WorkbenchAutomation,
     WorkbenchAutomationInput,
+    WorkbenchCalendarEvent,
+    WorkbenchCalendarEventInput,
+    WorkbenchCustomer,
+    WorkbenchCustomerInput,
+    WorkbenchData,
+    WorkbenchKnowledgeDocument,
+    WorkbenchKnowledgeDocumentInput,
     SkillPackageInput,
+    WorkbenchOperationLog,
+    WorkbenchRegulation,
+    WorkbenchReport,
+    WorkbenchReportInput,
+    WorkbenchSearchResult,
+    WorkbenchSyncJob,
+    WorkbenchTeamChatMessage,
+    WorkbenchTeamRoom,
+    WorkbenchTeamRun,
+    WorkbenchTeamRunArtifact as TeamRunArtifact,
+    WorkbenchTeamRunEvent as TeamRunEvent,
+    WorkbenchTeamRunStatus as TeamRunStatus,
     WorkspaceDiffView,
     WorkspaceChangesView,
   } from "./lib/types";
@@ -133,6 +152,25 @@
     SaveAutomation?: (input: WorkbenchAutomationInput) => Promise<WorkbenchAutomation>;
     DeleteAutomation?: (id: string) => Promise<void>;
     RunAutomationNow?: (id: string) => Promise<WorkbenchAutomation>;
+  };
+  type WorkbenchDataPersistenceBindings = {
+    ListWorkbenchData?: () => Promise<WorkbenchData>;
+    ListCustomers?: () => Promise<WorkbenchCustomer[]>;
+    SaveCustomer?: (input: WorkbenchCustomerInput) => Promise<WorkbenchCustomer>;
+    DeleteCustomer?: (id: string) => Promise<void>;
+    ListCalendarEvents?: () => Promise<WorkbenchCalendarEvent[]>;
+    SaveCalendarEvent?: (input: WorkbenchCalendarEventInput) => Promise<WorkbenchCalendarEvent>;
+    ListWorkbenchReports?: () => Promise<WorkbenchReport[]>;
+    SaveWorkbenchReport?: (input: WorkbenchReportInput) => Promise<WorkbenchReport>;
+    SaveKnowledgeDocument?: (input: WorkbenchKnowledgeDocumentInput) => Promise<WorkbenchKnowledgeDocument>;
+    RunWorkbenchSync?: (scope: string) => Promise<WorkbenchSyncJob[]>;
+    SearchWorkbench?: (query: string) => Promise<WorkbenchSearchResult[]>;
+    ExportOperationLogs?: () => Promise<string>;
+    ExportWorkbenchReports?: () => Promise<string>;
+    SaveTeamRoom?: (input: WorkbenchTeamRoom) => Promise<WorkbenchTeamRoom>;
+    SaveTeamRun?: (input: WorkbenchTeamRun) => Promise<WorkbenchTeamRun>;
+    SaveTeamChatMessage?: (input: WorkbenchTeamChatMessage) => Promise<WorkbenchTeamChatMessage>;
+    DistillAgentFromTodo?: (input: WorkbenchTodoInput, skillNames: string[]) => Promise<AgentView>;
   };
   type AutomationDraft = WorkbenchAutomationInput & { stepsText: string; logsText: string };
   const automationKindOptions = ["验证自动化", "质量门禁", "工程验证", "浏览器验证", "定时巡检", "报告生成", "自定义自动化"];
@@ -558,11 +596,11 @@
     { projectId: "lurefree", title: "复核发布资料", due: "今天", priority: "高", state: "进行中", desc: "确认发布前材料和验收证据。" },
     { projectId: "lurefree", title: "同步上线排期", due: "06-22", priority: "中", state: "待处理", desc: "更新客户与运营团队的提醒。" },
   ]);
-  const customerCards = [
-    { id: "internal", name: "内部研发团队", type: "企业", contact: "产品负责人", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", matters: 4, materials: 12, events: 3, todos: 5, risk: "低风险", riskLevel: "low", status: "active", createdAt: "2026-06-01", lastContact: "28 分钟前", address: "局域网本地客户档案", note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", projectIds: ["volt-gui", "homepage"] },
-    { id: "ops", name: "运营增长团队", type: "企业", contact: "增长负责人", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", matters: 3, materials: 8, events: 2, todos: 4, risk: "中风险", riskLevel: "medium", status: "active", createdAt: "2026-06-08", lastContact: "2 小时前", address: "运营项目群", note: "负责客户触达、发布材料和小程序增长相关任务，需保留交付前验证记录。", projectIds: ["lurefree"] },
-    { id: "founder", name: "个人创始人项目", type: "自然人", contact: "创始人本人", phone: "138-0000-0003", email: "founder@example.com", industry: "个人委托", matters: 1, materials: 5, events: 1, todos: 2, risk: "高风险", riskLevel: "high", status: "active", createdAt: "2026-06-12", lastContact: "今天", address: "远程访谈记录", note: "需求边界变化频繁，任务进入执行前需补齐确认记录与风险说明。", projectIds: [] },
-  ];
+  let customerCards = $state<WorkbenchCustomer[]>([
+    { id: "internal", name: "内部研发团队", type: "企业", contact: "产品负责人", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", owner: "产品工作台", stage: "活跃", region: "本地", matters: 4, materials: 12, events: 3, todos: 5, reports: 2, risk: "低风险", riskLevel: "low", status: "active", createdAt: "2026-06-01", lastTouch: "28 分钟前", lastContact: "28 分钟前", nextAction: "继续验证工作台功能", address: "局域网本地客户档案", note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", desc: "Volt GUI 研发与验证主体。", tags: ["内部", "研发"], projectIds: ["volt-gui", "homepage"] },
+    { id: "ops", name: "运营增长团队", type: "企业", contact: "增长负责人", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", owner: "增长项目", stage: "跟进中", region: "本地", matters: 3, materials: 8, events: 2, todos: 4, reports: 1, risk: "中风险", riskLevel: "medium", status: "active", createdAt: "2026-06-08", lastTouch: "2 小时前", lastContact: "2 小时前", nextAction: "复核发布素材", address: "运营项目群", note: "负责客户触达、发布材料和小程序增长相关任务，需保留交付前验证记录。", desc: "运营增长项目主体。", tags: ["运营", "增长"], projectIds: ["lurefree"] },
+    { id: "founder", name: "个人创始人项目", type: "自然人", contact: "创始人本人", phone: "138-0000-0003", email: "founder@example.com", industry: "个人委托", owner: "产品工作台", stage: "待确认", region: "远程", matters: 1, materials: 5, events: 1, todos: 2, reports: 0, risk: "高风险", riskLevel: "high", status: "active", createdAt: "2026-06-12", lastTouch: "今天", lastContact: "今天", nextAction: "确认需求边界", address: "远程访谈记录", note: "需求边界变化频繁，任务进入执行前需补齐确认记录与风险说明。", desc: "个人委托项目主体。", tags: ["个人", "待确认"], projectIds: [] },
+  ]);
   const customerMaterialRows = [
     { customerId: "internal", title: "Volt GUI 客户需求纪要", category: "访谈记录", source: "workspace", status: "已索引", updatedAt: "28 分钟前", desc: "整理导航、客户管理和项目管理的最新确认口径。" },
     { customerId: "internal", title: "桌面前端验证证据包", category: "交付资料", source: "desktop/frontend", status: "已同步", updatedAt: "今天", desc: "包含 Svelte 检查、构建、浏览器 DOM 与控制台验证记录。" },
@@ -715,26 +753,26 @@
     { id: "automation", title: "Automation Ops", version: "未加载", desc: "配置计划任务、监控和运行记录。", active: false, available: false },
   ];
   let skillCards = $state<AgentSkillCard[]>(defaultSkillCards);
-  const calendarEvents = [
-    { day: "09", title: "版本评审会议", time: "09:30", type: "meeting", place: "线上会议室" },
-    { day: "12", title: "客户工作流复盘", time: "14:00", type: "deadline", place: "项目群" },
-    { day: "18", title: "自动化验收", time: "16:30", type: "review", place: "研发工作台" },
-  ];
-  const reportCards = [
-    { title: "项目风险分析报告", status: "已生成", owner: "代码审查 Agent", desc: "覆盖变更风险、测试缺口、回滚建议。" },
-    { title: "客户运营周报", status: "草稿", owner: "运营 Agent", desc: "整理客户触达、项目状态与内容草案。" },
-    { title: "项目自动化运行报告", status: "待复核", owner: "自动化 Agent", desc: "汇总前端门禁、Go/Wails 门禁和本地预览回归的执行证据。" },
-  ];
-  const regulationItems = [
-    { title: "桌面端安全执行规范", category: "内部规则", status: "现行有效", tags: "权限 / 沙箱 / 审计" },
-    { title: "Agent 协作验收标准", category: "流程规范", status: "试行", tags: "任务 / 验证 / 交付" },
-    { title: "客户数据使用边界", category: "合规要求", status: "现行有效", tags: "客户 / 数据 / 留痕" },
-  ];
-  const documentItems = [
-    { title: "需求澄清记录模板", type: "模板", count: 18, status: "可用" },
-    { title: "项目复盘记录", type: "归档", count: 42, status: "已索引" },
-    { title: "项目自动化配置说明", type: "说明", count: 9, status: "已更新" },
-  ];
+  let calendarEvents = $state<WorkbenchCalendarEvent[]>([
+    { id: "version-review", day: "09", title: "版本评审会议", time: "09:30", type: "meeting", place: "线上会议室" },
+    { id: "customer-workflow", day: "12", title: "客户工作流复盘", time: "14:00", type: "deadline", place: "项目群" },
+    { id: "automation-review", day: "18", title: "自动化验收", time: "16:30", type: "review", place: "研发工作台" },
+  ]);
+  let reportCards = $state<WorkbenchReport[]>([
+    { id: "project-risk", title: "项目风险分析报告", status: "已生成", owner: "代码审查 Agent", desc: "覆盖变更风险、测试缺口、回滚建议。" },
+    { id: "customer-weekly", title: "客户运营周报", status: "草稿", owner: "运营 Agent", desc: "整理客户触达、项目状态与内容草案。" },
+    { id: "automation-run", title: "项目自动化运行报告", status: "待复核", owner: "自动化 Agent", desc: "汇总前端门禁、Go/Wails 门禁和本地预览回归的执行证据。" },
+  ]);
+  let regulationItems = $state<WorkbenchRegulation[]>([
+    { id: "desktop-security", title: "桌面端安全执行规范", category: "内部规则", status: "现行有效", tags: "权限 / 沙箱 / 审计" },
+    { id: "agent-acceptance", title: "Agent 协作验收标准", category: "流程规范", status: "试行", tags: "任务 / 验证 / 交付" },
+    { id: "customer-boundary", title: "客户数据使用边界", category: "合规要求", status: "现行有效", tags: "客户 / 数据 / 留痕" },
+  ]);
+  let documentItems = $state<WorkbenchKnowledgeDocument[]>([
+    { id: "requirement-template", title: "需求澄清记录模板", type: "模板", count: 18, status: "可用" },
+    { id: "project-retro", title: "项目复盘记录", type: "归档", count: 42, status: "已索引" },
+    { id: "automation-config", title: "项目自动化配置说明", type: "说明", count: 9, status: "已更新" },
+  ]);
   const resourceItems = $derived(projectMaterialRows.map((material) => {
     const project = projectCards.find((item) => item.id === material.projectId);
     return {
@@ -768,28 +806,16 @@
     const keyword = resourceSearch.trim().toLowerCase();
     return !keyword || [item.category, item.desc, item.latest, `${item.count}`].some((value) => value.toLowerCase().includes(keyword));
   }));
+  const filteredKnowledgeDocuments = $derived(documentItems.filter((item) => {
+    const keyword = resourceSearch.trim().toLowerCase();
+    return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.type, item.status, item.description, item.source, item.tags);
+  }));
+  const filteredRegulations = $derived(regulationItems.filter((item) => {
+    const keyword = resourceSearch.trim().toLowerCase();
+    return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.category, item.status, item.tags);
+  }));
   const selectedMaterialDetails = $derived(projectMaterialRows.filter((material) => material.id === selectedMaterialDetailId));
-  type TeamRunStep = { id: string; title: string; owner: string; status: string; detail: string };
-  type TeamRunStatus = "draft" | "running" | "paused" | "stopped" | "completed";
-  type TeamRunEvent = { id: string; time: string; actor: string; type: string; detail: string };
-  type TeamRunArtifact = { id: string; title: string; type: string; status: string };
-  type TeamRun = {
-    id: string;
-    teamId: string;
-    title: string;
-    status: TeamRunStatus;
-    task: string;
-    createdAt: string;
-    updatedAt: string;
-    currentStepId: string;
-    events: TeamRunEvent[];
-    artifacts: TeamRunArtifact[];
-  };
-  type TeamRoom = {
-    id: string; title: string; members: number; active: string; desc: string; leader: string; leaderId: string; status: string; topic: string; queue: string; memberIds: string[]; avatars: string[];
-    mode: string; sharedContext: string; runState: string; nextCheckpoint: string; outcome: string; controls: string[]; artifacts: string[]; steps: TeamRunStep[];
-  };
-  let teamRooms = $state<TeamRoom[]>([
+  let teamRooms = $state<WorkbenchTeamRoom[]>([
     { id: "product-lab", title: "产品研发组", members: 3, active: "模板已就绪", desc: "围绕桌面端体验、代码质量和发布节奏组织多 Agent 协作。", leader: "代码审查 Agent", leaderId: "code-review", status: "模板", topic: "桌面端体验复核", queue: "0 个运行节点", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"], mode: "协调者编排", sharedContext: "项目资料库 / 当前变更", runState: "待运行", nextCheckpoint: "发送任务后生成运行草稿", outcome: "等待首次运行", controls: ["暂停", "继续", "终止", "重新分配"], artifacts: ["报告草稿", "待办清单", "资料归档"], steps: [
       { id: "triage", title: "拆解目标", owner: "代码审查 Agent", status: "待运行", detail: "明确目标、非目标、验收标准和风险边界。" },
       { id: "research", title: "补充资料", owner: "资料研究 Agent", status: "待运行", detail: "读取关联资料并给出可引用依据。" },
@@ -805,14 +831,13 @@
       { id: "archive", title: "归档结果", owner: "自动化 Agent", status: "待运行", detail: "形成报告、待办和后续跟踪入口。" },
     ] },
   ]);
-  type TeamChatMessage = { id: string; teamId: string; role: "user" | "agent"; agentId?: string; agentName?: string; agentAvatar?: string; content: string };
-  let teamChatMessages = $state<TeamChatMessage[]>([
+  let teamChatMessages = $state<WorkbenchTeamChatMessage[]>([
     { id: "product-lab-system-1", teamId: "product-lab", role: "agent", agentId: "code-review", agentName: "代码审查 Agent", agentAvatar: "C", content: "当前是协作组模板预览。发送任务后会生成运行草稿，真实执行需要接入 Agent runtime。" },
     { id: "product-lab-system-2", teamId: "product-lab", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "我会在运行中负责资料依据、上下文摘要和待确认问题，不再引用未验证的外部页面结构。" },
     { id: "ops-growth-system-1", teamId: "ops-growth", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "请先绑定客户或项目资料，协作运行会基于真实上下文生成跟进建议。" },
     { id: "delivery-review-system-1", teamId: "delivery-review", role: "agent", agentId: "automation", agentName: "自动化 Agent", agentAvatar: "A", content: "审查组会把验证、报告和归档拆成可观察节点，目前展示的是运行计划而非已执行结果。" },
   ]);
-  let teamRuns = $state<TeamRun[]>([]);
+  let teamRuns = $state<WorkbenchTeamRun[]>([]);
   const filteredTeamBuilderAgents = $derived(agentCards.filter((agent) => {
     const keyword = teamBuilderSearch.trim().toLowerCase();
     return !keyword || [agent.name, agent.role, agent.desc].some((value) => value.toLowerCase().includes(keyword));
@@ -820,21 +845,25 @@
   const providerKindOptions = $derived(modelSettings?.providerKinds?.length ? modelSettings.providerKinds : ["openai", "anthropic"]);
   const modelCards = $derived(modelCardsFromSettings());
   const settingGroups = $derived(settingGroupsFromSettings());
-  const operationLogs = [
-    { action: "创建 Agent", target: "代码审查 Agent", user: "我的", time: "刚刚", result: "成功" },
-    { action: "更新自动化", target: "桌面前端质量门禁", user: "我的", time: "12 分钟前", result: "成功" },
-    { action: "关联项目", target: "Volt GUI 桌面端重构", user: "我的", time: "28 分钟前", result: "成功" },
-  ];
-  const searchResults = [
+  let operationLogs = $state<WorkbenchOperationLog[]>([
+    { id: "create-agent", action: "创建 Agent", target: "代码审查 Agent", user: "我的", time: "刚刚", result: "成功" },
+    { id: "update-automation", action: "更新自动化", target: "桌面前端质量门禁", user: "我的", time: "12 分钟前", result: "成功" },
+    { id: "link-project", action: "关联项目", target: "Volt GUI 桌面端重构", user: "我的", time: "28 分钟前", result: "成功" },
+  ]);
+  let searchResults = $state<WorkbenchSearchResult[]>([
     { title: "Agent 创建与配置", scope: "Agent 中心", snippet: "助手特征、基础工具、业务技能、核心文件均可配置。" },
     { title: "项目管理入口", scope: "业务管理", snippet: "项目可点击关联到新建对话。" },
     { title: "能力中心 MCP 管理", scope: "能力中心", snippet: "插件、MCP、SKILL 顶部横向切换。" },
-  ];
-  const syncJobs = [
-    { title: "记忆与核心文件同步", status: "已完成", progress: "100%", time: "5 分钟前" },
-    { title: "资料库索引", status: "运行中", progress: "64%", time: "正在执行" },
-    { title: "模型配置刷新", status: "排队中", progress: "0%", time: "等待中" },
-  ];
+  ]);
+  const displayedSearchResults = $derived(searchResults.filter((item) => {
+    const keyword = resourceSearch.trim().toLowerCase();
+    return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.scope, item.snippet);
+  }));
+  let syncJobs = $state<WorkbenchSyncJob[]>([
+    { id: "memory-sync", title: "记忆与核心文件同步", status: "已完成", progress: "100%", time: "5 分钟前" },
+    { id: "material-index", title: "资料库索引", status: "运行中", progress: "64%", time: "正在执行" },
+    { id: "model-refresh", title: "模型配置刷新", status: "排队中", progress: "0%", time: "等待中" },
+  ]);
   const ingestJobs = $derived(projectMaterialRows.map((material) => ({
     title: material.fileName ? `导入 ${material.fileName}` : `入库 ${material.title}`,
     source: projectCards.find((project) => project.id === material.projectId)?.name ?? material.projectName ?? material.source,
@@ -843,9 +872,10 @@
     total: 1,
   })));
   let workbenchNotice = $state("");
-  let knowledgePreviewTitle = $state(regulationItems[0]?.title ?? "知识库预览");
+  let knowledgePreviewTitle = $state("知识库预览");
   let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，避免在工作台中拆出重复入口。");
   let capabilityAgentBindings = $state<Record<string, string[]>>({});
+  let distillSampleTodoId = $state("");
   let workbenchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 
   function hasWailsBindings() {
@@ -897,6 +927,46 @@
     selectedResourceCategory = "";
     selectedMaterialDetailId = "";
     resourceSearch = "";
+  }
+  function matchesWorkbenchKeyword(keyword: string, ...values: Array<string | number | undefined>) {
+    return values.some((value) => String(value ?? "").toLowerCase().includes(keyword));
+  }
+  function localWorkbenchSearch(query: string): WorkbenchSearchResult[] {
+    const keyword = query.trim().toLowerCase();
+    const results: WorkbenchSearchResult[] = [];
+    const add = (title: string, scope: string, snippet = "") => {
+      if (!keyword || matchesWorkbenchKeyword(keyword, title, scope, snippet)) results.push({ title, scope, snippet });
+    };
+    for (const project of projectCards) add(project.name, "项目管理", `${project.client} / ${project.stage} / ${project.desc}`);
+    for (const customer of customerCards) add(customer.name, "客户管理", `${customer.contact} / ${customer.industry} / ${customer.note || customer.desc}`);
+    for (const todo of todoItems) add(todo.title, "待办事项", todoDescription(todo));
+    for (const material of projectMaterialRows) add(material.title, "资料库", `${material.category} / ${material.source} / ${material.desc}`);
+    for (const document of documentItems) add(document.title, "文档知识", `${document.type} / ${document.status} / ${document.description || ""}`);
+    for (const regulation of regulationItems) add(regulation.title, "规范知识", `${regulation.category} / ${regulation.tags}`);
+    for (const report of reportCards) add(report.title, "报告中心", `${report.status} / ${report.owner} / ${report.desc}`);
+    for (const event of calendarEvents) add(event.title, "日程日历", `${event.day} 日 ${event.time} / ${event.place} / ${event.status || event.type}`);
+    for (const team of teamRooms) add(team.title, "团队协作", `${team.topic} / ${team.desc} / ${team.status}`);
+    return results.slice(0, 50);
+  }
+  async function runWorkbenchSearch(query = resourceSearch) {
+    const search = workbenchDataPersistenceBindings()?.SearchWorkbench;
+    try {
+      if (typeof search === "function") {
+        const results = await search(query.trim());
+        if (Array.isArray(results)) {
+          searchResults = results;
+          return;
+        }
+      }
+      searchResults = localWorkbenchSearch(query);
+    } catch (error) {
+      console.error("Failed to search workbench", error);
+      searchResults = localWorkbenchSearch(query);
+    }
+  }
+  function handleResourceSearchInput(event: Event) {
+    resourceSearch = (event.currentTarget as HTMLInputElement).value;
+    if (resourceTab === "search") void runWorkbenchSearch(resourceSearch);
   }
   async function copyMaterialPath(material?: WorkbenchProjectMaterial) {
     const path = materialPath(material);
@@ -972,6 +1042,9 @@
   function automationPersistenceBindings(): AutomationPersistenceBindings | undefined {
     return typeof window === "undefined" ? undefined : window.go?.main?.App as AutomationPersistenceBindings | undefined;
   }
+  function workbenchDataPersistenceBindings(): WorkbenchDataPersistenceBindings | undefined {
+    return typeof window === "undefined" ? undefined : window.go?.main?.App as WorkbenchDataPersistenceBindings | undefined;
+  }
   function showWorkbenchNotice(message: string) {
     workbenchNotice = message;
     if (workbenchNoticeTimer) clearTimeout(workbenchNoticeTimer);
@@ -1016,24 +1089,69 @@
       .filter((todo) => todo.customerId === customerId)
       .map((todo) => ({ customerId, title: todo.title, due: todoDue(todo), priority: todo.priority, state: todoStatusLabel(todo.status), desc: todoDescription(todo) }));
   }
-  function syncWorkbench(scope = "工作台") {
-    if (hasWailsBindings()) void refreshModelSettings();
-    showWorkbenchNotice(`${scope}已触发同步，最新状态会回写到同步中心。`);
+  async function syncWorkbench(scope = "工作台") {
+    try {
+      if (hasWailsBindings()) {
+        void refreshModelSettings();
+        const runSync = workbenchDataPersistenceBindings()?.RunWorkbenchSync;
+        if (typeof runSync === "function") {
+          syncJobs = await runSync(scope);
+          await refreshWorkbenchData();
+        }
+      }
+      showWorkbenchNotice(`${scope}已完成同步。`);
+    } catch (error) {
+      console.error("Failed to sync workbench", error);
+      showWorkbenchNotice(`${scope}同步失败，请稍后重试。`);
+    }
   }
-  function exportOperationLog() {
-    showWorkbenchNotice(`已生成 ${operationLogs.length} 条操作记录导出。`);
+  async function exportOperationLog() {
+    try {
+      const exportLogs = workbenchDataPersistenceBindings()?.ExportOperationLogs;
+      if (typeof exportLogs === "function") {
+        const path = await exportLogs();
+        showWorkbenchNotice(`已导出 ${operationLogs.length} 条操作记录：${path}`);
+        return;
+      }
+      showWorkbenchNotice(`已生成 ${operationLogs.length} 条操作记录导出。`);
+    } catch (error) {
+      console.error("Failed to export operation logs", error);
+      showWorkbenchNotice("导出操作记录失败。");
+    }
   }
-  function exportReports() {
-    openWorkLayer("operationLog");
-    showWorkbenchNotice(`已将 ${reportCards.length} 份报告加入导出队列。`);
+  async function exportReports() {
+    try {
+      const exportReportsBinding = workbenchDataPersistenceBindings()?.ExportWorkbenchReports;
+      if (typeof exportReportsBinding === "function") {
+        const path = await exportReportsBinding();
+        await refreshWorkbenchData();
+        openWorkLayer("operationLog");
+        showWorkbenchNotice(`已导出 ${reportCards.length} 份报告：${path}`);
+        return;
+      }
+      openWorkLayer("operationLog");
+      showWorkbenchNotice(`已将 ${reportCards.length} 份报告加入导出队列。`);
+    } catch (error) {
+      console.error("Failed to export reports", error);
+      showWorkbenchNotice("导出报告失败。");
+    }
   }
-  function openCalendarEvent(event: (typeof calendarEvents)[number]) {
+  async function openCalendarEvent(event: (typeof calendarEvents)[number]) {
     openConfigDialog("schedule");
+    const saveEvent = workbenchDataPersistenceBindings()?.SaveCalendarEvent;
+    if (typeof saveEvent === "function") {
+      try {
+        await saveEvent(event);
+        await refreshWorkbenchData();
+      } catch (error) {
+        console.error("Failed to persist calendar event", error);
+      }
+    }
     showWorkbenchNotice(`正在查看日程：${event.title}`);
   }
   function openKnowledgeDocument(item: (typeof documentItems)[number]) {
     knowledgePreviewTitle = item.title;
-    knowledgePreviewDescription = `${item.type}知识包含 ${item.count} 份文档，状态：${item.status}。`;
+    knowledgePreviewDescription = item.description || `${item.type}知识包含 ${item.count} 份文档，状态：${item.status}。`;
     showWorkbenchNotice(`已打开文档知识：${item.title}`);
   }
   function showFailedIngestJobs() {
@@ -1215,6 +1333,7 @@
     }
   }
   function selectDistillSample(item: (typeof todoItems)[number]) {
+    distillSampleTodoId = item.id;
     distillStep = 2;
     showWorkbenchNotice(`已选择样本：${item.title}`);
   }
@@ -2631,8 +2750,18 @@
   }
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
   function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
-  function projectSchedules(project = selectedProject()) { return projectScheduleRows.filter((item) => item.projectId === project.id); }
-  function projectReports(project = selectedProject()) { return projectReportRows.filter((item) => item.projectId === project.id); }
+  function projectSchedules(project = selectedProject()) {
+    const persisted = calendarEvents
+      .filter((item) => item.projectId === project.id)
+      .map((item) => ({ projectId: project.id, title: item.title, date: item.day, time: item.time, place: item.place, state: item.status || item.type, desc: item.desc || item.type }));
+    return persisted.length ? persisted : projectScheduleRows.filter((item) => item.projectId === project.id);
+  }
+  function projectReports(project = selectedProject()) {
+    const persisted = reportCards
+      .filter((item) => !item.projectId || item.projectId === project.id)
+      .map((item) => ({ projectId: project.id, title: item.title, type: item.kind || "分析报告", status: item.status, owner: item.owner, updatedAt: item.updatedAt || "刚刚", summary: item.desc }));
+    return persisted.length ? persisted : projectReportRows.filter((item) => item.projectId === project.id);
+  }
   function projectTodos(project = selectedProject()) { return [...todoProjectRows(project.id), ...projectTodoRows.filter((item) => item.projectId === project.id)]; }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
   function customerProjects(customer = selectedCustomer()) { return projectCards.filter((project) => customer.projectIds.includes(project.id)); }
@@ -2680,7 +2809,17 @@
     const event: TeamRunEvent = { id: `${runId}-${Date.now()}`, time: "刚刚", actor, type, detail };
     teamRuns = teamRuns.map((run) => run.id === runId ? { ...run, updatedAt: "刚刚", events: [...run.events, event] } : run);
   }
-  function applyTeamRunControl(control: string, team = selectedTeamRoom()) {
+  async function persistTeamRun(run: WorkbenchTeamRun) {
+    const saveRun = workbenchDataPersistenceBindings()?.SaveTeamRun;
+    if (typeof saveRun !== "function") return run;
+    return await saveRun(run);
+  }
+  async function persistTeamRoom(room: WorkbenchTeamRoom) {
+    const saveRoom = workbenchDataPersistenceBindings()?.SaveTeamRoom;
+    if (typeof saveRoom !== "function") return room;
+    return await saveRoom(room);
+  }
+  async function applyTeamRunControl(control: string, team = selectedTeamRoom()) {
     if (!team) return;
     const run = activeTeamRun(team);
     if (!run) {
@@ -2740,7 +2879,9 @@
       return;
     }
 
-    teamRuns = teamRuns.map((item) => item.id === run.id ? { ...item, status: nextStatus, updatedAt: "刚刚", currentStepId: nextCurrentStepId } : item);
+    const nextRun = { ...run, status: nextStatus, updatedAt: "刚刚", currentStepId: nextCurrentStepId };
+    teamRuns = teamRuns.map((item) => item.id === run.id ? nextRun : item);
+    let nextRoom: WorkbenchTeamRoom | undefined;
     teamRooms = teamRooms.map((item) => item.id === team.id ? {
       ...item,
       status: teamRunStatusLabel(nextStatus),
@@ -2754,10 +2895,19 @@
         return step;
       }),
     } : item);
+    nextRoom = teamRooms.find((item) => item.id === team.id);
     addTeamRunEvent(run.id, leaderName, eventType, eventDetail);
+    try {
+      const latestRun = teamRuns.find((item) => item.id === run.id) ?? nextRun;
+      await persistTeamRun(latestRun);
+      if (nextRoom) await persistTeamRoom(nextRoom);
+      await refreshWorkbenchData();
+    } catch (error) {
+      console.error("Failed to persist team run control", error);
+    }
     showWorkbenchNotice(`${team.title}：${eventDetail}`);
   }
-  function archiveTeamRunArtifact(artifactId: string, team = selectedTeamRoom()) {
+  async function archiveTeamRunArtifact(artifactId: string, team = selectedTeamRoom()) {
     const run = activeTeamRun(team);
     if (!run) return;
     teamRuns = teamRuns.map((item) => item.id === run.id ? {
@@ -2766,6 +2916,15 @@
     } : item);
     const artifact = run.artifacts.find((item) => item.id === artifactId);
     addTeamRunEvent(run.id, "工作台", "归档", `${artifact?.title ?? "运行产物"}已沉淀到工作台。`);
+    try {
+      const latestRun = teamRuns.find((item) => item.id === run.id);
+      if (latestRun) {
+        await persistTeamRun(latestRun);
+        await refreshWorkbenchData();
+      }
+    } catch (error) {
+      console.error("Failed to persist archived team artifact", error);
+    }
     showWorkbenchNotice(`${artifact?.title ?? "运行产物"}已标记为归档。`);
   }
   function openTeamBuilder(teamTitle?: string) {
@@ -2811,7 +2970,7 @@
   function removeTeamChatAttachment(index: number) {
     teamChatAttachments = teamChatAttachments.filter((_, itemIndex) => itemIndex !== index);
   }
-  function sendTeamChat() {
+  async function sendTeamChat() {
     const text = teamChatInput.trim();
     const team = selectedTeamRoom();
     if (!text || !team || teamChatSending) return;
@@ -2832,9 +2991,7 @@
     ];
     teamChatInput = "";
     teamChatSending = true;
-    teamRuns = [
-      ...teamRuns,
-      {
+    const nextRun: WorkbenchTeamRun = {
         id: runId,
         teamId: team.id,
         title: runTopic,
@@ -2845,8 +3002,8 @@
         currentStepId: team.steps[0]?.id ?? "",
         events: runEvents,
         artifacts: runArtifacts,
-      },
-    ];
+      };
+    teamRuns = [...teamRuns, nextRun];
     teamRooms = teamRooms.map((item) => item.id === team.id ? {
       ...item,
       active: "运行草稿已创建",
@@ -2862,13 +3019,12 @@
         status: index === 0 ? "已生成草稿" : "待执行",
       })),
     } : item);
-    teamChatMessages = [
-      ...teamChatMessages,
-      { id: `${team.id}-user-${now}`, teamId: team.id, role: "user" as const, content: text },
+    const nextMessages: WorkbenchTeamChatMessage[] = [
+      { id: `${team.id}-user-${now}`, teamId: team.id, role: "user", content: text },
       ...responders.map((agent, index) => ({
         id: `${team.id}-agent-${now}-${index}`,
         teamId: team.id,
-        role: "agent" as const,
+        role: "agent",
         agentId: agent.id,
         agentName: agent.name,
         agentAvatar: agent.name.slice(0, 1),
@@ -2877,17 +3033,30 @@
           : `${agent.name} 已加入待执行节点。当前先生成本地 teamRun，后续可接入模型、工具和日志回写。`,
       })),
     ];
+    teamChatMessages = [...teamChatMessages, ...nextMessages];
+    try {
+      await persistTeamRun(nextRun);
+      const latestRoom = teamRooms.find((item) => item.id === team.id);
+      if (latestRoom) await persistTeamRoom(latestRoom);
+      const saveMessage = workbenchDataPersistenceBindings()?.SaveTeamChatMessage;
+      if (typeof saveMessage === "function") {
+        for (const message of nextMessages) await saveMessage(message);
+      }
+      await refreshWorkbenchData();
+    } catch (error) {
+      console.error("Failed to persist team chat", error);
+    }
     window.setTimeout(() => {
       teamChatSending = false;
     }, 380);
   }
-  function saveTeamBuilder() {
+  async function saveTeamBuilder() {
     const name = teamBuilderName.trim();
     if (!name || teamBuilderMemberIds.length === 0) return;
     const memberAgents = teamBuilderMemberIds.map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards;
     const leaderId = teamBuilderMemberIds.includes(teamBuilderLeaderId) ? teamBuilderLeaderId : teamBuilderMemberIds[0];
     const leaderAgent = memberAgents.find((agent) => agent.id === leaderId) ?? memberAgents[0];
-    const nextTeam = {
+    const nextTeam: WorkbenchTeamRoom = {
       id: teamConfigTitle ? (teamRooms.find((team) => team.title === teamConfigTitle)?.id ?? `team-${Date.now()}`) : `team-${Date.now()}`,
       title: name,
       members: memberAgents.length,
@@ -2919,6 +3088,13 @@
     selectedTeamTitle = nextTeam.title;
     configDialog = undefined;
     teamConfigTitle = undefined;
+    try {
+      await persistTeamRoom(nextTeam);
+      await refreshWorkbenchData();
+    } catch (error) {
+      console.error("Failed to persist team", error);
+      showWorkbenchNotice("保存协作组失败，请稍后重试。");
+    }
   }
   function selectAgentForTask(agentId: string) { selectedAgentId = agentId; agentSelectorOpen = false; }
   function linkProjectById(projectId: string) {
@@ -3249,6 +3425,156 @@
       showWorkbenchNotice("批量导入失败，请稍后重试。");
     }
   }
+  async function submitCustomerDraft() {
+    const saveCustomer = workbenchDataPersistenceBindings()?.SaveCustomer;
+    const baseName = linkedCustomer || projectDraftClient.trim() || `客户 ${new Date().toLocaleDateString("zh-CN")}`;
+    const input: WorkbenchCustomerInput = {
+      name: baseName,
+      type: "企业",
+      contact: "联系人",
+      phone: "",
+      risk: "低风险",
+      riskLevel: "low",
+      status: "active",
+      owner: agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "我的",
+      stage: "跟进中",
+      desc: configDialogIntro(),
+      projectIds: selectedProjectId ? [selectedProjectId] : [],
+      matters: selectedProjectId ? 1 : 0,
+      lastTouch: "刚刚",
+      lastContact: "刚刚",
+      tags: ["工作台"],
+    };
+    try {
+      const now = new Date().toISOString();
+      const saved = typeof saveCustomer === "function"
+        ? await saveCustomer(input)
+        : { ...input, id: `customer-${Date.now()}`, email: "", industry: "", region: "", address: "", note: "", materials: 0, events: 0, reports: 0, nextAction: "", createdAt: now, updatedAt: now } as WorkbenchCustomer;
+      customerCards = [saved, ...customerCards.filter((customer) => customer.id !== saved.id)];
+      selectedCustomerId = saved.id;
+      customerDetailOpen = true;
+      customerDetailTab = "overview";
+      workLayer = "customers";
+      configDialog = undefined;
+      showWorkbenchNotice(`已新建客户：${saved.name}`);
+    } catch (error) {
+      console.error("Failed to save customer", error);
+      showWorkbenchNotice("新建客户失败，请稍后重试。");
+    }
+  }
+  async function submitScheduleDraft() {
+    const saveEvent = workbenchDataPersistenceBindings()?.SaveCalendarEvent;
+    const now = new Date();
+    const input: WorkbenchCalendarEventInput = {
+      title: linkedProject ? `${linkedProject} 日程` : "新建日程",
+      day: String(now.getDate()).padStart(2, "0"),
+      time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      type: "meeting",
+      place: linkedProject || linkedCustomer || "工作台",
+      projectId: selectedProjectId || "",
+      customerId: selectedCustomerId || "",
+      status: "待开始",
+      desc: configDialogIntro(),
+    };
+    try {
+      const saved = typeof saveEvent === "function"
+        ? await saveEvent(input)
+        : { ...input, id: `schedule-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchCalendarEvent;
+      calendarEvents = [saved, ...calendarEvents.filter((event) => event.id !== saved.id)];
+      workLayer = "calendar";
+      configDialog = undefined;
+      showWorkbenchNotice(`已新建日程：${saved.title}`);
+    } catch (error) {
+      console.error("Failed to save calendar event", error);
+      showWorkbenchNotice("新建日程失败，请稍后重试。");
+    }
+  }
+  async function submitReportDraft() {
+    const saveReport = workbenchDataPersistenceBindings()?.SaveWorkbenchReport;
+    const input: WorkbenchReportInput = {
+      title: linkedProject ? `${linkedProject} 分析报告` : "新建分析报告",
+      status: "草稿",
+      owner: agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "自动化 Agent",
+      desc: configDialogIntro(),
+      kind: "分析报告",
+      projectId: selectedProjectId || "",
+      customerId: selectedCustomerId || "",
+    };
+    try {
+      const saved = typeof saveReport === "function"
+        ? await saveReport(input)
+        : { ...input, id: `report-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchReport;
+      reportCards = [saved, ...reportCards.filter((report) => report.id !== saved.id)];
+      workLayer = "reports";
+      configDialog = undefined;
+      showWorkbenchNotice(`已新建报告：${saved.title}`);
+    } catch (error) {
+      console.error("Failed to save report", error);
+      showWorkbenchNotice("新建报告失败，请稍后重试。");
+    }
+  }
+  async function submitTemplateDraft() {
+    const saveDocument = workbenchDataPersistenceBindings()?.SaveKnowledgeDocument;
+    const input: WorkbenchKnowledgeDocumentInput = {
+      title: "新建文档模板",
+      type: "模板",
+      count: 1,
+      status: "草稿",
+      description: configDialogIntro(),
+      source: "workbench",
+      tags: "模板 / 工作台",
+    };
+    try {
+      const saved = typeof saveDocument === "function"
+        ? await saveDocument(input)
+        : { ...input, id: `template-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchKnowledgeDocument;
+      documentItems = [saved, ...documentItems.filter((item) => item.id !== saved.id)];
+      resourceTab = "knowledge";
+      workLayer = "resources";
+      configDialog = undefined;
+      showWorkbenchNotice(`已新建模板：${saved.title}`);
+    } catch (error) {
+      console.error("Failed to save knowledge template", error);
+      showWorkbenchNotice("新建模板失败，请稍后重试。");
+    }
+  }
+  async function submitDistillDraft() {
+    const todo = todoItems.find((item) => item.id === distillSampleTodoId) ?? todoItems[0];
+    if (!todo) {
+      showWorkbenchNotice("请先选择可蒸馏的任务样本。");
+      return;
+    }
+    const selectedSkills = skillCards.filter((skill) => skill.active).map((skill) => skill.title);
+    try {
+      const distillAgent = workbenchDataPersistenceBindings()?.DistillAgentFromTodo;
+      if (typeof distillAgent === "function") {
+        const saved = await distillAgent({
+          title: todo.title,
+          description: todoDescription(todo),
+          priority: todo.priority,
+          dueLabel: todoDue(todo),
+          status: todo.status,
+          projectId: todo.projectId,
+          projectName: todo.projectName,
+          customerId: todo.customerId,
+          customerName: todo.customerName,
+        }, selectedSkills);
+        await refreshAgents();
+        selectedAgentId = saved.id;
+      } else {
+        const now = new Date().toISOString();
+        const localAgent: AgentView = { id: `distilled-${Date.now()}`, name: `${todo.title} Agent`, role: "已蒸馏", runs: 0, status: "已启用", desc: todoDescription(todo), avatar: "D", tools: ["本地文件与资料"], skills: selectedSkills, coreFiles: ["AGENTS.md"], builtIn: false, createdAt: now, updatedAt: now };
+        agentCards = [localAgent, ...agentCards];
+        selectedAgentId = localAgent.id;
+      }
+      configDialog = undefined;
+      workLayer = "agents";
+      showWorkbenchNotice(`已生成蒸馏 Agent：${todo.title} Agent`);
+    } catch (error) {
+      console.error("Failed to distill agent", error);
+      showWorkbenchNotice("生成蒸馏 Agent 失败。");
+    }
+  }
   function confirmConfigDialog() {
     if (configDialog === "team") return saveTeamBuilder();
     if (configDialog === "model") return void saveModelProvider();
@@ -3256,6 +3582,11 @@
     if (configDialog === "project") return void submitProjectDraft();
     if (configDialog === "ingest") return void submitIngestDraft();
     if (configDialog === "dossier" || configDialog === "resource") return void submitMaterialDraft();
+    if (configDialog === "customer") return void submitCustomerDraft();
+    if (configDialog === "schedule") return void submitScheduleDraft();
+    if (configDialog === "report") return void submitReportDraft();
+    if (configDialog === "template") return void submitTemplateDraft();
+    if (configDialog === "distill") return void submitDistillDraft();
     configDialog = undefined;
   }
   function configDialogTitle() {
@@ -3474,6 +3805,28 @@
       if (Array.isArray(automations) && automations.length) runningAutomations = automations;
     } catch (error) {
       console.error("Failed to load automations", error);
+    }
+  }
+  async function refreshWorkbenchData() {
+    const workbenchApi = workbenchDataPersistenceBindings();
+    if (typeof workbenchApi?.ListWorkbenchData !== "function") return;
+    try {
+      const data = await workbenchApi.ListWorkbenchData();
+      if (Array.isArray(data.customers) && data.customers.length) customerCards = data.customers;
+      if (Array.isArray(data.calendarEvents) && data.calendarEvents.length) calendarEvents = data.calendarEvents;
+      if (Array.isArray(data.reports) && data.reports.length) reportCards = data.reports;
+      if (Array.isArray(data.knowledgeDocuments) && data.knowledgeDocuments.length) documentItems = data.knowledgeDocuments;
+      if (Array.isArray(data.regulations) && data.regulations.length) regulationItems = data.regulations;
+      if (Array.isArray(data.syncJobs) && data.syncJobs.length) syncJobs = data.syncJobs;
+      if (Array.isArray(data.operationLogs) && data.operationLogs.length) operationLogs = data.operationLogs;
+      if (Array.isArray(data.teamRooms) && data.teamRooms.length) teamRooms = data.teamRooms;
+      if (Array.isArray(data.teamRuns)) teamRuns = data.teamRuns;
+      if (Array.isArray(data.teamChatMessages) && data.teamChatMessages.length) teamChatMessages = data.teamChatMessages;
+      if (!customerCards.some((customer) => customer.id === selectedCustomerId)) selectedCustomerId = customerCards[0]?.id ?? "";
+      if (!teamRooms.some((team) => team.title === selectedTeamTitle)) selectedTeamTitle = teamRooms[0]?.title ?? "";
+      await runWorkbenchSearch(resourceSearch);
+    } catch (error) {
+      console.error("Failed to load workbench data", error);
     }
   }
   async function saveAgentWizard() {
@@ -3906,6 +4259,7 @@
       await refreshProjectMaterials();
       await refreshTodos();
       await refreshAutomations();
+      await refreshWorkbenchData();
       await refreshToolStatus();
       await refreshSkillStatus();
       await refreshCapabilities();
@@ -4607,7 +4961,7 @@
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Calendar</span><strong>日程日历</strong></div><div><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todoItems.length}</strong><em>工作台同步</em></article><article><span>冲突提醒</span><strong>0</strong><em>暂无时间冲突</em></article></div><div class="calendar-board"><div class="calendar-grid">{#each Array.from({ length: 35 }, (_, index) => index + 1) as day (day)}<article class:today={day === 17}><b>{day}</b>{#each calendarEvents.filter((item) => Number(item.day) === day) as event (event.title)}<span>{event.time} {event.title}</span>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each calendarEvents as event (event.title)}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}</aside></div></section>
             {:else if workLayer === "reports"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>分析报告</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" onclick={exportReports}>批量导出</button></div></div><div class="aorist-card-grid">{#each reportCards as report (report.title)}<article class="media-card"><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc}</p><em>{report.owner}</em></article>{/each}</div></section>
-            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => (resourceTab = "search")}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文档知识</strong></header><div class="aorist-card-grid">{#each documentItems as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button" onclick={() => openKnowledgeDocument(item)}>打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>规范知识</strong></header><div class="aorist-list">{#each regulationItems as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{knowledgePreviewTitle}</strong><p>{knowledgePreviewDescription}</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{searchResults.length} 项</span></div><div class="aorist-list">{#each searchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button" onclick={showFailedIngestJobs}>查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>{job.phase}</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => (resourceTab = "knowledge")}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label><div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div></div><div class="knowledge-layout knowledge-layout--merged"><div class="knowledge-stack"><section><header><span>Document Knowledge</span><strong>文档知识</strong></header><div class="aorist-card-grid">{#each filteredKnowledgeDocuments as item (item.title)}<article class="capability-item"><span>{item.status}</span><strong>{item.title}</strong><p>{item.type} / {item.count} 份文档</p><button type="button" onclick={() => openKnowledgeDocument(item)}>打开</button></article>{/each}</div></section><section><header><span>Regulation Knowledge</span><strong>规范知识</strong></header><div class="aorist-list">{#each filteredRegulations as item (item.title)}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section></div><aside class="knowledge-preview"><span>知识库预览</span><strong>{knowledgePreviewTitle}</strong><p>{knowledgePreviewDescription}</p></aside></div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{displayedSearchResults.length} 项</span></div><div class="aorist-list">{#each displayedSearchResults as result (result.title)}<article><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></article>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button" onclick={showFailedIngestJobs}>查看失败</button></div><div class="aorist-list">{#each ingestJobs as job (job.title)}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>{job.phase}</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
                 {#if teamViewMode === "chat"}

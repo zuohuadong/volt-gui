@@ -44,6 +44,20 @@ import type {
   WorkbenchProjectMaterialInput,
   WorkbenchAutomation,
   WorkbenchAutomationInput,
+  WorkbenchCalendarEvent,
+  WorkbenchCalendarEventInput,
+  WorkbenchCustomer,
+  WorkbenchCustomerInput,
+  WorkbenchData,
+  WorkbenchKnowledgeDocument,
+  WorkbenchKnowledgeDocumentInput,
+  WorkbenchReport,
+  WorkbenchReportInput,
+  WorkbenchSearchResult,
+  WorkbenchSyncJob,
+  WorkbenchTeamChatMessage,
+  WorkbenchTeamRoom,
+  WorkbenchTeamRun,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
   WireEvent,
@@ -120,6 +134,23 @@ interface AppBindings {
   SaveAutomation(input: WorkbenchAutomationInput): Promise<WorkbenchAutomation>;
   DeleteAutomation(id: string): Promise<void>;
   RunAutomationNow(id: string): Promise<WorkbenchAutomation>;
+  ListWorkbenchData(): Promise<WorkbenchData>;
+  ListCustomers(): Promise<WorkbenchCustomer[]>;
+  SaveCustomer(input: WorkbenchCustomerInput): Promise<WorkbenchCustomer>;
+  DeleteCustomer(id: string): Promise<void>;
+  ListCalendarEvents(): Promise<WorkbenchCalendarEvent[]>;
+  SaveCalendarEvent(input: WorkbenchCalendarEventInput): Promise<WorkbenchCalendarEvent>;
+  ListWorkbenchReports(): Promise<WorkbenchReport[]>;
+  SaveWorkbenchReport(input: WorkbenchReportInput): Promise<WorkbenchReport>;
+  SaveKnowledgeDocument(input: WorkbenchKnowledgeDocumentInput): Promise<WorkbenchKnowledgeDocument>;
+  RunWorkbenchSync(scope: string): Promise<WorkbenchSyncJob[]>;
+  SearchWorkbench(query: string): Promise<WorkbenchSearchResult[]>;
+  ExportOperationLogs(): Promise<string>;
+  ExportWorkbenchReports(): Promise<string>;
+  SaveTeamRoom(input: WorkbenchTeamRoom): Promise<WorkbenchTeamRoom>;
+  SaveTeamRun(input: WorkbenchTeamRun): Promise<WorkbenchTeamRun>;
+  SaveTeamChatMessage(input: WorkbenchTeamChatMessage): Promise<WorkbenchTeamChatMessage>;
+  DistillAgentFromTodo(input: WorkbenchTodoInput, skillNames: string[]): Promise<AgentView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;

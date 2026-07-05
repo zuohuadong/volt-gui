@@ -12,6 +12,10 @@
 
 可以设置 `REASONIX_HOME` 覆盖 Reasonix home，主要用于测试、CI 或便携安装。普通用户通常不需要设置。
 
+高级测试或便携安装可以设置 `REASONIX_STATE_HOME` 来移动 sessions、archive、memory 等运行状态。
+它不会移动全局配置或 provider 凭据；这些仍然位于 `REASONIX_HOME` 下。如果旧版本曾把 provider key
+写到 `REASONIX_STATE_HOME/.env`，Reasonix 会在 `<Reasonix home>/.env` 缺少对应 key 时非破坏性导入。
+
 ## 目录内容
 
 | 数据 | 路径 |

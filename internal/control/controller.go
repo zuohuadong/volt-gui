@@ -171,6 +171,10 @@ type Controller struct {
 	autosaveWG  sync.WaitGroup
 	planMode    bool
 	sessionPath string
+	// savedRewriteVersion is the session rewrite generation that has been
+	// durably persisted for sessionPath. Auto-compaction rewrites history inside
+	// a normal turn; the next autosave must use SaveRewrite, not SaveSnapshot.
+	savedRewriteVersion int
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 
@@ -428,6 +432,7 @@ func New(opts Options) *Controller {
 	cmdsInit := opts.Commands
 	c.commands.Store(&cmdsInit)
 	if c.executor != nil {
+		c.savedRewriteVersion = c.executor.Session().RewriteVersion()
 		c.executor.SetPreEditHook(func(ch diff.Change) {
 			c.checkpoints.snapshot(ch)
 		})
@@ -2033,6 +2038,7 @@ func (c *Controller) NewSession() error {
 	}
 	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.markSessionRewritePersisted(c.executor.Session())
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
@@ -2081,6 +2087,7 @@ func (c *Controller) ClearSession() error {
 	}
 	c.setActiveJobSession(c.SessionPath())
 	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.markSessionRewritePersisted(c.executor.Session())
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
@@ -2296,6 +2303,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	}
 	if switchToFork {
 		c.executor.SetSession(sess)
+		c.markSessionRewritePersisted(sess)
 		c.ResetPlannerSession()
 		c.mu.Lock()
 		c.sessionPath = newPath
@@ -2369,6 +2377,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		return "", c.rewindFail(err)
 	}
 	c.executor.SetSession(sess)
+	c.markSessionRewritePersisted(sess)
 	c.ResetPlannerSession()
 	c.mu.Lock()
 	c.sessionPath = newPath
@@ -2423,6 +2432,7 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	}
 	if c.executor != nil {
 		c.executor.SetSession(loaded)
+		c.markSessionRewritePersisted(loaded)
 	}
 	c.ResetPlannerSession()
 	c.mu.Lock()
@@ -2521,6 +2531,7 @@ func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error
 func (c *Controller) Resume(s *agent.Session, path string) {
 	if c.executor != nil {
 		c.executor.SetSession(s)
+		c.markSessionRewritePersisted(s)
 	}
 	c.ResetPlannerSession()
 	c.mu.Lock()
@@ -2623,6 +2634,27 @@ func (c *Controller) SnapshotRewrite() error {
 	return c.snapshot(false, true)
 }
 
+func (c *Controller) snapshotShouldRewrite(s *agent.Session, forceRewrite bool) bool {
+	if forceRewrite || s == nil {
+		return forceRewrite
+	}
+	rewriteVersion := s.RewriteVersion()
+	c.mu.Lock()
+	saved := c.savedRewriteVersion
+	c.mu.Unlock()
+	return rewriteVersion > saved
+}
+
+func (c *Controller) markSessionRewritePersisted(s *agent.Session) {
+	if s == nil {
+		return
+	}
+	rewriteVersion := s.RewriteVersion()
+	c.mu.Lock()
+	c.savedRewriteVersion = rewriteVersion
+	c.mu.Unlock()
+}
+
 // midTurnSnapshotInterval is atomic (nanoseconds) so a test shrinking it
 // cannot race a previous test's still-parking autosave goroutine.
 var midTurnSnapshotInterval atomic.Int64
@@ -2682,6 +2714,7 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 			"label", c.Label(), "session_dir", c.SessionDir())
 		return errNoSessionPath
 	}
+	forceRewrite = c.snapshotShouldRewrite(s, forceRewrite)
 	var err error
 	if forceRewrite {
 		err = s.SaveRewrite(path)
@@ -2718,7 +2751,11 @@ func (c *Controller) snapshot(markActivity, forceRewrite bool) error {
 	// like SetBranchModelPreserveUpdated. The single write subsumes the old
 	// EnsureBranchMeta / SetBranchModel / TouchBranchMeta sequence.
 	preview, turns := agent.SessionPreviewFromMessages(s.Snapshot())
-	return agent.UpdateSessionMeta(path, modelRef, preview, turns, markActivity)
+	if err := agent.UpdateSessionMeta(path, modelRef, preview, turns, markActivity); err != nil {
+		return err
+	}
+	c.markSessionRewritePersisted(s)
+	return nil
 }
 
 func (c *Controller) recoverSnapshotConflict(path string, saveErr error, forceRewrite bool) (string, bool, error) {
@@ -2788,6 +2825,7 @@ func (c *Controller) adoptDiskSession(path string) bool {
 		return false
 	}
 	c.executor.SetSession(loaded)
+	c.markSessionRewritePersisted(loaded)
 	c.ResetPlannerSession()
 	c.rebindCheckpoints(path)
 	c.setActiveJobSession(path)

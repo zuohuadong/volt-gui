@@ -752,6 +752,116 @@ func TestSnapshotRewriteRecoversStaleControllerTranscript(t *testing.T) {
 	}
 }
 
+func TestSnapshotActivityPersistsOwnedCompactionRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	sess := agent.NewSession("sys")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	if err := sess.Save(path); err != nil {
+		t.Fatalf("Save base: %v", err)
+	}
+
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	exec := agent.New(nil, nil, loaded, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+
+	// A mid-turn autosave can persist the pre-compaction prefix. Auto-compaction
+	// then rewrites older history inside the same turn; the final activity
+	// snapshot must persist that owned rewrite in place instead of branching.
+	loaded.Add(provider.Message{Role: provider.RoleUser, Content: "second"})
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot pre-compaction: %v", err)
+	}
+	loaded.Replace([]provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "<compaction-summary>\nSummary of earlier conversation: first -> one\n</compaction-summary>"},
+		{Role: provider.RoleUser, Content: "second"},
+	})
+	loaded.IncrementRewrite()
+
+	if err := c.SnapshotActivity(); err != nil {
+		t.Fatalf("SnapshotActivity after compaction: %v", err)
+	}
+	if got := c.SessionPath(); got != path {
+		t.Fatalf("session path after owned compaction = %q, want original %q", got, path)
+	}
+	reloaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession rewritten: %v", err)
+	}
+	if got := len(reloaded.Messages); got != 3 {
+		t.Fatalf("message count after compaction rewrite = %d, want 3: %+v", got, reloaded.Messages)
+	}
+	if got := reloaded.Messages[1].Content; !strings.Contains(got, "compaction-summary") {
+		t.Fatalf("compaction summary was not persisted: %+v", reloaded.Messages)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
+		t.Fatalf("recovery branches after owned compaction rewrite = %v err=%v, want none", matches, err)
+	}
+}
+
+func TestRecoveryBranchPersistsLaterOwnedCompactionRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+
+	currentSess := agent.NewSession("sys")
+	currentSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	currentSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk"})
+	if err := currentSess.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	localSess := agent.NewSession("sys")
+	localSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	localSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "local"})
+	localExec := agent.New(nil, nil, localSess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: localExec, SessionDir: dir, SessionPath: path, Label: "test"})
+
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot initial recovery: %v", err)
+	}
+	recoveryPath := c.SessionPath()
+	if recoveryPath == "" || recoveryPath == path {
+		t.Fatalf("recovery path = %q, want distinct path", recoveryPath)
+	}
+
+	localSess.Add(provider.Message{Role: provider.RoleUser, Content: "continue"})
+	if err := c.Snapshot(); err != nil {
+		t.Fatalf("Snapshot recovery append: %v", err)
+	}
+	localSess.Replace([]provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "<compaction-summary>\nSummary of recovery branch work: first -> local\n</compaction-summary>"},
+		{Role: provider.RoleUser, Content: "continue"},
+	})
+	localSess.IncrementRewrite()
+
+	if err := c.SnapshotActivity(); err != nil {
+		t.Fatalf("SnapshotActivity recovery compaction: %v", err)
+	}
+	if got := c.SessionPath(); got != recoveryPath {
+		t.Fatalf("session path after recovery compaction = %q, want recovery %q", got, recoveryPath)
+	}
+	reloaded, err := agent.LoadSession(recoveryPath)
+	if err != nil {
+		t.Fatalf("LoadSession recovery: %v", err)
+	}
+	if got := len(reloaded.Messages); got != 3 {
+		t.Fatalf("message count after recovery compaction = %d, want 3: %+v", got, reloaded.Messages)
+	}
+	if got := reloaded.Messages[1].Content; !strings.Contains(got, "compaction-summary") {
+		t.Fatalf("recovery compaction summary was not persisted: %+v", reloaded.Messages)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dir, "*-recovery-*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
+		t.Fatalf("nested recovery branches after owned recovery compaction = %v err=%v, want none", matches, err)
+	}
+}
+
 func TestAdoptHistoryPreservesRewriteBaseline(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

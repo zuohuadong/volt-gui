@@ -677,6 +677,138 @@ func TestSaveRecoveryBranchDedupesByDigest(t *testing.T) {
 	}
 }
 
+func TestSaveRecoveryBranchCompactsLongParentFilename(t *testing.T) {
+	dir := t.TempDir()
+	parentID := strings.Repeat("longparent-", 22)
+	path := filepath.Join(dir, parentID+".jsonl")
+	current := NewSession("sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk"})
+	if err := current.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	stale := NewSession("sys")
+	stale.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	stale.Add(provider.Message{Role: provider.RoleAssistant, Content: "local"})
+	info, err := stale.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: path})
+	if err != nil {
+		t.Fatalf("SaveRecoveryBranch: %v", err)
+	}
+	base := filepath.Base(info.Path)
+	if len(base) > 140 {
+		t.Fatalf("recovery basename length = %d (%q), want bounded", len(base), base)
+	}
+	for _, suffix := range []string{".lock", ".lease.lock", ".lease.json", ".meta"} {
+		if len(base+suffix) > 255 {
+			t.Fatalf("recovery sidecar basename %q length = %d, want <= 255", base+suffix, len(base+suffix))
+		}
+	}
+	meta, ok, err := LoadBranchMeta(info.Path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta recovery ok=%v err=%v", ok, err)
+	}
+	if meta.ParentID != BranchID(path) {
+		t.Fatalf("recovery parent = %q, want original branch id", meta.ParentID)
+	}
+}
+
+func TestSaveRecoveryBranchDoesNotCascadeRecoveryFilename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	current := NewSession("sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "disk"})
+	if err := current.Save(path); err != nil {
+		t.Fatalf("Save current: %v", err)
+	}
+
+	local := NewSession("sys")
+	local.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	local.Add(provider.Message{Role: provider.RoleAssistant, Content: "local"})
+	first, err := local.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: path})
+	if err != nil {
+		t.Fatalf("first SaveRecoveryBranch: %v", err)
+	}
+
+	recoveryDisk, err := LoadSession(first.Path)
+	if err != nil {
+		t.Fatalf("LoadSession recovery: %v", err)
+	}
+	recoveryDisk.Add(provider.Message{Role: provider.RoleUser, Content: "disk follow-up"})
+	if err := recoveryDisk.SaveSnapshot(first.Path); err != nil {
+		t.Fatalf("SaveSnapshot recovery disk: %v", err)
+	}
+	recoveryLocal := NewSession("sys")
+	recoveryLocal.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	recoveryLocal.Add(provider.Message{Role: provider.RoleAssistant, Content: "local"})
+	recoveryLocal.Add(provider.Message{Role: provider.RoleUser, Content: "local follow-up"})
+
+	second, err := recoveryLocal.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: first.Path})
+	if err != nil {
+		t.Fatalf("second SaveRecoveryBranch: %v", err)
+	}
+	base := filepath.Base(second.Path)
+	if count := strings.Count(base, "-recovery-"); count != 1 {
+		t.Fatalf("recovery basename = %q, contains %d recovery markers, want 1", base, count)
+	}
+	if len(base) > 140 {
+		t.Fatalf("recovery basename length = %d (%q), want bounded", len(base), base)
+	}
+}
+
+func TestReconcileSessionSidecarsRemovesUnlockedArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte(`{"role":"user","content":"hello"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, sidecar := range []string{path + ".lock", path + ".lease.lock", path + ".lease.json"} {
+		if err := os.WriteFile(sidecar, []byte("{}\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", sidecar, err)
+		}
+	}
+
+	if err := ReconcileSessionSidecars(dir); err != nil {
+		t.Fatalf("ReconcileSessionSidecars: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("session transcript removed: %v", err)
+	}
+	for _, sidecar := range []string{path + ".lock", path + ".lease.lock", path + ".lease.json"} {
+		if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+			t.Fatalf("%s exists after sidecar cleanup (err=%v)", sidecar, err)
+		}
+	}
+}
+
+func TestReconcileSessionSidecarsKeepsLiveLocks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte(`{"role":"user","content":"hello"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockSessionFile(path)
+	if err != nil {
+		t.Fatalf("lockSessionFile: %v", err)
+	}
+	defer unlock()
+	lease, err := TryAcquireSessionLease(path)
+	if err != nil {
+		t.Fatalf("TryAcquireSessionLease: %v", err)
+	}
+	defer lease.Release()
+
+	if err := ReconcileSessionSidecars(dir); err != nil {
+		t.Fatalf("ReconcileSessionSidecars: %v", err)
+	}
+	for _, sidecar := range []string{path + ".lock", path + ".lease.lock", path + ".lease.json"} {
+		if _, err := os.Stat(sidecar); err != nil {
+			t.Fatalf("%s missing while lock is live: %v", sidecar, err)
+		}
+	}
+}
+
 // TestListSessionsOrdersByMTime makes sure the picker shows the most
 // recently used conversation first — that's what users reach for when they
 // hit `reasonix --continue`.

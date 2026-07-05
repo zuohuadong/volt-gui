@@ -15,18 +15,26 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
 )
 
-const cleanupPendingExt = ".cleanup-pending.json"
+const (
+	cleanupPendingExt             = ".cleanup-pending.json"
+	maxRecoveryParentStemBytes    = 80
+	sessionLockSidecarSuffix      = ".jsonl.lock"
+	sessionLeaseLockSidecarSuffix = ".jsonl.lease.lock"
+	sessionLeaseInfoSidecarSuffix = ".jsonl.lease.json"
+)
 
 var (
 	sessionSaveLocks            sync.Map
 	ErrSessionSnapshotConflict  = errors.New("session snapshot conflicts with newer transcript")
 	ErrSessionRecoveryNotNeeded = errors.New("session recovery not needed")
+	errSessionFileLockHeld      = errors.New("session file lock held")
 	sessionWriterID             = newSessionWriterID()
 )
 
@@ -395,11 +403,56 @@ func (s *Session) saveRecoveryBranchMeta(path string, opts RecoveryBranchOptions
 }
 
 func recoverySessionPath(originalPath string, digest [sha256.Size]byte) string {
-	parent := BranchID(originalPath)
-	if parent == "" {
-		parent = "session"
-	}
+	parent := recoveryParentStem(BranchID(originalPath))
 	return filepath.Join(filepath.Dir(originalPath), fmt.Sprintf("%s-recovery-%x.jsonl", parent, digest[:8]))
+}
+
+func recoveryParentStem(parent string) string {
+	parent = strings.TrimSpace(parent)
+	if parent == "" {
+		return "session"
+	}
+	sum := sha256.Sum256([]byte(parent))
+	if idx := strings.Index(parent, "-recovery-"); idx >= 0 {
+		base := strings.Trim(parent[:idx], "-_. ")
+		if base == "" {
+			base = "session"
+		}
+		base = strings.Trim(truncateUTF8Bytes(base, maxRecoveryParentStemBytes), "-_. ")
+		if base == "" {
+			base = "session"
+		}
+		return fmt.Sprintf("%s-%x", base, sum[:6])
+	}
+	if len(parent) <= maxRecoveryParentStemBytes {
+		return parent
+	}
+	prefix := strings.Trim(truncateUTF8Bytes(parent, maxRecoveryParentStemBytes), "-_. ")
+	if prefix == "" {
+		prefix = "session"
+	}
+	return fmt.Sprintf("%s-%x", prefix, sum[:6])
+}
+
+func truncateUTF8Bytes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	used := 0
+	for i, r := range s {
+		size := utf8.RuneLen(r)
+		if size < 0 {
+			size = 1
+		}
+		if used+size > max {
+			return s[:i]
+		}
+		used += size
+	}
+	return s
 }
 
 func firstNonEmpty(values ...string) string {
@@ -819,22 +872,122 @@ func ListCleanupPending(dir string) ([]CleanupPendingInfo, error) {
 }
 
 // ReconcileCleanupPending retries physical cleanup for leftover delayed-cleanup
-// markers. It keeps going after individual cleanup errors and returns them joined.
+// markers and stale lock/lease sidecars. It keeps going after individual
+// cleanup errors and returns them joined.
 func ReconcileCleanupPending(dir string, cleanup func(CleanupPendingInfo) error) error {
+	var errs []error
+	if err := ReconcileSessionSidecars(dir); err != nil {
+		errs = append(errs, err)
+	}
 	pending, err := ListCleanupPending(dir)
 	if err != nil {
-		return err
+		errs = append(errs, err)
+		return errors.Join(errs...)
 	}
 	if cleanup == nil {
-		return nil
+		return errors.Join(errs...)
 	}
-	var errs []error
 	for _, item := range pending {
 		if err := cleanup(item); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", item.SessionPath, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ReconcileSessionSidecars removes stale lock and lease files left beside
+// sessions by older runtimes. It never removes .jsonl transcripts; recovered
+// conversations may contain useful user history even when their names are ugly.
+func ReconcileSessionSidecars(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		sidecarPath := filepath.Join(dir, name)
+		switch {
+		case strings.HasSuffix(name, sessionLeaseInfoSidecarSuffix):
+			base := filepath.Join(dir, strings.TrimSuffix(name, ".lease.json"))
+			if err := removeStaleSessionLeaseSidecar(base, sidecarPath); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", sidecarPath, err))
+			}
+		case strings.HasSuffix(name, sessionLeaseLockSidecarSuffix):
+			base := filepath.Join(dir, strings.TrimSuffix(name, ".lease.lock"))
+			if err := removeStaleSessionLeaseSidecar(base, sidecarPath); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", sidecarPath, err))
+			}
+		case strings.HasSuffix(name, sessionLockSidecarSuffix):
+			base := filepath.Join(dir, strings.TrimSuffix(name, ".lock"))
+			if err := removeStaleSessionLockSidecar(base, sidecarPath); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", sidecarPath, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func removeStaleSessionLockSidecar(basePath, sidecarPath string) error {
+	basePath = canonicalSessionSavePath(basePath)
+	if sessionLeaseHeldLocally(basePath) || SessionLeaseHeldByOtherRuntime(basePath) {
+		return nil
+	}
+	unlock, err := tryLockSessionFile(basePath)
+	if err != nil {
+		if errors.Is(err, errSessionFileLockHeld) {
+			return nil
+		}
+		return err
+	}
+	if unlock != nil {
+		unlock()
+	}
+	if err := os.Remove(sidecarPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func removeStaleSessionLeaseSidecar(basePath, sidecarPath string) error {
+	basePath = canonicalSessionSavePath(basePath)
+	if sessionLeaseHeldLocally(basePath) {
+		return nil
+	}
+	lockPath := basePath + ".lease.lock"
+	if _, err := os.Stat(lockPath); err == nil {
+		unlock, err := tryLockSessionLeaseFile(basePath)
+		if err != nil {
+			if errors.Is(err, ErrSessionLeaseHeld) {
+				return nil
+			}
+			return err
+		}
+		if unlock != nil {
+			unlock()
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(sidecarPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func sessionLeaseHeldLocally(path string) bool {
+	_, ok := sessionLeaseOwners.Load(canonicalSessionSavePath(path))
+	return ok
 }
 
 // ListSessionOrder returns every *.jsonl session under dir in the same

@@ -15,6 +15,12 @@ location.
 Set `REASONIX_HOME` to override Reasonix home for tests, CI, or portable
 installations. Normal users should not need it.
 
+Advanced test and portable setups may set `REASONIX_STATE_HOME` to move runtime
+state such as sessions, archives, and memory. It does not move global config or
+provider credentials: those remain under `REASONIX_HOME`. If an older build wrote
+provider keys to `REASONIX_STATE_HOME/.env`, Reasonix imports those keys
+non-destructively when `<Reasonix home>/.env` is missing them.
+
 ## What Lives There
 
 | Data | Path |

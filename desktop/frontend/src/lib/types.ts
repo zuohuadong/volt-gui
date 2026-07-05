@@ -610,6 +610,10 @@ export interface WorkbenchData {
   teamChatMessages: WorkbenchTeamChatMessage[];
 }
 
+export interface WorkbenchDataPersisted extends WorkbenchData {
+  initialized?: boolean;
+}
+
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];

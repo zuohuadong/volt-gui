@@ -27,9 +27,12 @@
 | 全局 skills | `<Reasonix home>/skills/` |
 | 全局 hooks | `<Reasonix home>/settings.json` |
 | hooks 信任状态 | `<Reasonix home>/trust.json` |
-| 会话 | `<Reasonix home>/sessions/` |
-| 归档 | `<Reasonix home>/archive/` |
-| 记忆 | `<Reasonix home>/memory/` 与 `<Reasonix home>/projects/` |
+| 会话 | `<state root>/sessions/` |
+| 归档 | `<state root>/archive/` |
+| 记忆 | `<state root>/memory/` 与 `<state root>/projects/` |
+
+`<state root>` 默认等于 `<Reasonix home>`；只有设置 `REASONIX_STATE_HOME`
+时才会不同。
 
 全局用户配置文件名是 `config.toml`。项目本地配置文件仍叫 `reasonix.toml`。
 如果有人说“全局 reasonix.toml”，通常指的是 `<Reasonix home>/config.toml`。

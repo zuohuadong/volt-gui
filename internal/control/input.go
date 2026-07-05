@@ -46,6 +46,7 @@ const (
 // feature, or synthetic user messages injected by the controller).
 func StripComposePrefixes(content string) string {
 	s := agent.StripTransientUserBlocks(content)
+	s = stripXMLBlockPrefix(s, activeGoalOpen, activeGoalClose)
 	s = stripComposeMarker(s, PlanModeMarker)
 	s = stripComposeMarker(s, legacyPlanModeMarker)
 	s = agent.StripWorkbenchContextPrefix(s)
@@ -56,6 +57,18 @@ func StripComposePrefixes(content string) string {
 func stripComposeMarker(s, marker string) string {
 	s = strings.TrimPrefix(s, marker+"\n\n")
 	return strings.TrimPrefix(s, marker)
+}
+
+func stripXMLBlockPrefix(s, open, close string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, open) {
+		return s
+	}
+	end := strings.Index(s, close)
+	if end < 0 {
+		return s
+	}
+	return strings.TrimSpace(s[end+len(close):])
 }
 
 // StripReferencedContextPrefix removes the "Referenced context:" preamble and

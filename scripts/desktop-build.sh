@@ -41,7 +41,7 @@ node -e 'const fs=require("fs"),f="wails.json",j=JSON.parse(fs.readFileSync(f,"u
 # NSIS installer is Windows-only (Wails requires a single windows target for -nsis).
 ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
-UPDATE_HELPER="reasonix-update-helper.exe"
+UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \

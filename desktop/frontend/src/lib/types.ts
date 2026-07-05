@@ -352,6 +352,264 @@ export interface WorkbenchAutomationInput {
   logs?: string[];
 }
 
+export interface WorkbenchCustomer {
+  id: string;
+  name: string;
+  type: string;
+  contact: string;
+  phone: string;
+  email: string;
+  risk: string;
+  riskLevel: string;
+  status: string;
+  owner: string;
+  stage: string;
+  industry: string;
+  region: string;
+  address: string;
+  note: string;
+  desc: string;
+  projectIds: string[];
+  matters: number;
+  materials: number;
+  events: number;
+  todos: number;
+  reports: number;
+  lastTouch: string;
+  lastContact: string;
+  nextAction: string;
+  tags: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchCustomerInput {
+  id?: string;
+  name: string;
+  type?: string;
+  contact?: string;
+  phone?: string;
+  email?: string;
+  risk?: string;
+  riskLevel?: string;
+  status?: string;
+  owner?: string;
+  stage?: string;
+  industry?: string;
+  region?: string;
+  address?: string;
+  note?: string;
+  desc?: string;
+  projectIds?: string[];
+  matters?: number;
+  materials?: number;
+  events?: number;
+  todos?: number;
+  reports?: number;
+  lastTouch?: string;
+  lastContact?: string;
+  nextAction?: string;
+  tags?: string[];
+}
+
+export interface WorkbenchCalendarEvent {
+  id: string;
+  day: string;
+  title: string;
+  time: string;
+  type: string;
+  place: string;
+  projectId?: string;
+  customerId?: string;
+  status?: string;
+  desc?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchCalendarEventInput {
+  id?: string;
+  day?: string;
+  title: string;
+  time?: string;
+  type?: string;
+  place?: string;
+  projectId?: string;
+  customerId?: string;
+  status?: string;
+  desc?: string;
+}
+
+export interface WorkbenchReport {
+  id: string;
+  title: string;
+  status: string;
+  owner: string;
+  desc: string;
+  kind?: string;
+  projectId?: string;
+  customerId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchReportInput {
+  id?: string;
+  title: string;
+  status?: string;
+  owner?: string;
+  desc?: string;
+  kind?: string;
+  projectId?: string;
+  customerId?: string;
+}
+
+export interface WorkbenchKnowledgeDocument {
+  id: string;
+  title: string;
+  type: string;
+  count: number;
+  status: string;
+  description?: string;
+  source?: string;
+  tags?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchKnowledgeDocumentInput {
+  id?: string;
+  title: string;
+  type?: string;
+  count?: number;
+  status?: string;
+  description?: string;
+  source?: string;
+  tags?: string;
+}
+
+export interface WorkbenchRegulation {
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  tags: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchSearchResult {
+  title: string;
+  scope: string;
+  snippet: string;
+}
+
+export interface WorkbenchSyncJob {
+  id: string;
+  title: string;
+  status: string;
+  progress: string;
+  time: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchOperationLog {
+  id: string;
+  action: string;
+  target: string;
+  user: string;
+  time: string;
+  result: string;
+  createdAt?: string;
+}
+
+export interface WorkbenchTeamRunStep {
+  id: string;
+  title: string;
+  owner: string;
+  status: string;
+  detail: string;
+}
+
+export type WorkbenchTeamRunStatus = "draft" | "running" | "paused" | "stopped" | "completed" | string;
+
+export interface WorkbenchTeamRoom {
+  id: string;
+  title: string;
+  members: number;
+  active: string;
+  desc: string;
+  leader: string;
+  leaderId: string;
+  status: string;
+  topic: string;
+  queue: string;
+  memberIds: string[];
+  avatars: string[];
+  mode: string;
+  sharedContext: string;
+  runState: string;
+  nextCheckpoint: string;
+  outcome: string;
+  controls: string[];
+  artifacts: string[];
+  steps: WorkbenchTeamRunStep[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchTeamRunEvent {
+  id: string;
+  time: string;
+  actor: string;
+  type: string;
+  detail: string;
+}
+
+export interface WorkbenchTeamRunArtifact {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+}
+
+export interface WorkbenchTeamRun {
+  id: string;
+  teamId: string;
+  title: string;
+  status: WorkbenchTeamRunStatus;
+  task: string;
+  createdAt: string;
+  updatedAt: string;
+  currentStepId: string;
+  events: WorkbenchTeamRunEvent[];
+  artifacts: WorkbenchTeamRunArtifact[];
+}
+
+export interface WorkbenchTeamChatMessage {
+  id: string;
+  teamId: string;
+  role: "user" | "agent" | string;
+  agentId?: string;
+  agentName?: string;
+  agentAvatar?: string;
+  content: string;
+  createdAt?: string;
+}
+
+export interface WorkbenchData {
+  customers: WorkbenchCustomer[];
+  calendarEvents: WorkbenchCalendarEvent[];
+  reports: WorkbenchReport[];
+  knowledgeDocuments: WorkbenchKnowledgeDocument[];
+  regulations: WorkbenchRegulation[];
+  syncJobs: WorkbenchSyncJob[];
+  operationLogs: WorkbenchOperationLog[];
+  teamRooms: WorkbenchTeamRoom[];
+  teamRuns: WorkbenchTeamRun[];
+  teamChatMessages: WorkbenchTeamChatMessage[];
+}
+
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];

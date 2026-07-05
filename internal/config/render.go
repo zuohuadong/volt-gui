@@ -346,6 +346,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			if p.ContextWindow > 0 {
 				fmt.Fprintf(&b, "context_window = %d   # tokens; compaction triggers near this limit\n", p.ContextWindow)
 			}
+			if p.Priority != 0 {
+				fmt.Fprintf(&b, "priority    = %d   # higher wins when a bare model name appears in multiple providers\n", p.Priority)
+			}
 			if p.Price != nil {
 				fmt.Fprintf(&b, "price       = %s   # provider-wide fallback, per 1M tokens\n", renderPricingInline(p.Price))
 			}
@@ -935,6 +938,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 			}
 			if p.ContextWindow > 0 {
 				fmt.Fprintf(&b, "context_window = %d\n", p.ContextWindow)
+			}
+			if p.Priority != 0 {
+				fmt.Fprintf(&b, "priority    = %d\n", p.Priority)
 			}
 			if p.Price != nil {
 				fmt.Fprintf(&b, "price       = %s\n", renderPricingInline(p.Price))

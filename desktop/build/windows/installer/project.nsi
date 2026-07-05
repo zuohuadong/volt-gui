@@ -77,7 +77,7 @@ ManifestDPIAware true
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 !define REASONIX_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
-!define REASONIX_UPDATE_HELPER "reasonix-update-helper.exe"
+!define REASONIX_UPDATE_HELPER "voltui-update-helper.exe"
 !define REASONIX_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${REASONIX_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
@@ -133,7 +133,7 @@ fallback:
 done:
 FunctionEnd
 
-Function reasonix.waitForExecutableUnlock
+Function voltui.waitForExecutableUnlock
    IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 done
    StrCpy $0 0
 
@@ -171,7 +171,7 @@ Section
 
     !insertmacro wails.webview2runtime
 
-    Call reasonix.waitForExecutableUnlock
+    Call voltui.waitForExecutableUnlock
 
     SetOutPath $INSTDIR
 

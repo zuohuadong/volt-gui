@@ -1851,7 +1851,7 @@ func (e *ProviderEntry) APIKey() string {
 	}
 	value, _, ok := storedCredentialValue(e.APIKeyEnv)
 	if !ok {
-		return ""
+		return strings.TrimSpace(os.Getenv(e.APIKeyEnv))
 	}
 	return value
 }

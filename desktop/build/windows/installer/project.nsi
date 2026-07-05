@@ -154,14 +154,14 @@ failed:
    IfSilent silent interactive
 
 interactive:
-   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Reasonix is still running. Close Reasonix, then click Retry to continue the installation." IDRETRY retry IDCANCEL abort
+   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${INFO_PRODUCTNAME} is still running. Close ${INFO_PRODUCTNAME}, then click Retry to continue the installation." IDRETRY retry IDCANCEL abort
    Goto retry
 
 silent:
    SetErrorLevel 1618
 
 abort:
-   Abort "Reasonix is still running. Close Reasonix and run the installer again."
+   Abort "${INFO_PRODUCTNAME} is still running. Close ${INFO_PRODUCTNAME} and run the installer again."
 
 done:
 FunctionEnd

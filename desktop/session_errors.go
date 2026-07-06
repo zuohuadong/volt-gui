@@ -29,7 +29,7 @@ func friendlySessionFileError(err error) error {
 	if !errors.As(err, &errno) {
 		return err
 	}
-	friendly := err
+	var friendly error
 	switch {
 	case isFileInUseErrno(errno):
 		friendly = errSessionFileLocked

@@ -109,6 +109,24 @@ const infoCost = contextCostDisplay({
   usage: { cost: 0, costUsd: 0, currency: "¥" },
 });
 eq(infoCost, { amount: 0.1759, currency: "$" }, "panel cost keeps the panel currency instead of state default");
+const singleRequestOnly = contextCostDisplay({
+  info: { sessionCost: 0, sessionCurrency: "", sessionCostUsd: 0 },
+  sessionCost: 0,
+  sessionCurrency: "¥",
+  usage: { cost: 0.42, costUsd: 0.42, currency: "¥" },
+});
+eq(
+  singleRequestOnly,
+  { amount: 0, currency: "¥" },
+  "a single request's cost never renders under the session-cost label",
+);
+const localAccumulated = contextCostDisplay({
+  info: { sessionCost: 0, sessionCurrency: "", sessionCostUsd: 0 },
+  sessionCost: 1.5,
+  sessionCurrency: "¥",
+  usage: { cost: 0.42, costUsd: 0.42, currency: "$" },
+});
+eq(localAccumulated, { amount: 1.5, currency: "¥" }, "locally accumulated session cost still renders");
 eq(formatMoney(infoCost.amount, infoCost.currency, "dash"), "$0.1759", "USD panel cost renders with dollar sign");
 eq(currencySymbol("楼"), "¥", "unexpected currency text does not leak into money values");
 eq(currencySymbol("aud"), "AUD ", "unknown ISO currency codes stay readable");

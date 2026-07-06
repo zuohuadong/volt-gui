@@ -126,20 +126,17 @@ export function contextCostDisplay({
   sessionCurrency?: string;
   usage?: Pick<WireUsage, "cost" | "costUsd" | "currency">;
 }): { amount: number; currency?: string } {
+  // Session-scoped sources only: this value renders under the 会话费用 label,
+  // and falling back to a single request's usage.cost silently displayed one
+  // turn's spend as the whole session's. usage now contributes currency only.
   if (info?.sessionCost && info.sessionCost > 0) {
     return { amount: info.sessionCost, currency: info.sessionCurrency || sessionCurrency || usage?.currency };
   }
   if (sessionCost && sessionCost > 0) {
     return { amount: sessionCost, currency: sessionCurrency || info?.sessionCurrency || usage?.currency };
   }
-  if (usage?.cost && usage.cost > 0) {
-    return { amount: usage.cost, currency: usage.currency || sessionCurrency || info?.sessionCurrency };
-  }
   if (info?.sessionCostUsd && info.sessionCostUsd > 0) {
     return { amount: info.sessionCostUsd, currency: info.sessionCurrency || sessionCurrency || usage?.currency };
-  }
-  if (usage?.costUsd && usage.costUsd > 0) {
-    return { amount: usage.costUsd, currency: usage.currency || sessionCurrency || info?.sessionCurrency };
   }
   return { amount: 0, currency: info?.sessionCurrency || sessionCurrency || usage?.currency };
 }

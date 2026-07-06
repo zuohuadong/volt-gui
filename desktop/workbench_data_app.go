@@ -124,9 +124,14 @@ type WorkbenchReportView struct {
 	Status     string `json:"status"`
 	Owner      string `json:"owner"`
 	Desc       string `json:"desc"`
+	Body       string `json:"body,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	ProjectID  string `json:"projectId,omitempty"`
 	CustomerID string `json:"customerId,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Format     string `json:"format,omitempty"`
+	Priority   string `json:"priority,omitempty"`
+	DueAt      string `json:"dueAt,omitempty"`
 	CreatedAt  string `json:"createdAt"`
 	UpdatedAt  string `json:"updatedAt"`
 }
@@ -137,9 +142,14 @@ type WorkbenchReportInput struct {
 	Status     string `json:"status"`
 	Owner      string `json:"owner"`
 	Desc       string `json:"desc"`
+	Body       string `json:"body"`
 	Kind       string `json:"kind"`
 	ProjectID  string `json:"projectId"`
 	CustomerID string `json:"customerId"`
+	Source     string `json:"source"`
+	Format     string `json:"format"`
+	Priority   string `json:"priority"`
+	DueAt      string `json:"dueAt"`
 }
 
 type WorkbenchKnowledgeDocumentView struct {
@@ -700,7 +710,23 @@ func saveReportInto(data *WorkbenchDataView, input WorkbenchReportInput) (Workbe
 	}
 	now := time.Now().Format(time.RFC3339)
 	id := defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(slugifyAgentID(title), reportIDs(data.Reports)))
-	next := WorkbenchReportView{ID: id, Title: title, Status: defaultString(strings.TrimSpace(input.Status), "草稿"), Owner: defaultString(strings.TrimSpace(input.Owner), "自动化 Agent"), Desc: strings.TrimSpace(input.Desc), Kind: defaultString(strings.TrimSpace(input.Kind), "分析报告"), ProjectID: strings.TrimSpace(input.ProjectID), CustomerID: strings.TrimSpace(input.CustomerID), CreatedAt: now, UpdatedAt: now}
+	next := WorkbenchReportView{
+		ID:         id,
+		Title:      title,
+		Status:     defaultString(strings.TrimSpace(input.Status), "草稿"),
+		Owner:      defaultString(strings.TrimSpace(input.Owner), "自动化 Agent"),
+		Desc:       strings.TrimSpace(input.Desc),
+		Body:       strings.TrimSpace(input.Body),
+		Kind:       defaultString(strings.TrimSpace(input.Kind), "分析报告"),
+		ProjectID:  strings.TrimSpace(input.ProjectID),
+		CustomerID: strings.TrimSpace(input.CustomerID),
+		Source:     defaultString(strings.TrimSpace(input.Source), "工作台数据"),
+		Format:     defaultString(strings.TrimSpace(input.Format), "Markdown"),
+		Priority:   defaultString(strings.TrimSpace(input.Priority), "中"),
+		DueAt:      strings.TrimSpace(input.DueAt),
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
 	replaceOrPrependReport(data, next)
 	sortReports(data.Reports)
 	return next, nil
@@ -888,8 +914,17 @@ func normalizeReports(reports []WorkbenchReportView) []WorkbenchReportView {
 			continue
 		}
 		report.ID = defaultString(strings.TrimSpace(report.ID), slugifyAgentID(report.Title))
-		report.Status = defaultString(strings.TrimSpace(report.Status), "草稿")
+		report.Status = defaultString(strings.TrimSpace(report.Status), "??")
 		report.Owner = defaultString(strings.TrimSpace(report.Owner), "自动化 Agent")
+		report.Desc = strings.TrimSpace(report.Desc)
+		report.Body = strings.TrimSpace(report.Body)
+		if report.Body == "" && report.Desc != "" {
+			report.Body = report.Desc
+		}
+		report.Kind = defaultString(strings.TrimSpace(report.Kind), "分析报告")
+		report.Source = defaultString(strings.TrimSpace(report.Source), "工作台数据")
+		report.Format = defaultString(strings.TrimSpace(report.Format), "Markdown")
+		report.Priority = defaultString(strings.TrimSpace(report.Priority), "中")
 		report.CreatedAt = defaultString(report.CreatedAt, now)
 		report.UpdatedAt = defaultString(report.UpdatedAt, report.CreatedAt)
 		out = append(out, report)

@@ -446,9 +446,14 @@ export interface WorkbenchReport {
   status: string;
   owner: string;
   desc: string;
+  body?: string;
   kind?: string;
   projectId?: string;
   customerId?: string;
+  source?: string;
+  format?: string;
+  priority?: string;
+  dueAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -459,9 +464,14 @@ export interface WorkbenchReportInput {
   status?: string;
   owner?: string;
   desc?: string;
+  body?: string;
   kind?: string;
   projectId?: string;
   customerId?: string;
+  source?: string;
+  format?: string;
+  priority?: string;
+  dueAt?: string;
 }
 
 export interface WorkbenchKnowledgeDocument {

@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	winsandbox "github.com/SivanCola/windows-sandbox"
+	"reasonix/internal/winsandbox"
 )
 
 type windowsSandboxPayload struct {

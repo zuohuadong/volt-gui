@@ -6,12 +6,12 @@
 // (*policy*): a permitted command still cannot escape the box.
 //
 // macOS uses Seatbelt via sandbox-exec, Linux uses bubblewrap when available,
-// and Windows uses a helper process backed by github.com/SivanCola/windows-sandbox:
-// AppContainer for read-only commands, a low-integrity token for writable
-// commands, and a kill-on-close Job Object. When enforce is requested but no
-// OS sandbox backend is available, the bash tool fails closed instead of
-// running the command unwrapped. Confining the in-process file-writer
-// built-ins is handled separately, in package tool/builtin.
+// and Windows uses Reasonix's bundled native helper: AppContainer for read-only
+// commands, a low-integrity token for writable commands, and a kill-on-close
+// Job Object. When enforce is requested but no OS sandbox backend is available,
+// the bash tool fails closed instead of running the command unwrapped.
+// Confining the in-process file-writer built-ins is handled separately, in
+// package tool/builtin.
 package sandbox
 
 import (

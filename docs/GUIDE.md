@@ -484,9 +484,9 @@ Seatbelt on macOS, bubblewrap on Linux, and a native helper on Windows):
 commands may write only those same roots plus platform-specific command
 temp/cache roots, cannot read configured `forbid_read` roots while the OS
 sandbox is active, and reach the network only when `[sandbox] network` is set.
-The native Windows helper delegates the low-level isolation to
-`github.com/SivanCola/windows-sandbox`, which uses AppContainer for read-only
-commands and a low-integrity token for writable commands, temporarily grants
+The native Windows helper uses Reasonix's bundled Windows sandbox backend:
+AppContainer for read-only commands and a low-integrity token for writable
+commands, temporarily grants
 access to the workspace, a per-command temp root, and the target executable,
 applies deny ACEs for `forbid_read` (files as well as directories), snapshots
 touched DACLs before editing them, and restores those snapshots best-effort

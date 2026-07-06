@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	winsandbox "github.com/SivanCola/windows-sandbox"
+	"reasonix/internal/winsandbox"
 )
 
 func TestWindowsCommandWrapsWithHelper(t *testing.T) {

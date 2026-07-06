@@ -69,12 +69,16 @@ func (g SessionDataGuard) Check(target string) error {
 // periodic flushes — so an agent edit vanishes the same way a session-file edit
 // does. config.toml / credentials / skills stay writable: editing those on the
 // user's request is a legitimate flow with no autonomous rewriter racing it.
+// heartbeat-tasks.json stays writable too — it is documented as human- and
+// AI-editable (desktop/heartbeat.go, and the heartbeat panel tip says "AI
+// agents can also edit heartbeat-tasks.json"), so the product explicitly
+// accepts agent edits racing the engine there.
 func runtimeStateFile(name string) bool {
 	if strings.HasPrefix(name, "desktop-") {
 		return true // desktop-tabs.json(+.tmp), desktop-projects.json, desktop-window.json, desktop-workspace…
 	}
 	switch name {
-	case "heartbeat-tasks.json", "metrics-pending.json", "crash-pending.json":
+	case "metrics-pending.json", "crash-pending.json":
 		return true
 	}
 	return false
@@ -210,7 +214,7 @@ func sessionHintNeedles(rawRoot, realRoot string, allowRoots []string) []string 
 		}
 	}
 	for prefix := range prefixes {
-		for _, sub := range []string{"sessions", "projects", "desktop-", "heartbeat-tasks.json", "metrics-pending.json", "crash-pending.json"} {
+		for _, sub := range []string{"sessions", "projects", "desktop-", "metrics-pending.json", "crash-pending.json"} {
 			tree := filepath.Join(prefix, sub)
 			if covered := func() bool {
 				for _, a := range allowRoots {

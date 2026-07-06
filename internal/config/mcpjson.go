@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -21,13 +22,14 @@ const mcpJSONFile = ".mcp.json"
 // names and semantics match PluginEntry (and Claude): command/args/env describe
 // a local stdio server; type/url/headers describe a remote one.
 type mcpServerSpec struct {
-	Type      string            `json:"type"`
-	Command   string            `json:"command"`
-	Args      []string          `json:"args"`
-	Env       map[string]string `json:"env"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	AutoStart *bool             `json:"auto_start"`
+	Type                 string            `json:"type"`
+	Command              string            `json:"command"`
+	Args                 []string          `json:"args"`
+	Env                  map[string]string `json:"env"`
+	URL                  string            `json:"url"`
+	Headers              map[string]string `json:"headers"`
+	AutoStart            *bool             `json:"auto_start"`
+	TrustedReadOnlyTools []string          `json:"trusted_read_only_tools"`
 }
 
 // loadMCPJSON reads path (Claude Code's .mcp.json) and returns its servers as
@@ -85,6 +87,9 @@ func specsToEntries(specs map[string]mcpServerSpec, skip map[string]bool) []Plug
 
 // legacyConfigPath is the v0.x (TypeScript line) config file, ~/.voltui/config.json.
 func legacyConfigPath() string {
+	if IsolatedHomeDir() != "" {
+		return ""
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -120,16 +125,49 @@ func loadLegacyMCP(path string) []PluginEntry {
 	return specsToEntries(doc.MCPServers, disabled)
 }
 
+var legacyMCPSpecName = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$`)
+
+func parseLegacyMCPSpec(raw string) (PluginEntry, bool) {
+	body := strings.TrimSpace(raw)
+	var name string
+	if m := legacyMCPSpecName.FindStringSubmatch(body); m != nil {
+		name, body = m[1], strings.TrimSpace(m[2])
+	}
+	if body == "" {
+		return PluginEntry{}, false
+	}
+	lower := strings.ToLower(body)
+	if strings.HasPrefix(lower, "streamable+http://") || strings.HasPrefix(lower, "streamable+https://") {
+		return PluginEntry{Name: name, Type: "http", URL: body[len("streamable+"):]}, true
+	}
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return PluginEntry{Name: name, Type: "sse", URL: body}, true
+	}
+	parts, ok := splitPluginCommandLine(body)
+	if !ok || len(parts) == 0 {
+		return PluginEntry{}, false
+	}
+	if shouldSplitPluginCommand(body, parts[0]) {
+		return PluginEntry{Name: name, Command: parts[0], Args: parts[1:]}, true
+	}
+	return PluginEntry{Name: name, Command: body}, true
+}
+
+func anonymousMCPName(i int) string {
+	return fmt.Sprintf("mcp-%d", i+1)
+}
+
 func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
 	return PluginEntry{
-		Name:      name,
-		Type:      s.Type,
-		Command:   s.Command,
-		Args:      s.Args,
-		Env:       s.Env,
-		URL:       s.URL,
-		Headers:   s.Headers,
-		AutoStart: s.AutoStart,
+		Name:                 name,
+		Type:                 s.Type,
+		Command:              s.Command,
+		Args:                 s.Args,
+		Env:                  s.Env,
+		URL:                  s.URL,
+		Headers:              s.Headers,
+		AutoStart:            s.AutoStart,
+		TrustedReadOnlyTools: s.TrustedReadOnlyTools,
 	}
 }
 
@@ -245,6 +283,7 @@ func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry Pl
 		delete(server, "args")
 	}
 	setMCPJSONBool(server, "auto_start", entry.AutoStart)
+	setMCPJSONStringArray(server, "trusted_read_only_tools", entry.TrustedReadOnlyTools)
 }
 
 func writeMCPJSONServers(path string, root map[string]json.RawMessage, servers map[string]json.RawMessage) error {

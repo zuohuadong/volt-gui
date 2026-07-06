@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"voltui/internal/codegraph"
 	"voltui/internal/config"
 )
 
@@ -163,6 +162,8 @@ func mcpCommand(args []string) int {
 		return mcpAddCLI(args[1:])
 	case "remove", "rm":
 		return mcpRemoveCLI(args[1:])
+	case "import":
+		return mcpImportCLI()
 	case "help", "-h", "--help":
 		mcpUsage()
 		return 0
@@ -173,6 +174,16 @@ func mcpCommand(args []string) int {
 	}
 }
 
+func mcpImportCLI() int {
+	total, added, updated, err := config.ImportCCSwitchMCP()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("imported %d MCP servers from cc-switch (%d added, %d updated) — servers load on the next session\n", total, added, updated)
+	return 0
+}
+
 func mcpList() int {
 	cfg, err := config.Load()
 	if err != nil {
@@ -180,20 +191,6 @@ func mcpList() int {
 		return 1
 	}
 	listed := 0
-	// CodeGraph is a built-in server injected by boot, not a [[plugins]] entry, so
-	// report its resolved status here too. It is listed even when disabled, matching
-	// the MCP manager where the user can enable it and choose a startup tier.
-	codegraphMeta := fmt.Sprintf(" [auto_start=%v tier=%s]", cfg.Codegraph.Enabled, cfg.Codegraph.ResolvedTier())
-	if bin, ok := codegraph.Resolve(cfg.Codegraph.Path); ok {
-		fmt.Printf("%-16s (stdio, built-in)%s  %s serve --mcp\n", "codegraph", codegraphMeta, bin)
-	} else {
-		fmt.Printf("%-16s (built-in, not installed)%s  run `voltui codegraph install`", "codegraph", codegraphMeta)
-		if cfg.Codegraph.Enabled && cfg.Codegraph.AutoInstall {
-			fmt.Print(" (or let auto_install fetch it on next startup)")
-		}
-		fmt.Println()
-	}
-	listed++
 	for _, p := range cfg.Plugins {
 		typ := p.Type
 		if typ == "" {
@@ -271,6 +268,7 @@ Usage:
   voltui mcp add <name> <command> [args...]        stdio server
   voltui mcp add <name> --http <url> [--header K=V] remote (Streamable HTTP)
   voltui mcp add <name> --sse  <url>               remote (legacy SSE)
+  voltui mcp import                                import MCP servers from cc-switch
   voltui mcp remove <name>
 
 Flags for add:

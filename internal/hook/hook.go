@@ -99,6 +99,9 @@ type HookConfig struct {
 	Match string `json:"match,omitempty"`
 	// Command is the shell command to run (spawned through the platform shell).
 	Command string `json:"command"`
+	// ContextFile is an internal plugin-package helper: when set, the hook reads
+	// this file as stdout instead of spawning a shell command.
+	ContextFile string `json:"contextFile,omitempty"`
 	// Description is an optional human label surfaced in `/hooks`.
 	Description string `json:"description,omitempty"`
 	// Timeout overrides the per-event default, in milliseconds.
@@ -250,8 +253,12 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 			}
 			for _, h := range pkg.Manifest.Hooks[eventName] {
 				command := h.Command
-				if !filepath.IsAbs(command) {
+				if command != "" && !h.ShellCommand && !filepath.IsAbs(command) {
 					command = filepath.Join(pkg.Root, filepath.FromSlash(command))
+				}
+				contextFile := h.ContextFile
+				if contextFile != "" && !filepath.IsAbs(contextFile) {
+					contextFile = filepath.Join(pkg.Root, filepath.FromSlash(contextFile))
 				}
 				cwd := h.Cwd
 				if cwd == "" {
@@ -275,6 +282,7 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 					HookConfig: HookConfig{
 						Match:       h.Match,
 						Command:     command,
+						ContextFile: contextFile,
 						Description: h.Description,
 						Timeout:     h.Timeout,
 						Cwd:         cwd,
@@ -475,7 +483,7 @@ func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spa
 		}
 		timeout := h.timeout()
 		start := time.Now()
-		r := spawner(ctx, SpawnInput{Command: h.Command, Cwd: cwd, Env: h.Env, Stdin: stdin, Timeout: timeout})
+		r := runResolvedHook(ctx, h, SpawnInput{Command: h.Command, Cwd: cwd, Env: h.Env, Stdin: stdin, Timeout: timeout}, spawner)
 		decision := decideOutcome(event, r)
 		report.Outcomes = append(report.Outcomes, Outcome{
 			Hook:      h,
@@ -493,6 +501,26 @@ func Run(ctx context.Context, payload Payload, hooks []ResolvedHook, spawner Spa
 		}
 	}
 	return report
+}
+
+func runResolvedHook(ctx context.Context, h ResolvedHook, in SpawnInput, spawner Spawner) SpawnResult {
+	if h.Scope == ScopePlugin && h.ContextFile != "" {
+		return readContextFile(h.ContextFile)
+	}
+	return spawner(ctx, in)
+}
+
+func readContextFile(path string) SpawnResult {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return SpawnResult{ExitCode: -1, SpawnErr: err}
+	}
+	truncated := false
+	if len(body) > outputCapBytes {
+		body = body[:outputCapBytes]
+		truncated = true
+	}
+	return SpawnResult{ExitCode: 0, Stdout: string(body), Truncated: truncated}
 }
 
 // stderrFor returns the best human message for an outcome: real stderr, else a
@@ -629,6 +657,9 @@ func legacyTrustPath(homeDir string) string {
 
 func legacyReasonixHome(override string) string {
 	if override != "" {
+		return ""
+	}
+	if config.IsolatedHomeDir() != "" {
 		return ""
 	}
 	home, err := os.UserHomeDir()

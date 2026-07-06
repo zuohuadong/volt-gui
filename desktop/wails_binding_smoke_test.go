@@ -101,6 +101,7 @@ func newSmokeApp(t *testing.T) (*App, *WorkspaceTab, *captureSink, *streamingDes
 	app := NewApp()
 	app.ctx = context.Background()
 	app.readyHook = func() {}
+	app.bindControllerDisplayRecorder(ctrl)
 	tab := testTab("smoke", t.TempDir())
 	tab.Ctrl = ctrl
 	tab.model = "deepseek-flash/deepseek-v4-flash"

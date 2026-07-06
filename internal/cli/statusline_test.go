@@ -11,9 +11,11 @@ import (
 
 	"voltui/internal/agent"
 	"voltui/internal/agent/testutil"
+	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
 	"voltui/internal/i18n"
+	"voltui/internal/provider"
 	"voltui/internal/tool"
 )
 
@@ -57,9 +59,6 @@ func TestModelSwitchRefreshesCustomStatusline(t *testing.T) {
 	newCtrl := control.New(control.Options{Label: "new-model"})
 	m := newChatTUI(oldCtrl, "", make(chan event.Event, 1), 80)
 	m.statuslineCmd = "cat"
-	if runtime.GOOS == "windows" {
-		m.statuslineCmd = "more"
-	}
 	m.statuslineOut = `{"model":"old-model"}`
 
 	_, cmd := m.Update(modelSwitchMsg{
@@ -102,7 +101,7 @@ func TestIdleStatuslineIsCompact(t *testing.T) {
 		t.Fatalf("idle status line missing mode status:\n%s", plain)
 	}
 	if !strings.Contains(plain, "(shift+tab toggles plan · ctrl+y yolo)") {
-		t.Fatalf("idle status line missing mode-cycle hint:\n%s", plain)
+		t.Fatalf("idle status line missing plan-toggle hint:\n%s", plain)
 	}
 	for _, old := range []string{"Shift-Tab", "Ctrl-O", "Ctrl-D", "Enter sends", "Esc clears/exits state", "PgUp/PgDn"} {
 		if strings.Contains(plain, old) {
@@ -153,10 +152,23 @@ func TestStatuslineCycleHintFollowsLanguage(t *testing.T) {
 	content := renderStatuslineView(t, false)
 	plain := bottomStatusPlain(content)
 	if !strings.Contains(plain, "Auto") || !strings.Contains(plain, "就绪") || !strings.Contains(plain, "(shift+tab 切换计划 · ctrl+y yolo)") {
-		t.Fatalf("localized mode-cycle hint missing:\n%s", plain)
+		t.Fatalf("localized plan-toggle hint missing:\n%s", plain)
 	}
-	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab toggles plan") {
+	if strings.Contains(plain, "ready") || strings.Contains(plain, "shift+tab toggles plan · ctrl+y yolo") {
 		t.Fatalf("localized status line should not fall back to English:\n%s", plain)
+	}
+}
+
+func TestDesktopShortcutStatuslineUsesPlanToggleHint(t *testing.T) {
+	i18n.DetectLanguage("en")
+
+	content := renderStatuslineViewWithShortcutLayout(t, "desktop")
+	plain := bottomStatusPlain(content)
+	if !strings.Contains(plain, "Ask") || !strings.Contains(plain, "(shift+tab toggles plan · ctrl+y yolo)") {
+		t.Fatalf("desktop shortcut status line missing unified plan-toggle hint:\n%s", plain)
+	}
+	if strings.Contains(plain, "ask/auto/plan") {
+		t.Fatalf("desktop shortcut status line should not advertise Ask/Auto/Plan cycling:\n%s", plain)
 	}
 }
 
@@ -198,10 +210,10 @@ func TestStatuslinePutsGitIdentityOnModeRow(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("status block lines = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[0], "effort auto · VoltUI@codex/demo (+3 -1 ?2)") {
+	if !strings.Contains(lines[0], "effort auto · Reasonix@codex/demo (+3 -1 ?2)") {
 		t.Fatalf("mode row should include effort before git identity:\n%s", strings.Join(lines, "\n"))
 	}
-	if strings.Contains(lines[1], "VoltUI@codex/demo") {
+	if strings.Contains(lines[1], "Reasonix@codex/demo") {
 		t.Fatalf("data row should not include git identity:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[1], "deepseek-v4-flash") || strings.Contains(lines[1], "effort auto") {
@@ -238,8 +250,21 @@ func renderStatuslineView(t *testing.T, yolo bool) string {
 	t.Helper()
 
 	ctrl := control.New(control.Options{})
-	ctrl.SetBypass(yolo)
+	ctrl.SetAutoApproveTools(yolo)
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return next.(chatTUI).View().Content
+}
+
+func renderStatuslineViewWithShortcutLayout(t *testing.T, layout string) string {
+	t.Helper()
+
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.cfg = config.Default()
+	if err := m.cfg.SetUIShortcutLayout(layout); err != nil {
+		t.Fatal(err)
+	}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return next.(chatTUI).View().Content
 }
@@ -263,7 +288,7 @@ func renderStatuslineViewWithGitAndEffort(t *testing.T) string {
 	m.label = "deepseek-v4-flash"
 	m.effortLevel = "auto"
 	m.gitStatus = gitStatus{
-		Repo:      "VoltUI",
+		Repo:      "Reasonix",
 		Branch:    "codex/demo",
 		Added:     3,
 		Removed:   1,
@@ -276,10 +301,17 @@ func renderStatuslineViewWithGitAndEffort(t *testing.T) string {
 func renderStatuslineViewWithCache(t *testing.T) string {
 	t.Helper()
 
-	usage := testutil.UsageTurn(900, 100, 50)
-	usage.Text = "done"
-	prov := testutil.NewMock("deepseek-v4-flash", usage)
-	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 2, ContextWindow: 200_000}, event.Discard)
+	prov := testutil.NewMock("deepseek-v4-flash", testutil.Turn{
+		Text: "ok",
+		Usage: &provider.Usage{
+			CacheHitTokens:   900,
+			CacheMissTokens:  100,
+			CompletionTokens: 50,
+			PromptTokens:     1000,
+			TotalTokens:      1050,
+		},
+	})
+	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 1, ContextWindow: 200_000}, event.Discard)
 	if err := exec.Run(context.Background(), "hello"); err != nil {
 		t.Fatalf("seed agent usage: %v", err)
 	}

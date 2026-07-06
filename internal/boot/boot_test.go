@@ -1783,7 +1783,7 @@ model = "x"
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer
-	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{}, nil)
+	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{}, nil, nil)
 	for _, name := range []string{
 		"todo_write",
 		"complete_step",
@@ -1940,6 +1940,12 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	// user-decision policy is another fixed boot policy and is stripped for the
 	// same reason.
 	base = stripLanguagePolicy(base)
+	if i := strings.Index(base, "\n\nCurrent workspace:"); i >= 0 {
+		base = strings.TrimSpace(base[:i])
+	}
+	if i := strings.Index(base, "\n\n## Environment"); i >= 0 {
+		base = strings.TrimSpace(base[:i])
+	}
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
 	}
@@ -2024,6 +2030,7 @@ func stripLanguagePolicy(s string) string {
 		config.LanguagePolicy,
 		config.UserDecisionPolicy,
 	} {
+		s = strings.ReplaceAll(s, "\n\n"+policy, "")
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
 	}
 	return s
@@ -2313,7 +2320,7 @@ func TestBuildMigratesLegacySessionsFromConfigSessionDir(t *testing.T) {
 	}
 }
 
-func TestBuildMigratesLegacyXDGAndProjectSessions(t *testing.T) {
+func TestBuildSkipsLegacySessionMigrationWhenIsolated(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("legacy XDG paths are Unix-only")
 	}
@@ -2347,20 +2354,12 @@ func TestBuildMigratesLegacyXDGAndProjectSessions(t *testing.T) {
 	}
 	defer ctrl.Close()
 
-	flatData, err := os.ReadFile(filepath.Join(config.SessionDir(), "xdg-flat.jsonl"))
-	if err != nil {
-		t.Fatalf("legacy XDG flat session not imported: %v", err)
-	}
-	if !strings.Contains(string(flatData), "hello from xdg") {
-		t.Fatalf("legacy XDG flat session missing content:\n%s", flatData)
+	if _, err := os.Stat(filepath.Join(config.SessionDir(), "xdg-flat.jsonl")); !os.IsNotExist(err) {
+		t.Fatal("legacy XDG flat session was imported but must not be when REASONIX_HOME is set")
 	}
 	projectPath := filepath.Join(config.MemoryUserDir(), "projects", slug, "sessions", "project-chat.jsonl")
-	projectData, err := os.ReadFile(projectPath)
-	if err != nil {
-		t.Fatalf("legacy project session not imported to %s: %v", projectPath, err)
-	}
-	if !strings.Contains(string(projectData), "hello from old project session") {
-		t.Fatalf("legacy project session missing content:\n%s", projectData)
+	if _, err := os.Stat(projectPath); !os.IsNotExist(err) {
+		t.Fatal("legacy project session was imported but must not be when REASONIX_HOME is set")
 	}
 }
 

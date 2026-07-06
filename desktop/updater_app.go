@@ -15,7 +15,7 @@ import (
 // frontend calls — mirroring settings_app.go's "one file per concern" split. The
 // transport-free logic lives in updater.go; this file is the Wails glue: it streams
 // download progress as "updater:progress" events and routes macOS to the manual
-// download path (an unsigned .app can't be swapped in place under Gatekeeper).
+// download path unless the macOS build was Developer ID signed and notarized.
 
 // Version returns the build version injected via -ldflags (see main.go). The
 // frontend displays it; CheckUpdate compares against it.
@@ -27,10 +27,14 @@ func (a *App) Version() string { return version }
 func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	c, err := httpClient()
 	if err != nil {
+		a.recordUpdateError(err)
 		return &UpdateInfo{
 			Current:       version,
+			Channel:       channel,
 			CanSelfUpdate: canSelfUpdate(),
-			DownloadURL:   defaultDownloadPage,
+			ManualOnly:    !canSelfUpdate(),
+			ManualReason:  manualUpdateReason(),
+			DownloadURL:   downloadPage(),
 			Err:           err.Error(),
 		}, nil
 	}
@@ -38,10 +42,14 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	defer cancel()
 	m, err := fetchManifest(ctx, c)
 	if err != nil {
+		a.recordUpdateError(err)
 		return &UpdateInfo{
 			Current:       version,
+			Channel:       channel,
 			CanSelfUpdate: canSelfUpdate(),
-			DownloadURL:   defaultDownloadPage,
+			ManualOnly:    !canSelfUpdate(),
+			ManualReason:  manualUpdateReason(),
+			DownloadURL:   downloadPage(),
 			Err:           err.Error(),
 		}, nil
 	}
@@ -49,10 +57,10 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	return &info, nil
 }
 
-// OpenDownloadPage opens the releases page in the browser — the macOS manual-update
+// OpenDownloadPage opens the install page in the browser — the macOS manual-update
 // path and a fallback link elsewhere.
 func (a *App) OpenDownloadPage() {
-	page := defaultDownloadPage
+	page := downloadPage()
 	if c, err := httpClient(); err == nil {
 		ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 		defer cancel()
@@ -65,38 +73,63 @@ func (a *App) OpenDownloadPage() {
 	}
 }
 
-// ApplyUpdate downloads, verifies, installs the latest build, then relaunches. On
-// macOS it can't self-update (unsigned bundle), so it defers to the download page.
-// Progress is streamed on the "updater:progress" event; on success the process exits.
-func (a *App) ApplyUpdate() error {
+// DownloadUpdate downloads, verifies, and caches the latest build. Installation is
+// deliberately a separate user action so the UI can show "downloaded" before the
+// app quits to finish the update.
+func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 	if !canSelfUpdate() {
 		a.OpenDownloadPage()
-		return nil
+		return nil, nil
 	}
 	c, err := httpClient()
 	if err != nil {
-		return a.failUpdate(err)
+		return nil, a.failUpdate(err)
 	}
 	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 	defer cancel()
 	m, err := fetchManifest(ctx, c)
 	if err != nil {
-		return a.failUpdate(err)
+		return nil, a.failUpdate(err)
 	}
 	asset, ok := m.Asset()
 	if !ok {
-		return a.failUpdate(fmt.Errorf("no update artifact for %s", update.CurrentPlatform()))
+		return nil, a.failUpdate(fmt.Errorf("no update artifact for %s", update.CurrentPlatform()))
 	}
 
 	data, err := a.downloadVerify(asset)
 	if err != nil {
+		return nil, a.failUpdate(err)
+	}
+	meta, err := saveCachedUpdate(m.Version, asset, data)
+	if err != nil {
+		return nil, a.failUpdate(err)
+	}
+	a.emitProgress("downloaded", meta.Size, meta.Size, "")
+	return &UpdateDownloadResult{
+		Version: meta.Version,
+		Channel: meta.Channel,
+		Path:    meta.Path,
+		Size:    meta.Size,
+		SHA256:  meta.SHA256,
+	}, nil
+}
+
+// InstallUpdate applies the cached, verified update and then exits/relaunches.
+func (a *App) InstallUpdate() error {
+	if !canSelfUpdate() {
+		a.OpenDownloadPage()
+		return nil
+	}
+	meta, data, err := readVerifiedCachedUpdate()
+	if err != nil {
 		return a.failUpdate(err)
 	}
-
-	a.emitProgress("applying", asset.Size, asset.Size, "")
+	a.emitProgress("installing", meta.Size, meta.Size, "")
 	switch runtime.GOOS {
 	case "windows":
-		err = applyWindows(data)
+		err = applyWindowsFile(meta.Path)
+	case "darwin":
+		err = applyMac(meta.Path)
 	case "linux":
 		err = applyLinux(data)
 	default:
@@ -106,17 +139,26 @@ func (a *App) ApplyUpdate() error {
 		return a.failUpdate(err)
 	}
 
-	a.emitProgress("done", asset.Size, asset.Size, "")
+	a.emitProgress("done", meta.Size, meta.Size, "")
 
 	// Persist the conversation and stop subprocesses before handing off (same as
-	// shutdown). On Linux the binary is now replaced, so relaunch it; on Windows the
-	// installer we launched takes over once we exit.
+	// shutdown). On Linux the binary is now replaced, so relaunch it; on Windows and
+	// macOS the installer/helper we launched takes over once we exit.
 	a.shutdown(a.ctx)
 	if runtime.GOOS == "linux" {
 		_ = relaunch()
 	}
 	os.Exit(0)
 	return nil
+}
+
+// ApplyUpdate is kept for older frontend bindings and tests. New UI code uses the
+// explicit download → install split.
+func (a *App) ApplyUpdate() error {
+	if _, err := a.DownloadUpdate(); err != nil {
+		return err
+	}
+	return a.InstallUpdate()
 }
 
 // downloadVerify downloads the asset (streaming progress), verifies its minisign
@@ -127,7 +169,8 @@ func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := download(a.reqCtx(), c, asset.URL, asset.Size, func(rcv, total int64) {
+	v4, _ := httpClientIPv4() // best-effort IPv4 fallback; nil just means retries reuse c
+	data, err := download(a.reqCtx(), c, v4, asset.URL, asset.Size, func(rcv, total int64) {
 		a.emitProgress("downloading", rcv, total, "")
 	})
 	if err != nil {
@@ -167,6 +210,16 @@ func (a *App) emitProgress(phase string, received, total int64, errMsg string) {
 
 // failUpdate emits an error progress event and returns the error to the caller.
 func (a *App) failUpdate(err error) error {
+	a.recordUpdateError(err)
 	a.emitProgress("error", 0, 0, err.Error())
 	return err
+}
+
+func (a *App) recordUpdateError(err error) {
+	if err == nil || version == "dev" {
+		return
+	}
+	if m := a.metrics.Load(); m != nil {
+		m.inc("updater_error", errorClass(err.Error()))
+	}
 }

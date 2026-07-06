@@ -87,6 +87,14 @@ func legacyCredentialsPaths() []string {
 	return paths
 }
 
+func legacyUserCredentialsPath() string {
+	paths := legacyCredentialsPaths()
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
 func loadDotEnvFileAs(path string, source CredentialSource) {
 	f, err := os.Open(path)
 	if err != nil {

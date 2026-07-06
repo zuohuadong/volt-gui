@@ -7,18 +7,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
-	"voltui/internal/codegraph"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/mcpdiag"
 	"voltui/internal/plugin"
+	"voltui/internal/shellparse"
 )
 
 func (m chatTUI) applyMCPAction(v mcpServerView, action mcpAction) (tea.Model, tea.Cmd) {
@@ -53,20 +51,6 @@ func (m chatTUI) connectSelectedMCP(v mcpServerView) (tea.Model, tea.Cmd) {
 		m.notice("mcp: no active session")
 		return m, nil
 	}
-	if v.BuiltIn && v.Name == "codegraph" {
-		cfg, cfgPath, err := m.loadEditableMCPConfig()
-		if err != nil {
-			m.notice("mcp connect: " + err.Error())
-			return m, nil
-		}
-		if !cfg.Codegraph.Enabled {
-			cfg.Codegraph.Enabled = true
-			if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
-				m.notice("mcp connect: " + err.Error())
-				return m, nil
-			}
-		}
-	}
 	if v.Status == "connected" {
 		m.ctrl.DisconnectMCPServer(v.Name)
 	}
@@ -94,22 +78,6 @@ func (m chatTUI) disableSelectedMCP(v mcpServerView) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	persisted := false
-	if v.BuiltIn && v.Name == "codegraph" {
-		cfg, cfgPath, err := m.loadEditableMCPConfig()
-		if err != nil {
-			m.notice("mcp disable: " + err.Error())
-			return m, nil
-		}
-		cfg.Codegraph.Enabled = false
-		if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
-			m.notice("mcp disable: " + err.Error())
-			return m, nil
-		}
-		persisted = true
-		if h := m.ctrl.Host(); h != nil {
-			h.ClearFailure(v.Name)
-		}
-	}
 	if m.mcpDisabled == nil {
 		m.mcpDisabled = map[string]bool{}
 	}
@@ -167,38 +135,9 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	cfg, cfgPath, err := m.loadEditableMCPConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		m.notice("mcp mode: " + err.Error())
-		return m, nil
-	}
-	if v.BuiltIn && v.Name == "codegraph" {
-		cfg.Codegraph.Enabled = true
-		cfg.Codegraph.Tier = normalizeMCPTierForCLI(tier)
-		if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
-			m.notice("mcp mode: " + err.Error())
-			return m, nil
-		}
-		if m.mcpDisabled != nil {
-			delete(m.mcpDisabled, v.Name)
-		}
-		if tier != "lazy" && m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
-			if _, ok := codegraph.Resolve(cfg.Codegraph.Path); !ok {
-				err := fmt.Errorf("codegraph: not installed")
-				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
-				m.notice("saved connection mode, but connect failed: " + err.Error())
-			} else if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
-				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
-				m.notice("saved connection mode, but connect failed: " + err.Error())
-			}
-			m.host = m.ctrl.Host()
-		}
-		m.refreshMCPManager()
-		if m.mcp != nil {
-			m.mcp.stage = mcpStageDetail
-			m.mcp.selectName(v.Name)
-		}
-		m.notice("updated connection mode for " + v.Name)
 		return m, nil
 	}
 	found := false
@@ -218,14 +157,14 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 		m.notice(fmt.Sprintf("mcp mode: no configured MCP server named %q", v.Name))
 		return m, nil
 	}
-	if err := saveEditableMCPConfig(cfg, cfgPath); err != nil {
+	if err := cfg.Save(); err != nil {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
 	}
 	if m.mcpDisabled != nil {
 		delete(m.mcpDisabled, v.Name)
 	}
-	if tier != "lazy" && m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
+	if m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
 		if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
 			recordMCPModePluginFailure(m.ctrl, selected, err)
 			m.notice("saved connection mode, but connect failed: " + err.Error())
@@ -254,22 +193,6 @@ func recordMCPModePluginFailure(ctrl control.Capabilities, e config.PluginEntry,
 		Env:     exp.Env,
 		URL:     exp.URL,
 		Headers: exp.Headers,
-	}, err)
-}
-
-func recordMCPModeCodegraphFailure(ctrl control.Capabilities, c config.CodegraphConfig, err error) {
-	if ctrl == nil || ctrl.Host() == nil || err == nil {
-		return
-	}
-	cmd := strings.TrimSpace(c.Path)
-	if cmd == "" {
-		cmd = "codegraph"
-	}
-	ctrl.Host().RecordFailure(plugin.Spec{
-		Name:    "codegraph",
-		Type:    "stdio",
-		Command: cmd,
-		Args:    []string{"serve", "--mcp"},
 	}, err)
 }
 
@@ -326,7 +249,7 @@ func (m chatTUI) clearSelectedMCPAuthentication() (tea.Model, tea.Cmd) {
 
 func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 	if v.BuiltIn {
-		m.notice("codegraph is built in; it has no stored MCP authentication")
+		m.notice("managed MCP servers do not store authentication")
 		return m, nil
 	}
 	_, changed, _, err := config.ClearPluginAuthenticationInSource(v.Name)
@@ -356,8 +279,8 @@ func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 
 func mcpModeIndex(tier string) int {
 	tier = normalizeMCPTierForCLI(tier)
-	for i, choice := range mcpModeChoices {
-		if choice.tier == tier {
+	for i, choice := range mcpTierChoices {
+		if choice == tier {
 			return i
 		}
 	}
@@ -368,10 +291,12 @@ func normalizeMCPTierForCLI(tier string) string {
 	switch strings.ToLower(strings.TrimSpace(tier)) {
 	case "eager":
 		return "eager"
-	case "background":
+	case "background", "lazy":
+		return "background"
+	case "":
 		return "background"
 	default:
-		return "lazy"
+		return "background"
 	}
 }
 
@@ -386,32 +311,6 @@ func mcpConfigLocation() string {
 		return path
 	}
 	return "voltui.toml"
-}
-
-func (m chatTUI) loadEditableMCPConfig() (*config.Config, string, error) {
-	path := ""
-	if m.mcp != nil {
-		path = strings.TrimSpace(m.mcp.snapshot.configPath)
-	}
-	if path == "" {
-		path = mcpConfigLocation()
-	}
-	if isTOMLConfigPath(path) {
-		return config.LoadForEditWithoutCredentials(path), path, nil
-	}
-	cfg, err := config.Load()
-	return cfg, "", err
-}
-
-func saveEditableMCPConfig(cfg *config.Config, path string) error {
-	if strings.TrimSpace(path) != "" {
-		return cfg.SaveTo(path)
-	}
-	return cfg.Save()
-}
-
-func isTOMLConfigPath(path string) bool {
-	return strings.EqualFold(filepath.Ext(strings.TrimSpace(path)), ".toml")
 }
 
 type mcpEditConfigLaunch struct {
@@ -532,10 +431,10 @@ func mcpConnected(ctrl control.Capabilities, name string) bool {
 // (e.g. "code --wait", "nvim -p") and shell variable / tilde references
 // (e.g. "$HOME/bin/myeditor", "~/bin/myeditor"); these are expanded without
 // invoking a shell, and the editor binary is resolved by the OS directly.
-// Shell metacharacters in the value cannot be executed: the expanded value is
-// parsed only into argv words, so a value like "vim; rm -rf ~" becomes the
-// literal argv ["vim;", "rm", "-rf", "~/..."] and "vim;" is looked up as the
-// program name (failing harmlessly) rather than being interpreted by a shell.
+// Shell metacharacters in the value cannot be executed: the expanded value must
+// parse as one static shell command. Control operators, redirection,
+// substitution, globbing, assignments, and other shell-shaping syntax are
+// rejected before launch.
 //
 // This matches the safe pattern already used by the terminal-editor
 // fallback (exec.Command(bin, path)) in the same function and avoids the
@@ -543,7 +442,7 @@ func mcpConnected(ctrl control.Capabilities, name string) bool {
 // a shell command string.
 //
 // Quoting and backslash escaping are honored for word splitting only; shell
-// operators, globbing, command substitution, and redirection are not evaluated.
+// operators, globbing, command substitution, and redirection are rejected.
 // Tilde expansion only covers the leading-token forms "~" and "~/..."; "~user"
 // is not supported (and was not reliably supported by the prior sh -lc path
 // either, since $HOME for another user is not available without getpwuid).
@@ -561,59 +460,10 @@ func editorLaunchCmd(editor, path string) (*exec.Cmd, error) {
 }
 
 func splitEditorCommand(s string) ([]string, error) {
-	var args []string
-	var b strings.Builder
-	var quote rune
-	escaped := false
-	escapedQuote := rune(0)
-	inWord := false
-
-	flush := func() {
-		if inWord {
-			args = append(args, b.String())
-			b.Reset()
-			inWord = false
-		}
+	args, malformed := shellparse.StaticFields(s)
+	if malformed != "" {
+		return nil, fmt.Errorf("%s", malformed)
 	}
-
-	for _, r := range s {
-		switch {
-		case escaped:
-			if escapedQuote == '"' && r != '$' && r != '`' && r != '"' && r != '\\' {
-				b.WriteRune('\\')
-			}
-			b.WriteRune(r)
-			inWord = true
-			escaped = false
-			escapedQuote = 0
-		case r == '\\' && quote != '\'':
-			inWord = true
-			escaped = true
-			escapedQuote = quote
-		case quote != 0:
-			if r == quote {
-				quote = 0
-			} else {
-				b.WriteRune(r)
-			}
-			inWord = true
-		case r == '\'' || r == '"':
-			quote = r
-			inWord = true
-		case unicode.IsSpace(r):
-			flush()
-		default:
-			b.WriteRune(r)
-			inWord = true
-		}
-	}
-	if escaped {
-		b.WriteRune('\\')
-	}
-	if quote != 0 {
-		return nil, fmt.Errorf("unterminated %q quote", quote)
-	}
-	flush()
 	return args, nil
 }
 

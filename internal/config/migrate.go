@@ -22,9 +22,11 @@ type legacyConfig struct {
 	BaseURL     string                       `json:"baseUrl"`
 	Model       string                       `json:"model"`
 	Lang        string                       `json:"lang"`
+	MCP         []string                     `json:"mcp"` // pre-mcpServers `--mcp`-format strings
 	MCPServers  map[string]legacyMCPServer   `json:"mcpServers"`
 	MCPEnv      map[string]map[string]string `json:"mcpEnv"`
 	MCPDisabled []string                     `json:"mcpDisabled"`
+	QQ          legacyQQConfig               `json:"qq"`
 }
 
 type legacyMCPServer struct {
@@ -38,6 +40,15 @@ type legacyMCPServer struct {
 	Disabled  bool              `json:"disabled"`
 }
 
+type legacyQQConfig struct {
+	AppID       string   `json:"appId"`
+	AppSecret   string   `json:"appSecret"`
+	Sandbox     bool     `json:"sandbox"`
+	Enabled     bool     `json:"enabled"`
+	OwnerOpenID string   `json:"ownerOpenId"`
+	Allowlist   []string `json:"allowlist"`
+}
+
 // MigrationResult summarizes a one-time legacy import for the boot-time notice.
 type MigrationResult struct {
 	From     string
@@ -47,8 +58,8 @@ type MigrationResult struct {
 	Warnings []string
 }
 
-// MCPGlobalMigrationResult summarizes the MCP backfill that lifts MCP servers
-// from legacy and project-local sources into the user-global config.
+// MCPGlobalMigrationResult summarizes the v1.9.1 MCP backfill that lifts MCP
+// servers from legacy and project-local sources into the user-global config.
 type MCPGlobalMigrationResult struct {
 	To      string
 	Added   int
@@ -81,7 +92,10 @@ func MigrateLegacyIfNeeded() (*MigrationResult, error) {
 }
 
 func MigrateLegacyIfNeededForRoot(root string) (*MigrationResult, error) {
-	credErr := MigrateLegacyCredentialsForRoot(root)
+	if IsolatedHomeDir() != "" {
+		return nil, nil
+	}
+	credErr := migrateLegacyCredentialsIfNeededForRoot(root)
 	dest := userConfigPath()
 	if dest == "" {
 		return nil, credErr
@@ -102,7 +116,7 @@ func MigrateLegacyIfNeededForRoot(root string) (*MigrationResult, error) {
 	src := filepath.Join(home, ".voltui", "config.json")
 	data, err := os.ReadFile(src)
 	if err != nil {
-		return nil, credErr
+		return nil, nil
 	}
 	var legacy legacyConfig
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}) // tolerate a UTF-8 BOM (some editors add one)
@@ -136,6 +150,11 @@ func MigrateLegacyIfNeededForRoot(root string) (*MigrationResult, error) {
 				" — it was applied to the built-in DeepSeek providers; verify models if this endpoint is not DeepSeek-compatible")
 		}
 	}
+	if qqSecret := strings.TrimSpace(legacy.QQ.AppSecret); qqSecret != "" {
+		envLines = append(envLines, "QQ_BOT_APP_SECRET="+qqSecret)
+		res.Warnings = append(res.Warnings, "your previous QQ Bot App Secret was saved to voltui's credentials store")
+	}
+	migrateLegacyQQConfig(cfg, legacy.QQ)
 
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
@@ -151,11 +170,18 @@ func MigrateLegacyIfNeededForRoot(root string) (*MigrationResult, error) {
 	return res, credErr
 }
 
-// MigrateMCPToUserConfigOnUpgrade runs a one-time best-effort backfill for MCP
-// servers found in legacy TOML, known project roots, and legacy v0.x JSON. It
-// copies them into the user-global config so the desktop MCP settings page is
-// stable across Global/project tabs. Existing global entries win on name
-// collisions, and source files are left untouched.
+func MigrateLegacyCredentialsForRoot(root string) error {
+	if IsolatedHomeDir() != "" {
+		return nil
+	}
+	return migrateLegacyCredentialsIfNeededForRoot(root)
+}
+
+// MigrateMCPToUserConfigOnUpgrade runs a one-time best-effort backfill for the
+// v1.9.1 desktop/CLI upgrade: MCP servers found in legacy TOML, known project
+// roots, and legacy v0.x JSON are copied into the user-global config so the MCP
+// settings page is stable across Global/project tabs. Existing global entries win
+// on name collisions, and source files are left untouched.
 func MigrateMCPToUserConfigOnUpgrade(projectRoots []string) (*MCPGlobalMigrationResult, error) {
 	marker := mcpGlobalMigrationMarkerPath()
 	if marker == "" {
@@ -222,7 +248,6 @@ func migrateMCPToUserConfig(projectRoots []string) (*MCPGlobalMigrationResult, e
 		addEntries(loadPluginEntriesFromTOML(path))
 	}
 	for _, root := range normalizedMCPMigrationRoots(projectRoots) {
-		addEntries(loadPluginEntriesFromTOML(filepath.Join(root, "voltui.toml")))
 		addEntries(loadPluginEntriesFromTOML(filepath.Join(root, "voltui.toml")))
 		if entries, err := loadMCPJSON(filepath.Join(root, mcpJSONFile)); err == nil {
 			addEntries(entries)
@@ -317,13 +342,89 @@ func normalizedMCPMigrationRoots(roots []string) []string {
 	return out
 }
 
-// MigrateLegacyCredentialsForRoot is a best-effort per-workspace credentials
-// backfill hook used by desktop tab startup. The primary legacy migration path
-// already moves known provider keys into VoltUI's global credentials store; this
-// hook stays non-blocking so opening a workspace never fails because a legacy
-// credential source is unreadable.
-func MigrateLegacyCredentialsForRoot(root string) error {
-	return nil
+func migrateLegacyCredentialsIfNeededForRoot(root string) error {
+	missing := map[string]string{}
+	skip := func(key string) bool {
+		return credentialCurrentStoreHasKey(key) || credentialCurrentStoreClearedKey(key)
+	}
+	for _, key := range credentialEnvNamesForRoot(root) {
+		if skip(key) {
+			continue
+		}
+		if value, ok := legacyKeyringCredentialValueLookup(key); ok {
+			missing[key] = value
+		}
+	}
+	for _, src := range legacyCredentialsPaths() {
+		if src == "" {
+			continue
+		}
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		assignments := parseCredentialLines(strings.Split(string(data), "\n"))
+		for key, value := range assignments {
+			if _, exists := missing[key]; !exists && !skip(key) {
+				missing[key] = value
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	_, err := StoreCredentialLines(credentialLines(missing))
+	return err
+}
+
+func credentialLines(assignments map[string]string) []string {
+	keys := make([]string, 0, len(assignments))
+	for key := range assignments {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, key+"="+assignments[key])
+	}
+	return lines
+}
+
+func migrateLegacyQQConfig(cfg *Config, legacy legacyQQConfig) {
+	if cfg == nil || !legacyQQConfigured(legacy) {
+		return
+	}
+	cfg.Bot.Enabled = cfg.Bot.Enabled || legacy.Enabled
+	cfg.Bot.QQ.Enabled = legacy.Enabled
+	cfg.Bot.QQ.AppID = strings.TrimSpace(legacy.AppID)
+	cfg.Bot.QQ.AppSecretEnv = "QQ_BOT_APP_SECRET"
+	cfg.Bot.QQ.Sandbox = legacy.Sandbox
+	cfg.Bot.Allowlist.Enabled = true
+	cfg.Bot.Allowlist.QQUsers = mergeUniqueTrimmed(cfg.Bot.Allowlist.QQUsers, legacy.OwnerOpenID)
+	cfg.Bot.Allowlist.QQUsers = mergeUniqueTrimmed(cfg.Bot.Allowlist.QQUsers, legacy.Allowlist...)
+}
+
+func legacyQQConfigured(legacy legacyQQConfig) bool {
+	return legacy.Enabled ||
+		strings.TrimSpace(legacy.AppID) != "" ||
+		strings.TrimSpace(legacy.AppSecret) != "" ||
+		strings.TrimSpace(legacy.OwnerOpenID) != "" ||
+		len(legacy.Allowlist) > 0 ||
+		legacy.Sandbox
+}
+
+func mergeUniqueTrimmed(base []string, values ...string) []string {
+	seen := make(map[string]bool, len(base)+len(values))
+	out := make([]string, 0, len(base)+len(values))
+	for _, value := range append(base, values...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
@@ -351,7 +452,7 @@ func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
 		res := &MigrationResult{From: src, To: dest, Plugins: len(cfg.Plugins)}
 		legacyDir := filepath.Dir(src)
 		newDir := filepath.Dir(dest)
-		if !sameMigrationPath(legacyDir, newDir) {
+		if !samePath(legacyDir, newDir) {
 			if warnings := migrateSupportData(legacyDir, newDir); len(warnings) > 0 {
 				res.Warnings = append(res.Warnings, warnings...)
 			}
@@ -362,15 +463,29 @@ func migrateLegacyTOMLIfNeeded(dest, home string) (*MigrationResult, error) {
 }
 
 func legacyTOMLPaths(dest, home string) []string {
-	paths := []string{
-		legacyUserConfigPath(),
-		filepath.Join(filepath.Dir(dest), "voltui.toml"),
-		filepath.Join(filepath.Dir(dest), "voltui.toml"),
+	seen := map[string]bool{}
+	var paths []string
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		paths = append(paths, path)
 	}
+	if legacy := legacyUserConfigPath(); legacy != "" {
+		add(legacy)
+	}
+	for _, legacy := range legacyXDGConfigPaths() {
+		add(legacy)
+		add(filepath.Join(filepath.Dir(legacy), "voltui.toml"))
+	}
+	add(filepath.Join(filepath.Dir(dest), "voltui.toml"))
 	if home != "" {
-		paths = append(paths, filepath.Join(home, ".voltui", "voltui.toml"))
-		paths = append(paths, filepath.Join(home, ".voltui", "config.toml"))
-		paths = append(paths, filepath.Join(home, ".voltui", "voltui.toml"))
+		add(filepath.Join(home, ".voltui", "voltui.toml"))
 	}
 	return paths
 }
@@ -388,19 +503,42 @@ func migrateLegacyBaseURL(cfg *Config, baseURL string) {
 }
 
 func legacyPlugins(legacy legacyConfig) []PluginEntry {
-	if len(legacy.MCPServers) == 0 {
-		return nil
-	}
 	disabled := make(map[string]bool, len(legacy.MCPDisabled))
 	for _, n := range legacy.MCPDisabled {
 		disabled[n] = true
+	}
+	var out []PluginEntry
+	index := make(map[string]int)
+	add := func(pe PluginEntry, off bool) {
+		if off {
+			v := false
+			pe.AutoStart = &v
+		}
+		pe, _ = NormalizePluginCommandLine(pe)
+		if j, dup := index[pe.Name]; dup {
+			out[j] = pe // mcpServers overrides the `mcp` list on a name collision, matching v0.x
+			return
+		}
+		index[pe.Name] = len(out)
+		out = append(out, pe)
+	}
+	for i, raw := range legacy.MCP {
+		pe, ok := parseLegacyMCPSpec(raw)
+		if !ok {
+			continue
+		}
+		if pe.Name == "" {
+			pe.Name = anonymousMCPName(i)
+		} else if pe.Command != "" {
+			pe.Env = mergeEnv(nil, legacy.MCPEnv[pe.Name])
+		}
+		add(pe, disabled[pe.Name])
 	}
 	names := make([]string, 0, len(legacy.MCPServers))
 	for n := range legacy.MCPServers {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	out := make([]PluginEntry, 0, len(names))
 	for _, name := range names {
 		s := legacy.MCPServers[name]
 		pe := PluginEntry{
@@ -412,11 +550,7 @@ func legacyPlugins(legacy legacyConfig) []PluginEntry {
 			URL:     s.URL,
 			Headers: s.Headers,
 		}
-		if s.Disabled || disabled[name] {
-			off := false
-			pe.AutoStart = &off
-		}
-		out = append(out, pe)
+		add(pe, s.Disabled || disabled[name])
 	}
 	return out
 }
@@ -457,69 +591,19 @@ func mergeEnv(base, overlay map[string]string) map[string]string {
 	return out
 }
 
-// writeCredentialsEnv merges lines into the voltui-owned global credentials
-// file (UserCredentialsPath, e.g. %AppData%\voltui\credentials), replacing any
-// existing assignment of the same key, and pins them into the current process env
-// so the just-built session resolves the key without a restart. Falls back to
-// ~/.env only when the user config dir can't be resolved — never a project .env,
-// so a migration keeps secrets out of the user's project tree.
+// writeCredentialsEnv merges lines into Reasonix's global .env
+// and pins them into the current process env so the just-built session resolves
+// the key without a restart. Falls back to ~/.env only when Reasonix home can't
+// be resolved — never a project .env, so a migration keeps secrets out of the
+// user's project tree.
 func writeCredentialsEnv(home string, lines []string) error {
-	path := UserCredentialsPath()
-	if path == "" {
-		path = filepath.Join(home, ".env")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if _, err := StoreCredentialLines(lines); err != nil {
+		if UserCredentialsPath() == "" && home != "" {
+			return os.WriteFile(filepath.Join(home, ".env"), []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+		}
 		return err
 	}
-	target := make(map[string]bool, len(lines))
-	for _, l := range lines {
-		if k, _, ok := strings.Cut(l, "="); ok {
-			target[strings.TrimSpace(k)] = true
-		}
-	}
-	var kept []string
-	if data, err := os.ReadFile(path); err == nil {
-		for _, raw := range strings.Split(string(data), "\n") {
-			check := strings.TrimPrefix(strings.TrimSpace(raw), "export ")
-			if k, _, ok := strings.Cut(check, "="); ok && target[strings.TrimSpace(k)] {
-				continue
-			}
-			kept = append(kept, raw)
-		}
-		if n := len(kept); n > 0 && kept[n-1] == "" {
-			kept = kept[:n-1]
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	var b strings.Builder
-	for _, l := range kept {
-		b.WriteString(l)
-		b.WriteByte('\n')
-	}
-	for _, l := range lines {
-		b.WriteString(l)
-		b.WriteByte('\n')
-		if k, v, ok := strings.Cut(l, "="); ok {
-			os.Setenv(strings.TrimSpace(k), v)
-		}
-	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
-}
-
-func sameMigrationPath(a, b string) bool {
-	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
-		return false
-	}
-	aa, errA := filepath.Abs(a)
-	if errA == nil {
-		a = aa
-	}
-	bb, errB := filepath.Abs(b)
-	if errB == nil {
-		b = bb
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	return nil
 }
 
 func migrateSupportData(legacyDir, newDir string) []string {
@@ -542,12 +626,12 @@ func migrateSupportData(legacyDir, newDir string) []string {
 			} else {
 				warnings = append(warnings, fmt.Sprintf("successfully migrated directory %s", item))
 			}
-			continue
-		}
-		if err := copyFile(src, dst); err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to migrate file %s: %v", item, err))
 		} else {
-			warnings = append(warnings, fmt.Sprintf("successfully migrated file %s", item))
+			if err := copyFile(src, dst); err != nil {
+				warnings = append(warnings, fmt.Sprintf("failed to migrate file %s: %v", item, err))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("successfully migrated file %s", item))
+			}
 		}
 	}
 	return warnings
@@ -615,14 +699,15 @@ func copyDir(src, dst string) error {
 	for _, entry := range entries {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
+
 		if entry.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {
 				return err
 			}
-			continue
-		}
-		if err := copyFile(srcPath, dstPath); err != nil {
-			return err
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

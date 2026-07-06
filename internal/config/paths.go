@@ -7,6 +7,18 @@ import (
 	"strings"
 )
 
+var (
+	runtimeGOOS     = runtime.GOOS
+	osUserHomeDir   = os.UserHomeDir
+	osUserConfigDir = func() string {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return ""
+		}
+		return dir
+	}
+)
+
 func userConfigPath() string {
 	dir := userConfigDir()
 	if dir == "" {
@@ -23,17 +35,22 @@ func reasonixHomeDir() string {
 	if dir := cleanEnvDir("REASONIX_HOME"); dir != "" {
 		return dir
 	}
-	if runtime.GOOS != "windows" {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			return filepath.Join(home, ".voltui")
+	if runtimeGOOS == "windows" {
+		if dir := osUserConfigDir(); dir != "" {
+			return filepath.Join(dir, "voltui")
+		}
+		if home, err := osUserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, "AppData", "Roaming", "voltui")
 		}
 		return ""
 	}
-	dir := osUserConfigDir()
-	if dir == "" {
-		return ""
+	if home, err := osUserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".voltui")
 	}
-	return filepath.Join(dir, "voltui")
+	if dir := osUserConfigDir(); dir != "" {
+		return filepath.Join(dir, "voltui")
+	}
+	return ""
 }
 
 func userConfigLoadPath() string {
@@ -85,7 +102,10 @@ func userConfigCandidatePaths() []string {
 }
 
 func legacyXDGConfigPaths() []string {
-	if runtime.GOOS == "windows" {
+	if IsolatedHomeDir() != "" {
+		return nil
+	}
+	if runtimeGOOS == "windows" {
 		return nil
 	}
 	seen := map[string]bool{}
@@ -104,7 +124,7 @@ func legacyXDGConfigPaths() []string {
 	if dir := cleanEnvDir("XDG_CONFIG_HOME"); dir != "" {
 		add(filepath.Join(dir, "voltui", "config.toml"))
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
+	if home, err := osUserHomeDir(); err == nil && home != "" {
 		add(filepath.Join(home, ".config", "voltui", "config.toml"))
 	}
 	return paths
@@ -118,6 +138,9 @@ func userSupportDir() string {
 }
 
 func legacyOSSupportDir() string {
+	if IsolatedHomeDir() != "" {
+		return ""
+	}
 	dir := osUserConfigDir()
 	if dir == "" {
 		return ""
@@ -129,32 +152,18 @@ func legacyOSSupportDir() string {
 	return path
 }
 
-func legacyVoltUIOSConfigDir() string { return legacyOSSupportDir() }
-
-func legacyUserCredentialsPath() string {
-	if dir := legacyOSSupportDir(); dir != "" {
-		return filepath.Join(dir, "credentials")
-	}
-	return ""
-}
-
 func userCacheDir() string {
 	if dir := cleanEnvDir("REASONIX_CACHE_HOME"); dir != "" {
 		return dir
+	}
+	if dir := cleanEnvDir("REASONIX_HOME"); dir != "" {
+		return filepath.Join(dir, "cache")
 	}
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return ""
 	}
 	return filepath.Join(dir, "voltui")
-}
-
-func osUserConfigDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return dir
 }
 
 func cleanEnvDir(name string) string {
@@ -164,11 +173,11 @@ func cleanEnvDir(name string) string {
 	}
 	dir = ExpandVars(dir)
 	if dir == "~" {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if home, err := osUserHomeDir(); err == nil && home != "" {
 			dir = home
 		}
 	} else if strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if home, err := osUserHomeDir(); err == nil && home != "" {
 			dir = filepath.Join(home, dir[2:])
 		}
 	}
@@ -195,6 +204,14 @@ func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
+// IsolatedHomeDir returns the REASONIX_HOME directory when it has been
+// explicitly set via the environment variable. A non-empty return signals a
+// self-contained runtime that must not fall back to legacy OS-default data
+// paths or import data from the system-wide production install.
+func IsolatedHomeDir() string {
+	return cleanEnvDir("REASONIX_HOME")
+}
+
 // userConfigDisplayPath is userConfigPath collapsed to a ~-relative form for
 // comments rendered into the user's own config.toml, so Windows users see the
 // real location instead of a hardcoded ~/.voltui path.
@@ -203,7 +220,7 @@ func userConfigDisplayPath() string {
 	if p == "" {
 		return "<os-config-dir>/voltui/config.toml"
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
+	if home, err := osUserHomeDir(); err == nil && home != "" {
 		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
 			return "~/" + filepath.ToSlash(rel)
 		}
@@ -213,8 +230,9 @@ func userConfigDisplayPath() string {
 
 // UserConfigPath is the user-global config.toml. It lives under Reasonix home:
 // REASONIX_HOME/config.toml, then ~/.voltui/config.toml on Unix-like systems,
-// or %AppData%/voltui/config.toml on Windows. "" when the user config dir
-// can't be resolved.
+// or %AppData%/voltui/config.toml on Windows. If %AppData% is unavailable on
+// Windows, it falls back to %USERPROFILE%/AppData/Roaming/voltui/config.toml.
+// "" when the user config dir can't be resolved.
 func UserConfigPath() string { return userConfigPath() }
 
 // LegacyUserConfigPath is the old OS app-support config.toml path when it
@@ -247,10 +265,9 @@ func LegacyUserConfigPaths() []string {
 
 // ReasonixHomeDir is the current Reasonix home directory. It honors
 // REASONIX_HOME, then uses ~/.voltui on macOS/Linux or %APPDATA%/voltui on
-// Windows.
+// Windows, with a %USERPROFILE%/AppData/Roaming fallback when %APPDATA% is
+// unavailable.
 func ReasonixHomeDir() string { return reasonixHomeDir() }
-
-func VoltUIHomeDir() string { return reasonixHomeDir() }
 
 // UserCredentialsPath is the voltui-owned global .env file under Reasonix
 // home. It is the single source for provider credentials saved by Reasonix, so
@@ -395,7 +412,7 @@ func CommandDirsForRoot(root string) []string {
 	for _, legacy := range legacyXDGConfigPaths() {
 		add(filepath.Join(filepath.Dir(legacy), "commands"))
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := osUserHomeDir(); err == nil {
 		for _, dir := range conventionSubdirsAsc(home, "commands") {
 			add(dir)
 		}

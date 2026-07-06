@@ -1,5 +1,3 @@
-//go:build bot
-
 package weixin
 
 import (

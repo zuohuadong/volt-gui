@@ -39,6 +39,7 @@ type ArgData struct {
 	CurrentModel    string
 	ProviderNames   []string
 	CurrentProvider string
+	PluginNames     []string
 }
 
 // SlashArgItems completes the arguments of a management slash command
@@ -66,6 +67,8 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = providerArgItems(prior, d)
 	case "/skill", "/skills":
 		raw = skillArgItems(prior, d)
+	case "/plugin", "/plugins":
+		raw = pluginArgItems(prior, d)
 	case "/hooks":
 		raw = hooksArgItems(prior)
 	case "/effort":
@@ -128,7 +131,9 @@ func memoryV5ArgItems(prior []string) []SlashItem {
 	return []SlashItem{
 		{Label: "status", Insert: "status", Hint: "show current Memory v5 state"},
 		{Label: "off", Insert: "off", Hint: "disable Memory v5 for future turns"},
-		{Label: "on", Insert: "on", Hint: "enable Memory v5 for future turns"},
+		{Label: "observe", Insert: "observe", Hint: "learn without injecting IR"},
+		{Label: "compact", Insert: "compact", Hint: "inject compact execution contracts"},
+		{Label: "on", Insert: "on", Hint: "alias for compact"},
 	}
 }
 
@@ -336,6 +341,22 @@ func skillArgItems(prior []string, d ArgData) []SlashItem {
 		var items []SlashItem
 		for _, s := range d.DisabledSkills {
 			items = append(items, SlashItem{Label: s.Name, Insert: s.Name, Hint: string(s.Scope)})
+		}
+		return items
+	}
+	return nil
+}
+
+func pluginArgItems(prior []string, d ArgData) []SlashItem {
+	if len(prior) <= 1 {
+		return []SlashItem{
+			{Label: "show", Insert: "show ", Hint: "show plugin capabilities and usage", Descend: true},
+		}
+	}
+	if (prior[1] == "show" || prior[1] == "cat") && len(prior) == 2 {
+		var items []SlashItem
+		for _, name := range d.PluginNames {
+			items = append(items, SlashItem{Label: name, Insert: name})
 		}
 		return items
 	}

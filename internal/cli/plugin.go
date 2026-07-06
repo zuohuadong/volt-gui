@@ -264,6 +264,7 @@ func printPluginInventory(inv pluginpkg.Inventory) {
 		for _, hook := range inv.Hooks {
 			target := hook.Command
 			if target == "" {
+				target = hook.ContextFile
 			}
 			match := hook.Match
 			if match == "" {

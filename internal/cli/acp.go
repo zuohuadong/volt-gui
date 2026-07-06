@@ -6,25 +6,23 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"voltui/internal/acp"
-	"voltui/internal/agent"
 	"voltui/internal/boot"
-	"voltui/internal/command"
 	"voltui/internal/config"
 	"voltui/internal/control"
-	"voltui/internal/event"
 	"voltui/internal/i18n"
-	"voltui/internal/permission"
-	"voltui/internal/plugin"
+	"voltui/internal/netclient"
 	"voltui/internal/provider"
 	"voltui/internal/sandbox"
 	"voltui/internal/tool"
 	"voltui/internal/tool/builtin"
 )
 
-// acpCommand runs VoltUI as an Agent Client Protocol agent: a stdio JSON-RPC
+// acpCommand runs Reasonix as an Agent Client Protocol agent: a stdio JSON-RPC
 // server that editors and other host clients drive (initialize, session/new,
 // session/prompt, session/cancel). It keeps v2 wire-compatible with the many
 // tools that integrated with v1 over ACP.
@@ -39,30 +37,11 @@ func acpCommand(args []string, version string) int {
 		return 2
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	modelName := *model
-	if modelName == "" {
-		modelName = cfg.DefaultModel
-	}
-	// Fail fast on a missing/invalid key, with stderr (never stdout) so the wire
-	// stays clean, rather than failing per-session deep inside session/new.
-	if err := cfg.Validate(modelName); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	if cfg.BashMode() == "enforce" && !sandbox.Available() {
-		fmt.Fprintln(os.Stderr, "warning: bash sandbox requested but unavailable on this platform; running bash unconfined")
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	factory := &acpFactory{cfg: cfg, model: modelName}
-	info := acp.AgentInfo{Name: strings.ToLower(cfg.BrandName()), Version: version}
+	factory := &acpFactory{model: *model}
+	info := acp.AgentInfo{Name: "voltui", Version: version}
 	if err := acp.Serve(ctx, os.Stdin, os.Stdout, factory, info); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -70,188 +49,276 @@ func acpCommand(args []string, version string) int {
 	return 0
 }
 
-// acpFactory builds one control.Controller per ACP session. It mirrors setup()'s
-// assembly, with two differences that make sessions independent: the built-in
-// tools are bound to the session's cwd via builtin.Workspace (so concurrent
-// sessions have separate path roots), and the client's per-session MCP servers
-// are connected alongside the config's own plugins.
+// acpFactory builds one control.Controller per ACP session by reusing boot.Build
+// with the session cwd as WorkspaceRoot. That keeps ACP aligned with chat,
+// desktop, and serve assembly while still adding the host-supplied MCP servers
+// for this session only.
 type acpFactory struct {
-	cfg   *config.Config
 	model string
 }
 
-func acpKeepPolicy(keep []string) agent.KeepPolicy {
-	if keep == nil {
-		return agent.KeepErrors
-	}
-	var p agent.KeepPolicy
-	for _, k := range keep {
-		switch strings.TrimSpace(k) {
-		case "errors":
-			p |= agent.KeepErrors
-		case "user_marked":
-			p |= agent.KeepUserMarked
-		}
-	}
-	return p
+func (f *acpFactory) SessionDir() string {
+	return config.SessionDir()
 }
 
 // NewSession assembles the per-session controller. Resources (MCP subprocesses)
 // are released via the controller's Cleanup, run on ctrl.Close().
 func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*control.Controller, error) {
-	cfg := f.cfg
-	entry, ok := cfg.ResolveModel(f.model)
+	root := strings.TrimSpace(p.Cwd)
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
+	if root != "" && !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("session cwd must be an absolute path: %s", root)
+	}
+	return boot.Build(ctx, boot.Options{
+		Model:                    firstNonEmpty(p.Model, f.model),
+		RequireKey:               true,
+		Sink:                     p.Sink,
+		EffortOverride:           p.EffortOverride,
+		Stderr:                   os.Stderr,
+		WorkspaceRoot:            root,
+		ExtraPlugins:             p.MCPServers,
+		CleanupPendingReconciler: acp.ReconcileCleanupPending,
+		OnSessionRecovered:       p.OnSessionRecovered,
+	})
+}
+
+func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigStateParams) (acp.SessionConfigState, error) {
+	root := strings.TrimSpace(p.Cwd)
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
+	if root != "" && !filepath.IsAbs(root) {
+		return acp.SessionConfigState{}, fmt.Errorf("session cwd must be an absolute path: %s", root)
+	}
+	_, _ = config.MigrateLegacyIfNeededForRoot(root)
+	_, _ = config.MigrateMCPToUserConfigOnUpgrade([]string{root})
+	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		return acp.SessionConfigState{}, err
+	}
+
+	ref := firstNonEmpty(p.Model, f.model, cfg.DefaultModel)
+	if strings.TrimSpace(ref) == "" {
+		return acp.SessionConfigState{}, fmt.Errorf("no default_model configured")
+	}
+	entry, ok := cfg.ResolveModel(ref)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q", f.model)
+		return acp.SessionConfigState{}, fmt.Errorf("unknown model %q", ref)
 	}
-	proxySpec := cfg.NetworkProxySpec()
-	execProv, err := boot.NewProviderWithProxy(entry, proxySpec)
-	if err != nil {
-		return nil, err
+	if !entry.Configured() {
+		return acp.SessionConfigState{}, fmt.Errorf("model %q is not configured", ref)
 	}
-	sysPrompt, err := cfg.ResolveSystemPrompt()
-	if err != nil {
-		return nil, err
-	}
-
-	// Built-ins rooted at the session cwd. Writes confine to that cwd by default
-	// (Workspace makes Dir the sole write root when WriteRoots is empty), which is
-	// the right scope for a client that opened the session on a project; an empty
-	// cwd falls back to process-cwd tools, identical to the headless run.
-	reg := tool.NewRegistry()
-	var writeRoots []string
-	if p.Cwd != "" {
-		writeRoots = []string{p.Cwd}
-	}
-	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
-	ws := builtin.Workspace{Dir: p.Cwd, WriteRoots: writeRoots, Bash: bashSpec, Search: builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil)}
-	for _, t := range ws.Tools(cfg.Tools.Enabled...) {
-		reg.Add(t)
+	currentModel := entry.Name + "/" + entry.Model
+	modelOptions, modelInfos := acpModelOptions(cfg)
+	if !hasModelOption(modelOptions, currentModel) {
+		modelOptions = append(modelOptions, acp.SessionConfigSelectOption{
+			Value:       currentModel,
+			Name:        currentModel,
+			Description: entry.Name,
+		})
+		modelInfos = append(modelInfos, acp.ModelInfo{
+			ModelID:     currentModel,
+			Name:        currentModel,
+			Description: entry.Name,
+		})
 	}
 
-	// MCP: the config's own plugins plus the servers the client passed in
-	// session/new, all connected for the session's lifetime.
-	cleanup := func() {}
-	var host *plugin.Host
-	specs := append(boot.PluginSpecs(cfg.AutoStartPlugins()), p.MCPServers...)
-	if len(specs) > 0 {
-		h, ptools := plugin.StartAvailable(ctx, specs)
-		host = h
-		cleanup = h.Close
-		for _, t := range ptools {
-			reg.Add(t)
-		}
-		// Mirror boot.Build: phase B (prompts + resources) is deferred to a
-		// background goroutine on the session ctx so the ACP path also sees
-		// non-empty Host.Prompts()/Resources() once the auxiliary surfaces
-		// stream in. Without this, MCPPrompt and @-ref consumers would stay
-		// empty for the session.
-		go h.StartPhaseB(ctx, p.Sink)
-		if text, ok := boot.MCPStartupNotice(h.Failures()); ok {
-			p.Sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text})
-		}
-	}
-
-	maxSteps := cfg.Agent.MaxSteps
-	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
-	headlessGate := permission.NewGate(policy, nil)
-	keepPolicy := acpKeepPolicy(cfg.Agent.Keep)
-	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
-		me := *entry
-		if strings.TrimSpace(modelRef) != "" {
-			resolved, ok := cfg.ResolveModel(modelRef)
-			if !ok {
-				return nil, nil, 0, fmt.Errorf("unknown model %q", modelRef)
+	effortEntry := *entry
+	effortOverride := cloneStringPtr(p.EffortOverride)
+	hadEffortOverride := effortOverride != nil
+	if effortOverride != nil {
+		if strings.TrimSpace(*effortOverride) == "" {
+			effortEntry.Effort = ""
+		} else {
+			normalized, err := config.NormalizeEffort(&effortEntry, *effortOverride)
+			if err != nil {
+				effortEntry.Effort = ""
+				cleared := ""
+				effortOverride = &cleared
+			} else {
+				effortEntry.Effort = normalized
+				effortOverride = &normalized
 			}
-			me = *resolved
 		}
-		if strings.TrimSpace(effort) != "" {
-			normalized, err := config.NormalizeEffort(&me, effort)
+	}
+
+	options := []acp.SessionConfigOption{{
+		ID:           "model",
+		Name:         "Model",
+		Category:     "model",
+		Type:         "select",
+		CurrentValue: currentModel,
+		Options:      modelOptions,
+	}}
+	if cap := config.EffortCapabilityForEntry(&effortEntry); cap.Supported {
+		currentEffort := config.EffortDisplay(&effortEntry)
+		if !containsString(cap.Levels, currentEffort) {
+			currentEffort = "auto"
+			auto := ""
+			effortOverride = &auto
+		}
+		options = append(options, acp.SessionConfigOption{
+			ID:           "effort",
+			Name:         "Effort",
+			Category:     "thought_level",
+			Type:         "select",
+			CurrentValue: currentEffort,
+			Options:      acpEffortOptions(cap.Levels),
+		})
+	} else if hadEffortOverride {
+		cleared := ""
+		effortOverride = &cleared
+	}
+
+	return acp.SessionConfigState{
+		Model:          currentModel,
+		EffortOverride: effortOverride,
+		Models: &acp.SessionModelState{
+			AvailableModels: modelInfos,
+			CurrentModelID:  currentModel,
+		},
+		ConfigOptions: options,
+	}, nil
+}
+
+func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool.Tool {
+	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
+	ws := builtin.Workspace{
+		Dir:         cwd,
+		WriteRoots:  writeRoots,
+		Bash:        bashSpec,
+		BashTimeout: time.Duration(cfg.BashTimeoutSeconds()) * time.Second,
+		Search:      builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
+		ProxySpec:   cfg.NetworkProxySpec(),
+	}
+	return ws.Tools(cfg.Tools.Enabled...)
+}
+
+func acpModelOptions(cfg *config.Config) ([]acp.SessionConfigSelectOption, []acp.ModelInfo) {
+	if cfg == nil {
+		return nil, nil
+	}
+	var options []acp.SessionConfigSelectOption
+	var models []acp.ModelInfo
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if !p.Configured() {
+			continue
+		}
+		for _, model := range p.ChatModelList() {
+			ref := p.Name + "/" + model
+			options = append(options, acp.SessionConfigSelectOption{
+				Value:       ref,
+				Name:        ref,
+				Description: p.Name,
+			})
+			models = append(models, acp.ModelInfo{
+				ModelID:     ref,
+				Name:        ref,
+				Description: p.Name,
+			})
+		}
+	}
+	return options, models
+}
+
+func hasModelOption(options []acp.SessionConfigSelectOption, ref string) bool {
+	for _, opt := range options {
+		if opt.Value == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func acpEffortOptions(levels []string) []acp.SessionConfigSelectOption {
+	out := make([]acp.SessionConfigSelectOption, 0, len(levels))
+	for _, level := range levels {
+		out = append(out, acp.SessionConfigSelectOption{Value: level, Name: effortOptionName(level)})
+	}
+	return out
+}
+
+func effortOptionName(level string) string {
+	if level == "" {
+		return ""
+	}
+	if level == "xhigh" {
+		return "XHigh"
+	}
+	return strings.ToUpper(level[:1]) + level[1:]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func cloneStringPtr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	return &cp
+}
+
+func acpTaskProfileDefaults(cfg *config.Config) (string, string) {
+	if cfg == nil {
+		return "", ""
+	}
+	model := strings.TrimSpace(cfg.Agent.SubagentModels["task"])
+	if model == "" {
+		model = strings.TrimSpace(cfg.Agent.SubagentModel)
+	}
+	effort := strings.TrimSpace(cfg.Agent.SubagentEfforts["task"])
+	if effort == "" {
+		effort = strings.TrimSpace(cfg.Agent.SubagentEffort)
+	}
+	return model, effort
+}
+
+func newACPSubagentProviderResolver(cfg *config.Config, parent *config.ProviderEntry, proxySpec netclient.ProxySpec) func(string, string) (provider.Provider, *provider.Pricing, int, error) {
+	return func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+		modelRef = strings.TrimSpace(modelRef)
+		effort = strings.TrimSpace(effort)
+
+		var entry *config.ProviderEntry
+		if modelRef != "" {
+			var ok bool
+			entry, ok = cfg.ResolveModel(modelRef)
+			if !ok {
+				return nil, nil, 0, fmt.Errorf("subagent_model %q is not a configured provider", modelRef)
+			}
+		} else {
+			cp := *parent
+			entry = &cp
+		}
+
+		if effort != "" {
+			normalized, err := config.NormalizeEffort(entry, effort)
 			if err != nil {
 				return nil, nil, 0, err
 			}
-			me.Effort = normalized
-			if me.Kind == "anthropic" && strings.TrimSpace(me.Effort) != "" && strings.TrimSpace(me.Thinking) == "" {
-				me.Thinking = "adaptive"
+			entry.Effort = normalized
+			if entry.Kind == "anthropic" && strings.TrimSpace(entry.Effort) != "" && strings.TrimSpace(entry.Thinking) == "" {
+				entry.Thinking = "adaptive"
 			}
 		}
-		p, err := boot.NewProviderWithProxy(&me, proxySpec)
+
+		prov, err := boot.NewProviderWithProxy(entry, proxySpec)
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		return p, me.Price, me.ContextWindow, nil
+		return prov, entry.Price, entry.ContextWindow, nil
 	}
-	taskModel := cfg.Agent.SubagentModels["task"]
-	if taskModel == "" {
-		taskModel = cfg.Agent.SubagentModel
-	}
-	taskEffort := cfg.Agent.SubagentEfforts["task"]
-	if taskEffort == "" {
-		taskEffort = cfg.Agent.SubagentEffort
-	}
-	reg.Add(agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
-		entry.ContextWindow, cfg.Agent.RecentKeep, cfg.Agent.SoftCompactRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
-		cfg.Agent.Temperature, config.ArchiveDir(), "", headlessGate,
-		keepPolicy, taskModel, taskEffort, resolveSubagentProvider))
-
-	executor := agent.New(execProv, reg, agent.NewSession(sysPrompt), agent.Options{
-		MaxSteps:          maxSteps,
-		Temperature:       cfg.Agent.Temperature,
-		Pricing:           entry.Price,
-		Gate:              headlessGate,
-		ContextWindow:     entry.ContextWindow,
-		RecentKeep:        cfg.Agent.RecentKeep,
-		SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
-		CompactRatio:      cfg.Agent.CompactRatio,
-		CompactForceRatio: cfg.Agent.CompactForceRatio,
-		ArchiveDir:        config.ArchiveDir(),
-		KeepPolicy:        keepPolicy,
-	}, p.Sink)
-
-	cmds, _ := command.Load(config.CommandDirs()...)
-
-	var runner agent.Runner = executor
-	label := entry.Model
-	if pm := cfg.Agent.PlannerModel; pm != "" {
-		pe, ok := cfg.ResolveModel(pm)
-		if !ok {
-			cleanup()
-			return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)
-		}
-		if pe.Model != entry.Model {
-			plannerProv, err := boot.NewProviderWithProxy(pe, proxySpec)
-			if err != nil {
-				cleanup()
-				return nil, fmt.Errorf("planner %q: %w", pm, err)
-			}
-			plannerSess := agent.NewSession(agent.DefaultPlannerPrompt)
-			plannerOptions := agent.Options{
-				MaxSteps:          maxSteps,
-				Temperature:       cfg.Agent.Temperature,
-				Gate:              headlessGate,
-				ContextWindow:     pe.ContextWindow,
-				RecentKeep:        cfg.Agent.RecentKeep,
-				SoftCompactRatio:  cfg.Agent.SoftCompactRatio,
-				CompactRatio:      cfg.Agent.CompactRatio,
-				CompactForceRatio: cfg.Agent.CompactForceRatio,
-				ArchiveDir:        config.ArchiveDir(),
-				KeepPolicy:        keepPolicy,
-			}
-			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, reg, plannerOptions, executor, cfg.Agent.Temperature, p.Sink, control.TaskWarrantsPlanner)
-			label = entry.Model + " + planner " + pe.Model
-		}
-	}
-
-	return control.New(control.Options{
-		Runner:       runner,
-		Executor:     executor,
-		Sink:         p.Sink,
-		Policy:       policy,
-		Label:        label,
-		SystemPrompt: sysPrompt,
-		SessionDir:   config.SessionDir(),
-		Host:         host,
-		Commands:     cmds,
-		Cleanup:      cleanup,
-	}), nil
 }

@@ -1,44 +1,52 @@
 # Configuration Paths
 
-Starting with **VoltUI v1.8.1**, VoltUI uses one user-facing home directory
+Starting with **Reasonix v1.8.1**, Reasonix uses one user-facing home directory
 for global configuration and user-owned state. CLI and desktop share this
 location.
 
-## VoltUI Home
+## Reasonix Home
 
-| Platform | VoltUI home |
+| Platform | Reasonix home |
 | --- | --- |
-| macOS | `~/.voltui` |
-| Linux | `~/.voltui` |
-| Windows | `%APPDATA%\voltui` |
+| macOS | `~/.reasonix` |
+| Linux | `~/.reasonix` |
+| Windows | `%APPDATA%\reasonix` |
 
-Set `VOLTUI_HOME` to override VoltUI home for tests, CI, or portable
+Set `REASONIX_HOME` to override Reasonix home for tests, CI, or portable
 installations. Normal users should not need it.
+
+When `REASONIX_HOME` is set, the runtime is fully self-contained: all
+configuration, state, cache, and data live under that directory tree. Legacy
+migration, OS-home convention directory scanning, and all other fallback paths
+are skipped so no data leaks in from a system-wide production install.
 
 ## What Lives There
 
 | Data | Path |
 | --- | --- |
-| Global config | `<VoltUI home>/config.toml` |
-| Global provider credentials | `<VoltUI home>/.env` |
-| Legacy credentials import source | `<VoltUI home>/credentials` |
-| Global slash commands | `<VoltUI home>/commands/` |
-| Global skills | `<VoltUI home>/skills/` |
-| Global hooks | `<VoltUI home>/settings.json` |
-| Hook trust store | `<VoltUI home>/trust.json` |
-| Sessions | `<VoltUI home>/sessions/` |
-| Archives | `<VoltUI home>/archive/` |
-| Memory | `<VoltUI home>/memory/` and `<VoltUI home>/projects/` |
+| Global config | `<Reasonix home>/config.toml` |
+| Global provider credentials | `<Reasonix home>/.env` |
+| Legacy credentials import source | `<Reasonix home>/credentials` |
+| Global slash commands | `<Reasonix home>/commands/` |
+| Global skills | `<Reasonix home>/skills/` |
+| Global hooks | `<Reasonix home>/settings.json` |
+| Hook trust store | `<Reasonix home>/trust.json` |
+| Sessions | `<state root>/sessions/` |
+| Archives | `<state root>/archive/` |
+| Memory | `<state root>/memory/` and `<state root>/projects/` |
+
+`<state root>` defaults to `<Reasonix home>`. It only differs when
+`REASONIX_STATE_HOME` is set.
 
 The global user config is named `config.toml`. Project-local config files keep
-the name `voltui.toml`. If someone says "global voltui.toml", they usually
-mean `<VoltUI home>/config.toml`.
+the name `reasonix.toml`. If someone says "global reasonix.toml", they usually
+mean `<Reasonix home>/config.toml`.
 
 ## Global `config.toml`
 
-`<VoltUI home>/config.toml` stores non-secret configuration shared by the CLI
+`<Reasonix home>/config.toml` stores non-secret configuration shared by the CLI
 and desktop app. It may contain the same provider, plugin, UI, desktop, tool,
-skill, sandbox, bot, and agent settings that VoltUI renders into user config.
+skill, sandbox, bot, and agent settings that Reasonix renders into user config.
 Provider entries store the name of the credential variable in `api_key_env`, not
 the secret value.
 
@@ -124,8 +132,8 @@ core fields such as `model`, `messages`, `tools`, or `stream` to be overridden.
 
 ## Global `.env`
 
-`<VoltUI home>/.env` is the single runtime source for provider API keys saved
-by VoltUI. The setup wizard, desktop settings, CLI missing-key prompts, and
+`<Reasonix home>/.env` is the single runtime source for provider API keys saved
+by Reasonix. The setup wizard, desktop settings, CLI missing-key prompts, and
 provider-key delete actions all read or write this file through the same
 credential helpers.
 
@@ -135,7 +143,7 @@ Structure:
 DEEPSEEK_API_KEY=sk-...
 GEMINI_API_KEY=...
 ANTHROPIC_API_KEY=...
-# voltui-cleared OLD_API_KEY
+# reasonix-cleared OLD_API_KEY
 ```
 
 Rules:
@@ -143,14 +151,14 @@ Rules:
 - one `KEY=value` assignment per line;
 - blank lines and `#` comments are ignored;
 - `export KEY=value` and quoted values are accepted when reading;
-- multiline values are rejected by VoltUI writes;
+- multiline values are rejected by Reasonix writes;
 - keys must use shell-style names such as `DEEPSEEK_API_KEY`;
-- `# voltui-cleared KEY` comments are non-secret tombstones written after a key
+- `# reasonix-cleared KEY` comments are non-secret tombstones written after a key
   is deleted so legacy stores do not silently re-import it;
-- VoltUI writes this file with restricted permissions where the OS supports
+- Reasonix writes this file with restricted permissions where the OS supports
   them.
 
-For provider requests, VoltUI resolves only this global `.env`. Project `.env`
+For provider requests, Reasonix resolves only this global `.env`. Project `.env`
 files, home `.env` files, inherited shell environment variables, the old
 `credentials` file, and the OS keyring do not act as runtime provider-key
 fallbacks. Project `.env`, home `.env`, and inherited shell environment values
@@ -159,13 +167,15 @@ and old keyring entries are read only as non-destructive migration sources when
 the new global `.env` is missing a key. Project `.env` files are still read as
 workspace-scoped, non-provider expansion sources for `${VAR}` references in
 MCP/plugin env, headers, URLs, commands, and args; those values are not written
-into the process environment, and VoltUI control variables such as
-`VOLTUI_HOME`, `VOLTUI_STATE_HOME`, and `XDG_CONFIG_HOME` are ignored there.
+into the process environment, and Reasonix control variables such as
+`REASONIX_HOME`, `REASONIX_STATE_HOME`, and `XDG_CONFIG_HOME` are ignored there.
 
 Caches remain in the OS cache directory, for example
-`~/Library/Caches/voltui` on macOS, `$XDG_CACHE_HOME/voltui` or
-`~/.cache/voltui` on Linux, and `%LOCALAPPDATA%\voltui\cache` on Windows.
-Set `VOLTUI_CACHE_HOME` to override the cache root.
+`~/Library/Caches/reasonix` on macOS, `$XDG_CACHE_HOME/reasonix` or
+`~/.cache/reasonix` on Linux, and `%LOCALAPPDATA%\reasonix\cache` on Windows.
+Set `REASONIX_CACHE_HOME` to override the cache root. When `REASONIX_HOME` is
+set, the cache is placed under `$REASONIX_HOME/cache` (unless
+`REASONIX_CACHE_HOME` is also set, which takes precedence).
 
 ## Config Priority
 
@@ -173,8 +183,8 @@ Runtime configuration is resolved in this order:
 
 ```text
 command-line flags
-> project ./voltui.toml
-> global <VoltUI home>/config.toml
+> project ./reasonix.toml
+> global <Reasonix home>/config.toml
 > compatible legacy global config
 > built-in defaults
 ```
@@ -183,14 +193,14 @@ Writes always target the new global path:
 
 ```text
 macOS/Linux: ~/.voltui/config.toml
-Windows:     %APPDATA%\voltui\config.toml
+Windows:     %APPDATA%\reasonix\config.toml
 ```
 
 ## Legacy Migration
 
-Starting with **v1.8.1**, VoltUI automatically checks legacy locations on
+Starting with **v1.8.1**, Reasonix automatically checks legacy locations on
 startup before the first config load. Migration is synchronous, one-time, and
-non-destructive: old files are copied or converted to VoltUI home and left
+non-destructive: old files are copied or converted to Reasonix home and left
 untouched.
 
 Legacy config sources include:
@@ -198,19 +208,19 @@ Legacy config sources include:
 ```text
 ~/Library/Application Support/voltui/config.toml
 ~/.config/voltui/config.toml
-~/.voltui/voltui.toml
+~/.voltui/reasonix.toml
 ~/.voltui/config.json
 ```
 
-Legacy credentials, memory files, and sessions are also imported into VoltUI
+Legacy credentials, memory files, and sessions are also imported into Reasonix
 home when the new destination does not already exist. Legacy provider keys are
-copied into `<VoltUI home>/.env` only when that file does not already contain
+copied into `<Reasonix home>/.env` only when that file does not already contain
 the same key. If the new global config already exists, it wins and legacy config
 files are only kept as compatibility fallbacks.
 
-Starting in **v1.9.1**, VoltUI also backfills MCP servers from known legacy
+Starting in **v1.9.1**, Reasonix also backfills MCP servers from known legacy
 paths, legacy `config.json`, desktop-registered projects, and restored tab
-projects into the global `<VoltUI home>/config.toml`. Existing global
+projects into the global `<Reasonix home>/config.toml`. Existing global
 `[[plugins]]` entries win by name, so project or legacy entries never overwrite a
 server the user already configured globally. Source files are left untouched, and
 the backfill writes a one-time marker so a user-deleted global MCP server is not
@@ -218,7 +228,7 @@ recreated repeatedly from an old project config.
 
 ## Manual Migration Rescue
 
-If VoltUI has already created the new home directory but some legacy data was
+If Reasonix has already created the new home directory but some legacy data was
 not present yet, or if the desktop app was opened before the old paths were
 available, run the migration rescue command from either frontend:
 
@@ -240,16 +250,16 @@ Windows v0.52 install/data directory chosen during setup — pass that directory
 explicitly:
 
 ```text
-/migrate --from "D:\OldVoltUI"
+/migrate --from "D:\OldReasonix"
 ```
 
 The explicit form imports sessions only. The path may be the old install
-directory, a `.voltui`/data directory, or the `sessions` directory itself;
-VoltUI checks the common layouts below that root and uses a source-specific
+directory, a `.reasonix`/data directory, or the `sessions` directory itself;
+Reasonix checks the common layouts below that root and uses a source-specific
 marker, so a previous plain `/migrate` run does not hide the later import.
 
 The rescue command is intentionally non-destructive. It does not overwrite an
-existing `<VoltUI home>/config.toml`; if the new config already exists, copy
+existing `<Reasonix home>/config.toml`; if the new config already exists, copy
 any missing legacy settings across by hand. It copies legacy memory files only
 when the destination file is absent. It also respects session import markers, so
 sessions that were already imported and later deleted by the user will not be
@@ -258,8 +268,8 @@ restored on a later `/migrate` run.
 Version limits:
 
 - Automatic migration starts in **v1.8.1**.
-- `/migrate` is available only in Go-based VoltUI builds that include the
-  command. If VoltUI reports `unknown command`, upgrade first and rerun it.
+- `/migrate` is available only in Go-based Reasonix builds that include the
+  command. If Reasonix reports `unknown command`, upgrade first and rerun it.
 - The command is not available in the legacy `0.x` TypeScript line.
 - Plain `/migrate` rescans the legacy locations listed above. Use
   `/migrate --from <path>` only for a known v0.x session source; it is not a

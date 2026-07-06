@@ -43,6 +43,19 @@ func TestSpecZeroValue(t *testing.T) {
 	}
 }
 
+func TestUnavailableMessageIsActionable(t *testing.T) {
+	msg := UnavailableMessage()
+	for _, want := range []string{
+		"refusing to run unconfined",
+		`[sandbox] bash = "off"`,
+		"Settings -> Sandbox",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("UnavailableMessage() = %q, want %q", msg, want)
+		}
+	}
+}
+
 // --- Command ---
 
 func TestCommandNonEnforce(t *testing.T) {
@@ -251,8 +264,14 @@ func TestCommandNonDarwin(t *testing.T) {
 	}
 	spec := Spec{Mode: "enforce", WriteRoots: []string{"/tmp"}}
 	cmd, wrapped := Command(spec, Shell{Kind: ShellBash, Path: "sh"}, "echo hi")
+	if Available() {
+		if !wrapped || cmd[0] == "sh" {
+			t.Fatalf("non-darwin enforce with available sandbox should wrap: %v wrapped=%v", cmd, wrapped)
+		}
+		return
+	}
 	if wrapped {
-		t.Error("non-darwin should never wrap")
+		t.Error("non-darwin without sandbox should not wrap")
 	}
 	if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" || cmd[2] != "echo hi" {
 		t.Errorf("unexpected cmd: %v", cmd)
@@ -296,7 +315,11 @@ func TestAvailableNonDarwin(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		t.Skip("testing non-darwin path")
 	}
-	if Available() {
-		t.Error("non-darwin should report unavailable")
+	if runtime.GOOS == "windows" {
+		t.Skip("windows has its own helper-backed sandbox availability")
+	}
+	_, err := exec.LookPath("bwrap")
+	if Available() != (err == nil) {
+		t.Errorf("Available() = %v, bwrap err = %v", Available(), err)
 	}
 }

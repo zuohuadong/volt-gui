@@ -708,6 +708,116 @@ func TestBatchPrependRespectsTombstoneWrittenAfterScanSnapshot(t *testing.T) {
 	}
 }
 
+func TestTombstonedTitleOnlyTopicStaysHiddenInProjectTree(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	if err := addProject(t.TempDir(), "Existing project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+
+	// Control: a legitimate title-only topic (not in GlobalTopics) must keep
+	// rendering through the orderedTopicIDs title-map fallback.
+	controlID := "topic_control_visible"
+	if err := setTopicTitle("", controlID, "正常话题"); err != nil {
+		t.Fatalf("set control title: %v", err)
+	}
+	// Race product: DeleteTopic landed, but a stale whole-map save wrote the
+	// topic's title back — tombstoned, absent from GlobalTopics, title present.
+	tombstonedID := "legacy_raced_000000000009"
+	if err := setTopicTitle("", tombstonedID, "被删除的话题"); err != nil {
+		t.Fatalf("set stale title: %v", err)
+	}
+	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+		f.DeletedTopics = prependUniqueString(f.DeletedTopics, tombstonedID)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("seed tombstone: %v", err)
+	}
+
+	nodes := NewApp().ListProjectTree()
+	var global *ProjectNode
+	for i := range nodes {
+		if nodes[i].Kind == "global_folder" {
+			global = &nodes[i]
+			break
+		}
+	}
+	if global == nil {
+		t.Fatalf("project tree = %#v, want Global folder", nodes)
+	}
+	seen := map[string]bool{}
+	for _, c := range global.Children {
+		seen[c.TopicID] = true
+	}
+	if seen[tombstonedID] {
+		t.Fatalf("global children = %#v, tombstoned title-only topic %q must stay hidden", global.Children, tombstonedID)
+	}
+	if !seen[controlID] {
+		t.Fatalf("global children = %#v, legitimate title-only topic %q should still render", global.Children, controlID)
+	}
+}
+
+func TestRepairPassPrunesStaleTitleOfDeletedTopic(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	if err := addProject(t.TempDir(), "Existing project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+
+	// Stale race product on disk: tombstoned topic whose title lingers in the
+	// global title map. The next repair pass that saves the whole map must
+	// prune it instead of persisting it again.
+	tombstonedID := "legacy_raced_000000000010"
+	if err := setTopicTitle("", tombstonedID, "被删除的话题"); err != nil {
+		t.Fatalf("set stale title: %v", err)
+	}
+	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+		f.DeletedTopics = prependUniqueString(f.DeletedTopics, tombstonedID)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("seed tombstone: %v", err)
+	}
+
+	sessionPath := writeLegacySession(t, dir, "desktop-prune.jsonl", "needs repair", time.Now().Add(-time.Hour))
+	repairID := "legacy_desktop-prune_1234"
+	if err := agent.SaveBranchMetaPreserveUpdated(sessionPath, agent.BranchMeta{
+		ID:         agent.BranchID(sessionPath),
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+		UpdatedAt:  time.Now().Add(-time.Hour),
+		Scope:      "global",
+		TopicID:    repairID,
+		TopicTitle: "待修复话题",
+		Turns:      1,
+		Preview:    "needs repair",
+	}); err != nil {
+		t.Fatalf("save meta: %v", err)
+	}
+	markTopicMigrationDone(dir)
+
+	if repaired := migrateLegacySessionsIntoGlobalTopics(dir); len(repaired) != 1 || repaired[0] != repairID {
+		t.Fatalf("repaired topics = %#v, want %q", repaired, repairID)
+	}
+	if got := loadTopicTitle("", tombstonedID); got != "" {
+		t.Fatalf("stale title = %q, repair save should prune the tombstoned entry", got)
+	}
+	if got := loadTopicTitle("", repairID); got != "待修复话题" {
+		t.Fatalf("repaired title = %q, want 待修复话题", got)
+	}
+	f := loadProjectsFile()
+	if containsDesktopString(f.GlobalTopics, tombstonedID) {
+		t.Fatalf("globalTopics = %#v, tombstoned topic must stay out", f.GlobalTopics)
+	}
+	if !containsDesktopString(f.GlobalTopics, repairID) {
+		t.Fatalf("globalTopics = %#v, want repaired topic %q", f.GlobalTopics, repairID)
+	}
+}
+
 func TestTopicMigrationDefersEmptyLegacySession(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := config.SessionDir()

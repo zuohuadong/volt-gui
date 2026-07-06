@@ -5249,6 +5249,10 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		return repairedTopicIDs
 	}
 	_ = prependTopicsInProjectsFile(workspaceRoot, migratedTopicIDs, false)
+	// Same fresh tombstone re-check as the repair pass: these are whole-map
+	// saves, so a concurrent DeleteTopic of an unrelated topic must not have
+	// its title written back by this migration batch.
+	pruneDeletedTopicEntries(topicTitles, topicSources)
 	if topicTitles != nil {
 		_ = saveTopicTitles(topicTitleRoot, topicTitles)
 	}
@@ -5261,6 +5265,27 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 		markTopicMigrationDone(dir) // pass complete with nothing deferred
 	}
 	return uniqueStrings(append(repairedTopicIDs, migratedTopicIDs...))
+}
+
+// pruneDeletedTopicEntries drops tombstoned topics from scan-built title and
+// source maps just before they are persisted, re-reading DeletedTopics so a
+// DeleteTopic that landed after the scan snapshot wins. The maps are loaded
+// whole at scan start and saved whole at the end; without this re-check the
+// save would write the deleted topic's stale entries back, and a title-map
+// entry alone resurrects a topic in the sidebar (orderedTopicIDs lists topics
+// that exist only in the title map). Returns the tombstone list so callers can
+// filter their returned topic-ID slices against the same snapshot.
+func pruneDeletedTopicEntries(maps ...map[string]string) []string {
+	deleted := loadProjectsFile().DeletedTopics
+	if len(deleted) == 0 {
+		return nil
+	}
+	for _, m := range maps {
+		for _, id := range deleted {
+			delete(m, id)
+		}
+	}
+	return deleted
 }
 
 func repairIndexedSessionTopics(dir string) []string {
@@ -5353,6 +5378,26 @@ func repairIndexedSessionTopics(dir string) []string {
 		if strings.TrimSpace(topicSources[topicID]) == "" {
 			topicSources[topicID] = topicTitleSourceManual
 			sourcesChanged = true
+		}
+	}
+	if len(repairedTopicIDs) > 0 {
+		// Re-check tombstones right before persisting: a DeleteTopic landing
+		// after the scan snapshot must win. The prepend re-filters under the
+		// projects-file lock; the whole-map title/source saves and the
+		// returned IDs (callers bind blank Global tabs to the first entry)
+		// need the same fresh read.
+		if deletedNow := pruneDeletedTopicEntries(topicTitles, topicSources); len(deletedNow) > 0 {
+			deletedSet := make(map[string]bool, len(deletedNow))
+			for _, id := range deletedNow {
+				deletedSet[id] = true
+			}
+			live := repairedTopicIDs[:0]
+			for _, id := range repairedTopicIDs {
+				if !deletedSet[id] {
+					live = append(live, id)
+				}
+			}
+			repairedTopicIDs = live
 		}
 	}
 	if len(repairedTopicIDs) > 0 {
@@ -6174,6 +6219,14 @@ func (a *App) ListProjectTree() []ProjectNode {
 		migrateLegacySessionsIntoGlobalTopics(dir)
 	}
 	f := loadProjectsFile()
+	// Render-side tombstone guard: a deleted topic whose title survived a racy
+	// whole-map save would otherwise reappear via the orderedTopicIDs title-map
+	// fallback. The tombstone is authoritative until an intentional
+	// single-topic write (create/restore/tab indexing) clears it.
+	deletedTopicSet := make(map[string]bool, len(f.DeletedTopics))
+	for _, id := range f.DeletedTopics {
+		deletedTopicSet[id] = true
+	}
 	out := []ProjectNode{}
 	topicSummaries := map[string]topicSummary{}
 	sessionInfos := map[string]agent.SessionInfo{}
@@ -6346,6 +6399,9 @@ func (a *App) ListProjectTree() []ProjectNode {
 		globalTopicIDs := pinnedTopicIDs(orderedTopicIDs(f.GlobalTopics, globalTitleMap), f.GlobalPinnedTopics)
 		children := make([]ProjectNode, 0, len(globalTopicIDs))
 		for _, id := range globalTopicIDs {
+			if deletedTopicSet[id] {
+				continue
+			}
 			title := globalTitleMap[id]
 			summaryKey := topicSummaryKey("global", "", id)
 			summary := topicSummaries[summaryKey]
@@ -6421,6 +6477,9 @@ func (a *App) ListProjectTree() []ProjectNode {
 
 		children := make([]ProjectNode, 0, len(topicIDs))
 		for _, tid := range topicIDs {
+			if deletedTopicSet[tid] {
+				continue
+			}
 			topicTitle := strings.TrimSpace(titleMap[tid])
 			if topicTitle == "" {
 				topicTitle = defaultTopicTitle

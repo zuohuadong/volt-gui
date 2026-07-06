@@ -60,11 +60,11 @@ func TestRenderMemoryGroupsDocsAndStore(t *testing.T) {
 		t.Fatalf("save memory: %v", err)
 	}
 	got := renderMemory(width, &memory.Set{
-		Docs:  []memory.Source{{Path: "/Users/me/project/VOLTUI.md", Scope: memory.ScopeProject}},
+		Docs:  []memory.Source{{Path: "/Users/me/project/REASONIX.md", Scope: memory.ScopeProject}},
 		Store: store,
 		Index: store.Index(),
 	})
-	for _, want := range []string{"memory", "docs", "(project)", "VOLTUI.md", "saved memories", "saved-fact", "Saved Fact", "doc edits apply next session"} {
+	for _, want := range []string{"memory", "docs", "(project)", "REASONIX.md", "saved memories", "saved-fact", "Saved Fact", "doc edits apply next session"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("memory view missing %q:\n%s", want, got)
 		}
@@ -108,6 +108,21 @@ func TestRenderHooksUsesSharedVisualLanguage(t *testing.T) {
 		Scope:      hook.ScopeProject,
 	}}, false, true)
 	for _, want := range []string{"hooks (1 active)", "PreToolUse", "project", "…", "not trusted", "/hooks trust"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("hooks view missing %q:\n%s", want, got)
+		}
+	}
+	assertLinesWithin(t, got, width)
+}
+
+func TestRenderHooksShowsPermissionRequestMatch(t *testing.T) {
+	width := 72
+	got := renderHooks(width, []hook.ResolvedHook{{
+		HookConfig: hook.HookConfig{Command: "notify", Match: "bash"},
+		Event:      hook.PermissionRequest,
+		Scope:      hook.ScopeGlobal,
+	}}, true, true)
+	for _, want := range []string{"PermissionRequest", "global", "bash", "notify"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("hooks view missing %q:\n%s", want, got)
 		}

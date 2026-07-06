@@ -1,5 +1,3 @@
-//go:build bot
-
 package botruntime
 
 import (
@@ -244,12 +242,50 @@ func botSessionMappings(mappings []config.BotConnectionSessionMapping) []bot.Ses
 	for _, mapping := range mappings {
 		out = append(out, bot.SessionMapping{
 			RemoteID:      strings.TrimSpace(mapping.RemoteID),
+			SessionID:     strings.TrimSpace(mapping.SessionID),
+			SessionSource: strings.TrimSpace(mapping.SessionSource),
 			ChatType:      strings.TrimSpace(mapping.ChatType),
 			UserID:        strings.TrimSpace(mapping.UserID),
 			ThreadID:      strings.TrimSpace(mapping.ThreadID),
 			Scope:         strings.TrimSpace(mapping.Scope),
 			WorkspaceRoot: strings.TrimSpace(mapping.WorkspaceRoot),
+			UpdatedAt:     strings.TrimSpace(mapping.UpdatedAt),
 		})
+	}
+	return out
+}
+
+func RouteConfigs(routes []config.BotRouteConfig, includeModel bool, includeWorkspaceRoot bool) []bot.RouteConfig {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]bot.RouteConfig, 0, len(routes))
+	for _, route := range routes {
+		var channel bot.ChannelConfig
+		if includeModel {
+			channel.Model = strings.TrimSpace(route.Model)
+		}
+		if includeWorkspaceRoot {
+			channel.WorkspaceRoot = strings.TrimSpace(route.WorkspaceRoot)
+		}
+		if value := normalizeToolApprovalMode(route.ToolApprovalMode); value != "" {
+			channel.ToolApprovalMode = value
+		}
+		if channel.Model == "" && channel.WorkspaceRoot == "" && channel.ToolApprovalMode == "" {
+			continue
+		}
+		out = append(out, bot.RouteConfig{
+			ConnectionID: strings.TrimSpace(route.ConnectionID),
+			Platform:     bot.Platform(strings.TrimSpace(route.Platform)),
+			ChatType:     bot.ChatType(strings.TrimSpace(route.ChatType)),
+			ChatID:       strings.TrimSpace(route.ChatID),
+			UserID:       strings.TrimSpace(route.UserID),
+			ThreadID:     strings.TrimSpace(route.ThreadID),
+			Channel:      channel,
+		})
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -324,6 +360,21 @@ func AdapterBindings(cfg *config.Config, enabled map[bot.Platform]bool, feishuDo
 	return bindings
 }
 
+func ConnectionRuntimeID(conn config.BotConnectionConfig) string {
+	if id := strings.TrimSpace(conn.ID); id != "" {
+		return id
+	}
+	provider := strings.TrimSpace(conn.Provider)
+	domain := strings.TrimSpace(conn.Domain)
+	if provider == "" {
+		return ""
+	}
+	if domain == "" {
+		return provider
+	}
+	return provider + "-" + domain
+}
+
 func ModelName(cfg *config.Config, override string) string {
 	if strings.TrimSpace(override) != "" {
 		return strings.TrimSpace(override)
@@ -338,7 +389,9 @@ func ModelName(cfg *config.Config, override string) string {
 }
 
 func AllowlistUserCount(a config.BotAllowlist) int {
-	return len(a.QQUsers) + len(a.FeishuUsers) + len(a.WeixinUsers)
+	return len(a.QQUsers) + len(a.FeishuUsers) + len(a.WeixinUsers) +
+		len(a.QQApprovers) + len(a.FeishuApprovers) + len(a.WeixinApprovers) +
+		len(a.QQAdmins) + len(a.FeishuAdmins) + len(a.WeixinAdmins)
 }
 
 func BotAccessUserCount(access config.BotAccessConfig) int {

@@ -48,6 +48,7 @@ func LoadForRoot(root string) (*Config, error) {
 	globalMaxSteps := cfg.Agent.MaxSteps
 	globalPlannerMaxSteps := cfg.Agent.PlannerMaxSteps
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
+	globalAutoPlan := cfg.Agent.AutoPlan
 
 	tomlSources = append(tomlSources, projectTOML)
 	if err := mergeRuntimeTOMLFile(cfg, projectTOML); err != nil {
@@ -59,6 +60,7 @@ func LoadForRoot(root string) (*Config, error) {
 	cfg.Agent.MaxSteps = globalMaxSteps
 	cfg.Agent.PlannerMaxSteps = globalPlannerMaxSteps
 	cfg.Agent.MemoryCompiler = globalMemoryCompiler
+	cfg.Agent.AutoPlan = globalAutoPlan
 	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project voltui.toml doesn't drop the global config's MCP servers.
@@ -960,7 +962,7 @@ func canonicalDesktopOfficialProviderName(name string) string {
 		return "deepseek"
 	case "mimo", "xiaomi-mimo", "xiaomi_mimo", "mimo-api":
 		return "mimo-api"
-	case "mimo-pro", "mimo-flash", "mimo-token-plan":
+	case "mimo-token-plan":
 		return "mimo-token-plan"
 	default:
 		return strings.TrimSpace(name)
@@ -1182,7 +1184,7 @@ func retargetDesktopOfficialRef(ref string, access map[string]bool) string {
 			model = "mimo-v2.5-pro"
 		}
 		return "mimo-api/" + model
-	case "mimo-pro", "mimo-flash", "mimo-token-plan":
+	case "mimo-token-plan":
 		if !access["mimo-token-plan"] {
 			return ref
 		}

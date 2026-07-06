@@ -3,12 +3,14 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"voltui/internal/event"
+	"voltui/internal/i18n"
 	"voltui/internal/permission"
 )
 
@@ -67,6 +69,24 @@ func newApprovalManager(policy permission.Policy, mode string, timeout time.Dura
 		toolApprovalMode:         mode,
 		approvalTimeout:          timeout,
 	}
+}
+
+// NewHeadlessPermissionGate builds the non-interactive gate used by `voltui run`
+// and sub-agents. It preserves headless autonomy for ordinary Ask decisions, but
+// refuses tools whose contract requires a fresh human approval.
+func NewHeadlessPermissionGate(policy permission.Policy) *freshHumanHeadlessGate {
+	return &freshHumanHeadlessGate{gate: permission.NewGate(policy, nil)}
+}
+
+type freshHumanHeadlessGate struct {
+	gate *permission.Gate
+}
+
+func (g *freshHumanHeadlessGate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
+	if RequiresFreshHumanApprovalTool(toolName) {
+		return false, "this tool requires fresh human approval and cannot run in a non-interactive session. Use an interactive session or a user-initiated memory command.", nil
+	}
+	return g.gate.Check(ctx, toolName, args, readOnly)
 }
 
 // preApproved reports whether a tool call can skip the prompt — either the
@@ -278,7 +298,7 @@ func (a *approvalManager) autoApprovalWouldAllowLocked(tool, subject string) boo
 }
 
 func (a *approvalManager) sessionGrantAllowsLocked(tool, subject string) bool {
-	if requiresFreshApprovalTool(tool) {
+	if requiresFreshApprovalTool(tool) && !allowsFreshSessionGrantTool(tool) {
 		return false
 	}
 	for rule := range a.granted {
@@ -320,9 +340,25 @@ func normalizeToolApprovalMode(mode string) string {
 	}
 }
 
-func requiresFreshApprovalTool(tool string) bool {
+// RequiresFreshHumanApprovalTool reports whether a tool must be answered by a
+// human decision, not by YOLO/auto approval, Guardian, or a non-interactive nil
+// approver. A small subset may still opt into explicit session grants.
+func RequiresFreshHumanApprovalTool(tool string) bool {
 	switch tool {
-	case planApprovalTool, memoryRememberTool, memoryForgetTool:
+	case planApprovalTool, memoryRememberTool, memoryForgetTool, SandboxEscapeApprovalTool:
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresFreshApprovalTool(tool string) bool {
+	return RequiresFreshHumanApprovalTool(tool)
+}
+
+func allowsFreshSessionGrantTool(tool string) bool {
+	switch tool {
+	case SandboxEscapeApprovalTool:
 		return true
 	default:
 		return false
@@ -331,12 +367,12 @@ func requiresFreshApprovalTool(tool string) bool {
 
 func approvalNotificationText(tool, subject string) string {
 	if requiresFreshApprovalTool(tool) {
-		return "approval needed: " + tool
+		return fmt.Sprintf(i18n.M.ApprovalNeededFmt, tool)
 	}
 	if subject == "" {
-		return "approval needed: " + tool
+		return fmt.Sprintf(i18n.M.ApprovalNeededFmt, tool)
 	}
-	return "approval needed: " + tool + " " + subject
+	return fmt.Sprintf(i18n.M.ApprovalNeededWithSubjectFmt, tool, subject)
 }
 
 func permissionRequestHookPayload(tool, subject string, args json.RawMessage) (string, json.RawMessage, bool) {

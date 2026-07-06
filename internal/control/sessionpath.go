@@ -30,6 +30,14 @@ func (c *Controller) EnsureSessionPath() {
 // of bug (#2807) recurring as each surface copied it.
 func (c *Controller) AdoptHistory(msgs []provider.Message, path string) {
 	if len(msgs) > 0 {
+		if path != "" {
+			if loaded, err := agent.LoadSession(path); err == nil && loaded != nil {
+				if resumed, ok := loaded.CloneWithMessagesIfCompatible(msgs); ok {
+					c.Resume(resumed, path)
+					return
+				}
+			}
+		}
 		c.Resume(&agent.Session{Messages: msgs}, path)
 	} else if path != "" {
 		c.SetSessionPath(path)

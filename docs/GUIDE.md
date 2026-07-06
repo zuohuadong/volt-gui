@@ -218,7 +218,29 @@ user-global `default_model`.
 
 In the desktop app, open **Settings -> Model -> Access -> Add model service ->
 Custom provider** for proxies, aggregators, or self-hosted services that speak
-the OpenAI-compatible chat API.
+the OpenAI-compatible chat API or Anthropic-compatible Messages API.
+
+For common providers, choose **Add model service -> Recommended preset** instead.
+Reasonix can prefill editable custom-provider entries for Kimi CN, Kimi Global,
+Kimi Coding Plan, MiMo API, MiMo Anthropic, MiMo Token Plan CN/SGP/AMS and their
+Anthropic-compatible variants, MiniMax CN/Global API, MiniMax CN/Global
+Anthropic, GLM CN, Z.AI Global, GLM/Z.AI Coding Plan OpenAI-compatible and
+Anthropic-compatible endpoints, OpenCode Go, OpenCode Go Anthropic, OpenCode Zen
+Anthropic, Qwen/DashScope CN/Global, Qwen Coding Plan CN/Global
+OpenAI-compatible and Anthropic-compatible endpoints, StepFun OpenAI-compatible
+and Anthropic-compatible endpoints, NovitaAI, GMI Cloud, Vercel AI Gateway,
+HuggingFace Router, NVIDIA NIM, KiloCode, and Ollama Cloud. Plan names describe
+the access/payment route; they include CN/Global only when the provider exposes
+distinct regional endpoints. Kimi Coding Plan is therefore a dedicated plan
+endpoint, while Kimi direct API is split into CN and Global. The preset path
+usually needs only the provider API key: the key value is stored in Reasonix home
+`.env`, while `config.toml` stores the endpoint, model list, key
+environment-variable name, context window, vision model metadata, proxy bypass
+for China-only endpoints, MiniMax `reasoning_split`, GLM/MiniMax thinking
+heuristics, Anthropic-compatible Bearer auth where needed, Ollama Cloud
+max-effort support, and OpenCode Go per-model reasoning overrides. After adding
+a preset, open its provider card if you need to change models, headers,
+endpoint, or compatibility settings.
 
 Fill **API address** with the provider endpoint that should receive the standard
 chat path. In this mode Reasonix previews and sends chat requests to:
@@ -247,6 +269,8 @@ The **Compatibility settings (usually leave unchanged)** section is for gateways
 whose authentication, model-list endpoint, or reasoning/thinking request shape
 differs from the normal OpenAI-compatible defaults. Leave these fields at their
 defaults unless the provider documentation or a proxy error tells you otherwise.
+For Anthropic-compatible services, such as some coding-plan endpoints, choose
+**Anthropic-compatible** as the connection protocol before saving.
 
 | Field | What it controls | When to change it |
 | --- | --- | --- |
@@ -254,6 +278,7 @@ defaults unless the provider documentation or a proxy error tells you otherwise.
 | `models_url` | The URL used only for model discovery. Chat requests still use the API address or Full URL above. | Set it when `/models` or `/v1/models` is not where the gateway exposes its model list. |
 | Extra request headers | Static HTTP headers, one `Header: value` per line. | Use for gateways such as OpenRouter that require `HTTP-Referer`, `X-Title`, or similar site headers. Keep bearer/API keys in the key field instead of duplicating them here. |
 | Extra request body | A JSON object merged into the top-level chat request body. | Use only for provider-specific flags such as `{"enable_thinking": true}`. Reasonix still owns core fields such as `model`, `messages`, `tools`, `stream`, and `thinking`, and null values are rejected. |
+| Authorization: Bearer | For Anthropic-compatible providers, sends the saved API key as `Authorization: Bearer <key>` instead of `x-api-key`. | Enable it only when the gateway documents Bearer auth, such as MiniMax Global or Vercel AI Gateway. |
 | Model capability mode | Which reasoning request protocol Reasonix should use for this provider. | Keep **Auto-detect** unless the gateway is misdetected or the model docs require a specific reasoning format. |
 | Thinking override | Provider-specific override for `thinking.type`. | Keep **Auto** unless the backend documents `enabled`, `disabled`, or `adaptive`. Unsupported values can make some OpenAI-compatible gateways reject the request. |
 | Balance URL | Optional endpoint for wallet/balance lookup. | Set it when the provider exposes a balance endpoint and you want the desktop status bar to show it. |
@@ -454,13 +479,33 @@ out. `forbid_read` optionally hides sensitive directories from the agent's
 read/list/search tools; use absolute paths or `${HOME}` / `${VAR}` references,
 not `~`, because config expansion is environment-variable based. `bash` is
 itself jailed by default when an OS sandbox is available (`[sandbox] bash`,
-Seatbelt on macOS and bubblewrap on Linux): commands may write only those same
-roots (plus temp and toolchain caches), cannot read configured `forbid_read`
-roots while the OS sandbox is active, and reach the network only when
-`[sandbox] network` is set. When no OS sandbox is available, `bash = "enforce"`
-refuses bash execution instead of running unconfined (see
-[`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope) for the escape-prompt and
-broader OS support still to come).
+Seatbelt on macOS, bubblewrap on Linux, and a native helper on Windows):
+commands may write only those same roots plus platform-specific command
+temp/cache roots, cannot read configured `forbid_read` roots while the OS
+sandbox is active, and reach the network only when `[sandbox] network` is set.
+The native Windows helper delegates the low-level isolation to
+`github.com/SivanCola/windows-sandbox`, which uses AppContainer for read-only
+commands and a low-integrity token for writable commands, temporarily grants
+access to the workspace, a per-command temp root, and the target executable,
+applies deny ACEs for `forbid_read` (files as well as directories), snapshots
+touched DACLs before editing them, and restores those snapshots best-effort
+after the command exits. Concurrent commands touching the same workspace are
+serialized so their ACL edits cannot corrupt each other, and residue from a
+force-killed command (a lingering low-integrity label or `forbid_read` deny) is
+cleaned up by the next run. Because a writable command runs under a
+low-integrity token, it can still write the few locations Windows leaves
+writable to any low-integrity process (for example `%USERPROFILE%\AppData\LocalLow`)
+in addition to the configured roots; the workspace boundary and `forbid_read`
+denials still hold. Read-only AppContainer commands omit network capabilities
+when networking is disabled; writable Windows commands fail closed when
+`[sandbox] network = false`.
+When no OS sandbox backend is available, `bash = "enforce"` refuses bash
+execution instead of running unconfined. Install the platform sandbox backend
+(bubblewrap/`bwrap` on Linux, `sandbox-exec` on macOS) or set
+`[sandbox] bash = "off"` to explicitly restore the pre-1.16 unconfined shell
+behavior (see
+[`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope) for the escape-prompt
+and optional elevated Windows hardening still to come).
 
 ## Plugins (MCP)
 

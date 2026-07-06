@@ -143,6 +143,12 @@ func TestRenderMCPStatusCapsLongSections(t *testing.T) {
 	}
 }
 
+func TestMCPCapabilitiesTextUsesAdvertisedTools(t *testing.T) {
+	if got := mcpCapabilitiesText(mcpServerView{HasTools: true}); got != "tools" {
+		t.Fatalf("mcpCapabilitiesText = %q, want tools", got)
+	}
+}
+
 func TestRenderMCPStatusShowsFailures(t *testing.T) {
 	got := renderMCPStatus(90,
 		nil,
@@ -161,21 +167,21 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 	p := &mcpManager{snapshot: mcpSnapshot{
 		configPath: "voltui.toml",
 		servers: []mcpServerView{
-			{Name: "codegraph", Transport: "stdio", Status: "connected", BuiltIn: true, Tools: 4},
-			{Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy", Tools: 12},
-			{Name: "figma", Transport: "http", Status: "failed", Configured: true, Tier: "lazy", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized"},
+			{Name: "managed-search", Transport: "stdio", Status: "connected", BuiltIn: true, Tools: 4},
+			{Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background", Tools: 12},
+			{Name: "figma", Transport: "http", Status: "failed", Configured: true, Tier: "background", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized"},
 		},
 	}}
 	got := p.renderList(120)
 	for _, want := range []string{
 		"Manage MCP servers",
 		"3 servers",
-		"Built-in MCPs",
+		"Managed MCPs",
 		"User MCPs (voltui.toml)",
-		"codegraph",
+		"managed-search",
 		"connected",
 		"github",
-		"connect on use",
+		"preparing in background",
 		"figma",
 		"needs authentication",
 	} {
@@ -187,7 +193,7 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 
 func TestRenderMCPManagerListCompactsLongNames(t *testing.T) {
 	p := &mcpManager{snapshot: mcpSnapshot{servers: []mcpServerView{
-		{Name: "@modelcontextprotocol/server-sequential-thinking", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy"},
+		{Name: "@modelcontextprotocol/server-sequential-thinking", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background"},
 	}}}
 	got := p.renderList(80)
 	for _, line := range strings.Split(got, "\n") {
@@ -208,7 +214,7 @@ func TestRenderMCPManagerAuthFailureActions(t *testing.T) {
 			configPath: "voltui.toml",
 			servers: []mcpServerView{{
 				Name: "figma", Transport: "http", Status: "failed", Configured: true,
-				Tier: "lazy", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized",
+				Tier: "background", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized",
 			}},
 		},
 	}
@@ -240,7 +246,7 @@ func TestRenderMCPManagerClearAuthConfirmation(t *testing.T) {
 		snapshot: mcpSnapshot{
 			servers: []mcpServerView{{
 				Name: "figma", Transport: "http", Status: "failed", Configured: true,
-				Tier: "lazy", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized",
+				Tier: "background", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized",
 			}},
 		},
 	}
@@ -267,20 +273,23 @@ func TestRenderMCPManagerRemoteDeferredAuthHint(t *testing.T) {
 			configPath: "voltui.toml",
 			servers: []mcpServerView{{
 				Name: "dida", Transport: "http", Status: "deferred", Configured: true,
-				Tier: "lazy", URL: "https://mcp.dida365.com",
+				Tier: "background", URL: "https://mcp.dida365.com",
 			}},
 		},
 	}
 	got := p.renderDetail(100)
 	for _, want := range []string{
-		"connect on use",
+		"preparing in background",
 		"Auth:",
 		"may need authorization",
-		"Connect now",
+		"Reconnect",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered deferred remote details missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "Connect now") {
+		t.Fatalf("automatic background MCP should not expose manual connect:\n%s", got)
 	}
 	if strings.Contains(got, "Authenticate") {
 		t.Fatalf("possible auth should not replace connect action before a failure:\n%s", got)
@@ -295,7 +304,7 @@ func TestRenderMCPManagerDetailCompactsConfigPath(t *testing.T) {
 			configPath: "/Users/example/Library/Application Support/voltui/config.toml",
 			servers: []mcpServerView{{
 				Name: "github", Transport: "stdio", Status: "deferred", Configured: true,
-				Tier: "lazy", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-github"},
+				Tier: "background", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-github"},
 			}},
 		},
 	}
@@ -439,31 +448,19 @@ func TestMCPEditConfigLaunchEditorRejectsUnterminatedQuote(t *testing.T) {
 }
 
 // TestMCPEditConfigLaunchEditorRejectsShellMetachars confirms that shell
-// metacharacters in EDITOR/VISUAL are treated as literal argv tokens and
-// never executed as a shell command — the previous sh -lc construction would
-// have run "rm" here.
+// metacharacters in EDITOR/VISUAL are rejected before launch — the previous
+// sh -lc construction would have run "rm" here.
 func TestMCPEditConfigLaunchEditorRejectsShellMetachars(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "vim; rm -rf /tmp/should-not-exist")
 
 	path := "/tmp/voltui.toml"
-	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
+	_, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when EDITOR is set")
 		return "", errors.New("unexpected lookup")
 	})
-	if err != nil {
-		t.Fatalf("edit command: %v", err)
-	}
-	// The entire EDITOR value is split on whitespace, so "vim;", "rm", "-rf",
-	// and the path become separate argv tokens — none of them are interpreted
-	// by a shell. The first token "vim;" is the (literal) program name; the
-	// shell injection payload "rm" is just an argument to it.
-	wantFirst := "vim;"
-	if launch.cmd.Args[0] != wantFirst {
-		t.Fatalf("first arg = %q, want %q (shell metachars must not be executed)", launch.cmd.Args[0], wantFirst)
-	}
-	if launch.cmd.Args[len(launch.cmd.Args)-1] != path {
-		t.Fatalf("last arg should be path, args=%v", launch.cmd.Args)
+	if err == nil || !strings.Contains(err.Error(), "shell control syntax") {
+		t.Fatalf("expected shell control rejection, got %v", err)
 	}
 }
 
@@ -533,25 +530,18 @@ func TestMCPEditConfigLaunchEditorExpandsTilde(t *testing.T) {
 }
 
 // TestMCPEditConfigLaunchEditorTildeNotInPayload confirms that a tilde
-// appearing in an injection payload (not as the leading token) is left
-// untouched and is NOT expanded into a path the shell would then execute.
+// appearing in an injection payload cannot be used because shell control syntax
+// is rejected before any expansion beyond the leading editor token matters.
 func TestMCPEditConfigLaunchEditorTildeNotInPayload(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "vim; rm -rf ~/should-not-exist")
 
-	launch, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
+	_, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
 		t.Fatal("lookPath should not be called when EDITOR is set")
 		return "", errors.New("unexpected lookup")
 	})
-	if err != nil {
-		t.Fatalf("edit command: %v", err)
-	}
-	// The tilde sits in the middle of the value, so it is NOT expanded; the
-	// leading token "vim;" is looked up literally and the payload "rm" never
-	// runs. This proves tilde expansion cannot be abused to make an injection
-	// payload resolve to a real path.
-	if launch.cmd.Args[0] != "vim;" {
-		t.Fatalf("args[0] = %q, want vim;", launch.cmd.Args[0])
+	if err == nil || !strings.Contains(err.Error(), "shell control syntax") {
+		t.Fatalf("expected shell control rejection, got %v", err)
 	}
 }
 
@@ -602,11 +592,10 @@ func TestMCPEditConfigLaunchUsesSystemDefaultLast(t *testing.T) {
 	}
 }
 
-func TestApplyMCPModePersistsAutoStart(t *testing.T) {
+func TestApplyMCPModeDropsLegacyTier(t *testing.T) {
 	isolateUserConfig(t)
 	cfg := config.Default()
-	off := false
-	cfg.Plugins = []config.PluginEntry{{Name: "github", Command: "npx", Args: []string{"server"}, AutoStart: &off}}
+	cfg.Plugins = []config.PluginEntry{{Name: "github", Command: "npx", Args: []string{"server"}, Tier: "lazy"}}
 	if err := cfg.SaveTo("voltui.toml"); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -616,7 +605,7 @@ func TestApplyMCPModePersistsAutoStart(t *testing.T) {
 		stage: mcpStageMode,
 		name:  "github",
 		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
-			Name: "github", Transport: "stdio", Status: "disabled", Configured: true, AutoStart: false, Tier: "lazy",
+			Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background",
 		}}},
 	}
 	_, _ = m.applyMCPMode("background")
@@ -625,11 +614,15 @@ func TestApplyMCPModePersistsAutoStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if len(loaded.Plugins) != 1 || loaded.Plugins[0].AutoStart == nil || !*loaded.Plugins[0].AutoStart {
-		t.Fatalf("auto_start not persisted, plugins=%+v", loaded.Plugins)
+	if len(loaded.Plugins) != 1 || loaded.Plugins[0].Tier != "" {
+		t.Fatalf("tier should be migrated away, plugins=%+v", loaded.Plugins)
 	}
-	if loaded.Plugins[0].Tier != "" {
-		t.Fatalf("legacy tier should not persist, plugins=%+v", loaded.Plugins)
+	raw, err := os.ReadFile("voltui.toml")
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(raw), "\ntier") {
+		t.Fatalf("legacy tier should not be written back:\n%s", raw)
 	}
 }
 
@@ -637,7 +630,7 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	isolateUserConfig(t)
 	t.Setenv("PATH", "")
 	cfg := config.Default()
-	cfg.Plugins = []config.PluginEntry{{Name: "broken", Command: "definitely-missing-voltui-mcp", Tier: "lazy"}}
+	cfg.Plugins = []config.PluginEntry{{Name: "broken", Command: "definitely-missing-voltui-mcp", Tier: "background"}}
 	if err := cfg.SaveTo("voltui.toml"); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -650,7 +643,7 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 		stage: mcpStageMode,
 		name:  "broken",
 		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
-			Name: "broken", Transport: "stdio", Status: "deferred", Configured: true, Tier: "lazy",
+			Name: "broken", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background",
 		}}},
 	}
 
@@ -669,85 +662,13 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	}
 }
 
-func TestApplyMCPModeRecordsCodegraphConnectFailure(t *testing.T) {
-	isolateUserConfig(t)
-	t.Setenv("PATH", "")
-	t.Setenv("VOLTUI_CACHE_DIR", t.TempDir())
-	cfg := config.Default()
-	cfg.Codegraph.Enabled = false
-	cfg.Codegraph.Tier = "lazy"
-	if err := cfg.SaveTo("voltui.toml"); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
-
-	m := newTestChatTUI()
-	m.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer m.ctrl.Close()
-	m.host = m.ctrl.Host()
-	m.mcp = &mcpManager{
-		stage: mcpStageMode,
-		name:  "codegraph",
-		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
-			Name: "codegraph", Transport: "stdio", Status: "disabled", BuiltIn: true, Configured: true, Tier: "lazy",
-		}}},
-	}
-
-	_, _ = m.applyMCPMode("background")
-
-	failures := m.ctrl.Host().Failures()
-	if len(failures) != 1 || failures[0].Name != "codegraph" {
-		t.Fatalf("Host.Failures() = %+v, want codegraph failure", failures)
-	}
-	if !strings.Contains(failures[0].Error, "not installed") {
-		t.Fatalf("codegraph failure error = %q, want not installed", failures[0].Error)
-	}
-	v, ok := m.mcp.selectedServer()
-	if !ok {
-		t.Fatal("selected server missing after refresh")
-	}
-	if v.Status != "failed" {
-		t.Fatalf("codegraph status = %q, want failed; server = %+v", v.Status, v)
-	}
-}
-
-func TestDisableCodegraphPersistsEnabledFalse(t *testing.T) {
-	isolateUserConfig(t)
-	cfg := config.Default()
-	cfg.Codegraph.Enabled = true
-	cfg.Codegraph.Tier = "background"
-	if err := cfg.SaveTo("voltui.toml"); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
-
-	m := newTestChatTUI()
-	m.ctrl = control.New(control.Options{Host: plugin.NewHost()})
-	defer m.ctrl.Close()
-	m.mcp = &mcpManager{
-		stage: mcpStageDetail,
-		name:  "codegraph",
-		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
-			Name: "codegraph", Transport: "stdio", Status: "connected", BuiltIn: true, Configured: true, AutoStart: true, Tier: "background",
-		}}},
-	}
-
-	_, _ = m.disableSelectedMCP(m.mcp.snapshot.servers[0])
-
-	loaded, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if loaded.Codegraph.Enabled {
-		t.Fatalf("codegraph enabled = true, want false")
-	}
-}
-
 func TestMCPManagerEscFromDetailReturnsToList(t *testing.T) {
 	m := newTestChatTUI()
 	m.mcp = &mcpManager{
 		stage: mcpStageDetail,
-		name:  "codegraph",
+		name:  "managed-search",
 		snapshot: mcpSnapshot{servers: []mcpServerView{{
-			Name: "codegraph", Transport: "stdio", Status: "connected", BuiltIn: true,
+			Name: "managed-search", Transport: "stdio", Status: "connected", BuiltIn: true,
 		}}},
 	}
 

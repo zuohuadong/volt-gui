@@ -233,10 +233,14 @@ func (m *chatTUI) skillPaths() {
 func (m *chatTUI) skillStore() *skill.Store {
 	cwd, _ := os.Getwd()
 	var custom []string
+	var excluded []string
+	maxDepth := 3
 	if cfg, err := config.Load(); err == nil {
 		custom = cfg.SkillCustomPaths()
+		excluded = cfg.SkillExcludedPaths()
+		maxDepth = cfg.SkillMaxDepth()
 	}
-	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom})
+	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth})
 }
 
 func (m *chatTUI) runHooksSubcommand(input string) {
@@ -254,7 +258,7 @@ func (m *chatTUI) runHooksSubcommand(input string) {
 			m.notice("hooks trust: " + err.Error())
 			return
 		}
-		m.notice("trusted this project's hooks — they load on the next /new or restart")
+		m.notice("trusted this project's hooks — restart Reasonix to load them")
 	default:
 		m.notice("unknown /hooks subcommand " + args[1] + " — try: /hooks, /hooks trust")
 	}

@@ -1,30 +1,10 @@
 package main
 
 import (
-	"os"
 	"sync"
 
 	"fyne.io/systray"
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
-	"voltui/internal/config"
 )
-
-func (a *App) brandIconBytes() []byte {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil
-	}
-	path := cfg.BrandIconPath()
-	if path == "" {
-		return nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return nil
-	}
-	return data
-}
 
 type desktopTray struct {
 	end       func()
@@ -58,40 +38,41 @@ func (a *App) startTray() bool {
 	a.tray = t
 	a.mu.Unlock()
 
-	t.end = startDesktopTray(func() {
-		brandIcon := a.brandIconBytes()
-		if brandIcon != nil {
-			systray.SetIcon(brandIcon)
-		} else {
-			systray.SetIcon(trayIconBytes)
-		}
-		brandName := "VoltUI"
-		if cfg, err := config.Load(); err == nil {
-			brandName = cfg.BrandName()
-		}
-		systray.SetTitle(brandName)
-		systray.SetTooltip(brandName)
-		systray.SetOnTapped(func() { a.showFromTray() })
+	end := startDesktopTray(func() {
+		systray.SetIcon(trayIconBytes)
+		systray.SetTitle("Reasonix")
+		systray.SetTooltip("Reasonix")
+		// Run off the systray Win32 message loop: SetOnTapped fires inside wndProc,
+		// so a blocking showFromTray (a wedged webview after sleep freezes
+		// runtime.WindowShow) would stall the whole tray's message pump (#3834). The
+		// menu items below are already decoupled via goroutines for the same reason.
+		systray.SetOnTapped(func() { a.goSafe("showFromTray", a.showFromTray) })
+		// Keep secondary/right-click on systray's native menu path.
+		systray.SetOnSecondaryTapped(nil)
 
 		labels := trayMenuLabels(a.trayLocale())
-		t.openItem = systray.AddMenuItem(labels.openTitle, labels.openTooltip)
-		t.quitItem = systray.AddMenuItem(labels.quitTitle, labels.quitTooltip)
+		openItem := systray.AddMenuItem(labels.openTitle, labels.openTooltip)
+		quitItem := systray.AddMenuItem(labels.quitTitle, labels.quitTooltip)
 
+		// Publish the menu items under a.mu: this callback runs on the systray
+		// goroutine while bound settings calls (updateTrayLocale) read them.
 		a.mu.Lock()
+		t.openItem = openItem
+		t.quitItem = quitItem
 		a.trayReady = true
 		a.mu.Unlock()
 		t.markReady()
 
-		go func() {
-			for range t.openItem.ClickedCh {
+		a.goSafe("trayOpenLoop", func() {
+			for range openItem.ClickedCh {
 				a.showFromTray()
 			}
-		}()
-		go func() {
-			for range t.quitItem.ClickedCh {
+		})
+		a.goSafe("trayQuitLoop", func() {
+			for range quitItem.ClickedCh {
 				a.quitFromTray()
 			}
-		}()
+		})
 	}, func() {
 		a.mu.Lock()
 		if a.tray == t {
@@ -100,35 +81,47 @@ func (a *App) startTray() bool {
 		}
 		a.mu.Unlock()
 	})
+	a.mu.Lock()
+	t.end = end
+	a.mu.Unlock()
 	return true
 }
 
 func (a *App) stopTray() {
 	a.mu.RLock()
 	t := a.tray
+	var end func()
+	if t != nil {
+		end = t.end
+	}
 	a.mu.RUnlock()
-	if t == nil || t.end == nil {
+	if t == nil || end == nil {
 		return
 	}
-	t.once.Do(t.end)
+	t.once.Do(end)
 }
 
 func (a *App) updateTrayLocale(locale string) {
 	a.mu.RLock()
 	t := a.tray
+	var openItem, quitItem *systray.MenuItem
+	if t != nil {
+		openItem = t.openItem
+		quitItem = t.quitItem
+	}
 	a.mu.RUnlock()
-	if t == nil || t.openItem == nil || t.quitItem == nil {
+	if openItem == nil || quitItem == nil {
 		return
 	}
 	labels := trayMenuLabels(locale)
-	t.openItem.SetTitle(labels.openTitle)
-	t.openItem.SetTooltip(labels.openTooltip)
-	t.quitItem.SetTitle(labels.quitTitle)
-	t.quitItem.SetTooltip(labels.quitTooltip)
+	openItem.SetTitle(labels.openTitle)
+	openItem.SetTooltip(labels.openTooltip)
+	quitItem.SetTitle(labels.quitTitle)
+	quitItem.SetTooltip(labels.quitTooltip)
 }
 
 func (a *App) trayLocale() string {
-	cfg, _, err := a.loadDesktopUserConfigForEdit()
+	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
 		return ""
 	}
@@ -136,13 +129,7 @@ func (a *App) trayLocale() string {
 }
 
 func (a *App) showFromTray() {
-	ctx := a.ctx
-	if ctx == nil {
-		return
-	}
-	wruntime.Show(ctx)
-	wruntime.WindowShow(ctx)
-	wruntime.WindowUnminimise(ctx)
+	a.showMainWindow()
 }
 
 func (a *App) quitFromTray() {
@@ -157,22 +144,18 @@ type trayLabels struct {
 }
 
 func trayMenuLabels(locale string) trayLabels {
-	brandName := "VoltUI"
-	if cfg, err := config.Load(); err == nil {
-		brandName = cfg.BrandName()
-	}
 	if locale == "zh" {
 		return trayLabels{
 			openTitle:   "打开",
-			openTooltip: "打开 " + brandName + " 窗口",
+			openTooltip: "打开 Reasonix 窗口",
 			quitTitle:   "退出",
-			quitTooltip: "退出 " + brandName,
+			quitTooltip: "退出 Reasonix",
 		}
 	}
 	return trayLabels{
 		openTitle:   "Open",
-		openTooltip: "Open the " + brandName + " window",
+		openTooltip: "Open the Reasonix window",
 		quitTitle:   "Quit",
-		quitTooltip: "Quit " + brandName,
+		quitTooltip: "Quit Reasonix",
 	}
 }

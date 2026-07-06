@@ -28,10 +28,7 @@ func wrapTranscript(s string, width int) string {
 // platform clipboard tools can instead succeed on the remote host and skip the
 // terminal clipboard path entirely.
 func copyToClipboard(text string) tea.Cmd {
-	return func() tea.Msg {
-		_ = clipboardWriteAll(text)
-		return tea.SetClipboard(text)()
-	}
+	return tea.SetClipboard(text)
 }
 
 // copyNoticeTTL is how long the "copied to clipboard" status-line hint stays

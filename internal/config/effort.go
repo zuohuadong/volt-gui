@@ -46,6 +46,9 @@ func EffortCapabilityForEntry(e *ProviderEntry) EffortCapability {
 		levels = append(levels, "auto")
 		levels = append(levels, supported...)
 		def := normalizeEffortLevel(e.DefaultEffort)
+		if def == "auto" {
+			return EffortCapability{Supported: true, Levels: levels, Default: def}
+		}
 		if def == "" || !containsString(supported, def) {
 			def = supported[0]
 		}

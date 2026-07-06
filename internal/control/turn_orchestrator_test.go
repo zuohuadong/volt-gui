@@ -145,12 +145,16 @@ func TestTurnOrchestratorStopHookIgnoresCanceledTurnContext(t *testing.T) {
 }
 
 type recordingSessionRunner struct {
-	session *agent.Session
-	inputs  []string
+	session              *agent.Session
+	inputs               []string
+	memoryCompilerInputs []string
 }
 
-func (r *recordingSessionRunner) Run(_ context.Context, input string) error {
+func (r *recordingSessionRunner) Run(ctx context.Context, input string) error {
 	r.inputs = append(r.inputs, input)
+	if source, ok := agent.MemoryCompilerSourceInputFromContext(ctx); ok {
+		r.memoryCompilerInputs = append(r.memoryCompilerInputs, source)
+	}
 	r.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 	return nil
 }
@@ -286,11 +290,49 @@ func TestTurnOrchestratorRefTurnRecordsVisibleDisplay(t *testing.T) {
 	if !strings.Contains(runner.inputs[0], "Referenced context:") || !strings.Contains(runner.inputs[0], "referenced evidence") {
 		t.Fatalf("model input should include resolved reference context, got %q", runner.inputs[0])
 	}
+	if len(runner.memoryCompilerInputs) != 1 || runner.memoryCompilerInputs[0] != visible {
+		t.Fatalf("memory compiler source input = %+v, want %q", runner.memoryCompilerInputs, visible)
+	}
 	if gotDisplay != visible {
 		t.Fatalf("display recorder display = %q, want visible prompt %q", gotDisplay, visible)
 	}
 	if gotContent != runner.inputs[0] {
 		t.Fatalf("display recorder content = %q, want persisted model input %q", gotContent, runner.inputs[0])
+	}
+}
+
+func TestTurnOrchestratorAutoReasoningLanguageUsesRawPromptForRefTurns(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "auth.go"), []byte("package main\nfunc AuthHandler() error { return errors.New(\"not authorized\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeTurnRunner{}
+	events := make(chan event.Event, 4)
+	c := New(Options{
+		WorkspaceRoot: root,
+		Runner:        runner,
+		AutoPlan:      "off",
+		Sink: event.FuncSink(func(e event.Event) {
+			events <- e
+		}),
+	})
+
+	const visible = "解释 @auth.go 的报错"
+	c.runRefTurn(visible, visible)
+	waitForTurnDone(t, events)
+
+	if len(runner.inputs) != 1 {
+		t.Fatalf("runner inputs = %d, want 1", len(runner.inputs))
+	}
+	got := runner.inputs[0]
+	if !strings.HasPrefix(got, "<reasoning-language>") || !strings.Contains(got, "简体中文") {
+		t.Fatalf("auto reasoning language should anchor Chinese before referenced context, got %q", got)
+	}
+	if !strings.Contains(got, "Referenced context:") || !strings.Contains(got, "AuthHandler") {
+		t.Fatalf("ref context missing from model input: %q", got)
+	}
+	if strings.Contains(got, "use English") {
+		t.Fatalf("English referenced file content should not win over raw Chinese prompt:\n%s", got)
 	}
 }
 

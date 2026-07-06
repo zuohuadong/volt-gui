@@ -8,6 +8,7 @@ import (
 	"voltui/internal/event"
 	"voltui/internal/nilutil"
 	"voltui/internal/provider"
+	"voltui/internal/sandbox"
 	"voltui/internal/tool"
 )
 
@@ -28,7 +29,7 @@ for the executor. Output executor-ready instructions: what to do, which files or
 commands are relevant, expected blockers, and key decisions. Keep it short and
 actionable.`
 
-const executorHandoffMarker = "VoltUI executor handoff"
+const executorHandoffMarker = "Reasonix executor handoff"
 
 // PlannerPromptWithContext appends cache-stable standing context, such as loaded
 // REASONIX.md / AGENTS.md memory, to the planner's smaller system prompt.
@@ -166,6 +167,34 @@ func (c *Coordinator) SetPlanMode(v bool) {
 	}
 	if c.executor != nil {
 		c.executor.SetPlanMode(v)
+	}
+}
+
+// SetPlanModeReadOnlyTrustGate propagates MCP read-only trust approvals to both
+// tool-using agents in two-model mode.
+func (c *Coordinator) SetPlanModeReadOnlyTrustGate(g PlanModeReadOnlyTrustGate) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetPlanModeReadOnlyTrustGate(g)
+	}
+	if c.executor != nil {
+		c.executor.SetPlanModeReadOnlyTrustGate(g)
+	}
+}
+
+// SetSandboxEscapeApprover propagates one-shot shell sandbox escape approvals to
+// both tool-using agents in two-model mode.
+func (c *Coordinator) SetSandboxEscapeApprover(g sandbox.EscapeApprover) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetSandboxEscapeApprover(g)
+	}
+	if c.executor != nil {
+		c.executor.SetSandboxEscapeApprover(g)
 	}
 }
 

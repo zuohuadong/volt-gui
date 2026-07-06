@@ -1,5 +1,3 @@
-//go:build bot
-
 // Package qq 实现 QQ 官方 Bot API v2 适配器。
 // 参考 Hermes Agent 的 qqbot adapter 实现：
 // - app token 获取与刷新
@@ -40,6 +38,10 @@ type adapter struct {
 	token       string
 	tokenExpiry time.Time
 	tokenMu     sync.Mutex
+
+	sendMu             sync.Mutex
+	nextOutboundMsgSeq int
+	markdownDisabled   bool
 }
 
 func (a *adapter) Platform() bot.Platform { return bot.PlatformQQ }
@@ -47,6 +49,15 @@ func (a *adapter) Name() string           { return "qq" }
 
 func (a *adapter) Start(ctx context.Context) error {
 	a.msgCh = make(chan bot.InboundMessage, 64)
+	startupCtx, startupCancel := context.WithTimeout(ctx, qqStartupValidationTimeout)
+	defer startupCancel()
+	token, err := a.getAccessToken(startupCtx)
+	if err != nil {
+		return err
+	}
+	if _, err := a.getGatewayURL(startupCtx, token); err != nil {
+		return err
+	}
 	ctx, a.cancel = context.WithCancel(ctx)
 
 	go a.gatewayLoop(ctx)

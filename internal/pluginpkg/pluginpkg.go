@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	NativeManifest = "reasonix-plugin.json"
+	NativeManifest = "voltui-plugin.json"
 	CodexManifest  = ".codex-plugin/plugin.json"
 	StateFilename  = "plugin-packages.json"
 
@@ -56,6 +56,7 @@ type HookRef struct {
 	Event       string
 	Match       string
 	Command     string
+	ContextFile string
 	Description string
 }
 
@@ -311,7 +312,7 @@ func parseNative(path, root string) (Package, []string, error) {
 	if err := validateManifest(root, &manifest); err != nil {
 		return Package{}, warnings, err
 	}
-	return Package{Root: root, ManifestKind: "reasonix", Manifest: manifest}, warnings, nil
+	return Package{Root: root, ManifestKind: "voltui", Manifest: manifest}, warnings, nil
 }
 
 func parseCodex(path, root string) (Package, []string, error) {
@@ -766,6 +767,7 @@ func (p Package) hookRefs() []HookRef {
 				Event:       event,
 				Match:       hook.Match,
 				Command:     hook.Command,
+				ContextFile: hook.ContextFile,
 				Description: hook.Description,
 			})
 		}

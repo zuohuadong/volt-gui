@@ -9,8 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 	"unicode/utf8"
+
+	"mvdan.cc/sh/v3/syntax"
 
 	"voltui/internal/diff"
 	"voltui/internal/event"
@@ -22,6 +23,8 @@ import (
 	"voltui/internal/nilutil"
 	"voltui/internal/planmode"
 	"voltui/internal/provider"
+	"voltui/internal/sandbox"
+	"voltui/internal/shellparse"
 	"voltui/internal/tool"
 )
 
@@ -30,82 +33,6 @@ import (
 // grep, while preventing one accidental "read this 5 MB log" from blowing the
 // window before the next compaction runs.
 const maxToolOutputBytes = 32 * 1024
-
-// planModeDeniedTools lists tools that are unconditionally denied in plan mode.
-// These are never shown to the LLM and cannot be called even if the agent
-// somehow references them. The write_file, edit_file, and multi_edit tools are
-// the canonical file-writing tools; apply_patch is a structured write variant.
-var planModeDeniedTools = map[string]bool{
-	"write_file":      true,
-	"edit_file":       true,
-	"multi_edit":      true,
-	"move_file":       true,
-	"apply_patch":     true,
-	"edit_notebook":   true,
-	"notebook_edit":   true,
-	"range_delete":    true,
-	"symbol_delete":   true,
-	"delete_range":    true,
-	"delete_symbol":   true,
-	"complete_step":   true,
-	"task":            true,
-	"parallel_tasks":  true,
-	"run_skill":       true,
-	"explore":         true,
-	"research":        true,
-	"review":          true,
-	"security_review": true,
-	"security-review": true,
-	"install_source":  true,
-	"install_skill":   true,
-	"remember":        true,
-	"forget":          true,
-	"kill_shell":      true,
-}
-
-const (
-	MemoryCompilerVerbosityObserve = "observe"
-	MemoryCompilerVerbosityCompact = "compact"
-)
-
-// planModeBashMetachars defines shell metacharacters that indicate command
-// chaining, redirection, or substitution. When any of these appear in a bash
-// command during plan mode, the command is blocked — even if the command prefix
-// matches a safe read-only entry — because chaining can introduce side effects
-// after an otherwise safe prefix.
-var planModeBashMetachars = []string{"&&", "||", ">>", "<<", "$(", "\x60", ";", "|", ">", "<", "&", "\n", "\r"}
-
-// planModeSafeBashCommands are bash command prefixes that are safe to run in
-// plan mode. Each entry is matched as a prefix against the trimmed, lowercased
-// command string. The match requires a shell-argument boundary after the prefix:
-// whitespace or end-of-string — so "echop" never matches "echo".
-var planModeSafeBashCommands = []string{
-	"git status", "git diff", "git log", "git show",
-	"git ls-files", "git grep", "git blame",
-	"ls", "cat", "grep", "find", "head", "tail", "pwd",
-	"echo", "wc", "which", "type", "uname", "hostname",
-	"go version", "go list", "go doc", "go vet",
-	"node -v", "npm list", "python --version",
-}
-
-var planModeFindWriteArgs = map[string]bool{
-	"-delete":  true,
-	"-exec":    true,
-	"-execdir": true,
-	"-ok":      true,
-	"-okdir":   true,
-	"-fprint":  true,
-	"-fprintf": true,
-	"-fls":     true,
-}
-
-var planModeGoWriteOrExecArgs = map[string]bool{
-	"-fix":      true,
-	"-mod":      true,
-	"-modfile":  true,
-	"-toolexec": true,
-	"-vettool":  true,
-}
 
 const maxFinalReadinessBlocks = 3
 const maxEmptyFinalBlocks = 3
@@ -135,6 +62,7 @@ type Asker interface {
 // callContextKey carries the executing tool call's identity into Execute.
 type callContextKey struct{}
 type parentSessionContextKey struct{}
+type subagentDepthContextKey struct{}
 type userImagesContextKey struct{}
 
 // callContext is the per-call context a tool can read. parentID is the call being
@@ -185,6 +113,24 @@ func ParentSession(ctx context.Context) string {
 	return strings.TrimSpace(parentSession)
 }
 
+// WithSubagentDepth carries the current subagent depth through nested tool calls.
+// The root agent runs at depth 0; each spawned subagent increments by one.
+func WithSubagentDepth(ctx context.Context, depth int) context.Context {
+	if depth < 0 {
+		depth = 0
+	}
+	return context.WithValue(ctx, subagentDepthContextKey{}, depth)
+}
+
+// SubagentDepth returns the current subagent depth carried by a turn context.
+func SubagentDepth(ctx context.Context) int {
+	depth, _ := ctx.Value(subagentDepthContextKey{}).(int)
+	if depth < 0 {
+		return 0
+	}
+	return depth
+}
+
 // WithUserImages carries the data URLs of images the user attached to this turn,
 // resolved by the controller (which owns attachments) since the agent must not
 // depend on it. Run embeds them on the user message; the provider sends them only
@@ -209,21 +155,43 @@ type Gate interface {
 	Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error)
 }
 
-// PlanModeReadOnlyTrustRequest describes an external read-only hint that plan
-// mode will not trust without a user decision. ToolName is the provider-visible
-// name; ServerName and RawToolName are the MCP identifiers persisted in config.
+const PlanModeReadOnlyCommandApprovalTool = "plan_mode_read_only_command"
+
+// PlanModeReadOnlyTrustRequest describes a read-only claim that plan mode will
+// not trust without a user decision. For MCP, ServerName and RawToolName are the
+// identifiers persisted in config. For bash, Command is the concrete attempted
+// command and Prefix is the command prefix to trust for planning.
 type PlanModeReadOnlyTrustRequest struct {
 	ToolName    string
 	ServerName  string
 	RawToolName string
+	Command     string
+	Prefix      string
 	Args        json.RawMessage
 }
 
-// PlanModeReadOnlyTrustGate optionally confirms an MCP server's self-reported
-// read-only hint at execution time. It is separate from Gate because the
-// plan-mode check runs before ordinary permission policy.
+// PlanModeReadOnlyTrustGate optionally confirms MCP read-only hints and
+// user-approved bash read-only command prefixes at execution time. It is
+// separate from Gate because the plan-mode check runs before ordinary permission
+// policy.
 type PlanModeReadOnlyTrustGate interface {
 	CheckPlanModeReadOnlyTrust(ctx context.Context, req PlanModeReadOnlyTrustRequest) (allow bool, reason string, err error)
+}
+
+const (
+	MemoryCompilerVerbosityObserve = "observe"
+	MemoryCompilerVerbosityCompact = "compact"
+)
+
+const DefaultMaxSubagentDepth = 2
+
+// NormalizeMaxSubagentDepth applies the public config contract: values below 1
+// preserve the old single-delegation boundary.
+func NormalizeMaxSubagentDepth(depth int) int {
+	if depth < 1 {
+		return 1
+	}
+	return depth
 }
 
 // ToolHooks fires user-configured shell hooks around each tool call. PreToolUse
@@ -306,6 +274,10 @@ type Agent struct {
 	// server's readOnlyHint for plan-mode execution without changing tool schemas.
 	planModeReadOnlyTrust PlanModeReadOnlyTrustGate
 
+	// sandboxEscapeApprover, when non-nil, can ask the user whether one shell
+	// command may rerun unconfined after the OS sandbox failed to start.
+	sandboxEscapeApprover sandbox.EscapeApprover
+
 	// hooks, when non-nil, fires PreToolUse / PostToolUse shell hooks around each
 	// tool call. nil disables hook firing.
 	hooks ToolHooks
@@ -386,7 +358,13 @@ type Agent struct {
 	// planModeAllowedTools declares extra custom tools that the centralized
 	// plan-mode policy may treat as read-only. Known blocked tools still lose.
 	// Populated from Options.PlanModeAllowedTools during construction.
-	planModeAllowedTools []string
+	planModeAllowedTools     []string
+	planModeReadOnlyCommands []string
+
+	// subagentDepth tracks the current agent's nesting depth. maxSubagentDepth
+	// caps delegation; when reached, recursive agent/skill tools are excluded.
+	subagentDepth    int
+	maxSubagentDepth int
 
 	// Context management: when a turn's prompt nears contextWindow, the older
 	// middle of the session is summarized away, keeping a token-bounded recent
@@ -397,6 +375,7 @@ type Agent struct {
 	// notice so it fires once per approach, not every turn.
 	contextWindow       int
 	softCompactRatio    float64
+	toolResultSnipRatio float64
 	compactRatio        float64
 	compactForceRatio   float64
 	softCompactNoticed  bool
@@ -604,7 +583,8 @@ func (a *Agent) SetGate(g Gate) {
 }
 
 // SetPlanModeReadOnlyTrustGate installs the optional confirmation path for MCP
-// tools whose read-only flag comes from an external readOnlyHint.
+// tools whose read-only flag comes from an external readOnlyHint and bash
+// commands the user may trust as plan-mode read-only.
 func (a *Agent) SetPlanModeReadOnlyTrustGate(g PlanModeReadOnlyTrustGate) {
 	if nilutil.IsNil(g) {
 		g = nil
@@ -612,17 +592,13 @@ func (a *Agent) SetPlanModeReadOnlyTrustGate(g PlanModeReadOnlyTrustGate) {
 	a.planModeReadOnlyTrust = g
 }
 
-func (a *Agent) withReasoningLanguage(input string) string {
-	if a == nil {
-		return input
+// SetSandboxEscapeApprover installs the optional one-shot approval path used by
+// the bash tool when an enforced OS sandbox fails to start.
+func (a *Agent) SetSandboxEscapeApprover(g sandbox.EscapeApprover) {
+	if nilutil.IsNil(g) {
+		g = nil
 	}
-	lang := "auto"
-	if v := a.reasoningLanguage.Load(); v != nil {
-		if s, ok := v.(string); ok {
-			lang = s
-		}
-	}
-	return WithReasoningLanguage(input, lang)
+	a.sandboxEscapeApprover = g
 }
 
 func (a *Agent) withTurnPreferences(input string) string {
@@ -636,7 +612,14 @@ func (a *Agent) withTurnPreferences(input string) string {
 		}
 	}
 	input = WithResponseLanguage(input, responseLang)
-	return a.withReasoningLanguage(input)
+
+	lang := "auto"
+	if v := a.reasoningLanguage.Load(); v != nil {
+		if s, ok := v.(string); ok {
+			lang = s
+		}
+	}
+	return WithReasoningLanguage(input, lang)
 }
 
 // SetAsker installs the asker the `ask` tool uses to question the user.
@@ -791,15 +774,20 @@ type Options struct {
 	// plan mode would otherwise block them. nil keeps fail-closed behavior.
 	PlanModeReadOnlyTrustGate PlanModeReadOnlyTrustGate
 
+	// SandboxEscapeApprover confirms a one-shot unconfined shell rerun after an
+	// enforced OS sandbox fails. nil keeps fail-closed behavior.
+	SandboxEscapeApprover sandbox.EscapeApprover
+
 	// Context management. ContextWindow <= 0 disables compaction. Ratios and
 	// RecentKeep fall back to defaults when unset.
-	ContextWindow     int
-	SoftCompactRatio  float64
-	CompactRatio      float64
-	CompactForceRatio float64
-	RecentKeep        int
-	ArchiveDir        string
-	KeepPolicy        KeepPolicy
+	ContextWindow       int
+	SoftCompactRatio    float64
+	ToolResultSnipRatio float64
+	CompactRatio        float64
+	CompactForceRatio   float64
+	RecentKeep          int
+	ArchiveDir          string
+	KeepPolicy          KeepPolicy
 
 	// Hooks fires PreToolUse / PostToolUse shell hooks around tool calls. nil
 	// disables hook firing.
@@ -822,12 +810,22 @@ type Options struct {
 	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
 	// as read-only. It cannot unlock known blocked tools or unsafe bash commands.
 	PlanModeAllowedTools []string
+	// PlanModeReadOnlyCommands names concrete shell command prefixes that plan mode
+	// may treat as read-only. Shell operators, background execution, and shell
+	// interpreter prefixes remain blocked.
+	PlanModeReadOnlyCommands []string
+
+	// SubagentDepth is the current nesting depth for this agent. Root sessions are
+	// depth 0; child subagents are depth 1. MaxSubagentDepth caps delegation.
+	SubagentDepth                int
+	MaxSubagentDepth             int
+	SuppressSubagentStartContext bool
 
 	// MemoryCompiler enables Memory v5 execution trace writeback and cache-safe
 	// execution-contract compilation.
 	MemoryCompiler *memorycompiler.Runtime
 	// MemoryCompilerVerbosity controls provider-visible injection. Empty defaults
-	// to observe; compact restores execution-contract user-turn injection.
+	// to observe; compact restores the execution-contract user-turn injection.
 	MemoryCompilerVerbosity string
 
 	// UseMemoryCompilerLLMClassification 启用 LLM 分类来判断任务 vs 聊天
@@ -843,8 +841,14 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if opts.SoftCompactRatio <= 0 {
 		opts.SoftCompactRatio = defaultSoftCompactRatio
 	}
+	if opts.ToolResultSnipRatio <= 0 {
+		opts.ToolResultSnipRatio = defaultToolResultSnipRatio
+	}
 	if opts.CompactRatio <= 0 {
 		opts.CompactRatio = defaultCompactRatio
+	}
+	if opts.ToolResultSnipRatio >= opts.CompactRatio {
+		opts.ToolResultSnipRatio = opts.CompactRatio
 	}
 	if opts.CompactForceRatio <= 0 {
 		opts.CompactForceRatio = defaultCompactForceRatio
@@ -863,6 +867,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(planModeReadOnlyTrust) {
 		planModeReadOnlyTrust = nil
 	}
+	sandboxEscapeApprover := opts.SandboxEscapeApprover
+	if nilutil.IsNil(sandboxEscapeApprover) {
+		sandboxEscapeApprover = nil
+	}
 	hooks := opts.Hooks
 	if nilutil.IsNil(hooks) {
 		hooks = nil
@@ -871,32 +879,47 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if strings.TrimSpace(maxStepsKey) == "" {
 		maxStepsKey = "agent.max_steps"
 	}
+	maxSubagentDepth := opts.MaxSubagentDepth
+	if maxSubagentDepth == 0 {
+		maxSubagentDepth = DefaultMaxSubagentDepth
+	} else {
+		maxSubagentDepth = NormalizeMaxSubagentDepth(maxSubagentDepth)
+	}
+	subagentDepth := opts.SubagentDepth
+	if subagentDepth < 0 {
+		subagentDepth = 0
+	}
 	a := &Agent{
-		prov:                    prov,
-		tools:                   tools,
-		session:                 session,
-		maxSteps:                opts.MaxSteps,
-		maxStepsKey:             maxStepsKey,
-		temperature:             opts.Temperature,
-		pricing:                 opts.Pricing,
-		usageSource:             usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-		sink:                    sink,
-		gate:                    gate,
-		planModeReadOnlyTrust:   planModeReadOnlyTrust,
-		hooks:                   hooks,
-		jobs:                    opts.Jobs,
-		evidence:                evidence.NewLedger(),
-		projectChecks:           append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		contextWindow:           opts.ContextWindow,
-		softCompactRatio:        opts.SoftCompactRatio,
-		compactRatio:            opts.CompactRatio,
-		compactForceRatio:       opts.CompactForceRatio,
-		recentKeep:              opts.RecentKeep,
-		archiveDir:              opts.ArchiveDir,
-		keepPolicy:              opts.KeepPolicy,
-		planModeAllowedTools:    append([]string(nil), opts.PlanModeAllowedTools...),
-		memoryCompiler:          opts.MemoryCompiler,
-		memoryCompilerVerbosity: normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
+		prov:                     prov,
+		tools:                    tools,
+		session:                  session,
+		maxSteps:                 opts.MaxSteps,
+		maxStepsKey:              maxStepsKey,
+		temperature:              opts.Temperature,
+		pricing:                  opts.Pricing,
+		usageSource:              usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+		sink:                     sink,
+		gate:                     gate,
+		planModeReadOnlyTrust:    planModeReadOnlyTrust,
+		sandboxEscapeApprover:    sandboxEscapeApprover,
+		hooks:                    hooks,
+		jobs:                     opts.Jobs,
+		evidence:                 evidence.NewLedger(),
+		projectChecks:            append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		contextWindow:            opts.ContextWindow,
+		softCompactRatio:         opts.SoftCompactRatio,
+		toolResultSnipRatio:      opts.ToolResultSnipRatio,
+		compactRatio:             opts.CompactRatio,
+		compactForceRatio:        opts.CompactForceRatio,
+		recentKeep:               opts.RecentKeep,
+		archiveDir:               opts.ArchiveDir,
+		keepPolicy:               opts.KeepPolicy,
+		planModeAllowedTools:     append([]string(nil), opts.PlanModeAllowedTools...),
+		planModeReadOnlyCommands: append([]string(nil), opts.PlanModeReadOnlyCommands...),
+		subagentDepth:            subagentDepth,
+		maxSubagentDepth:         maxSubagentDepth,
+		memoryCompiler:           opts.MemoryCompiler,
+		memoryCompilerVerbosity:  normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
 	}
 	// 初始化分类器
 	if opts.UseMemoryCompilerLLMClassification && prov != nil {
@@ -1012,6 +1035,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 						Content:            text,
 						ReasoningContent:   reasoning,
 						ReasoningSignature: signature,
+						MemoryCitations:    a.memoryCitations(),
 					})
 				}
 				a.session.Add(provider.Message{
@@ -1049,6 +1073,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			ReasoningContent:   reasoning,
 			ReasoningSignature: signature,
 			ToolCalls:          calls,
+			MemoryCitations:    a.memoryCitations(),
 		})
 
 		if len(calls) == 0 {
@@ -1157,6 +1182,8 @@ func (a *Agent) emitMemoryCompilerStats(turn *memorycompiler.Turn) {
 		HighSignalNodes:  m.HighSignalNodes,
 		ToolResultNodes:  m.ToolResultNodes,
 		DecisionNodes:    m.DecisionNodes,
+		StrategyCount:    m.StrategyCount,
+		LearningCount:    m.LearningCount,
 	}})
 }
 
@@ -1672,7 +1699,12 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 				}
 				stored, display := finishReasoning()
 				if text.Len() > 0 || display != "" {
-					a.sink.Emit(event.Event{Kind: event.Message, Text: StripGoalMarkers(text.String()), Reasoning: display})
+					a.sink.Emit(event.Event{
+						Kind:            event.Message,
+						Text:            StripGoalMarkers(text.String()),
+						Reasoning:       display,
+						MemoryCitations: a.memoryCitations(),
+					})
 				}
 				return text.String(), stored, signature, calls, usage, false, false, nil
 			}
@@ -1717,6 +1749,13 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			return "", "", "", nil, nil, false, false, chunk.Err
 		}
 	}
+}
+
+func (a *Agent) memoryCitations() []provider.MemoryCitation {
+	if a.compilerTurn == nil {
+		return nil
+	}
+	return a.compilerTurn.MemoryCitations()
 }
 
 func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {
@@ -1854,6 +1893,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) []s
 				Output:     o.output,
 				Error:      o.errMsg,
 				ReadOnly:   ok && t.ReadOnly(),
+				Blocked:    o.blocked,
 				DurationMs: durations[i],
 				Truncated:  o.truncated,
 			})
@@ -2074,7 +2114,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  "blocked: fresh read required",
 		}
 	}
+	planModeTrustedReadOnly := false
 	if a.planMode.Load() {
+		// Translate the tool's optional plan-mode self-report into the policy's
+		// tri-state. Mirrors the t.(tool.Previewer) assertion precedent below.
 		safety := planmode.PlanSafetyUnknown
 		if c, ok := t.(tool.PlanModeClassifier); ok {
 			if c.PlanModeSafe() {
@@ -2089,10 +2132,18 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		if u, ok := t.(tool.PlanModeUntrustedReadOnly); ok {
 			untrusted = u.PlanModeUntrustedReadOnly()
 		}
-		if blocked, msg := a.planModeBlockedWithTrust(call.Name, t.ReadOnly(), untrusted, safety, json.RawMessage(call.Arguments)); blocked {
+		if decision := a.planModeDecision(call.Name, t.ReadOnly(), untrusted, safety, json.RawMessage(call.Arguments)); decision.Blocked {
 			trustAllowed := false
-			if t.ReadOnly() && untrusted && safety != planmode.PlanSafetyUnsafe {
-				if allow, outcome, handled := a.checkPlanModeReadOnlyTrust(ctx, call, t); handled {
+			if decision.ReadOnlyCommandTrust != nil {
+				if allow, outcome, handled := a.checkPlanModeBashReadOnlyTrust(ctx, call, decision.ReadOnlyCommandTrust); handled {
+					if !allow {
+						return outcome
+					}
+					trustAllowed = true
+					planModeTrustedReadOnly = true
+				}
+			} else if t.ReadOnly() && untrusted && safety != planmode.PlanSafetyUnsafe {
+				if allow, outcome, handled := a.checkPlanModeMCPReadOnlyTrust(ctx, call, t); handled {
 					if !allow {
 						return outcome
 					}
@@ -2101,7 +2152,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 			if !trustAllowed {
 				return toolOutcome{
-					output:  msg,
+					output:  decision.Message,
 					blocked: true,
 					errMsg:  "blocked: plan mode is read-only",
 				}
@@ -2109,7 +2160,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	if a.gate != nil {
-		allow, reason, err := a.gate.Check(ctx, call.Name, json.RawMessage(call.Arguments), t.ReadOnly())
+		readOnly := t.ReadOnly() || planModeTrustedReadOnly
+		allow, reason, err := a.gate.Check(ctx, call.Name, json.RawMessage(call.Arguments), readOnly)
 		if err != nil {
 			return toolOutcome{
 				output:  fmt.Sprintf("blocked: %s (%v)", reason, err),
@@ -2151,6 +2203,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker, a.planMode.Load())
+	cctx = WithSubagentDepth(cctx, a.subagentDepth)
 	if a.evidence != nil {
 		cctx = evidence.WithLedger(cctx, a.evidence)
 		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
@@ -2160,6 +2213,14 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if a.jobs != nil {
 		cctx = jobs.WithManager(cctx, a.jobs)
+	}
+	if a.sandboxEscapeApprover != nil {
+		cctx = sandbox.WithEscapeApprover(cctx, a.sandboxEscapeApprover)
+	}
+	if v := a.responseLanguage.Load(); v != nil {
+		if lang, ok := v.(string); ok {
+			cctx = WithResponseLanguagePreference(cctx, lang)
+		}
 	}
 	if v := a.reasoningLanguage.Load(); v != nil {
 		if lang, ok := v.(string); ok {
@@ -2217,7 +2278,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
 }
 
-func (a *Agent) checkPlanModeReadOnlyTrust(ctx context.Context, call provider.ToolCall, t tool.Tool) (bool, toolOutcome, bool) {
+func (a *Agent) checkPlanModeMCPReadOnlyTrust(ctx context.Context, call provider.ToolCall, t tool.Tool) (bool, toolOutcome, bool) {
 	if a.planModeReadOnlyTrust == nil {
 		return false, toolOutcome{}, false
 	}
@@ -2252,6 +2313,37 @@ func (a *Agent) checkPlanModeReadOnlyTrust(ctx context.Context, call provider.To
 	return true, toolOutcome{}, true
 }
 
+func (a *Agent) checkPlanModeBashReadOnlyTrust(ctx context.Context, call provider.ToolCall, trust *planmode.ReadOnlyCommandTrust) (bool, toolOutcome, bool) {
+	if a.planModeReadOnlyTrust == nil || trust == nil || strings.TrimSpace(trust.Prefix) == "" {
+		return false, toolOutcome{}, false
+	}
+	req := PlanModeReadOnlyTrustRequest{
+		ToolName: PlanModeReadOnlyCommandApprovalTool,
+		Command:  trust.Command,
+		Prefix:   trust.Prefix,
+		Args:     json.RawMessage(call.Arguments),
+	}
+	allow, reason, err := a.planModeReadOnlyTrust.CheckPlanModeReadOnlyTrust(ctx, req)
+	if err != nil {
+		return false, toolOutcome{
+			output:  fmt.Sprintf("blocked: plan-mode read-only command trust approval aborted (%v)", err),
+			blocked: true,
+			errMsg:  fmt.Sprintf("blocked: %v", err),
+		}, true
+	}
+	if !allow {
+		if strings.TrimSpace(reason) == "" {
+			reason = "the user declined to trust this bash command as read-only for plan mode — do not retry it; continue planning with other trusted read-only tools."
+		}
+		return false, toolOutcome{
+			output:  "blocked: " + reason,
+			blocked: true,
+			errMsg:  "blocked by plan-mode bash read-only trust",
+		}, true
+	}
+	return true, toolOutcome{}, true
+}
+
 func planModeMCPTrustTarget(toolName string, t tool.Tool) (server, rawTool string, ok bool) {
 	if meta, metaOK := t.(tool.MCPMetadata); metaOK {
 		server = strings.TrimSpace(meta.MCPServerName())
@@ -2264,117 +2356,27 @@ func planModeMCPTrustTarget(toolName string, t tool.Tool) (server, rawTool strin
 	return server, rawTool, ok
 }
 
-func (a *Agent) planModeBlocked(toolName string, readOnly bool, args json.RawMessage) (blocked bool, message string) {
-	return a.planModeBlockedWithTrust(toolName, readOnly, false, planmode.PlanSafetyUnknown, args)
+func (a *Agent) planModeBlocked(toolName string, readOnly, untrusted bool, safety planmode.PlanSafety, args json.RawMessage) (blocked bool, message string) {
+	decision := a.planModeDecision(toolName, readOnly, untrusted, safety, args)
+	return decision.Blocked, decision.Message
 }
 
-func (a *Agent) planModeBlockedWithTrust(toolName string, readOnly, untrusted bool, safety planmode.PlanSafety, args json.RawMessage) (blocked bool, message string) {
-	decision := planmode.Policy{AllowedTools: a.planModeAllowedTools}.Decide(planmode.Call{
+func (a *Agent) planModeDecision(toolName string, readOnly, untrusted bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
+	return planmode.Policy{
+		AllowedTools:     a.planModeAllowedTools,
+		ReadOnlyCommands: a.planModeReadOnlyCommands,
+	}.Decide(planmode.Call{
 		Name:      toolName,
 		ReadOnly:  readOnly,
 		Untrusted: untrusted,
 		Safety:    safety,
 		Args:      args,
 	})
-	return decision.Blocked, decision.Message
 }
 
 func planModeBashBlocked(args json.RawMessage) (bool, string) {
-	var p struct {
-		Command                     string `json:"command"`
-		RunInBackground             bool   `json:"run_in_background"`
-		PreserveBackgroundProcesses bool   `json:"preserve_background_processes"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return true, "blocked: bash command in plan mode must be valid JSON."
-	}
-	if strings.TrimSpace(p.Command) == "" {
-		return true, "blocked: bash command in plan mode must include a non-empty command."
-	}
-	if p.RunInBackground {
-		return true, "blocked: bash background execution is not available in plan mode. Use foreground read-only commands only."
-	}
-	if p.PreserveBackgroundProcesses {
-		return true, "blocked: bash process preservation is not available in plan mode. Use foreground read-only commands only."
-	}
-	cmd := strings.TrimSpace(p.Command)
-	lower := strings.ToLower(cmd)
-
-	// Reject commands containing shell metacharacters — chaining, piping,
-	// redirection, or command substitution can introduce side effects after
-	// an otherwise safe prefix.
-	for _, mc := range planModeBashMetachars {
-		if strings.Contains(lower, mc) {
-			return true, fmt.Sprintf("blocked: bash command in plan mode must not contain shell operators (%q). Use separate calls for chained commands.", mc)
-		}
-	}
-
-	// Check the command prefix against the safe read-only whitelist. Require a
-	// shell-argument boundary after the match to avoid prefix collisions.
-	for _, safe := range planModeSafeBashCommands {
-		if !planModeBashMatchesSafePrefix(lower, safe) {
-			continue
-		}
-		if arg := planModeUnsafeSafeCommandArg(cmd, safe); arg != "" {
-			return true, fmt.Sprintf("blocked: bash command in plan mode uses a write-capable argument (%q). Use a read-only command while planning.", arg)
-		}
-		return false, ""
-	}
-
-	return true, fmt.Sprintf("blocked: bash commands in plan mode must be read-only. %q is not in the safe command list. Use read-only tools for exploration, then exit plan mode to run this command.", cmd)
-}
-
-func planModeBashMatchesSafePrefix(lower, safe string) bool {
-	if !strings.HasPrefix(lower, safe) {
-		return false
-	}
-	if len(lower) == len(safe) {
-		return true
-	}
-	r, _ := utf8.DecodeRuneInString(lower[len(safe):])
-	return unicode.IsSpace(r)
-}
-
-func planModeUnsafeSafeCommandArg(cmd, safe string) string {
-	fields := strings.Fields(cmd)
-	base := strings.Fields(safe)
-	if len(fields) <= len(base) {
-		return ""
-	}
-	args := fields[len(base):]
-	lowerArgs := make([]string, len(args))
-	for i, arg := range args {
-		lowerArgs[i] = strings.ToLower(arg)
-	}
-	if strings.HasPrefix(safe, "git ") {
-		for _, arg := range lowerArgs {
-			if arg == "--output" || strings.HasPrefix(arg, "--output=") || arg == "--ext-diff" {
-				return arg
-			}
-		}
-	}
-	switch safe {
-	case "git grep":
-		for i, arg := range args {
-			lowerArg := lowerArgs[i]
-			if arg == "-O" || strings.HasPrefix(arg, "-O") || strings.HasPrefix(lowerArg, "--open-files-in-pager") {
-				return arg
-			}
-		}
-	case "find":
-		for _, arg := range lowerArgs {
-			if planModeFindWriteArgs[arg] {
-				return arg
-			}
-		}
-	case "go list", "go vet":
-		for _, arg := range lowerArgs {
-			if planModeGoWriteOrExecArgs[arg] || strings.HasPrefix(arg, "-mod=mod") || strings.HasPrefix(arg, "-modfile=") || strings.HasPrefix(arg, "-toolexec=") || strings.HasPrefix(arg, "-vettool=") {
-				return arg
-			}
-		}
-	}
-	return ""
+	decision := planmode.Policy{}.Decide(planmode.Call{Name: "bash", Args: args})
+	return decision.Blocked, decision.Message
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
@@ -2469,6 +2471,9 @@ func canonicalToolArgs(raw string) string {
 }
 
 func normalizeShellCommand(command string) string {
+	if fields, malformed := shellparse.StaticFields(command); malformed == "" && len(fields) > 0 {
+		return strings.Join(fields, " ")
+	}
 	return strings.Join(strings.Fields(command), " ")
 }
 
@@ -2504,6 +2509,78 @@ func shellPythonOpenWrites(lower string) bool {
 }
 
 func hasShellWriteRedirect(command string) bool {
+	file, err := shellparse.ParseBash(command)
+	if err == nil {
+		hasWrite := false
+		syntax.Walk(file, func(node syntax.Node) bool {
+			redir, ok := node.(*syntax.Redirect)
+			if !ok {
+				return true
+			}
+			if bashRedirectWritesFile(command, redir) {
+				hasWrite = true
+				return false
+			}
+			return true
+		})
+		return hasWrite
+	}
+	return hasShellWriteRedirectFallback(command)
+}
+
+func bashRedirectWritesFile(source string, redir *syntax.Redirect) bool {
+	if redir == nil {
+		return false
+	}
+	switch redir.Op {
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.AppClob,
+		syntax.RdrAll, syntax.RdrAllClob, syntax.AppAll, syntax.AppAllClob,
+		syntax.RdrInOut:
+		return !redirectWordIsNullSink(source, redir.Word)
+	default:
+		return false
+	}
+}
+
+func redirectWordIsNullSink(source string, word *syntax.Word) bool {
+	if word == nil {
+		return false
+	}
+	if value, ok := shellparse.StaticWord(word); ok {
+		if isNullSinkWord(strings.TrimSpace(value)) {
+			return true
+		}
+	}
+	value := strings.TrimSpace(redirectWordSource(source, word))
+	if isNullSinkWord(value) {
+		return true
+	}
+	if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
+		return isNullSinkWord(value[1 : len(value)-1])
+	}
+	return false
+}
+
+func isNullSinkWord(value string) bool {
+	if value == "/dev/null" {
+		return true
+	}
+	return strings.EqualFold(value, "$null") || strings.EqualFold(value, "nul")
+}
+
+func redirectWordSource(source string, word *syntax.Word) string {
+	if word == nil || !word.Pos().IsValid() || !word.End().IsValid() {
+		return ""
+	}
+	start := int(word.Pos().Offset())
+	end := int(word.End().Offset())
+	if start < 0 || end < start || end > len(source) {
+		return ""
+	}
+	return source[start:end]
+}
+
+func hasShellWriteRedirectFallback(command string) bool {
 	var quote rune
 	var prev rune
 	for _, r := range command {

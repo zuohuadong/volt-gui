@@ -18,7 +18,7 @@ const (
 	RenderScopeProject RenderScope = "project"
 )
 
-// RenderTOML renders the config as annotated TOML in the `reasonix setup` house style:
+// RenderTOML renders the config as annotated TOML in the `voltui setup` house style:
 // comments preserved, system_prompt as a multi-line string, helpful hints. The
 // output round-trips back through Load (see render_test.go).
 func RenderTOML(c *Config) string {
@@ -27,7 +27,7 @@ func RenderTOML(c *Config) string {
 
 // RenderTOMLForScope renders an annotated TOML file for a specific persistence
 // target. User configs can carry desktop and account-level preferences; project
-// reasonix.toml stays focused on project behavior and intentionally excludes
+// voltui.toml stays focused on project behavior and intentionally excludes
 // desktop-only preferences.
 func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if c == nil {
@@ -45,8 +45,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	var b strings.Builder
 
 	b.WriteString("# Reasonix configuration.\n")
-	fmt.Fprintf(&b, "# Resolution order: flag > ./reasonix.toml > %s > built-in defaults.\n", userConfigDisplayPath())
-	b.WriteString("# Fields marked user/global only are not overridden by ./reasonix.toml.\n")
+	fmt.Fprintf(&b, "# Resolution order: flag > ./voltui.toml > %s > built-in defaults.\n", userConfigDisplayPath())
+	b.WriteString("# Fields marked user/global only are not overridden by ./voltui.toml.\n")
 	b.WriteString("# Secrets are named via api_key_env and stored in Reasonix's global .env; never put keys here.\n\n")
 
 	fmt.Fprintf(&b, "config_version = %d   # schema marker for diagnostics; old versions may ignore it\n", configVersion(c))
@@ -663,7 +663,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	if len(c.Plugins) == 0 {
 		b.WriteString("# [[plugins]]\n")
 		b.WriteString("# name    = \"example\"\n")
-		b.WriteString("# command = \"reasonix-plugin-example\"\n")
+		b.WriteString("# command = \"voltui-plugin-example\"\n")
 		b.WriteString("# call_timeout_seconds = 600       # optional per-server MCP call timeout\n")
 		b.WriteString("# tool_timeout_seconds = { \"generate_video\" = 1800 }   # raw MCP tool names\n")
 		b.WriteString("# trusted_read_only_tools = [\"search\"]   # optional pre-seeded MCP read-only trust\n")
@@ -1641,7 +1641,7 @@ func renderBotRoute(b *strings.Builder, route BotRouteConfig) {
 }
 
 // renderRuleList emits a permission rule list. A populated list renders as an
-// active TOML array; an empty one renders as a commented example so `reasonix setup`
+// active TOML array; an empty one renders as a commented example so `voltui setup`
 // scaffolds discoverable guidance without imposing surprising rules.
 func renderRuleList(key string, rules []string, example string) string {
 	if len(rules) == 0 {

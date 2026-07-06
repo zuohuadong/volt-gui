@@ -15,7 +15,7 @@ import (
 	"voltui/internal/tool"
 )
 
-// buildExamplePlugin compiles cmd/voltui-plugin-example/voltui-plugin-example into a temp binary and
+// buildExamplePlugin compiles cmd/voltui-plugin-example/reasonix-plugin-example into a temp binary and
 // returns its path. Building from inside the module lets `go build` resolve the
 // import path regardless of the test's working directory.
 func buildExamplePlugin(t *testing.T) string {

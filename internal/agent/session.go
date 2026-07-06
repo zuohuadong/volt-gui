@@ -26,7 +26,7 @@ type Session struct {
 	// captured alongside the message snapshot, never a re-read one, so a
 	// compaction landing mid-save stays unpersisted.
 	persistedRewriteVersion int
-	persisted      sessionPersistState
+	persisted               sessionPersistState
 	// normalizedDirty is set when LoadSession repaired the history on the way in
 	// (empty tool-call names, dangling calls, truncated args, …). The repair
 	// already lives in Messages, so the next Save persists it automatically as

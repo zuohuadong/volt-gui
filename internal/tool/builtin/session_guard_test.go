@@ -57,7 +57,6 @@ func TestSessionDataGuardDeniesRuntimeLedgers(t *testing.T) {
 		filepath.Join(root, "desktop-projects.json"),
 		filepath.Join(root, "desktop-window.json"),
 		filepath.Join(root, "desktop-workspace"),
-		filepath.Join(root, "heartbeat-tasks.json"),
 		filepath.Join(root, "metrics-pending.json"),
 		filepath.Join(root, "crash-pending.json"),
 	} {
@@ -69,6 +68,12 @@ func TestSessionDataGuardDeniesRuntimeLedgers(t *testing.T) {
 	// state-root-direct ledgers are the app's).
 	if err := g.Check(filepath.Join(root, "backups", "desktop-tabs.json")); err != nil {
 		t.Errorf("nested copy of a ledger name should be writable: %v", err)
+	}
+	// heartbeat-tasks.json is a documented human/AI-editable contract
+	// (desktop/heartbeat.go; the heartbeat panel tip tells users agents can
+	// edit it) — the guard must never break that flow.
+	if err := g.Check(filepath.Join(root, "heartbeat-tasks.json")); err != nil {
+		t.Errorf("heartbeat-tasks.json is AI-editable by product contract, got %v", err)
 	}
 }
 

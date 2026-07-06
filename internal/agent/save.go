@@ -1471,7 +1471,7 @@ func reconcileOverlongSessionFilenames(dir string) error {
 	renamed := map[string]string{} // old branch ID -> new branch ID
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, guardianSidecarSuffix) {
+		if e.IsDir() || !store.IsSessionTranscriptName(name) {
 			continue
 		}
 		if len(name) <= maxSessionBasenameBytes {
@@ -1595,6 +1595,9 @@ func migrateSessionSidecars(oldPath, newPath, newID string) error {
 	}
 	for _, pair := range [][2]string{
 		{store.SessionGoalState(oldPath), store.SessionGoalState(newPath)},
+		{store.SessionEventLog(oldPath), store.SessionEventLog(newPath)},
+		{store.SessionEventIndex(oldPath), store.SessionEventIndex(newPath)},
+		{store.SessionConflictLog(oldPath), store.SessionConflictLog(newPath)},
 		{store.SessionCheckpointDir(oldPath), store.SessionCheckpointDir(newPath)},
 		{store.SessionJobsDir(oldPath), store.SessionJobsDir(newPath)},
 	} {
@@ -1620,7 +1623,7 @@ func reparentSessionBranches(dir string, renamed map[string]string) error {
 	var errs []error
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, guardianSidecarSuffix) {
+		if e.IsDir() || !store.IsSessionTranscriptName(name) {
 			continue
 		}
 		if len(name)+len(".meta") > nameMaxBytes {

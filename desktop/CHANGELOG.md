@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.11.0...desktop-v0.11.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **ci:** avoid desktop release artifact quota failures ([01b33d6](https://github.com/zuohuadong/volt-gui/commit/01b33d621cb71b8e3f80b16897d9e3d92a625f69))
+
 ## [0.11.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.10.0...desktop-v0.11.0) (2026-07-07)
 
 

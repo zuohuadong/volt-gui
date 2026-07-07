@@ -269,9 +269,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          args=(--title "Reasonix Desktop ${{ steps.ver.outputs.version }}" --generate-notes)
-          [ "${{ steps.ver.outputs.prerelease }}" = "true" ] && args+=(--prerelease)
-          gh release create "${{ steps.ver.outputs.tag }}" dist/* "${args[@]}"
+          set -euo pipefail
+
+          tag="${{ steps.ver.outputs.tag }}"
+          title="VoltUI Desktop ${{ steps.ver.outputs.version }}"
+          prerelease="${{ steps.ver.outputs.prerelease }}"
+
+          create_args=(--title "$title" --generate-notes)
+          [ "$prerelease" = "true" ] && create_args+=(--prerelease)
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --prerelease="$prerelease"
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* "${create_args[@]}"
+          fi
 
       - name: Upload canary dist for mirror
         if: steps.ver.outputs.channel == 'canary'

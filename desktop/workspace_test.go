@@ -254,7 +254,10 @@ func TestProjectFileUpdatesSerializeReadModifyWrite(t *testing.T) {
 func TestNormalizeProjectsFileMergesEquivalentProjectRoots(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectRoot := t.TempDir()
-	equivalentRoot := filepath.Join(projectRoot, ".")
+	// A textually different spelling of the same folder. filepath.Join would
+	// clean the dot segment away and hand back the identical string, so build
+	// the spelling by hand.
+	equivalentRoot := projectRoot + string(filepath.Separator) + "."
 
 	f := normalizeProjectsFile(desktopProjectFile{
 		Projects: []desktopProject{
@@ -301,7 +304,7 @@ func TestSwitchWorkspaceReaddsRemovedProject(t *testing.T) {
 
 	app := NewApp()
 	installNoopRuntimeEvents(app)
-	if got, err := app.SwitchWorkspace(filepath.Join(projectRoot, ".")); err != nil {
+	if got, err := app.SwitchWorkspace(projectRoot + string(filepath.Separator) + "."); err != nil {
 		t.Fatalf("switch workspace: %v", err)
 	} else if got != normalizeProjectRoot(projectRoot) {
 		t.Fatalf("SwitchWorkspace root = %q, want %q", got, normalizeProjectRoot(projectRoot))
@@ -313,6 +316,108 @@ func TestSwitchWorkspaceReaddsRemovedProject(t *testing.T) {
 	}
 	if got := loadWorkspace(); got != normalizeProjectRoot(projectRoot) {
 		t.Fatalf("active workspace = %q, want %q", got, normalizeProjectRoot(projectRoot))
+	}
+}
+
+// flipPathASCIICase returns the path with the case of every ASCII letter
+// swapped — on Windows an equivalent spelling of the same folder that
+// normalizeProjectRoot cannot fold away.
+func flipPathASCIICase(t *testing.T, path string) string {
+	t.Helper()
+	flipped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r - 'a' + 'A'
+		case r >= 'A' && r <= 'Z':
+			return r - 'A' + 'a'
+		}
+		return r
+	}, path)
+	if flipped == path {
+		t.Skipf("path %q contains no ASCII letters to flip", path)
+	}
+	return flipped
+}
+
+func TestNormalizeProjectsFileFoldsRootCaseOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive root matching only applies to Windows paths")
+	}
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	flipped := flipPathASCIICase(t, projectRoot)
+
+	f := normalizeProjectsFile(desktopProjectFile{
+		Projects: []desktopProject{
+			{Root: projectRoot, Title: "Project", Topics: []string{"topic_a"}},
+			{Root: flipped, Color: "blue", Topics: []string{"topic_b"}},
+		},
+		PinnedProjects: []string{flipped},
+		SidebarOrder:   []string{flipped, projectRoot},
+	})
+
+	if len(f.Projects) != 1 {
+		t.Fatalf("projects = %+v, want case-equivalent roots merged", f.Projects)
+	}
+	canonical := f.Projects[0].Root
+	if canonical != normalizeProjectRoot(projectRoot) {
+		t.Fatalf("merged root = %q, want first spelling %q", canonical, normalizeProjectRoot(projectRoot))
+	}
+	if f.Projects[0].Title != "Project" || f.Projects[0].Color != "blue" {
+		t.Fatalf("merged metadata = %+v, want title and color preserved", f.Projects[0])
+	}
+	if got := f.Projects[0].Topics; len(got) != 2 || got[0] != "topic_a" || got[1] != "topic_b" {
+		t.Fatalf("merged topics = %v, want [topic_a topic_b]", got)
+	}
+	if len(f.PinnedProjects) != 1 || f.PinnedProjects[0] != canonical {
+		t.Fatalf("pinned projects = %v, want canonical root %q", f.PinnedProjects, canonical)
+	}
+	if len(f.SidebarOrder) != 1 || f.SidebarOrder[0] != canonical {
+		t.Fatalf("sidebar order = %v, want canonical root %q", f.SidebarOrder, canonical)
+	}
+}
+
+func TestProjectRootOpsFoldCaseOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive root matching only applies to Windows paths")
+	}
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	flipped := flipPathASCIICase(t, projectRoot)
+
+	if err := addProject(projectRoot, "Project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := addProject(flipped, ""); err != nil {
+		t.Fatalf("re-add project under flipped case: %v", err)
+	}
+	projects := loadProjectsFile().Projects
+	if len(projects) != 1 {
+		t.Fatalf("projects = %+v, want re-add under equivalent spelling to update in place", projects)
+	}
+	if projects[0].Root != normalizeProjectRoot(flipped) {
+		t.Fatalf("root = %q, want self-healed to latest spelling %q", projects[0].Root, normalizeProjectRoot(flipped))
+	}
+	if projects[0].Title != "Project" {
+		t.Fatalf("title = %q, want preserved across re-add", projects[0].Title)
+	}
+
+	if err := prependTopicInProjectsFile(projectRoot, "topic_a", true); err != nil {
+		t.Fatalf("prepend topic: %v", err)
+	}
+	projects = loadProjectsFile().Projects
+	if len(projects) != 1 {
+		t.Fatalf("projects = %+v, want topic prepend to reuse the case-equivalent entry", projects)
+	}
+	if got := projects[0].Topics; len(got) != 1 || got[0] != "topic_a" {
+		t.Fatalf("topics = %v, want [topic_a] on the merged entry", got)
+	}
+
+	if err := removeProject(projectRoot); err != nil {
+		t.Fatalf("remove project via original spelling: %v", err)
+	}
+	if got := loadProjectsFile().Projects; len(got) != 0 {
+		t.Fatalf("projects after remove = %+v, want none", got)
 	}
 }
 

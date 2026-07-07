@@ -1949,7 +1949,7 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 	if tab == nil || tab.Scope != scope {
 		return false
 	}
-	if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+	if scope == "project" && !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
 		return false
 	}
 	if tab.Ctrl == nil {
@@ -2051,13 +2051,8 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 	var topicIDs []string
 	if scope == "global" {
 		topicIDs = orderedTopicIDs(f.GlobalTopics, titles)
-	} else {
-		for _, project := range f.Projects {
-			if project.Root == workspaceRoot {
-				topicIDs = orderedTopicIDs(project.Topics, titles)
-				break
-			}
-		}
+	} else if i := projectIndexByRoot(f.Projects, workspaceRoot); i >= 0 {
+		topicIDs = orderedTopicIDs(f.Projects[i].Topics, titles)
 	}
 	if len(topicIDs) == 0 {
 		return ""
@@ -2077,7 +2072,7 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 		if tab == nil || tab.Scope != scope || strings.TrimSpace(tab.TopicID) == "" {
 			continue
 		}
-		if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+		if scope == "project" && !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
 			continue
 		}
 		openTopics[tab.TopicID] = true
@@ -3090,7 +3085,9 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	changed := tab.Scope != scope ||
 		tab.WorkspaceRoot != workspaceRoot ||
 		canonicalTabSessionPath(tab.SessionPath) != canonicalTabSessionPath(binding.path)
-	workspaceChanged := tab.Scope != scope || tab.WorkspaceRoot != workspaceRoot
+	// Spelling-only root updates still persist above, but an equivalent root is
+	// the same workspace — do not warn the user about a switch.
+	workspaceChanged := tab.Scope != scope || !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 	tab.Scope = scope
 	tab.WorkspaceRoot = workspaceRoot
 	tab.SessionPath = canonicalTabSessionPath(binding.path)
@@ -4052,7 +4049,7 @@ func prependTopicsInProjectsFileOpts(workspaceRoot string, topicIDs []string, en
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root != workspaceRoot {
+			if !sameProjectRoot(p.Root, workspaceRoot) {
 				continue
 			}
 			next := uniqueStrings(append(append([]string(nil), live...), p.Topics...))
@@ -4187,6 +4184,9 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 
 func normalizeSidebarOrder(order []string, projects []desktopProject) []string {
 	seenGlobal := false
+	// Dedupe roots against a roots-only list: out also holds the global order
+	// token, which must never be path-compared against project roots.
+	var seenRoots []string
 	out := make([]string, 0, len(order))
 	for _, value := range order {
 		value = strings.TrimSpace(value)
@@ -4203,9 +4203,10 @@ func normalizeSidebarOrder(order []string, projects []desktopProject) []string {
 			continue
 		}
 		root = projects[i].Root
-		if projectRootInList(out, root) {
+		if projectRootInList(seenRoots, root) {
 			continue
 		}
+		seenRoots = append(seenRoots, root)
 		out = append(out, root)
 	}
 	return out
@@ -5514,11 +5515,8 @@ func repairIndexedSessionTopics(dir string) []string {
 	indexedTopics := projects.GlobalTopics
 	if scope == "project" {
 		indexedTopics = nil
-		for _, p := range projects.Projects {
-			if p.Root == workspaceRoot {
-				indexedTopics = p.Topics
-				break
-			}
+		if i := projectIndexByRoot(projects.Projects, workspaceRoot); i >= 0 {
+			indexedTopics = projects.Projects[i].Topics
 		}
 	}
 	indexedSet := make(map[string]bool, len(indexedTopics))
@@ -5683,6 +5681,17 @@ func sameDesktopPath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+// projectRootKey is the map-key form of a project root: cleaned, absolute,
+// and case-folded on Windows — the same key form agent.CanonicalSessionPath
+// uses for session paths, so equivalent spellings never split lookups.
+func projectRootKey(root string) string {
+	root = cleanDesktopPath(root)
+	if os.PathSeparator == '\\' {
+		return strings.ToLower(root)
+	}
+	return root
 }
 
 func restoreSessionTopicIndex(dir, sessionPath string) error {
@@ -6714,7 +6723,10 @@ func topicSummaryKey(scope, workspaceRoot, topicID string) string {
 	if scope == "global" {
 		return "global::" + topicID
 	}
-	return "project:" + workspaceRoot + ":" + topicID
+	// Producers key by the live tab's root spelling while the sidebar keys by
+	// the registry's canonical spelling; fold both so runtime status never
+	// splits across equivalent roots.
+	return "project:" + projectRootKey(workspaceRoot) + ":" + topicID
 }
 
 func projectSessionNodeKey(scope, sessionPath string) string {

@@ -75,6 +75,34 @@ func TestWorkspaceWriteConfinement(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAutomationOutputPathBinding(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "screen.png")
+	tools := byName(Workspace{Dir: dir}.Tools())
+
+	ds, ok := tools["desktop_screenshot"].(desktopScreenshot)
+	if !ok {
+		t.Fatalf("desktop_screenshot was not workspace-bound: %T", tools["desktop_screenshot"])
+	}
+	if ds.workDir != dir {
+		t.Fatalf("desktop_screenshot workDir = %q, want %q", ds.workDir, dir)
+	}
+	if got, err := resolveAutomationOutputPath("shots/screen.png", "desktop-screenshot", ds.roots, ds.workDir); err != nil || got != filepath.Join(dir, "shots", "screen.png") {
+		t.Fatalf("relative desktop screenshot path = %q err=%v", got, err)
+	}
+	if _, err := resolveAutomationOutputPath(outside, "desktop-screenshot", ds.roots, ds.workDir); err == nil {
+		t.Fatal("desktop screenshot outside workspace should be refused")
+	}
+
+	bc, ok := tools["browser_control"].(browserControl)
+	if !ok {
+		t.Fatalf("browser_control was not workspace-bound: %T", tools["browser_control"])
+	}
+	if _, err := resolveAutomationOutputPath(outside, "browser-control", bc.roots, bc.workDir); err == nil {
+		t.Fatal("browser screenshot outside workspace should be refused")
+	}
+}
+
 func TestWorkspaceMoveFileBindsAndConfines(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "evil.txt")

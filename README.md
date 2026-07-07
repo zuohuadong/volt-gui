@@ -231,12 +231,26 @@ allow = ["bash(go test*)"]                   # never prompted
 # allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit may touch
 ```
 
-## Browser (enabled by default)
+## Browser and desktop automation (enabled by default)
 
 Built-in `browser_navigate` drives a headless Chromium-family browser through
 CDP (Chrome DevTools Protocol), so JavaScript-heavy internal docs, dashboards,
 and SPAs render before text extraction. It covers pages that `web_fetch` (plain
 HTTP) cannot handle.
+
+Release builds also include first-party desktop automation tools:
+
+- `browser_control` — Playwright-like CDP actions: open a page, click selectors
+  or coordinates, type text, press keys, wait, and save browser screenshots.
+- `desktop_screenshot` — capture the desktop to a PNG file.
+- `desktop_mouse` / `desktop_keyboard` — move/click/drag/scroll and type/press
+  keys on the host desktop.
+
+These host-control tools are **not read-only** in the tool contract, so the
+normal permission rules and desktop approval UI gate them by default. macOS may
+ask for Screen Recording / Accessibility permissions; Windows uses built-in
+PowerShell/.NET + user32; Linux uses common desktop backends such as
+`gnome-screenshot`, `grim`, `scrot`, and `xdotool` when available.
 
 - **Windows 10:** Edge is pre-installed — works out of the box, zero setup.
 - **macOS / Linux:** auto-detects Chrome/Chromium/Edge from well-known paths.

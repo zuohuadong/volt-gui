@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.9.1...desktop-v0.10.0) (2026-07-07)
+
+
+### Features
+
+* add desktop automation builtins ([93268a1](https://github.com/zuohuadong/volt-gui/commit/93268a1d5e05bbd2875783f4605b04c5c6971f7f))
+
+
+### Chores
+
+* align VoltUI branding and release config ([64bea6a](https://github.com/zuohuadong/volt-gui/commit/64bea6a305475d48cc8bea581bdd2afe95cbdd7d))
+
 ## [0.9.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.9.0...desktop-v0.9.1) (2026-07-07)
 
 

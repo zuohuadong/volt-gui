@@ -209,11 +209,19 @@ jobs:
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         run: cp signed/*installer*.exe dist/
 
-      - uses: actions/upload-artifact@v7
+      # This is only a same-run handoff to publish; avoid Actions artifact storage
+      # so a full artifact quota cannot fail otherwise good platform builds.
+      - name: Stage packaged dist for publish
+        run: |
+          rm -rf "dist-${{ matrix.name }}"
+          mkdir -p "dist-${{ matrix.name }}"
+          cp -R dist/. "dist-${{ matrix.name }}/"
+
+      - name: Save packaged dist for publish
+        uses: actions/cache/save@v6
         with:
-          name: dist-${{ matrix.name }}
-          path: dist/*
-          if-no-files-found: error
+          path: dist-${{ matrix.name }}
+          key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}
 
   publish:
     name: publish release
@@ -231,11 +239,41 @@ jobs:
           cache: true
           cache-dependency-path: desktop/go.sum
 
-      - uses: actions/download-artifact@v8
+      - name: Restore darwin dist
+        uses: actions/cache/restore@v6
         with:
-          path: dist
-          pattern: dist-*
-          merge-multiple: true
+          path: dist-darwin-universal
+          key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-darwin-universal
+          fail-on-cache-miss: true
+
+      - name: Restore linux dist
+        uses: actions/cache/restore@v6
+        with:
+          path: dist-linux-amd64
+          key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
+          fail-on-cache-miss: true
+
+      - name: Restore Windows amd64 dist
+        uses: actions/cache/restore@v6
+        with:
+          path: dist-windows-amd64
+          key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-windows-amd64
+          fail-on-cache-miss: true
+
+      - name: Restore Windows arm64 dist
+        uses: actions/cache/restore@v6
+        with:
+          path: dist-windows-arm64
+          key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-windows-arm64
+          fail-on-cache-miss: true
+
+      - name: Collect restored dist
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          for dir in dist-darwin-universal dist-linux-amd64 dist-windows-amd64 dist-windows-arm64; do
+            cp -R "$dir"/. dist/
+          done
 
       - name: Resolve version
         id: ver
@@ -278,13 +316,19 @@ jobs:
             gh release create "$tag" dist/* "${create_args[@]}"
           fi
 
-      - name: Upload canary dist for mirror
+      - name: Stage canary dist for mirror
         if: steps.ver.outputs.channel == 'canary'
-        uses: actions/upload-artifact@v7
+        run: |
+          rm -rf assets
+          mkdir -p assets
+          cp -R dist/. assets/
+
+      - name: Save canary dist for mirror
+        if: steps.ver.outputs.channel == 'canary'
+        uses: actions/cache/save@v6
         with:
-          name: canary-dist
-          path: dist/*
-          if-no-files-found: error
+          path: assets
+          key: desktop-canary-dist-${{ github.run_id }}-${{ github.run_attempt }}
 
   mirror:
     name: mirror to R2
@@ -311,14 +355,15 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
 
-      # Canary has no GitHub release — pull the signed dist from the workflow
-      # artifact. Stable pulls from the published release.
-      - name: Download canary dist
+      # Canary has no GitHub release — pull the signed dist from the run-local
+      # cache. Stable pulls from the published release.
+      - name: Restore canary dist
         if: env.HAS_R2 == 'true' && steps.ver.outputs.channel == 'canary'
-        uses: actions/download-artifact@v8
+        uses: actions/cache/restore@v6
         with:
-          name: canary-dist
           path: assets
+          key: desktop-canary-dist-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
 
       - name: Download release assets
         if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'canary'

@@ -5,6 +5,9 @@
     AlertTriangle,
     Archive,
     ArrowLeft,
+    ArrowDown,
+    ArrowRight,
+    ArrowUp,
     Blocks,
     BookMarked,
     BookOpen,
@@ -18,6 +21,7 @@
     ClipboardList,
     Code2,
     ContactRound,
+    Crosshair,
     Crown,
     Database,
     Download,
@@ -32,6 +36,9 @@
     Loader2,
     Mail,
     MapPin,
+    Maximize2,
+    MousePointer2,
+    Move,
     PanelLeft,
     Pencil,
     Phone,
@@ -49,6 +56,8 @@
     UsersRound,
     Workflow,
     Zap,
+    ZoomIn,
+    ZoomOut,
   } from "@lucide/svelte";
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
@@ -122,6 +131,11 @@
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
+  type ArtifactCanvasMode = "select" | "pan";
+  type ArtifactReviewStageId = "copy" | "draft" | "design" | "export";
+  type ArtifactReviewStage = { id: ArtifactReviewStageId; label: string; status: string };
+  type ArtifactReviewFinding = { id: string; label: string; target: string; status: string; x: number; y: number };
+  type ArtifactStyleOption = { id: string; name: string; templateVersion: string; brandKitVersion: string; rationale: string };
   type AgentMarketItem = Pick<AgentView, "id" | "name" | "role" | "runs" | "status" | "desc"> & { category: string; source: string; version: string; tags: string[]; localPath: string };
   type SidebarConversation = { id: string; title: string; updatedAt: string; updatedAtMs?: number; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
   type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
@@ -492,6 +506,13 @@
   let ingestDraftFileLabel = $state("");
   let selectedMaterialDetailId = $state("");
   let selectedReportId = $state("");
+  let artifactCanvasMode = $state<ArtifactCanvasMode>("select");
+  let artifactCanvasZoom = $state(96);
+  let artifactCanvasPanX = $state(0);
+  let artifactCanvasPanY = $state(0);
+  let selectedArtifactStage = $state<ArtifactReviewStageId>("design");
+  let selectedArtifactStyleId = $state("brand-systematic");
+  let artifactStyleApproved = $state(false);
   let reportDraftTitle = $state("");
   let reportDraftKind = $state("项目风险报告");
   let reportDraftStatus = $state("草稿");
@@ -514,6 +535,22 @@
   const reportSourceOptions = ["工作台数据", "项目资料", "客户资料", "待办事项", "日程日历", "自动化运行", "团队协作"];
   const reportFormatOptions = ["Markdown", "PDF", "Word", "HTML"];
   const materialStatusOptions = ["待复核", "已关联", "已索引", "已同步", "已归档"];
+  const artifactReviewStages: ArtifactReviewStage[] = [
+    { id: "copy", label: "文案", status: "已审" },
+    { id: "draft", label: "草稿", status: "可退回" },
+    { id: "design", label: "设计", status: "审查中" },
+    { id: "export", label: "导出", status: "待门禁" },
+  ];
+  const artifactStyleOptions: ArtifactStyleOption[] = [
+    { id: "brand-systematic", name: "品牌系统化", templateVersion: "template.v3", brandKitVersion: "brand-kit.2026.07", rationale: "适合报告、PPT 和长图统一复用，信息密度更高。" },
+    { id: "launch-editorial", name: "发布叙事", templateVersion: "template.v2", brandKitVersion: "brand-kit.2026.07", rationale: "适合活动海报与故事板，主视觉更突出。" },
+    { id: "compliance-plain", name: "合规简明", templateVersion: "template.v1", brandKitVersion: "brand-kit.2026.06", rationale: "适合审查材料，强调证据、免责声明和留痕。" },
+  ];
+  const artifactReviewFindings: ArtifactReviewFinding[] = [
+    { id: "copy-claim", label: "文案断言", target: "slide:cover/title", status: "需证据", x: 26, y: 25 },
+    { id: "brand-logo", label: "品牌标识", target: "layer:logo", status: "已通过", x: 78, y: 22 },
+    { id: "cta-safe-area", label: "安全区", target: "scene:cta/footer", status: "待复核", x: 68, y: 76 },
+  ];
   let runningAutomations = $state<WorkbenchAutomation[]>([
     { id: "preflight-validation", title: "提交前验证自动化", desc: "参考 Codex 自动化，把前端门禁、构建、空白检查和浏览器日志验证串成一个可复用的自动化任务。", status: "运行中", kind: "验证自动化", owner: "自动化 Agent", startedAtMs: Date.now() - 5400000, cadence: "每次 UI 改动后", schedule: "手动触发 / 提交前", scope: "desktop/frontend", environment: "local workspace", command: "autofixer -> npm run check -> npm run build -> browser logs", result: "最近一次通过", lastRun: "刚刚", nextRun: "等待下一次改动", steps: ["Svelte autofixer", "类型检查", "生产构建", "浏览器 DOM / 控制台验证"], logs: ["0 errors / 0 warnings", "构建通过，保留已知 @theme warning", "浏览器 warn/error 为空"] },
     { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", kind: "质量门禁", owner: "代码审查 Agent", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", schedule: "改动后手动复跑", scope: "desktop/frontend", environment: "local workspace", command: "npm run check / npm run build / git diff --check", result: "通过", lastRun: "12 分钟前", nextRun: "下一次前端改动", steps: ["npm run check", "npm run build", "git diff --check"], logs: ["svelte-check 通过", "Vite build 通过", "无空白错误"] },
@@ -2790,6 +2827,62 @@
     const body = report?.body?.trim() || report?.desc?.trim();
     return body ? body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : ["暂无报告正文。"];
   }
+  function selectedArtifactStyle() {
+    return artifactStyleOptions.find((style) => style.id === selectedArtifactStyleId) ?? artifactStyleOptions[0];
+  }
+  function artifactKindLabel(report = selectedReport()) {
+    const text = [report?.kind, report?.format, report?.title].filter(Boolean).join(" ").toLowerCase();
+    if (/ppt|deck|slide|演示|幻灯/.test(text)) return "Deck Slides";
+    if (/poster|海报|长图/.test(text)) return "Poster Variant";
+    if (/video|storyboard|scene|视频|分镜/.test(text)) return "Storyboard";
+    return "Review Artifact";
+  }
+  function artifactStageLabel() {
+    return artifactReviewStages.find((stage) => stage.id === selectedArtifactStage)?.label ?? "设计";
+  }
+  function setArtifactStage(stageId: ArtifactReviewStageId) {
+    selectedArtifactStage = stageId;
+    if (stageId !== "export") return;
+    if (!artifactStyleApproved) showWorkbenchNotice("样式门禁未通过，导出阶段仍需人工批准。");
+  }
+  function updateArtifactZoom(delta: number) {
+    artifactCanvasZoom = Math.min(160, Math.max(60, artifactCanvasZoom + delta));
+  }
+  function fitArtifactCanvas() {
+    artifactCanvasZoom = 92;
+    artifactCanvasPanX = 0;
+    artifactCanvasPanY = 0;
+  }
+  function centerArtifactCanvas() {
+    artifactCanvasPanX = 0;
+    artifactCanvasPanY = 0;
+  }
+  function resetArtifactCanvas() {
+    artifactCanvasMode = "select";
+    artifactCanvasZoom = 96;
+    artifactCanvasPanX = 0;
+    artifactCanvasPanY = 0;
+  }
+  function panArtifactCanvas(dx: number, dy: number) {
+    artifactCanvasMode = "pan";
+    artifactCanvasPanX = Math.max(-96, Math.min(96, artifactCanvasPanX + dx));
+    artifactCanvasPanY = Math.max(-72, Math.min(72, artifactCanvasPanY + dy));
+  }
+  function approveArtifactStyle() {
+    artifactStyleApproved = true;
+    selectedArtifactStage = "design";
+    showWorkbenchNotice(`已批准样式：${selectedArtifactStyle().name}`);
+  }
+  function returnArtifactToDraft() {
+    artifactStyleApproved = false;
+    selectedArtifactStage = "draft";
+    showWorkbenchNotice("已退回草稿阶段，保留当前产物坐标与审查意见。");
+  }
+  function artifactExportState() {
+    if (!artifactStyleApproved) return "样式待批准";
+    if (selectedArtifactStage !== "export") return "等待导出阶段";
+    return "可导出";
+  }
   function projectTodos(project = selectedProject()) { return [...todoProjectRows(project.id), ...projectTodoRows.filter((item) => item.projectId === project.id)]; }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
   function customerProjects(customer = selectedCustomer()) { return projectCards.filter((project) => customer.projectIds.includes(project.id)); }
@@ -4679,6 +4772,117 @@
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined}>
             <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchModeCopy[activityMode].eyebrow}</span><strong>{activityMode === "code" ? "Code 工作台" : workLayerLabels[workLayer]}</strong></div><p>{activityMode === "code" ? "面向研发用户的代码上下文、diff、检查点和执行权限控制台。" : workbenchModeCopy.work.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> 代码状态</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
             {#if workbenchNotice}<div class="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
+            {#if activityMode === "work" && workLayer === "reports"}
+              {@const activeReport = selectedReport()}
+              {@const activeStyle = selectedArtifactStyle()}
+              <section class="artifact-review-workbench" aria-label="产物审查工作台">
+                <header class="artifact-review-head">
+                  <div>
+                    <span>Artifact Review</span>
+                    <strong>{activeReport?.title ?? "待选择产物"}</strong>
+                    <p>{artifactKindLabel(activeReport)} / {artifactStageLabel()} / {activeReport?.owner ?? "未指定负责人"}</p>
+                  </div>
+                  <div class="artifact-stage-tabs" role="tablist" aria-label="审查阶段">
+                    {#each artifactReviewStages as stage (stage.id)}
+                      <button class:active={selectedArtifactStage === stage.id} type="button" role="tab" aria-selected={selectedArtifactStage === stage.id} onclick={() => setArtifactStage(stage.id)}>
+                        <span>{stage.label}</span>
+                        <em>{stage.status}</em>
+                      </button>
+                    {/each}
+                  </div>
+                </header>
+
+                <div class="artifact-review-grid">
+                  <section class="artifact-canvas-shell" aria-label="通用审查画布">
+                    <div class="artifact-canvas-toolbar" role="toolbar" aria-label="画布工具">
+                      <div class="artifact-mode-switch" role="group" aria-label="画布模式">
+                        <button class:active={artifactCanvasMode === "select"} type="button" title="选择区域" aria-label="选择区域" onclick={() => (artifactCanvasMode = "select")}><MousePointer2 size={15} /></button>
+                        <button class:active={artifactCanvasMode === "pan"} type="button" title="平移画布" aria-label="平移画布" onclick={() => (artifactCanvasMode = "pan")}><Move size={15} /></button>
+                      </div>
+                      <div class="artifact-tool-buttons" role="group" aria-label="缩放与定位">
+                        <button type="button" title="缩小" aria-label="缩小" disabled={artifactCanvasZoom <= 60} onclick={() => updateArtifactZoom(-8)}><ZoomOut size={15} /></button>
+                        <strong>{artifactCanvasZoom}%</strong>
+                        <button type="button" title="放大" aria-label="放大" disabled={artifactCanvasZoom >= 160} onclick={() => updateArtifactZoom(8)}><ZoomIn size={15} /></button>
+                        <button type="button" title="适配屏幕" aria-label="适配屏幕" onclick={fitArtifactCanvas}><Maximize2 size={15} /></button>
+                        <button type="button" title="居中" aria-label="居中" disabled={artifactCanvasPanX === 0 && artifactCanvasPanY === 0} onclick={centerArtifactCanvas}><Crosshair size={15} /></button>
+                        <button type="button" title="重置" aria-label="重置" disabled={artifactCanvasZoom === 96 && artifactCanvasPanX === 0 && artifactCanvasPanY === 0 && artifactCanvasMode === "select"} onclick={resetArtifactCanvas}><RotateCcw size={15} /></button>
+                      </div>
+                      <div class="artifact-pan-pad" role="group" aria-label="平移控制">
+                        <button type="button" title="上移" aria-label="上移画布" onclick={() => panArtifactCanvas(0, -18)}><ArrowUp size={14} /></button>
+                        <button type="button" title="左移" aria-label="左移画布" onclick={() => panArtifactCanvas(-18, 0)}><ArrowLeft size={14} /></button>
+                        <button type="button" title="右移" aria-label="右移画布" onclick={() => panArtifactCanvas(18, 0)}><ArrowRight size={14} /></button>
+                        <button type="button" title="下移" aria-label="下移画布" onclick={() => panArtifactCanvas(0, 18)}><ArrowDown size={14} /></button>
+                      </div>
+                    </div>
+
+                    <div class="artifact-canvas-viewport" data-mode={artifactCanvasMode}>
+                      <div class="artifact-canvas-page" style={`--artifact-zoom:${artifactCanvasZoom / 100};--artifact-pan-x:${artifactCanvasPanX}px;--artifact-pan-y:${artifactCanvasPanY}px`}>
+                        <div class="artifact-page-meta">
+                          <span>{artifactKindLabel(activeReport)}</span>
+                          <strong>{activeReport?.title ?? "未选择报告"}</strong>
+                          <em>{activeStyle.name} / {activeStyle.templateVersion}</em>
+                        </div>
+                        <div class="artifact-page-layout">
+                          <section>
+                            <b>{activeReport?.kind || "分析报告"}</b>
+                            <h3>{activeReport?.title ?? "产物标题"}</h3>
+                            <p>{activeReport?.desc || "这里展示格式中立的产物预览，审查状态与视口缩放互不绑定。"}</p>
+                          </section>
+                          <aside>
+                            <span>Brand Kit</span>
+                            <strong>{activeStyle.brandKitVersion}</strong>
+                            <em>{artifactExportState()}</em>
+                          </aside>
+                        </div>
+                        {#each artifactReviewFindings as finding (finding.id)}
+                          <button class="artifact-marker" type="button" style={`--marker-x:${finding.x}%;--marker-y:${finding.y}%`} title={`${finding.label}: ${finding.target}`} aria-label={`${finding.label}: ${finding.target}`}>
+                            {finding.label}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+                  </section>
+
+                  <aside class="artifact-review-side" aria-label="审查门禁与坐标">
+                    <section class="artifact-style-gate">
+                      <header>
+                        <span>Style Gate</span>
+                        <strong>{artifactStyleApproved ? "样式已批准" : "等待样式批准"}</strong>
+                      </header>
+                      <div class="artifact-style-list">
+                        {#each artifactStyleOptions as style (style.id)}
+                          <button class:active={selectedArtifactStyleId === style.id} type="button" onclick={() => { selectedArtifactStyleId = style.id; artifactStyleApproved = false; }}>
+                            <strong>{style.name}</strong>
+                            <span>{style.templateVersion} / {style.brandKitVersion}</span>
+                            <em>{style.rationale}</em>
+                          </button>
+                        {/each}
+                      </div>
+                      <div class="artifact-gate-actions">
+                        <button type="button" onclick={returnArtifactToDraft}>退回草稿</button>
+                        <button type="button" onclick={approveArtifactStyle}>批准样式</button>
+                      </div>
+                    </section>
+
+                    <section class="artifact-coordinate-list">
+                      <header>
+                        <span>Coordinates</span>
+                        <strong>{artifactReviewFindings.length} 条坐标化意见</strong>
+                      </header>
+                      {#each artifactReviewFindings as finding (finding.id)}
+                        <article>
+                          <div>
+                            <strong>{finding.label}</strong>
+                            <p>{finding.target}</p>
+                          </div>
+                          <span>{finding.status}</span>
+                        </article>
+                      {/each}
+                    </section>
+                  </aside>
+                </div>
+              </section>
+            {/if}
             {#if activityMode === "code"}
               <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
                 <div class="code-workbench-shell">
@@ -6981,6 +7185,7 @@
   .detail-panel{padding:18px;border:1px solid rgba(226,232,240,.9);border-radius:20px;background:rgba(255,255,255,.82);box-shadow:0 18px 42px rgba(15,23,42,.06)}.detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.detail-panel header span{color:#7b8494;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.detail-panel header strong{display:block;margin-top:6px;color:#0f172a;font-size:22px;line-height:1.18;letter-spacing:-.035em}.detail-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}.detail-summary article{padding:12px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.detail-summary span{display:block;color:#7b8494;font-size:11px}.detail-summary strong{display:block;margin-top:6px;color:#111827;font-size:13px}.detail-tabs{display:flex;gap:7px;margin:16px 0 10px}.detail-tabs button{height:30px;padding:0 10px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#5f6774;font-size:12px}.detail-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.detail-timeline{display:grid;gap:10px}.detail-timeline article{padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.detail-timeline b{display:block;color:#111827}.detail-timeline p{margin:6px 0;color:#5f6774;font-size:13px;line-height:1.6}.detail-timeline em{color:#7b8494;font-size:11px;font-style:normal}.team-card{cursor:pointer;text-align:left}.team-card{border:1px solid rgba(226,232,240,.88);background:rgba(255,255,255,.78)}.config-grid select{height:36px;padding:0 10px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}.config-grid textarea,.config-grid input{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}@media(max-width:980px){.detail-summary{grid-template-columns:1fr}}
   .config-grid .percent-input{display:grid;grid-template-columns:minmax(0,1fr)auto;align-items:center;height:36px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827;overflow:hidden}.config-grid .percent-input input{height:34px;border:0;border-radius:0;background:transparent}.config-grid .percent-input span{padding:0 12px;color:#5f6774;font-size:13px}
   .config-grid .material-file-field{gap:8px}.material-file-picker{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;min-height:42px;padding:4px 12px 4px 4px;border:1px solid #d9dee8;border-radius:12px;background:#fff;color:#111827;overflow:hidden}.material-file-picker:hover{border-color:#bfdbfe;background:#f8fbff}.material-file-picker input{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:pointer}.material-file-picker strong{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border-radius:9px;background:#111827;color:#fff;font-size:13px;font-weight:650;white-space:nowrap}.material-file-picker span{min-width:0;overflow:hidden;color:#667085;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.material-file-field em{color:#7b8494;font-size:12px;font-style:normal}
+  .artifact-review-workbench{display:grid;gap:14px;padding:16px 20px;border-bottom:1px solid rgba(226,232,240,.9);background:#f7f9fc}.artifact-review-head{display:grid;grid-template-columns:minmax(260px,1fr) auto;align-items:end;gap:14px}.artifact-review-head span,.artifact-style-gate header span,.artifact-coordinate-list header span,.artifact-page-meta span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.artifact-review-head strong{display:block;margin-top:4px;color:#111827;font-size:18px;line-height:1.22}.artifact-review-head p{margin:4px 0 0;color:#667085;font-size:12px}.artifact-stage-tabs{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.artifact-stage-tabs button{display:grid;gap:2px;min-width:70px;min-height:42px;padding:6px 10px;border:1px solid #dbe3ee;border-radius:10px;background:#fff;color:#344054;text-align:left}.artifact-stage-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-stage-tabs span{color:inherit;font-size:12px;font-weight:800;letter-spacing:0;text-transform:none}.artifact-stage-tabs em{color:#7b8494;font-size:10px;font-style:normal}.artifact-review-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.38fr);gap:14px;align-items:stretch}.artifact-canvas-shell,.artifact-review-side section{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 10px 24px rgba(15,23,42,.045)}.artifact-canvas-shell{display:grid;grid-template-rows:auto minmax(320px,1fr);min-width:0;overflow:hidden}.artifact-canvas-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #e5eaf2;background:#fff}.artifact-mode-switch,.artifact-tool-buttons,.artifact-pan-pad{display:flex;align-items:center;gap:6px}.artifact-canvas-toolbar button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#344054}.artifact-canvas-toolbar button.active,.artifact-canvas-toolbar button:hover:not(:disabled){border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-canvas-toolbar button:disabled{cursor:not-allowed;opacity:.45}.artifact-canvas-toolbar strong{min-width:48px;color:#111827;font-size:12px;text-align:center}.artifact-canvas-viewport{display:grid;place-items:center;min-height:320px;padding:20px;overflow:hidden;background:linear-gradient(90deg,rgba(226,232,240,.55) 1px,transparent 1px),linear-gradient(180deg,rgba(226,232,240,.55) 1px,transparent 1px),#f8fafc;background-size:28px 28px}.artifact-canvas-viewport[data-mode=pan]{cursor:grab}.artifact-canvas-page{position:relative;width:min(620px,100%);aspect-ratio:16/10;padding:22px;border:1px solid #cbd5e1;border-radius:16px;background:linear-gradient(135deg,#fff 0%,#f8fbff 58%,#eef4ff 100%);box-shadow:0 22px 50px rgba(15,23,42,.14);transform:translate(var(--artifact-pan-x),var(--artifact-pan-y)) scale(var(--artifact-zoom));transform-origin:center;transition:transform .16s ease}.artifact-page-meta{display:grid;gap:4px}.artifact-page-meta strong{overflow:hidden;color:#0f172a;font-size:18px;text-overflow:ellipsis;white-space:nowrap}.artifact-page-meta em{color:#667085;font-size:12px;font-style:normal}.artifact-page-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;margin-top:22px}.artifact-page-layout section,.artifact-page-layout aside{min-height:150px;padding:16px;border:1px solid #e5e7eb;border-radius:14px;background:rgba(255,255,255,.76)}.artifact-page-layout b{color:#1d4ed8;font-size:12px}.artifact-page-layout h3{margin:12px 0 8px;color:#111827;font-size:24px;line-height:1.12}.artifact-page-layout p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.artifact-page-layout aside{display:grid;align-content:center;gap:8px}.artifact-page-layout aside span{color:#7b8494;font-size:11px}.artifact-page-layout aside strong{color:#111827;font-size:14px}.artifact-page-layout aside em{display:inline-flex;width:max-content;padding:4px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-style:normal}.artifact-marker{position:absolute;left:var(--marker-x);top:var(--marker-y);max-width:110px;transform:translate(-50%,-50%);padding:5px 8px;border:1px solid #f59e0b;border-radius:999px;background:#fffbeb;color:#92400e;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 8px 16px rgba(146,64,14,.16)}.artifact-review-side{display:grid;grid-template-rows:auto 1fr;gap:14px;min-width:0}.artifact-review-side section{padding:14px}.artifact-style-gate header,.artifact-coordinate-list header{margin-bottom:10px}.artifact-style-gate header strong,.artifact-coordinate-list header strong{display:block;margin-top:4px;color:#111827;font-size:15px}.artifact-style-list{display:grid;gap:8px}.artifact-style-list button{display:grid;gap:5px;width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;text-align:left}.artifact-style-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-style-list strong{color:#111827;font-size:13px}.artifact-style-list span,.artifact-style-list em{color:#667085;font-size:11px;font-style:normal;line-height:1.45}.artifact-gate-actions{display:flex;gap:8px;margin-top:10px}.artifact-gate-actions button{flex:1;min-height:34px;border:1px solid #d8e2ef;border-radius:10px;background:#fff;color:#344054;font-weight:750}.artifact-gate-actions button:last-child{border-color:#2563eb;background:#2563eb;color:#fff}.artifact-coordinate-list{display:grid;align-content:start;gap:8px}.artifact-coordinate-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff}.artifact-coordinate-list article strong{display:block;color:#111827;font-size:13px}.artifact-coordinate-list article p{margin:3px 0 0;overflow:hidden;color:#667085;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.artifact-coordinate-list article span{padding:4px 8px;border-radius:999px;background:#f3f4f6;color:#344054;font-size:11px;white-space:nowrap}@media(max-width:1120px){.artifact-review-head,.artifact-review-grid{grid-template-columns:1fr}.artifact-stage-tabs{justify-content:flex-start}.artifact-review-side{grid-template-columns:1fr 1fr;grid-template-rows:auto}}@media(max-width:720px){.artifact-review-workbench{padding:12px 14px}.artifact-canvas-toolbar{align-items:flex-start;flex-direction:column}.artifact-review-side,.artifact-page-layout{grid-template-columns:1fr}.artifact-canvas-page{aspect-ratio:4/5}.artifact-stage-tabs button{min-width:0;flex:1 1 120px}}
   .report-center-layout{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);gap:18px}.report-list-panel,.report-detail-panel{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.92);box-shadow:0 10px 24px rgba(15,23,42,.045)}.report-list-panel,.report-detail-panel{padding:16px}.report-list-panel header{margin-bottom:12px}.report-list-panel header strong{display:block;color:#111827;font-size:15px}.report-list-panel header span{display:block;margin-top:4px;color:#7b8494;font-size:12px}.report-card-list{display:grid;gap:10px}.report-card-list button{width:100%;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;text-align:left;cursor:pointer}.report-card-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.18)}.report-card-list span,.report-detail-panel header>em{display:inline-flex;align-items:center;width:max-content;padding:5px 10px;border-radius:999px;background:#f3f4f6;color:#111827;font-size:12px;font-style:normal}.report-card-list strong{display:block;margin-top:12px;color:#111827;font-size:16px}.report-card-list p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.55}.report-card-list em{display:block;margin-top:12px;color:#111827;font-size:12px;font-style:italic}.report-detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.report-detail-panel header span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.report-detail-panel header strong{display:block;margin-top:7px;color:#111827;font-size:22px;line-height:1.25}.report-detail-panel header p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.7}.report-detail-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}.report-detail-summary article,.report-detail-meta div{padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}.report-detail-summary span,.report-detail-meta span,.report-detail-body>span{display:block;color:#7b8494;font-size:11px}.report-detail-summary strong,.report-detail-meta strong{display:block;margin-top:6px;color:#111827;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail-body{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.report-detail-body p{margin:10px 0 0;color:#374151;font-size:13px;line-height:1.75}.report-detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}@media(max-width:1100px){.report-center-layout{grid-template-columns:1fr}.report-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.report-detail-summary,.report-detail-meta{grid-template-columns:1fr}}
 
   .detail-empty{padding:18px;border:1px dashed #cbd5e1;border-radius:16px;background:rgba(248,250,252,.78);color:#5f6774}.detail-empty strong{display:block;color:#111827}.detail-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}.detail-modal{width:min(840px,calc(100vw - 44px));padding:18px}.detail-modal>.detail-panel{margin-top:14px;background:rgba(255,255,255,.88)}

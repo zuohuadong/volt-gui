@@ -32,7 +32,7 @@ func userConfigDir() string {
 }
 
 func reasonixHomeDir() string {
-	if dir := cleanEnvDir("REASONIX_HOME"); dir != "" {
+	if dir := firstEnvDir("VOLTUI_HOME", "REASONIX_HOME"); dir != "" {
 		return dir
 	}
 	if runtimeGOOS == "windows" {
@@ -131,7 +131,7 @@ func legacyXDGConfigPaths() []string {
 }
 
 func userSupportDir() string {
-	if dir := cleanEnvDir("REASONIX_STATE_HOME"); dir != "" {
+	if dir := firstEnvDir("VOLTUI_STATE_HOME", "REASONIX_STATE_HOME"); dir != "" {
 		return dir
 	}
 	return reasonixHomeDir()
@@ -153,10 +153,10 @@ func legacyOSSupportDir() string {
 }
 
 func userCacheDir() string {
-	if dir := cleanEnvDir("REASONIX_CACHE_HOME"); dir != "" {
+	if dir := firstEnvDir("VOLTUI_CACHE_HOME", "REASONIX_CACHE_HOME"); dir != "" {
 		return dir
 	}
-	if dir := cleanEnvDir("REASONIX_HOME"); dir != "" {
+	if dir := firstEnvDir("VOLTUI_HOME", "REASONIX_HOME"); dir != "" {
 		return filepath.Join(dir, "cache")
 	}
 	dir, err := os.UserCacheDir()
@@ -189,6 +189,15 @@ func cleanEnvDir(name string) string {
 	return filepath.Clean(dir)
 }
 
+func firstEnvDir(names ...string) string {
+	for _, name := range names {
+		if dir := cleanEnvDir(name); dir != "" {
+			return dir
+		}
+	}
+	return ""
+}
+
 func samePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -204,12 +213,12 @@ func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// IsolatedHomeDir returns the REASONIX_HOME directory when it has been
+// IsolatedHomeDir returns the VOLTUI_HOME or legacy REASONIX_HOME directory when it has been
 // explicitly set via the environment variable. A non-empty return signals a
 // self-contained runtime that must not fall back to legacy OS-default data
 // paths or import data from the system-wide production install.
 func IsolatedHomeDir() string {
-	return cleanEnvDir("REASONIX_HOME")
+	return firstEnvDir("VOLTUI_HOME", "REASONIX_HOME")
 }
 
 // userConfigDisplayPath is userConfigPath collapsed to a ~-relative form for
@@ -228,8 +237,8 @@ func userConfigDisplayPath() string {
 	return p
 }
 
-// UserConfigPath is the user-global config.toml. It lives under Reasonix home:
-// REASONIX_HOME/config.toml, then ~/.voltui/config.toml on Unix-like systems,
+// UserConfigPath is the user-global config.toml. It lives under VoltUI home:
+// VOLTUI_HOME/config.toml, then ~/.voltui/config.toml on Unix-like systems,
 // or %AppData%/voltui/config.toml on Windows. If %AppData% is unavailable on
 // Windows, it falls back to %USERPROFILE%/AppData/Roaming/voltui/config.toml.
 // "" when the user config dir can't be resolved.
@@ -241,7 +250,7 @@ func UserConfigPath() string { return userConfigPath() }
 func LegacyUserConfigPath() string { return legacyUserConfigPath() }
 
 // LegacyUserConfigPaths returns every known legacy user config path that differs
-// from the current v1.8.1 Reasonix-home config path.
+// from the current VoltUI-home config path.
 func LegacyUserConfigPaths() []string {
 	primary := userConfigPath()
 	var out []string
@@ -263,16 +272,16 @@ func LegacyUserConfigPaths() []string {
 	return out
 }
 
-// ReasonixHomeDir is the current Reasonix home directory. It honors
-// REASONIX_HOME, then uses ~/.voltui on macOS/Linux or %APPDATA%/voltui on
+// ReasonixHomeDir is the current VoltUI home directory. It honors VOLTUI_HOME,
+// then legacy REASONIX_HOME, then uses ~/.voltui on macOS/Linux or %APPDATA%/voltui on
 // Windows, with a %USERPROFILE%/AppData/Roaming fallback when %APPDATA% is
 // unavailable.
 func ReasonixHomeDir() string { return reasonixHomeDir() }
 
-// UserCredentialsPath is the voltui-owned global .env file under Reasonix
-// home. It is the single source for provider credentials saved by Reasonix, so
+// UserCredentialsPath is the voltui-owned global .env file under VoltUI
+// home. It is the single source for provider credentials saved by VoltUI, so
 // stale shell, Windows, project, or home env vars cannot silently override keys
-// the user saved through setup or settings. "" when Reasonix home can't be
+// the user saved through setup or settings. "" when VoltUI home can't be
 // resolved.
 func UserCredentialsPath() string {
 	dir := userSupportDir()
@@ -350,8 +359,8 @@ func CacheDir() string {
 	return dir
 }
 
-// MemoryUserDir returns the voltui user state root (…/voltui), under which
-// the user-global REASONIX.md and the per-project auto-memory store live. Empty
+// MemoryUserDir returns the VoltUI user state root (…/voltui), under which
+// the user-global VOLTUI.md / legacy REASONIX.md and the per-project auto-memory store live. Empty
 // when the user state dir can't be resolved, which disables user-scoped memory.
 func MemoryUserDir() string {
 	return userSupportDir()
@@ -380,7 +389,7 @@ func conventionSubdirsAsc(base, sub string) []string {
 // CommandDirs returns the directories scanned for custom slash commands, lowest
 // priority first, so a later (more specific) directory overrides an earlier one
 // on a name clash. Order: home-dir convention dirs (~/.claude/commands …
-// ~/.voltui/commands), the Reasonix home commands dir, the legacy OS
+// ~/.voltui/commands), the VoltUI home commands dir, the legacy OS
 // app-support dir if different, then the project's
 // convention dirs (.claude/commands … .voltui/commands). Scanning the .claude /
 // .agents / .agent dirs lets commands authored for other agent tools (same .md +

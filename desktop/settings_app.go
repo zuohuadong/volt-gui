@@ -24,7 +24,7 @@ import (
 // resolved config and applies edits through internal/config/edit.go (the
 // purpose-built mutation API), then rebuilds the controller so the change takes
 // effect live — the same snapshot→reload→resume pattern as SetModel. Secrets are
-// the exception: they go to Reasonix's global .env (upsertDotEnv), since config
+// the exception: they go to VoltUI's global .env (upsertDotEnv), since config
 // stores only the env-var name, not the key.
 
 // --- read ---
@@ -1231,7 +1231,7 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 // config.LockUserConfigEdits(). Legacy migrations (provider-access normalize,
 // legacy bot-config merge) are applied to the returned copy in memory only;
 // the on-disk file migrates the first time a locked write path runs
-// loadDesktopUserConfigForEdit. Credentials (Reasonix global .env) are not
+// loadDesktopUserConfigForEdit. Credentials (VoltUI global .env) are not
 // loaded; callers that hand the config to a runtime resolving secrets from the
 // process env must use loadDesktopUserConfigForViewWithCredentials.
 func (a *App) loadDesktopUserConfigForView() (*config.Config, string, error) {
@@ -1239,7 +1239,7 @@ func (a *App) loadDesktopUserConfigForView() (*config.Config, string, error) {
 }
 
 // loadDesktopUserConfigForViewWithCredentials is loadDesktopUserConfigForView
-// plus credential resolution: like config.LoadForEdit it loads Reasonix's
+// plus credential resolution: like config.LoadForEdit it loads VoltUI's
 // global .env into the process env. Use it for read-only loads whose result
 // feeds a runtime that resolves env-based secrets — the bot runtime
 // (app-secret/control-token envs) and MCP server connects. It still never
@@ -1447,7 +1447,7 @@ func (a *App) saveProviderCredential(apiKeyEnv, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	warning := ""
 	if _, ok := os.LookupEnv(apiKeyEnv); ok && strings.TrimSpace(os.Getenv(apiKeyEnv)) == "" {
-		warning = fmt.Sprintf("Saved %s to Reasonix credentials, but environment variable may shadow it in this workspace.", apiKeyEnv)
+		warning = fmt.Sprintf("Saved %s to VoltUI credentials, but environment variable may shadow it in this workspace.", apiKeyEnv)
 	}
 	if err := upsertDotEnv(apiKeyEnv, value); err != nil {
 		return "", err
@@ -1481,9 +1481,9 @@ func (a *App) providerCredentialSourceNotice(apiKeyEnv, value string) string {
 			case config.CredentialSourceHomeEnv:
 				label = "home .env"
 			case config.CredentialSourceCredentials:
-				label = "Reasonix credentials"
+				label = "VoltUI credentials"
 			case config.CredentialSourceLegacy:
-				label = "legacy Reasonix credentials"
+				label = "legacy VoltUI credentials"
 			}
 		}
 		if label == "" || seen[label] {
@@ -1495,7 +1495,7 @@ func (a *App) providerCredentialSourceNotice(apiKeyEnv, value string) string {
 	if len(labels) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("Saved %s to Reasonix credentials, but %s may shadow it in this workspace.", apiKeyEnv, strings.Join(labels, ", "))
+	return fmt.Sprintf("Saved %s to VoltUI credentials, but %s may shadow it in this workspace.", apiKeyEnv, strings.Join(labels, ", "))
 }
 
 func projectConfigPathForRoot(root string) string {
@@ -2179,7 +2179,7 @@ func (a *App) AddProviderPresetAccess(id, key string) (string, error) {
 
 // ResetProviderPresetAccess intentionally overwrites same-name provider entries
 // with the curated preset template. It only mutates config; provider secrets stay
-// in Reasonix home .env under whichever api_key_env the resulting preset uses.
+// in VoltUI home .env under whichever api_key_env the resulting preset uses.
 func (a *App) ResetProviderPresetAccess(id string) error {
 	preset, ok := config.CuratedProviderPreset(id)
 	if !ok {
@@ -2567,7 +2567,7 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 	return nil
 }
 
-// SetProviderKey writes a secret to Reasonix's global .env under the given
+// SetProviderKey writes a secret to VoltUI's global .env under the given
 // env-var name (the one a provider's api_key_env points at) and rebuilds so it
 // resolves immediately.
 func (a *App) SetProviderKey(apiKeyEnv, value string) (string, error) {
@@ -2658,7 +2658,7 @@ func (a *App) ensureProviderAccessForKey(apiKeyEnv string) error {
 	return cfg.SaveTo(path)
 }
 
-// ClearProviderKey removes a provider secret from Reasonix's global .env
+// ClearProviderKey removes a provider secret from VoltUI's global .env
 // and rebuilds so the provider immediately becomes unauthenticated.
 func (a *App) ClearProviderKey(apiKeyEnv string) error {
 	if strings.TrimSpace(apiKeyEnv) == "" {

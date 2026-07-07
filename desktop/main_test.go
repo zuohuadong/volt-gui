@@ -10,7 +10,7 @@ import (
 
 // TestMain isolates user config/state/cache dirs for the whole package. Without
 // this, tests that persist desktop state, sessions, cache, or CLI-style config
-// can leak into the developer's real Reasonix directories.
+// can leak into the developer's real VoltUI directories.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "voltui-desktop-test")
 	if err != nil {
@@ -33,6 +33,7 @@ func TestWindowsWebview2GPUDisabled(t *testing.T) {
 	t.Cleanup(func() {
 		channel = oldChannel
 		os.Unsetenv(disableWebview2GPUEnv)
+		os.Unsetenv(legacyDisableWebview2GPUEnv)
 	})
 
 	tests := []struct {
@@ -52,6 +53,7 @@ func TestWindowsWebview2GPUDisabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			channel = tt.channel
+			os.Unsetenv(legacyDisableWebview2GPUEnv)
 			if tt.env == "" {
 				os.Unsetenv(disableWebview2GPUEnv)
 			} else {
@@ -61,6 +63,21 @@ func TestWindowsWebview2GPUDisabled(t *testing.T) {
 				t.Fatalf("windowsWebview2GPUDisabled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWindowsWebview2GPUDisabledHonorsLegacyEnv(t *testing.T) {
+	oldChannel := channel
+	t.Cleanup(func() {
+		channel = oldChannel
+		os.Unsetenv(disableWebview2GPUEnv)
+		os.Unsetenv(legacyDisableWebview2GPUEnv)
+	})
+	channel = "stable"
+	os.Unsetenv(disableWebview2GPUEnv)
+	os.Setenv(legacyDisableWebview2GPUEnv, "1")
+	if got := windowsWebview2GPUDisabled(); !got {
+		t.Fatalf("windowsWebview2GPUDisabled() = %v, want true for legacy env", got)
 	}
 }
 

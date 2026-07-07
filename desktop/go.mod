@@ -12,7 +12,6 @@ toolchain go1.26.4
 require voltui v0.0.0
 
 require (
-	aead.dev/minisign v0.3.0
 	fyne.io/systray v1.12.2
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/godbus/dbus/v5 v5.2.2
@@ -25,6 +24,7 @@ require (
 )
 
 require (
+	aead.dev/minisign v0.3.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect

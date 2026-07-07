@@ -95,7 +95,7 @@ var Chinese = Messages{
 	PlanModeMCPTrustReason:                 "这个 MCP 工具声明自己是只读的，但外部只读提示需要你确认后，计划模式才能使用。选择总是允许可为后续计划和只读研究记住这份信任。",
 	PlanModeMCPTrustDeclined:               "用户拒绝信任这个 MCP 只读提示；不要重试它，请继续使用其它已信任的只读工具，或询问用户希望如何继续。",
 	PlanModeBashTrustSubjectFmt:            "在计划模式中信任 %q 为只读命令前缀\n命令：%s",
-	PlanModeBashTrustReason:                "这条 bash 命令不在 Reasonix 内置只读集合中。只有在确认这个精确前缀用于计划和研究时是只读的，才应批准。自动/YOLO 审批不能回答这个信任提示。",
+	PlanModeBashTrustReason:                "这条 bash 命令不在 VoltUI 内置只读集合中。只有在确认这个精确前缀用于计划和研究时是只读的，才应批准。自动/YOLO 审批不能回答这个信任提示。",
 	PlanModeBashTrustDeclined:              "用户拒绝将这条 bash 命令信任为计划模式只读命令；不要重试它，请继续使用其它已信任的只读工具，或询问用户希望如何继续。",
 	SandboxEscapeSubjectFallback:           "仅本次不进沙箱运行 shell 命令",
 	SandboxEscapeSubjectPrefix:             "仅本次不进沙箱运行：",
@@ -265,7 +265,7 @@ var Chinese = Messages{
 	ArgEffortXHigh:      "超高推理",
 	ArgEffortMax:        "最高推理",
 	ArgThemeCurrent:     "当前",
-	ArgLanguageAuto:     "从 REASONIX_LANG / 系统 locale 自动检测",
+	ArgLanguageAuto:     "从 VOLTUI_LANG / 系统 locale 自动检测",
 	ArgLanguageEn:       "English",
 	ArgLanguageZh:       "中文",
 
@@ -282,7 +282,7 @@ var Chinese = Messages{
 	ListMcpHeader:       "MCP 服务器",
 	ListMcpNone:         "未连接 MCP 服务器 — 在 voltui.toml（[[plugins]]）或项目 .mcp.json 中添加",
 
-	MemoryNone:             "还没有加载任何记忆 — 输入 “/remember 内容” 可快速记录，也可以在项目根目录创建 REASONIX.md",
+	MemoryNone:             "还没有加载任何记忆 — 输入 “/remember 内容” 可快速记录，也可以在项目根目录创建 VOLTUI.md",
 	MemoryLoaded:           "当前已加载的记忆：",
 	MemorySavedHeader:      "  已记录的条目（用 “/forget <name>” 归档）：",
 	MemoryStoredUnderFmt:   "  存放于 %s",

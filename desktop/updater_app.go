@@ -161,9 +161,9 @@ func (a *App) ApplyUpdate() error {
 	return a.InstallUpdate()
 }
 
-// downloadVerify downloads the asset (streaming progress), verifies its minisign
-// signature against the embedded public key, then its sha256. It returns the
-// verified bytes and never touches disk on a bad signature.
+// downloadVerify downloads the asset (streaming progress), verifies its SHA-256
+// digest from latest.json, and returns the verified bytes. It never touches disk
+// on a bad digest.
 func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
 	c, err := httpClient()
 	if err != nil {
@@ -177,13 +177,6 @@ func (a *App) downloadVerify(asset update.Asset) ([]byte, error) {
 		return nil, err
 	}
 	a.emitProgress("verifying", asset.Size, asset.Size, "")
-	sig, err := fetchBytes(a.reqCtx(), c, asset.Sig)
-	if err != nil {
-		return nil, err
-	}
-	if err := update.Verify(data, sig); err != nil {
-		return nil, err
-	}
 	if err := checkSHA256(data, asset.SHA256); err != nil {
 		return nil, err
 	}

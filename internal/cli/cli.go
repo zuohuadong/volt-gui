@@ -298,7 +298,7 @@ func runAgent(args []string) int {
 	cont := fs.Bool("continue", false, "resume the most recent saved session")
 	fs.BoolVar(cont, "c", false, "shorthand for --continue")
 	resume := fs.String("resume", "", "resume a specific session file (non-interactive; takes precedence over --continue)")
-	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
+	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the session and continue in the copy (escape hatch when the original is held by another VoltUI process)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -595,7 +595,7 @@ func chatREPL(args []string) int {
 	cont := fs.Bool("continue", false, "resume the most recent saved session")
 	fs.BoolVar(cont, "c", false, "shorthand for --continue")
 	resume := fs.Bool("resume", false, "list saved sessions and pick one to resume")
-	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the selected session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
+	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the selected session and continue in the copy (escape hatch when the original is held by another VoltUI process)")
 	yolo := fs.Bool("dangerously-skip-permissions", false, "YOLO: auto-approve approval-gated tool calls this session; same runtime mode as Ctrl+Y")
 	fs.BoolVar(yolo, "yolo", false, "alias for --dangerously-skip-permissions")
 	dir := fs.String("dir", "", "change to this directory first (project root); config, sandbox and file tools resolve from here")
@@ -839,7 +839,7 @@ func reserveNativeScrollbackFrame(w io.Writer, rows int) {
 }
 
 // setupTargets is where the wizard writes: the TOML config and the credential
-// store. Keys always go to Reasonix's global .env so they
+// store. Keys always go to VoltUI's global .env so they
 // never land in a project's own .env; only the config location is project-local
 // under --local.
 type setupTargets struct {
@@ -857,7 +857,7 @@ func defaultConfigTarget() string {
 }
 
 // defaultEnvTarget is the display target for the voltui-owned global
-// Reasonix global .env.
+// VoltUI global .env.
 func defaultEnvTarget() string {
 	return config.CredentialsTargetDescription()
 }
@@ -888,7 +888,7 @@ func displayPath(p string) string {
 
 // setupConfig runs the configuration wizard (the `voltui setup` command),
 // writing config.toml to the user-global dir (or ./voltui.toml under --local)
-// and API keys to Reasonix's global .env — never a project's own .env.
+// and API keys to VoltUI's global .env — never a project's own .env.
 // Project memory is a separate concern — the in-session `/init` skill generates
 // AGENTS.md (see initHint).
 func setupConfig(args []string) int {
@@ -944,7 +944,7 @@ func initHint() int {
 }
 
 // interactiveSetup runs the setup wizard, then writes the config to configPath
-// and any entered API keys to Reasonix's global .env. The wizard
+// and any entered API keys to VoltUI's global .env. The wizard
 // is intentionally minimal: pick language, pick
 // provider, enter API keys. Language is asked first so every subsequent prompt
 // is already in the user's language even when env auto-detection got it wrong.
@@ -1189,7 +1189,7 @@ func familyStaticModels(providers []config.ProviderEntry, idxs []int) []string {
 // ensureProbeKey prompts once for the family's API key when it isn't already in
 // the environment, so the /models probe can run and return the live SKU list.
 // The value is set in the env for the probe; configureKeys returns the same key
-// for Reasonix's global .env later and skips re-asking. A blank entry is fine —
+// for VoltUI's global .env later and skips re-asking. A blank entry is fine —
 // the static fallback covers it.
 func ensureProbeKey(probe *config.ProviderEntry, famName string) {
 	if probe.APIKeyEnv == "" || os.Getenv(probe.APIKeyEnv) != "" {
@@ -1457,7 +1457,7 @@ func promptCustomProviderManual() ([]config.ProviderEntry, error) {
 // Pre-filled values (baseURL, keyEnv, apiKey) are reused as-is when non-empty
 // so the URL-fetch flow can fall through to manual entry without re-asking
 // the user for information they've already typed. An empty apiKey is allowed
-// — the key step happens later in the wizard and Reasonix's global .env is updated then.
+// — the key step happens later in the wizard and VoltUI's global .env is updated then.
 func promptCustomProviderManualWith(in *bufio.Scanner, baseURL, keyEnv, apiKey string) ([]config.ProviderEntry, error) {
 	fmt.Println()
 	if baseURL == "" {
@@ -1738,7 +1738,7 @@ func providersWithMissingKeys(cfg *config.Config) []config.ProviderEntry {
 // setup asks whether to re-enter it; Enter keeps and re-pins the existing value.
 // Otherwise the user is asked once per env var (deduped across providers that
 // share one, e.g. both DeepSeek models). Returns KEY=value lines for the
-// Reasonix global .env. Re-pinning keeps hand-edited or previously saved values
+// VoltUI global .env. Re-pinning keeps hand-edited or previously saved values
 // aligned with the user's latest setup choice.
 func configureKeys(selected []config.ProviderEntry, r io.Reader, w io.Writer) []string {
 	in := bufio.NewScanner(r)

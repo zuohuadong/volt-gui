@@ -97,7 +97,7 @@ func TestLoadIncludesPluginSessionStartHook(t *testing.T) {
 	if got[0].Scope != ScopePlugin || got[0].Event != SessionStart {
 		t.Fatalf("first hook = %+v, want plugin SessionStart", got[0])
 	}
-	if got[0].Env["REASONIX_PLUGIN_NAME"] != "superpowers" || got[0].Env["REASONIX_WORKSPACE_ROOT"] != "/workspace" {
+	if got[0].Env["VOLTUI_PLUGIN_NAME"] != "superpowers" || got[0].Env["VOLTUI_WORKSPACE_ROOT"] != "/workspace" {
 		t.Fatalf("plugin env = %#v", got[0].Env)
 	}
 	if got[1].Scope != ScopeGlobal {
@@ -105,44 +105,44 @@ func TestLoadIncludesPluginSessionStartHook(t *testing.T) {
 	}
 }
 
-func TestReasonixHomeOverridesGlobalHookPaths(t *testing.T) {
+func TestVoltUIHomeOverridesGlobalHookPaths(t *testing.T) {
 	home := t.TempDir()
-	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
+	voltuiHome := filepath.Join(t.TempDir(), "voltui-home")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("REASONIX_HOME", reasonixHome)
-	if err := os.MkdirAll(reasonixHome, 0o755); err != nil {
+	t.Setenv("VOLTUI_HOME", voltuiHome)
+	if err := os.MkdirAll(voltuiHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(reasonixHome, SettingsFilename), []byte(`{"hooks":{"PostToolUse":[{"command":"echo rx"}]}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(voltuiHome, SettingsFilename), []byte(`{"hooks":{"PostToolUse":[{"command":"echo rx"}]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo old"}]}}`)
 
-	if got := GlobalSettingsPath(""); got != filepath.Join(reasonixHome, SettingsFilename) {
-		t.Fatalf("GlobalSettingsPath = %q, want Reasonix home", got)
+	if got := GlobalSettingsPath(""); got != filepath.Join(voltuiHome, SettingsFilename) {
+		t.Fatalf("GlobalSettingsPath = %q, want VoltUI home", got)
 	}
-	if got := TrustPath(""); got != filepath.Join(reasonixHome, TrustFilename) {
-		t.Fatalf("TrustPath = %q, want Reasonix home", got)
+	if got := TrustPath(""); got != filepath.Join(voltuiHome, TrustFilename) {
+		t.Fatalf("TrustPath = %q, want VoltUI home", got)
 	}
 	hooks := Load(LoadOptions{})
 	if len(hooks) != 1 || hooks[0].Command != "echo rx" {
-		t.Fatalf("Load hooks = %+v, want Reasonix home hook only", hooks)
+		t.Fatalf("Load hooks = %+v, want VoltUI home hook only", hooks)
 	}
 }
 
-func TestReasonixHomeDoesNotFallBackToLegacyWhenIsolated(t *testing.T) {
+func TestVoltUIHomeDoesNotFallBackToLegacyWhenIsolated(t *testing.T) {
 	home := t.TempDir()
-	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
+	voltuiHome := filepath.Join(t.TempDir(), "voltui-home")
 	proj := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("REASONIX_HOME", reasonixHome)
+	t.Setenv("VOLTUI_HOME", voltuiHome)
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo old"}]}}`)
 
 	hooks := Load(LoadOptions{})
 	if len(hooks) != 0 {
-		t.Fatalf("Load hooks = %+v, want empty (isolated REASONIX_HOME must not load legacy hooks)", hooks)
+		t.Fatalf("Load hooks = %+v, want empty (isolated VOLTUI_HOME must not load legacy hooks)", hooks)
 	}
 
 	absProj, err := filepath.Abs(proj)
@@ -158,13 +158,13 @@ func TestReasonixHomeDoesNotFallBackToLegacyWhenIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	if IsTrusted(proj, "") {
-		t.Fatal("legacy trust must not be honored when REASONIX_HOME is set and trust.json is absent")
+		t.Fatal("legacy trust must not be honored when VOLTUI_HOME is set and trust.json is absent")
 	}
 	if err := Trust(proj, ""); err != nil {
 		t.Fatalf("Trust: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(reasonixHome, TrustFilename)); err != nil {
-		t.Fatalf("Trust should write current Reasonix home trust file: %v", err)
+	if _, err := os.Stat(filepath.Join(voltuiHome, TrustFilename)); err != nil {
+		t.Fatalf("Trust should write current VoltUI home trust file: %v", err)
 	}
 }
 

@@ -404,15 +404,15 @@ func (s *service) initialize(_ context.Context, _ json.RawMessage) (any, error) 
 			MCPCapabilities: MCPCapabilities{HTTP: true, SSE: false},
 		},
 		AgentInfo:   Implementation{Name: s.info.Name, Version: s.info.Version},
-		AuthMethods: []AuthMethod{reasonixSetupAuthMethod()},
+		AuthMethods: []AuthMethod{voltuiSetupAuthMethod()},
 	}, nil
 }
 
-func reasonixSetupAuthMethod() AuthMethod {
+func voltuiSetupAuthMethod() AuthMethod {
 	return AuthMethod{
 		ID:          "voltui-setup",
-		Name:        "Reasonix setup",
-		Description: "Configure Reasonix providers and credentials in a terminal",
+		Name:        "VoltUI setup",
+		Description: "Configure VoltUI providers and credentials in a terminal",
 		Type:        "terminal",
 		Args:        []string{"setup"},
 	}
@@ -423,7 +423,7 @@ func (s *service) authenticate(_ context.Context, raw json.RawMessage) (any, err
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, &RPCError{Code: ErrInvalidParams, Message: "authenticate: " + err.Error()}
 	}
-	if strings.TrimSpace(p.MethodID) != reasonixSetupAuthMethod().ID {
+	if strings.TrimSpace(p.MethodID) != voltuiSetupAuthMethod().ID {
 		return nil, &RPCError{Code: ErrInvalidParams, Message: "authenticate: unknown methodId " + p.MethodID}
 	}
 	return AuthenticateResult{}, nil
@@ -764,7 +764,7 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 	return res, nil
 }
 
-// sessionSetConfigOption applies ACP's generic session-level selector. Reasonix
+// sessionSetConfigOption applies ACP's generic session-level selector. VoltUI
 // currently exposes model and reasoning-effort selectors through this path.
 func (s *service) sessionSetConfigOption(ctx context.Context, raw json.RawMessage) (any, error) {
 	var p SetSessionConfigOptionParams

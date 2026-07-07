@@ -8,7 +8,7 @@
 
 | Item | 中文 | English |
 | --- | --- | --- |
-| Product name | VoltUI / Volt GUI。面向用户的材料统一使用 VoltUI；历史 Reasonix 命名仅作为兼容和迁移上下文处理。 | VoltUI / Volt GUI. User-facing materials should use VoltUI; legacy Reasonix naming is treated as compatibility and migration context only. |
+| Product name | VoltUI / Volt GUI。面向用户的材料统一使用 VoltUI；历史 VoltUI 命名仅作为兼容和迁移上下文处理。 | VoltUI / Volt GUI. User-facing materials should use VoltUI; legacy VoltUI naming is treated as compatibility and migration context only. |
 | Evidence base | 当前仓库 README、桌面 Workbench 契约、Feature Matrix、配置路径、插件开发文档、Marketing Hub 规划和 `desktop/frontend/src` 源码。 | Current repo README, desktop Workbench contract, feature matrix, config paths, plugin development docs, Marketing Hub plan, and `desktop/frontend/src` source. |
 | UI reference note | 项目规则要求 UI 规划优先参考 aoristlawer 源码；本机 `/Volumes/Data/workspace` 下未找到该仓库。本 PRD 不声明视觉对齐已完成，后续 UI 实施前必须补充该证据。 | Project rules require UI planning to reference the aoristlawer source first; that repo was not found under local `/Volumes/Data/workspace`. This PRD does not claim visual parity; UI implementation must refresh that evidence first. |
 | Non-goals for this document | 不改变代码、不定义商业价格、不承诺云 SaaS、不替代工程规格和测试矩阵。 | Do not change code, define pricing, promise cloud SaaS, or replace engineering specs and test matrices. |
@@ -104,7 +104,7 @@ The long-term direction is to become the local control console for enterprise in
 
 | Phase | 中文目标 | English goal | Exit criteria |
 | --- | --- | --- | --- |
-| Phase 0: Product contract consolidation | 统一 VoltUI 命名、产品边界、PRD、验收指标和文档入口；清理仍会误导用户的 Reasonix 表述。 | Consolidate VoltUI naming, product boundaries, PRD, acceptance metrics, and docs entry points; clean user-confusing legacy Reasonix wording. | Product docs link to a single current product narrative; legacy names are marked as compatibility context. |
+| Phase 0: Product contract consolidation | 统一 VoltUI 命名、产品边界、PRD、验收指标和文档入口；清理仍会误导用户的 VoltUI 表述。 | Consolidate VoltUI naming, product boundaries, PRD, acceptance metrics, and docs entry points; clean user-confusing legacy VoltUI wording. | Product docs link to a single current product narrative; legacy names are marked as compatibility context. |
 | Phase 1: Production desktop baseline | 把 Svelte Workbench 从功能可用推进到生产可用，重点是 onboarding、设置、模型验证、Work/Code 稳定性、更新、无障碍和响应式。 | Move the Svelte Workbench from usable to production-ready, focusing on onboarding, settings, model validation, Work/Code stability, updates, accessibility, and responsive behavior. | `scripts/ui-feature-smoke.mjs`, `scripts/p0-production-smoke.sh`, frontend build/check, and `git diff --check` pass for release candidates. |
 | Phase 2: Enterprise rollout kit | 形成企业分发包、内网模型模板、密钥/配置策略、Windows 安装与升级策略、管理员诊断和离线文档。 | Produce enterprise distribution packages, intranet model templates, credential/config policy, Windows install/update strategy, admin diagnostics, and offline docs. | A managed Windows user can start with a pre-baked provider and no manual secret entry. |
 | Phase 3: Team operations | 把任务、目标、自动化、Agent、团队和资料中心变成可持续日常工作流，而不是静态样例。 | Turn tasks, goals, automation, agents, teams, and resource center into durable daily workflows instead of static examples. | Work dashboard tasks and agent flows persist through typed resources and have smoke coverage. |
@@ -291,7 +291,7 @@ Choose the smallest real gate based on changed scope:
 
 | Risk | 中文缓解 | English mitigation |
 | --- | --- | --- |
-| Legacy naming drift | 建立产品术语清单，新增文档统一 VoltUI，旧 Reasonix 表述标注兼容来源并逐步修复。 | Maintain product terminology, use VoltUI in new docs, mark legacy Reasonix wording as compatibility context, and fix it incrementally. |
+| Legacy naming drift | 建立产品术语清单，新增文档统一 VoltUI，旧 VoltUI 表述标注兼容来源并逐步修复。 | Maintain product terminology, use VoltUI in new docs, mark legacy VoltUI wording as compatibility context, and fix it incrementally. |
 | Provider compatibility variance | 把模型发现、streaming、tool call、reasoning、vision、context window 都做成 capability，不靠厂商名推断。 | Model discovery, streaming, tool calls, reasoning, vision, and context window should be capabilities, not vendor-name assumptions. |
 | UI scope creep | Work/Code 核心路径优先；Marketing/Content Studio 等复杂业务能力通过 Workbench plugin 隔离。 | Prioritize Work/Code core paths; isolate complex business capabilities such as Marketing/Content Studio through Workbench plugins. |
 | Wails platform variance | 保持平台专项 release notes 和 smoke；Linux WebKit、Windows WebView2、macOS Gatekeeper 单独列风险。 | Keep platform-specific release notes and smoke; track Linux WebKit, Windows WebView2, and macOS Gatekeeper separately. |
@@ -302,7 +302,7 @@ Choose the smallest real gate based on changed scope:
 
 | Question | 中文说明 | English note |
 | --- | --- | --- |
-| Product naming | 对外统一叫 VoltUI、Volt GUI 还是 Volt？是否保留 Reasonix 作为内核/上游兼容名？ | Should the external name be VoltUI, Volt GUI, or Volt? Should Reasonix remain as a kernel/upstream compatibility name? |
+| Product naming | 对外统一叫 VoltUI、Volt GUI 还是 Volt？是否保留 VoltUI 作为内核/上游兼容名？ | Should the external name be VoltUI, Volt GUI, or Volt? Should VoltUI remain as a kernel/upstream compatibility name? |
 | Enterprise auth | OIDC/SSO 是否进入 P1，还是只作为下游/插件能力保留？ | Should OIDC/SSO enter P1, or remain a downstream/plugin capability? |
 | Sync boundary | 是否提供跨设备/团队同步？如果提供，同步哪些对象，默认是否关闭？ | Should cross-device/team sync exist? If yes, which objects sync, and is it disabled by default? |
 | Workbench plugin SDK | 首个样板插件选 Marketing Hub、Content Studio、Enterprise Mounts，还是内部 Agent Team 运营台？ | Should the first sample plugin be Marketing Hub, Content Studio, Enterprise Mounts, or an internal Agent Team operations console? |
@@ -311,13 +311,13 @@ Choose the smallest real gate based on changed scope:
 
 ## 15. Immediate Next Actions / 近期行动
 
-1. **中文**：确认产品命名和对外叙事，把新 PRD 链接到 README 或 docs index。  
+1. **中文**：确认产品命名和对外叙事，把新 PRD 链接到 README 或 docs index。
    **English**: Confirm naming and external narrative, then link this PRD from README or docs index.
 
-2. **中文**：对现有 docs 中的 Reasonix/VoltUI 术语做一次非破坏性审计，先修复最容易误导用户的页面。  
+2. **中文**：对现有 docs 中的新旧品牌术语做一次非破坏性审计，先修复最容易误导用户的页面。
    **English**: Run a non-destructive terminology audit across docs and fix the pages most likely to confuse users first.
 
-3. **中文**：把 Phase 1 的生产桌面门禁固化成 release checklist，明确每次 desktop release 前必须跑哪些命令。  
+3. **中文**：把 Phase 1 的生产桌面门禁固化成 release checklist，明确每次 desktop release 前必须跑哪些命令。
    **English**: Turn Phase 1 production desktop gates into a release checklist with exact commands for every desktop release.
 
 4. **中文**：补充 aoristlawer UI 参考证据，决定 Work/Code/Resource Console 的下一轮视觉和交互收敛范围。  

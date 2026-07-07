@@ -94,7 +94,7 @@ var English = Messages{
 	PlanModeMCPTrustReason:                 "This MCP tool reports read-only, but external read-only hints need your confirmation before plan mode can use them. Choose always allow to remember this trust for future planning and read-only research.",
 	PlanModeMCPTrustDeclined:               "the user declined to trust this MCP read-only hint - do not retry it; continue with other trusted read-only tools or ask how to proceed.",
 	PlanModeBashTrustSubjectFmt:            "Trust %q as a read-only command prefix while planning\nCommand: %s",
-	PlanModeBashTrustReason:                "This bash command is not in Reasonix's built-in read-only set. Confirm only if this exact prefix is read-only for planning and research. Auto/YOLO approval cannot answer this trust prompt.",
+	PlanModeBashTrustReason:                "This bash command is not in VoltUI's built-in read-only set. Confirm only if this exact prefix is read-only for planning and research. Auto/YOLO approval cannot answer this trust prompt.",
 	PlanModeBashTrustDeclined:              "the user declined to trust this bash command as read-only for plan mode - do not retry it; continue with other trusted read-only tools or ask how to proceed.",
 	SandboxEscapeSubjectFallback:           "run shell command unconfined once",
 	SandboxEscapeSubjectPrefix:             "run unconfined once: ",
@@ -264,7 +264,7 @@ var English = Messages{
 	ArgEffortXHigh:      "extra deep reasoning",
 	ArgEffortMax:        "maximum reasoning",
 	ArgThemeCurrent:     "current",
-	ArgLanguageAuto:     "auto-detect from REASONIX_LANG / locale",
+	ArgLanguageAuto:     "auto-detect from VOLTUI_LANG / locale",
 	ArgLanguageEn:       "English",
 	ArgLanguageZh:       "中文",
 
@@ -281,7 +281,7 @@ var English = Messages{
 	ListMcpHeader:       "mcp servers",
 	ListMcpNone:         "mcp: no servers connected — add one in voltui.toml ([[plugins]]) or a project .mcp.json",
 
-	MemoryNone:             "memory: none — add with “/remember <note>” or create REASONIX.md in the project root",
+	MemoryNone:             "memory: none — add with “/remember <note>” or create VOLTUI.md in the project root",
 	MemoryLoaded:           "memory loaded:",
 	MemorySavedHeader:      "  saved memories (archive with “/forget <name>”):",
 	MemoryStoredUnderFmt:   "  stored under %s",

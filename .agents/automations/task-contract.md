@@ -43,7 +43,7 @@ updated_at: ""
 
 ## Matter
 
-> Matter 是 Task Contract 的交付现场视图；coordination DB v2 项目可用 `agent-team matter list|show` 查看当前阶段、验收、证据和最终结论。
+> Matter 是 Task Contract 的交付现场视图；coordination DB v2 项目可用 `agmesh matter list|show` 查看当前阶段、验收、证据和最终结论。
 
 ```yaml
 matter:
@@ -60,7 +60,7 @@ matter:
 规则：
 
 - `matter` 不创建第二套执行事实源；状态仍以 coordination DB `tasks` / legacy Task Ledger 为准。
-- `agent-team matter draft` 只生成或写入可编辑 Task Contract 草案；`matter advance` / `matter review` 必须留下 event 和 evidence ref。
+- `agmesh matter draft` 只生成或写入可编辑 Task Contract 草案；`matter advance` / `matter review` 必须留下 event 和 evidence ref。
 - final verdict 必须引用测试、构建、CI、浏览器、部署健康检查、DB 查询或 live read-back 等证据。
 
 ## Taste Feedback
@@ -76,7 +76,7 @@ taste_feedback:
 
 规则：
 
-- `agent-team taste save` 将人类验收、打回原因和风格取舍写入结构化反馈；`taste recall` 按 scope 召回。
+- `agmesh taste save` 将人类验收、打回原因和风格取舍写入结构化反馈；`taste recall` 按 scope 召回。
 - Taste 只能影响候选排序、提示和文案偏好，不能作为权限、生产确认、测试通过或安全例外。
 - 被打回的方案不应在同一任务中继续作为默认推荐，除非 Task Contract 明确记录新的证据或用户最新指令覆盖。
 
@@ -94,16 +94,16 @@ loop_control:
     latest_mailbox_error: ".mailbox/<file>.md | coordination-db:mailbox_messages:<id> | none"
     retry_policy: "narrow prompt, inspect error mailbox, disable fallback when validating one model"
   tcb:
-    command: "agent-team automation tcb . --json"
+    command: "agmesh automation tcb . --json"
     policy: "read Thread Control Blocks before loading full sidecar context"
   approval:
     required_for: ["production", "secret", "destructive-git", "data-migration", "publish", "irreversible-decision"]
-    command: "agent-team approval request . --task <id> --reason <reason> --risk <risk> --rollback <plan>"
+    command: "agmesh approval request . --task <id> --reason <reason> --risk <risk> --rollback <plan>"
   product_signal:
-    command: "agent-team automation product-signal . --task <id> --hypothesis <text> --artifact <ref> --metric <metric> --value <value> --decision inconclusive"
+    command: "agmesh automation product-signal . --task <id> --hypothesis <text> --artifact <ref> --metric <metric> --value <value> --decision inconclusive"
     proxy_policy: "agent_score requires --proxy and is non-decisive"
   skill_evolution:
-    command: "agent-team automation skill-evolution . --task <id> --source runtime|context|ci|review --reason <reason> --write"
+    command: "agmesh automation skill-evolution . --task <id> --source runtime|context|ci|review --reason <reason> --write"
     auto_apply: false
 ```
 
@@ -132,10 +132,10 @@ goal_forge:
   evidence_summary: ""
   run_record_ref: "run_records:goal-forge:<run-id> | .agents/state/runs/<id>.json | none"
   verification:
-    status_check: "agent-team goal-forge status ."
-    init_check: "agent-team goal-forge init . '<goal>'"
-    run_check: "agent-team goal-forge run . '<runDir>' --adapter local"
-    loop_health_check: "agent-team automation loop-health . --json"
+    status_check: "agmesh goal-forge status ."
+    init_check: "agmesh goal-forge init . '<goal>'"
+    run_check: "agmesh goal-forge run . '<runDir>' --adapter local"
+    loop_health_check: "agmesh automation loop-health . --json"
   non_goals:
     - "do not vendor Goal Forge into this project"
     - "do not require model-backed Goal Forge runs during deploy"
@@ -194,14 +194,14 @@ delegation:
 
 规则：
 
-- `collaboration.mode` 定义任务的协作形态：`solo` 为单执行器；`roundtable` 为多方只读讨论后由 orchestrator 收束；`critic` 为做审分离；`pipeline` 为串行交接；`split` 为按互斥文件/模块分头执行后合并；`swarm` 为多方案竞选。未填写时按 `solo` 处理。`agent-team automation orchestrate --json` 会把该字段展开成 `collaboration_plan`。
+- `collaboration.mode` 定义任务的协作形态：`solo` 为单执行器；`roundtable` 为多方只读讨论后由 orchestrator 收束；`critic` 为做审分离；`pipeline` 为串行交接；`split` 为按互斥文件/模块分头执行后合并；`swarm` 为多方案竞选。未填写时，`agmesh automation orchestrate --json` 会按任务状态、风险、文本信号和写入型 `allowed_files` lane 推断 `collaboration_plan`；只有低风险局部任务且没有并发信号时才保持 `solo`。
 - `collaboration.mode` 不替代 Delegation Gate。中/高风险、跨边界、生产/安全/数据/不可逆、UI/E2E 或需要审查自己完成声明的任务，仍必须按 Delegation Gate 派发 explorer/executor/verifier 或记录 `safe_skip_reason`。
 - 低风险执行器和 explorer/critic/verifier sidecar 默认走候选链：`gpt-5.3-codex-spark`、`gpt-5.3-codex`、`sonnet`，`gemini-3-flash-agent` 只作为低优先级兜底；可通过 `--model`、`AGENT_TEAM_<ROLE>_MODEL(S)`、`AGENT_TEAM_SUBAGENT_MODEL(S)`、`AGENT_TEAM_LOW_RISK_MODELS` / `AGENT_TEAM_ROUTINE_MODELS`、`AGENT_TEAM_REVIEW_LOOP_MODEL` 或项目级 `.agents/agent-team.config.json` 覆盖。
 - `gpt-5.5` 是默认高风险升级标记和兜底，只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`；实际仲裁运行模型可通过 `--model`、`AGENT_TEAM_HIGH_RISK_MODEL` / `AGENT_TEAM_HIGH_RISK_MODELS`、`AGENT_TEAM_ARBITER_MODEL` / `AGENT_TEAM_ARBITER_MODELS` 或项目配置覆盖，候选链会识别国产强模型、Codex/OpenAI、Claude Code、Zed 或第三方网关常见模型名。
 - UI 设计生成使用独立 `ui-design-generation` 候选链：Gemini/GLM/Qwen/Kimi 优先，GPT/Codex 作为落地兜底；审美评审使用 `ui-aesthetic-review` 候选链：Claude/Sonnet 优先，Gemini/GLM 次之。UI 任务的验收必须包含视觉截图证据、响应式检查、文本不溢出/不重叠、交互控件状态和审美 rubric 评审结论。
 - Goal Forge 深度设计/质证循环用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；v2 项目中 `goal-forge run` strict validate 通过后会写入 `run_records`，作为 `loop-health` / trace evidence 的一部分；Scheduler 和新建任务默认模型分别用 `models.scheduler` / `models.task_default` 覆盖。
-- 不得以宿主工具策略、`create_thread` / parallel-agent 限制、或用户未明确要求并行代理作为 `safe_skip_reason`。行动型任务默认启用 agent-team delegation，不需要每次向用户请求子代理授权；agent-team 子代理以 `agent-team subagent dispatch` 或 `agent_team_dispatch_subagent` 为准。若 Delegation Gate 要求子代理但 runtime 不可派发，应记录 runtime 证据和 `interruption_recovery`，并标记 `blocked` / `PARTIAL`，不能把 runtime 不可用改写成安全跳过。
-- 推荐先用 `agent-team automation loop-strategy . --task <id> --domain auto` 生成 `parallelism` 建议：delivery/goal 默认只并行 read-only sidecar，fixed-list fanout 只有拆出互斥 `allowed_files` 后才允许并行 executor，marketing/demand/business 默认 human-gated。
+- 不得以宿主工具策略、`create_thread` / parallel-agent 限制、或用户未明确要求并行代理作为 `safe_skip_reason`。行动型任务默认启用 agent-team delegation，不需要每次向用户请求子代理授权；agent-team 子代理以 `agmesh subagent dispatch` 或 `agent_team_dispatch_subagent` 为准。若 Delegation Gate 要求子代理但 runtime 不可派发，应记录 runtime 证据和 `interruption_recovery`，并标记 `blocked` / `PARTIAL`，不能把 runtime 不可用改写成安全跳过。
+- 推荐先用 `agmesh automation loop-strategy . --task <id> --domain auto` 生成 `parallelism` 建议：delivery/goal 默认只并行 read-only sidecar，fixed-list fanout 只有拆出互斥 `allowed_files` 后才允许并行 executor，marketing/demand/business 默认 human-gated。
 - 并行 worker 只有在 `allowed_files` 明确互斥时才允许；未能证明互斥时，`parallelism.mode` 必须降级为 `read-only-fanout` 或 `serial`。
 - 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、mailbox（v2 为 DB mailbox，legacy 为 `.mailbox/`）和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
 - `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
@@ -336,9 +336,9 @@ browser_automation_profile:
   intent: "auto | local-preview | light-smoke | ci-e2e | authenticated | cdp-debug"
   task: ""
   selected_mode: ""
-  decision_source: "agent-team automation browser-profile --task | agent-team automation browser-profile --intent | user | task-contract | unavailable"
+  decision_source: "agmesh automation browser-profile --task | agmesh automation browser-profile --intent | user | task-contract | unavailable"
   evidence:
-    command: "agent-team automation browser-profile . --task '<task>' --json"
+    command: "agmesh automation browser-profile . --task '<task>' --json"
     choice: {}
     task_analysis: {}
     capabilities: []
@@ -353,9 +353,9 @@ browser_automation_profile:
     - "do not inspect cookies, passwords, local storage, or browser profiles unless explicitly authorized"
     - "confirm before submitting forms, changing permissions, uploading files, or causing external side effects"
   verification:
-    profile_check: "agent-team automation browser-profile . --intent <intent> --json"
-    task_profile_check: "agent-team automation browser-profile . --task '<task>' --json"
-    runtime_smoke: "agent-team automation browser-profile . --task '<task>' --verify --json"
+    profile_check: "agmesh automation browser-profile . --intent <intent> --json"
+    task_profile_check: "agmesh automation browser-profile . --task '<task>' --json"
+    runtime_smoke: "agmesh automation browser-profile . --task '<task>' --verify --json"
   non_goals:
     - "do not make Bun.WebView the only browser backend while it remains experimental"
     - "do not use the user's Chrome profile as a default fallback"
@@ -399,9 +399,9 @@ memory_profile:
   secrets_strategy: "none | env-explicit | provider-managed | blocked"
   required_skills: []
   verification:
-    status_check: "agent-team memory status ."
-    recall_check: "agent-team memory recall '<query>' --token-budget 1200"
-    save_check: "agent-team memory save decisions '<compact decision>'"
+    status_check: "agmesh memory status ."
+    recall_check: "agmesh memory recall '<query>' --token-budget 1200"
+    save_check: "agmesh memory save decisions '<compact decision>'"
   non_goals:
     - "do not inject unbounded memory into prompts"
     - "do not require mem0/OpenMemory/TencentDB unless explicitly configured"

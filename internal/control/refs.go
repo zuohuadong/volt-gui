@@ -72,7 +72,10 @@ type ExternalFolderRefEntry struct {
 var refTokenRe = regexp.MustCompile(`@([^\s]+)`)
 var pathLocationSuffixRe = regexp.MustCompile(`:\d+(?::\d+)?:?$`)
 
-const externalFolderRefPrefix = "__reasonix_external_folder"
+const (
+	externalFolderRefPrefix       = "__voltui_external_folder"
+	legacyExternalFolderRefPrefix = "__reasonix_external_folder"
+)
 
 // parseRefTokens extracts the deduped, punctuation-trimmed tokens following '@'
 // in a line. Pure: classification (server? file?) happens in classifyRef.
@@ -223,19 +226,23 @@ func (c *Controller) externalFolderRef(token string) (ref, bool) {
 
 func (c *Controller) externalFolderRefTarget(token string) (rootToken, rel, abs string, ok bool) {
 	key := normalizeExternalFolderRefToken(token)
-	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") {
+	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") && !strings.HasPrefix(key, legacyExternalFolderRefPrefix+"/") {
 		return "", "", "", false
+	}
+	lookupKey := key
+	if strings.HasPrefix(key, legacyExternalFolderRefPrefix+"/") {
+		lookupKey = externalFolderRefPrefix + strings.TrimPrefix(key, legacyExternalFolderRefPrefix)
 	}
 	c.externalFolderRefsMu.RLock()
 	defer c.externalFolderRefsMu.RUnlock()
-	if abs, ok := c.externalFolderRefs[key]; ok {
-		return key, ".", abs, true
+	if abs, ok := c.externalFolderRefs[lookupKey]; ok {
+		return lookupKey, ".", abs, true
 	}
 	for registered, abs := range c.externalFolderRefs {
-		if !strings.HasPrefix(key, registered+"/") {
+		if !strings.HasPrefix(lookupKey, registered+"/") {
 			continue
 		}
-		sub, ok := cleanExternalFolderSubpath(strings.TrimPrefix(key, registered+"/"))
+		sub, ok := cleanExternalFolderSubpath(strings.TrimPrefix(lookupKey, registered+"/"))
 		if !ok {
 			return "", "", "", false
 		}
@@ -645,7 +652,7 @@ func FileRefLine(line string) (string, bool) {
 }
 
 // SlashCodeCommentLine reports whether a slash-prefixed line is ordinary source
-// text rather than a Reasonix slash command.
+// text rather than a VoltUI slash command.
 func SlashCodeCommentLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*")

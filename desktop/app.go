@@ -309,13 +309,13 @@ func (a *App) ensureMediaTokenStore() *mediaTokenStore {
 }
 
 // workspaceMediaMiddleware returns an HTTP middleware that intercepts
-// /__reasonix_workspace_media/{token}/{filename} requests and serves the
+// /__voltui_workspace_media/{token}/{filename} requests and serves the
 // corresponding workspace file. All other paths pass through to the Wails
 // default asset handler unchanged.
 func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			prefix := "/__reasonix_workspace_media/"
+			prefix := "/__voltui_workspace_media/"
 			if !strings.HasPrefix(r.URL.Path, prefix) {
 				next.ServeHTTP(w, r)
 				return
@@ -6907,7 +6907,7 @@ func (e *sessionLeaseBusyError) Error() string {
 	if setting == "" {
 		setting = "this setting"
 	}
-	return fmt.Sprintf("this session is already open in another Reasonix window or still running in the background; close the other window or open a copy before changing %s", setting)
+	return fmt.Sprintf("this session is already open in another VoltUI window or still running in the background; close the other window or open a copy before changing %s", setting)
 }
 
 func (e *sessionLeaseBusyError) Unwrap() error {
@@ -7777,7 +7777,7 @@ func (a *App) ReadFile(rel string) FilePreview {
 		token := a.ensureMediaTokenStore().create(path, info.Name(), mime, kind, info.Size(), info.ModTime())
 		out.Kind = kind
 		out.Mime = mime
-		out.URL = "/__reasonix_workspace_media/" + token + "/" + url.PathEscape(info.Name())
+		out.URL = "/__voltui_workspace_media/" + token + "/" + url.PathEscape(info.Name())
 		return out
 	}
 	f, err := os.Open(path)
@@ -8271,7 +8271,7 @@ type MemoryView struct {
 // writableScopes are the quick-add targets the panel offers, broad → specific.
 var writableScopes = []memory.Scope{memory.ScopeUser, memory.ScopeProject, memory.ScopeLocal}
 
-// Memory returns the loaded memory for the panel: the REASONIX.md hierarchy,
+// Memory returns the loaded memory for the panel: the VOLTUI.md / legacy REASONIX.md hierarchy,
 // active/archived auto-memories, and the writable scopes. Read-only; mutations
 // go through Remember / SaveDoc.
 func (a *App) Memory() MemoryView {
@@ -8510,7 +8510,7 @@ func (a *App) NeedsOnboarding() bool {
 }
 
 // ConnectKey validates apiKey against the balance endpoint, persists it to
-// Reasonix's global .env, and rebuilds the controller so the new key takes effect.
+// VoltUI's global .env, and rebuilds the controller so the new key takes effect.
 func (a *App) ConnectKey(apiKey string) (string, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {

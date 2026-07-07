@@ -1,6 +1,6 @@
-# Reasonix Engineering Spec
+# VoltUI Engineering Spec
 
-> Reasonix is a coding agent: a thin harness driving multiple models, with **all
+> VoltUI is a coding agent: a thin harness driving multiple models, with **all
 > capabilities supplied by configuration and plugins**. This document is the
 > contract — code follows it. Change the contract first, then the code.
 
@@ -27,13 +27,13 @@ README is bilingual (`README.md` English + `README.zh-CN.md`).
 
 ```
 voltui/
-├── go.mod / go.sum          # module reasonix; require BurntSushi/toml
+├── go.mod / go.sum          # module voltui; require BurntSushi/toml
 ├── Makefile                 # build / cross / vet / fmt / test
 ├── README.md / README.zh-CN.md
-├── reasonix.example.toml         # sample config
+├── voltui.example.toml         # sample config
 ├── docs/SPEC.md             # this file
 ├── cmd/voltui/main.go          # entry; blank-imports built-in providers/tools
-├── cmd/reasonix-plugin-example/  # reference MCP stdio plugin (a runnable example)
+├── cmd/voltui-plugin-example/  # reference MCP stdio plugin (a runnable example)
 └── internal/
     ├── cli/                 # subcommand routing, flags, assembly, exit codes
     ├── config/              # TOML loading (flag > project > user > defaults)
@@ -156,7 +156,7 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
 - `prompts/list` + `prompts/get` surface as `/mcp__<server>__<prompt>` slash
   commands; `resources/list` + `resources/read` are referenced as
   `@<server>:<uri>` in chat. `/mcp` shows connected servers and their counts.
-- `cmd/reasonix-plugin-example` is a runnable reference stdio server (`echo`,
+- `cmd/voltui-plugin-example` is a runnable reference stdio server (`echo`,
   `wordcount`), driven by an end-to-end test that builds the real binary.
 
 ### 3.4 Agent (`internal/agent`)
@@ -189,7 +189,7 @@ prefix cache-stable:
 
 ### 3.6 Context management (compaction)
 
-Long tasks eventually fill the model's context window. Reasonix manages this with
+Long tasks eventually fill the model's context window. VoltUI manages this with
 **low-frequency compaction** that respects the cache-first design:
 
 - Each provider declares its `context_window` (tokens). Context maintenance is
@@ -303,7 +303,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   grant is path-scoped when a path is available, stored as `Edit(<path>)` so all
   built-in file-mutating tools share it. A
   non-interactive run
-  (`reasonix run`, a sub-agent, anything with no TTY / no approver) cannot prompt, so
+  (`voltui run`, a sub-agent, anything with no TTY / no approver) cannot prompt, so
   it resolves `Ask` to **allow** — preserving autonomous behaviour. A `Deny` is a
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
@@ -373,7 +373,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   transient active-goal user block. AutoResearch is a Goal strategy, not a
   standalone global skill: it writes project-local state under
   `.voltui/autoresearch/YYYYMMDD-HHMMSS-slug/` and keeps dynamic run state out
-  of `REASONIX.md`, `AGENTS.md`, project memory, tool schemas, and the
+  of `VOLTUI.md`, legacy `REASONIX.md`, `AGENTS.md`, project memory, tool schemas, and the
   cache-stable system prompt. `/goal --research <objective>` forces that
   strategy; `/goal --simple <objective>` forces lightweight Goal. Outside goal
   mode, an ordinary prompt with a very strong AutoResearch signal is upgraded by
@@ -392,8 +392,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 | YOLO approval / `yolo` | Approval prompts auto-allowed unless denied | Waits for user | Waits for user unless session-granted | Waits for user |
 | Approved-plan execution window | Approved plan's tool calls auto-allowed unless denied | Future plans still wait | Waits for user unless session-granted | Waits for user |
 
-Out of the box (`mode = "ask"`, no rules) `reasonix run` behaves exactly as before
-(writers resolve `Ask`→allow with no TTY), while `reasonix` now prompts before
+Out of the box (`mode = "ask"`, no rules) `voltui run` behaves exactly as before
+(writers resolve `Ask`→allow with no TTY), while `voltui` now prompts before
 each writer/bash call. `deny` rules harden both modes.
 
 ### 3.8 Slash commands (`internal/command`)
@@ -421,7 +421,7 @@ Review the staged diff. Focus on $ARGUMENTS, list bugs with file:line.
 ```
 
 - Frontmatter is an optional `---`-fenced block of simple `key: value` lines;
-  `description` and `argument-hint` are recognised (no YAML dependency — Reasonix
+  `description` and `argument-hint` are recognised (no YAML dependency — VoltUI
   stays lean). The remainder is the body template.
 - Substitution in the body: `$ARGUMENTS` (all args, space-joined), `$1`…`$N`
   (positional, empty when absent), `$$` (a literal `$`). Arguments are the
@@ -501,38 +501,38 @@ type Chunk struct {
 
 ## 5. Configuration (TOML)
 
-Resolution order: **flag > project `./reasonix.toml` > the user config file
-> built-in defaults**. Starting with **Reasonix v1.8.1**, the user config lives
+Resolution order: **flag > project `./voltui.toml` > the user config file
+> built-in defaults**. Starting with **VoltUI v1.8.1**, the user config lives
 at `~/.voltui/config.toml` on macOS/Linux and
-`%AppData%\reasonix\config.toml` on Windows. See
+`%AppData%\voltui\config.toml` on Windows. See
 [Configuration paths](./CONFIG_PATHS.md) for migration and related data paths.
 Fields marked user/global only, including agent step limits, are not overridden
-by project `reasonix.toml`.
+by project `voltui.toml`.
 Provider entries name secrets with `api_key_env`; saved key values live in
-Reasonix's global `<Reasonix home>/.env`, shared by CLI and desktop. Project
+VoltUI's global `<VoltUI home>/.env`, shared by CLI and desktop. Project
 `.env`, home `.env`, inherited shell environment variables, legacy credentials,
 and the OS keyring are not provider-key runtime fallbacks. Project `.env` still
 feeds workspace-scoped, non-provider `${VAR}` expansion for MCP/plugin settings
-without importing provider keys or Reasonix control variables. Step-limit
+without importing provider keys or VoltUI control variables. Step-limit
 preferences belong in the user config.
-Project `reasonix.toml` does not override `agent.max_steps` or
+Project `voltui.toml` does not override `agent.max_steps` or
 `agent.planner_max_steps`, and it does not override the user-level Memory v5
 compiler switch.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"
-# language    = "zh"                # ui language tag; empty = auto-detect from $LANG / $REASONIX_LANG
+# language    = "zh"                # ui language tag; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 [ui]
 # shortcut_layout = "desktop"       # classic|desktop; compatibility setting
 # cursor_shape = "underline"        # CLI/TUI textarea cursor: underline|block|bar
 
 [agent]
-system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
+system_prompt = "You are VoltUI, a coding agent..."  # or system_prompt_file = "..."
 max_steps         = 0    # user/global only; executor tool-call rounds; 0 = no limit
 planner_max_steps = 0    # user/global only; planner read-only tool-call rounds; 0 = no limit
 temperature       = 0.0
-memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: reasonix config memory-v5 off|observe|compact|on|status
+memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: voltui config memory-v5 off|observe|compact|on|status
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only declarations for custom tools;
 #                                                # cannot unlock known blocked tools or unsafe bash
@@ -591,12 +591,12 @@ ask   = []                                 # force a prompt even if otherwise al
 [serve]
 auth_mode = "none"             # none|token|password; use auth before binding beyond localhost
 # token = ""                   # optional fixed token; empty token mode generates one at startup
-# password_hash = ""           # bcrypt hash generated with reasonix serve --hash-password --password '...'
+# password_hash = ""           # bcrypt hash generated with voltui serve --hash-password --password '...'
 # behind_proxy = false         # trust X-Forwarded-* only behind a trusted reverse proxy
 
 [[plugins]]
 name    = "example"            # type defaults to "stdio"
-command = "reasonix-plugin-example"
+command = "voltui-plugin-example"
 args    = []
 # env   = { FOO = "bar" }
 # call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
@@ -610,14 +610,14 @@ args    = []
 # headers = { Authorization = "Bearer ${STRIPE_KEY}" }   # ${VAR} / ${VAR:-default} expanded
 ```
 
-`reasonix setup` writes this default config so the CLI is usable out of the box.
+`voltui setup` writes this default config so the CLI is usable out of the box.
 
 `[ui].cursor_shape` is normalized to `underline`, `block`, or `bar`; empty or
 unknown values fall back to `underline`. It applies to the Bubble Tea CLI/TUI
 textarea only, while desktop and browser inputs keep their platform-native
 cursor behavior.
 
-`[serve]` controls the HTTP browser frontend used by `reasonix serve`. The
+`[serve]` controls the HTTP browser frontend used by `voltui serve`. The
 default `auth_mode = "none"` is intended for the loopback default
 `127.0.0.1:8787`; deployments reachable from another machine must use `token` or
 `password`. Password mode requires either a startup `--password` or a stored
@@ -628,9 +628,9 @@ headers.
 MCP servers may also be declared in a project-root `.mcp.json` using Claude
 Code's exact `mcpServers` schema (`command`/`args`/`env`, `type`/`url`/`headers`,
 `${VAR}` expansion). It is read after the TOML files and merged into
-`[[plugins]]`; on a name collision `reasonix.toml` wins (it is the more explicit,
-Reasonix-specific source). This lets a server already configured for Claude work in
-Reasonix unchanged.
+`[[plugins]]`; on a name collision `voltui.toml` wins (it is the more explicit,
+VoltUI-specific source). This lets a server already configured for Claude work in
+VoltUI unchanged.
 
 ```json
 { "mcpServers": {
@@ -641,7 +641,7 @@ Reasonix unchanged.
 
 `[sandbox]` is the *enforcement* layer beneath permissions (which are *policy*).
 Phase 0 confines the file-writing built-ins (`write_file`, `edit_file`,
-`multi_edit`, `move_file`) to `workspace_root` (default cwd), the Reasonix user
+`multi_edit`, `move_file`) to `workspace_root` (default cwd), the VoltUI user
 config dir, plus `allow_write`: a write whose target — resolved to an absolute,
 symlink-free path so a symlinked dir or `..` cannot tunnel out — falls outside
 every root is refused, and the error is fed back to the model. Confinement is on
@@ -697,7 +697,7 @@ behavior. The escape-prompt and broader OS support are Phase 1's remainder (§9)
 
 ## 8. Distribution
 
-- Build: `CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$(VERSION)" -o reasonix ./cmd/reasonix`
+- Build: `CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$(VERSION)" -o voltui ./cmd/voltui`
 - Cross matrix: `darwin|linux|windows` × `amd64|arm64`.
 - Version injected via ldflags (`git describe --tags --always`).
 - Install: prebuilt binary / `go install` / future `brew tap`.
@@ -710,7 +710,7 @@ behavior. The escape-prompt and broader OS support are Phase 1's remainder (§9)
   when available** (see §5).
   Remaining: (a)
   the escape-prompt — detect sandbox-unavailable or sandbox-denied failures and
-  offer an explicit, permission-gated unconfined rerun (in `reasonix run`, the
+  offer an explicit, permission-gated unconfined rerun (in `voltui run`, the
   command just fails and the model adapts), which completes the "allow inside the
   box, prompt at its edge" model; (b) an optional elevated Windows backend with a
   dedicated sandbox user for enterprise hardening. Shells out to OS tooling so
@@ -724,4 +724,4 @@ behavior. The escape-prompt and broader OS support are Phase 1's remainder (§9)
 - An Anthropic-native provider `kind` (native prompt-cache control), proving the
   registry generalises beyond one wire format.
 - "Always allow" persistence writing learned rules back to project config; a
-  per-session permission override flag for `reasonix run`.
+  per-session permission override flag for `voltui run`.

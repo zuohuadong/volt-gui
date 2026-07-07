@@ -62,7 +62,7 @@ type Options struct {
 type installSourceTool struct {
 	root         string
 	home         string
-	reasonixHome string
+	voltuiHome   string
 	httpClient   *http.Client
 	connectMCP   MCPConnector
 	onDisconnect OnDisconnectFunc
@@ -88,13 +88,13 @@ func NewTool(opts Options) tool.Tool {
 			home = h
 		}
 	}
-	reasonixHome := ""
+	voltuiHome := ""
 	if opts.HomeDir != "" {
-		reasonixHome = filepath.Join(home, ".voltui")
+		voltuiHome = filepath.Join(home, ".voltui")
 	} else if dir := config.ReasonixHomeDir(); dir != "" {
-		reasonixHome = dir
+		voltuiHome = dir
 	} else if home != "" {
-		reasonixHome = filepath.Join(home, ".voltui")
+		voltuiHome = filepath.Join(home, ".voltui")
 	}
 	client := opts.HTTPClient
 	if client == nil {
@@ -107,7 +107,7 @@ func NewTool(opts Options) tool.Tool {
 	return &installSourceTool{
 		root:         root,
 		home:         home,
-		reasonixHome: reasonixHome,
+		voltuiHome:   voltuiHome,
 		httpClient:   client,
 		connectMCP:   opts.ConnectMCP,
 		onDisconnect: opts.OnDisconnect,
@@ -119,7 +119,7 @@ func (*installSourceTool) Name() string   { return "install_source" }
 func (*installSourceTool) ReadOnly() bool { return false }
 
 func (*installSourceTool) Description() string {
-	return "Plan, install, or uninstall a Reasonix skill, MCP server, or plugin package from a URL, local file/folder, .mcp.json, executable, or package name. Two-phase: with apply=false (default) returns a deterministic plan with per-action risk level; with apply=true copies/registers skills, connects/persists MCP servers, or installs plugin packages after validation. op='uninstall' removes a previously installed skill, MCP server, or plugin package by name."
+	return "Plan, install, or uninstall a VoltUI skill, MCP server, or plugin package from a URL, local file/folder, .mcp.json, executable, or package name. Two-phase: with apply=false (default) returns a deterministic plan with per-action risk level; with apply=true copies/registers skills, connects/persists MCP servers, or installs plugin packages after validation. op='uninstall' removes a previously installed skill, MCP server, or plugin package by name."
 }
 
 func (*installSourceTool) Schema() json.RawMessage {
@@ -197,7 +197,7 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 			Mode:     req.Mode,
 			PlanID:   planID,
 			Warnings: warnings,
-			Next:     "No installable Reasonix skill, MCP server, or plugin package was detected. Ask the user for a direct SKILL.md, skill root, .mcp.json, plugin manifest, MCP endpoint, or package name.",
+			Next:     "No installable VoltUI skill, MCP server, or plugin package was detected. Ask the user for a direct SKILL.md, skill root, .mcp.json, plugin manifest, MCP endpoint, or package name.",
 		}
 		return marshalJSON(out), nil
 	}
@@ -422,19 +422,19 @@ func (t *installSourceTool) uninstallActionsForScope(name, scope string) []actio
 		}
 	}
 	if scope == "global" || scope == "" {
-		if st, err := pluginpkg.LoadState(t.reasonixHome); err == nil {
+		if st, err := pluginpkg.LoadState(t.voltuiHome); err == nil {
 			for _, p := range st.Plugins {
 				if p.Name != name {
 					continue
 				}
-				root := pluginpkg.ResolveRoot(t.reasonixHome, p.Root)
+				root := pluginpkg.ResolveRoot(t.voltuiHome, p.Root)
 				actions = append(actions, action{
 					Kind:         "plugin",
 					Action:       "remove_plugin_package",
 					Name:         p.Name,
 					Target:       root,
 					Scope:        "global",
-					ConfigPath:   pluginpkg.StatePath(t.reasonixHome),
+					ConfigPath:   pluginpkg.StatePath(t.voltuiHome),
 					ManifestKind: p.ManifestKind,
 					Version:      p.Version,
 					RiskLevel:    RiskMedium,
@@ -459,10 +459,10 @@ func (t *installSourceTool) resolveSkillPath(name, scope string) (string, bool) 
 	}
 	var root string
 	if scope == "global" {
-		if t.reasonixHome == "" {
+		if t.voltuiHome == "" {
 			return "", false
 		}
-		root = filepath.Join(t.reasonixHome, skill.SkillsDirname)
+		root = filepath.Join(t.voltuiHome, skill.SkillsDirname)
 	} else {
 		root = filepath.Join(t.root, ".voltui", skill.SkillsDirname)
 	}

@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	ghOwner        = "esengine"
-	ghRepo         = "DeepSeek-Reasonix"
+	ghOwner        = "zuohuadong"
+	ghRepo         = "volt-gui"
 	ghAPIReleases  = "https://api.github.com/repos/" + ghOwner + "/" + ghRepo + "/releases"
 	ghDownloadBase = "https://github.com/" + ghOwner + "/" + ghRepo + "/releases/download"
 	upgradeTimeout = 60 * time.Second

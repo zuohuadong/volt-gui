@@ -1,4 +1,4 @@
-// Package config loads Reasonix's runtime configuration from TOML. Resolution order:
+// Package config loads VoltUI's runtime configuration from TOML. Resolution order:
 // flag > project ./voltui.toml > user config.toml (in the OS user-config dir) > built-in defaults.
 // User-global runtime controls, such as agent step limits, are documented exceptions.
 // Secrets come from the environment via api_key_env and are never stored in
@@ -37,11 +37,11 @@ func SkillNameKey(name string) string {
 	return name
 }
 
-// Config is Reasonix's runtime configuration.
+// Config is VoltUI's runtime configuration.
 type Config struct {
 	ConfigVersion    int                 `toml:"config_version"`
 	DefaultModel     string              `toml:"default_model"`
-	Language         string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	Language         string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $VOLTUI_LANG
 	CredentialsStore string              `toml:"credentials_store"`
 	Brand            BrandConfig         `toml:"brand"`
 	Auth             AuthConfig          `toml:"auth"`
@@ -1497,7 +1497,7 @@ type PluginEntry struct {
 	// from this server. Keys are server-local tool names, not model-visible
 	// mcp__server__tool names.
 	ToolTimeoutSeconds map[string]int `toml:"tool_timeout_seconds"`
-	// TrustedReadOnlyTools names raw MCP tool names that Reasonix should treat as
+	// TrustedReadOnlyTools names raw MCP tool names that VoltUI should treat as
 	// trusted read-only for planner / plan-mode / read-only research surfaces.
 	// Use this only for tools whose semantics are known to be side-effect free.
 	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
@@ -1588,7 +1588,7 @@ func (c *Config) AutoStartPlugins() []PluginEntry {
 }
 
 // DefaultSystemPrompt is used when config provides none.
-const DefaultSystemPrompt = `You are Reasonix, a coding agent focused on executing code tasks.
+const DefaultSystemPrompt = `You are VoltUI, a coding agent focused on executing code tasks.
 Use the provided tools to read and write files and run shell commands.
 Principles: understand the request before acting; verify with tools instead of
 guessing; keep changes minimal and correct; briefly summarize what you did.
@@ -1664,7 +1664,7 @@ func Default() *Config {
 			QueueCap:           20,
 			QueueDrop:          "summarize",
 			IgnoreSelfMessages: true,
-			Control:            BotControlConfig{Addr: "127.0.0.1:37913", TokenEnv: "REASONIX_BOT_CONTROL_TOKEN"},
+			Control:            BotControlConfig{Addr: "127.0.0.1:37913", TokenEnv: "VOLTUI_BOT_CONTROL_TOKEN"},
 			Pairing:            BotPairingConfig{Enabled: true, RequestTTLMinutes: 60, MaxPendingPerPlatform: 3},
 			Allowlist:          BotAllowlist{Enabled: true},
 			QQ:                 QQBotConfig{AppSecretEnv: "QQ_BOT_APP_SECRET"},
@@ -1858,7 +1858,7 @@ func (e *ProviderEntry) APIKey() string {
 
 // ResolveAPIKeyFromProcessEnvForProbe pins a setup-time, user-entered key onto
 // this entry for an immediate connectivity probe. Normal runtime resolution does
-// not call this; loaded provider entries still resolve only from Reasonix's
+// not call this; loaded provider entries still resolve only from VoltUI's
 // global .env.
 func (e *ProviderEntry) ResolveAPIKeyFromProcessEnvForProbe() {
 	if e == nil {

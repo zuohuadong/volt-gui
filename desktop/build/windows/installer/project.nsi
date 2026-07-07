@@ -1,7 +1,7 @@
 Unicode true
 
 ####
-## Reasonix per-user NSIS installer.
+## VoltUI per-user NSIS installer.
 ##
 ## This file is COMMITTED and customized (Wails leaves an existing project.nsi
 ## untouched and only regenerates wails_tools.nsh). The customizations vs.
@@ -17,8 +17,8 @@ Unicode true
 ##      InstallLocation (HKCU\...\Uninstall\InstallLocation). When upgrading from
 ##      a build that did not write InstallLocation yet, .onInit falls back to the
 ##      old DisplayIcon path before using the default. Without this, every release
-##      forces the user back to %LOCALAPPDATA%\Programs\Reasonix even if they had
-##      moved the install to a different drive (e.g. D:\Tools\Reasonix); the silent
+##      forces the user back to %LOCALAPPDATA%\Programs\VoltUI even if they had
+##      moved the install to a different drive (e.g. D:\Tools\VoltUI); the silent
 ##      auto-updater would re-run with /S into the wrong dir, leaving the old
 ##      install orphaned.
 ##
@@ -76,18 +76,18 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-!define REASONIX_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
-!define REASONIX_UPDATE_HELPER "voltui-update-helper.exe"
-!define REASONIX_UNLOCK_RETRIES 60
+!define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
+!define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
+!define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
-InstallDir "${REASONIX_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
+InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
 ShowInstDetails show # This will always show the installation details.
 
 ####
 ## Per-user uninstaller registry (HKCU). Replaces wails.writeUninstaller /
 ## wails.deleteUninstaller, which write HKLM and would fail without admin rights.
 ####
-!macro reasonix.writeUninstaller
+!macro voltui.writeUninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
     WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
@@ -98,8 +98,8 @@ ShowInstDetails show # This will always show the installation details.
     WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
     # Persist the resolved install path so a subsequent update picks it up
     # via InstallDirRegKey above. Without this, every release would force the
-    # user back to %LOCALAPPDATA%\Programs\Reasonix even if they had moved
-    # the install to a different drive (e.g. D:\Tools\Reasonix). The auto-
+    # user back to %LOCALAPPDATA%\Programs\VoltUI even if they had moved
+    # the install to a different drive (e.g. D:\Tools\VoltUI). The auto-
     # updater re-runs this installer with /S and trusts the persisted path,
     # so it has to be present before the silent re-install.
     WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
@@ -109,7 +109,7 @@ ShowInstDetails show # This will always show the installation details.
     WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
 !macroend
 
-!macro reasonix.deleteUninstaller
+!macro voltui.deleteUninstaller
     Delete "$INSTDIR\uninstall.exe"
     DeleteRegKey HKCU "${UNINST_KEY}"
 !macroend
@@ -129,7 +129,7 @@ Function .onInit
    StrCmp $INSTDIR "" fallback done
 
 fallback:
-   StrCpy $INSTDIR "${REASONIX_DEFAULT_INSTALLDIR}"
+   StrCpy $INSTDIR "${VOLTUI_DEFAULT_INSTALLDIR}"
 done:
 FunctionEnd
 
@@ -146,7 +146,7 @@ retry:
 
 locked:
    IntOp $0 $0 + 1
-   IntCmp $0 ${REASONIX_UNLOCK_RETRIES} failed 0 0
+   IntCmp $0 ${VOLTUI_UNLOCK_RETRIES} failed 0 0
    Sleep 1000
    Goto retry
 
@@ -176,10 +176,10 @@ Section
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
-    !if /FileExists "${REASONIX_UPDATE_HELPER}"
-    File "/oname=${REASONIX_UPDATE_HELPER}" "${REASONIX_UPDATE_HELPER}"
+    !if /FileExists "${VOLTUI_UPDATE_HELPER}"
+    File "/oname=${VOLTUI_UPDATE_HELPER}" "${VOLTUI_UPDATE_HELPER}"
     !else
-    !warning "${REASONIX_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
+    !warning "${VOLTUI_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
     !endif
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -188,7 +188,7 @@ Section
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
-    !insertmacro reasonix.writeUninstaller
+    !insertmacro voltui.writeUninstaller
 SectionEnd
 
 Section "uninstall"
@@ -198,7 +198,7 @@ Section "uninstall"
 
     ; Precision uninstall: delete main application files
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"
+    Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
@@ -206,7 +206,7 @@ Section "uninstall"
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
 
-    !insertmacro reasonix.deleteUninstaller
+    !insertmacro voltui.deleteUninstaller
 
     ; Only remove the installation directory if it is empty to prevent data loss
     RMDir $INSTDIR

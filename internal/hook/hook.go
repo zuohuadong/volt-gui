@@ -138,7 +138,7 @@ const (
 	SettingsFilename = "settings.json"
 )
 
-// GlobalSettingsPath is <Reasonix home>/settings.json (homeDir overrides ~ for
+// GlobalSettingsPath is <VoltUI home>/settings.json (homeDir overrides ~ for
 // tests and legacy callers).
 func GlobalSettingsPath(homeDir string) string {
 	return filepath.Join(reasonixHome(homeDir), SettingsFilename)
@@ -267,11 +267,16 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 					cwd = filepath.Join(pkg.Root, filepath.FromSlash(cwd))
 				}
 				env := cloneEnv(h.Env)
+				env["VOLTUI_PLUGIN_ROOT"] = pkg.Root
+				env["VOLTUI_PLUGIN_NAME"] = item.Installed.Name
+				env["VOLTUI_HOME"] = reasonixHomeDir
+				env["VOLTUI_WORKSPACE_ROOT"] = projectRoot
 				env["REASONIX_PLUGIN_ROOT"] = pkg.Root
 				env["REASONIX_PLUGIN_NAME"] = item.Installed.Name
 				env["REASONIX_HOME"] = reasonixHomeDir
 				env["REASONIX_WORKSPACE_ROOT"] = projectRoot
 				if item.Installed.Version != "" {
+					env["VOLTUI_PLUGIN_VERSION"] = item.Installed.Version
 					env["REASONIX_PLUGIN_VERSION"] = item.Installed.Version
 				}
 				manifestFile := pluginpkg.NativeManifest

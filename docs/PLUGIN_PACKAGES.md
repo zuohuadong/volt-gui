@@ -1,12 +1,12 @@
-# Reasonix Plugin Packages
+# VoltUI Plugin Packages
 
-Reasonix plugin packages bundle skills, hooks, and MCP servers behind one
+VoltUI plugin packages bundle skills, hooks, and MCP servers behind one
 installable unit.
 
 ## CLI Mode
 
-Use `reasonix plugin` when installing or managing plugin packages from a
-terminal. Plugin packages are installed globally under the Reasonix home
+Use `voltui plugin` when installing or managing plugin packages from a
+terminal. Plugin packages are installed globally under the VoltUI home
 directory.
 
 ### Install From CLI
@@ -17,31 +17,31 @@ directory.
   `https://github.com/obra/superpowers`.
 - A GitHub branch or subdirectory URL, such as
   `https://github.com/owner/repo/tree/main/path/to/plugin`.
-- A local directory that contains `reasonix-plugin.json` or
+- A local directory that contains `voltui-plugin.json` or
   `.codex-plugin/plugin.json`.
 
 Preview the install plan without writing files:
 
 ```bash
-reasonix plugin install git:github.com/obra/superpowers --dry-run
+voltui plugin install git:github.com/obra/superpowers --dry-run
 ```
 
 Install a plugin after reviewing the plan:
 
 ```bash
-reasonix plugin install git:github.com/obra/superpowers --yes
+voltui plugin install git:github.com/obra/superpowers --yes
 ```
 
 Install with an explicit name or replace an installed plugin with the same name:
 
 ```bash
-reasonix plugin install git:github.com/obra/superpowers --name superpowers --replace --yes
+voltui plugin install git:github.com/obra/superpowers --name superpowers --replace --yes
 ```
 
 Use a local directory in developer mode:
 
 ```bash
-reasonix plugin install /path/to/plugin --link --replace --yes
+voltui plugin install /path/to/plugin --link --replace --yes
 ```
 
 CLI install flags:
@@ -52,10 +52,10 @@ CLI install flags:
   name.
 - `--name <name>` or `--name=<name>` overrides the name from the plugin
   manifest for this install.
-- `--link` links a local plugin directory instead of copying it into Reasonix's
+- `--link` links a local plugin directory instead of copying it into VoltUI's
   plugin storage. Moving or deleting that directory breaks the linked plugin.
 
-Running `reasonix plugin install <source>` without `--dry-run` or `--yes`
+Running `voltui plugin install <source>` without `--dry-run` or `--yes`
 refuses to write files and prints a reminder to rerun with one of those flags.
 Install and remove commands print the structured JSON response from the same
 install-source backend used by the desktop UI.
@@ -63,8 +63,8 @@ install-source backend used by the desktop UI.
 Installed plugin state is stored in:
 
 ```text
-~/.reasonix/plugin-packages.json
-~/.reasonix/plugins/<name>/
+~/.voltui/plugin-packages.json
+~/.voltui/plugins/<name>/
 ```
 
 ### Manage From CLI
@@ -72,13 +72,13 @@ Installed plugin state is stored in:
 List installed plugins:
 
 ```bash
-reasonix plugin list
+voltui plugin list
 ```
 
 Show one plugin's metadata, root, source, and exported capability counts:
 
 ```bash
-reasonix plugin show superpowers
+voltui plugin show superpowers
 ```
 
 `show` also prints the concrete capability inventory when available:
@@ -90,20 +90,20 @@ reasonix plugin show superpowers
 Check that the manifest and skill roots are readable:
 
 ```bash
-reasonix plugin doctor superpowers
+voltui plugin doctor superpowers
 ```
 
 Enable or disable a plugin without uninstalling it:
 
 ```bash
-reasonix plugin disable superpowers
-reasonix plugin enable superpowers
+voltui plugin disable superpowers
+voltui plugin enable superpowers
 ```
 
 Remove a plugin:
 
 ```bash
-reasonix plugin remove superpowers --yes
+voltui plugin remove superpowers --yes
 ```
 
 `remove` also accepts `uninstall` as an alias. It requires `--yes` because it
@@ -113,7 +113,7 @@ external source directory is left in place.
 ### Use Installed Plugins From CLI
 
 Installed plugins do not open a separate chat surface. When a plugin is enabled,
-Reasonix loads its capabilities into normal interactive sessions:
+VoltUI loads its capabilities into normal interactive sessions:
 
 - Run `/plugins` inside an interactive session to list installed plugin
   packages. Run `/plugins show <name>` to inspect a plugin's exported skills,
@@ -123,10 +123,10 @@ Reasonix loads its capabilities into normal interactive sessions:
 - **Hooks** run automatically at their configured lifecycle events, such as
   `SessionStart`, `UserPromptSubmit`, `PreToolUse`, or `PostToolUse`.
 - **MCP servers** join the normal MCP/tool flow. Ask for the task you want done;
-  Reasonix can call the plugin's tools when they are relevant.
+  VoltUI can call the plugin's tools when they are relevant.
 
 After installing, enabling, disabling, or updating a plugin from a separate
-terminal while a session is already running, start a new `reasonix` session or
+terminal while a session is already running, start a new `voltui` session or
 reopen `/skills` to verify the current session sees the expected skills.
 
 ## Desktop Settings
@@ -157,7 +157,7 @@ Installer options:
   installed plugin with the same name. Leave it off when duplicate-name installs
   should fail instead of replacing existing content.
 - **Developer mode: link source folder** appears for **Local folder** installs.
-  It links the selected directory instead of copying it into Reasonix's plugin
+  It links the selected directory instead of copying it into VoltUI's plugin
   storage. Use it while developing or debugging a plugin. Moving or deleting the
   selected directory will break the linked plugin.
 
@@ -195,7 +195,7 @@ The desktop settings page uses the same runtime model as the CLI:
 
 ## Native Manifest
 
-Reasonix plugins can declare `reasonix-plugin.json` at the plugin root:
+VoltUI plugins can declare `voltui-plugin.json` at the plugin root:
 
 ```json
 {
@@ -219,24 +219,24 @@ Reasonix plugins can declare `reasonix-plugin.json` at the plugin root:
 }
 ```
 
-Relative paths are resolved inside the plugin root. Reasonix does not run
+Relative paths are resolved inside the plugin root. VoltUI does not run
 third-party install scripts during plugin installation.
 
 ## Codex Compatibility
 
-Reasonix also reads Codex plugin manifests at `.codex-plugin/plugin.json`.
-For packages such as Superpowers, Reasonix maps:
+VoltUI also reads Codex plugin manifests at `.codex-plugin/plugin.json`.
+For packages such as Superpowers, VoltUI maps:
 
-- `skills` to Reasonix skill roots.
-- `hooks/session-start-codex` to the Reasonix `SessionStart` hook when present.
+- `skills` to VoltUI skill roots.
+- `hooks/session-start-codex` to the VoltUI `SessionStart` hook when present.
 
 Plugin hooks receive these environment variables:
 
-- `REASONIX_PLUGIN_ROOT`
-- `REASONIX_PLUGIN_NAME`
-- `REASONIX_PLUGIN_VERSION`
-- `REASONIX_HOME`
-- `REASONIX_WORKSPACE_ROOT`
+- `VOLTUI_PLUGIN_ROOT`
+- `VOLTUI_PLUGIN_NAME`
+- `VOLTUI_PLUGIN_VERSION`
+- `VOLTUI_HOME`
+- `VOLTUI_WORKSPACE_ROOT`
 
 ## Desktop Backend Methods
 

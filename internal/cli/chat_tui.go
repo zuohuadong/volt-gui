@@ -56,9 +56,9 @@ type chatTUI struct {
 	// mouseCaptureOff releases mouse ownership back to the terminal (View() sets
 	// tea.MouseModeNone instead of MouseModeCellMotion) so its native
 	// click-drag selection and right-click context menu work again. Toggled by
-	// "/mouse" or REASONIX_DISABLE_MOUSE at startup; trades away in-app
+	// "/mouse" or VOLTUI_DISABLE_MOUSE at startup; trades away in-app
 	// drag-select, the transcript scrollbar, and wheel-scroll while it's on,
-	// since the terminal no longer forwards those events to Reasonix.
+	// since the terminal no longer forwards those events to VoltUI.
 	mouseCaptureOff bool
 
 	input   textarea.Model
@@ -547,7 +547,7 @@ func transcriptContentWidth(termW int, nativeScrollback bool) int {
 // menu and click-drag selection matter more than the scrollbar and
 // wheel-scroll) without having to type "/mouse" each session.
 func mouseCaptureOffByDefault() bool {
-	v := strings.TrimSpace(os.Getenv("REASONIX_DISABLE_MOUSE"))
+	v := firstNonEmptyEnv("VOLTUI_DISABLE_MOUSE", "REASONIX_DISABLE_MOUSE")
 	return v != "" && v != "0"
 }
 
@@ -3173,7 +3173,7 @@ func (m *chatTUI) toggleVerboseReasoning(notify bool) {
 	}
 }
 
-// toggleMouseCapture flips whether Reasonix owns the mouse. It's session-only
+// toggleMouseCapture flips whether VoltUI owns the mouse. It's session-only
 // (unlike /verbose, this accommodates the terminal/multiplexer at hand rather
 // than recording a lasting preference) — mirrors nativeScrollback, which is
 // likewise never persisted to config. Clears any in-app selection/scrollbar

@@ -1517,7 +1517,7 @@ func TestGatewayControlServerStatusAndSend(t *testing.T) {
 	}
 	metricsBody, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(metricsBody), "reasonix_bot_adapter_sends_total") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(metricsBody), "voltui_bot_adapter_sends_total") {
 		t.Fatalf("GET /metrics status=%d body=%q, want adapter metrics", resp.StatusCode, string(metricsBody))
 	}
 }

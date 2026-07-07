@@ -18,7 +18,7 @@ var deferredRebuildRetryInterval = 2 * time.Second
 
 // deferredRebuildState tracks tabs whose settings were saved to disk but whose
 // runtime could not refresh because the session lease was held by another
-// Reasonix process. A single background loop probes the lease and replays the
+// VoltUI process. A single background loop probes the lease and replays the
 // rebuild once the other side releases it. The loop only runs after
 // enableDeferredRebuildRetry (the wails startup hook); tests that never call
 // it get the pending bookkeeping without a background goroutine.

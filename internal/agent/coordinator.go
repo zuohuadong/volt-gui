@@ -29,10 +29,10 @@ for the executor. Output executor-ready instructions: what to do, which files or
 commands are relevant, expected blockers, and key decisions. Keep it short and
 actionable.`
 
-const executorHandoffMarker = "Reasonix executor handoff"
+const executorHandoffMarker = "VoltUI executor handoff"
 
 // PlannerPromptWithContext appends cache-stable standing context, such as loaded
-// REASONIX.md / AGENTS.md memory, to the planner's smaller system prompt.
+// VOLTUI.md / legacy REASONIX.md / AGENTS.md memory, to the planner's smaller system prompt.
 func PlannerPromptWithContext(context string) string {
 	context = strings.TrimSpace(context)
 	if context == "" {

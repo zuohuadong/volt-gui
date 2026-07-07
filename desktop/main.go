@@ -1,4 +1,4 @@
-// Command voltui-desktop is the Wails shell around the Reasonix kernel: a native
+// Command voltui-desktop is the Wails shell around the VoltUI kernel: a native
 // window hosting a webview frontend, with the Go-side control.Controller bound
 // directly to the UI (no HTTP hop — bindings in, runtime events out). It lives in
 // a nested module (voltui/desktop) so the CGO/WebKit desktop build never touches
@@ -49,8 +49,9 @@ var channel = "stable"
 var macSelfUpdate = "false"
 
 const (
-	disableWebview2GPUEnv  = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
-	linuxDRIRenderNodeGlob = "/dev/dri/renderD*"
+	disableWebview2GPUEnv       = "VOLTUI_DESKTOP_DISABLE_WEBVIEW2_GPU"
+	legacyDisableWebview2GPUEnv = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
+	linuxDRIRenderNodeGlob      = "/dev/dri/renderD*"
 )
 
 func macSelfUpdateAllowed() bool {
@@ -63,7 +64,11 @@ func macSelfUpdateAllowed() bool {
 }
 
 func windowsWebview2GPUDisabled() bool {
-	if raw, ok := os.LookupEnv(disableWebview2GPUEnv); ok {
+	for _, key := range []string{disableWebview2GPUEnv, legacyDisableWebview2GPUEnv} {
+		raw, ok := os.LookupEnv(key)
+		if !ok {
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(raw)) {
 		case "1", "true", "yes", "on":
 			return true
@@ -103,7 +108,7 @@ func main() {
 	}
 
 	err := wails.Run(&options.App{
-		Title:     "Reasonix",
+		Title:     "VoltUI",
 		Width:     width,
 		Height:    height,
 		MinWidth:  760,
@@ -147,7 +152,7 @@ func main() {
 			WebviewGpuIsDisabled: windowsWebview2GPUDisabled(),
 		},
 		Linux: &linux.Options{
-			ProgramName: "Reasonix",
+			ProgramName: "VoltUI",
 			// WebKitGTK GPU compositing is inconsistent across distros/drivers and
 			// is the one real cross-platform rough edge for a Go+webview stack:
 			// "always" can yield blank or flickering webviews on some setups, so

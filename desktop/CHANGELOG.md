@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.10.0...desktop-v0.11.0) (2026-07-07)
+
+
+### Features
+
+* **desktop:** add artifact review canvas controls ([f033084](https://github.com/zuohuadong/volt-gui/commit/f033084efc468b1427dfbe98d612b4843114c058))
+* **planmode:** make host automation configurable ([0d4262e](https://github.com/zuohuadong/volt-gui/commit/0d4262efaf7243b96b0ee1f66d6e3b360390b335))
+
+
+### Documentation
+
+* add marketing artifact review UX guidance ([#33](https://github.com/zuohuadong/volt-gui/issues/33)) ([b847b7d](https://github.com/zuohuadong/volt-gui/commit/b847b7d435604a7ee2359bb52519c77f71b53043))
+
 ## [0.10.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.9.1...desktop-v0.10.0) (2026-07-07)
 
 

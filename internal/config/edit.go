@@ -173,7 +173,7 @@ func (c *Config) SetProviderEffort(name, effort string) error {
 	return fmt.Errorf("set provider effort: no provider %q", name)
 }
 
-// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to REASONIX_LANG / locale.
+// SetLanguage pins the CLI UI/model language; empty/auto clears the override so runtime detection falls back to VOLTUI_LANG / locale.
 func (c *Config) SetLanguage(lang string) error {
 	switch strings.ToLower(strings.TrimSpace(lang)) {
 	case "", "auto":
@@ -1058,7 +1058,7 @@ func SaveMinimalProjectReasoningLanguage(path, lang string) (string, error) {
 	if err := cfg.SetReasoningLanguage(lang); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf(`# Reasonix project configuration.
+	body := fmt.Sprintf(`# VoltUI project configuration.
 # Project-local overrides are merged over the user config.
 
 [agent]

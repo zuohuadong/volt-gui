@@ -3721,7 +3721,7 @@ func (c *Controller) Bypass() bool {
 // the SessionAPI surface; each is a thin delegation. See memory.go.
 
 // QuickAdd appends a one-line note to the doc-memory file for scope (project
-// REASONIX.md by default) — the write side of "#<note>". Returns the file written.
+// VOLTUI.md by default) — the write side of "#<note>". Returns the file written.
 func (c *Controller) QuickAdd(scope memory.Scope, note string) (string, error) {
 	return c.memory.quickAdd(scope, note)
 }

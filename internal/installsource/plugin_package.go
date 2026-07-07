@@ -73,8 +73,8 @@ func (t *installSourceTool) pluginPackageAction(req request, pkg pluginpkg.Packa
 		name = pkg.Manifest.Name
 	}
 	root := ""
-	if t.reasonixHome != "" {
-		root = pluginpkg.InstallRoot(t.reasonixHome, name)
+	if t.voltuiHome != "" {
+		root = pluginpkg.InstallRoot(t.voltuiHome, name)
 	}
 	skills, hooks, mcp := pkg.CapabilityCounts()
 	a := action{
@@ -85,7 +85,7 @@ func (t *installSourceTool) pluginPackageAction(req request, pkg pluginpkg.Packa
 		Target:       root,
 		Scope:        "global",
 		Mode:         modeForPlugin(req.Mode),
-		ConfigPath:   pluginpkg.StatePath(t.reasonixHome),
+		ConfigPath:   pluginpkg.StatePath(t.voltuiHome),
 		Skills:       pkg.Manifest.Skills,
 		SkillCount:   skills,
 		HookCount:    hooks,
@@ -99,7 +99,7 @@ func (t *installSourceTool) pluginPackageAction(req request, pkg pluginpkg.Packa
 		a.RiskReasons = append(a.RiskReasons, "links a plugin package from a mutable local directory")
 	}
 	if hooks > 0 {
-		a.RiskReasons = append(a.RiskReasons, "registers shell hooks that execute during Reasonix sessions")
+		a.RiskReasons = append(a.RiskReasons, "registers shell hooks that execute during VoltUI sessions")
 	}
 	if mcp > 0 {
 		a.RiskReasons = append(a.RiskReasons, "adds MCP servers that can change provider-visible tool schemas")
@@ -116,13 +116,13 @@ func modeForPlugin(mode string) string {
 }
 
 func (t *installSourceTool) applyInstallPluginPackage(ctx context.Context, req request, act *action) error {
-	if t.reasonixHome == "" {
-		return newErr(ErrSourceUnreadable, "plugin install requires a Reasonix home directory")
+	if t.voltuiHome == "" {
+		return newErr(ErrSourceUnreadable, "plugin install requires a VoltUI home directory")
 	}
 	if !pluginpkg.IsValidName(act.Name) {
 		return newErr(ErrInvalidManifest, "invalid plugin name %q", act.Name)
 	}
-	target := pluginpkg.InstallRoot(t.reasonixHome, act.Name)
+	target := pluginpkg.InstallRoot(t.voltuiHome, act.Name)
 	sourceRoot, cleanup, err := t.preparePluginSource(ctx, act.Source, act.Mode)
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func (t *installSourceTool) applyInstallPluginPackage(ctx context.Context, req r
 	installed := pluginpkg.InstalledPlugin{
 		Name:         act.Name,
 		Source:       act.Source,
-		Root:         pluginpkg.RelativeRoot(t.reasonixHome, target),
+		Root:         pluginpkg.RelativeRoot(t.voltuiHome, target),
 		Version:      pkg.Manifest.Version,
 		Description:  pkg.Manifest.Description,
 		ManifestKind: pkg.ManifestKind,
@@ -160,7 +160,7 @@ func (t *installSourceTool) applyInstallPluginPackage(ctx context.Context, req r
 	if act.Mode == "link" {
 		installed.Root = sourceRoot
 	}
-	if err := pluginpkg.Upsert(t.reasonixHome, installed); err != nil {
+	if err := pluginpkg.Upsert(t.voltuiHome, installed); err != nil {
 		return err
 	}
 	act.Target = target
@@ -239,11 +239,11 @@ func replaceSymlink(target, sourceRoot string, replace bool) error {
 }
 
 func (t *installSourceTool) applyRemovePluginPackage(_ request, act *action) error {
-	installed, ok, err := pluginpkg.Remove(t.reasonixHome, act.Name)
+	installed, ok, err := pluginpkg.Remove(t.voltuiHome, act.Name)
 	if err != nil || !ok {
 		return err
 	}
-	root := pluginpkg.ResolveRoot(t.reasonixHome, installed.Root)
+	root := pluginpkg.ResolveRoot(t.voltuiHome, installed.Root)
 	if t.onDisconnect != nil {
 		if pkg, _, err := pluginpkg.ParseDir(root); err == nil {
 			names := make([]string, 0, len(pkg.Manifest.MCPServers))
@@ -256,7 +256,7 @@ func (t *installSourceTool) applyRemovePluginPackage(_ request, act *action) err
 			}
 		}
 	}
-	pluginsDir := pluginpkg.PluginsDir(t.reasonixHome)
+	pluginsDir := pluginpkg.PluginsDir(t.voltuiHome)
 	if rel, err := filepath.Rel(pluginsDir, root); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
 		if err := os.RemoveAll(root); err != nil {
 			return err

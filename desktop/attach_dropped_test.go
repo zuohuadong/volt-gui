@@ -265,7 +265,7 @@ func TestAttachDroppedOutsideWorkspaceDirRegistersWorkspaceRef(t *testing.T) {
 	if got.Kind != "workspace" || !got.IsDir {
 		t.Fatalf("got %+v, want workspace directory ref", got)
 	}
-	if !strings.HasPrefix(got.Path, "__reasonix_external_folder/") || strings.ContainsAny(got.Path, " \t\r\n") {
+	if !strings.HasPrefix(got.Path, "__voltui_external_folder/") || strings.ContainsAny(got.Path, " \t\r\n") {
 		t.Fatalf("external folder path token = %q, want whitespace-free external token", got.Path)
 	}
 	if got.DisplayPath != expectedDisplayPath {

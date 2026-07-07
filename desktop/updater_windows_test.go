@@ -5,12 +5,12 @@ package main
 import "testing"
 
 func TestInstallerCommandPassesUnquotedDFlagLast(t *testing.T) {
-	cmd := installerCommand(`C:\Temp\voltui-update-1.exe`, `D:\Tools\Reasonix App`)
+	cmd := installerCommand(`C:\Temp\voltui-update-1.exe`, `D:\Tools\VoltUI App`)
 	if cmd.SysProcAttr == nil {
 		t.Fatal("expected a raw command line forcing the install dir")
 	}
 	got := cmd.SysProcAttr.CmdLine
-	want := `"C:\Temp\voltui-update-1.exe" /S /D=D:\Tools\Reasonix App`
+	want := `"C:\Temp\voltui-update-1.exe" /S /D=D:\Tools\VoltUI App`
 	if got != want {
 		t.Fatalf("CmdLine = %q, want %q", got, want)
 	}

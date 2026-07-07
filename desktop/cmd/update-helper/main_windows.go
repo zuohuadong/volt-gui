@@ -26,10 +26,10 @@ func run(args []string) int {
 	var installer, installDir, relaunch string
 	fs := flag.NewFlagSet("voltui-update-helper", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	fs.UintVar(&parentPID, "parent-pid", 0, "Reasonix process id to wait for before installing")
+	fs.UintVar(&parentPID, "parent-pid", 0, "VoltUI process id to wait for before installing")
 	fs.StringVar(&installer, "installer", "", "verified NSIS installer path")
-	fs.StringVar(&installDir, "install-dir", "", "Reasonix installation directory")
-	fs.StringVar(&relaunch, "relaunch", "", "Reasonix executable to start after the installer succeeds")
+	fs.StringVar(&installDir, "install-dir", "", "VoltUI installation directory")
+	fs.StringVar(&relaunch, "relaunch", "", "VoltUI executable to start after the installer succeeds")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -60,7 +60,7 @@ func run(args []string) int {
 func newLogger() *log.Logger {
 	dir, err := os.UserCacheDir()
 	if err == nil {
-		dir = filepath.Join(dir, "Reasonix", "updates")
+		dir = filepath.Join(dir, "VoltUI", "updates")
 		if err := os.MkdirAll(dir, 0o700); err == nil {
 			if f, err := os.OpenFile(filepath.Join(dir, "update-helper.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 				return log.New(f, "", log.LstdFlags)

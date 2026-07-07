@@ -107,7 +107,7 @@ func configureCLITheme(mode string) {
 }
 
 func configureCLIThemeWithStyle(mode, style string) {
-	if env := strings.TrimSpace(os.Getenv("REASONIX_THEME")); env != "" {
+	if env := firstNonEmptyEnv("VOLTUI_THEME", "REASONIX_THEME"); env != "" {
 		if st, ok := cliThemeStyleByName(env); ok {
 			mode = st.mode
 			style = st.name
@@ -115,11 +115,20 @@ func configureCLIThemeWithStyle(mode, style string) {
 			mode = env
 		}
 	}
-	if env := strings.TrimSpace(os.Getenv("REASONIX_THEME_STYLE")); env != "" {
+	if env := firstNonEmptyEnv("VOLTUI_THEME_STYLE", "REASONIX_THEME_STYLE"); env != "" {
 		style = env
 	}
 	activeCLITheme = resolveCLIThemeWithStyle(mode, style)
 	refreshCLIStyles()
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if env := strings.TrimSpace(os.Getenv(name)); env != "" {
+			return env
+		}
+	}
+	return ""
 }
 
 func resolveCLITheme(mode string) cliPalette {

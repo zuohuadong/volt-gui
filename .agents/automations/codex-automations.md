@@ -21,7 +21,9 @@
 - 责任：扫描项目队列并按条件执行常规低/中风险调度；不是最终仲裁者
 
 ```text
-先运行确定性扫描命令：`agent-team automation orchestrate <workspace...> --json`。根据 JSON 的 `noop` 与 `actions` 决定后续动作；若 `noop=true`，最终只输出一行 NOOP 并停止。
+先运行确定性扫描命令：`agmesh automation orchestrate <workspace...> --write-loop-triggers --json`。根据 JSON 的 `noop` 与 `actions` 决定后续动作；若 `noop=true`，最终只输出一行 NOOP 并停止。
+
+如果 running/review action 带 `loop_triggers`，scheduler 只接受 passive 写入结果；除非用户或 schedule policy 明确批准，不得运行其中的 `active_execute_command`。
 
 针对每个配置好的工作区执行 agent-team 自动化调度。初始阶段只读取判断队列是否有动作所需的最小信息：coordination DB v2 项目的 DB-backed task 状态、pending mailbox、sweep/smoke/provider health；legacy 项目才读取 `tasks.md` active 表格、最近 progress 条目、`.mailbox/` frontmatter 和必要状态文件。不要把完整 legacy `progress.md`、完整 `.mailbox/` 历史、archived task contracts 或 coordination DB dump 塞进提示词。
 
@@ -34,19 +36,19 @@
 
 - 类型：cron
 - 频率：每 6 小时
-- 模型：默认升级标记为 `gpt-5.5`；实际运行模型可由 `agent-team model init --probe` 生成的高风险候选链覆盖
+- 模型：默认升级标记为 `gpt-5.5`；实际运行模型可由 `agmesh model init --probe` 生成的高风险候选链覆盖
 - 推理强度：high
 - 责任：只处理 `needs_model: gpt-5.5` / `review_class: review-high` 的高风险审查、最终仲裁和 reviewer 分歧裁决
 
 ```text
-针对每个配置好的工作区，优先运行 `agent-team arbitrate --next --project <workspace>` 处理 Task Ledger / Task Contract 中明确标记为 `needs_model: gpt-5.5` 或 `review_class: review-high` 的任务。若没有匹配到这两个标记，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up、不触碰普通 ready 队列、不输出逐项目长报告。发现高风险任务时，只读取匹配任务 row/contract、最近 progress、相关 mailbox 证据、`.agents/automations/task-contract.md`、`.agents/workflows/pr-review-merge.md`、相关 PR/MR diff、CI/check 状态、provider 原始任务、项目规则和相关 skills；不要加载完整历史。
+针对每个配置好的工作区，优先运行 `agmesh arbitrate --next --project <workspace>` 处理 Task Ledger / Task Contract 中明确标记为 `needs_model: gpt-5.5` 或 `review_class: review-high` 的任务。若没有匹配到这两个标记，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up、不触碰普通 ready 队列、不输出逐项目长报告。发现高风险任务时，只读取匹配任务 row/contract、最近 progress、相关 mailbox 证据、`.agents/automations/task-contract.md`、`.agents/workflows/pr-review-merge.md`、相关 PR/MR diff、CI/check 状态、provider 原始任务、项目规则和相关 skills；不要加载完整历史。
 
 高风险审查策略：如果没有匹配到 `needs_model: gpt-5.5` / `review_class: review-high`，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up。若匹配到的任务内容为空、字段不完整、无法判定风险范围或目标，直接标 invalid 或 blocked，不要归档成新动作，也不要扩大成普通任务。模型选择采用高风险候选链：优先用户配置/探测到的 `glm`、`kimi`、`deepseek`、`minimax/mino`、`qwen`、`hunyuan`，再尝试 Codex/OpenAI、Claude Code、Zed 或第三方网关兼容的 `claude`、`gemini`、`gpt`、`grok/xai`、`mistral` 名称，最后保留 `gpt-5.5` 兜底；只有当前候选模型调用失败时才换下一个，成功产出裁决后不再切模型。只有在 PR/MR 方向正确但实现有问题时才退回原 PR/MR 要求修复；如果 PR/MR 方向错误，标记 blocked，更新 Task Contract，必要时拆子任务并引用原任务/原 PR；如果问题已经合并进入主线，才创建 follow-up 修复任务，且必须包含 parent / source / reason。自动合并只允许在风险已降级、CI 全绿、diff 窄、回滚明确且契约逐条满足时发生。对生产、数据、权限、安全、不可逆迁移，默认只给审查结论和人工确认建议。处理 reviewer 分歧时必须引用各方证据、写明裁决理由和 accepted risks。处理完成后更新当前执行源（v2 为 coordination DB，legacy 为 Task Ledger/progress），并清除或更新 `needs_model` / `review_class`。不要处理普通 ready 任务，不要触碰无关业务改动。
 ```
 
 ## Agent Team CI Reviewer（可选）
 
-默认不创建 CI reviewer。需要接入 PR/MR 事件时，用 `agent-team automation codex-schedule --project <path> --ci-mode comment|merge --json` 生成第三个定义，再接入 GitHub Actions / CNB / GitLab CI。
+默认不创建 CI reviewer。需要接入 PR/MR 事件时，用 `agmesh automation codex-schedule --project <path> --ci-mode comment|merge --json` 生成第三个定义，再接入 GitHub Actions / CNB / GitLab CI。
 
 - `comment`：只评论审查结论、阻断项和下一步；永不合并。
 - `merge`：guarded auto-merge；只有 merge-bypass 扫描、自修改阻断、CI 全绿、可信提交者、风险和 Task Contract 门禁全部通过才允许合并。

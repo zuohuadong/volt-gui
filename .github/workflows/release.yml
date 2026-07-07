@@ -61,10 +61,10 @@ jobs:
               exit 0
               ;;
           esac
-          curl --retry 5 --retry-delay 2 -fsSL https://dl.reasonix.io/latest/latest.json -o latest.raw.json
-          jq '.download_page = "https://reasonix.io/#start"' latest.raw.json > latest.json
+          curl --retry 5 --retry-delay 2 -fsSL https://dl.voltui.io/latest/latest.json -o latest.raw.json
+          jq '.download_page = "https://voltui.io/#start"' latest.raw.json > latest.json
           jq -e '
-            ([.platforms[] | (.url, .sig)] |
-              all(type == "string" and startswith("https://dl.reasonix.io/") and (contains("/releases/latest/") | not)))
+            ([.platforms[] | .url] |
+              all(type == "string" and startswith("https://dl.voltui.io/") and (contains("/releases/latest/") | not)))
           ' latest.json >/dev/null
           gh release upload "$TAG" latest.json --clobber

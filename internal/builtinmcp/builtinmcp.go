@@ -1,4 +1,4 @@
-// Package builtinmcp defines MCP servers that ship with Reasonix without
+// Package builtinmcp defines MCP servers that ship with VoltUI without
 // requiring user configuration.
 package builtinmcp
 
@@ -77,7 +77,7 @@ func Entry(name string) (config.PluginEntry, bool) {
 	return config.PluginEntry{}, false
 }
 
-// IsBuiltIn reports whether name is a Reasonix-shipped MCP server.
+// IsBuiltIn reports whether name is a VoltUI-shipped MCP server.
 func IsBuiltIn(name string) bool {
 	_, ok := Entry(name)
 	return ok

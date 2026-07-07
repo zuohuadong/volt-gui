@@ -1,10 +1,10 @@
 # Goal Forge Integration
 
-Selected runtime: bundled (in-binary)
+Selected runtime: npm package (@goalforge/cli@latest)
 
-Source checkout fallback not detected. Optional: place it at ../goal-forge, or set GOAL_FORGE_PATH / GOAL_FORGE_HOME for local development templates.
+Source checkout fallback: /Volumes/Data/workspace/goal-forge
 
-This directory is managed by `agent-team deploy`. It connects the project Task Contract / design-review workflow to Goal Forge without vendoring Goal Forge into this project. Runtime discovery prefers an explicit/local binary first, then the latest published npm package, and keeps a sibling source checkout as a development fallback.
+This directory is managed by `agmesh deploy`. It connects the project Task Contract / design-review workflow to Goal Forge without vendoring Goal Forge into this project. Runtime discovery prefers an explicit/local binary first, then the latest published npm package, and keeps a sibling source checkout as a development fallback.
 
 Use Goal Forge when the deliverable is a design artifact, architecture/API/data model decision, migration plan, or any high-risk plan that benefits from adversarial review before implementation.
 
@@ -13,32 +13,32 @@ Use Goal Forge when the deliverable is a design artifact, architecture/API/data 
 Create a local review run:
 
 ```bash
-agmesh goal-forge <command> init --goal <design goal> --config D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\goal-forge.config.json --out D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id>
+npx -y @goalforge/cli@latest init --goal "<design goal>" --config "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/goal-forge.config.json" --out "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>"
 ```
 
 Run a deterministic local round:
 
 ```bash
-agmesh goal-forge <command> run D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id> --rounds 1 --adapter local
-agmesh goal-forge <command> validate D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id> --strict
+npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter local
+npx -y @goalforge/cli@latest validate "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --strict
 ```
 
 Run repository-aware verification through the Codex adapter:
 
 ```bash
-agmesh goal-forge <command> run D:\项目\西谷AI\volt-gui\.upstream-latest\.agents\goal-forge\runs\<run-id> --rounds 1 --adapter codex --repo D:\项目\西谷AI\volt-gui\.upstream-latest --model gpt-5.3-codex
+npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-forge/runs/<run-id>" --rounds 1 --adapter codex --repo "/Volumes/Data/workspace/volt-gui" --model gpt-5.3-codex
 ```
 
 Shortcuts from this project:
 
 ```bash
-agent-team goal-forge status .
-agent-team goal-forge init . "<design goal>"
+agmesh goal-forge status .
+agmesh goal-forge init . "<design goal>"
 ```
 
 ## Coordination Rules
 
-- In coordination DB v2 projects, keep `.agents/state/coordination.db` as the execution source and use `agent-team context` / `automation status` / `automation doctor` for bounded reads.
+- In coordination DB v2 projects, keep `.agents/state/coordination.db` as the execution source and use `agmesh context` / `automation status` / `automation doctor` for bounded reads.
 - In legacy projects only, `tasks.md`, `progress.md`, and `.mailbox/` remain the fallback coordination files until migration.
 - Keep Goal Forge runs under `.agents/goal-forge/runs/` as review evidence for design artifacts.
 - Record the final Goal Forge run path in the Task Contract under `goal_forge.run_dir`.
@@ -46,4 +46,4 @@ agent-team goal-forge init . "<design goal>"
 
 ## Development Fallback
 
-When working on Goal Forge itself, a source checkout at `<path-to-sibling-goal-forge>` can still provide config templates and a fallback runtime when no binary/package runner is available.
+When working on Goal Forge itself, a source checkout at `/Volumes/Data/workspace/goal-forge` can still provide config templates and a fallback runtime when no binary/package runner is available.

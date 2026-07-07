@@ -137,7 +137,7 @@ func TestNeedsOnboardingIgnoresInheritedEnv(t *testing.T) {
 
 	app := NewApp()
 	if !app.NeedsOnboarding() {
-		t.Fatal("NeedsOnboarding should require a key saved in Reasonix global .env")
+		t.Fatal("NeedsOnboarding should require a key saved in VoltUI global .env")
 	}
 	setDesktopTestCredential(t, onboardingKeyEnv, "saved-key")
 	if app.NeedsOnboarding() {
@@ -896,8 +896,8 @@ func TestSettingsShowsGlobalCredentialWithoutMutatingWorkspaceEnv(t *testing.T) 
 		if p.Name != "settings-provider" {
 			continue
 		}
-		if !p.KeySet || !strings.Contains(p.KeySource, "Reasonix credentials") {
-			t.Fatalf("settings-provider key = set:%v source:%q, want Reasonix credentials: %+v", p.KeySet, p.KeySource, p)
+		if !p.KeySet || !strings.Contains(p.KeySource, "VoltUI credentials") {
+			t.Fatalf("settings-provider key = set:%v source:%q, want VoltUI credentials: %+v", p.KeySet, p.KeySource, p)
 		}
 		if env := os.Getenv("SHARED_SETTINGS_KEY"); env != "from-project" {
 			t.Fatalf("Settings mutated SHARED_SETTINGS_KEY = %q, want existing project env", env)
@@ -1782,7 +1782,7 @@ func TestSetProviderKeyLeaseHeldKeepsCurrentController(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "current session could not refresh yet") || !strings.Contains(warning, "another Reasonix window") {
+	if !strings.Contains(warning, "current session could not refresh yet") || !strings.Contains(warning, "another VoltUI window") {
 		t.Fatalf("SetProviderKey warning = %q, want deferred rebuild warning", warning)
 	}
 	if strings.Contains(warning, sessionPath) || strings.Contains(warning, "held by") {
@@ -1926,7 +1926,7 @@ func TestSaveProviderWithKeyLeaseHeldPersistsCustomProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveProviderWithKey: %v", err)
 	}
-	if !strings.Contains(warning, "current session could not refresh yet") || !strings.Contains(warning, "another Reasonix window") {
+	if !strings.Contains(warning, "current session could not refresh yet") || !strings.Contains(warning, "another VoltUI window") {
 		t.Fatalf("SaveProviderWithKey warning = %q, want deferred rebuild warning", warning)
 	}
 	if strings.Contains(warning, sessionPath) || strings.Contains(warning, "held by") {
@@ -4190,7 +4190,7 @@ func TestConnectKeyRebuildLeaseHeldKeepsCurrentController(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConnectKey: %v", err)
 	}
-	if !strings.Contains(warning, "another Reasonix window") {
+	if !strings.Contains(warning, "another VoltUI window") {
 		t.Fatalf("ConnectKey warning = %q, want user-facing lease warning", warning)
 	}
 	if tab.Ctrl != oldCtrl {
@@ -6046,8 +6046,8 @@ args = ["-y", "@playwright/mcp"]
 
 func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
 	home := isolateDesktopUserDirs(t)
-	reasonixHome := filepath.Join(home, ".voltui")
-	root := filepath.Join(reasonixHome, "plugins", "superpowers")
+	voltuiHome := filepath.Join(home, ".voltui")
+	root := filepath.Join(voltuiHome, "plugins", "superpowers")
 	if err := os.MkdirAll(filepath.Join(root, "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -6068,7 +6068,7 @@ func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
 }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+	if err := pluginpkg.Upsert(voltuiHome, pluginpkg.InstalledPlugin{
 		Name:         "superpowers",
 		Root:         "plugins/superpowers",
 		Version:      "6.1.0",

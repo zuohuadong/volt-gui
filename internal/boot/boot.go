@@ -275,7 +275,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
-	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
+	// Persistent memory (VOLTUI.md / legacy REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the
 	// durable, cache-stable prefix every turn reuses, so memory costs nothing per
 	// turn. Mid-session changes never touch this prefix — they ride the
@@ -1025,7 +1025,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		MaxSubagentDepth:                   maxSubagentDepth,
 		MemoryCompiler:                     memCompiler,
 		MemoryCompilerVerbosity:            cfg.MemoryCompilerVerbosity(),
-		UseMemoryCompilerLLMClassification: strings.TrimSpace(os.Getenv("REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION")) == "true",
+		UseMemoryCompilerLLMClassification: firstNonEmptyEnv("VOLTUI_MEMORY_COMPILER_LLM_CLASSIFICATION", "REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION") == "true",
 	}, sink)
 
 	var runner agent.Runner = executor
@@ -1789,4 +1789,13 @@ func providerNames(cfg *config.Config) string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, "/")
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if env := strings.TrimSpace(os.Getenv(name)); env != "" {
+			return env
+		}
+	}
+	return ""
 }

@@ -191,7 +191,7 @@ type approveCall struct {
 
 func invalidACPv1PermissionOptionKind(options []PermissionOption) (PermissionOption, bool) {
 	// ACP v1 schema only accepts these four PermissionOptionKind values. ACP hosts
-	// own cross-session persistence, so Reasonix-specific persistent approvals must
+	// own cross-session persistence, so VoltUI-specific persistent approvals must
 	// not appear in session/request_permission options.
 	valid := map[PermissionOptionKind]bool{
 		OptAllowOnce:    true,

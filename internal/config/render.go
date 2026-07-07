@@ -44,20 +44,20 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	defaults := Default()
 	var b strings.Builder
 
-	b.WriteString("# Reasonix configuration.\n")
+	b.WriteString("# VoltUI configuration.\n")
 	fmt.Fprintf(&b, "# Resolution order: flag > ./voltui.toml > %s > built-in defaults.\n", userConfigDisplayPath())
 	b.WriteString("# Fields marked user/global only are not overridden by ./voltui.toml.\n")
-	b.WriteString("# Secrets are named via api_key_env and stored in Reasonix's global .env; never put keys here.\n\n")
+	b.WriteString("# Secrets are named via api_key_env and stored in VoltUI's global .env; never put keys here.\n\n")
 
 	fmt.Fprintf(&b, "config_version = %d   # schema marker for diagnostics; old versions may ignore it\n", configVersion(c))
 	fmt.Fprintf(&b, "default_model = %q\n", c.DefaultModel)
 	if c.Language != "" {
-		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
+		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $VOLTUI_LANG\n", c.Language)
 	} else {
-		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
+		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $VOLTUI_LANG\n")
 	}
 	if scope != RenderScopeProject {
-		fmt.Fprintf(&b, "credentials_store = %q   # legacy compatibility; provider keys are saved in Reasonix's global .env\n", normalizeCredentialsStore(c.CredentialsStore))
+		fmt.Fprintf(&b, "credentials_store = %q   # legacy compatibility; provider keys are saved in VoltUI's global .env\n", normalizeCredentialsStore(c.CredentialsStore))
 	}
 	b.WriteString("\n")
 
@@ -87,9 +87,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 
 	if shouldRenderUI(c, defaults, scope) {
 		b.WriteString("[ui]\n")
-		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; REASONIX_THEME can override per run\n", c.UITheme())
+		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; VOLTUI_THEME can override per run\n", c.UITheme())
 		if style := c.UIThemeStyle(); style != "" {
-			fmt.Fprintf(&b, "theme_style = %q   # CLI accent palette; REASONIX_THEME_STYLE can override per run\n", style)
+			fmt.Fprintf(&b, "theme_style = %q   # CLI accent palette; VOLTUI_THEME_STYLE can override per run\n", style)
 		} else {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|aurora|slate|carbon|nocturne|amber and legacy aliases\n")
 		}
@@ -187,7 +187,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		if c.Network.Proxy.Password != "" {
 			fmt.Fprintf(&b, "password = %q   # supports ${VAR} expansion\n", c.Network.Proxy.Password)
 		} else {
-			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
+			b.WriteString("# password = \"${VOLTUI_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}
 		b.WriteString("\n")
 	}
@@ -538,7 +538,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		if strings.TrimSpace(c.Bot.Control.TokenEnv) != "" {
 			fmt.Fprintf(&b, "token_env = %q\n", c.Bot.Control.TokenEnv)
 		} else {
-			b.WriteString("# token_env = \"REASONIX_BOT_CONTROL_TOKEN\"\n")
+			b.WriteString("# token_env = \"VOLTUI_BOT_CONTROL_TOKEN\"\n")
 		}
 		if len(c.Bot.Routes) > 0 {
 			for _, route := range c.Bot.Routes {

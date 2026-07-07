@@ -1,4 +1,4 @@
-// Package pluginpkg handles installed Reasonix plugin packages.
+// Package pluginpkg handles installed VoltUI plugin packages.
 //
 // Plugin packages are higher-level bundles that can contribute skills, hooks,
 // and MCP servers. They are intentionally parsed into package-local structs so
@@ -67,7 +67,7 @@ type MCPServerRef struct {
 	URL       string
 }
 
-// Manifest is the normalized manifest shape used by Reasonix.
+// Manifest is the normalized manifest shape used by VoltUI.
 type Manifest struct {
 	Name        string
 	Version     string
@@ -101,7 +101,7 @@ type MCPServer struct {
 	Tier      string            `json:"tier,omitempty"`
 }
 
-// State is persisted at <Reasonix home>/plugin-packages.json.
+// State is persisted at <VoltUI home>/plugin-packages.json.
 type State struct {
 	Version int               `json:"version"`
 	Plugins []InstalledPlugin `json:"plugins"`
@@ -173,7 +173,7 @@ func SaveState(reasonixHome string, st State) error {
 // process. SaveState writes atomically (tmpfile + rename), so concurrent
 // callers never see a half-written file; this lock additionally prevents two
 // in-process load-modify-save cycles from clobbering each other's edit. It is
-// not a cross-process lock — concurrent Reasonix processes can still race.
+// not a cross-process lock — concurrent VoltUI processes can still race.
 var stateMu sync.Mutex
 
 func Upsert(reasonixHome string, p InstalledPlugin) error {

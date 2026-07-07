@@ -26,7 +26,7 @@ func RunCommand(args []string, in io.Reader, out io.Writer, errOut io.Writer, ve
 	return 0
 }
 
-// ServeTimeMCP serves Reasonix's dependency-free built-in time MCP over stdio.
+// ServeTimeMCP serves VoltUI's dependency-free built-in time MCP over stdio.
 func ServeTimeMCP(in io.Reader, out io.Writer, version string) error {
 	r := bufio.NewReader(in)
 	w := bufio.NewWriter(out)

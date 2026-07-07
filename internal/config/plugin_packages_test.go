@@ -10,7 +10,7 @@ import (
 
 func TestLoadMergesInstalledPluginSkillRootsAndMCP(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("VOLTUI_HOME", home)
 	root := filepath.Join(home, "plugins", "superpowers")
 	writeConfigTestFile(t, filepath.Join(root, pluginpkg.NativeManifest), `{
   "name": "superpowers",
@@ -44,7 +44,7 @@ func TestLoadMergesInstalledPluginSkillRootsAndMCP(t *testing.T) {
 			if p.Command != filepath.Join(root, "bin", "helper") {
 				t.Fatalf("plugin command = %q", p.Command)
 			}
-			if p.Env["REASONIX_PLUGIN_NAME"] != "superpowers" {
+			if p.Env["VOLTUI_PLUGIN_NAME"] != "superpowers" || p.Env["REASONIX_PLUGIN_NAME"] != "superpowers" {
 				t.Fatalf("plugin env = %#v", p.Env)
 			}
 		}

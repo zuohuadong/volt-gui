@@ -6,12 +6,12 @@ name: Release desktop
 #   git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z
 #
 # Wails cannot cross-compile a CGO/WebKit binary, so build/ fans out to one native
-# runner per platform. Artifacts are minisign-signed (MINISIGN_* secrets), a
-# latest.json manifest is generated, and everything is published to a GitHub
+# runner per platform. A latest.json manifest with SHA-256 metadata is generated,
+# and everything is published to a GitHub
 # release and mirrored to R2 (the updater reads R2 first, then the crash worker
 # release gateway; GitHub's repository-wide "latest" is reserved for the CLI line).
 #
-# The same build/sign/manifest pipeline serves two channels. A `desktop-v*` tag
+# The same build/manifest pipeline serves two channels. A `desktop-v*` tag
 # (or manual stable dispatch) publishes a GitHub release and moves R2's latest/
 # pointer. A manual `channel: canary` dispatch builds with -X main.channel=canary
 # and uploads only to R2's canary/ pointer — no GitHub release, so canary never
@@ -171,9 +171,9 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: scripts/desktop-build.sh "${{ matrix.platform }}" "${{ steps.ver.outputs.version }}" "${{ steps.ver.outputs.channel }}"
 
-      # Authenticode-sign the Windows installer through SignPath. Runs BEFORE minisign:
-      # the signature rewrites the installer's bytes, so the updater's minisign sig and
-      # the manifest SHA must be computed over the signed build. SignPath pulls the file
+      # Authenticode-sign the Windows installer through SignPath before manifest
+      # generation: the signature rewrites the installer's bytes, so the manifest
+      # SHA must be computed over the signed build. SignPath pulls the file
       # from the Actions artifact API, so it must be uploaded first. Canary signs with the
       # test certificate; stable/rc sign with the Foundation release certificate, but only
       # once SIGNPATH_RELEASE_SIGNING_READY is set — until that cert clears CSR-pending,
@@ -194,7 +194,7 @@ jobs:
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: DeepSeek-Reasonix
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'VoltUI' }}
           signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
           artifact-configuration-slug: windows-installer
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
@@ -208,13 +208,6 @@ jobs:
       - name: Replace installer with signed build
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         run: cp signed/*installer*.exe dist/
-
-      - name: Sign artifacts (minisign)
-        working-directory: desktop
-        env:
-          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
-        run: go run ./cmd/sign sign ../dist/*
 
       - uses: actions/upload-artifact@v7
         with:
@@ -262,7 +255,7 @@ jobs:
         run: go run ./cmd/sign manifest ../dist "${{ steps.ver.outputs.version }}" "${{ steps.ver.outputs.tag }}"
 
       # Canary never appears on the GitHub releases page; the mirror job picks up
-      # the signed dist via the canary-dist artifact below. Stable publishes a
+      # the dist via the canary-dist artifact below. Stable publishes a
       # GitHub release as usual.
       - name: Publish GitHub release
         if: steps.ver.outputs.channel != 'canary'
@@ -335,19 +328,18 @@ jobs:
           mkdir -p assets
           gh release download "${{ steps.ver.outputs.tag }}" -R "${{ github.repository }}" -D assets
 
-      # Rewrite both url and sig inside latest.json from github.com to the R2 CDN,
+      # Rewrite artifact URLs inside latest.json from github.com to the R2 CDN,
       # so the updater pulls the manifest AND the heavy artifacts from R2.
       - name: Rewrite latest.json URLs to R2
         if: env.HAS_R2 == 'true'
         env:
-          R2_PUBLIC_BASE: https://dl.reasonix.io
+          R2_PUBLIC_BASE: https://dl.voltui.io
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           f=assets/latest.json
           jq --arg base "$R2_PUBLIC_BASE" --arg tag "$TAG" '
             .platforms |= with_entries(
               .value.url |= sub("https://github.com/[^/]+/[^/]+/releases/download/[^/]+/"; "\($base)/\($tag)/")
-              | .value.sig |= sub("https://github.com/[^/]+/[^/]+/releases/download/[^/]+/"; "\($base)/\($tag)/")
             )
           ' "$f" > "$f.new"
           mv "$f.new" "$f"
@@ -389,14 +381,14 @@ jobs:
         run: |
           set -euo pipefail
           f=assets/latest.json
-          jq -e --arg version "$VERSION" --arg prefix "https://dl.reasonix.io/${TAG}/" '
+          jq -e --arg version "$VERSION" --arg prefix "https://dl.voltui.io/${TAG}/" '
             .version == $version and
-            .download_page == "https://reasonix.io/#start" and
-            ([.platforms[] | (.url, .sig)] |
+            .download_page == "https://voltui.io/#start" and
+            ([.platforms[] | .url] |
               all(type == "string" and startswith($prefix) and (contains("/releases/latest/") | not)))
           ' "$f" >/dev/null
 
-          curl --retry 5 --retry-delay 2 -fsSL "https://dl.reasonix.io/${TAG}/latest.json" >/tmp/reasonix-desktop-tag-latest.json
+          curl --retry 5 --retry-delay 2 -fsSL "https://dl.voltui.io/${TAG}/latest.json" >/tmp/voltui-desktop-tag-latest.json
           if [ "$CHANNEL" = "canary" ]; then
             pointer="canary"
           elif [ "$PRERELEASE" = "true" ]; then
@@ -405,11 +397,11 @@ jobs:
             pointer="latest"
           fi
           if [ -n "$pointer" ]; then
-            curl --retry 5 --retry-delay 2 -fsSL "https://dl.reasonix.io/${pointer}/latest.json" >/tmp/reasonix-desktop-pointer-latest.json
-            jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-pointer-latest.json >/dev/null
+            curl --retry 5 --retry-delay 2 -fsSL "https://dl.voltui.io/${pointer}/latest.json" >/tmp/voltui-desktop-pointer-latest.json
+            jq -e --arg version "$VERSION" '.version == $version' /tmp/voltui-desktop-pointer-latest.json >/dev/null
           fi
 
-          jq -r '.platforms[] | .url, .sig' "$f" | while IFS= read -r asset; do
+          jq -r '.platforms[] | .url' "$f" | while IFS= read -r asset; do
             curl --retry 5 --retry-delay 2 -fsSI "$asset" >/dev/null
           done
 

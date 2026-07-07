@@ -241,10 +241,10 @@ func loadCredentialStoreForRoot(root string) {
 		return
 	}
 	if p := UserCredentialsPath(); p != "" {
-		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "Reasonix credentials (.env)"})
+		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "VoltUI credentials (.env)"})
 	}
 	for _, p := range legacyCredentialsPaths() {
-		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceLegacy, Path: p, Label: "legacy Reasonix credentials"})
+		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceLegacy, Path: p, Label: "legacy VoltUI credentials"})
 	}
 }
 
@@ -343,7 +343,7 @@ func parseCredentialLines(lines []string) map[string]string {
 func pinCredentialAssignments(assignments map[string]string) {
 	for key, value := range assignments {
 		_ = os.Setenv(key, value)
-		recordCredentialSource(key, value, CredentialSource{Kind: CredentialSourceCredentials, Path: UserCredentialsPath(), Label: "Reasonix credentials (.env)"})
+		recordCredentialSource(key, value, CredentialSource{Kind: CredentialSourceCredentials, Path: UserCredentialsPath(), Label: "VoltUI credentials (.env)"})
 	}
 }
 
@@ -396,11 +396,11 @@ func credentialSourceLabel(source CredentialSource) string {
 	case CredentialSourceProjectEnv:
 		return "project .env"
 	case CredentialSourceCredentials:
-		return "Reasonix credentials"
+		return "VoltUI credentials"
 	case CredentialSourceHomeEnv:
 		return "home .env"
 	case CredentialSourceLegacy:
-		return "legacy Reasonix credentials"
+		return "legacy VoltUI credentials"
 	case CredentialSourceEnvironment:
 		return "environment variable"
 	default:
@@ -501,7 +501,7 @@ func resolveCredentialForRootGlobalFirstWithFiles(root, key string) CredentialRe
 func storedCredentialValue(key string) (string, CredentialSource, bool) {
 	if p := UserCredentialsPath(); p != "" {
 		if value, ok := envFileValue(p, key); ok && value != "" {
-			return value, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "Reasonix credentials (.env)"}, true
+			return value, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "VoltUI credentials (.env)"}, true
 		}
 	}
 	return "", CredentialSource{}, false

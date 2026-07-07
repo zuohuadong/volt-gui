@@ -7,12 +7,12 @@ import (
 )
 
 func TestInstallerCommandLineIsSilentAndKeepsDFlagLast(t *testing.T) {
-	got := installerCommandLine(`C:\Temp\Reasonix Installer.exe`, `D:\Tools\Reasonix App`)
-	want := `"C:\Temp\Reasonix Installer.exe" /S /D=D:\Tools\Reasonix App`
+	got := installerCommandLine(`C:\Temp\VoltUI Installer.exe`, `D:\Tools\VoltUI App`)
+	want := `"C:\Temp\VoltUI Installer.exe" /S /D=D:\Tools\VoltUI App`
 	if got != want {
 		t.Fatalf("installerCommandLine = %q, want %q", got, want)
 	}
-	if !strings.HasSuffix(got, `/D=D:\Tools\Reasonix App`) {
+	if !strings.HasSuffix(got, `/D=D:\Tools\VoltUI App`) {
 		t.Fatalf("/D= must be the final unquoted NSIS token, got %q", got)
 	}
 }
@@ -20,15 +20,15 @@ func TestInstallerCommandLineIsSilentAndKeepsDFlagLast(t *testing.T) {
 func TestWindowsUpdateHandoffArgsCarryParentInstallAndRelaunch(t *testing.T) {
 	got := windowsUpdateHandoffArgs(
 		4242,
-		`C:\Users\Jane Doe\AppData\Local\Reasonix\updates\Reasonix-windows-amd64-installer.exe`,
-		`D:\Tools\Reasonix App`,
-		`D:\Tools\Reasonix App\voltui-desktop.exe`,
+		`C:\Users\Jane Doe\AppData\Local\VoltUI\updates\VoltUI-windows-amd64-installer.exe`,
+		`D:\Tools\VoltUI App`,
+		`D:\Tools\VoltUI App\voltui-desktop.exe`,
 	)
 	want := []string{
 		"--parent-pid", "4242",
-		"--installer", `C:\Users\Jane Doe\AppData\Local\Reasonix\updates\Reasonix-windows-amd64-installer.exe`,
-		"--install-dir", `D:\Tools\Reasonix App`,
-		"--relaunch", `D:\Tools\Reasonix App\voltui-desktop.exe`,
+		"--installer", `C:\Users\Jane Doe\AppData\Local\VoltUI\updates\VoltUI-windows-amd64-installer.exe`,
+		"--install-dir", `D:\Tools\VoltUI App`,
+		"--relaunch", `D:\Tools\VoltUI App\voltui-desktop.exe`,
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", got, want)
@@ -42,13 +42,13 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 	}
 	script := string(data)
 	for _, want := range []string{
-		`!define REASONIX_UPDATE_HELPER "voltui-update-helper.exe"`,
+		`!define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"`,
 		"Function voltui.waitForExecutableUnlock",
 		`FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a`,
 		"SetErrorLevel 1618",
 		"Call voltui.waitForExecutableUnlock",
-		`File "/oname=${REASONIX_UPDATE_HELPER}" "${REASONIX_UPDATE_HELPER}"`,
-		`Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"`,
+		`File "/oname=${VOLTUI_UPDATE_HELPER}" "${VOLTUI_UPDATE_HELPER}"`,
+		`Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("project.nsi missing %q", want)

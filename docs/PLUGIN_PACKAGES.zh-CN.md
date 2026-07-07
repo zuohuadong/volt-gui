@@ -1,11 +1,11 @@
-# Reasonix 插件包
+# VoltUI 插件包
 
-Reasonix 插件包把 skills、hooks 和 MCP servers 组织成一个可安装单元。
+VoltUI 插件包把 skills、hooks 和 MCP servers 组织成一个可安装单元。
 
 ## CLI 模式
 
-在终端里使用 `reasonix plugin` 安装和管理插件包。插件包当前按全局范围安装，
-写入 Reasonix home 目录。
+在终端里使用 `voltui plugin` 安装和管理插件包。插件包当前按全局范围安装，
+写入 VoltUI home 目录。
 
 ### 通过 CLI 安装
 
@@ -15,31 +15,31 @@ Reasonix 插件包把 skills、hooks 和 MCP servers 组织成一个可安装单
   `https://github.com/obra/superpowers`。
 - GitHub 分支或子目录 URL，例如
   `https://github.com/owner/repo/tree/main/path/to/plugin`。
-- 本地目录，目录内需要包含 `reasonix-plugin.json` 或
+- 本地目录，目录内需要包含 `voltui-plugin.json` 或
   `.codex-plugin/plugin.json`。
 
 只预览安装计划，不写文件：
 
 ```bash
-reasonix plugin install git:github.com/obra/superpowers --dry-run
+voltui plugin install git:github.com/obra/superpowers --dry-run
 ```
 
 确认计划后安装：
 
 ```bash
-reasonix plugin install git:github.com/obra/superpowers --yes
+voltui plugin install git:github.com/obra/superpowers --yes
 ```
 
 指定安装名称，或覆盖已安装的同名插件：
 
 ```bash
-reasonix plugin install git:github.com/obra/superpowers --name superpowers --replace --yes
+voltui plugin install git:github.com/obra/superpowers --name superpowers --replace --yes
 ```
 
 以开发模式使用本地目录：
 
 ```bash
-reasonix plugin install /path/to/plugin --link --replace --yes
+voltui plugin install /path/to/plugin --link --replace --yes
 ```
 
 CLI 安装参数：
@@ -49,18 +49,18 @@ CLI 安装参数：
 - `--replace` 允许当前来源替换已安装的同名插件。
 - `--name <name>` 或 `--name=<name>` 覆盖插件 manifest 里的名称，
   作为本次安装名称。
-- `--link` 链接本地插件目录，而不是复制到 Reasonix 的插件存储目录。
+- `--link` 链接本地插件目录，而不是复制到 VoltUI 的插件存储目录。
   移动或删除该目录会导致这个链接插件失效。
 
-如果运行 `reasonix plugin install <source>` 时既没有 `--dry-run`，
+如果运行 `voltui plugin install <source>` 时既没有 `--dry-run`，
 也没有 `--yes`，CLI 会拒绝写文件，并提示使用其中一个参数重新运行。
 安装和移除命令会输出结构化 JSON，来源于桌面端同一套 install-source 后端。
 
 插件状态和内容写入：
 
 ```text
-~/.reasonix/plugin-packages.json
-~/.reasonix/plugins/<name>/
+~/.voltui/plugin-packages.json
+~/.voltui/plugins/<name>/
 ```
 
 ### 通过 CLI 管理
@@ -68,13 +68,13 @@ CLI 安装参数：
 列出已安装插件：
 
 ```bash
-reasonix plugin list
+voltui plugin list
 ```
 
 查看某个插件的元数据、根目录、来源以及导出的能力数量：
 
 ```bash
-reasonix plugin show superpowers
+voltui plugin show superpowers
 ```
 
 如果能读取到能力明细，`show` 也会输出具体清单：
@@ -86,20 +86,20 @@ reasonix plugin show superpowers
 检查 manifest 和 skill roots 是否可读：
 
 ```bash
-reasonix plugin doctor superpowers
+voltui plugin doctor superpowers
 ```
 
 在不卸载的情况下启用或禁用插件：
 
 ```bash
-reasonix plugin disable superpowers
-reasonix plugin enable superpowers
+voltui plugin disable superpowers
+voltui plugin enable superpowers
 ```
 
 移除插件：
 
 ```bash
-reasonix plugin remove superpowers --yes
+voltui plugin remove superpowers --yes
 ```
 
 `remove` 也可以写成 `uninstall`。它需要 `--yes`，
@@ -108,7 +108,7 @@ reasonix plugin remove superpowers --yes
 
 ### 在 CLI 中使用已安装插件
 
-已安装插件不会打开一个独立聊天界面。插件启用后，Reasonix 会把它的能力加载到普通交互会话里：
+已安装插件不会打开一个独立聊天界面。插件启用后，VoltUI 会把它的能力加载到普通交互会话里：
 
 - 在交互会话里运行 `/plugins` 可以列出已安装插件包。
   运行 `/plugins show <name>` 可以在不离开聊天的情况下查看该插件导出的
@@ -118,9 +118,9 @@ reasonix plugin remove superpowers --yes
 - **Hooks** 会在配置的生命周期事件里自动运行，例如 `SessionStart`、
   `UserPromptSubmit`、`PreToolUse` 或 `PostToolUse`。
 - **MCP servers** 会进入正常 MCP/工具流程。用户只需要描述任务，
-  Reasonix 会在相关时调用插件提供的工具。
+  VoltUI 会在相关时调用插件提供的工具。
 
-如果是在另一个终端里安装、启用、禁用或更新插件，而当前已有 `reasonix` 会话正在运行，
+如果是在另一个终端里安装、启用、禁用或更新插件，而当前已有 `voltui` 会话正在运行，
 建议开启新会话，或重新打开 `/skills` 确认当前会话能看到预期技能。
 
 ## 桌面端设置
@@ -178,7 +178,7 @@ reasonix plugin remove superpowers --yes
 
 ## 原生 Manifest
 
-Reasonix 原生插件在根目录声明 `reasonix-plugin.json`：
+VoltUI 原生插件在根目录声明 `voltui-plugin.json`：
 
 ```json
 {
@@ -202,23 +202,23 @@ Reasonix 原生插件在根目录声明 `reasonix-plugin.json`：
 }
 ```
 
-相对路径都按插件根目录解析。Reasonix 安装插件时不会执行第三方安装脚本。
+相对路径都按插件根目录解析。VoltUI 安装插件时不会执行第三方安装脚本。
 
 ## Codex 兼容
 
-Reasonix 也会读取 `.codex-plugin/plugin.json`。对于 Superpowers 这类插件，
-Reasonix 会映射：
+VoltUI 也会读取 `.codex-plugin/plugin.json`。对于 Superpowers 这类插件，
+VoltUI 会映射：
 
-- `skills` 到 Reasonix skill root。
-- 如果存在 `hooks/session-start-codex`，映射为 Reasonix `SessionStart` hook。
+- `skills` 到 VoltUI skill root。
+- 如果存在 `hooks/session-start-codex`，映射为 VoltUI `SessionStart` hook。
 
 插件 hook 会收到这些环境变量：
 
-- `REASONIX_PLUGIN_ROOT`
-- `REASONIX_PLUGIN_NAME`
-- `REASONIX_PLUGIN_VERSION`
-- `REASONIX_HOME`
-- `REASONIX_WORKSPACE_ROOT`
+- `VOLTUI_PLUGIN_ROOT`
+- `VOLTUI_PLUGIN_NAME`
+- `VOLTUI_PLUGIN_VERSION`
+- `VOLTUI_HOME`
+- `VOLTUI_WORKSPACE_ROOT`
 
 ## 桌面端后端方法
 

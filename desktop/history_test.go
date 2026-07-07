@@ -249,7 +249,7 @@ func TestHistoryForTabRestoresPlannerDisplayAfterReload(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 	handoff := strings.Join([]string{
-		"# Reasonix executor handoff",
+		"# VoltUI executor handoff",
 		"",
 		"You are the executor now.",
 		"",

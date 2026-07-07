@@ -11,17 +11,17 @@ import (
 
 // mergeInstalledPluginPackages overlays enabled plugin package capabilities onto
 // the in-memory config. It never writes config.toml: plugin package state lives
-// in <Reasonix home>/plugin-packages.json so uninstall/disable can remove the
+// in <VoltUI home>/plugin-packages.json so uninstall/disable can remove the
 // entire bundle without editing user-authored config.
 func mergeInstalledPluginPackages(cfg *Config, root string) []string {
 	if cfg == nil {
 		return nil
 	}
-	reasonixHome := ReasonixHomeDir()
-	if strings.TrimSpace(reasonixHome) == "" {
+	voltuiHome := ReasonixHomeDir()
+	if strings.TrimSpace(voltuiHome) == "" {
 		return nil
 	}
-	installed, warnings := pluginpkg.LoadInstalled(reasonixHome)
+	installed, warnings := pluginpkg.LoadInstalled(voltuiHome)
 	sort.SliceStable(installed, func(i, j int) bool {
 		return installed[i].Installed.Name < installed[j].Installed.Name
 	})
@@ -70,9 +70,12 @@ func pluginPackageEnv(installed pluginpkg.InstalledPlugin, root string, env map[
 	if out == nil {
 		out = map[string]string{}
 	}
+	out["VOLTUI_PLUGIN_ROOT"] = root
+	out["VOLTUI_PLUGIN_NAME"] = installed.Name
 	out["REASONIX_PLUGIN_ROOT"] = root
 	out["REASONIX_PLUGIN_NAME"] = installed.Name
 	if installed.Version != "" {
+		out["VOLTUI_PLUGIN_VERSION"] = installed.Version
 		out["REASONIX_PLUGIN_VERSION"] = installed.Version
 	}
 	return out

@@ -221,7 +221,10 @@ func TestManagedConfigWriteGatedOnApprover(t *testing.T) {
 	// Declined: the approver's reason surfaces to the model and nothing lands.
 	decline := &stubConfigWriteApprover{allow: false, reason: "the user declined this Reasonix config write"}
 	dctx := tool.WithConfigWriteApprover(context.Background(), decline)
-	declinedTarget := filepath.Join(home, ".config", "reasonix", "config.toml")
+	declinedTarget := config.UserConfigPath()
+	if err := os.Remove(declinedTarget); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove approved config before declined write: %v", err)
+	}
 	args, _ := json.Marshal(map[string]string{"path": declinedTarget, "content": "{}\n"})
 	if _, err := w.Execute(dctx, args); err == nil || !strings.Contains(err.Error(), "declined") {
 		t.Fatalf("declined managed config write should surface the reason, got: %v", err)

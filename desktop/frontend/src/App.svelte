@@ -102,8 +102,9 @@
     WorkbenchSyncJob,
     WorkbenchTeamChatMessage,
     WorkbenchTeamRoom,
+    WorkbenchTeamRuntimeInput,
+    WorkbenchTeamRuntimeResult,
     WorkbenchTeamRun,
-    WorkbenchTeamRunArtifact as TeamRunArtifact,
     WorkbenchTeamRunEvent as TeamRunEvent,
     WorkbenchTeamRunStatus as TeamRunStatus,
     WorkspaceDiffView,
@@ -170,6 +171,7 @@
     SaveTeamRoom?: (input: WorkbenchTeamRoom) => Promise<WorkbenchTeamRoom>;
     SaveTeamRun?: (input: WorkbenchTeamRun) => Promise<WorkbenchTeamRun>;
     SaveTeamChatMessage?: (input: WorkbenchTeamChatMessage) => Promise<WorkbenchTeamChatMessage>;
+    RunTeamRuntime?: (input: WorkbenchTeamRuntimeInput) => Promise<WorkbenchTeamRuntimeResult>;
     DistillAgentFromTodo?: (input: WorkbenchTodoInput, skillNames: string[]) => Promise<AgentView>;
   };
   type AutomationDraft = WorkbenchAutomationInput & { stepsText: string; logsText: string };
@@ -294,7 +296,7 @@
   let teamBuilderMemberIds = $state<string[]>(["code-review", "research"]);
   let teamBuilderLeaderId = $state("code-review");
   let teamChatInput = $state("");
-  let teamChatModel = $state("GPT-4o");
+  let teamChatModel = $state("");
   let teamChatAttachments = $state<string[]>([]);
   let teamChatSending = $state(false);
   let automationDialog = $state<string | undefined>();
@@ -3000,81 +3002,52 @@
     const text = teamChatInput.trim();
     const team = selectedTeamRoom();
     if (!text || !team || teamChatSending) return;
-    const members = teamMembers(team);
-    const responders = members.length ? members.slice(0, Math.min(3, members.length)) : agentCards.slice(0, 2);
-    const now = Date.now();
-    const runTopic = text.length > 28 ? `${text.slice(0, 28)}...` : text;
-    const runId = `${team.id}-run-${now}`;
-    const runArtifacts: TeamRunArtifact[] = (team.artifacts.length ? team.artifacts : ["报告草稿", "待办清单", "资料归档"]).map((title, index) => ({
-      id: `${runId}-artifact-${index}`,
-      title,
-      type: index === 0 ? "报告" : index === 1 ? "待办" : "资料",
-      status: "待生成",
-    }));
-    const runEvents: TeamRunEvent[] = [
-      { id: `${runId}-created`, time: "刚刚", actor: "用户", type: "创建运行", detail: `发起任务：${text}` },
-      { id: `${runId}-plan`, time: "刚刚", actor: teamLeader(team)?.name ?? "协调者", type: "生成计划", detail: `按「${team.mode}」生成 ${team.steps.length} 个运行节点。` },
-    ];
+    const runTeamRuntime = workbenchDataPersistenceBindings()?.RunTeamRuntime;
+    if (typeof runTeamRuntime !== "function") {
+      showWorkbenchNotice("团队 runtime 未连接，请在 Wails 桌面环境中重试。");
+      return;
+    }
     teamChatInput = "";
     teamChatSending = true;
-    const nextRun: WorkbenchTeamRun = {
-        id: runId,
-        teamId: team.id,
-        title: runTopic,
-        status: "draft",
-        task: text,
-        createdAt: "刚刚",
-        updatedAt: "刚刚",
-        currentStepId: team.steps[0]?.id ?? "",
-        events: runEvents,
-        artifacts: runArtifacts,
-      };
-    teamRuns = [...teamRuns, nextRun];
+    const previousTeamRooms = teamRooms;
     teamRooms = teamRooms.map((item) => item.id === team.id ? {
       ...item,
-      active: "运行草稿已创建",
-      status: "草稿",
-      topic: runTopic,
-      queue: `${responders.length} 个待执行节点`,
-      runState: "等待 runtime 执行",
-      nextCheckpoint: "确认分工并启动真实运行",
-      outcome: "运行草稿",
-      artifacts: item.artifacts.length ? item.artifacts : ["报告草稿", "待办清单", "资料归档"],
+      active: "runtime 正在执行",
+      status: "运行中",
+      topic: text.length > 28 ? `${text.slice(0, 28)}...` : text,
+      queue: `${teamMembers(team).length || 1} 个成员待返回`,
+      runState: "运行中",
+      nextCheckpoint: "等待团队成员输出",
+      outcome: "执行中",
       steps: item.steps.map((step, index) => ({
         ...step,
-        status: index === 0 ? "已生成草稿" : "待执行",
+        status: index === 0 ? "执行中" : "待执行",
       })),
     } : item);
-    const nextMessages: WorkbenchTeamChatMessage[] = [
-      { id: `${team.id}-user-${now}`, teamId: team.id, role: "user", content: text },
-      ...responders.map((agent, index) => ({
-        id: `${team.id}-agent-${now}-${index}`,
-        teamId: team.id,
-        role: "agent",
-        agentId: agent.id,
-        agentName: agent.name,
-        agentAvatar: agent.name.slice(0, 1),
-        content: index === 0
-          ? `已创建协作运行草稿 #${runId.split("-").pop()}：${text}。下一步可以在运行台启动、暂停、重新分配或终止。`
-          : `${agent.name} 已加入待执行节点。当前先生成本地 teamRun，后续可接入模型、工具和日志回写。`,
-      })),
-    ];
-    teamChatMessages = [...teamChatMessages, ...nextMessages];
     try {
-      await persistTeamRun(nextRun);
-      const latestRoom = teamRooms.find((item) => item.id === team.id);
-      if (latestRoom) await persistTeamRoom(latestRoom);
-      const saveMessage = workbenchDataPersistenceBindings()?.SaveTeamChatMessage;
-      if (typeof saveMessage === "function") {
-        for (const message of nextMessages) await saveMessage(message);
-      }
+      const result = await runTeamRuntime({
+        teamId: team.id,
+        task: text,
+        modelRef: teamChatModel || selectedModel || modelSettings?.defaultModel,
+        attachments: teamChatAttachments,
+      });
+      teamRooms = teamRooms.map((item) => item.id === result.room.id ? result.room : item);
+      teamRuns = [result.run, ...teamRuns.filter((item) => item.id !== result.run.id)];
+      const incomingIds = new Set(result.messages.map((message) => message.id));
+      teamChatMessages = [
+        ...teamChatMessages.filter((message) => message.teamId !== team.id || !incomingIds.has(message.id)),
+        ...result.messages,
+      ];
+      teamChatAttachments = [];
       await refreshWorkbenchData();
+      showWorkbenchNotice(`${result.room.title}：${result.run.status === "completed" ? "运行完成" : "运行已记录"}`);
     } catch (error) {
-      console.error("Failed to persist team chat", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Failed to run team runtime", error);
+      teamRooms = previousTeamRooms;
+      showWorkbenchNotice(`团队 runtime 执行失败：${message}`);
     }
-    window.setTimeout(() => {
-      teamChatSending = false;
-    }, 380);
+    teamChatSending = false;
   }
   async function saveTeamBuilder() {
     const name = teamBuilderName.trim();
@@ -5084,7 +5057,7 @@
                         <button type="button" aria-label="上传文件" onclick={addTeamChatAttachment}><Plus size={16} /></button>
                         <select bind:value={teamChatModel} aria-label="选择模型">
                           {#each modelCards as model (model.ref)}
-                            <option value={model.name}>{model.name}</option>
+                            <option value={model.ref}>{model.name}</option>
                           {/each}
                         </select>
                         <textarea bind:value={teamChatInput} rows="1" placeholder="向协作组发送任务..." onkeydown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendTeamChat(); } }}></textarea>

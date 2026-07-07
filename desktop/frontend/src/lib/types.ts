@@ -596,6 +596,19 @@ export interface WorkbenchTeamRun {
   artifacts: WorkbenchTeamRunArtifact[];
 }
 
+export interface WorkbenchTeamRuntimeInput {
+  teamId: string;
+  task: string;
+  modelRef?: string;
+  attachments?: string[];
+}
+
+export interface WorkbenchTeamRuntimeResult {
+  room: WorkbenchTeamRoom;
+  run: WorkbenchTeamRun;
+  messages: WorkbenchTeamChatMessage[];
+}
+
 export interface WorkbenchTeamChatMessage {
   id: string;
   teamId: string;

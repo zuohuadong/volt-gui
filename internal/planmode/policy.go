@@ -64,37 +64,41 @@ type ReadOnlyCommandTrust struct {
 
 // Policy is the single plan-mode stage policy.
 type Policy struct {
-	AllowedTools     []string
-	ReadOnlyCommands []string
+	AllowedTools        []string
+	ReadOnlyCommands    []string
+	BlockHostAutomation bool
 }
 
 var knownBlockedTools = map[string]bool{
-	"write_file":         true,
-	"edit_file":          true,
-	"multi_edit":         true,
-	"move_file":          true,
-	"apply_patch":        true,
-	"edit_notebook":      true,
-	"notebook_edit":      true,
-	"range_delete":       true,
-	"symbol_delete":      true,
-	"delete_range":       true,
-	"delete_symbol":      true,
-	"complete_step":      true,
-	"task":               true,
-	"parallel_tasks":     true,
-	"run_skill":          true,
-	"explore":            true,
-	"research":           true,
-	"review":             true,
-	"security_review":    true,
-	"security-review":    true,
-	"install_source":     true,
-	"install_skill":      true,
-	"remember":           true,
-	"forget":             true,
-	"kill_shell":         true,
-	"browser_navigate":   true,
+	"write_file":       true,
+	"edit_file":        true,
+	"multi_edit":       true,
+	"move_file":        true,
+	"apply_patch":      true,
+	"edit_notebook":    true,
+	"notebook_edit":    true,
+	"range_delete":     true,
+	"symbol_delete":    true,
+	"delete_range":     true,
+	"delete_symbol":    true,
+	"complete_step":    true,
+	"task":             true,
+	"parallel_tasks":   true,
+	"run_skill":        true,
+	"explore":          true,
+	"research":         true,
+	"review":           true,
+	"security_review":  true,
+	"security-review":  true,
+	"install_source":   true,
+	"install_skill":    true,
+	"remember":         true,
+	"forget":           true,
+	"kill_shell":       true,
+	"browser_navigate": true,
+}
+
+var hostAutomationTools = map[string]bool{
 	"browser_control":    true,
 	"desktop_keyboard":   true,
 	"desktop_mouse":      true,
@@ -188,17 +192,23 @@ var goWriteOrExecArgs = map[string]bool{
 // is fail-closed for untrusted tools: a tool whose ReadOnly() is false, or whose
 // ReadOnly() is asserted by an untrusted external source (an MCP server's
 // readOnlyHint, surfaced via Call.Untrusted), is refused unless it self-reports
-// plan-safe, is declared in plan_mode_allowed_tools, or is trusted by plugin
+// plan-safe, is declared in plan_mode_allowed_tools, is a first-party host
+// automation tool not disabled by user config, or is trusted by plugin
 // configuration before reaching this policy. A trustworthy ReadOnly()==true tool
-// — a built-in or a first-party/user MCP override — is allowed,
-// EXCEPT one that self-reports PlanSafetyUnsafe (complete_step: read-only yet
-// post-approval only), which is refused regardless. The invariant
-// PlanSafe ⇒ ReadOnly is enforced: a writer that claims plan-safe is a wiring
-// bug and is refused.
+// — a built-in or a first-party/user MCP override — is allowed, EXCEPT one that
+// self-reports PlanSafetyUnsafe (complete_step: read-only yet post-approval
+// only), which is refused regardless. The invariant PlanSafe ⇒ ReadOnly is
+// enforced: a writer that claims plan-safe is a wiring bug and is refused.
 func (p Policy) Decide(call Call) Decision {
 	name := strings.TrimSpace(call.Name)
 	if name == "bash" {
 		return decideBash(call.Args, p.ReadOnlyCommands)
+	}
+	if hostAutomationTools[name] {
+		if p.BlockHostAutomation {
+			return blockKnown(name)
+		}
+		return Decision{}
 	}
 	if knownBlockedTools[name] {
 		return blockKnown(name)
@@ -245,7 +255,7 @@ func (p Policy) IgnoredAllowedTools() []string {
 		if name == "" || seen[name] {
 			continue
 		}
-		if name == "bash" || knownBlockedTools[name] {
+		if name == "bash" || knownBlockedTools[name] || (p.BlockHostAutomation && hostAutomationTools[name]) {
 			out = append(out, name)
 			seen[name] = true
 		}
@@ -325,6 +335,9 @@ const (
 	ClassBlockedUnsafe
 	// ClassAlwaysAllowed is ask / todo_write.
 	ClassAlwaysAllowed
+	// ClassHostAutomation is a first-party browser/desktop automation tool that
+	// is allowed during planning by default, but can be disabled by user config.
+	ClassHostAutomation
 	// ClassPlanSafeSelfReported is a tool that self-reports PlanSafetySafe.
 	ClassPlanSafeSelfReported
 	// ClassPlanSafeAudited is a tool in the planSafeReadOnly whitelist.
@@ -345,6 +358,9 @@ func Classify(name string, readOnly bool, safety PlanSafety) Class {
 	}
 	if knownBlockedTools[name] {
 		return ClassBlockedKnown
+	}
+	if hostAutomationTools[name] {
+		return ClassHostAutomation
 	}
 	if safety == PlanSafetyUnsafe {
 		return ClassBlockedUnsafe

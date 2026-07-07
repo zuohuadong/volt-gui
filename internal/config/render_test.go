@@ -472,10 +472,18 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 
 func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	cfg := Default()
+	allowHostAutomation := false
+	cfg.Agent.PlanModeAllowHostAutomation = &allowHostAutomation
 	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
 	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
+	if !strings.Contains(rendered, `plan_mode_allow_host_automation = false`) {
+		t.Fatalf("rendered config should preserve plan_mode_allow_host_automation=false:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "allow browser/desktop automation while planning") {
+		t.Fatalf("rendered config should document plan_mode_allow_host_automation semantics:\n%s", rendered)
+	}
 	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
 	}
@@ -486,6 +494,9 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if got.Agent.PlanModeAllowHostAutomation == nil || *got.Agent.PlanModeAllowHostAutomation {
+		t.Fatalf("PlanModeAllowHostAutomation round trip = %+v, want false", got.Agent.PlanModeAllowHostAutomation)
 	}
 	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
 		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)

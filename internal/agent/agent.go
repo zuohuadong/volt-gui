@@ -358,8 +358,9 @@ type Agent struct {
 	// planModeAllowedTools declares extra custom tools that the centralized
 	// plan-mode policy may treat as read-only. Known blocked tools still lose.
 	// Populated from Options.PlanModeAllowedTools during construction.
-	planModeAllowedTools     []string
-	planModeReadOnlyCommands []string
+	planModeAllowedTools        []string
+	planModeReadOnlyCommands    []string
+	planModeBlockHostAutomation bool
 
 	// subagentDepth tracks the current agent's nesting depth. maxSubagentDepth
 	// caps delegation; when reached, recursive agent/skill tools are excluded.
@@ -814,6 +815,9 @@ type Options struct {
 	// may treat as read-only. Shell operators, background execution, and shell
 	// interpreter prefixes remain blocked.
 	PlanModeReadOnlyCommands []string
+	// PlanModeBlockHostAutomation blocks first-party browser/desktop automation
+	// tools during planning. Zero value keeps them available for convenience.
+	PlanModeBlockHostAutomation bool
 
 	// SubagentDepth is the current nesting depth for this agent. Root sessions are
 	// depth 0; child subagents are depth 1. MaxSubagentDepth caps delegation.
@@ -890,36 +894,37 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		subagentDepth = 0
 	}
 	a := &Agent{
-		prov:                     prov,
-		tools:                    tools,
-		session:                  session,
-		maxSteps:                 opts.MaxSteps,
-		maxStepsKey:              maxStepsKey,
-		temperature:              opts.Temperature,
-		pricing:                  opts.Pricing,
-		usageSource:              usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-		sink:                     sink,
-		gate:                     gate,
-		planModeReadOnlyTrust:    planModeReadOnlyTrust,
-		sandboxEscapeApprover:    sandboxEscapeApprover,
-		hooks:                    hooks,
-		jobs:                     opts.Jobs,
-		evidence:                 evidence.NewLedger(),
-		projectChecks:            append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		contextWindow:            opts.ContextWindow,
-		softCompactRatio:         opts.SoftCompactRatio,
-		toolResultSnipRatio:      opts.ToolResultSnipRatio,
-		compactRatio:             opts.CompactRatio,
-		compactForceRatio:        opts.CompactForceRatio,
-		recentKeep:               opts.RecentKeep,
-		archiveDir:               opts.ArchiveDir,
-		keepPolicy:               opts.KeepPolicy,
-		planModeAllowedTools:     append([]string(nil), opts.PlanModeAllowedTools...),
-		planModeReadOnlyCommands: append([]string(nil), opts.PlanModeReadOnlyCommands...),
-		subagentDepth:            subagentDepth,
-		maxSubagentDepth:         maxSubagentDepth,
-		memoryCompiler:           opts.MemoryCompiler,
-		memoryCompilerVerbosity:  normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
+		prov:                        prov,
+		tools:                       tools,
+		session:                     session,
+		maxSteps:                    opts.MaxSteps,
+		maxStepsKey:                 maxStepsKey,
+		temperature:                 opts.Temperature,
+		pricing:                     opts.Pricing,
+		usageSource:                 usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+		sink:                        sink,
+		gate:                        gate,
+		planModeReadOnlyTrust:       planModeReadOnlyTrust,
+		sandboxEscapeApprover:       sandboxEscapeApprover,
+		hooks:                       hooks,
+		jobs:                        opts.Jobs,
+		evidence:                    evidence.NewLedger(),
+		projectChecks:               append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		contextWindow:               opts.ContextWindow,
+		softCompactRatio:            opts.SoftCompactRatio,
+		toolResultSnipRatio:         opts.ToolResultSnipRatio,
+		compactRatio:                opts.CompactRatio,
+		compactForceRatio:           opts.CompactForceRatio,
+		recentKeep:                  opts.RecentKeep,
+		archiveDir:                  opts.ArchiveDir,
+		keepPolicy:                  opts.KeepPolicy,
+		planModeAllowedTools:        append([]string(nil), opts.PlanModeAllowedTools...),
+		planModeReadOnlyCommands:    append([]string(nil), opts.PlanModeReadOnlyCommands...),
+		planModeBlockHostAutomation: opts.PlanModeBlockHostAutomation,
+		subagentDepth:               subagentDepth,
+		maxSubagentDepth:            maxSubagentDepth,
+		memoryCompiler:              opts.MemoryCompiler,
+		memoryCompilerVerbosity:     normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
 	}
 	// 初始化分类器
 	if opts.UseMemoryCompilerLLMClassification && prov != nil {
@@ -2363,8 +2368,9 @@ func (a *Agent) planModeBlocked(toolName string, readOnly, untrusted bool, safet
 
 func (a *Agent) planModeDecision(toolName string, readOnly, untrusted bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
 	return planmode.Policy{
-		AllowedTools:     a.planModeAllowedTools,
-		ReadOnlyCommands: a.planModeReadOnlyCommands,
+		AllowedTools:        a.planModeAllowedTools,
+		ReadOnlyCommands:    a.planModeReadOnlyCommands,
+		BlockHostAutomation: a.planModeBlockHostAutomation,
 	}.Decide(planmode.Call{
 		Name:      toolName,
 		ReadOnly:  readOnly,

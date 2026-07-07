@@ -160,6 +160,18 @@ func TestPlanModeReadOnlyCommandsOverride(t *testing.T) {
 	}
 }
 
+func TestPlanModeHostAutomationConfig(t *testing.T) {
+	a := &Agent{}
+	if blocked, msg := a.planModeBlocked("browser_control", false, false, planmode.PlanSafetyUnknown, nil); blocked {
+		t.Fatalf("host automation should be allowed by default: %s", msg)
+	}
+
+	a.planModeBlockHostAutomation = true
+	if blocked, _ := a.planModeBlocked("browser_control", false, false, planmode.PlanSafetyUnknown, nil); !blocked {
+		t.Fatal("host automation should be blocked when configured")
+	}
+}
+
 func TestPlanModeGenericWriterBlocked(t *testing.T) {
 	blocked, msg := (&Agent{}).planModeBlocked("some_writer_tool", false, false, planmode.PlanSafetyUnknown, nil)
 	if !blocked {

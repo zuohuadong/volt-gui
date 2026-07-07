@@ -534,6 +534,7 @@ planner_max_steps = 0    # user/global only; planner read-only tool-call rounds;
 temperature       = 0.0
 memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: voltui config memory-v5 off|observe|compact|on|status
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
+# plan_mode_allow_host_automation = true   # set false to block browser/desktop automation while planning
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only declarations for custom tools;
 #                                                # cannot unlock known blocked tools or unsafe bash
 # plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode

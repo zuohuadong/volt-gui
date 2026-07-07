@@ -36,6 +36,31 @@ func TestDecideDoesNotLetOverridesReopenKnownBlockedTools(t *testing.T) {
 	}
 }
 
+func TestDecideAllowsHostAutomationByDefault(t *testing.T) {
+	for _, name := range []string{"browser_control", "desktop_keyboard", "desktop_mouse", "desktop_screenshot"} {
+		t.Run(name, func(t *testing.T) {
+			decision := (Policy{}).Decide(Call{Name: name, ReadOnly: false})
+			if decision.Blocked {
+				t.Fatalf("%s should be allowed in plan mode by default: %s", name, decision.Message)
+			}
+		})
+	}
+}
+
+func TestDecideBlocksHostAutomationWhenConfigured(t *testing.T) {
+	p := Policy{
+		AllowedTools:        []string{"browser_control"},
+		BlockHostAutomation: true,
+	}
+	decision := p.Decide(Call{Name: "browser_control", ReadOnly: false})
+	if !decision.Blocked {
+		t.Fatal("host automation should be blocked when BlockHostAutomation is true")
+	}
+	if got := p.IgnoredAllowedTools(); len(got) != 1 || got[0] != "browser_control" {
+		t.Fatalf("IgnoredAllowedTools() = %v, want [browser_control]", got)
+	}
+}
+
 func TestDecideBlocksSubagentStyleToolsWithCategoryMessage(t *testing.T) {
 	for _, name := range []string{"explore", "research", "review", "security_review", "security-review"} {
 		t.Run(name, func(t *testing.T) {

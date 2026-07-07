@@ -257,6 +257,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# recent_keep         = 2   # minimum recent messages kept verbatim\n")
 	}
 	fmt.Fprintf(&b, "cold_resume_prune   = %v   # elide stale tool results when reopening a session past the provider cache window\n", c.ColdResumePruneEnabled())
+	fmt.Fprintf(&b, "plan_mode_allow_host_automation = %v   # allow browser/desktop automation while planning; set false for stricter privacy\n", c.PlanModeAllowHostAutomation())
 	if len(c.Agent.PlanModeAllowedTools) > 0 {
 		fmt.Fprintf(&b, "plan_mode_allowed_tools = %s   # extra read-only declarations for custom tools; cannot unlock known blocked tools or unsafe bash\n", renderStringArray(c.Agent.PlanModeAllowedTools))
 	} else {
@@ -850,6 +851,10 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if c.Agent.ColdResumePrune != d.Agent.ColdResumePrune {
 		fmt.Fprintf(&agentBuf, "cold_resume_prune = %v\n", c.ColdResumePruneEnabled())
+		anyAgent = true
+	}
+	if c.Agent.PlanModeAllowHostAutomation != nil && c.PlanModeAllowHostAutomation() != d.PlanModeAllowHostAutomation() {
+		fmt.Fprintf(&agentBuf, "plan_mode_allow_host_automation = %v\n", c.PlanModeAllowHostAutomation())
 		anyAgent = true
 	}
 	if len(c.Agent.PlanModeAllowedTools) > 0 && !reflect.DeepEqual(c.Agent.PlanModeAllowedTools, d.Agent.PlanModeAllowedTools) {

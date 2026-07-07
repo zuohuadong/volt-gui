@@ -73,7 +73,9 @@ jobs:
 
       - name: Install create-dmg
         if: runner.os == 'macOS'
-        run: brew install create-dmg
+        run: |
+          brew untap aws/tap || true
+          brew install create-dmg
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
@@ -81,9 +83,11 @@ jobs:
       - name: Build desktop package
         run: scripts/desktop-build.sh "${{ matrix.platform }}" "v0.0.0-ci.${{ github.run_number }}"
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload desktop package
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

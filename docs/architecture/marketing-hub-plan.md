@@ -144,6 +144,49 @@ Recommended first navigation model:
 - Produces reviewable findings attached to exact artifact coordinates: slide id, layer id, scene id, timestamp, or text span.
 - Blocks final approval when required checks fail.
 
+### 6.9 Artifact Review UX Patterns
+
+Marketing artifacts need an inspection surface that works across PPT, poster, and video without turning Volt GUI into a format-specific editor. The first implementation should treat the desktop as an artifact review and approval workbench, while generation workers and format-native editors own heavyweight rendering and deep editing.
+
+#### Review Canvas
+
+The main-stage preview should use a review canvas whenever an artifact has more structure than a single static file. The canvas is shared by deck slides, poster variants, storyboard frames, and video scenes.
+
+Required behavior:
+
+- Keep the canvas independent from the conversation or job thread panel so users can inspect artifacts while the generation trace remains visible.
+- Provide explicit select and pan modes. Select mode should open artifact details or comments; pan mode should move the canvas without accidentally activating artifact controls.
+- Provide bounded zoom, fit-to-screen, center, and reset controls. Disabled states should be visible when the current view cannot zoom further or has no pan offset to reset.
+- Provide quick jumps to reviewable stages such as copy, draft, design, and export when those stages exist for the artifact.
+- Keep controls keyboard reachable and labelled. Canvas buttons should use icons with accessible titles instead of text-heavy command pills.
+- Persist reviewer decisions, comments, and selected regions as artifact coordinates. Treat viewport pan and zoom as local UI state unless product requirements later need shared review playback.
+
+Non-goals for MVP:
+
+- Do not implement a full PPT, poster, or video editor inside the core desktop shell.
+- Do not hardcode a PPT-only canvas or generation flow into the generic workbench.
+- Do not require all artifact formats to share identical visual layouts; they only need the same control contract and review state model.
+
+#### Style Gate
+
+The generation flow should expose style or template choice as a user-reviewable checkpoint before expensive final rendering or export.
+
+Required behavior:
+
+- Present style, template, or visual-direction options as a job step that can be approved, changed, or sent back to the previous draft/content stage.
+- Record the selected style id, template version, brand kit version, and reviewer identity in the job or review record.
+- In manual mode, block final design generation until the user chooses and approves a style option.
+- In autopilot mode, allow the worker to select a recommended style, but still surface the choice and rationale before final export.
+- Let users return from the style gate to the draft/content stage without discarding the whole campaign job.
+- Show downstream export readiness only after the selected style has been applied and policy checks have passed.
+
+Acceptance criteria:
+
+- A reviewer can inspect a generated deck, poster, or storyboard with pan, zoom, fit, center, reset, and stage-jump controls.
+- A reviewer can approve a style choice or return to the prior stage before final rendering.
+- Review comments and policy findings can point to exact artifact coordinates independent of the current viewport.
+- The generic workbench code remains provider-neutral and format-neutral; format-specific generation logic stays in plugins, workers, or provider adapters.
+
 ## 7. Core Data Model
 
 | Entity | Owns | Notes |
@@ -268,9 +311,9 @@ All formats start from a shared campaign plan:
 
 ## 13. Open Questions
 
-- Should Marketing start as a Work-mode resource section or become a third top-level activity mode after validation?`r`n- Is this module for internal single-organization use first, or a multi-tenant product?
+- Should Marketing start as a Work-mode resource section or become a third top-level activity mode after validation?
+- Is this module for internal single-organization use first, or a multi-tenant product?
 - Which channels must be supported at launch: WeChat, Douyin, Xiaohongshu, sales PDF, web banners, offline print?
 - Which provider family is allowed for image and video generation, and what data can leave the organization?
 - Should editable poster/video source be preserved in a third-party design format or a first-party JSON manifest?
 - Does approval require legal sign-off, brand sign-off, regional sign-off, or all three?
-

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.9.0...desktop-v0.9.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* make desktop release publishing idempotent ([27ec32f](https://github.com/zuohuadong/volt-gui/commit/27ec32fdaec10cf3cc685640a2cea9b9578858d7))
+
 ## [0.9.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.8.0...desktop-v0.9.0) (2026-07-07)
 
 

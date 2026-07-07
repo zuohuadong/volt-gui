@@ -57,6 +57,8 @@ import type {
   WorkbenchSyncJob,
   WorkbenchTeamChatMessage,
   WorkbenchTeamRoom,
+  WorkbenchTeamRuntimeInput,
+  WorkbenchTeamRuntimeResult,
   WorkbenchTeamRun,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
@@ -150,6 +152,7 @@ interface AppBindings {
   SaveTeamRoom(input: WorkbenchTeamRoom): Promise<WorkbenchTeamRoom>;
   SaveTeamRun(input: WorkbenchTeamRun): Promise<WorkbenchTeamRun>;
   SaveTeamChatMessage(input: WorkbenchTeamChatMessage): Promise<WorkbenchTeamChatMessage>;
+  RunTeamRuntime(input: WorkbenchTeamRuntimeInput): Promise<WorkbenchTeamRuntimeResult>;
   DistillAgentFromTodo(input: WorkbenchTodoInput, skillNames: string[]): Promise<AgentView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;

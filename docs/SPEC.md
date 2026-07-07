@@ -115,6 +115,11 @@ type Tool interface {
 - Tool schemas are canonicalized on registry insertion. The built-in contract is
   documented in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md) and backed by tests that
   compare the documented surface against the same canonical schema path.
+- Host-control built-ins (`browser_control`, `desktop_screenshot`,
+  `desktop_mouse`, `desktop_keyboard`) ship in the same compile-time registry as
+  file/shell/browser tools. They must report `ReadOnly() == false` so the
+  permission gate and desktop approval UI always mediate screen capture,
+  mouse/keyboard input, and Playwright-like browser actions.
 - `Execute` parses raw JSON args itself. Errors are returned, not fatal — the
   agent feeds them back so the model can self-correct.
 

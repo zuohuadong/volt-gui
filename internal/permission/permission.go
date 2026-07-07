@@ -302,8 +302,9 @@ func bashRulePrefixBaseMatches(existing, candidate Rule) bool {
 // subjectKeys are the JSON argument keys, in priority order, that carry a tool
 // call's "subject" — the thing a Subject glob matches against. Generic so tools
 // need not implement a permission-specific method: bash exposes command, the
-// file tools expose path / file_path, grep & glob expose pattern.
-var subjectKeys = []string{"command", "file_path", "path", "source_path", "destination_path", "pattern"}
+// file tools expose path / file_path, grep & glob expose pattern, and host tools
+// may expose url / screenshot_path.
+var subjectKeys = []string{"command", "file_path", "path", "source_path", "destination_path", "screenshot_path", "pattern", "url"}
 
 // Subject extracts the primary matchable subject string from a call's raw JSON
 // args, returning "" when none of the known keys is present (such a call only
@@ -317,9 +318,10 @@ func Subject(args json.RawMessage) string {
 	return ""
 }
 
-// Subjects extracts every matchable subject from a call's raw JSON args. Most
-// tools expose one subject; move_file exposes both source_path and
-// destination_path so path-scoped permission rules can protect either endpoint.
+// Subjects extracts every top-level matchable subject from a call's raw JSON
+// args, de-duplicated in subjectKeys order. Multi-endpoint tools such as
+// move_file or browser_control with screenshot_path can then protect every
+// touched endpoint.
 func Subjects(args json.RawMessage) []string {
 	if len(args) == 0 {
 		return nil
@@ -328,21 +330,23 @@ func Subjects(args json.RawMessage) []string {
 	if err := json.Unmarshal(args, &m); err != nil {
 		return nil
 	}
-	src := stringArg(m, "source_path")
-	dst := stringArg(m, "destination_path")
-	if src != "" && dst != "" {
-		out := []string{src}
-		if dst != src {
-			out = append(out, dst)
-		}
-		return out
-	}
+	out := make([]string, 0, len(subjectKeys))
+	seen := map[string]bool{}
 	for _, k := range subjectKeys {
 		if s := stringArg(m, k); s != "" {
-			return []string{s}
+			if !seen[s] {
+				out = append(out, s)
+				seen[s] = true
+			}
 		}
 	}
-	return nil
+	for _, s := range nestedActionPaths(m) {
+		if !seen[s] {
+			out = append(out, s)
+			seen[s] = true
+		}
+	}
+	return out
 }
 
 func stringArg(m map[string]any, key string) string {
@@ -352,6 +356,24 @@ func stringArg(m map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func nestedActionPaths(m map[string]any) []string {
+	raw, ok := m["actions"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		action, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if s := stringArg(action, "path"); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // matchGlob reports whether name matches pattern, where '*' matches any run of

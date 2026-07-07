@@ -68,6 +68,8 @@ func TestDesktopBuildScriptCompilesAndPackagesWindowsUpdateHelper(t *testing.T) 
 	}
 	script := string(data)
 	for _, want := range []string{
+		`BINNAME="voltui-desktop"`,
+		`cp -R "build/bin/${BINNAME}.app" "$app"`,
 		`UPDATE_HELPER="voltui-update-helper.exe"`,
 		`GOOS=windows GOARCH="$arch" go build`,
 		`./cmd/update-helper`,

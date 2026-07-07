@@ -229,6 +229,7 @@ func appendResolved(out *[]ResolvedHook, s *Settings, scope Scope, source string
 			if strings.TrimSpace(cfg.Command) == "" {
 				continue
 			}
+			cfg.Command = NormalizeCommand(cfg.Command)
 			*out = append(*out, ResolvedHook{HookConfig: cfg, Event: event, Scope: scope, Source: source})
 		}
 	}
@@ -256,6 +257,7 @@ func appendPluginHooks(out *[]ResolvedHook, reasonixHomeDir, projectRoot string)
 				if command != "" && !h.ShellCommand && !filepath.IsAbs(command) {
 					command = filepath.Join(pkg.Root, filepath.FromSlash(command))
 				}
+				command = NormalizeCommand(command)
 				contextFile := h.ContextFile
 				if contextFile != "" && !filepath.IsAbs(contextFile) {
 					contextFile = filepath.Join(pkg.Root, filepath.FromSlash(contextFile))
@@ -546,8 +548,7 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 	cctx, cancel := context.WithTimeout(ctx, in.Timeout)
 	defer cancel()
 
-	name, args := shellInvocation(in.Command)
-	cmd := exec.CommandContext(cctx, name, args...)
+	cmd := spawnCommand(cctx, in.Command)
 	proc.HideWindow(cmd)
 	cmd.Dir = in.Cwd
 	if len(in.Env) > 0 {
@@ -593,6 +594,14 @@ func DefaultSpawner(ctx context.Context, in SpawnInput) SpawnResult {
 		res.ExitCode = 0
 	}
 	return res
+}
+
+func spawnCommand(ctx context.Context, command string) *exec.Cmd {
+	if node, flag, script, ok := directNodeEvalArgs(command); ok {
+		return exec.CommandContext(ctx, node, flag, script)
+	}
+	name, args := shellInvocation(command)
+	return exec.CommandContext(ctx, name, args...)
 }
 
 func shellInvocation(command string) (string, []string) {

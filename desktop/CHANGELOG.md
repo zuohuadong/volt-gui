@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.9.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.8.0...desktop-v0.9.0) (2026-07-07)
+
+
+### Features
+
+* persist workbench business data ([96c9d87](https://github.com/zuohuadong/volt-gui/commit/96c9d875e17619d0915299f54f0f81bb6f932478))
+* persist workbench data flows ([7c46cb1](https://github.com/zuohuadong/volt-gui/commit/7c46cb1c511b9ae3b27073e68d8b8e307859ebd5))
+* refine workbench report form ([b5a28d8](https://github.com/zuohuadong/volt-gui/commit/b5a28d8654e6a2e76e235cd9c9b7d6a729f97ea9))
+
+
+### Bug Fixes
+
+* address upstream sync regressions ([1d79e94](https://github.com/zuohuadong/volt-gui/commit/1d79e94bf3a1f2fedef00ad6083338e5567cae10))
+* **ci:** install nfpm for desktop builds ([c49f091](https://github.com/zuohuadong/volt-gui/commit/c49f09183527c00d01c446e8b82b692297d135f9))
+* **desktop:** repair CI packaging build ([b601f38](https://github.com/zuohuadong/volt-gui/commit/b601f38d094543777a7dc4879ac64678d8f719d0))
+* **desktop:** wire team chat to runtime ([66b41c8](https://github.com/zuohuadong/volt-gui/commit/66b41c8f7c641639e1a2a7a11451bf4548aad5b1))
+* prevent re-seeding cleared data and harden workbench persistence ([392e69b](https://github.com/zuohuadong/volt-gui/commit/392e69bc624a9778485cc9835c8afa983cb542d6))
+* remove installer brand residue ([4097e32](https://github.com/zuohuadong/volt-gui/commit/4097e32f922e5e7a61aaa07c067700be2491994b))
+
+
+### Chores
+
+* clean desktop worktree artifacts ([262d902](https://github.com/zuohuadong/volt-gui/commit/262d902c921899969c58bcc35f5b73b8b3d1450e))
+* **deps:** bump astro from 7.0.2 to 7.0.6 in /site in the npm group ([5df158b](https://github.com/zuohuadong/volt-gui/commit/5df158bd636a83e540c4dc2cc6f7b6dd71533034))
+* **deps:** bump astro from 7.0.2 to 7.0.6 in /site in the npm group ([2ea1e31](https://github.com/zuohuadong/volt-gui/commit/2ea1e31fab8449828d7a365ba26807688d1feaea))
+* **deps:** bump the go group across 1 directory with 3 updates ([dd02220](https://github.com/zuohuadong/volt-gui/commit/dd0222089e2357615bbc5a4c5d393360009472cd))
+* **deps:** bump the go group across 1 directory with 3 updates ([771603c](https://github.com/zuohuadong/volt-gui/commit/771603cc9389935c303eff838e2b7fdeaf5c4ef5))
+* **deps:** bump the npm group in /desktop/frontend with 7 updates ([aca5d14](https://github.com/zuohuadong/volt-gui/commit/aca5d14a375959443095be9d0cd7d50b199d10a6))
+* **deps:** bump the npm group in /desktop/frontend with 7 updates ([e8b4cff](https://github.com/zuohuadong/volt-gui/commit/e8b4cffa95e1b64d02a6b0a353c05603c0f69d62))
+
 ## [0.8.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.7.0...desktop-v0.8.0) (2026-07-01)
 
 

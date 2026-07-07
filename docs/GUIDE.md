@@ -59,6 +59,7 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 max_steps = 0                    # user/global only; executor tool-call rounds; 0 = no limit
 planner_max_steps = 0            # user/global only; planner read-only tool-call rounds; 0 = no limit
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
+# plan_mode_allow_host_automation = true        # set false to block browser/desktop automation while planning
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
 #                                                # does not unlock blocked tools or unsafe bash
 # plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for planning
@@ -117,6 +118,12 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 ```
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
+
+`[agent].plan_mode_allow_host_automation` defaults to `true` so interactive
+planning can still use first-party browser/desktop assistance such as
+`browser_control`, `desktop_keyboard`, `desktop_mouse`, and
+`desktop_screenshot`. Set it to `false` when plan mode should remain stricter
+for privacy-sensitive or shared machines.
 
 `[agent].plan_mode_allowed_tools` is an extra read-only declaration for custom or
 external tools VoltUI cannot classify itself. For MCP/plugin tools, a concrete

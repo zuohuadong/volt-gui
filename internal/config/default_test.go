@@ -24,6 +24,18 @@ func TestDefaultMemoryCompilerEnabled(t *testing.T) {
 	}
 }
 
+func TestDefaultPlanModeAllowHostAutomation(t *testing.T) {
+	cfg := Default()
+	if !cfg.PlanModeAllowHostAutomation() {
+		t.Fatal("default plan_mode_allow_host_automation = false, want true")
+	}
+	disabled := false
+	cfg.Agent.PlanModeAllowHostAutomation = &disabled
+	if cfg.PlanModeAllowHostAutomation() {
+		t.Fatal("explicit plan_mode_allow_host_automation = false resolved to true")
+	}
+}
+
 func TestDefaultDesktopAppearanceAutoGraphite(t *testing.T) {
 	cfg := Default()
 	if got := cfg.DesktopTheme(); got != "auto" {

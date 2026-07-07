@@ -485,6 +485,16 @@ func (c *Config) ColdResumePruneEnabled() bool {
 	return *c.Agent.ColdResumePrune
 }
 
+// PlanModeAllowHostAutomation reports whether first-party browser/desktop
+// automation tools may run while planning. Default true favors convenience;
+// privacy-sensitive users can disable it in config.
+func (c *Config) PlanModeAllowHostAutomation() bool {
+	if c == nil || c.Agent.PlanModeAllowHostAutomation == nil {
+		return true
+	}
+	return *c.Agent.PlanModeAllowHostAutomation
+}
+
 // ResponseLanguage normalizes the top-level language preference for final
 // answers. Empty means auto: replies follow the current user turn.
 func (c *Config) ResponseLanguage() string {
@@ -1084,6 +1094,9 @@ type AgentConfig struct {
 	// ColdResumePrune elides stale tool results when a session reopens past the
 	// provider cache window. nil = default enabled.
 	ColdResumePrune *bool `toml:"cold_resume_prune"`
+	// PlanModeAllowHostAutomation controls whether first-party browser/desktop
+	// automation tools may run in plan mode. nil/default = true for convenience.
+	PlanModeAllowHostAutomation *bool `toml:"plan_mode_allow_host_automation"`
 	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
 	// as read-only. It cannot unlock known blocked tools or unsafe bash commands.
 	PlanModeAllowedTools []string `toml:"plan_mode_allowed_tools"`

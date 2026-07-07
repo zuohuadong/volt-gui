@@ -179,14 +179,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sink := event.Sync(opts.Sink)
 
 	planModePolicy := planmode.Policy{
-		AllowedTools:     cfg.Agent.PlanModeAllowedTools,
-		ReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
+		AllowedTools:        cfg.Agent.PlanModeAllowedTools,
+		ReadOnlyCommands:    cfg.Agent.PlanModeReadOnlyCommands,
+		BlockHostAutomation: !cfg.PlanModeAllowHostAutomation(),
 	}
 	if ignored := planModePolicy.IgnoredAllowedTools(); len(ignored) > 0 {
 		sink.Emit(event.Event{
 			Kind:  event.Notice,
 			Level: event.LevelWarn,
-			Text:  fmt.Sprintf("plan_mode_allowed_tools ignored known blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock known blocked tools or unsafe bash. For shell exploration, declare concrete read-only prefixes in plan_mode_read_only_commands (for example \"gh issue view\"); use read_only_task/read_only_skill instead of task/run_skill while planning.", strings.Join(ignored, ", ")),
+			Text:  fmt.Sprintf("plan_mode_allowed_tools ignored blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock blocked tools, host automation disabled by plan_mode_allow_host_automation=false, or unsafe bash. For shell exploration, declare concrete read-only prefixes in plan_mode_read_only_commands (for example \"gh issue view\"); use read_only_task/read_only_skill instead of task/run_skill while planning.", strings.Join(ignored, ", ")),
 		})
 	}
 	if ignored := planModePolicy.IgnoredReadOnlyCommands(); len(ignored) > 0 {
@@ -1021,6 +1022,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ReasoningLanguage:                  cfg.ReasoningLanguage(),
 		PlanModeAllowedTools:               cfg.Agent.PlanModeAllowedTools,
 		PlanModeReadOnlyCommands:           cfg.Agent.PlanModeReadOnlyCommands,
+		PlanModeBlockHostAutomation:        !cfg.PlanModeAllowHostAutomation(),
 		SubagentDepth:                      0,
 		MaxSubagentDepth:                   maxSubagentDepth,
 		MemoryCompiler:                     memCompiler,
@@ -1062,19 +1064,20 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
-				MaxSteps:                 cfg.Agent.PlannerMaxSteps,
-				MaxStepsKey:              "agent.planner_max_steps",
-				Gate:                     headlessGate,
-				ContextWindow:            pe.ContextWindow,
-				SoftCompactRatio:         cfg.Agent.SoftCompactRatio,
-				ToolResultSnipRatio:      cfg.Agent.ToolResultSnipRatio,
-				CompactRatio:             cfg.Agent.CompactRatio,
-				CompactForceRatio:        cfg.Agent.CompactForceRatio,
-				RecentKeep:               cfg.Agent.RecentKeep,
-				ArchiveDir:               config.ArchiveDir(),
-				KeepPolicy:               keepPolicy,
-				ReasoningLanguage:        cfg.ReasoningLanguage(),
-				PlanModeReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
+				MaxSteps:                    cfg.Agent.PlannerMaxSteps,
+				MaxStepsKey:                 "agent.planner_max_steps",
+				Gate:                        headlessGate,
+				ContextWindow:               pe.ContextWindow,
+				SoftCompactRatio:            cfg.Agent.SoftCompactRatio,
+				ToolResultSnipRatio:         cfg.Agent.ToolResultSnipRatio,
+				CompactRatio:                cfg.Agent.CompactRatio,
+				CompactForceRatio:           cfg.Agent.CompactForceRatio,
+				RecentKeep:                  cfg.Agent.RecentKeep,
+				ArchiveDir:                  config.ArchiveDir(),
+				KeepPolicy:                  keepPolicy,
+				ReasoningLanguage:           cfg.ReasoningLanguage(),
+				PlanModeReadOnlyCommands:    cfg.Agent.PlanModeReadOnlyCommands,
+				PlanModeBlockHostAutomation: !cfg.PlanModeAllowHostAutomation(),
 			}, executor, cfg.Agent.Temperature, sink, control.NewPlannerGate(classifier))
 			label = entry.Model + " + planner " + pe.Model
 		}

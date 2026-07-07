@@ -343,6 +343,10 @@ type Agent struct {
 	// provider-visible execution contract. compact preserves the old injection.
 	memoryCompilerVerbosity string
 	compilerTurn            *memorycompiler.Turn
+	// lastCompilerOutcome is the previous finished turn's persisted outcome.
+	// The immediately following user message may retroactively downgrade it
+	// when it reports the result wrong; any turn start consumes it (one-shot).
+	lastCompilerOutcome *memorycompiler.OutcomeRef
 
 	// compilerInjectionMu bounds how often Memory v5 may replace a visible user
 	// turn with an execution contract. The runtime can still observe throttled
@@ -529,6 +533,22 @@ func (a *Agent) clearClassifierCache() {
 	if llm, ok := a.classifier.(*llmClassifier); ok && llm.cache != nil {
 		llm.cache.Clear()
 	}
+}
+
+// reviseMemoryCompilerOutcomeForFeedback retroactively downgrades the previous
+// turn's recorded success when the user's immediate follow-up reports the
+// result wrong. One-shot: only the next turn's input may revise, so a stale
+// reference can never be replayed against later conversation.
+func (a *Agent) reviseMemoryCompilerOutcomeForFeedback(rt *memorycompiler.Runtime, input string) {
+	ref := a.lastCompilerOutcome
+	a.lastCompilerOutcome = nil
+	if ref == nil || rt == nil {
+		return
+	}
+	if !memorycompiler.IsCorrectiveFeedback(input) {
+		return
+	}
+	rt.ReviseOutcomeFromFeedback(*ref, input)
 }
 
 func shouldStartMemoryCompiler(input string) bool {
@@ -990,6 +1010,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		memoryCompilerInput = sourceInput
 	}
 	input = a.withTurnPreferences(rawInput)
+	if memCompiler := a.memoryCompilerRuntime(); memCompiler != nil && !MemoryCompilerSkipFromContext(ctx) {
+		a.reviseMemoryCompilerOutcomeForFeedback(memCompiler, memoryCompilerInput)
+	}
 	if memCompiler := a.memoryCompilerRuntime(); memCompiler != nil && !MemoryCompilerSkipFromContext(ctx) && shouldStartMemoryCompiler(memoryCompilerInput) {
 		// 使用分类器判断是否为任务
 		isTask := true // 默认为任务
@@ -1015,6 +1038,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 				a.emitMemoryCompilerStats(turn)
 				defer func() {
 					turn.Finish(runErr)
+					ref := turn.OutcomeRef()
+					a.lastCompilerOutcome = &ref
 					if a.compilerTurn == turn {
 						a.compilerTurn = nil
 					}

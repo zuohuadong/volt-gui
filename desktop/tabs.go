@@ -32,6 +32,7 @@ import (
 	"voltui/internal/notify"
 	"voltui/internal/provider"
 	"voltui/internal/store"
+	usageledger "voltui/internal/usage"
 )
 
 // --- WorkspaceTab -----------------------------------------------------------
@@ -1206,6 +1207,21 @@ func (s *tabEventSink) recordUsageTelemetry(e event.Event) {
 		return
 	}
 	tab.recordUsage(e)
+	_ = usageledger.RecordEvent(e, usageledger.Metadata{
+		Surface: "desktop",
+		Model: func() string {
+			if strings.TrimSpace(tab.model) != "" {
+				return tab.model
+			}
+			return tab.Label
+		},
+		SessionPath: func() string {
+			return sp
+		},
+		WorkspaceRoot: func() string {
+			return tab.WorkspaceRoot
+		},
+	})
 	if sp != "" {
 		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
 	}

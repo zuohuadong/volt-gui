@@ -425,6 +425,7 @@ var Chinese = Messages{
   voltui run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   执行单次任务后退出
   voltui review [--base BRANCH] [--commit SHA] [--model NAME]  AI 代码审查（基于本地 diff）
   voltui serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  通过 HTTP+SSE 提供服务（支持可选认证）
+  voltui usage [--since 7d] [--all] [--json]       汇总本地 token/cache/cost 用量（也可用：voltui stats）
   voltui acp [--model NAME]                           通过 stdio 提供 Agent Client Protocol（也可用：voltui --acp）
   voltui setup [path]                                 交互式配置向导；生成 voltui.toml（及 .env）
   voltui config auto-plan [off|on]                    配置自动计划模式

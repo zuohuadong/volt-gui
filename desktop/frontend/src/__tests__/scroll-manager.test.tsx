@@ -38,6 +38,7 @@ function Harness({ onReady }: { onReady: (api: ScrollManagerApi) => void }) {
       data-testid="transcript"
       onScroll={manager.onScroll}
       onWheelCapture={manager.onWheelIntent}
+      onKeyDownCapture={manager.onKeyScrollIntent}
     />
   );
 }
@@ -115,6 +116,31 @@ await act(async () => {
   eq(released, false, "wheel intent is ignored when the transcript is not scrollable");
 });
 eq(api.stick.current, true, "short transcripts stay pinned after ignored wheel intent");
+
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1000 });
+scrollTop = 900;
+await act(async () => {
+  api!.stick.current = true;
+  const released = api?.onWheelIntent({ deltaX: 0, deltaY: -48, ctrlKey: true } as React.WheelEvent<HTMLElement>);
+  eq(released, false, "ctrl+wheel (trackpad pinch-zoom) is ignored, not treated as scroll intent");
+});
+eq(api.stick.current, true, "pinch-zoom gesture does not release tail-follow");
+
+const editTextarea = document.createElement("textarea");
+await act(async () => {
+  api!.stick.current = true;
+  const released = api?.onKeyScrollIntent({ key: "Home", target: editTextarea } as unknown as React.KeyboardEvent<HTMLElement>);
+  eq(released, false, "Home pressed while editing a message textarea is not treated as scroll intent");
+});
+eq(api.stick.current, true, "editing an earlier message does not release the streaming tail-follow");
+
+const plainDiv = document.createElement("div");
+await act(async () => {
+  api!.stick.current = true;
+  const released = api?.onKeyScrollIntent({ key: "Home", target: plainDiv } as unknown as React.KeyboardEvent<HTMLElement>);
+  eq(released, true, "Home pressed on a non-editable target still releases tail-follow");
+});
+eq(api.stick.current, false, "keyboard scroll intent from outside an editable field still breaks the bottom pin");
 
 await act(async () => {
   root.unmount();

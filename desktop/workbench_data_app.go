@@ -161,6 +161,13 @@ type WorkbenchKnowledgeDocumentView struct {
 	Description string `json:"description,omitempty"`
 	Source      string `json:"source,omitempty"`
 	Tags        string `json:"tags,omitempty"`
+	FileName    string `json:"fileName,omitempty"`
+	FilePath    string `json:"filePath,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+	FileSize    int64  `json:"fileSize,omitempty"`
+	ChunkCount  int    `json:"chunkCount,omitempty"`
+	IndexedAt   string `json:"indexedAt,omitempty"`
+	Error       string `json:"error,omitempty"`
 	CreatedAt   string `json:"createdAt"`
 	UpdatedAt   string `json:"updatedAt"`
 }
@@ -373,6 +380,21 @@ func (a *App) SaveKnowledgeDocument(input WorkbenchKnowledgeDocumentInput) (Work
 	if err != nil {
 		return WorkbenchKnowledgeDocumentView{}, err
 	}
+	indexedDoc, indexErr := importKnowledgeDocument(KnowledgeDocumentImportInput{
+		ID:          doc.ID,
+		Title:       doc.Title,
+		Type:        doc.Type,
+		Source:      defaultString(doc.Source, "workbench"),
+		Tags:        doc.Tags,
+		Description: doc.Description,
+		Content:     strings.Join([]string{doc.Title, doc.Description, doc.Tags}, "\n"),
+	})
+	if indexErr != nil {
+		doc.Error = indexErr.Error()
+	} else {
+		mergeKnowledgeIndexMetadata(&doc, workbenchKnowledgeDocumentFromStore(indexedDoc))
+	}
+	replaceOrPrependKnowledgeDocument(&data, doc)
 	appendOperationLog(&data, "保存知识模板", doc.Title, "我的", "成功")
 	return doc, saveWorkbenchData(data)
 }
@@ -423,6 +445,18 @@ func (a *App) SearchWorkbench(query string) ([]WorkbenchSearchResultView, error)
 	}
 	for _, material := range materials {
 		appendWorkbenchSearchResult(&results, keyword, material.Title, "资料库", material.Category+" / "+material.Source+" / "+material.Desc)
+	}
+	if keyword != "" {
+		knowledgeResults, err := a.SearchKnowledge(query, 10)
+		if err == nil {
+			for _, result := range knowledgeResults {
+				results = append(results, WorkbenchSearchResultView{
+					Title:   result.Title,
+					Scope:   "知识库 / " + result.Match,
+					Snippet: result.Snippet,
+				})
+			}
+		}
 	}
 	return limitWorkbenchSearchResults(results), nil
 }
@@ -755,6 +789,49 @@ func saveKnowledgeDocumentInto(data *WorkbenchDataView, input WorkbenchKnowledge
 	return next, nil
 }
 
+func mergeKnowledgeIndexMetadata(doc *WorkbenchKnowledgeDocumentView, indexed WorkbenchKnowledgeDocumentView) {
+	if doc == nil || indexed.ID == "" {
+		return
+	}
+	doc.Count = maxInt(indexed.Count, doc.Count)
+	doc.ChunkCount = maxInt(indexed.ChunkCount, doc.ChunkCount)
+	doc.IndexedAt = indexed.IndexedAt
+	doc.Error = indexed.Error
+	doc.FileName = defaultString(doc.FileName, indexed.FileName)
+	doc.FilePath = defaultString(doc.FilePath, indexed.FilePath)
+	doc.MimeType = defaultString(doc.MimeType, indexed.MimeType)
+	doc.FileSize = maxInt64(doc.FileSize, indexed.FileSize)
+	if strings.TrimSpace(doc.Source) == "" {
+		doc.Source = indexed.Source
+	}
+}
+
+func removeWorkbenchKnowledgeDocument(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("knowledge document id is required")
+	}
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return err
+	}
+	next := data.KnowledgeDocuments[:0]
+	deleted := ""
+	for _, doc := range data.KnowledgeDocuments {
+		if doc.ID == id {
+			deleted = doc.Title
+			continue
+		}
+		next = append(next, doc)
+	}
+	if deleted == "" {
+		return nil
+	}
+	data.KnowledgeDocuments = next
+	appendOperationLog(&data, "删除知识", defaultString(deleted, id), "我的", "成功")
+	return saveWorkbenchData(data)
+}
+
 func saveTeamRoomInto(data *WorkbenchDataView, input WorkbenchTeamRoomView) (WorkbenchTeamRoomView, error) {
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
@@ -945,6 +1022,8 @@ func normalizeKnowledgeDocuments(items []WorkbenchKnowledgeDocumentView) []Workb
 		item.Type = defaultString(strings.TrimSpace(item.Type), "文档")
 		item.Status = defaultString(strings.TrimSpace(item.Status), "可用")
 		item.Count = maxInt(item.Count, 1)
+		item.FileSize = maxInt64(item.FileSize, 0)
+		item.ChunkCount = maxInt(item.ChunkCount, 0)
 		item.CreatedAt = defaultString(item.CreatedAt, now)
 		item.UpdatedAt = defaultString(item.UpdatedAt, item.CreatedAt)
 		out = append(out, item)

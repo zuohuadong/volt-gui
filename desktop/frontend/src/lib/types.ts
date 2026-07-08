@@ -483,6 +483,13 @@ export interface WorkbenchKnowledgeDocument {
   description?: string;
   source?: string;
   tags?: string;
+  fileName?: string;
+  filePath?: string;
+  mimeType?: string;
+  fileSize?: number;
+  chunkCount?: number;
+  indexedAt?: string;
+  error?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -512,6 +519,56 @@ export interface WorkbenchSearchResult {
   title: string;
   scope: string;
   snippet: string;
+  source?: string;
+  documentId?: string;
+  chunkId?: string;
+  score?: number;
+}
+
+export interface KnowledgeStatus {
+  path: string;
+  sqlite: boolean;
+  fts5: boolean;
+  sqliteVec: boolean;
+  documents: number;
+  chunks: number;
+  vectors: number;
+  lastError?: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeBaseView {
+  documents: WorkbenchKnowledgeDocument[];
+  status: KnowledgeStatus;
+}
+
+export interface KnowledgeSearchResult {
+  documentId: string;
+  chunkId: string;
+  title: string;
+  type: string;
+  source?: string;
+  tags?: string;
+  fileName?: string;
+  filePath?: string;
+  snippet: string;
+  score: number;
+  match: string;
+  updatedAt?: string;
+}
+
+export interface KnowledgeDocumentImportInput {
+  id?: string;
+  title: string;
+  type?: string;
+  source?: string;
+  tags?: string;
+  description?: string;
+  fileName?: string;
+  filePath?: string;
+  mimeType?: string;
+  fileSize?: number;
+  content?: string;
 }
 
 export interface WorkbenchSyncJob {
@@ -641,6 +698,7 @@ export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];
   skillRoots: SkillRootView[];
+  plugins: PluginView[];
 }
 
 export interface MCPServerInput {
@@ -663,6 +721,47 @@ export interface WorkbenchPlugin {
   providerIds?: string[];
   config?: Record<string, string>;
   enabled: boolean;
+}
+
+export interface PluginSkillView {
+  name: string;
+  description?: string;
+  path?: string;
+  invocation?: string;
+  runAs?: string;
+}
+
+export interface PluginHookView {
+  event: string;
+  match?: string;
+  command?: string;
+  contextFile?: string;
+  description?: string;
+}
+
+export interface PluginMCPServerView {
+  name: string;
+  transport?: string;
+  command?: string;
+  url?: string;
+}
+
+export interface PluginView {
+  name: string;
+  version?: string;
+  description?: string;
+  source?: string;
+  root: string;
+  manifestKind?: string;
+  enabled: boolean;
+  skills: number;
+  hooks: number;
+  mcpServers: number;
+  skillDetails?: PluginSkillView[];
+  hookDetails?: PluginHookView[];
+  mcpServerDetails?: PluginMCPServerView[];
+  warnings?: string[];
+  error?: string;
 }
 
 export interface WorkbenchPluginInput {

@@ -140,6 +140,53 @@ func TestWorkbenchExportsWriteFiles(t *testing.T) {
 	}
 }
 
+func TestDeleteKnowledgeDocumentRemovesIndexAndWorkbenchMetadata(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	document, err := app.SaveKnowledgeDocument(WorkbenchKnowledgeDocumentInput{
+		Title:       "待删除知识",
+		Type:        "模板",
+		Status:      "草稿",
+		Description: "删除时需要同时清理本地 SQLite 索引和工作台元数据。",
+		Tags:        "sqlite / metadata",
+	})
+	if err != nil {
+		t.Fatalf("SaveKnowledgeDocument: %v", err)
+	}
+	if document.ChunkCount == 0 || document.IndexedAt == "" {
+		t.Fatalf("SaveKnowledgeDocument did not return index metadata: %+v", document)
+	}
+
+	results, err := app.SearchKnowledge("SQLite 索引", 5)
+	if err != nil {
+		t.Fatalf("SearchKnowledge: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("SearchKnowledge did not find indexed document")
+	}
+
+	if err := app.DeleteKnowledgeDocument(document.ID); err != nil {
+		t.Fatalf("DeleteKnowledgeDocument: %v", err)
+	}
+	afterDelete, err := app.SearchKnowledge("SQLite 索引", 5)
+	if err != nil {
+		t.Fatalf("SearchKnowledge after delete: %v", err)
+	}
+	for _, result := range afterDelete {
+		if result.DocumentID == document.ID {
+			t.Fatalf("deleted document still indexed: %+v", result)
+		}
+	}
+	reloaded, err := app.ListWorkbenchData()
+	if err != nil {
+		t.Fatalf("ListWorkbenchData: %v", err)
+	}
+	if containsKnowledgeDocument(reloaded.KnowledgeDocuments, document.ID) {
+		t.Fatalf("deleted document still present in workbench metadata: %+v", reloaded.KnowledgeDocuments)
+	}
+}
+
 func TestWorkbenchDeleteCustomerRemovesRecord(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	app := &App{}

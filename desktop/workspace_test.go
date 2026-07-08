@@ -207,7 +207,7 @@ func TestWorkspaceChangesNonGitDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges(nil)
 	if got.GitAvailable {
 		t.Fatal("non-git directory should mark git unavailable")
 	}
@@ -239,7 +239,7 @@ func TestWorkspaceChangesGitStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges(nil)
 	if !got.GitAvailable {
 		t.Fatalf("git unavailable: %s", got.GitErr)
 	}
@@ -293,7 +293,7 @@ func TestWorkspaceChangesGitStatusFromRepoSubdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges(nil)
 	if !got.GitAvailable {
 		t.Fatalf("git unavailable: %s", got.GitErr)
 	}
@@ -334,7 +334,7 @@ func TestWorkspaceChangesUntrackedDirectoryListsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := (&App{}).WorkspaceChanges()
+	got := (&App{}).WorkspaceChanges(nil)
 	byPath := map[string]WorkspaceChangeView{}
 	for _, file := range got.Files {
 		byPath[file.Path] = file
@@ -469,7 +469,7 @@ func TestWorkspaceDiffRenamedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changes := (&App{}).WorkspaceChanges()
+	changes := (&App{}).WorkspaceChanges(nil)
 	byPath := map[string]WorkspaceChangeView{}
 	for _, file := range changes.Files {
 		byPath[file.Path] = file

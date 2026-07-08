@@ -33,7 +33,7 @@ func TestBoundArrayPayloadsAreNonNilBeforeStartup(t *testing.T) {
 	if got := app.SlashArgs("/skill "); got.Items == nil {
 		t.Fatal("SlashArgs().Items is nil; frontend expects []")
 	}
-	if got := app.WorkspaceChanges(); got.Files == nil {
+	if got := app.WorkspaceChanges(nil); got.Files == nil {
 		t.Fatal("WorkspaceChanges().Files is nil; frontend expects []")
 	}
 	if got := app.ContextPanel("missing"); got.ReadFiles == nil || got.ChangedFiles == nil {

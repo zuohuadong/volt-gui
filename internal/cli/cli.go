@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode/utf16"
 
@@ -35,6 +36,7 @@ import (
 	"voltui/internal/provider/openai"
 	"voltui/internal/sandbox"
 	"voltui/internal/serve"
+	usageledger "voltui/internal/usage"
 
 	tea "charm.land/bubbletea/v2"
 	"golang.org/x/term"
@@ -94,6 +96,9 @@ func Run(args []string, version string) int {
 		return runAgent(rest)
 	case "chat", "code": // "code" is the v0.x name for the interactive session
 		return runInteractiveSession(rest)
+	case "usage", "stats":
+		configureCLIThemeFromConfigNoProbe()
+		return usageCommand(rest)
 	case "serve":
 		return runServe(rest)
 	case "setup":
@@ -155,7 +160,7 @@ func isDefaultInteractiveFlag(arg string) bool {
 
 func shouldMigrateLegacyConfigForCLI(cmd string) bool {
 	switch cmd {
-	case "", "run", "chat", "code", "serve", "setup", "config", "init", "acp", "mcp", "plugin", "doctor", "bot", "upgrade", "update":
+	case "", "run", "chat", "code", "usage", "stats", "serve", "setup", "config", "init", "acp", "mcp", "plugin", "doctor", "bot", "upgrade", "update":
 		return true
 	default:
 		return false
@@ -392,6 +397,26 @@ func runAgent(args []string) int {
 		metrics = &metricsSink{inner: textSink}
 		sink = metrics
 	}
+	var usageCtrl *control.Controller
+	sink = usageledger.NewRecordingSink(sink, usageledger.Metadata{
+		Surface: "run",
+		Model: func() string {
+			if usageCtrl != nil {
+				return usageCtrl.Label()
+			}
+			return *model
+		},
+		SessionPath: func() string {
+			if usageCtrl != nil {
+				return usageCtrl.SessionPath()
+			}
+			return ""
+		},
+		WorkspaceRoot: func() string {
+			wd, _ := os.Getwd()
+			return wd
+		},
+	})
 	sink = withNotifications(sink, cfg)
 	if resumePath != "" {
 		*model = modelForResumePath(*model, resumePath, cfg)
@@ -401,6 +426,7 @@ func runAgent(args []string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
+	usageCtrl = ctrl
 	defer ctrl.Close()
 
 	// --resume: load a specific session file (non-interactive, meant for
@@ -473,6 +499,26 @@ func runServe(args []string) int {
 	ctx := context.Background()
 	bc := serve.NewBroadcaster()
 	cfg, _ := config.Load()
+	var usageCtrl *control.Controller
+	sink := usageledger.NewRecordingSink(bc, usageledger.Metadata{
+		Surface: "serve",
+		Model: func() string {
+			if usageCtrl != nil {
+				return usageCtrl.Label()
+			}
+			return *model
+		},
+		SessionPath: func() string {
+			if usageCtrl != nil {
+				return usageCtrl.SessionPath()
+			}
+			return ""
+		},
+		WorkspaceRoot: func() string {
+			wd, _ := os.Getwd()
+			return wd
+		},
+	})
 
 	// Build serve config, merging CLI flags over config file.
 	serveCfg := cfg.Serve
@@ -539,11 +585,12 @@ func runServe(args []string) int {
 			}
 		}
 	}
-	ctrl, err := setup(ctx, *model, *maxSteps, true, bc)
+	ctrl, err := setup(ctx, *model, *maxSteps, true, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
+	usageCtrl = ctrl
 	defer ctrl.Close()
 
 	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
@@ -682,7 +729,37 @@ func chatREPL(args []string) int {
 	// agent goroutine.
 	eventCh := make(chan event.Event, 1024)
 
-	var sink event.Sink = &eventSink{ch: eventCh}
+	var activeCtrlMu sync.RWMutex
+	var activeCtrl *control.Controller
+	setActiveCtrl := func(c *control.Controller) {
+		activeCtrlMu.Lock()
+		activeCtrl = c
+		activeCtrlMu.Unlock()
+	}
+	currentCtrl := func() *control.Controller {
+		activeCtrlMu.RLock()
+		defer activeCtrlMu.RUnlock()
+		return activeCtrl
+	}
+	var sink event.Sink = usageledger.NewRecordingSink(&eventSink{ch: eventCh}, usageledger.Metadata{
+		Surface: "chat",
+		Model: func() string {
+			if c := currentCtrl(); c != nil {
+				return c.Label()
+			}
+			return *model
+		},
+		SessionPath: func() string {
+			if c := currentCtrl(); c != nil {
+				return c.SessionPath()
+			}
+			return ""
+		},
+		WorkspaceRoot: func() string {
+			wd, _ := os.Getwd()
+			return wd
+		},
+	})
 	sink = withNotifications(sink, cfg)
 	ctrl, err := setup(ctx, *model, *maxSteps, false, sink)
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
@@ -699,6 +776,7 @@ func chatREPL(args []string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
+	setActiveCtrl(ctrl)
 
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
@@ -762,6 +840,7 @@ func chatREPL(args []string) int {
 		if err != nil {
 			return nil, err
 		}
+		setActiveCtrl(c)
 		// Keep the carried conversation in its existing file so the switch doesn't
 		// orphan a duplicate (#2807).
 		path := agent.ContinueSessionPath(resumePath, c.SessionDir(), c.Label())

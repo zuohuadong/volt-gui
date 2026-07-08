@@ -498,6 +498,7 @@ export interface WorkbenchKnowledgeDocument {
   chunkCount?: number;
   indexedAt?: string;
   error?: string;
+  materialIds?: string[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -511,6 +512,7 @@ export interface WorkbenchKnowledgeDocumentInput {
   description?: string;
   source?: string;
   tags?: string;
+  materialIds?: string[];
 }
 
 export interface WorkbenchRegulation {

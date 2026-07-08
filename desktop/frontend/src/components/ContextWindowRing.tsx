@@ -11,6 +11,7 @@ import {
 } from "./ContextPanel";
 
 interface ContextWindowRingProps {
+  enabled?: boolean;
   context?: ContextInfo;
   tabId?: string;
   turnCost?: number;
@@ -39,12 +40,13 @@ function fmtDuration(ms: number, t: ReturnType<typeof useI18n>['t']): string {
   return t("context.durationMinutesSeconds", { minutes, seconds });
 }
 
-export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, cacheMissTokens, balance }: ContextWindowRingProps) {
+export function ContextWindowRing({ enabled = true, context, tabId, turnCost, cacheHitTokens, cacheMissTokens, balance }: ContextWindowRingProps) {
   const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [info, setInfo] = useState<ContextPanelInfo | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const loadingRef = useRef(false);
+  const loadingTabRef = useRef<string | null>(null);
+  const requestSeq = useRef(0);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -56,24 +58,32 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
   const status = contextWindowStatus(usagePct, compactPct);
 
   const loadInfo = useCallback(() => {
-    if (!loadingRef.current && tabId) {
-      loadingRef.current = true;
-      app.ContextPanel(tabId).then(setInfo).catch(() => {}).finally(() => {
-        loadingRef.current = false;
-      });
-    }
-  }, [tabId]);
+    if (!enabled || !tabId) return;
+    if (loadingTabRef.current === tabId) return;
+    const requestTab = tabId;
+    const seq = requestSeq.current + 1;
+    requestSeq.current = seq;
+    loadingTabRef.current = requestTab;
+    app.ContextPanel(requestTab).then((next) => {
+      if (requestSeq.current === seq) setInfo(next);
+    }).catch(() => {}).finally(() => {
+      if (requestSeq.current === seq) loadingTabRef.current = null;
+    });
+  }, [enabled, tabId]);
 
-  // Reset and reload when tabId changes (switching sessions)
+  // Reset when tabId changes so an older panel request cannot paint a new session.
   useEffect(() => {
+    requestSeq.current += 1;
+    loadingTabRef.current = null;
     setInfo(null);
-    if (tabId && !loadingRef.current) {
-      loadingRef.current = true;
-      app.ContextPanel(tabId).then(setInfo).catch(() => {}).finally(() => {
-        loadingRef.current = false;
-      });
-    }
-  }, [tabId]);
+    if (!enabled) setOpen(false);
+  }, [enabled, tabId]);
+
+  useEffect(() => () => {
+    requestSeq.current += 1;
+    if (enterTimer.current != null) clearTimeout(enterTimer.current);
+    if (leaveTimer.current != null) clearTimeout(leaveTimer.current);
+  }, []);
 
   const onEnter = useCallback(() => {
     if (leaveTimer.current != null) clearTimeout(leaveTimer.current);
@@ -94,6 +104,8 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
     setOpen(false);
   }, []);
 
+  if (!enabled) return null;
+
   const promptTokens = info?.promptTokens ?? 0;
   const completionTokens = info?.completionTokens ?? 0;
   const reasoningTokens = info?.reasoningTokens ?? 0;
@@ -105,7 +117,7 @@ export function ContextWindowRing({ context, tabId, turnCost, cacheHitTokens, ca
   const tokensToCompact = compactTokens > used ? compactTokens - used : 0;
   const ringOffset = RING_C * (1 - usagePct / 100);
   const elapsed = info?.elapsedMs && info.elapsedMs > 0 ? fmtDuration(info.elapsedMs, t) : undefined;
-  const sessionCost = info?.sessionCost && info.sessionCost > 0 
+  const sessionCost = info?.sessionCost && info.sessionCost > 0
     ? formatMoneyLocalized(info.sessionCost, info.sessionCurrency, { locale, empty: "dash" })
     : undefined;
 

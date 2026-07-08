@@ -469,6 +469,7 @@ export function Composer({
   guidanceConsumedKey,
   guidanceConsumedText,
   guidanceQueuePreviewItems,
+  showContextWindowRing = false,
   context,
   turnCost,
   cacheHitTokens,
@@ -522,6 +523,7 @@ export function Composer({
   guidanceConsumedKey?: string;
   guidanceConsumedText?: string;
   guidanceQueuePreviewItems?: readonly string[];
+  showContextWindowRing?: boolean;
   context?: ContextInfo;
   turnCost?: number;
   cacheHitTokens?: number;
@@ -2765,7 +2767,17 @@ export function Composer({
               </div>
             </div>
             <div className="composer-meta__control composer-meta__control--model">
-              <ContextWindowRing context={context} tabId={tabId} turnCost={turnCost} cacheHitTokens={cacheHitTokens} cacheMissTokens={cacheMissTokens} balance={balance} />
+              {showContextWindowRing && (
+                <ContextWindowRing
+                  enabled={showContextWindowRing}
+                  context={context}
+                  tabId={tabId}
+                  turnCost={turnCost}
+                  cacheHitTokens={cacheHitTokens}
+                  cacheMissTokens={cacheMissTokens}
+                  balance={balance}
+                />
+              )}
               <ModelSwitcher label={modelLabel} tabId={tabId} onPick={onSwitchModel} />
             </div>
             {hasEffort && (

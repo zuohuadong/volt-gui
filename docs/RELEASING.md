@@ -1,6 +1,6 @@
 # Releasing
 
-How Reasonix ships, who can ship what, and the canary-before-stable flow.
+How VoltUI ships, who can ship what, and the canary-before-stable flow.
 
 ## Branch model: trunk + tags
 
@@ -17,8 +17,8 @@ provides the pre-release buffer instead of a long-lived branch.
 
 | Surface | Stable | Pre-release buffer |
 |---|---|---|
-| npm | `latest` (0.x), `next` (1.x) | `canary` (`npm i reasonix@canary`) |
-| Desktop | R2 `latest/` pointer | R2 `canary/` pointer (R2-only — never on the GitHub releases page) |
+| npm | `latest` (0.x), `next` (1.x) | `canary` (`npm i voltui@canary`) |
+| Desktop | R2 `latest/` pointer + release gateway | R2 `canary/` pointer + release gateway proxy (never on the GitHub releases page) |
 
 A canary build is isolated: it **never** moves `latest` / `next` / desktop `latest/`.
 Testers opt in explicitly. (Desktop builds carry `-X main.channel=canary`; npm versions
@@ -47,7 +47,7 @@ the `release` environment deployment.
    - Desktop: Actions → **Release desktop** → `channel: canary`, `base_version: 1.4.0`
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
    - Publishes `1.4.0-canary.N` to the desktop R2 `canary/` pointer (no GitHub release) and npm `@canary`.
-3. **Test** — testers install `reasonix@canary` (CLI) or grab the desktop canary
+3. **Test** — testers install `voltui@canary` (CLI) or grab the desktop canary
    build from its R2 link, and report bugs.
 4. **Fix** on `main-v2` via PRs; re-cut the canary as needed (`canary.N` bumps).
 5. **Ship stable** when the canary is clean — push the three tags:
@@ -59,7 +59,7 @@ the `release` environment deployment.
    Each stable run **waits for esengine to approve the `release` environment** before publishing.
 6. **Promote to default install** (optional, when 1.x should become the bare `npm i` target):
    ```sh
-   npm dist-tag add reasonix@1.4.0 latest
+   npm dist-tag add voltui@1.4.0 latest
    ```
 7. **Next cycle** — the canary rolls on toward `1.5.0`.
 
@@ -68,5 +68,13 @@ the `release` environment deployment.
 - Canary version numbers use the workflow `run_number`, so the desktop and CLI canary
   numbers differ (e.g. `canary.11` vs `canary.2`). Only monotonicity per channel matters.
 - A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
-- macOS canary self-update is manual (no notarization); testers download the canary
-  build from its R2 link (canary is not on the GitHub releases page).
+- Desktop in-app updates use R2 first, then the `crash.voltui.io` desktop release
+  gateway. The gateway resolves the `desktop-v*` release line directly and never uses
+  GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI
+  release line. Stable CLI releases also carry a compatibility `latest.json` asset so
+  older desktop builds that still use GitHub `latest` do not 404.
+- Canary uses R2 plus the same gateway proxy for the `canary/` pointer; it never
+  appears on the GitHub releases page.
+- Windows and Linux apply downloaded artifacts after manifest SHA-256 verification. macOS
+  applies in-app only for Developer ID signed and notarized builds; ad-hoc/local
+  builds fall back to the download page.

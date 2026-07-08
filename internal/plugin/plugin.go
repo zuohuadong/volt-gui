@@ -27,6 +27,11 @@ import (
 // protocolVersion is the MCP revision VoltUI advertises during initialize.
 const protocolVersion = "2024-11-05"
 
+// defaultCallTimeout is the MCP JSON-RPC call deadline applied when neither the
+// caller context nor config provides one. It is intentionally finite so a slow
+// or hung MCP server cannot block an agent turn indefinitely.
+const defaultCallTimeout = 300 * time.Second
+
 // Spec declares an external MCP server. Type selects the transport: "stdio"
 // (default) runs Command/Args/Env as a subprocess; "http" / "streamable-http"
 // and "sse" connect to URL with optional static Headers.
@@ -38,6 +43,16 @@ type Spec struct {
 	Env     map[string]string
 	URL     string
 	Headers map[string]string
+	// DefaultCallTimeout is the global MCP call cap for this server. Zero keeps
+	// VoltUI's built-in defaultCallTimeout.
+	DefaultCallTimeout time.Duration
+	// CallTimeout overrides DefaultCallTimeout for all calls to this server.
+	// Zero falls back to DefaultCallTimeout.
+	CallTimeout time.Duration
+	// ToolTimeouts overrides the per-call deadline for raw MCP tool names.
+	// Keys are server-local tool names as returned by tools/list, not the
+	// model-visible mcp__server__tool names.
+	ToolTimeouts map[string]time.Duration
 	// Dir, when set, is the working directory of a stdio subprocess. Empty means
 	// inherit voltui's cwd (the default for user-configured plugins). It exists
 	// for cwd-aware servers like CodeGraph, which detect the project from the
@@ -49,8 +64,8 @@ type Spec struct {
 	Stderr io.Writer
 	// ReadOnlyToolNames marks trusted raw MCP tool names as read-only even when
 	// the server omits annotations.readOnlyHint. It is for known compatibility
-	// overrides where the tool semantics are stable; other user-configured
-	// plugins should rely on MCP metadata.
+	// overrides or user-audited plugin config where the tool semantics are
+	// stable; other user-configured plugins should rely on MCP metadata.
 	ReadOnlyToolNames map[string]bool
 	// ReadOnlyModelToolNames marks trusted model-visible MCP tool names
 	// ("mcp__<server>__<tool>") as read-only. This supports user-level
@@ -189,6 +204,12 @@ const defaultStartConcurrency = 8
 // on than by stalling the whole session.
 const defaultStartTimeout = 5 * time.Second
 
+var advertisedToolsEmptyListRetryDelays = []time.Duration{
+	50 * time.Millisecond,
+	150 * time.Millisecond,
+	300 * time.Millisecond,
+}
+
 // ErrServerAlreadyConnected marks an attempted MCP connection whose server name
 // is already live on the host.
 var ErrServerAlreadyConnected = errors.New("plugin server already connected")
@@ -324,6 +345,7 @@ func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool
 				_ = SaveCachedSchema(spec.Name, CachedSchema{
 					SpecHash: SpecFingerprint(spec),
 					Capabilities: map[string]bool{
+						"tools":     c.hasTools,
 						"prompts":   c.hasPrompts,
 						"resources": c.hasResources,
 					},
@@ -483,6 +505,7 @@ type Client struct {
 	// Capabilities advertised by the server at initialize. prompts/list and
 	// resources/list are only called when advertised, so we never provoke a
 	// "method not found" on a tools-only server.
+	hasTools     bool
 	hasPrompts   bool
 	hasResources bool
 
@@ -495,6 +518,13 @@ type Client struct {
 	resources []Resource
 	toolsMu   sync.Mutex
 	tools     []ToolInfo
+
+	// toolAdapters caches the model-visible remote tool adapters produced by
+	// the first successful tools/list call. Shared hosts reuse Client instances
+	// across controllers, so subsequent ToolsFor calls must not re-query slow
+	// MCP servers just to rebuild identical schemas.
+	toolsListed  bool
+	toolAdapters []tool.Tool
 }
 
 func (c *Client) auxiliaryClient(ctx context.Context) (*Client, context.Context, context.CancelFunc, error) {
@@ -509,8 +539,9 @@ func (c *Client) auxiliaryClient(ctx context.Context) (*Client, context.Context,
 
 // ToolInfo is the human-facing metadata returned by MCP tools/list for one tool.
 type ToolInfo struct {
-	Name        string
-	Description string
+	Name         string
+	Description  string
+	ReadOnlyHint bool
 }
 
 // ServerStatus summarises one connected server for the /mcp command.
@@ -520,6 +551,7 @@ type ServerStatus struct {
 	Tools     int
 	Prompts   int
 	Resources int
+	HasTools  bool
 	ToolList  []ToolInfo
 }
 
@@ -540,8 +572,11 @@ func (h *Host) Servers() []ServerStatus {
 			Name:      c.name,
 			Transport: c.transport,
 			Tools:     c.toolCount,
-			ToolList:  append([]ToolInfo(nil), c.tools...),
+			HasTools:  c.hasTools,
 		}
+		c.toolsMu.Lock()
+		s.ToolList = append([]ToolInfo(nil), c.tools...)
+		c.toolsMu.Unlock()
 		for _, p := range h.prompts {
 			if p.Server == c.name {
 				s.Prompts++
@@ -720,6 +755,9 @@ func (h *Host) ToolsFor(ctx context.Context, name string) ([]tool.Tool, error) {
 	c := h.client(name)
 	if c == nil {
 		return nil, fmt.Errorf("client %q not found on shared host", name)
+	}
+	if tools, ok := c.cachedTools(); ok {
+		return tools, nil
 	}
 	return c.listTools(ctx)
 }
@@ -939,6 +977,21 @@ func newTransport(ctx context.Context, s Spec) (transport, error) {
 }
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	callCtx, cancel, timeout := c.contextWithCallTimeout(ctx, method, params)
+	if cancel != nil {
+		defer cancel()
+	}
+
+	res, err := c.callTransport(callCtx, method, params)
+	if timeout > 0 && errors.Is(err, context.DeadlineExceeded) && callCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		slog.Warn("plugin: MCP call timed out",
+			"server", c.name, "method", method, "tool", rawToolNameFromCallParams(params), "timeout", timeout)
+		return nil, c.timeoutError(method, params, timeout)
+	}
+	return res, err
+}
+
+func (c *Client) callTransport(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	res, err := c.t.call(ctx, method, params)
 	if err == nil || method == "initialize" || !isHTTPSessionExpired(err) {
 		return res, err
@@ -947,6 +1000,62 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		return nil, fmt.Errorf("%w; reinitialize failed: %v", err, initErr)
 	}
 	return c.t.call(ctx, method, params)
+}
+
+func (c *Client) contextWithCallTimeout(ctx context.Context, method string, params any) (context.Context, context.CancelFunc, time.Duration) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, nil, 0
+	}
+	timeout := c.callTimeout(method, params)
+	if timeout <= 0 {
+		timeout = defaultCallTimeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	return callCtx, cancel, timeout
+}
+
+func (c *Client) callTimeout(method string, params any) time.Duration {
+	if method == "tools/call" {
+		if raw := rawToolNameFromCallParams(params); raw != "" {
+			if timeout := c.spec.ToolTimeouts[raw]; timeout > 0 {
+				return timeout
+			}
+		}
+	}
+	if c.spec.CallTimeout > 0 {
+		return c.spec.CallTimeout
+	}
+	if c.spec.DefaultCallTimeout > 0 {
+		return c.spec.DefaultCallTimeout
+	}
+	return defaultCallTimeout
+}
+
+func rawToolNameFromCallParams(params any) string {
+	m, ok := params.(map[string]any)
+	if !ok {
+		return ""
+	}
+	name, _ := m["name"].(string)
+	return name
+}
+
+func (c *Client) timeoutError(method string, params any, timeout time.Duration) error {
+	if method == "tools/call" {
+		if raw := rawToolNameFromCallParams(params); raw != "" {
+			return fmt.Errorf("MCP tool %q timed out after %s; increase tool_timeout_seconds or call_timeout_seconds to allow longer runs: %w",
+				c.name+"."+raw, formatTimeout(timeout), context.DeadlineExceeded)
+		}
+	}
+	return fmt.Errorf("MCP method %q on server %q timed out after %s; increase mcp_call_timeout_seconds or call_timeout_seconds to allow longer runs: %w",
+		method, c.name, formatTimeout(timeout), context.DeadlineExceeded)
+}
+
+func formatTimeout(timeout time.Duration) string {
+	if timeout > 0 && timeout%time.Second == 0 {
+		return fmt.Sprintf("%ds", int(timeout/time.Second))
+	}
+	return timeout.String()
 }
 
 func (c *Client) notify(ctx context.Context, method string, params any) error {
@@ -985,6 +1094,7 @@ func (c *Client) initializeSession(ctx context.Context, recordCapabilities bool)
 	if err := json.Unmarshal(res, &ir); err != nil {
 		slog.Warn("plugin: parse initialize capabilities", "server", c.name, "err", err)
 	}
+	_, c.hasTools = ir.Capabilities["tools"]
 	_, c.hasPrompts = ir.Capabilities["prompts"]
 	_, c.hasResources = ir.Capabilities["resources"]
 
@@ -1005,13 +1115,73 @@ type mcpTool struct {
 }
 
 func (s Spec) toolReadOnly(rawName, visibleName string, hinted bool) bool {
-	return hinted || s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
+	return hinted || s.toolReadOnlyTrusted(rawName, visibleName)
+}
+
+func (s Spec) toolReadOnlyTrusted(rawName, visibleName string) bool {
+	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
 }
 
 func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 	c.toolsMu.Lock()
 	defer c.toolsMu.Unlock()
+	if c.toolsListed {
+		return append([]tool.Tool(nil), c.toolAdapters...), nil
+	}
 
+	out, err := c.listToolsRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Some MCP servers start accepting requests before dynamically registered
+	// tools have been added. If the server advertised the tools capability, a
+	// first empty list may be a startup race; give it a small bounded window to
+	// settle before freezing the provider-visible tool surface for this client.
+	if c.hasTools && len(out) == 0 {
+		for _, delay := range advertisedToolsEmptyListRetryDelays {
+			if err := sleepContext(ctx, delay); err != nil {
+				return nil, err
+			}
+			out, err = c.listToolsRaw(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if len(out) > 0 {
+				break
+			}
+		}
+	}
+
+	toolInfos := make([]ToolInfo, 0, len(out))
+	tools := make([]tool.Tool, 0, len(out))
+	for _, t := range out {
+		hinted := t.Annotations != nil && t.Annotations.ReadOnlyHint
+		visibleName := t.Name
+		if c.spec.StripRawPrefix != "" {
+			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
+		}
+		toolInfos = append(toolInfos, ToolInfo{Name: t.Name, Description: t.Description, ReadOnlyHint: hinted})
+		trusted := c.spec.toolReadOnlyTrusted(t.Name, visibleName)
+		tools = append(tools, &remoteTool{
+			client:          c,
+			name:            toolName(c.name, visibleName),
+			rawName:         t.Name,
+			desc:            t.Description,
+			schema:          canonicalizeSchema(t.InputSchema),
+			readOnly:        c.spec.toolReadOnly(t.Name, visibleName, hinted),
+			readOnlyTrusted: trusted,
+		})
+	}
+	sort.SliceStable(toolInfos, func(i, j int) bool { return toolInfos[i].Name < toolInfos[j].Name })
+	sortedTools := sortToolsByName(tools)
+	c.tools = toolInfos
+	c.toolAdapters = append([]tool.Tool(nil), sortedTools...)
+	c.toolsListed = true
+	return append([]tool.Tool(nil), sortedTools...), nil
+}
+
+func (c *Client) listToolsRaw(ctx context.Context) ([]mcpTool, error) {
 	res, err := c.call(ctx, "tools/list", map[string]any{})
 	if err != nil {
 		return nil, err
@@ -1022,29 +1192,30 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 	if err := json.Unmarshal(res, &out); err != nil {
 		return nil, fmt.Errorf("plugin %q: decode tools/list: %w", c.name, err)
 	}
+	return out.Tools, nil
+}
 
-	toolInfos := make([]ToolInfo, 0, len(out.Tools))
-	tools := make([]tool.Tool, 0, len(out.Tools))
-	for _, t := range out.Tools {
-		hinted := t.Annotations != nil && t.Annotations.ReadOnlyHint
-		visibleName := t.Name
-		if c.spec.StripRawPrefix != "" {
-			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
-		}
-		toolInfos = append(toolInfos, ToolInfo{Name: t.Name, Description: t.Description})
-		tools = append(tools, &remoteTool{
-			client:          c,
-			name:            toolName(c.name, visibleName),
-			rawName:         t.Name,
-			desc:            t.Description,
-			schema:          canonicalizeSchema(t.InputSchema),
-			readOnly:        c.spec.toolReadOnly(t.Name, visibleName, hinted),
-			readOnlyTrusted: c.spec.ReadOnlyToolNames[t.Name] || c.spec.ReadOnlyModelToolNames[toolName(c.spec.Name, visibleName)],
-		})
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
 	}
-	sort.SliceStable(toolInfos, func(i, j int) bool { return toolInfos[i].Name < toolInfos[j].Name })
-	c.tools = toolInfos
-	return sortToolsByName(tools), nil
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (c *Client) cachedTools() ([]tool.Tool, bool) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	if !c.toolsListed {
+		return nil, false
+	}
+	return append([]tool.Tool(nil), c.toolAdapters...), true
 }
 
 // toolName builds the model-visible namespaced name "mcp__<server>__<tool>",
@@ -1128,6 +1299,13 @@ type remoteTool struct {
 
 func (t *remoteTool) Name() string        { return t.name }
 func (t *remoteTool) Description() string { return t.desc }
+func (t *remoteTool) MCPServerName() string {
+	if t.client == nil {
+		return ""
+	}
+	return t.client.name
+}
+func (t *remoteTool) MCPRawToolName() string { return t.rawName }
 
 // ReadOnly reflects MCP readOnlyHint, plus trusted first-party Spec overrides.
 // It defaults to false: opaque third-party tools must declare readOnlyHint

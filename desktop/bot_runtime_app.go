@@ -35,6 +35,10 @@ func newDesktopBotRuntime() *desktopBotRuntime {
 	return &desktopBotRuntime{status: BotRuntimeStatusView{Status: "stopped", Message: "bot runtime is not started"}}
 }
 
+func forgetAutoSessionMappingsForPath(sessionPath string) error {
+	return botruntime.ForgetAutoSessionMappingsForPath(sessionPath)
+}
+
 func (a *App) refreshBotRuntimeAsync() {
 	if a.ctx == nil {
 		return
@@ -43,8 +47,11 @@ func (a *App) refreshBotRuntimeAsync() {
 }
 
 func (a *App) refreshBotRuntime() {
+	// NewApp always pre-fills botRuntime; a nil here means a test-constructed
+	// App with no bot runtime, which must not lazily create one from a
+	// background goroutine (that would race a concurrent refresh).
 	if a.botRuntime == nil {
-		a.botRuntime = newDesktopBotRuntime()
+		return
 	}
 	cfg, err := a.loadDesktopBotConfig()
 	if err != nil {
@@ -243,4 +250,74 @@ func (r *desktopBotRuntime) snapshot() BotRuntimeStatusView {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.status
+}
+
+// updateConnectionToolApprovalMode updates a connection's tool approval mode
+// on the running gateway without restarting. Returns true if updated, false if
+// the gateway is not running or the connection is unknown.
+func (r *desktopBotRuntime) updateConnectionToolApprovalMode(connID, mode string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gw == nil {
+		return false
+	}
+	mode = normalizeBotConnectionToolApprovalMode(mode)
+	// Update ConnectionChannels in the internal GatewayConfig so new sessions
+	// pick up the mode. Existing sessions are updated by the gateway directly.
+	r.gw.UpdateConnectionToolApprovalMode(connID, mode)
+	return true
+}
+
+// SendToAdapter sends a message through the running gateway's adapter
+// identified by connID. Returns an error if the gateway is not running
+// or no matching adapter is found.
+func (r *desktopBotRuntime) SendToAdapter(ctx context.Context, connID, domain string, msg bot.OutboundMessage) (bot.SendResult, error) {
+	r.mu.Lock()
+	gw := r.gw
+	r.mu.Unlock()
+	if gw == nil {
+		return bot.SendResult{}, nil // gateway not running — silent no-op
+	}
+	return gw.SendToAdapter(ctx, connID, domain, msg)
+}
+
+// Running returns true if the bot gateway is currently active.
+func (r *desktopBotRuntime) Running() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.gw != nil
+}
+
+// ForwardTargets returns the list of bot forward targets derived from the
+// current config's bot connections and their session mappings. Each mapping
+// produces one target (connID + chatID + chatType) for event forwarding.
+func (r *desktopBotRuntime) ForwardTargets(cfg *config.Config) []botForwardTarget {
+	if cfg == nil {
+		return nil
+	}
+	var targets []botForwardTarget
+	for _, conn := range cfg.Bot.Connections {
+		if !conn.Enabled {
+			continue
+		}
+		connID := botruntime.ConnectionRuntimeID(conn)
+		domain := strings.TrimSpace(conn.Domain)
+		for _, sm := range conn.SessionMappings {
+			remoteID := strings.TrimSpace(sm.RemoteID)
+			if remoteID == "" {
+				continue
+			}
+			chatType := bot.ChatDM
+			if sm.ChatType != "" {
+				chatType = bot.ChatType(sm.ChatType)
+			}
+			targets = append(targets, botForwardTarget{
+				ConnID:   connID,
+				Domain:   domain,
+				ChatID:   remoteID,
+				ChatType: chatType,
+			})
+		}
+	}
+	return targets
 }

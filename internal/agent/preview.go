@@ -6,9 +6,18 @@ import (
 	"strings"
 )
 
-var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs)>.*?</(?:response-language|reasoning-language|memory-update|background-jobs)>\s*\n?`)
+var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal)>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal)>\s*\n?`)
+
+const memoryCompilerExecutionOpen = "<memory-compiler-execution>"
 
 var reMemoryCompilerExecution = regexp.MustCompile(`(?s)<memory-compiler-execution>\s*(.*?)\s*</memory-compiler-execution>`)
+
+// ContainsMemoryCompilerExecution reports whether content includes a Memory v5
+// execution contract. Callers that prepare user-facing or replayable text should
+// unwrap it before display and avoid treating the raw contract as user-authored.
+func ContainsMemoryCompilerExecution(content string) bool {
+	return strings.Contains(content, memoryCompilerExecutionOpen)
+}
 
 // StripTransientUserBlocks removes controller-injected transient XML blocks
 // from persisted user messages before deriving display text, previews, or
@@ -43,16 +52,35 @@ func StripTransientUserBlocks(content string) string {
 // contract without a recoverable source_event collapses to empty, matching the
 // prior "strip the block" behavior only as a last resort.
 func unwrapMemoryCompilerExecution(content string) string {
-	if !strings.Contains(content, "<memory-compiler-execution>") {
-		return content
-	}
-	return reMemoryCompilerExecution.ReplaceAllStringFunc(content, func(block string) string {
-		m := reMemoryCompilerExecution.FindStringSubmatch(block)
-		if len(m) < 2 {
-			return ""
+	// Unwrap to a fixpoint. A long goal loop (the #5342 bug) could re-compile an
+	// echoed contract many times, so source_event nests another full
+	// <memory-compiler-execution> block; each pass peels the outermost layer and
+	// exposes the next. A single (or fixed two) pass leaves raw contract JSON in
+	// the transcript (#5361). maxDepth bounds pathological accretion.
+	const maxDepth = 24
+	for range maxDepth {
+		if !ContainsMemoryCompilerExecution(content) {
+			return content
 		}
-		return memoryCompilerSourceEvent(m[1])
-	})
+		next := reMemoryCompilerExecution.ReplaceAllStringFunc(content, func(block string) string {
+			m := reMemoryCompilerExecution.FindStringSubmatch(block)
+			if len(m) < 2 {
+				return ""
+			}
+			return memoryCompilerSourceEvent(m[1])
+		})
+		if next == content {
+			break // no complete block matched (e.g. a dangling/truncated tag)
+		}
+		content = next
+	}
+	// Any residual open tag is a dangling/partial/unparseable block the strict
+	// regex can't complete; drop from the first open tag onward so raw contract
+	// JSON is never surfaced. The user's actual text precedes it.
+	if idx := strings.Index(content, memoryCompilerExecutionOpen); idx >= 0 {
+		content = strings.TrimRight(content[:idx], " \t\r\n")
+	}
+	return content
 }
 
 // memoryCompilerSourceEvent pulls the original user prompt out of a compiled
@@ -78,7 +106,36 @@ func memoryCompilerSourceEvent(body string) string {
 // UserPreviewText returns the user-authored part of a persisted user message.
 func UserPreviewText(content string) string {
 	s := StripTransientUserBlocks(content)
+	s = StripWorkbenchContextPrefix(s)
 	s = HandoffTask(s)
 	s = StripTransientUserBlocks(s)
+	s = StripWorkbenchContextPrefix(s)
 	return strings.TrimSpace(s)
+}
+
+// StripWorkbenchContextPrefix removes desktop composer metadata that is sent to
+// the model for context but should not appear in chat history or session lists.
+func StripWorkbenchContextPrefix(content string) string {
+	lines := strings.Split(strings.TrimLeft(content, " \t\r\n"), "\n")
+	if len(lines) == 0 {
+		return content
+	}
+	index := 0
+	for index < len(lines) && isWorkbenchContextLine(lines[index]) {
+		index++
+	}
+	if index == 0 {
+		return content
+	}
+	return strings.TrimLeft(strings.Join(lines[index:], "\n"), " \t\r\n")
+}
+
+func isWorkbenchContextLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "归属项目：") ||
+		strings.HasPrefix(trimmed, "归属项目:") ||
+		strings.HasPrefix(trimmed, "所属项目：") ||
+		strings.HasPrefix(trimmed, "所属项目:") ||
+		strings.HasPrefix(trimmed, "工作权限：") ||
+		strings.HasPrefix(trimmed, "工作权限:")
 }

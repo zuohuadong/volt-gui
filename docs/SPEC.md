@@ -40,7 +40,7 @@ voltui/
     ├── provider/            # Provider interface + types + kind→factory registry
     │   └── openai/          # OpenAI-compatible impl; init() registers "openai"
     ├── tool/                # Tool interface + Registry
-    │   └── builtin/         # read_file/write_file/edit_file/bash/ls/glob/grep
+    │   └── builtin/         # read_file/write_file/edit_file/move_file/bash/ls/glob/grep
     ├── permission/          # per-call Policy: allow/ask/deny rules → Decision
     ├── command/             # custom slash commands loaded from .voltui/commands/*.md
     ├── plugin/              # stdio JSON-RPC (MCP) client; adapts remote tools
@@ -80,18 +80,20 @@ type Config struct {
 ```
 
 - The `openai` kind is an OpenAI-compatible `/chat/completions` implementation.
-- **DeepSeek and MiMo are not code — they are config instances** of `kind = "openai"`,
+- **OpenAI-compatible vendors are config instances** of `kind = "openai"`,
   differing only in `base_url` / `model` / `api_key_env`. Adding another OpenAI-
   compatible model is a config edit, not a code change.
 - **A provider is a vendor endpoint** (one `base_url` + `api_key_env`) that offers
-  one or more models. An entry declares either a single `model = "..."` or a
+  one or more models. OpenAI-compatible chat normally posts to
+  `base_url + "/chat/completions"`; set `chat_url` only for gateways that require a
+  full request URL. An entry declares either a single `model = "..."` or a
   `models = ["...", "..."]` list (with an optional `default`); the list form lets
-  one vendor expose several models without re-declaring the endpoint/key — picking
-  a model reuses the same connection. A **model reference** (`default_model`, the
-  `--model` flag, the desktop switcher) resolves via `Config.ResolveModel`, which
-  accepts a provider name (→ its default model), a bare model name, or an explicit
-  `provider/model`. `context_window` / `price` are per-provider, so models that
-  need distinct values stay separate single-`model` entries.
+  one vendor expose several models without re-declaring the endpoint/key. A
+  **model reference** (`default_model`, the `--model` flag, the desktop switcher)
+  resolves via `Config.ResolveModel`, which accepts a provider name (→ its default
+  model), a bare model name, or an explicit `provider/model`. `context_window` /
+  `price` are per-provider, so models that need distinct values stay separate
+  single-`model` entries.
 - Streaming tool-call deltas are accumulated by index inside the provider; only
   complete `ToolCall`s are emitted.
 
@@ -110,6 +112,14 @@ type Tool interface {
   (`tool.RegisterBuiltin(t)`); `tool.Builtins()` lists them.
 - A runtime `*Registry` is assembled per run: enabled built-ins (filtered by
   config) **plus** plugin-provided tools. The agent only sees the `*Registry`.
+- Tool schemas are canonicalized on registry insertion. The built-in contract is
+  documented in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md) and backed by tests that
+  compare the documented surface against the same canonical schema path.
+- Host-control built-ins (`browser_control`, `desktop_screenshot`,
+  `desktop_mouse`, `desktop_keyboard`) ship in the same compile-time registry as
+  file/shell/browser tools. They must report `ReadOnly() == false` so the
+  permission gate and desktop approval UI always mediate screen capture,
+  mouse/keyboard input, and Playwright-like browser actions.
 - `Execute` parses raw JSON args itself. Errors are returned, not fatal — the
   agent feeds them back so the model can self-correct.
 
@@ -165,8 +175,11 @@ When `agent.planner_model` names a provider different from the executor, a
 `Coordinator` runs two models in **separate sessions** to keep each one's prompt
 prefix cache-stable:
 
-- The **planner** (low-frequency) runs in its own session with no tools and
-  produces a concise plan.
+- The **planner** (low-frequency) runs in its own session with the same standing
+  memory context plus a filtered read-only research tool set, then produces a
+  concise plan. It can inspect files/docs before planning, but writer and
+  workflow tools are not exposed to it. `agent.planner_max_steps` bounds this
+  read-only exploration independently from the executor's `agent.max_steps`.
 - The plan is handed off as structured text to the **executor** — a full
   tool-using `Agent` in its own session — which carries it out.
 - The sessions never mix, so neither model's prefix is disturbed by the other's
@@ -179,17 +192,64 @@ prefix cache-stable:
 Long tasks eventually fill the model's context window. VoltUI manages this with
 **low-frequency compaction** that respects the cache-first design:
 
-- Each provider declares its `context_window` (tokens). When a turn's reported
-  `prompt_tokens` reach `compactRatio` (default `0.8`) of that window, the
-  executor compacts **once** before the next turn.
-- Compaction summarizes the older middle of the session into a single briefing —
-  using the executor's own provider, no tools — and replaces it in place: the
-  session becomes `system + summary + recentKeep` (default `8`) verbatim
-  messages. The boundary is aligned backward off any tool result so the recent
-  tail never begins with an orphan tool message whose `tool_calls` were
-  summarized away.
-- The dropped originals are archived to `~/.config/voltui/archive/<timestamp>.jsonl`
-  (one message per line), so the full history stays traceable.
+- Each provider declares its `context_window` (tokens). Context maintenance is
+  tiered: below `agent.tool_result_snip_ratio` (default `0.6`) the session is
+  left untouched apart from the soft notice; at the snip ratio, stale tool
+  results before the recent tail are archived and shortened with deterministic
+  head/tail markers; at `agent.compact_ratio` (default `0.8`) stale tool results
+  are archived and pruned to short placeholders before any summary call; only if
+  pruning still leaves the prompt above the threshold does summary compaction
+  run. At `agent.compact_force_ratio` (default `0.9`), the existing forced fold
+  may proceed even when the fold economics would normally skip it.
+- Tool-result snip/prune never removes messages, so assistant `tool_calls` and
+  tool results stay paired. `KeepErrors` preserves error/blocked tool outputs,
+  and the recent tail is not rewritten. Snipped results can later be upgraded to
+  pruned placeholders; already-pruned results are left alone.
+- When summary compaction runs, it folds only the assistant/tool work. Every
+  **user turn** small enough to be a brief and every **prior digest** is kept
+  verbatim; the foldable remainder is summarized — using the executor's own
+  provider, no tools — in place. The boundary is aligned backward off any tool
+  result so the recent tail never begins with an orphan tool message whose
+  `tool_calls` were summarized away.
+- The dropped originals are archived under the user config dir
+  (`voltui/archive/<timestamp>.jsonl`; see §5 for its per-OS location), one
+  message per line, so the full history stays traceable.
+- The read-only `history` tool gives the agent on-demand BM25 retrieval over
+  saved session JSONL files. `scope="project"` searches the current controller's
+  session directory; `scope="global"` also searches the user-global session
+  directory and compacted-history archives. `operation="around"` can then read a
+  bounded transcript window around a returned hit. Search keeps the best hit and
+  trims trailing common-word-only noise with a relative score floor; a 0-result
+  response tells the agent how to retry with rarer terms or widen scope.
+- The read-only `memory` tool gives the agent on-demand search/list/read access
+  to saved auto-memory files. It complements the writer tools: `memory` checks
+  what already exists, `remember` saves or updates a fact, and `forget` removes
+  a stale one from the active index while archiving the file for traceability.
+  Archived memory files are visible in local management surfaces (`/memory`,
+  TUI, desktop panel) but are excluded from active-memory retrieval. Memory
+  search uses the same relative BM25 floor and guides the agent to fall back to
+  history when exact original wording or tool output matters.
+- Agent-initiated `remember` and `forget` calls require a fresh human approval
+  each time, even when tool auto-approval or YOLO/full-access mode is enabled.
+  Guardian/safety review cannot answer these prompts on the user's behalf. In
+  non-interactive headless runs or sub-agents, these tools are refused rather
+  than auto-approved. The approval request includes a compact preview of the
+  memory being saved or archived, while external notification hooks only receive
+  the tool name.
+  User-initiated memory edits in the local UI are already explicit user actions.
+  See [`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md) for the
+  detailed implementation contract.
+
+**What survives a fold.** A fact the user states in a normal-sized turn is kept
+verbatim and is never summarized away — at any point in the session, across any
+number of compactions. A digest, once written, is likewise kept verbatim rather
+than re-summarized, so facts it captured are not lost to drift. The one
+**best-effort** boundary: a fact buried inside a single oversized message (a
+large paste, over the per-turn pin budget) folds with the rest, so its survival
+depends on the summarizer catching it while compressing bulk. There is no
+reliable way to auto-detect an arbitrary fact in bulk, so durable facts belong in
+their own turn rather than buried in a large paste; the raw oversized content is
+still archived and recoverable either way.
 
 This is the **only** point where the prompt prefix changes — a deliberate, rare
 "cache-reset point". Between compactions the session grows prepend-only and
@@ -213,38 +273,140 @@ type Policy struct { Mode Decision; Allow, Ask, Deny []Rule }
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision
 ```
 
-- **Rule syntax.** A rule is `ToolName` (matches any call to that tool) or
-  `ToolName(glob)` (matches when the call's *subject* matches the glob, via
-  `path.Match`). The subject is extracted generically from the call's JSON args
-  by a small set of known keys — `command` (bash), `path` / `file_path`
-  (file tools), `pattern` (grep/glob) — so tools need not change. A rule whose
-  subject the args don't expose only matches in its bare `ToolName` form.
+- **Rule syntax.** A rule is `Tool` (matches any call in that tool family) or
+  `Tool(specifier)` (matches when the call's *subject* matches the specifier).
+  Bash and file mutation approvals use Claude Code-style families such as
+  `Bash(npm run build)`, `Bash(npm run test:*)`, and `Edit(docs/**)`. Built-in
+  file mutations include writes, edits, notebook edits, symbol/range deletes,
+  and `move_file` renames/moves. Legacy
+  lowercase tool IDs and `tool=literal` rules still load for compatibility. The
+  `:*` suffix marks a Bash command-prefix approval; generated prefix rules also
+  reject later commands that introduce shell operators, so `Bash(go test:*)`
+  does not cover `go test ./... && rm -rf tmp`.
+  Legacy `Bash(go test *)` prefix rules still load, but new rules are saved as
+  `Bash(go test:*)`. The subject is extracted generically from the call's JSON
+  args by a small set of
+  known keys — `command` (bash), `path` / `file_path` (file tools), `pattern`
+  (grep/glob) — so tools need not change. A rule whose subject the args don't
+  expose only matches in its bare `Tool` form.
 - **Precedence.** `deny` > `ask` > `allow` > fallback. Fallback is `Allow` for
   read-only tools and `Mode` (default `Ask`) for writers. `deny` always wins, so
-  a broad `allow = ["bash"]` can still be carved by `deny = ["bash(rm -rf*)"]`;
+  a broad `allow = ["Bash"]` can still be carved by `deny = ["Bash(rm -rf*)"]`;
   conversely `ask` overrides a broad `allow` to force a prompt on a risky subset.
 - **Resolving `Ask`.** The interactive front-end (the chat TUI) prompts the user
-  — allow once / always allow / deny — via an `Approver`. A non-interactive run
+  — allow once / allow this approval scope for the session / always allow this
+  approval scope / deny — via an `Approver`. For Bash, the default scope is the
+  concrete command subject, and the user may choose a conservative command-prefix
+  scope when available (for example `Bash(go test:*)`) so similar invocations in
+  the same session or saved config do not prompt again. For file-mutation tools,
+  a session grant covers editing for the rest of the session while a persisted
+  grant is path-scoped when a path is available, stored as `Edit(<path>)` so all
+  built-in file-mutating tools share it. A
+  non-interactive run
   (`voltui run`, a sub-agent, anything with no TTY / no approver) cannot prompt, so
   it resolves `Ask` to **allow** — preserving autonomous behaviour. A `Deny` is a
   hard block in *every* mode: the tool never executes and the model receives a
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
 - **Relationship to plan mode.** Plan mode (§3.4) is an orthogonal, coarser gate
-  that refuses *all* writers regardless of policy; it is checked first. The
-  permission layer is the fine-grained, always-on gate underneath it.
+  checked before the permission layer. Its boundary is fail-closed for untrusted
+  tools: while planning, a tool runs only if it reports a *trustworthy*
+  `ReadOnly()==true` — a built-in, a first-party MCP `ReadOnlyToolNames`
+  override, a plugin-level `trusted_read_only_tools` declaration, or a concrete
+  MCP name listed in `[agent].plan_mode_allowed_tools` — or self-reports
+  plan-safe via `tool.PlanModeClassifier`. An MCP tool's `ReadOnly()` may
+  instead come from the server's self-reported `readOnlyHint`, which plan mode
+  treats as untrusted (`tool.PlanModeUntrustedReadOnly`): interactive
+  controllers may ask once before executing it and may remember a persistent
+  approval as `trusted_read_only_tools`. This trust prompt is a fresh user
+  decision: `auto`, `yolo`, and the approved-plan execution window do not answer
+  it, but an explicit session grant still prevents repeat prompts for the same
+  tool. Non-interactive sessions and declined approvals remain fail-closed.
+  Bash is gated separately: built-in read-only commands and concrete prefixes
+  declared in `[agent].plan_mode_read_only_commands` may run. Interactive
+  controllers may also ask once before running an unknown query-shaped prefix
+  and may remember a persistent approval as the same
+  `plan_mode_read_only_commands` entry. This bash trust prompt is also a fresh
+  user decision: `auto`, `yolo`, and the approved-plan execution window do not
+  answer it, while explicit session/persistent trust prevents repeat prompts for
+  that prefix. Shell operators, background execution, shell interpreters, and
+  unsafe arguments stay blocked while planning. Writers, installers, memory
+  mutation, process control, and `complete_step` (read-only yet post-approval only, so it
+  self-reports plan-unsafe) are refused; the enforced invariant is
+  PlanSafe ⇒ ReadOnly. An untrusted read-only MCP/plugin tool is therefore
+  blocked until the user approves or pre-trusts it, and it is excluded from
+  planner/read-only research sub-agents until the tool is part of the trusted
+  read-only registry. Plan mode still allows `read_only_task` and
+  `read_only_skill`, whose sub-agents receive only read-only research tools and
+  safe foreground bash; writer-capable `task` delegation and full skill execution
+  remain blocked. The desktop MCP panel writes the same
+  `trusted_read_only_tools` raw-name list as an advanced management surface:
+  **Pre-trust read-only** adds currently listed `readOnlyHint` tools, per-tool
+  **Pre-trust** adds an audited reader manually, and **Untrust** removes it
+  again. These UI actions do not make MCP `readOnlyHint` globally trusted by
+  default.
+- **User decisions are separate from tool approvals.** Runtime tool approval has
+  three user-facing postures: `ask` ("需要批准"), `auto` ("自动批准"), and
+  `yolo` ("Yolo批准"). `auto` lets the permission policy auto-approve the writer
+  fallback while preserving explicit ask/deny rules; `yolo` skips all tool
+  permission approvals for approval-gated tools such as writers and Bash.
+  Neither posture answers `ask` questions, approves `exit_plan_mode` plans, or
+  confirms MCP read-only trust prompts for the user.
+  Auto-plan is also a separate feature flag: when enabled, a complex task may
+  still enter plan mode in any tool approval posture. After a user approves a
+  plan, the controller opens a short `approvedPlanAutoApproveTools` execution
+  window so the model can perform the approved writes without re-prompting; that
+  transient window still does not auto-approve future plans. In headless `ask`
+  execution, any fallback answer is labelled as a model assumption, not as a
+  user decision.
+
+- **Collaboration mode is separate from tool approval.** The desktop composer
+  presents collaboration as `normal` ("正常模式"), `plan` ("计划模式"), and
+  `goal` ("目标模式"). `/goal <objective>` starts an autonomous, session-scoped
+  active goal: the controller prepends goal context to user turns outside the
+  cache-stable system prompt and keeps issuing continuation turns until the
+  model reports completion, repeats the same blocked state three times, the user
+  stops it, or the safety continuation limit is reached. Blocked-state matching
+  is normalized for casing, whitespace, and punctuation so minor wording drift
+  does not reset the audit; restarting a goal begins a fresh blocked audit.
+  Goals that look like long-horizon research, debugging, optimization, or
+  implementation work automatically add an AutoResearch protocol to the same
+  transient active-goal user block. AutoResearch is a Goal strategy, not a
+  standalone global skill: it writes project-local state under
+  `.voltui/autoresearch/YYYYMMDD-HHMMSS-slug/` and keeps dynamic run state out
+  of `VOLTUI.md`, legacy `REASONIX.md`, `AGENTS.md`, project memory, tool schemas, and the
+  cache-stable system prompt. `/goal --research <objective>` forces that
+  strategy; `/goal --simple <objective>` forces lightweight Goal. Outside goal
+  mode, an ordinary prompt with a very strong AutoResearch signal is upgraded by
+  the host into the equivalent of `/goal --research <original prompt>`; the
+  ordinary-prompt classifier is intentionally stricter than `/goal`'s internal
+  classification so weak words such as "long term", "optimize", "research", or
+  "verify" do not create durable task state by themselves. `/goal clear` removes
+  the active goal. Switching into plan/normal mode clears the active goal in the
+  desktop UI so the collaboration mode remains one of the three choices, while
+  the underlying tool approval posture is preserved.
+
+| Tool approval posture | Tool approvals | Plan approval | MCP read-only trust | `ask` questions |
+| --- | --- | --- | --- | --- |
+| Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user unless session-granted | Waits for user |
+| Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user unless session-granted | Waits for user |
+| YOLO approval / `yolo` | Approval prompts auto-allowed unless denied | Waits for user | Waits for user unless session-granted | Waits for user |
+| Approved-plan execution window | Approved plan's tool calls auto-allowed unless denied | Future plans still wait | Waits for user unless session-granted | Waits for user |
 
 Out of the box (`mode = "ask"`, no rules) `voltui run` behaves exactly as before
-(writers resolve `Ask`→allow with no TTY), while `voltui chat` now prompts before
+(writers resolve `Ask`→allow with no TTY), while `voltui` now prompts before
 each writer/bash call. `deny` rules harden both modes.
 
 ### 3.8 Slash commands (`internal/command`)
 
 The chat TUI accepts `/command` input. Three kinds share one dispatch:
 
-- **Built-in actions** (`/compact`, `/new`, `/effort`, `/mcp`, `/help`) manipulate session
-  state locally and never reach the model.
+- **Built-in actions** (`/compact`, `/new`, `/clear`, `/effort`, `/mcp`, `/help`) manipulate session
+  state locally and never reach the model. `/new` starts a new session while
+  saving the previous transcript for resume/history. `/clear` requires
+  confirmation, then discards the current context without saving it; it does not
+  delete project memory.
 - **Custom commands** are Markdown files under `.voltui/commands/` (project) and
-  `~/.config/voltui/commands/` (user); the project dir overrides the user dir on a
+  the user config dir, e.g. `~/.voltui/commands/` on macOS/Linux; the project dir overrides the user dir on a
   name clash. A file `review.md` becomes `/review`; a subdirectory namespaces it
   (`git/commit.md` → `/git:commit`). Invoking one renders its body and sends the
   result as the next user turn.
@@ -339,20 +501,44 @@ type Chunk struct {
 
 ## 5. Configuration (TOML)
 
-Resolution order: **flag > project `./voltui.toml` > user `~/.config/voltui/config.toml`
-> built-in defaults**. Secrets come from the environment via `api_key_env` and
-are never stored in config files. A `.env` in the working directory is loaded if
-present.
+Resolution order: **flag > project `./voltui.toml` > the user config file
+> built-in defaults**. Starting with **VoltUI v1.8.1**, the user config lives
+at `~/.voltui/config.toml` on macOS/Linux and
+`%AppData%\voltui\config.toml` on Windows. See
+[Configuration paths](./CONFIG_PATHS.md) for migration and related data paths.
+Fields marked user/global only, including agent step limits, are not overridden
+by project `voltui.toml`.
+Provider entries name secrets with `api_key_env`; saved key values live in
+VoltUI's global `<VoltUI home>/.env`, shared by CLI and desktop. Project
+`.env`, home `.env`, inherited shell environment variables, legacy credentials,
+and the OS keyring are not provider-key runtime fallbacks. Project `.env` still
+feeds workspace-scoped, non-provider `${VAR}` expansion for MCP/plugin settings
+without importing provider keys or VoltUI control variables. Step-limit
+preferences belong in the user config.
+Project `voltui.toml` does not override `agent.max_steps` or
+`agent.planner_max_steps`, and it does not override the user-level Memory v5
+compiler switch.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"
 # language    = "zh"                # ui language tag; empty = auto-detect from $LANG / $VOLTUI_LANG
 
+[ui]
+# shortcut_layout = "desktop"       # classic|desktop; compatibility setting
+# cursor_shape = "underline"        # CLI/TUI textarea cursor: underline|block|bar
+
 [agent]
 system_prompt = "You are VoltUI, a coding agent..."  # or system_prompt_file = "..."
-max_steps     = 25
-temperature   = 0.0
-# planner_model = "mimo"   # optional: two-model collaboration (low-frequency planner)
+max_steps         = 0    # user/global only; executor tool-call rounds; 0 = no limit
+planner_max_steps = 0    # user/global only; planner read-only tool-call rounds; 0 = no limit
+temperature       = 0.0
+memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: voltui config memory-v5 off|observe|compact|on|status
+reasoning_language = "auto"       # visible reasoning text: auto|zh|en
+# plan_mode_allow_host_automation = true   # set false to block browser/desktop automation while planning
+# plan_mode_allowed_tools = ["custom_reader"]   # extra read-only declarations for custom tools;
+#                                                # cannot unlock known blocked tools or unsafe bash
+# plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode
+# planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
 
@@ -361,48 +547,62 @@ temperature   = 0.0
 name           = "deepseek"
 kind           = "openai"
 base_url       = "https://api.deepseek.com"
+# chat_url     = "https://proxy.example.com/v1/chat/completions"   # optional full chat request URL
+# models_url   = "https://proxy.example.com/v1/models"             # optional model discovery URL
 models         = ["deepseek-v4-flash", "deepseek-v4-pro"]
 default        = "deepseek-v4-flash"   # optional; defaults to models[0]
 api_key_env    = "DEEPSEEK_API_KEY"
 context_window = 1000000   # tokens; harness compacts older history near this limit (0 disables)
 
-# A single-model entry (use when a model needs its own base_url/context_window/price).
-[[providers]]
-name        = "mimo-pro"
-kind        = "openai"
-base_url    = "https://api.xiaomimimo.com/v1"
-model       = "mimo-v2.5-pro"
-api_key_env = "MIMO_API_KEY"
+# A single-model entry still works for custom OpenAI-compatible endpoints.
 
-[[providers]]
-name        = "mimo-flash"
-kind        = "openai"
-base_url    = "https://api.xiaomimimo.com/v1"
-model       = "mimo-v2-flash"
-api_key_env = "MIMO_API_KEY"
+[environment]
+enabled = true   # inject a stable startup summary of OS, shell, and common tool versions
+
+# Optional trusted executable paths shown to the model when PATH probing is not enough.
+# Workspace-local paths are listed but not auto-executed during startup probing.
+# [environment.tools]
+# go = "/opt/homebrew/bin/go"
 
 [tools]
 enabled = []   # omit/empty = all built-ins
+bash_timeout_seconds = 120   # foreground safety cap; set 0 for no tool-local cap
+mcp_call_timeout_seconds = 300   # default MCP call safety cap; plugin/tool overrides may raise it
+
+[tools.shell]
+prefer = "auto"   # auto (default) | bash | powershell | pwsh — force the shell tool's interpreter
+# path = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"   # explicit executable for the chosen shell
 
 [skills]
 # paths = ["~/my-skills", "../shared/skills"]   # extra custom skill roots
+# excluded_paths = ["~/.agents/skills"]         # hide convention roots without deleting folders
 # disabled_skills = ["review"]                  # hidden from prompt, slash invocation, and skill tools
 
 [permissions]
 mode  = "ask"                              # writer fallback when no rule matches: ask|allow|deny
-deny  = ["bash(rm -rf*)", "bash(git push*)"]   # hard-blocked in every mode
-allow = ["bash(go test*)", "bash(git status*)"]  # never prompted
+deny  = ["Bash(rm -rf*)", "Bash(git push*)"]   # hard-blocked in every mode
+allow = ["Bash(go test:*)", "Bash(git status:*)"]  # never prompted
 ask   = []                                 # force a prompt even if otherwise allowed
 
 [sandbox]
-# workspace_root = ""          # file-writers confined here; empty = cwd (writes stay in-project)
-# allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit may modify
+# workspace_root = ""          # file-writers confined here; empty = cwd
+# allow_write    = ["/tmp"]    # extra dirs write_file/edit_file/multi_edit/move_file may modify
+# forbid_read    = ["${HOME}/.ssh"]   # dirs read/list/search tools and sandboxed bash may not inspect
+
+[serve]
+auth_mode = "none"             # none|token|password; use auth before binding beyond localhost
+# token = ""                   # optional fixed token; empty token mode generates one at startup
+# password_hash = ""           # bcrypt hash generated with voltui serve --hash-password --password '...'
+# behind_proxy = false         # trust X-Forwarded-* only behind a trusted reverse proxy
 
 [[plugins]]
 name    = "example"            # type defaults to "stdio"
 command = "voltui-plugin-example"
 args    = []
 # env   = { FOO = "bar" }
+# call_timeout_seconds = 600            # per-server MCP call timeout; 0 = global/default cap
+# tool_timeout_seconds = { "generate_video" = 1800 }   # raw MCP tool names
+# trusted_read_only_tools = ["search"]   # optional pre-seeded MCP read-only trust
 
 # [[plugins]]                   # a remote MCP server over Streamable HTTP
 # name    = "stripe"
@@ -412,6 +612,19 @@ args    = []
 ```
 
 `voltui setup` writes this default config so the CLI is usable out of the box.
+
+`[ui].cursor_shape` is normalized to `underline`, `block`, or `bar`; empty or
+unknown values fall back to `underline`. It applies to the Bubble Tea CLI/TUI
+textarea only, while desktop and browser inputs keep their platform-native
+cursor behavior.
+
+`[serve]` controls the HTTP browser frontend used by `voltui serve`. The
+default `auth_mode = "none"` is intended for the loopback default
+`127.0.0.1:8787`; deployments reachable from another machine must use `token` or
+`password`. Password mode requires either a startup `--password` or a stored
+bcrypt `password_hash`. `behind_proxy` must stay false unless the server is
+behind a trusted proxy that owns the `X-Forwarded-For` and `X-Forwarded-Proto`
+headers.
 
 MCP servers may also be declared in a project-root `.mcp.json` using Claude
 Code's exact `mcpServers` schema (`command`/`args`/`env`, `type`/`url`/`headers`,
@@ -429,15 +642,44 @@ VoltUI unchanged.
 
 `[sandbox]` is the *enforcement* layer beneath permissions (which are *policy*).
 Phase 0 confines the file-writing built-ins (`write_file`, `edit_file`,
-`multi_edit`) to `workspace_root` (default cwd) plus `allow_write`: a write whose
-target — resolved to an absolute, symlink-free path so a symlinked dir or `..`
-cannot tunnel out — falls outside every root is refused, and the error is fed
-back to the model. Confinement is on by default (root = cwd), so edits stay in
-the project; reads are unrestricted. `bash` is itself jailed on macOS by default
-(`[sandbox] bash = "enforce"`, Seatbelt): each command runs under sandbox-exec
-allowed to write only the same roots (+ temp and toolchain caches) and to reach
-the network only when `network = true`. Unsupported platforms fall back to
-running unconfined. The escape-prompt and Linux support are Phase 1's remainder (§9).
+`multi_edit`, `move_file`) to `workspace_root` (default cwd), the VoltUI user
+config dir, plus `allow_write`: a write whose target — resolved to an absolute,
+symlink-free path so a symlinked dir or `..` cannot tunnel out — falls outside
+every root is refused, and the error is fed back to the model. Confinement is on
+by default (root = cwd), so edits stay in the project while the agent can still
+update its own global config. `forbid_read` lists directories the agent should
+not read, list, or search; entries support `${VAR}` / `${VAR:-default}` expansion
+and should be absolute, or use `${HOME}` for home-relative secrets such as
+`${HOME}/.ssh`. `bash` is itself jailed by default when an OS sandbox is
+available (`[sandbox] bash = "enforce"`: Seatbelt on macOS, bubblewrap on
+Linux, and a native helper on Windows): each command is allowed to write only
+the same roots plus platform-specific command temp/cache roots, denied reads
+under `forbid_read`, and allowed to reach the network only when
+`network = true`.
+The native Windows helper delegates the low-level isolation to
+`github.com/SivanCola/windows-sandbox`: AppContainer for read-only commands and
+a low-integrity token for writable commands, with temporary ACL grants for
+writable roots and tool executables, a per-command temp root instead of mutating
+the global Temp directory, temporary deny ACEs for `forbid_read` (files and
+directories), best-effort restoration from pre-run DACL snapshots for touched
+directories, and a kill-on-close Job Object. Because the sandbox works by
+temporarily mutating shared-path ACLs and integrity labels, concurrent commands
+against the same root are serialized with a per-root lock, and residue from a
+force-killed command (a lingering low-integrity label or `forbid_read` deny ACE)
+is swept by the next run so a crash cannot durably lower a workspace's integrity
+or lock the user out of a `forbid_read` path. A writable command runs under a
+low-integrity token, so beyond the configured roots it retains write access to
+the narrow set of locations Windows leaves writable to any low-integrity process
+(e.g. `AppData\LocalLow`); the workspace boundary and `forbid_read` denials are
+unaffected. Read-only AppContainer commands omit network capabilities when
+networking is disabled; writable Windows commands fail closed when
+`network = false` because the low-integrity token does not provide a reliable
+per-process network block without elevated firewall/WFP setup.
+When no OS sandbox is available, `bash = "enforce"` refuses bash execution
+instead of running unconfined. Install the platform sandbox backend
+(bubblewrap/`bwrap` on Linux, `sandbox-exec` on macOS) or set
+`[sandbox] bash = "off"` to explicitly restore the pre-1.16 unconfined shell
+behavior. The escape-prompt and broader OS support are Phase 1's remainder (§9).
 
 ## 6. Error Handling
 
@@ -464,13 +706,16 @@ running unconfined. The escape-prompt and Linux support are Phase 1's remainder 
 ## 9. Roadmap (not in current scope)
 
 - Sandbox Phase 1: an OS-level jail for `bash` so commands — not just the
-  file-writer built-ins (Phase 0) — are confined to the workspace. **macOS
-  (Seatbelt via `sandbox-exec`) ships, on by default** (see §5). Remaining: (a)
-  the escape-prompt — detect a sandbox-denied failure and offer to re-run the
-  command unconfined via the permission gate (in `voltui run`, the command just
-  fails and the model adapts), which completes the "allow inside the box, prompt
-  at its edge" model; (b) Linux (bubblewrap / landlock). Shells out to OS tooling
-  so the binary stays dependency-free; Windows is out of scope. With this in
+  file-writer built-ins (Phase 0) — are confined to the workspace. **Seatbelt on
+  macOS, bubblewrap on Linux, and a native Windows helper ship, on by default
+  when available** (see §5).
+  Remaining: (a)
+  the escape-prompt — detect sandbox-unavailable or sandbox-denied failures and
+  offer an explicit, permission-gated unconfined rerun (in `voltui run`, the
+  command just fails and the model adapts), which completes the "allow inside the
+  box, prompt at its edge" model; (b) an optional elevated Windows backend with a
+  dedicated sandbox user for enterprise hardening. Shells out to OS tooling so
+  the binary stays dependency-free. With this in
   place, "always allow" rule persistence becomes optional rather than load-bearing.
 - MCP long tail (deferred deliberately — no consumer / no foundation yet): OAuth
   2.0 + `headersHelper` auth for remote servers; the remaining `.mcp.json` scopes

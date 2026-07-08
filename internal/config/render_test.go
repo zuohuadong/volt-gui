@@ -16,13 +16,13 @@ func isolateUserConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	t.Setenv("VOLTUI_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 	return home
 }
 
-func expectedDefaultReasonixHome(home string) string {
+func expectedDefaultVoltUIHome(home string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(home, "AppData", "Roaming", "voltui")
 	}
@@ -43,22 +43,68 @@ func TestUserConfigDisplayPathCollapsesHome(t *testing.T) {
 	}
 }
 
-func TestUserConfigPathUsesReasonixHome(t *testing.T) {
+func TestUserConfigPathUsesVoltUIHome(t *testing.T) {
 	home := isolateUserConfigHome(t)
-	want := filepath.Join(expectedDefaultReasonixHome(home), "config.toml")
+	want := filepath.Join(expectedDefaultVoltUIHome(home), "config.toml")
 	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
 	}
 }
 
-func TestUserConfigPathHonorsReasonixHome(t *testing.T) {
+func TestUserConfigPathHonorsVoltUIHome(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	custom := filepath.Join(home, "custom-home")
+	t.Setenv("VOLTUI_HOME", custom)
+
+	want := filepath.Join(custom, "config.toml")
+	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestUserConfigPathHonorsLegacyReasonixHome(t *testing.T) {
+	home := isolateUserConfigHome(t)
+	custom := filepath.Join(home, "legacy-home")
 	t.Setenv("REASONIX_HOME", custom)
 
 	want := filepath.Join(custom, "config.toml")
 	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadForRootUsesWindowsHomeFallbackWhenConfigDirUnavailable(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+
+	oldGOOS := runtimeGOOS
+	oldConfigDir := osUserConfigDir
+	oldHomeDir := osUserHomeDir
+	runtimeGOOS = "windows"
+	osUserConfigDir = func() string { return "" }
+	osUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() {
+		runtimeGOOS = oldGOOS
+		osUserConfigDir = oldConfigDir
+		osUserHomeDir = oldHomeDir
+	})
+
+	t.Setenv("VOLTUI_HOME", "")
+
+	configPath := filepath.Join(home, "AppData", "Roaming", "voltui", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("default_model = \"custom/from-home\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatalf("LoadForRoot() error = %v", err)
+	}
+	if cfg.DefaultModel != "custom/from-home" {
+		t.Fatalf("DefaultModel = %q, want %q", cfg.DefaultModel, "custom/from-home")
 	}
 }
 
@@ -98,6 +144,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.UI.Theme = "light"
 	orig.UI.ThemeStyle = "glacier"
 	orig.UI.ShortcutLayout = "desktop"
+	orig.UI.CursorShape = "bar"
 	orig.Desktop.Language = "en"
 	orig.Desktop.LayoutStyle = "workbench"
 	orig.Desktop.Theme = "dark"
@@ -117,8 +164,10 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Agent.PlannerMaxSteps = 0
 	orig.Agent.AutoPlanClassifier = "deepseek-flash"
 	orig.Agent.ReasoningLanguage = "zh"
+	orig.Agent.ToolResultSnipRatio = 0.65
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
+	orig.Agent.MaxSubagentDepth = 3
 	orig.Agent.Keep = []string{"errors", "user_marked"}
 	orig.Agent.RecentKeep = 4
 	orig.Tools.BashTimeoutSeconds = intPtr(900)
@@ -138,14 +187,25 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 			Server:   "127.0.0.1",
 			Port:     7890,
 			Username: "user",
-			Password: "${REASONIX_PROXY_PASSWORD}",
+			Password: "${VOLTUI_PROXY_PASSWORD}",
 		},
 	}
+	orig.Environment.Enabled = boolPtr(false)
+	orig.Environment.Tools = map[string]string{"go": "/opt/homebrew/bin/go", "python3": "~/.pyenv/shims/python3"}
 	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Skills.ExcludedPaths = []string{"~/.agents/skills"}
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
 	orig.Skills.MaxDepth = 2
 	orig.Bot.ToolApprovalMode = "auto"
+	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
+	orig.Bot.Routes = []BotRouteConfig{{
+		ConnectionID:     "feishu-lark",
+		ChatType:         "group",
+		ChatID:           "oc_group",
+		Model:            "deepseek-pro",
+		ToolApprovalMode: "ask",
+		WorkspaceRoot:    "/tmp/voltui-route",
+	}}
 	orig.Bot.Connections = []BotConnectionConfig{{
 		ID:               "feishu-lark",
 		Provider:         "feishu",
@@ -180,11 +240,15 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	orig.Plugins = []PluginEntry{
 		{Name: "example", Command: "voltui-plugin-example"},
-		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
+		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, TrustedReadOnlyTools: []string{"customer_read"}, AutoStart: boolPtr(false), Tier: "background"},
 	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
+	mm.ChatURL = "http://localhost:8000/v1/chat/completions"
+	mm.ModelsURL = "http://localhost:8000/v1/models"
 	mm.ReasoningProtocol = "openai"
+	mm.PresetID = "mimo-api"
+	mm.PresetVersion = ProviderPresetVersion
 	ds, _ := orig.Provider("deepseek-flash")
 	ds.Effort = "max"
 
@@ -212,6 +276,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.UI.ShortcutLayout != "desktop" {
 		t.Errorf("ui.shortcut_layout = %q, want desktop", got.UI.ShortcutLayout)
+	}
+	if got.UICursorShape() != "bar" {
+		t.Errorf("ui.cursor_shape = %q, want bar", got.UICursorShape())
 	}
 	if got.Desktop.Language != "en" {
 		t.Errorf("desktop.language = %q, want en", got.Desktop.Language)
@@ -258,6 +325,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Bot.ToolApprovalMode != "auto" || got.Bot.Connections[0].ToolApprovalMode != "yolo" {
 		t.Errorf("bot tool approval mode not preserved: bot=%q connection=%q", got.Bot.ToolApprovalMode, got.Bot.Connections[0].ToolApprovalMode)
 	}
+	if !got.Bot.Control.Enabled || got.Bot.Control.Addr != "127.0.0.1:39001" || got.Bot.Control.TokenEnv != "BOT_CONTROL_TOKEN" {
+		t.Errorf("bot control not preserved: %+v", got.Bot.Control)
+	}
+	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/voltui-route" || got.Bot.Routes[0].ChatID != "oc_group" {
+		t.Errorf("bot routes not preserved: %+v", got.Bot.Routes)
+	}
 	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/voltui-bot" {
 		t.Errorf("bot session mapping scope not preserved: %+v", got.Bot.Connections[0].SessionMappings)
 	}
@@ -276,6 +349,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.SoftCompactRatio != orig.Agent.SoftCompactRatio {
 		t.Errorf("soft_compact_ratio = %v, want %v", got.Agent.SoftCompactRatio, orig.Agent.SoftCompactRatio)
 	}
+	if got.Agent.ToolResultSnipRatio != orig.Agent.ToolResultSnipRatio {
+		t.Errorf("tool_result_snip_ratio = %v, want %v", got.Agent.ToolResultSnipRatio, orig.Agent.ToolResultSnipRatio)
+	}
 	if got.Agent.CompactRatio != orig.Agent.CompactRatio {
 		t.Errorf("compact_ratio = %v, want %v", got.Agent.CompactRatio, orig.Agent.CompactRatio)
 	}
@@ -293,6 +369,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if !got.LSP.Enabled {
 		t.Error("lsp.enabled = false, want true")
+	}
+	if got.Environment.Enabled == nil || *got.Environment.Enabled {
+		t.Errorf("environment.enabled = %+v, want false", got.Environment.Enabled)
+	}
+	if !reflect.DeepEqual(got.Environment.Tools, orig.Environment.Tools) {
+		t.Errorf("environment.tools = %v, want %v", got.Environment.Tools, orig.Environment.Tools)
 	}
 	lua := got.LSP.Servers["lua"]
 	if lua.Command != "lua-language-server" || lua.LanguageID != "lua" || lua.InstallHint != "install lua-language-server" {
@@ -313,6 +395,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.SubagentModels["review"] != "deepseek-pro" {
 		t.Errorf("subagent_models.review = %q, want deepseek-pro", got.Agent.SubagentModels["review"])
 	}
+	if got.Agent.MaxSubagentDepth != 3 {
+		t.Errorf("max_subagent_depth = %d, want 3", got.Agent.MaxSubagentDepth)
+	}
 	if got.Tools.BashTimeoutSeconds == nil || *got.Tools.BashTimeoutSeconds != 900 {
 		t.Errorf("tools.bash_timeout_seconds = %v, want 900", got.Tools.BashTimeoutSeconds)
 	}
@@ -325,8 +410,11 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Tools.Shell.Path != "/usr/local/bin/bash" {
 		t.Errorf("tools.shell.path = %q, want /usr/local/bin/bash", got.Tools.Shell.Path)
 	}
-	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" || g.ReasoningProtocol != "openai" {
-		t.Errorf("mimo-pro base_url not preserved: %+v", g)
+	if g, _ := got.Provider("mimo-pro"); g == nil || g.BaseURL != "http://localhost:8000/v1" || g.ChatURL != "http://localhost:8000/v1/chat/completions" || g.ModelsURL != "http://localhost:8000/v1/models" || g.ReasoningProtocol != "openai" {
+		t.Errorf("mimo-pro endpoint fields not preserved: %+v", g)
+	}
+	if g, _ := got.Provider("mimo-pro"); g == nil || g.PresetID != "mimo-api" || g.PresetVersion != ProviderPresetVersion {
+		t.Errorf("mimo-pro preset metadata not preserved: %+v", g)
 	}
 	if g, _ := got.Provider("deepseek-flash"); g == nil || g.Effort != "max" {
 		t.Errorf("deepseek-flash effort not preserved: %+v", g)
@@ -368,6 +456,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if stripe.Headers["Authorization"] != "Bearer x" {
 		t.Errorf("plugin headers not preserved: %v", stripe.Headers)
 	}
+	if len(stripe.TrustedReadOnlyTools) != 1 || stripe.TrustedReadOnlyTools[0] != "customer_read" {
+		t.Errorf("plugin trusted_read_only_tools not preserved: %+v", stripe.TrustedReadOnlyTools)
+	}
 	if stripe.AutoStart == nil || *stripe.AutoStart {
 		t.Errorf("auto_start should render and parse as false, got %+v", stripe.AutoStart)
 	}
@@ -381,9 +472,18 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 
 func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	cfg := Default()
+	allowHostAutomation := false
+	cfg.Agent.PlanModeAllowHostAutomation = &allowHostAutomation
 	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
+	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
+	if !strings.Contains(rendered, `plan_mode_allow_host_automation = false`) {
+		t.Fatalf("rendered config should preserve plan_mode_allow_host_automation=false:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "allow browser/desktop automation while planning") {
+		t.Fatalf("rendered config should document plan_mode_allow_host_automation semantics:\n%s", rendered)
+	}
 	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
 	}
@@ -395,8 +495,85 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
 	}
+	if got.Agent.PlanModeAllowHostAutomation == nil || *got.Agent.PlanModeAllowHostAutomation {
+		t.Fatalf("PlanModeAllowHostAutomation round trip = %+v, want false", got.Agent.PlanModeAllowHostAutomation)
+	}
 	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
 		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)
+	}
+	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
+		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "concrete read-only shell prefixes") {
+		t.Fatalf("rendered config should document plan_mode_read_only_commands semantics:\n%s", rendered)
+	}
+	if !reflect.DeepEqual(got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands) {
+		t.Fatalf("PlanModeReadOnlyCommands round trip = %v, want %v", got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands)
+	}
+}
+
+func TestRenderTOMLDocumentsPluginTrustedReadOnlyTools(t *testing.T) {
+	cfg := Default()
+	cfg.Plugins = []PluginEntry{{
+		Name:                 "github",
+		Command:              "github-mcp",
+		TrustedReadOnlyTools: []string{"issue_read", "pull_request_read"},
+	}}
+
+	rendered := RenderTOML(cfg)
+	if !strings.Contains(rendered, `trusted_read_only_tools = ["issue_read", "pull_request_read"]`) {
+		t.Fatalf("rendered config should preserve trusted_read_only_tools:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "optional pre-seeded MCP read-only trust") {
+		t.Fatalf("rendered config should document trusted_read_only_tools semantics:\n%s", rendered)
+	}
+
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if !reflect.DeepEqual(got.Plugins[0].TrustedReadOnlyTools, cfg.Plugins[0].TrustedReadOnlyTools) {
+		t.Fatalf("TrustedReadOnlyTools round trip = %v, want %v", got.Plugins[0].TrustedReadOnlyTools, cfg.Plugins[0].TrustedReadOnlyTools)
+	}
+}
+
+func TestRenderTOMLPreservesMCPCallTimeouts(t *testing.T) {
+	cfg := Default()
+	cfg.Tools.MCPCallTimeoutSeconds = intPtr(450)
+	cfg.Plugins = []PluginEntry{{
+		Name:               "maker",
+		Command:            "maker-mcp",
+		CallTimeoutSeconds: 600,
+		ToolTimeoutSeconds: map[string]int{
+			"generate/video": 1800,
+			"search":         120,
+		},
+	}}
+
+	rendered := RenderTOML(cfg)
+	for _, want := range []string{
+		"mcp_call_timeout_seconds = 450",
+		"call_timeout_seconds = 600",
+		`tool_timeout_seconds = { "generate/video" = 1800, "search" = 120 }`,
+		"Raw MCP tool names",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
+		}
+	}
+
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if got.Tools.MCPCallTimeoutSeconds == nil || *got.Tools.MCPCallTimeoutSeconds != 450 {
+		t.Fatalf("MCPCallTimeoutSeconds round trip = %v, want 450", got.Tools.MCPCallTimeoutSeconds)
+	}
+	if got.Plugins[0].CallTimeoutSeconds != 600 {
+		t.Fatalf("CallTimeoutSeconds round trip = %d, want 600", got.Plugins[0].CallTimeoutSeconds)
+	}
+	if !reflect.DeepEqual(got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds) {
+		t.Fatalf("ToolTimeoutSeconds round trip = %v, want %v", got.Plugins[0].ToolTimeoutSeconds, cfg.Plugins[0].ToolTimeoutSeconds)
 	}
 }
 
@@ -588,6 +765,26 @@ func TestProjectDeltaRendersToolsShellOverrides(t *testing.T) {
 	}
 }
 
+func TestProjectDeltaRendersUICursorShape(t *testing.T) {
+	c := Default()
+	c.UI.CursorShape = "block"
+
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", `cursor_shape = "block"`} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if got.UICursorShape() != "block" {
+		t.Fatalf("ui.cursor_shape = %q, want block", got.UICursorShape())
+	}
+}
+
 func TestProjectRenderPreservesNonDefaultLegacySections(t *testing.T) {
 	c := Default()
 	c.UI.Theme = "light"
@@ -684,6 +881,105 @@ func TestRenderTOMLRoundTripsVisionModels(t *testing.T) {
 	}
 	if disabled.VisionModels == nil || len(disabled.VisionModels) != 0 {
 		t.Fatalf("disabled-vision vision_models after round trip = %#v, want explicit empty list", disabled.VisionModels)
+	}
+}
+
+func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
+	orig := Default()
+	orig.Providers = []ProviderEntry{{
+		Name:      "gateway",
+		Kind:      "openai",
+		BaseURL:   "https://gateway.example/v1",
+		Models:    []string{"deepseek-v4-flash", "plain-chat"},
+		Default:   "plain-chat",
+		APIKeyEnv: "GATEWAY_API_KEY",
+		Headers: map[string]string{
+			"HTTP-Referer": "https://app.example",
+			"X-Title":      "VoltUI",
+		},
+		ExtraBody: map[string]any{
+			"enable_thinking": true,
+			"top_p":           0.8,
+			"metadata": map[string]any{
+				"mode": "fast",
+			},
+		},
+		AuthHeader: true,
+		ModelOverrides: map[string]ProviderModelOverride{
+			"deepseek-v4-flash": {
+				ReasoningProtocol: ReasoningProtocolDeepSeek,
+				SupportedEfforts:  []string{"high", "max"},
+				DefaultEffort:     "high",
+				Vision:            boolPtr(false),
+			},
+		},
+	}}
+
+	rendered := RenderTOML(orig)
+	if !strings.Contains(rendered, `headers     = { HTTP-Referer = "https://app.example", X-Title = "VoltUI" }`) {
+		t.Fatalf("rendered TOML missing headers:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `extra_body`) || !strings.Contains(rendered, `"enable_thinking" = true`) {
+		t.Fatalf("rendered TOML missing extra_body:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `auth_header = true`) {
+		t.Fatalf("rendered TOML missing auth_header:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `model_overrides`) || !strings.Contains(rendered, `reasoning_protocol = "deepseek"`) {
+		t.Fatalf("rendered TOML missing model overrides:\n%s", rendered)
+	}
+
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	p, ok := got.Provider("gateway")
+	if !ok {
+		t.Fatal("gateway provider missing after round trip")
+	}
+	if p.Headers["HTTP-Referer"] != "https://app.example" || p.Headers["X-Title"] != "VoltUI" {
+		t.Fatalf("headers after round trip = %+v", p.Headers)
+	}
+	if p.ExtraBody["enable_thinking"] != true || p.ExtraBody["top_p"] != 0.8 {
+		t.Fatalf("extra_body after round trip = %+v", p.ExtraBody)
+	}
+	if !p.AuthHeader {
+		t.Fatal("auth_header after round trip = false, want true")
+	}
+	metadata, ok := p.ExtraBody["metadata"].(map[string]any)
+	if !ok || metadata["mode"] != "fast" {
+		t.Fatalf("extra_body metadata after round trip = %+v", p.ExtraBody["metadata"])
+	}
+	ov := p.ModelOverrides["deepseek-v4-flash"]
+	if ov.ReasoningProtocol != ReasoningProtocolDeepSeek || !reflect.DeepEqual(ov.SupportedEfforts, []string{"high", "max"}) || ov.DefaultEffort != "high" || ov.Vision == nil || *ov.Vision {
+		t.Fatalf("model override after round trip = %+v", ov)
+	}
+}
+
+func TestRenderStringMapQuotesNonBareTOMLKeys(t *testing.T) {
+	rendered := renderStringMap(map[string]string{
+		"github:gh-fix-ci": "deepseek-pro",
+		"review":           "deepseek-flash",
+	})
+	if !strings.Contains(rendered, `"github:gh-fix-ci" = "deepseek-pro"`) {
+		t.Fatalf("non-bare key was not quoted: %s", rendered)
+	}
+	var got struct {
+		M map[string]string `toml:"m"`
+	}
+	if _, err := toml.Decode("m = "+rendered, &got); err != nil {
+		t.Fatalf("rendered inline map does not parse: %v (%s)", err, rendered)
+	}
+	if got.M["github:gh-fix-ci"] != "deepseek-pro" || got.M["review"] != "deepseek-flash" {
+		t.Fatalf("decoded map = %+v", got.M)
+	}
+}
+
+func TestRenderTOMLTablePathQuotesEachSegment(t *testing.T) {
+	got := renderTOMLTablePath("lsp", "servers", "c++", "github:gh-fix-ci")
+	want := `lsp.servers."c++"."github:gh-fix-ci"`
+	if got != want {
+		t.Fatalf("renderTOMLTablePath = %q, want %q", got, want)
 	}
 }
 
@@ -807,5 +1103,131 @@ func TestRenderTOMLDefaultStepsDoNotOverrideGlobalConfig(t *testing.T) {
 	}
 	if cfg.Agent.MaxSteps != 100 {
 		t.Errorf("after project: max_steps = %d, want 100 (global should not be overridden by commented-out default)", cfg.Agent.MaxSteps)
+	}
+}
+
+func TestIsolatedHomeDirEmptyByDefault(t *testing.T) {
+	t.Setenv("VOLTUI_HOME", "")
+	t.Setenv("REASONIX_HOME", "")
+	if got := IsolatedHomeDir(); got != "" {
+		t.Fatalf("IsolatedHomeDir() = %q, want empty", got)
+	}
+}
+
+func TestIsolatedHomeDirReturnsCleanPath(t *testing.T) {
+	raw := filepath.Join(t.TempDir(), "isolated-voltui")
+	t.Setenv("VOLTUI_HOME", raw)
+	got := IsolatedHomeDir()
+	if filepath.Clean(got) != filepath.Clean(raw) {
+		t.Fatalf("IsolatedHomeDir() = %q, want %q", got, raw)
+	}
+}
+
+func TestLegacyOSSupportDirEmptyWhenIsolated(t *testing.T) {
+	isolateUserConfigHome(t)
+	t.Setenv("VOLTUI_HOME", filepath.Join(t.TempDir(), "isolated-home"))
+	if got := legacyOSSupportDir(); got != "" {
+		t.Fatalf("legacyOSSupportDir() = %q, want empty when isolated", got)
+	}
+}
+
+func TestLegacyXDGConfigPathsEmptyWhenIsolated(t *testing.T) {
+	isolateUserConfigHome(t)
+	t.Setenv("VOLTUI_HOME", filepath.Join(t.TempDir(), "isolated-home"))
+	if got := legacyXDGConfigPaths(); got != nil {
+		t.Fatalf("legacyXDGConfigPaths() = %v, want nil when isolated", got)
+	}
+}
+
+func TestCacheDirHonorsVoltUIHome(t *testing.T) {
+	home := t.TempDir()
+	isolated := filepath.Join(home, "isolated-home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("VOLTUI_HOME", isolated)
+
+	got := CacheDir()
+	want := filepath.Join(isolated, "cache")
+	if filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("CacheDir() = %q, want %q", got, want)
+	}
+}
+
+func TestCacheDirHonorsVoltUICacheHomeOverVoltUIHome(t *testing.T) {
+	home := t.TempDir()
+	cacheHome := filepath.Join(home, "custom-cache")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("VOLTUI_HOME", filepath.Join(home, "isolated-home"))
+	t.Setenv("VOLTUI_CACHE_HOME", cacheHome)
+
+	got := CacheDir()
+	want := cacheHome
+	if filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("CacheDir() = %q, want %q (VOLTUI_CACHE_HOME must win)", got, want)
+	}
+}
+
+func TestUserConfigLoadPathNoLegacyFallbackWhenIsolated(t *testing.T) {
+	home := isolateUserConfigHome(t)
+	isolated := filepath.Join(home, "isolated-home")
+	t.Setenv("VOLTUI_HOME", isolated)
+
+	// Create a legacy config at the OS production path — it must not be loaded.
+	productionHome := expectedDefaultVoltUIHome(home)
+	if err := os.MkdirAll(productionHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(productionHome, "config.toml"), []byte("default_model = \"production/model\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The primary config under isolated home does not exist yet.
+	got := userConfigLoadPath()
+	want := filepath.Join(isolated, "config.toml")
+	if filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("userConfigLoadPath() = %q, want %q (must not fall back to production legacy config)", got, want)
+	}
+}
+
+func TestCredentialSourceCandidatesSkipHomeEnvWhenIsolated(t *testing.T) {
+	isolateUserConfigHome(t)
+	t.Setenv("VOLTUI_HOME", filepath.Join(t.TempDir(), "isolated-home"))
+
+	// Write a key into the production home .env — it must not appear as a source.
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := os.WriteFile(filepath.Join(home, ".env"), []byte("LEAKED_KEY=leaked-value\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	candidates := credentialSourceCandidates(".")
+	for _, c := range candidates {
+		if c.Kind == CredentialSourceHomeEnv {
+			t.Fatalf("credentialSourceCandidates includes CredentialSourceHomeEnv when isolated: %v", c)
+		}
+	}
+}
+
+func TestMigrateLegacyIfNeededSkipsWhenIsolated(t *testing.T) {
+	home := isolateUserConfigHome(t)
+	isolated := filepath.Join(home, "isolated-home")
+	t.Setenv("VOLTUI_HOME", isolated)
+
+	// Create a legacy config.json in production home — migration must skip it.
+	legacyDir := filepath.Join(home, ".voltui")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"model":"production-model","apiKey":"sk-legacy"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := MigrateLegacyIfNeeded()
+	if err != nil {
+		t.Fatalf("MigrateLegacyIfNeeded() error = %v", err)
+	}
+	if res != nil {
+		t.Fatalf("MigrateLegacyIfNeeded() = %+v, want nil when isolated", res)
 	}
 }

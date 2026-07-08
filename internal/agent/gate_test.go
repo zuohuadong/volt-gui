@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"voltui/internal/event"
 	"strings"
 	"testing"
+
+	"voltui/internal/agent/testutil"
+	"voltui/internal/event"
 
 	"voltui/internal/provider"
 	"voltui/internal/tool"
@@ -51,6 +53,51 @@ func TestGateBlocksDeniedCall(t *testing.T) {
 
 	if len(g.checked) != 2 {
 		t.Errorf("gate consulted %d times, want 2 (%v)", len(g.checked), g.checked)
+	}
+}
+
+func TestRunPermissionDeniedToolCallPreservesRecovery(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+
+	mp := testutil.NewMock("p0-provider",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{
+			ID:        "call-write",
+			Name:      "write_file",
+			Arguments: `{"path":"outside.txt","content":"no"}`,
+		}}},
+		testutil.Turn{Text: "permission denial handled"},
+	)
+	g := &stubGate{deny: map[string]bool{"write_file": true}}
+	a := New(mp, reg, NewSession(""), Options{Gate: g}, event.Discard)
+
+	if err := a.Run(context.Background(), "write outside the workspace"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if mp.CallCount() != 2 {
+		t.Fatalf("provider calls = %d, want recovery request after denied tool", mp.CallCount())
+	}
+
+	msgs := a.Session().Messages
+	if len(msgs) < 4 {
+		t.Fatalf("session messages = %#v, want user/assistant/tool/assistant", msgs)
+	}
+	toolResult := msgs[2]
+	if toolResult.Role != provider.RoleTool || toolResult.ToolCallID != "call-write" || !strings.HasPrefix(toolResult.Content, "blocked: denied by test policy") {
+		t.Fatalf("denied tool result was not persisted as a paired tool message: %+v", toolResult)
+	}
+
+	reqs := mp.Requests()
+	second := provider.SanitizeToolPairing(reqs[1].Messages)
+	seenPairedResult := false
+	for _, msg := range second {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == "call-write" && strings.HasPrefix(msg.Content, "blocked: denied by test policy") {
+			seenPairedResult = true
+			break
+		}
+	}
+	if !seenPairedResult {
+		t.Fatalf("second provider request lost the denied tool result: %#v", second)
 	}
 }
 

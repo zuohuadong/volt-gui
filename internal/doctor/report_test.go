@@ -80,9 +80,17 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 }
 
 func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("VOLTUI_DOCTOR_TEST_MISSING_KEY", "")
 
 	cfg := config.Default()
+	cfg.DefaultModel = "missing-key"
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "missing-key",
+		Kind:      "openai",
+		BaseURL:   "https://api.example.com/v1",
+		Model:     "model-a",
+		APIKeyEnv: "VOLTUI_DOCTOR_TEST_MISSING_KEY",
+	}}
 	report := Collect(Options{Version: "1.2.3", Config: cfg})
 	text := RenderText(report)
 
@@ -92,18 +100,18 @@ func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
 	if len(report.Providers) == 0 {
 		t.Fatal("expected built-in providers in report")
 	}
-	var deepseek *ProviderReport
+	var missingKey *ProviderReport
 	for i := range report.Providers {
-		if report.Providers[i].Name == "deepseek-flash" {
-			deepseek = &report.Providers[i]
+		if report.Providers[i].Name == "missing-key" {
+			missingKey = &report.Providers[i]
 			break
 		}
 	}
-	if deepseek == nil {
-		t.Fatalf("deepseek-flash provider missing from report: %+v", report.Providers)
+	if missingKey == nil {
+		t.Fatalf("missing-key provider missing from report: %+v", report.Providers)
 	}
-	if deepseek.KeyPresent {
-		t.Fatal("deepseek key should be reported missing when env is empty")
+	if missingKey.KeyPresent {
+		t.Fatal("missing-key provider key should be reported missing when env is empty")
 	}
 	if !strings.Contains(text, "voltui 1.2.3 doctor") {
 		t.Fatalf("text report missing header:\n%s", text)
@@ -124,14 +132,17 @@ func TestRenderTextSurfacesWarningsUpTop(t *testing.T) {
 	}
 }
 
-func TestRenderTextFlagsInactiveSandbox(t *testing.T) {
+func TestRenderTextFlagsUnavailableSandboxAsFailClosed(t *testing.T) {
 	inactive := RenderText(Report{Sandbox: SandboxReport{Bash: "enforce", Available: false}})
-	if !strings.Contains(inactive, "inactive") {
-		t.Fatalf("enforce without an OS sandbox should be flagged inactive:\n%s", inactive)
+	if !strings.Contains(inactive, "bash execution is refused") {
+		t.Fatalf("enforce without an OS sandbox should report fail-closed bash behavior:\n%s", inactive)
+	}
+	if strings.Contains(inactive, "runs unconfined") {
+		t.Fatalf("enforce without an OS sandbox should not claim bash runs unconfined:\n%s", inactive)
 	}
 
 	active := RenderText(Report{Sandbox: SandboxReport{Bash: "enforce", Available: true}})
-	if strings.Contains(active, "inactive") {
-		t.Fatalf("enforce with an OS sandbox should not be flagged inactive:\n%s", active)
+	if strings.Contains(active, "bash execution is refused") {
+		t.Fatalf("enforce with an OS sandbox should not be flagged unavailable:\n%s", active)
 	}
 }

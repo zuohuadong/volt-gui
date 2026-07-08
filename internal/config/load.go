@@ -16,7 +16,7 @@ import (
 // Load builds the configuration: defaults, then user config, then project
 // config, then MCP servers from Claude Code's .mcp.json, then (lowest priority)
 // the v0.x ~/.voltui/config.json's mcpServers. Provider api_key_env values
-// resolve from Reasonix's global .env, not from project .env files.
+// resolve from VoltUI's global .env, not from project .env files.
 func Load() (*Config, error) {
 	return LoadForRoot(".")
 }
@@ -25,7 +25,7 @@ func Load() (*Config, error) {
 // instead of the current working directory. When root is "" or ".", it behaves
 // like Load(). This is the workspace-aware entry point: desktop tabs use it so
 // each project's voltui.toml + .mcp.json are resolved independently without
-// changing the process cwd, while provider keys stay rooted in Reasonix home.
+// changing the process cwd, while provider keys stay rooted in VoltUI home.
 func LoadForRoot(root string) (*Config, error) {
 	root = resolveRoot(root)
 	expansionEnv := loadDotEnvForRoot(root)
@@ -48,6 +48,7 @@ func LoadForRoot(root string) (*Config, error) {
 	globalMaxSteps := cfg.Agent.MaxSteps
 	globalPlannerMaxSteps := cfg.Agent.PlannerMaxSteps
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
+	globalAutoPlan := cfg.Agent.AutoPlan
 
 	tomlSources = append(tomlSources, projectTOML)
 	if err := mergeRuntimeTOMLFile(cfg, projectTOML); err != nil {
@@ -59,6 +60,7 @@ func LoadForRoot(root string) (*Config, error) {
 	cfg.Agent.MaxSteps = globalMaxSteps
 	cfg.Agent.PlannerMaxSteps = globalPlannerMaxSteps
 	cfg.Agent.MemoryCompiler = globalMemoryCompiler
+	cfg.Agent.AutoPlan = globalAutoPlan
 	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project voltui.toml doesn't drop the global config's MCP servers.
@@ -97,6 +99,7 @@ func LoadForRoot(root string) (*Config, error) {
 	// from the TypeScript line keeps MCP servers without rewriting them. Anything
 	// the v2 config or .mcp.json already declared wins on a name collision.
 	cfg.mergeMCPJSON(loadLegacyMCP(legacyConfigPath()))
+	_ = mergeInstalledPluginPackages(cfg, root)
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeLegacyMCPTiers(cfg)
@@ -383,7 +386,7 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 // LoadForEdit returns a config to seed the `voltui setup` wizard when reconfiguring:
 // the built-in defaults with the file at path (if present) decoded on top, so a
 // reconfigure preserves the user's existing providers and agent settings instead
-// of resetting to defaults. Reasonix's global .env is loaded so api_key_env
+// of resetting to defaults. VoltUI's global .env is loaded so api_key_env
 // resolution works while the wizard decides which keys are still missing.
 func LoadForEdit(path string) *Config {
 	cfg, err := loadForEditStrict(path, true)
@@ -975,7 +978,7 @@ func canonicalDesktopOfficialProviderName(name string) string {
 		return "deepseek"
 	case "mimo", "xiaomi-mimo", "xiaomi_mimo", "mimo-api":
 		return "mimo-api"
-	case "mimo-pro", "mimo-flash", "mimo-token-plan":
+	case "mimo-token-plan":
 		return "mimo-token-plan"
 	default:
 		return strings.TrimSpace(name)
@@ -1197,7 +1200,7 @@ func retargetDesktopOfficialRef(ref string, access map[string]bool) string {
 			model = "mimo-v2.5-pro"
 		}
 		return "mimo-api/" + model
-	case "mimo-pro", "mimo-flash", "mimo-token-plan":
+	case "mimo-token-plan":
 		if !access["mimo-token-plan"] {
 			return ref
 		}

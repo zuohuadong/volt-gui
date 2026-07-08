@@ -9,10 +9,10 @@ changed and how to move over.
 | | Legacy (v1) | VoltUI 1.0+ (v2) |
 |---|---|---|
 | Language | TypeScript / Node | Go |
-| Branch | [`v1`](https://github.com/esengine/voltui/tree/v1) (maintenance only) | `main-v2` (default, active) |
+| Branch | [`v1`](https://github.com/zuohuadong/volt-gui/tree/v1) (maintenance only) | `main-v2` (default, active) |
 | Versions | `0.x` (up to v0.54.x) | `1.0.0`+ |
 | Install | `npm i -g voltui` (the `latest` tag, stays on `0.x`) | `npm i -g voltui@next` — `latest` deliberately stays on `0.x`; or a release archive / `go build` |
-| Code intelligence | embedding semantic search | bundled [CodeGraph](https://github.com/colbymchenry/codegraph) (symbol/call graph) |
+| Code intelligence | embedding semantic search + tree-sitter symbols | LSP-assisted code reading plus grep/read_file/glob; semantic index is not yet ported |
 
 "v1" and "v2" are **codebase generations**, not semver: the v1 line never reached
 1.0, so the Go rewrite takes the `1.x` major.
@@ -30,7 +30,7 @@ without asking. v1.x (Go) ships under the `next` tag; opt in explicitly:
 
 ```sh
 npm i -g voltui@next     # or pin a version: voltui@1.1.0
-voltui chat
+voltui
 ```
 
 `latest` will stay on `0.x` for the foreseeable future, so installing or
@@ -44,26 +44,47 @@ your shell alongside a `1.x` desktop app is expected, not a conflict. Or build
 from source:
 
 ```sh
-git clone https://github.com/esengine/voltui   # default: main-v2 (Go)
-cd voltui && make build                        # -> bin/voltui(.exe)
+git clone https://github.com/zuohuadong/volt-gui   # default: main-v2 (Go)
+cd volt-gui && make build                        # -> bin/voltui(.exe)
 ```
 
 ## Configuration
 
 | Legacy | VoltUI 1.0 |
 |---|---|
-| TS config files | `voltui.toml` (project) / `~/.config/voltui/config.toml` (user) — see `voltui.example.toml` |
-| env / API keys | `.env` or the environment (`DEEPSEEK_API_KEY`, `MIMO_API_KEY`, …) via `api_key_env` |
-| project memory | `VOLTUI.md` (+ auto-memory), Claude-Code-compatible |
+| TS config files | `voltui.toml` (project) / `config.toml` in VoltUI home (`~/.voltui/` on macOS/Linux; `%AppData%\voltui\` on Windows) from v1.8.1 — see `voltui.example.toml` and [Configuration paths](./CONFIG_PATHS.md) |
+| env / API keys | Provider config keeps `api_key_env`; saved key values live in VoltUI home `.env` (`DEEPSEEK_API_KEY`, `MIMO_API_KEY`, …) |
+| project memory | `VOLTUI.md` / legacy `REASONIX.md` (+ auto-memory), Claude-Code-compatible |
 | MCP servers | `[[plugins]]` in `voltui.toml`, or a Claude-Code `.mcp.json` (read as-is) |
 
-On first launch v2 runs a one-time, **non-destructive** import: it reads a v0.x
-`~/.voltui/config.json` (API key, base URL, language, MCP servers) and imports
-past sessions from `~/.voltui/sessions`, leaves the old files untouched, and
-prints a boot notice when it does. Imported sessions resume with `--resume` or
-the history panel. The config import only runs when no v2 config exists yet — if
-v2 wrote its config before your `0.x` data was in place nothing is overwritten,
-so copy any missing values across by hand.
+On first launch, v1.8.1+ runs a one-time, **non-destructive** import: it reads
+legacy config from `~/Library/Application Support/voltui/config.toml`,
+`~/.config/voltui/config.toml`, `~/.voltui/voltui.toml`, or v0.x
+`~/.voltui/config.json` (API key, base URL, language, MCP servers), migrates
+legacy credentials into `<VoltUI home>/.env` when a key is missing there, and
+imports past sessions from legacy session directories. Old files are left
+untouched, and VoltUI prints a boot notice when it imports data. Each session lands in the
+workspace it belonged to (read from its v0.x sidecar meta, summary carried over
+as the title), so the desktop sidebar lists it under the right project; sessions
+whose workspace no longer exists land in the global session dir. Imported
+sessions resume with `--resume` or the history panel. The config import only
+runs when no v1.8.1+ config exists yet — if v1.8.1+ wrote its config before your
+legacy data was in place nothing is overwritten, so copy any missing values
+across by hand.
+
+If the automatic pass missed data because you opened a v1.8.1+ CLI/desktop build
+before the old paths were available, run `/migrate` from an interactive session.
+The command is available only in Go-based VoltUI builds that include it; if you
+see `unknown command`, upgrade first. It prints progress while it checks legacy
+config and credentials, scans legacy memory and session directories, imports
+memory files and sessions that were not previously imported, and summarizes the
+result. `/migrate` keeps the same safety rules as startup migration: it does not
+overwrite an existing `config.toml` or memory file, it respects session import
+markers, and it is not available in the legacy 0.x TypeScript line. If the old
+v0.x sessions are in a custom Windows install/data directory, use
+`/migrate --from "D:\OldVoltUI"` to import sessions from that explicit source.
+See
+[Configuration paths](./CONFIG_PATHS.md) for the full path list and limitations.
 
 ## What's the same
 
@@ -73,20 +94,37 @@ and DeepSeek prefix-cache–oriented design.
 
 ## What's different
 
-- **Code intelligence**: embedding semantic search is replaced by **CodeGraph**
-  (`codegraph_*` tools) — a tree-sitter symbol/call graph, no embedding service or
-  API cost. New (first-run) configs start with it off; existing configs keep it
-  on across upgrades. Toggle `[codegraph]` in the MCP manager or config, and set
-  `[codegraph].tier` to choose lazy, background, or eager startup.
+- **Code intelligence**: the Go rewrite uses LSP-assisted code reading plus
+  `grep` / `read_file` / `glob` for local understanding. The legacy v1 semantic
+  search + tree-sitter symbol index is not bundled in v2 yet, and CodeGraph is no
+  longer shipped as an internal MCP server.
 - **Plan mode** + `complete_step` (evidence-backed step sign-off).
 - **Plan-mode tool overrides are narrower, and plan mode is fail-closed for
   external tools**: `[agent].plan_mode_allowed_tools` now only declares extra
   read-only custom/external tools. It no longer unlocks known blocked plan-mode
   tools such as `bash`, `task`, writers, installers, or memory mutation tools, and
-  unsafe bash commands still remain blocked. An MCP/plugin tool whose read-only
-  status comes from the server's untrusted `readOnlyHint` is not trusted by plan
-  mode; declare it here to use it while planning — otherwise plan mode fails closed
-  on it. First-party `ReadOnlyToolNames` overrides and built-ins stay trusted.
+  unsafe bash commands still remain blocked. To migrate old
+  `plan_mode_allowed_tools = ["bash", ...]` configs, move concrete read-only
+  shell prefixes such as `gh issue view` or internal query CLIs to
+  `[agent].plan_mode_read_only_commands`; do not declare shell interpreters or
+  writer-capable commands there. Interactive plan-mode runs can also ask you to
+  trust a concrete unknown query prefix once, and the persistent choice writes
+  the same `plan_mode_read_only_commands` entry. Auto/YOLO tool approval does
+  not answer this bash trust prompt. Use `read_only_task` / `read_only_skill`
+  instead of trying to unlock `task` / `run_skill` while planning. An MCP/plugin tool
+  whose read-only status comes from the server's untrusted `readOnlyHint` is
+  confirmed the first time an interactive plan-mode run needs it; choose the
+  persistent option to write the plugin-level `trusted_read_only_tools` raw-name
+  list. Auto/YOLO tool approval does not answer this trust prompt, although a
+  session or persistent trust choice prevents repeat prompts for the same MCP
+  tool. Non-interactive runs still fail closed, so pre-seed
+  `trusted_read_only_tools` or declare a concrete `mcp__<server>__<tool>` when no
+  user can approve. In the desktop MCP
+  panel, expand a server and use **Pre-trust read-only** for currently listed
+  `readOnlyHint` tools, per-tool **Pre-trust** for audited readers, or
+  **Untrust** to remove a tool; those actions write the same
+  `trusted_read_only_tools` list. First-party `ReadOnlyToolNames` overrides and
+  built-ins stay trusted.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do
@@ -113,4 +151,4 @@ Issues and PRs are labelled by line: **`v1`** (legacy TypeScript) and **`v2`**
 (Go). File new reports against the line you're using. The legacy `v1` line is in
 maintenance mode — bug fixes only, no new features.
 
-Questions? Open a [Discussion](https://github.com/esengine/voltui/discussions).
+Questions? Open a [Discussion](https://github.com/zuohuadong/volt-gui/discussions).

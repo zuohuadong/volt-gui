@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"voltui/internal/i18n"
 )
 
 // wrapTranscript wraps the joined transcript to width for the viewport, keeping
@@ -26,10 +28,29 @@ func wrapTranscript(s string, width int) string {
 // platform clipboard tools can instead succeed on the remote host and skip the
 // terminal clipboard path entirely.
 func copyToClipboard(text string) tea.Cmd {
-	return func() tea.Msg {
-		_ = clipboardWriteAll(text)
-		return tea.SetClipboard(text)()
-	}
+	return tea.SetClipboard(text)
+}
+
+// copyNoticeTTL is how long the "copied to clipboard" status-line hint stays
+// visible after a selection copy (mouse drag, right-click, or Ctrl+C) before
+// copyNoticeExpireMsg clears it.
+const copyNoticeTTL = 1500 * time.Millisecond
+
+// copyNoticeExpireMsg clears the transient copy notice — but only if seq still
+// matches m.copyNoticeSeq, so an older copy's timer can't stomp a newer notice
+// (e.g. drag-copy immediately followed by a right-click re-copy).
+type copyNoticeExpireMsg struct{ seq int }
+
+// copySelectionWithNotice copies text to the clipboard and arms the status-line
+// "copied to clipboard" hint, bumping copyNoticeSeq so any in-flight expiry tick
+// from a prior copy is superseded rather than racing this one.
+func (m *chatTUI) copySelectionWithNotice(text string) tea.Cmd {
+	m.copyNoticeSeq++
+	seq := m.copyNoticeSeq
+	m.copyNoticeText = i18n.M.MouseCopiedHint
+	return tea.Batch(copyToClipboard(text), tea.Tick(copyNoticeTTL, func(time.Time) tea.Msg {
+		return copyNoticeExpireMsg{seq: seq}
+	}))
 }
 
 // autoScrollMsg drives one step of edge-drag scrolling while a selection is held
@@ -179,6 +200,26 @@ func scrollbarThumb(height, yoff, total int) (start, size int) {
 	return start, size
 }
 
+func scrollbarYOffset(height, row, total, grabOffset int) int {
+	if total <= height {
+		return 0
+	}
+	_, thumbSize := scrollbarThumb(height, 0, total)
+	maxTop := height - thumbSize
+	if maxTop <= 0 {
+		return 0
+	}
+	top := row - grabOffset
+	if top < 0 {
+		top = 0
+	}
+	if top > maxTop {
+		top = maxTop
+	}
+	maxYoff := total - height
+	return (top*maxYoff + maxTop/2) / maxTop
+}
+
 func scrollbarCell(row, total, height, thumbStart, thumbSize int) string {
 	if total <= height {
 		return " "
@@ -187,6 +228,26 @@ func scrollbarCell(row, total, height, thumbStart, thumbSize int) string {
 		return scrollThumbStyle.Render("█")
 	}
 	return scrollTrackStyle.Render("│")
+}
+
+func (m chatTUI) inScrollbar(x, y int) bool {
+	if m.nativeScrollback {
+		return false
+	}
+	h := m.viewport.Height()
+	return h > 0 && y >= 0 && y < h && x == m.viewport.Width() && len(m.wrappedLines) > h
+}
+
+func (m chatTUI) scrollbarGrabRowOffset(row int) int {
+	thumbStart, thumbSize := scrollbarThumb(m.viewport.Height(), m.viewport.YOffset(), len(m.wrappedLines))
+	if row >= thumbStart && row < thumbStart+thumbSize {
+		return row - thumbStart
+	}
+	return thumbSize / 2
+}
+
+func (m *chatTUI) dragScrollbar(row int) {
+	m.viewport.SetYOffset(scrollbarYOffset(m.viewport.Height(), row, len(m.wrappedLines), m.scrollbarGrabOffset))
 }
 
 // transcriptCaret maps a screen cell (x, y) in the transcript region to an

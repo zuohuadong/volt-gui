@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, Check, Code2, FileText, FileType, Folder, FolderKanban, Image, LayoutDashboard, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
+  import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
   import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
@@ -15,6 +15,8 @@
     onPreviewFile,
     models = [],
     selectedModel = "",
+    disabled = false,
+    disabledReason = "",
     onModelChange,
     projectOptions = [],
     selectedProjectId = "",
@@ -23,7 +25,6 @@
     onWorkPermissionChange,
     onOpenResources,
     activityMode,
-    onActivityModeChange,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -34,6 +35,8 @@
     onPreviewFile: (path: string) => void;
     models?: ModelInfo[];
     selectedModel?: string;
+    disabled?: boolean;
+    disabledReason?: string;
     onModelChange?: (event: Event) => void;
     projectOptions?: { id: string; label: string }[];
     selectedProjectId?: string;
@@ -42,7 +45,6 @@
     onWorkPermissionChange?: (value: string) => void;
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
-    onActivityModeChange?: (mode: ActivityMode) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -71,7 +73,7 @@
   const slashArgMode = $derived(/^\/[^\s]+\s+/.test(input));
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
-  const canSubmit = $derived(!sending && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
+  const canSubmit = $derived(!sending && !disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
 
   onMount(() => {
     const unsubscribeDropped = onFilesDropped((paths) => void attachDroppedPaths(paths));
@@ -103,7 +105,7 @@
   }
 
   function modelValue(model: ModelInfo) {
-    return model.name || model.model || model.ref || model.label || "";
+    return model.ref || model.name || model.model || model.label || "";
   }
 
   function modelKey(model: ModelInfo, index: number) {
@@ -111,7 +113,7 @@
   }
 
   function modelLabel(model: ModelInfo, index: number) {
-    return model.label || modelValue(model) || `模型 ${index + 1}`;
+    return model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
   }
 
   function commandKey(command: CommandInfo, index: number) {
@@ -287,7 +289,7 @@
 
   function submitComposer() {
     const text = input.trim();
-    if (sending || !canSubmit) return;
+    if (sending || disabled || !canSubmit) return;
     const refs = attachments.map((attachment) => `@${attachment.path}`).join(" ");
     const displayText = [text, refs].filter(Boolean).join(text && refs ? " " : "");
     const projectLabel = selectedProjectId ? selectedProjectLabel() : "";
@@ -623,6 +625,9 @@
     </div>
 
     <div class="composer__actions">
+      {#if disabledReason}
+        <span class="composer__status" aria-live="polite">{disabledReason}</span>
+      {/if}
       <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange} disabled={!models.length}>
         {#if models.length}
           {#each models as model, index (modelKey(model, index))}
@@ -633,24 +638,12 @@
           <option value="">选择模型</option>
         {/if}
       </select>
-      {#if activityMode && onActivityModeChange}
-        <div class="composer__mode-switch" role="group" aria-label="Work / Code 切换">
-          <button class:active={activityMode === "work"} type="button" aria-pressed={activityMode === "work"} onclick={() => onActivityModeChange("work")}>
-            <LayoutDashboard size={14} />
-            <span>Work</span>
-          </button>
-          <button class:active={activityMode === "code"} type="button" aria-pressed={activityMode === "code"} onclick={() => onActivityModeChange("code")}>
-            <Code2 size={14} />
-            <span>Code</span>
-          </button>
-        </div>
-      {/if}
       {#if sending}
         <button class="composer__submit secondary" type="button" aria-label={t.composer.cancel} title={t.composer.cancel} onclick={onCancel}>
           <Square size={16} />
         </button>
       {:else}
-        <button class="composer__submit" type="submit" aria-label={t.composer.send} title={t.composer.send} disabled={!canSubmit}>
+        <button class="composer__submit" type="submit" aria-label={t.composer.send} title={disabledReason || t.composer.send} disabled={!canSubmit}>
           <Send size={16} />
           <span>{t.composer.send}</span>
         </button>

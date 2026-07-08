@@ -11,7 +11,7 @@ try {
   console.error(
     `voltui: no prebuilt binary for ${process.platform}-${process.arch}.\n` +
       `Install the matching optional package (${pkg}), or build from source:\n` +
-      `  https://github.com/esengine/voltui`,
+      `  https://github.com/zuohuadong/volt-gui`,
   );
   process.exit(1);
 }

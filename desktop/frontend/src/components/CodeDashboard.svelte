@@ -7,6 +7,8 @@
   import { t } from "../lib/i18n";
 
   type RewindScope = "conversation" | "code" | "both";
+  type CodeDashboardVariant = "dock" | "workbench";
+  type CodeDashboardFocus = "overview" | "workspace" | "context" | "changes" | "checkpoints";
 
   let {
     context,
@@ -18,6 +20,8 @@
     onPreviewChange,
     onRewind,
     onRefreshContext,
+    variant = "dock",
+    focus = "overview",
   }: {
     context?: ContextPanelInfo;
     changes?: WorkspaceChangesView;
@@ -28,6 +32,8 @@
     onPreviewChange: (path: string) => void;
     onRewind: (turn: number, scope: RewindScope) => Promise<void> | void;
     onRefreshContext: () => Promise<void> | void;
+    variant?: CodeDashboardVariant;
+    focus?: CodeDashboardFocus;
   } = $props();
 
   let entriesByDir = $state<Record<string, DirEntry[]>>({});
@@ -206,7 +212,7 @@
   }
 </script>
 
-<section class="code-layout" aria-label="Code workspace">
+<section class={["code-layout", `code-layout--${variant}`, `code-layout--focus-${focus}`]} aria-label="Code workspace">
   <div class="dashboard-grid">
     <article>
       <Gauge size={20} />
@@ -226,7 +232,7 @@
   </div>
 
   <aside class="code-dock">
-    <section class="context-card" data-testid="code-context-panel">
+    <section class={["context-card", (focus === "context" || focus === "overview") && "is-focus"]} data-testid="code-context-panel">
       <div class="code-dock__section-head">
         <h2><Gauge size={15} /> {t.code.contextFiles}</h2>
         <button type="button" title={t.code.refresh} disabled={contextBusy} onclick={refreshContextPanel}><RefreshCw size={14} /></button>
@@ -278,7 +284,7 @@
         <span>Context panel pending.</span>
       {/if}
     </section>
-    <section>
+    <section class={[(focus === "workspace" || focus === "overview") && "is-focus"]}>
       <div class="code-dock__section-head">
         <h2><Folder size={15} /> Files</h2>
         <button type="button" title={t.code.refresh} disabled={treeBusy} onclick={refreshTree}><RefreshCw size={14} /></button>
@@ -315,7 +321,7 @@
         <span class="code-dock__status">{treeStatus}</span>
       {/if}
     </section>
-    <section>
+    <section class={[focus === "context" && "is-focus"]}>
       <h2><Code2 size={15} /> Read files</h2>
       {#if context?.readFiles.length}
         {#each context.readFiles as file (`${file.path}-${file.turn}`)}
@@ -325,7 +331,7 @@
         <span>No files read yet.</span>
       {/if}
     </section>
-    <section>
+    <section class={[focus === "changes" && "is-focus"]}>
       <h2><GitPullRequest size={15} /> Changes</h2>
       {#if changes?.files.length}
         {#each changes.files as file (file.path)}
@@ -344,7 +350,7 @@
         <span>{changes?.gitErr || "No changed files."}</span>
       {/if}
     </section>
-    <section data-testid="code-checkpoints">
+    <section class={[focus === "checkpoints" && "is-focus"]} data-testid="code-checkpoints">
       <h2><RotateCcw size={15} /> Checkpoints</h2>
       {#if checkpoints.length}
         {#each checkpoints as checkpoint (checkpoint.turn)}
@@ -374,7 +380,7 @@
         <span class="code-dock__status">{rewindStatus}</span>
       {/if}
     </section>
-    <section>
+    <section class={[(focus === "workspace" || focus === "changes" || focus === "overview") && "is-focus"]}>
       <h2><FileText size={15} /> Preview</h2>
       <DiffViewer change={selectedChange} preview={filePreview} diff={diffPreview} />
     </section>

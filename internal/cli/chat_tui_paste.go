@@ -14,8 +14,6 @@ import (
 	"voltui/internal/control"
 )
 
-var clipboardWriteAll = clipboard.WriteAll
-
 // This file holds the chat TUI's paste & image-attachment input layer: folding
 // long pasted text into a deletable [Pasted text #N] token, turning
 // dragged/pasted images and file paths into @references, and the clipboard

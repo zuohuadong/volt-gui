@@ -15,32 +15,46 @@
 ## Agent Team Scheduler
 
 - 类型：cron
-- 频率：每 20 分钟；若当前 Codex cron 只支持小时级，则每小时
+- 频率：每 6 小时
 - 模型：`gpt-5.3-codex`
 - 推理强度：high
 - 责任：扫描项目队列并按条件执行常规低/中风险调度；不是最终仲裁者
 
 ```text
-针对每个配置好的工作区执行 agent-team 自动化调度。先做轻量扫描，只读取判断队列是否有动作所需的最小信息：coordination DB v2 项目的 DB-backed task 状态、recent events、pending mailbox、sweep 和 smoke health；legacy 项目才读取 `tasks.md` active 表格、最近 progress 条目、`.mailbox/` frontmatter、`.agents/state/tasks.json` 和必要状态文件；只有命中可处理项后，才读取当前 task contract、命名 mailbox 证据、对应 workflow 和相关 skills。不要把完整 legacy `progress.md`、完整 `.mailbox/` 历史、archived task contracts 或 coordination DB dump 塞进提示词；需要历史证据时优先用 `agent-team context . --task <id> --limit <n>`、`agent-team memory recall "<query>" --token-budget <n>` 或点名读取 archive 文件。若 `agent-team automation doctor .` 报 coordination context warning，先运行建议的 archive/prune/upgrade 命令再做宽范围执行。执行源按项目形态选择：v2 项目只写 coordination DB，legacy 项目才写 Task Ledger / `tasks.md`。
+先运行确定性扫描命令：`agmesh automation orchestrate <workspace...> --write-loop-triggers --json`。根据 JSON 的 `noop` 与 `actions` 决定后续动作；若 `noop=true`，最终只输出一行 NOOP 并停止。
 
-调度规则：先做轻量扫描，只判断是否存在 ready、review、超时 blocked/running、pending mailbox、provider 异常、smoke 到期，或明显需要高风险审查的任务。若没有任何可处理项，立刻静默结束：不写 progress、不发 .mailbox、不创建 follow-up、不切模型、不打印额外动作。只有在命中可处理项时才继续进入后续流程。
+如果 running/review action 带 `loop_triggers`，scheduler 只接受 passive 写入结果；除非用户或 schedule policy 明确批准，不得运行其中的 `active_execute_command`。
 
-存在 ready 且 risk 为 low/medium、契约完整时，按 task-automation 串行领取并执行，直到没有可执行 ready 任务。实现前必须执行 Stack/Fullstack/Database/Deployment Profile Gate 和 Delegation Gate：涉及技术栈选择、SvelteKit/Nuxt、数据库/持久化、桌面端、移动端、小程序、Mpx、托管或部署平台边界时，必须记录 profile、decision source、evidence、required skills、non-goals、verification 和 rollback；推荐栈/推荐数据库/推荐平台只用于 greenfield fallback，不覆盖现有项目，不做隐含框架、数据库或托管平台迁移。中/高风险、多文件、多 subsystem、架构/API/数据模型/状态机/迁移、安全/权限/计费/生产配置、根因不明、不熟悉区域、UI/E2E 行为、需要外部资料核验、或需要审查自己的完成声明时，必须派发 explorer / executor / verifier 子智能体；低风险单文件且验收清楚的任务可由主进程直接实现，记录 `safe_skip_reason` 并运行本地验证，结果范围广、用户可见、不熟悉或用户明确要求时再派发 verifier；只有纯解释、只读、简单命令、格式化或纯文档任务可跳过全部子代理，并必须记录 `safe_skip_reason`。子智能体请求必须写明 role、exact scope、read/write ownership、allowed files/directories、context isolation、handoff artifacts、`verification_command` / verification commands、output schema 和 mailbox persistence；默认上下文隔离，v2 项目通过 Task Contract、coordination DB mailbox、run record 或命名 artifact 传递证据；legacy 项目才通过 `.mailbox/` 文件传递。子智能体中断、超时或输出不完整时，先记录 `interruption_recovery`，再续跑、重派、请求用户输入或标记 blocked；不要把半截输出当作完成证据。按 `skill_loading` 渐进加载 skill：先读索引和元数据，命中后再读完整 `SKILL.md` 及必要引用；用户或契约显式 `/skill-name` 只对本轮激活。中/高风险、长程、多子代理或可恢复任务建议写 `.agents/state/runs/<run_id>.json`，并遵循 `.agents/state/run-records.schema.json`；任务完成后只把稳定事实、决策、已知坑、否决方案或回滚约束写入 memory，并先按 `dedupe_policy` 去重。常规 sidecar 默认使用 `gpt-5.3-codex`，只有高风险、生产/安全/数据/不可逆决策或 reviewer 分歧仲裁才升级 `gpt-5.5`，并写明 `escalation_reason`。ready 任务缺少目标、验收标准、scope、skill、测试约定，或缺少必要 Stack/Fullstack/Database/Deployment Profile/evidence/verification/rollback 时，直接标记 blocked 或 invalid；内容为空、字段不完整、无法判定目标或范围时优先标 invalid，不要新建派生动作，也不要升级成 follow-up。存在 review 且 risk 为 low、CI 通过、diff 窄、契约满足时，按 pr-review-merge 审查并可合并。review medium 只在检查充分且项目规则允许时合并，否则留下 review 摘要。review high、生产/权限/认证/数据迁移/安全/大范围 diff 或回滚困难时，不要合并，标记 `needs_model: gpt-5.5` 和 `review_class: review-high`，写明 `escalation_reason`，交给 High-Risk Reviewer。provider 权限、CI 可见性、ledger/PR 状态漂移时运行 `agent-team automation doctor .` 并按 automation-health-check 处理；doctor 只有在 `.agents/state/tasks.json` 存在且可解析时才对缺失 subagent evidence 做 warning，否则只报告跳过该 enforcement。每周 smoke 到期时在 agent-team-config 工作区运行 `agent-team automation smoke`；发布前运行 `agent-team automation release-check`。当且仅当 `ready`、`review`、`running` 队列全空且 `agent-team automation sweep-check .` 通过（冷却默认 7 天，状态来自 coordination DB `sweep_state`；legacy 项目来自 `.agents/state/sweep.json`）时，按 `.agents/workflows/backlog-sweep.md` 执行只读自审：每轮最多生成 3 个候选，风险必须为 `low`，去重并填出完整 Task Contract 后写入当前执行源（v2 为 coordination DB，legacy 为 `tasks.md`），`source_url` 标 `backlog-sweep`，并用 `agent-team automation sweep-record . --generated <task_id,...> --claim-after <iso> --force` 同步 sweep state；`medium`/`high` 候选及任何涉及 `setup.ts`、`.agents/workflows/*.md`、`.agents/automations/*.md`、`templates/**` 等框架核心的发现只写 mailbox 队列给 human，不自动入队；`automation claim` 会拒绝同轮 sweep 任务和触碰框架核心 deny-list 的 sweep 任务；无可生成候选时输出 NOOP。不要触碰无关业务改动。
+针对每个配置好的工作区执行 agent-team 自动化调度。初始阶段只读取判断队列是否有动作所需的最小信息：coordination DB v2 项目的 DB-backed task 状态、pending mailbox、sweep/smoke/provider health；legacy 项目才读取 `tasks.md` active 表格、最近 progress 条目、`.mailbox/` frontmatter 和必要状态文件。不要把完整 legacy `progress.md`、完整 `.mailbox/` 历史、archived task contracts 或 coordination DB dump 塞进提示词。
+
+只有命中可处理项后才继续：ready 任务读取对应 Task Contract、`task-automation`、项目规则和命中的 skill；review 任务读取 `pr-review-merge`、PR/MR diff、CI/check 和契约证据；provider/队列漂移读取 `automation-health-check`；smoke/release 只运行对应命令；队列全空且 sweep 开放时才读取 `backlog-sweep`。执行中仍必须遵守 Delegation Gate、Stack/Fullstack/Database/Deployment/Profile Gate、browser-profile、skill 渐进加载、run record、memory dedupe、高风险升级、follow-up parent/source/reason、以及“不触碰无关业务改动”等项目规则；这些详细规则按命中的 workflow/runbook 读取，不放入初始扫描 prompt。
+
+停止规则：没有 ready、review、超时 blocked/running、pending mailbox、provider 异常、smoke 到期或 sweep_open 时，输出 NOOP 并停止；不要写 progress、不发 mailbox、不创建 follow-up、不切模型、不展开宽范围审查。
 ```
 
 ## Agent Team High-Risk Reviewer / Arbiter
 
 - 类型：cron
-- 频率：每小时
-- 模型：`gpt-5.5`
+- 频率：每 6 小时
+- 模型：默认升级标记为 `gpt-5.5`；实际运行模型可由 `agmesh model init --probe` 生成的高风险候选链覆盖
 - 推理强度：high
 - 责任：只处理 `needs_model: gpt-5.5` / `review_class: review-high` 的高风险审查、最终仲裁和 reviewer 分歧裁决
 
 ```text
-针对每个配置好的工作区，优先运行 `agent-team arbitrate --next --project <workspace>` 处理 Task Ledger / Task Contract 中明确标记为 `needs_model: gpt-5.5` 或 `review_class: review-high` 的任务。若没有匹配到这两个标记，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up、不触碰普通 ready 队列、不输出逐项目长报告。发现高风险任务时，只读取匹配任务 row/contract、最近 progress、相关 mailbox 证据、`.agents/automations/task-contract.md`、`.agents/workflows/pr-review-merge.md`、相关 PR/MR diff、CI/check 状态、provider 原始任务、项目规则和相关 skills；不要加载完整历史。
+针对每个配置好的工作区，优先运行 `agmesh arbitrate --next --project <workspace>` 处理 Task Ledger / Task Contract 中明确标记为 `needs_model: gpt-5.5` 或 `review_class: review-high` 的任务。若没有匹配到这两个标记，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up、不触碰普通 ready 队列、不输出逐项目长报告。发现高风险任务时，只读取匹配任务 row/contract、最近 progress、相关 mailbox 证据、`.agents/automations/task-contract.md`、`.agents/workflows/pr-review-merge.md`、相关 PR/MR diff、CI/check 状态、provider 原始任务、项目规则和相关 skills；不要加载完整历史。
 
-高风险审查策略：如果没有匹配到 `needs_model: gpt-5.5` / `review_class: review-high`，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up。若匹配到的任务内容为空、字段不完整、无法判定风险范围或目标，直接标 invalid 或 blocked，不要归档成新动作，也不要扩大成普通任务。只有在 PR/MR 方向正确但实现有问题时才退回原 PR/MR 要求修复；如果 PR/MR 方向错误，标记 blocked，更新 Task Contract，必要时拆子任务并引用原任务/原 PR；如果问题已经合并进入主线，才创建 follow-up 修复任务，且必须包含 parent / source / reason。自动合并只允许在风险已降级、CI 全绿、diff 窄、回滚明确且契约逐条满足时发生。对生产、数据、权限、安全、不可逆迁移，默认只给审查结论和人工确认建议。处理 reviewer 分歧时必须引用各方证据、写明裁决理由和 accepted risks。处理完成后更新当前执行源（v2 为 coordination DB，legacy 为 Task Ledger/progress），并清除或更新 `needs_model` / `review_class`。不要处理普通 ready 任务，不要触碰无关业务改动。
+高风险审查策略：如果没有匹配到 `needs_model: gpt-5.5` / `review_class: review-high`，直接静默结束，不写 progress、不发 .mailbox、不创建 follow-up。若匹配到的任务内容为空、字段不完整、无法判定风险范围或目标，直接标 invalid 或 blocked，不要归档成新动作，也不要扩大成普通任务。模型选择采用高风险候选链：优先用户配置/探测到的 `glm`、`kimi`、`deepseek`、`minimax/mino`、`qwen`、`hunyuan`，再尝试 Codex/OpenAI、Claude Code、Zed 或第三方网关兼容的 `claude`、`gemini`、`gpt`、`grok/xai`、`mistral` 名称，最后保留 `gpt-5.5` 兜底；只有当前候选模型调用失败时才换下一个，成功产出裁决后不再切模型。只有在 PR/MR 方向正确但实现有问题时才退回原 PR/MR 要求修复；如果 PR/MR 方向错误，标记 blocked，更新 Task Contract，必要时拆子任务并引用原任务/原 PR；如果问题已经合并进入主线，才创建 follow-up 修复任务，且必须包含 parent / source / reason。自动合并只允许在风险已降级、CI 全绿、diff 窄、回滚明确且契约逐条满足时发生。对生产、数据、权限、安全、不可逆迁移，默认只给审查结论和人工确认建议。处理 reviewer 分歧时必须引用各方证据、写明裁决理由和 accepted risks。处理完成后更新当前执行源（v2 为 coordination DB，legacy 为 Task Ledger/progress），并清除或更新 `needs_model` / `review_class`。不要处理普通 ready 任务，不要触碰无关业务改动。
 ```
+
+## Agent Team CI Reviewer（可选）
+
+默认不创建 CI reviewer。需要接入 PR/MR 事件时，用 `agmesh automation codex-schedule --project <path> --ci-mode comment|merge --json` 生成第三个定义，再接入 GitHub Actions / CNB / GitLab CI。
+
+- `comment`：只评论审查结论、阻断项和下一步；永不合并。
+- `merge`：guarded auto-merge；只有 merge-bypass 扫描、自修改阻断、CI 全绿、可信提交者、风险和 Task Contract 门禁全部通过才允许合并。
+- provider、CI 可见性或 AI 模型不可用时，只发中性 unavailable / insufficient evidence 评论，不得 fail-open。
+
+详细 workflow 形状和 stop rules 见 `templates/automations/ci-review-mode.md`。
 
 ## 内部流程参考
 

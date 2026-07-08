@@ -36,6 +36,35 @@ import type {
   WorkbenchPlugin,
   WorkbenchProvider,
   SkillPackageInput,
+  WorkbenchTodo,
+  WorkbenchTodoInput,
+  WorkbenchProject,
+  WorkbenchProjectInput,
+  WorkbenchProjectMaterial,
+  WorkbenchProjectMaterialBatchInput,
+  WorkbenchProjectMaterialInput,
+  WorkbenchAutomation,
+  WorkbenchAutomationInput,
+  WorkbenchCalendarEvent,
+  WorkbenchCalendarEventInput,
+  WorkbenchCustomer,
+  WorkbenchCustomerInput,
+  WorkbenchData,
+  WorkbenchKnowledgeDocument,
+  WorkbenchKnowledgeDocumentInput,
+  KnowledgeBaseView,
+  KnowledgeDocumentImportInput,
+  KnowledgeSearchResult,
+  KnowledgeStatus,
+  WorkbenchReport,
+  WorkbenchReportInput,
+  WorkbenchSearchResult,
+  WorkbenchSyncJob,
+  WorkbenchTeamChatMessage,
+  WorkbenchTeamRoom,
+  WorkbenchTeamRuntimeInput,
+  WorkbenchTeamRuntimeResult,
+  WorkbenchTeamRun,
   CreateWorkbenchJobInput,
   UpdateWorkbenchStepInput,
   WireEvent,
@@ -87,6 +116,7 @@ interface AppBindings {
   ReadFile(rel: string): Promise<FilePreview>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
+  RevealPath(path: string): Promise<void>;
   WorkspaceChanges(): Promise<WorkspaceChangesView>;
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   SavePastedImage(dataUrl: string): Promise<string>;
@@ -98,6 +128,43 @@ interface AppBindings {
   ListAgents(): Promise<AgentView[]>;
   SaveAgent(input: AgentInput): Promise<AgentView>;
   DeleteAgent(id: string): Promise<void>;
+  ListTodos(): Promise<WorkbenchTodo[]>;
+  SaveTodo(input: WorkbenchTodoInput): Promise<WorkbenchTodo>;
+  DeleteTodo(id: string): Promise<void>;
+  ListWorkbenchProjects(): Promise<WorkbenchProject[]>;
+  SaveWorkbenchProject(input: WorkbenchProjectInput): Promise<WorkbenchProject>;
+  DeleteWorkbenchProject(id: string): Promise<void>;
+  ListProjectMaterials(): Promise<WorkbenchProjectMaterial[]>;
+  SaveProjectMaterial(input: WorkbenchProjectMaterialInput): Promise<WorkbenchProjectMaterial>;
+  SaveProjectMaterialsBatch(input: WorkbenchProjectMaterialBatchInput): Promise<WorkbenchProjectMaterial[]>;
+  DeleteProjectMaterial(id: string): Promise<void>;
+  ListAutomations(): Promise<WorkbenchAutomation[]>;
+  SaveAutomation(input: WorkbenchAutomationInput): Promise<WorkbenchAutomation>;
+  DeleteAutomation(id: string): Promise<void>;
+  RunAutomationNow(id: string): Promise<WorkbenchAutomation>;
+  ListWorkbenchData(): Promise<WorkbenchData>;
+  ListCustomers(): Promise<WorkbenchCustomer[]>;
+  SaveCustomer(input: WorkbenchCustomerInput): Promise<WorkbenchCustomer>;
+  DeleteCustomer(id: string): Promise<void>;
+  ListCalendarEvents(): Promise<WorkbenchCalendarEvent[]>;
+  SaveCalendarEvent(input: WorkbenchCalendarEventInput): Promise<WorkbenchCalendarEvent>;
+  ListWorkbenchReports(): Promise<WorkbenchReport[]>;
+  SaveWorkbenchReport(input: WorkbenchReportInput): Promise<WorkbenchReport>;
+  SaveKnowledgeDocument(input: WorkbenchKnowledgeDocumentInput): Promise<WorkbenchKnowledgeDocument>;
+  KnowledgeBase(): Promise<KnowledgeBaseView>;
+  KnowledgeStatus(): Promise<KnowledgeStatus>;
+  ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument>;
+  SearchKnowledge(query: string, limit: number): Promise<KnowledgeSearchResult[]>;
+  DeleteKnowledgeDocument(id: string): Promise<void>;
+  RunWorkbenchSync(scope: string): Promise<WorkbenchSyncJob[]>;
+  SearchWorkbench(query: string): Promise<WorkbenchSearchResult[]>;
+  ExportOperationLogs(): Promise<string>;
+  ExportWorkbenchReports(): Promise<string>;
+  SaveTeamRoom(input: WorkbenchTeamRoom): Promise<WorkbenchTeamRoom>;
+  SaveTeamRun(input: WorkbenchTeamRun): Promise<WorkbenchTeamRun>;
+  SaveTeamChatMessage(input: WorkbenchTeamChatMessage): Promise<WorkbenchTeamChatMessage>;
+  RunTeamRuntime(input: WorkbenchTeamRuntimeInput): Promise<WorkbenchTeamRuntimeResult>;
+  DistillAgentFromTodo(input: WorkbenchTodoInput, skillNames: string[]): Promise<AgentView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
@@ -159,6 +226,7 @@ declare global {
 
 const EVENT_CHANNEL = "agent:event";
 const PROJECT_TREE_CHANNEL = "project-tree:changed";
+const AGENT_READY_CHANNEL = "agent:ready";
 
 function bindings(): AppBindings {
   const real = typeof window === "undefined" ? undefined : window.go?.main?.App;
@@ -190,6 +258,12 @@ export function onProjectTreeChanged(cb: () => void): () => void {
   const runtime = typeof window === "undefined" ? undefined : window.runtime;
   if (!runtime) return () => {};
   return runtime.EventsOn(PROJECT_TREE_CHANNEL, () => cb());
+}
+
+export function onWorkspaceReady(cb: () => void): () => void {
+  const runtime = typeof window === "undefined" ? undefined : window.runtime;
+  if (!runtime) return () => {};
+  return runtime.EventsOn(AGENT_READY_CHANNEL, () => cb());
 }
 
 export function onFilesDropped(cb: (paths: string[]) => void): () => void {

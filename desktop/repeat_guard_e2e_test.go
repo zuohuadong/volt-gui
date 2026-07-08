@@ -34,6 +34,9 @@ func (t desktopCountingTool) Execute(context.Context, json.RawMessage) (string, 
 }
 
 func TestDesktopE2EBlocksRepeatedSuccessfulBashFileWrite(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	writeKeylessSubmitProviderConfig(t, "scripted-desktop/test-model")
+
 	var calls int32
 	reg := tool.NewRegistry()
 	reg.Add(desktopCountingTool{name: "bash", calls: &calls})
@@ -49,9 +52,11 @@ func TestDesktopE2EBlocksRepeatedSuccessfulBashFileWrite(t *testing.T) {
 	ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, sink)
 	ctrl := control.New(control.Options{Runner: ag, Executor: ag, Sink: sink})
 	app := NewApp()
-	app.setTestCtrl(ctrl, "scripted-desktop")
+	app.setTestCtrl(ctrl, "scripted-desktop/test-model")
 
-	app.SubmitToTab("test", "update the prompt file")
+	if err := app.SubmitToTab("test", "update the prompt file"); err != nil {
+		t.Fatalf("SubmitToTab: %v", err)
+	}
 
 	var results []event.Event
 	deadline := time.After(5 * time.Second)

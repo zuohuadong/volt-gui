@@ -21,7 +21,8 @@
     | { id: string; kind: "list"; ordered: boolean; items: Array<{ id: string; content: InlinePart[]; checked?: boolean }> }
     | { id: string; kind: "quote"; content: InlinePart[] }
     | { id: string; kind: "table"; headers: TableCell[]; rows: TableRow[] }
-    | { id: string; kind: "math"; body: string };
+    | { id: string; kind: "math"; body: string }
+    | { id: string; kind: "hr" };
 
   let { text }: { text: string } = $props();
 
@@ -45,6 +46,23 @@
       .replace(/\\\)/g, "$");
   }
 
+  function decodeEntities(value: string): string {
+    return value.replace(/&(nbsp|amp|lt|gt|quot|#39);/g, (entity) => {
+      if (entity === "&nbsp;") return "\u00a0";
+      if (entity === "&amp;") return "&";
+      if (entity === "&lt;") return "<";
+      if (entity === "&gt;") return ">";
+      if (entity === "&quot;") return '"';
+      if (entity === "&#39;") return "'";
+      return entity;
+    });
+  }
+
+  function textPart(id: string, kind: InlinePart["kind"], text: string): InlinePart {
+    if (kind === "link") return { id, kind, text: decodeEntities(text), href: text };
+    return { id, kind, text: decodeEntities(text) } as InlinePart;
+  }
+
   function inlineParts(value: string, owner: string): InlinePart[] {
     const parts: InlinePart[] = [];
     const pattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|~~([^~]+)~~|\*([^*\n]+)\*|(?<!\$)\$([^$\n]+)\$(?!\$)|(https?:\/\/[^\s<]+)/g;
@@ -53,20 +71,20 @@
     for (const match of value.matchAll(pattern)) {
       const index = match.index ?? 0;
       if (index > cursor) {
-        parts.push({ id: `${owner}-text-${ordinal}`, kind: "text", text: value.slice(cursor, index) });
+        parts.push(textPart(`${owner}-text-${ordinal}`, "text", value.slice(cursor, index)));
         ordinal += 1;
       }
-      if (match[1] && match[2]) parts.push({ id: `${owner}-link-${ordinal}`, kind: "link", text: match[1], href: match[2] });
-      else if (match[3]) parts.push({ id: `${owner}-code-${ordinal}`, kind: "code", text: match[3] });
-      else if (match[4]) parts.push({ id: `${owner}-strong-${ordinal}`, kind: "strong", text: match[4] });
-      else if (match[5]) parts.push({ id: `${owner}-del-${ordinal}`, kind: "del", text: match[5] });
-      else if (match[6]) parts.push({ id: `${owner}-em-${ordinal}`, kind: "em", text: match[6] });
-      else if (match[7]) parts.push({ id: `${owner}-math-${ordinal}`, kind: "math", text: match[7] });
+      if (match[1] && match[2]) parts.push({ id: `${owner}-link-${ordinal}`, kind: "link", text: decodeEntities(match[1]), href: match[2] });
+      else if (match[3]) parts.push(textPart(`${owner}-code-${ordinal}`, "code", match[3]));
+      else if (match[4]) parts.push(textPart(`${owner}-strong-${ordinal}`, "strong", match[4]));
+      else if (match[5]) parts.push(textPart(`${owner}-del-${ordinal}`, "del", match[5]));
+      else if (match[6]) parts.push(textPart(`${owner}-em-${ordinal}`, "em", match[6]));
+      else if (match[7]) parts.push(textPart(`${owner}-math-${ordinal}`, "math", match[7]));
       else if (match[8]) parts.push({ id: `${owner}-url-${ordinal}`, kind: "link", text: match[8], href: match[8] });
       ordinal += 1;
       cursor = index + match[0].length;
     }
-    if (cursor < value.length) parts.push({ id: `${owner}-text-${ordinal}`, kind: "text", text: value.slice(cursor) });
+    if (cursor < value.length) parts.push(textPart(`${owner}-text-${ordinal}`, "text", value.slice(cursor)));
     return parts.length ? parts : [{ id: `${owner}-empty`, kind: "text", text: "" }];
   }
 
@@ -110,6 +128,11 @@
     while (index < lines.length) {
       const line = lines[index];
       if (!line.trim()) {
+        index += 1;
+        continue;
+      }
+      if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+        parsed.push({ id: `hr-${index}`, kind: "hr" });
         index += 1;
         continue;
       }
@@ -274,6 +297,8 @@
       </table>
     {:else if block.kind === "math"}
       <MathView source={block.body} display={true} />
+    {:else if block.kind === "hr"}
+      <hr />
     {/if}
   {/each}
 </div>

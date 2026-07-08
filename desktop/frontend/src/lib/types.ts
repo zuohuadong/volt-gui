@@ -185,10 +185,528 @@ export interface AgentInput {
   coreFiles?: string[];
 }
 
+export type TodoStatus = "pending" | "in_progress" | "done" | "blocked" | string;
+
+export interface WorkbenchTodo {
+  id: string;
+  title: string;
+  description: string;
+  projectId?: string;
+  projectName?: string;
+  customerId?: string;
+  customerName?: string;
+  agentId?: string;
+  agentName?: string;
+  model?: string;
+  priority: string;
+  dueAt?: string;
+  dueLabel: string;
+  status: TodoStatus;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface WorkbenchTodoInput {
+  id?: string;
+  title: string;
+  description: string;
+  projectId?: string;
+  projectName?: string;
+  customerId?: string;
+  customerName?: string;
+  agentId?: string;
+  agentName?: string;
+  model?: string;
+  priority: string;
+  dueAt?: string;
+  dueLabel: string;
+  status?: TodoStatus;
+  source?: string;
+}
+
+export interface WorkbenchProject {
+  id: string;
+  name: string;
+  code: string;
+  client: string;
+  stage: string;
+  owner: string;
+  desc: string;
+  category: string;
+  court: string;
+  budget: string;
+  acceptedAt: string;
+  status: "active" | "closed" | string;
+  progress: number;
+  priority: string;
+  risk: string;
+  updatedAt: string;
+  nextStep: string;
+  agent: string;
+  materials: number;
+  todos: number;
+  events: number;
+  reports: number;
+  timeline: string[];
+  createdAt?: string;
+  updatedISO?: string;
+}
+
+export interface WorkbenchProjectInput {
+  id?: string;
+  name: string;
+  code?: string;
+  client?: string;
+  stage?: string;
+  owner?: string;
+  desc?: string;
+  category?: string;
+  court?: string;
+  budget?: string;
+  acceptedAt?: string;
+  status?: "active" | "closed" | string;
+  progress?: number;
+  priority?: string;
+  risk?: string;
+  nextStep?: string;
+  agent?: string;
+  materials?: number;
+  todos?: number;
+  events?: number;
+  reports?: number;
+  timeline?: string[];
+}
+
+export interface WorkbenchProjectMaterial {
+  id: string;
+  projectId: string;
+  projectName?: string;
+  title: string;
+  category: string;
+  source: string;
+  status: string;
+  updatedAt: string;
+  desc: string;
+  fileName?: string;
+  filePath?: string;
+  fileSize?: number;
+  mimeType?: string;
+  createdAt?: string;
+  updatedISO?: string;
+}
+
+export interface WorkbenchProjectMaterialInput {
+  id?: string;
+  projectId: string;
+  projectName?: string;
+  title: string;
+  category?: string;
+  source?: string;
+  status?: string;
+  desc?: string;
+  fileName?: string;
+  filePath?: string;
+  fileSize?: number;
+  mimeType?: string;
+}
+
+export type WorkbenchProjectMaterialBatchInput = WorkbenchProjectMaterialInput[];
+
+export interface WorkbenchAutomation {
+  id: string;
+  title: string;
+  desc: string;
+  status: string;
+  kind: string;
+  owner: string;
+  startedAtMs: number;
+  cadence: string;
+  schedule: string;
+  scheduleMode?: string;
+  scope: string;
+  environment: string;
+  command: string;
+  nextRunAt?: string;
+  result: string;
+  lastRun: string;
+  nextRun: string;
+  steps: string[];
+  logs: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchAutomationInput {
+  id?: string;
+  title: string;
+  desc: string;
+  status?: string;
+  kind?: string;
+  owner?: string;
+  startedAtMs?: number;
+  cadence?: string;
+  schedule?: string;
+  scheduleMode?: string;
+  scope?: string;
+  environment?: string;
+  command?: string;
+  nextRunAt?: string;
+  result?: string;
+  lastRun?: string;
+  nextRun?: string;
+  steps?: string[];
+  logs?: string[];
+}
+
+export interface WorkbenchCustomer {
+  id: string;
+  name: string;
+  type: string;
+  contact: string;
+  phone: string;
+  email: string;
+  risk: string;
+  riskLevel: string;
+  status: string;
+  owner: string;
+  stage: string;
+  industry: string;
+  region: string;
+  address: string;
+  note: string;
+  desc: string;
+  projectIds: string[];
+  matters: number;
+  materials: number;
+  events: number;
+  todos: number;
+  reports: number;
+  lastTouch: string;
+  lastContact: string;
+  nextAction: string;
+  tags: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchCustomerInput {
+  id?: string;
+  name: string;
+  type?: string;
+  contact?: string;
+  phone?: string;
+  email?: string;
+  risk?: string;
+  riskLevel?: string;
+  status?: string;
+  owner?: string;
+  stage?: string;
+  industry?: string;
+  region?: string;
+  address?: string;
+  note?: string;
+  desc?: string;
+  projectIds?: string[];
+  matters?: number;
+  materials?: number;
+  events?: number;
+  todos?: number;
+  reports?: number;
+  lastTouch?: string;
+  lastContact?: string;
+  nextAction?: string;
+  tags?: string[];
+}
+
+export interface WorkbenchCalendarEvent {
+  id: string;
+  day: string;
+  title: string;
+  time: string;
+  type: string;
+  place: string;
+  projectId?: string;
+  customerId?: string;
+  status?: string;
+  desc?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchCalendarEventInput {
+  id?: string;
+  day?: string;
+  title: string;
+  time?: string;
+  type?: string;
+  place?: string;
+  projectId?: string;
+  customerId?: string;
+  status?: string;
+  desc?: string;
+}
+
+export interface WorkbenchReport {
+  id: string;
+  title: string;
+  status: string;
+  owner: string;
+  desc: string;
+  body?: string;
+  kind?: string;
+  projectId?: string;
+  customerId?: string;
+  source?: string;
+  format?: string;
+  priority?: string;
+  dueAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchReportInput {
+  id?: string;
+  title: string;
+  status?: string;
+  owner?: string;
+  desc?: string;
+  body?: string;
+  kind?: string;
+  projectId?: string;
+  customerId?: string;
+  source?: string;
+  format?: string;
+  priority?: string;
+  dueAt?: string;
+}
+
+export interface WorkbenchKnowledgeDocument {
+  id: string;
+  title: string;
+  type: string;
+  count: number;
+  status: string;
+  description?: string;
+  source?: string;
+  tags?: string;
+  fileName?: string;
+  filePath?: string;
+  mimeType?: string;
+  fileSize?: number;
+  chunkCount?: number;
+  indexedAt?: string;
+  error?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchKnowledgeDocumentInput {
+  id?: string;
+  title: string;
+  type?: string;
+  count?: number;
+  status?: string;
+  description?: string;
+  source?: string;
+  tags?: string;
+}
+
+export interface WorkbenchRegulation {
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  tags: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchSearchResult {
+  title: string;
+  scope: string;
+  snippet: string;
+  source?: string;
+  documentId?: string;
+  chunkId?: string;
+  score?: number;
+}
+
+export interface KnowledgeStatus {
+  path: string;
+  sqlite: boolean;
+  fts5: boolean;
+  sqliteVec: boolean;
+  documents: number;
+  chunks: number;
+  vectors: number;
+  lastError?: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeBaseView {
+  documents: WorkbenchKnowledgeDocument[];
+  status: KnowledgeStatus;
+}
+
+export interface KnowledgeSearchResult {
+  documentId: string;
+  chunkId: string;
+  title: string;
+  type: string;
+  source?: string;
+  tags?: string;
+  fileName?: string;
+  filePath?: string;
+  snippet: string;
+  score: number;
+  match: string;
+  updatedAt?: string;
+}
+
+export interface KnowledgeDocumentImportInput {
+  id?: string;
+  title: string;
+  type?: string;
+  source?: string;
+  tags?: string;
+  description?: string;
+  fileName?: string;
+  filePath?: string;
+  mimeType?: string;
+  fileSize?: number;
+  content?: string;
+}
+
+export interface WorkbenchSyncJob {
+  id: string;
+  title: string;
+  status: string;
+  progress: string;
+  time: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchOperationLog {
+  id: string;
+  action: string;
+  target: string;
+  user: string;
+  time: string;
+  result: string;
+  createdAt?: string;
+}
+
+export interface WorkbenchTeamRunStep {
+  id: string;
+  title: string;
+  owner: string;
+  status: string;
+  detail: string;
+}
+
+export type WorkbenchTeamRunStatus = "draft" | "running" | "paused" | "stopped" | "completed" | string;
+
+export interface WorkbenchTeamRoom {
+  id: string;
+  title: string;
+  members: number;
+  active: string;
+  desc: string;
+  leader: string;
+  leaderId: string;
+  status: string;
+  topic: string;
+  queue: string;
+  memberIds: string[];
+  avatars: string[];
+  mode: string;
+  sharedContext: string;
+  runState: string;
+  nextCheckpoint: string;
+  outcome: string;
+  controls: string[];
+  artifacts: string[];
+  steps: WorkbenchTeamRunStep[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkbenchTeamRunEvent {
+  id: string;
+  time: string;
+  actor: string;
+  type: string;
+  detail: string;
+}
+
+export interface WorkbenchTeamRunArtifact {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+}
+
+export interface WorkbenchTeamRun {
+  id: string;
+  teamId: string;
+  title: string;
+  status: WorkbenchTeamRunStatus;
+  task: string;
+  createdAt: string;
+  updatedAt: string;
+  currentStepId: string;
+  events: WorkbenchTeamRunEvent[];
+  artifacts: WorkbenchTeamRunArtifact[];
+}
+
+export interface WorkbenchTeamRuntimeInput {
+  teamId: string;
+  task: string;
+  modelRef?: string;
+  attachments?: string[];
+}
+
+export interface WorkbenchTeamRuntimeResult {
+  room: WorkbenchTeamRoom;
+  run: WorkbenchTeamRun;
+  messages: WorkbenchTeamChatMessage[];
+}
+
+export interface WorkbenchTeamChatMessage {
+  id: string;
+  teamId: string;
+  role: "user" | "agent" | string;
+  agentId?: string;
+  agentName?: string;
+  agentAvatar?: string;
+  content: string;
+  createdAt?: string;
+}
+
+export interface WorkbenchData {
+  customers: WorkbenchCustomer[];
+  calendarEvents: WorkbenchCalendarEvent[];
+  reports: WorkbenchReport[];
+  knowledgeDocuments: WorkbenchKnowledgeDocument[];
+  regulations: WorkbenchRegulation[];
+  syncJobs: WorkbenchSyncJob[];
+  operationLogs: WorkbenchOperationLog[];
+  teamRooms: WorkbenchTeamRoom[];
+  teamRuns: WorkbenchTeamRun[];
+  teamChatMessages: WorkbenchTeamChatMessage[];
+}
+
+export interface WorkbenchDataPersisted extends WorkbenchData {
+  initialized?: boolean;
+}
+
 export interface CapabilitiesView {
   servers: ServerView[];
   skills: SkillView[];
   skillRoots: SkillRootView[];
+  plugins: PluginView[];
 }
 
 export interface MCPServerInput {
@@ -211,6 +729,47 @@ export interface WorkbenchPlugin {
   providerIds?: string[];
   config?: Record<string, string>;
   enabled: boolean;
+}
+
+export interface PluginSkillView {
+  name: string;
+  description?: string;
+  path?: string;
+  invocation?: string;
+  runAs?: string;
+}
+
+export interface PluginHookView {
+  event: string;
+  match?: string;
+  command?: string;
+  contextFile?: string;
+  description?: string;
+}
+
+export interface PluginMCPServerView {
+  name: string;
+  transport?: string;
+  command?: string;
+  url?: string;
+}
+
+export interface PluginView {
+  name: string;
+  version?: string;
+  description?: string;
+  source?: string;
+  root: string;
+  manifestKind?: string;
+  enabled: boolean;
+  skills: number;
+  hooks: number;
+  mcpServers: number;
+  skillDetails?: PluginSkillView[];
+  hookDetails?: PluginHookView[];
+  mcpServerDetails?: PluginMCPServerView[];
+  warnings?: string[];
+  error?: string;
 }
 
 export interface WorkbenchPluginInput {

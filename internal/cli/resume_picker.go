@@ -87,7 +87,13 @@ func (m chatTUI) applyResumePick() (tea.Model, tea.Cmd) {
 		m.notice("resume: " + err.Error())
 		return m, nil
 	}
+	// Snapshot before moving the lease: the outgoing session must be written
+	// while this process still owns it.
 	_ = m.ctrl.Snapshot()
+	if err := m.rebindSessionLease(target.Path); err != nil {
+		m.notice("resume: " + sessionLeaseHeldNotice(err))
+		return m, nil
+	}
 	m.ctrl.Resume(loaded, target.Path)
 	m.replayActiveBranch(i18n.M.ResumedTitle)
 	return m, nil
@@ -112,9 +118,16 @@ func (m chatTUI) renderResumePicker() string {
 	return choicePanelStyle.Width(w).Render(b.String())
 }
 
-// sessionPickerLabel is the "N turns · first message" line, truncated to fit.
+// sessionPickerLabel is the "N turns · display title" line, truncated to fit.
+// Explicit session renames win, then topic titles, then the raw preview.
 func sessionPickerLabel(s agent.SessionInfo) string {
-	preview := s.Preview
+	preview := s.CustomTitle
+	if preview == "" {
+		preview = s.TopicTitle
+	}
+	if preview == "" {
+		preview = s.Preview
+	}
 	if preview == "" {
 		preview = "(no user message yet)"
 	}

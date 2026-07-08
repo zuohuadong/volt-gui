@@ -14,13 +14,13 @@ Unicode true
 ##      wails.deleteUninstaller macros hard-code HKLM, which a non-admin install
 ##      cannot write - so we inline HKCU versions below instead.
 ##   3. InstallDir is remembered across updates via InstallDirRegKey +
-##      InstallLocation (HKCU\...\Uninstall\InstallLocation). Without this, every
-##      release forces the user back to %LOCALAPPDATA%\Programs\VoltUI even if
-##      they had moved the install to a different drive (e.g. D:\Tools\VoltUI);
-##      the silent auto-updater would re-run with /S into the wrong dir, leaving
-##      the old install orphaned.
-##   4. Running app processes are closed before install/uninstall so an overwrite
-##      install can replace the old executable instead of failing on a locked file.
+##      InstallLocation (HKCU\...\Uninstall\InstallLocation). When upgrading from
+##      a build that did not write InstallLocation yet, .onInit falls back to the
+##      old DisplayIcon path before using the default. Without this, every release
+##      forces the user back to %LOCALAPPDATA%\Programs\VoltUI even if they had
+##      moved the install to a different drive (e.g. D:\Tools\VoltUI); the silent
+##      auto-updater would re-run with /S into the wrong dir, leaving the old
+##      install orphaned.
 ##
 ## Everything else mirrors Wails' generated default. Defines below override the
 ## ProjectInfo values that wails_tools.nsh would otherwise populate.
@@ -35,6 +35,8 @@ Unicode true
 ## wails.* macros used below).
 ####
 !include "wails_tools.nsh"
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 # The version information for this two must consist of 4 parts
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
@@ -73,8 +75,10 @@ ManifestDPIAware true
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "../../bin/voltui-desktop-${ARCH}-installer.exe" # Keep Linux makensis output path ASCII/POSIX-safe.
+OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 !define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
+!define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
+!define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
 ShowInstDetails show # This will always show the installation details.
@@ -110,43 +114,76 @@ ShowInstDetails show # This will always show the installation details.
     DeleteRegKey HKCU "${UNINST_KEY}"
 !macroend
 
-!macro voltui.closeRunningApp
-    DetailPrint "Closing running ${INFO_PRODUCTNAME} instances..."
-    ; First request a normal close. This gives the Wails process a chance to run
-    ; its shutdown path before the installer has to replace locked files.
-    nsExec::ExecToLog 'taskkill /IM "${PRODUCT_EXECUTABLE}" /T'
-    Pop $0
-    StrCmp $0 "0" 0 +4
-    Sleep 5000
-    ; If an older version is still holding the executable, force it down so
-    ; manual overwrite installs do not fail with "file in use".
-    nsExec::ExecToLog 'taskkill /F /IM "${PRODUCT_EXECUTABLE}" /T'
-    Pop $0
-!macroend
-
 Function .onInit
    !insertmacro wails.checkArchitecture
 
-   ; InstallDirRegKey leaves $INSTDIR empty when the InstallLocation value
-   ; is missing (first install, or the user wiped the uninstaller registry).
-   ; Fall back to the per-user default so the directory page lands on a
-   ; usable path instead of crashing the install with "InstallDir empty".
-   StrCmp $INSTDIR "" 0 +2
+   ; InstallDirRegKey leaves $INSTDIR empty when the InstallLocation value is
+   ; missing. Older installers still wrote DisplayIcon, so use its parent folder
+   ; as a compatibility bridge before falling back to the per-user default.
+   StrCmp $INSTDIR "" 0 done
+   ClearErrors
+   ReadRegStr $0 HKCU "${UNINST_KEY}" "DisplayIcon"
+   IfErrors fallback
+   StrCmp $0 "" fallback
+   ${GetParent} "$0" $INSTDIR
+   StrCmp $INSTDIR "" fallback done
+
+fallback:
    StrCpy $INSTDIR "${VOLTUI_DEFAULT_INSTALLDIR}"
+done:
+FunctionEnd
+
+Function voltui.waitForExecutableUnlock
+   IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 done
+   StrCpy $0 0
+
+retry:
+   ClearErrors
+   FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a
+   IfErrors locked
+   FileClose $1
+   Goto done
+
+locked:
+   IntOp $0 $0 + 1
+   IntCmp $0 ${VOLTUI_UNLOCK_RETRIES} failed 0 0
+   Sleep 1000
+   Goto retry
+
+failed:
+   IfSilent silent interactive
+
+interactive:
+   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${INFO_PRODUCTNAME} is still running. Close ${INFO_PRODUCTNAME}, then click Retry to continue the installation." IDRETRY retry IDCANCEL abort
+   Goto retry
+
+silent:
+   SetErrorLevel 1618
+
+abort:
+   Abort "${INFO_PRODUCTNAME} is still running. Close ${INFO_PRODUCTNAME} and run the installer again."
+
+done:
 FunctionEnd
 
 Section
     !insertmacro wails.setShellContext
-    !insertmacro voltui.closeRunningApp
 
     !insertmacro wails.webview2runtime
+
+    Call voltui.waitForExecutableUnlock
 
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
+    !if /FileExists "${VOLTUI_UPDATE_HELPER}"
+    File "/oname=${VOLTUI_UPDATE_HELPER}" "${VOLTUI_UPDATE_HELPER}"
+    !else
+    !warning "${VOLTUI_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
+    !endif
 
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
+    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
@@ -156,12 +193,12 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
-    !insertmacro voltui.closeRunningApp
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     ; Precision uninstall: delete main application files
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

@@ -244,7 +244,7 @@ func loadCredentialStoreForRoot(root string) {
 		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "VoltUI credentials (.env)"})
 	}
 	for _, p := range legacyCredentialsPaths() {
-		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceLegacy, Path: p, Label: "legacy Reasonix credentials"})
+		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceLegacy, Path: p, Label: "legacy VoltUI credentials"})
 	}
 }
 
@@ -400,7 +400,7 @@ func credentialSourceLabel(source CredentialSource) string {
 	case CredentialSourceHomeEnv:
 		return "home .env"
 	case CredentialSourceLegacy:
-		return "legacy Reasonix credentials"
+		return "legacy VoltUI credentials"
 	case CredentialSourceEnvironment:
 		return "environment variable"
 	default:
@@ -542,8 +542,10 @@ func credentialSourceCandidates(root string) []CredentialSource {
 	if p := UserCredentialsPath(); p != "" {
 		out = append(out, CredentialSource{Kind: CredentialSourceCredentials, Path: p})
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		out = append(out, CredentialSource{Kind: CredentialSourceHomeEnv, Path: filepath.Join(home, ".env")})
+	if IsolatedHomeDir() == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			out = append(out, CredentialSource{Kind: CredentialSourceHomeEnv, Path: filepath.Join(home, ".env")})
+		}
 	}
 	return out
 }

@@ -20,6 +20,7 @@ import (
 
 	"voltui/internal/agent"
 	"voltui/internal/agent/testutil"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/event"
 	"voltui/internal/memory"
@@ -1460,6 +1461,62 @@ env = { GO_WANT_HELPER_PROCESS = "1" }
 	}
 }
 
+func TestBuildTokenEconomyPlanModeCanConnectTrustedReadOnlyMCPSource(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{
+			{ID: "source-1", Name: "connect_tool_source", Arguments: `{"source":"mcp","name":"mockmcp"}`},
+		}},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "voltui.toml", fmt.Sprintf(`
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+
+[[plugins]]
+name = "mockmcp"
+command = %q
+args = ["-test.run=TestHelperProcess", "--"]
+env = { GO_WANT_HELPER_PROCESS = "1" }
+trusted_read_only_tools = ["echo"]
+`, os.Args[0]))
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	ctrl.SetPlanMode(true)
+	if err := ctrl.Run(context.Background(), "connect trusted mcp while planning"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	reqs := prov.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	if !requestHasTool(reqs[1], "mcp__mockmcp__echo") {
+		t.Fatalf("second request should expose trusted MCP source in plan economy mode; tools=%v", toolSchemaNames(reqs[1].Tools))
+	}
+	for _, msg := range ctrl.History() {
+		if msg.Role == provider.RoleTool && msg.Name == "connect_tool_source" && strings.Contains(msg.Content, "blocked:") {
+			t.Fatalf("connect_tool_source should not block trusted MCP in plan mode, got:\n%s", msg.Content)
+		}
+	}
+}
+
 func TestPlanModeAllowsMCPServerRequiresConcreteToolName(t *testing.T) {
 	if planModeAllowsMCPServer([]string{"mcp__mockmcp__"}, "mockmcp") {
 		t.Fatal("bare MCP namespace prefix should not allow a server in plan mode")
@@ -1727,7 +1784,7 @@ model = "x"
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer
-	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{})
+	addBuiltins(reg, nil, []string{robustTempDir(t)}, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{}, nil, nil)
 	for _, name := range []string{
 		"todo_write",
 		"complete_step",
@@ -1884,6 +1941,12 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	// user-decision policy is another fixed boot policy and is stripped for the
 	// same reason.
 	base = stripLanguagePolicy(base)
+	if i := strings.Index(base, "\n\nCurrent workspace:"); i >= 0 {
+		base = strings.TrimSpace(base[:i])
+	}
+	if i := strings.Index(base, "\n\n## Environment"); i >= 0 {
+		base = strings.TrimSpace(base[:i])
+	}
 	if base != "JUST THE BASE" {
 		t.Fatalf("expected untouched base prompt, got:\n%s", sys)
 	}
@@ -1968,6 +2031,7 @@ func stripLanguagePolicy(s string) string {
 		config.LanguagePolicy,
 		config.UserDecisionPolicy,
 	} {
+		s = strings.ReplaceAll(s, "\n\n"+policy, "")
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
 	}
 	return s
@@ -2257,7 +2321,7 @@ func TestBuildMigratesLegacySessionsFromConfigSessionDir(t *testing.T) {
 	}
 }
 
-func TestBuildMigratesLegacyXDGAndProjectSessions(t *testing.T) {
+func TestBuildSkipsLegacySessionMigrationWhenIsolated(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("legacy XDG paths are Unix-only")
 	}
@@ -2291,20 +2355,12 @@ func TestBuildMigratesLegacyXDGAndProjectSessions(t *testing.T) {
 	}
 	defer ctrl.Close()
 
-	flatData, err := os.ReadFile(filepath.Join(config.SessionDir(), "xdg-flat.jsonl"))
-	if err != nil {
-		t.Fatalf("legacy XDG flat session not imported: %v", err)
-	}
-	if !strings.Contains(string(flatData), "hello from xdg") {
-		t.Fatalf("legacy XDG flat session missing content:\n%s", flatData)
+	if _, err := os.Stat(filepath.Join(config.SessionDir(), "xdg-flat.jsonl")); !os.IsNotExist(err) {
+		t.Fatal("legacy XDG flat session was imported but must not be when REASONIX_HOME is set")
 	}
 	projectPath := filepath.Join(config.MemoryUserDir(), "projects", slug, "sessions", "project-chat.jsonl")
-	projectData, err := os.ReadFile(projectPath)
-	if err != nil {
-		t.Fatalf("legacy project session not imported to %s: %v", projectPath, err)
-	}
-	if !strings.Contains(string(projectData), "hello from old project session") {
-		t.Fatalf("legacy project session missing content:\n%s", projectData)
+	if _, err := os.Stat(projectPath); !os.IsNotExist(err) {
+		t.Fatal("legacy project session was imported but must not be when REASONIX_HOME is set")
 	}
 }
 
@@ -2345,6 +2401,32 @@ func TestPartitionByTier(t *testing.T) {
 	}
 }
 
+func TestDefaultEnabledMCPEntriesIncludesOffice(t *testing.T) {
+	t.Setenv("VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS", "1")
+
+	cfg := config.Default()
+	got := defaultEnabledMCPEntries(cfg, nil)
+	found := false
+	for _, p := range got {
+		if p.Name == builtinmcp.OfficeName {
+			found = true
+		}
+		if p.Name == builtinmcp.Context7Name {
+			t.Fatalf("context7 should not be default-started because it may install over the network: %+v", got)
+		}
+	}
+	if !found {
+		t.Fatalf("defaultEnabledMCPEntries missing office: %+v", got)
+	}
+
+	got = defaultEnabledMCPEntries(cfg, []plugin.Spec{{Name: builtinmcp.OfficeName}})
+	for _, p := range got {
+		if p.Name == builtinmcp.OfficeName {
+			t.Fatalf("session-scoped office MCP should reserve the built-in name: %+v", got)
+		}
+	}
+}
+
 func TestPluginSpecsTrustKnownCodeGraphReadTools(t *testing.T) {
 	specs := PluginSpecs([]config.PluginEntry{{Name: "codegraph"}})
 	if len(specs) != 1 {
@@ -2354,6 +2436,94 @@ func TestPluginSpecsTrustKnownCodeGraphReadTools(t *testing.T) {
 		if !specs[0].ReadOnlyToolNames[name] {
 			t.Fatalf("codegraph spec missing read-only override for %q: %+v", name, specs[0].ReadOnlyToolNames)
 		}
+	}
+}
+
+func TestPluginSpecsTrustConfiguredReadOnlyTools(t *testing.T) {
+	specs := PluginSpecs([]config.PluginEntry{{
+		Name:                 "github",
+		TrustedReadOnlyTools: []string{"issue_read", " pull_request_read ", ""},
+	}})
+	if len(specs) != 1 {
+		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
+	}
+	for _, name := range []string{"issue_read", "pull_request_read"} {
+		if !specs[0].ReadOnlyToolNames[name] {
+			t.Fatalf("configured trusted read-only tool %q missing: %+v", name, specs[0].ReadOnlyToolNames)
+		}
+	}
+	if specs[0].ReadOnlyToolNames[""] {
+		t.Fatalf("empty trusted read-only tool name should be ignored: %+v", specs[0].ReadOnlyToolNames)
+	}
+}
+
+func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
+	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{{
+		Name:               "maker",
+		Command:            "maker-mcp",
+		CallTimeoutSeconds: 600,
+		ToolTimeoutSeconds: map[string]int{
+			"generate_video": 1800,
+			" ":              120,
+			"zero":           0,
+		},
+	}}, "", PluginSpecOptions{DefaultCallTimeout: 300 * time.Second})
+	if len(specs) != 1 {
+		t.Fatalf("PluginSpecs returned %d specs, want 1", len(specs))
+	}
+	if specs[0].DefaultCallTimeout != 5*time.Minute {
+		t.Fatalf("DefaultCallTimeout = %v, want 5m", specs[0].DefaultCallTimeout)
+	}
+	if specs[0].CallTimeout != 10*time.Minute {
+		t.Fatalf("CallTimeout = %v, want 10m", specs[0].CallTimeout)
+	}
+	if specs[0].ToolTimeouts["generate_video"] != 30*time.Minute {
+		t.Fatalf("generate_video timeout = %v, want 30m", specs[0].ToolTimeouts["generate_video"])
+	}
+	if _, ok := specs[0].ToolTimeouts["zero"]; ok {
+		t.Fatalf("zero tool timeout should be ignored: %+v", specs[0].ToolTimeouts)
+	}
+	if _, ok := specs[0].ToolTimeouts[""]; ok {
+		t.Fatalf("empty tool timeout should be ignored: %+v", specs[0].ToolTimeouts)
+	}
+}
+
+func TestApplyDefaultMCPCallTimeoutPreservesConfiguredDefault(t *testing.T) {
+	specs := applyDefaultMCPCallTimeout([]plugin.Spec{
+		{Name: "configured", DefaultCallTimeout: 2 * time.Minute},
+		{Name: "empty"},
+	}, 5*time.Minute)
+	if specs[0].DefaultCallTimeout != 2*time.Minute {
+		t.Fatalf("configured DefaultCallTimeout overwritten: %v", specs[0].DefaultCallTimeout)
+	}
+	if specs[1].DefaultCallTimeout != 5*time.Minute {
+		t.Fatalf("empty DefaultCallTimeout = %v, want 5m", specs[1].DefaultCallTimeout)
+	}
+}
+
+func TestPluginSpecsTrustPlanModeAllowedMCPTools(t *testing.T) {
+	specs := PluginSpecsForRootWithPlanModeAllowedTools(
+		[]config.PluginEntry{{Name: "github"}, {Name: "linear"}},
+		"",
+		[]string{
+			"mcp__github__issue_read",
+			"mcp__linear__issue_read",
+			"mcp__github__",
+			"read_file",
+			"mcp__other__issue_read",
+		},
+	)
+	if len(specs) != 2 {
+		t.Fatalf("PluginSpecsForRootWithPlanModeAllowedTools returned %d specs, want 2", len(specs))
+	}
+	if !specs[0].ReadOnlyModelToolNames["mcp__github__issue_read"] {
+		t.Fatalf("github allowed MCP tool missing from model trust map: %+v", specs[0].ReadOnlyModelToolNames)
+	}
+	if specs[0].ReadOnlyModelToolNames["mcp__github__"] || specs[0].ReadOnlyModelToolNames["mcp__other__issue_read"] {
+		t.Fatalf("github trust map accepted non-concrete or other-server tools: %+v", specs[0].ReadOnlyModelToolNames)
+	}
+	if !specs[1].ReadOnlyModelToolNames["mcp__linear__issue_read"] {
+		t.Fatalf("linear allowed MCP tool missing from model trust map: %+v", specs[1].ReadOnlyModelToolNames)
 	}
 }
 

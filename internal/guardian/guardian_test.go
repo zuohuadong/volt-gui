@@ -201,3 +201,50 @@ func TestGuardianUsageDoesNotLeakAcrossReviews(t *testing.T) {
 		t.Fatalf("second usage leaked from first review: %+v", events[1].Guardian.Usage)
 	}
 }
+
+// TestGuardianReviewTurnsAlternateRoles pins the review request shape: the
+// transcript evidence and action request ride in one combined user message per
+// review, so the guardian session alternates user/assistant strictly and
+// providers that reject consecutive same-role messages can run the guardian.
+func TestGuardianReviewTurnsAlternateRoles(t *testing.T) {
+	prov := &scriptedProvider{responses: []scriptedResponse{
+		{text: `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"first ok"}`},
+		{text: `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"second ok"}`},
+	}}
+	gs := NewSession(prov, tool.NewRegistry(), PolicyPrompt(), "guardian-test", 0, nil, &captureSink{})
+	parent := agent.NewSession("sys")
+	parent.Add(provider.Message{Role: provider.RoleUser, Content: "do the thing"})
+
+	for i := 0; i < 2; i++ {
+		if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
+			t.Fatalf("review %d = allow %v err %v, want allow nil", i+1, allow, err)
+		}
+	}
+
+	reqs := prov.requestsSnapshot()
+	if len(reqs) < 2 {
+		t.Fatalf("requests = %d, want >= 2", len(reqs))
+	}
+	for r, req := range reqs {
+		for i := 1; i < len(req.Messages); i++ {
+			if req.Messages[i].Role == provider.RoleUser && req.Messages[i-1].Role == provider.RoleUser {
+				t.Fatalf("request %d carries consecutive user messages at index %d", r, i)
+			}
+		}
+	}
+
+	// The combined message must still carry the evidence boundary and the action.
+	msgs := reqs[len(reqs)-1].Messages
+	var review string
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == provider.RoleUser {
+			review = msgs[i].Content
+			break
+		}
+	}
+	for _, want := range []string{"untrusted evidence", "The agent has requested the following action", "write_file"} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("combined review message missing %q:\n%s", want, review)
+		}
+	}
+}

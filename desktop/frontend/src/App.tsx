@@ -3670,6 +3670,7 @@ export default function App() {
               guidanceConsumedKey={latestGuidanceConsumed?.key}
               guidanceConsumedText={latestGuidanceConsumed?.text}
               guidanceQueuePreviewItems={guidanceQueueMockItems}
+              showContextWindowRing={sidebarCreation}
               context={state.context}
               turnCost={state.turnCost}
               cacheHitTokens={state.usage?.cacheHitTokens}

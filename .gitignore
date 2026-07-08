@@ -72,3 +72,9 @@ tasks.md
 AGENTS.md
 CLAUDE.md
 .zed/CONVENTIONS.md
+
+# Local Playwright artifacts and test output
+output/
+.playwright-cli/
+CODEBUDDY.md
+HERMES.md

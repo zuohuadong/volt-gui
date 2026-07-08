@@ -113,7 +113,7 @@ func (b bash) resolved() sandbox.Shell {
 }
 
 func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, wait with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."},"preserve_background_processes":{"type":"boolean","description":"After the shell command exits normally, keep any process-group members it intentionally left behind. Use only for deliberate daemonization, such as nohup/disown/setsid; cancellation and timeouts still kill the process group."}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, wait with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."},"preserve_background_processes":{"type":"boolean","description":"After the shell command exits normally, keep any process-group members it intentionally left behind. Use only for deliberate daemonization, browser/GUI/session launchers such as playwright-cli open, or nohup/disown/setsid; cancellation and timeouts still kill the process group."}},"required":["command"]}`)
 }
 
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
@@ -142,7 +142,10 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 
 	// Wrap in the OS sandbox when configured; otherwise argv is just the shell.
-	argv, _ := sandbox.Command(b.sb, sh, p.Command)
+	argv, wrapped := sandbox.Command(b.sb, sh, p.Command)
+	if b.sb.Enforce() && !wrapped {
+		return "", fmt.Errorf("bash sandbox requested but unavailable on this platform; refusing to run unconfined")
+	}
 	cmdEnv := bashCommandEnv(ctx)
 
 	if p.RunInBackground {
@@ -157,15 +160,14 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 			cmd := exec.CommandContext(jobCtx, argv[0], argv[1:]...)
 			cmd.Dir = workDir
 			cmd.Env = cmdEnv
-			setKillTree(cmd)
 			cmd.WaitDelay = bashWaitDelay
 			cmd.Stdout = out
 			cmd.Stderr = out
-			runErr := cmd.Run()
+			tracked, runErr := runShellProcess(jobCtx, cmd, shouldTrackShellProcess(sh, p.Command, p.PreserveBackgroundProcesses))
 			if shouldReapAfterRun(jobCtx, sh, p.Command, p.PreserveBackgroundProcesses) {
-				reapTree(cmd) // reap process-group stragglers the job left running (#3702)
+				reapShellProcess(cmd, tracked) // reap process-group stragglers the job left running (#3702)
 			}
-			return "", runErr
+			return "", normalizeBashRunError(jobCtx, runErr, p.PreserveBackgroundProcesses)
 		})
 		return fmt.Sprintf("Started background job %q. It keeps running across turns; read new output with bash_output(job_id=%q), wait for it with wait, or stop it with kill_shell(job_id=%q).", job.ID, job.ID, job.ID), nil
 	}
@@ -181,7 +183,6 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = b.workDir // "" lets exec use the process working directory
 	cmd.Env = cmdEnv
-	setKillTree(cmd)
 	cmd.WaitDelay = bashWaitDelay
 	var buf bytes.Buffer
 	w := io.Writer(&buf)
@@ -190,14 +191,15 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 	cmd.Stdout = w
 	cmd.Stderr = w
-	err := cmd.Run()
+	tracked, err := runShellProcess(runCtx, cmd, shouldTrackShellProcess(sh, p.Command, p.PreserveBackgroundProcesses))
 	// A foreground command that spawned a lingering child (e.g. `bazel run`'s
 	// server) leaves it in the process group; Wait only reaped the shell leader.
 	// Kill the group so those don't accumulate into an OOM (#3702). On cancel/
-	// timeout setKillTree's Cancel already did this; this covers normal exit.
+	// timeout the command's Cancel path already did this; this covers normal exit.
 	if shouldReapAfterRun(runCtx, sh, p.Command, p.PreserveBackgroundProcesses) {
-		reapTree(cmd)
+		reapShellProcess(cmd, tracked)
 	}
+	err = normalizeBashRunError(runCtx, err, p.PreserveBackgroundProcesses)
 	out := buf.String()
 
 	if errors.Is(context.Cause(runCtx), errBashTimeout) {
@@ -208,6 +210,13 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		return out, fmt.Errorf("command exited: %w", err)
 	}
 	return out, nil
+}
+
+func normalizeBashRunError(ctx context.Context, err error, preserveBackgroundProcesses bool) error {
+	if preserveBackgroundProcesses && ctx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
+	return err
 }
 
 func shouldReapAfterRun(ctx context.Context, sh sandbox.Shell, command string, preserveBackgroundProcesses bool) bool {
@@ -238,6 +247,184 @@ func (b bash) foregroundTimeout() time.Duration {
 		return 0
 	}
 	return b.timeout
+}
+
+type trackedShellProcess struct {
+	cmd    *exec.Cmd
+	mu     sync.Mutex
+	job    uintptr
+	tree   *proc.TreeTracker
+	killed bool
+}
+
+func shouldTrackShellProcess(sh sandbox.Shell, command string, preserveBackgroundProcesses bool) bool {
+	if preserveBackgroundProcesses {
+		return false
+	}
+	return sh.Kind != sandbox.ShellBash || !hasExplicitBackgroundKeepalive(command)
+}
+
+func runShellProcess(ctx context.Context, cmd *exec.Cmd, track bool) (*trackedShellProcess, error) {
+	if !track {
+		setKillTree(cmd)
+		return nil, cmd.Run()
+	}
+	tracked := &trackedShellProcess{cmd: cmd}
+	proc.HideWindow(cmd)
+	cmd.Cancel = func() error {
+		tracked.kill()
+		return context.Canceled
+	}
+	job, err := proc.StartTracked(cmd)
+	if err != nil {
+		return tracked, err
+	}
+	tracked.setJob(job)
+	tracked.setTree(proc.TrackTree(cmd))
+	return tracked, waitForTrackedShellProcess(ctx, tracked, cmd.Wait, bashWaitDelay+time.Second)
+}
+
+func waitForTrackedShellProcess(ctx context.Context, tracked *trackedShellProcess, wait func() error, grace time.Duration) error {
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- wait() }()
+
+	select {
+	case err := <-waitCh:
+		tracked.stopTracking()
+		return err
+	case <-ctx.Done():
+	}
+
+	tracked.kill()
+	// If the shell's Wait path is wedged on a held pipe or a platform-specific
+	// process-tree edge, do not keep the foreground turn hostage after Stop.
+	select {
+	case err := <-waitCh:
+		tracked.stopTracking()
+		return canceledShellWaitError{cause: context.Cause(ctx), waitErr: err}
+	case <-time.After(grace):
+		go tracked.retryKillUntilWait(waitCh, 5*time.Second)
+		return context.Cause(ctx)
+	}
+}
+
+type canceledShellWaitError struct {
+	cause   error
+	waitErr error
+}
+
+func (e canceledShellWaitError) Error() string {
+	if e.cause != nil {
+		return e.cause.Error()
+	}
+	if e.waitErr != nil {
+		return e.waitErr.Error()
+	}
+	return "shell wait canceled"
+}
+
+func (e canceledShellWaitError) Unwrap() []error {
+	if e.cause != nil && e.waitErr != nil {
+		return []error{e.cause, e.waitErr}
+	}
+	if e.cause != nil {
+		return []error{e.cause}
+	}
+	if e.waitErr != nil {
+		return []error{e.waitErr}
+	}
+	return nil
+}
+
+func reapShellProcess(cmd *exec.Cmd, tracked *trackedShellProcess) {
+	if tracked != nil {
+		tracked.kill()
+		return
+	}
+	reapTree(cmd)
+}
+
+func (p *trackedShellProcess) setJob(job uintptr) {
+	if p == nil || job == 0 {
+		return
+	}
+	p.mu.Lock()
+	killed := p.killed
+	if !killed {
+		p.job = job
+	}
+	p.mu.Unlock()
+	if killed {
+		proc.KillTracked(p.cmd, job)
+	}
+}
+
+func (p *trackedShellProcess) setTree(tree *proc.TreeTracker) {
+	if p == nil || tree == nil {
+		return
+	}
+	p.mu.Lock()
+	killed := p.killed
+	if !killed {
+		p.tree = tree
+	}
+	p.mu.Unlock()
+	if killed {
+		tree.Kill()
+		tree.Stop()
+	}
+}
+
+func (p *trackedShellProcess) stopTracking() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	tree := p.tree
+	p.tree = nil
+	p.mu.Unlock()
+	if tree != nil {
+		tree.Stop()
+	}
+}
+
+func (p *trackedShellProcess) kill() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	firstKill := !p.killed
+	p.killed = true
+	job := p.job
+	p.job = 0
+	tree := p.tree
+	p.mu.Unlock()
+	if !firstKill {
+		job = 0
+	}
+	proc.KillTracked(p.cmd, job)
+	if tree != nil {
+		tree.Kill()
+		tree.Stop()
+	}
+}
+
+func (p *trackedShellProcess) retryKillUntilWait(waitCh <-chan error, max time.Duration) {
+	defer p.stopTracking()
+	deadline := time.NewTimer(max)
+	defer deadline.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-waitCh:
+			return
+		case <-ticker.C:
+			p.kill()
+		case <-deadline.C:
+			return
+		}
+	}
 }
 
 // progressWriter forwards each chunk the command writes to a tool.ProgressFunc,

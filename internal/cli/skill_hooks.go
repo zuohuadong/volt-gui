@@ -121,20 +121,27 @@ func (m *chatTUI) skillSaveEnabledChanges(changes map[string]bool) {
 	for _, sk := range m.ctrl.AllSkills() {
 		known[config.SkillNameKey(sk.Name)] = sk.Name
 	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	for name, enabled := range changes {
-		canonical, ok := known[config.SkillNameKey(name)]
-		if !ok {
-			m.notice("skill " + enableVerb(enabled) + ": unknown skill: " + name)
-			return
+	// Lock only the load-modify-save cycle; the session refresh below runs
+	// off-lock. The closure returns a non-empty notice on failure.
+	if failNotice := func() string {
+		unlock := config.LockUserConfigEdits()
+		defer unlock()
+		cfg := config.LoadForEdit(config.UserConfigPath())
+		for name, enabled := range changes {
+			canonical, ok := known[config.SkillNameKey(name)]
+			if !ok {
+				return "skill " + enableVerb(enabled) + ": unknown skill: " + name
+			}
+			if err := cfg.SetSkillEnabled(canonical, enabled); err != nil {
+				return "skill " + enableVerb(enabled) + ": " + err.Error()
+			}
 		}
-		if err := cfg.SetSkillEnabled(canonical, enabled); err != nil {
-			m.notice("skill " + enableVerb(enabled) + ": " + err.Error())
-			return
+		if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+			return "skill toggle: " + err.Error()
 		}
-	}
-	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
-		m.notice("skill toggle: " + err.Error())
+		return ""
+	}(); failNotice != "" {
+		m.notice(failNotice)
 		return
 	}
 	notice := ""
@@ -226,10 +233,14 @@ func (m *chatTUI) skillPaths() {
 func (m *chatTUI) skillStore() *skill.Store {
 	cwd, _ := os.Getwd()
 	var custom []string
+	var excluded []string
+	maxDepth := 3
 	if cfg, err := config.Load(); err == nil {
 		custom = cfg.SkillCustomPaths()
+		excluded = cfg.SkillExcludedPaths()
+		maxDepth = cfg.SkillMaxDepth()
 	}
-	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom})
+	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth})
 }
 
 func (m *chatTUI) runHooksSubcommand(input string) {
@@ -247,7 +258,7 @@ func (m *chatTUI) runHooksSubcommand(input string) {
 			m.notice("hooks trust: " + err.Error())
 			return
 		}
-		m.notice("trusted this project's hooks — they load on the next /new or restart")
+		m.notice("trusted this project's hooks — restart VoltUI to load them")
 	default:
 		m.notice("unknown /hooks subcommand " + args[1] + " — try: /hooks, /hooks trust")
 	}

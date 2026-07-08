@@ -73,12 +73,14 @@ func (m *chatTUI) runBranchCommand(input string) {
 		if _, err := m.ctrl.ForkNamed(n-1, name); err != nil {
 			return
 		}
+		m.followSessionLease()
 		m.replayActiveBranch(fmt.Sprintf("branched from turn %d", n))
 		return
 	} else {
 		if _, err := m.ctrl.Branch(name); err != nil {
 			return
 		}
+		m.followSessionLease()
 	}
 	m.showBranchTree()
 }
@@ -89,7 +91,23 @@ func (m *chatTUI) runSwitchCommand(input string) {
 		m.notice("usage: /switch <branch id|name>")
 		return
 	}
+	// Move the session lease before the controller binds the target branch for
+	// writing; a branch held by another runtime is refused here. Resolution
+	// failures fall through to SwitchBranch, which reports them as before.
+	if m.leases != nil {
+		if branches, err := m.ctrl.Branches(); err == nil {
+			if match, err := control.ResolveBranchRef(branches, ref); err == nil {
+				if err := m.rebindSessionLease(match.Path); err != nil {
+					m.notice("switch: " + sessionLeaseHeldNotice(err))
+					return
+				}
+			}
+		}
+	}
 	if _, err := m.ctrl.SwitchBranch(ref); err != nil {
+		// The switch failed after the lease already moved; re-point it at the
+		// session the controller still owns.
+		m.restoreSessionLease()
 		return
 	}
 	m.replayActiveBranch("switched branch")
@@ -104,13 +122,26 @@ func (m *chatTUI) replayActiveBranch(title string) {
 	m.pendingApproval = nil
 	m.bubblePending = false
 	m.turnDiscarded = false
+	m.planMode = false
+	m.ctrl.SetPlanMode(false)
+	m.sessionSwitch = true
+
+	// Discard the previous session's transcript so the viewport only shows the
+	// newly loaded session. Without this the transcript accumulates across
+	// every /resume / /switch / /rewind / /branch, bloating memory and causing
+	// the scroll position to be preserved at a stale offset inside the merged
+	// content (#4584).
+	m.clearTranscriptDisplay()
+	m.transcriptDirty = true
+	m.forceGotoBottom = true
 
 	m.commitLine("")
 	if title != "" {
 		m.commitLine(dim("  -- " + title + " --"))
 	}
-	m.commitLine(strings.TrimRight(renderTUIBanner(m.label, "", m.width), "\n"))
-	for _, section := range replaySectionsFor(m.ctrl.History(), m.width, m.renderer) {
+	contentW := transcriptContentWidth(m.width, m.nativeScrollback)
+	m.commitLine(strings.TrimRight(renderTUIBanner(m.label, "", contentW), "\n"))
+	for _, section := range replaySectionsFor(m.ctrl.History(), contentW, m.renderer) {
 		m.commitLine(strings.TrimRight(section, "\n"))
 	}
 }

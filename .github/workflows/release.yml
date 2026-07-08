@@ -1,5 +1,12 @@
 name: Release
 
+# CLI binary line. Tag namespace `v<semver>` triggers this — it builds the
+# release archives + checksums, publishes the GitHub release, and updates the
+# Homebrew cask. npm is a SEPARATE line (release-npm.yml, `npm-v*`) so an npm
+# prerelease can ship without forcing the stable cask, and vice versa; desktop is
+# `desktop-v*` (release-desktop.yml). A prerelease `v*-rc*` still builds archives
+# and a prerelease GitHub release, but goreleaser auto-skips the cask upload
+# (brew has no prerelease channel — see .goreleaser.yaml).
 on:
   push:
     tags: ['v*']
@@ -23,6 +30,9 @@ jobs:
     name: archives + checksums + homebrew tap
     needs: cache-guard
     runs-on: ubuntu-latest
+    # CLI stable release (archives + GitHub release + Homebrew cask). Gated on the
+    # `release` environment so only esengine can approve it going public.
+    environment: release
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,20 +49,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
-  npm:
-    name: publish npm packages
-    needs: cache-guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-      - run: node npm/build.mjs "${GITHUB_REF_NAME}" --publish
+      - name: Attach desktop manifest compatibility asset
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            *-*)
+              echo "prerelease $TAG — GitHub latest does not move here; skipping desktop manifest compatibility asset"
+              exit 0
+              ;;
+          esac
+          curl --retry 5 --retry-delay 2 -fsSL https://dl.voltui.io/latest/latest.json -o latest.raw.json
+          jq '.download_page = "https://voltui.io/#start"' latest.raw.json > latest.json
+          jq -e '
+            ([.platforms[] | .url] |
+              all(type == "string" and startswith("https://dl.voltui.io/") and (contains("/releases/latest/") | not)))
+          ' latest.json >/dev/null
+          gh release upload "$TAG" latest.json --clobber

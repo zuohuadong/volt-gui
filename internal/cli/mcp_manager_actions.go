@@ -12,11 +12,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"voltui/internal/codegraph"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/mcpdiag"
 	"voltui/internal/plugin"
+	"voltui/internal/shellparse"
 )
 
 func (m chatTUI) applyMCPAction(v mcpServerView, action mcpAction) (tea.Model, tea.Cmd) {
@@ -51,20 +51,6 @@ func (m chatTUI) connectSelectedMCP(v mcpServerView) (tea.Model, tea.Cmd) {
 		m.notice("mcp: no active session")
 		return m, nil
 	}
-	if v.BuiltIn && v.Name == "codegraph" {
-		cfg, err := config.Load()
-		if err != nil {
-			m.notice("mcp connect: " + err.Error())
-			return m, nil
-		}
-		if !cfg.Codegraph.Enabled {
-			cfg.Codegraph.Enabled = true
-			if err := cfg.Save(); err != nil {
-				m.notice("mcp connect: " + err.Error())
-				return m, nil
-			}
-		}
-	}
 	if v.Status == "connected" {
 		m.ctrl.DisconnectMCPServer(v.Name)
 	}
@@ -92,22 +78,6 @@ func (m chatTUI) disableSelectedMCP(v mcpServerView) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	persisted := false
-	if v.BuiltIn && v.Name == "codegraph" {
-		cfg, err := config.Load()
-		if err != nil {
-			m.notice("mcp disable: " + err.Error())
-			return m, nil
-		}
-		cfg.Codegraph.Enabled = false
-		if err := cfg.Save(); err != nil {
-			m.notice("mcp disable: " + err.Error())
-			return m, nil
-		}
-		persisted = true
-		if h := m.ctrl.Host(); h != nil {
-			h.ClearFailure(v.Name)
-		}
-	}
 	if m.mcpDisabled == nil {
 		m.mcpDisabled = map[string]bool{}
 	}
@@ -170,35 +140,6 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
 	}
-	if v.BuiltIn && v.Name == "codegraph" {
-		cfg.Codegraph.Enabled = true
-		cfg.Codegraph.Tier = normalizeMCPTierForCLI(tier)
-		if err := cfg.Save(); err != nil {
-			m.notice("mcp mode: " + err.Error())
-			return m, nil
-		}
-		if m.mcpDisabled != nil {
-			delete(m.mcpDisabled, v.Name)
-		}
-		if tier != "lazy" && m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
-			if _, ok := codegraph.Resolve(cfg.Codegraph.Path); !ok {
-				err := fmt.Errorf("codegraph: not installed")
-				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
-				m.notice("saved connection mode, but connect failed: " + err.Error())
-			} else if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
-				recordMCPModeCodegraphFailure(m.ctrl, cfg.Codegraph, err)
-				m.notice("saved connection mode, but connect failed: " + err.Error())
-			}
-			m.host = m.ctrl.Host()
-		}
-		m.refreshMCPManager()
-		if m.mcp != nil {
-			m.mcp.stage = mcpStageDetail
-			m.mcp.selectName(v.Name)
-		}
-		m.notice("updated connection mode for " + v.Name)
-		return m, nil
-	}
 	found := false
 	var selected config.PluginEntry
 	for i := range cfg.Plugins {
@@ -223,7 +164,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	if m.mcpDisabled != nil {
 		delete(m.mcpDisabled, v.Name)
 	}
-	if tier != "lazy" && m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
+	if m.ctrl != nil && !mcpConnected(m.ctrl, v.Name) {
 		if _, err := m.ctrl.ConnectConfiguredMCPServer(v.Name); err != nil {
 			recordMCPModePluginFailure(m.ctrl, selected, err)
 			m.notice("saved connection mode, but connect failed: " + err.Error())
@@ -252,22 +193,6 @@ func recordMCPModePluginFailure(ctrl control.Capabilities, e config.PluginEntry,
 		Env:     exp.Env,
 		URL:     exp.URL,
 		Headers: exp.Headers,
-	}, err)
-}
-
-func recordMCPModeCodegraphFailure(ctrl control.Capabilities, c config.CodegraphConfig, err error) {
-	if ctrl == nil || ctrl.Host() == nil || err == nil {
-		return
-	}
-	cmd := strings.TrimSpace(c.Path)
-	if cmd == "" {
-		cmd = "codegraph"
-	}
-	ctrl.Host().RecordFailure(plugin.Spec{
-		Name:    "codegraph",
-		Type:    "stdio",
-		Command: cmd,
-		Args:    []string{"serve", "--mcp"},
 	}, err)
 }
 
@@ -324,7 +249,7 @@ func (m chatTUI) clearSelectedMCPAuthentication() (tea.Model, tea.Cmd) {
 
 func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 	if v.BuiltIn {
-		m.notice("codegraph is built in; it has no stored MCP authentication")
+		m.notice("managed MCP servers do not store authentication")
 		return m, nil
 	}
 	_, changed, _, err := config.ClearPluginAuthenticationInSource(v.Name)
@@ -354,8 +279,8 @@ func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 
 func mcpModeIndex(tier string) int {
 	tier = normalizeMCPTierForCLI(tier)
-	for i, choice := range mcpModeChoices {
-		if choice.tier == tier {
+	for i, choice := range mcpTierChoices {
+		if choice == tier {
 			return i
 		}
 	}
@@ -366,10 +291,12 @@ func normalizeMCPTierForCLI(tier string) string {
 	switch strings.ToLower(strings.TrimSpace(tier)) {
 	case "eager":
 		return "eager"
-	case "background":
+	case "background", "lazy":
+		return "background"
+	case "":
 		return "background"
 	default:
-		return "lazy"
+		return "background"
 	}
 }
 
@@ -398,14 +325,22 @@ func mcpEditConfigLaunchCommand(path string, lookPath func(string) (string, erro
 		return mcpEditConfigLaunch{}, fmt.Errorf("no config path available")
 	}
 	if editor := strings.TrimSpace(os.Getenv("VISUAL")); editor != "" {
+		cmd, err := editorLaunchCmd(editor, path)
+		if err != nil {
+			return mcpEditConfigLaunch{}, err
+		}
 		return mcpEditConfigLaunch{
-			cmd:    exec.Command("sh", "-lc", editor+" "+shellQuote(path)),
+			cmd:    cmd,
 			editor: mcpEditorDisplayName(editor),
 		}, nil
 	}
 	if editor := strings.TrimSpace(os.Getenv("EDITOR")); editor != "" {
+		cmd, err := editorLaunchCmd(editor, path)
+		if err != nil {
+			return mcpEditConfigLaunch{}, err
+		}
 		return mcpEditConfigLaunch{
-			cmd:    exec.Command("sh", "-lc", editor+" "+shellQuote(path)),
+			cmd:    cmd,
 			editor: mcpEditorDisplayName(editor),
 		}, nil
 	}
@@ -428,8 +363,8 @@ func mcpEditConfigLaunchCommand(path string, lookPath func(string) (string, erro
 }
 
 func mcpEditorDisplayName(editor string) string {
-	fields := strings.Fields(editor)
-	if len(fields) == 0 {
+	fields, err := splitEditorCommand(os.ExpandEnv(editor))
+	if err != nil || len(fields) == 0 {
 		return ""
 	}
 	return fields[0]
@@ -491,8 +426,63 @@ func mcpConnected(ctrl control.Capabilities, name string) bool {
 	return false
 }
 
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+// editorLaunchCmd builds an exec.Cmd for an editor invocation read from the
+// VISUAL/EDITOR environment variable. The editor string may carry arguments
+// (e.g. "code --wait", "nvim -p") and shell variable / tilde references
+// (e.g. "$HOME/bin/myeditor", "~/bin/myeditor"); these are expanded without
+// invoking a shell, and the editor binary is resolved by the OS directly.
+// Shell metacharacters in the value cannot be executed: the expanded value must
+// parse as one static shell command. Control operators, redirection,
+// substitution, globbing, assignments, and other shell-shaping syntax are
+// rejected before launch.
+//
+// This matches the safe pattern already used by the terminal-editor
+// fallback (exec.Command(bin, path)) in the same function and avoids the
+// previous sh -lc construction that concatenated the raw editor value into
+// a shell command string.
+//
+// Quoting and backslash escaping are honored for word splitting only; shell
+// operators, globbing, command substitution, and redirection are rejected.
+// Tilde expansion only covers the leading-token forms "~" and "~/..."; "~user"
+// is not supported (and was not reliably supported by the prior sh -lc path
+// either, since $HOME for another user is not available without getpwuid).
+func editorLaunchCmd(editor, path string) (*exec.Cmd, error) {
+	expanded := os.ExpandEnv(editor)
+	args, err := splitEditorCommand(expanded)
+	if err != nil {
+		return nil, fmt.Errorf("invalid EDITOR/VISUAL value: %w", err)
+	}
+	if len(args) == 0 {
+		return nil, fmt.Errorf("invalid EDITOR/VISUAL value: %q", editor)
+	}
+	args[0] = expandLeadingTilde(args[0])
+	return exec.Command(args[0], append(args[1:], path)...), nil
+}
+
+func splitEditorCommand(s string) ([]string, error) {
+	args, malformed := shellparse.StaticFields(s)
+	if malformed != "" {
+		return nil, fmt.Errorf("%s", malformed)
+	}
+	return args, nil
+}
+
+// expandLeadingTilde replaces a leading "~" or "~/" prefix with the current
+// user's home directory. Other forms (e.g. "~user") are returned unchanged.
+// If the home directory cannot be determined the value is returned as-is so
+// the caller surfaces the exec failure rather than panicking.
+func expandLeadingTilde(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return home + p[1:]
 }
 
 func mcpBoolPtr(v bool) *bool { return &v }

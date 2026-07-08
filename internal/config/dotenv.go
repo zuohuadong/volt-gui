@@ -74,9 +74,6 @@ func legacyCredentialsPaths() []string {
 		seen[path] = true
 		paths = append(paths, path)
 	}
-	if dir := legacyVoltUIOSConfigDir(); dir != "" {
-		add(filepath.Join(dir, "credentials"))
-	}
 	if dir := legacyOSSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
 	}
@@ -88,6 +85,14 @@ func legacyCredentialsPaths() []string {
 		add(filepath.Join(filepath.Dir(cfg), "credentials"))
 	}
 	return paths
+}
+
+func legacyUserCredentialsPath() string {
+	paths := legacyCredentialsPaths()
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
 }
 
 func loadDotEnvFileAs(path string, source CredentialSource) {

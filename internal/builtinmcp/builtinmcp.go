@@ -1,10 +1,12 @@
-// Package builtinmcp defines MCP servers that ship with Reasonix without
+// Package builtinmcp defines MCP servers that ship with VoltUI without
 // requiring user configuration.
 package builtinmcp
 
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"voltui/internal/config"
 )
@@ -12,6 +14,9 @@ import (
 const (
 	TimeName     = "time"
 	Context7Name = "context7"
+	OfficeName   = "office"
+
+	enableDefaultBuiltInMCPInTestsEnv = "VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS"
 )
 
 var (
@@ -30,6 +35,13 @@ func Entries() []config.PluginEntry {
 			Type:    "stdio",
 			Command: executablePath(),
 			Args:    []string{"builtin-mcp", TimeName},
+			Tier:    "lazy",
+		},
+		{
+			Name:    OfficeName,
+			Type:    "stdio",
+			Command: executablePath(),
+			Args:    []string{"builtin-mcp", OfficeName},
 			Tier:    "lazy",
 		},
 		context7Entry(),
@@ -77,17 +89,55 @@ func Entry(name string) (config.PluginEntry, bool) {
 	return config.PluginEntry{}, false
 }
 
-// IsBuiltIn reports whether name is a Reasonix-shipped MCP server.
+// IsBuiltIn reports whether name is a VoltUI-shipped MCP server.
 func IsBuiltIn(name string) bool {
 	_, ok := Entry(name)
 	return ok
+}
+
+// IsBuiltInEntry reports whether e is the VoltUI-provided entry shape for a
+// built-in server. A user may define the same name with different command/args;
+// that override should stay editable/removable in UI surfaces.
+func IsBuiltInEntry(e config.PluginEntry) bool {
+	builtIn, ok := Entry(e.Name)
+	if !ok {
+		return false
+	}
+	if e.Type != builtIn.Type || e.Command != builtIn.Command || len(e.Args) != len(builtIn.Args) {
+		return false
+	}
+	for i := range e.Args {
+		if e.Args[i] != builtIn.Args[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // AppendMissing appends built-in MCP entries unless a configured or
 // session-scoped entry with the same name exists. Explicit user and host config
 // wins, including auto_start=false.
 func AppendMissing(out []config.PluginEntry, configured []config.PluginEntry, reservedNames ...string) []config.PluginEntry {
-	return AppendEnabled(out, configured, []string{TimeName, Context7Name}, reservedNames...)
+	return AppendEnabled(out, configured, []string{TimeName, OfficeName, Context7Name}, reservedNames...)
+}
+
+// DefaultEnabledNames returns built-ins that should be active in ordinary
+// sessions without user config. Keep this dependency-free so startup never
+// performs surprise package installs or network work.
+func DefaultEnabledNames() []string {
+	if runningGoTestBinary() && os.Getenv(enableDefaultBuiltInMCPInTestsEnv) == "" {
+		return nil
+	}
+	return []string{OfficeName}
+}
+
+// AppendDefaultEnabled appends only default-on built-in MCP servers.
+func AppendDefaultEnabled(out []config.PluginEntry, configured []config.PluginEntry, reservedNames ...string) []config.PluginEntry {
+	return AppendEnabled(out, configured, DefaultEnabledNames(), reservedNames...)
+}
+
+func runningGoTestBinary() bool {
+	return strings.HasSuffix(filepath.Base(os.Args[0]), ".test")
 }
 
 // AppendEnabled is like AppendMissing but only appends enabled built-in names.

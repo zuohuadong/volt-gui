@@ -78,13 +78,39 @@ type PlanModeClassifier interface {
 // external, untrusted source — an MCP server's readOnlyHint — rather than by
 // first-party code. Plan mode must not take such a flag at face value: a tool
 // reporting true here is gated like a writer (it runs while planning only via an
-// explicit plan_mode_allowed_tools declaration or a PlanModeClassifier
-// self-report) and is excluded from read-only research sub-agents. Built-ins, and
-// MCP tools trusted via a first-party Spec.ReadOnlyToolNames override, do not
-// implement this (or return false) and are trusted normally. Type-assert a Tool
-// to discover support; only externally-sourced tools implement it.
+// explicit plan_mode_allowed_tools declaration, trusted plugin read-only config,
+// or a PlanModeClassifier self-report) and is excluded from read-only research
+// sub-agents. Built-ins, and MCP tools trusted via Spec read-only overrides, do
+// not implement this (or return false) and are trusted normally. Type-assert a
+// Tool to discover support; only externally-sourced tools implement it.
 type PlanModeUntrustedReadOnly interface {
 	PlanModeUntrustedReadOnly() bool
+}
+
+// MCPMetadata exposes the original MCP identity behind a model-visible
+// "mcp__<server>__<tool>" adapter. The model name may be normalized for provider
+// function-name rules; config such as trusted_read_only_tools must use the raw
+// server-local tool name.
+type MCPMetadata interface {
+	MCPServerName() string
+	MCPRawToolName() string
+}
+
+// SnipHint describes how context maintenance should shorten a stale, oversized
+// result this tool produced. Head/Tail are the line counts kept from each end
+// when the result has many lines; HeadChars/TailChars bound the kept runes when
+// the result is one giant line.
+type SnipHint struct {
+	Head      int
+	Tail      int
+	HeadChars int
+	TailChars int
+}
+
+// SnipHinter is an optional capability a Tool implements when its output has a
+// known shape that a generic head/tail split would garble.
+type SnipHinter interface {
+	SnipHint() SnipHint
 }
 
 // --- process-global built-in set (populated by builtin subpackage init) ---

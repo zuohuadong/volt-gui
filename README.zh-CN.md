@@ -230,11 +230,24 @@ allow = ["bash(go test*)"]                   # 从不询问
 # allow_write    = ["/tmp"]    # write_file/edit_file/multi_edit 额外可写的目录
 ```
 
-## 浏览器（默认启用）
+## 浏览器与桌面自动化（默认启用）
 
 内置 `browser_navigate` 工具，通过 CDP（Chrome DevTools Protocol）驱动无头
 Chromium 系浏览器。浏览内网文档站、管理后台、SPA 应用时，它会先执行页面
 JavaScript 再提取可见文本，覆盖 `web_fetch`（纯 HTTP）做不到的场景。
+
+Release 构建也会内置第一方桌面自动化工具：
+
+- `browser_control`：类似 Playwright 的 CDP 操作，可打开页面、点击选择器
+  或坐标、输入文本、按键、等待，并保存浏览器截图。
+- `desktop_screenshot`：将桌面截图保存为 PNG 文件。
+- `desktop_mouse` / `desktop_keyboard`：控制宿主桌面的移动、点击、拖拽、
+  滚动、输入和按键。
+
+这些宿主控制工具在工具契约中都不是只读工具，因此默认会走现有权限规则
+和桌面端审批 UI。macOS 可能需要 Screen Recording / Accessibility 权限；
+Windows 使用系统自带 PowerShell/.NET + user32；Linux 会优先使用
+`gnome-screenshot`、`grim`、`scrot`、`xdotool` 等常见桌面后端。
 
 - **Windows 10：**系统自带 Edge（Chromium 内核），零配置开箱即用。
 - **macOS / Linux：**自动检测 Chrome/Chromium/Edge。

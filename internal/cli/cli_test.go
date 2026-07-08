@@ -1,16 +1,24 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
-	"errors"
+	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"voltui/internal/agent"
 	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
+	"voltui/internal/notify"
 	"voltui/internal/provider"
 )
 
@@ -45,6 +53,138 @@ func TestChdirTo(t *testing.T) {
 	}
 }
 
+func TestModelForResumePathUsesStoredModelWhenAvailable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	session := agent.NewSession("sys")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	if err := session.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SetBranchModelPreserveUpdated(path, "saved/model"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		DefaultModel: "default/model",
+		Providers: []config.ProviderEntry{
+			{Name: "default", Kind: "openai", BaseURL: "https://default.invalid/v1", Model: "model"},
+			{Name: "saved", Kind: "openai", BaseURL: "https://saved.invalid/v1", Model: "model"},
+		},
+	}
+
+	if got := modelForResumePath("", path, cfg); got != "saved/model" {
+		t.Fatalf("modelForResumePath = %q, want saved/model", got)
+	}
+	if got := modelForResumePath("explicit/model", path, cfg); got != "explicit/model" {
+		t.Fatalf("explicit model was overwritten: %q", got)
+	}
+	if got := modelForResumePath("", filepath.Join(dir, "missing.jsonl"), cfg); got != "" {
+		t.Fatalf("missing session model = %q, want empty fallback", got)
+	}
+	cfg.Providers = cfg.Providers[:1]
+	if got := modelForResumePath("", path, cfg); got != "" {
+		t.Fatalf("unknown stored model = %q, want empty fallback", got)
+	}
+}
+
+func TestLoadResumableSessionRejectsCleanupPending(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.jsonl")
+	saveTestSession(t, path, "pending prompt")
+	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadResumableSession(path); err == nil || !strings.Contains(err.Error(), "pending cleanup") {
+		t.Fatalf("loadResumableSession cleanup-pending error = %v, want pending cleanup", err)
+	}
+}
+
+func TestRunResumeRejectsCleanupPending(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	path := filepath.Join(t.TempDir(), "pending-run.jsonl")
+	saveTestSession(t, path, "pending prompt")
+	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	errOut := captureStderr(t, func() {
+		if rc := runAgent([]string{"--resume", path, "continue task"}); rc != 1 {
+			t.Fatalf("run --resume cleanup-pending rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "pending cleanup") {
+		t.Fatalf("run --resume cleanup-pending stderr = %q, want pending cleanup", errOut)
+	}
+}
+
+func TestServeResumeRejectsCleanupPending(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	path := filepath.Join(t.TempDir(), "pending-serve.jsonl")
+	saveTestSession(t, path, "pending prompt")
+	if err := agent.MarkCleanupPending(path, "delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	errOut := captureStderr(t, func() {
+		if rc := runServe([]string{"--resume", path, "--addr", "127.0.0.1:0"}); rc != 1 {
+			t.Fatalf("serve --resume cleanup-pending rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "pending cleanup") {
+		t.Fatalf("serve --resume cleanup-pending stderr = %q, want pending cleanup", errOut)
+	}
+}
+
+func TestServeRejectsUnknownAuthMode(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := runServe([]string{"--auth", "tokne", "--addr", "127.0.0.1:0"}); rc != 1 {
+			t.Fatalf("serve --auth tokne rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "auth mode must be none, token, or password") {
+		t.Fatalf("serve --auth tokne stderr = %q, want auth mode validation", errOut)
+	}
+}
+
+func TestServePasswordAuthRequiresPasswordMaterial(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := runServe([]string{"--auth", "password", "--addr", "127.0.0.1:0"}); rc != 1 {
+			t.Fatalf("serve --auth password without password rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "auth mode password requires --password or serve.password_hash") {
+		t.Fatalf("serve --auth password stderr = %q, want password material validation", errOut)
+	}
+}
+
+func TestReserveNativeScrollbackFrameWritesOnlyNewlines(t *testing.T) {
+	var b bytes.Buffer
+	reserveNativeScrollbackFrame(&b, 3)
+	if got := b.String(); got != "\n\n\n" {
+		t.Fatalf("reserveNativeScrollbackFrame wrote %q, want only three newlines", got)
+	}
+
+	reserveNativeScrollbackFrame(&b, 0)
+	if got := b.String(); got != "\n\n\n" {
+		t.Fatalf("reserveNativeScrollbackFrame(0) changed output to %q", got)
+	}
+}
+
+func TestPrepareNativeScrollbackClearsBeforeFrame(t *testing.T) {
+	var b bytes.Buffer
+	prepareNativeScrollback(&b, 2)
+	if got, want := b.String(), "\x1B[3J\x1B[2J\x1B[H\n\n"; got != want {
+		t.Fatalf("prepareNativeScrollback wrote %q, want %q", got, want)
+	}
+}
+
 func mustGetwd(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()
@@ -58,11 +198,46 @@ func isolateCLIConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	t.Chdir(t.TempDir())
 	return home
+}
+
+func TestMCPMigrationWaitsForCLIWorkspace(t *testing.T) {
+	isolateCLIConfigHome(t)
+	cwd := mustGetwd(t)
+	if err := os.WriteFile(filepath.Join(cwd, "voltui.toml"), []byte(`
+[[plugins]]
+name = "cwd-project"
+command = "cwd-project-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateLegacyConfigForCLI()
+	if cfg := config.LoadForEdit(config.UserConfigPath()); hasPluginNamed(cfg, "cwd-project") {
+		t.Fatalf("early CLI legacy migration imported the cwd project plugin: %+v", cfg.Plugins)
+	}
+
+	migrateMCPConfigForCLIWorkspace()
+	if cfg := config.LoadForEdit(config.UserConfigPath()); !hasPluginNamed(cfg, "cwd-project") {
+		t.Fatalf("workspace-aware CLI migration did not import project plugin: %+v", cfg.Plugins)
+	}
+}
+
+func hasPluginNamed(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, plugin := range cfg.Plugins {
+		if plugin.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMetadataCommandsDoNotProbeTerminalTheme(t *testing.T) {
@@ -88,8 +263,129 @@ func TestMetadataCommandsDoNotProbeTerminalTheme(t *testing.T) {
 			t.Fatalf("help rc = %d, want 0", rc)
 		}
 	})
-	if !strings.Contains(out, "Usage:") {
+	if !strings.Contains(out, "Usage:") && !strings.Contains(out, "用法：") {
 		t.Fatalf("help output missing usage:\n%s", out)
+	}
+	if !strings.Contains(out, "voltui run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>") {
+		t.Fatalf("help output missing run resume flags:\n%s", out)
+	}
+}
+
+func TestRunDispatchesACPLongFlagAlias(t *testing.T) {
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"--acp", "-h"}, "test-version"); rc != 2 {
+			t.Fatalf("Run --acp -h rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "Usage of acp:") {
+		t.Fatalf("--acp should dispatch to the ACP command, got stderr:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "unknown command") {
+		t.Fatalf("--acp should not be treated as an unknown command:\n%s", errOut)
+	}
+}
+
+func TestRunDefaultsToInteractiveSession(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	prev := runInteractiveSession
+	prevInteractive := cliIsInteractive
+	t.Cleanup(func() {
+		runInteractiveSession = prev
+		cliIsInteractive = prevInteractive
+	})
+	cliIsInteractive = func() bool { return true }
+
+	var gotArgs []string
+	runInteractiveSession = func(args []string) int {
+		gotArgs = append([]string(nil), args...)
+		return 17
+	}
+
+	if rc := Run(nil, "test-version"); rc != 17 {
+		t.Fatalf("Run(nil) rc = %d, want 17", rc)
+	}
+	if gotArgs != nil {
+		t.Fatalf("interactive args = %#v, want nil", gotArgs)
+	}
+}
+
+func TestRunNoArgsNonInteractivePrintsUsage(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	prev := runInteractiveSession
+	prevInteractive := cliIsInteractive
+	t.Cleanup(func() {
+		runInteractiveSession = prev
+		cliIsInteractive = prevInteractive
+	})
+	cliIsInteractive = func() bool { return false }
+	runInteractiveSession = func(args []string) int {
+		t.Fatalf("non-interactive no-arg Run should not start session with %#v", args)
+		return 99
+	}
+
+	out := captureStdout(t, func() {
+		if rc := Run(nil, "test-version"); rc != 0 {
+			t.Fatalf("Run(nil) rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "voltui —") || !strings.Contains(out, "voltui run") {
+		t.Fatalf("non-interactive no-arg Run should print usage, got:\n%s", out)
+	}
+}
+
+func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	prev := runInteractiveSession
+	t.Cleanup(func() { runInteractiveSession = prev })
+
+	for _, args := range [][]string{
+		{"--continue"},
+		{"--continue=true"},
+		{"-c=true"},
+		{"--resume=true"},
+		{"--yolo=true"},
+		{"--dangerously-skip-permissions=true"},
+	} {
+		var gotArgs []string
+		runInteractiveSession = func(args []string) int {
+			gotArgs = append([]string(nil), args...)
+			return 23
+		}
+
+		if rc := Run(args, "test-version"); rc != 23 {
+			t.Fatalf("Run(%#v) rc = %d, want 23", args, rc)
+		}
+		if !reflect.DeepEqual(gotArgs, args) {
+			t.Fatalf("interactive args = %#v, want %#v", gotArgs, args)
+		}
+	}
+}
+
+func TestRunKeepsChatAndCodeCompatibilityAliases(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	prev := runInteractiveSession
+	t.Cleanup(func() { runInteractiveSession = prev })
+
+	var calls [][]string
+	runInteractiveSession = func(args []string) int {
+		calls = append(calls, append([]string(nil), args...))
+		return 0
+	}
+
+	if rc := Run([]string{"chat", "--resume"}, "test-version"); rc != 0 {
+		t.Fatalf("Run(chat --resume) rc = %d, want 0", rc)
+	}
+	if rc := Run([]string{"code", "--continue"}, "test-version"); rc != 0 {
+		t.Fatalf("Run(code --continue) rc = %d, want 0", rc)
+	}
+
+	want := [][]string{{"--resume"}, {"--continue"}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("interactive calls = %#v, want %#v", calls, want)
 	}
 }
 
@@ -169,7 +465,7 @@ func TestConfigAutoPlanCommandWritesUserConfig(t *testing.T) {
 	}
 }
 
-func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
+func TestConfigAutoPlanLocalIsRejected(t *testing.T) {
 	isolateCLIConfigHome(t)
 
 	userCfg := config.Default()
@@ -178,24 +474,16 @@ func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
 		t.Fatalf("write user config: %v", err)
 	}
 
-	out := captureStdout(t, func() {
-		if rc := Run([]string{"config", "auto-plan", "--local", "on"}, "test-version"); rc != 0 {
-			t.Fatalf("config auto-plan --local rc = %d, want 0", rc)
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"config", "auto-plan", "--local", "on"}, "test-version"); rc != 2 {
+			t.Fatalf("config auto-plan --local rc = %d, want 2", rc)
 		}
 	})
-	if !strings.Contains(out, `auto_plan = "on"`) {
-		t.Fatalf("config auto-plan --local output = %q", out)
+	if !strings.Contains(errOut, "--local is not supported") {
+		t.Fatalf("config auto-plan --local stderr = %q", errOut)
 	}
-
-	body, err := os.ReadFile("voltui.toml")
-	if err != nil {
-		t.Fatalf("read project config: %v", err)
-	}
-	if strings.Contains(string(body), "default_model") {
-		t.Fatalf("project auto-plan override should not pin default_model:\n%s", body)
-	}
-	if !strings.Contains(string(body), "[agent]") || !strings.Contains(string(body), `auto_plan = "on"`) {
-		t.Fatalf("project config missing auto_plan override:\n%s", body)
+	if _, err := os.Stat("voltui.toml"); !os.IsNotExist(err) {
+		t.Fatalf("voltui.toml should not be written, stat err=%v", err)
 	}
 
 	cfg, err := config.Load()
@@ -205,27 +493,323 @@ func TestConfigAutoPlanLocalCreatesMinimalProjectOverride(t *testing.T) {
 	if cfg.DefaultModel != "mimo-pro" {
 		t.Fatalf("default_model = %q, want global mimo-pro", cfg.DefaultModel)
 	}
-	if cfg.Agent.AutoPlan != "on" {
-		t.Fatalf("auto_plan = %q, want local on", cfg.Agent.AutoPlan)
+	if cfg.Agent.AutoPlan != "off" {
+		t.Fatalf("auto_plan = %q, want global off", cfg.Agent.AutoPlan)
 	}
 }
 
-func TestWelcomePromptMissingKeysRequiresConfigSource(t *testing.T) {
-	if welcomeShouldPromptMissingKeys("", nil) {
-		t.Fatal("built-in defaults without a config source should not prompt for missing provider keys")
+func TestConfigMemoryV5CommandWritesUserConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"config", "memory-v5", "off"}, "test-version"); rc != 0 {
+			t.Fatalf("config memory-v5 rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "memory_compiler.enabled = false") {
+		t.Fatalf("config memory-v5 output = %q", out)
 	}
-	if welcomeShouldPromptMissingKeys("voltui.toml", errors.New("bad config")) {
-		t.Fatal("invalid config should not enter the missing-key prompt path")
+	if !strings.Contains(out, `memory_compiler.verbosity = "observe"`) {
+		t.Fatalf("config memory-v5 output missing verbosity = %q", out)
 	}
-	if !welcomeShouldPromptMissingKeys("voltui.toml", nil) {
-		t.Fatal("valid config source should enter the missing-key prompt path")
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.MemoryCompilerEnabled() {
+		t.Fatalf("saved memory_compiler.enabled = true, want false")
+	}
+	if got := cfg.MemoryCompilerVerbosity(); got != config.MemoryCompilerVerbosityObserve {
+		t.Fatalf("saved memory_compiler.verbosity = %q, want observe", got)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := Run([]string{"config", "memory-v5", "status"}, "test-version"); rc != 0 {
+			t.Fatalf("config memory-v5 status rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "memory_compiler.enabled = false") {
+		t.Fatalf("config memory-v5 status output = %q", out)
+	}
+	if !strings.Contains(out, `memory_compiler.verbosity = "observe"`) {
+		t.Fatalf("config memory-v5 status output = %q", out)
+	}
+
+	out = captureStdout(t, func() {
+		if rc := Run([]string{"config", "memory-v5", "compact"}, "test-version"); rc != 0 {
+			t.Fatalf("config memory-v5 compact rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, "memory_compiler.enabled = true") ||
+		!strings.Contains(out, `memory_compiler.verbosity = "compact"`) {
+		t.Fatalf("config memory-v5 compact output = %q", out)
+	}
+}
+
+func TestConfigMemoryV5LocalIsRejected(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"config", "memory-v5", "--local", "off"}, "test-version"); rc != 2 {
+			t.Fatalf("config memory-v5 --local rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "--local is not supported") {
+		t.Fatalf("config memory-v5 --local stderr = %q", errOut)
+	}
+	if _, err := os.Stat("voltui.toml"); !os.IsNotExist(err) {
+		t.Fatalf("voltui.toml should not be written, stat err=%v", err)
+	}
+}
+
+func TestConfigAutoPlanIgnoresProjectConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	userCfg := config.Default()
+	if err := userCfg.SetAutoPlan("off"); err != nil {
+		t.Fatal(err)
+	}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+	if err := os.WriteFile("voltui.toml", []byte("[agent]\nauto_plan = \"on\"\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Agent.AutoPlan != "off" {
+		t.Fatalf("auto_plan = %q, want user-level off despite project on", cfg.Agent.AutoPlan)
+	}
+
+	if err := userCfg.SetAutoPlan("on"); err != nil {
+		t.Fatal(err)
+	}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("rewrite user config: %v", err)
+	}
+	if err := os.WriteFile("voltui.toml", []byte("[agent]\nauto_plan = \"off\"\n"), 0o644); err != nil {
+		t.Fatalf("rewrite project config: %v", err)
+	}
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.Agent.AutoPlan != "on" {
+		t.Fatalf("auto_plan = %q, want user-level on despite project off", cfg.Agent.AutoPlan)
+	}
+}
+
+func TestConfigReasoningLanguageCommandWritesUserConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"config", "reasoning-language", "zh"}, "test-version"); rc != 0 {
+			t.Fatalf("config reasoning-language rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, `reasoning_language = "zh"`) {
+		t.Fatalf("config reasoning-language output = %q", out)
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Agent.ReasoningLanguage != "zh" || cfg.ReasoningLanguage() != "zh" {
+		t.Fatalf("saved reasoning_language = %q/%q, want zh", cfg.Agent.ReasoningLanguage, cfg.ReasoningLanguage())
+	}
+}
+
+func TestConfigReasoningLanguageLocalCreatesMinimalProjectOverride(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	userCfg := config.Default()
+	userCfg.DefaultModel = "mimo-pro"
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := Run([]string{"config", "reasoning-language", "--local", "en"}, "test-version"); rc != 0 {
+			t.Fatalf("config reasoning-language --local rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(out, `reasoning_language = "en"`) {
+		t.Fatalf("config reasoning-language --local output = %q", out)
+	}
+
+	body, err := os.ReadFile("voltui.toml")
+	if err != nil {
+		t.Fatalf("read project config: %v", err)
+	}
+	if strings.Contains(string(body), "default_model") {
+		t.Fatalf("project reasoning-language override should not pin default_model:\n%s", body)
+	}
+	if !strings.Contains(string(body), "[agent]") || !strings.Contains(string(body), `reasoning_language = "en"`) {
+		t.Fatalf("project config missing reasoning_language override:\n%s", body)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load merged config: %v", err)
+	}
+	if cfg.DefaultModel != "mimo-pro" {
+		t.Fatalf("default_model = %q, want global mimo-pro", cfg.DefaultModel)
+	}
+	if cfg.ReasoningLanguage() != "en" {
+		t.Fatalf("reasoning_language = %q, want local en", cfg.ReasoningLanguage())
+	}
+}
+
+func TestConfigReasoningLanguageRejectsAliases(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"config", "reasoning-language", "中文"}, "test-version"); rc != 2 {
+			t.Fatalf("config reasoning-language alias rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "must be auto|zh|en") {
+		t.Fatalf("config reasoning-language alias stderr = %q", errOut)
+	}
+}
+
+func TestProvidersWithMissingKeysOnlyChecksActiveDefaultModel(t *testing.T) {
+	cfg := config.Default()
+	t.Setenv("XIGU_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("MIMO_API_KEY", "")
+
+	missing := providersWithMissingKeys(cfg)
+	if len(missing) != 1 {
+		t.Fatalf("missing providers = %+v, want only active default model provider", missing)
+	}
+	if missing[0].APIKeyEnv != "XIGU_API_KEY" {
+		t.Fatalf("missing key env = %q, want XIGU_API_KEY", missing[0].APIKeyEnv)
+	}
+}
+
+func TestProvidersWithMissingKeysIgnoresUnusedBuiltInPresets(t *testing.T) {
+	cfg := config.Default()
+	t.Setenv("XIGU_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("MIMO_API_KEY", "")
+
+	if missing := providersWithMissingKeys(cfg); len(missing) != 0 {
+		t.Fatalf("missing providers = %+v, want none when only the configured default is keyed", missing)
+	}
+}
+
+func TestProvidersWithMissingKeysIncludesReferencedSecondaryModels(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = append(cfg.Providers,
+		config.ProviderEntry{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY"},
+		config.ProviderEntry{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"},
+	)
+	cfg.Agent.PlannerModel = "mimo-pro"
+	cfg.Agent.SubagentModel = "mimo-flash"
+	cfg.Agent.SubagentModels = map[string]string{
+		"review": "mimo-pro/mimo-v2.5-pro",
+	}
+	cfg.Agent.AutoPlanClassifier = "mimo-flash/mimo-v2.5"
+	t.Setenv("XIGU_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("MIMO_API_KEY", "")
+
+	missing := providersWithMissingKeys(cfg)
+	if len(missing) != 1 {
+		t.Fatalf("missing providers = %+v, want MiMo once", missing)
+	}
+	if missing[0].APIKeyEnv != "MIMO_API_KEY" {
+		t.Fatalf("missing key env = %q, want MIMO_API_KEY", missing[0].APIKeyEnv)
+	}
+}
+
+func TestProvidersWithMissingKeysSkipsDisabledAutoPlanClassifier(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY"})
+	cfg.Agent.AutoPlan = "off"
+	cfg.Agent.AutoPlanClassifier = "mimo-flash/mimo-v2.5"
+	t.Setenv("XIGU_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("MIMO_API_KEY", "")
+
+	if missing := providersWithMissingKeys(cfg); len(missing) != 0 {
+		t.Fatalf("missing providers = %+v, want none when auto-plan classifier is disabled", missing)
+	}
+
+	cfg.Agent.AutoPlan = "on"
+	missing := providersWithMissingKeys(cfg)
+	if len(missing) != 1 {
+		t.Fatalf("missing providers = %+v, want enabled auto-plan classifier provider", missing)
+	}
+	if missing[0].APIKeyEnv != "MIMO_API_KEY" {
+		t.Fatalf("missing key env = %q, want MIMO_API_KEY", missing[0].APIKeyEnv)
+	}
+}
+
+type cliRecordSink struct {
+	events []event.Kind
+}
+
+func (s *cliRecordSink) Emit(e event.Event) {
+	s.events = append(s.events, e.Kind)
+}
+
+type cliRecordSender struct {
+	messages []notify.Message
+}
+
+func (s *cliRecordSender) Send(m notify.Message) error {
+	s.messages = append(s.messages, m)
+	return nil
+}
+
+func TestWithNotificationsWrapsCLISinkWithConfiguredSender(t *testing.T) {
+	inner := &cliRecordSink{}
+	sender := &cliRecordSender{}
+	calls := 0
+	prev := newNotificationSender
+	newNotificationSender = func() notify.Sender {
+		calls++
+		return sender
+	}
+	t.Cleanup(func() { newNotificationSender = prev })
+
+	cfg := config.Default()
+	cfg.Notifications.Enabled = true
+
+	wrapped := withNotifications(inner, cfg)
+	wrapped.Emit(event.Event{Kind: event.TurnDone})
+
+	if calls != 1 {
+		t.Fatalf("newNotificationSender calls = %d, want 1", calls)
+	}
+	if len(inner.events) != 1 || inner.events[0] != event.TurnDone {
+		t.Fatalf("forwarded events = %v, want [TurnDone]", inner.events)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].Body != "Turn finished" {
+		t.Fatalf("notification body = %q, want Turn finished", sender.messages[0].Body)
+	}
+}
+
+func TestSetupOverwritePromptShowsYNDefault(t *testing.T) {
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+	for _, lang := range []string{"en", "zh"} {
+		i18n.DetectLanguage(lang)
+		var out bytes.Buffer
+		if confirmReconfigureExistingConfig("config.toml", bufio.NewScanner(strings.NewReader("\n")), &out) {
+			t.Fatalf("%s empty overwrite answer should keep existing config", lang)
+		}
+		if !strings.Contains(out.String(), "[y/N]:") {
+			t.Fatalf("%s overwrite prompt should show explicit [y/N] default, got %q", lang, out.String())
+		}
 	}
 }
 
 // TestConfigureKeys verifies that a shared api_key_env (each vendor's SKUs use
 // the same env var) is asked only once, and entered keys become env lines.
 func TestConfigureKeys(t *testing.T) {
-	// Force a clean baseline: any DEEPSEEK_API_KEY / MIMO_API_KEY in the
+	// Force a clean baseline: any DEEPSEEK_API_KEY in the
 	// process env (e.g. inherited from the test runner) would be picked up
 	// by the new "reuse existing" path and the prompt would be skipped,
 	// making the assertion below noisy.
@@ -267,7 +851,7 @@ func TestConfigureKeysReusesExistingEnv(t *testing.T) {
 
 	selected := config.Default().Providers
 	var output bytes.Buffer
-	env := configureKeys(selected, strings.NewReader("xigu-key-from-input\nmi-key-from-input\n"), &output)
+	env := configureKeys(selected, strings.NewReader("xigu-key-from-input\n\nmi-key-from-input\n"), &output)
 
 	if len(env) != 3 {
 		t.Fatalf("env = %v (want 3: Xigu entered + DeepSeek reused + MiMo entered)", env)
@@ -286,17 +870,35 @@ func TestConfigureKeysReusesExistingEnv(t *testing.T) {
 	}
 }
 
-// TestConfigureKeysAllSetSkipsInput ensures that when every env var is
-// already populated, configureKeys returns without reading anything from
-// the input — critical for the first-time-setup flow, where the URL-fetch
-// step has already collected all keys and configureKeys is a no-op.
-func TestConfigureKeysAllSetSkipsInput(t *testing.T) {
+func TestConfigureKeysCanResetExistingEnv(t *testing.T) {
+	t.Setenv("XIGU_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "stale-ds-key")
+	t.Setenv("MIMO_API_KEY", "")
+
+	selected := config.Default().Providers
+	var output bytes.Buffer
+	env := configureKeys(selected, strings.NewReader("xigu-key\ny\nfresh-ds-key\nmi-key\n"), &output)
+
+	if len(env) != 3 {
+		t.Fatalf("env = %v (want 3: Xigu entered + DeepSeek reset + MiMo entered)", env)
+	}
+	if env[1] != "DEEPSEEK_API_KEY=fresh-ds-key" {
+		t.Errorf("env[1] = %q, want freshly entered value", env[1])
+	}
+	if !strings.Contains(output.String(), "[y/N]:") || !strings.Contains(output.String(), "DEEPSEEK_API_KEY") {
+		t.Errorf("expected a reset confirmation for DEEPSEEK_API_KEY, got:\n%s", output.String())
+	}
+}
+
+// TestConfigureKeysAllSetDefaultsToReusingInput ensures that when every env var
+// is already populated, pressing Enter at each confirmation keeps the values.
+func TestConfigureKeysAllSetDefaultsToReusingInput(t *testing.T) {
 	t.Setenv("XIGU_API_KEY", "xigu")
 	t.Setenv("DEEPSEEK_API_KEY", "ds")
 	t.Setenv("MIMO_API_KEY", "mi")
 
 	selected := config.Default().Providers
-	env := configureKeys(selected, strings.NewReader("should-not-be-consumed\n"), io.Discard)
+	env := configureKeys(selected, strings.NewReader("\n\n\n"), io.Discard)
 	if len(env) != 3 {
 		t.Errorf("env = %v, want 3 (all reused)", env)
 	}
@@ -304,8 +906,8 @@ func TestConfigureKeysAllSetSkipsInput(t *testing.T) {
 
 // TestAppendEnvUpsertReplacesExistingKey covers the bug where re-running the
 // wizard with a corrected key would append a second line for the same env
-// var. loadDotEnv is first-wins, so without dedupe the stale key kept
-// authenticating, and the user saw a 401 with no obvious cause.
+// var. Without dedupe, different dotenv readers can disagree on which
+// assignment wins, leaving stale keys hard to diagnose.
 func TestAppendEnvUpsertReplacesExistingKey(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "") // also covers the os.Setenv pin path
 	p := filepath.Join(t.TempDir(), ".env")
@@ -345,8 +947,8 @@ func TestAppendEnvUpsertHandlesExportPrefix(t *testing.T) {
 func TestGroupByFamily(t *testing.T) {
 	order, members, info := groupByFamily(config.Default().Providers)
 
-	if got := order; !reflect.DeepEqual(got, []string{"xigu", "deepseek", "mimo"}) {
-		t.Fatalf("family order = %v, want [xigu deepseek mimo]", got)
+	if got := order; !reflect.DeepEqual(got, []string{"xigu", "deepseek", "mimo-pro", "mimo-flash"}) {
+		t.Fatalf("family order = %v, want [xigu deepseek mimo-pro mimo-flash]", got)
 	}
 	if got := members["xigu"]; !reflect.DeepEqual(got, []int{0, 1, 2, 3}) {
 		t.Errorf("xigu members = %v, want [0 1 2 3]", got)
@@ -354,11 +956,14 @@ func TestGroupByFamily(t *testing.T) {
 	if got := members["deepseek"]; !reflect.DeepEqual(got, []int{4, 5}) {
 		t.Errorf("deepseek members = %v, want [4 5]", got)
 	}
-	if got := members["mimo"]; !reflect.DeepEqual(got, []int{6, 7}) {
-		t.Errorf("mimo members = %v, want [6 7]", got)
+	if got := members["mimo-pro"]; !reflect.DeepEqual(got, []int{6}) {
+		t.Errorf("mimo-pro members = %v, want [6]", got)
 	}
-	if info["xigu"].name != "西谷内网" || info["deepseek"].name != "DeepSeek" || info["mimo"].name != "MiMo (Xiaomi)" {
-		t.Errorf("display names = %q / %q / %q", info["xigu"].name, info["deepseek"].name, info["mimo"].name)
+	if got := members["mimo-flash"]; !reflect.DeepEqual(got, []int{7}) {
+		t.Errorf("mimo-flash members = %v, want [7]", got)
+	}
+	if info["xigu"].name != "西谷内网" || info["deepseek"].name != "DeepSeek" || info["mimo-pro"].name != "mimo-pro" || info["mimo-flash"].name != "mimo-flash" {
+		t.Errorf("display names = %q / %q / %q / %q", info["xigu"].name, info["deepseek"].name, info["mimo-pro"].name, info["mimo-flash"].name)
 	}
 }
 
@@ -381,15 +986,96 @@ func TestFetchOrFallback(t *testing.T) {
 	})
 
 	t.Run("no key set returns static list (offline first-run)", func(t *testing.T) {
-		t.Setenv("VOLTUI_FETCH_TEST_KEY", "")
+		t.Setenv("REASONIX_FETCH_TEST_KEY", "")
 		probe := config.ProviderEntry{
 			BaseURL:   "http://127.0.0.1:1", // unreachable, no listener
-			APIKeyEnv: "VOLTUI_FETCH_TEST_KEY",
+			APIKeyEnv: "REASONIX_FETCH_TEST_KEY",
 			Models:    []string{"preset-a"},
 		}
 		got := fetchOrFallback(&probe, "Test")
 		if !reflect.DeepEqual(got, []string{"preset-a"}) {
 			t.Errorf("got %v, want preset-a", got)
+		}
+	})
+}
+
+// TestFetchModelListCompatWalksCandidates covers the wizard's custom-provider
+// model probe. Previously the probe was a single URL (baseURL+"/models"),
+// which worked for OpenAI vendors with a /v1 base URL but silently failed
+// for Anthropic-style root URLs (no /v1) and Anthropic-compatible proxies
+// (a /v1 base URL but a /v1/messages endpoint). The new helper walks
+// BuildModelFetchURLs's candidate list — root + /v1 + known compat
+// suffixes — so the same probe now succeeds for both shapes, matching
+// what the conversation-time client URL will actually be.
+func TestFetchModelListCompatWalksCandidates(t *testing.T) {
+	t.Run("anthropic root form resolves via v1 fallback", func(t *testing.T) {
+		var gotPath atomic.Value
+		gotPath.Store("")
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath.Store(r.URL.Path)
+			if r.URL.Path == "/v1/models" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"data":[{"id":"claude-test"}]}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		models, err := fetchModelListCompat(context.Background(), srv.URL, "k")
+		if err != nil {
+			t.Fatalf("fetchModelListCompat: %v", err)
+		}
+		if !reflect.DeepEqual(models, []string{"claude-test"}) {
+			t.Errorf("models = %v, want [claude-test]", models)
+		}
+		if got := gotPath.Load().(string); got != "/v1/models" {
+			t.Errorf("probe path = %q, want /v1/models (root form should fall through to v1 candidate)", got)
+		}
+	})
+
+	t.Run("versioned v1 base URL hits models directly", func(t *testing.T) {
+		var gotPath atomic.Value
+		gotPath.Store("")
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath.Store(r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"data":[{"id":"model-a"}]}`)
+		}))
+		defer srv.Close()
+
+		models, err := fetchModelListCompat(context.Background(), srv.URL+"/v1", "k")
+		if err != nil {
+			t.Fatalf("fetchModelListCompat: %v", err)
+		}
+		if !reflect.DeepEqual(models, []string{"model-a"}) {
+			t.Errorf("models = %v, want [model-a]", models)
+		}
+		if got := gotPath.Load().(string); got != "/v1/models" {
+			t.Errorf("probe path = %q, want /v1/models", got)
+		}
+	})
+
+	t.Run("endpoint-miss on every candidate returns empty (manual flow)", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		models, err := fetchModelListCompat(context.Background(), srv.URL, "k")
+		if err != nil {
+			t.Fatalf("expected graceful empty result on all-miss, got err: %v", err)
+		}
+		if len(models) != 0 {
+			t.Errorf("expected empty models on all-miss, got %v", models)
+		}
+	})
+
+	t.Run("non-404 network error short-circuits with the real error", func(t *testing.T) {
+		// Point at a closed port — connection refused, not a 404.
+		models, err := fetchModelListCompat(context.Background(), "http://127.0.0.1:1", "k")
+		if err == nil {
+			t.Fatalf("expected error for unreachable host, got models=%v", models)
 		}
 	})
 }
@@ -550,6 +1236,78 @@ func TestProviderSlug(t *testing.T) {
 			t.Errorf("fallback slug = %q, want 8 hex chars after prefix", got)
 		}
 	})
+
+	t.Run("sha1 fallback for non-ascii host", func(t *testing.T) {
+		got := providerSlug("custom", "https://例子.测试/v1")
+		if !strings.HasPrefix(got, "custom-") || got == "custom-" {
+			t.Errorf("fallback slug = %q, want custom-<hex>", got)
+		}
+		if len(got) != len("custom-")+8 {
+			t.Errorf("fallback slug = %q, want 8 hex chars after prefix", got)
+		}
+	})
+}
+
+func TestAPIKeyEnvFromProviderName(t *testing.T) {
+	cases := []struct {
+		name, providerName, want string
+	}{
+		{"custom host slug", "custom-token-sensenova-cn", "CUSTOM_TOKEN_SENSENOVA_CN_API_KEY"},
+		{"localhost slug with port", "custom-localhost-11434", "CUSTOM_LOCALHOST_11434_API_KEY"},
+		{"desktop-style custom name", "Local Gateway", "LOCAL_GATEWAY_API_KEY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := apiKeyEnvFromProviderName(tc.providerName); got != tc.want {
+				t.Errorf("apiKeyEnvFromProviderName(%q) = %q, want %q", tc.providerName, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("non-ascii provider names use desktop-compatible hash fallback", func(t *testing.T) {
+		if got, want := apiKeyEnvFromProviderName("商汤"), "CUSTOM_d39b9067_API_KEY"; got != want {
+			t.Errorf("apiKeyEnvFromProviderName(non-ascii) = %q, want %q", got, want)
+		}
+		if got := apiKeyEnvFromProviderName("通义千问"); got == "CUSTOM_d39b9067_API_KEY" || got == "CUSTOM_API_KEY" {
+			t.Errorf("apiKeyEnvFromProviderName(second non-ascii) = %q, want distinct stable fallback", got)
+		}
+	})
+}
+
+func TestPromptCustomProviderManualDefaultsKeyEnvFromBaseURL(t *testing.T) {
+	entries, err := promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("\n\nsensenova-chat\n")),
+		"https://token.sensenova.cn/v1",
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("promptCustomProviderManualWith: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if got, want := entries[0].APIKeyEnv, "CUSTOM_TOKEN_SENSENOVA_CN_API_KEY"; got != want {
+		t.Errorf("APIKeyEnv = %q, want %q", got, want)
+	}
+}
+
+func TestPromptCustomProviderManualPreservesExplicitKeyEnv(t *testing.T) {
+	entries, err := promptCustomProviderManualWith(
+		bufio.NewScanner(strings.NewReader("\nmanual-chat\n")),
+		"https://token.sensenova.cn/v1",
+		"CUSTOM_API_KEY",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("promptCustomProviderManualWith: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if got := entries[0].APIKeyEnv; got != "CUSTOM_API_KEY" {
+		t.Errorf("APIKeyEnv = %q, want explicit CUSTOM_API_KEY", got)
+	}
 }
 
 // TestFilterStaleCustomEntries covers the wizard's auto-cleanup of legacy
@@ -601,7 +1359,7 @@ func TestFilterStaleCustomEntries(t *testing.T) {
 	})
 }
 
-func TestWithBuiltinFamiliesAddsMissingMiMo(t *testing.T) {
+func TestWithBuiltinFamiliesDoesNotAddMissingMimo(t *testing.T) {
 	// The user's case: a voltui.toml that defines only deepseek providers.
 	cfg := []config.ProviderEntry{
 		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com"},
@@ -612,8 +1370,11 @@ func TestWithBuiltinFamiliesAddsMissingMiMo(t *testing.T) {
 	for _, k := range order {
 		seen[info[k].name] = true
 	}
-	if !seen["DeepSeek"] || !seen["MiMo (Xiaomi)"] {
-		t.Fatalf("wizard families = %v, want both DeepSeek and MiMo", order)
+	if !seen["DeepSeek"] {
+		t.Fatalf("wizard families = %v, want DeepSeek", order)
+	}
+	if seen["MiMo (Xiaomi)"] {
+		t.Fatalf("wizard families = %v, should not inject MiMo", order)
 	}
 	// A user's customized deepseek must not be duplicated.
 	if n := len(groupByFamilyKeys(withBuiltinFamilies(cfg), "deepseek")); n != 2 {
@@ -621,17 +1382,142 @@ func TestWithBuiltinFamiliesAddsMissingMiMo(t *testing.T) {
 	}
 }
 
+func TestWithBuiltinFamiliesForLanguageUsesDeepSeekPricing(t *testing.T) {
+	providers := withBuiltinFamiliesForLanguage(nil, "zh")
+	var flash *config.ProviderEntry
+	for i := range providers {
+		if providers[i].Name == "deepseek-flash" {
+			flash = &providers[i]
+			break
+		}
+	}
+	if flash == nil {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if flash.Price == nil || flash.Price.Output != 2 || flash.Price.Currency != "¥" {
+		t.Fatalf("flash price = %+v, want CNY preset", flash.Price)
+	}
+}
+
+// TestWithBuiltinFamiliesRestoresSiblingEntries covers the re-run scenario:
+// a user previously selected only deepseek-v4-flash (saved as deepseek-flash
+// with a single model). Re-running `voltui setup` must still surface the
+// sibling deepseek-pro entry so the user can pick deepseek-v4-pro too,
+// rather than only showing the previously selected model.
+func TestWithBuiltinFamiliesRestoresSiblingEntries(t *testing.T) {
+	cfg := []config.ProviderEntry{
+		{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", Models: []string{"deepseek-v4-flash"}, APIKeyEnv: "DEEPSEEK_API_KEY"},
+	}
+	got := withBuiltinFamilies(cfg)
+
+	// deepseek-pro must be restored even though deepseek family already exists.
+	var found bool
+	for _, p := range got {
+		if p.Name == "deepseek-pro" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("withBuiltinFamilies(%+v) = %v, want deepseek-pro sibling restored", cfg, namesOf(got))
+	}
+
+	// The static model list for the deepseek family must include both SKUs.
+	_, members, _ := groupByFamily(got)
+	deepseekIdxs := members["deepseek"]
+	models := familyStaticModels(got, deepseekIdxs)
+	wantModels := map[string]bool{"deepseek-v4-flash": true, "deepseek-v4-pro": true}
+	for _, m := range models {
+		delete(wantModels, m)
+	}
+	if len(wantModels) > 0 {
+		t.Errorf("familyStaticModels = %v, missing %v", models, wantModels)
+	}
+}
+
+func namesOf(ps []config.ProviderEntry) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.Name
+	}
+	return out
+}
+
 func groupByFamilyKeys(ps []config.ProviderEntry, key string) []int {
 	_, members, _ := groupByFamily(ps)
 	return members[key]
 }
 
-func TestWriteDefaultConfigDisablesCodegraph(t *testing.T) {
+func TestWriteDefaultConfigOmitsLegacyInternalMCPSections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "voltui.toml")
 	if rc := writeDefaultConfig(path); rc != 0 {
 		t.Fatalf("writeDefaultConfig rc = %d", rc)
 	}
-	if c := config.LoadForEdit(path); c.Codegraph.Enabled {
-		t.Fatal("a freshly scaffolded config left codegraph enabled; new users should start without it")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, forbidden := range []string{"[codegraph]", "[builtin_mcp]", "[builtin_mcp_updates]"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("default config should omit %s:\n%s", forbidden, text)
+		}
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestProvidersWithMissingKeysOnlyReferenced(t *testing.T) {
+	t.Setenv("XIGU_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("MIMO_API_KEY", "")
+	cfg := config.Default()
+
+	got := providersWithMissingKeys(cfg)
+	envs := map[string]bool{}
+	for _, p := range got {
+		envs[p.APIKeyEnv] = true
+	}
+	if !envs["XIGU_API_KEY"] {
+		t.Errorf("the default model's missing key must be prompted, got %v", got)
+	}
+	if envs["DEEPSEEK_API_KEY"] {
+		t.Errorf("unreferenced DeepSeek key must not be prompted, got %v", got)
+	}
+	if envs["MIMO_API_KEY"] {
+		t.Errorf("unreferenced preset keys must not be prompted, got %v", got)
+	}
+}
+
+func TestProvidersWithMissingKeysIncludesPlannerModel(t *testing.T) {
+	t.Setenv("XIGU_API_KEY", "set")
+	t.Setenv("DEEPSEEK_API_KEY", "set")
+	t.Setenv("MIMO_API_KEY", "")
+	cfg := config.Default()
+	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY"})
+	cfg.Agent.PlannerModel = "mimo-pro"
+
+	got := providersWithMissingKeys(cfg)
+	if len(got) != 1 || got[0].APIKeyEnv != "MIMO_API_KEY" {
+		t.Errorf("planner model's missing key must be prompted, got %+v", got)
 	}
 }

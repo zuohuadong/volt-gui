@@ -4,7 +4,7 @@ Selected runtime: npm package (@goalforge/cli@latest)
 
 Source checkout fallback: /Volumes/Data/workspace/goal-forge
 
-This directory is managed by `agent-team deploy`. It connects the project Task Contract / design-review workflow to Goal Forge without vendoring Goal Forge into this project. Runtime discovery prefers an explicit/local binary first, then the latest published npm package, and keeps a sibling source checkout as a development fallback.
+This directory is managed by `agmesh deploy`. It connects the project Task Contract / design-review workflow to Goal Forge without vendoring Goal Forge into this project. Runtime discovery prefers an explicit/local binary first, then the latest published npm package, and keeps a sibling source checkout as a development fallback.
 
 Use Goal Forge when the deliverable is a design artifact, architecture/API/data model decision, migration plan, or any high-risk plan that benefits from adversarial review before implementation.
 
@@ -32,13 +32,13 @@ npx -y @goalforge/cli@latest run "/Volumes/Data/workspace/volt-gui/.agents/goal-
 Shortcuts from this project:
 
 ```bash
-agent-team goal-forge status .
-agent-team goal-forge init . "<design goal>"
+agmesh goal-forge status .
+agmesh goal-forge init . "<design goal>"
 ```
 
 ## Coordination Rules
 
-- In coordination DB v2 projects, keep `.agents/state/coordination.db` as the execution source and use `agent-team context` / `automation status` / `automation doctor` for bounded reads.
+- In coordination DB v2 projects, keep `.agents/state/coordination.db` as the execution source and use `agmesh context` / `automation status` / `automation doctor` for bounded reads.
 - In legacy projects only, `tasks.md`, `progress.md`, and `.mailbox/` remain the fallback coordination files until migration.
 - Keep Goal Forge runs under `.agents/goal-forge/runs/` as review evidence for design artifacts.
 - Record the final Goal Forge run path in the Task Contract under `goal_forge.run_dir`.

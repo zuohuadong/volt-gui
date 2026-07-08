@@ -42,7 +42,7 @@ func runTool(t *testing.T, tl tool.Tool, m map[string]any) string {
 }
 
 func TestBuiltinsRegistered(t *testing.T) {
-	want := []string{"bash", "edit_file", "glob", "grep", "ls", "multi_edit", "read_file", "web_fetch", "write_file"}
+	want := []string{"bash", "browser_control", "desktop_keyboard", "desktop_mouse", "desktop_screenshot", "edit_file", "glob", "grep", "ls", "multi_edit", "read_file", "web_fetch", "write_file"}
 	for _, name := range want {
 		if _, ok := tool.LookupBuiltin(name); !ok {
 			t.Errorf("built-in %q not registered", name)
@@ -59,6 +59,7 @@ func TestBuiltinReadOnlyClassification(t *testing.T) {
 	readOnly := map[string]bool{
 		"read_file": true, "ls": true, "glob": true, "grep": true, "web_fetch": true,
 		"write_file": false, "edit_file": false, "multi_edit": false, "bash": false,
+		"browser_control": false, "desktop_keyboard": false, "desktop_mouse": false, "desktop_screenshot": false,
 	}
 	for name, want := range readOnly {
 		tl, ok := tool.LookupBuiltin(name)
@@ -192,6 +193,8 @@ func TestEditFile(t *testing.T) {
 	args := argsJSON(t, map[string]any{"path": f, "old_string": "x", "new_string": "y"})
 	if _, err := (editFile{}).Execute(context.Background(), args); err == nil {
 		t.Fatal("expected not-unique error")
+	} else if !strings.Contains(err.Error(), "repeated separator lines") {
+		t.Fatalf("not-unique error should steer away from weak anchors, got: %v", err)
 	}
 	if b, _ := os.ReadFile(f); string(b) != "x x x" {
 		t.Fatalf("file modified despite error: %q", b)

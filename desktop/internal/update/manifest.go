@@ -1,8 +1,5 @@
-// Package update defines the desktop auto-updater's shared types and signature
-// verification — the single source of truth for the latest.json manifest format,
-// the platform-asset lookup, and minisign verification. Both the CI signing tool
-// (desktop/cmd/sign) and the running updater (desktop/updater.go) import this
-// package, so the sign path and the verify path can never drift apart.
+// Package update defines the desktop auto-updater's shared types: the latest.json
+// manifest format and platform-asset lookup used by both CI and the running app.
 package update
 
 import "runtime"
@@ -23,9 +20,8 @@ type Manifest struct {
 // needs to verify and report on it.
 type Asset struct {
 	URL    string `json:"url"`    // direct download URL for the artifact
-	Sig    string `json:"sig"`    // URL of the detached minisign (.minisig) signature
 	Size   int64  `json:"size"`   // artifact size in bytes (download-progress denominator)
-	SHA256 string `json:"sha256"` // lowercase hex digest, for a second integrity check after verify
+	SHA256 string `json:"sha256"` // lowercase hex digest used before applying an update
 }
 
 // PlatformKey is the map key used in Manifest.Platforms for the given OS/arch.

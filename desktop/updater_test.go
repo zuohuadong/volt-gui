@@ -4,8 +4,20 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"voltui/desktop/internal/update"
 )
@@ -64,18 +76,127 @@ func TestEvaluate(t *testing.T) {
 	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.AssetSize != 999 {
 		t.Errorf("metadata not carried: %+v", full)
 	}
-	noAsset := mk("v1.1.0")
-	noAsset.Platforms = map[string]update.Asset{"missing-platform": {Size: 999}}
-	if got := evaluate("v1.0.0", noAsset); got.Available || got.AssetSize != 0 {
-		t.Errorf("missing current-platform asset should not prompt: %+v", got)
-	}
-	unsigned := mk("v1.1.0")
-	unsigned.Platforms[update.CurrentPlatform()] = update.Asset{Size: 999}
-	if got := evaluate("v1.0.0", unsigned); !got.Available || got.CanSelfUpdate {
-		t.Errorf("unsigned artifact should prompt manual download only: %+v", got)
-	}
 	if full.CanSelfUpdate != (runtime.GOOS != "darwin") {
 		t.Errorf("CanSelfUpdate = %v on %s", full.CanSelfUpdate, runtime.GOOS)
+	}
+}
+
+func TestPrivateForkUsesCNBReleaseManifest(t *testing.T) {
+	orig := channel
+	t.Cleanup(func() { channel = orig })
+
+	channel = "stable"
+	stable := manifestEndpoints()
+	channel = "canary"
+	canary := manifestEndpoints()
+
+	if len(stable) != 1 || stable[0] != manifestPrimary {
+		t.Fatalf("stable endpoints = %q, want only the CNB manifest", stable)
+	}
+	if len(canary) != 1 || canary[0] != manifestPrimary {
+		t.Fatalf("canary endpoints = %q, want the private CNB release line", canary)
+	}
+	if strings.Contains(stable[0], "github.com") || strings.Contains(stable[0], "dl.voltui.io") {
+		t.Errorf("private updater endpoint should not use public VoltUI hosting: %q", stable[0])
+	}
+	if strings.Contains(downloadPage(), "/releases/latest") {
+		t.Errorf("download page should not use GitHub's repository-wide latest release: %q", downloadPage())
+	}
+	if !strings.Contains(downloadPage(), "cnb.cool/aizhuliren/xgic/anyong-agent") {
+		t.Errorf("download page = %q, want private CNB release page", downloadPage())
+	}
+}
+
+func withUpdateCacheDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	restore := updateCacheBaseDir
+	updateCacheBaseDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { updateCacheBaseDir = restore })
+	return dir
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestSaveCachedUpdateMarksEvaluateDownloaded(t *testing.T) {
+	withUpdateCacheDir(t)
+	oldChannel := channel
+	channel = "stable"
+	t.Cleanup(func() { channel = oldChannel })
+
+	data := []byte("verified artifact")
+	asset := update.Asset{
+		URL:    "https://dl.voltui.io/desktop-v9.9.9/VoltUI-linux-amd64.tar.gz",
+		Size:   int64(len(data)),
+		SHA256: sha256Hex(data),
+	}
+	manifest := &update.Manifest{
+		Version:   "v9.9.9",
+		Platforms: map[string]update.Asset{update.CurrentPlatform(): asset},
+	}
+	if got := evaluate("v1.0.0", manifest); got.Downloaded {
+		t.Fatal("fresh cache should not report a downloaded update")
+	}
+	meta, err := saveCachedUpdate("v9.9.9", asset, data)
+	if err != nil {
+		t.Fatalf("saveCachedUpdate: %v", err)
+	}
+	if meta.Version != "v9.9.9" || meta.Channel != "stable" || meta.Platform != update.CurrentPlatform() {
+		t.Fatalf("cached metadata mismatch: %+v", meta)
+	}
+	if got := evaluate("v1.0.0", manifest); !got.Downloaded {
+		t.Fatalf("evaluate did not detect cached update: %+v", got)
+	}
+}
+
+func TestCachedUpdateRejectsTamperedArtifact(t *testing.T) {
+	withUpdateCacheDir(t)
+	oldChannel := channel
+	channel = "stable"
+	t.Cleanup(func() { channel = oldChannel })
+
+	data := []byte("verified artifact")
+	asset := update.Asset{
+		URL:    "https://dl.voltui.io/desktop-v9.9.9/VoltUI-linux-amd64.tar.gz",
+		Size:   int64(len(data)),
+		SHA256: sha256Hex(data),
+	}
+	meta, err := saveCachedUpdate("v9.9.9", asset, data)
+	if err != nil {
+		t.Fatalf("saveCachedUpdate: %v", err)
+	}
+	if err := os.WriteFile(meta.Path, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cachedUpdateMatches("v9.9.9", asset) {
+		t.Fatal("tampered cached artifact should not match")
+	}
+	if _, _, err := readVerifiedCachedUpdate(); err == nil {
+		t.Fatal("readVerifiedCachedUpdate should reject a tampered artifact")
+	}
+}
+
+func TestCachedUpdateRejectsDifferentChannel(t *testing.T) {
+	withUpdateCacheDir(t)
+	oldChannel := channel
+	channel = "stable"
+	t.Cleanup(func() { channel = oldChannel })
+
+	data := []byte("verified artifact")
+	asset := update.Asset{
+		URL:    "https://dl.voltui.io/desktop-v9.9.9/VoltUI-linux-amd64.tar.gz",
+		Size:   int64(len(data)),
+		SHA256: sha256Hex(data),
+	}
+	if _, err := saveCachedUpdate("v9.9.9", asset, data); err != nil {
+		t.Fatalf("saveCachedUpdate: %v", err)
+	}
+	channel = "canary"
+	if _, _, err := readVerifiedCachedUpdate(); err == nil {
+		t.Fatal("readVerifiedCachedUpdate should reject a cache from another channel")
 	}
 }
 
@@ -123,3 +244,163 @@ func TestExtractBinary(t *testing.T) {
 		t.Error("missing entry should error")
 	}
 }
+
+func fastRetry(t *testing.T) {
+	t.Helper()
+	restore := retryBackoff
+	retryBackoff = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { retryBackoff = restore })
+}
+
+func TestDownloadRecoversFromMidStreamReset(t *testing.T) {
+	fastRetry(t)
+	const body = "complete-installer-bytes"
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) < int32(downloadAttempts) {
+			// Mid-stream reset: promise 100 bytes, send a few, drop the socket —
+			// the client's body read fails with unexpected EOF, exactly the CN-IPv6
+			// "forcibly closed" case the retry exists for.
+			conn, bw, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			bw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")
+			bw.Flush()
+			conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	data, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil)
+	if err != nil {
+		t.Fatalf("download should recover after %d resets: %v", downloadAttempts-1, err)
+	}
+	if string(data) != body {
+		t.Fatalf("got %q, want %q", data, body)
+	}
+	if n := atomic.LoadInt32(&calls); n != int32(downloadAttempts) {
+		t.Fatalf("made %d attempts, want %d", n, downloadAttempts)
+	}
+}
+
+func TestDownloadGivesUpAfterCap(t *testing.T) {
+	fastRetry(t)
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	if _, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil); err == nil {
+		t.Fatal("download should fail after exhausting retries")
+	}
+	if n := atomic.LoadInt32(&calls); n != int32(downloadAttempts) {
+		t.Fatalf("made %d attempts, want %d", n, downloadAttempts)
+	}
+}
+
+func TestRetryTransientStopsWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	if err := retryTransient(ctx, func(int) error {
+		calls++
+		return errors.New("boom")
+	}); err == nil {
+		t.Fatal("cancelled retry should return the error")
+	}
+	if calls != 1 {
+		t.Fatalf("cancelled retry made %d calls, want 1", calls)
+	}
+}
+
+func TestDownloadResumesWithRange(t *testing.T) {
+	fastRetry(t)
+	full := bytes.Repeat([]byte("0123456789"), 50) // 500 bytes
+	const cut = 200
+	var calls int32
+	rangeCh := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			// First attempt: promise the whole file, send a prefix, drop the socket.
+			conn, bw, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			fmt.Fprintf(bw, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", len(full))
+			bw.Write(full[:cut])
+			bw.Flush()
+			conn.Close()
+			return
+		}
+		// Resume attempt: honor the Range header with a 206 + Content-Range.
+		rng := r.Header.Get("Range")
+		rangeCh <- rng
+		start := 0
+		fmt.Sscanf(rng, "bytes=%d-", &start)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(full)-1, len(full)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(full[start:])
+	}))
+	defer srv.Close()
+
+	data, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil)
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if !bytes.Equal(data, full) {
+		t.Fatalf("assembled %d bytes, want %d (equal=%v)", len(data), len(full), bytes.Equal(data, full))
+	}
+	select {
+	case rng := <-rangeCh:
+		if rng != fmt.Sprintf("bytes=%d-", cut) {
+			t.Fatalf("resume Range = %q, want bytes=%d-", rng, cut)
+		}
+	default:
+		t.Fatal("resume attempt sent no Range header")
+	}
+}
+
+func TestDownloadFallsBackToSecondClient(t *testing.T) {
+	fastRetry(t)
+	const body = "served-over-ipv4"
+	primary := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection reset (ipv6)")
+	})}
+	var fbCalls int32
+	fallback := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		atomic.AddInt32(&fbCalls, 1)
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Body:          io.NopCloser(strings.NewReader(body)),
+			ContentLength: int64(len(body)),
+			Header:        make(http.Header),
+		}, nil
+	})}
+
+	data, err := download(context.Background(), primary, fallback, "http://example.invalid/x", 0, nil)
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if string(data) != body {
+		t.Fatalf("got %q, want %q", data, body)
+	}
+	if atomic.LoadInt32(&fbCalls) == 0 {
+		t.Fatal("fallback client was never used after the primary failed")
+	}
+}
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

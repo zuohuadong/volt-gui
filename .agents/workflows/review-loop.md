@@ -14,7 +14,7 @@ with real-world data, or a human-owned loop.
 Run the selector first:
 
 ```bash
-agent-team automation loop-strategy . --task <task_id> --domain auto
+agmesh automation loop-strategy . --task <task_id> --domain auto
 ```
 
 Decision rules:
@@ -26,7 +26,7 @@ Decision rules:
 | Real-world demand or growth data | `macro-loop` | Require real interaction, lead, payment, retention, or conversion data. |
 | Taste, positioning, irreversible tradeoff | `human-loop` | Agents may prepare options; the human decides direction. |
 
-`agent-team automation review-loop` is allowed only for `goal` and
+`agmesh automation review-loop` is allowed only for `goal` and
 `micro-loop` outcomes. It must not be used to fake demand validation,
 marketing conversion, business viability, or irreversible product direction.
 
@@ -35,7 +35,7 @@ marketing conversion, business viability, or irreversible product direction.
 Normalize trigger intent before creating a loop plan:
 
 ```bash
-agent-team automation loop-trigger . \
+agmesh automation loop-trigger . \
   --task <task_id> \
   --source doctor \
   --event-key doctor-warning
@@ -62,7 +62,7 @@ passive trigger is passed `--execute`, the command fails closed.
 Generate a plan:
 
 ```bash
-agent-team automation review-loop . \
+agmesh automation review-loop . \
   --task <task_id> \
   --domain delivery \
   --panels contract,tests,runtime,docs \
@@ -73,7 +73,38 @@ agent-team automation review-loop . \
 The command writes to coordination DB in v2 projects, or to
 `.agents/state/review-loops/<task_id>.json` in legacy projects. It does not
 launch agents by itself. The plan lists panel commands that can be dispatched
-through the normal `agent-team subagent dispatch` runtime.
+through the normal `agmesh subagent dispatch` runtime.
+
+Run and inspect trace evidence:
+
+```bash
+agmesh automation review-loop-run . --task <task_id> --json
+agmesh automation loop-health . --json
+```
+
+`review-loop-run --json` includes `trace_eval` with pass/fail counts, an
+advisory score, grader dimensions, and the next action. `loop-health` summarizes
+runtime timeout/error mailbox state, review-loop/Goal Forge run evidence,
+context snapshot pressure, and the gated loop entry points:
+
+`review-loop` plans also include additive `adaptive_depth` metadata. It records
+the bounded min/max rounds, early-exit signals, deepen signals, escalation
+signals, and the contraction metric used by `trace_eval`. `review-loop-run`
+keeps existing output fields and adds `executed_rounds`, `early_exit_reason`,
+`contraction_delta`, and `adaptive_depth` under `trace_eval`. These fields only
+explain whether the loop stabilized, needs another bounded round, or should
+escalate to stronger review / human judgement; they do not override `max_rounds`,
+the 5-round cap, production approvals, product-signal boundaries, or release
+gates.
+
+- `agmesh automation tcb . --json` for Thread Control Blocks instead of full sidecar context.
+- `agmesh approval request|approve|reject` for production, secret, destructive git, migration, publish, or irreversible choices.
+- `agmesh automation product-signal` for real-world macro-product evidence; `agent_score` is proxy-only.
+- `agmesh automation skill-evolution --write` for human-reviewed skill/playbook Matter drafts.
+
+These commands record evidence or pause/resume eligibility. They must not
+auto-create product, marketing, skill rewrite, production, or approval
+execution loops.
 
 Hard limits:
 

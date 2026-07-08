@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"voltui/internal/config"
@@ -97,12 +98,16 @@ var (
 	queryTerminalBackgroundForTheme = queryTerminalBackground
 )
 
+// cliCursorShape is the active cursor shape for the textarea input, configured
+// via [ui] cursor_shape. Defaults to "underline".
+var cliCursorShape = "underline"
+
 func configureCLITheme(mode string) {
 	configureCLIThemeWithStyle(mode, "")
 }
 
 func configureCLIThemeWithStyle(mode, style string) {
-	if env := strings.TrimSpace(os.Getenv("VOLTUI_THEME")); env != "" {
+	if env := firstNonEmptyEnv("VOLTUI_THEME", "REASONIX_THEME"); env != "" {
 		if st, ok := cliThemeStyleByName(env); ok {
 			mode = st.mode
 			style = st.name
@@ -110,11 +115,20 @@ func configureCLIThemeWithStyle(mode, style string) {
 			mode = env
 		}
 	}
-	if env := strings.TrimSpace(os.Getenv("VOLTUI_THEME_STYLE")); env != "" {
+	if env := firstNonEmptyEnv("VOLTUI_THEME_STYLE", "REASONIX_THEME_STYLE"); env != "" {
 		style = env
 	}
 	activeCLITheme = resolveCLIThemeWithStyle(mode, style)
 	refreshCLIStyles()
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if env := strings.TrimSpace(os.Getenv(name)); env != "" {
+			return env
+		}
+	}
+	return ""
 }
 
 func resolveCLITheme(mode string) cliPalette {
@@ -252,7 +266,7 @@ func parseOSC11Response(s string) (terminalRGB, bool) {
 	payload = strings.TrimSpace(payload)
 	if strings.HasPrefix(payload, "#") {
 		r, g, b, ok := parseHexColor(payload)
-		return terminalRGB{int(r), int(g), int(b)}, ok
+		return terminalRGB{r, g, b}, ok
 	}
 	for _, prefix := range []string{"rgb:", "rgba:"} {
 		if strings.HasPrefix(payload, prefix) {
@@ -318,15 +332,15 @@ func bgSGR(c cliColor) string {
 	return fmt.Sprintf("\033[48;5;%dm", c.xterm)
 }
 
-func parseHexColor(hex string) (int64, int64, int64, bool) {
+func parseHexColor(hex string) (int, int, int, bool) {
 	hex = strings.TrimPrefix(hex, "#")
 	if len(hex) != 6 {
 		return 0, 0, 0, false
 	}
-	r, errR := strconv.ParseInt(hex[0:2], 16, 64)
-	g, errG := strconv.ParseInt(hex[2:4], 16, 64)
-	b, errB := strconv.ParseInt(hex[4:6], 16, 64)
-	return r, g, b, errR == nil && errG == nil && errB == nil
+	r, errR := strconv.ParseUint(hex[0:2], 16, 8)
+	g, errG := strconv.ParseUint(hex[2:4], 16, 8)
+	b, errB := strconv.ParseUint(hex[4:6], 16, 8)
+	return int(r), int(g), int(b), errR == nil && errG == nil && errB == nil
 }
 
 func supportsTrueColor() bool {
@@ -432,6 +446,14 @@ func applyTextareaTheme(ti *textarea.Model) {
 	} else {
 		styles.Cursor.Color = nil
 	}
+	switch cliCursorShape {
+	case "block":
+		styles.Cursor.Shape = tea.CursorBlock
+	case "bar":
+		styles.Cursor.Shape = tea.CursorBar
+	default:
+		styles.Cursor.Shape = tea.CursorUnderline
+	}
 	ti.SetStyles(styles)
 }
 
@@ -466,6 +488,10 @@ func (m *chatTUI) persistTheme(inputName string) {
 	if path == "" {
 		return
 	}
+	// Serialize the load-modify-save against other in-process user-config
+	// editors so concurrent writers don't drop each other's fields.
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
 	edit := config.LoadForEdit(path)
 	switch inputName {
 	case "auto", "light", "dark":

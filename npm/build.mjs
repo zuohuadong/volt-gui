@@ -18,10 +18,12 @@ const TARGETS = [
 
 const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME;
 if (!tag) {
-  console.error("usage: node npm/build.mjs <tag>   (e.g. v1.0.0)");
+  console.error("usage: node npm/build.mjs <tag>   (e.g. v1.0.0 or npm-v1.0.0)");
   process.exit(1);
 }
-const version = tag.replace(/^v/, "");
+// npm ships on its own `npm-v*` tag (release-npm.yml); also accept a bare `v*`.
+const version = tag.replace(/^(npm-)?v/, "");
+const binaryVersion = `v${version}`;
 const publish = process.argv.includes("--publish");
 
 rmSync(STAGE, { recursive: true, force: true });
@@ -41,7 +43,7 @@ for (const t of TARGETS) {
       "build",
       "-trimpath",
       "-ldflags",
-      `-s -w -X main.version=${tag}`,
+      `-s -w -X main.version=${binaryVersion}`,
       "-o",
       join(dir, "bin", exe),
       "./cmd/voltui",
@@ -53,11 +55,6 @@ for (const t of TARGETS) {
     },
   );
 
-  // Copy license and notice files into each platform package
-  cpSync(join(ROOT, "LICENSE"), join(dir, "LICENSE"));
-  cpSync(join(ROOT, "NOTICE"), join(dir, "NOTICE"));
-  cpSync(join(ROOT, "THIRD-PARTY-NOTICES"), join(dir, "THIRD-PARTY-NOTICES"));
-
   writeFileSync(
     join(dir, "package.json"),
     `${JSON.stringify(
@@ -67,11 +64,11 @@ for (const t of TARGETS) {
         description: `voltui prebuilt binary for ${t.node}.`,
         os: [t.goos === "windows" ? "win32" : t.goos],
         cpu: [t.goarch === "amd64" ? "x64" : "arm64"],
-        files: ["bin/", "LICENSE", "NOTICE", "THIRD-PARTY-NOTICES"],
+        files: ["bin/"],
         license: "MIT",
         repository: {
           type: "git",
-          url: "git+https://github.com/esengine/voltui.git",
+          url: "git+https://github.com/zuohuadong/volt-gui.git",
         },
       },
       null,
@@ -103,11 +100,16 @@ if (!publish) {
   process.exit(0);
 }
 
-// Only the v0.x stable line is the promoted default (`latest`). The v2 (1.x) line
-// and every prerelease ship under `next` so a bare `npm i voltui` keeps resolving
-// 0.53.x; opt in with `npm i voltui@next`. (npm rejects `v2` as a tag — it parses
-// as a SemVer range.) Promote v2 with a manual `npm dist-tag add voltui@<ver> latest`.
-const distTag = version.startsWith("0.") && !version.includes("-") ? "latest" : "next";
+// Three independent dist-tags: 0.x stable is the promoted default (`latest`); a
+// `-canary.` build is the opt-in tester channel (`canary`); everything else — the
+// 1.x line and rc prereleases — ships under `next`. Only a `--tag canary` publish
+// moves canary, so `next`/`latest` users never resolve a canary. Promote a 1.x
+// stable to default with a manual `npm dist-tag add voltui@<ver> latest`.
+const distTag = version.includes("-canary.")
+  ? "canary"
+  : version.startsWith("0.") && !version.includes("-")
+    ? "latest"
+    : "next";
 const publishArgs = ["publish", "--access", "public", "--tag", distTag];
 
 for (const sub of subPackages) {

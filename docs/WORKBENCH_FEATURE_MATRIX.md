@@ -12,6 +12,29 @@ Status values:
 - `complete`: parity is reached, regression coverage exists, and obsolete legacy
   code can be removed.
 
+## Production P0 gate
+
+Before promoting the workbench from demo-ready to production-ready, run:
+
+```sh
+./scripts/p0-production-smoke.sh
+```
+
+The default gate is deterministic and secret-free: it covers provider retry
+streaming, permission-denied tool recovery, Wails binding smoke, startup crash
+recovery, frontend production build, and `git diff --check`.
+
+Credentialed and packaging checks are explicit opt-ins:
+
+```sh
+VOLTUI_P0_REAL_PROVIDER=1 DEEPSEEK_API_KEY=... ./scripts/p0-production-smoke.sh
+VOLTUI_P0_DESKTOP_PACKAGE=1 ./scripts/p0-production-smoke.sh
+```
+
+`VOLTUI_P0_PROVIDER_BASE_URL`, `VOLTUI_P0_PROVIDER_MODEL`, and
+`VOLTUI_P0_PROVIDER_API_KEY_ENV` can point the real-provider smoke at another
+OpenAI-compatible backend without writing secrets to the repo.
+
 | Area | Feature | Mode | Status | Evidence required |
 | --- | --- | --- | --- | --- |
 | Runtime | Wails boot path | work, code | usable | `VOLTUI_DESKTOP_FRONTEND=svelte wails build` packages the Svelte workbench through the Wails embed path, and a macOS runtime smoke starts the built app without crashing after disabling the tray path that attempted to create AppKit status items off the main thread. |

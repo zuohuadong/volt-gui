@@ -104,6 +104,19 @@ func TestSubjectsForMoveFile(t *testing.T) {
 	}
 }
 
+func TestSubjectsReturnsAllTopLevelSubjects(t *testing.T) {
+	got := Subjects(json.RawMessage(`{"url":"https://example.test","screenshot_path":"shots/page.png","actions":[{"type":"screenshot","path":"shots/step.png"}]}`))
+	want := []string{"shots/page.png", "https://example.test", "shots/step.png"}
+	if len(got) != len(want) {
+		t.Fatalf("Subjects length = %d (%v), want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Subjects[%d] = %q, want %q (all subjects: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestPolicyDecide(t *testing.T) {
 	p := New("ask",
 		[]string{"bash(go test*)", "ls"},

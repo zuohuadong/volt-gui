@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
-import { gsap } from "gsap";
+import gsap from "gsap";
 import { DUR_FAST, EASE_OUT, prefersReducedMotion } from "./gsapAnimations";
+import { isEditableTarget } from "./keyboardShortcuts";
 
 const BOTTOM_THRESHOLD_PX = 80;
 const TOUCH_SCROLL_THRESHOLD_PX = 2;
@@ -90,7 +91,10 @@ export function useScrollManager() {
 
   const onWheelIntent = useCallback((event: ReactWheelEvent<HTMLElement>) => {
     const el = scrollRef.current;
-    if (!el || !isScrollable(el) || event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
+    // ctrlKey marks a pinch-zoom gesture synthesized as a wheel event (trackpads on
+    // macOS/Chrome), not a scroll — treating it as scroll intent would release
+    // tail-follow on a zoom that never actually moved scrollTop.
+    if (!el || !isScrollable(el) || event.ctrlKey || event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
     if (event.deltaY < 0 || !isNearBottom(el)) {
       releaseAutoScroll();
       return true;
@@ -118,7 +122,12 @@ export function useScrollManager() {
 
   const onKeyScrollIntent = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     const el = scrollRef.current;
-    if (!el || !isScrollable(el)) return false;
+    // The transcript's scroll keys (Home/End/arrows/space/page keys) are also
+    // ordinary text-editing keys. This listener runs on the capture phase, ahead
+    // of a nested message-edit textarea's own key handling, so without this guard
+    // moving the cursor while editing an earlier message would release tail-follow
+    // on a completely unrelated stream, even though nothing was scrolled.
+    if (!el || !isScrollable(el) || isEditableTarget(event.target)) return false;
     if (SCROLL_BREAK_KEYS.has(event.key) || (CONDITIONAL_SCROLL_KEYS.has(event.key) && !isNearBottom(el))) {
       releaseAutoScroll();
       return true;

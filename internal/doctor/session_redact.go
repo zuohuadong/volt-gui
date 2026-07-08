@@ -249,10 +249,9 @@ func eventLogNeedsRedaction(path string) bool {
 			Messages []provider.Message `json:"messages"`
 		}
 		if err := dec.Decode(&rec); err != nil {
-			if errors.Is(err, io.EOF) {
-				return false
-			}
-			return true
+			// EOF is a clean end; anything else is an undecodable tail whose
+			// torn bytes may hold raw secret text — compact it away.
+			return !errors.Is(err, io.EOF)
 		}
 		if messagesNeedRedaction(rec.Messages) {
 			return true

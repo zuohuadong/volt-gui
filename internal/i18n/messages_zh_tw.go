@@ -373,6 +373,7 @@ var ChineseTraditional = Messages{
   voltui run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] <task>   執行單次任務後退出
   voltui review [--base BRANCH] [--commit SHA] [--model NAME]  AI 程式碼審查（基於本機 diff）
   voltui serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  透過 HTTP+SSE 提供服務（支援可選認證）
+  voltui usage [--since 7d] [--all] [--json]       彙總本地 token/cache/cost 用量（也可用：voltui stats）
   voltui acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：voltui --acp）
   voltui setup [path]                                 互動式設定精靈；生成 voltui.toml（及 .env）
   voltui config auto-plan [off|on]                    設定自動計畫模式

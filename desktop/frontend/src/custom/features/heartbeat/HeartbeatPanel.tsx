@@ -147,6 +147,11 @@ export function HeartbeatPanel({ open, onClose, startNew, onOpenTopic }: Heartbe
   const dirtyRef = useRef(false);
   const startedRef = useRef(false);
 
+  // Reset dirty ref when leaving edit mode
+  useEffect(() => {
+    if (!editing) dirtyRef.current = false;
+  }, [editing]);
+
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
@@ -873,7 +878,9 @@ function TaskEditor({
     || draft.newConversationEachRun !== initialTaskRef.current.newConversationEachRun
     || draft.notifyChannels !== initialTaskRef.current.notifyChannels
     || draft.scope !== initialTaskRef.current.scope
-    || draft.workspaceRoot !== initialTaskRef.current.workspaceRoot;
+    || draft.workspaceRoot !== initialTaskRef.current.workspaceRoot
+    || draft.timeWindowStart !== initialTaskRef.current.timeWindowStart
+    || draft.timeWindowEnd !== initialTaskRef.current.timeWindowEnd;
 
   useEffect(() => {
     onDirtyChange?.(isDirty);

@@ -424,6 +424,7 @@ Usage:
   voltui run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   run one task and exit
   voltui review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
   voltui serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
+  voltui usage [--since 7d] [--all] [--json]       summarize local token/cache/cost usage (also: voltui stats)
   voltui acp [--model NAME]                           serve Agent Client Protocol over stdio (also: voltui --acp)
   voltui setup [path]                                 interactive config wizard; writes voltui.toml (+ .env)
   voltui config auto-plan [off|on]                    configure automatic plan mode

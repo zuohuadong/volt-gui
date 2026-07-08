@@ -117,7 +117,7 @@ interface AppBindings {
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
-  WorkspaceChanges(): Promise<WorkspaceChangesView>;
+  WorkspaceChanges(paths: string[]): Promise<WorkspaceChangesView>;
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;

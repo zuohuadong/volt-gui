@@ -1414,17 +1414,8 @@ function makeMockApp(): AppBindings {
     });
     return out;
   };
-  const noticePreviewHistory = (): HistoryMessage[] => [
-    { role: "user", content: "在真实聊天页面里预览 compact notice 的展示效果。" },
-    {
-      role: "assistant",
-      content: "下面是同一套 Transcript 渲染出来的提示。信息类提示更低调，诊断细节默认折叠；需要用户处理的失败仍保留警告样式。展开任意“详情”可以看到完整诊断文本。",
-    },
-  ];
 	  const mockTopicHistory = (topicId: string): HistoryMessage[] => {
 	    switch (topicId) {
-      case "topic_notice_preview":
-        return noticePreviewHistory();
       case "topic_product":
         return [
           {

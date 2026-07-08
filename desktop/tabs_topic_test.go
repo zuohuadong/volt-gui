@@ -489,6 +489,54 @@ func TestLegacyRecoverySessionsDoNotMigrateIntoTopics(t *testing.T) {
 	}
 }
 
+func TestHistoryMarksLegacyRecoverySessionsAsRecovered(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	recovery := writeLegacySession(t, dir, "desktop-recovery-0123456789abcdef.jsonl", "legacy recovery prompt", time.Now())
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: recovery, Label: "test"})
+	defer ctrl.Close()
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+
+	sessions := app.ListSessions()
+	for _, session := range sessions {
+		if filepath.Clean(session.Path) != filepath.Clean(recovery) {
+			continue
+		}
+		if !session.Recovered {
+			t.Fatalf("history session recovered flag = false, want true: %+v", session)
+		}
+		return
+	}
+	t.Fatalf("history sessions = %#v, want recovery session %q", sessions, recovery)
+}
+
+func TestTrashMarksLegacyRecoverySessionsAsRecovered(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	recovery := writeLegacySession(t, dir, "desktop-recovery-0123456789abcdef.jsonl", "legacy recovery prompt", time.Now())
+	if err := deleteSessionFile(dir, recovery); err != nil {
+		t.Fatalf("delete recovery session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(recovery), filepath.Base(recovery))
+
+	sessions := NewApp().ListTrashedSessions()
+	if len(sessions) != 1 || filepath.Clean(sessions[0].Path) != filepath.Clean(trashPath) {
+		t.Fatalf("trashed sessions = %#v, want %q", sessions, trashPath)
+	}
+	if !sessions[0].Recovered {
+		t.Fatalf("trashed recovery session recovered flag = false, want true: %+v", sessions[0])
+	}
+}
+
 func TestProjectTreeHidesAlreadyMigratedLegacyRecoveryTopic(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

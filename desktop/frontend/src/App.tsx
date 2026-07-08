@@ -3715,6 +3715,7 @@ export default function App() {
             onRestore={onRestoreTrashedSession}
             onPurge={onPurgeTrashedSession}
             onPurgeAll={onPurgeAllTrashedSessions}
+            onPurgeRecoveryCopies={onPurgeAllTrashedSessions}
             onClose={closeHistory}
           />
         </Suspense>

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.11.1...desktop-v0.11.2) (2026-07-07)
+
+
+### CI
+
+* avoid desktop artifact uploads in CI ([afbbfdc](https://github.com/zuohuadong/volt-gui/commit/afbbfdc736783183ea3dbce1459fefdc7a7928d4))
+
 ## [0.11.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.11.0...desktop-v0.11.1) (2026-07-07)
 
 

@@ -20,6 +20,7 @@ import (
 
 	"voltui/internal/agent"
 	"voltui/internal/agent/testutil"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/event"
 	"voltui/internal/memory"
@@ -2397,6 +2398,32 @@ func TestPartitionByTier(t *testing.T) {
 	}
 	if len(bg) != 3 || bg[0].Name != "l1" || bg[1].Name != "b1" || bg[2].Name != "default" {
 		t.Fatalf("background bucket = %+v, want [l1, b1, default] preserving input order", bg)
+	}
+}
+
+func TestDefaultEnabledMCPEntriesIncludesOffice(t *testing.T) {
+	t.Setenv("VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS", "1")
+
+	cfg := config.Default()
+	got := defaultEnabledMCPEntries(cfg, nil)
+	found := false
+	for _, p := range got {
+		if p.Name == builtinmcp.OfficeName {
+			found = true
+		}
+		if p.Name == builtinmcp.Context7Name {
+			t.Fatalf("context7 should not be default-started because it may install over the network: %+v", got)
+		}
+	}
+	if !found {
+		t.Fatalf("defaultEnabledMCPEntries missing office: %+v", got)
+	}
+
+	got = defaultEnabledMCPEntries(cfg, []plugin.Spec{{Name: builtinmcp.OfficeName}})
+	for _, p := range got {
+		if p.Name == builtinmcp.OfficeName {
+			t.Fatalf("session-scoped office MCP should reserve the built-in name: %+v", got)
+		}
 	}
 }
 

@@ -15,11 +15,21 @@ const protocolVersion = "2024-11-05"
 // RunCommand runs hidden built-in MCP subcommands shared by the CLI and desktop
 // binary. It intentionally writes only MCP JSON-RPC frames to stdout.
 func RunCommand(args []string, in io.Reader, out io.Writer, errOut io.Writer, version string) int {
-	if len(args) != 1 || args[0] != TimeName {
-		fmt.Fprintln(errOut, "usage: voltui builtin-mcp time")
+	if len(args) != 1 {
+		fmt.Fprintln(errOut, "usage: voltui builtin-mcp <time|office>")
 		return 2
 	}
-	if serveErr := ServeTimeMCP(in, out, version); serveErr != nil {
+	var serveErr error
+	switch args[0] {
+	case TimeName:
+		serveErr = ServeTimeMCP(in, out, version)
+	case OfficeName:
+		serveErr = ServeOfficeMCP(in, out, version)
+	default:
+		fmt.Fprintln(errOut, "usage: voltui builtin-mcp <time|office>")
+		return 2
+	}
+	if serveErr != nil {
 		fmt.Fprintln(errOut, serveErr)
 		return 1
 	}

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/mcpdiag"
 	"voltui/internal/plugin"
@@ -305,6 +306,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 	configured := map[string]config.PluginEntry{}
 	var configuredEntries []config.PluginEntry
 	if cfg != nil {
+		configuredEntries = builtinmcp.AppendDefaultEnabled(configuredEntries, cfg.Plugins)
 		configuredEntries = append(configuredEntries, cfg.Plugins...)
 		for _, p := range configuredEntries {
 			configured[p.Name] = p
@@ -372,6 +374,7 @@ func withMCPPluginConfig(v mcpServerView, p config.PluginEntry) mcpServerView {
 		transport = "stdio"
 	}
 	v.Transport = transport
+	v.BuiltIn = builtinmcp.IsBuiltInEntry(p)
 	v.Configured = true
 	v.AutoStart = p.ShouldAutoStart()
 	v.Tier = p.ResolvedTier()

@@ -25,6 +25,7 @@ import (
 	"time"
 	"voltui/internal/agent"
 	"voltui/internal/boot"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
@@ -48,6 +49,9 @@ var (
 func Run(args []string, version string) int {
 	if len(args) > 0 && args[0] == sandbox.WindowsHelperCommand {
 		return sandbox.RunWindowsSandboxHelper(args[1:], os.Stdin, os.Stdout, os.Stderr)
+	}
+	if len(args) > 0 && args[0] == "builtin-mcp" {
+		return builtinmcp.RunCommand(args[1:], os.Stdin, os.Stdout, os.Stderr, version)
 	}
 	// Pick the UI language up front so even pre-config paths (the first-run
 	// welcome banner) come through localized. Env-only first; if a config

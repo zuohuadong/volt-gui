@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 )
 
@@ -191,7 +192,9 @@ func mcpList() int {
 		return 1
 	}
 	listed := 0
-	for _, p := range cfg.Plugins {
+	plugins := builtinmcp.AppendDefaultEnabled(nil, cfg.Plugins)
+	plugins = append(plugins, cfg.Plugins...)
+	for _, p := range plugins {
 		typ := p.Type
 		if typ == "" {
 			typ = "stdio"
@@ -200,11 +203,15 @@ func mcpList() int {
 		if !p.ShouldAutoStart() {
 			auto = " [auto_start=false]"
 		}
+		builtIn := ""
+		if builtinmcp.IsBuiltInEntry(p) {
+			builtIn = " [built-in]"
+		}
 		if typ == "stdio" {
 			line := strings.TrimSpace(p.Command + " " + strings.Join(p.Args, " "))
-			fmt.Printf("%-16s (stdio)%s  %s\n", p.Name, auto, line)
+			fmt.Printf("%-16s (stdio)%s%s  %s\n", p.Name, auto, builtIn, line)
 		} else {
-			fmt.Printf("%-16s (%s)%s  %s\n", p.Name, typ, auto, p.URL)
+			fmt.Printf("%-16s (%s)%s%s  %s\n", p.Name, typ, auto, builtIn, p.URL)
 		}
 		listed++
 	}

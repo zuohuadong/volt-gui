@@ -19,6 +19,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
+	"voltui/internal/builtinmcp"
+
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/voltui does — boot.Build resolves providers/tools from these registries.
 	_ "voltui/internal/provider/anthropic"
@@ -94,6 +96,10 @@ func linuxWebviewGpuPolicy(pattern string) linux.WebviewGpuPolicy {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "builtin-mcp" {
+		os.Exit(builtinmcp.RunCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr, version))
+	}
+
 	app := NewApp()
 
 	// Restore saved window size, or fall back to the default.

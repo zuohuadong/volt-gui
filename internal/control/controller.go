@@ -32,6 +32,7 @@ import (
 	"voltui/internal/agent"
 	"voltui/internal/autoresearch"
 	"voltui/internal/billing"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/checkpoint"
 	"voltui/internal/command"
 	"voltui/internal/config"
@@ -3461,8 +3462,10 @@ func (c *Controller) ConfiguredMCPNames() []string {
 	if err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(cfg.Plugins))
-	for _, p := range cfg.Plugins {
+	plugins := builtinmcp.AppendDefaultEnabled(nil, cfg.Plugins)
+	plugins = append(plugins, cfg.Plugins...)
+	names := make([]string, 0, len(plugins))
+	for _, p := range plugins {
 		names = append(names, p.Name)
 	}
 	return names
@@ -3477,8 +3480,10 @@ func (c *Controller) DisconnectedMCPNames() []string {
 	for _, name := range c.mcp.serverNames() {
 		connected[name] = true
 	}
+	plugins := builtinmcp.AppendDefaultEnabled(nil, cfg.Plugins)
+	plugins = append(plugins, cfg.Plugins...)
 	var names []string
-	for _, p := range cfg.Plugins {
+	for _, p := range plugins {
 		if !connected[p.Name] {
 			names = append(names, p.Name)
 		}
@@ -3495,6 +3500,9 @@ func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
 		if p.Name == name {
 			return c.connectMCPServer(p)
 		}
+	}
+	if p, ok := builtinmcp.Entry(name); ok {
+		return c.connectMCPServer(p)
 	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowUp, Check, ChevronDown, ChevronUp, ChevronsUpDown, CornerDownRight, Eye, FileText, Folder, Gauge, List, MessageSquare, Search, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
 import { filterAtMatches } from "../lib/atMatches";
@@ -30,7 +30,7 @@ import { ContextWindowRing } from "./ContextWindowRing";
 import { ImageViewer } from "./ImageViewer";
 import { VirtualMenu } from "./VirtualMenu";
 import { dirEntryMenuLabel, dirEntrySubmitPath } from "./FileReferenceMenu";
-
+import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 interface Attachment {
   path: string;
   previewUrl?: string;
@@ -572,6 +572,7 @@ export function Composer({
   const nextGuidanceId = useRef(1);
   const [loadingPastChats, setLoadingPastChats] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [inputMenuPoint, setInputMenuPoint] = useState<ContextMenuPoint | null>(null);
   const [composerPrompt, setComposerPrompt] = useState<string | null>(null);
   // Prompt history navigation (plain ↑/↓)
   // Use refs for values read inside async closures to avoid stale captures
@@ -1494,6 +1495,99 @@ export function Composer({
     }
   };
 
+  const getInputSelection = () => {
+    const node = taRef.current;
+    const start = node?.selectionStart ?? text.length;
+    const end = node?.selectionEnd ?? text.length;
+    const from = Math.min(start, end);
+    const to = Math.max(start, end);
+    return {
+      from,
+      to,
+      selected: text.slice(from, to),
+    };
+  };
+
+  const focusInputRange = (start: number, end = start) => {
+    requestAnimationFrame(() => {
+      const node = taRef.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(start, end);
+      lastSelectionRef.current = { start, end };
+    });
+  };
+
+  const replaceInputRange = (value: string, start: number, end: number) => {
+    const next = text.slice(0, start) + value + text.slice(end);
+    setText(next);
+    focusInputRange(start + value.length);
+  };
+
+  const insertPastedText = (pasted: string, start: number, end: number) => {
+    const normalizedPasted = pasted.replace(/\r\n/g, "\n");
+
+    if (shouldFoldPaste(pasted)) {
+      const id = nextPasteId.current++;
+      const lines = lineCount(pasted);
+      const label = t("composer.pastedLabel", { id, lines });
+      const block: PastedBlock = { label, text: pasted };
+      const next = text.slice(0, start) + label + text.slice(end);
+      pastedBlocksRef.current = [...pastedBlocksRef.current, block];
+      setPastedBlocks((prev) => [...prev, block]);
+      setText(next);
+      focusInputRange(start + label.length);
+    } else {
+      resetPromptHistoryNavigation();
+      const next = text.slice(0, start) + normalizedPasted + text.slice(end);
+      setText(next);
+      focusInputRange(start + normalizedPasted.length);
+    }
+  };
+
+  const copyComposerSelection = async (cut = false) => {
+    const selection = getInputSelection();
+    setInputMenuPoint(null);
+    if (!selection.selected || !navigator.clipboard?.writeText) {
+      focusInputRange(selection.from, selection.to);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(selection.selected);
+      if (cut) replaceInputRange("", selection.from, selection.to);
+      else focusInputRange(selection.from, selection.to);
+    } catch {
+      focusInputRange(selection.from, selection.to);
+    }
+  };
+
+  const pasteIntoComposer = async () => {
+    const selection = getInputSelection();
+    setInputMenuPoint(null);
+    if (!navigator.clipboard?.readText) {
+      focusInputRange(selection.from, selection.to);
+      return;
+    }
+    try {
+      const pasted = await navigator.clipboard.readText();
+      insertPastedText(pasted, selection.from, selection.to);
+    } catch {
+      focusInputRange(selection.from, selection.to);
+    }
+  };
+
+  const selectAllComposerText = () => {
+    setInputMenuPoint(null);
+    focusInputRange(0, text.length);
+  };
+
+  const openInputMenu = (event: ReactMouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    rememberCaret();
+    setInputMenuPoint(contextMenuPointFromEvent(event));
+  };
+
   const hasWorkspaceReferenceDrag = (dataTransfer: DataTransfer): boolean =>
     Array.from(dataTransfer.types).includes(WORKSPACE_REF_DRAG_TYPE);
 
@@ -2168,6 +2262,39 @@ export function Composer({
     planModeOn || goalModeOn || tokenModeOn ? "composer-meta--has-intent-chip" : "composer-meta--no-intent-chip",
   ].join(" ");
 
+  const inputSelection = getInputSelection();
+  const hasInputSelection = inputSelection.from !== inputSelection.to;
+  const inputMenuItems: ContextMenuItem[] = [
+    {
+      key: "cut",
+      label: t("common.cut"),
+      shortcut: "⌘X",
+      disabled: disabled || !hasInputSelection,
+      onSelect: () => void copyComposerSelection(true),
+    },
+    {
+      key: "copy",
+      label: t("common.copy"),
+      shortcut: "⌘C",
+      disabled: !hasInputSelection,
+      onSelect: () => void copyComposerSelection(),
+    },
+    {
+      key: "paste",
+      label: t("common.paste"),
+      shortcut: "⌘V",
+      disabled,
+      onSelect: () => void pasteIntoComposer(),
+    },
+    {
+      key: "select-all",
+      label: t("common.selectAll"),
+      shortcut: "⌘A",
+      disabled: text.length === 0,
+      onSelect: selectAllComposerText,
+    },
+  ];
+
   return (
     <div
       className={`composer-wrap${decisionPending ? " composer-wrap--decision-pending" : ""}`}
@@ -2603,6 +2730,7 @@ export function Composer({
             onClick={rememberCaret}
             onKeyUp={rememberCaret}
             onFocus={rememberCaret}
+            onContextMenu={openInputMenu}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
             onCompositionStart={() => {
@@ -2645,6 +2773,15 @@ export function Composer({
             </button>
           </Tooltip>
         </div>
+        <ContextMenu
+          open={inputMenuPoint !== null}
+          point={inputMenuPoint}
+          items={inputMenuItems}
+          className="context-menu--composer-input"
+          minWidth={64}
+          ariaLabel={t("composer.inputActions")}
+          onClose={() => setInputMenuPoint(null)}
+        />
         <div className={composerMetaClass}>
           <div className="composer-meta__params">
             <div className="composer-meta__control composer-meta__control--intent">

@@ -20877,6 +20877,23 @@ body > .mermaid-diagram--fullscreen {
   min-width: 0;
 }
 
+.context-menu__shortcut {
+  margin-left: 16px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: inherit;
+  pointer-events: none;
+}
+
+.context-menu__item:hover .context-menu__shortcut,
+.context-menu__item:focus-visible .context-menu__shortcut {
+  color: var(--fg-normal);
+}
+
+.context-menu--composer-input .context-menu__item {
+  padding: 0 12px;
+}
+
 .context-menu__label-with-check {
   display: flex;
   align-items: center;

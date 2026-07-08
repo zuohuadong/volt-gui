@@ -51,6 +51,10 @@ import type {
   WorkbenchData,
   WorkbenchKnowledgeDocument,
   WorkbenchKnowledgeDocumentInput,
+  KnowledgeBaseView,
+  KnowledgeDocumentImportInput,
+  KnowledgeSearchResult,
+  KnowledgeStatus,
   WorkbenchReport,
   WorkbenchReportInput,
   WorkbenchSearchResult,
@@ -145,6 +149,11 @@ interface AppBindings {
   ListWorkbenchReports(): Promise<WorkbenchReport[]>;
   SaveWorkbenchReport(input: WorkbenchReportInput): Promise<WorkbenchReport>;
   SaveKnowledgeDocument(input: WorkbenchKnowledgeDocumentInput): Promise<WorkbenchKnowledgeDocument>;
+  KnowledgeBase(): Promise<KnowledgeBaseView>;
+  KnowledgeStatus(): Promise<KnowledgeStatus>;
+  ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument>;
+  SearchKnowledge(query: string, limit: number): Promise<KnowledgeSearchResult[]>;
+  DeleteKnowledgeDocument(id: string): Promise<void>;
   RunWorkbenchSync(scope: string): Promise<WorkbenchSyncJob[]>;
   SearchWorkbench(query: string): Promise<WorkbenchSearchResult[]>;
   ExportOperationLogs(): Promise<string>;

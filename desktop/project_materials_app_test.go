@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSaveProjectMaterialPersistsAndReloads(t *testing.T) {
 	isolateDesktopUserDirs(t)
@@ -45,6 +49,59 @@ func TestSaveProjectMaterialPersistsAndReloads(t *testing.T) {
 		}
 	}
 	t.Fatalf("saved material %q not found after reload", saved.ID)
+}
+
+func TestSaveProjectMaterialIndexesLocalKnowledge(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	source := filepath.Join(home, "knowledge-material.md")
+	if err := os.WriteFile(source, []byte("本地知识库会把导入资料切片，写入 SQLite FTS5 和 sqlite-vec 索引。"), 0o644); err != nil {
+		t.Fatalf("write source material: %v", err)
+	}
+
+	app := &App{}
+	saved, err := app.SaveProjectMaterial(WorkbenchProjectMaterialInput{
+		ProjectID: "volt-gui",
+		Title:     "知识库索引资料",
+		Category:  "知识库",
+		Source:    source,
+		FileName:  "knowledge-material.md",
+		FilePath:  source,
+		MimeType:  "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("SaveProjectMaterial() error = %v", err)
+	}
+	if saved.Status != "已索引" {
+		t.Fatalf("SaveProjectMaterial() status = %q, want 已索引", saved.Status)
+	}
+
+	results, err := app.SearchWorkbench("sqlite-vec")
+	if err != nil {
+		t.Fatalf("SearchWorkbench() error = %v", err)
+	}
+	found := false
+	for _, result := range results {
+		if result.Title == saved.Title && result.Scope == "知识库 / FTS5" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("SearchWorkbench() did not include indexed knowledge result: %+v", results)
+	}
+
+	if err := app.DeleteProjectMaterial(saved.ID); err != nil {
+		t.Fatalf("DeleteProjectMaterial() error = %v", err)
+	}
+	afterDelete, err := app.SearchKnowledge("sqlite-vec", 5)
+	if err != nil {
+		t.Fatalf("SearchKnowledge() after delete error = %v", err)
+	}
+	for _, result := range afterDelete {
+		if result.DocumentID == saved.ID {
+			t.Fatalf("deleted material still indexed: %+v", result)
+		}
+	}
 }
 
 func TestDeleteProjectMaterialRemovesPersistedItem(t *testing.T) {

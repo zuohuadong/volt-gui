@@ -96,6 +96,7 @@ func (a *App) DeleteProjectMaterial(id string) error {
 		}
 		next = append(next, material)
 	}
+	_ = deleteKnowledgeDocument(id)
 	return saveProjectMaterials(next)
 }
 
@@ -135,6 +136,11 @@ func saveProjectMaterialInput(input WorkbenchProjectMaterialInput) (WorkbenchPro
 		CreatedAt:   nowISO,
 		UpdatedISO:  nowISO,
 	}
+	if status, err := indexProjectMaterialIntoKnowledge(next); err == nil {
+		next.Status = status
+	} else {
+		next.Status = "索引失败"
+	}
 	replaced := false
 	for i, existing := range materials {
 		if existing.ID != id {
@@ -153,6 +159,42 @@ func saveProjectMaterialInput(input WorkbenchProjectMaterialInput) (WorkbenchPro
 		return WorkbenchProjectMaterialView{}, err
 	}
 	return next, nil
+}
+
+func indexProjectMaterialIntoKnowledge(material WorkbenchProjectMaterialView) (string, error) {
+	content := strings.TrimSpace(material.Desc)
+	if strings.TrimSpace(material.FilePath) != "" {
+		extracted, err := extractProjectMaterialText(material.FilePath, material.MimeType, material.FileName)
+		if err != nil {
+			return "索引失败", err
+		}
+		if strings.TrimSpace(extracted) != "" {
+			content = extracted
+		}
+	}
+	if strings.TrimSpace(content) == "" {
+		content = strings.Join([]string{material.Title, material.Category, material.Source}, "\n")
+	}
+	doc, err := importKnowledgeDocument(KnowledgeDocumentImportInput{
+		ID:          material.ID,
+		Title:       material.Title,
+		Type:        defaultString(material.Category, "项目资料"),
+		Source:      defaultString(material.Source, "project-material"),
+		Tags:        material.Category,
+		Description: material.Desc,
+		FileName:    material.FileName,
+		FilePath:    material.FilePath,
+		MimeType:    material.MimeType,
+		FileSize:    material.FileSize,
+		Content:     content,
+	})
+	if err != nil {
+		return "索引失败", err
+	}
+	if doc.ChunkCount == 0 {
+		return "无可索引文本", nil
+	}
+	return "已索引", nil
 }
 
 func projectMaterialsPath() (string, error) {

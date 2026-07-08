@@ -685,16 +685,25 @@ export function Composer({
 
   useEffect(() => {
     if (wasRunning.current && !running) {
-      setPendingGuidance([]);
       setGuidanceExpanded(false);
       if (text.trim() === "") {
         pastedBlocksRef.current = [];
         setPastedBlocks([]);
         setOpenPastedLabels([]);
       }
+      // A message queued while the turn was running (without the explicit
+      // "guide" steer click) is the user's next turn, not scratch text to
+      // discard — send it now that the turn is done. sendQueuedGuidance
+      // removes it from the shelf on success and starts a new turn, which
+      // flips `running` true then false again, so this same effect fires
+      // once more and drains the shelf one item at a time. A failed send
+      // is left in place (dismissible via the trash button) rather than
+      // silently dropped.
+      const next = pendingGuidance[0];
+      if (next) void sendQueuedGuidance(next);
     }
     wasRunning.current = running;
-  }, [running, text]);
+  }, [running, text, pendingGuidance]);
 
   useEffect(() => {
     setPendingGuidance([]);

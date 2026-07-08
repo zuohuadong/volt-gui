@@ -8,12 +8,13 @@ import (
 	"voltui/internal/config"
 )
 
-// WorkspaceChanges keeps the pre-tab-id binding shape for older tests and
-// frontend callers; an omitted id means the active tab.
-func (a *App) WorkspaceChanges(tabID ...string) WorkspaceChangesView {
+// WorkspaceChanges accepts a slice because Wails binds Go variadic string
+// parameters as array payloads in TypeScript but calls them inconsistently at
+// runtime. A fixed slice keeps the desktop binding stable.
+func (a *App) WorkspaceChanges(tabIDs []string) WorkspaceChangesView {
 	id := ""
-	if len(tabID) > 0 {
-		id = tabID[0]
+	if len(tabIDs) > 0 {
+		id = tabIDs[0]
 	}
 	return a.workspaceChanges(id)
 }

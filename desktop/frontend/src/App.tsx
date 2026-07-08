@@ -162,8 +162,7 @@ import { composerDraftKeyForTab } from "./lib/composerDraftKey";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
 function noticePreviewMockEnabled(): boolean {
-  if (typeof window === "undefined") return false;
-  const value = new URLSearchParams(window.location.search).get("mock")?.trim().toLowerCase();
+  const value = browserMockScenarioParam();
   return value === "notice" || value === "notices" || value === "notice-preview";
 }
 

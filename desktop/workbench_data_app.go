@@ -153,34 +153,36 @@ type WorkbenchReportInput struct {
 }
 
 type WorkbenchKnowledgeDocumentView struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Type        string `json:"type"`
-	Count       int    `json:"count"`
-	Status      string `json:"status"`
-	Description string `json:"description,omitempty"`
-	Source      string `json:"source,omitempty"`
-	Tags        string `json:"tags,omitempty"`
-	FileName    string `json:"fileName,omitempty"`
-	FilePath    string `json:"filePath,omitempty"`
-	MimeType    string `json:"mimeType,omitempty"`
-	FileSize    int64  `json:"fileSize,omitempty"`
-	ChunkCount  int    `json:"chunkCount,omitempty"`
-	IndexedAt   string `json:"indexedAt,omitempty"`
-	Error       string `json:"error,omitempty"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Type        string   `json:"type"`
+	Count       int      `json:"count"`
+	Status      string   `json:"status"`
+	Description string   `json:"description,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	Tags        string   `json:"tags,omitempty"`
+	FileName    string   `json:"fileName,omitempty"`
+	FilePath    string   `json:"filePath,omitempty"`
+	MimeType    string   `json:"mimeType,omitempty"`
+	FileSize    int64    `json:"fileSize,omitempty"`
+	ChunkCount  int      `json:"chunkCount,omitempty"`
+	IndexedAt   string   `json:"indexedAt,omitempty"`
+	Error       string   `json:"error,omitempty"`
+	MaterialIDs []string `json:"materialIds,omitempty"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
 }
 
 type WorkbenchKnowledgeDocumentInput struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Type        string `json:"type"`
-	Count       int    `json:"count"`
-	Status      string `json:"status"`
-	Description string `json:"description"`
-	Source      string `json:"source"`
-	Tags        string `json:"tags"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Type        string   `json:"type"`
+	Count       int      `json:"count"`
+	Status      string   `json:"status"`
+	Description string   `json:"description"`
+	Source      string   `json:"source"`
+	Tags        string   `json:"tags"`
+	MaterialIDs []string `json:"materialIds"`
 }
 
 type WorkbenchRegulationView struct {
@@ -777,14 +779,15 @@ func saveKnowledgeDocumentInto(data *WorkbenchDataView, input WorkbenchKnowledge
 		ID:          id,
 		Title:       title,
 		Type:        defaultString(strings.TrimSpace(input.Type), "模板"),
-		Count:       maxInt(input.Count, 1),
 		Status:      defaultString(strings.TrimSpace(input.Status), "草稿"),
 		Description: strings.TrimSpace(input.Description),
 		Source:      strings.TrimSpace(input.Source),
 		Tags:        strings.TrimSpace(input.Tags),
+		MaterialIDs: normalizeKnowledgeMaterialIDs(input.MaterialIDs),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	next.Count = len(next.MaterialIDs)
 	replaceOrPrependKnowledgeDocument(data, next)
 	return next, nil
 }
@@ -1021,9 +1024,17 @@ func normalizeKnowledgeDocuments(items []WorkbenchKnowledgeDocumentView) []Workb
 		item.ID = defaultString(strings.TrimSpace(item.ID), slugifyAgentID(item.Title))
 		item.Type = defaultString(strings.TrimSpace(item.Type), "文档")
 		item.Status = defaultString(strings.TrimSpace(item.Status), "可用")
-		item.Count = maxInt(item.Count, 1)
 		item.FileSize = maxInt64(item.FileSize, 0)
 		item.ChunkCount = maxInt(item.ChunkCount, 0)
+		item.MaterialIDs = normalizeKnowledgeMaterialIDs(item.MaterialIDs)
+		if len(item.MaterialIDs) == 0 {
+			item.MaterialIDs = defaultKnowledgeMaterialIDs(item.ID)
+		}
+		if len(item.MaterialIDs) > 0 {
+			item.Count = len(item.MaterialIDs)
+		} else {
+			item.Count = maxInt(item.Count, 1)
+		}
 		item.CreatedAt = defaultString(item.CreatedAt, now)
 		item.UpdatedAt = defaultString(item.UpdatedAt, item.CreatedAt)
 		out = append(out, item)
@@ -1250,6 +1261,36 @@ func knowledgeDocumentIDs(items []WorkbenchKnowledgeDocumentView) []string {
 		out = append(out, item.ID)
 	}
 	return out
+}
+
+func normalizeKnowledgeMaterialIDs(ids []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func defaultKnowledgeMaterialIDs(id string) []string {
+	switch id {
+	case "requirement-template":
+		return []string{"volt-gui-ia-notes", "volt-gui-relation-sample"}
+	case "project-retro":
+		return []string{"homepage-restore-log", "volt-gui-aoristlawer-map"}
+	case "automation-config":
+		return []string{"volt-gui-quality-gate", "lurefree-map-regression"}
+	default:
+		return nil
+	}
 }
 
 func syncJobIDs(items []WorkbenchSyncJobView) []string {

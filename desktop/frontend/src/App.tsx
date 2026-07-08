@@ -3670,6 +3670,12 @@ export default function App() {
               guidanceConsumedKey={latestGuidanceConsumed?.key}
               guidanceConsumedText={latestGuidanceConsumed?.text}
               guidanceQueuePreviewItems={guidanceQueueMockItems}
+              showContextWindowRing={sidebarCreation}
+              context={state.context}
+              turnCost={state.turnCost}
+              cacheHitTokens={state.usage?.cacheHitTokens}
+              cacheMissTokens={state.usage?.cacheMissTokens}
+              balance={state.balance}
             />
             <StatusBar
               context={state.context}
@@ -3720,7 +3726,7 @@ export default function App() {
           >
             <div className="workbench-dock__tools">
               <div className="workbench-dock__tabs" role="tablist" aria-label={t("rightDock.views")}>
-                {SHOW_CONTEXT_DOCK && (
+                {SHOW_CONTEXT_DOCK && desktopLayoutStyle !== "creation" && (
                   <button
                     type="button"
                     role="tab"
@@ -3755,7 +3761,7 @@ export default function App() {
               </div>
             </div>
             <div className="workbench-dock__body">
-              {rightDockMode === "context" ? (
+              {rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
                 <ContextPanel
                   tabId={activeTabId}
                   context={state.context}

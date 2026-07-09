@@ -457,6 +457,13 @@ trusted_read_only_tools = ["issue_read", "pull_request_read"]
 `mcpServers.<server>.trusted_read_only_tools`，普通 VoltUI plugin 会写入用户级 VoltUI config。
 只信任无副作用的读取工具；create/update/delete 这类写工具应保持未信任。
 
+桌面 release 内置 `computer-use` MCP。它随 Wails app 资源携带
+`@zavora-ai/computer-use-mcp` 及各平台预编译 `.node`，运行时用系统 Node（>= 18；
+可用 `VOLTUI_COMPUTER_USE_NODE` 指向自带 Node；Windows ARM64 当前需 x64 Node/native 兼容层）
+启动资源里的 `dist/server.js`。该服务器默认
+作为内置 MCP 出现在桌面 MCP 面板，可在当前会话里显式启用/禁用；`screenshot`、mouse、keyboard
+等工具不预置为可信只读，仍会经过 VoltUI 现有 MCP 工具审批。
+
 服务器的 **prompts** 会暴露成 `/mcp__<server>__<prompt>` 斜杠命令（命令后空格分隔参
 数）；**resources** 通过在消息里写 `@<server>:<uri>` 拉入；`/mcp` 列出已连接服务器及
 各自暴露的内容。`make build` 还会产出 `bin/voltui-plugin-example`——一个可直接运行的

@@ -78,6 +78,7 @@ Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 !define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
+!define VOLTUI_COMPUTER_USE_MCP_DIR "computer-use-mcp"
 !define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
@@ -181,6 +182,13 @@ Section
     !else
     !warning "${VOLTUI_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
     !endif
+    !if /FileExists "${VOLTUI_COMPUTER_USE_MCP_DIR}\node_modules\@zavora-ai\computer-use-mcp\dist\server.js"
+    SetOutPath "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
+    File /r "${VOLTUI_COMPUTER_USE_MCP_DIR}\*"
+    SetOutPath $INSTDIR
+    !else
+    !warning "${VOLTUI_COMPUTER_USE_MCP_DIR} was not found; bundled computer-use MCP will be unavailable."
+    !endif
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -199,6 +207,7 @@ Section "uninstall"
     ; Precision uninstall: delete main application files
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
     Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
+    RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

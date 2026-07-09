@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"voltui/internal/agent"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/command"
 	"voltui/internal/config"
 	"voltui/internal/control"
@@ -371,7 +372,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		DefaultCallTimeout:   time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
 		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
 	}
-	autoStartEntries := cfg.AutoStartPlugins()
+	autoStartEntries := autoStartPluginEntries(cfg)
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
 	extraSpecs := applyDefaultMCPCallTimeout(
 		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(opts.ExtraPlugins, root), cfg.Agent.PlanModeAllowedTools),
@@ -1612,6 +1613,14 @@ func partitionByTier(entries []config.PluginEntry) (eager, bg []config.PluginEnt
 		}
 	}
 	return eager, bg
+}
+
+func autoStartPluginEntries(cfg *config.Config) []config.PluginEntry {
+	if cfg == nil {
+		return nil
+	}
+	entries := builtinmcp.AppendDefaultEnabled(nil, cfg.Plugins)
+	return append(entries, cfg.AutoStartPlugins()...)
 }
 
 // PluginSpecs maps configured plugin entries to plugin.Spec, expanding ${VAR}

@@ -27,6 +27,24 @@ arch="${PLATFORM#*/}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="VoltUI"              # release bundle/artifact name
 BINNAME="voltui-desktop"      # wails.json outputfilename -> linux binary name
+COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
+COMPUTER_USE_MCP_TMP="$(mktemp -d)"
+COMPUTER_USE_MCP_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-mcp"
+
+cleanup() {
+	rm -rf "$COMPUTER_USE_MCP_TMP"
+}
+trap cleanup EXIT
+
+copy_computer_use_mcp() {
+	local dest="$1"
+	rm -rf "$dest"
+	mkdir -p "$(dirname "$dest")"
+	cp -R "$COMPUTER_USE_MCP_RESOURCE" "$dest"
+}
+
+echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
+node "$ROOT/scripts/stage-computer-use-mcp.mjs" "$COMPUTER_USE_MCP_RESOURCE" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
 
 cd "$ROOT/desktop"
 
@@ -46,6 +64,7 @@ if [ "$os" = windows ]; then
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
+	copy_computer_use_mcp "build/windows/installer/computer-use-mcp"
 fi
 build_args=(-clean -platform "$PLATFORM" -ldflags "$ldflags")
 [ "$os" = windows ] && build_args+=(-nsis -webview2 embed)
@@ -65,6 +84,7 @@ darwin)
 	staging=$(mktemp -d)
 	app="$staging/${APPNAME}.app"
 	cp -R "build/bin/${BINNAME}.app" "$app"
+	copy_computer_use_mcp "$app/Contents/Resources/computer-use-mcp"
 
 	# Two signing paths, selected by HAS_APPLE_CERT (set by release-desktop.yml when
 	# the APPLE_* secrets are present). With a real Developer ID cert + notarization
@@ -140,17 +160,23 @@ windows)
 	[ -n "$portable" ] || { echo "no portable Windows exe found in build/bin" >&2; exit 1; }
 	staging=$(mktemp -d)
 	cp "$portable" "$staging/${APPNAME}.exe"
+	copy_computer_use_mcp "$staging/computer-use-mcp"
 	helper="build/windows/installer/$UPDATE_HELPER"
 	if [ -f "$helper" ]; then
 		cp "$helper" "$staging/$UPDATE_HELPER"
 	fi
-	src_win=$(cygpath -w "$staging/${APPNAME}.exe")
+	staging_win=$(cygpath -w "$staging")
 	zip_win=$(cygpath -w "$ROOT/dist/${APPNAME}-windows-${arch}.zip")
-	powershell.exe -NoProfile -Command "Compress-Archive -Force -LiteralPath '$src_win' -DestinationPath '$zip_win'"
+	powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$staging_win\\*' -DestinationPath '$zip_win'"
 	rm -rf "$staging"
 	;;
 linux)
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME"
+	copy_computer_use_mcp "build/computer-use-mcp"
+	staging=$(mktemp -d)
+	cp "build/bin/$BINNAME" "$staging/$BINNAME"
+	copy_computer_use_mcp "$staging/computer-use-mcp"
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$staging" "$BINNAME" "computer-use-mcp"
+	rm -rf "$staging"
 	# Also build a .deb for Debian/Ubuntu users (goreleaser/nfpm; see
 	# desktop/build/linux/nfpm.yaml). Human-download only: the Linux updater channel
 	# stays the tarball and cmd/sign's manifest skips .deb files. nfpm reads

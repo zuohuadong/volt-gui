@@ -21,6 +21,7 @@ import (
 
 	"voltui/internal/agent"
 	"voltui/internal/agent/testutil"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/event"
 	"voltui/internal/memory"
@@ -3068,6 +3069,27 @@ func TestPluginSpecsMapConfiguredCallTimeouts(t *testing.T) {
 	}
 	if _, ok := specs[0].ToolTimeouts[""]; ok {
 		t.Fatalf("empty tool timeout should be ignored: %+v", specs[0].ToolTimeouts)
+	}
+}
+
+func TestAutoStartPluginEntriesIncludesDefaultBuiltIns(t *testing.T) {
+	t.Setenv("VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS", "1")
+
+	on := true
+	off := false
+	cfg := &config.Config{Plugins: []config.PluginEntry{
+		{Name: "github", Command: "github-mcp", AutoStart: &on},
+		{Name: builtinmcp.OfficeName, Command: "custom-office", AutoStart: &off},
+	}}
+
+	got := autoStartPluginEntries(cfg)
+	var names []string
+	for _, e := range got {
+		names = append(names, e.Name)
+	}
+	want := []string{builtinmcp.ComputerUseName, "github"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("autoStartPluginEntries names = %+v, want %+v (configured office override stays off)", names, want)
 	}
 }
 

@@ -2,7 +2,7 @@
 # Resolution order: flag > ./voltui.toml > ~/.config/voltui/config.toml > built-in defaults.
 # Secrets come from the environment via api_key_env; never put keys here.
 
-default_model = "qwen-gpu4"   # a provider name (→ its default model) or "provider/model"
+default_model = "qwen-thinking"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 # White-label / OEM branding — replace the product name and logos for your
@@ -49,18 +49,19 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # models reuses the same connection; no need to re-declare base_url/api_key.
 # 西谷内网模型网关 — OpenAI 兼容接口 (http://192.168.1.47:9010/v1)
 # 每个模型单独一个 provider entry，model 字段写完整 id（含 provider 前缀斜杠）
-# 调用时 default_model = "qwen-gpu4" 或 "glm-primary"，ResolveModel 自动拼接
+# 调用时 default_model = "qwen-thinking" 或 "glm-5.2"，ResolveModel 自动拼接
+# 短名语义: qwen-thinking(思考) / qwen-fast(非思考) / glm-5.2 / image-gen(图像)
 
 [[providers]]
-name           = "glm-primary"
+name           = "glm-5.2"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
-model          = "glm-primary/GLM-5.1-478B-A42B-REAP-NVFP4"
+model          = "glm-primary/glm-5.2-nvfp4"
 api_key_env    = "XIGU_API_KEY"
 context_window = 131072
 
 [[providers]]
-name           = "qwen-gpu4"
+name           = "qwen-thinking"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
 model          = "qwen-gpu4/qwen36-opus-prisma8-gpu4"
@@ -68,7 +69,7 @@ api_key_env    = "XIGU_API_KEY"
 context_window = 131072
 
 [[providers]]
-name           = "qwen-gpu5"
+name           = "qwen-fast"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
 model          = "qwen-gpu5/qwen36-opus-prisma8-gpu5"
@@ -76,7 +77,7 @@ api_key_env    = "XIGU_API_KEY"
 context_window = 131072
 
 [[providers]]
-name           = "image-gpu5"
+name           = "image-gen"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
 model          = "image-gpu5/image-gpu5"

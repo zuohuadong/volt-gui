@@ -1728,7 +1728,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 func Default() *Config {
 	return &Config{
 		ConfigVersion:    4,
-		DefaultModel:     "qwen-gpu4",
+		DefaultModel:     "qwen-thinking",
 		CredentialsStore: CredentialsStoreAuto,
 		Brand:            BrandConfig{Name: "VoltUI"},
 		Auth:             AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},
@@ -1784,10 +1784,10 @@ func Default() *Config {
 			Weixin:             WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
 		Providers: []ProviderEntry{
-			{Name: "qwen-gpu4", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
-			{Name: "glm-primary", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "glm-primary/GLM-5.1-478B-A42B-REAP-NVFP4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
-			{Name: "qwen-gpu5", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
-			{Name: "image-gpu5", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
+			{Name: "qwen-thinking", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
+			{Name: "glm-5.2", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
+			{Name: "qwen-fast", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
+			{Name: "image-gen", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4FlashPrice()},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
 			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true, Priority: 10},

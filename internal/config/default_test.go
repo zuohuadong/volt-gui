@@ -10,15 +10,15 @@ func TestDefaultAutoPlanOff(t *testing.T) {
 
 func TestDefaultUsesXiguInternalGateway(t *testing.T) {
 	cfg := Default()
-	if cfg.DefaultModel != "qwen-gpu4" {
-		t.Fatalf("default_model = %q, want qwen-gpu4", cfg.DefaultModel)
+	if cfg.DefaultModel != "qwen-thinking" {
+		t.Fatalf("default_model = %q, want qwen-thinking", cfg.DefaultModel)
 	}
 
 	want := map[string]string{
-		"glm-primary": "glm-primary/GLM-5.1-478B-A42B-REAP-NVFP4",
-		"qwen-gpu4":   "qwen-gpu4/qwen36-opus-prisma8-gpu4",
-		"qwen-gpu5":   "qwen-gpu5/qwen36-opus-prisma8-gpu5",
-		"image-gpu5":  "image-gpu5/image-gpu5",
+		"glm-5.2":       "glm-primary/glm-5.2-nvfp4",
+		"qwen-thinking": "qwen-gpu4/qwen36-opus-prisma8-gpu4",
+		"qwen-fast":     "qwen-gpu5/qwen36-opus-prisma8-gpu5",
+		"image-gen":     "image-gpu5/image-gpu5",
 	}
 	for name, model := range want {
 		provider, ok := cfg.Provider(name)
@@ -40,7 +40,7 @@ func TestDefaultUsesXiguInternalGateway(t *testing.T) {
 		if provider.ContextWindow != 131_072 {
 			t.Errorf("%s context_window = %d, want 131072", name, provider.ContextWindow)
 		}
-		if name == "qwen-gpu4" || name == "qwen-gpu5" {
+		if name == "qwen-thinking" || name == "qwen-fast" {
 			if provider.DefaultEffort != "high" || len(provider.SupportedEfforts) != 2 || provider.SupportedEfforts[0] != "high" || provider.SupportedEfforts[1] != "max" {
 				t.Errorf("%s effort = default %q supported %v, want high with [high max]", name, provider.DefaultEffort, provider.SupportedEfforts)
 			}

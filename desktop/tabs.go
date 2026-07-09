@@ -1001,6 +1001,12 @@ func (s *tabEventSink) Emit(e event.Event) {
 			s.SetBotSink(nil)
 		}
 	}
+	// Unlike the transient botSink above, the bridge observes every tab for
+	// its whole lifetime (god view: /desktop status, watch subscriptions,
+	// remote approvals). observe only does in-memory bookkeeping and queueing.
+	if app != nil && app.botBridge != nil {
+		app.botBridge.observe(tabID, e)
+	}
 }
 
 // SetBotSink atomically sets or clears the bot event forwarder on this sink.

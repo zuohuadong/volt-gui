@@ -81,7 +81,13 @@ func (a *App) refreshBotRuntime() {
 		a.botRuntime.stop("error", err.Error())
 		return
 	}
-	_ = a.botRuntime.apply(a.bootContext(), cfg, globalTabWorkspaceRoot(), a.persistRemoteBotToolApprovalMode)
+	// Assign through a typed local so a nil *botBridgeHub never becomes a
+	// non-nil bot.DesktopBridge interface inside the gateway config.
+	var bridge bot.DesktopBridge
+	if a.botBridge != nil {
+		bridge = a.botBridge
+	}
+	_ = a.botRuntime.apply(a.bootContext(), cfg, globalTabWorkspaceRoot(), a.persistRemoteBotToolApprovalMode, bridge)
 }
 
 func (a *App) loadDesktopBotConfig() (*config.Config, error) {
@@ -109,7 +115,7 @@ func (a *App) BotRuntimeStatus() BotRuntimeStatusView {
 	return a.botRuntime.snapshot()
 }
 
-func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, workspaceRoot string, onToolApprovalModeChange func(bot.InboundMessage, string) error) error {
+func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, workspaceRoot string, onToolApprovalModeChange func(bot.InboundMessage, string) error, bridge bot.DesktopBridge) error {
 	if r == nil {
 		return nil
 	}
@@ -184,6 +190,7 @@ func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, wo
 		OnInbound:                botruntime.NewRemoteRememberer(logger),
 		OnSessionReady:           botruntime.NewSessionRemembererWithWorkspace(logger, workspaceRoot),
 		OnToolApprovalModeChange: onToolApprovalModeChange,
+		Desktop:                  bridge,
 	}
 	bindings := botruntime.AdapterBindings(cfg, plan.Enabled, nil, logger)
 	if len(bindings) == 0 {

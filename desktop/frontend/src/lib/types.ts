@@ -414,6 +414,7 @@ export interface WorkbenchCustomerInput {
 
 export interface WorkbenchCalendarEvent {
   id: string;
+  date?: string;
   day: string;
   title: string;
   time: string;
@@ -429,6 +430,7 @@ export interface WorkbenchCalendarEvent {
 
 export interface WorkbenchCalendarEventInput {
   id?: string;
+  date?: string;
   day?: string;
   title: string;
   time?: string;

@@ -8,13 +8,22 @@ import (
 	"voltui/internal/config"
 )
 
-// WorkspaceChanges accepts a slice because Wails binds Go variadic string
-// parameters as array payloads in TypeScript but calls them inconsistently at
-// runtime. A fixed slice keeps the desktop binding stable.
-func (a *App) WorkspaceChanges(tabIDs []string) WorkspaceChangesView {
+// WorkspaceChanges accepts both the Wails array payload and legacy string calls.
+func (a *App) WorkspaceChanges(tabIDs any) WorkspaceChangesView {
 	id := ""
-	if len(tabIDs) > 0 {
-		id = tabIDs[0]
+	switch v := tabIDs.(type) {
+	case string:
+		id = v
+	case []string:
+		if len(v) > 0 {
+			id = v[0]
+		}
+	case []any:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				id = s
+			}
+		}
 	}
 	return a.workspaceChanges(id)
 }

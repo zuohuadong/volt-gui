@@ -3,17 +3,20 @@ package doctor
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/BurntSushi/toml"
+
 	"voltui/internal/agent"
-	"voltui/internal/codegraph"
 	"voltui/internal/config"
 	"voltui/internal/netclient"
 	"voltui/internal/sandbox"
+	"voltui/internal/store"
 )
 
 type Options struct {
@@ -29,7 +32,6 @@ type Report struct {
 	Config     ConfigReport     `json:"config"`
 	Providers  []ProviderReport `json:"providers"`
 	Plugins    []PluginReport   `json:"plugins,omitempty"`
-	Codegraph  CodegraphReport  `json:"codegraph"`
 	LSP        LSPReport        `json:"lsp"`
 	Sessions   SessionsReport   `json:"sessions"`
 	Sandbox    SandboxReport    `json:"sandbox"`
@@ -63,15 +65,6 @@ type PluginReport struct {
 	Target    string `json:"target,omitempty"`
 }
 
-type CodegraphReport struct {
-	Enabled     bool   `json:"enabled"`
-	AutoInstall bool   `json:"auto_install"`
-	Version     string `json:"version"`
-	CacheDir    string `json:"cache_dir,omitempty"`
-	Resolved    bool   `json:"resolved"`
-	Path        string `json:"path,omitempty"`
-}
-
 type LSPReport struct {
 	Enabled bool `json:"enabled"`
 	Servers int  `json:"servers"`
@@ -89,9 +82,19 @@ type SandboxReport struct {
 	Network    bool     `json:"network"`
 	WriteRoots []string `json:"write_roots,omitempty"`
 	// Available is whether an OS sandbox actually backs an "enforce" request on
-	// this host (bwrap/seatbelt present). Without it "enforce" refuses bash
-	// execution instead of running unconfined.
+	// this host (Seatbelt, bubblewrap, or the Windows helper). Without it
+	// "enforce" refuses bash execution instead of running unconfined.
 	Available bool `json:"available"`
+	// Shell is the interpreter the bash tool resolved (kind and path). On
+	// Windows this is the first thing to check when sandboxed commands fail:
+	// Git-for-Windows/MSYS2 bash is far more fragile under a low-integrity
+	// token than PowerShell.
+	Shell string `json:"shell,omitempty"`
+	// BashConfigIgnored is set when the config file requests bash = "enforce"
+	// but the platform force-resolves it to "off" (Windows, until the native
+	// backend is reliable) — the one case where Bash silently disagrees with
+	// what the user wrote.
+	BashConfigIgnored bool `json:"bash_config_ignored,omitempty"`
 }
 
 type NetworkReport struct {
@@ -119,21 +122,42 @@ func Collect(opts Options) Report {
 		}
 	}
 	cwd, _ := os.Getwd()
+	sourcePath := config.SourcePath()
+	// Settings UIs and `voltui config` edit the user-level config, but a
+	// project voltui.toml outranks it. Users who toggle the sandbox off in
+	// Settings while the project file pins [sandbox] read the no-op as "bash is
+	// broken" (#5961, #6046) — surface the layering explicitly.
+	if sourcePath != "" && filepath.Base(sourcePath) == "voltui.toml" {
+		if raw, err := os.ReadFile(sourcePath); err == nil && tomlHasSandboxTable(raw) {
+			warnings = append(warnings, "project "+redactHome(sourcePath)+" sets [sandbox]; it overrides user-level Settings -> Sandbox for this workspace — edit the project file to change sandbox behavior here")
+		}
+	}
+	userPath := config.UserConfigPath()
+	if legacyPath := config.LegacyUserConfigPath(); userPath != "" && legacyPath != "" {
+		if _, userErr := os.Stat(userPath); userErr == nil {
+			if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+				warnings = append(warnings, "legacy user config exists at "+redactHome(legacyPath)+
+					" but is ignored because "+redactHome(userPath)+" exists")
+			}
+		}
+	}
+	// A config that says enforce while the platform force-resolves it to off is
+	// the one case where bash behavior silently disagrees with the file the user
+	// edited (Windows forces off until the native backend is reliable) — say it
+	// out loud instead of leaving it to be discovered from unconfined commands.
+	bashConfigIgnored := strings.TrimSpace(cfg.Sandbox.Bash) == "enforce" && cfg.BashMode() == "off"
+	if bashConfigIgnored {
+		warnings = append(warnings, `config requests [sandbox] bash = "enforce", but this platform currently forces the Bash sandbox off; bash runs unconfined`)
+	}
 	report := Report{
 		Version: opts.Version,
 		OS:      runtime.GOOS,
 		Arch:    runtime.GOARCH,
 		CWD:     redactHome(cwd),
 		Config: ConfigReport{
-			SourcePath:   redactHome(config.SourcePath()),
-			UserPath:     redactHome(config.UserConfigPath()),
+			SourcePath:   redactHome(sourcePath),
+			UserPath:     redactHome(userPath),
 			DefaultModel: cfg.DefaultModel,
-		},
-		Codegraph: CodegraphReport{
-			Enabled:     cfg.Codegraph.Enabled,
-			AutoInstall: cfg.Codegraph.AutoInstall,
-			Version:     codegraph.Version,
-			CacheDir:    redactHome(codegraph.CacheDir()),
 		},
 		LSP: LSPReport{
 			Enabled: cfg.LSP.Enabled,
@@ -141,10 +165,12 @@ func Collect(opts Options) Report {
 		},
 		Sessions: collectSessions(config.SessionDir()),
 		Sandbox: SandboxReport{
-			Bash:       cfg.BashMode(),
-			Network:    cfg.Sandbox.Network,
-			WriteRoots: redactHomeAll(cfg.WriteRoots()),
-			Available:  sandbox.Available(),
+			Bash:              cfg.BashMode(),
+			Network:           cfg.Sandbox.Network,
+			WriteRoots:        redactHomeAll(cfg.WriteRoots()),
+			Available:         sandbox.Available(),
+			Shell:             resolvedShellSummary(cfg),
+			BashConfigIgnored: bashConfigIgnored,
 		},
 		Network: NetworkReport{
 			ProxyMode: cfg.NetworkProxyMode(),
@@ -160,10 +186,6 @@ func Collect(opts Options) Report {
 		Warnings: warnings,
 	}
 	report.Sessions.Dir = redactHome(report.Sessions.Dir)
-	if p, ok := codegraph.Resolve(cfg.Codegraph.Path); ok {
-		report.Codegraph.Resolved = true
-		report.Codegraph.Path = redactHome(p)
-	}
 	for i := range cfg.Providers {
 		p := cfg.Providers[i]
 		models := p.ModelList()
@@ -233,16 +255,6 @@ func RenderText(r Report) string {
 		}
 	}
 
-	resolved := "missing"
-	if r.Codegraph.Resolved {
-		resolved = "resolved"
-	}
-	fmt.Fprintf(&b, "\ncodegraph\n")
-	fmt.Fprintf(&b, "  enabled      %v\n", r.Codegraph.Enabled)
-	fmt.Fprintf(&b, "  auto_install %v\n", r.Codegraph.AutoInstall)
-	fmt.Fprintf(&b, "  version      %s\n", r.Codegraph.Version)
-	fmt.Fprintf(&b, "  resolved     %s\n", resolved)
-
 	fmt.Fprintf(&b, "\nlsp\n")
 	fmt.Fprintf(&b, "  enabled      %v\n", r.LSP.Enabled)
 	fmt.Fprintf(&b, "  servers      %d configured overrides\n", r.LSP.Servers)
@@ -258,9 +270,15 @@ func RenderText(r Report) string {
 	fmt.Fprintf(&b, "\nsandbox\n")
 	bashLine := r.Sandbox.Bash
 	if r.Sandbox.Bash == "enforce" && !r.Sandbox.Available {
-		bashLine += " (unavailable: no OS sandbox on this host — bash execution is refused)"
+		bashLine += " (unavailable: no OS sandbox on this host; bash execution is refused. " + sandbox.UnavailableRemediation() + ")"
+	}
+	if r.Sandbox.BashConfigIgnored {
+		bashLine += ` (config requests "enforce", ignored: this platform currently forces the Bash sandbox off)`
 	}
 	fmt.Fprintf(&b, "  bash         %s\n", bashLine)
+	if r.Sandbox.Shell != "" {
+		fmt.Fprintf(&b, "  shell        %s\n", r.Sandbox.Shell)
+	}
 	fmt.Fprintf(&b, "  network      %v\n", r.Sandbox.Network)
 	fmt.Fprintf(&b, "  write_roots  %s\n", strings.Join(r.Sandbox.WriteRoots, ", "))
 
@@ -286,7 +304,15 @@ func collectSessions(dir string) SessionsReport {
 	}
 	r.Count = len(sessions)
 	if err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		// Transcript storage spans the .jsonl checkpoint plus the event
+		// log/index; counting only checkpoints would under-report usage.
+		name := filepath.Base(path)
+		if !store.IsSessionTranscriptName(name) &&
+			!strings.HasSuffix(name, ".events.jsonl") &&
+			!strings.HasSuffix(name, ".event-index.json") {
 			return nil
 		}
 		if info, statErr := d.Info(); statErr == nil {
@@ -353,4 +379,25 @@ func redactHomeAll(paths []string) []string {
 		out[i] = redactHome(p)
 	}
 	return out
+}
+
+// resolvedShellSummary reports which interpreter the bash tool would run
+// commands under, e.g. "bash (~/bin/bash)" or "powershell (C:\...\pwsh.exe)".
+func resolvedShellSummary(cfg *config.Config) string {
+	sh := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, io.Discard)
+	if sh.Path == "" {
+		return sh.Kind.String() + " (not found)"
+	}
+	return sh.Kind.String() + " (" + redactHome(sh.Path) + ")"
+}
+
+// tomlHasSandboxTable reports whether raw TOML sets any [sandbox] key. A parse
+// failure returns false — the config loader reports broken TOML on its own.
+func tomlHasSandboxTable(raw []byte) bool {
+	var doc map[string]toml.Primitive
+	if _, err := toml.Decode(string(raw), &doc); err != nil {
+		return false
+	}
+	_, ok := doc["sandbox"]
+	return ok
 }

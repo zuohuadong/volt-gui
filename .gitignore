@@ -5,6 +5,8 @@
 /npm/.stage/
 /voltui
 /voltui.exe
+/reasonix
+/reasonix.exe
 
 # Website (Astro) build output
 /site/dist/
@@ -22,29 +24,36 @@ mem.prof
 # Wails desktop artifacts
 /desktop/build/*
 !/desktop/build/appicon.png
+!/desktop/build/appicon.svg
 /desktop/desktop
 /desktop/frontend/dist/*
 !/desktop/frontend/dist/.gitkeep
+/desktop/frontend/sourcemaps/
 /desktop/frontend/wailsjs/
 /desktop/frontend/package.json.md5
 
-# Environment / local config (voltui.example.toml is the shared template)
+# Environment / local config (voltui.example.toml/reasonix.example.toml are shared templates)
 .env
 .env.local
 *.local
 /voltui.toml
+/reasonix.toml
 /desktop/.env
 /desktop/voltui.toml
+/desktop/reasonix.toml
 
 # Node / frontend dependencies and caches
 node_modules/
 .pnpm-store/
 .npm/
 
-# Project-local VoltUI state; keep the checked-in review command.
+# Project-local VoltUI/Reasonix state; keep the checked-in review command.
 /.voltui/*
 !/.voltui/commands/
 !/.voltui/commands/review.md
+/.reasonix/*
+!/.reasonix/commands/
+!/.reasonix/commands/review.md
 
 # CodeGraph per-project index (rebuilt locally; never committed)
 .codegraph/
@@ -54,6 +63,7 @@ node_modules/
 Thumbs.db
 .idea/
 .vscode/
+/site/public/av/
 
 # Scratch / agent working dirs (never committed)
 /tmp/
@@ -70,9 +80,14 @@ tasks.md
 AGENTS.md
 CLAUDE.md
 .zed/CONVENTIONS.md
+CODEBUDDY.md
+HERMES.md
 
 # Local Playwright artifacts and test output
 output/
 .playwright-cli/
-CODEBUDDY.md
-HERMES.md
+
+benchmarks/context-maintenance-e2e/run/
+
+# Local scratch
+temp/

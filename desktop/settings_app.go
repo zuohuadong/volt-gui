@@ -18,6 +18,7 @@ import (
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/provider"
+	"voltui/internal/sandbox"
 )
 
 // settings_app.go is the desktop Settings panel's command surface: it reads the
@@ -36,13 +37,14 @@ type ProviderView struct {
 	Kind              string                      `json:"kind"`
 	BaseURL           string                      `json:"baseUrl"`
 	ChatURL           string                      `json:"chatUrl"`
+	APISurface        string                      `json:"apiSurface"`
+	ResponsesURL      string                      `json:"responsesUrl"`
 	Models            []string                    `json:"models"`
 	VisionModels      []string                    `json:"visionModels"`
 	VisionModelsSet   bool                        `json:"visionModelsConfigured"`
 	ModelsURL         string                      `json:"modelsUrl"`
 	Default           string                      `json:"default"`
 	APIKeyEnv         string                      `json:"apiKeyEnv"`
-	APIKeyValue       string                      `json:"apiKeyValue,omitempty"`
 	Headers           map[string]string           `json:"headers"`
 	ExtraBody         map[string]any              `json:"extraBody"`
 	AuthHeader        bool                        `json:"authHeader"`
@@ -57,7 +59,6 @@ type ProviderView struct {
 	Thinking          string                      `json:"thinking"`
 	SupportedEfforts  []string                    `json:"supportedEfforts"`
 	DefaultEffort     string                      `json:"defaultEffort"`
-	Priority          int                         `json:"priority"`
 	ModelOverrides    []ProviderModelOverrideView `json:"modelOverrides"`
 }
 
@@ -110,6 +111,7 @@ type SandboxView struct {
 	EffectiveWorkspaceRoot string   `json:"effectiveWorkspaceRoot"`
 	EffectiveWriteRoots    []string `json:"effectiveWriteRoots"`
 	Shell                  string   `json:"shell"` // [tools.shell] prefer: auto|bash|powershell|pwsh
+	EffectiveShell         string   `json:"effectiveShell,omitempty"`
 }
 
 type NetworkProxyView struct {
@@ -492,7 +494,7 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 	key := resolver.ResolveGlobalFirst(p.APIKeyEnv)
 	requiresKey := p.RequiresAPIKey()
 	return ProviderView{
-		Name: p.Name, BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL, ChatURL: p.ChatURL,
+		Name: p.Name, BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL, ChatURL: p.ChatURL, APISurface: config.EffectiveAPISurface(&p), ResponsesURL: p.ResponsesURL,
 		Models: nonNil(models), VisionModels: nonNil(providerVisionModels(models, visionModels)), VisionModelsSet: visionModelsSet, ModelsURL: p.ModelsURL, Default: p.DefaultModel(),
 		APIKeyEnv:         p.APIKeyEnv,
 		Headers:           nonNilStringMap(p.Headers),
@@ -509,7 +511,6 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 		Thinking:          providerThinkingForSettings(p.Thinking),
 		SupportedEfforts:  nonNil(p.SupportedEfforts),
 		DefaultEffort:     p.DefaultEffort,
-		Priority:          p.Priority,
 		ModelOverrides:    providerModelOverridesForView(p.ModelOverrides, models),
 	}
 }
@@ -798,7 +799,7 @@ func (a *App) Settings() SettingsView {
 				Ask:   []string{},
 				Deny:  []string{},
 			},
-			Sandbox:                 SandboxView{Bash: "enforce", AllowWrite: []string{}, EffectiveWriteRoots: []string{}, Shell: "auto"},
+			Sandbox:                 SandboxView{Bash: config.Default().BashMode(), AllowWrite: []string{}, EffectiveWriteRoots: []string{}, Shell: "auto", EffectiveShell: sandboxEffectiveShellView(sandbox.ResolveShell("", "", nil))},
 			Agent:                   AgentView{PlannerMaxSteps: 0, MaxSubagentDepth: agent.DefaultMaxSubagentDepth, ColdResumePrune: true, ReasoningLanguage: "auto"},
 			Bot:                     botSettingsView(config.BotConfig{}),
 			AutoPlan:                "off",
@@ -818,10 +819,7 @@ func (a *App) Settings() SettingsView {
 		}
 	}
 	ctrl := a.activeCtrl()
-	bash := cfg.Sandbox.Bash
-	if bash == "" {
-		bash = "enforce"
-	}
+	bash := cfg.BashMode()
 	shell := cfg.Tools.Shell.Prefer
 	if shell == "" {
 		shell = "auto"
@@ -832,6 +830,7 @@ func (a *App) Settings() SettingsView {
 	if len(writeRoots) > 0 {
 		effectiveWorkspaceRoot = writeRoots[0]
 	}
+	effectiveShell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, nil)
 	v := SettingsView{
 		DefaultModel:      cfg.DefaultModel,
 		PlannerModel:      cfg.Agent.PlannerModel,
@@ -851,7 +850,7 @@ func (a *App) Settings() SettingsView {
 			Bash: bash, Network: cfg.Sandbox.Network,
 			WorkspaceRoot: cfg.Sandbox.WorkspaceRoot, AllowWrite: nonNil(cfg.Sandbox.AllowWrite),
 			EffectiveWorkspaceRoot: effectiveWorkspaceRoot, EffectiveWriteRoots: nonNil(writeRoots),
-			Shell: shell,
+			Shell: shell, EffectiveShell: sandboxEffectiveShellView(effectiveShell),
 		},
 		Network: NetworkView{
 			ProxyMode: cfg.NetworkProxyMode(),
@@ -895,6 +894,20 @@ func (a *App) Settings() SettingsView {
 		v.Providers = append(v.Providers, providerViewFromEntryForRootWithResolver(*p, isOfficialBuiltInProvider(*p), added[p.Name], root, resolver))
 	}
 	return v
+}
+
+func sandboxEffectiveShellView(sh sandbox.Shell) string {
+	if sh.Kind == sandbox.ShellPowerShell {
+		if sh.SupportsChaining() {
+			return "pwsh"
+		}
+		return "powershell"
+	}
+	path := strings.ToLower(strings.ReplaceAll(sh.Path, "\\", "/"))
+	if strings.Contains(path, "/git/") && strings.HasSuffix(path, "bash.exe") {
+		return "git-bash"
+	}
+	return "bash"
 }
 
 func botSettingsView(b config.BotConfig) BotSettingsView {
@@ -1215,10 +1228,8 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 		}
 		return cfg, userPath, nil
 	}
-	legacyCfg := config.LoadForEdit(legacyPath)
-	if err := normalizeLegacyDesktopProviderAccessForSettings(legacyCfg, legacyPath); err != nil {
-		return nil, "", err
-	}
+	legacyCfg := config.LoadForView(legacyPath)
+	normalizeLegacyDesktopProviderAccessInMemory(legacyCfg, legacyPath)
 	legacyCfg.ConfigVersion = config.Default().ConfigVersion
 	if err := migrateLegacyBotConfigToUser(cfg, legacyCfg, userPath); err != nil {
 		return nil, "", err
@@ -1235,7 +1246,7 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 // loaded; callers that hand the config to a runtime resolving secrets from the
 // process env must use loadDesktopUserConfigForViewWithCredentials.
 func (a *App) loadDesktopUserConfigForView() (*config.Config, string, error) {
-	return a.loadDesktopUserConfigReadOnly(config.LoadForEditWithoutCredentials)
+	return a.loadDesktopUserConfigReadOnly(config.LoadForViewWithoutCredentials)
 }
 
 // loadDesktopUserConfigForViewWithCredentials is loadDesktopUserConfigForView
@@ -1245,7 +1256,7 @@ func (a *App) loadDesktopUserConfigForView() (*config.Config, string, error) {
 // (app-secret/control-token envs) and MCP server connects. It still never
 // writes to disk.
 func (a *App) loadDesktopUserConfigForViewWithCredentials() (*config.Config, string, error) {
-	return a.loadDesktopUserConfigReadOnly(config.LoadForEdit)
+	return a.loadDesktopUserConfigReadOnly(config.LoadForView)
 }
 
 // loadDesktopUserConfigReadOnly is the shared pure-read loader behind the View
@@ -1291,7 +1302,7 @@ func (a *App) migrateLegacyBotConfigToUser(userCfg *config.Config, userPath stri
 	if legacyPath == "" || sameConfigPath(legacyPath, userPath) {
 		return nil
 	}
-	legacyCfg := config.LoadForEdit(legacyPath)
+	legacyCfg := config.LoadForView(legacyPath)
 	return migrateLegacyBotConfigToUser(userCfg, legacyCfg, userPath)
 }
 
@@ -1445,57 +1456,14 @@ func (a *App) activeWorkspaceRoot() string {
 func (a *App) saveProviderCredential(apiKeyEnv, value string) (string, error) {
 	apiKeyEnv = strings.TrimSpace(apiKeyEnv)
 	value = strings.TrimSpace(value)
-	warning := ""
-	if _, ok := os.LookupEnv(apiKeyEnv); ok && strings.TrimSpace(os.Getenv(apiKeyEnv)) == "" {
-		warning = fmt.Sprintf("Saved %s to VoltUI credentials, but environment variable may shadow it in this workspace.", apiKeyEnv)
-	}
 	if err := upsertDotEnv(apiKeyEnv, value); err != nil {
 		return "", err
 	}
-	return appendSettingsWarning(warning, a.providerCredentialSourceNotice(apiKeyEnv, value)), nil
+	return providerCredentialSourceNotice(apiKeyEnv, value), nil
 }
 
-func (a *App) providerCredentialSourceNotice(apiKeyEnv, value string) string {
-	apiKeyEnv = strings.TrimSpace(apiKeyEnv)
-	if apiKeyEnv == "" {
-		return ""
-	}
-	root := "."
-	if a != nil {
-		root = a.activeWorkspaceRoot()
-	}
-	res := config.ResolveCredentialForRootGlobalFirst(root, apiKeyEnv)
-	if len(res.Shadowed) == 0 {
-		return ""
-	}
-	labels := make([]string, 0, len(res.Shadowed))
-	seen := map[string]bool{}
-	for _, source := range res.Shadowed {
-		label := strings.TrimSpace(source.Label)
-		if label == "" {
-			switch source.Kind {
-			case config.CredentialSourceProjectEnv:
-				label = "project .env"
-			case config.CredentialSourceEnvironment:
-				label = "environment variable"
-			case config.CredentialSourceHomeEnv:
-				label = "home .env"
-			case config.CredentialSourceCredentials:
-				label = "VoltUI credentials"
-			case config.CredentialSourceLegacy:
-				label = "legacy VoltUI credentials"
-			}
-		}
-		if label == "" || seen[label] {
-			continue
-		}
-		seen[label] = true
-		labels = append(labels, label)
-	}
-	if len(labels) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("Saved %s to VoltUI credentials, but %s may shadow it in this workspace.", apiKeyEnv, strings.Join(labels, ", "))
+func providerCredentialSourceNotice(apiKeyEnv, value string) string {
+	return ""
 }
 
 func projectConfigPathForRoot(root string) string {
@@ -1578,8 +1546,8 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		if prevPath == "" {
 			prevPath = oldCtrl.SessionPath()
 		}
-		if err := tab.ensureSessionLease(prevPath); err != nil {
-			return userFacingSessionLeaseError(setting, err)
+		if err := a.ensureTabSessionLeaseForRebuild(tab, prevPath, setting); err != nil {
+			return err
 		}
 		if err := a.snapshotTabForAction(tab, "rebuilding settings"); err != nil {
 			return err
@@ -1612,10 +1580,14 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	})
 	if err != nil {
 		if oldCtrl == nil {
+			leaseHeld := false
 			a.mu.Lock()
-			tab.StartupErr = err.Error()
+			leaseHeld = setTabStartupError(tab, err)
 			tab.Ready = true
 			a.mu.Unlock()
+			if leaseHeld {
+				a.scheduleDeferredStartupBuild(tab.ID)
+			}
 			a.emitReady(a.ctx)
 		}
 		return err
@@ -1631,9 +1603,9 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		applyTabToolApprovalModeToController(ctrl, mode)
 	}
 	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
-	if err := tab.ensureSessionLease(path); err != nil {
+	if err := a.ensureTabSessionLeaseForRebuild(tab, path, setting); err != nil {
 		ctrl.Close()
-		return userFacingSessionLeaseError(setting, err)
+		return err
 	}
 	resumeWithFreshSystemPrompt(ctrl, carried, path)
 	if oldCtrl != nil {
@@ -1650,7 +1622,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	tab.Ctrl = ctrl
 	tab.model = model
 	tab.Label = ctrl.Label()
-	tab.StartupErr = ""
+	clearTabStartupError(tab)
 	tab.Ready = true
 	// Supersede any in-flight startup build: it would otherwise finish later,
 	// pass its generation check, and overwrite the controller just installed.
@@ -1923,9 +1895,6 @@ func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEn
 			ContextWindow: 1_000_000,
 			Prices:        config.DeepSeekV4PricesForLanguage(pricingLanguage),
 		}}, "DEEPSEEK_API_KEY", nil
-	case "mimo-api", "mimo", "xiaomi-mimo", "xiaomi_mimo":
-		entry := config.LegacyMimoOfficialProvider("mimo-api")
-		return []config.ProviderEntry{entry}, "MIMO_API_KEY", nil
 	default:
 		return nil, "", fmt.Errorf("unknown official provider template %q", kind)
 	}
@@ -1989,6 +1958,12 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.Kind = p.Kind
 	e.BaseURL = p.BaseURL
 	e.ChatURL = strings.TrimSpace(p.ChatURL)
+	if surface, err := config.NormalizeAPISurface(p.APISurface); err != nil {
+		return err
+	} else {
+		e.APISurface = surface
+	}
+	e.ResponsesURL = strings.TrimSpace(p.ResponsesURL)
 	e.ModelsURL = strings.TrimSpace(p.ModelsURL)
 	e.APIKeyEnv = p.APIKeyEnv
 	e.Headers = p.Headers
@@ -2000,7 +1975,6 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.Thinking = providerThinkingForSettings(p.Thinking)
 	e.SupportedEfforts = p.SupportedEfforts
 	e.DefaultEffort = p.DefaultEffort
-	e.Priority = p.Priority
 	e.Model = ""
 	e.Models = nil
 	e.Default = ""
@@ -2255,7 +2229,6 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 		AuthHeader: p.AuthHeader,
 	}
 	e.ResolveAPIKeyForRoot(a.activeWorkspaceRoot())
-	e.SetAPIKeyForProbe(p.APIKeyValue)
 	ctx, cancel := context.WithTimeout(a.reqCtx(), 15*time.Second)
 	defer cancel()
 	models, err := e.FetchModels(ctx)
@@ -2433,7 +2406,7 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 		a.supersedeTabBuildLocked(tab)
 		tab.model = fallbackRef
 		tab.Label = fallbackRef
-		tab.StartupErr = ""
+		clearTabStartupError(tab)
 		tab.Ready = a.ctx == nil
 		if a.ctx != nil {
 			rebuildTabs = append(rebuildTabs, tab)
@@ -2552,7 +2525,7 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 		a.supersedeTabBuildLocked(tab)
 		tab.model = fallbackRef
 		tab.Label = fallbackRef
-		tab.StartupErr = ""
+		clearTabStartupError(tab)
 		tab.Ready = a.ctx == nil
 		if a.ctx != nil {
 			rebuildTabs = append(rebuildTabs, tab)
@@ -3070,26 +3043,11 @@ func (a *App) applyReasoningLanguageToLiveControllers(fallback string) {
 	a.mu.RUnlock()
 	for _, tab := range tabs {
 		mode := fallback
-		if strings.TrimSpace(tab.root) != "" {
-			if cfg, err := config.LoadForRoot(tab.root); err == nil {
-				mode = cfg.ReasoningLanguage()
-			}
-		} else if cfg, err := config.LoadForRoot("."); err == nil && configDeclaresReasoningLanguage(config.UserConfigPath()) {
+		if cfg, err := config.LoadForRoot(tab.root); err == nil {
 			mode = cfg.ReasoningLanguage()
 		}
 		tab.ctrl.SetReasoningLanguage(mode)
 	}
-}
-
-func configDeclaresReasoningLanguage(path string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(body), "reasoning_language")
 }
 
 func (a *App) applyResponseLanguageToLiveControllers(fallback string) {

@@ -134,6 +134,7 @@ func memoryV5ArgItems(prior []string) []SlashItem {
 		{Label: "observe", Insert: "observe", Hint: "learn without injecting IR"},
 		{Label: "compact", Insert: "compact", Hint: "inject compact execution contracts"},
 		{Label: "on", Insert: "on", Hint: "alias for compact"},
+		{Label: "learnings", Insert: "learnings", Hint: "show recent Memory v5 learnings"},
 	}
 }
 

@@ -69,6 +69,7 @@
     ActivityMode,
     AgentInput,
     AgentView,
+    BrandInfo,
     CapabilitiesView,
     CheckpointMeta,
     CommandInfo,
@@ -203,6 +204,7 @@
   type WorkspaceNavItem = { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string; resourceTab?: ResourceTab };
   type WorkspaceNavSection = { title: string; items: WorkspaceNavItem[] };
   type AutomationDraft = WorkbenchAutomationInput & { stepsText: string; logsText: string };
+  const defaultBrand: BrandInfo = { name: "VoltUI", shortName: "VoltUI" };
   const automationKindOptions = ["验证自动化", "质量门禁", "工程验证", "浏览器验证", "定时巡检", "报告生成", "自定义自动化"];
   const automationStatusOptions = ["待配置", "运行中", "已暂停", "已停用", "失败", "已完成"];
   const automationOwnerOptions = ["自动化 Agent", "代码审查 Agent", "Browser 插件", "资料研究 Agent"];
@@ -241,6 +243,8 @@
     apiKeyEnv: string;
     apiKeyValue: string;
     modelsUrl: string;
+    apiSurface: string;
+    responsesUrl: string;
     priority: string;
     fetchedModels: string[];
     selectedFetchedModels: string[];
@@ -304,6 +308,7 @@
   let userMenuOpen = $state(false);
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
+  let brand = $state<BrandInfo>(defaultBrand);
   let modelSettings = $state<SettingsView | undefined>();
   let modelSettingsLoading = $state(false);
   let modelSettingsError = $state("");
@@ -382,6 +387,10 @@
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
   const showActiveTranscript = $derived(((activityMode === "code" && newTaskConversationActive) || (activityMode === "work" && workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || newTaskConversationActive));
+  const brandName = $derived(brand.name?.trim() || "VoltUI");
+  const brandShortName = $derived(brand.shortName?.trim() || brandName);
+  const brandMarkSrc = $derived(brand.logoDataUrl || brand.iconDataUrl || "");
+  const brandWordmarkSrc = $derived(brand.wordmarkDataUrl || "");
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
   const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
@@ -1047,6 +1056,28 @@
 
   function hasWailsBindings() {
     return typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  }
+  function normalizeBrandInfo(value?: BrandInfo | null): BrandInfo {
+    return {
+      ...defaultBrand,
+      ...(value ?? {}),
+      name: value?.name?.trim() || defaultBrand.name,
+      shortName: value?.shortName?.trim() || value?.name?.trim() || defaultBrand.shortName,
+    };
+  }
+  function brandText(value: string) {
+    return value.replace(/VoltUI/g, brandName).replace(/\bVolt\b/g, brandShortName);
+  }
+  function brandInitial() {
+    return Array.from(brandShortName || brandName || "V")[0]?.toUpperCase() || "V";
+  }
+  async function refreshBrand() {
+    if (!hasWailsBindings()) return;
+    try {
+      brand = normalizeBrandInfo(await app().Brand());
+    } catch (error) {
+      console.error("Failed to load brand", error);
+    }
   }
   function readFileAsDataURL(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -1920,6 +1951,8 @@
       apiKeyEnv: "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: "",
+      apiSurface: "chat_completions",
+      responsesUrl: "",
       priority: "0",
       fetchedModels: [],
       selectedFetchedModels: [],
@@ -2106,6 +2139,8 @@
       apiKeyEnv: provider.apiKeyEnv || "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: provider.modelsUrl || "",
+      apiSurface: provider.apiSurface || "chat_completions",
+      responsesUrl: provider.responsesUrl || "",
       priority: String(provider.priority ?? 0),
       fetchedModels: [],
       selectedFetchedModels: [],
@@ -2126,6 +2161,8 @@
       name: modelDraft.name.trim(),
       kind: modelDraft.kind.trim() || "openai",
       baseUrl: modelDraft.baseUrl.trim(),
+      apiSurface: modelDraft.apiSurface.trim() || "chat_completions",
+      responsesUrl: modelDraft.responsesUrl.trim(),
       models: modelsList,
       visionModels,
       visionModelsConfigured: visionModels.length > 0,
@@ -2470,6 +2507,7 @@
     sidebarStateHydrated = true;
 
     if (!hasWailsBindings()) {
+      brand = defaultBrand;
       hydrateBrowserPreview();
       const previewTick = window.setInterval(() => {
         nowMs = Date.now();
@@ -2479,6 +2517,7 @@
 
     // Check auth gate first — if [auth] is configured and no valid token exists,
     // show the OIDC login overlay before anything else.
+    void refreshBrand();
     withTimeout(app().NeedsAuth(), "auth check timed out", 8_000)
       .then((auth) => {
         needsAuth = auth;
@@ -5003,6 +5042,7 @@
   async function refresh() {
     loading = true;
     try {
+      await settleRefreshStep("brand", refreshBrand());
       tabs = await settleRefreshStep("tabs", app().ListTabs()) ?? tabs;
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
       models = active ? await settleRefreshStep("models", app().ModelsForTab(active.id)) ?? models : [];
@@ -5172,7 +5212,16 @@
     const next = (event.currentTarget as HTMLSelectElement).value;
     selectedModel = next;
     if (!hasWailsBindings()) return;
-    if (activeTab && next) await app().SetModelForTab(activeTab.id, next);
+    const tabID = currentComposerTab?.id || activeTab?.id;
+    if (!tabID || !next) return;
+    await app().SetModelForTab(tabID, next);
+    try {
+      tabs = await app().ListTabs();
+      models = await app().ModelsForTab(tabID);
+      selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]) || next;
+    } catch {
+      // The optimistic selectedModel is still valid; the next refresh will hydrate metadata.
+    }
   }
 
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
@@ -5236,7 +5285,10 @@
   }
 </script>
 <svelte:head>
-  <title>{t.app.title}</title>
+  <title>{brandText(t.app.title)}</title>
+  {#if brand.iconDataUrl}
+    <link rel="icon" href={brand.iconDataUrl} />
+  {/if}
 </svelte:head>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
@@ -5248,7 +5300,7 @@
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
     <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark"><Bot size={17} /></div><div class="brand-copy"><strong>{workbenchModeCopy[activityMode].title}</strong><span>{workbenchModeCopy[activityMode].eyebrow}</span></div><div class="brand-workspace-switch" role="group" aria-label="切换工作台"><button class="brand-workbench-button" class:active={activityMode === "work"} type="button" aria-label="Work 工作台" title="Work 工作台" onclick={openWorkWorkspace}><BriefcaseBusiness size={15} /></button><button class="brand-code-button" class:active={activityMode === "code"} type="button" aria-label="Code 工作台" title="Code 工作台" onclick={() => void openUnifiedCodeTask()}><Code2 size={15} /></button></div><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
+      <header class="sidebar__brand"><div class="brand-mark">{#if brandMarkSrc}<img src={brandMarkSrc} alt="" />{:else}<span>{brandInitial()}</span>{/if}</div><div class="brand-copy">{#if brandWordmarkSrc}<img class="brand-wordmark" src={brandWordmarkSrc} alt={brandName} />{:else}<strong>{brandName}</strong>{/if}<span>{brandText(workbenchModeCopy[activityMode].eyebrow)}</span></div><div class="brand-workspace-switch" role="group" aria-label="切换工作台"><button class="brand-workbench-button" class:active={activityMode === "work"} type="button" aria-label="Work 工作台" title="Work 工作台" onclick={openWorkWorkspace}><BriefcaseBusiness size={15} /></button><button class="brand-code-button" class:active={activityMode === "code"} type="button" aria-label="Code 工作台" title="Code 工作台" onclick={() => void openUnifiedCodeTask()}><Code2 size={15} /></button></div><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
       <nav class="workspace-nav" aria-label="工作台导航">
         {#if activityMode === "code"}
           <section class="code-repo-dock" aria-label="当前代码工作区">
@@ -5395,6 +5447,7 @@
                 onPreviewFile={previewFile}
                 {models}
                 {selectedModel}
+                imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                 onModelChange={switchModel}
                 projectOptions={newTaskProjectOptions}
                 selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
@@ -5408,7 +5461,7 @@
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined}>
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchModeCopy[activityMode].eyebrow}</span><strong>{activityMode === "code" ? "Code 工作台" : currentWorkLayerLabel()}</strong></div><p>{activityMode === "code" ? "面向研发用户的代码上下文、diff、检查点和执行权限控制台。" : workbenchModeCopy.work.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> 代码状态</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{brandText(workbenchModeCopy[activityMode].eyebrow)}</span><strong>{activityMode === "code" ? "Code 工作台" : currentWorkLayerLabel()}</strong></div><p>{activityMode === "code" ? "面向研发用户的代码上下文、diff、检查点和执行权限控制台。" : workbenchModeCopy.work.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> 代码状态</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
             {#if workbenchNotice}<div class="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if activityMode === "work" && workLayer === "reports"}
               {@const activeReport = selectedReport()}
@@ -5590,6 +5643,7 @@
                         onPreviewFile={previewFile}
                         {models}
                         {selectedModel}
+                        imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                         onModelChange={switchModel}
                         projectOptions={newTaskProjectOptions}
                         selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
@@ -5679,6 +5733,7 @@
                       onPreviewFile={previewFile}
                       {models}
                       {selectedModel}
+                      imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                       onModelChange={switchModel}
                       projectOptions={newTaskProjectOptions}
                       selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
@@ -6234,7 +6289,7 @@
               <header class="home-command__hero">
                 <div>
                   <h1>
-                    {landing.title}
+                    {brandText(landing.title)}
                     <span>{t.home.beta}</span>
                   </h1>
                   <p>把上下文、代码变更、检查点和 Agent 指令集中在一个输入入口。</p>
@@ -6258,6 +6313,7 @@
                   onPreviewFile={previewFile}
                   {models}
                   {selectedModel}
+                  imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                   onModelChange={switchModel}
                   projectOptions={newTaskProjectOptions}
                   selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
@@ -6948,7 +7004,9 @@
       <label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label>
       <label>渠道优先级<input bind:value={modelDraft.priority} inputmode="numeric" placeholder="0" /></label>
       <label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label>
-      <label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / responses" /></label>
+      <label>请求 API<select bind:value={modelDraft.apiSurface}><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option></select></label>
+      {#if modelDraft.apiSurface === "responses"}<label>Responses URL<input bind:value={modelDraft.responsesUrl} placeholder="默认 base_url + /responses" /></label>{/if}
+      <label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / openai" /></label>
       <label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label>
       <label class="wide">支持的 Effort<textarea rows="2" bind:value={modelDraft.supportedEffortsText} placeholder="逗号或换行分隔，例如 high, max"></textarea></label>
       <label class="wide">视觉模型<textarea rows="2" bind:value={modelDraft.visionModelsText} placeholder="可选，只给支持图片输入的模型填写"></textarea></label>
@@ -7521,7 +7579,7 @@
 
 
   .sidebar--aorist{padding:0;background:hsl(220 20% 98%);border-right:1px solid hsl(220 20% 90%)}
-  .sidebar__brand{--wails-draggable:drag;display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:56px;padding:0 12px;border-bottom:1px solid #e5e7eb}.brand-mark,.nav-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;color:#1f5fbf;background:#eaf2ff}.sidebar__brand strong,.sidebar__brand span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar__brand strong{font-size:14px;color:#111827}.sidebar__brand span{margin-top:2px;color:#6b7280;font-size:11px}
+  .sidebar__brand{--wails-draggable:drag;display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:56px;padding:0 12px;border-bottom:1px solid #e5e7eb}.brand-mark,.nav-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;color:#1f5fbf;background:#eaf2ff}.brand-mark img{display:block;max-width:100%;max-height:100%;object-fit:contain}.brand-mark span{margin:0;font-size:12px;font-weight:800;color:inherit}.brand-wordmark{display:block;max-width:100%;max-height:24px;object-fit:contain;object-position:left center}.sidebar__brand strong,.sidebar__brand span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar__brand strong{font-size:14px;color:#111827}.sidebar__brand span{margin-top:2px;color:#6b7280;font-size:11px}
   .workspace-nav{flex:1;min-height:0;overflow:auto;padding:10px 8px}.workspace-nav section{margin-bottom:10px}.workspace-nav h2{margin:8px 8px 5px;color:#8b95a1;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.workspace-nav button{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;min-height:36px;padding:4px 8px;color:#5f6774;background:transparent;border:0;border-radius:10px;text-align:left;font:inherit}.workspace-nav button:hover,.workspace-nav button.active{color:#1f2937;background:hsl(220 20% 94%)}.workspace-nav button span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:620}.workspace-nav button em{min-width:18px;padding:1px 5px;border-radius:999px;background:#e6eefc;color:#1f5fbf;font-size:10px;font-style:normal;text-align:center}
   .sidebar__user-wrap{position:relative;padding:0 8px 10px}.sidebar__user-wrap .sidebar__user{width:100%;display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid #e5e7eb;border-radius:13px;background:#fff;text-align:left;font:inherit}.user-menu{position:absolute;left:8px;right:8px;bottom:58px;z-index:40;display:grid;gap:4px;padding:6px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;box-shadow:0 18px 38px rgba(15,23,42,.16)}.user-menu button{width:100%;padding:9px 10px;border:0;border-radius:9px;color:#344054;background:transparent;text-align:left;font-size:13px}.user-menu button:hover{background:#f3f6fb;color:#111827}
   .stage-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:0 18px;border-bottom:1px solid #e5e7eb;background:rgba(255,255,255,.76);backdrop-filter:blur(16px)}.stage-topbar span,.aorist-toolbar span,.hero-panel span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.stage-topbar strong{display:block;margin-top:2px;font-size:17px;color:#111827}.stage-topbar__actions,.aorist-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hero-panel button,.aorist-toolbar button,:global(.composer-context-actions button),.automation-card footer button,.capability-item button,.config-modal footer button,.agent-wizard__footer button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:650}.hero-panel button:first-child,.aorist-toolbar button:last-child,.config-modal footer button:last-child,.agent-wizard__footer button:last-child{border-color:#1f5fbf;background:#1f5fbf;color:#fff}

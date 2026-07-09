@@ -52,9 +52,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	fmt.Fprintf(&b, "config_version = %d   # schema marker for diagnostics; old versions may ignore it\n", configVersion(c))
 	fmt.Fprintf(&b, "default_model = %q\n", c.DefaultModel)
 	if c.Language != "" {
-		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $VOLTUI_LANG\n", c.Language)
+		fmt.Fprintf(&b, "language      = %q   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n", c.Language)
 	} else {
-		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $VOLTUI_LANG\n")
+		b.WriteString("# language      = \"zh\"   # ui/model language; empty = auto-detect from $LANG / $REASONIX_LANG\n")
 	}
 	if scope != RenderScopeProject {
 		fmt.Fprintf(&b, "credentials_store = %q   # legacy compatibility; provider keys are saved in VoltUI's global .env\n", normalizeCredentialsStore(c.CredentialsStore))
@@ -87,9 +87,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 
 	if shouldRenderUI(c, defaults, scope) {
 		b.WriteString("[ui]\n")
-		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; VOLTUI_THEME can override per run\n", c.UITheme())
+		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; REASONIX_THEME can override per run\n", c.UITheme())
 		if style := c.UIThemeStyle(); style != "" {
-			fmt.Fprintf(&b, "theme_style = %q   # CLI accent palette; VOLTUI_THEME_STYLE can override per run\n", style)
+			fmt.Fprintf(&b, "theme_style = %q   # CLI accent palette; REASONIX_THEME_STYLE can override per run\n", style)
 		} else {
 			b.WriteString("# theme_style = \"graphite\"   # graphite|aurora|slate|carbon|nocturne|amber and legacy aliases\n")
 		}
@@ -187,7 +187,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		if c.Network.Proxy.Password != "" {
 			fmt.Fprintf(&b, "password = %q   # supports ${VAR} expansion\n", c.Network.Proxy.Password)
 		} else {
-			b.WriteString("# password = \"${VOLTUI_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
+			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}
 		b.WriteString("\n")
 	}
@@ -257,7 +257,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("# recent_keep         = 2   # minimum recent messages kept verbatim\n")
 	}
 	fmt.Fprintf(&b, "cold_resume_prune   = %v   # elide stale tool results when reopening a session past the provider cache window\n", c.ColdResumePruneEnabled())
-	fmt.Fprintf(&b, "plan_mode_allow_host_automation = %v   # allow browser/desktop automation while planning; set false for stricter privacy\n", c.PlanModeAllowHostAutomation())
 	if len(c.Agent.PlanModeAllowedTools) > 0 {
 		fmt.Fprintf(&b, "plan_mode_allowed_tools = %s   # extra read-only declarations for custom tools; cannot unlock known blocked tools or unsafe bash\n", renderStringArray(c.Agent.PlanModeAllowedTools))
 	} else {
@@ -314,6 +313,12 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			if p.ChatURL != "" {
 				fmt.Fprintf(&b, "chat_url    = %q   # optional full chat completions URL; disables automatic /chat/completions suffix\n", p.ChatURL)
 			}
+			if p.APISurface != "" {
+				fmt.Fprintf(&b, "api_surface = %q   # chat_completions|responses; responses changes the request schema\n", p.APISurface)
+			}
+			if p.ResponsesURL != "" {
+				fmt.Fprintf(&b, "responses_url = %q   # optional full Responses API request URL\n", p.ResponsesURL)
+			}
 			if len(p.Models) > 0 {
 				fmt.Fprintf(&b, "models      = %s\n", renderStringArray(p.Models))
 				if p.Default != "" {
@@ -346,9 +351,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			}
 			if p.ContextWindow > 0 {
 				fmt.Fprintf(&b, "context_window = %d   # tokens; compaction triggers near this limit\n", p.ContextWindow)
-			}
-			if p.Priority != 0 {
-				fmt.Fprintf(&b, "priority    = %d   # higher wins when a bare model name appears in multiple providers\n", p.Priority)
 			}
 			if p.Price != nil {
 				fmt.Fprintf(&b, "price       = %s   # provider-wide fallback, per 1M tokens\n", renderPricingInline(p.Price))
@@ -462,8 +464,10 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("[sandbox]\n")
 	b.WriteString("# Confine tool blast radius. File-writers (write_file/edit_file/multi_edit/move_file)\n")
 	b.WriteString("# may only write under workspace_root (empty = current dir) and allow_write extras.\n")
-	b.WriteString("# bash = \"enforce\" (default) jails each command in an OS sandbox when\n")
-	b.WriteString("# available; without one, bash execution is refused. \"off\" disables it. network allows egress.\n")
+	b.WriteString("# bash = \"enforce\" jails each command in an OS sandbox when available;\n")
+	b.WriteString("# without one, bash execution is refused. Empty defaults to enforce on macOS/Linux.\n")
+	b.WriteString("# Windows currently forces bash = \"off\" to restore pre-1.16 unconfined shell execution.\n")
+	b.WriteString("# network allows sandboxed bash egress.\n")
 	if c.Sandbox.WorkspaceRoot != "" {
 		fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
 	} else {
@@ -644,17 +648,25 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("\n")
 	}
 
-	if shouldRenderCodegraph(c, defaults, scope) {
-		b.WriteString("[codegraph]\n")
-		fmt.Fprintf(&b, "enabled = %v   # built-in CodeGraph MCP server\n", c.Codegraph.Enabled)
-		fmt.Fprintf(&b, "auto_install = %v   # download the CodeGraph runtime on first use when missing\n", c.Codegraph.AutoInstall)
-		if strings.TrimSpace(c.Codegraph.Path) != "" {
-			fmt.Fprintf(&b, "path = %q\n", c.Codegraph.Path)
+	// [secrets] is user/global only: LoadForRoot discards project values, so
+	// the project scope never renders it. Rendering it here lets saved user
+	// toggles survive config rewrites.
+	if scope != RenderScopeProject {
+		b.WriteString("[secrets]   # credential protection; user/global only, ./voltui.toml cannot override\n")
+		if c.Secrets.RedactToolOutput != nil {
+			fmt.Fprintf(&b, "redact_tool_output = %v   # mask secret-shaped values in tool output before model context/UI; transcripts and job artifacts are always redacted on disk\n", *c.Secrets.RedactToolOutput)
 		} else {
-			b.WriteString("# path = \"/path/to/codegraph\"   # optional launcher override\n")
+			b.WriteString("# redact_tool_output = true   # default on; set false only if masking breaks fixture-heavy edit workflows\n")
 		}
-		if strings.TrimSpace(c.Codegraph.Tier) != "" {
-			fmt.Fprintf(&b, "tier = %q   # background|eager; legacy lazy resolves to background\n", c.Codegraph.ResolvedTier())
+		if c.Secrets.FilterSubprocessEnv {
+			b.WriteString("filter_subprocess_env = true   # strip credential-named env vars from tool/hook/LSP/MCP subprocesses\n")
+		} else {
+			b.WriteString("# filter_subprocess_env = false   # opt-in; stripping tokens breaks gh, HTTPS git push, npm publish\n")
+		}
+		if c.Secrets.ProtectSensitiveFiles {
+			b.WriteString("protect_sensitive_files = true   # hide .env/.git-credentials/key files/~/.ssh from read tools\n")
+		} else {
+			b.WriteString("# protect_sensitive_files = false   # opt-in; values are already masked by redaction even when files stay readable\n")
 		}
 		b.WriteString("\n")
 	}
@@ -853,10 +865,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 		fmt.Fprintf(&agentBuf, "cold_resume_prune = %v\n", c.ColdResumePruneEnabled())
 		anyAgent = true
 	}
-	if c.Agent.PlanModeAllowHostAutomation != nil && c.PlanModeAllowHostAutomation() != d.PlanModeAllowHostAutomation() {
-		fmt.Fprintf(&agentBuf, "plan_mode_allow_host_automation = %v\n", c.PlanModeAllowHostAutomation())
-		anyAgent = true
-	}
 	if len(c.Agent.PlanModeAllowedTools) > 0 && !reflect.DeepEqual(c.Agent.PlanModeAllowedTools, d.Agent.PlanModeAllowedTools) {
 		fmt.Fprintf(&agentBuf, "plan_mode_allowed_tools = %s\n", renderStringArray(c.Agent.PlanModeAllowedTools))
 		anyAgent = true
@@ -911,6 +919,12 @@ func RenderTOMLProjectDelta(c *Config) string {
 			if p.ChatURL != "" {
 				fmt.Fprintf(&b, "chat_url    = %q\n", p.ChatURL)
 			}
+			if p.APISurface != "" {
+				fmt.Fprintf(&b, "api_surface = %q\n", p.APISurface)
+			}
+			if p.ResponsesURL != "" {
+				fmt.Fprintf(&b, "responses_url = %q\n", p.ResponsesURL)
+			}
 			if len(p.Models) > 0 {
 				fmt.Fprintf(&b, "models      = %s\n", renderStringArray(p.Models))
 				if p.Default != "" {
@@ -943,9 +957,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 			}
 			if p.ContextWindow > 0 {
 				fmt.Fprintf(&b, "context_window = %d\n", p.ContextWindow)
-			}
-			if p.Priority != 0 {
-				fmt.Fprintf(&b, "priority    = %d\n", p.Priority)
 			}
 			if p.Price != nil {
 				fmt.Fprintf(&b, "price       = %s\n", renderPricingInline(p.Price))
@@ -1071,20 +1082,27 @@ func RenderTOMLProjectDelta(c *Config) string {
 
 	// [sandbox]
 	if !reflect.DeepEqual(c.Sandbox, d.Sandbox) {
-		b.WriteString("[sandbox]\n")
+		var sandboxBuf strings.Builder
 		if c.Sandbox.WorkspaceRoot != "" {
-			fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
+			fmt.Fprintf(&sandboxBuf, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)
 		}
 		if len(c.Sandbox.AllowWrite) > 0 {
-			fmt.Fprintf(&b, "allow_write = %s\n", renderStringArray(c.Sandbox.AllowWrite))
+			fmt.Fprintf(&sandboxBuf, "allow_write = %s\n", renderStringArray(c.Sandbox.AllowWrite))
 		}
-		if c.BashMode() != "enforce" {
-			fmt.Fprintf(&b, "bash = %q\n", c.BashMode())
+		// Only persist a bash mode when its effective value differs from the
+		// platform default. On Windows, even explicit "enforce" currently
+		// resolves to "off", so project configs should not imply otherwise.
+		if strings.TrimSpace(c.Sandbox.Bash) != "" && c.BashMode() != d.BashModeForGOOS(runtimeGOOS) {
+			fmt.Fprintf(&sandboxBuf, "bash = %q\n", c.BashMode())
 		}
 		if c.Sandbox.Network != d.Sandbox.Network {
-			fmt.Fprintf(&b, "network = %v\n", c.Sandbox.Network)
+			fmt.Fprintf(&sandboxBuf, "network = %v\n", c.Sandbox.Network)
 		}
-		b.WriteString("\n")
+		if sandboxBuf.Len() > 0 {
+			b.WriteString("[sandbox]\n")
+			b.WriteString(sandboxBuf.String())
+			b.WriteString("\n")
+		}
 	}
 
 	// [statusline]
@@ -1092,20 +1110,6 @@ func RenderTOMLProjectDelta(c *Config) string {
 		b.WriteString("[statusline]\n")
 		if c.Statusline.Command != "" {
 			fmt.Fprintf(&b, "command = %q\n", c.Statusline.Command)
-		}
-		b.WriteString("\n")
-	}
-
-	// [codegraph] — include when it differs from defaults
-	if !reflect.DeepEqual(c.Codegraph, d.Codegraph) {
-		b.WriteString("[codegraph]\n")
-		fmt.Fprintf(&b, "enabled = %v\n", c.Codegraph.Enabled)
-		fmt.Fprintf(&b, "auto_install = %v\n", c.Codegraph.AutoInstall)
-		if strings.TrimSpace(c.Codegraph.Path) != "" {
-			fmt.Fprintf(&b, "path = %q\n", c.Codegraph.Path)
-		}
-		if strings.TrimSpace(c.Codegraph.Tier) != "" {
-			fmt.Fprintf(&b, "tier = %q\n", c.Codegraph.ResolvedTier())
 		}
 		b.WriteString("\n")
 	}
@@ -1672,11 +1676,4 @@ func formatFloat(f float64) string {
 		s += ".0"
 	}
 	return s
-}
-
-func shouldRenderCodegraph(c, defaults *Config, scope RenderScope) bool {
-	if scope != RenderScopeProject {
-		return true
-	}
-	return !reflect.DeepEqual(c.Codegraph, defaults.Codegraph)
 }

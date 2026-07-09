@@ -267,8 +267,35 @@ endpoint, open **Compatibility settings** and set `models_url`, for example
 `https://gateway.example.com/v1/models`. If discovery is not available, fill the
 model list manually.
 
-**Full URL** still uses the OpenAI-compatible chat request body. It does not
-switch the request schema to the OpenAI Responses API.
+**Full URL** still uses the OpenAI-compatible chat request body. If a provider
+requires the OpenAI Responses API request body, set **API surface** to
+**Responses** for that provider. VoltUI then sends requests to
+`base_url + "/responses"`, or to the explicit `responses_url` configured in
+compatibility settings.
+
+### Chat Models, Vision Input, and Image Generation
+
+Model switching keeps the current conversation alive. After the desktop model
+picker or CLI `/model <provider/model>` selects a new model, the next turn uses
+that model while the transcript, tool context, and session file continue from
+the same conversation.
+
+Multimodal behavior is a current-model capability, not a permanent session
+mode. A provider can set `vision = true` for every listed chat model or
+`vision_models = [...]` for only the models that accept image input. When you
+switch to a text-only model, image attachments still appear as `@...` file
+references in the prompt, but image bytes are not sent directly to the model.
+When you switch back to a vision-capable model, only images referenced by that
+turn are sent as direct image input. This avoids 400s from text-only models and
+prevents accidental image-token spend.
+
+Image generation, video rendering, and poster generation models should not be
+added to the normal chat model picker. VoltUI's chat providers default to
+OpenAI-compatible chat or Anthropic-compatible messages requests; OpenAI
+mainline models can explicitly switch to Responses when a provider sets
+`api_surface = "responses"`. Image generation should be exposed through
+Responses built-in image tools, MCP, or Workbench durable jobs/artifacts so the
+workbench can register and review the generated files.
 
 ### Compatibility settings
 
@@ -283,11 +310,14 @@ For Anthropic-compatible services, such as some coding-plan endpoints, choose
 | --- | --- | --- |
 | `api_key_env` | The environment-variable name used for this provider's API key. Desktop-saved key values are stored in VoltUI home `.env` under this name; the TOML config stores only the name. | Change it when several providers need distinct keys, or leave it blank for a service that does not require an API key. |
 | `models_url` | The URL used only for model discovery. Chat requests still use the API address or Full URL above. | Set it when `/models` or `/v1/models` is not where the gateway exposes its model list. |
+| `api_surface` | Request schema. The default is `chat_completions`; `responses` uses the OpenAI Responses API. | Set it for OpenAI mainline models or gateways that require the `/responses` request body. |
+| `responses_url` | Optional full Responses API request URL. Empty means `base_url + "/responses"`. | Set it when the gateway's Responses endpoint is not on the standard path. |
 | Extra request headers | Static HTTP headers, one `Header: value` per line. | Use for gateways such as OpenRouter that require `HTTP-Referer`, `X-Title`, or similar site headers. Keep bearer/API keys in the key field instead of duplicating them here. |
 | Extra request body | A JSON object merged into the top-level chat request body. | Use only for provider-specific flags such as `{"enable_thinking": true}`. VoltUI still owns core fields such as `model`, `messages`, `tools`, `stream`, and `thinking`, and null values are rejected. |
 | Authorization: Bearer | For Anthropic-compatible providers, sends the saved API key as `Authorization: Bearer <key>` instead of `x-api-key`. | Enable it only when the gateway documents Bearer auth, such as MiniMax Global or Vercel AI Gateway. |
 | Model capability mode | Which reasoning request protocol VoltUI should use for this provider. | Keep **Auto-detect** unless the gateway is misdetected or the model docs require a specific reasoning format. |
 | Thinking override | Provider-specific override for `thinking.type`. | Keep **Auto** unless the backend documents `enabled`, `disabled`, or `adaptive`. Unsupported values can make some OpenAI-compatible gateways reject the request. |
+| `vision_detail` | OpenAI-compatible image-input detail hint. Set `low` or `high`; leave empty for provider default/auto. | Use `low` to reduce cost for coarse reads, and `high` when screenshots, charts, or design files need finer detail. |
 | Balance URL | Optional endpoint for wallet/balance lookup. | Set it when the provider exposes a balance endpoint and you want the desktop status bar to show it. |
 | Context window | The maximum number of tokens this provider keeps in context. `0` means provider default. | Set it when the model's real context size differs from VoltUI's default or built-in metadata. |
 

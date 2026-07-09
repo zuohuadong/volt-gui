@@ -1376,6 +1376,53 @@ func TestSettingsMarksPresetWithChangedCoreConfigAsModified(t *testing.T) {
 	}
 }
 
+func TestSettingsMigratesLegacyStepFunPresetBaseURLs(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	cfg := config.Default()
+	stepfun, ok := config.CuratedProviderPreset("stepfun")
+	if !ok || len(stepfun.Entries) != 1 {
+		t.Fatal("missing stepfun preset")
+	}
+	stepfunEntry := stepfun.Entries[0]
+	stepfunEntry.BaseURL = "https://api.stepfun.ai/step_plan/v1"
+	stepfunAnthropic, ok := config.CuratedProviderPreset("stepfun-anthropic")
+	if !ok || len(stepfunAnthropic.Entries) != 1 {
+		t.Fatal("missing stepfun-anthropic preset")
+	}
+	stepfunAnthropicEntry := stepfunAnthropic.Entries[0]
+	stepfunAnthropicEntry.BaseURL = "https://api.stepfun.ai/step_plan"
+	cfg.Providers = append(cfg.Providers, stepfunEntry, stepfunAnthropicEntry)
+	cfg.Desktop.ProviderAccess = []string{"stepfun", "stepfun-anthropic"}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	view := NewApp().Settings()
+	for _, id := range []string{"stepfun", "stepfun-anthropic"} {
+		presetView := providerPresetViewByID(t, view, id)
+		if !presetView.Added || presetView.Status != providerPresetStatusInstalled {
+			t.Fatalf("%s preset view = %+v, want installed after migration", id, presetView)
+		}
+	}
+
+	migrated := config.LoadForEdit(config.UserConfigPath())
+	stepfunEntryView, ok := migrated.Provider("stepfun")
+	if !ok {
+		t.Fatal("stepfun provider missing after migration")
+	}
+	if got := stepfunEntryView.BaseURL; got != "https://api.stepfun.com/step_plan/v1" {
+		t.Fatalf("stepfun base_url = %q, want official URL", got)
+	}
+	stepfunAnthropicEntryView, ok := migrated.Provider("stepfun-anthropic")
+	if !ok {
+		t.Fatal("stepfun-anthropic provider missing after migration")
+	}
+	if got := stepfunAnthropicEntryView.BaseURL; got != "https://api.stepfun.com/step_plan" {
+		t.Fatalf("stepfun-anthropic base_url = %q, want official URL", got)
+	}
+}
+
 func TestSettingsMarksSimilarProviderPresetWithoutBlockingAdd(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	preset, ok := config.CuratedProviderPreset("mimo-api")
@@ -2079,6 +2126,7 @@ func TestDeferredRebuildRetryAppliesAfterLeaseRelease(t *testing.T) {
 		sink:        &tabEventSink{tabID: "tab_deferred_retry", app: app},
 		disabledMCP: map[string]ServerView{},
 	}
+	installNoopRuntimeEvents(app, tab.sink)
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
@@ -2189,6 +2237,7 @@ func TestDeferredRebuildWaitsForTabToBecomeActive(t *testing.T) {
 		sink:        &tabEventSink{tabID: "tab_pending", app: app},
 		disabledMCP: map[string]ServerView{},
 	}
+	installNoopRuntimeEvents(app, tab.sink)
 	other := &WorkspaceTab{
 		ID:          "tab_other",
 		Scope:       "global",
@@ -2489,6 +2538,82 @@ api_key_env = "LOCAL_API_KEY"
 	}
 	if len(models) != 2 {
 		t.Fatalf("Models() len = %d, want 2: %+v", len(models), models)
+	}
+}
+
+func TestModelsForTabMarksVisionModels(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "local/model-a"
+
+[desktop]
+provider_access = ["local"]
+
+[[providers]]
+name = "local"
+kind = "openai"
+base_url = "http://127.0.0.1:23333/v1"
+models = ["model-a", "qwen-vl-plus"]
+vision_models = ["qwen-vl-plus"]
+default = "model-a"
+api_key_env = "LOCAL_API_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	models := NewApp().Models()
+	visionByRef := map[string]bool{}
+	for _, model := range models {
+		visionByRef[model.Ref] = model.Vision
+	}
+	if visionByRef["local/model-a"] {
+		t.Fatalf("text model marked vision-capable: %+v", models)
+	}
+	if !visionByRef["local/qwen-vl-plus"] {
+		t.Fatalf("vision model not marked vision-capable: %+v", models)
+	}
+}
+
+func TestListTabsReportsImageInputEnabledForSelectedModel(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "local/model-a"
+
+[desktop]
+provider_access = ["local"]
+
+[[providers]]
+name = "local"
+kind = "openai"
+base_url = "http://127.0.0.1:23333/v1"
+models = ["model-a", "qwen-vl-plus"]
+vision_models = ["qwen-vl-plus"]
+default = "model-a"
+api_key_env = "LOCAL_API_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	app := NewApp()
+	tab := &WorkspaceTab{ID: "tab", Scope: "global", Ready: true, model: "local/qwen-vl-plus"}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	if tabs := app.ListTabs(); len(tabs) != 1 || !tabs[0].ImageInputEnabled {
+		t.Fatalf("ListTabs() = %+v, want image input enabled", tabs)
+	}
+
+	tab.model = "local/model-a"
+	if tabs := app.ListTabs(); len(tabs) != 1 || tabs[0].ImageInputEnabled {
+		t.Fatalf("ListTabs() = %+v, want image input disabled", tabs)
 	}
 }
 

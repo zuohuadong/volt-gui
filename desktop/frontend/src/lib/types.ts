@@ -2,6 +2,17 @@ export type ActivityMode = "work" | "code";
 export type RunMode = "ask" | "auto" | "yolo" | "plan" | "goal";
 export type BackendMode = "normal" | "plan" | "yolo";
 
+export interface BrandInfo {
+  name: string;
+  shortName: string;
+  logoPath?: string;
+  wordmarkPath?: string;
+  iconPath?: string;
+  logoDataUrl?: string;
+  wordmarkDataUrl?: string;
+  iconDataUrl?: string;
+}
+
 export interface TabMeta {
   id: string;
   scope: "global" | "project";
@@ -28,6 +39,7 @@ export interface TabMeta {
   tokenMode?: string;
   goal?: string;
   goalStatus?: string;
+  imageInputEnabled?: boolean;
   startupErr?: string;
   cwd?: string;
 }
@@ -76,6 +88,7 @@ export interface ModelInfo {
   name: string;
   label?: string;
   current?: boolean;
+  vision?: boolean;
 }
 
 export interface ProviderView {
@@ -84,6 +97,8 @@ export interface ProviderView {
   added?: boolean;
   kind: string;
   baseUrl: string;
+  apiSurface?: string;
+  responsesUrl?: string;
   models: string[];
   visionModels?: string[];
   visionModelsConfigured?: boolean;
@@ -1005,10 +1020,39 @@ export interface WireCacheDiagnostics {
   cacheHitTokens: number;
 }
 
+export interface MemoryCitation {
+  id?: string;
+  source: string;
+  lineStart?: number;
+  lineEnd?: number;
+  note?: string;
+  kind?: string;
+}
+
+export interface MemoryCompilerStats {
+  injected: boolean;
+  usefulIR: boolean;
+  compiledTokens: number;
+  irOverheadTokens: number;
+  memoryReferences: number;
+  constraints: number;
+  riskNotes: number;
+  executionSteps: number;
+  totalNodes: number;
+  highSignalNodes: number;
+  toolResultNodes: number;
+  decisionNodes: number;
+  strategyCount: number;
+  learningCount: number;
+}
+
 export interface WireEvent {
   kind: WireEventKind;
   text?: string;
+  detail?: string;
   reasoning?: string;
+  memoryCitations?: MemoryCitation[];
+  memoryCompiler?: MemoryCompilerStats;
   err?: string;
   level?: "info" | "warn";
   tabId?: string;

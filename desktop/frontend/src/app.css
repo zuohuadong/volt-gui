@@ -1426,6 +1426,40 @@ button {
   color: var(--law-muted);
   border-style: dashed;
 }
+
+.composer-context__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(520px, 100%);
+  min-height: 28px;
+  padding: 0 10px;
+  color: #4b5563;
+  background: #f8fafc;
+  border: 1px dashed var(--law-border-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.composer-context__hint span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-context__hint--vision {
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.composer-context__hint--text {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
 /* === Decision shelf (approval / ask) === */
 .decision-shelf {
   display: grid;

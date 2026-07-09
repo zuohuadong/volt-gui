@@ -25,6 +25,21 @@ type gitStatusEntry struct {
 	WorktreeStatus string
 }
 
+type WorkspaceDiffView struct {
+	Path           string `json:"path"`
+	OldPath        string `json:"oldPath,omitempty"`
+	Status         string `json:"status,omitempty"`
+	IndexStatus    string `json:"indexStatus,omitempty"`
+	WorktreeStatus string `json:"worktreeStatus,omitempty"`
+	Kind           string `json:"kind"`
+	Diff           string `json:"diff"`
+	Added          int    `json:"added"`
+	Removed        int    `json:"removed"`
+	Binary         bool   `json:"binary"`
+	Truncated      bool   `json:"truncated"`
+	Err            string `json:"err,omitempty"`
+}
+
 type workspaceChangeAccumulator struct {
 	view       WorkspaceChangeView
 	hasSession bool

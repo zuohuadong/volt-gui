@@ -6176,6 +6176,7 @@ func TestCapabilitiesShowsDefaultBuiltInComputerUse(t *testing.T) {
 	t.Chdir(dir)
 	t.Setenv("VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS", "1")
 	t.Setenv("VOLTUI_COMPUTER_USE_MCP_DIR", filepath.Join(dir, "computer-use-mcp"))
+	t.Setenv("VOLTUI_COMPUTER_USE_RUNTIME", filepath.Join(dir, "computer-use-runtime", "bun"))
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
@@ -6195,8 +6196,8 @@ func TestCapabilitiesShowsDefaultBuiltInComputerUse(t *testing.T) {
 	if found.Status != "deferred" || found.StartIntent != "automatic" || found.RuntimeState != "idle" || !found.BuiltIn || !found.Configured {
 		t.Fatalf("computer-use view = %+v, want deferred automatic built-in config", *found)
 	}
-	if found.Command != "node" || len(found.Args) != 1 || !strings.HasSuffix(found.Args[0], filepath.FromSlash("node_modules/@zavora-ai/computer-use-mcp/dist/server.js")) {
-		t.Fatalf("computer-use command/args = %q %+v, want system node + bundled server.js", found.Command, found.Args)
+	if found.Command != filepath.Join(dir, "computer-use-runtime", "bun") || len(found.Args) != 1 || !strings.HasSuffix(found.Args[0], filepath.FromSlash("node_modules/@zavora-ai/computer-use-mcp/dist/server.js")) {
+		t.Fatalf("computer-use command/args = %q %+v, want runtime override + bundled server.js", found.Command, found.Args)
 	}
 }
 

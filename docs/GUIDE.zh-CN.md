@@ -458,9 +458,10 @@ trusted_read_only_tools = ["issue_read", "pull_request_read"]
 只信任无副作用的读取工具；create/update/delete 这类写工具应保持未信任。
 
 桌面 release 内置 `computer-use` MCP。它随 Wails app 资源携带
-`@zavora-ai/computer-use-mcp` 及各平台预编译 `.node`，运行时用系统 Node（>= 18；
-可用 `VOLTUI_COMPUTER_USE_NODE` 指向自带 Node；Windows ARM64 当前需 x64 Node/native 兼容层）
-启动资源里的 `dist/server.js`。该服务器默认
+`@zavora-ai/computer-use-mcp`、各平台预编译 `.node` 和 Bun runtime，运行时直接用随包 Bun
+启动资源里的 `dist/server.js`，用户机器不需要安装 Node.js。`VOLTUI_COMPUTER_USE_RUNTIME`
+可指向自定义 Bun/Node 兼容 runtime，旧的 `VOLTUI_COMPUTER_USE_NODE` 覆盖仍兼容。Windows ARM64
+当前使用随包 x64 Bun/native 兼容路径，因为 upstream 未发布 win32-arm64 `.node`。该服务器默认
 作为内置 MCP 出现在桌面 MCP 面板，可在当前会话里显式启用/禁用；`screenshot`、mouse、keyboard
 等工具不预置为可信只读，仍会经过 VoltUI 现有 MCP 工具审批。
 

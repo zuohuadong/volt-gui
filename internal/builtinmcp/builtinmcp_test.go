@@ -27,6 +27,9 @@ func TestEntries(t *testing.T) {
 		lookPath = lookPathDefault
 	})
 	t.Setenv(computerUseResourceDirEnv, "/opt/voltui/computer-use-mcp")
+	t.Setenv(computerUseRuntimeEnv, "")
+	t.Setenv(computerUseNodeEnv, "")
+	t.Setenv(computerUseRuntimeDirEnv, "")
 
 	entries := Entries()
 	if len(entries) != 4 {
@@ -92,16 +95,16 @@ func TestAppendDefaultEnabledAddsDefaultOnBuiltIns(t *testing.T) {
 	}
 }
 
-func TestComputerUseEntryUsesBundledServerAndNodeOverride(t *testing.T) {
+func TestComputerUseEntryUsesBundledServerAndRuntimeOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(computerUseResourceDirEnv, dir)
-	t.Setenv(computerUseNodeEnv, "/opt/node/bin/node")
+	t.Setenv(computerUseRuntimeEnv, "/opt/voltui/bun/bin/bun")
 
 	entry, ok := Entry(ComputerUseName)
 	if !ok {
 		t.Fatal("computer-use built-in entry missing")
 	}
-	if entry.Command != "/opt/node/bin/node" {
+	if entry.Command != "/opt/voltui/bun/bin/bun" {
 		t.Fatalf("computer-use command = %q, want env override", entry.Command)
 	}
 	want := filepath.Join(dir, filepath.FromSlash(computerUseServerRelPath))
@@ -110,6 +113,39 @@ func TestComputerUseEntryUsesBundledServerAndNodeOverride(t *testing.T) {
 	}
 	if entry.Type != "stdio" || entry.Tier != "lazy" {
 		t.Fatalf("computer-use type/tier = %q/%q, want stdio/lazy", entry.Type, entry.Tier)
+	}
+}
+
+func TestComputerUseRuntimeUsesBundledBunBeforeSystemRuntime(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(computerUseRuntimeEnv, "")
+	t.Setenv(computerUseNodeEnv, "")
+	bundled := filepath.Join(dir, computerUseBunRelPath())
+	if err := os.MkdirAll(filepath.Dir(bundled), 0o755); err != nil {
+		t.Fatalf("mkdir bundled bun dir: %v", err)
+	}
+	if err := os.WriteFile(bundled, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write bundled bun: %v", err)
+	}
+	t.Setenv(computerUseRuntimeDirEnv, dir)
+	lookPath = func(file string) (string, error) {
+		if file == "bun" {
+			return "/usr/bin/bun", nil
+		}
+		return "", errors.New("not found")
+	}
+	t.Cleanup(func() { lookPath = lookPathDefault })
+
+	if got := computerUseRuntimeCommand(); got != bundled {
+		t.Fatalf("computerUseRuntimeCommand = %q, want bundled bun %q", got, bundled)
+	}
+}
+
+func TestComputerUseRuntimeKeepsLegacyNodeOverride(t *testing.T) {
+	t.Setenv(computerUseRuntimeEnv, "")
+	t.Setenv(computerUseNodeEnv, "/opt/node/bin/node")
+	if got := computerUseRuntimeCommand(); got != "/opt/node/bin/node" {
+		t.Fatalf("computerUseRuntimeCommand legacy override = %q, want node path", got)
 	}
 }
 

@@ -28,8 +28,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="VoltUI"              # release bundle/artifact name
 BINNAME="voltui-desktop"      # wails.json outputfilename -> linux binary name
 COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
+BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"
 COMPUTER_USE_MCP_TMP="$(mktemp -d)"
 COMPUTER_USE_MCP_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-mcp"
+COMPUTER_USE_RUNTIME_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-runtime"
 
 cleanup() {
 	rm -rf "$COMPUTER_USE_MCP_TMP"
@@ -43,8 +45,17 @@ copy_computer_use_mcp() {
 	cp -R "$COMPUTER_USE_MCP_RESOURCE" "$dest"
 }
 
+copy_computer_use_runtime() {
+	local dest="$1"
+	rm -rf "$dest"
+	mkdir -p "$(dirname "$dest")"
+	cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$dest"
+}
+
 echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
 node "$ROOT/scripts/stage-computer-use-mcp.mjs" "$COMPUTER_USE_MCP_RESOURCE" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
+echo "==> stage Bun runtime $BUN_RUNTIME_VERSION"
+node "$ROOT/scripts/stage-bun-runtime.mjs" "$COMPUTER_USE_RUNTIME_RESOURCE" "$BUN_RUNTIME_VERSION" "$PLATFORM"
 
 cd "$ROOT/desktop"
 
@@ -65,6 +76,7 @@ if [ "$os" = windows ]; then
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
 	copy_computer_use_mcp "build/windows/installer/computer-use-mcp"
+	copy_computer_use_runtime "build/windows/installer/computer-use-runtime"
 fi
 build_args=(-clean -platform "$PLATFORM" -ldflags "$ldflags")
 [ "$os" = windows ] && build_args+=(-nsis -webview2 embed)
@@ -85,6 +97,7 @@ darwin)
 	app="$staging/${APPNAME}.app"
 	cp -R "build/bin/${BINNAME}.app" "$app"
 	copy_computer_use_mcp "$app/Contents/Resources/computer-use-mcp"
+	copy_computer_use_runtime "$app/Contents/Resources/computer-use-runtime"
 
 	# Two signing paths, selected by HAS_APPLE_CERT (set by release-desktop.yml when
 	# the APPLE_* secrets are present). With a real Developer ID cert + notarization
@@ -161,6 +174,7 @@ windows)
 	staging=$(mktemp -d)
 	cp "$portable" "$staging/${APPNAME}.exe"
 	copy_computer_use_mcp "$staging/computer-use-mcp"
+	copy_computer_use_runtime "$staging/computer-use-runtime"
 	helper="build/windows/installer/$UPDATE_HELPER"
 	if [ -f "$helper" ]; then
 		cp "$helper" "$staging/$UPDATE_HELPER"
@@ -172,10 +186,12 @@ windows)
 	;;
 linux)
 	copy_computer_use_mcp "build/computer-use-mcp"
+	copy_computer_use_runtime "build/computer-use-runtime"
 	staging=$(mktemp -d)
 	cp "build/bin/$BINNAME" "$staging/$BINNAME"
 	copy_computer_use_mcp "$staging/computer-use-mcp"
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$staging" "$BINNAME" "computer-use-mcp"
+	copy_computer_use_runtime "$staging/computer-use-runtime"
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$staging" "$BINNAME" "computer-use-mcp" "computer-use-runtime"
 	rm -rf "$staging"
 	# Also build a .deb for Debian/Ubuntu users (goreleaser/nfpm; see
 	# desktop/build/linux/nfpm.yaml). Human-download only: the Linux updater channel

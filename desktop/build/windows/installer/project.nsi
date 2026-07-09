@@ -79,6 +79,7 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 !define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
 !define VOLTUI_COMPUTER_USE_MCP_DIR "computer-use-mcp"
+!define VOLTUI_COMPUTER_USE_RUNTIME_DIR "computer-use-runtime"
 !define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
@@ -189,6 +190,13 @@ Section
     !else
     !warning "${VOLTUI_COMPUTER_USE_MCP_DIR} was not found; bundled computer-use MCP will be unavailable."
     !endif
+    !if /FileExists "${VOLTUI_COMPUTER_USE_RUNTIME_DIR}\bun-windows-amd64\bin\bun.exe"
+    SetOutPath "$INSTDIR\${VOLTUI_COMPUTER_USE_RUNTIME_DIR}"
+    File /r "${VOLTUI_COMPUTER_USE_RUNTIME_DIR}\*"
+    SetOutPath $INSTDIR
+    !else
+    !warning "${VOLTUI_COMPUTER_USE_RUNTIME_DIR} was not found; bundled computer-use Bun runtime will be unavailable."
+    !endif
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -208,6 +216,7 @@ Section "uninstall"
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
     Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
     RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
+    RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_RUNTIME_DIR}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

@@ -579,12 +579,15 @@ create/update/delete tools should remain untrusted.
 
 Desktop releases include the built-in `computer-use` MCP. The app resources
 ship `@zavora-ai/computer-use-mcp` with its platform prebuilt `.node` binaries;
-at runtime VoltUI starts the bundled `dist/server.js` with system Node (>= 18,
-or `VOLTUI_COMPUTER_USE_NODE` if you point it at your own Node; Windows ARM64
-currently needs the x64 Node/native compatibility path). It appears in
-the desktop MCP panel as a built-in server that can be enabled or disabled for
-the current session. `screenshot`, mouse, and keyboard tools are not pre-trusted;
-they still pass through VoltUI's normal MCP tool approval flow.
+at runtime VoltUI starts the bundled `dist/server.js` with its bundled Bun
+runtime, so users do not need to install Node.js. `VOLTUI_COMPUTER_USE_RUNTIME`
+can point at a custom Bun/Node-compatible runtime, and the legacy
+`VOLTUI_COMPUTER_USE_NODE` override still works. Windows ARM64 currently uses
+the bundled x64 Bun/native compatibility path because the upstream MCP package
+does not publish a win32-arm64 `.node`. It appears in the desktop MCP panel as a
+built-in server that can be enabled or disabled for the current session.
+`screenshot`, mouse, and keyboard tools are not pre-trusted; they still pass
+through VoltUI's normal MCP tool approval flow.
 
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing

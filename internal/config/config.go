@@ -612,6 +612,17 @@ type FeishuBotConfig struct {
 	Mode              string `toml:"mode"`               // webhook（默认）| websocket
 	WebhookPort       int    `toml:"webhook_port"`       // webhook 模式端口
 	RequireMention    bool   `toml:"require_mention"`
+	// OutboundMediaRoots whitelists local directories the loopback /send control
+	// API may read files from to attach as outbound image/file messages. Empty
+	// (the default) disables local-file sending — a path outside every root is
+	// rejected, so an authenticated /send caller cannot exfiltrate arbitrary
+	// files. Paths are compared after symlink resolution.
+	OutboundMediaRoots []string `toml:"outbound_media_roots"`
+	// OutboundMediaAllowedHosts whitelists hosts the bot may fetch outbound media
+	// URLs from. Empty (the default) disables URL media. Even an allowed host is
+	// still blocked from resolving to a private/loopback/link-local address
+	// (SSRF guard). A leading dot (".example.com") matches subdomains.
+	OutboundMediaAllowedHosts []string `toml:"outbound_media_allowed_hosts"`
 }
 
 // WeixinBotConfig 微信 iLink Bot 配置。

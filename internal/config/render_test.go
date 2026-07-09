@@ -243,6 +243,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.MaxDepth = 2
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
+	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/reasonix-media", "/srv/shots"}
+	orig.Bot.Feishu.OutboundMediaAllowedHosts = []string{"cdn.example.com", ".assets.example.org"}
 	orig.Bot.Routes = []BotRouteConfig{{
 		ConnectionID:     "feishu-lark",
 		ChatType:         "group",
@@ -372,6 +374,12 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if !got.Bot.Control.Enabled || got.Bot.Control.Addr != "127.0.0.1:39001" || got.Bot.Control.TokenEnv != "BOT_CONTROL_TOKEN" {
 		t.Errorf("bot control not preserved: %+v", got.Bot.Control)
+	}
+	if len(got.Bot.Feishu.OutboundMediaRoots) != 2 || got.Bot.Feishu.OutboundMediaRoots[0] != "/tmp/reasonix-media" {
+		t.Errorf("feishu outbound_media_roots not preserved: %+v", got.Bot.Feishu.OutboundMediaRoots)
+	}
+	if len(got.Bot.Feishu.OutboundMediaAllowedHosts) != 2 || got.Bot.Feishu.OutboundMediaAllowedHosts[1] != ".assets.example.org" {
+		t.Errorf("feishu outbound_media_allowed_hosts not preserved: %+v", got.Bot.Feishu.OutboundMediaAllowedHosts)
 	}
 	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/reasonix-route" || got.Bot.Routes[0].ChatID != "oc_group" {
 		t.Errorf("bot routes not preserved: %+v", got.Bot.Routes)

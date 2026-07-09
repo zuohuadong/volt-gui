@@ -24,6 +24,7 @@ func IsSessionTranscriptName(name string) bool {
 	name = strings.TrimSpace(name)
 	return strings.HasSuffix(name, ".jsonl") &&
 		!strings.HasSuffix(name, ".events.jsonl") &&
+		!strings.HasSuffix(name, ".conflicts.jsonl") &&
 		!strings.HasSuffix(name, ".guardian.jsonl")
 }
 
@@ -67,6 +68,16 @@ func SessionEventIndex(sessionPath string) string {
 		return ""
 	}
 	return sessionStem(sessionPath) + ".event-index.json"
+}
+
+// SessionConflictLog is the append-only diagnostic log for snapshot conflict
+// recoveries (<id>.conflicts.jsonl). It contains revision counters and branch
+// ids, not transcript content.
+func SessionConflictLog(sessionPath string) string {
+	if sessionPath == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".conflicts.jsonl"
 }
 
 // SessionLockFile is the advisory save lock (<id>.jsonl.lock).

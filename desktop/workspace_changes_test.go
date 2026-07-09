@@ -23,7 +23,7 @@ func TestWorkspaceGitDisablesDaemonSpawns(t *testing.T) {
 	}
 }
 
-func gitOutput(t *testing.T, args ...string) string {
+func workspaceChangesGitOutput(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
@@ -114,7 +114,7 @@ func TestWorkspaceGitBranchDetachedHead(t *testing.T) {
 	}
 	runGit(t, "add", "tracked.txt")
 	runGit(t, "commit", "-m", "init")
-	short := gitOutput(t, "rev-parse", "--short", "HEAD")
+	short := workspaceChangesGitOutput(t, "rev-parse", "--short", "HEAD")
 	runGit(t, "checkout", "--detach", "HEAD")
 
 	if got := workspaceGitBranch(repo); got != "@"+short {

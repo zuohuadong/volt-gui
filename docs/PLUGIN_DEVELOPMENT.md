@@ -97,6 +97,32 @@ The Svelte workbench also exposes these resources through `workbenchDataProvider
 
 MCP providers should do capability work such as retrieval, generation, rendering, and export. The native workbench plugin should own product UX, state transitions, validation, and artifact review.
 
+### Image generation providers
+
+Do not expose image-generation models as normal chat models. Chat models stay in
+`[[providers]]` and are filtered to chat/completion use. A provider that creates
+images should be wired as a Workbench provider or MCP tool with an explicit
+capability such as `image-render`.
+
+Use an MCP tool when image generation is a stateless model-callable action, such
+as "render this prompt and return a file path." Use a Workbench plugin when the
+user needs editable prompts, staged approvals, variant comparison, retries, or
+artifact review. The Workbench plugin links to the rendering provider through
+`provider_ids` and `capabilities`; the renderer owns bytes, while the plugin owns
+workflow state.
+
+For an `image-render` provider, keep the contract artifact-oriented:
+
+- Input should include a prompt, optional negative prompt, size/aspect ratio,
+  style/template hints, seed when supported, and source asset references.
+- Output should be one or more files under `WorkbenchArtifactDir(jobID)`, plus
+  metadata such as provider id, model id, prompt digest, dimensions, mime type,
+  and retry/error details.
+- The workbench plugin should call `AddWorkbenchArtifact` for completed images
+  and keep user approvals or regeneration requests on the durable job steps.
+- Secrets stay in provider env/header config; frontend state should only see
+  `envKeys` and `headerKeys`.
+
 ## Production Checklist
 
 - Keep plugin config generic; do not hardcode a customer or deployment name.

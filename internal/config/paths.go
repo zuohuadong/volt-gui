@@ -1,10 +1,13 @@
 package config
 
 import (
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -237,8 +240,8 @@ func userConfigDisplayPath() string {
 	return p
 }
 
-// UserConfigPath is the user-global config.toml. It lives under VoltUI home:
-// VOLTUI_HOME/config.toml, then ~/.voltui/config.toml on Unix-like systems,
+// UserConfigPath is the user-global config.toml. It lives under Reasonix home:
+// REASONIX_HOME/config.toml, then ~/.voltui/config.toml on Unix-like systems,
 // or %AppData%/voltui/config.toml on Windows. If %AppData% is unavailable on
 // Windows, it falls back to %USERPROFILE%/AppData/Roaming/voltui/config.toml.
 // "" when the user config dir can't be resolved.
@@ -250,7 +253,7 @@ func UserConfigPath() string { return userConfigPath() }
 func LegacyUserConfigPath() string { return legacyUserConfigPath() }
 
 // LegacyUserConfigPaths returns every known legacy user config path that differs
-// from the current VoltUI-home config path.
+// from the current v1.8.1 Reasonix-home config path.
 func LegacyUserConfigPaths() []string {
 	primary := userConfigPath()
 	var out []string
@@ -289,6 +292,36 @@ func UserCredentialsPath() string {
 		return ""
 	}
 	return filepath.Join(dir, ".env")
+}
+
+// ReasonixManagedConfigPaths returns the VoltUI-owned user configuration FILES
+// that model-driven tools may repair on the user's request, each gated by a
+// fresh per-write human approval: the current config.toml, compatibility TOML
+// locations, and the legacy v0.x ~/.voltui/config.json. Individual files,
+// never directories: the home also holds credentials, hooks, skills, and
+// session stores, and none of those may ride along on a config repair.
+func ReasonixManagedConfigPaths() []string {
+	var out []string
+	out = appendUniquePath(out, UserConfigPath())
+	for _, path := range LegacyUserConfigPaths() {
+		out = appendUniquePath(out, path)
+	}
+	out = appendUniquePath(out, legacyConfigPath())
+	return out
+}
+
+func appendUniquePath(paths []string, path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return paths
+	}
+	clean := filepath.Clean(path)
+	for _, existing := range paths {
+		if samePath(existing, clean) {
+			return paths
+		}
+	}
+	return append(paths, clean)
 }
 
 // ArchiveDir is where compacted conversation history is archived for
@@ -343,9 +376,50 @@ func MemoryCompilerDir(workspaceRoot string) string {
 }
 
 // WorkspaceSlug flattens an absolute workspace path into the directory name
-// used under <config root>/projects.
+// used under <config root>/projects. Windows spells the same folder with
+// varying case (drive-letter case, Explorer renames), so the slug folds case
+// there — matching agent.CanonicalSessionPath's key form — or equivalent
+// spellings of one workspace would produce distinct slug strings. Existing
+// mixed-case slug directories need no migration: NTFS resolves names
+// case-insensitively, so the folded slug opens the same directory.
 func WorkspaceSlug(absPath string) string {
-	return strings.NewReplacer(string(os.PathSeparator), "-", "/", "-", "\\", "-", ":", "-").Replace(absPath)
+	if runtimeGOOS == "windows" {
+		absPath = strings.ToLower(absPath)
+	}
+	slug := strings.NewReplacer(string(os.PathSeparator), "-", "/", "-", "\\", "-", ":", "-").Replace(absPath)
+	return boundFilenameComponent(slug, 255)
+}
+
+// boundFilenameComponent caps a derived filename component at the common
+// per-component filesystem limit (255 bytes on ext4/APFS/NTFS). maxLen is the
+// byte budget for this component (path segments pass 255; names that gain an
+// extension pass 255 minus the extension length). Inputs at or under the
+// budget pass through byte-identical — every component that ever existed on
+// disk is under the budget, or it could not have been created — so existing
+// directories and files keep resolving. Only inputs that would previously
+// have failed with ENAMETOOLONG are truncated, with an FNV-1a hash of the
+// full input appended so distinct deep paths cannot collapse to one name.
+func boundFilenameComponent(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
+		return s
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s))
+	budget := maxLen - 17 // room for "-" + 16 hex digits
+	prefix := s[:budget]
+	// Back off to a rune boundary so a multi-byte character is never split.
+	for len(prefix) > 0 && !utf8.ValidString(prefix) {
+		prefix = prefix[:len(prefix)-1]
+	}
+	return fmt.Sprintf("%s-%016x", prefix, h.Sum64())
+}
+
+// BoundFilenameComponent is the exported form for sibling packages deriving
+// filename components from unbounded input. maxLen is the byte budget for the
+// component (pass 255 for a bare path segment; subtract the extension length
+// when one will be appended).
+func BoundFilenameComponent(s string, maxLen int) string {
+	return boundFilenameComponent(s, maxLen)
 }
 
 // CacheDir is the per-user cache root for derived/regenerable artefacts: MCP
@@ -359,8 +433,8 @@ func CacheDir() string {
 	return dir
 }
 
-// MemoryUserDir returns the VoltUI user state root (…/voltui), under which
-// the user-global VOLTUI.md / legacy REASONIX.md and the per-project auto-memory store live. Empty
+// MemoryUserDir returns the voltui user state root (…/voltui), under which
+// the user-global REASONIX.md and the per-project auto-memory store live. Empty
 // when the user state dir can't be resolved, which disables user-scoped memory.
 func MemoryUserDir() string {
 	return userSupportDir()
@@ -389,7 +463,7 @@ func conventionSubdirsAsc(base, sub string) []string {
 // CommandDirs returns the directories scanned for custom slash commands, lowest
 // priority first, so a later (more specific) directory overrides an earlier one
 // on a name clash. Order: home-dir convention dirs (~/.claude/commands …
-// ~/.voltui/commands), the VoltUI home commands dir, the legacy OS
+// ~/.voltui/commands), the Reasonix home commands dir, the legacy OS
 // app-support dir if different, then the project's
 // convention dirs (.claude/commands … .voltui/commands). Scanning the .claude /
 // .agents / .agent dirs lets commands authored for other agent tools (same .md +

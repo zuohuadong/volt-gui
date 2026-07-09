@@ -1,11 +1,15 @@
 package skill
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"voltui/internal/config"
 )
 
 func writeSkill(t *testing.T, base, rel, content string) string {
@@ -20,6 +24,7 @@ func writeSkill(t *testing.T, base, rel, content string) string {
 	return full
 }
 
+// writeScript creates a file at base/rel with the given content.
 func writeScript(t *testing.T, base, rel, content string) string {
 	t.Helper()
 	full := filepath.Join(base, rel)
@@ -78,6 +83,78 @@ func TestFlatAndDirLayout(t *testing.T) {
 	}
 }
 
+func TestNestedSkillsDiscoveredByDefault(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/superpower/skill-a.md", "---\ndescription: nested flat\n---\nflat body")
+	writeSkill(t, home, ".voltui/skills/superpower/tool-a/SKILL.md", "---\ndescription: nested dir\n---\ndir body")
+	writeSkill(t, home, ".voltui/skills/superpower/references/notes.md", "---\ndescription: not a skill\n---\nnotes")
+
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	list := st.List()
+	if _, ok := find(list, "skill-a"); !ok {
+		t.Fatal("default max depth should discover nested flat skills")
+	}
+	if _, ok := find(list, "tool-a"); !ok {
+		t.Fatal("default max depth should discover nested directory skills")
+	}
+	if _, ok := find(list, "notes"); ok {
+		t.Fatal("references directories should not be scanned as skill roots")
+	}
+	if sk, ok := st.Read("skill-a"); !ok || sk.Description != "nested flat" || !strings.Contains(sk.Body, "flat body") {
+		t.Fatalf("Read should resolve nested skills from the same discovery path: %+v ok=%v", sk, ok)
+	}
+}
+
+func TestMaxDepthOnePreservesRootOnlyDiscovery(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/superpower/skill-a.md", "---\ndescription: nested flat\n---\nflat body")
+	writeSkill(t, home, ".voltui/skills/superpower/tool-a/SKILL.md", "---\ndescription: nested dir\n---\ndir body")
+
+	st := New(Options{HomeDir: home, MaxDepth: 1, DisableBuiltins: true})
+	if _, ok := find(st.List(), "skill-a"); ok {
+		t.Fatal("max depth 1 should not discover nested flat skills")
+	}
+	if _, ok := find(st.List(), "tool-a"); ok {
+		t.Fatal("max depth 1 should not discover nested directory skills")
+	}
+}
+
+func TestNestedSkillsRequireDescription(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/root.md", "---\n---\nroot body")
+	writeSkill(t, home, ".voltui/skills/superpower/draft.md", "---\n---\ndraft body")
+	writeSkill(t, home, ".voltui/skills/superpower/tool/SKILL.md", "---\n---\ntool body")
+
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	list := st.List()
+	if _, ok := find(list, "root"); !ok {
+		t.Fatal("root-level skills without description should keep legacy discovery behavior")
+	}
+	if _, ok := find(list, "draft"); ok {
+		t.Fatal("nested flat skills without description should be ignored")
+	}
+	if _, ok := find(list, "tool"); ok {
+		t.Fatal("nested directory skills without description should be ignored")
+	}
+	if _, ok := st.Read("draft"); ok {
+		t.Fatal("Read should not resolve nested skills filtered for missing description")
+	}
+}
+
+func TestNestedDirectorySkillStopsTraversal(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/pack/SKILL.md", "---\ndescription: pack\n---\npack body")
+	writeSkill(t, home, ".voltui/skills/pack/child.md", "---\ndescription: child\n---\nchild body")
+
+	st := New(Options{HomeDir: home, MaxDepth: 3, DisableBuiltins: true})
+	if _, ok := find(st.List(), "pack"); !ok {
+		t.Fatal("directory-layout skill should be discovered")
+	}
+	if _, ok := find(st.List(), "child"); ok {
+		t.Fatal("directory-layout skill packages should not be scanned for child skills")
+	}
+}
+
 func TestConventionDirsDiscovered(t *testing.T) {
 	proj := t.TempDir()
 	writeSkill(t, proj, ".claude/skills/fromclaude.md", "---\ndescription: c\n---\nb")
@@ -92,10 +169,161 @@ func TestConventionDirsDiscovered(t *testing.T) {
 	}
 }
 
+func TestReasonixHomeDirOverridesGlobalReasonixSkills(t *testing.T) {
+	home := t.TempDir()
+	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
+	writeSkill(t, home, ".voltui/skills/old.md", "---\ndescription: old\n---\nold")
+	writeSkill(t, home, ".voltui/skills/current.md", "---\ndescription: old current\n---\nold current")
+	currentPath := writeSkill(t, reasonixHome, "skills/current.md", "---\ndescription: current\n---\ncurrent")
+
+	st := New(Options{HomeDir: home, ReasonixHomeDir: reasonixHome, DisableBuiltins: true})
+	list := st.List()
+	current, ok := find(list, "current")
+	if !ok {
+		t.Fatal("Reasonix home skill should be discovered")
+	}
+	if current.Path != currentPath {
+		t.Fatalf("current skill path = %q, want Reasonix home path %q", current.Path, currentPath)
+	}
+	if _, ok := find(list, "old"); !ok {
+		t.Fatal("legacy ~/.voltui skill should remain discoverable")
+	}
+
+	path, err := st.Create("created", ScopeGlobal)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := filepath.Join(reasonixHome, SkillsDirname, "created", SkillFile)
+	if path != want {
+		t.Fatalf("created skill path = %q, want %q", path, want)
+	}
+}
+
+func TestNonSkillMarkdownInClaudeSkillRootsIgnored(t *testing.T) {
+	proj := t.TempDir()
+	writeSkill(t, proj, ".claude/skills/guide.md", "# Skill notes\n\nThis is documentation, not a skill.")
+	writeSkill(t, proj, ".claude/skills/notes.md", "---\ntitle: Notes\n---\n# Notes")
+	writeSkill(t, proj, ".claude/skills/real.md", "---\ndescription: real skill\n---\nbody")
+
+	var stderr bytes.Buffer
+	st := New(Options{HomeDir: t.TempDir(), ProjectRoot: proj, DisableBuiltins: true, Stderr: &stderr})
+	list := st.List()
+	if _, ok := find(list, "real"); !ok {
+		t.Fatal("real skill should be discovered")
+	}
+	for _, name := range []string{"guide", "notes"} {
+		if _, ok := find(list, name); ok {
+			t.Errorf("non-skill markdown %q should not be listed", name)
+		}
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("non-skill markdown should not warn during List, got %q", got)
+	}
+
+	for _, name := range []string{"guide", "notes"} {
+		stderr.Reset()
+		if _, ok := st.Read(name); ok {
+			t.Errorf("non-skill markdown %q should not be readable as a skill", name)
+		}
+		if got := stderr.String(); got != "" {
+			t.Errorf("non-skill markdown %q should not warn during Read, got %q", name, got)
+		}
+	}
+}
+
+func TestSkillLikeFlatClaudeMarkdownWithoutDescriptionWarns(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".claude/skills/named.md", "---\nname: renamed\n---\nbody")
+
+	var stderr bytes.Buffer
+	st := New(Options{HomeDir: home, DisableBuiltins: true, Stderr: &stderr})
+	list := st.List()
+	if _, ok := find(list, "renamed"); !ok {
+		t.Fatal("skill-like flat Claude markdown should still load")
+	}
+	if got := stderr.String(); !strings.Contains(got, "has no description") {
+		t.Fatalf("skill-like flat Claude markdown without description should warn, got %q", got)
+	}
+}
+
+func TestBlankDescriptionFlatClaudeMarkdownIsSkillLike(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{name: "blank", content: "---\ndescription:\n---\nbody"},
+		{name: "quoted", content: "---\ndescription: \"\"\n---\nbody"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeSkill(t, home, ".claude/skills/"+tc.name+".md", tc.content)
+
+			var stderr bytes.Buffer
+			st := New(Options{HomeDir: home, DisableBuiltins: true, Stderr: &stderr})
+			if _, ok := find(st.List(), tc.name); !ok {
+				t.Fatal("blank description marker should still list flat Claude markdown as skill-like")
+			}
+			if got := stderr.String(); !strings.Contains(got, "has no description") {
+				t.Fatalf("blank description listed skill should warn, got %q", got)
+			}
+
+			stderr.Reset()
+			sk, ok := st.Read(tc.name)
+			if !ok {
+				t.Fatal("blank description marker should still make flat Claude markdown skill-like")
+			}
+			if sk.Description != "" {
+				t.Fatalf("description should stay empty, got %q", sk.Description)
+			}
+			if got := stderr.String(); !strings.Contains(got, "has no description") {
+				t.Fatalf("blank description skill should warn, got %q", got)
+			}
+		})
+	}
+}
+
+func TestRunAsOnlyFlatClaudeMarkdownIsSkillLike(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".claude/skills/sub.md", "---\nrunAs: subagent\n---\nbody")
+
+	var stderr bytes.Buffer
+	st := New(Options{HomeDir: home, DisableBuiltins: true, Stderr: &stderr})
+	sk, ok := st.Read("sub")
+	if !ok {
+		t.Fatal("runAs-only Claude markdown should be treated as skill-like")
+	}
+	if sk.RunAs != RunSubagent {
+		t.Fatalf("runAs should be parsed despite frontmatter key casing, got %s", sk.RunAs)
+	}
+	if got := stderr.String(); !strings.Contains(got, "has no description") {
+		t.Fatalf("runAs-only Claude markdown without description should warn, got %q", got)
+	}
+}
+
+func TestExcludedPathsHideConventionRoots(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/keep.md", "---\ndescription: keep\n---\nb")
+	writeSkill(t, home, ".agents/skills/noisy.md", "---\ndescription: noisy\n---\nb")
+	excluded := filepath.Join(home, ".agents", "skills")
+	st := New(Options{HomeDir: home, ExcludedPaths: []string{excluded}, DisableBuiltins: true})
+
+	if _, ok := find(st.List(), "keep"); !ok {
+		t.Fatal("non-excluded skill should be listed")
+	}
+	if _, ok := find(st.List(), "noisy"); ok {
+		t.Fatal("excluded skill should not be listed")
+	}
+	for _, root := range st.Roots() {
+		if config.CanonicalSkillPath(root.Dir) == config.CanonicalSkillPath(excluded) {
+			t.Fatalf("excluded root should be hidden from Roots: %+v", st.Roots())
+		}
+	}
+}
+
 func TestFrontmatterFields(t *testing.T) {
 	home := t.TempDir()
 	writeSkill(t, home, ".voltui/skills/sub.md",
-		"---\ndescription: a sub\nrunAs: subagent\nallowed-tools: read_file, grep\nmodel: deepseek-pro\n---\nbody")
+		"---\ndescription: a sub\nrunAs: subagent\nallowed-tools: read_file, grep\nmodel: deepseek-pro\nread-only: true\n---\nbody")
 	writeSkill(t, home, ".voltui/skills/fork.md", "---\ndescription: f\ncontext: fork\n---\nbody")
 	writeSkill(t, home, ".voltui/skills/plain.md", "---\ndescription: p\n---\nbody")
 
@@ -110,11 +338,17 @@ func TestFrontmatterFields(t *testing.T) {
 	if sub.Model != "deepseek-pro" {
 		t.Errorf("model mis-parsed: %q", sub.Model)
 	}
+	if !sub.ReadOnly {
+		t.Error("read-only: true not parsed")
+	}
 	if fork, _ := st.Read("fork"); fork.RunAs != RunSubagent {
 		t.Error("context: fork should imply subagent")
 	}
 	if plain, _ := st.Read("plain"); plain.RunAs != RunInline {
 		t.Error("default runAs should be inline")
+	}
+	if plain, _ := st.Read("plain"); plain.ReadOnly {
+		t.Error("read-only should default to false when the key is absent")
 	}
 }
 
@@ -238,23 +472,28 @@ func TestScriptsFilteredByExt(t *testing.T) {
 		t.Fatal("skill not found")
 	}
 	body := sk.Body
+	// lint.py should be listed (recognized .py extension)
 	if !strings.Contains(body, "lint.py") {
-		t.Error("lint.py should be listed")
+		t.Error("lint.py should be listed (recognized .py extension)")
 	}
+	// deploy (no extension) should be listed (bare executable)
 	if !strings.Contains(body, "deploy") {
-		t.Error("deploy should be listed as bare executable")
+		t.Error("deploy (no extension) should be listed as bare executable")
 	}
+	// .hidden.py should NOT be listed (hidden file)
 	if strings.Contains(body, ".hidden.py") {
-		t.Error("hidden files should not be listed")
+		t.Error("hidden files should NOT be listed")
 	}
+	// readme.md should NOT be listed (documentation, not a script)
 	if strings.Contains(body, "readme.md") {
-		t.Error("non-script extensions should not be listed")
+		t.Error("non-script extensions should NOT be listed")
 	}
 	if strings.Contains(body, "legacy.p") {
-		t.Error("partial extension matches should not be listed")
+		t.Error("partial extension matches should NOT be listed")
 	}
+	// .gitkeep should NOT be listed (hidden file)
 	if strings.Contains(body, ".gitkeep") {
-		t.Error(".gitkeep should not be listed")
+		t.Error(".gitkeep should NOT be listed")
 	}
 }
 
@@ -443,6 +682,48 @@ func TestSymlinkedDirAndFile(t *testing.T) {
 	}
 }
 
+type fakeDirEntry struct {
+	name  string
+	isDir bool
+	typ   os.FileMode
+}
+
+func (f fakeDirEntry) Name() string      { return f.name }
+func (f fakeDirEntry) IsDir() bool       { return f.isDir }
+func (f fakeDirEntry) Type() os.FileMode { return f.typ }
+func (f fakeDirEntry) Info() (os.FileInfo, error) {
+	return fakeFileInfo{name: f.name, mode: f.typ}, nil
+}
+
+type fakeFileInfo struct {
+	name string
+	mode os.FileMode
+}
+
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeFileInfo) Sys() any           { return nil }
+
+func TestIrregularDirectoryEntryFollowsTarget(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".agents", "skills")
+	writeSkill(t, root, "linkedpack/SKILL.md", "---\ndescription: linked pack\n---\nbody")
+	writeSkill(t, root, "collection/nested.md", "---\ndescription: nested\n---\nbody")
+
+	st := New(Options{HomeDir: home, DisableBuiltins: true})
+	linkedPack := fakeDirEntry{name: "linkedpack", typ: os.ModeIrregular}
+	if sk, ok := st.readEntry(root, ScopeGlobal, false, linkedPack); !ok || sk.Name != "linkedpack" {
+		t.Fatalf("irregular directory-layout entry should follow target, got %+v ok=%v", sk, ok)
+	}
+	collection := fakeDirEntry{name: "collection", typ: os.ModeIrregular}
+	if !st.canScanChildDir(root, collection) {
+		t.Fatal("irregular directory entry should be scannable when its target is a directory")
+	}
+}
+
 func TestApplyIndex(t *testing.T) {
 	if got := ApplyIndex("BASE", nil); got != "BASE" {
 		t.Errorf("empty skills should leave base unchanged, got %q", got)
@@ -520,6 +801,15 @@ func TestApplyIndexTruncates(t *testing.T) {
 	}
 }
 
+func TestIndexLineClipsGraphemeClusters(t *testing.T) {
+	cluster := "👨‍👩‍👧‍👦"
+	got := clipRunes("a"+cluster+"bc", 3)
+	want := "a" + cluster + "…"
+	if got != want {
+		t.Fatalf("clipRunes() = %q, want %q", got, want)
+	}
+}
+
 func TestCreateRefusesOverwrite(t *testing.T) {
 	home := t.TempDir()
 	st := New(Options{HomeDir: home, DisableBuiltins: true})
@@ -527,10 +817,15 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".voltui", "skills", "mine", "SKILL.md")) {
+	if !strings.HasSuffix(path, filepath.Join(".voltui", "skills", "mine", SkillFile)) {
 		t.Errorf("unexpected path %q", path)
 	}
 	if _, err := st.Create("mine", ScopeGlobal); err == nil {
 		t.Error("second create should refuse to overwrite")
+	}
+
+	writeSkill(t, home, ".voltui/skills/legacy.md", "---\ndescription: legacy\n---\nbody")
+	if _, err := st.Create("legacy", ScopeGlobal); err == nil {
+		t.Error("create should refuse to shadow an existing legacy flat skill")
 	}
 }

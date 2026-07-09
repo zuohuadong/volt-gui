@@ -307,6 +307,14 @@ func TestServeIndexDefinesQueryHelpers(t *testing.T) {
 	}
 }
 
+func TestServeBrandHTMLHonorsEnv(t *testing.T) {
+	t.Setenv("VOLTUI_BRAND_NAME", "Acme Copilot")
+	html := string(renderBrandHTML([]byte("<title>VoltUI</title><h1>VoltUI</h1>")))
+	if strings.Contains(html, "VoltUI") || !strings.Contains(html, "Acme Copilot") {
+		t.Fatalf("branded html = %q, want env brand replacement", html)
+	}
+}
+
 func TestServeIndexHandlesRetryingEvents(t *testing.T) {
 	html := string(indexHTML)
 	for _, want := range []string{

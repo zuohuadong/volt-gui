@@ -1,0 +1,173 @@
+package bot
+
+import (
+	"fmt"
+	"strings"
+
+	"reasonix/internal/event"
+)
+
+// DesktopSessionInfo 是一个桌面 live 会话(tab)的快照，用于 /desktop status。
+type DesktopSessionInfo struct {
+	TabID         string
+	Label         string
+	Workspace     string
+	Topic         string
+	Ready         bool
+	Running       bool
+	PendingPrompt bool
+}
+
+// DesktopWatchRoute 标识一个订阅了桌面事件的 bot 聊天。
+type DesktopWatchRoute struct {
+	ConnectionID string
+	Domain       string
+	Platform     Platform
+	ChatType     ChatType
+	ChatID       string
+}
+
+// Key 返回订阅表的稳定键。
+func (r DesktopWatchRoute) Key() string {
+	return fmt.Sprintf("%s|%s|%s|%s", r.Platform, r.ConnectionID, r.Domain, r.ChatID)
+}
+
+// DesktopBridge 由桌面端进程实现，让 bot 聊天获得对整个桌面端的上帝视角：
+// 全局会话清单、事件订阅、以及对任意桌面 live 会话的远程审批/问答。
+//
+// 语义约定：
+//   - 审批应答与桌面 UI 是"先到者赢"（controller 侧幂等，重复应答被静默忽略），
+//     Approve/Answer 的返回文案应体现"以先到者为准"。
+//   - 本接口刻意不包含向桌面会话注入输入或抢占写权的方法。将来的显式接管
+//     （/takeover：抢写 lease、桌面提示并可抢回）会作为独立方法在此扩展，
+//     底层依赖 internal/control 的接管端口，而不是复用 gateway 的会话机器。
+type DesktopBridge interface {
+	// Sessions 枚举当前所有桌面 live 会话。
+	Sessions() []DesktopSessionInfo
+	// SetWatch 订阅/退订当前聊天的桌面事件推送。
+	SetWatch(route DesktopWatchRoute, enable bool)
+	// Watching 返回该聊天当前是否在订阅。
+	Watching(route DesktopWatchRoute) bool
+	// Approve 应答任意桌面会话的待审批项，返回用户可读的结果文案。
+	Approve(approvalID string, allow bool) (string, error)
+	// AskQuestions 返回某个待回答 ask 的问题列表（用于把 IM 文本解析成选项）。
+	AskQuestions(askID string) ([]event.AskQuestion, bool)
+	// Answer 应答任意桌面会话的待回答 ask，返回用户可读的结果文案。
+	Answer(askID string, answers []event.AskAnswer) (string, error)
+}
+
+func desktopRouteFromMessage(msg InboundMessage) DesktopWatchRoute {
+	return DesktopWatchRoute{
+		ConnectionID: msg.ConnectionID,
+		Domain:       msg.Domain,
+		Platform:     msg.Platform,
+		ChatType:     msg.ChatType,
+		ChatID:       msg.ChatID,
+	}
+}
+
+const desktopCommandUsage = "用法:\n" +
+	"/desktop status - 查看桌面端所有 live 会话\n" +
+	"/desktop watch on|off|status - 订阅/退订桌面事件推送(审批请求、任务完成/出错)\n" +
+	"/desktop approve <id> - 批准桌面会话的待审批操作\n" +
+	"/desktop deny <id> - 拒绝桌面会话的待审批操作\n" +
+	"/desktop answer <id> <选项编号或文本> - 回答桌面会话的提问"
+
+// handleDesktopCommand 处理 /desktop 系列命令(上帝视角：观察 + 遥控审批)。
+// 调用方已完成 admin 角色门控。
+func (gw *BotGateway) handleDesktopCommand(msg InboundMessage) string {
+	bridge := gw.cfg.Desktop
+	if bridge == nil {
+		return "此 bot 未运行在桌面端进程内，/desktop 命令不可用。请在桌面端设置里启用 bot。"
+	}
+	fields := strings.Fields(msg.Text)
+	sub := ""
+	if len(fields) > 1 {
+		sub = strings.ToLower(fields[1])
+	}
+	switch sub {
+	case "", "status", "sessions":
+		return formatDesktopSessions(bridge.Sessions())
+	case "watch":
+		arg := ""
+		if len(fields) > 2 {
+			arg = strings.ToLower(fields[2])
+		}
+		route := desktopRouteFromMessage(msg)
+		switch arg {
+		case "on":
+			bridge.SetWatch(route, true)
+			return "已订阅桌面事件：审批请求、任务完成/出错会推送到本聊天。用 /desktop watch off 退订。\n注意：订阅状态保存在内存中，桌面端重启后需重新订阅。"
+		case "off":
+			bridge.SetWatch(route, false)
+			return "已退订桌面事件推送。"
+		case "", "state":
+			if bridge.Watching(route) {
+				return "本聊天正在订阅桌面事件推送。用 /desktop watch off 退订。"
+			}
+			return "本聊天未订阅桌面事件推送。用 /desktop watch on 订阅。"
+		default:
+			return desktopCommandUsage
+		}
+	case "approve", "deny":
+		if len(fields) < 3 {
+			return desktopCommandUsage
+		}
+		feedback, err := bridge.Approve(fields[2], sub == "approve")
+		if err != nil {
+			return err.Error()
+		}
+		return feedback
+	case "answer":
+		if len(fields) < 4 {
+			return desktopCommandUsage
+		}
+		askID := fields[2]
+		questions, ok := bridge.AskQuestions(askID)
+		if !ok {
+			return fmt.Sprintf("未找到待回答的提问 %s（可能已在桌面端回答或已超时）。", askID)
+		}
+		raw := strings.Join(fields[3:], " ")
+		answers := parseAskAnswers(questions, raw)
+		feedback, err := bridge.Answer(askID, answers)
+		if err != nil {
+			return err.Error()
+		}
+		return feedback
+	default:
+		return desktopCommandUsage
+	}
+}
+
+func formatDesktopSessions(sessions []DesktopSessionInfo) string {
+	if len(sessions) == 0 {
+		return "桌面端当前没有 live 会话。"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "桌面端 live 会话（%d 个）:\n", len(sessions))
+	for _, s := range sessions {
+		state := "空闲"
+		switch {
+		case s.PendingPrompt:
+			state = "⚠️ 等待审批/回答"
+		case s.Running:
+			state = "▶️ 执行中"
+		case !s.Ready:
+			state = "启动中"
+		}
+		label := strings.TrimSpace(s.Label)
+		if label == "" {
+			label = strings.TrimSpace(s.Topic)
+		}
+		if label == "" {
+			label = "(未命名)"
+		}
+		fmt.Fprintf(&b, "\n- %s [%s]", label, state)
+		if ws := strings.TrimSpace(s.Workspace); ws != "" {
+			fmt.Fprintf(&b, "\n  项目: %s", ws)
+		}
+		fmt.Fprintf(&b, "\n  tab: %s", s.TabID)
+	}
+	b.WriteString("\n\n用 /desktop watch on 订阅审批与完成事件。")
+	return b.String()
+}

@@ -59,6 +59,11 @@ type GatewayConfig struct {
 	// The gateway updates the live session and in-memory defaults first; this
 	// callback lets desktop save the chosen connection mode to user config.
 	OnToolApprovalModeChange func(InboundMessage, string) error
+	// Desktop, when the gateway is embedded in the desktop app, gives bot
+	// chats a god view over desktop sessions (/desktop commands): global
+	// status, event subscriptions, and remote approvals for any live desktop
+	// session. Nil when the gateway runs standalone (reasonix bot start).
+	Desktop DesktopBridge
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
@@ -1285,6 +1290,15 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		}
 		_ = gw.sendText(ctx, adapter, msg, gw.handleProjectSearchCommand(ctx, msg.Text))
 
+	case strings.HasPrefix(msg.Text, "/desktop"):
+		// God view over the embedding desktop app: listing every live desktop
+		// session and answering its approvals is strictly more power than the
+		// per-session approver role, so gate on admin.
+		if !gw.requireCommandRole(ctx, adapter, msg, "admin") {
+			return
+		}
+		_ = gw.sendText(ctx, adapter, msg, gw.handleDesktopCommand(msg))
+
 	case strings.HasPrefix(msg.Text, "/status"):
 		active := gw.sessions.ActiveCount()
 		pending := gw.sessions.PendingCount(key)
@@ -1310,6 +1324,7 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/sessions search <关键词> - 搜索可 attach 的历史会话\n" +
 			"/attach session <id|关键词> - 绑定当前远端会话到已有历史会话\n" +
 			"/search all <关键词> - 跨已索引项目检索文件内容\n" +
+			"/desktop status|watch|approve|deny|answer - 桌面端上帝视角(需内嵌运行)\n" +
 			"/status - 查看状态\n" +
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)

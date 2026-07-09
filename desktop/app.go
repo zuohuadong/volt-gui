@@ -173,6 +173,10 @@ type App struct {
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
 	botRuntime  *desktopBotRuntime
+	// botBridge gives the embedded bot gateway a god view over desktop
+	// sessions (/desktop commands). Set once in NewApp before any tab exists,
+	// read-only afterwards, so tabEventSink.Emit reads it without a lock.
+	botBridge *botBridgeHub
 
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 
@@ -365,13 +369,21 @@ func (a *App) workspaceMediaMiddleware() func(http.Handler) http.Handler {
 // NewApp constructs the bound object. Tabs are restored in startup from the
 // last session's desktop-tabs.json.
 func NewApp() *App {
-	return &App{
+	a := &App{
 		tabs:             map[string]*WorkspaceTab{},
 		detachedSessions: map[string]*WorkspaceTab{},
 		mediaTokens:      newMediaTokenStore(),
 		botInstalls:      map[string]*botInstallSession{},
 		botRuntime:       newDesktopBotRuntime(),
 	}
+	a.botBridge = newBotBridgeHub(
+		a.ListTabs,
+		a.ApproveTab,
+		a.AnswerQuestionForTab,
+		a.botRuntime.SendToAdapter,
+		slog.Default(),
+	)
+	return a
 }
 
 func (a *App) bootContext() context.Context {

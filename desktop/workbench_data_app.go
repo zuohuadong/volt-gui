@@ -92,6 +92,7 @@ type WorkbenchCustomerInput struct {
 
 type WorkbenchCalendarEventView struct {
 	ID         string `json:"id"`
+	Date       string `json:"date,omitempty"`
 	Day        string `json:"day"`
 	Title      string `json:"title"`
 	Time       string `json:"time"`
@@ -107,6 +108,7 @@ type WorkbenchCalendarEventView struct {
 
 type WorkbenchCalendarEventInput struct {
 	ID         string `json:"id"`
+	Date       string `json:"date"`
 	Day        string `json:"day"`
 	Title      string `json:"title"`
 	Time       string `json:"time"`
@@ -732,8 +734,19 @@ func saveCalendarEventInto(data *WorkbenchDataView, input WorkbenchCalendarEvent
 	}
 	now := time.Now().Format(time.RFC3339)
 	id := defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(slugifyAgentID(title), calendarIDs(data.CalendarEvents)))
-	day := defaultString(strings.TrimSpace(input.Day), time.Now().Format("02"))
-	next := WorkbenchCalendarEventView{ID: id, Day: day, Title: title, Time: defaultString(strings.TrimSpace(input.Time), "09:00"), Type: defaultString(strings.TrimSpace(input.Type), "meeting"), Place: defaultString(strings.TrimSpace(input.Place), "工作台"), ProjectID: strings.TrimSpace(input.ProjectID), CustomerID: strings.TrimSpace(input.CustomerID), Status: defaultString(strings.TrimSpace(input.Status), "待开始"), Desc: strings.TrimSpace(input.Desc), CreatedAt: now, UpdatedAt: now}
+	date := strings.TrimSpace(input.Date)
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+	day := defaultString(strings.TrimSpace(input.Day), "")
+	if day == "" {
+		if parsed, err := time.Parse("2006-01-02", date); err == nil {
+			day = parsed.Format("02")
+		} else {
+			day = time.Now().Format("02")
+		}
+	}
+	next := WorkbenchCalendarEventView{ID: id, Date: date, Day: day, Title: title, Time: defaultString(strings.TrimSpace(input.Time), "09:00"), Type: defaultString(strings.TrimSpace(input.Type), "meeting"), Place: defaultString(strings.TrimSpace(input.Place), "工作台"), ProjectID: strings.TrimSpace(input.ProjectID), CustomerID: strings.TrimSpace(input.CustomerID), Status: defaultString(strings.TrimSpace(input.Status), "待开始"), Desc: strings.TrimSpace(input.Desc), CreatedAt: now, UpdatedAt: now}
 	replaceOrPrependCalendar(data, next)
 	sortCalendarEvents(data.CalendarEvents)
 	return next, nil
@@ -1339,6 +1352,9 @@ func sortCustomers(items []WorkbenchCustomerView) {
 
 func sortCalendarEvents(items []WorkbenchCalendarEventView) {
 	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Date != items[j].Date {
+			return items[i].Date < items[j].Date
+		}
 		if items[i].Day == items[j].Day {
 			return items[i].Time < items[j].Time
 		}

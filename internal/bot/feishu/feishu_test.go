@@ -231,7 +231,7 @@ func TestHandleMessageTreatsTopicGroupAsGroup(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		msgCh:  make(chan bot.InboundMessage, 1),
 	}
-	a.handleMessage(feishuMsgEvent{
+	a.handleMessage(context.Background(), feishuMsgEvent{
 		MessageID: "msg-topic",
 		ChatID:    "chat-topic",
 		ChatType:  "topic_group",
@@ -260,7 +260,7 @@ func TestHandleMessageRequiresMentionInTopicGroup(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		msgCh:  make(chan bot.InboundMessage, 1),
 	}
-	a.handleMessage(feishuMsgEvent{
+	a.handleMessage(context.Background(), feishuMsgEvent{
 		MessageID: "msg-topic",
 		ChatID:    "chat-topic",
 		ChatType:  "topic_group",
@@ -343,6 +343,153 @@ func TestWebSocketDispatcherHandlesCardActionTrigger(t *testing.T) {
 	select {
 	case duplicate := <-a.msgCh:
 		t.Fatalf("duplicate card action enqueued message: %#v", duplicate)
+	default:
+	}
+}
+
+// pngHeader 是合法 PNG 签名，足够 http.DetectContentType 识别为 image/png。
+var pngHeader = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+
+func newTestAdapter(fetch func(ctx context.Context, messageID, key, typ string) ([]byte, string, error)) *adapter {
+	return &adapter{
+		cfg:           config.FeishuBotConfig{},
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		msgCh:         make(chan bot.InboundMessage, 1),
+		fetchResource: fetch,
+	}
+}
+
+func testSender(openID string) feishuSender {
+	return feishuSender{SenderID: struct {
+		UserID  string `json:"user_id"`
+		OpenID  string `json:"open_id"`
+		UnionID string `json:"union_id"`
+	}{OpenID: openID}}
+}
+
+func TestHandleMessageDownloadsImage(t *testing.T) {
+	a := newTestAdapter(func(ctx context.Context, messageID, key, typ string) ([]byte, string, error) {
+		if messageID != "msg-img" || key != "img-key-1" || typ != "image" {
+			t.Fatalf("fetch args = %s/%s/%s, want msg-img/img-key-1/image", messageID, key, typ)
+		}
+		return pngHeader, "", nil
+	})
+	a.handleMessage(context.Background(), feishuMsgEvent{
+		MessageID: "msg-img",
+		ChatID:    "chat-1",
+		ChatType:  "p2p",
+		MsgType:   "image",
+		Content:   `{"image_key":"img-key-1"}`,
+		Sender:    testSender("open-user"),
+	})
+
+	msg := <-a.msgCh
+	if len(msg.Media) != 1 {
+		t.Fatalf("media items = %d, want 1", len(msg.Media))
+	}
+	if !strings.HasPrefix(msg.Media[0].MIME, "image/png") {
+		t.Fatalf("media mime = %q, want image/png", msg.Media[0].MIME)
+	}
+}
+
+func TestHandleMessageFileDownloadFailureKeepsPlaceholder(t *testing.T) {
+	a := newTestAdapter(func(ctx context.Context, messageID, key, typ string) ([]byte, string, error) {
+		return nil, "", fmt.Errorf("boom")
+	})
+	a.handleMessage(context.Background(), feishuMsgEvent{
+		MessageID: "msg-file",
+		ChatID:    "chat-1",
+		ChatType:  "p2p",
+		MsgType:   "file",
+		Content:   `{"file_key":"file-key-1","file_name":"report.pdf"}`,
+		Sender:    testSender("open-user"),
+	})
+
+	msg := <-a.msgCh
+	if len(msg.Media) != 0 {
+		t.Fatalf("media items = %d, want none on download failure", len(msg.Media))
+	}
+	if !strings.Contains(msg.Text, "report.pdf") {
+		t.Fatalf("text = %q, want download-failure placeholder naming the file", msg.Text)
+	}
+}
+
+func TestHandleMessageParsesPostContent(t *testing.T) {
+	a := newTestAdapter(func(ctx context.Context, messageID, key, typ string) ([]byte, string, error) {
+		if key != "post-img-1" || typ != "image" {
+			t.Fatalf("fetch args = %s/%s, want post-img-1/image", key, typ)
+		}
+		return pngHeader, "", nil
+	})
+	a.handleMessage(context.Background(), feishuMsgEvent{
+		MessageID: "msg-post",
+		ChatID:    "chat-1",
+		ChatType:  "p2p",
+		MsgType:   "post",
+		Content:   `{"title":"周报","content":[[{"tag":"text","text":"进展见 "},{"tag":"a","text":"文档","href":"https://example.com/doc"},{"tag":"at","user_name":"张三"}],[{"tag":"img","image_key":"post-img-1"}]]}`,
+		Sender:    testSender("open-user"),
+	})
+
+	msg := <-a.msgCh
+	for _, want := range []string{"周报", "进展见", "文档 (https://example.com/doc)", "@张三"} {
+		if !strings.Contains(msg.Text, want) {
+			t.Fatalf("text = %q, want it to contain %q", msg.Text, want)
+		}
+	}
+	if len(msg.Media) != 1 {
+		t.Fatalf("media items = %d, want embedded image downloaded", len(msg.Media))
+	}
+}
+
+func TestHandleMessageUnsupportedTypeIgnored(t *testing.T) {
+	a := newTestAdapter(nil)
+	a.handleMessage(context.Background(), feishuMsgEvent{
+		MessageID: "msg-audio",
+		ChatID:    "chat-1",
+		ChatType:  "p2p",
+		MsgType:   "audio",
+		Content:   `{"file_key":"audio-key"}`,
+		Sender:    testSender("open-user"),
+	})
+
+	select {
+	case msg := <-a.msgCh:
+		t.Fatalf("unsupported message type was queued: %+v", msg)
+	default:
+	}
+}
+
+func TestReplaceMentionPlaceholdersStripsBotAndNamesOthers(t *testing.T) {
+	a := newTestAdapter(nil)
+	a.botID = "ou-bot"
+	got := a.replaceMentionPlaceholders("@_user_1 帮 @_user_2 看看这个", []mentionRef{
+		{Key: "@_user_1", OpenID: "ou-bot", Name: "Reasonix"},
+		{Key: "@_user_2", OpenID: "ou-zhang", Name: "张三"},
+	})
+	if got != "帮 @张三 看看这个" {
+		t.Fatalf("text = %q, want bot mention stripped and peer mention named", got)
+	}
+}
+
+func TestMentionGatingRequiresBotWhenIdentityKnown(t *testing.T) {
+	a := newTestAdapter(nil)
+	a.cfg.RequireMention = true
+	a.botID = "ou-bot"
+	a.handleMessage(context.Background(), feishuMsgEvent{
+		MessageID: "msg-other",
+		ChatID:    "chat-group",
+		ChatType:  "group",
+		MsgType:   "text",
+		Content:   `{"text":"@_user_1 在吗"}`,
+		Sender:    testSender("open-user"),
+		Mentions: []feishuMention{{Key: "@_user_1", Name: "张三", ID: struct {
+			OpenID string `json:"open_id"`
+		}{OpenID: "ou-zhang"}}},
+	})
+
+	select {
+	case msg := <-a.msgCh:
+		t.Fatalf("message mentioning someone else was queued: %+v", msg)
 	default:
 	}
 }

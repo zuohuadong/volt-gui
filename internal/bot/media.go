@@ -75,6 +75,43 @@ func saveOneInboundMedia(ctx context.Context, workspaceRoot, rawURL string) (str
 	return control.SaveAttachmentBytesInRoot(workspaceRoot, name, raw)
 }
 
+func saveInboundMediaItems(workspaceRoot string, items []InboundMedia) (refs []string, errs []error) {
+	for _, item := range items {
+		ref, err := saveOneInboundMediaItem(workspaceRoot, item)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs, errs
+}
+
+func saveOneInboundMediaItem(workspaceRoot string, item InboundMedia) (string, error) {
+	if len(item.Data) == 0 || len(item.Data) > maxBotMediaBytes {
+		return "", fmt.Errorf("media must be between 1 byte and 25 MB")
+	}
+	contentType := strings.TrimSpace(item.MIME)
+	if contentType == "" || strings.EqualFold(contentType, "application/octet-stream") {
+		contentType = http.DetectContentType(item.Data[:min(len(item.Data), 512)])
+	}
+	if strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		if ref, err := control.SaveImageBytesInRoot(workspaceRoot, contentType, item.Data); err == nil {
+			return ref, nil
+		}
+		// 图片超过 10MB 上限或签名不被识别时，降级存为普通附件而不是丢弃。
+	}
+	name := strings.TrimSpace(item.Name)
+	if name == "" {
+		if exts, err := mime.ExtensionsByType(contentType); err == nil && len(exts) > 0 {
+			name = "media" + exts[0]
+		} else {
+			name = "media.bin"
+		}
+	}
+	return control.SaveAttachmentBytesInRoot(workspaceRoot, name, item.Data)
+}
+
 func mediaFilename(u *url.URL, contentType string) string {
 	base := path.Base(u.Path)
 	if base == "." || base == "/" || strings.TrimSpace(base) == "" {

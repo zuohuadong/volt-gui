@@ -75,7 +75,9 @@ ManifestDPIAware true
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+# Keep the generated installer filename ASCII-only for Linux makensis in CNB.
+# User-facing branding stays in INFO_PRODUCTNAME and Windows version metadata.
+OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Name of the installer's file.
 !define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
 !define VOLTUI_UNLOCK_RETRIES 60

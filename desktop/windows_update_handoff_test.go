@@ -45,6 +45,7 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		`!define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"`,
 		"Function voltui.waitForExecutableUnlock",
 		`FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a`,
+		`OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe"`,
 		"SetErrorLevel 1618",
 		"Call voltui.waitForExecutableUnlock",
 		`File "/oname=${VOLTUI_UPDATE_HELPER}" "${VOLTUI_UPDATE_HELPER}"`,

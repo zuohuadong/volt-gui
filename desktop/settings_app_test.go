@@ -15,6 +15,7 @@ import (
 	"voltui/internal/control"
 	"voltui/internal/hook"
 	"voltui/internal/provider"
+	"voltui/internal/sandbox"
 )
 
 type captureTurnRunner struct {
@@ -97,6 +98,16 @@ func TestProviderViewFromEntry_MigratesProviderWideVision(t *testing.T) {
 	}
 }
 
+func TestProviderViewFromEntryIncludesThinking(t *testing.T) {
+	view := providerViewFromEntry(config.ProviderEntry{
+		Name:     "anthropic",
+		Thinking: "ADAPTIVE",
+	}, false, true)
+	if view.Thinking != "adaptive" {
+		t.Fatalf("ProviderView.Thinking = %q, want adaptive", view.Thinking)
+	}
+}
+
 func TestProviderViewFromEntryShowsKeySource(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("TEST_PROVIDER_KEY_SOURCE", "")
@@ -117,6 +128,64 @@ func TestProviderViewFromEntryShowsKeySource(t *testing.T) {
 	}
 	if view.KeySource == "" || !strings.Contains(view.KeySource, "credentials") {
 		t.Fatalf("KeySource = %q, want credentials source", view.KeySource)
+	}
+}
+
+func TestSettingsExposesEffectiveSandboxWriteRoots(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	project := robustTempDir(t)
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Sandbox.AllowWrite = []string{
+		"${HOME}/.m2",
+		"${HOME}/.m2/repository",
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{
+		"project": {ID: "project", Scope: "project", WorkspaceRoot: project, Ready: true},
+	}
+	app.activeTabID = "project"
+
+	got := app.Settings().Sandbox
+	if got.EffectiveWorkspaceRoot != project {
+		t.Fatalf("EffectiveWorkspaceRoot = %q, want %q", got.EffectiveWorkspaceRoot, project)
+	}
+	// Settings expose expanded configured roots; the writer confiner normalizes
+	// separators later when enforcing them.
+	want := []string{
+		project,
+		home + "/.m2",
+		home + "/.m2/repository",
+	}
+	if !reflect.DeepEqual(got.EffectiveWriteRoots, want) {
+		t.Fatalf("EffectiveWriteRoots = %v, want %v", got.EffectiveWriteRoots, want)
+	}
+	if !reflect.DeepEqual(got.AllowWrite, cfg.Sandbox.AllowWrite) {
+		t.Fatalf("AllowWrite = %v, want raw configured paths %v", got.AllowWrite, cfg.Sandbox.AllowWrite)
+	}
+	if got.EffectiveShell == "" {
+		t.Fatal("EffectiveShell is empty")
+	}
+}
+
+func TestSandboxEffectiveShellViewLabels(t *testing.T) {
+	cases := []struct {
+		name  string
+		shell sandbox.Shell
+		want  string
+	}{
+		{"bash", sandbox.Shell{Kind: sandbox.ShellBash, Path: "bash"}, "bash"},
+		{"git bash", sandbox.Shell{Kind: sandbox.ShellBash, Path: `C:\Program Files\Git\bin\bash.exe`}, "git-bash"},
+		{"windows powershell", sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}, "powershell"},
+		{"pwsh", sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}, "pwsh"},
+	}
+	for _, tc := range cases {
+		if got := sandboxEffectiveShellView(tc.shell); got != tc.want {
+			t.Errorf("%s: sandboxEffectiveShellView() = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -169,7 +238,7 @@ func TestProviderViewFromEntryExposesNoAuthAvailability(t *testing.T) {
 	}
 }
 
-func TestSetProviderKeyWarnsWhenProjectEnvWillShadowSavedKey(t *testing.T) {
+func TestSetProviderKeyDoesNotWarnWhenProjectEnvAlsoDefinesSavedKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("TEST_PROVIDER_SHADOW=old-key\n"), 0o600); err != nil {
@@ -186,8 +255,8 @@ func TestSetProviderKeyWarnsWhenProjectEnvWillShadowSavedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "project .env") {
-		t.Fatalf("SetProviderKey warning = %q, want project .env shadow warning", warning)
+	if warning != "" {
+		t.Fatalf("SetProviderKey warning = %q, want no warning because provider keys use global credentials only", warning)
 	}
 	data, readErr := os.ReadFile(config.UserCredentialsPath())
 	if readErr != nil {
@@ -198,7 +267,7 @@ func TestSetProviderKeyWarnsWhenProjectEnvWillShadowSavedKey(t *testing.T) {
 	}
 }
 
-func TestSetProviderKeyWarnsWhenEmptyEnvironmentWillShadowSavedKey(t *testing.T) {
+func TestSetProviderKeyDoesNotWarnWhenEnvironmentAlsoDefinesSavedKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("TEST_PROVIDER_EMPTY_ENV", "")
 
@@ -207,8 +276,8 @@ func TestSetProviderKeyWarnsWhenEmptyEnvironmentWillShadowSavedKey(t *testing.T)
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "environment variable") {
-		t.Fatalf("SetProviderKey warning = %q, want environment variable shadow warning", warning)
+	if warning != "" {
+		t.Fatalf("SetProviderKey warning = %q, want no warning because provider keys use global credentials only", warning)
 	}
 	data, readErr := os.ReadFile(config.UserCredentialsPath())
 	if readErr != nil {
@@ -219,7 +288,7 @@ func TestSetProviderKeyWarnsWhenEmptyEnvironmentWillShadowSavedKey(t *testing.T)
 	}
 }
 
-func TestSetProviderKeyWarnsWhenEmptyProjectEnvWillShadowSavedKey(t *testing.T) {
+func TestSetProviderKeyDoesNotWarnWhenEmptyProjectEnvAlsoDefinesSavedKey(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	project := t.TempDir()
 	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("TEST_PROVIDER_EMPTY_PROJECT=\n"), 0o600); err != nil {
@@ -236,13 +305,16 @@ func TestSetProviderKeyWarnsWhenEmptyProjectEnvWillShadowSavedKey(t *testing.T) 
 	if err != nil {
 		t.Fatalf("SetProviderKey: %v", err)
 	}
-	if !strings.Contains(warning, "project .env") {
-		t.Fatalf("SetProviderKey warning = %q, want project .env shadow warning", warning)
+	if warning != "" {
+		t.Fatalf("SetProviderKey warning = %q, want no warning because provider keys use global credentials only", warning)
 	}
 }
 
 func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
-	t.Setenv("TEST_PROVIDER_KEY", "test-key")
+	isolateDesktopUserDirs(t)
+	if _, err := config.SetCredential("TEST_PROVIDER_KEY", "test-key"); err != nil {
+		t.Fatalf("SetCredential: %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
 			http.NotFound(w, r)
@@ -258,8 +330,6 @@ func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
 				{"id": "mimo-v2.5-pro", "object": "model"},
 				{"id": "mimo-v2.5-asr", "object": "model"},
 				{"id": "mimo-v2.5-tts", "object": "model"},
-				{"id": "agnes-image-2.1-flash", "object": "model"},
-				{"id": "agnes-video-v2.0", "object": "model"},
 			},
 		})
 	}))
@@ -279,37 +349,45 @@ func TestFetchProviderModelsFiltersNonChatModels(t *testing.T) {
 	}
 }
 
-func TestFetchProviderModelsUsesDraftAPIKeyValue(t *testing.T) {
+func TestFetchProviderModelsUsesSavedCredentialBeforeEnvironment(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	const keyEnv = "TEST_PROVIDER_FETCH_KEY"
+	if _, err := config.SetCredential(keyEnv, "saved-key"); err != nil {
+		t.Fatalf("SetCredential: %v", err)
+	}
+	t.Setenv(keyEnv, "stale-env-key")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer draft-key" {
+		if r.Header.Get("Authorization") != "Bearer saved-key" {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"object": "list",
 			"data": []map[string]string{
-				{"id": "draft-model", "object": "model"},
+				{"id": "model-a", "object": "model"},
 			},
 		})
 	}))
 	defer srv.Close()
 
 	got, err := NewApp().FetchProviderModels(ProviderView{
-		Name:        "custom",
-		BaseURL:     srv.URL,
-		APIKeyEnv:   "UNSAVED_PROVIDER_KEY",
-		APIKeyValue: "draft-key",
+		Name:      "custom",
+		BaseURL:   srv.URL,
+		APIKeyEnv: keyEnv,
 	})
 	if err != nil {
 		t.Fatalf("FetchProviderModels: %v", err)
 	}
-	want := []string{"draft-model"}
-	if !reflect.DeepEqual(got, want) {
+	if want := []string{"model-a"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("FetchProviderModels = %v, want %v", got, want)
+	}
+	if got := os.Getenv(keyEnv); got != "stale-env-key" {
+		t.Fatalf("process env = %q, want stale env left untouched", got)
 	}
 }
 
@@ -321,17 +399,14 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 		Name:    "mimo-api",
 		Kind:    "openai",
 		BaseURL: "https://api.xiaomimimo.com/v1",
-		Models:  []string{"mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts", "agnes-image-2.1-flash", "agnes-video-v2.0"},
+		Models:  []string{"mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts"},
 		VisionModels: []string{
 			"mimo-v2.5-asr",
 			"mimo-v2.5-pro",
 			"mimo-v2.5-tts",
-			"agnes-image-2.1-flash",
-			"agnes-video-v2.0",
 		},
 		VisionModelsSet: true,
 		Default:         "mimo-v2.5-asr",
-		Priority:        30,
 		APIKeyEnv:       "MIMO_API_KEY",
 	}); err != nil {
 		t.Fatalf("SaveProvider: %v", err)
@@ -351,9 +426,6 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	}
 	if got, want := got.VisionModels, []string{"mimo-v2.5-pro"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("saved provider vision_models = %v, want %v", got, want)
-	}
-	if got.Priority != 30 {
-		t.Errorf("saved provider priority = %d, want 30", got.Priority)
 	}
 	raw, err := os.ReadFile(config.UserConfigPath())
 	if err != nil {
@@ -377,8 +449,182 @@ func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	if !strings.Contains(block, `vision_models = ["mimo-v2.5-pro"]`) {
 		t.Fatalf("saved provider block did not persist filtered vision_models:\n%s", block)
 	}
-	if !strings.Contains(block, `priority    = 30`) {
-		t.Fatalf("saved provider block did not persist priority:\n%s", block)
+}
+
+func TestSaveProviderPersistsThinkingOverride(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SaveProvider(ProviderView{
+		Name:      "glm-proxy",
+		Kind:      "openai",
+		BaseURL:   "https://proxy.example.com/v1",
+		Models:    []string{"glm-4.5-air"},
+		APIKeyEnv: "GLM_PROXY_API_KEY",
+		Thinking:  "DISABLED",
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("glm-proxy")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if got.Thinking != "disabled" {
+		t.Fatalf("saved provider thinking = %q, want disabled", got.Thinking)
+	}
+}
+
+func TestSaveProviderPersistsAuthHeader(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SaveProvider(ProviderView{
+		Name:       "minimax-global-anthropic",
+		Kind:       "anthropic",
+		BaseURL:    "https://api.minimax.io/anthropic",
+		Models:     []string{"MiniMax-M3"},
+		APIKeyEnv:  "MINIMAX_API_KEY",
+		AuthHeader: true,
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("minimax-global-anthropic")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if !got.AuthHeader {
+		t.Fatal("saved provider auth_header = false, want true")
+	}
+	view := providerViewFromEntry(*got, false, true)
+	if !view.AuthHeader {
+		t.Fatal("provider view authHeader = false, want true")
+	}
+}
+
+func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if err := app.SaveProvider(ProviderView{
+		Name:         "sub2api",
+		Kind:         "openai",
+		BaseURL:      "https://proxy.example.com/v1",
+		ChatURL:      " https://proxy.example.com/custom/chat/completions ",
+		APISurface:   "responses",
+		ResponsesURL: " https://proxy.example.com/custom/responses ",
+		ModelsURL:    " https://proxy.example.com/v1/models ",
+		Models:       []string{"model-a"},
+		Default:      "model-a",
+		APIKeyEnv:    "SUB2API_KEY",
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("sub2api")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if got.ChatURL != "https://proxy.example.com/custom/chat/completions" {
+		t.Fatalf("saved chat_url = %q", got.ChatURL)
+	}
+	if got.ModelsURL != "https://proxy.example.com/v1/models" {
+		t.Fatalf("saved models_url = %q", got.ModelsURL)
+	}
+	if got.APISurface != config.APISurfaceResponses || got.ResponsesURL != "https://proxy.example.com/custom/responses" {
+		t.Fatalf("saved responses fields = %q %q", got.APISurface, got.ResponsesURL)
+	}
+
+	view := app.Settings()
+	for _, provider := range view.Providers {
+		if provider.Name != "sub2api" {
+			continue
+		}
+		if provider.ChatURL != "https://proxy.example.com/custom/chat/completions" {
+			t.Fatalf("Settings chatUrl = %q", provider.ChatURL)
+		}
+		if provider.ModelsURL != "https://proxy.example.com/v1/models" {
+			t.Fatalf("Settings modelsUrl = %q", provider.ModelsURL)
+		}
+		if provider.APISurface != config.APISurfaceResponses || provider.ResponsesURL != "https://proxy.example.com/custom/responses" {
+			t.Fatalf("Settings responses fields = %q %q", provider.APISurface, provider.ResponsesURL)
+		}
+		return
+	}
+	t.Fatalf("Settings providers missing sub2api: %+v", view.Providers)
+}
+
+func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Providers = []config.ProviderEntry{{
+		Name:         "custom",
+		Kind:         "openai",
+		BaseURL:      "https://proxy.example.com/v1",
+		Models:       []string{"model-a", "model-b"},
+		Default:      "model-a",
+		APIKeyEnv:    "CUSTOM_API_KEY",
+		Price:        &provider.Pricing{Input: 1, Output: 2, Currency: "$"},
+		Prices:       map[string]*provider.Pricing{"model-b": {Input: 3, Output: 4, Currency: "$"}},
+		Thinking:     "adaptive",
+		Effort:       "high",
+		VisionDetail: "low",
+		ExtraBody:    map[string]any{"enable_thinking": true},
+		NoProxy:      true,
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	app := NewApp()
+	settings := app.Settings()
+	var view ProviderView
+	found := false
+	for _, p := range settings.Providers {
+		if p.Name == "custom" {
+			view = p
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Settings providers missing custom: %+v", settings.Providers)
+	}
+	if view.ExtraBody["enable_thinking"] != true {
+		t.Fatalf("settings extra_body = %+v, want enable_thinking=true", view.ExtraBody)
+	}
+
+	if err := app.SaveProvider(view); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	gotCfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := gotCfg.Provider("custom")
+	if !ok {
+		t.Fatal("saved provider not found")
+	}
+	if got.Price == nil || got.Price.Input != 1 || got.Price.Output != 2 || got.Price.Currency != "$" {
+		t.Fatalf("provider-wide price = %+v, want preserved", got.Price)
+	}
+	if got.Prices["model-b"] == nil || got.Prices["model-b"].Input != 3 || got.Prices["model-b"].Output != 4 || got.Prices["model-b"].Currency != "$" {
+		t.Fatalf("per-model prices = %+v, want model-b price preserved", got.Prices)
+	}
+	if got.Thinking != "adaptive" || got.Effort != "high" {
+		t.Fatalf("thinking/effort = %q/%q, want adaptive/high", got.Thinking, got.Effort)
+	}
+	if got.VisionDetail != "low" {
+		t.Fatalf("vision_detail = %q, want low", got.VisionDetail)
+	}
+	if got.ExtraBody["enable_thinking"] != true {
+		t.Fatalf("extra_body = %+v, want enable_thinking=true", got.ExtraBody)
+	}
+	if !got.NoProxy {
+		t.Fatal("no_proxy = false, want preserved true")
 	}
 }
 
@@ -465,20 +711,9 @@ func TestSaveProviderPreservesExplicitEmptyVisionModels(t *testing.T) {
 	}
 }
 
-func TestOfficialMimoAPITemplateAvailable(t *testing.T) {
-	entries, keyEnv, err := officialProviderTemplate("mimo-api", "en")
-	if err != nil {
-		t.Fatalf("officialProviderTemplate(mimo-api): %v", err)
-	}
-	if keyEnv != "MIMO_API_KEY" || len(entries) != 1 {
-		t.Fatalf("template = %v/%q, want one MIMO_API_KEY entry", entries, keyEnv)
-	}
-	got := entries[0]
-	if got.Name != "mimo-api" || got.BaseURL != "https://api.xiaomimimo.com/v1" {
-		t.Fatalf("mimo-api template = %+v", got)
-	}
-	if got.Default != "mimo-v2.5-pro" || !reflect.DeepEqual(got.Models, []string{"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni"}) {
-		t.Fatalf("mimo-api models = default:%q models:%v", got.Default, got.Models)
+func TestOfficialMimoAPITemplateRemoved(t *testing.T) {
+	if entries, keyEnv, err := officialProviderTemplate("mimo-api", "en"); err == nil {
+		t.Fatalf("officialProviderTemplate(mimo-api) = entries=%v key=%q nil error, want unknown template", entries, keyEnv)
 	}
 }
 
@@ -624,7 +859,7 @@ func TestSetReasoningLanguageUpdatesLiveTabControllers(t *testing.T) {
 	}
 
 	userComposed := userCtrl.Compose("hi")
-	if !strings.Contains(userComposed, "Simplified Chinese") {
+	if !strings.Contains(userComposed, "简体中文") {
 		t.Fatalf("user-level tab Compose = %q, want zh reasoning language", userComposed)
 	}
 	projectComposed := projectCtrl.Compose("hi")
@@ -851,6 +1086,51 @@ func TestSetDesktopMetricsDefaultsOnAndPersistsOff(t *testing.T) {
 	}
 }
 
+func TestSetMemoryCompilerDefaultsOnAndPersistsOff(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if !app.Settings().MemoryCompiler {
+		t.Fatal("Settings().MemoryCompiler default = false, want true")
+	}
+	if err := app.SetMemoryCompilerEnabled(false); err != nil {
+		t.Fatalf("SetMemoryCompilerEnabled: %v", err)
+	}
+	view := app.Settings()
+	if view.MemoryCompiler {
+		t.Fatal("Settings().MemoryCompiler = true, want false")
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Agent.MemoryCompiler.Enabled == nil || *cfg.Agent.MemoryCompiler.Enabled {
+		t.Fatalf("agent.memory_compiler.enabled = %+v, want false", cfg.Agent.MemoryCompiler.Enabled)
+	}
+	if cfg.MemoryCompilerEnabled() {
+		t.Fatal("MemoryCompilerEnabled() = true, want false")
+	}
+}
+
+type memoryCompilerTargetFake struct {
+	calls []bool
+}
+
+func (f *memoryCompilerTargetFake) SetMemoryCompilerEnabled(enabled bool) {
+	f.calls = append(f.calls, enabled)
+}
+
+func TestApplyMemoryCompilerToControllersBroadcastsToAllTargets(t *testing.T) {
+	first := &memoryCompilerTargetFake{}
+	second := &memoryCompilerTargetFake{}
+
+	applyMemoryCompilerToControllers(false, []memoryCompilerTarget{first, nil, second})
+
+	if !reflect.DeepEqual(first.calls, []bool{false}) {
+		t.Fatalf("first calls = %v, want [false]", first.calls)
+	}
+	if !reflect.DeepEqual(second.calls, []bool{false}) {
+		t.Fatalf("second calls = %v, want [false]", second.calls)
+	}
+}
+
 func TestSaveHooksSettingsPreservesUnknownSettingsKeys(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	path := hook.GlobalSettingsPath("")
@@ -884,6 +1164,30 @@ func TestSaveHooksSettingsPreservesUnknownSettingsKeys(t *testing.T) {
 	view := app.HooksSettings("global")
 	if len(view.Hooks) != 1 || view.Hooks[0].Event != string(hook.PreToolUse) || view.Hooks[0].Command != "echo guard" {
 		t.Fatalf("HooksSettings = %+v, want saved PreToolUse hook", view)
+	}
+}
+
+func TestSaveHooksSettingsNormalizesQuotedNodeEvalHookCommand(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	script := "const payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log(payload.toolName)"
+	bad := `node -e "\"` + script + `\""`
+	want := hook.NormalizeCommand(bad)
+	if want == bad {
+		t.Fatal("test command did not normalize")
+	}
+
+	app := NewApp()
+	if err := app.SaveHooksSettings("global", []HookConfigView{{
+		Event:   string(hook.PreToolUse),
+		Match:   "bash",
+		Command: bad,
+	}}); err != nil {
+		t.Fatalf("SaveHooksSettings: %v", err)
+	}
+
+	view := app.HooksSettings("global")
+	if len(view.Hooks) != 1 || view.Hooks[0].Command != want {
+		t.Fatalf("HooksSettings = %+v, want normalized command %q", view.Hooks, want)
 	}
 }
 
@@ -965,5 +1269,136 @@ func TestSaveHooksSettingsForRootUsesDisplayedProjectRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectB, ".voltui", "settings.json")); err == nil {
 		t.Fatal("active project root was written instead of displayed project root")
+	}
+}
+
+// TestLoadDesktopUserConfigForViewDoesNotPersistLegacyProviderAccess locks the
+// read-path contract: loading a legacy-form config (configured providers but
+// no declared desktop.provider_access) through the View helpers returns a
+// normalized in-memory view while leaving the file bytes untouched. The
+// on-disk migration only happens once a locked write path runs.
+func TestLoadDesktopUserConfigForViewDoesNotPersistLegacyProviderAccess(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	userPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "default_model = \"local/m1\"\n\n[[providers]]\nname = \"local\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nmodels = [\"m1\"]\n"
+	if err := os.WriteFile(userPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	for name, load := range map[string]func() (*config.Config, string, error){
+		"view":                  app.loadDesktopUserConfigForView,
+		"view-with-credentials": app.loadDesktopUserConfigForViewWithCredentials,
+	} {
+		cfg, _, err := load()
+		if err != nil {
+			t.Fatalf("%s load: %v", name, err)
+		}
+		if len(cfg.Desktop.ProviderAccess) == 0 {
+			t.Fatalf("%s load should normalize legacy provider access in memory", name)
+		}
+		raw, err := os.ReadFile(userPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != legacy {
+			t.Fatalf("%s load must not rewrite the user config, got:\n%s", name, raw)
+		}
+	}
+
+	// The first locked write path persists the pending migration.
+	if err := app.applyConfigOnly(func(*config.Config) error { return nil }); err != nil {
+		t.Fatalf("applyConfigOnly: %v", err)
+	}
+	if !configDeclaresProviderAccess(userPath) {
+		t.Fatal("locked write path should persist the provider access migration to disk")
+	}
+	migrated := config.LoadForEditWithoutCredentials(userPath)
+	if len(migrated.Desktop.ProviderAccess) == 0 {
+		t.Fatalf("migrated config lost provider access: %v", migrated.Desktop.ProviderAccess)
+	}
+}
+
+// TestLoadDesktopUserConfigViewKeepsLegacyBotConfigMigrationInMemory locks the
+// same contract for the legacy bot-config migration: read paths (including the
+// bot runtime's credential-loading view) see the merged bot config in memory
+// without any file being written; the locked write path performs the on-disk
+// migration.
+func TestLoadDesktopUserConfigViewKeepsLegacyBotConfigMigrationInMemory(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	userPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userBody := "default_model = \"local/m1\"\n"
+	if err := os.WriteFile(userPath, []byte(userBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot := t.TempDir()
+	legacyPath := filepath.Join(legacyRoot, "voltui.toml")
+	legacyBody := "[bot]\nenabled = true\nmodel = \"local/m1\"\n"
+	if err := os.WriteFile(legacyPath, []byte(legacyBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{
+		"t": {ID: "t", Scope: "project", WorkspaceRoot: legacyRoot, Ready: true},
+	}
+	app.activeTabID = "t"
+
+	assertFilesUntouched := func(step string) {
+		t.Helper()
+		rawUser, err := os.ReadFile(userPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(rawUser) != userBody {
+			t.Fatalf("%s must not rewrite the user config, got:\n%s", step, rawUser)
+		}
+		rawLegacy, err := os.ReadFile(legacyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(rawLegacy) != legacyBody {
+			t.Fatalf("%s must not rewrite the legacy config, got:\n%s", step, rawLegacy)
+		}
+	}
+
+	cfg, _, err := app.loadDesktopUserConfigForView()
+	if err != nil {
+		t.Fatalf("loadDesktopUserConfigForView: %v", err)
+	}
+	if !cfg.Bot.Enabled {
+		t.Fatal("view load should merge the legacy bot config in memory")
+	}
+	assertFilesUntouched("loadDesktopUserConfigForView")
+
+	botCfg, err := app.loadDesktopBotConfig()
+	if err != nil {
+		t.Fatalf("loadDesktopBotConfig: %v", err)
+	}
+	if !botCfg.Bot.Enabled {
+		t.Fatal("bot runtime load should see the merged legacy bot config")
+	}
+	assertFilesUntouched("loadDesktopBotConfig")
+
+	// The first locked write path migrates the bot config into the user file.
+	if err := app.applyConfigOnly(func(*config.Config) error { return nil }); err != nil {
+		t.Fatalf("applyConfigOnly: %v", err)
+	}
+	migrated := config.LoadForEditWithoutCredentials(userPath)
+	if !migrated.Bot.Enabled {
+		t.Fatal("locked write path should persist the legacy bot config migration")
+	}
+	rawLegacy, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rawLegacy) != legacyBody {
+		t.Fatalf("migration must not rewrite the legacy config, got:\n%s", rawLegacy)
 	}
 }

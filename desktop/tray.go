@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 
 	"fyne.io/systray"
@@ -38,10 +39,11 @@ func (a *App) startTray() bool {
 	a.tray = t
 	a.mu.Unlock()
 
+	brand := loadDesktopBrand()
 	end := startDesktopTray(func() {
-		systray.SetIcon(trayIconBytes)
-		systray.SetTitle("VoltUI")
-		systray.SetTooltip("VoltUI")
+		systray.SetIcon(brand.trayIconBytes(trayIconBytes))
+		systray.SetTitle(brand.compactName())
+		systray.SetTooltip(brand.displayName())
 		// Run off the systray Win32 message loop: SetOnTapped fires inside wndProc,
 		// so a blocking showFromTray (a wedged webview after sleep freezes
 		// runtime.WindowShow) would stall the whole tray's message pump (#3834). The
@@ -50,7 +52,7 @@ func (a *App) startTray() bool {
 		// Keep secondary/right-click on systray's native menu path.
 		systray.SetOnSecondaryTapped(nil)
 
-		labels := trayMenuLabels(a.trayLocale())
+		labels := trayMenuLabels(a.trayLocale(), brand.displayName())
 		openItem := systray.AddMenuItem(labels.openTitle, labels.openTooltip)
 		quitItem := systray.AddMenuItem(labels.quitTitle, labels.quitTooltip)
 
@@ -113,7 +115,7 @@ func (a *App) updateTrayLocale(locale string) {
 	if openItem == nil || quitItem == nil {
 		return
 	}
-	labels := trayMenuLabels(locale)
+	labels := trayMenuLabels(locale, loadDesktopBrand().displayName())
 	openItem.SetTitle(labels.openTitle)
 	openItem.SetTooltip(labels.openTooltip)
 	quitItem.SetTitle(labels.quitTitle)
@@ -143,19 +145,22 @@ type trayLabels struct {
 	quitTooltip string
 }
 
-func trayMenuLabels(locale string) trayLabels {
+func trayMenuLabels(locale, brandName string) trayLabels {
+	if strings.TrimSpace(brandName) == "" {
+		brandName = "VoltUI"
+	}
 	if locale == "zh" {
 		return trayLabels{
 			openTitle:   "打开",
-			openTooltip: "打开 VoltUI 窗口",
+			openTooltip: "打开 " + brandName + " 窗口",
 			quitTitle:   "退出",
-			quitTooltip: "退出 VoltUI",
+			quitTooltip: "退出 " + brandName,
 		}
 	}
 	return trayLabels{
 		openTitle:   "Open",
-		openTooltip: "Open the VoltUI window",
+		openTooltip: "Open the " + brandName + " window",
 		quitTitle:   "Quit",
-		quitTooltip: "Quit VoltUI",
+		quitTooltip: "Quit " + brandName,
 	}
 }

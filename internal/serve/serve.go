@@ -416,7 +416,7 @@ func (s *Server) index(w http.ResponseWriter, _ *http.Request) {
 			lang = dl
 		}
 	}
-	html := string(indexHTML)
+	html := string(renderBrandHTML(indexHTML))
 	html = strings.ReplaceAll(html, "__LANG__", lang)
 	_, _ = w.Write([]byte(html))
 }

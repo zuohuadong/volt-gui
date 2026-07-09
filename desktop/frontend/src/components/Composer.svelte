@@ -15,6 +15,7 @@
     onPreviewFile,
     models = [],
     selectedModel = "",
+    imageInputEnabled = false,
     disabled = false,
     disabledReason = "",
     onModelChange,
@@ -35,6 +36,7 @@
     onPreviewFile: (path: string) => void;
     models?: ModelInfo[];
     selectedModel?: string;
+    imageInputEnabled?: boolean;
     disabled?: boolean;
     disabledReason?: string;
     onModelChange?: (event: Event) => void;
@@ -74,6 +76,19 @@
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
   const canSubmit = $derived(!sending && !disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
+  const selectedModelInfo = $derived(models.find((model) => modelValue(model) === selectedModel) ?? models.find((model) => model.current));
+  const selectedModelSupportsImages = $derived(selectedModelInfo?.vision ?? imageInputEnabled);
+  const hasImageAttachments = $derived(attachments.some((attachment) => Boolean(attachment.previewUrl)));
+  const imageAttachmentNote = $derived(
+    hasImageAttachments
+      ? selectedModelSupportsImages
+        ? t.composer.imageDirect
+        : t.composer.imageReferenceOnly
+      : "",
+  );
+  const currentModelCapabilityTitle = $derived(
+    selectedModelSupportsImages ? t.composer.imageModelAvailable : t.composer.textModelOnly,
+  );
 
   onMount(() => {
     const unsubscribeDropped = onFilesDropped((paths) => void attachDroppedPaths(paths));
@@ -113,7 +128,8 @@
   }
 
   function modelLabel(model: ModelInfo, index: number) {
-    return model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
+    const label = model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
+    return model.vision ? `${label} (${t.composer.imageInputShort})` : label;
   }
 
   function commandKey(command: CommandInfo, index: number) {
@@ -515,6 +531,12 @@
             {t.composer.dropToAttach}
           </div>
         {/if}
+        {#if imageAttachmentNote}
+          <div class={["composer-context__hint", selectedModelSupportsImages ? "composer-context__hint--vision" : "composer-context__hint--text"]}>
+            <Image size={14} />
+            <span>{imageAttachmentNote}</span>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -628,7 +650,7 @@
       {#if disabledReason}
         <span class="composer__status" aria-live="polite">{disabledReason}</span>
       {/if}
-      <select class="composer__model" aria-label={t.common.model} value={selectedModel} onchange={onModelChange} disabled={!models.length}>
+      <select class="composer__model" aria-label={t.common.model} title={currentModelCapabilityTitle} value={selectedModel} onchange={onModelChange} disabled={!models.length}>
         {#if models.length}
           {#each models as model, index (modelKey(model, index))}
             {@const value = modelValue(model)}

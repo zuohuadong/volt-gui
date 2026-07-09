@@ -4,6 +4,7 @@
 
 import type {
   CommandInfo,
+  BrandInfo,
   ContextPanelInfo,
   BrandView,
   DirEntry,
@@ -73,7 +74,7 @@ import type {
 } from "./types";
 
 interface AppBindings {
-  Brand(): Promise<BrandView>;
+  Brand(): Promise<BrandInfo>;
   SubmitToTab(tabID: string, input: string): Promise<void>;
   SubmitDisplayToTab(tabID: string, display: string, input: string): Promise<void>;
   CancelTab(tabID: string): Promise<void>;

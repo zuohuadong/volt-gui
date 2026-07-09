@@ -32,7 +32,6 @@ import (
 	"voltui/internal/notify"
 	"voltui/internal/provider"
 	"voltui/internal/store"
-	usageledger "voltui/internal/usage"
 )
 
 // --- WorkspaceTab -----------------------------------------------------------
@@ -42,25 +41,26 @@ import (
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID              string             // stable random id
-	Scope           string             // "project" | "global"
-	WorkspaceRoot   string             // project root dir (empty for global)
-	SharedHostKey   string             // opaque key for the shared plugin host (set by buildTabController)
-	TopicID         string             // topic within the project
-	TopicTitle      string             // display title
-	SessionPath     string             // exact .jsonl file this tab continues
-	ReadOnly        bool               // true for external channel transcripts opened for browsing
-	Ctrl            control.SessionAPI // nil while booting / on error
-	Label           string             // model label (for the tab badge)
-	Ready           bool               // true once boot.Build completes
-	StartupErr      string             // build error, surfaced to the frontend
-	sessionLease    *agent.SessionLease
-	sessionLeaseMu  sync.Mutex
-	sink            *tabEventSink      // routes events with this tab's ID
-	buildCancel     context.CancelFunc // cancels in-flight boot for tabs removed before Ready
-	buildGeneration uint64             // identifies the current in-flight build
-	removed         bool               // set when the visible tab is pruned/closed before build completes
-	reconcileMu     sync.Mutex         // serializes stale controller workspace repair for this tab
+	ID                  string             // stable random id
+	Scope               string             // "project" | "global"
+	WorkspaceRoot       string             // project root dir (empty for global)
+	SharedHostKey       string             // opaque key for the shared plugin host (set by buildTabController)
+	TopicID             string             // topic within the project
+	TopicTitle          string             // display title
+	SessionPath         string             // exact .jsonl file this tab continues
+	ReadOnly            bool               // true for external channel transcripts opened for browsing
+	Ctrl                control.SessionAPI // nil while booting / on error
+	Label               string             // model label (for the tab badge)
+	Ready               bool               // true once boot.Build completes
+	StartupErr          string             // build error, surfaced to the frontend
+	StartupErrLeaseHeld bool               // true when StartupErr can be retried after a session lease releases
+	sessionLease        *agent.SessionLease
+	sessionLeaseMu      sync.Mutex
+	sink                *tabEventSink      // routes events with this tab's ID
+	buildCancel         context.CancelFunc // cancels in-flight boot for tabs removed before Ready
+	buildGeneration     uint64             // identifies the current in-flight build
+	removed             bool               // set when the visible tab is pruned/closed before build completes
+	reconcileMu         sync.Mutex         // serializes stale controller workspace repair for this tab
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -69,6 +69,10 @@ type WorkspaceTab struct {
 	saving       bool
 	saveAgain    bool
 	saveFailures int
+	// lastAutosaveWarnAt debounces the user-facing autosave-failure notice:
+	// a persistently failing disk (AV hold, full volume) otherwise emits a
+	// chat warning for every completed turn. Logs are never debounced.
+	lastAutosaveWarnAt time.Time
 
 	// closing is set under saveMu when the tab is being torn down. Once set,
 	// tabSnapshotLoop stops taking new snapshot work and CloseTab waits on
@@ -82,7 +86,14 @@ type WorkspaceTab struct {
 	// readTelemetry tracks files read during this tab's session.
 	readTelemetry  []readFileRecord
 	usageTelemetry sessionUsageStats
-	telemMu        sync.Mutex
+	// telemetrySessionKey is the sessionRuntimeKey the telemetry above belongs
+	// to. Controller-side session rotations (typed /new, bot /reset) bypass the
+	// App bindings, so telemetry writers and readers re-key through
+	// syncTelemetryToSession before trusting the in-memory totals — otherwise a
+	// previous session's cost keeps accumulating under the new session and gets
+	// persisted into its sidecar (#5850).
+	telemetrySessionKey string
+	telemMu             sync.Mutex
 
 	// plannerDisplay keeps display-only planner output for the in-flight turn.
 	// The executor session remains the model-facing transcript; this sidecar
@@ -244,8 +255,14 @@ func (t *WorkspaceTab) hasActiveRuntimeWork() bool {
 	return status.Running || status.PendingPrompt || status.BackgroundJobs > 0
 }
 
+// sessionRuntimeKey is the comparison/map key for "same session" checks. It
+// layers agent.CanonicalSessionPath on top of the desktop path normalization
+// so the key matches the form held by session leases (lowercased on Windows).
+// Comparing a lease's Path() against a raw tab path without this fold made
+// every rebuild on Windows look like a foreign holder (self-lock, #5999).
+// Keys are identities only — never use them as display or file paths.
 func sessionRuntimeKey(path string) string {
-	return canonicalTabSessionPath(path)
+	return agent.CanonicalSessionPath(canonicalTabSessionPath(path))
 }
 
 var sessionLeaseAcquireHookForTest func()
@@ -429,7 +446,7 @@ func (a *App) detachSessionRuntime(tab *WorkspaceTab) bool {
 	}
 	a.mu.Lock()
 	a.ensureDetachedSessionsLocked()
-	tab.SessionPath = key
+	tab.SessionPath = canonicalTabSessionPath(path)
 	a.detachedSessions[key] = tab
 	a.mu.Unlock()
 	return true
@@ -440,40 +457,45 @@ func (a *App) detachSessionRuntime(tab *WorkspaceTab) bool {
 // ActivityStatus, disabledMCP, ...) are written under a.mu by bound methods
 // and the event sink, and the disabledMCP map read would otherwise race those
 // writers. The session lease is transferred separately by the caller through
-// the sessionLeaseMu helpers.
-func cloneDetachedRuntimeTab(tab *WorkspaceTab, key string) *WorkspaceTab {
+// the sessionLeaseMu helpers. key is the runtime identity (map key / tab id
+// hash); path is the real session path — keys are case-folded on Windows and
+// must not leak into SessionPath, which is displayed and persisted.
+func cloneDetachedRuntimeTab(tab *WorkspaceTab, key, path string) *WorkspaceTab {
 	if tab == nil {
 		return nil
 	}
 	tab.telemMu.Lock()
 	readTelemetry := append([]readFileRecord(nil), tab.readTelemetry...)
 	usageTelemetry := cloneSessionUsageStats(tab.usageTelemetry)
+	telemetrySessionKey := tab.telemetrySessionKey
 	tab.telemMu.Unlock()
 
 	return &WorkspaceTab{
-		ID:               detachedRuntimeTabID(key),
-		Scope:            tab.Scope,
-		WorkspaceRoot:    tab.WorkspaceRoot,
-		SharedHostKey:    tab.SharedHostKey,
-		TopicID:          tab.TopicID,
-		TopicTitle:       tab.TopicTitle,
-		SessionPath:      key,
-		Ctrl:             tab.Ctrl,
-		Label:            tab.Label,
-		Ready:            tab.Ready,
-		StartupErr:       tab.StartupErr,
-		sink:             tab.sink,
-		ActivityStatus:   tab.ActivityStatus,
-		readTelemetry:    readTelemetry,
-		usageTelemetry:   usageTelemetry,
-		model:            tab.model,
-		effort:           cloneStringPtr(tab.effort),
-		tokenMode:        tab.tokenMode,
-		mode:             tab.mode,
-		goal:             tab.goal,
-		toolApprovalMode: tab.toolApprovalMode,
-		disabledMCP:      cloneServerViewMap(tab.disabledMCP),
-		mcpOrder:         append([]string(nil), tab.mcpOrder...),
+		ID:                  detachedRuntimeTabID(key),
+		Scope:               tab.Scope,
+		WorkspaceRoot:       tab.WorkspaceRoot,
+		SharedHostKey:       tab.SharedHostKey,
+		TopicID:             tab.TopicID,
+		TopicTitle:          tab.TopicTitle,
+		SessionPath:         canonicalTabSessionPath(path),
+		Ctrl:                tab.Ctrl,
+		Label:               tab.Label,
+		Ready:               tab.Ready,
+		StartupErr:          tab.StartupErr,
+		StartupErrLeaseHeld: tab.StartupErrLeaseHeld,
+		sink:                tab.sink,
+		ActivityStatus:      tab.ActivityStatus,
+		readTelemetry:       readTelemetry,
+		usageTelemetry:      usageTelemetry,
+		telemetrySessionKey: telemetrySessionKey,
+		model:               tab.model,
+		effort:              cloneStringPtr(tab.effort),
+		tokenMode:           tab.tokenMode,
+		mode:                tab.mode,
+		goal:                tab.goal,
+		toolApprovalMode:    tab.toolApprovalMode,
+		disabledMCP:         cloneServerViewMap(tab.disabledMCP),
+		mcpOrder:            append([]string(nil), tab.mcpOrder...),
 	}
 }
 
@@ -497,12 +519,13 @@ func (a *App) detachRuntimeForReplacement(tab *WorkspaceTab) bool {
 		a.mu.Unlock()
 		return false
 	}
-	key := sessionRuntimeKey(tab.currentSessionPath())
+	sourcePath := tab.currentSessionPath()
+	key := sessionRuntimeKey(sourcePath)
 	if key == "" {
 		a.mu.Unlock()
 		return false
 	}
-	detached := cloneDetachedRuntimeTab(tab, key)
+	detached := cloneDetachedRuntimeTab(tab, key, sourcePath)
 	if detached == nil {
 		a.mu.Unlock()
 		return false
@@ -525,13 +548,17 @@ func (a *App) detachRuntimeForReplacement(tab *WorkspaceTab) bool {
 	return true
 }
 
-func applyRuntimeTab(target, source *WorkspaceTab, key string, wailsCtx context.Context, app *App) {
+// applyRuntimeTab moves source's runtime (controller, sink, lease, telemetry)
+// onto target. path is the real session path for display/persistence; the
+// case-folded runtime key must never be written into SessionPath.
+func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context.Context, app *App) {
 	if target == nil || source == nil {
 		return
 	}
 	source.telemMu.Lock()
 	readTelemetry := append([]readFileRecord(nil), source.readTelemetry...)
 	usageTelemetry := cloneSessionUsageStats(source.usageTelemetry)
+	telemetrySessionKey := source.telemetrySessionKey
 	source.telemMu.Unlock()
 
 	if source.sink != nil {
@@ -542,11 +569,11 @@ func applyRuntimeTab(target, source *WorkspaceTab, key string, wailsCtx context.
 	target.Ctrl = source.Ctrl
 	target.sink = source.sink
 	target.adoptSessionLease(source.takeSessionLease())
-	target.SessionPath = key
+	target.SessionPath = canonicalTabSessionPath(path)
 	target.SharedHostKey = source.SharedHostKey
 	target.Label = source.Label
 	target.Ready = true
-	target.StartupErr = ""
+	clearTabStartupError(target)
 	target.ActivityStatus = source.ActivityStatus
 	target.model = source.model
 	target.effort = cloneStringPtr(source.effort)
@@ -558,6 +585,7 @@ func applyRuntimeTab(target, source *WorkspaceTab, key string, wailsCtx context.
 	target.mcpOrder = append([]string(nil), source.mcpOrder...)
 	target.readTelemetry = readTelemetry
 	target.usageTelemetry = usageTelemetry
+	target.telemetrySessionKey = telemetrySessionKey
 }
 
 func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wailsCtx context.Context) bool {
@@ -574,7 +602,7 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 	detached := a.detachedSessions[key]
 	if detached != nil {
 		delete(a.detachedSessions, key)
-		applyRuntimeTab(tab, detached, key, wailsCtx, a)
+		applyRuntimeTab(tab, detached, path, wailsCtx, a)
 		if current := a.tabs[tab.ID]; current == tab {
 			a.saveTabsLocked()
 		}
@@ -605,7 +633,7 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 	if a.activeTabID == source.ID {
 		a.activeTabID = tab.ID
 	}
-	applyRuntimeTab(tab, source, key, wailsCtx, a)
+	applyRuntimeTab(tab, source, path, wailsCtx, a)
 	a.saveTabsLocked()
 	attachedCtrl := tab.Ctrl
 	a.mu.Unlock()
@@ -704,10 +732,41 @@ func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 	return tabTelemetrySnapshot{Version: 2, ReadFiles: records, Usage: usage}
 }
 
-func (t *WorkspaceTab) resetTelemetry() {
+func (t *WorkspaceTab) resetTelemetry(sessionPath string) {
 	t.telemMu.Lock()
 	t.readTelemetry = nil
 	t.usageTelemetry = sessionUsageStats{}
+	t.telemetrySessionKey = sessionRuntimeKey(sessionPath)
+	t.telemMu.Unlock()
+}
+
+// syncTelemetryToSession keys the in-memory telemetry to the runtime's current
+// session. When the runtime rotated to a different session underneath the tab
+// (typed /new routes through Controller.Submit and never reaches App.NewSession),
+// the previous session's totals must not bleed into the new one: swap in the
+// new session's persisted sidecar, or start from zero when none exists. The
+// sidecar is rewritten on every recorded event, so a reload never loses more
+// than the sub-second in-memory delta of an in-flight record.
+func (t *WorkspaceTab) syncTelemetryToSession(sessionPath string) {
+	key := sessionRuntimeKey(sessionPath)
+	if key == "" {
+		return
+	}
+	t.telemMu.Lock()
+	same := t.telemetrySessionKey == key
+	t.telemMu.Unlock()
+	if same {
+		return
+	}
+	// File I/O stays outside telemMu; re-check the key after reacquiring in
+	// case a concurrent sync or reset re-keyed the tab first.
+	snapshot := loadTelemetry(sessionPath + ".telemetry.json")
+	t.telemMu.Lock()
+	if t.telemetrySessionKey != key {
+		t.readTelemetry = snapshot.ReadFiles
+		t.usageTelemetry = snapshot.Usage
+		t.telemetrySessionKey = key
+	}
 	t.telemMu.Unlock()
 }
 
@@ -809,7 +868,7 @@ func (t *WorkspaceTab) recordPlannerDisplayEvent(e event.Event) {
 			if e.Level == event.LevelWarn {
 				level = "warn"
 			}
-			t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{Role: "notice", Level: level, Content: e.Text})
+			t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{Role: "notice", Level: level, Content: e.Text, Detail: e.Detail})
 		}
 	}
 }
@@ -1002,6 +1061,13 @@ type runtimeEventEnvelope struct {
 // emission. runtime.EventsEmit can block when the single webview event channel
 // backs up; callers enqueue in-order work and return without holding the
 // agent's event.Sync lock.
+// runtimeEventsEmitFallback is the emit used when no per-instance override is
+// installed. Production keeps the real Wails bridge; the test binary swaps in
+// a no-op via TestMain, because Wails EventsEmit log.Fatals outside a running
+// Wails app and would kill the whole test process from any code path that
+// emits a runtime event with a plain Background context.
+var runtimeEventsEmitFallback runtimeEventEmitFunc = runtime.EventsEmit
+
 type asyncRuntimeEmitter struct {
 	mu      sync.Mutex
 	emit    runtimeEventEmitFunc
@@ -1057,20 +1123,12 @@ func (e *asyncRuntimeEmitter) run() {
 		}
 		emit := e.emit
 		if emit == nil {
-			if isPlainRuntimeEventContext(item.ctx) {
-				e.mu.Unlock()
-				continue
-			}
-			emit = runtime.EventsEmit
+			emit = runtimeEventsEmitFallback
 		}
 		e.mu.Unlock()
 
 		emit(item.ctx, item.name, item.payload...)
 	}
-}
-
-func isPlainRuntimeEventContext(ctx context.Context) bool {
-	return ctx == context.Background() || ctx == context.TODO()
 }
 
 func topicActivityStatusFromEvent(e event.Event) (string, bool) {
@@ -1106,6 +1164,35 @@ func isBackgroundJobLifecycleNotice(e event.Event) bool {
 			strings.Contains(text, " finished: ") ||
 			strings.Contains(text, " failed: ") ||
 			strings.Contains(text, " killed: "))
+}
+
+// notifyTabRuntimeRebuilt tells the frontend a tab's controller was replaced
+// in place (model/effort/token-mode switch, clear-while-running). A rebuilt
+// controller restarts its approval/ask id counter at "1", so tab-scoped
+// frontend state keyed by prompt id (the attention-chime dedupe) must reset —
+// unlike agent:ready, this event carries no reload semantics, so emitting it
+// on every swap adds no hydration churn.
+//
+// Ordering matters: the reset must reach the frontend BEFORE the rebuilt
+// controller's first approval/ask event, or the stale key still mutes it. The
+// tab's agent events ride the tab sink's own async queue, so the notice goes
+// through THAT queue — same lane, FIFO, guaranteed to arrive first. The
+// App-level queue is only the fallback when the sink cannot deliver (no sink,
+// or its webview context is cleared); it cannot order against sink traffic,
+// but an unordered notice still beats none.
+func (a *App) notifyTabRuntimeRebuilt(tab *WorkspaceTab) {
+	if tab == nil {
+		return
+	}
+	a.mu.RLock()
+	sink := tab.sink
+	tabID := tab.ID
+	a.mu.RUnlock()
+	if sink != nil && sink.context() != nil {
+		sink.emitRuntimeEvent("runtime:rebuilt", tabID)
+		return
+	}
+	a.emitRuntimeEvent("runtime:rebuilt", tabID)
 }
 
 func (a *App) emitReady(ctx context.Context, tabID ...string) {
@@ -1163,6 +1250,13 @@ func (s *tabEventSink) recordReadTelemetry(e event.Event) {
 	truncated := e.Tool.Truncated || strings.Contains(e.Tool.Output, "truncated") ||
 		strings.Contains(e.Tool.Output, "File truncated")
 
+	sp := ""
+	if ctrl != nil {
+		sp = ctrl.SessionPath()
+	}
+	if sp != "" {
+		tab.syncTelemetryToSession(sp)
+	}
 	tab.recordReadFile(readFileRecord{
 		Path:      path,
 		Turn:      turn,
@@ -1171,10 +1265,7 @@ func (s *tabEventSink) recordReadTelemetry(e event.Event) {
 		Limit:     limit,
 		Truncated: truncated,
 	})
-	if ctrl == nil {
-		return
-	}
-	if sp := ctrl.SessionPath(); sp != "" {
+	if sp != "" {
 		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
 	}
 }
@@ -1183,6 +1274,9 @@ func (s *tabEventSink) recordTurnStarted() {
 	tab, sp := s.telemetryTab()
 	if tab == nil {
 		return
+	}
+	if sp != "" {
+		tab.syncTelemetryToSession(sp)
 	}
 	tab.recordTurnStarted(time.Now().UnixMilli())
 	if sp != "" {
@@ -1195,6 +1289,9 @@ func (s *tabEventSink) recordTurnDone() {
 	if tab == nil {
 		return
 	}
+	if sp != "" {
+		tab.syncTelemetryToSession(sp)
+	}
 	tab.recordTurnDone(time.Now().UnixMilli())
 	if sp != "" {
 		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
@@ -1206,22 +1303,10 @@ func (s *tabEventSink) recordUsageTelemetry(e event.Event) {
 	if tab == nil {
 		return
 	}
+	if sp != "" {
+		tab.syncTelemetryToSession(sp)
+	}
 	tab.recordUsage(e)
-	_ = usageledger.RecordEvent(e, usageledger.Metadata{
-		Surface: "desktop",
-		Model: func() string {
-			if strings.TrimSpace(tab.model) != "" {
-				return tab.model
-			}
-			return tab.Label
-		},
-		SessionPath: func() string {
-			return sp
-		},
-		WorkspaceRoot: func() string {
-			return tab.WorkspaceRoot
-		},
-	})
 	if sp != "" {
 		_ = saveTelemetry(sp+".telemetry.json", tab.telemetrySnapshot())
 	}
@@ -1368,6 +1453,7 @@ type TabMeta struct {
 	TokenMode         string                   `json:"tokenMode"`
 	Goal              string                   `json:"goal,omitempty"`
 	GoalStatus        string                   `json:"goalStatus,omitempty"`
+	ImageInputEnabled bool                     `json:"imageInputEnabled"`
 	AutoResearch      *AutoResearchCompactView `json:"autoResearch,omitempty"`
 	Recovered         bool                     `json:"recovered,omitempty"`
 	RecoveryReason    string                   `json:"recoveryReason,omitempty"`
@@ -1413,6 +1499,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		TokenMode:         currentTabTokenMode(tab),
 		Goal:              currentTabGoal(tab),
 		GoalStatus:        currentTabGoalStatus(tab),
+		ImageInputEnabled: tabImageInputEnabled(tab),
 		AutoResearch:      compactAutoResearch(tab),
 		StartupErr:        tab.StartupErr,
 		Active:            active,
@@ -1442,6 +1529,25 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	return m
 }
 
+func tabImageInputEnabled(tab *WorkspaceTab) bool {
+	if tab == nil {
+		return false
+	}
+	if tab.Ctrl != nil {
+		return tab.Ctrl.ImageInputEnabled()
+	}
+	ref := tab.model
+	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	if err == nil && ref == "" {
+		ref = cfg.DefaultModel
+	}
+	if err != nil || ref == "" {
+		return false
+	}
+	entry, ok := cfg.ResolveModel(ref)
+	return ok && config.EffectiveVision(entry)
+}
+
 // ListTabs returns every open view container's metadata for the frontend chrome and sidebar.
 func (a *App) ListTabs() []TabMeta {
 	a.mu.RLock()
@@ -1468,6 +1574,42 @@ func (a *App) ListTabs() []TabMeta {
 	return enrichTabMetas(out)
 }
 
+// syncTabWorkspaceRootSpellings repoints open project tabs at the registry's
+// canonical root spelling after a registry write may have rewritten it
+// (addProject and friends adopt the caller's spelling). Tabs, the project
+// tree, and persisted tab state then agree on a single string form of each
+// root, which the frontend compares exactly. Callers must not hold a.mu.
+func (a *App) syncTabWorkspaceRootSpellings() {
+	projects := loadProjectsFile().Projects
+	a.mu.Lock()
+	changed := false
+	for _, tab := range a.tabs {
+		if tab == nil || tab.Scope != "project" {
+			continue
+		}
+		i := projectIndexByRoot(projects, tab.WorkspaceRoot)
+		if i < 0 || tab.WorkspaceRoot == projects[i].Root {
+			continue
+		}
+		tab.WorkspaceRoot = projects[i].Root
+		changed = true
+	}
+	if changed {
+		a.saveTabsLocked()
+	}
+	a.mu.Unlock()
+	if changed {
+		a.emitProjectTreeChanged()
+	}
+}
+
+// registerProjectRoot indexes workspaceRoot in the project registry and
+// realigns open tabs when the registry adopted a new spelling of the root.
+func (a *App) registerProjectRoot(workspaceRoot string) {
+	_ = addProject(workspaceRoot, "")
+	a.syncTabWorkspaceRootSpellings()
+}
+
 // OpenProjectTab builds a controller scoped to workspaceRoot and opens the
 // session selected by the given topic. Topic selection resolves to a concrete
 // session path first; the visible tab is then attached to that session runtime.
@@ -1479,7 +1621,7 @@ func (a *App) OpenProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 		workspaceRoot = abs
 	}
 	saveWorkspace(workspaceRoot)
-	_ = addProject(workspaceRoot, "")
+	a.registerProjectRoot(workspaceRoot)
 
 	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
 	return a.openTopicTab("project", workspaceRoot, topicID, sessionPath)
@@ -1496,7 +1638,7 @@ func (a *App) openProjectTabInactive(workspaceRoot, topicID string) (TabMeta, er
 	if abs, err := filepath.Abs(workspaceRoot); err == nil {
 		workspaceRoot = abs
 	}
-	_ = addProject(workspaceRoot, "")
+	a.registerProjectRoot(workspaceRoot)
 
 	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
 	return a.openTopicTabWithActivation("project", workspaceRoot, topicID, sessionPath, false)
@@ -1630,7 +1772,7 @@ func (a *App) OpenTopicSession(scope, workspaceRoot, topicID, sessionPath string
 			return TabMeta{}, fmt.Errorf("workspaceRoot is required")
 		}
 		saveWorkspace(workspaceRoot)
-		_ = addProject(workspaceRoot, "")
+		a.registerProjectRoot(workspaceRoot)
 	}
 	_, validPath, err := a.sessionDirForPath(sessionPath)
 	if err != nil {
@@ -1683,13 +1825,13 @@ func tabMatchesTopicTarget(tab *WorkspaceTab, scope, workspaceRoot, topicID stri
 	if scope == "global" {
 		return true
 	}
-	return normalizeProjectRoot(tab.WorkspaceRoot) == normalizeProjectRoot(workspaceRoot)
+	return sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 }
 
 func tabInWorkspace(tab *WorkspaceTab, workspaceRoot string) bool {
 	return tab != nil &&
 		tab.Scope == "project" &&
-		normalizeProjectRoot(tab.WorkspaceRoot) == normalizeProjectRoot(workspaceRoot)
+		sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 }
 
 // EnsureBlankTab activates the existing blank tab for the target scope, or
@@ -1711,7 +1853,7 @@ func (a *App) EnsureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 			workspaceRoot = abs
 		}
 		saveWorkspace(workspaceRoot)
-		_ = addProject(workspaceRoot, "")
+		a.registerProjectRoot(workspaceRoot)
 	} else {
 		workspaceRoot = ""
 		globalRoot = globalWorkspaceRoot()
@@ -1866,7 +2008,7 @@ func (a *App) blankTabMatchesTargetLocked(tab *WorkspaceTab, scope, workspaceRoo
 	if tab == nil || tab.Scope != scope {
 		return false
 	}
-	if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+	if scope == "project" && !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
 		return false
 	}
 	if tab.Ctrl == nil {
@@ -1968,13 +2110,8 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 	var topicIDs []string
 	if scope == "global" {
 		topicIDs = orderedTopicIDs(f.GlobalTopics, titles)
-	} else {
-		for _, project := range f.Projects {
-			if project.Root == workspaceRoot {
-				topicIDs = orderedTopicIDs(project.Topics, titles)
-				break
-			}
-		}
+	} else if i := projectIndexByRoot(f.Projects, workspaceRoot); i >= 0 {
+		topicIDs = orderedTopicIDs(f.Projects[i].Topics, titles)
 	}
 	if len(topicIDs) == 0 {
 		return ""
@@ -1994,7 +2131,7 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 		if tab == nil || tab.Scope != scope || strings.TrimSpace(tab.TopicID) == "" {
 			continue
 		}
-		if scope == "project" && tab.WorkspaceRoot != workspaceRoot {
+		if scope == "project" && !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
 			continue
 		}
 		openTopics[tab.TopicID] = true
@@ -2028,13 +2165,17 @@ func (a *App) indexedBlankTopicIDLocked(scope, workspaceRoot string) string {
 			continue
 		}
 		hasSession := false
+		leaseHeld := false
 		for _, index := range sessionIndexes {
 			if topicSessionIndexHasContentTopic(index, topicID) {
 				hasSession = true
 				break
 			}
+			if topicSessionIndexHasForeignLeaseTopic(index, topicID) {
+				leaseHeld = true
+			}
 		}
-		if hasSession {
+		if hasSession || leaseHeld {
 			continue
 		}
 		return topicID
@@ -2425,9 +2566,10 @@ func (a *App) tabBuildSuperseded(tab *WorkspaceTab, generation uint64) bool {
 }
 
 // supersedeTabBuildLocked invalidates any in-flight startup build and cancels
-// its context. A synchronous rebuild that has already installed its controller
-// calls this so a slower blank-session build cannot overwrite the rebound tab.
-// Callers must hold a.mu.
+// its context. A synchronous rebuild (model/effort/token switch) that has
+// already installed its controller calls this so a slower blank-session build
+// cannot finish afterward, overwrite tab.Ctrl, and release or steal the
+// session lease the switch just bound. Callers must hold a.mu.
 func (a *App) supersedeTabBuildLocked(tab *WorkspaceTab) {
 	if tab == nil {
 		return
@@ -2558,6 +2700,23 @@ func (a *App) desktopControllerSink(inner event.Sink, cfg config.NotificationsCo
 	return notify.NewSink(inner, sender, cfg)
 }
 
+func setTabStartupError(tab *WorkspaceTab, err error) bool {
+	if tab == nil {
+		return false
+	}
+	tab.StartupErr = userFacingSessionLeaseError("", err).Error()
+	tab.StartupErrLeaseHeld = errors.Is(err, agent.ErrSessionLeaseHeld)
+	return tab.StartupErrLeaseHeld
+}
+
+func clearTabStartupError(tab *WorkspaceTab) {
+	if tab == nil {
+		return
+	}
+	tab.StartupErr = ""
+	tab.StartupErrLeaseHeld = false
+}
+
 func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
 	defer a.recoverToPending("buildTabController")
 	keepBuildContext := false
@@ -2594,15 +2753,19 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
+		leaseHeld := false
 		a.mu.Lock()
 		if a.tabBuildSupersededLocked(tab, buildGeneration) {
 			a.mu.Unlock()
 			return
 		}
-		tab.StartupErr = err.Error()
+		leaseHeld = setTabStartupError(tab, err)
 		tab.Ready = true
 		tab.releaseSessionLease()
 		a.mu.Unlock()
+		if leaseHeld {
+			a.scheduleDeferredStartupBuild(tab.ID)
+		}
 		a.emitReady(wailsCtx, tab.ID)
 		return
 	}
@@ -2672,9 +2835,9 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, resolved))
 		}
 		model = resolved
-	} else if defaultRef := strings.TrimSpace(cfg.DefaultModel); defaultRef != "" && defaultRef != model {
-		if entry, found := resolveModelIgnoringKey(cfg, defaultRef); found {
-			resolved := entry.Name + "/" + entry.Model
+	} else if defaultModel := strings.TrimSpace(cfg.DefaultModel); defaultModel != "" && defaultModel != requestedModel {
+		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, defaultModel)
+		if resolved, _, ok := cfg.ResolveModelWithFallback(defaultModel); ok {
 			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, resolved))
 			model = resolved
 		}
@@ -2725,19 +2888,23 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
 	})
 	if err != nil {
+		leaseHeld := false
 		a.mu.Lock()
 		if a.tabBuildSupersededLocked(tab, buildGeneration) {
 			a.mu.Unlock()
 			a.abandonSupersededBuild(tab, nil, rootKey, "")
 			return
 		}
-		tab.StartupErr = err.Error()
+		leaseHeld = setTabStartupError(tab, err)
 		tab.Ready = true
 		hostKey := takeTabSharedHostKey(tab)
 		tab.releaseSessionLease()
 		a.mu.Unlock()
 		if hostKey != "" {
 			a.releaseSharedHost(hostKey)
+		}
+		if leaseHeld {
+			a.scheduleDeferredStartupBuild(tab.ID)
 		}
 		a.emitReady(wailsCtx, tab.ID)
 		return
@@ -2808,29 +2975,41 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 				a.emitReady(wailsCtx, tab.ID)
 				return
 			}
+			preLeaseKey := tab.sessionLeaseRuntimeKey()
 			if err := tab.ensureSessionLease(path); err != nil {
+				leaseHeld := false
 				a.mu.Lock()
 				if a.tabBuildSupersededLocked(tab, buildGeneration) {
 					a.mu.Unlock()
 					a.abandonSupersededBuild(tab, ctrl, rootKey, "")
 					return
 				}
-				tab.StartupErr = err.Error()
+				leaseHeld = setTabStartupError(tab, err)
 				tab.Ready = true
 				hostKey := takeTabSharedHostKey(tab)
-				tab.releaseSessionLease()
+				// Release only a lease bound to THIS build's session: a failed
+				// ensure leaves any prior lease untouched, and that lease may
+				// belong to a runtime a concurrent switch just installed.
+				tab.releaseSessionLeaseForKey(sessionRuntimeKey(path))
 				a.mu.Unlock()
 				ctrl.Close()
 				if hostKey != "" {
 					a.releaseSharedHost(hostKey)
+				}
+				if leaseHeld {
+					a.scheduleDeferredStartupBuild(tab.ID)
 				}
 				a.emitReady(wailsCtx, tab.ID)
 				return
 			}
 			// Remember which lease THIS build bound: if the build is later
 			// superseded, only a lease still carrying this key may be
-			// released (see abandonSupersededBuild).
-			acquiredLeaseKey = sessionRuntimeKey(path)
+			// released (see abandonSupersededBuild). A fast-path reuse means
+			// the lease existed before this build (bound by a concurrent
+			// switch or recovery) — it is not ours to release.
+			if key := sessionRuntimeKey(path); key != preLeaseKey {
+				acquiredLeaseKey = key
+			}
 			// Re-check ownership right after the (potentially slow) lease
 			// bind: a rebind that superseded this build while ensure was in
 			// flight has already retargeted the tab, and continuing into
@@ -2857,14 +3036,18 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 					a.emitProjectTreeChanged()
 				}
 			}
-			// Restore existing telemetry if resuming a session.
-			telemetryPath := path + ".telemetry.json"
-			if snapshot := loadTelemetry(telemetryPath); len(snapshot.ReadFiles) > 0 || snapshot.Usage.RequestCount > 0 {
-				tab.telemMu.Lock()
-				tab.readTelemetry = snapshot.ReadFiles
-				tab.usageTelemetry = snapshot.Usage
-				tab.telemMu.Unlock()
-			}
+			// Key telemetry to the session this build binds: restore its
+			// persisted sidecar, or start from zero when none exists (fresh
+			// session, CLI-created session, pre-telemetry session). Keeping
+			// the previous session's totals here made 会话费用 accumulate
+			// across sessions and persisted the stale totals into the new
+			// session's sidecar on the next event (#5850).
+			snapshot := loadTelemetry(path + ".telemetry.json")
+			tab.telemMu.Lock()
+			tab.readTelemetry = snapshot.ReadFiles
+			tab.usageTelemetry = snapshot.Usage
+			tab.telemetrySessionKey = sessionRuntimeKey(path)
+			tab.telemMu.Unlock()
 		}
 	}
 
@@ -2877,7 +3060,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	tab.Ctrl = ctrl
 	tab.Label = ctrl.Label()
 	tab.Ready = true
-	tab.StartupErr = ""
+	clearTabStartupError(tab)
 	keepBuildContext = true
 	a.mu.Unlock()
 	a.emitReady(wailsCtx, tab.ID)
@@ -2915,7 +3098,7 @@ func (a *App) reconcileTabWithPinnedSessionMeta(tab *WorkspaceTab) (string, bool
 		return "", false
 	}
 	if tab.Scope == "project" && binding.scope != "project" && normalizeProjectRoot(tab.WorkspaceRoot) != "" {
-		if root, ok := safeControllerWorkspaceRoot(tab.Ctrl); ok && normalizeProjectRoot(root) == normalizeProjectRoot(tab.WorkspaceRoot) {
+		if root, ok := safeControllerWorkspaceRoot(tab.Ctrl); ok && sameProjectRoot(root, tab.WorkspaceRoot) {
 			return "", false
 		}
 	}
@@ -2949,7 +3132,7 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 		if workspaceRoot == "" {
 			return
 		}
-		_ = addProject(workspaceRoot, "")
+		a.registerProjectRoot(workspaceRoot)
 	} else {
 		scope = "global"
 		workspaceRoot = globalTabWorkspaceRoot()
@@ -2971,7 +3154,9 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	changed := tab.Scope != scope ||
 		tab.WorkspaceRoot != workspaceRoot ||
 		canonicalTabSessionPath(tab.SessionPath) != canonicalTabSessionPath(binding.path)
-	workspaceChanged := tab.Scope != scope || tab.WorkspaceRoot != workspaceRoot
+	// Spelling-only root updates still persist above, but an equivalent root is
+	// the same workspace — do not warn the user about a switch.
+	workspaceChanged := tab.Scope != scope || !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
 	tab.Scope = scope
 	tab.WorkspaceRoot = workspaceRoot
 	tab.SessionPath = canonicalTabSessionPath(binding.path)
@@ -3178,6 +3363,10 @@ func (a *App) ctrlByTabID(tabID string) control.SessionAPI {
 
 const maxTabSnapshotFailureRetries = 2
 
+// autosaveWarnInterval rate-limits the user-facing autosave-failure notice
+// per tab; slog keeps recording every failure regardless.
+const autosaveWarnInterval = 5 * time.Minute
+
 func tabSnapshotRetryDelay(failures int) time.Duration {
 	switch {
 	case failures <= 1:
@@ -3251,7 +3440,6 @@ func (a *App) tabSnapshotLoop(tab *WorkspaceTab) {
 				}
 			} else {
 				snapshotErr = err
-				a.reportTabSnapshotError(tab, "autosave", err)
 			}
 		}
 		tab.saveMu.Lock()
@@ -3268,22 +3456,36 @@ func (a *App) tabSnapshotLoop(tab *WorkspaceTab) {
 			tab.saving = false
 			tab.saveCond.Broadcast()
 			tab.saveMu.Unlock()
+			if snapshotErr != nil {
+				slog.Warn("desktop: session autosave failed during teardown", "tab", tab.ID, "err", snapshotErr)
+			}
 			return
 		}
 		if tab.saveAgain {
 			tab.saveAgain = false
 			tab.saveMu.Unlock()
+			if snapshotErr != nil {
+				slog.Warn("desktop: session autosave failed; newer snapshot queued", "tab", tab.ID, "err", snapshotErr)
+			}
 			continue
 		}
 		if snapshotErr != nil && tab.saveFailures <= maxTabSnapshotFailureRetries {
 			delay := tabSnapshotRetryDelay(tab.saveFailures)
+			attempt := tab.saveFailures
 			tab.saveMu.Unlock()
+			// Retries are routine (transient AV/indexer holds); tell the user
+			// only when the whole burst gives up, not once per attempt.
+			slog.Warn("desktop: session autosave failed; retrying", "tab", tab.ID, "attempt", attempt, "err", snapshotErr)
 			time.Sleep(delay)
 			continue
 		}
+		exhausted := snapshotErr
 		tab.saving = false
 		tab.saveCond.Broadcast()
 		tab.saveMu.Unlock()
+		if exhausted != nil {
+			a.reportTabSnapshotError(tab, "autosave", exhausted)
+		}
 		return
 	}
 }
@@ -3460,29 +3662,22 @@ func topicTitleFromSession(path string) string {
 }
 
 func topicTitleUserTurnsFromSession(path string) []string {
-	f, err := os.Open(path)
+	// Event-log aware: decoding the .jsonl checkpoint directly would stop
+	// seeing user turns after the first save, silently disabling the ≥3-turn
+	// title upgrade.
+	msgs, err := agent.LoadSessionUserMessages(path)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
-	dec := json.NewDecoder(f)
 	var users []string
-	for {
-		var msg struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		if err := dec.Decode(&msg); err != nil {
-			return users
-		}
-		if msg.Role == "user" {
-			content := control.StripComposePrefixes(agent.HandoffTask(msg.Content))
-			content = control.StripReferencedContextPrefix(content)
-			if strings.TrimSpace(content) != "" {
-				users = append(users, content)
-			}
+	for _, msg := range msgs {
+		content := control.StripComposePrefixes(agent.HandoffTask(msg.Text))
+		content = control.StripReferencedContextPrefix(content)
+		if strings.TrimSpace(content) != "" {
+			users = append(users, content)
 		}
 	}
+	return users
 }
 
 func topicTitleFromUserTurns(users []string) string {
@@ -3746,10 +3941,11 @@ func desktopMCPMigrationRoots(tabs desktopTabsFile) []string {
 	var roots []string
 	add := func(root string) {
 		root = normalizeProjectRoot(root)
-		if root == "" || seen[root] {
+		key := projectRootKey(root)
+		if root == "" || seen[key] {
 			return
 		}
-		seen[root] = true
+		seen[key] = true
 		roots = append(roots, root)
 	}
 	if cur := loadWorkspace(); cur != "" {
@@ -3781,16 +3977,17 @@ func recoverLegacyProjectSidebarRoots(tabs desktopTabsFile) (bool, error) {
 		for _, project := range f.Projects {
 			root := normalizeProjectRoot(project.Root)
 			if root != "" {
-				seen[root] = true
+				seen[projectRootKey(root)] = true
 			}
 		}
 
 		add := func(root string) {
 			root = normalizeProjectRoot(root)
-			if root == "" || seen[root] || !existingDirectory(root) {
+			key := projectRootKey(root)
+			if root == "" || seen[key] || !existingDirectory(root) {
 				return
 			}
-			seen[root] = true
+			seen[key] = true
 			f.Projects = append(f.Projects, desktopProject{Root: root})
 			changed = true
 		}
@@ -3923,7 +4120,7 @@ func prependTopicsInProjectsFileOpts(workspaceRoot string, topicIDs []string, en
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root != workspaceRoot {
+			if !sameProjectRoot(p.Root, workspaceRoot) {
 				continue
 			}
 			next := uniqueStrings(append(append([]string(nil), live...), p.Topics...))
@@ -3979,33 +4176,60 @@ func normalizeProjectRoot(root string) string {
 	if root == "" {
 		return ""
 	}
-	if abs, err := filepath.Abs(root); err == nil {
-		root = abs
-	}
-	if info, err := os.Stat(root); err == nil && info.IsDir() {
-		return root
-	}
 	if repaired := repairGBKMojibakePath(root); repaired != "" {
-		if abs, err := filepath.Abs(repaired); err == nil {
-			repaired = abs
-		}
-		if info, err := os.Stat(repaired); err == nil && info.IsDir() {
-			return repaired
-		}
+		root = repaired
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		return abs
 	}
 	return root
 }
 
 func repairGBKMojibakePath(path string) string {
-	encoded, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(path))
-	if err != nil || !utf8.Valid(encoded) {
+	raw, err := simplifiedchinese.GB18030.NewEncoder().Bytes([]byte(path))
+	if err != nil || !utf8.Valid(raw) {
 		return ""
 	}
-	repaired := string(encoded)
+	repaired := string(raw)
 	if repaired == path {
 		return ""
 	}
-	return repaired
+	if abs, err := filepath.Abs(repaired); err == nil {
+		if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
+			return abs
+		}
+	}
+	return ""
+}
+
+func sameProjectRoot(a, b string) bool {
+	return sameDesktopPath(normalizeProjectRoot(a), normalizeProjectRoot(b))
+}
+
+func projectIndexByRoot(projects []desktopProject, root string) int {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return -1
+	}
+	for i, project := range projects {
+		if sameProjectRoot(project.Root, root) {
+			return i
+		}
+	}
+	return -1
+}
+
+func projectRootInList(roots []string, root string) bool {
+	root = normalizeProjectRoot(root)
+	if root == "" {
+		return false
+	}
+	for _, candidate := range roots {
+		if sameProjectRoot(candidate, root) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
@@ -4016,7 +4240,6 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		GlobalPinnedTopics: uniqueStrings(f.GlobalPinnedTopics),
 		DeletedTopics:      uniqueStrings(f.DeletedTopics),
 	}
-	index := map[string]int{}
 	for _, p := range f.Projects {
 		root := normalizeProjectRoot(p.Root)
 		if root == "" {
@@ -4027,7 +4250,7 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		p.Color = normalizeProjectColor(p.Color)
 		p.Topics = uniqueStrings(p.Topics)
 		p.PinnedTopics = uniqueStrings(p.PinnedTopics)
-		if i, ok := index[root]; ok {
+		if i := projectIndexByRoot(out.Projects, root); i >= 0 {
 			if out.Projects[i].Title == "" && p.Title != "" {
 				out.Projects[i].Title = p.Title
 			}
@@ -4038,17 +4261,12 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 			out.Projects[i].PinnedTopics = uniqueStrings(append(out.Projects[i].PinnedTopics, p.PinnedTopics...))
 			continue
 		}
-		index[root] = len(out.Projects)
 		out.Projects = append(out.Projects, p)
-	}
-	projectRoots := make(map[string]bool, len(out.Projects))
-	for _, project := range out.Projects {
-		projectRoots[project.Root] = true
 	}
 	for _, root := range uniqueStrings(f.PinnedProjects) {
 		root = normalizeProjectRoot(root)
-		if root != "" && projectRoots[root] && !containsDesktopString(out.PinnedProjects, root) {
-			out.PinnedProjects = append(out.PinnedProjects, root)
+		if i := projectIndexByRoot(out.Projects, root); i >= 0 && !projectRootInList(out.PinnedProjects, out.Projects[i].Root) {
+			out.PinnedProjects = append(out.PinnedProjects, out.Projects[i].Root)
 		}
 	}
 	out.SidebarOrder = normalizeSidebarOrder(f.SidebarOrder, out.Projects)
@@ -4056,28 +4274,30 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 }
 
 func normalizeSidebarOrder(order []string, projects []desktopProject) []string {
-	projectRoots := make(map[string]bool, len(projects))
-	for _, project := range projects {
-		if project.Root != "" {
-			projectRoots[project.Root] = true
-		}
-	}
-	seen := make(map[string]bool, len(order))
+	seenGlobal := false
+	// Dedupe roots against a roots-only list: out also holds the global order
+	// token, which must never be path-compared against project roots.
+	var seenRoots []string
 	out := make([]string, 0, len(order))
 	for _, value := range order {
 		value = strings.TrimSpace(value)
 		if value == desktopGlobalOrderToken {
-			if !seen[value] {
-				seen[value] = true
+			if !seenGlobal {
+				seenGlobal = true
 				out = append(out, value)
 			}
 			continue
 		}
 		root := normalizeProjectRoot(value)
-		if root == "" || !projectRoots[root] || seen[root] {
+		i := projectIndexByRoot(projects, root)
+		if i < 0 {
 			continue
 		}
-		seen[root] = true
+		root = projects[i].Root
+		if projectRootInList(seenRoots, root) {
+			continue
+		}
+		seenRoots = append(seenRoots, root)
 		out = append(out, root)
 	}
 	return out
@@ -4294,7 +4514,7 @@ func projectColor(root string) string {
 		return globalProjectColor()
 	}
 	for _, p := range loadProjectsFile().Projects {
-		if p.Root == root {
+		if sameProjectRoot(p.Root, root) {
 			return normalizeProjectColor(p.Color)
 		}
 	}
@@ -4320,11 +4540,19 @@ func addProject(root, title string) error {
 	title = strings.TrimSpace(title)
 	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if title == "" || f.Projects[i].Title == title {
+			if sameProjectRoot(p.Root, root) {
+				changed := false
+				if f.Projects[i].Root != root {
+					f.Projects[i].Root = root
+					changed = true
+				}
+				if title != "" && f.Projects[i].Title != title {
+					f.Projects[i].Title = title
+					changed = true
+				}
+				if !changed {
 					return false, nil
 				}
-				f.Projects[i].Title = title
 				return true, nil
 			}
 		}
@@ -4345,10 +4573,11 @@ func renameProject(root, title string) error {
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if f.Projects[i].Title == title {
+			if sameProjectRoot(p.Root, root) {
+				if f.Projects[i].Root == root && f.Projects[i].Title == title {
 					return false, nil
 				}
+				f.Projects[i].Root = root
 				f.Projects[i].Title = title
 				return true, nil
 			}
@@ -4370,10 +4599,11 @@ func setProjectColor(root, color string) error {
 			return true, nil
 		}
 		for i, p := range f.Projects {
-			if p.Root == root {
-				if f.Projects[i].Color == color {
+			if sameProjectRoot(p.Root, root) {
+				if f.Projects[i].Root == root && f.Projects[i].Color == color {
 					return false, nil
 				}
+				f.Projects[i].Root = root
 				f.Projects[i].Color = color
 				return true, nil
 			}
@@ -4388,7 +4618,7 @@ func removeProject(root string) error {
 	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		projects := make([]desktopProject, 0, len(f.Projects))
 		for _, p := range f.Projects {
-			if p.Root != root {
+			if !sameProjectRoot(p.Root, root) {
 				projects = append(projects, p)
 			}
 		}
@@ -4710,17 +4940,6 @@ func forkTopicTitle(title string) string {
 	return base + " · 分叉"
 }
 
-func recoveryTopicTitle(title string) string {
-	base := strings.TrimSpace(title)
-	if base == "" || base == defaultTopicTitle || base == "Global" {
-		return "恢复分支"
-	}
-	if strings.HasSuffix(base, " · 恢复") {
-		return base
-	}
-	return base + " · 恢复"
-}
-
 type sessionRecoveryEvent struct {
 	OriginalPath     string `json:"originalPath,omitempty"`
 	RecoveryPath     string `json:"recoveryPath"`
@@ -4751,6 +4970,7 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 		ctrl := tab.Ctrl
 		scope := strings.TrimSpace(tab.Scope)
 		workspaceRoot := strings.TrimSpace(tab.WorkspaceRoot)
+		topicID := tab.TopicID
 		topicTitle := tab.TopicTitle
 		model := strings.TrimSpace(tab.model)
 		tokenMode := persistedTabTokenMode(boot.NormalizeTokenMode(tab.tokenMode))
@@ -4777,8 +4997,8 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 			Name:             agent.RecoveryBranchDefaultName,
 			Scope:            scope,
 			WorkspaceRoot:    workspaceRoot,
-			TopicID:          newTopicID(),
-			TopicTitle:       recoveryTopicTitle(topicTitle),
+			TopicID:          topicID,
+			TopicTitle:       topicTitle,
 			Model:            model,
 			TokenMode:        tokenMode,
 			Mode:             persistedTabMode(mode),
@@ -4801,7 +5021,12 @@ func (a *App) handleTabSessionRecovered(tab *WorkspaceTab) func(control.SessionR
 					reason = "lease_held"
 				}
 				a.emitRuntimeEvent("session:recovery-failed", sessionRecoveryFailedEvent{Reason: reason})
-				return fmt.Errorf("acquire recovery session lease: %w", err)
+				// This error propagates out through ctrl.Snapshot() into chat
+				// notices and bridge returns (reportTabSnapshotError). The raw
+				// path/holder id stayed in the slog line above; keep it out of
+				// the surfaced message.
+				return fmt.Errorf("acquire recovery session lease: %w",
+					userFacingSessionLeaseError("", err))
 			}
 		}
 		meta := info.Meta
@@ -4812,14 +5037,6 @@ func (a *App) handleTabSessionRecovered(tab *WorkspaceTab) func(control.SessionR
 		workspaceRoot := strings.TrimSpace(meta.WorkspaceRoot)
 		if scope == "global" {
 			workspaceRoot = ""
-		}
-		if strings.TrimSpace(meta.TopicID) != "" {
-			title := strings.TrimSpace(meta.TopicTitle)
-			if title == "" {
-				title = recoveryTopicTitle("")
-			}
-			_ = setTopicTitleWithSource(workspaceRoot, meta.TopicID, title, topicTitleSourceManual)
-			_ = ensureTopicIndexed(scope, workspaceRoot, meta.TopicID, title, topicTitleSourceManual)
 		}
 		invalidateTopicSessionIndexForPath(info.RecoveryPath)
 		a.mu.Lock()
@@ -4832,17 +5049,33 @@ func (a *App) handleTabSessionRecovered(tab *WorkspaceTab) func(control.SessionR
 				a.detachedSessions[newKey] = tab
 			}
 			tab.SessionPath = canonicalTabSessionPath(info.RecoveryPath)
-			if strings.TrimSpace(meta.TopicID) != "" {
-				tab.Scope = scope
-				tab.WorkspaceRoot = workspaceRoot
-				tab.TopicID = meta.TopicID
-				tab.TopicTitle = meta.TopicTitle
-			}
 			if a.tabs[tab.ID] == tab {
 				a.saveTabsLocked()
 			}
 		}
 		a.mu.Unlock()
+		// The fork continues the same conversation, so its cost history moves
+		// with it: re-key the in-memory telemetry from the original session to
+		// the recovery path and persist the sidecar right away. Without this
+		// the fork's sidecar stays empty until the next usage event (cost
+		// shows 0 after a restart), and the sync-by-key reload would wipe the
+		// carried totals as "another session's" numbers.
+		if tab != nil && !tab.removed {
+			origKey := sessionRuntimeKey(info.OriginalPath)
+			newKey := sessionRuntimeKey(info.RecoveryPath)
+			carried := false
+			if newKey != "" {
+				tab.telemMu.Lock()
+				if tab.telemetrySessionKey == origKey || tab.telemetrySessionKey == "" {
+					tab.telemetrySessionKey = newKey
+					carried = true
+				}
+				tab.telemMu.Unlock()
+			}
+			if carried {
+				_ = saveTelemetry(info.RecoveryPath+".telemetry.json", tab.telemetrySnapshot())
+			}
+		}
 		a.emitProjectTreeChanged()
 		a.emitRuntimeEvent("session:recovered", sessionRecoveryEvent{
 			OriginalPath:     info.OriginalPath,
@@ -5132,7 +5365,7 @@ func topicDirMarkerDone(dir, marker string) bool {
 			continue
 		}
 		name := entry.Name()
-		if filepath.Ext(name) != ".jsonl" && !strings.HasSuffix(name, ".jsonl.meta") {
+		if !store.IsSessionTranscriptName(name) && !strings.HasSuffix(name, ".jsonl.meta") {
 			continue
 		}
 		info, err := entry.Info()
@@ -5210,6 +5443,9 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	// unmarked so the next render retries instead of the gate hiding it forever.
 	deferred := false
 	for _, info := range infos {
+		if sessionOrderInfoIsAutomaticRecovery(info) {
+			continue
+		}
 		if strings.TrimSpace(info.TopicID) != "" {
 			continue
 		}
@@ -5373,11 +5609,8 @@ func repairIndexedSessionTopics(dir string) []string {
 	indexedTopics := projects.GlobalTopics
 	if scope == "project" {
 		indexedTopics = nil
-		for _, p := range projects.Projects {
-			if p.Root == workspaceRoot {
-				indexedTopics = p.Topics
-				break
-			}
+		if i := projectIndexByRoot(projects.Projects, workspaceRoot); i >= 0 {
+			indexedTopics = projects.Projects[i].Topics
 		}
 	}
 	indexedSet := make(map[string]bool, len(indexedTopics))
@@ -5390,6 +5623,9 @@ func repairIndexedSessionTopics(dir string) []string {
 	sourcesChanged := false
 	deferred := false
 	for _, info := range infos {
+		if sessionOrderInfoIsAutomaticRecovery(info) {
+			continue
+		}
 		topicID := strings.TrimSpace(info.TopicID)
 		if topicID == "" {
 			continue
@@ -5486,6 +5722,37 @@ func indexedSessionTopicTitle(sessionTitles map[string]string, info agent.Sessio
 	return topicTitleFromText(info.Preview)
 }
 
+func sessionOrderInfoIsAutomaticRecovery(info agent.SessionOrderInfo) bool {
+	return info.Recovered ||
+		strings.TrimSpace(info.RecoveryDigest) != "" ||
+		isAutomaticRecoverySessionPath(info.Path)
+}
+
+func sessionInfoIsAutomaticRecovery(info agent.SessionInfo) bool {
+	return info.Recovered ||
+		strings.TrimSpace(info.RecoveryDigest) != "" ||
+		isAutomaticRecoverySessionPath(info.Path)
+}
+
+func isAutomaticRecoverySessionPath(path string) bool {
+	id := agent.BranchID(path)
+	idx := strings.LastIndex(id, "-recovery-")
+	if idx <= 0 {
+		return false
+	}
+	suffix := id[idx+len("-recovery-"):]
+	if len(suffix) != 16 {
+		return false
+	}
+	for _, r := range suffix {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func legacyMigrationTargetForDir(dir string) (scope, workspaceRoot, topicTitleRoot string, ok bool) {
 	dir = cleanDesktopPath(dir)
 	if dir == "" {
@@ -5516,9 +5783,9 @@ func legacySessionScopeMatchesMigrationTarget(meta agent.BranchMeta, scope, work
 	}
 	metaRoot := normalizeProjectRoot(meta.WorkspaceRoot)
 	if scope == "project" {
-		return metaRoot == "" || normalizeProjectRoot(workspaceRoot) == metaRoot
+		return metaRoot == "" || sameProjectRoot(workspaceRoot, metaRoot)
 	}
-	return metaRoot == "" || normalizeProjectRoot(globalWorkspaceRoot()) == metaRoot
+	return metaRoot == "" || sameProjectRoot(globalWorkspaceRoot(), metaRoot)
 }
 
 func cleanDesktopPath(path string) string {
@@ -5542,6 +5809,17 @@ func sameDesktopPath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+// projectRootKey is the map-key form of a project root: cleaned, absolute,
+// and case-folded on Windows — the same key form agent.CanonicalSessionPath
+// uses for session paths, so equivalent spellings never split lookups.
+func projectRootKey(root string) string {
+	root = cleanDesktopPath(root)
+	if os.PathSeparator == '\\' {
+		return strings.ToLower(root)
+	}
+	return root
 }
 
 func restoreSessionTopicIndex(dir, sessionPath string) error {
@@ -5712,6 +5990,7 @@ func (a *App) RenameProject(workspaceRoot, title string) error {
 	if err := renameProject(workspaceRoot, title); err != nil {
 		return err
 	}
+	a.syncTabWorkspaceRootSpellings()
 	a.emitProjectTreeChanged()
 	return nil
 }
@@ -5722,6 +6001,7 @@ func (a *App) SetProjectColor(workspaceRoot, color string) error {
 	if err := setProjectColor(workspaceRoot, color); err != nil {
 		return err
 	}
+	a.syncTabWorkspaceRootSpellings()
 	a.emitProjectTreeChanged()
 	return nil
 }
@@ -5734,19 +6014,19 @@ func (a *App) SetProjectPinned(workspaceRoot string, pinned bool) error {
 		return fmt.Errorf("workspaceRoot is required")
 	}
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
-		found := false
-		for _, project := range f.Projects {
-			if project.Root == root {
-				found = true
-				break
-			}
-		}
-		if !found {
+		i := projectIndexByRoot(f.Projects, root)
+		if i < 0 {
 			return false, fmt.Errorf("project %q not found", root)
 		}
-		next := removeString(f.PinnedProjects, root)
+		root = f.Projects[i].Root
+		next := make([]string, 0, len(f.PinnedProjects))
+		for _, pinnedRoot := range f.PinnedProjects {
+			if !sameProjectRoot(pinnedRoot, root) {
+				next = append(next, pinnedRoot)
+			}
+		}
 		if pinned {
-			next = prependUniqueString(f.PinnedProjects, root)
+			next = prependUniqueString(next, root)
 		}
 		if sameStringList(next, f.PinnedProjects) {
 			return false, nil
@@ -5764,36 +6044,32 @@ func (a *App) SetProjectPinned(workspaceRoot string, pinned bool) error {
 // when present, the virtual Global sidebar section.
 func (a *App) ReorderProjects(workspaceRoots []string) error {
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
-		byRoot := make(map[string]desktopProject, len(f.Projects))
-		for _, project := range f.Projects {
-			byRoot[project.Root] = project
-		}
-		seen := make(map[string]bool, len(workspaceRoots))
+		var seenProjects []string
 		next := make([]desktopProject, 0, len(workspaceRoots))
 		sidebarOrder := make([]string, 0, len(workspaceRoots))
 		hasGlobalOrder := false
 		for _, root := range workspaceRoots {
 			root = strings.TrimSpace(root)
 			if root == desktopGlobalOrderToken {
-				if seen[root] {
+				if hasGlobalOrder {
 					return false, fmt.Errorf("duplicate global section")
 				}
-				seen[root] = true
 				hasGlobalOrder = true
 				sidebarOrder = append(sidebarOrder, root)
 				continue
 			}
 			root = normalizeProjectRoot(root)
-			project, ok := byRoot[root]
-			if !ok {
+			i := projectIndexByRoot(f.Projects, root)
+			if i < 0 {
 				return false, fmt.Errorf("project %q not found", root)
 			}
-			if seen[root] {
+			project := f.Projects[i]
+			if projectRootInList(seenProjects, project.Root) {
 				return false, fmt.Errorf("duplicate project %q", root)
 			}
-			seen[root] = true
+			seenProjects = append(seenProjects, project.Root)
 			next = append(next, project)
-			sidebarOrder = append(sidebarOrder, root)
+			sidebarOrder = append(sidebarOrder, project.Root)
 		}
 		if len(next) != len(f.Projects) {
 			return false, fmt.Errorf("project order length mismatch")
@@ -5973,6 +6249,10 @@ func (a *App) emitRuntimeEvent(name string, payload ...interface{}) {
 
 // DeleteTopic removes a topic and its title metadata.
 func (a *App) DeleteTopic(topicID string) error {
+	return friendlySessionFileError(a.deleteTopic(topicID))
+}
+
+func (a *App) deleteTopic(topicID string) error {
 	f := loadProjectsFile()
 	found := false
 	for _, p := range f.Projects {
@@ -6078,6 +6358,10 @@ func (a *App) SetTopicPinned(topicID string, pinned bool) error {
 // cancelled and detached from the app first, so their autosave/jobs cannot
 // recreate state after the topic is gone.
 func (a *App) TrashTopic(topicID string) error {
+	return friendlySessionFileError(a.trashTopic(topicID))
+}
+
+func (a *App) trashTopic(topicID string) error {
 	if strings.TrimSpace(topicID) == "" {
 		return fmt.Errorf("topicID is required")
 	}
@@ -6127,11 +6411,16 @@ func (a *App) TrashTopic(topicID string) error {
 				}
 			}
 		}
-		return a.DeleteTopic(topicID)
+		return a.deleteTopic(topicID)
 	}(); err != nil {
 		return err
 	}
 	if fallback.needs {
+		topic, err := a.CreateTopic(fallback.scope, fallback.workspaceRoot, "")
+		if err != nil {
+			return err
+		}
+		fallback.topicID = topic.ID
 		if err := a.openFallbackRuntime(fallback); err != nil {
 			return err
 		}
@@ -6216,10 +6505,43 @@ func (a *App) topicTrashTargets(topicID string) ([]topicTrashTarget, error) {
 type topicSummary struct {
 	turns            int
 	lastActivityAt   int64
+	hasNormalSession bool
+	hasRecoveryOnly  bool
+}
+
+// runtimeSessionStatus is one open or detached runtime session, as shown in
+// the sidebar tree.
+type runtimeSessionStatus struct {
+	sessionPath      string
+	label            string
+	turns            int
+	createdAt        int64
+	lastActivityAt   int64
+	open             bool
+	running          bool
+	status           string
 	recovered        bool
 	recoveryReason   string
 	recoveryDigest   string
 	recoveryParentID string
+}
+
+// topicHiddenAsRecoveryOnly hides topics whose only on-disk sessions are
+// conflict-recovery copies: they stay reachable from History, but must not sit
+// in the tree as regular conversations. Pinned topics and topics with any
+// open or running runtime session remain visible — note topicRuntimeStatus
+// reports open/running only for single-session topics, so it must not gate
+// topic existence.
+func topicHiddenAsRecoveryOnly(summary topicSummary, pinned bool, runtimeSessions []runtimeSessionStatus) bool {
+	if !summary.hasRecoveryOnly || summary.hasNormalSession || pinned {
+		return false
+	}
+	for _, session := range runtimeSessions {
+		if session.open || session.running {
+			return false
+		}
+	}
+	return true
 }
 
 var listProjectTreeMu sync.Mutex
@@ -6242,20 +6564,6 @@ func (a *App) ListProjectTree() []ProjectNode {
 		deletedTopicSet[id] = true
 	}
 	out := []ProjectNode{}
-	type runtimeSessionStatus struct {
-		sessionPath      string
-		label            string
-		turns            int
-		createdAt        int64
-		lastActivityAt   int64
-		open             bool
-		running          bool
-		status           string
-		recovered        bool
-		recoveryReason   string
-		recoveryDigest   string
-		recoveryParentID string
-	}
 	topicSummaries := map[string]topicSummary{}
 	sessionInfos := map[string]agent.SessionInfo{}
 	sessionTitles := map[string]string{}
@@ -6333,6 +6641,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 		}
 		seenRuntimePaths[sessionPath] = true
 		info := sessionInfos[sessionPath]
+		recovered := sessionInfoIsAutomaticRecovery(info) || isAutomaticRecoverySessionPath(sessionPath)
 		label := runtimeSessionTreeLabel(tab, info, sessionTitles[sessionPath])
 		status := activityStatusForTab(tab)
 		runtimeStatus := control.RuntimeStatus{}
@@ -6349,7 +6658,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 			open:             open,
 			running:          running,
 			status:           status,
-			recovered:        info.Recovered,
+			recovered:        recovered,
 			recoveryReason:   info.RecoveryReason,
 			recoveryDigest:   info.RecoveryDigest,
 			recoveryParentID: string(info.ParentID),
@@ -6431,27 +6740,27 @@ func (a *App) ListProjectTree() []ProjectNode {
 				continue
 			}
 			title := globalTitleMap[id]
-			summary := topicSummaries[topicSummaryKey("global", "", id)]
-			open, running, status := topicRuntimeStatus(topicSummaryKey("global", "", id))
+			summaryKey := topicSummaryKey("global", "", id)
+			summary := topicSummaries[summaryKey]
+			open, running, status := topicRuntimeStatus(summaryKey)
 			pinned := containsDesktopString(f.GlobalPinnedTopics, id)
+			if topicHiddenAsRecoveryOnly(summary, pinned, runtimeSessionsByTopic[summaryKey]) {
+				continue
+			}
 			children = append(children, ProjectNode{
-				Key:              "global_topic_" + id,
-				Kind:             "global_topic",
-				Label:            title,
-				TopicID:          id,
-				ProjectColor:     globalColor,
-				Turns:            summary.turns,
-				CreatedAt:        topicCreatedAtForTree(globalCreatedMap, id),
-				LastActivityAt:   summary.lastActivityAt,
-				Open:             open,
-				Running:          running,
-				Status:           status,
-				Pinned:           pinned,
-				Recovered:        summary.recovered,
-				RecoveryReason:   summary.recoveryReason,
-				RecoveryDigest:   summary.recoveryDigest,
-				RecoveryParentID: summary.recoveryParentID,
-				Children:         runtimeSessionNodes("global", "", id, globalColor),
+				Key:            "global_topic_" + id,
+				Kind:           "global_topic",
+				Label:          title,
+				TopicID:        id,
+				ProjectColor:   globalColor,
+				Turns:          summary.turns,
+				CreatedAt:      topicCreatedAtForTree(globalCreatedMap, id),
+				LastActivityAt: summary.lastActivityAt,
+				Open:           open,
+				Running:        running,
+				Status:         status,
+				Pinned:         pinned,
+				Children:       runtimeSessionNodes("global", "", id, globalColor),
 			})
 		}
 		out = append(out, ProjectNode{
@@ -6512,28 +6821,28 @@ func (a *App) ListProjectTree() []ProjectNode {
 			if topicTitle == "" {
 				topicTitle = defaultTopicTitle
 			}
-			summary := topicSummaries[topicSummaryKey("project", p.Root, tid)]
-			open, running, status := topicRuntimeStatus(topicSummaryKey("project", p.Root, tid))
+			summaryKey := topicSummaryKey("project", p.Root, tid)
+			summary := topicSummaries[summaryKey]
+			open, running, status := topicRuntimeStatus(summaryKey)
 			pinned := containsDesktopString(p.PinnedTopics, tid)
+			if topicHiddenAsRecoveryOnly(summary, pinned, runtimeSessionsByTopic[summaryKey]) {
+				continue
+			}
 			children = append(children, ProjectNode{
-				Key:              "topic_" + tid,
-				Kind:             "topic",
-				Label:            topicTitle,
-				Root:             p.Root,
-				TopicID:          tid,
-				ProjectColor:     p.Color,
-				Turns:            summary.turns,
-				CreatedAt:        topicCreatedAtForTree(createdMap, tid),
-				LastActivityAt:   summary.lastActivityAt,
-				Open:             open,
-				Running:          running,
-				Status:           status,
-				Pinned:           pinned,
-				Recovered:        summary.recovered,
-				RecoveryReason:   summary.recoveryReason,
-				RecoveryDigest:   summary.recoveryDigest,
-				RecoveryParentID: summary.recoveryParentID,
-				Children:         runtimeSessionNodes("project", p.Root, tid, p.Color),
+				Key:            "topic_" + tid,
+				Kind:           "topic",
+				Label:          topicTitle,
+				Root:           p.Root,
+				TopicID:        tid,
+				ProjectColor:   p.Color,
+				Turns:          summary.turns,
+				CreatedAt:      topicCreatedAtForTree(createdMap, tid),
+				LastActivityAt: summary.lastActivityAt,
+				Open:           open,
+				Running:        running,
+				Status:         status,
+				Pinned:         pinned,
+				Children:       runtimeSessionNodes("project", p.Root, tid, p.Color),
 			})
 		}
 		node.Label = title
@@ -6549,7 +6858,10 @@ func topicSummaryKey(scope, workspaceRoot, topicID string) string {
 	if scope == "global" {
 		return "global::" + topicID
 	}
-	return "project:" + workspaceRoot + ":" + topicID
+	// Producers key by the live tab's root spelling while the sidebar keys by
+	// the registry's canonical spelling; fold both so runtime status never
+	// splits across equivalent roots.
+	return "project:" + projectRootKey(workspaceRoot) + ":" + topicID
 }
 
 func projectSessionNodeKey(scope, sessionPath string) string {
@@ -6640,6 +6952,9 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 
 	info := ContextPanelInfo{ReadFiles: []readFileRecord{}, ChangedFiles: []ChangedFileInfo{}}
 	if ctrl != nil {
+		if sp := ctrl.SessionPath(); sp != "" {
+			tab.syncTelemetryToSession(sp)
+		}
 		used, window := ctrl.ContextSnapshot()
 		info.UsedTokens = used
 		info.WindowTokens = window
@@ -6957,13 +7272,12 @@ func persistedToolApprovalMode(mode string) string {
 	}
 }
 
-// persistedTabMode is the composer mode saved with a tab so it survives reload.
-// Plain yolo is runtime-only; plan-yolo persists because the planner axis is
-// user intent while the yolo axis is cleared on restart.
+// persistedTabMode saves only the plan axis. Tool approval/yolo state is stored
+// separately in ToolApprovalMode and remains runtime-only for the Mode field.
 func persistedTabMode(mode string) string {
 	switch normalizeTabMode(mode) {
 	case "plan", "plan-yolo":
-		return normalizeTabMode(mode)
+		return "plan"
 	}
 	return ""
 }
@@ -7382,7 +7696,15 @@ func canonicalTabSessionPath(path string) string {
 	if validPath, _, err := validateSessionPath(config.SessionDir(), path); err == nil {
 		return validPath
 	}
-	return path
+	// Project-scope sessions live outside config.SessionDir(), so validation
+	// against it always fails. Still normalize the shape: without clean+abs,
+	// the same file spelled with a different separator or a relative prefix
+	// splits into distinct runtime keys.
+	cleaned := filepath.Clean(path)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		return abs
+	}
+	return cleaned
 }
 
 func (a *App) rememberTabSessionPath(tab *WorkspaceTab, path string) {
@@ -7451,7 +7773,7 @@ func (a *App) knownSessionDirs() []string {
 
 func topicSessionMatchMatchesTarget(match topicSessionMatch, scope, workspaceRoot string) bool {
 	if scope == "project" {
-		return match.scope == "project" && normalizeProjectRoot(match.workspaceRoot) == normalizeProjectRoot(workspaceRoot)
+		return match.scope == "project" && sameProjectRoot(match.workspaceRoot, workspaceRoot)
 	}
 	return match.scope == "" || match.scope == "global"
 }
@@ -7577,22 +7899,24 @@ func mergeSessionInfos(dir string, infos []agent.SessionInfo, titles map[string]
 		}
 		key := topicSummaryKey(info.Scope, info.WorkspaceRoot, info.TopicID)
 		summary := topicSummaries[key]
-		summary.turns += info.Turns
 		lastActivityAt := info.LastActivityAt.UnixMilli()
+		if sessionInfoIsAutomaticRecovery(info) {
+			// A conflict copy duplicates its original, so its turns would
+			// double-count — but its activity is real: once a tab adopts the
+			// copy as its live transcript, all new work lands here, and
+			// skipping it would freeze the topic's recency, unread state, and
+			// time filters at the original's last save.
+			summary.hasRecoveryOnly = true
+			if lastActivityAt > summary.lastActivityAt {
+				summary.lastActivityAt = lastActivityAt
+			}
+			topicSummaries[key] = summary
+			continue
+		}
+		summary.hasNormalSession = true
+		summary.turns += info.Turns
 		if lastActivityAt > summary.lastActivityAt {
 			summary.lastActivityAt = lastActivityAt
-		}
-		if info.Recovered {
-			summary.recovered = true
-			if summary.recoveryReason == "" {
-				summary.recoveryReason = info.RecoveryReason
-			}
-			if summary.recoveryDigest == "" {
-				summary.recoveryDigest = info.RecoveryDigest
-			}
-			if summary.recoveryParentID == "" {
-				summary.recoveryParentID = string(info.ParentID)
-			}
 		}
 		topicSummaries[key] = summary
 	}
@@ -7626,7 +7950,7 @@ func topicSessionDirSnapshot(dir string) ([]topicSessionFileSignature, []string,
 		if entry.IsDir() {
 			continue
 		}
-		isSession := filepath.Ext(name) == ".jsonl"
+		isSession := store.IsSessionTranscriptName(name)
 		isMeta := strings.HasSuffix(name, ".jsonl.meta")
 		if !isSession && !isMeta {
 			continue
@@ -7721,6 +8045,25 @@ func topicSessionIndexHasContentTopic(index topicSessionDirIndex, topicID string
 	return false
 }
 
+// topicSessionIndexHasForeignLeaseTopic reports whether any session file
+// indexed under topicID is currently lease-held by a runtime other than this
+// process. A blank topic can still be lease-held — its session lease keeper
+// keeps a leftover blank tab's lease alive across a hide-to-tray close, and a
+// stale-but-live holder blocks a genuinely new session from ever settling on
+// this path. Reusing it anyway would make the "new" tab collide with that
+// holder: every lease-gated switch (effort/model/token mode) would fail as if
+// a foreign window owned it, and creating another "new" conversation would
+// keep re-picking the same stuck topic (#6028, #6109).
+func topicSessionIndexHasForeignLeaseTopic(index topicSessionDirIndex, topicID string) bool {
+	matches := index.byTopic[strings.TrimSpace(topicID)]
+	for _, match := range matches {
+		if agent.SessionLeaseHeldByOtherRuntime(match.path) {
+			return true
+		}
+	}
+	return false
+}
+
 func topicSessionMatches(dir, topicID string) []topicSessionMatch {
 	index, err := topicSessionIndexForDir(dir)
 	if err != nil {
@@ -7776,40 +8119,4 @@ func findTopicSession(dir, topicID string) string {
 		}
 	}
 	return bestPath
-}
-
-func resolveModelIgnoringKey(cfg *config.Config, ref string) (*config.ProviderEntry, bool) {
-	if cfg == nil {
-		return nil, false
-	}
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return nil, false
-	}
-	providerName, model, hasModel := strings.Cut(ref, "/")
-	providerName = strings.TrimSpace(providerName)
-	model = strings.TrimSpace(model)
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if p.Name != providerName {
-			continue
-		}
-		models := p.ModelList()
-		if len(models) == 0 {
-			return nil, false
-		}
-		chosen := p.DefaultModel()
-		if hasModel && model != "" {
-			for _, candidate := range models {
-				if candidate == model {
-					chosen = model
-					break
-				}
-			}
-		}
-		cp := *p
-		cp.Model = chosen
-		return &cp, true
-	}
-	return nil, false
 }

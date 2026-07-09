@@ -56,17 +56,46 @@ type Config struct {
 	Network          NetworkConfig       `toml:"network"`
 	Environment      EnvironmentConfig   `toml:"environment"`
 	Plugins          []PluginEntry       `toml:"plugins"`
-	Workbench        WorkbenchConfig     `toml:"workbench"`
 	Skills           SkillsConfig        `toml:"skills"`
 	Codegraph        CodegraphConfig     `toml:"codegraph"`
 	Statusline       StatuslineConfig    `toml:"statusline"`
 	LSP              LSPConfig           `toml:"lsp"`
+	Workbench        WorkbenchConfig     `toml:"workbench"`
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
+	Secrets          SecretsConfig       `toml:"secrets"`
 
 	providerSources          map[string]providerSourceScope
 	shadowedProjectProviders []ProviderEntry
 	expansionEnv             map[string]string
+}
+
+// SecretsConfig controls the credential protection layers. It is a user-global
+// setting: project voltui.toml values are ignored (see LoadForRoot), so a cloned
+// repository cannot silently switch off redaction or opt the user into
+// workflow-breaking protections.
+type SecretsConfig struct {
+	// RedactToolOutput masks credential-shaped values in tool output before it
+	// enters model context and UI events. Nil keeps the default enabled.
+	// Session transcripts and background-job artifacts on disk are always
+	// redacted, regardless of this switch.
+	RedactToolOutput *bool `toml:"redact_tool_output"`
+	// FilterSubprocessEnv strips credential-like environment variables
+	// (*_API_KEY, *TOKEN*, *SECRET*, ...) from tool subprocesses (bash, hooks,
+	// LSP, MCP stdio). Default off: it breaks token-based workflows such as
+	// `gh`, HTTPS `git push`, and `npm publish`.
+	FilterSubprocessEnv bool `toml:"filter_subprocess_env"`
+	// ProtectSensitiveFiles makes read/list/search tools treat credential
+	// paths (.env, .git-credentials, .netrc, *.pem/*.key/*.p12/*.pfx, ~/.ssh)
+	// as invisible. Default off: output redaction already masks the values,
+	// and hiding the files breaks legitimate "edit my .env" workflows.
+	ProtectSensitiveFiles bool `toml:"protect_sensitive_files"`
+}
+
+// SecretsRedactToolOutput reports whether live tool output redaction is enabled
+// (default true).
+func (c *Config) SecretsRedactToolOutput() bool {
+	return c == nil || c.Secrets.RedactToolOutput == nil || *c.Secrets.RedactToolOutput
 }
 
 type providerSourceScope string
@@ -202,6 +231,14 @@ func (c *Config) BrandIconPath() string {
 		return v
 	}
 	return c.expandVars(strings.TrimSpace(c.Brand.IconPath))
+}
+
+func (c *Config) ApplyBrandName(s string) string {
+	name := c.BrandName()
+	if strings.TrimSpace(name) == "" || name == "VoltUI" {
+		return s
+	}
+	return strings.ReplaceAll(s, "VoltUI", name)
 }
 
 // NotificationsConfig controls optional system notifications for CLI chat/run.
@@ -584,13 +621,6 @@ type LSPServer struct {
 	InstallHint string            `toml:"install_hint"`
 }
 
-// StatuslineConfig configures a custom status line. Command, when set, is run at
-// startup and after each turn; its first line of stdout replaces the built-in
-// status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
-type StatuslineConfig struct {
-	Command string `toml:"command"`
-}
-
 // CodegraphConfig governs the built-in CodeGraph MCP server.
 type CodegraphConfig struct {
 	Enabled     bool   `toml:"enabled"`
@@ -605,6 +635,13 @@ func (c CodegraphConfig) ShouldAutoStart() bool {
 
 func (c CodegraphConfig) ResolvedTier() string {
 	return resolvedMCPTier(c.Tier)
+}
+
+// StatuslineConfig configures a custom status line. Command, when set, is run at
+// startup and after each turn; its first line of stdout replaces the built-in
+// status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
+type StatuslineConfig struct {
+	Command string `toml:"command"`
 }
 
 // BotConfig 控制多渠道 IM bot 消息网关。
@@ -964,9 +1001,9 @@ type SandboxConfig struct {
 	WorkspaceRoot string   `toml:"workspace_root"`
 	AllowWrite    []string `toml:"allow_write"`
 	ForbidRead    []string `toml:"forbid_read"`
-	// Bash is the OS-sandbox mode for the bash tool: "enforce" (default) jails
-	// each command when an OS sandbox is available and refuses bash otherwise;
-	// "off" runs it unconfined.
+	// Bash is the OS-sandbox mode for the bash tool: "enforce" jails each
+	// command when an OS sandbox is available and refuses bash otherwise; "off"
+	// runs it unconfined. Empty uses the platform default.
 	Bash string `toml:"bash"`
 	// Network allows network egress from inside the bash sandbox. Defaults true
 	// so module/package downloads keep working; the boundary is then writes.
@@ -1006,6 +1043,20 @@ func (c *Config) WriteRootsForRoot(fallbackRoot string) []string {
 	return roots
 }
 
+// AllowWriteRoots returns only the configured [sandbox] allow_write extras with
+// ${VAR} expanded — the explicit escape-hatch entries, without the workspace
+// root that WriteRoots prepends. The session-data write guard treats these as
+// user-sanctioned raw access.
+func (c *Config) AllowWriteRoots() []string {
+	var roots []string
+	for _, d := range c.Sandbox.AllowWrite {
+		if d = c.expandVars(d); d != "" {
+			roots = append(roots, d)
+		}
+	}
+	return roots
+}
+
 // ForbidReadRoots returns the directories the agent is forbidden from reading
 // or listing, with ${VAR} expanded. Relative roots are resolved against the
 // current working directory; the confiner resolves them to symlink-free paths.
@@ -1037,14 +1088,30 @@ func (c *Config) ForbidReadRootsForRoot(fallbackRoot string) []string {
 	return roots
 }
 
-// BashMode normalises the bash-sandbox mode: only an explicit "off" disables
-// it; empty or any other value resolves to "enforce", so the sandbox is on by
-// default and fails safe.
+// BashMode normalises the bash-sandbox mode for the current host.
 func (c *Config) BashMode() string {
-	if c.Sandbox.Bash == "off" {
+	return c.BashModeForGOOS(runtimeGOOS)
+}
+
+// BashModeForGOOS normalises the bash-sandbox mode for tests and cross-platform
+// rendering. Windows currently forces bash sandboxing off, even when older
+// configs explicitly requested "enforce", because the native backend still
+// breaks common Git Bash/MSYS2, Docker, and git workflows. macOS/Linux keep the
+// existing explicit-mode behavior.
+func (c *Config) BashModeForGOOS(goos string) string {
+	if goos == "windows" {
 		return "off"
 	}
-	return "enforce"
+	switch strings.TrimSpace(c.Sandbox.Bash) {
+	case "enforce":
+		return "enforce"
+	case "off":
+		return "off"
+	case "":
+		return "enforce"
+	default:
+		return "enforce"
+	}
 }
 
 // AgentConfig configures the harness loop. PlannerModel is optional: when set
@@ -1157,10 +1224,17 @@ func NormalizeMemoryCompilerVerbosity(v string) string {
 // token budget; the harness compacts older history as a turn's prompt approaches
 // it (see agent compaction). 0 disables compaction for the instance.
 type ProviderEntry struct {
-	Name           string            `toml:"name"`
-	Kind           string            `toml:"kind"`
-	BaseURL        string            `toml:"base_url"`
-	ChatURL        string            `toml:"chat_url"`
+	Name    string `toml:"name"`
+	Kind    string `toml:"kind"`
+	BaseURL string `toml:"base_url"`
+	ChatURL string `toml:"chat_url"`
+	// APISurface selects the OpenAI-compatible request schema. Empty/default is
+	// chat_completions; "responses" uses the Responses API at ResponsesURL or
+	// base_url + "/responses".
+	APISurface string `toml:"api_surface"`
+	// ResponsesURL is an optional full Responses API endpoint URL. It is ignored
+	// unless APISurface is "responses".
+	ResponsesURL   string            `toml:"responses_url"`
 	Model          string            `toml:"model"`      // a single model (back-compat)
 	Models         []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models)
 	ModelsURL      string            `toml:"models_url"` // auto-fetch models from this URL on startup
@@ -1229,6 +1303,32 @@ type ProviderModelOverride struct {
 	SupportedEfforts  []string `toml:"supported_efforts"`
 	DefaultEffort     string   `toml:"default_effort"`
 	Vision            *bool    `toml:"vision"`
+}
+
+const (
+	APISurfaceChatCompletions = "chat_completions"
+	APISurfaceResponses       = "responses"
+)
+
+func NormalizeAPISurface(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "chat", "chat_completions", "chat-completions", "chat.completions":
+		return "", nil
+	case "responses", "response":
+		return APISurfaceResponses, nil
+	default:
+		return "", fmt.Errorf("api_surface %q: must be chat_completions or responses", raw)
+	}
+}
+
+func EffectiveAPISurface(e *ProviderEntry) string {
+	if e == nil {
+		return APISurfaceChatCompletions
+	}
+	if surface, err := NormalizeAPISurface(e.APISurface); err == nil && surface != "" {
+		return surface
+	}
+	return APISurfaceChatCompletions
 }
 
 // ModelList returns the models this provider exposes: the explicit `models` list,
@@ -1488,6 +1588,41 @@ type PermissionsConfig struct {
 	Deny  []string `toml:"deny"`
 }
 
+// WorkbenchConfig declares desktop workbench integrations.
+type WorkbenchConfig struct {
+	Plugins   []WorkbenchPluginEntry   `toml:"plugins"`
+	Providers []WorkbenchProviderEntry `toml:"providers"`
+}
+
+type WorkbenchPluginEntry struct {
+	ID           string            `toml:"id"`
+	Name         string            `toml:"name"`
+	Kind         string            `toml:"kind"`
+	Entry        string            `toml:"entry"`
+	Version      string            `toml:"version"`
+	Capabilities []string          `toml:"capabilities"`
+	ProviderIDs  []string          `toml:"provider_ids"`
+	Config       map[string]string `toml:"config"`
+	Enabled      *bool             `toml:"enabled"`
+}
+
+func (e WorkbenchPluginEntry) IsEnabled() bool {
+	return e.Enabled == nil || *e.Enabled
+}
+
+type WorkbenchProviderEntry struct {
+	ID           string            `toml:"id"`
+	Type         string            `toml:"type"`
+	Server       string            `toml:"server"`
+	URL          string            `toml:"url"`
+	Command      string            `toml:"command"`
+	Args         []string          `toml:"args"`
+	Capabilities []string          `toml:"capabilities"`
+	Headers      map[string]string `toml:"headers"`
+	Env          map[string]string `toml:"env"`
+	Config       map[string]string `toml:"config"`
+}
+
 // PluginEntry declares an external MCP server. Type selects the transport:
 // "stdio" (default) launches Command/Args/Env as a subprocess; "http"
 // (a.k.a. streamable-http) and "sse" connect to a remote URL with optional
@@ -1529,41 +1664,6 @@ type PluginEntry struct {
 	// without blocking chat. Unknown non-empty values fall back to "background".
 	Tier         string `toml:"tier"`
 	expansionEnv map[string]string
-}
-
-// WorkbenchConfig declares product-level workbench plugins.
-type WorkbenchConfig struct {
-	Plugins   []WorkbenchPluginEntry   `toml:"plugins"`
-	Providers []WorkbenchProviderEntry `toml:"providers"`
-}
-
-type WorkbenchPluginEntry struct {
-	ID           string            `toml:"id"`
-	Name         string            `toml:"name"`
-	Kind         string            `toml:"kind"`
-	Entry        string            `toml:"entry"`
-	Version      string            `toml:"version"`
-	Capabilities []string          `toml:"capabilities"`
-	ProviderIDs  []string          `toml:"provider_ids"`
-	Config       map[string]string `toml:"config"`
-	Enabled      *bool             `toml:"enabled"`
-}
-
-func (e WorkbenchPluginEntry) IsEnabled() bool {
-	return e.Enabled == nil || *e.Enabled
-}
-
-type WorkbenchProviderEntry struct {
-	ID           string            `toml:"id"`
-	Type         string            `toml:"type"` // "mcp" | "http" | "local"
-	Server       string            `toml:"server"`
-	URL          string            `toml:"url"`
-	Command      string            `toml:"command"`
-	Args         []string          `toml:"args"`
-	Capabilities []string          `toml:"capabilities"`
-	Headers      map[string]string `toml:"headers"`
-	Env          map[string]string `toml:"env"`
-	Config       map[string]string `toml:"config"`
 }
 
 func (e PluginEntry) ShouldAutoStart() bool {
@@ -1627,7 +1727,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration.
 func Default() *Config {
 	return &Config{
-		ConfigVersion:    3,
+		ConfigVersion:    4,
 		DefaultModel:     "qwen-gpu4",
 		CredentialsStore: CredentialsStoreAuto,
 		Brand:            BrandConfig{Name: "VoltUI"},
@@ -1658,17 +1758,16 @@ func Default() *Config {
 		// resolves to allow) while `voltui` prompts before writers. Users add
 		// deny/allow rules to harden or quiet specific tools.
 		Permissions: PermissionsConfig{Mode: "ask"},
-		// Sandbox on by default: bash is jailed (macOS), network allowed so
-		// builds/downloads work. Set bash = "off" to disable. Network=true here
-		// so an absent [sandbox] in a user's file keeps egress (zero value would
-		// wrongly deny it).
-		Sandbox: SandboxConfig{Bash: "enforce", Network: true},
-		// CodeGraph defaults on for existing configs
-		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
+		// Sandbox uses platform defaults: macOS/Linux jail bash by default;
+		// Windows forces bash off until the native sandbox backend is reliable.
+		// Network=true here so an absent [sandbox] in a user's file keeps egress
+		// (zero value would wrongly deny it).
+		Sandbox: SandboxConfig{Network: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP:     LSPConfig{Enabled: true},
-		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
+		LSP:       LSPConfig{Enabled: true},
+		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
+		Network:   NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Bot: BotConfig{
 			ToolApprovalMode:   "ask",
 			MaxSteps:           25,
@@ -1691,7 +1790,7 @@ func Default() *Config {
 			{Name: "image-gpu5", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4FlashPrice()},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
-			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true},
+			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true, Priority: 10},
 			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25Price(), NoProxy: true},
 		},
 	}
@@ -1868,7 +1967,7 @@ func (e *ProviderEntry) APIKey() string {
 	}
 	value, _, ok := storedCredentialValue(e.APIKeyEnv)
 	if !ok {
-		return strings.TrimSpace(os.Getenv(e.APIKeyEnv))
+		return ""
 	}
 	return value
 }
@@ -1886,20 +1985,6 @@ func (e *ProviderEntry) ResolveAPIKeyFromProcessEnvForProbe() {
 		return
 	}
 	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return
-	}
-	e.resolvedAPIKey = value
-	e.resolvedSource = CredentialSource{Kind: CredentialSourceEnvironment, Label: "setup prompt"}
-}
-
-// SetAPIKeyForProbe pins a user-entered key onto this in-memory provider copy
-// for one immediate connectivity/model-list probe. It never persists the key.
-func (e *ProviderEntry) SetAPIKeyForProbe(value string) {
-	if e == nil {
-		return
-	}
-	value = strings.TrimSpace(value)
 	if value == "" {
 		return
 	}
@@ -1982,12 +2067,12 @@ func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("system_prompt_file: %w", err)
 		}
-		return strings.TrimSpace(string(b)), nil
+		return c.ApplyBrandName(strings.TrimSpace(string(b))), nil
 	}
 	if strings.TrimSpace(c.Agent.SystemPrompt) == "" {
-		return DefaultSystemPrompt, nil
+		return c.ApplyBrandName(DefaultSystemPrompt), nil
 	}
-	return c.Agent.SystemPrompt, nil
+	return c.ApplyBrandName(c.Agent.SystemPrompt), nil
 }
 
 // Validate checks that the selected model's provider is usable.

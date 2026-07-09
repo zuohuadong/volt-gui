@@ -98,6 +98,62 @@ func countBucket(n int) string {
 	}
 }
 
+func memoryCompilerCountBucket(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	switch {
+	case n == 0:
+		return "n_0"
+	case n == 1:
+		return "n_1"
+	case n <= 3:
+		return "n_2_3"
+	case n <= 5:
+		return "n_4_5"
+	case n <= 20:
+		return "n_6_20"
+	case n <= 50:
+		return "n_21_50"
+	default:
+		return "n_51_plus"
+	}
+}
+
+func memoryCompilerTokenBucket(n int) string {
+	if n <= 0 {
+		return "t_0"
+	}
+	switch {
+	case n <= 250:
+		return "t_1_250"
+	case n <= 750:
+		return "t_251_750"
+	case n <= 1500:
+		return "t_751_1500"
+	case n <= 3000:
+		return "t_1501_3000"
+	default:
+		return "t_3001_plus"
+	}
+}
+
+func memoryCompilerRegistryBucket(n int) string {
+	if n <= 0 {
+		return "n_0"
+	}
+	switch {
+	case n <= 5:
+		return "n_1_5"
+	case n <= 20:
+		return "n_6_20"
+	case n <= 50:
+		return "n_21_50"
+	default:
+		return "n_51_plus"
+	}
+}
+
 func knownBucket(value string, allowed ...string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	for _, ok := range allowed {
@@ -231,6 +287,7 @@ func (m *metricsAggregator) observeSettingsSnapshot(c *config.Config) {
 	m.inc("settings_close_behavior", c.DesktopCloseBehavior())
 	m.inc("settings_display_mode", c.DesktopDisplayMode())
 	m.inc("settings_auto_plan", desktopAutoPlanMode(c.Agent.AutoPlan))
+	m.inc("settings_memory_compiler", boolBucket(c.MemoryCompilerEnabled()))
 	m.inc("settings_status_bar_style", c.DesktopStatusBarStyle())
 	m.inc("settings_status_bar_items_count", statusBarItemsCountBucket(len(c.DesktopStatusBarItems())))
 	m.inc("settings_check_updates", boolBucket(c.DesktopCheckUpdates()))
@@ -305,8 +362,28 @@ func (m *metricsAggregator) observe(e event.Event) {
 		}
 	case event.CompactionDone:
 		m.inc("compaction", "total")
+	case event.MemoryCompilerStatsEvent:
+		if e.MemoryCompiler == nil {
+			return
+		}
+		stats := e.MemoryCompiler
+		m.inc("memory_compiler_turn", "total")
+		m.inc("memory_compiler_injected", boolBucket(stats.Injected))
+		m.inc("memory_compiler_useful_ir", boolBucket(stats.UsefulIR))
+		m.inc("memory_compiler_compiled_tokens", memoryCompilerTokenBucket(stats.CompiledTokens))
+		m.inc("memory_compiler_ir_overhead_tokens", memoryCompilerTokenBucket(stats.IROverheadTokens))
+		m.inc("memory_compiler_memory_refs", memoryCompilerCountBucket(stats.MemoryReferences))
+		m.inc("memory_compiler_constraints", memoryCompilerCountBucket(stats.Constraints))
+		m.inc("memory_compiler_risk_notes", memoryCompilerCountBucket(stats.RiskNotes))
+		m.inc("memory_compiler_execution_steps", memoryCompilerCountBucket(stats.ExecutionSteps))
+		m.inc("memory_compiler_nodes", memoryCompilerCountBucket(stats.TotalNodes))
+		m.inc("memory_compiler_high_signal_nodes", memoryCompilerCountBucket(stats.HighSignalNodes))
+		m.inc("memory_compiler_tool_result_nodes", memoryCompilerCountBucket(stats.ToolResultNodes))
+		m.inc("memory_compiler_decisions", memoryCompilerRegistryBucket(stats.DecisionNodes))
+		m.inc("memory_compiler_strategies", memoryCompilerRegistryBucket(stats.StrategyCount))
+		m.inc("memory_compiler_learnings", memoryCompilerCountBucket(stats.LearningCount))
 	case event.Notice:
-		if strings.HasPrefix(e.Text, "empty final answer blocked") {
+		if e.Text == "No visible answer was produced; asking the assistant to respond again." || strings.HasPrefix(e.Detail, "empty final answer blocked") {
 			m.inc("empty_final", "total")
 		}
 	}

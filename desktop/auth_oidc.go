@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -436,7 +437,8 @@ func serveOIDCCallback(ctx context.Context, listener net.Listener, state string)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte("<!doctype html><title>VoltUI login complete</title><p>Login complete. You can return to VoltUI.</p>"))
+		brandName := html.EscapeString(loadDesktopBrand().displayName())
+		_, _ = w.Write([]byte("<!doctype html><title>" + brandName + " login complete</title><p>Login complete. You can return to " + brandName + ".</p>"))
 		send(oidcCallbackResult{code: code})
 	})
 	go func() {

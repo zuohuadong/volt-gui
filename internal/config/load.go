@@ -49,6 +49,11 @@ func LoadForRoot(root string) (*Config, error) {
 	globalPlannerMaxSteps := cfg.Agent.PlannerMaxSteps
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
 	globalAutoPlan := cfg.Agent.AutoPlan
+	globalSecrets := cfg.Secrets
+	if cfg.Secrets.RedactToolOutput != nil {
+		v := *cfg.Secrets.RedactToolOutput
+		globalSecrets.RedactToolOutput = &v
+	}
 
 	tomlSources = append(tomlSources, projectTOML)
 	if err := mergeRuntimeTOMLFile(cfg, projectTOML); err != nil {
@@ -61,6 +66,10 @@ func LoadForRoot(root string) (*Config, error) {
 	cfg.Agent.PlannerMaxSteps = globalPlannerMaxSteps
 	cfg.Agent.MemoryCompiler = globalMemoryCompiler
 	cfg.Agent.AutoPlan = globalAutoPlan
+	// Secret protection is a user-global security control: a cloned repo's
+	// voltui.toml must not be able to disable redaction or flip on the
+	// workflow-breaking env/path protections.
+	cfg.Secrets = globalSecrets
 	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project voltui.toml doesn't drop the global config's MCP servers.
@@ -103,6 +112,7 @@ func LoadForRoot(root string) (*Config, error) {
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeLegacyMCPTiers(cfg)
+	normalizeLegacyStepFunBaseURLs(cfg)
 	normalizeLegacyMimoCustomProviders(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
@@ -389,7 +399,7 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 // of resetting to defaults. VoltUI's global .env is loaded so api_key_env
 // resolution works while the wizard decides which keys are still missing.
 func LoadForEdit(path string) *Config {
-	cfg, err := loadForEditStrict(path, true)
+	cfg, err := loadForEditStrict(path, true, true)
 	if err == nil {
 		return cfg
 	}
@@ -401,7 +411,7 @@ func LoadForEdit(path string) *Config {
 }
 
 func LoadForEditWithoutCredentials(path string) *Config {
-	cfg, err := loadForEditStrict(path, false)
+	cfg, err := loadForEditStrict(path, false, true)
 	if err == nil {
 		return cfg
 	}
@@ -411,7 +421,30 @@ func LoadForEditWithoutCredentials(path string) *Config {
 	return cfg
 }
 
-func loadForEditStrict(path string, loadCredentials bool) (*Config, error) {
+func LoadForView(path string) *Config {
+	cfg, err := loadForEditStrict(path, true, false)
+	if err == nil {
+		return cfg
+	}
+	slog.Warn("config: load for view failed, using defaults", "path", path, "err", err)
+	loadDotEnvForEditPath(path)
+	cfg = Default()
+	normalizeConfigForEdit(cfg)
+	return cfg
+}
+
+func LoadForViewWithoutCredentials(path string) *Config {
+	cfg, err := loadForEditStrict(path, false, false)
+	if err == nil {
+		return cfg
+	}
+	slog.Warn("config: load for view failed, using defaults", "path", path, "err", err)
+	cfg = Default()
+	normalizeConfigForEdit(cfg)
+	return cfg
+}
+
+func loadForEditStrict(path string, loadCredentials bool, writeBack bool) (*Config, error) {
 	if loadCredentials {
 		loadDotEnvForEditPath(path)
 	}
@@ -424,8 +457,8 @@ func loadForEditStrict(path string, loadCredentials bool) (*Config, error) {
 	if err := mergeFile(cfg, path); err != nil {
 		return nil, err
 	}
-	migratedMimo := normalizeConfigForEdit(cfg)
-	if migratedMimo && strings.TrimSpace(path) != "" {
+	changed := normalizeConfigForEdit(cfg)
+	if writeBack && changed && strings.TrimSpace(path) != "" {
 		if _, err := os.Stat(path); err == nil {
 			if err := cfg.SaveTo(path); err != nil {
 				return nil, err
@@ -439,14 +472,14 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	normalizePluginCommandLines(cfg)
 	normalizeLegacyEffort(cfg)
 	normalizeLegacyMCPTiers(cfg)
-	migratedMimo := normalizeLegacyMimoCustomProviders(cfg)
+	changed := normalizeLegacyStepFunBaseURLs(cfg)
+	changed = normalizeLegacyMimoCustomProviders(cfg) || changed
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
-	normalizeOfficialDeepSeekModels(cfg)
 	applyDeepSeekOfficialDefaultPricing(cfg)
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
-	return migratedMimo
+	return changed
 }
 
 func loadDotEnvForEditPath(path string) {
@@ -593,6 +626,43 @@ func normalizeLegacyProviderModels(c *Config) {
 	}
 }
 
+const (
+	legacyStepFunOpenAIBaseURL      = "https://api.stepfun.ai/step_plan/v1"
+	officialStepFunOpenAIBaseURL    = "https://api.stepfun.com/step_plan/v1"
+	legacyStepFunAnthropicBaseURL   = "https://api.stepfun.ai/step_plan"
+	officialStepFunAnthropicBaseURL = "https://api.stepfun.com/step_plan"
+)
+
+func normalizeLegacyStepFunBaseURLs(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	changed := false
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		switch {
+		case isLegacyStepFunPresetProvider(*p, "stepfun", "openai") && normalizedBaseURLForMigration(p.BaseURL) == legacyStepFunOpenAIBaseURL:
+			p.BaseURL = officialStepFunOpenAIBaseURL
+			changed = true
+		case isLegacyStepFunPresetProvider(*p, "stepfun-anthropic", "anthropic") && normalizedBaseURLForMigration(p.BaseURL) == legacyStepFunAnthropicBaseURL:
+			p.BaseURL = officialStepFunAnthropicBaseURL
+			changed = true
+		}
+	}
+	return changed
+}
+
+func isLegacyStepFunPresetProvider(p ProviderEntry, id, kind string) bool {
+	if !strings.EqualFold(strings.TrimSpace(p.Kind), kind) {
+		return false
+	}
+	return strings.TrimSpace(p.Name) == id || strings.TrimSpace(p.PresetID) == id
+}
+
+func normalizedBaseURLForMigration(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
 func normalizeLegacyMimoProviderCatalogs(c *Config) bool {
 	if c == nil {
 		return false
@@ -681,27 +751,12 @@ func normalizeOfficialDeepSeekModels(c *Config) {
 		}
 		switch strings.TrimSpace(p.Name) {
 		case "deepseek":
-			normalizeInheritedDeepSeekDefaults(p)
 			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, "deepseek-v4-flash")
 		case "deepseek-flash":
-			normalizeInheritedDeepSeekDefaults(p)
 			ensureProviderModels(p, []string{"deepseek-v4-flash"}, "deepseek-v4-flash")
 		case "deepseek-pro":
-			normalizeInheritedDeepSeekDefaults(p)
 			ensureProviderModels(p, []string{"deepseek-v4-pro"}, "deepseek-v4-pro")
 		}
-	}
-}
-
-func normalizeInheritedDeepSeekDefaults(p *ProviderEntry) {
-	if p == nil {
-		return
-	}
-	if p.Model != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.Model)), "deepseek-") {
-		p.Model = ""
-	}
-	if len(p.Models) == 0 && p.ContextWindow == 131_072 {
-		p.ContextWindow = 1_000_000
 	}
 }
 
@@ -942,7 +997,7 @@ func NormalizeLegacyDesktopProviderAccess(c *Config) {
 	}
 	addRef := func(ref string) {
 		if entry, ok := c.ResolveModel(ref); ok {
-			if !entry.Configured() {
+			if !entry.Configured() && legacyMimoProviderName(entry.Name) == "" {
 				return
 			}
 			add(entry.Name)

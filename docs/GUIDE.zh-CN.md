@@ -229,8 +229,25 @@ Anthropic-compatible 网关需要的 Bearer 认证、Ollama Cloud max-effort 支
 模型列表端点，在 **兼容设置** 中填写 `models_url`，例如
 `https://gateway.example.com/v1/models`。如果接口不支持模型发现，也可以手动填写模型列表。
 
-**完整 URL** 仍使用 OpenAI-compatible chat 请求体；它不会切换成 OpenAI Responses API
-的请求 schema。
+**完整 URL** 仍使用 OpenAI-compatible chat 请求体。若服务商要求 OpenAI Responses API
+请求体，请在模型渠道里把 **请求 API** 设为 **Responses**；此时 VoltUI 会发送到
+`base_url + "/responses"`，也可以在兼容设置里填写 `responses_url` 指向完整 Responses
+端点。
+
+### 聊天模型、视觉输入和生图
+
+模型切换保持同一段对话继续运行：在桌面端模型下拉框或 CLI `/model <provider/model>` 切换后，
+下一轮会使用新模型，但会话历史、工具上下文和 session 文件仍沿用当前对话。
+
+多模态不是会话模式，而是当前模型的能力。Provider 可以用 `vision = true` 给所有模型开启图片输入，
+或用 `vision_models = [...]` 只给部分聊天模型开启。切到文本模型后，图片附件仍会作为 `@...`
+文件引用进入提示词，但图片 bytes 不会直接发送给模型；切回视觉模型后，本轮引用到的图片才会作为
+直接图片输入发送。这个边界可以避免文本模型因为图片 payload 报错，也避免无意消耗图片 token。
+
+生图、视频渲染、海报生成等非聊天模型不要放进普通聊天模型列表。VoltUI 的聊天 provider 默认使用
+OpenAI-compatible chat 或 Anthropic-compatible messages 请求；OpenAI 主线模型也可显式切到
+Responses API。图片生成仍应通过 Responses 内置工具、MCP 或 Workbench 能力暴露为工具/持久 job，
+例如 `image-render` provider 生成 artifact，再由工作台登记和审查。
 
 ### 兼容设置
 
@@ -243,11 +260,14 @@ Anthropic-compatible 网关需要的 Bearer 认证、Ollama Cloud max-effort 支
 | --- | --- | --- |
 | `api_key_env` | 该 provider 使用的 API key 环境变量名。桌面端保存的真实 key 会写入 VoltUI home `.env` 的同名变量；TOML 配置里只保存变量名。 | 多个 provider 需要不同 key 时改名；服务不需要 API key 时可以留空。 |
 | `models_url` | 只用于自动发现模型列表的 URL。聊天请求仍使用上方的 API 地址或完整 URL。 | `/models` 或 `/v1/models` 不是该网关模型列表地址时填写。 |
+| `api_surface` | 请求 schema，默认 `chat_completions`；设为 `responses` 时使用 OpenAI Responses API。 | OpenAI 主线模型或网关要求 `/responses` 请求体时填写。 |
+| `responses_url` | 可选的完整 Responses API 请求 URL；为空时使用 `base_url + "/responses"`。 | 网关的 Responses 端点不是标准路径时填写。 |
 | 额外请求头 | 静态 HTTP header，一行一个 `Header: value`。 | OpenRouter 等网关要求 `HTTP-Referer`、`X-Title` 或类似站点来源 header 时使用。API key 仍放在上方密钥字段，不要重复写到这里。 |
 | 额外请求体 | 合并到聊天请求体顶层的 JSON 对象。 | 仅用于服务商专用开关，例如 `{"enable_thinking": true}`。`model`、`messages`、`tools`、`stream`、`thinking` 等核心字段仍由 VoltUI 控制，且不接受 `null` 值。 |
 | Authorization: Bearer | 对 Anthropic-compatible provider，把已保存的 API key 用 `Authorization: Bearer <key>` 发送，而不是 `x-api-key`。 | MiniMax Global、Vercel AI Gateway 等网关文档明确要求 Bearer 认证时开启。 |
 | 模型能力模式 | 指定 VoltUI 对该 provider 使用哪种 reasoning 请求协议。 | 默认用“自动识别”。只有网关被误判，或模型文档要求特定 reasoning 格式时再切换。 |
 | Thinking 覆盖 | provider 专用的 `thinking.type` 覆盖项。 | 默认用 Auto。只有后端文档明确支持 `enabled`、`disabled` 或 `adaptive` 时再手动指定；不支持的值可能让中转站拒绝请求。 |
+| `vision_detail` | OpenAI-compatible 图片输入的细节提示，可设为 `low` 或 `high`；留空表示使用服务默认/auto。 | 视觉模型读图成本过高且只需粗略识别时用 `low`；需要更细节的截图、图表或设计稿理解时用 `high`。 |
 | 余额查询 URL | 可选的钱包余额查询接口。 | 服务商提供余额接口，且希望桌面端状态栏显示余额时填写。 |
 | 上下文窗口 | 该 provider 可保留的最大上下文 token 数。`0` 表示使用模型服务默认值。 | 模型实际上下文大小和 VoltUI 默认值或内置元数据不一致时填写。 |
 

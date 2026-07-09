@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"runtime"
+	"time"
 )
 
 // WindowsHelperCommand is an internal CLI subcommand used only by the Windows
@@ -66,6 +67,11 @@ type Spec struct {
 	// Path) means the tool resolves one itself; the composition root sets it from
 	// [tools.shell] so the configured choice rides along with the spec.
 	Shell Shell
+	// WindowsLockWait bounds how long a Windows-sandboxed run may queue behind
+	// another sandboxed command on the same workspace before failing with a
+	// clear error naming the holder. Zero uses the short interactive default; the
+	// bash tool passes a longer budget for background jobs. Other platforms ignore it.
+	WindowsLockWait time.Duration
 }
 
 // Enforce reports whether the spec asks for confinement.

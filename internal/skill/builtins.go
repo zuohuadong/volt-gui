@@ -323,6 +323,7 @@ func builtinSkills() []Skill {
 			Path:         "(builtin)",
 			RunAs:        RunSubagent,
 			AllowedTools: append([]string(nil), reviewTools...),
+			ReadOnly:     true,
 		},
 		{
 			Name:         "security-review",
@@ -332,6 +333,7 @@ func builtinSkills() []Skill {
 			Path:         "(builtin)",
 			RunAs:        RunSubagent,
 			AllowedTools: append([]string(nil), reviewTools...),
+			ReadOnly:     true,
 		},
 		{
 			Name:        "test",

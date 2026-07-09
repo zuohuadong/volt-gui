@@ -177,6 +177,133 @@ func TestStreamUsesConfiguredChatURL(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamUsesResponsesURLAndMapsTextVisionUsage(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("path = %s, want /v1/responses", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"total_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens_details\":{\"reasoning_tokens\":1}}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{
+		Name:    "openai",
+		BaseURL: srv.URL + "/v1",
+		Model:   "gpt-5.4",
+		APIKey:  "k",
+		Extra:   map[string]any{"api_surface": "responses", "vision": true},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ch, err := p.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleSystem, Content: "be concise"},
+			{Role: provider.RoleUser, Content: "inspect", Images: []string{"data:image/png;base64,AAAA"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var got strings.Builder
+	var usage *provider.Usage
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkError {
+			t.Fatalf("stream error: %v", chunk.Err)
+		}
+		if chunk.Type == provider.ChunkText {
+			got.WriteString(chunk.Text)
+		}
+		if chunk.Type == provider.ChunkUsage {
+			usage = chunk.Usage
+		}
+	}
+	if got.String() != "ok" {
+		t.Fatalf("streamed text = %q, want ok", got.String())
+	}
+	if usage == nil || usage.PromptTokens != 10 || usage.CompletionTokens != 2 || usage.CacheHitTokens != 4 || usage.CacheMissTokens != 6 || usage.ReasoningTokens != 1 {
+		t.Fatalf("usage = %+v, want normalized Responses usage", usage)
+	}
+	if body["instructions"] != "be concise" {
+		t.Fatalf("instructions = %v, want system prompt", body["instructions"])
+	}
+	if _, ok := body["messages"]; ok {
+		t.Fatalf("Responses request leaked chat messages field: %#v", body)
+	}
+	if body["store"] != false {
+		t.Fatalf("store = %v, want false by default", body["store"])
+	}
+	input := body["input"].([]any)
+	content := input[0].(map[string]any)["content"].([]any)
+	if content[0].(map[string]any)["type"] != "input_text" || content[1].(map[string]any)["type"] != "input_image" {
+		t.Fatalf("input content = %#v, want text and image parts", content)
+	}
+}
+
+func TestResponsesStreamFunctionCall(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"arguments\":\"{\\\"path\\\":\\\"main.go\\\"}\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"main.go\\\"}\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1,\"total_tokens\":4}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{
+		Name:    "openai",
+		BaseURL: srv.URL,
+		Model:   "gpt-5.4",
+		APIKey:  "k",
+		Extra:   map[string]any{"api_surface": "responses"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ch, err := p.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "read"}},
+		Tools:    []provider.ToolSchema{{Name: "read_file", Description: "Read a file", Parameters: provider.CanonicalizeSchema(nil)}},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var started, completed *provider.ToolCall
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkError {
+			t.Fatalf("stream error: %v", chunk.Err)
+		}
+		if chunk.Type == provider.ChunkToolCallStart {
+			started = chunk.ToolCall
+		}
+		if chunk.Type == provider.ChunkToolCall {
+			completed = chunk.ToolCall
+		}
+	}
+	if started == nil || started.ID != "call_1" || started.Name != "read_file" {
+		t.Fatalf("start = %+v, want call_1/read_file", started)
+	}
+	if completed == nil || completed.ID != "call_1" || completed.Name != "read_file" || completed.Arguments != `{"path":"main.go"}` {
+		t.Fatalf("completed = %+v, want complete function call", completed)
+	}
+	tools := body["tools"].([]any)
+	if tools[0].(map[string]any)["type"] != "function" || tools[0].(map[string]any)["name"] != "read_file" {
+		t.Fatalf("tools = %#v, want Responses function tool", tools)
+	}
+}
+
 func TestStreamSendsCustomHeaders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer real-key" {
@@ -821,8 +948,12 @@ func TestNewThinkingConfigParsing(t *testing.T) {
 }
 
 // TestBuildRequestDeepSeekDisabled covers both user-facing ways to turn
-// DeepSeek thinking off. Either input must route to thinking.type=disabled and
-// drop reasoning_effort.
+// DeepSeek thinking off. Either input must route to thinking.type=disabled,
+// drop reasoning_effort, and keep the pre-fix tool-call history bytes: a
+// tool_calls turn with no reasoning omits the reasoning_content key entirely
+// (only thinking mode requires it), while reasoning left over from a
+// thinking-mode round still round-trips so the prompt-cache prefix of a mixed
+// thinking-on→off session stays stable.
 func TestBuildRequestDeepSeekDisabled(t *testing.T) {
 	base := provider.Config{Name: "ds", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4", APIKey: "k"}
 	for _, tc := range []struct {
@@ -839,12 +970,30 @@ func TestBuildRequestDeepSeekDisabled(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New(%v): %v", tc.extra, err)
 			}
-			req := p.(*client).buildRequest(provider.Request{})
+			req := p.(*client).buildRequest(provider.Request{
+				Messages: []provider.Message{
+					{Role: provider.RoleUser, Content: "inspect"},
+					{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+						ID: "call_1", Name: "read_file", Arguments: `{"path":"main.go"}`,
+					}}},
+					{Role: provider.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "package main"},
+					{Role: provider.RoleAssistant, ReasoningContent: "from a thinking round", ToolCalls: []provider.ToolCall{{
+						ID: "call_2", Name: "read_file", Arguments: `{"path":"go.mod"}`,
+					}}},
+					{Role: provider.RoleTool, ToolCallID: "call_2", Name: "read_file", Content: "module demo"},
+				},
+			})
 			if req.Thinking == nil || req.Thinking.Type != "disabled" {
 				t.Fatalf("Thinking = %+v, want disabled", req.Thinking)
 			}
 			if req.ReasoningEffort != "" {
 				t.Fatalf("disabled DeepSeek must not send reasoning_effort, got %q", req.ReasoningEffort)
+			}
+			if rc := req.Messages[1].ReasoningContent; rc != nil {
+				t.Fatalf("disabled mode must omit reasoning_content on a reasoning-less tool_calls turn, got %q", *rc)
+			}
+			if rc := req.Messages[3].ReasoningContent; rc == nil || *rc != "from a thinking round" {
+				t.Fatalf("disabled mode must keep round-tripping thinking-round reasoning, got %v", rc)
 			}
 		})
 	}
@@ -946,6 +1095,152 @@ func TestNewReadsEffortFromConfig(t *testing.T) {
 	}
 	if got := p.(*client).effort; got != "medium" {
 		t.Errorf("effort = %q, want medium", got)
+	}
+}
+
+func TestStreamReadsReasoningFallbackField(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"reasoning":"vllm thinking","content":"answer"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{Name: "vllm", BaseURL: srv.URL, Model: "qwen", APIKey: "k"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ch, err := p.Stream(context.Background(), provider.Request{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var reasoning, text strings.Builder
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkReasoning:
+			reasoning.WriteString(chunk.Text)
+		case provider.ChunkText:
+			text.WriteString(chunk.Text)
+		case provider.ChunkError:
+			t.Fatalf("stream error: %v", chunk.Err)
+		}
+	}
+	if reasoning.String() != "vllm thinking" {
+		t.Fatalf("reasoning = %q, want vLLM fallback field", reasoning.String())
+	}
+	if text.String() != "answer" {
+		t.Fatalf("text = %q, want answer", text.String())
+	}
+}
+
+func TestStreamReasoningContentTakesPrecedenceOverFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"reasoning_content":"standard","reasoning":"fallback"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{Name: "vllm", BaseURL: srv.URL, Model: "qwen", APIKey: "k"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ch, err := p.Stream(context.Background(), provider.Request{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var reasoning strings.Builder
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkReasoning:
+			reasoning.WriteString(chunk.Text)
+		case provider.ChunkError:
+			t.Fatalf("stream error: %v", chunk.Err)
+		}
+	}
+	if reasoning.String() != "standard" {
+		t.Fatalf("reasoning = %q, want reasoning_content precedence", reasoning.String())
+	}
+}
+
+// TestBuildRequestAlwaysSendsReasoningKeyOnDeepSeekToolCalls proves the wire
+// contract verified against the live API: DeepSeek thinking mode 400s an
+// assistant tool_calls turn whose reasoning_content KEY is missing from the
+// request JSON, but accepts an empty string. A turn whose reasoning was lost
+// upstream (gateway renamed/dropped the field, legacy session, model switch)
+// must therefore still serialize the key — while plain assistant text turns
+// keep omitting it.
+func TestBuildRequestAlwaysSendsReasoningKeyOnDeepSeekToolCalls(t *testing.T) {
+	p, err := New(provider.Config{
+		Name:    "deepseek-proxy",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-pro",
+		APIKey:  "k",
+		Extra:   map[string]any{"reasoning_protocol": "deepseek"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	body, err := json.Marshal(p.(*client).buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "inspect"},
+			{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+				ID: "call_1", Name: "read_file", Arguments: `{"path":"main.go"}`,
+			}}},
+			{Role: provider.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "package main"},
+			{Role: provider.RoleAssistant, Content: "plain text turn"},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	var req struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if len(req.Messages) != 4 {
+		t.Fatalf("messages = %d, want 4", len(req.Messages))
+	}
+	rc, ok := req.Messages[1]["reasoning_content"]
+	if !ok {
+		t.Fatal("tool_calls turn with lost reasoning must still serialize the reasoning_content key")
+	}
+	if string(rc) != `""` {
+		t.Fatalf("reasoning_content = %s, want empty string", rc)
+	}
+	if _, ok := req.Messages[3]["reasoning_content"]; ok {
+		t.Fatal("plain assistant text turn must keep omitting reasoning_content")
+	}
+}
+
+// TestBuildRequestRoundTripsDeepSeekToolCallReasoning keeps the healthy-path
+// bytes intact: when the session has the provider-issued reasoning, it is
+// replayed verbatim on the tool_calls turn.
+func TestBuildRequestRoundTripsDeepSeekToolCallReasoning(t *testing.T) {
+	p, err := New(provider.Config{
+		Name:    "deepseek-proxy",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-pro",
+		APIKey:  "k",
+		Extra:   map[string]any{"reasoning_protocol": "deepseek"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	out := p.(*client).buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "inspect"},
+			{Role: provider.RoleAssistant, ReasoningContent: "read main.go first", ToolCalls: []provider.ToolCall{{
+				ID: "call_1", Name: "read_file", Arguments: `{"path":"main.go"}`,
+			}}},
+			{Role: provider.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "package main"},
+		},
+	})
+	got := out.Messages[1].ReasoningContent
+	if got == nil || *got != "read main.go first" {
+		t.Fatalf("reasoning_content = %v, want provider-issued reasoning round-tripped", got)
 	}
 }
 

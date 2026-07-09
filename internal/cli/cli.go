@@ -171,6 +171,9 @@ func migrateLegacyConfigForCLI() {
 	if _, err := config.MigrateLegacyIfNeeded(); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: config migration failed:", err)
 	}
+	if _, err := config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath()); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: config upgrade failed:", err)
+	}
 }
 
 func migrateMCPConfigForCLIWorkspace() {
@@ -877,8 +880,7 @@ func chatREPL(args []string) int {
 	signal.Notify(hangup, syscall.SIGHUP, syscall.SIGTERM)
 	go func() {
 		for range hangup {
-			_ = ctrl.Snapshot()
-			p.Quit()
+			p.Send(tuiShutdownMsg{})
 		}
 	}()
 	final, runErr := p.Run()

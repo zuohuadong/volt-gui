@@ -1,8 +1,10 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -13,40 +15,47 @@ import (
 
 // ConfineBash returns the bash built-in bound to an OS-sandbox spec, overriding
 // the unconfined instance registered at init. When the spec enforces, bash runs
-// each command through the sandbox (see package sandbox).
-func ConfineBash(spec sandbox.Spec, timeout ...time.Duration) tool.Tool {
+// each command through the sandbox (see package sandbox). guard appends a
+// warning to command output when the command references Reasonix's own session
+// stores (see SessionDataGuard).
+func ConfineBash(spec sandbox.Spec, guard SessionDataGuard, timeout ...time.Duration) tool.Tool {
 	shell := spec.Shell
 	if shell.Path == "" {
 		shell = sandbox.ResolveShell("", "", nil)
 	}
-	b := bash{sb: spec, shell: shell}
+	b := bash{sb: spec, shell: shell, guard: guard}
 	if len(timeout) > 0 {
 		b.timeout = timeout[0]
 	}
 	return b
 }
 
-// ConfineWebFetch returns the web_fetch built-in bound to VoltUI proxy
+// ConfineWebFetch returns the web_fetch built-in bound to Reasonix proxy
 // settings while preserving its SSRF-guarded dialer.
 func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
 	return webFetch{proxySpec: proxySpec}
 }
 
 // ConfineWriters returns the file-writing built-ins (write_file, edit_file,
-// multi_edit, notebook_edit) bound to roots — the only directories they may
+// multi_edit, move_file, notebook_edit) bound to roots — the only directories they may
 // modify. The composition root adds these to the per-run registry to override
 // the unconfined instances registered at init time, so writes stay inside the
 // workspace by default. roots may be relative; they are resolved to absolute,
 // symlink-free paths once here. An empty roots slice yields unconfined writers.
-func ConfineWriters(roots []string) []tool.Tool {
+// guard additionally rejects writes into Reasonix's own session stores even
+// when the roots would allow them (see SessionDataGuard). managed names the
+// Reasonix-owned config files writable outside the roots after a fresh human
+// approval (see ManagedConfigPaths).
+func ConfineWriters(roots []string, guard SessionDataGuard, managed ManagedConfigPaths) []tool.Tool {
 	rs := realRoots(roots)
 	return []tool.Tool{
-		writeFile{roots: rs},
-		editFile{roots: rs},
-		multiEdit{roots: rs},
-		notebookEdit{roots: rs},
-		deleteRange{roots: rs},
-		deleteSymbol{roots: rs},
+		writeFile{roots: rs, guard: guard, managed: managed},
+		editFile{roots: rs, guard: guard, managed: managed},
+		multiEdit{roots: rs, guard: guard, managed: managed},
+		moveFile{roots: rs, guard: guard, managed: managed},
+		notebookEdit{roots: rs, guard: guard, managed: managed},
+		deleteRange{roots: rs, guard: guard, managed: managed},
+		deleteSymbol{roots: rs, guard: guard, managed: managed},
 	}
 }
 
@@ -68,7 +77,9 @@ func ConfineReaders(forbidRoots []string) []tool.Tool {
 // confineRead reports whether target is inside any forbidRoot. An empty
 // forbidRoots slice is unconfined (returns false). Callers should return a
 // result that mimics the directory appearing empty, matching
-// the tmpfs semantics the bubblewrap sandbox provides.
+// the tmpfs semantics the bubblewrap sandbox provides. Deny-side, so the
+// check folds case on case-insensitive platforms (see withinFold): a
+// case-variant of a forbidden path reaches the same bytes there.
 func confineRead(forbidRoots []string, target string) bool {
 	if len(forbidRoots) == 0 {
 		return false
@@ -78,7 +89,7 @@ func confineRead(forbidRoots []string, target string) bool {
 		return false // can't resolve -> let the caller's normal error path handle it
 	}
 	for _, r := range forbidRoots {
-		if within(r, abs) {
+		if withinFold(r, abs) {
 			return true
 		}
 	}
@@ -115,9 +126,44 @@ func confine(roots []string, target string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("path %q is outside the workspace (writes are confined to %s); "+
-		"write inside it, or widen [sandbox] workspace_root / allow_write in voltui.toml",
+	return fmt.Errorf("path %q is outside the writable roots (writes are confined to %s); "+
+		"write inside the workspace or a configured allow_write root, or widen [sandbox] workspace_root / allow_write in voltui.toml",
 		target, strings.Join(roots, ", "))
+}
+
+// confineWrite is the write-tool boundary check: workspace confinement first,
+// then the session-data guard, so a write can be inside the roots (e.g. a
+// home-directory workspace covering the state root) and still be refused when
+// it targets Reasonix's own session stores. A target outside every root that
+// matches a Reasonix-managed config file (see ManagedConfigPaths) may proceed
+// after a fresh per-write human approval carried on ctx; without an approver it
+// fails closed with the original confinement error semantics.
+func confineWrite(ctx context.Context, roots []string, guard SessionDataGuard, managed ManagedConfigPaths, target string) error {
+	confineErr := confine(roots, target)
+	if confineErr == nil {
+		return guard.Check(target)
+	}
+	if !managed.Match(target) {
+		return confineErr
+	}
+	if err := guard.Check(target); err != nil {
+		return err
+	}
+	return managed.approve(ctx, target)
+}
+
+// confinePreview mirrors confineWrite for ctx-less diff previews: they read the
+// target to render a diff but never write, so a managed config file passes
+// without the per-write approval — Execute still gates the actual write.
+func confinePreview(roots []string, guard SessionDataGuard, managed ManagedConfigPaths, target string) error {
+	confineErr := confine(roots, target)
+	if confineErr == nil {
+		return guard.Check(target)
+	}
+	if !managed.Match(target) {
+		return confineErr
+	}
+	return guard.Check(target)
 }
 
 // realPath resolves path to an absolute, symlink-free form. Because a write
@@ -155,4 +201,25 @@ func within(root, path string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// foldPaths reports whether deny-side path checks on this platform must ignore
+// case: the default filesystems on Windows (NTFS) and macOS (APFS/HFS+) are
+// case-insensitive, so /X/SESSIONS and /x/sessions reach the same bytes and a
+// case-variant must not slip past a deny rule. EvalSymlinks does NOT normalize
+// case, so realPath alone cannot be relied on for this.
+var foldPaths = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+// withinFold is within with platform case folding, for DENY-side checks only
+// (forbid-read roots, the session-data guard). Allow-side checks (confine)
+// keep the exact within: folding an allow rule on a case-sensitive filesystem
+// would wave a genuinely different directory through, whereas folding a deny
+// rule only ever refuses more. On a case-sensitive macOS volume this can
+// refuse a legitimate same-letters-different-case path; the error text points
+// at allow_write / forbid_read config as the way out.
+func withinFold(root, path string) bool {
+	if foldPaths {
+		return within(strings.ToLower(root), strings.ToLower(path))
+	}
+	return within(root, path)
 }

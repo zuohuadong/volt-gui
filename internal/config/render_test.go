@@ -16,13 +16,24 @@ func isolateUserConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("VOLTUI_CREDENTIALS_STORE", "file")
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 	return home
 }
 
-func expectedDefaultVoltUIHome(home string) string {
+// setRuntimeGOOS overrides the package-level runtimeGOOS for one test. The
+// t.Setenv call is a guard: it panics if the test also uses t.Parallel, which
+// would otherwise race on the shared global.
+func setRuntimeGOOS(t *testing.T, goos string) {
+	t.Helper()
+	t.Setenv("REASONIX_TEST_GOOS", goos)
+	old := runtimeGOOS
+	runtimeGOOS = goos
+	t.Cleanup(func() { runtimeGOOS = old })
+}
+
+func expectedDefaultReasonixHome(home string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(home, "AppData", "Roaming", "voltui")
 	}
@@ -43,28 +54,62 @@ func TestUserConfigDisplayPathCollapsesHome(t *testing.T) {
 	}
 }
 
-func TestUserConfigPathUsesVoltUIHome(t *testing.T) {
+func TestUserConfigPathUsesReasonixHome(t *testing.T) {
 	home := isolateUserConfigHome(t)
-	want := filepath.Join(expectedDefaultVoltUIHome(home), "config.toml")
+	want := filepath.Join(expectedDefaultReasonixHome(home), "config.toml")
 	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
 	}
 }
 
-func TestUserConfigPathHonorsVoltUIHome(t *testing.T) {
+func TestReasonixManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
+	home := isolateUserConfigHome(t)
+	setRuntimeGOOS(t, "windows")
+	oldConfigDir := osUserConfigDir
+	osUserConfigDir = func() string { return filepath.Join(home, "AppData", "Roaming") }
+	t.Cleanup(func() { osUserConfigDir = oldConfigDir })
+
+	paths := ReasonixManagedConfigPaths()
+	for _, want := range []string{
+		filepath.Join(home, "AppData", "Roaming", "voltui", "config.toml"),
+		filepath.Join(home, ".voltui", "config.json"),
+	} {
+		found := false
+		for _, got := range paths {
+			if samePath(got, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("managed config paths = %v, want %s", paths, want)
+		}
+	}
+	// The escape hatch is file-level by contract: no directories, and none of
+	// the sensitive Reasonix-home siblings (credentials, hooks, skills,
+	// sessions) may ride along.
+	for _, got := range paths {
+		if base := filepath.Base(got); base != "config.toml" && base != "config.json" {
+			t.Fatalf("managed config path %q is not a known config file (paths must be files, not directories): %v", got, paths)
+		}
+		for _, forbidden := range []string{
+			home,
+			ReasonixHomeDir(),
+			UserCredentialsPath(),
+			filepath.Join(ReasonixHomeDir(), "settings.json"),
+			filepath.Join(ReasonixHomeDir(), "skills"),
+			filepath.Join(ReasonixHomeDir(), "sessions"),
+		} {
+			if samePath(got, forbidden) {
+				t.Fatalf("managed config paths must not include %q: %v", forbidden, paths)
+			}
+		}
+	}
+}
+
+func TestUserConfigPathHonorsReasonixHome(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	custom := filepath.Join(home, "custom-home")
-	t.Setenv("VOLTUI_HOME", custom)
-
-	want := filepath.Join(custom, "config.toml")
-	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
-		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
-	}
-}
-
-func TestUserConfigPathHonorsLegacyReasonixHome(t *testing.T) {
-	home := isolateUserConfigHome(t)
-	custom := filepath.Join(home, "legacy-home")
 	t.Setenv("REASONIX_HOME", custom)
 
 	want := filepath.Join(custom, "config.toml")
@@ -89,7 +134,7 @@ func TestLoadForRootUsesWindowsHomeFallbackWhenConfigDirUnavailable(t *testing.T
 		osUserHomeDir = oldHomeDir
 	})
 
-	t.Setenv("VOLTUI_HOME", "")
+	t.Setenv("REASONIX_HOME", "")
 
 	configPath := filepath.Join(home, "AppData", "Roaming", "voltui", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -187,7 +232,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 			Server:   "127.0.0.1",
 			Port:     7890,
 			Username: "user",
-			Password: "${VOLTUI_PROXY_PASSWORD}",
+			Password: "${REASONIX_PROXY_PASSWORD}",
 		},
 	}
 	orig.Environment.Enabled = boolPtr(false)
@@ -262,8 +307,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.DefaultModel != "mimo-pro" {
 		t.Errorf("default_model = %q, want mimo-pro", got.DefaultModel)
 	}
-	if got.ConfigVersion != 3 {
-		t.Errorf("config_version = %d, want 3", got.ConfigVersion)
+	if got.ConfigVersion != 4 {
+		t.Errorf("config_version = %d, want 4", got.ConfigVersion)
 	}
 	if got.Language != "zh" {
 		t.Errorf("language = %q, want zh", got.Language)
@@ -472,18 +517,10 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 
 func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	cfg := Default()
-	allowHostAutomation := false
-	cfg.Agent.PlanModeAllowHostAutomation = &allowHostAutomation
 	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
 	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
-	if !strings.Contains(rendered, `plan_mode_allow_host_automation = false`) {
-		t.Fatalf("rendered config should preserve plan_mode_allow_host_automation=false:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "allow browser/desktop automation while planning") {
-		t.Fatalf("rendered config should document plan_mode_allow_host_automation semantics:\n%s", rendered)
-	}
 	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
 	}
@@ -494,9 +531,6 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
-	}
-	if got.Agent.PlanModeAllowHostAutomation == nil || *got.Agent.PlanModeAllowHostAutomation {
-		t.Fatalf("PlanModeAllowHostAutomation round trip = %+v, want false", got.Agent.PlanModeAllowHostAutomation)
 	}
 	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
 		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)
@@ -597,7 +631,7 @@ func TestRenderTOMLCreationLayoutStyle(t *testing.T) {
 
 func TestScopedRenderPreservesLSPConfig(t *testing.T) {
 	const src = `
-config_version = 3
+config_version = 4
 default_model = "mimo"
 
 [lsp]
@@ -721,7 +755,7 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c.Desktop.CheckUpdates = boolPtr(false)
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 3", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, "[notifications]", "[tools.shell]"} {
+	for _, want := range []string{"config_version = 4", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, "[notifications]", "[tools.shell]"} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}
@@ -884,6 +918,37 @@ func TestRenderTOMLRoundTripsVisionModels(t *testing.T) {
 	}
 }
 
+func TestRenderTOMLRoundTripsResponsesAPISurface(t *testing.T) {
+	orig := Default()
+	orig.Providers = []ProviderEntry{{
+		Name:         "openai-responses",
+		Kind:         "openai",
+		BaseURL:      "https://api.openai.com/v1",
+		ResponsesURL: "https://gateway.example.com/v1/responses",
+		APISurface:   APISurfaceResponses,
+		Models:       []string{"gpt-5.4"},
+		Default:      "gpt-5.4",
+		APIKeyEnv:    "OPENAI_API_KEY",
+	}}
+
+	rendered := RenderTOML(orig)
+	if !strings.Contains(rendered, `api_surface = "responses"`) || !strings.Contains(rendered, `responses_url = "https://gateway.example.com/v1/responses"`) {
+		t.Fatalf("rendered TOML missing Responses fields:\n%s", rendered)
+	}
+
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v", err)
+	}
+	p, ok := got.Provider("openai-responses")
+	if !ok {
+		t.Fatal("provider missing after round trip")
+	}
+	if p.APISurface != APISurfaceResponses || p.ResponsesURL != "https://gateway.example.com/v1/responses" {
+		t.Fatalf("responses fields after round trip = surface %q url %q", p.APISurface, p.ResponsesURL)
+	}
+}
+
 func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	orig := Default()
 	orig.Providers = []ProviderEntry{{
@@ -895,7 +960,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 		APIKeyEnv: "GATEWAY_API_KEY",
 		Headers: map[string]string{
 			"HTTP-Referer": "https://app.example",
-			"X-Title":      "VoltUI",
+			"X-Title":      "Reasonix",
 		},
 		ExtraBody: map[string]any{
 			"enable_thinking": true,
@@ -916,7 +981,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	}}
 
 	rendered := RenderTOML(orig)
-	if !strings.Contains(rendered, `headers     = { HTTP-Referer = "https://app.example", X-Title = "VoltUI" }`) {
+	if !strings.Contains(rendered, `headers     = { HTTP-Referer = "https://app.example", X-Title = "Reasonix" }`) {
 		t.Fatalf("rendered TOML missing headers:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, `extra_body`) || !strings.Contains(rendered, `"enable_thinking" = true`) {
@@ -937,7 +1002,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	if !ok {
 		t.Fatal("gateway provider missing after round trip")
 	}
-	if p.Headers["HTTP-Referer"] != "https://app.example" || p.Headers["X-Title"] != "VoltUI" {
+	if p.Headers["HTTP-Referer"] != "https://app.example" || p.Headers["X-Title"] != "Reasonix" {
 		t.Fatalf("headers after round trip = %+v", p.Headers)
 	}
 	if p.ExtraBody["enable_thinking"] != true || p.ExtraBody["top_p"] != 0.8 {
@@ -1020,6 +1085,23 @@ func TestRenderTOMLDefaultStepsCommentedOut(t *testing.T) {
 				t.Errorf("default planner_max_steps should be commented out in [agent], got: %s", line)
 			}
 		}
+	}
+}
+
+func TestRenderTOMLWindowsSandboxDefaultAndExplicitEnforceDisabled(t *testing.T) {
+	isolateUserConfigHome(t)
+	setRuntimeGOOS(t, "windows")
+
+	defaultRendered := RenderTOMLForScope(Default(), RenderScopeUser)
+	if !strings.Contains(defaultRendered, `bash    = "off"`) {
+		t.Fatalf("Windows default user config should render bash off:\n%s", defaultRendered)
+	}
+
+	cfg := Default()
+	cfg.Sandbox.Bash = "enforce"
+	delta := RenderTOMLProjectDelta(cfg)
+	if strings.Contains(delta, `[sandbox]`) || strings.Contains(delta, `bash = `) {
+		t.Fatalf("Windows explicit enforce should not render as an effective project delta:\n%s", delta)
 	}
 }
 
@@ -1107,7 +1189,6 @@ func TestRenderTOMLDefaultStepsDoNotOverrideGlobalConfig(t *testing.T) {
 }
 
 func TestIsolatedHomeDirEmptyByDefault(t *testing.T) {
-	t.Setenv("VOLTUI_HOME", "")
 	t.Setenv("REASONIX_HOME", "")
 	if got := IsolatedHomeDir(); got != "" {
 		t.Fatalf("IsolatedHomeDir() = %q, want empty", got)
@@ -1116,7 +1197,7 @@ func TestIsolatedHomeDirEmptyByDefault(t *testing.T) {
 
 func TestIsolatedHomeDirReturnsCleanPath(t *testing.T) {
 	raw := filepath.Join(t.TempDir(), "isolated-voltui")
-	t.Setenv("VOLTUI_HOME", raw)
+	t.Setenv("REASONIX_HOME", raw)
 	got := IsolatedHomeDir()
 	if filepath.Clean(got) != filepath.Clean(raw) {
 		t.Fatalf("IsolatedHomeDir() = %q, want %q", got, raw)
@@ -1125,7 +1206,7 @@ func TestIsolatedHomeDirReturnsCleanPath(t *testing.T) {
 
 func TestLegacyOSSupportDirEmptyWhenIsolated(t *testing.T) {
 	isolateUserConfigHome(t)
-	t.Setenv("VOLTUI_HOME", filepath.Join(t.TempDir(), "isolated-home"))
+	t.Setenv("REASONIX_HOME", filepath.Join(t.TempDir(), "isolated-home"))
 	if got := legacyOSSupportDir(); got != "" {
 		t.Fatalf("legacyOSSupportDir() = %q, want empty when isolated", got)
 	}
@@ -1133,18 +1214,18 @@ func TestLegacyOSSupportDirEmptyWhenIsolated(t *testing.T) {
 
 func TestLegacyXDGConfigPathsEmptyWhenIsolated(t *testing.T) {
 	isolateUserConfigHome(t)
-	t.Setenv("VOLTUI_HOME", filepath.Join(t.TempDir(), "isolated-home"))
+	t.Setenv("REASONIX_HOME", filepath.Join(t.TempDir(), "isolated-home"))
 	if got := legacyXDGConfigPaths(); got != nil {
 		t.Fatalf("legacyXDGConfigPaths() = %v, want nil when isolated", got)
 	}
 }
 
-func TestCacheDirHonorsVoltUIHome(t *testing.T) {
+func TestCacheDirHonorsReasonixHome(t *testing.T) {
 	home := t.TempDir()
 	isolated := filepath.Join(home, "isolated-home")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("VOLTUI_HOME", isolated)
+	t.Setenv("REASONIX_HOME", isolated)
 
 	got := CacheDir()
 	want := filepath.Join(isolated, "cache")
@@ -1153,28 +1234,28 @@ func TestCacheDirHonorsVoltUIHome(t *testing.T) {
 	}
 }
 
-func TestCacheDirHonorsVoltUICacheHomeOverVoltUIHome(t *testing.T) {
+func TestCacheDirHonorsReasonixCacheHomeOverReasonixHome(t *testing.T) {
 	home := t.TempDir()
 	cacheHome := filepath.Join(home, "custom-cache")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("VOLTUI_HOME", filepath.Join(home, "isolated-home"))
-	t.Setenv("VOLTUI_CACHE_HOME", cacheHome)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, "isolated-home"))
+	t.Setenv("REASONIX_CACHE_HOME", cacheHome)
 
 	got := CacheDir()
 	want := cacheHome
 	if filepath.Clean(got) != filepath.Clean(want) {
-		t.Fatalf("CacheDir() = %q, want %q (VOLTUI_CACHE_HOME must win)", got, want)
+		t.Fatalf("CacheDir() = %q, want %q (REASONIX_CACHE_HOME must win)", got, want)
 	}
 }
 
 func TestUserConfigLoadPathNoLegacyFallbackWhenIsolated(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	isolated := filepath.Join(home, "isolated-home")
-	t.Setenv("VOLTUI_HOME", isolated)
+	t.Setenv("REASONIX_HOME", isolated)
 
 	// Create a legacy config at the OS production path — it must not be loaded.
-	productionHome := expectedDefaultVoltUIHome(home)
+	productionHome := expectedDefaultReasonixHome(home)
 	if err := os.MkdirAll(productionHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1192,7 +1273,7 @@ func TestUserConfigLoadPathNoLegacyFallbackWhenIsolated(t *testing.T) {
 
 func TestCredentialSourceCandidatesSkipHomeEnvWhenIsolated(t *testing.T) {
 	isolateUserConfigHome(t)
-	t.Setenv("VOLTUI_HOME", filepath.Join(t.TempDir(), "isolated-home"))
+	t.Setenv("REASONIX_HOME", filepath.Join(t.TempDir(), "isolated-home"))
 
 	// Write a key into the production home .env — it must not appear as a source.
 	if home, err := os.UserHomeDir(); err == nil {
@@ -1212,7 +1293,7 @@ func TestCredentialSourceCandidatesSkipHomeEnvWhenIsolated(t *testing.T) {
 func TestMigrateLegacyIfNeededSkipsWhenIsolated(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	isolated := filepath.Join(home, "isolated-home")
-	t.Setenv("VOLTUI_HOME", isolated)
+	t.Setenv("REASONIX_HOME", isolated)
 
 	// Create a legacy config.json in production home — migration must skip it.
 	legacyDir := filepath.Join(home, ".voltui")

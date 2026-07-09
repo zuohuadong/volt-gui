@@ -155,6 +155,14 @@ func (a *App) refreshBotRuntimeAsync() {}
 
 func (a *App) refreshBotRuntime() {}
 
+func (a *App) loadDesktopBotConfig() (*config.Config, error) {
+	cfg, _, err := a.loadDesktopUserConfigForViewWithCredentials()
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func (a *App) stopBotRuntime() {}
 
 func (a *App) BotRuntimeStatus() BotRuntimeStatusView {

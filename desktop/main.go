@@ -101,6 +101,7 @@ func main() {
 	}
 
 	app := NewApp()
+	brand := loadDesktopBrand()
 
 	// Restore saved window size, or fall back to the default.
 	width, height := 1240, 720
@@ -114,7 +115,7 @@ func main() {
 	}
 
 	err := wails.Run(&options.App{
-		Title:     "VoltUI",
+		Title:     brand.displayName(),
 		Width:     width,
 		Height:    height,
 		MinWidth:  760,
@@ -158,7 +159,7 @@ func main() {
 			WebviewGpuIsDisabled: windowsWebview2GPUDisabled(),
 		},
 		Linux: &linux.Options{
-			ProgramName: "VoltUI",
+			ProgramName: brand.compactName(),
 			// WebKitGTK GPU compositing is inconsistent across distros/drivers and
 			// is the one real cross-platform rough edge for a Go+webview stack:
 			// "always" can yield blank or flickering webviews on some setups, so

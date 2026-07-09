@@ -6,8 +6,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-
-	"voltui/internal/config"
 )
 
 // createAppMenu builds the native application menu bar. macOS only: it's the
@@ -19,10 +17,7 @@ func (a *App) createAppMenu() *menu.Menu {
 		return nil
 	}
 
-	brandName := "VoltUI"
-	if cfg, err := config.Load(); err == nil {
-		brandName = cfg.BrandName()
-	}
+	brandName := loadDesktopBrand().displayName()
 
 	m := menu.NewMenu()
 
@@ -34,10 +29,10 @@ func (a *App) createAppMenu() *menu.Menu {
 			runtime.EventsEmit(a.ctx, "app:open-settings")
 		}
 	})
-	fileMenu.AddText("Show " + brandName, nil, func(_ *menu.CallbackData) {
+	fileMenu.AddText("Show "+brandName, nil, func(_ *menu.CallbackData) {
 		a.showMainWindow()
 	})
-	fileMenu.AddText("Quit " + brandName, keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+	fileMenu.AddText("Quit "+brandName, keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		a.quitApp()
 	})
 	m.Append(menu.EditMenu())

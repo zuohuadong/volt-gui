@@ -62,7 +62,7 @@ func (a *App) refreshBotRuntime() {
 }
 
 func (a *App) loadDesktopBotConfig() (*config.Config, error) {
-	cfg, _, err := a.loadDesktopUserConfigForEdit()
+	cfg, _, err := a.loadDesktopUserConfigForViewWithCredentials()
 	if err != nil {
 		return nil, err
 	}

@@ -99,7 +99,7 @@ func reviewCommand(args []string) int {
 	return 0
 }
 
-func buildReviewSubagentRegistry(reviewSk skill.Skill) *tool.Registry {
+func buildReviewSubagentRegistry(reviewSk skill.Skill, _ ...*config.Config) *tool.Registry {
 	// The shared helper strips subagent-unavailable background capabilities while
 	// preserving foreground bash. This direct CLI path does not go through boot,
 	// so it first builds the small parent set from the review skill allow-list.
@@ -108,6 +108,9 @@ func buildReviewSubagentRegistry(reviewSk skill.Skill) *tool.Registry {
 		if tl, ok := tool.LookupBuiltin(name); ok {
 			parentReg.Add(tl)
 		}
+	}
+	if reviewSk.ReadOnly {
+		return agent.ReadOnlySubagentToolRegistry(parentReg, reviewSk.AllowedTools)
 	}
 	return agent.SubagentToolRegistry(parentReg, reviewSk.AllowedTools)
 }

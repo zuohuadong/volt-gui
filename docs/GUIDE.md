@@ -577,6 +577,15 @@ MCP tool names to `trusted_read_only_tools` in the owning config source: project
 are updated in the user's VoltUI config. Trust only side-effect-free readers;
 create/update/delete tools should remain untrusted.
 
+Desktop releases include the built-in `computer-use` MCP. The app resources
+ship `@zavora-ai/computer-use-mcp` with its platform prebuilt `.node` binaries;
+at runtime VoltUI starts the bundled `dist/server.js` with system Node (>= 18,
+or `VOLTUI_COMPUTER_USE_NODE` if you point it at your own Node; Windows ARM64
+currently needs the x64 Node/native compatibility path). It appears in
+the desktop MCP panel as a built-in server that can be enabled or disabled for
+the current session. `screenshot`, mouse, and keyboard tools are not pre-trusted;
+they still pass through VoltUI's normal MCP tool approval flow.
+
 A server's **prompts** surface as `/mcp__<server>__<prompt>` slash commands
 (positional args after the command); its **resources** are pulled in by writing
 `@<server>:<uri>` in a message; `/mcp` lists connected servers and what each

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -25,15 +26,17 @@ func TestEntries(t *testing.T) {
 		currentExecutable = executablePathDefault
 		lookPath = lookPathDefault
 	})
+	t.Setenv(computerUseResourceDirEnv, "/opt/voltui/computer-use-mcp")
 
 	entries := Entries()
-	if len(entries) != 3 {
-		t.Fatalf("Entries() length = %d, want 3", len(entries))
+	if len(entries) != 4 {
+		t.Fatalf("Entries() length = %d, want 4", len(entries))
 	}
 	want := map[string][]string{
-		TimeName:     []string{"builtin-mcp", "time"},
-		OfficeName:   []string{"builtin-mcp", "office"},
-		Context7Name: []string{"-y", "@upstash/context7-mcp"},
+		TimeName:        []string{"builtin-mcp", "time"},
+		OfficeName:      []string{"builtin-mcp", "office"},
+		ComputerUseName: []string{filepath.Join("/opt/voltui/computer-use-mcp", filepath.FromSlash(computerUseServerRelPath))},
+		Context7Name:    []string{"-y", "@upstash/context7-mcp"},
 	}
 	for _, e := range entries {
 		args, ok := want[e.Name]
@@ -41,9 +44,10 @@ func TestEntries(t *testing.T) {
 			t.Fatalf("unexpected built-in MCP entry: %+v", e)
 		}
 		wantCommand := map[string]string{
-			TimeName:     "voltui",
-			OfficeName:   "voltui",
-			Context7Name: "npx",
+			TimeName:        "voltui",
+			OfficeName:      "voltui",
+			ComputerUseName: "node",
+			Context7Name:    "npx",
 		}[e.Name]
 		if e.Type != "stdio" || e.Command != wantCommand || e.Tier != "lazy" {
 			t.Fatalf("%s type/command/tier = %q/%q/%q, want stdio/%s/lazy", e.Name, e.Type, e.Command, e.Tier, wantCommand)
@@ -61,29 +65,51 @@ func TestEntries(t *testing.T) {
 func TestAppendMissingLetsUserConfigWin(t *testing.T) {
 	base := Entries()[:1]
 	got := AppendMissing(nil, base)
-	if len(got) != 2 || got[0].Name != OfficeName || got[1].Name != Context7Name {
-		t.Fatalf("AppendMissing with configured time = %+v, want office + context7", got)
+	if len(got) != 3 || got[0].Name != OfficeName || got[1].Name != ComputerUseName || got[2].Name != Context7Name {
+		t.Fatalf("AppendMissing with configured time = %+v, want office + computer-use + context7", got)
 	}
 }
 
 func TestAppendMissingLetsReservedNamesWin(t *testing.T) {
 	got := AppendMissing(nil, nil, TimeName)
-	if len(got) != 2 || got[0].Name != OfficeName || got[1].Name != Context7Name {
-		t.Fatalf("AppendMissing with reserved time = %+v, want office + context7", got)
+	if len(got) != 3 || got[0].Name != OfficeName || got[1].Name != ComputerUseName || got[2].Name != Context7Name {
+		t.Fatalf("AppendMissing with reserved time = %+v, want office + computer-use + context7", got)
 	}
 }
 
-func TestAppendDefaultEnabledOnlyAddsOffice(t *testing.T) {
+func TestAppendDefaultEnabledAddsDefaultOnBuiltIns(t *testing.T) {
 	t.Setenv(enableDefaultBuiltInMCPInTestsEnv, "1")
 
 	got := AppendDefaultEnabled(nil, nil)
-	if len(got) != 1 || got[0].Name != OfficeName {
-		t.Fatalf("AppendDefaultEnabled = %+v, want only office", got)
+	if len(got) != 2 || got[0].Name != OfficeName || got[1].Name != ComputerUseName {
+		t.Fatalf("AppendDefaultEnabled = %+v, want office + computer-use", got)
 	}
 	off := Entries()[1]
 	off.Command = "custom-office"
-	if got := AppendDefaultEnabled(nil, []config.PluginEntry{off}); len(got) != 0 {
+	got = AppendDefaultEnabled(nil, []config.PluginEntry{off})
+	if len(got) != 1 || got[0].Name != ComputerUseName {
 		t.Fatalf("AppendDefaultEnabled should respect configured office override, got %+v", got)
+	}
+}
+
+func TestComputerUseEntryUsesBundledServerAndNodeOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(computerUseResourceDirEnv, dir)
+	t.Setenv(computerUseNodeEnv, "/opt/node/bin/node")
+
+	entry, ok := Entry(ComputerUseName)
+	if !ok {
+		t.Fatal("computer-use built-in entry missing")
+	}
+	if entry.Command != "/opt/node/bin/node" {
+		t.Fatalf("computer-use command = %q, want env override", entry.Command)
+	}
+	want := filepath.Join(dir, filepath.FromSlash(computerUseServerRelPath))
+	if len(entry.Args) != 1 || entry.Args[0] != want {
+		t.Fatalf("computer-use args = %+v, want [%q]", entry.Args, want)
+	}
+	if entry.Type != "stdio" || entry.Tier != "lazy" {
+		t.Fatalf("computer-use type/tier = %q/%q, want stdio/lazy", entry.Type, entry.Tier)
 	}
 }
 

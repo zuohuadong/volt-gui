@@ -12,11 +12,16 @@ import (
 )
 
 const (
-	TimeName     = "time"
-	Context7Name = "context7"
-	OfficeName   = "office"
+	TimeName        = "time"
+	Context7Name    = "context7"
+	OfficeName      = "office"
+	ComputerUseName = "computer-use"
 
 	enableDefaultBuiltInMCPInTestsEnv = "VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS"
+	computerUseNodeEnv                = "VOLTUI_COMPUTER_USE_NODE"
+	computerUseResourceDirEnv         = "VOLTUI_COMPUTER_USE_MCP_DIR"
+	computerUseResourceDirName        = "computer-use-mcp"
+	computerUseServerRelPath          = "node_modules/@zavora-ai/computer-use-mcp/dist/server.js"
 )
 
 var (
@@ -44,6 +49,7 @@ func Entries() []config.PluginEntry {
 			Args:    []string{"builtin-mcp", OfficeName},
 			Tier:    "lazy",
 		},
+		computerUseEntry(),
 		context7Entry(),
 	}
 }
@@ -77,6 +83,75 @@ func context7Command() (string, []string) {
 		return "bunx", []string{"@upstash/context7-mcp"}
 	}
 	return "npx", []string{"-y", "@upstash/context7-mcp"}
+}
+
+func computerUseEntry() config.PluginEntry {
+	return config.PluginEntry{
+		Name:    ComputerUseName,
+		Type:    "stdio",
+		Command: computerUseNodeCommand(),
+		Args:    []string{computerUseServerPath()},
+		Tier:    "lazy",
+	}
+}
+
+func computerUseNodeCommand() string {
+	if command := strings.TrimSpace(os.Getenv(computerUseNodeEnv)); command != "" {
+		return command
+	}
+	return "node"
+}
+
+func computerUseServerPath() string {
+	return filepath.Join(computerUseResourceDir(), filepath.FromSlash(computerUseServerRelPath))
+}
+
+func computerUseResourceDir() string {
+	if dir := strings.TrimSpace(os.Getenv(computerUseResourceDirEnv)); dir != "" {
+		return dir
+	}
+	for _, dir := range computerUseResourceDirCandidates() {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	candidates := computerUseResourceDirCandidates()
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+	return computerUseResourceDirName
+}
+
+func computerUseResourceDirCandidates() []string {
+	var out []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		clean := filepath.Clean(dir)
+		for _, existing := range out {
+			if existing == clean {
+				return
+			}
+		}
+		out = append(out, clean)
+	}
+	if exe, err := currentExecutable(); err == nil && exe != "" {
+		exeDir := filepath.Dir(exe)
+		add(filepath.Join(exeDir, computerUseResourceDirName))
+		add(filepath.Join(filepath.Dir(exeDir), "Resources", computerUseResourceDirName))
+		if strings.Contains(exeDir, ".app"+string(filepath.Separator)+"Contents"+string(filepath.Separator)+"MacOS") {
+			add(filepath.Join(filepath.Dir(exeDir), "Resources", computerUseResourceDirName))
+		}
+	}
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		add(filepath.Join(wd, computerUseResourceDirName))
+		add(filepath.Join(wd, "build", computerUseResourceDirName))
+		add(filepath.Join(wd, "desktop", "build", computerUseResourceDirName))
+	}
+	add(filepath.Join(string(filepath.Separator), "usr", "lib", "voltui", computerUseResourceDirName))
+	return out
 }
 
 // Entry returns one built-in MCP entry by name.
@@ -118,7 +193,7 @@ func IsBuiltInEntry(e config.PluginEntry) bool {
 // session-scoped entry with the same name exists. Explicit user and host config
 // wins, including auto_start=false.
 func AppendMissing(out []config.PluginEntry, configured []config.PluginEntry, reservedNames ...string) []config.PluginEntry {
-	return AppendEnabled(out, configured, []string{TimeName, OfficeName, Context7Name}, reservedNames...)
+	return AppendEnabled(out, configured, []string{TimeName, OfficeName, ComputerUseName, Context7Name}, reservedNames...)
 }
 
 // DefaultEnabledNames returns built-ins that should be active in ordinary
@@ -128,7 +203,7 @@ func DefaultEnabledNames() []string {
 	if runningGoTestBinary() && os.Getenv(enableDefaultBuiltInMCPInTestsEnv) == "" {
 		return nil
 	}
-	return []string{OfficeName}
+	return []string{OfficeName, ComputerUseName}
 }
 
 // AppendDefaultEnabled appends only default-on built-in MCP servers.

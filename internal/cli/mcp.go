@@ -298,6 +298,10 @@ func looksSensitiveMCPKey(key string) bool {
 	return false
 }
 
+func looksSensitiveMCPQueryKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), "key") || looksSensitiveMCPKey(key)
+}
+
 func looksSensitiveMCPValue(value string) bool {
 	lower := strings.ToLower(value)
 	for _, needle := range []string{"access_token", "id_token", "refresh_token", "api_key", "api-key", "apikey", "bearer "} {
@@ -323,7 +327,7 @@ func redactMCPURL(raw string) string {
 	q := u.Query()
 	changed := false
 	for key := range q {
-		if looksSensitiveMCPKey(key) {
+		if looksSensitiveMCPQueryKey(key) {
 			q.Set(key, "<redacted>")
 			changed = true
 		}

@@ -34,6 +34,7 @@ import (
 	"voltui/internal/billing"
 	"voltui/internal/boot"
 	"voltui/internal/botruntime"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
@@ -5775,6 +5776,7 @@ func (a *App) mcpServersView() []ServerView {
 	configured := map[string]config.PluginEntry{}
 	var configuredEntries []config.PluginEntry
 	if cfg, err := config.LoadForRoot(workspaceRoot); err == nil {
+		configuredEntries = builtinmcp.AppendDefaultEnabled(configuredEntries, cfg.Plugins)
 		configuredEntries = append(configuredEntries, cfg.Plugins...)
 		for _, p := range configuredEntries {
 			configured[p.Name] = p
@@ -5901,6 +5903,7 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	}
 	v.Transport = tt
 	v.Configured = true
+	v.BuiltIn = builtinmcp.IsBuiltInEntry(p)
 	v.AutoStart = p.ShouldAutoStart()
 	v.Tier = p.ResolvedTier()
 	if v.StartIntent == "" {
@@ -6675,6 +6678,9 @@ func (a *App) connectConfiguredMCPServerForTab(tab *WorkspaceTab, name string) (
 			return ctrl.ConnectMCPServer(p)
 		}
 	}
+	if p, ok := builtinmcp.Entry(name); ok {
+		return ctrl.ConnectMCPServer(p)
+	}
 	return 0, fmt.Errorf("no configured MCP server named %q", name)
 }
 
@@ -6729,6 +6735,9 @@ func (a *App) desktopMCPServerForEdit(name string) (config.PluginEntry, bool, er
 		if p, ok := findPluginEntry(merged.Plugins, name); ok {
 			return p, true, nil
 		}
+	}
+	if p, ok := builtinmcp.Entry(name); ok {
+		return p, true, nil
 	}
 	return config.PluginEntry{}, false, nil
 }

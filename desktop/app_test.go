@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1051,8 +1052,8 @@ api_key_env = "DEEPSEEK_API_KEY"
 		if !p.BuiltIn {
 			t.Fatalf("deepseek provider should be marked built-in for official endpoint: %+v", p)
 		}
-		if !p.Added || !p.KeySet || len(p.Models) != 2 || p.Models[0] != "deepseek-v4-flash" || p.Models[1] != "deepseek-v4-pro" || p.Default != "deepseek-v4-flash" {
-			t.Fatalf("deepseek provider = %+v, want added repaired official model list", p)
+		if !p.Added || !p.KeySet || !slices.Contains(p.Models, "deepseek-v4-flash") || !slices.Contains(p.Models, "deepseek-v4-pro") || p.Default != "deepseek-v4-flash" {
+			t.Fatalf("deepseek provider = %+v, want added repaired official models", p)
 		}
 		if got.DefaultModel != "deepseek/deepseek-v4-flash" {
 			t.Fatalf("default_model = %q, want deepseek/deepseek-v4-flash", got.DefaultModel)

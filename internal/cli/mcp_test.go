@@ -159,7 +159,7 @@ func TestMCPGetRedactsRemoteAuthMaterial(t *testing.T) {
 	_ = captureStdout(t, func() {
 		if rc := Run([]string{
 			"mcp", "add", "stripe",
-			"--http", "https://mcp.example.test/mcp?access_token=abc&workspace=main",
+			"--http", "https://mcp.example.test/mcp?access_token=abc&key=xyz&workspace=main",
 			"--header", "Authorization=Bearer abc",
 		}, "test-version"); rc != 0 {
 			t.Fatalf("mcp add remote rc = %d, want 0", rc)
@@ -175,13 +175,14 @@ func TestMCPGetRedactsRemoteAuthMaterial(t *testing.T) {
 		"type: http",
 		"workspace=main",
 		"access_token=%3Credacted%3E",
+		"key=%3Credacted%3E",
 		"Authorization=<redacted>",
 	} {
 		if !strings.Contains(getOut, want) {
 			t.Fatalf("mcp get remote output missing %q:\n%s", want, getOut)
 		}
 	}
-	if strings.Contains(getOut, "Bearer abc") || strings.Contains(getOut, "access_token=abc") {
+	if strings.Contains(getOut, "Bearer abc") || strings.Contains(getOut, "access_token=abc") || strings.Contains(getOut, "key=xyz") {
 		t.Fatalf("mcp get leaked remote auth material:\n%s", getOut)
 	}
 }

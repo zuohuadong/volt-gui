@@ -39,7 +39,14 @@ import type {
 
 export type ToolStatus = "running" | "done" | "error" | "stopped";
 
-export type LiveStream = { id: string; text: string; reasoning: string; reasoningComplete: boolean };
+export type LiveStream = {
+  id: string;
+  text: string;
+  reasoning: string;
+  reasoningComplete: boolean;
+  reasoningStartedAt?: number;
+  reasoningCompletedAt?: number;
+};
 export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversation" | "code" | "both";
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 export type HydrateReason = "switch-tab" | "new-session" | "resume-session" | "open-topic" | "startup";
@@ -51,7 +58,7 @@ const HISTORY_PAGE_TURNS = 60;
 
 export type Item =
   | { kind: "user"; id: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
-  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; memoryCitations?: MemoryCitation[] }
+  | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; memoryCitations?: MemoryCitation[] }
   | { kind: "phase"; id: string; text: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string }
   | {
@@ -562,6 +569,24 @@ function ensureAssistant(s: State): { items: Item[]; id: string; seq: number } {
   return { items: [...s.items, item], id, seq: s.seq + 1 };
 }
 
+function liveReasoningDurationMs(live?: LiveStream): number | undefined {
+  if (!live?.reasoningStartedAt || !live.reasoning) return undefined;
+  const completedAt = live.reasoningCompletedAt;
+  if (!completedAt || completedAt < live.reasoningStartedAt) return undefined;
+  return completedAt - live.reasoningStartedAt;
+}
+
+function completeLiveReasoning(live: LiveStream, now = Date.now()): LiveStream {
+  if (!live.reasoning || live.reasoningCompletedAt) {
+    return { ...live, reasoningComplete: live.reasoning !== "" || live.reasoningComplete };
+  }
+  return {
+    ...live,
+    reasoningComplete: true,
+    reasoningCompletedAt: now,
+  };
+}
+
 function flushPendingUser(s: State): State {
   if (s.pendingUser === undefined) return s;
   const lastItem = s.items[s.items.length - 1];
@@ -608,10 +633,17 @@ function applyEvent(s: State, e: WireEvent): State {
       const { items, id, seq } = ensureAssistant(s);
       const delta = e.text ?? e.reasoning ?? "";
       const base = s.live?.id === id ? s.live : { id, text: "", reasoning: "", reasoningComplete: false };
+      const now = Date.now();
       const live =
         e.kind === "text"
-          ? { ...base, text: base.text + delta, reasoningComplete: base.reasoning !== "" || base.reasoningComplete }
-          : { ...base, reasoning: base.reasoning + delta, reasoningComplete: false };
+          ? { ...completeLiveReasoning(base, now), text: base.text + delta }
+          : {
+              ...base,
+              reasoning: base.reasoning + delta,
+              reasoningComplete: false,
+              reasoningStartedAt: base.reasoningStartedAt ?? (delta ? now : undefined),
+              reasoningCompletedAt: undefined,
+            };
       return { ...s, items, live, currentAssistant: id, seq };
     }
     case "message": {
@@ -629,6 +661,8 @@ function applyEvent(s: State, e: WireEvent): State {
         return { ...s, items, live: undefined, currentAssistant: undefined };
       }
       const { items, id, seq } = ensureAssistant(s);
+      const completedLive = s.live?.id === id ? completeLiveReasoning({ ...s.live, text, reasoning }) : undefined;
+      const reasoningDurationMs = liveReasoningDurationMs(completedLive);
       const next = items.map((it) =>
         it.kind === "assistant" && it.id === id
           ? (() => {
@@ -638,6 +672,8 @@ function applyEvent(s: State, e: WireEvent): State {
                 text,
                 reasoning,
                 streaming: false,
+                reasoningComplete: reasoning !== "" || it.reasoningComplete,
+                reasoningDurationMs: reasoningDurationMs ?? it.reasoningDurationMs,
                 memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
               };
             })()
@@ -763,7 +799,17 @@ function applyEvent(s: State, e: WireEvent): State {
     case "turn_done": {
       if (s.pendingUser !== undefined) s = flushPendingUser(s);
       const finalized = s.items.map((it) => {
-        if (it.kind === "assistant" && s.live && it.id === s.live.id) return { ...it, text: s.live.text, reasoning: s.live.reasoning, streaming: false };
+        if (it.kind === "assistant" && s.live && it.id === s.live.id) {
+          const completedLive = completeLiveReasoning(s.live);
+          return {
+            ...it,
+            text: completedLive.text,
+            reasoning: completedLive.reasoning,
+            streaming: false,
+            reasoningComplete: completedLive.reasoning !== "" || completedLive.reasoningComplete,
+            reasoningDurationMs: liveReasoningDurationMs(completedLive) ?? it.reasoningDurationMs,
+          };
+        }
         if (it.kind === "assistant" && it.streaming) return { ...it, streaming: false };
         if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
         return it;

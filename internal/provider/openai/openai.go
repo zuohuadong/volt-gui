@@ -238,6 +238,20 @@ func (c *client) RequiresToolCallReasoning() bool {
 	return c != nil && c.deepseek && c.thinkingType != "disabled"
 }
 
+func (c *client) WarnOnMissingToolCallReasoning() bool {
+	return c.RequiresToolCallReasoning() && expectsDeepSeekToolCallReasoning(c.model)
+}
+
+func expectsDeepSeekToolCallReasoning(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if !strings.Contains(model, "deepseek") || strings.Contains(model, "flash") {
+		return false
+	}
+	return strings.Contains(model, "reasoner") ||
+		strings.Contains(model, "deepseek-r1") ||
+		strings.Contains(model, "-pro")
+}
+
 func (c *client) sendOpts() provider.SendOptions {
 	return provider.SendOptions{
 		Provider:   c.name,

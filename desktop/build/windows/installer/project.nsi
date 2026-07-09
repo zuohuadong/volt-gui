@@ -80,6 +80,7 @@ Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Name of the installer's file.
 !define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
+!define VOLTUI_BUNDLED_ENV "bundled.env"
 !define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
@@ -183,6 +184,9 @@ Section
     !else
     !warning "${VOLTUI_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
     !endif
+    !if /FileExists "${VOLTUI_BUNDLED_ENV}"
+    File "/oname=${VOLTUI_BUNDLED_ENV}" "${VOLTUI_BUNDLED_ENV}"
+    !endif
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -201,6 +205,7 @@ Section "uninstall"
     ; Precision uninstall: delete main application files
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
     Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
+    Delete "$INSTDIR\${VOLTUI_BUNDLED_ENV}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

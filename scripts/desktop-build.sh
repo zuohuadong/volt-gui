@@ -46,6 +46,19 @@ if [ "$os" = windows ]; then
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
+
+	# OEM 网关密钥 sidecar: 当 CI 注入了 XIGU_API_KEY secret 时, 写入随包发布的
+	# bundled.env (NSIS 按需打包)。运行时优先级最低, 用户凭据/环境变量覆盖此值。
+	if [ -n "${XIGU_API_KEY:-}" ]; then
+		echo "==> writing bundled.env sidecar (XIGU_API_KEY present)"
+		{
+			echo "# 西谷智灯暗涌系统 — OEM 内置网关密钥 (build-time injected from XIGU_API_KEY)."
+			echo "# 优先级最低: 用户在凭据存储或环境变量配置的同名 key 始终覆盖此值。请勿手工编辑。"
+			printf 'XIGU_API_KEY=%s\n' "$XIGU_API_KEY"
+		} > build/windows/installer/bundled.env
+	else
+		rm -f build/windows/installer/bundled.env
+	fi
 fi
 build_args=(-clean -platform "$PLATFORM" -ldflags "$ldflags")
 [ "$os" = windows ] && build_args+=(-nsis -webview2 embed)

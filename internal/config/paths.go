@@ -294,6 +294,22 @@ func UserCredentialsPath() string {
 	return filepath.Join(dir, ".env")
 }
 
+// bundledEnvPath is the OEM-shipped bundled.env located next to the running
+// executable, carrying build-time injected provider keys (e.g. XIGU_API_KEY)
+// as a lowest-priority credential fallback. Overridden in tests.
+var bundledEnvPath = defaultBundledEnvPath
+
+func defaultBundledEnvPath() string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Join(filepath.Dir(exe), "bundled.env")
+}
+
 // ReasonixManagedConfigPaths returns the VoltUI-owned user configuration FILES
 // that model-driven tools may repair on the user's request, each gated by a
 // fresh per-write human approval: the current config.toml, compatibility TOML

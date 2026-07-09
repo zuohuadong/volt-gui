@@ -51,8 +51,12 @@ main:
 
     # Pipeline 2: 自动发版（仅约定式提交触发）
     # CNB 直接构建 Windows 桌面端、签名、生成 latest.json，并上传 CNB Release 资产
+    # imports 导入密钥仓库文件 (.cnb/envs.yml), 提供 XIGU_API_KEY 给 build-windows-desktop;
+    # 与 MINISIGN_* 同属构建期敏感变量, env 里的同名 key 优先于 imports.
     - docker:
         image: golang:1.26
+      imports:
+        - https://cnb.cool/aizhuliren/xgic/anyong-agent/-/blob/main/.cnb/envs.yml
       env:
         GIT_AUTHOR_NAME: "西谷智灯暗涌系统 Bot"
         GIT_AUTHOR_EMAIL: "bot@xigu.ai"
@@ -150,6 +154,8 @@ main:
             . ./.release_env
 
             rm -rf dist desktop/build/bin
+            # XIGU_API_KEY (CNB secret, 复用 MINISIGN_* 同款注入) 在 desktop-build.sh 里
+            # 落盘为随包发布的 OEM 网关密钥 sidecar (bundled.env)；缺失时不影响构建。
             # Windows is built by cross-compiling Wails from the CNB Linux container.
             # macOS and Linux targets are intentionally disabled for now:
             #   scripts/desktop-build.sh darwin/universal "$VERSION"

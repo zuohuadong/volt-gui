@@ -1,0 +1,3 @@
+# 西谷智灯暗涌系统 — CNB 密钥仓库文件 (供 .cnb.yml imports 导入).
+# 包含构建期注入到桌面安装包 bundled.env 的 OEM 网关密钥; 仓库私有, 请勿公开.
+XIGU_API_KEY: sk_gom_HdmDda0HKz7ABywvIZDtSg_VJbKAmfOr_smejT83zA8

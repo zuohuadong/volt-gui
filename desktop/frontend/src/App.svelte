@@ -63,7 +63,6 @@
   import Composer from "./components/Composer.svelte";
   import Transcript from "./components/Transcript.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
-  import brandLogo from "./assets/logo-symbol.svg";
   import { app, onAgentEvent, onWorkspaceReady } from "./lib/bridge";
   import { t } from "./lib/i18n";
   import type {
@@ -1585,7 +1584,8 @@
   }
   function parseCalendarTimeRange(time: string): { start: number; end: number } | undefined {
     const matches = (time || "").match(/\d{1,2}[:\uFF1A]\d{2}/g) || [];
-    if (!matches.length) return undefined;
+    const [firstMatch, secondMatch] = matches;
+    if (!firstMatch) return undefined;
     const toMinutes = (value: string) => {
       const [hourText = "", minuteText = ""] = value.replace(/\uFF1A/g, ":").split(":");
       const hour = Number(hourText);
@@ -1593,9 +1593,9 @@
       if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return undefined;
       return hour * 60 + minute;
     };
-    const start = toMinutes(matches[0]);
+    const start = toMinutes(firstMatch);
     if (start === undefined) return undefined;
-    const parsedEnd = matches[1] ? toMinutes(matches[1]) : undefined;
+    const parsedEnd = secondMatch ? toMinutes(secondMatch) : undefined;
     const end = parsedEnd === undefined ? start + 60 : parsedEnd <= start ? parsedEnd + 24 * 60 : parsedEnd;
     return { start, end };
   }

@@ -282,8 +282,8 @@ headers = { Authorization = "Bearer ${SEARCH_TOKEN}" }
 Drop an `.mcp.json` in the project root and VoltUI reads it as-is.
 
 Desktop builds also ship a built-in `computer-use` MCP resource based on
-`@zavora-ai/computer-use-mcp`; it uses system Node >= 18 to launch the bundled
-server and still goes through VoltUI's normal tool approval flow.
+`@zavora-ai/computer-use-mcp`; the desktop package includes Bun to launch the
+bundled server and still goes through VoltUI's normal tool approval flow.
 
 ## Architecture
 

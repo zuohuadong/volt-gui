@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"voltui/internal/config"
@@ -18,9 +19,12 @@ const (
 	ComputerUseName = "computer-use"
 
 	enableDefaultBuiltInMCPInTestsEnv = "VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS"
+	computerUseRuntimeEnv             = "VOLTUI_COMPUTER_USE_RUNTIME"
 	computerUseNodeEnv                = "VOLTUI_COMPUTER_USE_NODE"
 	computerUseResourceDirEnv         = "VOLTUI_COMPUTER_USE_MCP_DIR"
+	computerUseRuntimeDirEnv          = "VOLTUI_COMPUTER_USE_RUNTIME_DIR"
 	computerUseResourceDirName        = "computer-use-mcp"
+	computerUseRuntimeDirName         = "computer-use-runtime"
 	computerUseServerRelPath          = "node_modules/@zavora-ai/computer-use-mcp/dist/server.js"
 )
 
@@ -89,15 +93,24 @@ func computerUseEntry() config.PluginEntry {
 	return config.PluginEntry{
 		Name:    ComputerUseName,
 		Type:    "stdio",
-		Command: computerUseNodeCommand(),
+		Command: computerUseRuntimeCommand(),
 		Args:    []string{computerUseServerPath()},
 		Tier:    "lazy",
 	}
 }
 
-func computerUseNodeCommand() string {
+func computerUseRuntimeCommand() string {
+	if command := strings.TrimSpace(os.Getenv(computerUseRuntimeEnv)); command != "" {
+		return command
+	}
 	if command := strings.TrimSpace(os.Getenv(computerUseNodeEnv)); command != "" {
 		return command
+	}
+	if path, ok := bundledComputerUseRuntimePath(); ok {
+		return path
+	}
+	if _, err := lookPath("bun"); err == nil {
+		return "bun"
 	}
 	return "node"
 }
@@ -123,6 +136,63 @@ func computerUseResourceDir() string {
 }
 
 func computerUseResourceDirCandidates() []string {
+	return computerUseResourceDirCandidatesFor(computerUseResourceDirName)
+}
+
+func bundledComputerUseRuntimePath() (string, bool) {
+	rel := computerUseBunRelPath()
+	for _, dir := range computerUseRuntimeDirCandidates() {
+		path := filepath.Join(dir, rel)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func computerUseRuntimeDirCandidates() []string {
+	if dir := strings.TrimSpace(os.Getenv(computerUseRuntimeDirEnv)); dir != "" {
+		return []string{filepath.Clean(dir)}
+	}
+	return computerUseResourceDirCandidatesFor(computerUseRuntimeDirName)
+}
+
+func computerUseBunRelPath() string {
+	return filepath.Join(computerUseBunTargetDir(), "bin", computerUseBunBinaryName())
+}
+
+func computerUseBunBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "bun.exe"
+	}
+	return "bun"
+}
+
+func computerUseBunTargetDir() string {
+	switch runtime.GOOS {
+	case "darwin":
+		switch runtime.GOARCH {
+		case "arm64":
+			return "bun-darwin-arm64"
+		default:
+			return "bun-darwin-amd64"
+		}
+	case "windows":
+		// Zavora publishes win32-x64 NAPI only, so Windows ARM64 launches x64 Bun
+		// under the OS compatibility layer instead of an arm64 Bun that cannot
+		// load the bundled native addon.
+		return "bun-windows-amd64"
+	case "linux":
+		if runtime.GOARCH == "arm64" {
+			return "bun-linux-arm64"
+		}
+		return "bun-linux-amd64"
+	default:
+		return "bun-" + runtime.GOOS + "-" + runtime.GOARCH
+	}
+}
+
+func computerUseResourceDirCandidatesFor(resourceName string) []string {
 	var out []string
 	add := func(dir string) {
 		dir = strings.TrimSpace(dir)
@@ -139,18 +209,18 @@ func computerUseResourceDirCandidates() []string {
 	}
 	if exe, err := currentExecutable(); err == nil && exe != "" {
 		exeDir := filepath.Dir(exe)
-		add(filepath.Join(exeDir, computerUseResourceDirName))
-		add(filepath.Join(filepath.Dir(exeDir), "Resources", computerUseResourceDirName))
+		add(filepath.Join(exeDir, resourceName))
+		add(filepath.Join(filepath.Dir(exeDir), "Resources", resourceName))
 		if strings.Contains(exeDir, ".app"+string(filepath.Separator)+"Contents"+string(filepath.Separator)+"MacOS") {
-			add(filepath.Join(filepath.Dir(exeDir), "Resources", computerUseResourceDirName))
+			add(filepath.Join(filepath.Dir(exeDir), "Resources", resourceName))
 		}
 	}
 	if wd, err := os.Getwd(); err == nil && wd != "" {
-		add(filepath.Join(wd, computerUseResourceDirName))
-		add(filepath.Join(wd, "build", computerUseResourceDirName))
-		add(filepath.Join(wd, "desktop", "build", computerUseResourceDirName))
+		add(filepath.Join(wd, resourceName))
+		add(filepath.Join(wd, "build", resourceName))
+		add(filepath.Join(wd, "desktop", "build", resourceName))
 	}
-	add(filepath.Join(string(filepath.Separator), "usr", "lib", "voltui", computerUseResourceDirName))
+	add(filepath.Join(string(filepath.Separator), "usr", "lib", "voltui", resourceName))
 	return out
 }
 

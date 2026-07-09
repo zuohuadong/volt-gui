@@ -35,6 +35,14 @@ type SessionSource struct {
 	ThreadID     string   `json:"thread_id,omitempty"`
 }
 
+// InboundMedia 是适配器预先下载好的入站媒体内容。飞书这类平台的消息资源
+// 必须经 SDK 鉴权接口下载，无法表示为 MediaURLs 里的裸 URL。
+type InboundMedia struct {
+	Name string `json:"name,omitempty"`
+	MIME string `json:"mime,omitempty"`
+	Data []byte `json:"-"`
+}
+
 // InboundMessage 是从任一平台收到的入站消息。
 type InboundMessage struct {
 	Platform     Platform `json:"platform"`
@@ -45,12 +53,13 @@ type InboundMessage struct {
 	UserID       string   `json:"user_id"`
 	UserName     string   `json:"user_name"`
 	// OperatorID, when set, is the authenticated actor gated by the allowlist; UserID stays routing-only.
-	OperatorID string   `json:"operator_id,omitempty"`
-	Text       string   `json:"text"`
-	MessageID  string   `json:"message_id"`
-	ThreadID   string   `json:"thread_id,omitempty"`
-	MediaURLs  []string `json:"media_urls,omitempty"`
-	Raw        any      `json:"-"`
+	OperatorID string         `json:"operator_id,omitempty"`
+	Text       string         `json:"text"`
+	MessageID  string         `json:"message_id"`
+	ThreadID   string         `json:"thread_id,omitempty"`
+	MediaURLs  []string       `json:"media_urls,omitempty"`
+	Media      []InboundMedia `json:"-"`
+	Raw        any            `json:"-"`
 }
 
 // Session derives the SessionSource from this message.

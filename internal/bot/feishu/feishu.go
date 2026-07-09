@@ -619,12 +619,25 @@ func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot
 	if msg.Card != nil {
 		return a.sendCard(ctx, msg)
 	}
-	// Outbound MediaURLs are intentionally not resolved here: doing so would let
-	// the loopback /send control caller drive arbitrary local-file reads and
-	// URL fetches (SSRF) from inside the gateway process. Outbound file/image
-	// sending is deferred until it can be built against a confined media root
-	// plus a host allowlist. QQ/WeChat ignore MediaURLs for the same reason.
-	return a.sendRenderedText(ctx, msg)
+	if len(msg.MediaURLs) == 0 {
+		return a.sendRenderedText(ctx, msg)
+	}
+	// Outbound MediaURLs are resolved under a strict policy (confined local
+	// roots + host allow-list + SSRF guard, all off by default) — see
+	// outbound_media.go. Send any text first, then each media item.
+	var result bot.SendResult
+	var firstErr error
+	if strings.TrimSpace(msg.Text) != "" {
+		result, firstErr = a.sendRenderedText(ctx, msg)
+	}
+	mediaResult, mediaErr := a.sendMediaURLs(ctx, msg)
+	if mediaErr != nil && firstErr == nil {
+		firstErr = mediaErr
+	}
+	if mediaResult.MessageID != "" {
+		result = mediaResult
+	}
+	return result, firstErr
 }
 
 func (a *adapter) sendRenderedText(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {

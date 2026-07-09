@@ -376,13 +376,7 @@ func NewApp() *App {
 		botInstalls:      map[string]*botInstallSession{},
 		botRuntime:       newDesktopBotRuntime(),
 	}
-	a.botBridge = newBotBridgeHub(
-		a.ListTabs,
-		a.ApproveTab,
-		a.AnswerQuestionForTab,
-		a.botRuntime.SendToAdapter,
-		slog.Default(),
-	)
+	a.botBridge = a.newBotBridge()
 	return a
 }
 
@@ -832,9 +826,19 @@ func (a *App) Submit(input string) error {
 }
 
 func (a *App) SubmitToTab(tabID, input string) error {
+	return a.submitToTab(tabID, input, false)
+}
+
+// submitToTab is the shared submit body. fromBridge marks submissions driven
+// by the IM takeover bridge; local (frontend) submissions on a taken-over tab
+// reclaim remote control first — typing locally is the grab-back gesture.
+func (a *App) submitToTab(tabID, input string, fromBridge bool) error {
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if a.tabIsReadOnly(tab) {
 		return readOnlyChannelErr()
+	}
+	if !fromBridge && tab != nil && a.botBridge != nil {
+		a.botBridge.reclaimFromDesktop(tab.ID)
 	}
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {

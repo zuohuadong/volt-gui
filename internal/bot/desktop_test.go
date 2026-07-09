@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,6 +16,9 @@ type fakeDesktopBridge struct {
 	denied    []string
 	answered  map[string][]event.AskAnswer
 	questions map[string][]event.AskQuestion
+	takeovers map[string]string // routeKey -> tabID
+	driven    []string
+	driveErr  error
 }
 
 func newFakeDesktopBridge() *fakeDesktopBridge {
@@ -22,6 +26,7 @@ func newFakeDesktopBridge() *fakeDesktopBridge {
 		watching:  make(map[string]bool),
 		answered:  make(map[string][]event.AskAnswer),
 		questions: make(map[string][]event.AskQuestion),
+		takeovers: make(map[string]string),
 	}
 }
 
@@ -50,6 +55,36 @@ func (f *fakeDesktopBridge) AskQuestions(id string) ([]event.AskQuestion, bool) 
 func (f *fakeDesktopBridge) Answer(id string, answers []event.AskAnswer) (string, error) {
 	f.answered[id] = answers
 	return "已提交回答", nil
+}
+
+func (f *fakeDesktopBridge) Takeover(route DesktopWatchRoute, tabID string) (string, error) {
+	for _, s := range f.sessions {
+		if s.TabID == tabID {
+			f.takeovers[route.Key()] = tabID
+			return "已接管", nil
+		}
+	}
+	return "", fmt.Errorf("未找到会话 %s", tabID)
+}
+
+func (f *fakeDesktopBridge) Release(route DesktopWatchRoute) (string, error) {
+	if _, ok := f.takeovers[route.Key()]; !ok {
+		return "", fmt.Errorf("本聊天当前没有接管任何桌面会话。")
+	}
+	delete(f.takeovers, route.Key())
+	return "已解除接管", nil
+}
+
+func (f *fakeDesktopBridge) TakeoverTab(route DesktopWatchRoute) string {
+	return f.takeovers[route.Key()]
+}
+
+func (f *fakeDesktopBridge) DriveInput(route DesktopWatchRoute, text string) (string, error) {
+	if f.driveErr != nil {
+		return "", f.driveErr
+	}
+	f.driven = append(f.driven, text)
+	return "", nil
 }
 
 func desktopTestMessage(text string) InboundMessage {
@@ -168,5 +203,64 @@ func TestHandleDesktopCommandAnswerParsesSelection(t *testing.T) {
 
 	if got := gw.handleDesktopCommand(desktopTestMessage("/desktop answer ask-gone 1")); !strings.Contains(got, "未找到") {
 		t.Fatalf("missing-ask reply = %q", got)
+	}
+}
+
+func TestHandleDesktopCommandTakeoverAndRelease(t *testing.T) {
+	bridge := newFakeDesktopBridge()
+	bridge.sessions = []DesktopSessionInfo{{TabID: "tab-1", Label: "会话一"}}
+	gw := &BotGateway{cfg: GatewayConfig{Desktop: bridge}}
+	msg := desktopTestMessage("/desktop takeover tab-1")
+
+	if got := gw.handleDesktopCommand(msg); !strings.Contains(got, "已接管") {
+		t.Fatalf("takeover reply = %q", got)
+	}
+	route := desktopRouteFromMessage(msg)
+	if bridge.takeovers[route.Key()] != "tab-1" {
+		t.Fatalf("takeovers = %v, want route bound to tab-1", bridge.takeovers)
+	}
+
+	msg.Text = "/desktop release"
+	if got := gw.handleDesktopCommand(msg); !strings.Contains(got, "已解除") {
+		t.Fatalf("release reply = %q", got)
+	}
+	if got := gw.handleDesktopCommand(desktopTestMessage("/desktop takeover missing")); !strings.Contains(got, "未找到") {
+		t.Fatalf("missing-tab reply = %q", got)
+	}
+}
+
+func TestDivertToDesktopTakeover(t *testing.T) {
+	bridge := newFakeDesktopBridge()
+	bridge.sessions = []DesktopSessionInfo{{TabID: "tab-1", Label: "会话一"}}
+	gw := &BotGateway{
+		cfg:           GatewayConfig{Desktop: bridge},
+		logger:        discardLogger(),
+		adapterHealth: map[string]*AdapterHealthSnapshot{},
+	}
+	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
+	msg := desktopTestMessage("帮我跑一下测试")
+
+	// 未接管:不分流。
+	if gw.divertToDesktopTakeover(context.Background(), adapter, msg) {
+		t.Fatal("message should not divert without a takeover binding")
+	}
+
+	route := desktopRouteFromMessage(msg)
+	bridge.takeovers[route.Key()] = "tab-1"
+	if !gw.divertToDesktopTakeover(context.Background(), adapter, msg) {
+		t.Fatal("message should divert to the taken-over session")
+	}
+	if len(bridge.driven) != 1 || bridge.driven[0] != "帮我跑一下测试" {
+		t.Fatalf("driven = %v, want the plain message text", bridge.driven)
+	}
+
+	// 驱动失败:错误文案回给用户。
+	bridge.driveErr = fmt.Errorf("会话正在执行中")
+	if !gw.divertToDesktopTakeover(context.Background(), adapter, msg) {
+		t.Fatal("drive failure should still consume the message")
+	}
+	sent := adapter.sentMessages()
+	if len(sent) == 0 || !strings.Contains(sent[len(sent)-1].Text, "正在执行中") {
+		t.Fatalf("sent = %+v, want drive error relayed to the chat", sent)
 	}
 }

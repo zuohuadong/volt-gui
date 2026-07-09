@@ -609,6 +609,13 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 		return
 	}
 
+	// 已接管桌面会话的聊天：普通消息直接驱动那个桌面会话，不进 bot 自己的
+	// 会话机器（斜杠命令仍走上面的分支，/desktop release 永远可达）。
+	if gw.divertToDesktopTakeover(ctx, binding.Adapter, msg) {
+		gw.logger.Info("bot message diverted to desktop takeover", logFields...)
+		return
+	}
+
 	cleanup := gw.addPendingReaction(ctx, binding.Platform, binding.Adapter, msg)
 
 	queueMode := gw.queueMode(key, msg)

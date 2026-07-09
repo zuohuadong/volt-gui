@@ -21,32 +21,72 @@ type bridgeNotifyCall struct {
 }
 
 type bridgeTestEnv struct {
-	hub      *botBridgeHub
-	notified chan bridgeNotifyCall
-	approves chan [2]string // [tabID, id+":"+allow]
-	answers  chan [2]string // [tabID, id]
+	hub       *botBridgeHub
+	notified  chan bridgeNotifyCall
+	approves  chan [2]string // [tabID, id+":"+allow]
+	answers   chan [2]string // [tabID, id]
+	driven    chan [2]string // [tabID, text]
+	announced chan [2]string // [tabID, text]
+	persisted chan []bot.DesktopWatchRoute
+	driveErr  error
+}
+
+func tabsToSessions(tabs []TabMeta) []bot.DesktopSessionInfo {
+	out := make([]bot.DesktopSessionInfo, 0, len(tabs))
+	for _, t := range tabs {
+		out = append(out, bot.DesktopSessionInfo{
+			TabID:         t.ID,
+			Label:         t.Label,
+			Workspace:     t.WorkspaceName,
+			Topic:         t.TopicTitle,
+			Ready:         t.Ready,
+			Running:       t.Running,
+			PendingPrompt: t.PendingPrompt,
+		})
+	}
+	return out
 }
 
 func newBridgeTestEnv(tabs []TabMeta) *bridgeTestEnv {
+	return newBridgeTestEnvSessions(tabsToSessions(tabs))
+}
+
+func newBridgeTestEnvSessions(sessions []bot.DesktopSessionInfo) *bridgeTestEnv {
 	env := &bridgeTestEnv{
-		notified: make(chan bridgeNotifyCall, 16),
-		approves: make(chan [2]string, 16),
-		answers:  make(chan [2]string, 16),
+		notified:  make(chan bridgeNotifyCall, 16),
+		approves:  make(chan [2]string, 16),
+		answers:   make(chan [2]string, 16),
+		driven:    make(chan [2]string, 16),
+		announced: make(chan [2]string, 16),
+		persisted: make(chan []bot.DesktopWatchRoute, 16),
 	}
-	env.hub = newBotBridgeHub(
-		func() []TabMeta { return tabs },
-		func(tabID, id string, allow, session, persist bool) {
+	env.hub = newBotBridgeHub(botBridgeDeps{
+		sessions: func() []bot.DesktopSessionInfo { return sessions },
+		approveTab: func(tabID, id string, allow, session, persist bool) {
 			env.approves <- [2]string{tabID, fmt.Sprintf("%s:%t", id, allow)}
 		},
-		func(tabID, id string, answers []QuestionAnswer) {
+		answerTab: func(tabID, id string, answers []QuestionAnswer) {
 			env.answers <- [2]string{tabID, id}
 		},
-		func(ctx context.Context, connectionID, domain string, msg bot.OutboundMessage) (bot.SendResult, error) {
+		notify: func(ctx context.Context, connectionID, domain string, msg bot.OutboundMessage) (bot.SendResult, error) {
 			env.notified <- bridgeNotifyCall{connectionID: connectionID, domain: domain, msg: msg}
 			return bot.SendResult{MessageID: "sent-1"}, nil
 		},
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
+		drive: func(tabID, text string, route bot.DesktopWatchRoute) error {
+			if env.driveErr != nil {
+				return env.driveErr
+			}
+			env.driven <- [2]string{tabID, text}
+			return nil
+		},
+		announce: func(tabID, text string) {
+			env.announced <- [2]string{tabID, text}
+		},
+		persistWatchers: func(routes []bot.DesktopWatchRoute) {
+			env.persisted <- routes
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
 	return env
 }
 
@@ -225,5 +265,151 @@ func TestBridgeWatchLifecycleStopsNotifications(t *testing.T) {
 	}
 
 	env.hub.observe("tab-x", event.Event{Kind: event.TurnDone})
+	env.expectNoNotification(t)
+}
+
+func TestBridgeSetWatchPersistsAndSeedRestores(t *testing.T) {
+	env := newBridgeTestEnv(nil)
+	route := testWatchRoute()
+
+	env.hub.SetWatch(route, true)
+	select {
+	case routes := <-env.persisted:
+		if len(routes) != 1 || routes[0].Key() != route.Key() {
+			t.Fatalf("persisted = %+v, want the subscribed route", routes)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SetWatch did not persist watchers")
+	}
+
+	// 模拟重启:全新 hub 从配置种子恢复。
+	env2 := newBridgeTestEnv(nil)
+	env2.hub.seedWatchers([]bot.DesktopWatchRoute{route})
+	if !env2.hub.Watching(route) {
+		t.Fatal("seeded hub should be watching the persisted route")
+	}
+	env2.hub.observe("tab-x", event.Event{Kind: event.TurnDone})
+	if call := env2.waitNotification(t); !strings.Contains(call.msg.Text, "✅") {
+		t.Fatalf("seeded watcher did not receive notifications: %q", call.msg.Text)
+	}
+}
+
+func TestBridgeApprovalRoutesToDetachedSession(t *testing.T) {
+	env := newBridgeTestEnvSessions([]bot.DesktopSessionInfo{
+		{TabID: "tab-bg", Label: "后台任务", Detached: true, Ready: true},
+	})
+
+	env.hub.observe("tab-bg", event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "appr-bg", Tool: "bash"}})
+	if _, err := env.hub.Approve("appr-bg", true); err != nil {
+		t.Fatalf("Approve on detached session: %v", err)
+	}
+	select {
+	case got := <-env.approves:
+		if got[0] != "tab-bg" {
+			t.Fatalf("approve routed to %v, want tab-bg", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached approval was not routed")
+	}
+}
+
+func TestBridgeTakeoverLifecycle(t *testing.T) {
+	env := newBridgeTestEnvSessions([]bot.DesktopSessionInfo{
+		{TabID: "tab-1", Label: "会话一", Ready: true},
+		{TabID: "tab-bg", Label: "后台", Detached: true},
+	})
+	route := testWatchRoute()
+
+	// 后台会话拒绝接管。
+	if _, err := env.hub.Takeover(route, "tab-bg"); err == nil {
+		t.Fatal("takeover of a detached session should fail")
+	}
+
+	feedback, err := env.hub.Takeover(route, "tab-1")
+	if err != nil {
+		t.Fatalf("Takeover: %v", err)
+	}
+	if !strings.Contains(feedback, "已接管") {
+		t.Fatalf("feedback = %q", feedback)
+	}
+	if env.hub.TakeoverTab(route) != "tab-1" {
+		t.Fatalf("TakeoverTab = %q, want tab-1", env.hub.TakeoverTab(route))
+	}
+	select {
+	case got := <-env.announced:
+		if got[0] != "tab-1" || !strings.Contains(got[1], "接管") {
+			t.Fatalf("announce = %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("takeover was not announced to the desktop transcript")
+	}
+
+	// 驱动输入路由到 tab。
+	if _, err := env.hub.DriveInput(route, "跑一下测试"); err != nil {
+		t.Fatalf("DriveInput: %v", err)
+	}
+	select {
+	case got := <-env.driven:
+		if got[0] != "tab-1" || got[1] != "跑一下测试" {
+			t.Fatalf("driven = %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("drive input was not routed")
+	}
+
+	// 另一个聊天抢同一会话被拒。
+	other := route
+	other.ChatID = "chat-other"
+	if _, err := env.hub.Takeover(other, "tab-1"); err == nil {
+		t.Fatal("takeover by another chat should be rejected while held")
+	}
+
+	// 释放。
+	if _, err := env.hub.Release(route); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if env.hub.TakeoverTab(route) != "" {
+		t.Fatal("binding should be cleared after release")
+	}
+	if _, err := env.hub.Release(route); err == nil {
+		t.Fatal("second release should report no binding")
+	}
+}
+
+func TestBridgeDriveInputRejectsRunningSession(t *testing.T) {
+	env := newBridgeTestEnvSessions([]bot.DesktopSessionInfo{
+		{TabID: "tab-1", Label: "会话一", Ready: true, Running: true},
+	})
+	route := testWatchRoute()
+	if _, err := env.hub.Takeover(route, "tab-1"); err != nil {
+		t.Fatalf("Takeover: %v", err)
+	}
+	<-env.announced
+	if _, err := env.hub.DriveInput(route, "hello"); err == nil || !strings.Contains(err.Error(), "正在执行中") {
+		t.Fatalf("DriveInput on running session = %v, want busy rejection", err)
+	}
+}
+
+func TestBridgeReclaimFromDesktopNotifiesController(t *testing.T) {
+	env := newBridgeTestEnvSessions([]bot.DesktopSessionInfo{
+		{TabID: "tab-1", Label: "会话一", Ready: true},
+	})
+	route := testWatchRoute()
+	if _, err := env.hub.Takeover(route, "tab-1"); err != nil {
+		t.Fatalf("Takeover: %v", err)
+	}
+	<-env.announced
+
+	env.hub.reclaimFromDesktop("tab-1")
+	if env.hub.TakeoverTab(route) != "" {
+		t.Fatal("reclaim should clear the binding")
+	}
+	call := env.waitNotification(t)
+	if !strings.Contains(call.msg.Text, "收回") || call.msg.ChatID != route.ChatID {
+		t.Fatalf("reclaim notification = %+v", call)
+	}
+
+	// 未接管 tab 的 reclaim 是 no-op。
+	env.hub.reclaimFromDesktop("tab-1")
 	env.expectNoNotification(t)
 }

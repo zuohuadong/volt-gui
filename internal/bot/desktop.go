@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,8 @@ type DesktopSessionInfo struct {
 	Ready         bool
 	Running       bool
 	PendingPrompt bool
+	// Detached 标记后台运行的会话（已从可见 tab 分离，controller 仍存活）。
+	Detached bool
 }
 
 // DesktopWatchRoute 标识一个订阅了桌面事件的 bot 聊天。
@@ -38,11 +41,11 @@ func (r DesktopWatchRoute) Key() string {
 // 语义约定：
 //   - 审批应答与桌面 UI 是"先到者赢"（controller 侧幂等，重复应答被静默忽略），
 //     Approve/Answer 的返回文案应体现"以先到者为准"。
-//   - 本接口刻意不包含向桌面会话注入输入或抢占写权的方法。将来的显式接管
-//     （/takeover：抢写 lease、桌面提示并可抢回）会作为独立方法在此扩展，
-//     底层依赖 internal/control 的接管端口，而不是复用 gateway 的会话机器。
+//   - 接管是"显式"的：/desktop takeover 绑定聊天与会话，桌面端会在会话
+//     transcript 里看到提示；桌面用户在该会话本地发送任意消息即自动收回
+//     控制并通知远端。接管期间桌面输入不被锁定（controller 侧先到者赢）。
 type DesktopBridge interface {
-	// Sessions 枚举当前所有桌面 live 会话。
+	// Sessions 枚举当前所有桌面 live 会话（含后台 detached）。
 	Sessions() []DesktopSessionInfo
 	// SetWatch 订阅/退订当前聊天的桌面事件推送。
 	SetWatch(route DesktopWatchRoute, enable bool)
@@ -54,6 +57,15 @@ type DesktopBridge interface {
 	AskQuestions(askID string) ([]event.AskQuestion, bool)
 	// Answer 应答任意桌面会话的待回答 ask，返回用户可读的结果文案。
 	Answer(askID string, answers []event.AskAnswer) (string, error)
+	// Takeover 把该聊天绑定为某个桌面会话的远程驾驶者，返回用户可读文案。
+	Takeover(route DesktopWatchRoute, tabID string) (string, error)
+	// Release 解除该聊天的接管绑定，返回用户可读文案。
+	Release(route DesktopWatchRoute) (string, error)
+	// TakeoverTab 返回该聊天当前接管的 tabID，未接管时为空串。
+	TakeoverTab(route DesktopWatchRoute) string
+	// DriveInput 把一条文本作为新 turn 提交到该聊天接管的桌面会话。
+	// 成功时输出会经事件转发流回聊天；返回的文案（可为空）用于即时回执。
+	DriveInput(route DesktopWatchRoute, text string) (string, error)
 }
 
 func desktopRouteFromMessage(msg InboundMessage) DesktopWatchRoute {
@@ -71,7 +83,9 @@ const desktopCommandUsage = "用法:\n" +
 	"/desktop watch on|off|status - 订阅/退订桌面事件推送(审批请求、任务完成/出错)\n" +
 	"/desktop approve <id> - 批准桌面会话的待审批操作\n" +
 	"/desktop deny <id> - 拒绝桌面会话的待审批操作\n" +
-	"/desktop answer <id> <选项编号或文本> - 回答桌面会话的提问"
+	"/desktop answer <id> <选项编号或文本> - 回答桌面会话的提问\n" +
+	"/desktop takeover <tab> - 接管桌面会话，后续消息直接驱动它\n" +
+	"/desktop release - 解除接管，回到普通 bot 会话"
 
 // handleDesktopCommand 处理 /desktop 系列命令(上帝视角：观察 + 遥控审批)。
 // 调用方已完成 admin 角色门控。
@@ -134,9 +148,51 @@ func (gw *BotGateway) handleDesktopCommand(msg InboundMessage) string {
 			return err.Error()
 		}
 		return feedback
+	case "takeover":
+		if len(fields) < 3 {
+			return desktopCommandUsage
+		}
+		feedback, err := bridge.Takeover(desktopRouteFromMessage(msg), fields[2])
+		if err != nil {
+			return err.Error()
+		}
+		return feedback
+	case "release":
+		feedback, err := bridge.Release(desktopRouteFromMessage(msg))
+		if err != nil {
+			return err.Error()
+		}
+		return feedback
 	default:
 		return desktopCommandUsage
 	}
+}
+
+// divertToDesktopTakeover 把已接管聊天的普通消息改道到桌面会话。斜杠命令
+// 不经过这里（仍走 handleSlashCommand），所以 /desktop release 永远可用。
+// 返回 true 表示消息已被桌面接管通道消费。
+func (gw *BotGateway) divertToDesktopTakeover(ctx context.Context, adapter Adapter, msg InboundMessage) bool {
+	bridge := gw.cfg.Desktop
+	if bridge == nil {
+		return false
+	}
+	route := desktopRouteFromMessage(msg)
+	if bridge.TakeoverTab(route) == "" {
+		return false
+	}
+	if strings.TrimSpace(msg.Text) == "" {
+		_ = gw.sendText(ctx, adapter, msg, "接管模式暂不支持转发附件，请发送文本。")
+		return true
+	}
+	feedback, err := bridge.DriveInput(route, msg.Text)
+	if err != nil {
+		_ = gw.sendText(ctx, adapter, msg, err.Error())
+		return true
+	}
+	if strings.TrimSpace(feedback) != "" {
+		_ = gw.sendText(ctx, adapter, msg, feedback)
+	}
+	return true
 }
 
 func formatDesktopSessions(sessions []DesktopSessionInfo) string {
@@ -162,12 +218,15 @@ func formatDesktopSessions(sessions []DesktopSessionInfo) string {
 		if label == "" {
 			label = "(未命名)"
 		}
+		if s.Detached {
+			state += "·后台"
+		}
 		fmt.Fprintf(&b, "\n- %s [%s]", label, state)
 		if ws := strings.TrimSpace(s.Workspace); ws != "" {
 			fmt.Fprintf(&b, "\n  项目: %s", ws)
 		}
 		fmt.Fprintf(&b, "\n  tab: %s", s.TabID)
 	}
-	b.WriteString("\n\n用 /desktop watch on 订阅审批与完成事件。")
+	b.WriteString("\n\n用 /desktop watch on 订阅审批与完成事件；/desktop takeover <tab> 接管某个会话。")
 	return b.String()
 }

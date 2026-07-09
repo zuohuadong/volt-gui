@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,15 +27,26 @@ import (
 // observe 跑在 controller 的事件 goroutine 上，绝不能做网络调用——通知统一
 // 进有界队列由 worker 异步发送，队列满时丢弃并告警。
 type botBridgeHub struct {
-	listTabs   func() []TabMeta
+	sessions   func() []bot.DesktopSessionInfo
 	approveTab func(tabID, id string, allow, session, persist bool)
 	answerTab  func(tabID, id string, answers []QuestionAnswer)
 	notify     func(ctx context.Context, connectionID, domain string, msg bot.OutboundMessage) (bot.SendResult, error)
-	logger     *slog.Logger
+	// drive 把一条远程文本提交为 tab 的新 turn，并把该 turn 的输出转发回 route。
+	drive func(tabID, text string, route bot.DesktopWatchRoute) error
+	// announce 往会话 transcript 里发一条 Notice，让桌面用户看到接管状态变化。
+	announce func(tabID, text string)
+	// persistWatchers 把订阅全集回写用户配置（bot.desktop_watchers）。
+	persistWatchers func(routes []bot.DesktopWatchRoute)
+	// takeoverChanged 通知桌面前端刷新（TabMeta.RemoteControlled 变化）。
+	takeoverChanged func()
+	logger          *slog.Logger
 
 	mu       sync.Mutex
 	watchers map[string]bot.DesktopWatchRoute
 	pending  map[string]desktopPendingPrompt
+	// takeovers: tabID -> 驾驶该会话的聊天路由；takeoverTabs: routeKey -> tabID。
+	takeovers    map[string]bot.DesktopWatchRoute
+	takeoverTabs map[string]string
 
 	queue chan desktopBridgeNotification
 }
@@ -49,9 +61,11 @@ type desktopPendingPrompt struct {
 
 // desktopBridgeNotification 是一条待推送的桌面事件。card 按订阅路由现做
 // （chat_type 因聊天而异）；text 同时是非卡片平台的完整降级文案。
+// route 非 nil 时定向发给该聊天（不看 watch 订阅），用于接管收回等必达通知。
 type desktopBridgeNotification struct {
-	text string
-	card func(route bot.DesktopWatchRoute) *bot.InteractiveCard
+	text  string
+	card  func(route bot.DesktopWatchRoute) *bot.InteractiveCard
+	route *bot.DesktopWatchRoute
 }
 
 const (
@@ -63,25 +77,39 @@ const (
 	botBridgePromptPreview = 500
 )
 
-func newBotBridgeHub(
-	listTabs func() []TabMeta,
-	approveTab func(tabID, id string, allow, session, persist bool),
-	answerTab func(tabID, id string, answers []QuestionAnswer),
-	notify func(ctx context.Context, connectionID, domain string, msg bot.OutboundMessage) (bot.SendResult, error),
-	logger *slog.Logger,
-) *botBridgeHub {
+// botBridgeDeps 打包 hub 对宿主(App)的全部依赖，便于测试注入。
+type botBridgeDeps struct {
+	sessions        func() []bot.DesktopSessionInfo
+	approveTab      func(tabID, id string, allow, session, persist bool)
+	answerTab       func(tabID, id string, answers []QuestionAnswer)
+	notify          func(ctx context.Context, connectionID, domain string, msg bot.OutboundMessage) (bot.SendResult, error)
+	drive           func(tabID, text string, route bot.DesktopWatchRoute) error
+	announce        func(tabID, text string)
+	persistWatchers func(routes []bot.DesktopWatchRoute)
+	takeoverChanged func()
+	logger          *slog.Logger
+}
+
+func newBotBridgeHub(deps botBridgeDeps) *botBridgeHub {
+	logger := deps.logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	h := &botBridgeHub{
-		listTabs:   listTabs,
-		approveTab: approveTab,
-		answerTab:  answerTab,
-		notify:     notify,
-		logger:     logger.With("component", "bot_bridge"),
-		watchers:   make(map[string]bot.DesktopWatchRoute),
-		pending:    make(map[string]desktopPendingPrompt),
-		queue:      make(chan desktopBridgeNotification, botBridgeQueueSize),
+		sessions:        deps.sessions,
+		approveTab:      deps.approveTab,
+		answerTab:       deps.answerTab,
+		notify:          deps.notify,
+		drive:           deps.drive,
+		announce:        deps.announce,
+		persistWatchers: deps.persistWatchers,
+		takeoverChanged: deps.takeoverChanged,
+		logger:          logger.With("component", "bot_bridge"),
+		watchers:        make(map[string]bot.DesktopWatchRoute),
+		pending:         make(map[string]desktopPendingPrompt),
+		takeovers:       make(map[string]bot.DesktopWatchRoute),
+		takeoverTabs:    make(map[string]string),
+		queue:           make(chan desktopBridgeNotification, botBridgeQueueSize),
 	}
 	go h.run()
 	return h
@@ -163,9 +191,11 @@ func (h *botBridgeHub) run() {
 
 func (h *botBridgeHub) deliver(n desktopBridgeNotification) {
 	h.mu.Lock()
-	routes := make([]bot.DesktopWatchRoute, 0, len(h.watchers))
-	for _, r := range h.watchers {
-		routes = append(routes, r)
+	var routes []bot.DesktopWatchRoute
+	if n.route != nil {
+		routes = []bot.DesktopWatchRoute{*n.route}
+	} else {
+		routes = h.watcherRoutesLocked()
 	}
 	notify := h.notify
 	h.mu.Unlock()
@@ -191,21 +221,27 @@ func (h *botBridgeHub) deliver(n desktopBridgeNotification) {
 
 // tabLabel 把 tabID 解析成人类可读的会话名。
 func (h *botBridgeHub) tabLabel(tabID string) string {
-	if h.listTabs != nil {
-		for _, t := range h.listTabs() {
-			if t.ID != tabID {
-				continue
-			}
-			if label := strings.TrimSpace(t.Label); label != "" {
-				return label
-			}
-			if title := strings.TrimSpace(t.TopicTitle); title != "" {
-				return title
-			}
-			break
+	if s, ok := h.sessionByTabID(tabID); ok {
+		if label := strings.TrimSpace(s.Label); label != "" {
+			return label
+		}
+		if title := strings.TrimSpace(s.Topic); title != "" {
+			return title
 		}
 	}
 	return "(未命名会话)"
+}
+
+func (h *botBridgeHub) sessionByTabID(tabID string) (bot.DesktopSessionInfo, bool) {
+	if h.sessions == nil {
+		return bot.DesktopSessionInfo{}, false
+	}
+	for _, s := range h.sessions() {
+		if s.TabID == tabID {
+			return s, true
+		}
+	}
+	return bot.DesktopSessionInfo{}, false
 }
 
 func (h *botBridgeHub) approvalNotification(tabID string, approval event.Approval) desktopBridgeNotification {
@@ -300,33 +336,47 @@ func truncateForBridge(s string, limit int) string {
 // ---- bot.DesktopBridge 实现 ----
 
 func (h *botBridgeHub) Sessions() []bot.DesktopSessionInfo {
-	if h.listTabs == nil {
+	if h.sessions == nil {
 		return nil
 	}
-	tabs := h.listTabs()
-	out := make([]bot.DesktopSessionInfo, 0, len(tabs))
-	for _, t := range tabs {
-		out = append(out, bot.DesktopSessionInfo{
-			TabID:         t.ID,
-			Label:         t.Label,
-			Workspace:     t.WorkspaceName,
-			Topic:         t.TopicTitle,
-			Ready:         t.Ready,
-			Running:       t.Running,
-			PendingPrompt: t.PendingPrompt,
-		})
-	}
-	return out
+	return h.sessions()
 }
 
 func (h *botBridgeHub) SetWatch(route bot.DesktopWatchRoute, enable bool) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if enable {
 		h.watchers[route.Key()] = route
-		return
+	} else {
+		delete(h.watchers, route.Key())
 	}
-	delete(h.watchers, route.Key())
+	routes := h.watcherRoutesLocked()
+	persist := h.persistWatchers
+	h.mu.Unlock()
+	if persist != nil {
+		persist(routes)
+	}
+}
+
+// seedWatchers 用配置里的订阅全集重置内存态（配置是持久化的唯一事实源）。
+func (h *botBridgeHub) seedWatchers(routes []bot.DesktopWatchRoute) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.watchers = make(map[string]bot.DesktopWatchRoute, len(routes))
+	for _, r := range routes {
+		if strings.TrimSpace(r.ChatID) == "" {
+			continue
+		}
+		h.watchers[r.Key()] = r
+	}
+}
+
+func (h *botBridgeHub) watcherRoutesLocked() []bot.DesktopWatchRoute {
+	routes := make([]bot.DesktopWatchRoute, 0, len(h.watchers))
+	for _, r := range h.watchers {
+		routes = append(routes, r)
+	}
+	sort.Slice(routes, func(i, j int) bool { return routes[i].Key() < routes[j].Key() })
+	return routes
 }
 
 func (h *botBridgeHub) Watching(route bot.DesktopWatchRoute) bool {
@@ -388,4 +438,141 @@ func (h *botBridgeHub) Answer(askID string, answers []event.AskAnswer) (string, 
 	}
 	h.answerTab(p.tabID, askID, out)
 	return fmt.Sprintf("已提交「%s」的回答。桌面端若已先处理，以先到者为准。", h.tabLabel(p.tabID)), nil
+}
+
+// ---- 显式接管 ----
+
+func (h *botBridgeHub) Takeover(route bot.DesktopWatchRoute, tabID string) (string, error) {
+	tabID = strings.TrimSpace(tabID)
+	session, ok := h.sessionByTabID(tabID)
+	if !ok {
+		return "", fmt.Errorf("未找到会话 %s。用 /desktop status 查看可接管的会话。", tabID)
+	}
+	if session.Detached {
+		return "", fmt.Errorf("会话「%s」在后台运行，暂不支持接管；请先在桌面端打开它。", h.tabLabel(tabID))
+	}
+	h.mu.Lock()
+	if holder, held := h.takeovers[tabID]; held && holder.Key() != route.Key() {
+		h.mu.Unlock()
+		return "", fmt.Errorf("会话「%s」已被另一个聊天接管。", h.tabLabel(tabID))
+	}
+	// 同一聊天换目标：先解除旧绑定。
+	if prev, ok := h.takeoverTabs[route.Key()]; ok && prev != tabID {
+		delete(h.takeovers, prev)
+	}
+	h.takeovers[tabID] = route
+	h.takeoverTabs[route.Key()] = tabID
+	announce := h.announce
+	changed := h.takeoverChanged
+	h.mu.Unlock()
+	if announce != nil {
+		announce(tabID, "此会话已被 IM 远程接管（bot 管理员）。在此本地发送任意消息即可收回控制。")
+	}
+	if changed != nil {
+		changed()
+	}
+	label := h.tabLabel(tabID)
+	return fmt.Sprintf("已接管「%s」。现在直接发消息即可驱动它，输出会流回本聊天；/desktop release 解除接管。桌面端本地发言会自动收回控制。", label), nil
+}
+
+func (h *botBridgeHub) Release(route bot.DesktopWatchRoute) (string, error) {
+	h.mu.Lock()
+	tabID, ok := h.takeoverTabs[route.Key()]
+	if ok {
+		delete(h.takeoverTabs, route.Key())
+		delete(h.takeovers, tabID)
+	}
+	announce := h.announce
+	changed := h.takeoverChanged
+	h.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("本聊天当前没有接管任何桌面会话。")
+	}
+	if announce != nil {
+		announce(tabID, "IM 远程接管已解除。")
+	}
+	if changed != nil {
+		changed()
+	}
+	return fmt.Sprintf("已解除对「%s」的接管。", h.tabLabel(tabID)), nil
+}
+
+func (h *botBridgeHub) TakeoverTab(route bot.DesktopWatchRoute) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.takeoverTabs[route.Key()]
+}
+
+func (h *botBridgeHub) DriveInput(route bot.DesktopWatchRoute, text string) (string, error) {
+	h.mu.Lock()
+	tabID := h.takeoverTabs[route.Key()]
+	h.mu.Unlock()
+	if tabID == "" {
+		return "", fmt.Errorf("本聊天没有接管任何桌面会话。")
+	}
+	session, ok := h.sessionByTabID(tabID)
+	if !ok || session.Detached {
+		// 会话被关闭或转入后台：自动解除绑定，避免消息黑洞。
+		h.mu.Lock()
+		delete(h.takeoverTabs, route.Key())
+		delete(h.takeovers, tabID)
+		h.mu.Unlock()
+		if changed := h.takeoverChanged; changed != nil {
+			changed()
+		}
+		return "", fmt.Errorf("被接管的会话已关闭或转入后台，接管已自动解除。")
+	}
+	if session.Running {
+		return "", fmt.Errorf("会话「%s」正在执行中，等它完成后再发；或用 /desktop watch on 订阅完成通知。", h.tabLabel(tabID))
+	}
+	if h.drive == nil {
+		return "", fmt.Errorf("桌面端驱动通道不可用。")
+	}
+	if err := h.drive(tabID, text, route); err != nil {
+		return "", fmt.Errorf("驱动失败: %v", err)
+	}
+	return "", nil
+}
+
+// reclaimFromDesktop 在桌面用户本地提交输入时收回控制权：解除绑定并通知
+// 远端聊天。由 App.SubmitToTab 调用（bridge 自己的驱动不走这条路）。
+func (h *botBridgeHub) reclaimFromDesktop(tabID string) {
+	h.mu.Lock()
+	route, ok := h.takeovers[tabID]
+	if ok {
+		delete(h.takeovers, tabID)
+		delete(h.takeoverTabs, route.Key())
+	}
+	notify := h.notify
+	changed := h.takeoverChanged
+	h.mu.Unlock()
+	if !ok {
+		return
+	}
+	if changed != nil {
+		changed()
+	}
+	if notify == nil {
+		return
+	}
+	label := h.tabLabel(tabID)
+	// 直接入通知队列（不依赖 watch 订阅）：接管者必须知道控制权没了。
+	h.enqueue(desktopBridgeNotification{
+		text:  fmt.Sprintf("🔓 桌面端已收回会话「%s」的控制权，接管已解除。", label),
+		route: &route,
+	})
+}
+
+// remoteControlledTabs 返回当前被接管的 tabID 集合（TabMeta 标记用）。
+func (h *botBridgeHub) remoteControlledTabs() map[string]bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.takeovers) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(h.takeovers))
+	for tabID := range h.takeovers {
+		out[tabID] = true
+	}
+	return out
 }

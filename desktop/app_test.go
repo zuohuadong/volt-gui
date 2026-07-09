@@ -23,6 +23,7 @@ import (
 	"voltui/internal/agent"
 	"voltui/internal/billing"
 	"voltui/internal/boot"
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
@@ -6185,6 +6186,37 @@ args = ["-y", "@playwright/mcp"]
 		}
 	}
 	t.Fatalf("playwright MCP missing from Capabilities: %+v", view.Servers)
+}
+
+func TestCapabilitiesShowsDefaultBuiltInComputerUse(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	t.Setenv("VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS", "1")
+	t.Setenv("VOLTUI_COMPUTER_USE_MCP_DIR", filepath.Join(dir, "computer-use-mcp"))
+	t.Setenv("VOLTUI_COMPUTER_USE_RUNTIME", filepath.Join(dir, "computer-use-runtime", "bun"))
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	view := app.Capabilities()
+	var found *ServerView
+	for i := range view.Servers {
+		if view.Servers[i].Name == builtinmcp.ComputerUseName {
+			found = &view.Servers[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("computer-use built-in MCP missing from Capabilities: %+v", view.Servers)
+	}
+	if found.Status != "deferred" || found.StartIntent != "automatic" || found.RuntimeState != "idle" || !found.BuiltIn || !found.Configured {
+		t.Fatalf("computer-use view = %+v, want deferred automatic built-in config", *found)
+	}
+	if found.Command != filepath.Join(dir, "computer-use-runtime", "bun") || len(found.Args) != 1 || !strings.HasSuffix(found.Args[0], filepath.FromSlash("node_modules/@zavora-ai/computer-use-mcp/dist/server.js")) {
+		t.Fatalf("computer-use command/args = %q %+v, want runtime override + bundled server.js", found.Command, found.Args)
+	}
 }
 
 func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {

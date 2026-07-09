@@ -6,17 +6,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"voltui/internal/config"
 )
 
 const (
-	TimeName     = "time"
-	Context7Name = "context7"
-	OfficeName   = "office"
+	TimeName        = "time"
+	Context7Name    = "context7"
+	OfficeName      = "office"
+	ComputerUseName = "computer-use"
 
 	enableDefaultBuiltInMCPInTestsEnv = "VOLTUI_ENABLE_DEFAULT_BUILTIN_MCP_IN_TESTS"
+	computerUseRuntimeEnv             = "VOLTUI_COMPUTER_USE_RUNTIME"
+	computerUseNodeEnv                = "VOLTUI_COMPUTER_USE_NODE"
+	computerUseResourceDirEnv         = "VOLTUI_COMPUTER_USE_MCP_DIR"
+	computerUseRuntimeDirEnv          = "VOLTUI_COMPUTER_USE_RUNTIME_DIR"
+	computerUseResourceDirName        = "computer-use-mcp"
+	computerUseRuntimeDirName         = "computer-use-runtime"
+	computerUseServerRelPath          = "node_modules/@zavora-ai/computer-use-mcp/dist/server.js"
 )
 
 var (
@@ -44,6 +53,7 @@ func Entries() []config.PluginEntry {
 			Args:    []string{"builtin-mcp", OfficeName},
 			Tier:    "lazy",
 		},
+		computerUseEntry(),
 		context7Entry(),
 	}
 }
@@ -77,6 +87,141 @@ func context7Command() (string, []string) {
 		return "bunx", []string{"@upstash/context7-mcp"}
 	}
 	return "npx", []string{"-y", "@upstash/context7-mcp"}
+}
+
+func computerUseEntry() config.PluginEntry {
+	return config.PluginEntry{
+		Name:    ComputerUseName,
+		Type:    "stdio",
+		Command: computerUseRuntimeCommand(),
+		Args:    []string{computerUseServerPath()},
+		Tier:    "lazy",
+	}
+}
+
+func computerUseRuntimeCommand() string {
+	if command := strings.TrimSpace(os.Getenv(computerUseRuntimeEnv)); command != "" {
+		return command
+	}
+	if command := strings.TrimSpace(os.Getenv(computerUseNodeEnv)); command != "" {
+		return command
+	}
+	if path, ok := bundledComputerUseRuntimePath(); ok {
+		return path
+	}
+	if _, err := lookPath("bun"); err == nil {
+		return "bun"
+	}
+	return "node"
+}
+
+func computerUseServerPath() string {
+	return filepath.Join(computerUseResourceDir(), filepath.FromSlash(computerUseServerRelPath))
+}
+
+func computerUseResourceDir() string {
+	if dir := strings.TrimSpace(os.Getenv(computerUseResourceDirEnv)); dir != "" {
+		return dir
+	}
+	for _, dir := range computerUseResourceDirCandidates() {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	candidates := computerUseResourceDirCandidates()
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+	return computerUseResourceDirName
+}
+
+func computerUseResourceDirCandidates() []string {
+	return computerUseResourceDirCandidatesFor(computerUseResourceDirName)
+}
+
+func bundledComputerUseRuntimePath() (string, bool) {
+	rel := computerUseBunRelPath()
+	for _, dir := range computerUseRuntimeDirCandidates() {
+		path := filepath.Join(dir, rel)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func computerUseRuntimeDirCandidates() []string {
+	if dir := strings.TrimSpace(os.Getenv(computerUseRuntimeDirEnv)); dir != "" {
+		return []string{filepath.Clean(dir)}
+	}
+	return computerUseResourceDirCandidatesFor(computerUseRuntimeDirName)
+}
+
+func computerUseBunRelPath() string {
+	return filepath.Join(computerUseBunTargetDir(), "bin", computerUseBunBinaryName())
+}
+
+func computerUseBunBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "bun.exe"
+	}
+	return "bun"
+}
+
+func computerUseBunTargetDir() string {
+	switch runtime.GOOS {
+	case "darwin":
+		switch runtime.GOARCH {
+		case "arm64":
+			return "bun-darwin-arm64"
+		default:
+			return "bun-darwin-amd64"
+		}
+	case "windows":
+		// Zavora publishes win32-x64 NAPI only, so Windows ARM64 launches x64 Bun
+		// under the OS compatibility layer instead of an arm64 Bun that cannot
+		// load the bundled native addon.
+		return "bun-windows-amd64"
+	case "linux":
+		if runtime.GOARCH == "arm64" {
+			return "bun-linux-arm64"
+		}
+		return "bun-linux-amd64"
+	default:
+		return "bun-" + runtime.GOOS + "-" + runtime.GOARCH
+	}
+}
+
+func computerUseResourceDirCandidatesFor(resourceName string) []string {
+	var out []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		clean := filepath.Clean(dir)
+		for _, existing := range out {
+			if existing == clean {
+				return
+			}
+		}
+		out = append(out, clean)
+	}
+	if exe, err := currentExecutable(); err == nil && exe != "" {
+		exeDir := filepath.Dir(exe)
+		add(filepath.Join(exeDir, resourceName))
+		add(filepath.Join(filepath.Dir(exeDir), "Resources", resourceName))
+		if strings.Contains(exeDir, ".app"+string(filepath.Separator)+"Contents"+string(filepath.Separator)+"MacOS") {
+			add(filepath.Join(filepath.Dir(exeDir), "Resources", resourceName))
+		}
+	}
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		add(filepath.Join(wd, resourceName))
+		add(filepath.Join(wd, "build", resourceName))
+		add(filepath.Join(wd, "desktop", "build", resourceName))
+	}
+	add(filepath.Join(string(filepath.Separator), "usr", "lib", "voltui", resourceName))
+	return out
 }
 
 // Entry returns one built-in MCP entry by name.
@@ -118,7 +263,7 @@ func IsBuiltInEntry(e config.PluginEntry) bool {
 // session-scoped entry with the same name exists. Explicit user and host config
 // wins, including auto_start=false.
 func AppendMissing(out []config.PluginEntry, configured []config.PluginEntry, reservedNames ...string) []config.PluginEntry {
-	return AppendEnabled(out, configured, []string{TimeName, OfficeName, Context7Name}, reservedNames...)
+	return AppendEnabled(out, configured, []string{TimeName, OfficeName, ComputerUseName, Context7Name}, reservedNames...)
 }
 
 // DefaultEnabledNames returns built-ins that should be active in ordinary
@@ -128,7 +273,7 @@ func DefaultEnabledNames() []string {
 	if runningGoTestBinary() && os.Getenv(enableDefaultBuiltInMCPInTestsEnv) == "" {
 		return nil
 	}
-	return []string{OfficeName}
+	return []string{OfficeName, ComputerUseName}
 }
 
 // AppendDefaultEnabled appends only default-on built-in MCP servers.

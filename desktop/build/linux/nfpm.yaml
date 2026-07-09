@@ -29,6 +29,16 @@ contents:
     dst: /usr/bin/voltui-desktop
     file_info:
       mode: 0755
+  - src: ./build/computer-use-mcp
+    dst: /usr/lib/voltui/computer-use-mcp
+    type: tree
+    file_info:
+      mode: 0644
+  - src: ./build/computer-use-runtime
+    dst: /usr/lib/voltui/computer-use-runtime
+    type: tree
+    file_info:
+      mode: 0755
   - src: ./build/linux/voltui.desktop
     dst: /usr/share/applications/voltui.desktop
     file_info:

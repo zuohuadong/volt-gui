@@ -67,6 +67,23 @@
 | ANYONG-RUNTIME-BRAND-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复暗涌发行版运行时仍自称 Volt/VoltUI | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
+| ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+
+### ANYONG-RELEASE-20260710-4 Task Contract
+
+- 目标：基于 live CNB `main=3c95bdab` 和已发布 `desktop-v0.8.1`，以补丁版发布已合并的 upstream workbench/Office/Coreutils 更新以及 OEM 运行时品牌默认，由 CNB 构建并发布 Windows amd64 Anyong 安装包、便携包和 `latest.json`。
+- 非目标：不发布 macOS/Linux/CLI，不改仓库可见性，不硬编码产品名到通用源码，不重写/force push `main`，不覆盖或重用旧 tag，不输出 CNB/Git/签名/OEM 网关 secret。
+- 验收标准：fresh live `main` 与本地一致，最新 tag 为 `desktop-v0.8.1@d9eee8b7`；`fix(desktop): release OEM runtime branding update` 最终 trigger commit 计算为 `desktop-v0.8.2`；发布前主进程与独立 candidate verifier 通过；push 后 CNB 快速验证与 release pipeline 成功；live tag `desktop-v0.8.2` 指向 trigger commit；Release 存在且包含 `Anyong-windows-amd64-installer.exe`、`Anyong-windows-amd64.zip`、`latest.json`；manifest 的 `version`、canonical installer URL、size、SHA-256 与实际资产一致；真实 zip 包含 `Anyong.exe`、update helper、computer-use MCP server、Windows N-API addon、bundled Bun、Coreutils 安装资源，且可执行文件携带 OEM 中文品牌默认；独立 live verifier PASS。
+- 协作模式：`pipeline`。explorer 只读审计版本、触发、产物、鉴权和回滚；candidate verifier 独立复核本地发布候选；production commit/push/tag/release 由 orchestrator 主进程与 CNB CI 执行，不委派 secret/不可逆写入；live verifier 独立下载并校验发布资产；orchestrator 最终裁决。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`xigu-ai-ops`；遵循现有 Go/Wails/CNB Windows-only 技术栈、Conventional Commits、BrandConfig/OEM build default 与 `DESKTOP_APP_NAME=Anyong` 命名边界。
+- Stack/Deployment Profile：既有 Go CLI + Wails v2 desktop + Svelte frontend；发布目标为 CNB Linux Docker runner 交叉构建 Windows amd64 Wails/NSIS，并通过 CNB Release API 上传私有资产。决策来源为 `.agents/AGENTS.local.md`、`.cnb.yml`、`references/skills/cnb-ci-cd/SKILL.md`；本轮不选择新栈/数据库/托管平台。
+- 发布序列：先将本 Task Contract 形成 `chore: prepare desktop v0.8.2 release [skip-release]` 本地提交，再创建空 `fix(desktop): release OEM runtime branding update` trigger commit，一次 fast-forward push 以确保最终 HEAD 消息触发 patch release；发布完成后用 `[skip-release]` 协作收尾提交记录 live 证据。
+- 风险：high，涉及远程 `main`、自动 tag/Release、签名私钥、OEM 网关 sidecar、Windows 原生 N-API/Bun/Coreutils 资源和私有下载鉴权；CNB 构建中任一依赖/网络/签名/API 失败都可能产生部分发布状态。
+- Secrets Strategy：Git 仅用一次性 macOS Keychain helper reset；CNB token、minisign key/password、`XIGU_API_KEY` 只由 CI secret 注入；远程 API/资产验证仅使用内存中的 Keychain 凭据并只输出状态/元数据，不显示 secret 值，不读取 `bundled.env` 内容。
+- 回滚：push 前任何门禁失败则停止；trigger push 后若尚未生成 tag，以同一 `main` 上的普通 `fix:` follow-up 修复并发布下一 patch；若 tag/Release 已部分生成，不强推/重写 tag，优先用新 patch 修复，仅在明确证据支持且必要时通过 CNB 管理面撤下错误 Release。
+- 验证计划：fresh local/tracking/live refs 与 tag/release 基线；root/desktop Go test+vet、brand/linker 专项、Coreutils/Bun/computer-use stage 脚本测试、frontend check/build、YAML/shell/Node 语法、manifest/release tools 测试、secret scan；candidate verifier；push 后持续读取 CNB build/tag/Release，下载 `latest.json`、installer 和 zip 完成 size/SHA-256/内容/OEM 品牌验证；live verifier。
+- context_isolation：explorer 写 `.mailbox/045-release-explorer-result.md`；candidate verifier 写 `.mailbox/046-release-candidate-verifier-result.md`；live verifier 写 `.mailbox/047-release-live-verifier-result.md`；不向子代理传递凭据值，产物证据以文件路径+哈希/元数据交付。
+- interruption_recovery：子代理或 CNB 构建超时时，`last_stable_artifact` 为 Task Contract、candidate commit、push porcelain、live tag/Release JSON、已下载资产哈希；子代理可重派一次，不切换 Claude/WorkBuddy；持续无 live 发布证据则保持 running/PARTIAL，不声称完成。
 
 ### ANYONG-PUSH-20260710 Task Contract
 

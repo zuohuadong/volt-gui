@@ -66,7 +66,7 @@
 | ANYONG-CHAT-OUTPUT-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 诊断暗涌桌面对话重复输出与工具调用报错 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-RUNTIME-BRAND-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复暗涌发行版运行时仍自称 Volt/VoltUI | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | running | codex | gpt-5.3-codex | - | review-high | main | - |
+| ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
 
 ### ANYONG-PUSH-20260710 Task Contract
 
@@ -82,6 +82,7 @@
 - 验证计划：Keychain-only `ls-remote/fetch`、remote ahead/behind；提交前 `git diff --check`、root/desktop Go 测试与 vet、brand 专项、Coreutils Node、frontend check/build 证据；精确 staged-file 清单与 secret 扫描；push 后 `ls-remote origin refs/heads/main`、commit range/tag 复核和独立 verifier。
 - context_isolation：explorer 将结果写入 `.mailbox/042-push-explorer-result.md`；verifier 只读 final local/remote 状态并写 `.mailbox/043-push-verifier-result.md`；子代理不接收凭据内容，不执行 push。
 - interruption_recovery：若 explorer/verifier 超时，保留 mailbox error；`last_stable_artifact` 为 Task Contract、本地 commit、push porcelain/live ref 输出；orchestrator 可重派一次，不切换 Claude/WorkBuddy，缺 verifier 时不声称完成。
+- completion_evidence：explorer `.mailbox/042-push-explorer-result.md` PASS；产品/协作提交 `93230f6cf8c40f0e74cc6f652d4b7904a846e80a` 以 fast-forward 推送到 live CNB `main`；独立 verifier `.mailbox/043-push-verifier-result.md` PASS，local/tracking/live ref 一致，merge `b556405d` 与 upstream `909fbc9f` 均为远程祖先；六文件范围、测试、secret scan 和 `[skip-release]` 通过，live 最新 tag 仍为 `desktop-v0.8.1@d9eee8b7`；保护 stash 未删除。
 
 ### ANYONG-SYNC-20260710-3 Task Contract
 

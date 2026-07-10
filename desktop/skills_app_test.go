@@ -62,6 +62,40 @@ func TestSkillRootsViewCountsProjectSkills(t *testing.T) {
 	t.Fatalf("project skill root %q not found in %+v", root, roots)
 }
 
+func TestCreateSkillPackageAppearsInCapabilitiesWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	project := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	if _, err := app.CreateSkillPackage(SkillPackageInput{
+		Name:        "合同审查",
+		Description: "检查合同条款风险",
+		RunAs:       "workflow",
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	view := app.Capabilities()
+	for _, sk := range view.Skills {
+		if sk.Description == "检查合同条款风险" {
+			if sk.Name == "" || sk.DisplayName != "合同审查" || !sk.Enabled {
+				t.Fatalf("created skill = %+v, want named enabled skill with display name", sk)
+			}
+			return
+		}
+	}
+	t.Fatalf("created skill missing from Capabilities: %+v", view.Skills)
+}
+
 func TestSkillRootsViewMarksEnvConfiguredCustomRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

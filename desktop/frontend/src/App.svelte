@@ -77,6 +77,7 @@
     FilePreview,
     HistoryMessage,
     ModelInfo,
+    MCPServerInput,
     ProviderView,
     QuestionAnswer,
     SettingsView,
@@ -189,6 +190,8 @@
     SearchWorkbench?: (query: string) => Promise<WorkbenchSearchResult[]>;
     ExportOperationLogs?: () => Promise<string>;
     ExportWorkbenchReports?: () => Promise<string>;
+    ExportWorkbenchReport?: (id: string) => Promise<string>;
+    DeleteWorkbenchReport?: (id: string) => Promise<void>;
     SaveTeamRoom?: (input: WorkbenchTeamRoom) => Promise<WorkbenchTeamRoom>;
     SaveTeamRun?: (input: WorkbenchTeamRun) => Promise<WorkbenchTeamRun>;
     SaveTeamChatMessage?: (input: WorkbenchTeamChatMessage) => Promise<WorkbenchTeamChatMessage>;
@@ -302,6 +305,9 @@
   let capabilityCreateEntry = $state("plugin.json");
   let capabilityCreateStatus = $state("启用");
   let capabilityCreateDescription = $state("");
+  let capabilityCreateMcpArgs = $state("");
+  let capabilityCreateMcpEnv = $state("");
+  let capabilityImportInput = $state<HTMLInputElement | undefined>();
   let resourceTab = $state<ResourceTab>("resources");
   let resourceSearch = $state("");
   let collapsedWorkspaceSections = $state<string[]>([]);
@@ -525,6 +531,23 @@
   let projectDraftAgent = $state("");
   let projectDraftNextStep = $state("");
   let projectDraftDesc = $state("");
+  let customerDraftName = $state("");
+  let customerDraftType = $state("企业");
+  let customerDraftContact = $state("");
+  let customerDraftPhone = $state("");
+  let customerDraftEmail = $state("");
+  let customerDraftIndustry = $state("");
+  let customerDraftRegion = $state("");
+  let customerDraftOwner = $state("");
+  let customerDraftStage = $state("跟进中");
+  let customerDraftStatus = $state("active");
+  let customerDraftRisk = $state("低风险");
+  let customerDraftProjectId = $state("");
+  let customerDraftNextAction = $state("");
+  let customerDraftTags = $state("");
+  let customerDraftAddress = $state("");
+  let customerDraftNote = $state("");
+  let customerDraftDesc = $state("");
   let materialDraftTitle = $state("");
   let materialDraftProjectId = $state("");
   let materialDraftCategory = $state("项目资料");
@@ -556,6 +579,7 @@
   let selectedArtifactStage = $state<ArtifactReviewStageId>("design");
   let selectedArtifactStyleId = $state("brand-systematic");
   let artifactStyleApproved = $state(false);
+  let reportDraftId = $state("");
   let reportDraftTitle = $state("");
   let reportDraftKind = $state("项目风险报告");
   let reportDraftStatus = $state("草稿");
@@ -581,6 +605,15 @@
   const projectStageOptions = ["立项中", "需求确认", "进行中", "验证中", "交付中", "已暂停", "已归档"];
   const projectCategoryOptions = ["业务项目", "交付项目", "研发项目", "运营项目", "客户项目", "内部项目", "官网运营", "小程序发布", "桌面端重构"];
   const projectRiskOptions = ["低风险", "中风险", "高风险", "待评估", "已关闭"];
+  const customerTypeOptions = ["企业", "自然人", "团队", "机构"];
+  const customerStageOptions = ["初次接触", "跟进中", "需求确认", "方案沟通", "交付中", "活跃", "暂停", "已归档"];
+  const customerRiskOptions = ["低风险", "中风险", "高风险", "待评估"];
+  const customerStatusOptions = [
+    { value: "active", label: "活跃" },
+    { value: "pending", label: "待跟进" },
+    { value: "paused", label: "暂停" },
+    { value: "closed", label: "已归档" },
+  ];
   const materialCategoryOptions = ["项目资料", "需求资料", "业务资料", "验收资料", "验证资料", "发布资料", "归档资料"];
   const reportKindOptions = ["项目风险报告", "客户运营周报", "自动化运行报告", "验收报告", "复盘报告", "分析报告"];
   const reportStatusOptions = ["草稿", "待复核", "已生成", "已归档"];
@@ -837,7 +870,7 @@
       ? linkedProject || activeTab?.workspaceName || t.common.global
       : activeTab?.workspaceName || t.common.global,
   );
-  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean };
+  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
   type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
   const defaultCapabilityBuckets: CapabilityBuckets = {
     plugin: [
@@ -1442,6 +1475,7 @@
     const linked = projectCards.find((item) => item.name === linkedProject);
     if (linked) return linked.id;
     if (projectDetailOpen && projectCards.some((item) => item.id === selectedProjectId)) return selectedProjectId;
+    if (customerDetailOpen) return customerProjects(selectedCustomer())[0]?.id ?? "";
     return "";
   }
   function todoProjectRows(projectId: string) {
@@ -1912,16 +1946,35 @@
     if (nextTitle) showWorkbenchNotice(`${nextTitle}已${enabled ? "加入" : "移出"}蒸馏能力。`);
   }
   function capabilityAgentBindingList(item: CapabilityItem) {
-    return capabilityAgentBindings[item.id] ?? (item.enabled ? agentCards.slice(0, 2).map((agent) => agent.id) : []);
+    const explicit = capabilityAgentBindings[item.id];
+    if (explicit) return explicit;
+    const target = item.name || item.id;
+    const persisted = agentCards.filter((agent) => capabilityTab === "skill" ? (agent.skills ?? []).includes(target) : (agent.tools ?? []).includes(target)).map((agent) => agent.id);
+    return persisted;
   }
   function isCapabilityAgentBound(item: CapabilityItem, agentId: string) {
     return capabilityAgentBindingList(item).includes(agentId);
   }
-  function toggleCapabilityAgentBinding(item: CapabilityItem, agent: AgentView) {
+  async function toggleCapabilityAgentBinding(item: CapabilityItem, agent: AgentView) {
     const current = capabilityAgentBindingList(item);
     const next = current.includes(agent.id) ? current.filter((id) => id !== agent.id) : [...current, agent.id];
     capabilityAgentBindings = { ...capabilityAgentBindings, [item.id]: next };
-    showWorkbenchNotice(`${agent.name}已${next.includes(agent.id) ? "绑定到" : "从"}${item.name}${next.includes(agent.id) ? "" : "解绑"}。`);
+    const bound = next.includes(agent.id);
+    if (hasWailsBindings()) {
+      try {
+        await app().SaveAgent(agentInputWithCapability(agent, item, bound));
+        await refreshAgents();
+      } catch (error) {
+        console.error("Failed to persist capability binding", error);
+        capabilityAgentBindings = { ...capabilityAgentBindings, [item.id]: current };
+        showWorkbenchNotice("保存 Agent 能力绑定失败，请稍后重试。");
+        return;
+      }
+    } else {
+      const nextInput = agentInputWithCapability(agent, item, bound);
+      agentCards = agentCards.map((candidate) => candidate.id === agent.id ? { ...candidate, tools: nextInput.tools ?? [], skills: nextInput.skills ?? [], updatedAt: new Date().toISOString() } : candidate);
+    }
+    showWorkbenchNotice(`${agent.name}已${bound ? "绑定到" : "从"}${item.name}${bound ? "" : "解绑"}。`);
   }
   const REQUEST_TIMEOUT_MS = 30_000;
   const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
@@ -3360,6 +3413,56 @@
     const body = report?.body?.trim() || report?.desc?.trim();
     return body ? body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : ["暂无报告正文。"];
   }
+  function openReportEditor(report = selectedReport()) {
+    if (!report) return;
+    reportDraftId = report.id;
+    reportDraftTitle = report.title || "";
+    reportDraftKind = report.kind || "项目风险报告";
+    reportDraftStatus = report.status || "草稿";
+    reportDraftProjectId = report.projectId || "";
+    reportDraftCustomerId = report.customerId || "";
+    reportDraftOwner = report.owner || agentCards.find((agent) => agent.id === selectedAgentId)?.name || "自动化 Agent";
+    reportDraftSource = report.source || "工作台数据";
+    reportDraftFormat = report.format || "Markdown";
+    reportDraftPriority = report.priority || "中";
+    reportDraftDueAt = report.dueAt || "";
+    reportDraftDesc = report.desc || "";
+    reportDraftBody = report.body || "";
+    configDialog = "report";
+  }
+  async function exportReport(report = selectedReport()) {
+    if (!report) return;
+    const exportReportBinding = workbenchDataPersistenceBindings()?.ExportWorkbenchReport;
+    if (typeof exportReportBinding !== "function") {
+      showWorkbenchNotice("当前环境未连接单篇报告导出接口。");
+      return;
+    }
+    try {
+      const path = await exportReportBinding(report.id);
+      await refreshWorkbenchData();
+      showWorkbenchNotice(`已导出报告：${path}`);
+    } catch (error) {
+      console.error("Failed to export report", error);
+      showWorkbenchNotice("导出报告失败，请稍后重试。");
+    }
+  }
+  async function deleteReport(report = selectedReport()) {
+    if (!report) return;
+    if (!window.confirm(`确认删除报告“${report.title}”？`)) return;
+    const deleteReportBinding = workbenchDataPersistenceBindings()?.DeleteWorkbenchReport;
+    try {
+      if (typeof deleteReportBinding === "function") {
+        await deleteReportBinding(report.id);
+      }
+      reportCards = reportCards.filter((item) => item.id !== report.id);
+      selectedReportId = reportCards[0]?.id ?? "";
+      if (typeof deleteReportBinding === "function") await refreshWorkbenchData();
+      showWorkbenchNotice(`已删除报告：${report.title}`);
+    } catch (error) {
+      console.error("Failed to delete report", error);
+      showWorkbenchNotice("删除报告失败，请稍后重试。");
+    }
+  }
   function selectedArtifactStyle() {
     return artifactStyleOptions.find((style) => style.id === selectedArtifactStyleId) ?? artifactStyleOptions[0];
   }
@@ -3418,10 +3521,48 @@
   }
   function projectTodos(project = selectedProject()) { return [...todoProjectRows(project.id), ...projectTodoRows.filter((item) => item.projectId === project.id)]; }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
-  function customerProjects(customer = selectedCustomer()) { return projectCards.filter((project) => customer.projectIds.includes(project.id)); }
-  function customerMaterials(customer = selectedCustomer()) { return customerMaterialRows.filter((item) => item.customerId === customer.id); }
-  function customerSchedules(customer = selectedCustomer()) { return customerScheduleRows.filter((item) => item.customerId === customer.id); }
-  function customerTodos(customer = selectedCustomer()) { return [...todoCustomerRows(customer.id), ...customerTodoRows.filter((item) => item.customerId === customer.id)]; }
+  function customerProjectIdSet(customer = selectedCustomer()) {
+    return new Set([...(customer?.projectIds ?? []), ...projectCards.filter((project) => project.client === customer?.name).map((project) => project.id)].filter(Boolean));
+  }
+  function customerProjects(customer = selectedCustomer()) {
+    const projectIds = customerProjectIdSet(customer);
+    return projectCards.filter((project) => projectIds.has(project.id));
+  }
+  function customerMaterials(customer = selectedCustomer()) {
+    const projectIds = customerProjectIdSet(customer);
+    return projectMaterialRows.filter((material) => projectIds.has(material.projectId));
+  }
+  function customerSchedules(customer = selectedCustomer()) {
+    const projectIds = customerProjectIdSet(customer);
+    return calendarEvents
+      .filter((event) => event.customerId === customer.id || (event.projectId ? projectIds.has(event.projectId) : false))
+      .map((event) => ({
+        id: event.id,
+        title: event.title,
+        date: calendarEventFullDate(event) || event.date || event.day,
+        time: event.time,
+        place: event.place,
+        state: event.status || event.type,
+        desc: event.desc || `${event.type || "日程"} / ${event.place || "未设置地点"}`,
+        event,
+      }));
+  }
+  function customerTodos(customer = selectedCustomer()) {
+    const projectIds = customerProjectIdSet(customer);
+    const rows = todoItems
+      .filter((todo) => todo.customerId === customer.id || (todo.projectId ? projectIds.has(todo.projectId) : false))
+      .map((todo) => ({
+        id: todo.id,
+        customerId: customer.id,
+        title: todo.title,
+        due: todoDue(todo),
+        priority: todo.priority,
+        state: todoStatusLabel(todo.status),
+        desc: todoDescription(todo),
+        todo,
+      }));
+    return rows.filter((row, index, list) => list.findIndex((item) => item.id === row.id) === index);
+  }
   function selectedAgent() { return agentCards.find((agent) => agent.id === selectedAgentId) ?? agentCards[0]; }
   function selectedTeamRoom() { return teamRooms.find((team) => team.title === selectedTeamTitle) ?? teamRooms[0]; }
   function teamMembers(team = selectedTeamRoom()) { return (team?.memberIds ?? []).map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
@@ -3805,6 +3946,33 @@
     }, 0) + 1;
     return `${prefix}-${String(next).padStart(2, "0")}`;
   }
+  function customerRiskLevel(risk: string) {
+    if (risk.includes("高")) return "high";
+    if (risk.includes("中")) return "medium";
+    return "low";
+  }
+  function splitDraftList(value: string) {
+    return value.split(/[,，、/\n]/).map((item) => item.trim()).filter(Boolean);
+  }
+  function resetCustomerDraft() {
+    customerDraftName = linkedCustomer || "";
+    customerDraftType = "企业";
+    customerDraftContact = "";
+    customerDraftPhone = "";
+    customerDraftEmail = "";
+    customerDraftIndustry = "";
+    customerDraftRegion = "";
+    customerDraftOwner = agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "我的";
+    customerDraftStage = "跟进中";
+    customerDraftStatus = "active";
+    customerDraftRisk = "低风险";
+    customerDraftProjectId = "";
+    customerDraftNextAction = "";
+    customerDraftTags = "";
+    customerDraftAddress = "";
+    customerDraftNote = "";
+    customerDraftDesc = "";
+  }
   function resetProjectDraft() {
     const now = new Date();
     const pad = (value: number) => String(value).padStart(2, "0");
@@ -3829,6 +3997,7 @@
     const customer = selectedCustomer();
     const agent = agentCards.find((item) => item.id === selectedAgentId);
     const baseTitle = linkedProject || project?.name;
+    reportDraftId = "";
     reportDraftTitle = baseTitle ? `${baseTitle} 分析报告` : "新建分析报告";
     reportDraftKind = "项目风险报告";
     reportDraftStatus = "草稿";
@@ -3858,6 +4027,7 @@
     if (kind === "schedule") resetScheduleDraft();
     if (kind === "todo") resetTodoDraft();
     if (kind === "project") resetProjectDraft();
+    if (kind === "customer") resetCustomerDraft();
     if (kind === "report") resetReportDraft();
     if (kind === "template") resetTemplateDraft();
     if (kind === "ingest") resetIngestDraft();
@@ -3939,6 +4109,7 @@
     const priority = todoDraftPriority.trim() || "中";
     const desc = todoDraftDesc.trim() || "待补充执行说明。";
     const project = todoDraftProjectId ? projectCards.find((item) => item.id === todoDraftProjectId) : undefined;
+    const customer = customerDetailOpen ? selectedCustomer() : undefined;
     const agent = agentCards.find((item) => item.id === selectedAgentId);
     const projectId = project?.id ?? "";
     const input: WorkbenchTodoInput = {
@@ -3950,8 +4121,8 @@
       priority,
       projectId,
       projectName: project?.name ?? "",
-      customerId: "",
-      customerName: "",
+      customerId: customer?.id ?? "",
+      customerName: customer?.name ?? "",
       agentId: agent?.id ?? selectedAgentId,
       agentName: agent?.name ?? "",
       model: selectedModel || agentModel,
@@ -4111,23 +4282,34 @@
   }
   async function submitCustomerDraft() {
     const saveCustomer = workbenchDataPersistenceBindings()?.SaveCustomer;
-    const baseName = linkedCustomer || projectDraftClient.trim() || `客户 ${new Date().toLocaleDateString("zh-CN")}`;
+    const name = customerDraftName.trim();
+    if (!name) {
+      showWorkbenchNotice("请填写客户名称。");
+      return;
+    }
+    const projectIds = customerDraftProjectId ? [customerDraftProjectId] : [];
     const input: WorkbenchCustomerInput = {
-      name: baseName,
-      type: "企业",
-      contact: "联系人",
-      phone: "",
-      risk: "低风险",
-      riskLevel: "low",
-      status: "active",
-      owner: agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "我的",
-      stage: "跟进中",
-      desc: configDialogIntro(),
-      projectIds: selectedProjectId ? [selectedProjectId] : [],
-      matters: selectedProjectId ? 1 : 0,
+      name,
+      type: customerDraftType.trim() || "企业",
+      contact: customerDraftContact.trim() || "联系人",
+      phone: customerDraftPhone.trim(),
+      email: customerDraftEmail.trim(),
+      risk: customerDraftRisk.trim() || "低风险",
+      riskLevel: customerRiskLevel(customerDraftRisk),
+      status: customerDraftStatus || "active",
+      owner: customerDraftOwner.trim() || "我的",
+      stage: customerDraftStage.trim() || "跟进中",
+      industry: customerDraftIndustry.trim(),
+      region: customerDraftRegion.trim(),
+      address: customerDraftAddress.trim(),
+      note: customerDraftNote.trim(),
+      desc: customerDraftDesc.trim(),
+      projectIds,
+      matters: projectIds.length,
+      nextAction: customerDraftNextAction.trim(),
       lastTouch: "刚刚",
       lastContact: "刚刚",
-      tags: ["工作台"],
+      tags: splitDraftList(customerDraftTags),
     };
     try {
       const now = new Date().toISOString();
@@ -4186,6 +4368,7 @@
       return;
     }
     const input: WorkbenchReportInput = {
+      id: reportDraftId || undefined,
       title,
       status: reportDraftStatus.trim() || "草稿",
       owner: reportDraftOwner.trim() || "自动化 Agent",
@@ -4202,12 +4385,13 @@
     try {
       const saved = typeof saveReport === "function"
         ? await saveReport(input)
-        : { ...input, id: `report-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchReport;
+        : { ...input, id: input.id || `report-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchReport;
       reportCards = [saved, ...reportCards.filter((report) => report.id !== saved.id)];
       selectedReportId = saved.id;
       workLayer = "reports";
       configDialog = undefined;
-      showWorkbenchNotice(`已新建报告：${saved.title}`);
+      reportDraftId = "";
+      showWorkbenchNotice(`${input.id ? "已更新报告" : "已新建报告"}：${saved.title}`);
     } catch (error) {
       console.error("Failed to save report", error);
       showWorkbenchNotice("新建报告失败，请稍后重试。");
@@ -4342,7 +4526,7 @@
   function configDialogTitle() {
     if (configDialog === "schedule") return selectedScheduleEventId ? "日程详情" : "新建日程";
     if (configDialog === "todo") return "新建待办";
-    if (configDialog === "report") return "新建分析报告";
+    if (configDialog === "report") return reportDraftId ? "编辑分析报告" : "新建分析报告";
     if (configDialog === "model") return modelDraftEditing ? "编辑模型渠道" : "添加模型渠道";
     if (configDialog === "ingest") return "批量导入";
     if (configDialog === "knowledge") return "导入知识";
@@ -4685,6 +4869,11 @@
       path: plugin.entry || plugin.id,
       permission: plugin.config ? Object.keys(plugin.config).join(" / ") || "按插件配置" : "按插件配置",
       enabled: plugin.enabled,
+      pluginKind: plugin.kind || "native",
+      pluginEntry: plugin.entry || plugin.id,
+      capabilities: plugin.capabilities ?? [],
+      providerIds: plugin.providerIds ?? [],
+      pluginConfig: plugin.config ?? {},
     };
   }
   function installedPluginToCapability(plugin: CapabilitiesView["plugins"][number]): CapabilityItem {
@@ -4737,9 +4926,10 @@
     };
   }
   function skillToCapability(skill: CapabilitiesView["skills"][number]): CapabilityItem {
+    const displayName = skill.displayName?.trim() || skill.name;
     return {
       id: skill.name,
-      name: skill.name,
+      name: displayName,
       desc: skill.description || "Skill 工作流",
       status: skill.enabled ? "已加载" : "未启用",
       version: skill.scope || "skill",
@@ -4791,7 +4981,7 @@
   }
   function capabilityActionLabel(item: CapabilityItem) {
     if (item.readOnly) return item.enabled ? "本地已安装" : "查看状态";
-    if (item.enabled) return "配置";
+    if (item.enabled) return "停用";
     if (item.status.includes("开发中")) return "开发中";
     if (item.status.includes("授权") || item.sync.includes("授权")) return "授权";
     if (item.status.includes("待安装")) return "安装";
@@ -4802,27 +4992,219 @@
     const currentIndex = item.status.includes("授权") ? 2 : item.status.includes("配置") ? 1 : 0;
     return index <= currentIndex;
   }
+  function capabilityChoiceEnabled(value: string) {
+    const text = value.trim().toLowerCase();
+    return text === "启用" || text === "enabled" || text === "true";
+  }
+  function capabilitySlug(value: string, fallback: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || fallback;
+  }
+  function capabilityDescriptionParts(value: string) {
+    return value.split(/[\n,，/]/).map((item) => item.trim()).filter(Boolean);
+  }
+  function capabilityStringConfig(value: unknown): Record<string, string> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, typeof raw === "string" ? raw : JSON.stringify(raw)]));
+  }
+  function capabilityMCPTransport() {
+    const value = capabilityCreateGroup.trim().toLowerCase();
+    if (value === "http" || value === "streamable-http") return "http";
+    if (value === "sse") return "sse";
+    return "stdio";
+  }
+  function parseCapabilityMCPArgs(value: string) {
+    const text = value.trim();
+    if (!text) return [];
+    if (text.startsWith("[")) {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map(String);
+      throw new Error("MCP args must be a JSON array");
+    }
+    return text.split(/\r?\n/).flatMap((line) => line.trim().split(/\s+/)).filter(Boolean);
+  }
+  function parseCapabilityMCPEnv(value: string) {
+    const env: Record<string, string> = {};
+    for (const raw of value.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const index = line.indexOf("=");
+      if (index <= 0) throw new Error(`Invalid MCP env line: ${line}`);
+      env[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+    }
+    return env;
+  }
+  function capabilityPluginInput(item: CapabilityItem, enabled = item.enabled): WorkbenchPluginInput {
+    return {
+      id: item.id,
+      name: item.name,
+      kind: item.pluginKind || item.source || "native",
+      entry: item.pluginEntry || item.path || item.id,
+      version: item.version || "v0.1",
+      capabilities: item.capabilities?.length ? item.capabilities : capabilityDescriptionParts(item.desc),
+      providerIds: item.providerIds?.length ? item.providerIds : item.scope && item.scope !== "workspace" ? capabilityDescriptionParts(item.scope) : [],
+      config: item.pluginConfig ?? (item.permission && !item.permission.includes("按") ? { permission: item.permission } : {}),
+      enabled,
+    };
+  }
+  function agentInputWithCapability(agent: AgentView, item: CapabilityItem, bound: boolean): AgentInput {
+    const tools = new Set(agent.tools ?? []);
+    const skills = new Set(agent.skills ?? []);
+    const target = item.name || item.id;
+    if (capabilityTab === "skill") {
+      bound ? skills.add(target) : skills.delete(target);
+    } else {
+      bound ? tools.add(target) : tools.delete(target);
+    }
+    return {
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      status: agent.status,
+      desc: agent.desc,
+      avatar: agent.avatar ?? agent.name.slice(0, 1),
+      vibe: agent.vibe ?? "",
+      provider: agent.provider ?? "OpenAI",
+      model: agent.model ?? agentModel,
+      tools: [...tools],
+      skills: [...skills],
+      coreFiles: agent.coreFiles ?? [],
+    };
+  }
+  async function toggleCapabilityEnabled(item = currentCapability()) {
+    if (!item) return;
+    if (!hasWailsBindings()) {
+      showWorkbenchNotice("当前环境未连接桌面后端，无法更新能力状态。");
+      return;
+    }
+    if (item.readOnly && capabilityTab === "plugin") {
+      showWorkbenchNotice("本地插件包状态来自插件清单，请在插件配置中启停。");
+      return;
+    }
+    const enabled = !item.enabled;
+    try {
+      if (capabilityTab === "plugin") {
+        await app().SaveWorkbenchPlugin(capabilityPluginInput(item, enabled));
+      } else if (capabilityTab === "mcp") {
+        await app().SetMCPServerEnabled(item.id, enabled);
+      } else {
+        await app().SetSkillEnabled(item.name, enabled);
+        await app().RefreshSkills();
+      }
+      await refreshCapabilities();
+      await refreshSkillStatus();
+      showWorkbenchNotice(`${item.name} 已${enabled ? "启用" : "停用"}。`);
+    } catch (error) {
+      console.error("Failed to toggle capability", error);
+      showWorkbenchNotice("更新能力状态失败，请检查配置或当前会话状态。");
+    }
+  }
+  function openCapabilityImportPicker() {
+    capabilityImportInput?.click();
+  }
+  async function handleCapabilityImportFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    if (!hasWailsBindings()) {
+      showWorkbenchNotice("当前环境未连接桌面后端，无法导入能力配置。");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(await file.text());
+      const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed.capabilities) ? parsed.capabilities : [parsed];
+      let count = 0;
+      for (const item of items) {
+        if (await importCapabilityConfig(item)) count += 1;
+      }
+      await refreshCapabilities();
+      await refreshSkillStatus();
+      showWorkbenchNotice(`已导入 ${count} 条能力配置。`);
+    } catch (error) {
+      console.error("Failed to import capability config", error);
+      showWorkbenchNotice("导入配置失败，请确认 JSON 格式和字段。");
+    }
+  }
+  async function importCapabilityConfig(raw: unknown) {
+    if (!raw || typeof raw !== "object") return false;
+    const item = raw as Record<string, unknown>;
+    const type = String(item.type ?? item.kind ?? capabilityTab).toLowerCase();
+    const name = String(item.name ?? item.id ?? "").trim();
+    if (!name) return false;
+    const enabled = typeof item.enabled === "boolean" ? item.enabled : capabilityChoiceEnabled(String(item.status ?? "启用"));
+    if (type.includes("mcp")) {
+      const transport = String(item.transport ?? "stdio") === "http" ? "http" : "stdio";
+      const mcpInput: MCPServerInput = {
+        name,
+        transport,
+        command: String(item.command ?? item.entry ?? ""),
+        args: Array.isArray(item.args) ? item.args.map(String) : [],
+        url: String(item.url ?? ""),
+        tier: String(item.tier ?? item.scope ?? "workspace"),
+        enabled,
+      };
+      await app().AddMCPServer(mcpInput);
+      return true;
+    }
+    if (type.includes("skill")) {
+      await app().CreateSkillPackage({
+        name,
+        description: String(item.description ?? item.desc ?? ""),
+        runAs: String(item.runAs ?? item.scope ?? "workflow"),
+        enabled,
+      });
+      return true;
+    }
+    const capabilities = Array.isArray(item.capabilities) ? item.capabilities.map(String) : capabilityDescriptionParts(String(item.description ?? item.desc ?? ""));
+    await app().SaveWorkbenchPlugin({
+      id: String(item.id ?? capabilitySlug(name, `plugin-${Date.now()}`)),
+      name,
+      kind: String(item.kind ?? "native"),
+      entry: String(item.entry ?? item.path ?? name),
+      version: String(item.version ?? "v0.1"),
+      capabilities,
+      providerIds: Array.isArray(item.providerIds) ? item.providerIds.map(String) : [],
+      config: capabilityStringConfig(item.config),
+      enabled,
+    });
+    return true;
+  }
   function resetCapabilityCreateForm(kind: CapabilityTab) {
     capabilityCreateName = `新建${capabilityLabel(kind)}`;
-    capabilityCreateGroup = capabilityLabel(kind);
+    capabilityCreateGroup = kind === "mcp" ? "stdio" : capabilityLabel(kind);
     capabilityCreateVersion = "v0.1";
-    capabilityCreateScope = kind === "mcp" ? "workspace" : kind === "skill" ? "skills" : "desktop/frontend";
+    capabilityCreateScope = kind === "mcp" ? "background" : kind === "skill" ? "workflow" : "desktop/frontend";
     capabilityCreateEntry = kind === "mcp" ? "npx mcp-server" : kind === "skill" ? "SKILL.md" : "plugin.json";
     capabilityCreateStatus = "启用";
-    capabilityCreateDescription = `${capabilitySubtitle(kind)}：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。`;
+    capabilityCreateMcpArgs = "";
+    capabilityCreateMcpEnv = "";
+    capabilityCreateDescription =
+      kind === "skill"
+        ? "描述 Skill 的使用场景、输入输出、执行步骤和注意事项。"
+        : `${capabilitySubtitle(kind)}：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。`;
   }
   function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; if (capabilityCreateOpen) resetCapabilityCreateForm(kind); }
   function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); resetCapabilityCreateForm(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
   async function submitCapabilityCreate() {
     const name = capabilityCreateName.trim();
     if (!name) return;
-    const enabled = capabilityCreateStatus === "启用";
+    const enabled = capabilityChoiceEnabled(capabilityCreateStatus);
     try {
       if (capabilityTab === "plugin") {
-        const input: WorkbenchPluginInput = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `plugin-${Date.now()}`, name, kind: capabilityCreateGroup.trim() || "native", entry: capabilityCreateEntry.trim() || name, version: capabilityCreateVersion.trim() || "v0.1", capabilities: capabilityCreateDescription.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean), enabled };
+        const input: WorkbenchPluginInput = { id: capabilitySlug(name, `plugin-${Date.now()}`), name, kind: capabilityCreateGroup.trim() || "native", entry: capabilityCreateEntry.trim() || name, version: capabilityCreateVersion.trim() || "v0.1", capabilities: capabilityDescriptionParts(capabilityCreateDescription), enabled };
         await app().SaveWorkbenchPlugin(input);
       } else if (capabilityTab === "mcp") {
-        await app().AddMCPServer({ name, transport: capabilityCreateGroup.trim().toLowerCase() === "http" ? "http" : "stdio", command: capabilityCreateEntry.trim(), args: [], url: capabilityCreateGroup.trim().toLowerCase() === "http" ? capabilityCreateEntry.trim() : "", tier: capabilityCreateScope.trim() || "workspace" });
+        const transport = capabilityMCPTransport();
+        await app().AddMCPServer({
+          name,
+          transport,
+          command: transport === "stdio" ? capabilityCreateEntry.trim() : "",
+          args: transport === "stdio" ? parseCapabilityMCPArgs(capabilityCreateMcpArgs) : [],
+          url: transport === "stdio" ? "" : capabilityCreateEntry.trim(),
+          env: parseCapabilityMCPEnv(capabilityCreateMcpEnv),
+          tier: "background",
+          enabled,
+        });
       } else {
         const input: SkillPackageInput = { name, description: capabilityCreateDescription.trim(), runAs: capabilityCreateScope.trim() || "workflow", enabled };
         await app().CreateSkillPackage(input);
@@ -4832,6 +5214,8 @@
       await refreshSkillStatus();
     } catch (error) {
       console.error("Failed to create capability", error);
+      await refreshCapabilities();
+      await refreshSkillStatus();
     }
   }
   function configDialogIntro() {
@@ -5857,7 +6241,7 @@
                 <div class="management-stats">
                   <article><div><span>客户总数</span><strong>{customerCards.length}</strong><em>全部客户档案</em></div><UsersRound size={18} /></article>
                   <article><div><span>企业客户</span><strong>{customerCards.filter((customer) => customer.type === "企业").length}</strong><em>机构与团队主体</em></div><BriefcaseBusiness size={18} /></article>
-                  <article><div><span>关联项目</span><strong>{customerCards.reduce((sum, customer) => sum + customer.matters, 0)}</strong><em>累计项目数量</em></div><FolderKanban size={18} /></article>
+                  <article><div><span>关联项目</span><strong>{customerCards.reduce((sum, customer) => sum + customerProjects(customer).length, 0)}</strong><em>累计项目数量</em></div><FolderKanban size={18} /></article>
                   <article><div><span>高风险客户</span><strong>{customerCards.filter((customer) => customer.riskLevel === "high").length}</strong><em>需重点跟进</em></div><ShieldCheck size={18} /></article>
                 </div>
                 <div class="management-controls">
@@ -5877,7 +6261,7 @@
                           <span><BriefcaseBusiness size={13} />{customer.industry || "个人档案"}</span>
                         </div>
                       </div>
-                      <aside class="client-card-side"><span>{customer.matters} 个项目</span><em class:riskHigh={customer.riskLevel === "high"}>{customer.risk}</em></aside>
+                      <aside class="client-card-side"><span>{customerProjects(customer).length} 个项目</span><em class:riskHigh={customer.riskLevel === "high"}>{customer.risk}</em></aside>
                       <b>›</b>
                     </button>
                   {:else}
@@ -5886,7 +6270,7 @@
                 </div>
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page calendar-page"><div class="aorist-toolbar calendar-toolbar"><div><span>Calendar</span><strong>日程日历 · {calendarMonthLabel()}</strong></div><div><button type="button" onclick={() => shiftCalendarMonth(-1)}>上月</button><button type="button" onclick={resetCalendarMonth}>今天</button><button type="button" onclick={() => shiftCalendarMonth(1)}>下月</button><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarMonthEvents().length}</strong><em>{calendarMonthLabel()} / 会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todayTodoItems().length}</strong><em>仅统计今天截止</em></article><article><span>冲突提醒</span><strong>{calendarConflictGroups().length}</strong><em>{calendarConflictSummary()}</em></article></div><div class="calendar-board"><div class="calendar-grid calendar-month-grid">{#each calendarWeekdays as weekday (weekday)}<div class="calendar-weekday">{weekday}</div>{/each}{#each calendarMonthCells() as cell (cell.key)}<article class:today={cell.isToday} class:muted={!cell.inMonth}><b>{cell.day}</b>{#each cell.events as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="calendar-event-chip" type="button" onclick={() => openCalendarEvent(event)}>{event.time} {event.title}</button>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each upcomingCalendarEvents() as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{calendarEventFullDate(event).slice(8, 10) || event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{:else}<article class="detail-empty"><strong>暂无近日安排</strong><p>当前月份暂无近期日程。</p></article>{/each}</aside></div></section>
-            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => (selectedReportId = report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportUpdatedAt()}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-meta"><div><span>报告 ID</span><strong>{selectedReport()?.id}</strong></div><div><span>创建时间</span><strong>{selectedReport()?.createdAt || "未记录"}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
+            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => (selectedReportId = report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportUpdatedAt()}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta"><div><span>报告 ID</span><strong>{selectedReport()?.id}</strong></div><div><span>创建时间</span><strong>{selectedReport()?.createdAt || "未记录"}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
   <div class="resource-section-top">
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
     <div class="resource-actions"><button type="button" onclick={() => openConfigDialog("knowledge")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
@@ -6204,7 +6588,8 @@
                     <input bind:value={capabilitySearch} placeholder={`搜索${capabilityLabel(capabilityTab)}名称 / 描述 / 来源`} />
                   </label>
                   <div class="capability-hub-header__actions">
-                    <button type="button" onclick={() => openConfigDialog("ingest")}><Upload size={15} /> 导入配置</button>
+                    <input bind:this={capabilityImportInput} class="visually-hidden" type="file" accept=".json,application/json" aria-label="导入能力配置文件" onchange={handleCapabilityImportFile} />
+                    <button type="button" onclick={openCapabilityImportPicker}><Upload size={15} /> 导入配置</button>
                     <button type="button" onclick={() => void refreshCapabilities()}><RefreshCw size={15} /> 刷新状态</button>
                     <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> {capabilityCreateLabel(capabilityTab)}</button>
                   </div>
@@ -6629,9 +7014,9 @@
                   <div class="detail-tabs" role="tablist" aria-label="客户详情标签">
                     <button class:active={customerDetailTab === "overview"} type="button" onclick={() => (customerDetailTab = "overview")}>概览</button>
                     <button class:active={customerDetailTab === "projects"} type="button" onclick={() => (customerDetailTab = "projects")}>项目 ({linkedCustomerProjects.length})</button>
-                    <button class:active={customerDetailTab === "materials"} type="button" onclick={() => (customerDetailTab = "materials")}>资料 ({customer.materials})</button>
-                    <button class:active={customerDetailTab === "schedules"} type="button" onclick={() => (customerDetailTab = "schedules")}>日程 ({customer.events})</button>
-                    <button class:active={customerDetailTab === "todos"} type="button" onclick={() => (customerDetailTab = "todos")}>待办</button>
+                    <button class:active={customerDetailTab === "materials"} type="button" onclick={() => (customerDetailTab = "materials")}>资料 ({linkedCustomerMaterials.length})</button>
+                    <button class:active={customerDetailTab === "schedules"} type="button" onclick={() => (customerDetailTab = "schedules")}>日程 ({linkedCustomerSchedules.length})</button>
+                    <button class:active={customerDetailTab === "todos"} type="button" onclick={() => (customerDetailTab = "todos")}>待办 ({linkedCustomerTodos.length})</button>
                   </div>
                   {#if customerDetailTab === "overview"}
                     <section class="customer-detail-card">
@@ -6639,8 +7024,8 @@
                       <div class="customer-profile-grid">
                         <article><span>联系人</span><strong>{customer.contact}</strong></article>
                         <article><span>当前活跃项目</span><strong>{linkedCustomerProjects.filter((project) => project.status !== "closed").length} 件</strong></article>
-                        <article><span>关联资料</span><strong>{customer.materials} 份</strong></article>
-                        <article><span>本月日程</span><strong>{customer.events} 项</strong></article>
+                        <article><span>关联资料</span><strong>{linkedCustomerMaterials.length} 份</strong></article>
+                        <article><span>本月日程</span><strong>{linkedCustomerSchedules.length} 项</strong></article>
                       </div>
                       <p>{customer.note}</p>
                     </section>
@@ -6672,7 +7057,7 @@
                   {:else if customerDetailTab === "materials"}
                     <section class="customer-detail-card customer-tab-panel">
                       <header class="customer-section-head">
-                        <div><h3><Database size={15} /> 客户资料库</h3><p>展示最近关联资料，完整 {customer.materials} 份资料继续在资料中心索引。</p></div>
+                        <div><h3><Database size={15} /> 客户资料库</h3><p>展示真实关联资料，完整 {linkedCustomerMaterials.length} 份资料继续在资料中心索引。</p></div>
                         <button type="button" onclick={() => openConfigDialog("resource")}><Upload size={13} /> 上传资料</button>
                       </header>
                       <div class="customer-resource-toolbar">
@@ -6681,7 +7066,7 @@
                       </div>
                       <div class="customer-detail-list">
                         {#each linkedCustomerMaterials as material, materialIndex (indexedKey(material.title, materialIndex))}
-                          <button class="customer-detail-row" type="button" onclick={() => { customerDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>
+                          <button class="customer-detail-row" type="button" onclick={() => { customerDetailOpen = false; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
                             <b>{material.status}<small>{material.updatedAt}</small></b>
@@ -6699,7 +7084,7 @@
                       </header>
                       <div class="customer-detail-list customer-schedule-list">
                         {#each linkedCustomerSchedules as schedule, scheduleIndex (calendarEventKey(schedule, scheduleIndex))}
-                          <button class="customer-detail-row" type="button" onclick={() => openWorkLayer("calendar")}>
+                          <button class="customer-detail-row" type="button" onclick={() => { customerDetailOpen = false; void openCalendarEvent(schedule.event); }}>
                             <span><CalendarDays size={17} /></span>
                             <div><strong>{schedule.title}</strong><em>{schedule.date} {schedule.time} / {schedule.place}</em><p>{schedule.desc}</p></div>
                             <b>{schedule.state}</b>
@@ -6907,7 +7292,7 @@
                 <header><Zap size={16} /><strong>绑定 Agent</strong></header>
                 {#each agentCards.slice(0, 3) as agent (agent.id)}
                   {@const isBound = isCapabilityAgentBound(selectedCapability, agent.id)}
-                  <button type="button" aria-pressed={isBound} onclick={() => toggleCapabilityAgentBinding(selectedCapability, agent)}>
+                  <button type="button" aria-pressed={isBound} onclick={() => void toggleCapabilityAgentBinding(selectedCapability, agent)}>
                     <span><strong>{agent.name}</strong><em>{agent.role} / {agent.status}</em></span>
                     <i class:enabled={isBound}><u></u></i>
                   </button>
@@ -6922,11 +7307,38 @@
                 <div><dt>权限</dt><dd>{selectedCapability.permission}</dd></div>
               </dl>
             </div>
-            <footer><button type="button" onclick={() => (capabilityDetailOpen = false)}>关闭</button><button type="button" disabled={selectedCapability.readOnly || selectedCapability.status.includes("开发中")} onclick={() => { capabilityCreateOpen = true; capabilityDetailOpen = false; }}>{capabilityActionLabel(selectedCapability)}</button></footer>
+            <footer><button type="button" onclick={() => void refreshCapabilities()}>刷新状态</button><button type="button" onclick={() => (capabilityDetailOpen = false)}>关闭</button><button type="button" disabled={selectedCapability.readOnly || selectedCapability.status.includes("开发中")} onclick={() => void toggleCapabilityEnabled(selectedCapability)}>{capabilityActionLabel(selectedCapability)}</button></footer>
           </div>
         </div>
       {/if}
-      {#if configDialog}
+      {#if configDialog === "customer"}
+        <div class="modal-backdrop">
+          <section class="config-modal customer-create-modal">
+            <header><div><span>Customer</span><strong>{configDialogTitle()}</strong><p>填写客户档案、联系方式、风险状态和关联项目后保存到客户管理。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
+            <div class="config-grid">
+              <label>客户名称 *<input bind:value={customerDraftName} placeholder="例如 内部研发团队" /></label>
+              <label>客户类型<select bind:value={customerDraftType}>{#each customerTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>联系人<input bind:value={customerDraftContact} placeholder="例如 产品负责人" /></label>
+              <label>联系电话<input bind:value={customerDraftPhone} placeholder="例如 138-0000-0000" /></label>
+              <label>邮箱<input bind:value={customerDraftEmail} type="email" placeholder="name@example.com" /></label>
+              <label>行业<input bind:value={customerDraftIndustry} placeholder="例如 研发工具 / 运营增长" /></label>
+              <label>地区<input bind:value={customerDraftRegion} placeholder="例如 本地 / 上海 / 远程" /></label>
+              <label>负责人 / Agent<select bind:value={customerDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}<option value="我的">我的</option></select></label>
+              <label>客户阶段<select bind:value={customerDraftStage}>{#each customerStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>客户状态<select bind:value={customerDraftStatus}>{#each customerStatusOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label>
+              <label>风险等级<select bind:value={customerDraftRisk}>{#each customerRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>关联项目<select bind:value={customerDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label>
+              <label>下次行动<input bind:value={customerDraftNextAction} placeholder="例如 确认需求边界" /></label>
+              <label>标签<input bind:value={customerDraftTags} placeholder="用 / 或逗号分隔，例如 内部 / 研发" /></label>
+              <label class="wide">地址<input bind:value={customerDraftAddress} placeholder="客户地址、工作群或会议地点" /></label>
+              <label class="wide">备注<textarea rows="3" bind:value={customerDraftNote} placeholder="记录客户背景、沟通偏好、风险提示等"></textarea></label>
+              <label class="wide">客户说明<textarea rows="4" bind:value={customerDraftDesc} placeholder="补充客户画像、业务目标、合作范围或验收口径"></textarea></label>
+            </div>
+            <footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={confirmConfigDialog}>保存客户</button></footer>
+          </section>
+        </div>
+      {/if}
+      {#if configDialog && configDialog !== "customer"}
         <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"} class:schedule-modal={configDialog === "schedule"}><header><div><span>{configDialog === "team" ? "协作组" : configDialog === "model" ? "Model Channel" : "Workbench Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责拆解、分配和汇总的协调者。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.id)}<button type="button" onclick={() => selectDistillSample(item)}><div><strong>{item.title}</strong><p>{todoDescription(item)}</p></div><em>{todoStatusLabel(item.status)}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button" onclick={() => toggleDistillSkill(skill.id)}><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
   <div class="team-builder">
     <section>
@@ -7074,15 +7486,35 @@
               <button class:active={capabilityTab === "mcp"} type="button" onclick={() => switchCapabilityTab("mcp")}>MCP</button>
               <button class:active={capabilityTab === "skill"} type="button" onclick={() => switchCapabilityTab("skill")}>SKILL</button>
             </div>
-            <div class="config-grid capability-create-form">
-              <label>名称<input bind:value={capabilityCreateName} /></label>
-              <label>分组<input bind:value={capabilityCreateGroup} /></label>
-              <label>版本<input bind:value={capabilityCreateVersion} /></label>
-              <label>运行范围<input bind:value={capabilityCreateScope} /></label>
-              <label>入口路径<input bind:value={capabilityCreateEntry} /></label>
-              <label>默认状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
-              <label class="wide">配置说明<textarea rows="4" bind:value={capabilityCreateDescription}></textarea></label>
-            </div>
+            {#if capabilityTab === "mcp"}
+              <div class="config-grid capability-create-form">
+                <label>名称<input bind:value={capabilityCreateName} placeholder="如 playwright-mcp" /></label>
+                <label>连接方式<select bind:value={capabilityCreateGroup}><option value="stdio">stdio</option><option value="http">http</option><option value="sse">sse</option></select></label>
+                <label class="wide">命令 / URL<input bind:value={capabilityCreateEntry} placeholder={capabilityMCPTransport() === "stdio" ? "npx -y @playwright/mcp@latest" : "https://example.com/mcp"} /></label>
+                <label class="wide">参数<textarea rows="3" bind:value={capabilityCreateMcpArgs} placeholder="stdio 可填：&#10;--stdio&#10;或 JSON 数组：[&quot;--stdio&quot;]" disabled={capabilityMCPTransport() !== "stdio"}></textarea></label>
+                <label class="wide">环境变量<textarea rows="3" bind:value={capabilityCreateMcpEnv} placeholder="一行一个 KEY=VALUE，例如：&#10;GITHUB_TOKEN=your-token"></textarea></label>
+                <label>启动状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
+                <label class="wide">说明<textarea rows="3" bind:value={capabilityCreateDescription} placeholder="说明这个 MCP 提供什么能力、需要什么授权。"></textarea></label>
+              </div>
+            {:else if capabilityTab === "skill"}
+              <div class="config-grid capability-create-form">
+                <label>名称<input bind:value={capabilityCreateName} placeholder="如 contract-review" /></label>
+                <label>运行方式<select bind:value={capabilityCreateScope}><option value="workflow">workflow</option><option value="prompt">prompt</option><option value="tool">tool</option></select></label>
+                <label>入口文件<input bind:value={capabilityCreateEntry} placeholder="SKILL.md" readonly /></label>
+                <label>启动状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
+                <label class="wide">说明<textarea rows="4" bind:value={capabilityCreateDescription} placeholder="描述 Skill 的使用场景、输入输出、执行步骤和注意事项。"></textarea></label>
+              </div>
+            {:else}
+              <div class="config-grid capability-create-form">
+                <label>名称<input bind:value={capabilityCreateName} /></label>
+                <label>分组<input bind:value={capabilityCreateGroup} /></label>
+                <label>版本<input bind:value={capabilityCreateVersion} /></label>
+                <label>运行范围<input bind:value={capabilityCreateScope} /></label>
+                <label>入口路径<input bind:value={capabilityCreateEntry} /></label>
+                <label>默认状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
+                <label class="wide">配置说明<textarea rows="4" bind:value={capabilityCreateDescription}></textarea></label>
+              </div>
+            {/if}
             <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => void submitCapabilityCreate()}>创建并挂载</button></footer>
           </section>
         </div>
@@ -7093,6 +7525,18 @@
 {/if}
 
 <style>
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .shell {
     --sidebar-width: clamp(220px, 15vw, 280px);
     --content-width: clamp(620px, 52vw, 900px);
@@ -7942,7 +8386,7 @@
   .config-grid .percent-input{display:grid;grid-template-columns:minmax(0,1fr)auto;align-items:center;height:36px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827;overflow:hidden}.config-grid .percent-input input{height:34px;border:0;border-radius:0;background:transparent}.config-grid .percent-input span{padding:0 12px;color:#5f6774;font-size:13px}
   .config-grid .material-file-field{gap:8px}.material-file-picker{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;min-height:42px;padding:4px 12px 4px 4px;border:1px solid #d9dee8;border-radius:12px;background:#fff;color:#111827;overflow:hidden}.material-file-picker:hover{border-color:#bfdbfe;background:#f8fbff}.material-file-picker input{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:pointer}.material-file-picker strong{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border-radius:9px;background:#111827;color:#fff;font-size:13px;font-weight:650;white-space:nowrap}.material-file-picker span{min-width:0;overflow:hidden;color:#667085;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.material-file-field em{color:#7b8494;font-size:12px;font-style:normal}
   .artifact-review-workbench{display:grid;gap:14px;padding:16px 20px;border-bottom:1px solid rgba(226,232,240,.9);background:#f7f9fc}.artifact-review-head{display:grid;grid-template-columns:minmax(260px,1fr) auto;align-items:end;gap:14px}.artifact-review-head span,.artifact-style-gate header span,.artifact-coordinate-list header span,.artifact-page-meta span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.artifact-review-head strong{display:block;margin-top:4px;color:#111827;font-size:18px;line-height:1.22}.artifact-review-head p{margin:4px 0 0;color:#667085;font-size:12px}.artifact-stage-tabs{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.artifact-stage-tabs button{display:grid;gap:2px;min-width:70px;min-height:42px;padding:6px 10px;border:1px solid #dbe3ee;border-radius:10px;background:#fff;color:#344054;text-align:left}.artifact-stage-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-stage-tabs span{color:inherit;font-size:12px;font-weight:800;letter-spacing:0;text-transform:none}.artifact-stage-tabs em{color:#7b8494;font-size:10px;font-style:normal}.artifact-review-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.38fr);gap:14px;align-items:stretch}.artifact-canvas-shell,.artifact-review-side section{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 10px 24px rgba(15,23,42,.045)}.artifact-canvas-shell{display:grid;grid-template-rows:auto minmax(320px,1fr);min-width:0;overflow:hidden}.artifact-canvas-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #e5eaf2;background:#fff}.artifact-mode-switch,.artifact-tool-buttons,.artifact-pan-pad{display:flex;align-items:center;gap:6px}.artifact-canvas-toolbar button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#344054}.artifact-canvas-toolbar button.active,.artifact-canvas-toolbar button:hover:not(:disabled){border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-canvas-toolbar button:disabled{cursor:not-allowed;opacity:.45}.artifact-canvas-toolbar strong{min-width:48px;color:#111827;font-size:12px;text-align:center}.artifact-canvas-viewport{display:grid;place-items:center;min-height:320px;padding:20px;overflow:hidden;background:linear-gradient(90deg,rgba(226,232,240,.55) 1px,transparent 1px),linear-gradient(180deg,rgba(226,232,240,.55) 1px,transparent 1px),#f8fafc;background-size:28px 28px}.artifact-canvas-viewport[data-mode=pan]{cursor:grab}.artifact-canvas-page{position:relative;width:min(620px,100%);aspect-ratio:16/10;padding:22px;border:1px solid #cbd5e1;border-radius:16px;background:linear-gradient(135deg,#fff 0%,#f8fbff 58%,#eef4ff 100%);box-shadow:0 22px 50px rgba(15,23,42,.14);transform:translate(var(--artifact-pan-x),var(--artifact-pan-y)) scale(var(--artifact-zoom));transform-origin:center;transition:transform .16s ease}.artifact-page-meta{display:grid;gap:4px}.artifact-page-meta strong{overflow:hidden;color:#0f172a;font-size:18px;text-overflow:ellipsis;white-space:nowrap}.artifact-page-meta em{color:#667085;font-size:12px;font-style:normal}.artifact-page-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;margin-top:22px}.artifact-page-layout section,.artifact-page-layout aside{min-height:150px;padding:16px;border:1px solid #e5e7eb;border-radius:14px;background:rgba(255,255,255,.76)}.artifact-page-layout b{color:#1d4ed8;font-size:12px}.artifact-page-layout h3{margin:12px 0 8px;color:#111827;font-size:24px;line-height:1.12}.artifact-page-layout p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.artifact-page-layout aside{display:grid;align-content:center;gap:8px}.artifact-page-layout aside span{color:#7b8494;font-size:11px}.artifact-page-layout aside strong{color:#111827;font-size:14px}.artifact-page-layout aside em{display:inline-flex;width:max-content;padding:4px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-style:normal}.artifact-marker{position:absolute;left:var(--marker-x);top:var(--marker-y);max-width:110px;transform:translate(-50%,-50%);padding:5px 8px;border:1px solid #f59e0b;border-radius:999px;background:#fffbeb;color:#92400e;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 8px 16px rgba(146,64,14,.16)}.artifact-review-side{display:grid;grid-template-rows:auto 1fr;gap:14px;min-width:0}.artifact-review-side section{padding:14px}.artifact-style-gate header,.artifact-coordinate-list header{margin-bottom:10px}.artifact-style-gate header strong,.artifact-coordinate-list header strong{display:block;margin-top:4px;color:#111827;font-size:15px}.artifact-style-list{display:grid;gap:8px}.artifact-style-list button{display:grid;gap:5px;width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;text-align:left}.artifact-style-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-style-list strong{color:#111827;font-size:13px}.artifact-style-list span,.artifact-style-list em{color:#667085;font-size:11px;font-style:normal;line-height:1.45}.artifact-gate-actions{display:flex;gap:8px;margin-top:10px}.artifact-gate-actions button{flex:1;min-height:34px;border:1px solid #d8e2ef;border-radius:10px;background:#fff;color:#344054;font-weight:750}.artifact-gate-actions button:last-child{border-color:#2563eb;background:#2563eb;color:#fff}.artifact-coordinate-list{display:grid;align-content:start;gap:8px}.artifact-coordinate-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff}.artifact-coordinate-list article strong{display:block;color:#111827;font-size:13px}.artifact-coordinate-list article p{margin:3px 0 0;overflow:hidden;color:#667085;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.artifact-coordinate-list article span{padding:4px 8px;border-radius:999px;background:#f3f4f6;color:#344054;font-size:11px;white-space:nowrap}@media(max-width:1120px){.artifact-review-head,.artifact-review-grid{grid-template-columns:1fr}.artifact-stage-tabs{justify-content:flex-start}.artifact-review-side{grid-template-columns:1fr 1fr;grid-template-rows:auto}}@media(max-width:720px){.artifact-review-workbench{padding:12px 14px}.artifact-canvas-toolbar{align-items:flex-start;flex-direction:column}.artifact-review-side,.artifact-page-layout{grid-template-columns:1fr}.artifact-canvas-page{aspect-ratio:4/5}.artifact-stage-tabs button{min-width:0;flex:1 1 120px}}
-  .report-center-layout{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);gap:18px}.report-list-panel,.report-detail-panel{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.92);box-shadow:0 10px 24px rgba(15,23,42,.045)}.report-list-panel,.report-detail-panel{padding:16px}.report-list-panel header{margin-bottom:12px}.report-list-panel header strong{display:block;color:#111827;font-size:15px}.report-list-panel header span{display:block;margin-top:4px;color:#7b8494;font-size:12px}.report-card-list{display:grid;gap:10px}.report-card-list button{width:100%;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;text-align:left;cursor:pointer}.report-card-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.18)}.report-card-list span,.report-detail-panel header>em{display:inline-flex;align-items:center;width:max-content;padding:5px 10px;border-radius:999px;background:#f3f4f6;color:#111827;font-size:12px;font-style:normal}.report-card-list strong{display:block;margin-top:12px;color:#111827;font-size:16px}.report-card-list p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.55}.report-card-list em{display:block;margin-top:12px;color:#111827;font-size:12px;font-style:italic}.report-detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.report-detail-panel header span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.report-detail-panel header strong{display:block;margin-top:7px;color:#111827;font-size:22px;line-height:1.25}.report-detail-panel header p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.7}.report-detail-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}.report-detail-summary article,.report-detail-meta div{padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}.report-detail-summary span,.report-detail-meta span,.report-detail-body>span{display:block;color:#7b8494;font-size:11px}.report-detail-summary strong,.report-detail-meta strong{display:block;margin-top:6px;color:#111827;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail-body{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.report-detail-body p{margin:10px 0 0;color:#374151;font-size:13px;line-height:1.75}.report-detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}@media(max-width:1100px){.report-center-layout{grid-template-columns:1fr}.report-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.report-detail-summary,.report-detail-meta{grid-template-columns:1fr}}
+  .report-center-layout{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);gap:18px}.report-list-panel,.report-detail-panel{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.92);box-shadow:0 10px 24px rgba(15,23,42,.045)}.report-list-panel,.report-detail-panel{padding:16px}.report-list-panel header{margin-bottom:12px}.report-list-panel header strong{display:block;color:#111827;font-size:15px}.report-list-panel header span{display:block;margin-top:4px;color:#7b8494;font-size:12px}.report-card-list{display:grid;gap:10px}.report-card-list button{width:100%;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;text-align:left;cursor:pointer}.report-card-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.18)}.report-card-list span,.report-detail-panel header>em{display:inline-flex;align-items:center;width:max-content;padding:5px 10px;border-radius:999px;background:#f3f4f6;color:#111827;font-size:12px;font-style:normal}.report-card-list strong{display:block;margin-top:12px;color:#111827;font-size:16px}.report-card-list p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.55}.report-card-list em{display:block;margin-top:12px;color:#111827;font-size:12px;font-style:italic}.report-detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.report-detail-panel header span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.report-detail-panel header strong{display:block;margin-top:7px;color:#111827;font-size:22px;line-height:1.25}.report-detail-panel header p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.7}.report-detail-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}.report-detail-summary article,.report-detail-meta div{padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}.report-detail-summary span,.report-detail-meta span,.report-detail-body>span{display:block;color:#7b8494;font-size:11px}.report-detail-summary strong,.report-detail-meta strong{display:block;margin-top:6px;color:#111827;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail-body{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.report-detail-body p{margin:10px 0 0;color:#374151;font-size:13px;line-height:1.75}.report-detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.report-detail-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:14px}.report-detail-actions button{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid #dbe4ef;border-radius:9px;background:#fff;color:#1f2937;font-size:12px;cursor:pointer}.report-detail-actions button:hover{border-color:#93c5fd;background:#f8fbff}.report-detail-actions button.danger{border-color:#fecaca;color:#b91c1c;background:#fff7f7}@media(max-width:1100px){.report-center-layout{grid-template-columns:1fr}.report-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.report-detail-summary,.report-detail-meta{grid-template-columns:1fr}}
 
   .detail-empty{padding:18px;border:1px dashed #cbd5e1;border-radius:16px;background:rgba(248,250,252,.78);color:#5f6774}.detail-empty strong{display:block;color:#111827}.detail-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}.detail-modal{width:min(840px,calc(100vw - 44px));padding:18px}.detail-modal>.detail-panel{margin-top:14px;background:rgba(255,255,255,.88)}
 
@@ -17658,26 +18102,43 @@
 
   .shell .capability-create-modal {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, auto) auto;
     width: min(760px, calc(100vw - 32px));
-    height: min(680px, calc(100dvh - 32px));
-    max-height: calc(100dvh - 32px);
+    height: auto;
+    max-height: min(620px, calc(100dvh - 32px));
     padding: 0;
     overflow: hidden;
   }
 
   .shell .capability-create-modal > .capability-create-tabs {
-    margin: 10px auto 12px;
+    margin: 10px auto 8px;
   }
 
   .shell .capability-create-modal > .config-grid {
+    align-content: start;
+    gap: 14px 12px;
     min-height: 0;
     margin-top: 0;
     overflow: auto;
     overscroll-behavior: contain;
-    padding: 0 16px 16px;
+    padding: 0 24px 14px;
     scrollbar-gutter: stable;
-    scroll-padding-bottom: 88px;
+    scroll-padding-bottom: 72px;
+  }
+
+  .shell .capability-create-modal > .capability-create-form label {
+    gap: 5px;
+  }
+
+  .shell .capability-create-modal > .capability-create-form input,
+  .shell .capability-create-modal > .capability-create-form select {
+    height: 34px;
+  }
+
+  .shell .capability-create-modal > .capability-create-form textarea {
+    min-height: 108px;
+    max-height: 132px;
+    resize: vertical;
   }
 
   .shell .capability-create-modal > footer {

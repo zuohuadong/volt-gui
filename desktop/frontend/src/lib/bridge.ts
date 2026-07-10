@@ -160,6 +160,8 @@ interface AppBindings {
   SearchWorkbench(query: string): Promise<WorkbenchSearchResult[]>;
   ExportOperationLogs(): Promise<string>;
   ExportWorkbenchReports(): Promise<string>;
+  ExportWorkbenchReport(id: string): Promise<string>;
+  DeleteWorkbenchReport(id: string): Promise<void>;
   SaveTeamRoom(input: WorkbenchTeamRoom): Promise<WorkbenchTeamRoom>;
   SaveTeamRun(input: WorkbenchTeamRun): Promise<WorkbenchTeamRun>;
   SaveTeamChatMessage(input: WorkbenchTeamChatMessage): Promise<WorkbenchTeamChatMessage>;

@@ -153,6 +153,7 @@ let holdNextMetaForH = false;
 let holdNextHistoryForH = false;
 let setActiveCalls = 0;
 let newSessionCalls = 0;
+const newSessionTargets: string[] = [];
 let failSetActiveFor = "";
 const runningTabs = new Set<string>();
 const tabsById = new Map([tabA, tabB, tabC, tabD, tabE, tabF, tabG, tabH].map((tab) => [tab.id, tab]));
@@ -230,7 +231,17 @@ window.go = {
       NewSession: async () => {
         newSessionCalls += 1;
       },
+      NewSessionForTab: async (tabID: string) => {
+        newSessionCalls += 1;
+        newSessionTargets.push(tabID);
+      },
       Fork: async () => {
+        tabsById.set("tab-e", tabE);
+        backendActiveId = "tab-e";
+        runningTabs.add("tab-e");
+        return { ...tabE, active: true, running: true };
+      },
+      ForkForTab: async () => {
         tabsById.set("tab-e", tabE);
         backendActiveId = "tab-e";
         runningTabs.add("tab-e");
@@ -297,7 +308,8 @@ await act(async () => {
   newSessionWhileSwitching = controller?.newSession();
   await flushPromises();
 });
-eq(newSessionCalls, 0, "newSession waits for backend activation before using the unscoped binding");
+eq(newSessionCalls, 1, "newSession can target the selected tab before backend focus activation settles");
+eq(newSessionTargets.join(","), "tab-b", "newSession keeps the selected tab as its explicit target");
 
 await act(async () => {
   setActiveBGate.resolve();
@@ -305,7 +317,7 @@ await act(async () => {
   await newSessionWhileSwitching;
   await flushPromises();
 });
-eq(newSessionCalls, 1, "newSession runs after the selected tab is active in the backend");
+eq(newSessionCalls, 1, "backend focus completion does not duplicate the scoped new-session action");
 await waitFor("tab-b history request", () => historyCalls.includes("tab-b"));
 
 const historyCallsBeforeReturnToA = historyCalls.length;

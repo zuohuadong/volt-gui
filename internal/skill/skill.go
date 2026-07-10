@@ -546,7 +546,6 @@ const (
 var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterDescription,
 	skillFrontmatterName,
-	skillFrontmatterTitle,
 	skillFrontmatterRunAs,
 	skillFrontmatterContext,
 	skillFrontmatterAgent,

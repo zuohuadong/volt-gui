@@ -11,8 +11,7 @@ import (
 
 func TestReadOutboundFileConfinement(t *testing.T) {
 	root := t.TempDir()
-	inside := filepath.Join(root, "ok.txt")
-	if err := os.WriteFile(inside, []byte("hello"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(t.TempDir(), "secret.txt")
@@ -22,7 +21,7 @@ func TestReadOutboundFileConfinement(t *testing.T) {
 
 	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{root}}}
 
-	data, name, err := a.readOutboundFile(inside)
+	data, name, err := a.readOutboundFile("ok.txt")
 	if err != nil {
 		t.Fatalf("file inside root should be readable: %v", err)
 	}
@@ -30,7 +29,13 @@ func TestReadOutboundFileConfinement(t *testing.T) {
 		t.Fatalf("got %q/%q, want hello/ok.txt", data, name)
 	}
 
-	// Outside every root: rejected.
+	// Paths are never aliases for a staged filename: callers must send a bare
+	// filename, even when an absolute path happens to point inside a root.
+	if _, _, err := a.readOutboundFile(filepath.Join(root, "ok.txt")); err == nil {
+		t.Fatal("absolute paths must be rejected")
+	}
+
+	// Outside every root: rejected before any lookup.
 	if _, _, err := a.readOutboundFile(outside); err == nil {
 		t.Fatal("file outside the roots must be rejected")
 	}
@@ -47,8 +52,61 @@ func TestReadOutboundFileConfinement(t *testing.T) {
 
 	// No roots configured: local sending disabled.
 	off := &adapter{cfg: config.FeishuBotConfig{}}
-	if _, _, err := off.readOutboundFile(inside); err == nil {
+	if _, _, err := off.readOutboundFile("ok.txt"); err == nil {
 		t.Fatal("local file sending must be disabled when no roots are set")
+	}
+}
+
+func TestReadOutboundFileRejectsAmbiguousName(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	for _, root := range []string{first, second} {
+		if err := os.WriteFile(filepath.Join(root, "report.pdf"), []byte(root), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{first, second}}}
+	if _, _, err := a.readOutboundFile("report.pdf"); err == nil {
+		t.Fatal("the same filename in multiple roots must be rejected as ambiguous")
+	}
+}
+
+func TestReadOutboundFileRequiresAbsoluteRoots(t *testing.T) {
+	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{"relative-root"}}}
+	if _, _, err := a.readOutboundFile("report.pdf"); err == nil {
+		t.Fatal("relative outbound media roots must be rejected")
+	}
+}
+
+func TestReadOutboundFileEnforcesActualReadLimit(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.bin")
+	if err := os.WriteFile(path, []byte{1}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, maxOutboundMediaBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{root}}}
+	if _, _, err := a.readOutboundFile("large.bin"); err == nil {
+		t.Fatal("files larger than the actual read limit must be rejected")
+	}
+}
+
+func TestLoadOutboundMediaEnforcesAggregateLimit(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"first.bin", "second.bin"} {
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, []byte{1}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(path, maxOutboundMediaBytes/2+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{root}}}
+	if _, err := a.loadOutboundMedia([]string{"first.bin", "second.bin"}); err == nil {
+		t.Fatal("aggregate outbound media larger than 25 MB must be rejected before sending")
 	}
 }
 
@@ -67,7 +125,7 @@ func TestReadOutboundFileRejectsSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink not supported: %v", err)
 	}
 	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{root}}}
-	if _, _, err := a.readOutboundFile(link); err == nil {
+	if _, _, err := a.readOutboundFile("escape.txt"); err == nil {
 		t.Fatal("a symlink escaping the root must be rejected (symlink resolution)")
 	}
 }
@@ -82,11 +140,11 @@ func TestReadOutboundFileAcceptsSymlinkWithinRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, "link.txt")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(filepath.Base(real), link); err != nil {
 		t.Skipf("symlink not supported: %v", err)
 	}
 	a := &adapter{cfg: config.FeishuBotConfig{OutboundMediaRoots: []string{root}}}
-	if _, _, err := a.readOutboundFile(link); err != nil {
+	if _, _, err := a.readOutboundFile("link.txt"); err != nil {
 		t.Fatalf("a symlink staying within the root should be allowed: %v", err)
 	}
 }

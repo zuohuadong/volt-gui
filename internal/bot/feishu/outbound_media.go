@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,47 +16,60 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-const maxOutboundMediaBytes = 25 * 1024 * 1024
+const (
+	maxOutboundMediaBytes      = 25 * 1024 * 1024
+	maxOutboundMediaTotalBytes = maxOutboundMediaBytes
+)
 
-// sendMediaURLs uploads each OutboundMessage.MediaURLs entry and sends it as an
-// image/file message. Refs are resolved under a strict, off-by-default policy:
-// only absolute local paths contained in a configured root are accepted (see
-// readOutboundFile). Anything rejected is skipped with a warning. URL media is
-// intentionally not fetched here — pulling a caller-supplied URL from inside the
-// gateway is an SSRF sink with no safe static-analysis story; the /send caller
-// should stage remote media to an allow-listed root instead.
-func (a *adapter) sendMediaURLs(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {
-	var result bot.SendResult
-	var firstErr error
-	for _, ref := range msg.MediaURLs {
-		res, err := a.sendOneMedia(ctx, msg, ref)
-		if err != nil {
-			a.logger.Warn("feishu media send rejected or failed", "err", err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		result = res
-	}
-	return result, firstErr
+type outboundMedia struct {
+	name string
+	data []byte
 }
 
-func (a *adapter) sendOneMedia(ctx context.Context, msg bot.OutboundMessage, ref string) (bot.SendResult, error) {
-	data, name, err := a.readOutboundFile(ref)
-	if err != nil {
-		return bot.SendResult{}, err
+// loadOutboundMedia validates and reads every requested item before any remote
+// message is sent. This keeps local policy failures from producing a successful
+// text message followed by a retryable /send error.
+func (a *adapter) loadOutboundMedia(refs []string) ([]outboundMedia, error) {
+	media := make([]outboundMedia, 0, len(refs))
+	totalBytes := 0
+	for _, ref := range refs {
+		data, name, err := a.readOutboundFile(ref)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > maxOutboundMediaTotalBytes-totalBytes {
+			return nil, fmt.Errorf("feishu outbound media: total payload must not exceed 25 MB")
+		}
+		totalBytes += len(data)
+		media = append(media, outboundMedia{name: name, data: data})
 	}
-	mimeType := http.DetectContentType(data[:min(len(data), 512)])
+	return media, nil
+}
+
+func (a *adapter) sendMedia(ctx context.Context, msg bot.OutboundMessage, media []outboundMedia) (bot.SendResult, error) {
+	var result bot.SendResult
+	for _, item := range media {
+		res, err := a.sendOneMedia(ctx, msg, item)
+		if err != nil {
+			a.logger.Warn("feishu media send failed", "err", err)
+			return result, err
+		}
+		result.Merge(res)
+	}
+	return result, nil
+}
+
+func (a *adapter) sendOneMedia(ctx context.Context, msg bot.OutboundMessage, media outboundMedia) (bot.SendResult, error) {
+	mimeType := http.DetectContentType(media.data[:min(len(media.data), 512)])
 	if strings.HasPrefix(mimeType, "image/") {
-		imageKey, err := a.uploadImage(ctx, data)
+		imageKey, err := a.uploadImage(ctx, media.data)
 		if err == nil {
 			content, _ := json.Marshal(map[string]string{"image_key": imageKey})
 			return a.sendSDKContent(ctx, msg, larkim.MsgTypeImage, string(content))
 		}
 		a.logger.Warn("feishu image upload failed; falling back to file", "err", err)
 	}
-	fileKey, err := a.uploadFile(ctx, name, data)
+	fileKey, err := a.uploadFile(ctx, media.name, media.data)
 	if err != nil {
 		return bot.SendResult{}, err
 	}
@@ -63,14 +77,9 @@ func (a *adapter) sendOneMedia(ctx context.Context, msg bot.OutboundMessage, ref
 	return a.sendSDKContent(ctx, msg, larkim.MsgTypeFile, string(content))
 }
 
-// readOutboundFile reads a media file for outbound sending under a strict
-// policy: the ref is reduced to a bare filename and looked up directly inside a
-// configured OutboundMediaRoots directory (empty by default → disabled). Using
-// filepath.Base strips every directory component — including any traversal — so
-// the file can only ever come from directly within a root, which is both the
-// intended contract ("stage the file into a media root, then send it by name")
-// and a path-injection sanitizer. A symlink sitting in a root that resolves
-// outside it is rejected before any read.
+// readOutboundFile reads a bare filename from exactly one configured root.
+// os.Root pins each root directory and prevents symlink traversal outside it;
+// the selected file is then sized and read through the same open handle.
 func (a *adapter) readOutboundFile(ref string) ([]byte, string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -79,44 +88,72 @@ func (a *adapter) readOutboundFile(ref string) ([]byte, string, error) {
 	if len(a.cfg.OutboundMediaRoots) == 0 {
 		return nil, "", fmt.Errorf("feishu outbound media: local file sending is disabled (set outbound_media_roots)")
 	}
-	// Reject any traversal outright, then reduce to a bare filename so no
-	// directory component can survive into the lookup below.
-	if strings.Contains(ref, "..") {
-		return nil, "", fmt.Errorf("feishu outbound media: file name may not contain '..'")
+	name := filepath.Base(ref)
+	if name != ref || name == "." || name == ".." || name == string(filepath.Separator) {
+		return nil, "", fmt.Errorf("feishu outbound media: ref must be a bare file name")
 	}
-	name := filepath.Base(filepath.Clean(ref))
-	if name == "." || name == ".." || name == string(filepath.Separator) {
-		return nil, "", fmt.Errorf("feishu outbound media: invalid file name")
-	}
-	for _, root := range a.cfg.OutboundMediaRoots {
+
+	var selected *os.File
+	var selectedSize int64
+	for i, root := range a.cfg.OutboundMediaRoots {
 		root = strings.TrimSpace(root)
 		if root == "" {
 			continue
 		}
-		full := filepath.Join(root, name)
-		info, err := os.Stat(full)
-		if err != nil || !info.Mode().IsRegular() {
+		if !filepath.IsAbs(root) {
+			return nil, "", fmt.Errorf("feishu outbound media: configured root %d must be absolute", i+1)
+		}
+		rootHandle, err := os.OpenRoot(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, "", fmt.Errorf("feishu outbound media: configured root %d is unavailable: %w", i+1, err)
+		}
+		file, openErr := rootHandle.Open(name)
+		closeErr := rootHandle.Close()
+		if openErr != nil {
+			if os.IsNotExist(openErr) {
+				continue
+			}
+			return nil, "", fmt.Errorf("feishu outbound media: cannot open %q in configured root %d: %w", name, i+1, openErr)
+		}
+		if closeErr != nil {
+			_ = file.Close()
+			return nil, "", fmt.Errorf("feishu outbound media: close configured root %d: %w", i+1, closeErr)
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return nil, "", fmt.Errorf("feishu outbound media: stat %q: %w", name, err)
+		}
+		if !info.Mode().IsRegular() {
+			_ = file.Close()
 			continue
 		}
-		// Defense in depth: a regular file inside the root could still be a
-		// symlink resolving outside it — reject that before reading.
-		if resolved, err := filepath.EvalSymlinks(full); err == nil {
-			if rootResolved, err2 := filepath.EvalSymlinks(root); err2 == nil {
-				if resolved != rootResolved && !strings.HasPrefix(resolved, rootResolved+string(filepath.Separator)) {
-					return nil, "", fmt.Errorf("feishu outbound media: %q escapes its root via a symlink", name)
-				}
-			}
+		if selected != nil {
+			_ = file.Close()
+			return nil, "", fmt.Errorf("feishu outbound media: %q exists in more than one configured root", name)
 		}
-		if info.Size() == 0 || info.Size() > maxOutboundMediaBytes {
-			return nil, "", fmt.Errorf("feishu outbound media: %q must be between 1 byte and 25 MB", name)
-		}
-		raw, err := os.ReadFile(full)
-		if err != nil {
-			return nil, "", err
-		}
-		return raw, name, nil
+		selected = file
+		selectedSize = info.Size()
+		defer selected.Close()
 	}
-	return nil, "", fmt.Errorf("feishu outbound media: %q not found in any configured root", name)
+	if selected == nil {
+		return nil, "", fmt.Errorf("feishu outbound media: %q not found in any configured root", name)
+	}
+	if selectedSize == 0 || selectedSize > maxOutboundMediaBytes {
+		return nil, "", fmt.Errorf("feishu outbound media: %q must be between 1 byte and 25 MB", name)
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(selected, maxOutboundMediaBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("feishu outbound media: read %q: %w", name, err)
+	}
+	if len(raw) == 0 || len(raw) > maxOutboundMediaBytes {
+		return nil, "", fmt.Errorf("feishu outbound media: %q must be between 1 byte and 25 MB", name)
+	}
+	return raw, name, nil
 }
 
 func (a *adapter) uploadImage(ctx context.Context, data []byte) (string, error) {

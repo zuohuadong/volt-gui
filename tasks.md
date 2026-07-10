@@ -68,7 +68,7 @@
 | ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
 | ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
-| ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | in_progress | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+| ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
 
 ### ANYONG-SYNC-20260711 Task Contract
 
@@ -82,6 +82,7 @@
 - 回滚：push 前门禁失败则停止并保留隔离 worktree/merge 证据；push 后不改写历史或旧 tag，以普通 follow-up `fix:` 提交修复并发布下一 patch；错误 Release 仅在明确证据支持时通过 CNB 管理面撤下。
 - 验证计划：merge-tree 与重点文件语义审计；root/desktop `go test ./...`、`go vet ./...`；frontend check/build；site build；release tools、Node/YAML/shell/smoke 测试；brand/linker、Bun/computer-use/Coreutils staging、diff/secret scan；candidate verifier；push 后持续检查 CNB commit/build/tag/Release，下载真实 installer/ZIP/latest.json 验证 size/SHA/manifest/Anyong 命名、运行时资源和 OEM 中文品牌；live verifier。
 - context_isolation：explorer、candidate verifier、live verifier 分别写新的 `.mailbox/` 结果文件；不传递凭据值，生产证据仅以 commit/build/tag/URL/文件元数据和哈希交付。
+- completion_evidence：prepare `e76c4f7d`、merge `01c3df8d`、fork CI contract fix `b2a75a50`、candidate record `028742fb` 与最终空 trigger `a8252ca85464f70ca576bb2136e7db5feefe1a07` 已普通 fast-forward push；CNB build `cnb-dro-1jt76897h` 的 pipeline-1/2 及全部业务 stages success；live `main`/tag `desktop-v0.8.3` 指向 trigger；Release 非 draft/prerelease且精确三资产。installer=`87287528` bytes / SHA-256 `8e7f659c...0fa8`，ZIP=`87040316` / `94b2348d...32c0`，manifest=`428` / `00609487...badb`；manifest URL/size/SHA 与 installer 一致；ZIP 4090 entries，包含 Anyong.exe、update helper、computer-use 6.2.0/N-API、Bun、Coreutils 2026.6.16；PE/Go build info 证明 Windows amd64、`v0.8.3` 和 OEM 中文 linker 默认。Explorer `.mailbox/048-upstream-explorer-result.md` 的条件已处理，candidate verifier `.mailbox/049-sync-candidate-verifier-result.md` 与 live verifier `.mailbox/050-release-live-verifier-result.md` PASS；live verifier 初次外网调用遭 `egress_required`，通过 orchestrator 固化的原始 CNB JSON/真实资产/已 fetch refs 完成独立离线恢复验证。保护 stash `255991ae` 保留。
 
 ### ANYONG-RELEASE-20260710-4 Task Contract
 

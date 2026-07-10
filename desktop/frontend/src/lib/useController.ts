@@ -1870,29 +1870,39 @@ export function useController() {
     });
   }, [activeTabFromBackend, activeTabId, confirmBackendActiveTab, dispatchRuntimeStatusForTab, sendToTab]);
 
-  const runShell = useCallback(async (command: string) => {
-    if (!activeTabId) throw new Error(t("composer.workspaceStarting"));
-    dispatchTo(activeTabId, { type: "user", text: `!${command}`, seq: getOrCreateState(statesRef.current, activeTabId).seq });
+  const runShellForTab = useCallback(async (tabId: string, command: string) => {
+    if (!tabId) throw new Error(t("composer.workspaceStarting"));
+    dispatchTo(tabId, { type: "user", text: `!${command}`, seq: getOrCreateState(statesRef.current, tabId).seq });
     try {
-      await app.RunShellForTab(activeTabId, command);
+      await app.RunShellForTab(tabId, command);
     } catch (error) {
-      dispatchTo(activeTabId, { type: "send_failed", error: `Command failed: ${error instanceof Error ? error.message : String(error)}` });
+      dispatchTo(tabId, { type: "send_failed", error: `Command failed: ${error instanceof Error ? error.message : String(error)}` });
       throw error;
     }
-  }, [activeTabId, dispatchTo]);
+  }, [dispatchTo]);
 
-  const steer = useCallback(async (text: string) => {
+  const runShell = useCallback(async (command: string) => {
     if (!activeTabId) throw new Error(t("composer.workspaceStarting"));
+    await runShellForTab(activeTabId, command);
+  }, [activeTabId, runShellForTab]);
+
+  const steerForTab = useCallback(async (tabId: string, text: string) => {
+    if (!tabId) throw new Error(t("composer.workspaceStarting"));
     // No optimistic user bubble: rewind/fork map turns by counting user items,
     // and a steer is not a backend turn — the Steer event's ↪ notice is the
     // visible confirmation (#3660).
     try {
-      await app.SteerForTab(activeTabId, text);
+      await app.SteerForTab(tabId, text);
     } catch (error) {
-      dispatchTo(activeTabId, { type: "local_notice", level: "warn", text: `Steer failed: ${error instanceof Error ? error.message : String(error)}` });
+      dispatchTo(tabId, { type: "local_notice", level: "warn", text: `Steer failed: ${error instanceof Error ? error.message : String(error)}` });
       throw error;
     }
-  }, [activeTabId, dispatchTo]);
+  }, [dispatchTo]);
+
+  const steer = useCallback(async (text: string) => {
+    if (!activeTabId) throw new Error(t("composer.workspaceStarting"));
+    await steerForTab(activeTabId, text);
+  }, [activeTabId, steerForTab]);
 
   const notice = useCallback((text: string, level: "info" | "warn" = "info") => {
     if (!activeTabId) return;
@@ -1944,34 +1954,54 @@ export function useController() {
     }).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
+  const setCollaborationModeForTab = useCallback(async (tabId: string, mode: CollaborationMode): Promise<void> => {
+    if (!tabId) return;
+    await app.SetCollaborationModeForTab(tabId, mode).catch(() => {});
+    await refreshMetaForTab(tabId, dispatchTo);
+  }, [dispatchTo]);
+
   const setCollaborationMode = useCallback(async (mode: CollaborationMode): Promise<void> => {
     if (!activeTabId) return;
-    await app.SetCollaborationModeForTab(activeTabId, mode).catch(() => {});
-    await refreshMetaForTab(activeTabId, dispatchTo);
-  }, [activeTabId, dispatchTo]);
+    await setCollaborationModeForTab(activeTabId, mode);
+  }, [activeTabId, setCollaborationModeForTab]);
+
+  const setToolApprovalModeForTab = useCallback(async (tabId: string, mode: ToolApprovalMode): Promise<void> => {
+    if (!tabId) return;
+    await app.SetToolApprovalModeForTab(tabId, mode).catch(() => {});
+    if (mode === "auto" || mode === "yolo") dispatchTo(tabId, { type: "clearApproval" });
+    await refreshMetaForTab(tabId, dispatchTo);
+  }, [dispatchTo]);
 
   const setToolApprovalMode = useCallback(async (mode: ToolApprovalMode): Promise<void> => {
     if (!activeTabId) return;
-    await app.SetToolApprovalModeForTab(activeTabId, mode).catch(() => {});
-    if (mode === "auto" || mode === "yolo") dispatchTo(activeTabId, { type: "clearApproval" });
-    await refreshMetaForTab(activeTabId, dispatchTo);
-  }, [activeTabId, dispatchTo]);
+    await setToolApprovalModeForTab(activeTabId, mode);
+  }, [activeTabId, setToolApprovalModeForTab]);
+
+  const setGoalForTab = useCallback(async (tabId: string, goal: string): Promise<void> => {
+    if (!tabId) return;
+    await app.SetGoalForTab(tabId, goal).catch(() => {});
+    await refreshMetaForTab(tabId, dispatchTo);
+  }, [dispatchTo]);
 
   const setGoal = useCallback(async (goal: string): Promise<void> => {
     if (!activeTabId) return;
-    await app.SetGoalForTab(activeTabId, goal).catch(() => {});
-    await refreshMetaForTab(activeTabId, dispatchTo);
-  }, [activeTabId, dispatchTo]);
+    await setGoalForTab(activeTabId, goal);
+  }, [activeTabId, setGoalForTab]);
+
+  const clearGoalForTab = useCallback(async (tabId: string): Promise<void> => {
+    if (!tabId) return;
+    await app.ClearGoalForTab(tabId).catch(() => {});
+    await refreshMetaForTab(tabId, dispatchTo);
+  }, [dispatchTo]);
 
   const clearGoal = useCallback(async (): Promise<void> => {
     if (!activeTabId) return;
-    await app.ClearGoalForTab(activeTabId).catch(() => {});
-    await refreshMetaForTab(activeTabId, dispatchTo);
-  }, [activeTabId, dispatchTo]);
+    await clearGoalForTab(activeTabId);
+  }, [activeTabId, clearGoalForTab]);
 
   const newSession = useCallback(async () => {
     const tabId = activeTabId;
-    if (tabId && !(await waitForBackendActiveTab(tabId))) return;
+    if (tabId) await waitForTabReady(tabId);
     if (tabId) {
       addBreadcrumb("session.new", `click ${tabId}`);
       bumpCheckpointRefreshSeq(tabId);
@@ -1981,7 +2011,8 @@ export function useController() {
       addBreadcrumb("session.new", `visible-reset ${tabId}`);
     }
     try {
-      await app.NewSession();
+      if (tabId) await app.NewSessionForTab(tabId);
+      else await app.NewSession();
       addBreadcrumb("session.new", `backend-done ${tabId ?? ""}`);
     } catch (err) {
       if (tabId) {
@@ -2000,19 +2031,18 @@ export function useController() {
       app.ContextUsageForTab(tabId).then((context) => dispatchTo(tabId, { type: "context", context })).catch(() => {});
       void refreshCheckpoints(tabId);
     }
-  }, [activeTabId, bumpCheckpointRefreshSeq, bumpSessionLoadSeq, dispatchTo, loadSessionDataForTab, refreshCheckpoints, waitForBackendActiveTab]);
+  }, [activeTabId, bumpCheckpointRefreshSeq, bumpSessionLoadSeq, dispatchTo, loadSessionDataForTab, refreshCheckpoints, waitForTabReady]);
 
   const clearSession = useCallback(async () => {
     const tabId = activeTabId;
-    if (tabId && !(await waitForBackendActiveTab(tabId))) {
-      throw new Error("Tab activation has not completed");
-    }
+    if (tabId) await waitForTabReady(tabId);
     if (tabId) {
       bumpCheckpointRefreshSeq(tabId);
       bumpSessionLoadSeq(tabId);
     }
     try {
-      await app.ClearSession();
+      if (tabId) await app.ClearSessionForTab(tabId);
+      else await app.ClearSession();
     } catch {
       if (tabId) void loadSessionDataForTab(tabId);
       return;
@@ -2024,7 +2054,7 @@ export function useController() {
       // Clear placeholder items since no history action follows.
       dispatchTo(tabId, { type: "history", messages: [] });
     }
-  }, [activeTabId, bumpCheckpointRefreshSeq, bumpSessionLoadSeq, dispatchTo, loadSessionDataForTab, waitForBackendActiveTab]);
+  }, [activeTabId, bumpCheckpointRefreshSeq, bumpSessionLoadSeq, dispatchTo, loadSessionDataForTab, waitForTabReady]);
 
   const listSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListSessions().catch(() => [])), []);
   const listTrashedSessions = useCallback(async (): Promise<SessionMeta[]> => asArray<SessionMeta>(await app.ListTrashedSessions().catch(() => [])), []);
@@ -2110,10 +2140,8 @@ export function useController() {
   const compact = useCallback(() => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-    void waitForBackendActiveTab(tabId).then((active) => {
-      if (active) app.Compact().catch(() => {});
-    });
-  }, [waitForBackendActiveTab]);
+    void waitForTabReady(tabId).then(() => app.CompactForTab(tabId).catch(() => {}));
+  }, [waitForTabReady]);
 
   const setModel = useCallback(async (name: string) => {
     if (!activeTabId) return;
@@ -2166,16 +2194,15 @@ export function useController() {
   const forget = useCallback(async (name: string) => { await app.Forget(name).catch(() => {}); }, []);
   const saveDoc = useCallback(async (path: string, body: string) => { await app.SaveDoc(path, body).catch(() => {}); }, []);
 
-  const rewind = useCallback(async (turn: number, scope: string): Promise<boolean> => {
-    const sourceTabId = activeTabId;
+  const rewindForTab = useCallback(async (sourceTabId: string, turn: number, scope: string): Promise<boolean> => {
     if (!sourceTabId) return false;
-    if (!(await waitForBackendActiveTab(sourceTabId))) return false;
+    await waitForTabReady(sourceTabId);
     const actionScope = (["fork", "summ-from", "summ-upto", "conversation", "code", "both"].includes(scope) ? scope : "both") as MessageActionScope;
     dispatchTo(sourceTabId, { type: "message_action_start", action: { turn, scope: actionScope } });
     dispatchTo(sourceTabId, { type: "local_notice", level: "info", text: messageActionBusyText(actionScope) });
     try {
       if (actionScope === "fork") {
-        const tab = await app.Fork(turn);
+        const tab = await app.ForkForTab(sourceTabId, turn);
         if (tab?.id) {
           setActiveTabId(tab.id);
           activeTabIdRef.current = tab.id;
@@ -2193,9 +2220,9 @@ export function useController() {
         return true;
       }
 
-      if (actionScope === "summ-from") await app.SummarizeFrom(turn);
-      else if (actionScope === "summ-upto") await app.SummarizeUpTo(turn);
-      else await app.Rewind(turn, actionScope);
+      if (actionScope === "summ-from") await app.SummarizeFromForTab(sourceTabId, turn);
+      else if (actionScope === "summ-upto") await app.SummarizeUpToForTab(sourceTabId, turn);
+      else await app.RewindForTab(sourceTabId, turn, actionScope);
 
       const messages = asArray(await app.HistoryForTab(sourceTabId).catch(() => [] as HistoryMessage[]));
       dispatchTo(sourceTabId, { type: "reset" });
@@ -2209,7 +2236,12 @@ export function useController() {
     } finally {
       dispatchTo(sourceTabId, { type: "message_action_done" });
     }
-  }, [activeTabId, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime, syncActiveTabFromBackend, waitForBackendActiveTab, waitForTabReady]);
+  }, [confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, reconcileTabRuntime, syncActiveTabFromBackend, waitForTabReady]);
+
+  const rewind = useCallback(async (turn: number, scope: string): Promise<boolean> => {
+    if (!activeTabId) return false;
+    return rewindForTab(activeTabId, turn, scope);
+  }, [activeTabId, rewindForTab]);
 
   // Tab management: switch preserves per-tab state; open creates it.
   const switchTab = useCallback(async (tabId: string, optimisticTab?: TabMeta): Promise<TabMeta[] | undefined> => {
@@ -2407,10 +2439,11 @@ export function useController() {
   return {
     state: activeState,
     activeTabId,
-    send, sendToTab, runShell, steer, notice, cancel, approve, answerQuestion, setControllerMode, setCollaborationMode, setToolApprovalMode, setGoal, clearGoal,
+    send, sendToTab, runShell, runShellForTab, steer, steerForTab, notice, cancel, approve, answerQuestion, setControllerMode,
+    setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setGoal, setGoalForTab, clearGoal, clearGoalForTab,
     newSession, clearSession, listSessions, listTrashedSessions, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     loadOlderHistory,
-    refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, setModel, setEffort, setTokenMode,
+    refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, setModel, setEffort, setTokenMode,
     fetchMemory, remember, forget, saveDoc,
     switchTab, openProjectTab, openGlobalTab, openTopicSession, ensureBlankTab, activateTopic, ensureBlankSurface, closeTab, reorderTabs,
     syncActiveTab: syncActiveTabFromBackend,

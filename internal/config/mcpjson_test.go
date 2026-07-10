@@ -685,3 +685,50 @@ func TestLoadLegacyMCP(t *testing.T) {
 		t.Errorf("empty path: got %+v, want nil", got)
 	}
 }
+
+func TestRemovePluginFromSourcesForRootRemovesEveryWritableDeclaration(t *testing.T) {
+	_, userConfig, _ := legacyHome(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(userConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{userConfig, filepath.Join(root, "reasonix.toml")} {
+		if err := os.WriteFile(path, []byte(`
+[[plugins]]
+name = "duplicate"
+command = "duplicate-mcp"
+`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mcpPath := filepath.Join(root, mcpJSONFile)
+	if err := os.WriteFile(mcpPath, []byte(`{
+  "mcpServers": {
+    "duplicate": { "command": "duplicate-json" },
+    "keep": { "command": "keep-json" }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := RemovePluginFromSourcesForRoot(root, "duplicate")
+	if err != nil {
+		t.Fatalf("RemovePluginFromSourcesForRoot: %v", err)
+	}
+	if !removed {
+		t.Fatal("RemovePluginFromSourcesForRoot reported no removal")
+	}
+	for _, path := range []string{userConfig, filepath.Join(root, "reasonix.toml")} {
+		for _, p := range LoadForEdit(path).Plugins {
+			if p.Name == "duplicate" {
+				t.Fatalf("duplicate MCP survived in %s: %+v", path, p)
+			}
+		}
+	}
+	if _, found, err := LoadMCPJSONPlugin(mcpPath, "duplicate"); err != nil || found {
+		t.Fatalf("duplicate .mcp.json entry survived: found=%v err=%v", found, err)
+	}
+	if _, found, err := LoadMCPJSONPlugin(mcpPath, "keep"); err != nil || !found {
+		t.Fatalf("unrelated .mcp.json entry was lost: found=%v err=%v", found, err)
+	}
+}

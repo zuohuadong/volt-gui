@@ -245,6 +245,70 @@ console.log("capabilities panel MCP actions");
   dom.window.close();
 }
 
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const meta: Meta = { label: "test", ready: true, eventChannel: "managed-mcp-channel", cwd: "/tmp/reasonix-test", workspaceRoot: "/tmp/reasonix-test" };
+  const tabs: TabMeta[] = [{
+    id: "tab-managed-mcp",
+    scope: "project",
+    workspaceRoot: "/tmp/reasonix-test",
+    workspaceName: "reasonix-test",
+    topicId: "topic-managed-mcp",
+    topicTitle: "Managed MCP",
+    label: "Managed MCP",
+    ready: true,
+    running: false,
+    mode: "normal",
+    toolApprovalMode: "auto",
+    active: true,
+    cwd: "/tmp/reasonix-test",
+  }];
+  const servers: ServerView[] = [{
+    name: "helper",
+    transport: "http",
+    status: "connected",
+    configured: true,
+    managedByPlugin: "superpowers",
+    autoStart: true,
+    tools: 1,
+    prompts: 0,
+    resources: 0,
+  }];
+  window.go = {
+    main: {
+      App: {
+        Meta: async () => meta,
+        ListTabs: async () => tabs,
+        MCPServers: async () => servers,
+      } as Partial<AppBindings> as AppBindings,
+    },
+  };
+
+  await act(async () => {
+    root.render(React.createElement(LocaleProvider, null, React.createElement(MCPServersSettingsPage)));
+    await flush();
+  });
+  await waitFor("plugin-managed MCP row", () => Boolean(document.querySelector(".cap-row__name")?.textContent?.includes("helper")));
+  ok(document.body.textContent?.includes("Managed by plugin superpowers") ?? false, "plugin-managed MCP identifies its owner");
+
+  const disclosure = document.querySelector<HTMLButtonElement>(".cap-disclosure");
+  if (!disclosure) throw new Error("missing plugin-managed MCP disclosure");
+  await act(async () => {
+    disclosure.click();
+    await flush();
+  });
+  ok(!findButton("Remove server"), "plugin-managed MCP hides the misleading remove action");
+  ok(!findButton("Edit config"), "plugin-managed MCP hides direct config editing");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
 console.log("capabilities panel plugin actions");
 
 {

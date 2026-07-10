@@ -6,22 +6,23 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   title="Page not found — VoltUI"
   titleEn="Page not found — VoltUI"
   titleZh="页面不存在 — VoltUI"
+  bodyClass="not-found-page"
   description="The page you are looking for does not exist.">
 
   <Fragment slot="head"><meta name="robots" content="noindex" /></Fragment>
 
-  <header class="nav scrolled">
-    <div class="nav-inner">
+  <header class="subpage-nav">
+    <div class="subpage-nav-inner">
       <a class="brand" href={`${base}/`}><img src={`${base}/logo.svg`} alt="VoltUI logo" /><span>VoltUI</span></a>
       <div class="lang-switch" role="group" aria-label="Language">
         <button type="button" data-lang="en" class="active">EN</button>
         <button type="button" data-lang="zh">中文</button>
       </div>
-      <a class="btn btn-dark" href={`${base}/#start`}><span class="l-en">Install</span><span class="l-zh">安装</span></a>
+      <a class="btn btn-dark" href={`${base}/#top`}><span class="l-en">Install</span><span class="l-zh">安装</span></a>
     </div>
   </header>
 
-  <main class="hero" style="padding-bottom:150px">
+  <main class="not-found-main">
     <div class="wrap">
       <div class="eyebrow">404</div>
       <h1><span class="l-en">This page went <span class="grad">cold.</span></span><span class="l-zh">这一页<span class="grad">冷掉了</span>。</span></h1>

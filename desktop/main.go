@@ -25,8 +25,20 @@ import (
 	// cmd/voltui does — boot.Build resolves providers/tools from these registries.
 	_ "voltui/internal/provider/anthropic"
 	_ "voltui/internal/provider/openai"
+	"voltui/internal/sandbox"
 	_ "voltui/internal/tool/builtin"
 )
+
+// runWindowsSandboxHelperIfRequested reports whether argv (os.Args-shaped, so
+// argv[0] is the program name) asks this process to act as the hidden Windows
+// sandbox helper, and runs it when so. Split from main so tests can pin that
+// the desktop binary keeps the helper route the sandbox wrapper depends on.
+func runWindowsSandboxHelperIfRequested(argv []string) (int, bool) {
+	if len(argv) > 1 && argv[1] == sandbox.WindowsHelperCommand {
+		return sandbox.RunWindowsSandboxHelper(argv[2:], os.Stdin, os.Stdout, os.Stderr), true
+	}
+	return 0, false
+}
 
 // assets embeds the built frontend. `all:` so dotfiles (e.g. the dist .gitkeep
 // that keeps this directive compilable before the first `pnpm build`) are
@@ -96,6 +108,16 @@ func linuxWebviewGpuPolicy(pattern string) linux.WebviewGpuPolicy {
 }
 
 func main() {
+	// The Windows bash sandbox relaunches the current executable as a hidden
+	// helper process. Dispatch it before any Wails or single-instance setup:
+	// otherwise every sandboxed command starts a second GUI instance that
+	// forwards to the running app and exits 0 with no output, so bash silently
+	// returns empty on Windows.
+	if code, ok := runWindowsSandboxHelperIfRequested(os.Args); ok {
+		os.Exit(code)
+	}
+	sandbox.RegisterHelperDispatch()
+
 	if len(os.Args) > 1 && os.Args[1] == "builtin-mcp" {
 		os.Exit(builtinmcp.RunCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr, version))
 	}

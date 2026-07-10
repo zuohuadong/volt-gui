@@ -6,18 +6,19 @@
 // (*policy*): a permitted command still cannot escape the box.
 //
 // macOS uses Seatbelt via sandbox-exec, Linux uses bubblewrap when available,
-// and Windows uses a helper process backed by github.com/SivanCola/windows-sandbox:
-// AppContainer for read-only commands, a low-integrity token for writable
-// commands, and a kill-on-close Job Object. When enforce is requested but no
-// OS sandbox backend is available, the bash tool fails closed instead of
-// running the command unwrapped. Confining the in-process file-writer
-// built-ins is handled separately, in package tool/builtin.
+// and Windows uses VoltUI's bundled native helper: AppContainer for read-only
+// commands, a low-integrity token for writable commands, and a kill-on-close
+// Job Object. When enforce is requested but no OS sandbox backend is available,
+// the bash tool fails closed instead of running the command unwrapped.
+// Confining the in-process file-writer built-ins is handled separately, in
+// package tool/builtin.
 package sandbox
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"runtime"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,6 +26,20 @@ import (
 // sandbox wrapper. It is intentionally obscure so it does not collide with
 // public commands.
 const WindowsHelperCommand = "__reasonix_windows_sandbox"
+
+// helperDispatchRegistered records that this binary's entry point routes
+// WindowsHelperCommand to RunWindowsSandboxHelper. The Windows wrapper
+// relaunches os.Executable() as the sandbox helper, so a host binary without
+// that route could swallow sandboxed commands by starting its normal UI.
+// Registration turns that mistake into a fail-closed refusal: Available()
+// stays false until the entry point registers.
+var helperDispatchRegistered atomic.Bool
+
+// RegisterHelperDispatch declares that the current binary's entry point routes
+// WindowsHelperCommand to RunWindowsSandboxHelper before any other startup
+// work. Every main() that can host the bash tool must add the route and call
+// this; on Windows, enforce mode fails closed without it.
+func RegisterHelperDispatch() { helperDispatchRegistered.Store(true) }
 
 const windowsSandboxFailureMarkerPrefix = "__reasonix_windows_sandbox_failure__:"
 

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
+
+	"voltui/internal/sandbox"
 )
 
 // TestMain isolates user config/state/cache dirs for the whole package. Without
@@ -33,6 +35,17 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+func TestRunWindowsSandboxHelperIfRequested(t *testing.T) {
+	if code, handled := runWindowsSandboxHelperIfRequested([]string{"voltui-desktop"}); handled || code != 0 {
+		t.Fatalf("normal desktop argv handled=%v code=%d, want false/0", handled, code)
+	}
+
+	code, handled := runWindowsSandboxHelperIfRequested([]string{"voltui-desktop", sandbox.WindowsHelperCommand})
+	if !handled || code != 2 {
+		t.Fatalf("sandbox helper argv handled=%v code=%d, want true/2", handled, code)
+	}
 }
 
 func TestWindowsWebview2GPUDisabled(t *testing.T) {

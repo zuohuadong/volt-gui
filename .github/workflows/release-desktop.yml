@@ -222,6 +222,7 @@ jobs:
         with:
           path: dist-${{ matrix.name }}
           key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}
+          enableCrossOsArchive: true
 
   publish:
     name: publish release
@@ -245,6 +246,7 @@ jobs:
           path: dist-darwin-universal
           key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-darwin-universal
           fail-on-cache-miss: true
+          enableCrossOsArchive: true
 
       - name: Restore linux dist
         uses: actions/cache/restore@v6
@@ -252,6 +254,7 @@ jobs:
           path: dist-linux-amd64
           key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-linux-amd64
           fail-on-cache-miss: true
+          enableCrossOsArchive: true
 
       - name: Restore Windows amd64 dist
         uses: actions/cache/restore@v6
@@ -259,6 +262,7 @@ jobs:
           path: dist-windows-amd64
           key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-windows-amd64
           fail-on-cache-miss: true
+          enableCrossOsArchive: true
 
       - name: Restore Windows arm64 dist
         uses: actions/cache/restore@v6
@@ -266,6 +270,7 @@ jobs:
           path: dist-windows-arm64
           key: desktop-dist-${{ github.run_id }}-${{ github.run_attempt }}-windows-arm64
           fail-on-cache-miss: true
+          enableCrossOsArchive: true
 
       - name: Collect restored dist
         run: |
@@ -329,6 +334,7 @@ jobs:
         with:
           path: assets
           key: desktop-canary-dist-${{ github.run_id }}-${{ github.run_attempt }}
+          enableCrossOsArchive: true
 
   mirror:
     name: mirror to R2
@@ -364,6 +370,7 @@ jobs:
           path: assets
           key: desktop-canary-dist-${{ github.run_id }}-${{ github.run_attempt }}
           fail-on-cache-miss: true
+          enableCrossOsArchive: true
 
       - name: Download release assets
         if: env.HAS_R2 == 'true' && steps.ver.outputs.channel != 'canary'

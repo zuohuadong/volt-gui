@@ -4,13 +4,14 @@
 #
 # Key design decisions:
 # 1. Skip React frontend, site, and docs entirely
-# 2. For heavily-forked packages (control, agent, cli), skip on conflict
+# 2. For heavily-forked packages and entrypoints, skip on conflict
 #    instead of blindly accepting upstream --theirs
-# 3. Only auto-merge safe packages (sandbox, config/migrate, proc, plugin)
-# 4. Global brand replacement: reasonix -> voltui
+# 3. Never patch VoltUI's fork-specific Windows sandbox implementation
+# 4. Auto-merge other safe packages (config/migrate, proc, plugin)
+# 5. Global brand replacement: reasonix -> voltui
 set -euo pipefail
 
-UPSTREAM_URL="git@github.com:esengine/DeepSeek-Reasonix.git"
+UPSTREAM_URL="https://github.com/esengine/DeepSeek-Reasonix.git"
 UPSTREAM_BRANCH="main-v2"
 MARKER_FILE=".upstream-sync-marker"
 
@@ -19,6 +20,8 @@ DIVERGENT_PKGS=(
   "internal/control/"
   "internal/agent/"
   "internal/cli/"
+  "internal/sandbox/"
+  "desktop/main.go"
 )
 
 echo "=== Fetching upstream ==="
@@ -47,6 +50,10 @@ for c in $COMMITS; do
     ':(exclude)desktop/frontend-legacy/' \
     ':(exclude)site/' \
     ':(exclude)docs/README*' \
+    ':(exclude)internal/winsandbox/' \
+    ':(exclude)internal/sandbox/seatbelt_windows.go' \
+    ':(exclude)internal/sandbox/seatbelt_windows_test.go' \
+    ':(exclude)internal/sandbox/seatbelt_other.go' \
     | git apply --3way --whitespace=nowarn - 2>/dev/null || {
       # Check which files conflicted
       for f in $(git diff --name-only --diff-filter=U 2>/dev/null); do

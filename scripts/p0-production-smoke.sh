@@ -22,20 +22,19 @@ require_cmd() {
 	}
 }
 
-write_stub_frontend() {
+restore_frontend_keep() {
 	mkdir -p desktop/frontend/dist
-	if [[ ! -f desktop/frontend/dist/index.html ]]; then
-		printf '<!doctype html><title>p0-smoke</title>\n' > desktop/frontend/dist/index.html
-	fi
+	touch desktop/frontend/dist/.gitkeep
 }
 
-run_frontend_build() {
-	if ! command -v pnpm >/dev/null 2>&1; then
-		printf '\n==> skipping frontend build: pnpm not found\n'
-		return
-	fi
+run_frontend_checks() {
+	run pnpm --dir desktop/frontend check
+	(
+		cd desktop/frontend
+		run bun test
+	)
 	run pnpm --dir desktop/frontend build
-	printf '\n' > desktop/frontend/dist/.gitkeep
+	restore_frontend_keep
 }
 
 run_real_provider_smoke() {
@@ -114,16 +113,18 @@ EOF_CFG
 }
 
 require_cmd go
+require_cmd pnpm
+require_cmd bun
+trap restore_frontend_keep EXIT
 
 run go test ./internal/agent -run 'TestAgentEmitsRetryingThenStreams|TestGateBlocksDeniedCall|TestRunPermissionDeniedToolCallPreservesRecovery|TestRunRecoversInterruptedPartialToolCallWithoutExecutingIt' -count=1
 
-write_stub_frontend
+run_frontend_checks
 (
 	cd desktop
 	run go test ./... -run 'TestWailsBindingSmoke|TestSubmitDisplayToTabRejectsMissingProviderKeyBeforeTurn|TestEnsureTabModelReadyFallsBackFromKeylessRestoredModel|TestRecoverToPending|TestFlushPendingCrash|TestAppPlatformReturnsRuntimeGOOS' -count=1
 )
 
-run_frontend_build
 run_real_provider_smoke
 
 if [[ "${VOLTUI_P0_DESKTOP_PACKAGE:-0}" == "1" ]]; then

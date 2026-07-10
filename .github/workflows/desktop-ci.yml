@@ -7,7 +7,12 @@ on:
       - ".github/workflows/desktop-ci.yml"
       - ".github/workflows/release-desktop.yml"
       - "desktop/**"
+      - "go.mod"
+      - "go.sum"
+      - "internal/**"
+      - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/prod-test.test.mjs"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
       - "scripts/stage-coreutils.mjs"
@@ -19,7 +24,12 @@ on:
       - ".github/workflows/desktop-ci.yml"
       - ".github/workflows/release-desktop.yml"
       - "desktop/**"
+      - "go.mod"
+      - "go.sum"
+      - "internal/**"
+      - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/prod-test.test.mjs"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
       - "scripts/stage-coreutils.mjs"
@@ -67,6 +77,10 @@ jobs:
 
       - name: Test Coreutils staging contract
         run: node --test scripts/stage-coreutils.test.mjs
+
+      - name: Test local production packaging contract
+        if: runner.os == 'macOS'
+        run: node --test scripts/prod-test.test.mjs
 
       - name: Install Linux build deps
         if: runner.os == 'Linux'

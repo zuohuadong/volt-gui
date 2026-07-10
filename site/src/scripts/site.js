@@ -4,9 +4,9 @@
     document.body.dataset.motion === "rich" &&
     !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const nav = document.querySelector(".nav");
+  const nav = document.querySelector("#nav, .subpage-nav");
   if (nav) {
-    const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 12);
+    const onScroll = () => nav.classList.toggle(nav.id === "nav" ? "stuck" : "scrolled", window.scrollY > 12);
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
   }
@@ -97,18 +97,28 @@
 
   /* language switch */
   const LANG_KEY = "voltui-lang";
-  const langBtns = Array.from(document.querySelectorAll(".lang-switch button"));
+  const LEGACY_LANG_KEY = "rx-lang";
+  const langBtns = Array.from(document.querySelectorAll(".lang-switch button, #lang"));
   const setLang = (l) => {
+    if (l !== "en" && l !== "zh") l = "en";
     document.body.dataset.lang = l;
-    document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
+    document.documentElement.lang = l;
     const t = document.body.dataset[l === "zh" ? "titleZh" : "titleEn"];
     if (t) document.title = t;
-    langBtns.forEach((b) => b.classList.toggle("active", b.dataset.lang === l));
-    try { localStorage.setItem(LANG_KEY, l); } catch (e) {}
+    langBtns.forEach((b) => {
+      if (b.id === "lang") b.textContent = l === "zh" ? "EN" : "中文";
+      else b.classList.toggle("active", b.dataset.lang === l);
+    });
+    try {
+      localStorage.setItem(LANG_KEY, l);
+      localStorage.setItem(LEGACY_LANG_KEY, l);
+    } catch (e) {}
   };
-  langBtns.forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
+  langBtns.forEach((b) => b.addEventListener("click", () => {
+    setLang(b.id === "lang" ? (document.body.dataset.lang === "zh" ? "en" : "zh") : b.dataset.lang);
+  }));
   let savedLang = "";
-  try { savedLang = localStorage.getItem(LANG_KEY) || ""; } catch (e) {}
+  try { savedLang = localStorage.getItem(LANG_KEY) || localStorage.getItem(LEGACY_LANG_KEY) || ""; } catch (e) {}
   setLang(savedLang || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"));
 
   /* docs scrollspy */
@@ -132,10 +142,13 @@
     btn.addEventListener("click", () => {
       const text = btn.getAttribute("data-copy");
       const done = () => {
-        btn.classList.add("copied");
-        const prev = btn.textContent;
-        btn.textContent = "Copied";
-        setTimeout(() => { btn.classList.remove("copied"); btn.textContent = prev; }, 1600);
+        const prev = btn.innerHTML;
+        btn.classList.add("copied", "ok");
+        btn.textContent = document.body.dataset.lang === "zh" ? "已复制" : "Copied";
+        setTimeout(() => {
+          btn.classList.remove("copied", "ok");
+          btn.innerHTML = prev;
+        }, 1600);
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done).catch(done);
@@ -144,15 +157,17 @@
   });
 
   /* refresh the Go-preview version from the published manifest between rebuilds */
-  fetch("https://dl.voltui.io/latest/latest.json", { cache: "no-cache" })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => {
-      const v = String((d && d.version) || "").replace(/^v/, "");
-      if (!v) return;
-      document.querySelectorAll(".rxv").forEach((e) => { e.textContent = v; });
-      document.querySelectorAll("a.rxnotes").forEach((a) => {
-        a.href = a.href.replace(/releases\/tag\/v[^/]*$/, "releases/tag/v" + v);
-      });
-    })
-    .catch(() => {});
+  if (document.querySelector(".rxv")) {
+    fetch("https://pub-147fb53b9c1e4bbf891a257968619ea7.r2.dev/latest/latest.json", { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const v = String((d && d.version) || "").replace(/^v/, "");
+        if (!v) return;
+        document.querySelectorAll(".rxv").forEach((e) => { e.textContent = v; });
+        document.querySelectorAll("a.rxnotes").forEach((a) => {
+          a.href = a.href.replace(/releases\/tag\/v[^/]*$/, "releases/tag/v" + v);
+        });
+      })
+      .catch(() => {});
+  }
 })();

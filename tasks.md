@@ -58,6 +58,31 @@
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | https://cnb.cool/aizhuliren/volt-gui/-/compare/main...codex/feat-oidc-auth |
 | VOLTGUI-005 | local | aizhuliren/volt-gui | review-merge | Workbench 产品插件框架（通用 upstream 插件层） | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/product-plugin-framework | https://cnb.cool/aizhuliren/volt-gui/-/pull/6 |
+| ANYONG-SYNC-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 GitHub upstream/main 更新并保留暗涌 fork 覆盖 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RELEASE-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 构建并发布合并 computer-use MCP 与 Bun runtime 的新版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+
+### ANYONG-RELEASE-20260710 Task Contract
+
+- 目标：将已合并的 upstream computer-use MCP + Bun runtime 与 Anyong 产物命名覆盖形成可发布提交，推送 `main` 触发 CNB Windows amd64 自动发版，并以 CNB 实际构建、tag、Release 和资产为最终证据。
+- 非目标：不改 Go/Wails 技术栈、不把 Bun 用作主程序构建工具、不重写或替换 N-API addon、不发布 macOS/Linux/CLI、不暴露或提交凭据。
+- 验收标准：明确 Bun 的真实职责；fresh origin tag 基线与版本计算一致；本地发布门禁通过；发布提交使用 `feat:` 触发版本；CNB 构建成功并创建新的 `desktop-v*` tag；Release 至少包含 `Anyong-windows-amd64-installer.exe`、`Anyong-windows-amd64.zip`、`latest.json`，manifest 指向 Anyong installer；远端 `main` 与本地发布提交一致。
+- 协作模式：`pipeline`。explorer 审计版本/打包/runtime，生产 push/tag/release 由 orchestrator 主进程执行（避免把凭据和不可逆外部写入委派），独立 verifier 复核本地发布候选与 live CNB 结果。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-diagnose`、`agent-team-tdd`、`cnb-ci-cd`、`xigu-ai-ops`、`anyong-brand-config`；遵循项目 Go/Wails/CNB Verification Profile。
+- 风险：high，涉及远端 `main`、自动 tag、Windows 安装包、OEM sidecar 与原生 `.node` addon；Bun/MCP 资源会显著增大安装包；CNB token、npm 网络或原生目标不匹配会阻断发布。
+- 回滚：发布前可停止 push；push 后若构建失败，以新的 `fix:` 提交修复并产生 patch 版本，不强推、不覆盖既有 tag；错误 Release 通过 CNB 平台撤回，代码用普通 revert 提交回滚。
+- 验证计划：YAML/shell/Node 语法；Windows 目标 MCP/Bun staging 实测并核对 `.node`/`bun.exe`；修复并锁定语义 provider family 的既有失败测试；Go root/desktop/release tools 测试；前端 release build/check；独立 verifier；push 后持续检查 CNB build、tag、Release 资产与 `latest.json`。
+
+### ANYONG-SYNC-20260710 Task Contract
+
+- 目标：fresh fetch `git@github.com:zuohuadong/volt-gui.git` 的 `upstream/main`，将真实增量合并到当前 `main`，保留暗涌配置化品牌、CNB 发布覆盖和现有未提交工作区改动。
+- 非目标：不推送、不部署、不触发发布、不把上游通用源码改成硬编码暗涌品牌、不丢弃或擅自提交现有未提交改动。
+- 验收标准：`main` 包含 fresh `upstream/main`；无未解决冲突；合并前已有的 `.cnb.yml`、`desktop/cmd/sign/main_test.go`、`scripts/desktop-build.sh` 改动仍存在；品牌仍通过配置实现；`.upstream-sync-marker` 与 fresh upstream 头一致；针对实际改动运行真实验证并通过或明确记录阻塞。
+- 协作模式：`pipeline`，explorer 先审计上游增量与冲突面，主进程执行合并，独立 verifier 复核结果，orchestrator 最终裁决。
+- 相关 skill：`agent-team-delegation-gate`、`xigu-ai-ops`、`anyong-brand-config`；遵循项目 Go/Wails/Astro 目录边界和 Verification Profile。
+- 预计影响：Git 历史、`.upstream-sync-marker`、上游实际变更文件；协调记录位于 `tasks.md` / `progress.md`，不提交 `.agents/state/` 或 mailbox 运行态。
+- 风险：上游与 fork 品牌/CNB/发布文件冲突；当前工作区有未提交改动；上游可能包含跨 Go、desktop/frontend、site 的变化。
+- 回滚：合并提交产生前可 `git merge --abort` 并恢复自动暂存；产生后如需回退仅针对本次 merge commit 使用非破坏性 revert，现有未提交改动保持独立。
+- 验证计划：`git diff --check`；按上游变更范围运行 root/desktop/frontend/site 的最小真实门禁；检查冲突标记、品牌硬编码漂移、marker 和 ahead/behind；由独立 verifier 给出 PASS/FAIL/PARTIAL。
 
 ### VOLTGUI-004 Task Contract
 

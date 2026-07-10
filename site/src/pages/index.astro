@@ -2,7 +2,7 @@
 import Base from '../layouts/Base.astro';
 const R2BASE = 'https://pub-147fb53b9c1e4bbf891a257968619ea7.r2.dev';
 const R2 = `${R2BASE}/latest`;
-const repo = 'https://github.com/esengine/voltui';
+const repo = 'https://github.com/zuohuadong/volt-gui';
 const DT053 = `${R2BASE}/desktop-v0.53.0`;
 
 // v1.x (Go preview) version, resolved from the published manifest at build time
@@ -154,13 +154,6 @@ try {
   </footer>
 
   <script>
-    const root = document.documentElement;
-    const langBtn = document.getElementById('lang')!;
-    function setLang(l: string){ root.lang = l; langBtn.textContent = l === 'zh' ? 'EN' : '中文'; try{ localStorage.setItem('rx-lang', l) }catch{} }
-    let saved = ''; try{ saved = localStorage.getItem('rx-lang') || '' }catch{}
-    setLang(saved || ((navigator.language||'').toLowerCase().startsWith('zh') ? 'zh' : 'en'));
-    langBtn.addEventListener('click', () => setLang(root.lang === 'zh' ? 'en' : 'zh'));
-
     const nav = document.getElementById('nav')!;
     addEventListener('scroll', () => nav.classList.toggle('stuck', scrollY > 8), { passive: true });
 
@@ -178,14 +171,6 @@ try {
       document.querySelector(`[data-panel="${t.dataset.tab}"]`)!.classList.add('on');
     }));
 
-    document.querySelectorAll<HTMLButtonElement>('.cp').forEach((b) => b.addEventListener('click', () => {
-      navigator.clipboard.writeText(b.dataset.copy || '').then(() => {
-        const prev = b.innerHTML; b.classList.add('ok');
-        b.innerHTML = '<span data-en>Copied</span><span data-zh>已复制</span>';
-        setTimeout(() => { b.innerHTML = prev; b.classList.remove('ok'); }, 1400);
-      });
-    }));
-
     // reveal on scroll
     const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .12 });
     document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
@@ -196,18 +181,5 @@ try {
     let acc = 280;
     lines.forEach((ln, i) => { setTimeout(() => ln.classList.add('on'), acc); acc += delays[i] || 300; });
 
-    // Refresh the v1.x (Go preview) version from the published manifest, so the
-    // page stays current between site rebuilds.
-    fetch('https://pub-147fb53b9c1e4bbf891a257968619ea7.r2.dev/latest/latest.json', { cache: 'no-cache' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        const v = String((d && d.version) || '').replace(/^v/, '');
-        if (!v) return;
-        document.querySelectorAll('.rxv').forEach((e) => { e.textContent = v; });
-        document.querySelectorAll<HTMLAnchorElement>('a.rxnotes').forEach((a) => {
-          a.href = a.href.replace(/releases\/tag\/v[^/]*$/, 'releases/tag/v' + v);
-        });
-      })
-      .catch(() => {});
   </script>
 </Base>

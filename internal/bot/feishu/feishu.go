@@ -624,8 +624,8 @@ func SendText(ctx context.Context, cfg config.FeishuBotConfig, chatID, text stri
 // sendMessage 使用飞书/Lark SDK 以 Interactive Card (JSON 2.0) 发送消息。
 // Card 内嵌 markdown 元素，支持 CommonMark 标准语法。
 // 当卡片体积超过 30KB 限制（如大段代码），自动降级为纯文本消息。
-// MediaURLs are intentionally ignored until outbound reads are confined by an
-// explicit operator policy; see #6279 for that follow-up.
+// MediaURLs are bare filenames staged in an operator-configured outbound media
+// root. URL fetching and arbitrary-path reads are intentionally unsupported.
 func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {
 	if msg.Card != nil {
 		return a.sendCard(ctx, msg)
@@ -633,22 +633,22 @@ func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot
 	if len(msg.MediaURLs) == 0 {
 		return a.sendRenderedText(ctx, msg)
 	}
-	// Outbound MediaURLs are resolved under a strict policy (absolute paths
-	// confined to configured roots, off by default) — see outbound_media.go.
-	// Send any text first, then each media item.
+	media, err := a.loadOutboundMedia(msg.MediaURLs)
+	if err != nil {
+		return bot.SendResult{}, err
+	}
+
 	var result bot.SendResult
-	var firstErr error
 	if strings.TrimSpace(msg.Text) != "" {
-		result, firstErr = a.sendRenderedText(ctx, msg)
+		textResult, err := a.sendRenderedText(ctx, msg)
+		result.Merge(textResult)
+		if err != nil {
+			return result, err
+		}
 	}
-	mediaResult, mediaErr := a.sendMediaURLs(ctx, msg)
-	if mediaErr != nil && firstErr == nil {
-		firstErr = mediaErr
-	}
-	if mediaResult.MessageID != "" {
-		result = mediaResult
-	}
-	return result, firstErr
+	mediaResult, err := a.sendMedia(ctx, msg, media)
+	result.Merge(mediaResult)
+	return result, err
 }
 
 func (a *adapter) sendRenderedText(ctx context.Context, msg bot.OutboundMessage) (bot.SendResult, error) {

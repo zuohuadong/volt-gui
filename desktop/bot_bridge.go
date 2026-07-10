@@ -42,7 +42,7 @@ type botBridgeHub struct {
 	// announce 往会话 transcript 里发一条 Notice，让桌面用户看到接管状态变化。
 	announce func(tabID, text string)
 	// persistWatchers 把订阅全集回写用户配置（bot.desktop_watchers）。
-	persistWatchers func(routes []bot.DesktopWatchRoute)
+	persistWatchers func(routes []bot.DesktopWatchRoute) error
 	// takeoverChanged 通知桌面前端刷新（TabMeta.RemoteControlled 变化）。
 	takeoverChanged func()
 	logger          *slog.Logger
@@ -55,6 +55,9 @@ type botBridgeHub struct {
 	takeoverTabs map[string]string
 	// watchSeq 单调递增，标记订阅快照的新旧；persist 时用它丢弃过期写入。
 	watchSeq uint64
+	// watchPersistDirty keeps a failed local mutation authoritative in memory;
+	// a later runtime refresh must not silently restore the older disk snapshot.
+	watchPersistDirty bool
 
 	// persistMu 串行化订阅落盘，并保证只写最新快照（见 SetWatch）。
 	persistMu      sync.Mutex
@@ -107,7 +110,7 @@ type botBridgeDeps struct {
 	notify          func(ctx context.Context, connectionID, domain string, msg bot.OutboundMessage) (bot.SendResult, error)
 	drive           func(tabID, text string, route bot.DesktopWatchRoute) error
 	announce        func(tabID, text string)
-	persistWatchers func(routes []bot.DesktopWatchRoute)
+	persistWatchers func(routes []bot.DesktopWatchRoute) error
 	takeoverChanged func()
 	logger          *slog.Logger
 }
@@ -320,12 +323,22 @@ func (h *botBridgeHub) askNotification(tabID string, ask event.Ask) desktopBridg
 		}
 	}
 	fmt.Fprintf(&b, "\nID: `%s`\n用 /desktop answer %s <选项编号或文本> 回答；桌面端先处理则以先到者为准。", ask.ID, ask.ID)
-	text := b.String()
+	privateText := b.String()
+	sharedText := fmt.Sprintf("❓ 桌面会话「%s」正在等待回答（问题详情仅在桌面端或私聊显示）。\n\nID: `%s`", label, ask.ID)
+	textFor := func(route bot.DesktopWatchRoute) string {
+		if isSharedChat(route.ChatType) {
+			return sharedText
+		}
+		return privateText
+	}
 
 	var card func(route bot.DesktopWatchRoute) *bot.InteractiveCard
 	if len(ask.Questions) == 1 && len(ask.Questions[0].Options) > 0 {
 		options := ask.Questions[0].Options
 		card = func(route bot.DesktopWatchRoute) *bot.InteractiveCard {
+			if isSharedChat(route.ChatType) {
+				return nil
+			}
 			actions := make([]map[string]any, 0, len(options))
 			for i, opt := range options {
 				optLabel := strings.TrimSpace(opt.Label)
@@ -337,13 +350,13 @@ func (h *botBridgeHub) askNotification(tabID string, ask event.Ask) desktopBridg
 			return &bot.InteractiveCard{
 				Header: "桌面会话在等待回答",
 				Elements: []bot.InteractiveCardElement{
-					{Tag: "markdown", Content: text},
+					{Tag: "markdown", Content: privateText},
 					{Tag: "action", Extra: map[string]any{"actions": actions}},
 				},
 			}
 		}
 	}
-	return desktopBridgeNotification{text: constText(text), card: card}
+	return desktopBridgeNotification{text: textFor, card: card}
 }
 
 func (h *botBridgeHub) turnDoneNotification(tabID string, err error) desktopBridgeNotification {
@@ -403,7 +416,7 @@ func (h *botBridgeHub) Sessions() []bot.DesktopSessionInfo {
 	return sessions
 }
 
-func (h *botBridgeHub) SetWatch(route bot.DesktopWatchRoute, enable bool) {
+func (h *botBridgeHub) SetWatch(route bot.DesktopWatchRoute, enable bool) error {
 	h.mu.Lock()
 	if enable {
 		h.watchers[route.Key()] = route
@@ -411,12 +424,13 @@ func (h *botBridgeHub) SetWatch(route bot.DesktopWatchRoute, enable bool) {
 		delete(h.watchers, route.Key())
 	}
 	h.watchSeq++
+	h.watchPersistDirty = true
 	seq := h.watchSeq
 	routes := h.watcherRoutesLocked()
 	persist := h.persistWatchers
 	h.mu.Unlock()
 	if persist == nil {
-		return
+		return nil
 	}
 	// Serialize persists and drop stale ones: two concurrent SetWatch calls
 	// (different connections) compute snapshots under h.mu but write config
@@ -425,16 +439,37 @@ func (h *botBridgeHub) SetWatch(route bot.DesktopWatchRoute, enable bool) {
 	h.persistMu.Lock()
 	defer h.persistMu.Unlock()
 	if seq <= h.lastPersistSeq {
-		return
+		return nil
+	}
+	if err := persist(routes); err != nil {
+		return err
 	}
 	h.lastPersistSeq = seq
-	persist(routes)
+	h.mu.Lock()
+	if h.watchSeq == seq {
+		h.watchPersistDirty = false
+	}
+	h.mu.Unlock()
+	return nil
 }
 
-// seedWatchers 用配置里的订阅全集重置内存态（配置是持久化的唯一事实源）。
-func (h *botBridgeHub) seedWatchers(routes []bot.DesktopWatchRoute) {
+func (h *botBridgeHub) watcherVersion() uint64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.watchSeq
+}
+
+// seedWatchers applies a config snapshot only if no watch command changed the
+// runtime after the config read began. Fresh external config edits still apply;
+// stale refreshes and failed local persists do not erase newer runtime state.
+func (h *botBridgeHub) seedWatchers(routes []bot.DesktopWatchRoute, expectedSeq uint64) {
+	h.persistMu.Lock()
+	defer h.persistMu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.watchSeq != expectedSeq || h.watchPersistDirty {
+		return
+	}
 	h.watchers = make(map[string]bot.DesktopWatchRoute, len(routes))
 	for _, r := range routes {
 		if strings.TrimSpace(r.ChatID) == "" {

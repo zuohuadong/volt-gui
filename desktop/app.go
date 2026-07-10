@@ -829,52 +829,108 @@ func (a *App) SubmitToTab(tabID, input string) error {
 	return a.submitToTab(tabID, input, false)
 }
 
+// beginTabTurn locks the tab's foreground-turn admission gate and reserves the
+// event sink until TurnDone has completed all of its fan-out. The caller must
+// call finishTabTurnStart exactly once after invoking the controller.
+func (a *App) beginTabTurn(tabID string, reclaim bool) (*WorkspaceTab, control.SessionAPI, error) {
+	tab, ctrl := a.tabAndCtrlByID(tabID)
+	if a.tabIsReadOnly(tab) {
+		return nil, nil, readOnlyChannelErr()
+	}
+	if tab == nil || ctrl == nil {
+		return nil, nil, a.workspaceNotReadyErr(tab)
+	}
+	tab.turnStartMu.Lock()
+	if a.tabIsReadOnly(tab) {
+		tab.turnStartMu.Unlock()
+		return nil, nil, readOnlyChannelErr()
+	}
+	if reclaim && a.botBridge != nil {
+		a.botBridge.reclaimFromDesktop(tab.ID)
+	}
+	ctrl = a.controllerForTab(tab)
+	if ctrl == nil {
+		tab.turnStartMu.Unlock()
+		return nil, nil, a.workspaceNotReadyErr(tab)
+	}
+	if err := a.ensureTabControllerWorkspace(tab); err != nil {
+		tab.turnStartMu.Unlock()
+		return nil, nil, err
+	}
+	ctrl = a.controllerForTab(tab)
+	if ctrl == nil {
+		tab.turnStartMu.Unlock()
+		return nil, nil, a.workspaceNotReadyErr(tab)
+	}
+	if ctrl.RuntimeStatus().Running || (tab.sink != nil && !tab.sink.tryBeginTurn()) {
+		tab.turnStartMu.Unlock()
+		return nil, nil, control.ErrTurnRunning
+	}
+	return tab, ctrl, nil
+}
+
+func (a *App) finishTabTurnStart(tab *WorkspaceTab, ctrl control.SessionAPI) bool {
+	started := ctrl != nil && ctrl.RuntimeStatus().Running
+	if !started && tab != nil && tab.sink != nil {
+		tab.sink.cancelTurnStart()
+	}
+	if tab != nil {
+		tab.turnStartMu.Unlock()
+	}
+	return started
+}
+
 // submitToTab is the shared submit body. fromBridge marks submissions driven
 // by the IM takeover bridge; local (frontend) submissions on a taken-over tab
 // reclaim remote control first — typing locally is the grab-back gesture.
 func (a *App) submitToTab(tabID, input string, fromBridge bool) error {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
-	}
-	if !fromBridge && tab != nil && a.botBridge != nil {
-		a.botBridge.reclaimFromDesktop(tab.ID)
-	}
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
+		tab, _ := a.tabAndCtrlByID(tabID)
+		if a.tabIsReadOnly(tab) {
+			return readOnlyChannelErr()
+		}
+		if tab == nil {
+			return a.workspaceNotReadyErr(tab)
+		}
+		tab.turnStartMu.Lock()
+		defer tab.turnStartMu.Unlock()
+		if !fromBridge && a.botBridge != nil {
+			a.botBridge.reclaimFromDesktop(tab.ID)
+		}
 		a.runEffortCommandForTab(tabID, trimmed)
 		return nil
 	}
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
-	}
-	if err := a.ensureTabControllerWorkspace(tab); err != nil {
+	tab, ctrl, err := a.beginTabTurn(tabID, !fromBridge)
+	if err != nil {
 		return err
-	}
-	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitDisplay(input, input)
+	a.finishTabTurnStart(tab, ctrl)
 	return nil
 }
 
 func (a *App) submitUserTurnToTab(tabID, input string) bool {
-	if a.tabReadOnly(tabID) {
+	return a.submitUserTurnToTabWithSink(tabID, input, nil)
+}
+
+func (a *App) submitUserTurnToTabWithSink(tabID, input string, forwarder event.Sink) bool {
+	tab, ctrl, err := a.beginTabTurn(tabID, false)
+	if err != nil {
 		return false
 	}
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if ctrl == nil || a.ensureTabControllerWorkspace(tab) != nil {
-		return false
-	}
-	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
-		return false
+	var generation uint64
+	if forwarder != nil {
+		generation = tab.sink.SetBotSink(forwarder)
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitUserTurn(input, input)
-	return true
+	started := a.finishTabTurnStart(tab, ctrl)
+	if !started && forwarder != nil {
+		tab.sink.clearBotSink(generation)
+	}
+	return started
 }
 
 // RunShell executes a shell command directly (bypassing the model) and streams
@@ -884,22 +940,13 @@ func (a *App) RunShell(command string) error {
 }
 
 func (a *App) RunShellForTab(tabID, command string) error {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
-	}
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
-	}
-	if err := a.ensureTabControllerWorkspace(tab); err != nil {
+	tab, ctrl, err := a.beginTabTurn(tabID, true)
+	if err != nil {
 		return err
-	}
-	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.RunShell(command)
+	a.finishTabTurnStart(tab, ctrl)
 	return nil
 }
 
@@ -910,42 +957,24 @@ func (a *App) SubmitDisplay(display, input string) error {
 }
 
 func (a *App) SubmitDisplayToTab(tabID, display, input string) error {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
-	}
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
-	}
-	if err := a.ensureTabControllerWorkspace(tab); err != nil {
+	tab, ctrl, err := a.beginTabTurn(tabID, true)
+	if err != nil {
 		return err
-	}
-	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitDisplay(display, input)
+	a.finishTabTurnStart(tab, ctrl)
 	return nil
 }
 
 func (a *App) SubmitEditedDisplayToTab(tabID, display, input, original string) error {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
-	}
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
-	}
-	if err := a.ensureTabControllerWorkspace(tab); err != nil {
+	tab, ctrl, err := a.beginTabTurn(tabID, true)
+	if err != nil {
 		return err
-	}
-	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitEditedDisplay(display, input, original)
+	a.finishTabTurnStart(tab, ctrl)
 	return nil
 }
 

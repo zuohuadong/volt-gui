@@ -112,28 +112,24 @@ func (a *App) bridgeAnnounce(tabID, text string) {
 // bridgeDrive 把远程文本提交为可见 tab 的新 turn，并为这一轮挂上事件转发器,
 // 让输出流回接管聊天（转发器在 TurnDone 自动卸载）。
 func (a *App) bridgeDrive(tabID, text string, route bot.DesktopWatchRoute) error {
-	a.mu.RLock()
-	tab := a.tabs[tabID]
-	var sink *tabEventSink
-	var ctrl control.SessionAPI
-	if tab != nil {
-		sink = tab.sink
-		ctrl = tab.Ctrl
+	tab, ctrl, err := a.beginTabTurn(tabID, false)
+	if err != nil {
+		if err == control.ErrTurnRunning {
+			return errDriveBusy
+		}
+		return err
 	}
-	a.mu.RUnlock()
-	if tab == nil || sink == nil {
-		return fmt.Errorf("会话不在前台，无法驱动")
+	if tab.sink == nil {
+		a.finishTabTurnStart(tab, nil)
+		return fmt.Errorf("会话事件通道不可用，无法驱动")
 	}
-	if a.tabIsReadOnly(tab) {
-		return fmt.Errorf("会话是只读的（外部 transcript），无法驱动")
-	}
-	// Fresh busy check (the DriveInput-side check uses a slow ListTabs snapshot).
-	// SubmitDisplay silently no-ops when the controller is already running, so if
-	// we attached the forwarder and submitted into a busy controller, the message
-	// would be dropped AND the forwarder would linger onto the next (foreign)
-	// turn. Bail before attaching.
-	if ctrl != nil && ctrl.RuntimeStatus().Running {
-		return errDriveBusy
+	// A local submission may have reclaimed the tab while this drive was waiting
+	// for the per-tab admission gate. Revalidate ownership only after the gate is
+	// held, immediately before attaching the route-specific forwarder.
+	if a.botBridge == nil || a.botBridge.TakeoverTab(route) != tabID {
+		tab.sink.cancelTurnStart()
+		tab.turnStartMu.Unlock()
+		return fmt.Errorf("接管已解除，请重新接管会话")
 	}
 	target := botForwardTarget{
 		ConnID:   route.ConnectionID,
@@ -141,17 +137,14 @@ func (a *App) bridgeDrive(tabID, text string, route bot.DesktopWatchRoute) error
 		ChatID:   route.ChatID,
 		ChatType: route.ChatType,
 	}
-	sink.SetBotSink(newBotEventForwarder(a.botRuntime, []botForwardTarget{target}))
-	if err := a.submitToTab(tabID, text, true); err != nil {
-		sink.SetBotSink(nil)
-		return err
-	}
+	generation := tab.sink.SetBotSink(newBotEventForwarder(a.botRuntime, []botForwardTarget{target}))
+	a.ensureTabTopicIndexedForUserTurn(tab)
+	ctrl.SubmitDisplay(text, text)
 	// Confirm the submit actually started a turn. If nothing is running now, the
-	// controller was busy/rotating in the tiny window after the check above and
-	// the submit no-oped — detach so a later turn's output does not leak, and
-	// report busy instead of silently swallowing the message.
-	if ctrl != nil && !ctrl.RuntimeStatus().Running {
-		sink.SetBotSink(nil)
+	// controller was rotating and the submit no-oped — detach this exact
+	// generation so a later turn's output does not leak.
+	if !a.finishTabTurnStart(tab, ctrl) {
+		tab.sink.clearBotSink(generation)
 		return errDriveBusy
 	}
 	return nil
@@ -159,8 +152,8 @@ func (a *App) bridgeDrive(tabID, text string, route bot.DesktopWatchRoute) error
 
 // bridgePersistWatchers 把订阅全集回写用户配置（bot.desktop_watchers），
 // 桌面重启后由 refreshBotRuntime 重新种子。
-func (a *App) bridgePersistWatchers(routes []bot.DesktopWatchRoute) {
-	err := a.applyConfigOnly(func(c *config.Config) error {
+func (a *App) bridgePersistWatchers(routes []bot.DesktopWatchRoute) error {
+	return a.applyConfigOnly(func(c *config.Config) error {
 		watchers := make([]config.BotDesktopWatcherConfig, 0, len(routes))
 		for _, r := range routes {
 			watchers = append(watchers, config.BotDesktopWatcherConfig{
@@ -174,9 +167,6 @@ func (a *App) bridgePersistWatchers(routes []bot.DesktopWatchRoute) {
 		c.Bot.DesktopWatchers = watchers
 		return nil
 	})
-	if err != nil {
-		slog.Warn("persist desktop watchers failed", "err", err)
-	}
 }
 
 func bridgeRoutesFromConfig(watchers []config.BotDesktopWatcherConfig) []bot.DesktopWatchRoute {

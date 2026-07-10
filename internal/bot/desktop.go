@@ -58,7 +58,7 @@ type DesktopBridge interface {
 	// Sessions 枚举当前所有桌面 live 会话（含后台 detached）。
 	Sessions() []DesktopSessionInfo
 	// SetWatch 订阅/退订当前聊天的桌面事件推送。
-	SetWatch(route DesktopWatchRoute, enable bool)
+	SetWatch(route DesktopWatchRoute, enable bool) error
 	// Watching 返回该聊天当前是否在订阅。
 	Watching(route DesktopWatchRoute) bool
 	// Approve 应答任意桌面会话的待审批项，返回用户可读的结果文案。
@@ -120,11 +120,15 @@ func (gw *BotGateway) handleDesktopCommand(msg InboundMessage) string {
 		route := desktopRouteFromMessage(msg)
 		switch arg {
 		case "on":
-			bridge.SetWatch(route, true)
-			return "已订阅桌面事件：审批请求、任务完成/出错会推送到本聊天。用 /desktop watch off 退订。\n注意：订阅状态保存在内存中，桌面端重启后需重新订阅。"
+			if err := bridge.SetWatch(route, true); err != nil {
+				return "已在本次运行中订阅桌面事件，但保存订阅失败；桌面端重启后可能需要重新订阅。"
+			}
+			return "已订阅桌面事件：审批请求、任务完成/出错会推送到本聊天。订阅已保存，桌面端重启后仍会生效。用 /desktop watch off 退订。"
 		case "off":
-			bridge.SetWatch(route, false)
-			return "已退订桌面事件推送。"
+			if err := bridge.SetWatch(route, false); err != nil {
+				return "已在本次运行中退订桌面事件，但保存失败；桌面端重启后订阅可能恢复。"
+			}
+			return "已退订桌面事件推送，持久化订阅也已移除。"
 		case "", "state":
 			if bridge.Watching(route) {
 				return "本聊天正在订阅桌面事件推送。用 /desktop watch off 退订。"
@@ -182,6 +186,9 @@ func (gw *BotGateway) handleDesktopCommand(msg InboundMessage) string {
 // 不经过这里（仍走 handleSlashCommand），所以 /desktop release 永远可用。
 // 返回 true 表示消息已被桌面接管通道消费。
 func (gw *BotGateway) divertToDesktopTakeover(ctx context.Context, adapter Adapter, msg InboundMessage) bool {
+	if strings.HasPrefix(strings.TrimSpace(msg.Text), "/") {
+		return false
+	}
 	bridge := gw.cfg.Desktop
 	if bridge == nil {
 		return false
@@ -189,6 +196,14 @@ func (gw *BotGateway) divertToDesktopTakeover(ctx context.Context, adapter Adapt
 	route := desktopRouteFromMessage(msg)
 	if bridge.TakeoverTab(route) == "" {
 		return false
+	}
+	// Re-check the continuing capability, not only the command that created it.
+	// A runtime refresh can revoke admin while leaving this process-local binding
+	// alive; base allowlist admission alone must not preserve takeover power.
+	if !gw.checkCommandRole(msg.Platform, msg, "admin") {
+		_, _ = bridge.Release(route)
+		_ = gw.sendText(ctx, adapter, msg, "桌面接管已解除：当前账号不再具有 bot 管理员权限。")
+		return true
 	}
 	if strings.TrimSpace(msg.Text) == "" {
 		_ = gw.sendText(ctx, adapter, msg, "接管模式暂不支持转发附件，请发送文本。")

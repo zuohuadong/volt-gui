@@ -19,6 +19,7 @@ type fakeDesktopBridge struct {
 	takeovers map[string]string // routeKey -> tabID
 	driven    []string
 	driveErr  error
+	watchErr  error
 }
 
 func newFakeDesktopBridge() *fakeDesktopBridge {
@@ -31,8 +32,9 @@ func newFakeDesktopBridge() *fakeDesktopBridge {
 }
 
 func (f *fakeDesktopBridge) Sessions() []DesktopSessionInfo { return f.sessions }
-func (f *fakeDesktopBridge) SetWatch(route DesktopWatchRoute, enable bool) {
+func (f *fakeDesktopBridge) SetWatch(route DesktopWatchRoute, enable bool) error {
 	f.watching[route.Key()] = enable
+	return f.watchErr
 }
 func (f *fakeDesktopBridge) Watching(route DesktopWatchRoute) bool {
 	return f.watching[route.Key()]
@@ -170,6 +172,21 @@ func TestHandleDesktopCommandWatchLifecycle(t *testing.T) {
 	}
 }
 
+func TestHandleDesktopCommandWatchReportsPersistenceFailure(t *testing.T) {
+	bridge := newFakeDesktopBridge()
+	bridge.watchErr = fmt.Errorf("disk unavailable")
+	gw := &BotGateway{cfg: GatewayConfig{Desktop: bridge}}
+	msg := desktopTestMessage("/desktop watch on")
+
+	got := gw.handleDesktopCommand(msg)
+	if !strings.Contains(got, "本次运行中订阅") || !strings.Contains(got, "保存订阅失败") {
+		t.Fatalf("watch persistence failure reply = %q", got)
+	}
+	if !bridge.Watching(desktopRouteFromMessage(msg)) {
+		t.Fatal("runtime subscription should remain active after persistence failure")
+	}
+}
+
 func TestHandleDesktopCommandApproveAndDeny(t *testing.T) {
 	bridge := newFakeDesktopBridge()
 	gw := &BotGateway{cfg: GatewayConfig{Desktop: bridge}}
@@ -262,6 +279,11 @@ func TestDivertToDesktopTakeover(t *testing.T) {
 
 	route := desktopRouteFromMessage(msg)
 	bridge.takeovers[route.Key()] = "tab-1"
+	msg.Text = "/desktop status"
+	if gw.divertToDesktopTakeover(context.Background(), adapter, msg) {
+		t.Fatal("slash commands must remain in the bot command path during takeover")
+	}
+	msg.Text = "帮我跑一下测试"
 	if !gw.divertToDesktopTakeover(context.Background(), adapter, msg) {
 		t.Fatal("message should divert to the taken-over session")
 	}
@@ -277,5 +299,35 @@ func TestDivertToDesktopTakeover(t *testing.T) {
 	sent := adapter.sentMessages()
 	if len(sent) == 0 || !strings.Contains(sent[len(sent)-1].Text, "正在执行中") {
 		t.Fatalf("sent = %+v, want drive error relayed to the chat", sent)
+	}
+}
+
+func TestDivertToDesktopTakeoverRevokesFormerAdmin(t *testing.T) {
+	bridge := newFakeDesktopBridge()
+	bridge.sessions = []DesktopSessionInfo{{TabID: "tab-1", Label: "会话一"}}
+	gw := &BotGateway{
+		cfg: GatewayConfig{
+			Desktop: bridge,
+			Allowlist: AllowlistConfig{Admins: map[Platform][]string{
+				PlatformFeishu: {"current-admin"},
+			}},
+		},
+		logger:        discardLogger(),
+		adapterHealth: map[string]*AdapterHealthSnapshot{},
+	}
+	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
+	msg := desktopTestMessage("run tests")
+	route := desktopRouteFromMessage(msg)
+	bridge.takeovers[route.Key()] = "tab-1"
+
+	if !gw.divertToDesktopTakeover(context.Background(), adapter, msg) {
+		t.Fatal("revoked takeover message should be consumed with an explanation")
+	}
+	if bridge.TakeoverTab(route) != "" || len(bridge.driven) != 0 {
+		t.Fatalf("revoked takeover remained active or drove input: tab=%q driven=%v", bridge.TakeoverTab(route), bridge.driven)
+	}
+	sent := adapter.sentMessages()
+	if len(sent) == 0 || !strings.Contains(sent[len(sent)-1].Text, "不再具有") {
+		t.Fatalf("sent = %+v, want admin-revocation explanation", sent)
 	}
 }

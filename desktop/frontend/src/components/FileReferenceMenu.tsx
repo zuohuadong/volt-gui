@@ -55,7 +55,7 @@ export function insertTextAtSelection(
   return { value: next, caret: before.length + text.length };
 }
 
-export function useFileReferenceMenu(text: string, cwd?: string) {
+export function useFileReferenceMenu(text: string, cwd?: string, tabId?: string) {
   const token = useMemo(() => activeFileReferenceToken(text), [text]);
   const atRaw = token?.raw ?? null;
   const atDir = token?.dir ?? "";
@@ -66,18 +66,20 @@ export function useFileReferenceMenu(text: string, cwd?: string) {
   const [dismissed, setDismissed] = useState(false);
   const dirCache = useRef<Record<string, DirEntry[]>>({});
   const searchCache = useRef<Record<string, FileRefSearchCacheEntry>>({});
-  const prevCwdRef = useRef(cwd);
+  const fileRefTabId = tabId ?? "";
+  const prevFileRefScopeRef = useRef({ tabId: fileRefTabId, cwd });
 
   useEffect(() => {
-    if (prevCwdRef.current === cwd) return;
-    prevCwdRef.current = cwd;
+    const previous = prevFileRefScopeRef.current;
+    if (previous.tabId === fileRefTabId && previous.cwd === cwd) return;
+    prevFileRefScopeRef.current = { tabId: fileRefTabId, cwd };
     dirCache.current = {};
     searchCache.current = {};
     setEntries([]);
     setSearchEntries([]);
     setActive(0);
     setDismissed(false);
-  }, [cwd]);
+  }, [cwd, fileRefTabId]);
 
   useEffect(() => {
     setActive(0);
@@ -94,7 +96,7 @@ export function useFileReferenceMenu(text: string, cwd?: string) {
     }
     let live = true;
     app
-      .ListDir(atDir)
+      .ListDirForTab(fileRefTabId, atDir)
       .then((next) => {
         const list = asArray(next);
         if (!live) return;
@@ -105,7 +107,7 @@ export function useFileReferenceMenu(text: string, cwd?: string) {
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, cwd]);
+  }, [atRaw === null, atDir, cwd, fileRefTabId]);
 
   useEffect(() => {
     if (atRaw === null || atDir !== "" || atFrag === "") {
@@ -121,7 +123,7 @@ export function useFileReferenceMenu(text: string, cwd?: string) {
     }
     let live = true;
     app
-      .SearchFileRefs(atFrag)
+      .SearchFileRefsForTab(fileRefTabId, atFrag)
       .then((next) => {
         const list = asArray(next);
         if (!live) return;
@@ -132,7 +134,7 @@ export function useFileReferenceMenu(text: string, cwd?: string) {
     return () => {
       live = false;
     };
-  }, [atRaw === null, atDir, atFrag, cwd]);
+  }, [atRaw === null, atDir, atFrag, cwd, fileRefTabId]);
 
   const items = useMemo(() => {
     if (atRaw === null) return [];

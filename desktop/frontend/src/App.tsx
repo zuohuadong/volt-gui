@@ -3591,6 +3591,7 @@ export default function App() {
                 key={state.approval.id}
                 approval={state.approval}
                 cwd={state.meta?.cwd}
+                tabId={activeTabId}
                 insertRequest={planRevisionInsertRequest}
                 onRevisionActiveChange={(active) => setWorkspaceInsertTarget(active ? "planRevision" : "composer")}
                 onAnswer={async (allow, session, persist) => {

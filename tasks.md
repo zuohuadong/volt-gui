@@ -68,6 +68,20 @@
 | ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
 | ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
+| ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | in_progress | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+
+### ANYONG-SYNC-20260711 Task Contract
+
+- 目标：fresh fetch GitHub `upstream/main`，将 `95537774 fix: repair cross-platform regressions and smoke coverage` 合并到 Anyong `main`，保留配置化 OEM 品牌、CNB Windows-only 发布覆盖与现有运行时资源，fast-forward push 并由 CNB 发布 `desktop-v0.8.3`。
+- 非目标：不发布 macOS/Linux/CLI，不硬编码暗涌产品名到通用源码，不改仓库可见性，不 force push、不移动或覆盖旧 tag，不输出 Git/CNB/签名/OEM secret，不运行会自动 `add -A` 或强推的旧同步脚本。
+- 验收标准：merge 结果包含 fresh `upstream/main=95537774` 且无冲突；`.upstream-sync-marker` 对齐；`scripts/desktop-build.sh` 保留 `DESKTOP_APP_NAME`、`RUNTIME_BRAND/defaultBrandName`、OEM `bundled.env`、computer-use/Bun/Coreutils 与 Linux zip fallback；GitHub workflow 更新不扩张 CNB Windows-only 发布边界；root/desktop/frontend/site/release/smoke 相关门禁通过；最终 trigger commit 为 live `main` HEAD；CNB 成功创建 `desktop-v0.8.3`；Release 精确提供 Anyong installer/ZIP/manifest，下载资产的 size/SHA/manifest/运行时资源/OEM 品牌验证通过；独立 verifier PASS。
+- 协作模式：`pipeline`。只读 explorer 审计上游增量与冲突面；orchestrator 在隔离 worktree 完成合并、候选提交、push 与 live 发布监控；独立 candidate verifier 复核合并候选；独立 live verifier 下载并核验真实资产；生产凭据和外部写入不委派。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`xigu-ai-ops`；若人工修改 Astro/TypeScript 源码，追加 `typescript`，并遵循既有 Go/Wails/Svelte/Astro/CNB Verification Profile。
+- Stack/Deployment Profile：沿用既有 Go CLI + Wails v2 desktop + Svelte frontend + Astro site；部署目标仍为 CNB Linux runner 交叉构建 Windows amd64 Wails/NSIS 并上传 CNB Release，不选择新栈、数据库或托管平台。
+- 风险：high，39 个上游文件跨 Windows sandbox、desktop/main、CI、smoke 与 site/Astro；发布涉及远端 `main`、自动 tag/Release、Windows 原生资源、签名与私有资产鉴权；任何依赖、网络、签名或 API 失败都可能形成部分发布状态。
+- 回滚：push 前门禁失败则停止并保留隔离 worktree/merge 证据；push 后不改写历史或旧 tag，以普通 follow-up `fix:` 提交修复并发布下一 patch；错误 Release 仅在明确证据支持时通过 CNB 管理面撤下。
+- 验证计划：merge-tree 与重点文件语义审计；root/desktop `go test ./...`、`go vet ./...`；frontend check/build；site build；release tools、Node/YAML/shell/smoke 测试；brand/linker、Bun/computer-use/Coreutils staging、diff/secret scan；candidate verifier；push 后持续检查 CNB commit/build/tag/Release，下载真实 installer/ZIP/latest.json 验证 size/SHA/manifest/Anyong 命名、运行时资源和 OEM 中文品牌；live verifier。
+- context_isolation：explorer、candidate verifier、live verifier 分别写新的 `.mailbox/` 结果文件；不传递凭据值，生产证据仅以 commit/build/tag/URL/文件元数据和哈希交付。
 
 ### ANYONG-RELEASE-20260710-4 Task Contract
 

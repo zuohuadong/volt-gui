@@ -52,9 +52,24 @@ func mergeInstalledPluginPackages(cfg *Config, root string) []string {
 				Tier:      srv.Tier,
 			}
 			cfg.Plugins = append(cfg.Plugins, entry)
+			if cfg.pluginPackageOwners == nil {
+				cfg.pluginPackageOwners = map[string]string{}
+			}
+			cfg.pluginPackageOwners[name] = item.Installed.Name
 		}
 	}
 	return warnings
+}
+
+// PluginPackageOwner reports the installed plugin package that contributed an
+// MCP server. Config-authored servers with the same name win during merge and
+// therefore have no package owner.
+func (cfg *Config) PluginPackageOwner(name string) (string, bool) {
+	if cfg == nil || len(cfg.pluginPackageOwners) == 0 {
+		return "", false
+	}
+	owner, ok := cfg.pluginPackageOwners[strings.TrimSpace(name)]
+	return owner, ok
 }
 
 func pluginPackageCommand(root, command string) string {

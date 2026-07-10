@@ -5659,6 +5659,7 @@ type ServerView struct {
 	AuthStatus           string     `json:"authStatus,omitempty"`
 	AuthURL              string     `json:"authUrl,omitempty"`
 	AuthConfigured       bool       `json:"authConfigured,omitempty"`
+	ManagedByPlugin      string     `json:"managedByPlugin,omitempty"`
 }
 
 type ToolView struct {
@@ -5771,11 +5772,15 @@ func (a *App) mcpServersView() []ServerView {
 	connected := map[string]bool{}
 	retainedDisabled := map[string]ServerView{}
 	configured := map[string]config.PluginEntry{}
+	managedByPlugin := map[string]string{}
 	var configuredEntries []config.PluginEntry
 	if cfg, err := config.LoadForRoot(workspaceRoot); err == nil {
 		configuredEntries = append(configuredEntries, cfg.Plugins...)
 		for _, p := range configuredEntries {
 			configured[p.Name] = p
+			if owner, ok := cfg.PluginPackageOwner(p.Name); ok {
+				managedByPlugin[p.Name] = owner
+			}
 		}
 	}
 	if h := ctrl.Host(); h != nil {
@@ -5859,6 +5864,9 @@ func (a *App) mcpServersView() []ServerView {
 		}
 	}
 	out = orderServerViews(out, order)
+	for i := range out {
+		out[i].ManagedByPlugin = managedByPlugin[out[i].Name]
+	}
 
 	a.mu.Lock()
 	if tab, ok := a.tabs[tabID]; ok {
@@ -6429,22 +6437,29 @@ func (a *App) RemoveMCPServer(name string) error {
 	if controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
-	disconnected := ctrl.DisconnectMCPServer(name)
+	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	if err != nil {
+		return err
+	}
+	if owner, ok := cfg.PluginPackageOwner(name); ok {
+		return fmt.Errorf("MCP server %q is managed by plugin %q; disable or remove the plugin instead", name, owner)
+	}
 	removed, err := a.removeDesktopMCPServer(name)
 	if err != nil {
 		return err
 	}
-	if disconnected || removed {
-		if h := ctrl.Host(); h != nil {
-			h.ClearFailure(name)
-		}
-		a.mu.Lock()
-		delete(tab.disabledMCP, name)
-		tab.mcpOrder = removeServerOrder(tab.mcpOrder, name)
-		a.mu.Unlock()
-		return nil
+	if !removed {
+		return fmt.Errorf("no removable MCP server named %q", name)
 	}
-	return fmt.Errorf("no MCP server named %q", name)
+	ctrl.DisconnectMCPServer(name)
+	if h := ctrl.Host(); h != nil {
+		h.ClearFailure(name)
+	}
+	a.mu.Lock()
+	delete(tab.disabledMCP, name)
+	tab.mcpOrder = removeServerOrder(tab.mcpOrder, name)
+	a.mu.Unlock()
+	return nil
 }
 
 // ReconnectMCPServer disconnects the server if it is already connected (to force
@@ -6757,33 +6772,7 @@ func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
 }
 
 func (a *App) removeDesktopMCPServer(name string) (bool, error) {
-	removed := false
-	// Lock only the user-config load-modify-save; the project-scope removals
-	// below write project files, which this lock does not cover.
-	if err := func() error {
-		unlock := config.LockUserConfigEdits()
-		defer unlock()
-		cfg, path, err := a.loadDesktopUserConfigForEdit()
-		if err != nil {
-			return err
-		}
-		if cfg.RemovePlugin(name) {
-			removed = true
-			return cfg.SaveTo(path)
-		}
-		return nil
-	}(); err != nil {
-		return false, err
-	}
-	projectRemoved, err := a.removeProjectMCPOverride(name)
-	if err != nil {
-		return removed, err
-	}
-	mcpJSONRemoved, err := a.removeProjectMCPJSONServer(name)
-	if err != nil {
-		return removed || projectRemoved, err
-	}
-	return removed || projectRemoved || mcpJSONRemoved, nil
+	return config.RemovePluginFromSourcesForRoot(a.activeWorkspaceRoot(), name)
 }
 
 func (a *App) removeProjectMCPOverride(name string) (bool, error) {
@@ -6806,10 +6795,6 @@ func (a *App) removeProjectMCPOverride(name string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func (a *App) removeProjectMCPJSONServer(name string) (bool, error) {
-	return config.RemoveMCPJSONPlugin(projectMCPJSONPathForRoot(a.activeWorkspaceRoot()), name)
 }
 
 func (a *App) desktopMCPServerOwnedByProjectMCPJSON(name string) bool {

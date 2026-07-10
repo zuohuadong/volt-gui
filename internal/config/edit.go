@@ -810,6 +810,80 @@ func pluginTOMLSourcePath(name string) string {
 	return pluginTOMLSourcePathForRoot(".", name)
 }
 
+// RemovePluginFromSourcesForRoot removes an MCP server from every writable
+// config source that can contribute it for root. Removing all matching TOML
+// declarations prevents a lower-priority duplicate from reappearing after the
+// higher-priority entry is deleted; project .mcp.json is handled last.
+func RemovePluginFromSourcesForRoot(root, name string) (bool, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, fmt.Errorf("remove MCP server: name is required")
+	}
+
+	removeTOML := func(path string) (bool, error) {
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		cfg, err := loadForEditStrict(path, false)
+		if err != nil {
+			return false, err
+		}
+		if !cfg.RemovePlugin(name) {
+			return false, nil
+		}
+		if err := cfg.SaveTo(path); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	removed := false
+	userPaths := userConfigCandidatePaths()
+	unlock := LockUserConfigEdits()
+	for _, path := range userPaths {
+		changed, err := removeTOML(path)
+		if err != nil {
+			unlock()
+			return removed, err
+		}
+		removed = removed || changed
+	}
+	unlock()
+
+	resolvedRoot := resolveRoot(root)
+	projectTOML := "reasonix.toml"
+	if resolvedRoot != "." {
+		projectTOML = filepath.Join(resolvedRoot, "reasonix.toml")
+	}
+	isUserPath := false
+	for _, path := range userPaths {
+		if samePath(path, projectTOML) {
+			isUserPath = true
+			break
+		}
+	}
+	if !isUserPath {
+		changed, err := removeTOML(projectTOML)
+		if err != nil {
+			return removed, err
+		}
+		removed = removed || changed
+	}
+
+	mcpPath := mcpJSONFile
+	if resolvedRoot != "." {
+		mcpPath = filepath.Join(resolvedRoot, mcpJSONFile)
+	}
+	changed, err := RemoveMCPJSONPlugin(mcpPath, name)
+	if err != nil {
+		return removed, err
+	}
+	return removed || changed, nil
+}
+
 // TrustPluginReadOnlyToolInSourceForRoot persists one trusted MCP read-only tool
 // into the file that owns the server for root. TOML declarations win over
 // .mcp.json, matching LoadForRoot merge precedence.

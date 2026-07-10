@@ -820,7 +820,7 @@ function FailedServersNotice({
                 <button className="btn btn--small" onClick={() => onToggle(s.name)} aria-expanded={open}>
                   {open ? t("common.collapse") : t("caps.showLog")}
                 </button>
-                {!s.builtIn && (
+                {!s.builtIn && !s.managedByPlugin && (
                   <InlineConfirmButton
                     label={t("caps.remove")}
                     confirmLabel={t("caps.confirmRemove")}
@@ -905,6 +905,9 @@ function ServerRow({
           ? t("caps.disabledAutoStart")
           : t("caps.disabled")
         : t("caps.counts", { tools: s.tools, prompts: s.prompts, resources: s.resources });
+  if (s.managedByPlugin) {
+    sub = `${sub} · ${t("caps.managedByPlugin", { plugin: s.managedByPlugin })}`;
+  }
   if (s.authStatus === "possible" && s.status !== "failed") {
     sub = `${sub} · ${t("caps.authPossibleShort")}`;
   }
@@ -1019,7 +1022,7 @@ function ServerDetails({
 }) {
   const t = useT();
   const command = serverCommand(s);
-  const canEditConfig = s.configured && !s.builtIn;
+  const canEditConfig = s.configured && !s.builtIn && !s.managedByPlugin;
   const lifecycle = mcpServerLifecycleActions(s);
   const canConnectNow = lifecycle.canConnectNow;
   const canReconnect = lifecycle.canReconnect;
@@ -1401,7 +1404,7 @@ function failureGroupLabel(kind: FailureKind, count: number, t: ReturnType<typeo
 }
 
 function canBulkRemoveFailure(server: ServerView): boolean {
-  if (server.builtIn || !server.configured) return false;
+  if (server.builtIn || server.managedByPlugin || !server.configured) return false;
   const kind = failureKind(server);
   return kind === "missing-command" || kind === "command-unavailable";
 }

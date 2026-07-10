@@ -12,13 +12,14 @@
 //   8. upstream sync preserves VoltUI's fork-specific Windows sandbox boundary
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const wf = (name) => readFileSync(join(root, ".github", "workflows", name), "utf8");
-const script = (name) => readFileSync(join(root, "scripts", name), "utf8");
+const readIfPresent = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
+const wf = (name) => readIfPresent(join(root, ".github", "workflows", name));
+const script = (name) => readIfPresent(join(root, "scripts", name));
 
 const releaseDesktop = wf("release-desktop.yml");
 const desktopCi = wf("desktop-ci.yml");
@@ -44,89 +45,101 @@ function cacheWithBlocks(yaml) {
   return blocks;
 }
 
-test("release-desktop.yml: every cache save/restore enables cross-OS archive", () => {
-  const blocks = cacheWithBlocks(releaseDesktop);
-  assert.ok(blocks.length >= 1, "expected at least one actions/cache save/restore step");
-  for (const b of blocks) {
+if (releaseDesktop !== null) {
+  test("release-desktop.yml: every cache save/restore enables cross-OS archive", () => {
+    const blocks = cacheWithBlocks(releaseDesktop);
+    assert.ok(blocks.length >= 1, "expected at least one actions/cache save/restore step");
+    for (const b of blocks) {
+      assert.match(
+        b.text,
+        /enableCrossOsArchive:\s*true/,
+        `line ${b.lineNo} (${b.uses}): missing enableCrossOsArchive in with: block`
+      );
+      assert.doesNotMatch(
+        b.text,
+        /enable-cross-os-archive:/,
+        `line ${b.lineNo} (${b.uses}): actions/cache input must use camelCase enableCrossOsArchive`
+      );
+    }
+  });
+}
+
+test("optional upstream sync workflow and script are present or absent together", () => {
+  assert.equal(
+    upstreamSyncYml === null,
+    upstreamSyncSh === null,
+    "upstream-sync.yml and upstream-sync.sh must be installed or removed together",
+  );
+});
+
+if (upstreamSyncYml !== null && upstreamSyncSh !== null) {
+  test("upstream-sync.sh uses public HTTPS upstream (no SSH git@ URL)", () => {
     assert.match(
-      b.text,
-      /enableCrossOsArchive:\s*true/,
-      `line ${b.lineNo} (${b.uses}): missing enableCrossOsArchive in with: block`
+      upstreamSyncSh,
+      /https:\/\/github\.com\/esengine\/DeepSeek-Reasonix/,
+      "upstream URL must be public HTTPS"
     );
     assert.doesNotMatch(
-      b.text,
-      /enable-cross-os-archive:/,
-      `line ${b.lineNo} (${b.uses}): actions/cache input must use camelCase enableCrossOsArchive`
+      upstreamSyncSh,
+      /git@github\.com:/,
+      "upstream URL must not be SSH (git@github.com)"
     );
-  }
-});
+  });
 
-test("upstream-sync.sh uses public HTTPS upstream (no SSH git@ URL)", () => {
-  assert.match(
-    upstreamSyncSh,
-    /https:\/\/github\.com\/esengine\/DeepSeek-Reasonix/,
-    "upstream URL must be public HTTPS"
-  );
-  assert.doesNotMatch(
-    upstreamSyncSh,
-    /git@github\.com:/,
-    "upstream URL must not be SSH (git@github.com)"
-  );
-});
-
-test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", () => {
-  assert.match(
-    upstreamSyncSh,
-    /"internal\/sandbox\/"/,
-    "sandbox conflicts must be treated as fork-divergent",
-  );
-  assert.match(
-    upstreamSyncSh,
-    /"desktop\/main\.go"/,
-    "desktop helper dispatch conflicts must keep the VoltUI side",
-  );
-  for (const protectedPath of [
-    "internal/winsandbox/",
-    "internal/sandbox/seatbelt_windows.go",
-    "internal/sandbox/seatbelt_windows_test.go",
-    "internal/sandbox/seatbelt_other.go",
-  ]) {
-    assert.ok(
-      upstreamSyncSh.includes(`':(exclude)${protectedPath}'`),
-      `upstream patch stream must exclude ${protectedPath}`,
+  test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", () => {
+    assert.match(
+      upstreamSyncSh,
+      /"internal\/sandbox\/"/,
+      "sandbox conflicts must be treated as fork-divergent",
     );
-  }
-});
+    assert.match(
+      upstreamSyncSh,
+      /"desktop\/main\.go"/,
+      "desktop helper dispatch conflicts must keep the VoltUI side",
+    );
+    for (const protectedPath of [
+      "internal/winsandbox/",
+      "internal/sandbox/seatbelt_windows.go",
+      "internal/sandbox/seatbelt_windows_test.go",
+      "internal/sandbox/seatbelt_other.go",
+    ]) {
+      assert.ok(
+        upstreamSyncSh.includes(`':(exclude)${protectedPath}'`),
+        `upstream patch stream must exclude ${protectedPath}`,
+      );
+    }
+  });
 
-test("upstream-sync.yml commits as github-actions[bot]", () => {
-  assert.match(upstreamSyncYml, /github-actions\[bot\]/, "must configure github-actions[bot] name");
-  assert.match(
-    upstreamSyncYml,
-    /41898282\+github-actions\[bot\]@users\.noreply\.github\.com/,
-    "must configure the bot noreply email"
-  );
-});
+  test("upstream-sync.yml commits as github-actions[bot]", () => {
+    assert.match(upstreamSyncYml, /github-actions\[bot\]/, "must configure github-actions[bot] name");
+    assert.match(
+      upstreamSyncYml,
+      /41898282\+github-actions\[bot\]@users\.noreply\.github\.com/,
+      "must configure the bot noreply email"
+    );
+  });
 
-test("upstream-sync.yml: missing upstream-sync label does not fail PR creation", () => {
-  // `gh pr create --label` hard-fails when the label is absent in the repo.
-  // The contract: create the PR unconditionally, then attach the label only if
-  // it already exists (never create a remote label).
-  assert.doesNotMatch(
-    upstreamSyncYml,
-    /--label\s+"upstream-sync"/,
-    "gh pr create must not hard-pass --label \"upstream-sync\""
-  );
-  assert.match(
-    upstreamSyncYml,
-    /gh label list/,
-    "must check label existence before attaching"
-  );
-  assert.match(
-    upstreamSyncYml,
-    /--add-label "upstream-sync"/,
-    "must conditionally attach the label via gh pr edit --add-label"
-  );
-});
+  test("upstream-sync.yml: missing upstream-sync label does not fail PR creation", () => {
+    // `gh pr create --label` hard-fails when the label is absent in the repo.
+    // The contract: create the PR unconditionally, then attach the label only if
+    // it already exists (never create a remote label).
+    assert.doesNotMatch(
+      upstreamSyncYml,
+      /--label\s+"upstream-sync"/,
+      "gh pr create must not hard-pass --label \"upstream-sync\""
+    );
+    assert.match(
+      upstreamSyncYml,
+      /gh label list/,
+      "must check label existence before attaching"
+    );
+    assert.match(
+      upstreamSyncYml,
+      /--add-label "upstream-sync"/,
+      "must conditionally attach the label via gh pr edit --add-label"
+    );
+  });
+}
 
 test("desktop-ci.yml: path filters include root Go module dependency paths", () => {
   // Desktop builds compile root-module Go code, so changes to go.mod, go.sum,

@@ -10,6 +10,9 @@ on:
       - "scripts/desktop-build.sh"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
+      - "scripts/stage-coreutils.mjs"
+      - "scripts/stage-coreutils.test.mjs"
+      - "third_party/coreutils/**"
   push:
     branches: [main]
     paths:
@@ -19,6 +22,9 @@ on:
       - "scripts/desktop-build.sh"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
+      - "scripts/stage-coreutils.mjs"
+      - "scripts/stage-coreutils.test.mjs"
+      - "third_party/coreutils/**"
   workflow_dispatch:
 
 permissions:
@@ -58,6 +64,9 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: 10
+
+      - name: Test Coreutils staging contract
+        run: node --test scripts/stage-coreutils.test.mjs
 
       - name: Install Linux build deps
         if: runner.os == 'Linux'

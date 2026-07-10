@@ -55,6 +55,7 @@ const (
 // Skill is a loaded playbook.
 type Skill struct {
 	Name        string // canonical identifier; matches the directory / filename stem
+	DisplayName string // human-readable title for UI surfaces; falls back to Name
 	Description string // one-liner shown in the pinned index
 	Body        string // full markdown body (post-frontmatter), loaded eagerly
 	Scope       Scope  // where it came from
@@ -488,8 +489,13 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 	if desc == "" {
 		fmt.Fprintf(s.stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
 	}
+	displayName := strings.TrimSpace(fm[skillFrontmatterTitle])
+	if displayName == "" {
+		displayName = firstMarkdownH1(body)
+	}
 	return Skill{
 		Name:         name,
+		DisplayName:  displayName,
 		Description:  desc,
 		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
 		Scope:        scope,
@@ -509,9 +515,20 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 	}, true
 }
 
+func firstMarkdownH1(body string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		}
+	}
+	return ""
+}
+
 const (
 	skillFrontmatterDescription      = "description"
 	skillFrontmatterName             = "name"
+	skillFrontmatterTitle            = "title"
 	skillFrontmatterRunAs            = "runas"
 	skillFrontmatterContext          = "context"
 	skillFrontmatterAgent            = "agent"

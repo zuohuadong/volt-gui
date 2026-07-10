@@ -108,3 +108,50 @@ func TestWorkbenchBindingsFallbackWhenConfigMissing(t *testing.T) {
 		t.Fatalf("ListWorkbenchJobs = %+v, want empty", got)
 	}
 }
+
+func TestWorkbenchPluginSavePersistsEnabledState(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+
+	input := WorkbenchPluginInput{
+		ID:           "contract-review",
+		Name:         "Contract Review",
+		Kind:         "native",
+		Entry:        "contract-review",
+		Version:      "v1.2.0",
+		Capabilities: []string{"review", "risk-check"},
+		ProviderIDs:  []string{"legal-mcp"},
+		Config:       map[string]string{"permission": "workspace"},
+		Enabled:      true,
+	}
+	if err := app.SaveWorkbenchPlugin(input); err != nil {
+		t.Fatalf("SaveWorkbenchPlugin create: %v", err)
+	}
+	plugins := app.WorkbenchPlugins()
+	if len(plugins) != 1 {
+		t.Fatalf("WorkbenchPlugins length = %d, want 1: %+v", len(plugins), plugins)
+	}
+	plugin := plugins[0]
+	if plugin.ID != input.ID || plugin.Name != input.Name || !plugin.Enabled {
+		t.Fatalf("WorkbenchPlugins saved plugin = %+v", plugin)
+	}
+	if len(plugin.Capabilities) != 2 || plugin.Capabilities[1] != "risk-check" {
+		t.Fatalf("WorkbenchPlugins capabilities = %+v", plugin.Capabilities)
+	}
+	if plugin.Config["permission"] != "workspace" {
+		t.Fatalf("WorkbenchPlugins config = %+v", plugin.Config)
+	}
+
+	input.Enabled = false
+	input.Version = "v1.2.1"
+	if err := app.SaveWorkbenchPlugin(input); err != nil {
+		t.Fatalf("SaveWorkbenchPlugin update: %v", err)
+	}
+	plugins = app.WorkbenchPlugins()
+	if len(plugins) != 1 {
+		t.Fatalf("WorkbenchPlugins after update length = %d, want 1: %+v", len(plugins), plugins)
+	}
+	if plugins[0].Enabled || plugins[0].Version != "v1.2.1" {
+		t.Fatalf("WorkbenchPlugins updated plugin = %+v", plugins[0])
+	}
+}

@@ -194,6 +194,9 @@ type App struct {
 	skillRootsMu    sync.Mutex
 	skillRootsCache skillRootsCache
 
+	projectMaterialSelectionsMu sync.Mutex
+	projectMaterialSelections   map[string]projectMaterialSelection
+
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
 }
 
@@ -843,6 +846,9 @@ func (a *App) SubmitToTab(tabID, input string) error {
 	if ctrl == nil {
 		return a.workspaceNotReadyErr(tab)
 	}
+	if handled, err := a.submitTodayAgendaIfMatched(tab, ctrl, input, input); handled {
+		return err
+	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitDisplay(input, input)
 	return nil
@@ -912,6 +918,9 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) error {
 	if ctrl == nil {
 		return a.workspaceNotReadyErr(tab)
 	}
+	if handled, err := a.submitTodayAgendaIfMatched(tab, ctrl, display, input); handled {
+		return err
+	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitDisplay(display, input)
 	return nil
@@ -931,6 +940,9 @@ func (a *App) SubmitEditedDisplayToTab(tabID, display, input, original string) e
 	ctrl = a.controllerForTab(tab)
 	if ctrl == nil {
 		return a.workspaceNotReadyErr(tab)
+	}
+	if handled, err := a.submitTodayAgendaIfMatched(tab, ctrl, display, input); handled {
+		return err
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitEditedDisplay(display, input, original)
@@ -5477,13 +5489,16 @@ func (a *App) SetToolApprovalMode(mode string) {
 	a.SetToolApprovalModeForTab("", mode)
 }
 
-func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
+// SetToolApprovalModeForTab updates one tab's tool approval posture. It
+// returns an error instead of silently dropping a stale tab request so the
+// desktop UI can retain the server-confirmed state.
+func (a *App) SetToolApprovalModeForTab(tabID, mode string) error {
 	mode = normalizeToolApprovalMode(mode)
 	a.mu.Lock()
 	tab := a.tabByIDLocked(tabID)
 	if tab == nil {
 		a.mu.Unlock()
-		return
+		return fmt.Errorf("tab %q not found", tabID)
 	}
 	tab.toolApprovalMode = mode
 	tab.mode = tabModeFromAxes(tabModeHasPlan(currentTabMode(tab)), mode == control.ToolApprovalYolo)
@@ -5496,6 +5511,7 @@ func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	return nil
 }
 
 // CommandInfo describes one available slash command for the composer's "/" menu.
@@ -5673,6 +5689,7 @@ type ToolView struct {
 // SkillView is one discoverable skill for the drawer.
 type SkillView struct {
 	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
@@ -5681,6 +5698,7 @@ type SkillView struct {
 
 type SkillRootSkillView struct {
 	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
@@ -5720,6 +5738,8 @@ func (a *App) MCPServers() []ServerView {
 // SkillsSettings returns the skills management snapshot without MCP status.
 func (a *App) SkillsSettings() SkillsSettingsView {
 	out := SkillsSettingsView{Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
+	rootViews := a.cachedSkillRootsView()
+	out.SkillRoots = rootViews
 	a.mu.RLock()
 	tab := a.activeTabLocked()
 	var ctrl control.SessionAPI
@@ -5728,6 +5748,7 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 	}
 	a.mu.RUnlock()
 	if ctrl == nil {
+		out.Skills = skillViewsFromRoots(rootViews, nil)
 		return out
 	}
 
@@ -5739,14 +5760,48 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 			}
 		}
 	}
+	seen := map[string]bool{}
 	for _, s := range ctrl.AllSkills() {
 		out.Skills = append(out.Skills, SkillView{
-			Name: s.Name, Description: s.Description,
+			Name: s.Name, DisplayName: s.DisplayName, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
 			Enabled: !disabled[config.SkillNameKey(s.Name)],
 		})
+		seen[config.SkillNameKey(s.Name)] = true
 	}
-	out.SkillRoots = a.cachedSkillRootsView()
+	for _, s := range skillViewsFromRoots(rootViews, disabled) {
+		if key := config.SkillNameKey(s.Name); key != "" && !seen[key] {
+			out.Skills = append(out.Skills, s)
+			seen[key] = true
+		}
+	}
+	return out
+}
+
+func skillViewsFromRoots(roots []SkillRootView, disabled map[string]bool) []SkillView {
+	out := []SkillView{}
+	seen := map[string]bool{}
+	for _, root := range roots {
+		for _, item := range root.SkillItems {
+			key := config.SkillNameKey(item.Name)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			isDisabled := false
+			if disabled != nil {
+				isDisabled = disabled[key]
+			}
+			out = append(out, SkillView{
+				Name:        item.Name,
+				DisplayName: item.DisplayName,
+				Description: item.Description,
+				Scope:       item.Scope,
+				RunAs:       item.RunAs,
+				Enabled:     !isDisabled,
+			})
+		}
+	}
 	return out
 }
 
@@ -5756,7 +5811,7 @@ func (a *App) mcpServersView() []ServerView {
 	tab := a.activeTabLocked()
 	if tab == nil {
 		a.mu.RUnlock()
-		return out
+		return configuredMCPServerViewsForRoot(a.activeWorkspaceRoot())
 	}
 	ctrl := tab.Ctrl
 	disabled := make(map[string]ServerView, len(tab.disabledMCP))
@@ -5768,7 +5823,7 @@ func (a *App) mcpServersView() []ServerView {
 	tabID := tab.ID
 	a.mu.RUnlock()
 	if ctrl == nil {
-		return out
+		return configuredMCPServerViewsForRoot(workspaceRoot)
 	}
 	seen := map[string]bool{}
 	connected := map[string]bool{}
@@ -5881,6 +5936,30 @@ func mcpStartIntent(p config.PluginEntry) string {
 		return "off"
 	}
 	return "automatic"
+}
+
+func configuredMCPServerViewsForRoot(root string) []ServerView {
+	configuredEntries := []config.PluginEntry{}
+	if cfg, err := config.LoadForRoot(root); err == nil {
+		configuredEntries = builtinmcp.AppendDefaultEnabled(configuredEntries, cfg.Plugins)
+		configuredEntries = append(configuredEntries, cfg.Plugins...)
+	}
+	out := []ServerView{}
+	seen := map[string]bool{}
+	for _, p := range configuredEntries {
+		if seen[p.Name] {
+			continue
+		}
+		seen[p.Name] = true
+		status := "disabled"
+		startIntent := "off"
+		if p.ShouldAutoStart() {
+			status = "deferred"
+			startIntent = mcpStartIntent(p)
+		}
+		out = append(out, withPluginConfig(ServerView{Name: p.Name, Status: status, StartIntent: startIntent, RuntimeState: "idle"}, p))
+	}
+	return orderServerViews(out, nil)
 }
 
 func mcpRuntimeState(status string) string {
@@ -6002,6 +6081,7 @@ func skillRootsViewFrom(cwd string, cfg, userCfg *config.Config) []SkillRootView
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
 			Name:        sk.Name,
+			DisplayName: sk.DisplayName,
 			Description: sk.Description,
 			Scope:       string(sk.Scope),
 			RunAs:       string(sk.RunAs),
@@ -6330,6 +6410,8 @@ type MCPServerInput struct {
 	URL                  string            `json:"url"`
 	Env                  map[string]string `json:"env"`
 	Headers              map[string]string `json:"headers"`
+	Tier                 string            `json:"tier"`
+	Enabled              *bool             `json:"enabled"`
 	TrustedReadOnlyTools []string          `json:"trustedReadOnlyTools"`
 }
 
@@ -6337,10 +6419,7 @@ type MCPServerInput struct {
 // Add). Returns the number of tools it exposed.
 func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 	ctrl := a.activeCtrl()
-	if ctrl == nil {
-		return 0, fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
+	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) {
 		return 0, rebuildControllerActiveWorkError("MCP server")
 	}
 	entry := config.PluginEntry{
@@ -6351,23 +6430,35 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		URL:                  in.URL,
 		Env:                  in.Env,
 		Headers:              in.Headers,
+		Tier:                 normalizeMCPTier(in.Tier),
 		TrustedReadOnlyTools: uniqueStrings(in.TrustedReadOnlyTools),
+	}
+	if in.Enabled != nil {
+		entry.AutoStart = in.Enabled
 	}
 	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
 		return 0, err
 	}
-	return ctrl.ConnectMCPServer(entry)
+	if in.Enabled != nil && !*in.Enabled {
+		return 0, nil
+	}
+	if ctrl == nil {
+		return 0, nil
+	}
+	tools, err := ctrl.ConnectMCPServer(entry)
+	if err != nil {
+		recordMCPFailure(ctrl, entry, err)
+		return 0, err
+	}
+	return tools, nil
 }
 
 // UpdateMCPServer edits a persisted external MCP server. The name is the stable
 // identity; callers must remove + add if they want to rename a server.
 func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	ctrl := a.activeCtrl()
-	if ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
+	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
 	if strings.TrimSpace(in.Name) != "" && strings.TrimSpace(in.Name) != name {
@@ -6384,7 +6475,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	updated.Command = strings.TrimSpace(in.Command)
 	updated.Args = append([]string(nil), in.Args...)
 	updated.URL = strings.TrimSpace(in.URL)
-	updated.Tier = ""
+	updated.Tier = normalizeMCPTier(in.Tier)
 	if in.Env != nil {
 		updated.Env = in.Env
 	}
@@ -6393,6 +6484,9 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if in.TrustedReadOnlyTools != nil {
 		updated.TrustedReadOnlyTools = uniqueStrings(in.TrustedReadOnlyTools)
+	}
+	if in.Enabled != nil {
+		updated.AutoStart = in.Enabled
 	}
 	updated, _ = config.NormalizePluginCommandLine(updated)
 	if updated.Type == "stdio" {
@@ -6403,6 +6497,9 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if err := a.saveDesktopMCPServer(updated); err != nil {
 		return err
+	}
+	if ctrl == nil {
+		return nil
 	}
 
 	a.mu.RLock()
@@ -6416,7 +6513,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	if wasConnected {
 		ctrl.DisconnectMCPServer(name)
 	}
-	if !sessionDisabled {
+	if !sessionDisabled && updated.ShouldAutoStart() {
 		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
 			recordMCPFailure(ctrl, updated, err)
 			return nil
@@ -6601,6 +6698,10 @@ func (a *App) UntrustMCPServerTool(name, toolName string) error {
 // for this session, off disconnects it (config untouched either way — like Claude
 // Code's per-conversation enable/disable, it resets on the next session start).
 func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
+	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(name)
+	if err != nil {
+		return err
+	}
 	a.mu.RLock()
 	tab := a.activeTabLocked()
 	var ctrl control.SessionAPI
@@ -6610,15 +6711,21 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 		hostKey = tab.SharedHostKey
 	}
 	a.mu.RUnlock()
-	if tab == nil || ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
+	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
-	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(name)
-	if err != nil {
-		return err
+	if hasConfiguredEntry {
+		configuredEntry.AutoStart = &enabled
+		if err := a.saveDesktopMCPServer(configuredEntry); err != nil {
+			return err
+		}
+	}
+	if tab == nil || ctrl == nil {
+		// A runtime-only MCP can remain briefly in the frontend after its
+		// workspace closes. There is no live connection left to change, and the
+		// following frontend refresh removes that stale row. Configured entries
+		// have already been persisted above.
+		return nil
 	}
 	if enabled {
 		_, err := a.connectConfiguredMCPServerForTab(tab, name)
@@ -8266,6 +8373,167 @@ func (a *App) SavePastedFile(name, dataURL string) (string, error) {
 	return a.withActiveWorkspace(func() (string, error) {
 		return control.SaveAttachmentDataURL(name, dataURL)
 	})
+}
+
+const (
+	maxProjectMaterialFileBytes = control.MaxFileAttachmentBytes
+	projectMaterialSelectionTTL = 10 * time.Minute
+)
+
+// ProjectMaterialFile contains the safe metadata returned to the webview for a
+// native material selection. SelectionToken is opaque and one-time; source paths
+// remain in the desktop process and are never serialized to the frontend.
+type ProjectMaterialFile struct {
+	SelectionToken string `json:"selectionToken,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Name           string `json:"name"`
+	Size           int64  `json:"size"`
+	MimeType       string `json:"mimeType"`
+}
+
+type projectMaterialSelection struct {
+	sourcePath string
+	identity   os.FileInfo
+	file       ProjectMaterialFile
+	expiresAt  time.Time
+}
+
+// PickProjectMaterialFile opens the native file picker without reading file
+// bytes into the webview. An empty SelectionToken means that the picker was
+// cancelled.
+func (a *App) PickProjectMaterialFile() (ProjectMaterialFile, error) {
+	if a.ctx == nil {
+		return ProjectMaterialFile{}, nil
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "选择资料文件",
+		DefaultDirectory: dialogDefaultDirectory(a.activeWorkspaceRoot()),
+		Filters: []runtime.FileFilter{
+			{DisplayName: "所有文件 (*.*)", Pattern: "*.*"},
+		},
+	})
+	if err != nil || path == "" {
+		return ProjectMaterialFile{}, err
+	}
+	return a.registerProjectMaterialSelection(path)
+}
+
+// ImportProjectMaterialFile copies a file selected by PickProjectMaterialFile
+// into the active workspace at confirmation time. It only accepts the opaque
+// one-time token and revalidates the source identity before the bounded,
+// streaming copy.
+func (a *App) ImportProjectMaterialFile(selectionToken string) (ProjectMaterialFile, error) {
+	selection, err := a.takeProjectMaterialSelection(selectionToken)
+	if err != nil {
+		return ProjectMaterialFile{}, err
+	}
+	if err := validateProjectMaterialSelection(selection); err != nil {
+		return ProjectMaterialFile{}, err
+	}
+	path, err := a.withActiveWorkspace(func() (string, error) {
+		return control.SaveAttachmentFileWithExpectedInfo(selection.sourcePath, selection.identity)
+	})
+	if err != nil {
+		return ProjectMaterialFile{}, err
+	}
+	selected := selection.file
+	selected.SelectionToken = ""
+	selected.Path = path
+	return selected, nil
+}
+
+func (a *App) registerProjectMaterialSelection(path string) (ProjectMaterialFile, error) {
+	selected, identity, err := projectMaterialFileInfo(path)
+	if err != nil {
+		return ProjectMaterialFile{}, err
+	}
+	token, err := newProjectMaterialSelectionToken()
+	if err != nil {
+		return ProjectMaterialFile{}, err
+	}
+	selected.SelectionToken = token
+
+	a.projectMaterialSelectionsMu.Lock()
+	defer a.projectMaterialSelectionsMu.Unlock()
+	if a.projectMaterialSelections == nil {
+		a.projectMaterialSelections = make(map[string]projectMaterialSelection)
+	}
+	now := time.Now()
+	for existingToken, existing := range a.projectMaterialSelections {
+		if !now.Before(existing.expiresAt) {
+			delete(a.projectMaterialSelections, existingToken)
+		}
+	}
+	a.projectMaterialSelections[token] = projectMaterialSelection{
+		sourcePath: path,
+		identity:   identity,
+		file:       selected,
+		expiresAt:  now.Add(projectMaterialSelectionTTL),
+	}
+	return selected, nil
+}
+
+func (a *App) takeProjectMaterialSelection(token string) (projectMaterialSelection, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return projectMaterialSelection{}, fmt.Errorf("select a material file before importing")
+	}
+	a.projectMaterialSelectionsMu.Lock()
+	defer a.projectMaterialSelectionsMu.Unlock()
+	selection, ok := a.projectMaterialSelections[token]
+	if !ok || !time.Now().Before(selection.expiresAt) {
+		delete(a.projectMaterialSelections, token)
+		return projectMaterialSelection{}, fmt.Errorf("the selected material is no longer available; select it again")
+	}
+	delete(a.projectMaterialSelections, token)
+	return selection, nil
+}
+
+func newProjectMaterialSelectionToken() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("could not prepare the selected material; select it again")
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func validateProjectMaterialSelection(selection projectMaterialSelection) error {
+	_, identity, err := projectMaterialFileInfo(selection.sourcePath)
+	if err != nil {
+		return fmt.Errorf("the selected material is no longer available; select it again")
+	}
+	if !os.SameFile(selection.identity, identity) || identity.Size() != selection.identity.Size() || !identity.ModTime().Equal(selection.identity.ModTime()) {
+		return fmt.Errorf("the selected material changed after selection; select it again")
+	}
+	return nil
+}
+
+func projectMaterialFileInfo(path string) (ProjectMaterialFile, os.FileInfo, error) {
+	if strings.TrimSpace(path) == "" {
+		return ProjectMaterialFile{}, nil, fmt.Errorf("select a material file before importing")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return ProjectMaterialFile{}, nil, fmt.Errorf("selected material is unavailable; select it again")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ProjectMaterialFile{}, nil, fmt.Errorf("selected material must not be a symbolic link")
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxProjectMaterialFileBytes {
+		return ProjectMaterialFile{}, nil, fmt.Errorf("selected material must be between 1 byte and 64 MiB")
+	}
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	if base, _, ok := strings.Cut(mimeType, ";"); ok {
+		mimeType = base
+	}
+	return ProjectMaterialFile{
+		Name:     filepath.Base(path),
+		Size:     info.Size(),
+		MimeType: mimeType,
+	}, info, nil
 }
 
 // PickExportFile opens the native save dialog and returns the selected path. It

@@ -93,3 +93,4 @@ benchmarks/context-maintenance-e2e/run/
 
 # Local scratch
 temp/
+.agents/docs/

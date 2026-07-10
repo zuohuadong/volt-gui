@@ -33,9 +33,12 @@ BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"
 COMPUTER_USE_MCP_TMP="$(mktemp -d)"
 COMPUTER_USE_MCP_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-mcp"
 COMPUTER_USE_RUNTIME_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-runtime"
+COREUTILS_TMP=""
+COREUTILS_RESOURCE=""
 
 cleanup() {
 	rm -rf "$COMPUTER_USE_MCP_TMP"
+	[ -z "$COREUTILS_TMP" ] || rm -rf "$COREUTILS_TMP"
 }
 trap cleanup EXIT
 
@@ -51,6 +54,18 @@ copy_computer_use_runtime() {
 	rm -rf "$dest"
 	mkdir -p "$(dirname "$dest")"
 	cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$dest"
+}
+
+copy_coreutils() {
+	local dest="$1"
+	[ -n "$COREUTILS_RESOURCE" ] && [ -f "$COREUTILS_RESOURCE/voltui-coreutils-path.txt" ] && \
+		[ -f "$COREUTILS_RESOURCE/coreutils-system-installer.exe" ] || {
+			echo "Coreutils resource is missing or incomplete" >&2
+			exit 1
+		}
+	rm -rf "$dest"
+	mkdir -p "$(dirname "$dest")"
+	cp -R "$COREUTILS_RESOURCE" "$dest"
 }
 
 echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
@@ -73,6 +88,10 @@ ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
+	COREUTILS_TMP="$(mktemp -d)"
+	COREUTILS_RESOURCE="$COREUTILS_TMP/coreutils"
+	echo "==> stage bundled Microsoft Coreutils"
+	node "$ROOT/scripts/stage-coreutils.mjs" "$COREUTILS_RESOURCE" "$PLATFORM"
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
@@ -91,6 +110,7 @@ if [ "$os" = windows ]; then
 	fi
 	copy_computer_use_mcp "build/windows/installer/computer-use-mcp"
 	copy_computer_use_runtime "build/windows/installer/computer-use-runtime"
+	copy_coreutils "build/windows/installer/coreutils"
 fi
 build_args=(-clean -platform "$PLATFORM" -ldflags "$ldflags")
 [ "$os" = windows ] && build_args+=(-nsis -webview2 embed)
@@ -189,6 +209,7 @@ windows)
 	cp "$portable" "$staging/${APPNAME}.exe"
 	copy_computer_use_mcp "$staging/computer-use-mcp"
 	copy_computer_use_runtime "$staging/computer-use-runtime"
+	copy_coreutils "$staging/coreutils"
 	helper="build/windows/installer/$UPDATE_HELPER"
 	if [ -f "$helper" ]; then
 		cp "$helper" "$staging/$UPDATE_HELPER"

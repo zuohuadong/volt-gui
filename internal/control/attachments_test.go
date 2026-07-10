@@ -119,6 +119,87 @@ func TestSaveAttachmentFile(t *testing.T) {
 	}
 }
 
+func TestSaveAttachmentFileWithExpectedInfoRejectsReplacedSource(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	source := filepath.Join(t.TempDir(), "selected.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7 original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := source + ".replacement"
+	if err := os.WriteFile(replacement, []byte("%PDF-1.7 replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, source); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SaveAttachmentFileWithExpectedInfo(source, expected); err == nil {
+		t.Fatal("replacement after selection should be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".voltui", "attachments")); !os.IsNotExist(err) {
+		t.Fatalf("rejected source should not create an attachment, stat err=%v", err)
+	}
+}
+
+func TestSaveAttachmentFileAcceptsThirtySevenMiBPDF(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const size = 37*1024*1024 + 200*1024
+	pdf := make([]byte, size)
+	copy(pdf, "%PDF-1.7\n")
+	if err := os.WriteFile("report.pdf", pdf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SaveAttachmentFile("report.pdf")
+	if err != nil {
+		t.Fatalf("SaveAttachmentFile: %v", err)
+	}
+	if !strings.HasPrefix(got, ".voltui/attachments/") || !strings.HasSuffix(got, ".pdf") {
+		t.Fatalf("path = %q, want attachment pdf path", got)
+	}
+	info, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat stored PDF: %v", err)
+	}
+	if info.Size() != size {
+		t.Fatalf("stored PDF size = %d, want %d", info.Size(), size)
+	}
+}
+
+func TestSaveAttachmentFileRejectsMoreThanSixtyFourMiB(t *testing.T) {
+	t.Chdir(t.TempDir())
+	f, err := os.Create("too-large.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxFileAttachmentBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SaveAttachmentFile("too-large.pdf"); err == nil || !strings.Contains(err.Error(), "64 MiB") {
+		t.Fatalf("SaveAttachmentFile oversized error = %v, want 64 MiB limit", err)
+	}
+}
+
+func TestSaveAttachmentFileDoesNotExposeSourcePath(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "missing.pdf")
+	if _, err := SaveAttachmentFile(source); err == nil {
+		t.Fatal("missing attachment source should fail")
+	} else if strings.Contains(err.Error(), source) {
+		t.Fatalf("attachment error leaked source path: %v", err)
+	}
+}
+
 func TestSaveAttachmentFileRejectsEmptyAndDir(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := os.WriteFile("empty.txt", nil, 0o644); err != nil {

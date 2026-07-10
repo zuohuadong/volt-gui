@@ -3,6 +3,7 @@
   import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
+  import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
   import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
 
   let {
@@ -22,8 +23,9 @@
     projectOptions = [],
     selectedProjectId = "",
     onProjectChange,
-    workPermission = "auto-approve",
+    workPermission = "ask",
     onWorkPermissionChange,
+    permissionChanging = false,
     onOpenResources,
     activityMode,
   }: {
@@ -43,8 +45,9 @@
     projectOptions?: { id: string; label: string }[];
     selectedProjectId?: string;
     onProjectChange?: (value: string) => void;
-    workPermission?: string;
-    onWorkPermissionChange?: (value: string) => void;
+    workPermission?: ComposerToolApprovalMode;
+    onWorkPermissionChange?: (value: ComposerToolApprovalMode) => void | Promise<void>;
+    permissionChanging?: boolean;
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
   } = $props();
@@ -64,7 +67,7 @@
   let textarea: HTMLTextAreaElement | undefined;
   let composerRoot: HTMLFormElement | undefined;
 
-  const workPermissionOptions = [
+  const workPermissionOptions: { id: ComposerToolApprovalMode; label: string; mark: string }[] = [
     { id: "ask", label: "请求批准", mark: "手" },
     { id: "auto-approve", label: "替我批准", mark: "审" },
     { id: "full-access", label: "完全访问权限", mark: "!" },
@@ -266,8 +269,12 @@
     return workPermissionOptions.find((option) => option.id === workPermission)?.label ?? "替我批准";
   }
 
-  function setWorkPermission(value: string) {
-    onWorkPermissionChange?.(value);
+  function setWorkPermission(value: ComposerToolApprovalMode) {
+    if (permissionChanging || value === workPermission) {
+      permissionMenuOpen = false;
+      return;
+    }
+    void onWorkPermissionChange?.(value);
     permissionMenuOpen = false;
   }
 
@@ -622,7 +629,7 @@
         </div>
       {/if}
       <div class="composer__permission-wrap">
-        <button class="composer__permission-picker" type="button" title="工作权限" aria-haspopup="menu" aria-expanded={permissionMenuOpen} onclick={togglePermissionMenu}>
+        <button class="composer__permission-picker" type="button" title="工作权限" aria-haspopup="menu" aria-expanded={permissionMenuOpen} aria-busy={permissionChanging} disabled={permissionChanging} onclick={togglePermissionMenu}>
           <ShieldCheck size={14} />
           <span>{selectedPermissionLabel()}</span>
         </button>
@@ -633,7 +640,7 @@
               <span>了解更多</span>
             </div>
             {#each workPermissionOptions as option (option.id)}
-              <button class:active={workPermission === option.id} type="button" role="menuitem" onclick={() => setWorkPermission(option.id)}>
+              <button class:active={workPermission === option.id} type="button" role="menuitem" disabled={permissionChanging} onclick={() => setWorkPermission(option.id)}>
                 <i>{option.mark}</i>
                 <span>
                   <strong>{option.label}</strong>

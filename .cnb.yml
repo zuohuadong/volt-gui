@@ -50,9 +50,9 @@ main:
             go test ./cmd/sign ./cmd/cnbrelease ./internal/update
 
     # Pipeline 2: 自动发版（仅约定式提交触发）
-    # CNB 直接构建 Windows 桌面端、签名、生成 latest.json，并上传 CNB Release 资产
+    # CNB 直接构建 Windows 桌面端、生成 SHA-256 manifest，并上传 CNB Release 资产
     # imports 导入密钥仓库文件 (.cnb/envs.yml), 提供 XIGU_API_KEY 给 build-windows-desktop;
-    # 与 MINISIGN_* 同属构建期敏感变量, env 里的同名 key 优先于 imports.
+    # env 里的同名 key 优先于 imports.
     - docker:
         image: golang:1.26
       imports:
@@ -64,6 +64,7 @@ main:
         GIT_COMMITTER_EMAIL: "bot@xigu.ai"
         XIGU_BRAND_NAME: "西谷智灯暗涌系统"
         VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
+        DESKTOP_APP_NAME: "Anyong"   # release artifact prefix (Anyong-windows-amd64-...); overrides upstream VoltUI
       stages:
         - name: resolve-release
           script: |
@@ -154,7 +155,7 @@ main:
             . ./.release_env
 
             rm -rf dist desktop/build/bin
-            # XIGU_API_KEY (CNB secret, 复用 MINISIGN_* 同款注入) 在 desktop-build.sh 里
+            # XIGU_API_KEY (CNB secret, 由 imports/env 注入) 在 desktop-build.sh 里
             # 落盘为随包发布的 OEM 网关密钥 sidecar (bundled.env)；缺失时不影响构建。
             # Windows is built by cross-compiling Wails from the CNB Linux container.
             # macOS and Linux targets are intentionally disabled for now:
@@ -162,7 +163,7 @@ main:
             #   scripts/desktop-build.sh linux/amd64 "$VERSION"
             scripts/desktop-build.sh windows/amd64 "$VERSION"
 
-        - name: sign-and-manifest
+        - name: generate-manifest
           script: |
             if [ -f .release_skip ]; then
               exit 0
@@ -170,16 +171,9 @@ main:
             . ./.release_env
 
             cd desktop
-            if [ -n "${MINISIGN_PRIVATE_KEY:-}" ] && [ -n "${MINISIGN_PASSWORD:-}" ]; then
-              go run ./cmd/sign sign ../dist/*
-            else
-              echo "MINISIGN_PRIVATE_KEY/MINISIGN_PASSWORD not configured; publishing unsigned installer"
-            fi
-
-            RELEASE_PAGE="${CNB_REPO_URL_HTTPS:-https://cnb.cool/${CNB_REPO_SLUG}}/-/releases/${DESKTOP_TAG}"
-            ASSET_BASE="${RELEASE_PAGE}/downloads"
-            RELEASE_DOWNLOAD_PAGE="$RELEASE_PAGE" \
-              RELEASE_ASSET_BASE_URL="$ASSET_BASE" \
+            REPO_BASE="${CNB_REPO_URL_HTTPS:-https://cnb.cool/${CNB_REPO_SLUG}}"
+            RELEASE_DOWNLOAD_PAGE="${REPO_BASE}/-/releases" \
+              RELEASE_ASSET_BASE_URL="${REPO_BASE}/-/releases/download/${DESKTOP_TAG}" \
               go run ./cmd/sign manifest ../dist "$VERSION" "$DESKTOP_TAG"
 
         - name: publish-cnb-release

@@ -5,9 +5,9 @@
 // Subcommands:
 //
 //	manifest <dir> <ver> <tag>   Scan <dir> for the per-platform artifacts, compute
-//	                             size + sha256, and write <dir>/latest.json with GitHub
-//	                             release download URLs. The R2 mirror step rewrites those
-//	                             URLs to the CDN afterwards.
+//	                             size + sha256, and write <dir>/latest.json with release
+//	                             download URLs. The R2 mirror step rewrites the default
+//	                             GitHub URLs to the CDN afterwards.
 package main
 
 import (
@@ -61,9 +61,17 @@ func genManifest(dir, version, tag string) error {
 	if repo == "" {
 		repo = "zuohuadong/volt-gui"
 	}
+	downloadPage := strings.TrimRight(strings.TrimSpace(os.Getenv("RELEASE_DOWNLOAD_PAGE")), "/")
+	if downloadPage == "" {
+		downloadPage = "https://voltui.io/#start"
+	}
+	assetBase := strings.TrimRight(strings.TrimSpace(os.Getenv("RELEASE_ASSET_BASE_URL")), "/")
+	if assetBase == "" {
+		assetBase = fmt.Sprintf("https://github.com/%s/releases/download/%s", repo, tag)
+	}
 	m := update.Manifest{
 		Version:      version,
-		DownloadPage: "https://voltui.io/#start",
+		DownloadPage: downloadPage,
 		Platforms:    map[string]update.Asset{},
 	}
 	entries, err := os.ReadDir(dir)
@@ -83,7 +91,7 @@ func genManifest(dir, version, tag string) error {
 		if err != nil {
 			return err
 		}
-		url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, tag, name)
+		url := assetBase + "/" + name
 		m.Platforms[key] = update.Asset{URL: url, Size: size, SHA256: sum}
 		fmt.Printf("manifest: %s -> %s (%d bytes)\n", key, name, size)
 	}

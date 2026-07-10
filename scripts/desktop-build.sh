@@ -5,12 +5,13 @@
 #
 # Output lands in <repo>/dist/ with stable, platform-keyed names that
 # desktop/cmd/sign's `manifest` subcommand maps back to update.PlatformKey:
-#   macOS:   VoltUI-darwin-<arch>.zip                    (ditto archive; updater channel)
-#            VoltUI-darwin-universal.dmg                 (drag-to-install; human download)
-#   Windows: VoltUI-windows-<arch>-installer.exe         (NSIS per-user installer; updater channel)
-#            VoltUI-windows-<arch>.zip                   (portable human download)
-#   Linux:   VoltUI-linux-<arch>.tar.gz                  (bare binary; updater channel)
-#            VoltUI-linux-<arch>.deb                     (Debian/Ubuntu package; human download)
+#   macOS:   <App>-darwin-<arch>.zip                     (ditto archive; updater channel)
+#            <App>-darwin-universal.dmg                  (drag-to-install; human download)
+#   Windows: <App>-windows-<arch>-installer.exe          (NSIS per-user installer; updater channel)
+#            <App>-windows-<arch>.zip                    (portable human download)
+#   Linux:   <App>-linux-<arch>.tar.gz                   (bare binary; updater channel)
+#            <App>-linux-<arch>.deb                      (Debian/Ubuntu package; human download)
+# <App> defaults to "VoltUI"; forks override with DESKTOP_APP_NAME (e.g. "Anyong").
 #
 # Usage: scripts/desktop-build.sh <os/arch> <version> [channel]
 #   e.g. scripts/desktop-build.sh darwin/arm64 v1.1.0
@@ -25,7 +26,7 @@ os="${PLATFORM%/*}"
 arch="${PLATFORM#*/}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APPNAME="VoltUI"              # release bundle/artifact name
+APPNAME="${DESKTOP_APP_NAME:-VoltUI}"  # release bundle/artifact name (forks override via DESKTOP_APP_NAME)
 BINNAME="voltui-desktop"      # wails.json outputfilename -> linux binary name
 COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
 BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"

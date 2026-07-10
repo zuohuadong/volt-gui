@@ -84,3 +84,52 @@ func TestGenManifest(t *testing.T) {
 		t.Fatalf("linux-amd64 url = %q, want the .tar.gz, not the .deb", lin.URL)
 	}
 }
+
+// TestGenManifestForkBrand covers a rebranded fork whose artifacts drop the
+// upstream "VoltUI" prefix (e.g. Anyong-windows-amd64-installer.exe). The
+// platform key is matched by substring on the arch tag, so the manifest must
+// still resolve every channel.
+func TestGenManifestForkBrand(t *testing.T) {
+	dir := t.TempDir()
+	releasePage := "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases"
+	assetBase := "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.0"
+	names := []string{
+		"Anyong-windows-amd64-installer.exe",
+		"Anyong-windows-amd64.zip", // portable, must not shadow the installer key
+		"Anyong-darwin-arm64.zip",
+		"Anyong-linux-amd64.tar.gz",
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GITHUB_REPOSITORY", "aizhuliren/anyong-agent")
+	t.Setenv("RELEASE_DOWNLOAD_PAGE", releasePage)
+	t.Setenv("RELEASE_ASSET_BASE_URL", assetBase)
+	if err := genManifest(dir, "v0.8.0", "desktop-v0.8.0"); err != nil {
+		t.Fatalf("genManifest: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "latest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m update.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("latest.json is not valid: %v", err)
+	}
+	if m.DownloadPage != releasePage {
+		t.Fatalf("download_page = %q, want %q", m.DownloadPage, releasePage)
+	}
+	if len(m.Platforms) != 3 {
+		t.Fatalf("want 3 platforms, got %d: %v", len(m.Platforms), m.Platforms)
+	}
+	win, ok := m.Platforms["windows-amd64"]
+	if !ok {
+		t.Fatal("windows-amd64 missing")
+	}
+	wantURL := assetBase + "/Anyong-windows-amd64-installer.exe"
+	if win.URL != wantURL {
+		t.Fatalf("windows url = %q, want %q", win.URL, wantURL)
+	}
+}

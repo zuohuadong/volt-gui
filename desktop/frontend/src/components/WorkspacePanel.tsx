@@ -236,6 +236,7 @@ export function WorkspacePanel({
   showViewTabs?: boolean;
 }) {
   const t = useT();
+  const workspaceTabId = tabId ?? "";
   const panelRef = useRef<HTMLElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -274,7 +275,8 @@ export function WorkspacePanel({
   const dismissedFileListRequestIdRef = useRef<number | null>(null);
   const lastChangeListRequestIdRef = useRef<number | null>(null);
   const dismissedChangeListRequestIdRef = useRef<number | null>(null);
-  const lastWorkspaceTabIdRef = useRef(tabId ?? "");
+  const currentWorkspaceTabIdRef = useRef(workspaceTabId);
+  const lastWorkspaceTabIdRef = useRef(workspaceTabId);
   const workspaceChangesRequestIdRef = useRef(0);
   const gitHistoryRequestIdRef = useRef(0);
   const commitDetailRequestIdRef = useRef(0);
@@ -283,23 +285,29 @@ export function WorkspacePanel({
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
   const pendingTreeRevealPathRef = useRef<string | null>(null);
+  currentWorkspaceTabIdRef.current = workspaceTabId;
 
   useEffect(() => {
     openDirsRef.current = openDirs;
   }, [openDirs]);
 
   const loadDir = useCallback(async (dir: string) => {
+    const requestTabId = workspaceTabId;
     const generation = dirLoadGenerationRef.current;
     const requestId = (dirLoadRequestIdsRef.current[dir] ?? 0) + 1;
     dirLoadRequestIdsRef.current[dir] = requestId;
-    const entries = await app.ListDir(dir).catch((): DirEntry[] => []);
-    if (dirLoadGenerationRef.current !== generation || dirLoadRequestIdsRef.current[dir] !== requestId) return;
+    const entries = await app.ListDirForTab(requestTabId, dir).catch((): DirEntry[] => []);
+    if (
+      currentWorkspaceTabIdRef.current !== requestTabId ||
+      dirLoadGenerationRef.current !== generation ||
+      dirLoadRequestIdsRef.current[dir] !== requestId
+    ) return;
     setEntriesByDir((prev) => ({ ...prev, [dir]: asArray(entries) }));
-  }, []);
+  }, [workspaceTabId]);
 
   const loadGitHistory = useCallback(async () => {
     const requestId = ++gitHistoryRequestIdRef.current;
-    const requestTabId = tabId ?? "";
+    const requestTabId = workspaceTabId;
     setLoadingHistory(true);
     try {
       const result = await app.WorkspaceGitHistory(requestTabId, selectedPath || "");
@@ -315,11 +323,11 @@ export function WorkspacePanel({
         setLoadingHistory(false);
       }
     }
-  }, [selectedPath, tabId]);
+  }, [selectedPath, workspaceTabId]);
 
   const loadWorkspaceChanges = useCallback(async () => {
     const requestId = ++workspaceChangesRequestIdRef.current;
-    const requestTabId = tabId ?? "";
+    const requestTabId = workspaceTabId;
     try {
       const result = await app.WorkspaceChanges(requestTabId);
       if (workspaceChangesRequestIdRef.current === requestId && lastWorkspaceTabIdRef.current === requestTabId) {
@@ -335,7 +343,7 @@ export function WorkspacePanel({
         setWorkspaceChanges({ files: [], gitAvailable: false });
       }
     }
-  }, [tabId]);
+  }, [workspaceTabId]);
 
   const toggleCommit = useCallback((hash: string) => {
     setExpandedCommit((prev) => {
@@ -349,7 +357,7 @@ export function WorkspacePanel({
     if (!open) return;
     if (expandedCommit) {
       const requestId = ++commitDetailRequestIdRef.current;
-      const requestTabId = tabId ?? "";
+      const requestTabId = workspaceTabId;
       let live = true;
       setLoadingCommit(true);
       app
@@ -376,7 +384,7 @@ export function WorkspacePanel({
       commitDetailRequestIdRef.current += 1;
       setCommitDetail(null);
     }
-  }, [expandedCommit, selectedPath, open, tabId]);
+  }, [expandedCommit, selectedPath, open, workspaceTabId]);
 
   const selectFile = useCallback(
     (path: string) => {
@@ -436,7 +444,7 @@ export function WorkspacePanel({
 
   useEffect(() => {
     if (!open) return;
-    const nextTabId = tabId ?? "";
+    const nextTabId = workspaceTabId;
     if (lastWorkspaceTabIdRef.current === nextTabId) return;
     lastWorkspaceTabIdRef.current = nextTabId;
     workspaceChangesRequestIdRef.current += 1;
@@ -456,7 +464,7 @@ export function WorkspacePanel({
       setOpenTabs([]);
       setPreview(null);
     }
-  }, [open, tabId]);
+  }, [open, workspaceTabId]);
 
   useEffect(() => {
     if (!open) return;
@@ -666,7 +674,7 @@ export function WorkspacePanel({
     let live = true;
     setLoadingPreview(true);
     app
-      .ReadFile(selectedPath)
+      .ReadFileForTab(workspaceTabId, selectedPath)
       .then((next) => {
         if (live) setPreview(next);
       })
@@ -688,7 +696,7 @@ export function WorkspacePanel({
     return () => {
       live = false;
     };
-  }, [selectedPath]);
+  }, [selectedPath, workspaceTabId]);
 
 
 
@@ -741,13 +749,13 @@ export function WorkspacePanel({
       return;
     }
     let cancelled = false;
-    app.SearchFileRefs(q).then((results) => {
+    app.SearchFileRefsForTab(workspaceTabId, q).then((results) => {
       if (!cancelled) setSearchResults(results);
     }).catch(() => {
       if (!cancelled) setSearchResults(null);
     });
     return () => { cancelled = true; };
-  }, [filter, viewMode, scopedFilePaths, open]);
+  }, [filter, viewMode, scopedFilePaths, open, workspaceTabId]);
 
   const flattened = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -1059,9 +1067,11 @@ export function WorkspacePanel({
   const addTreeFileToChat = async () => {
     if (!treeMenu || treeMenu.isDir) return;
     const target = treeMenu;
+    const requestTabId = workspaceTabId;
     setTreeMenu(null);
     try {
-      const file = await app.ReadFile(target.path);
+      const file = await app.ReadFileForTab(requestTabId, target.path);
+      if (currentWorkspaceTabIdRef.current !== requestTabId) return;
       if (file.err || file.binary || file.kind) {
         onAddToChat?.(formatWorkspaceReference(target.path, false));
         return;
@@ -1069,6 +1079,7 @@ export function WorkspacePanel({
       const suffix = file.truncated ? `\n\n${t("workspace.truncated")}` : "";
       onAddToChat?.(formatSelectionReference(target.path, file.body) + suffix);
     } catch {
+      if (currentWorkspaceTabIdRef.current !== requestTabId) return;
       onAddToChat?.(formatWorkspaceReference(target.path, false));
     }
   };
@@ -1076,7 +1087,7 @@ export function WorkspacePanel({
   const revealInFileManager = () => {
     if (!treeMenu) return;
     setTreeMenu(null);
-    void app.RevealWorkspacePath(treeMenu.path).catch(() => {});
+    void app.RevealWorkspacePathForTab(workspaceTabId, treeMenu.path).catch(() => {});
   };
 
   const renderNormalRow = (row: TreeRow) => {

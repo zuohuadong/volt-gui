@@ -136,6 +136,7 @@ export function ApprovalModal({
   onExitPlan,
   onStop,
   cwd,
+  tabId,
   insertRequest,
   onRevisionActiveChange,
   toolApprovalMode,
@@ -146,6 +147,7 @@ export function ApprovalModal({
   onExitPlan?: () => void;
   onStop: () => void;
   cwd?: string;
+  tabId?: string;
   insertRequest?: ComposerInsertRequest | null;
   onRevisionActiveChange?: (active: boolean) => void;
   toolApprovalMode?: ToolApprovalMode;
@@ -185,7 +187,7 @@ export function ApprovalModal({
   // the new one slides in.  GSAP fromTo on the shelf wrapper avoids the
   // jarring pop when the API cycles through 4+ pending approvals.
   const closingRef = useRef(false);
-  const fileMenu = useFileReferenceMenu(revisionText, cwd);
+  const fileMenu = useFileReferenceMenu(revisionText, cwd, tabId);
 
   const answerWithExit = (fn: () => void) => {
     if (closingRef.current) return;

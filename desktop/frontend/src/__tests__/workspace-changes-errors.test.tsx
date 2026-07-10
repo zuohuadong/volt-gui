@@ -72,7 +72,7 @@ async function renderWorkspace(changes: WorkspaceChangesView) {
   window.go = {
     main: {
       App: {
-        ListDir: async () => [],
+        ListDirForTab: async () => [],
         WorkspaceGitHistory: async () => [],
         WorkspaceChanges: async () => changes,
       } as Partial<AppBindings> as AppBindings,
@@ -106,8 +106,8 @@ async function renderFilesWorkspace(methods: Partial<AppBindings>, props: Partia
   window.go = {
     main: {
       App: {
-        ListDir: async () => [],
-        SearchFileRefs: async () => [],
+        ListDirForTab: async () => [],
+        SearchFileRefsForTab: async () => [],
         WorkspaceGitHistory: async () => [],
         WorkspaceChanges: async () => ({ files: [], gitAvailable: true }),
         ...methods,
@@ -194,20 +194,57 @@ console.log("\nworkspace changes git errors");
 
 {
   const calls: string[] = [];
-  const listDir = async (dir: string): Promise<DirEntry[]> => {
-    calls.push(dir);
+  const listDirForTab = async (tabId: string, dir: string): Promise<DirEntry[]> => {
+    calls.push(`${tabId}:${dir}`);
     return [];
   };
   const { dom, root, rerender } = await renderFilesWorkspace(
-    { ListDir: listDir },
+    { ListDirForTab: listDirForTab },
     { fileListRequest: { id: 1, paths: ["src/app.ts"] } },
   );
 
-  await waitFor("initial referenced file dirs", () => calls.filter((dir) => dir === "src/").length === 1);
+  await waitFor("initial referenced file dirs", () => calls.filter((call) => call === "tab-a:src/").length === 1);
   await rerender({ fileListRequest: { id: 2, paths: ["src/app.ts"] } });
-  await waitFor("referenced file dirs revalidated", () => calls.filter((dir) => dir === "src/").length === 2);
+  await waitFor("referenced file dirs revalidated", () => calls.filter((call) => call === "tab-a:src/").length === 2);
 
-  ok(calls.filter((dir) => dir === "src/").length === 2, "workspace file tree revalidates cached directories for repeated file-list requests");
+  ok(calls.filter((call) => call === "tab-a:src/").length === 2, "workspace file tree revalidates cached directories for repeated file-list requests");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const pending: Array<{ tabId: string; resolve: (entries: DirEntry[]) => void }> = [];
+  const listDirForTab = (tabId: string, dir: string): Promise<DirEntry[]> => {
+    if (dir !== "") return Promise.resolve([]);
+    return new Promise((resolve) => pending.push({ tabId, resolve }));
+  };
+  const { dom, root, rerender } = await renderFilesWorkspace(
+    { ListDirForTab: listDirForTab },
+    { tabId: "parent-tab", cwd: "/repo" },
+  );
+
+  await waitFor("parent workspace request", () => pending.some((request) => request.tabId === "parent-tab"));
+  await rerender({ tabId: "child-tab", cwd: "/repo/child" });
+  await waitFor("child workspace request", () => pending.some((request) => request.tabId === "child-tab"));
+
+  await act(async () => {
+    pending.filter((request) => request.tabId === "child-tab").forEach((request) => request.resolve([
+      { name: "child-a.txt", isDir: false },
+      { name: "child-b.txt", isDir: false },
+    ]));
+    await flushPromises();
+  });
+  await waitFor("child workspace entries", () => (document.querySelector(".workspace-tree__sizer") as HTMLElement | null)?.style.height === "48px");
+
+  await act(async () => {
+    pending.filter((request) => request.tabId === "parent-tab").forEach((request) => request.resolve([{ name: "parent-only.txt", isDir: false }]));
+    await flushPromises();
+  });
+
+  ok((document.querySelector(".workspace-tree__sizer") as HTMLElement | null)?.style.height === "48px", "late parent workspace response cannot overwrite the two-row child tree");
 
   await act(async () => {
     root.unmount();

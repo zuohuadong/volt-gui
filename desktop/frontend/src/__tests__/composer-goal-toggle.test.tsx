@@ -105,6 +105,7 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
     tokenMode: "full" as TokenMode,
     goal: "",
     cwd: "/repo",
+    tabId: "tab-a",
     modelLabel: "DeepSeek-R1",
     onSend: (displayText, submitText) => {
       calls.send.push(displayText);
@@ -838,12 +839,14 @@ console.log("\ncomposer goal toggle");
 {
   const dom = installDom();
   let listDirCalls = 0;
+  const listDirTabs: string[] = [];
   mockApp({
-    ListDir: async () => {
+    ListDirForTab: async (tabId) => {
+      listDirTabs.push(tabId);
       listDirCalls += 1;
       return listDirCalls === 1 ? [fileEntry("cached-dir.txt")] : [fileEntry("fresh-dir.txt")];
     },
-    SearchFileRefs: async () => [],
+    SearchFileRefsForTab: async () => [],
   });
   const { root, rerender } = await renderComposer();
 
@@ -855,6 +858,7 @@ console.log("\ncomposer goal toggle");
   await waitFor("@ directory revalidation call", () => listDirCalls === 2);
 
   eq(listDirCalls, 2, "@ directory cache hit still revalidates ListDir");
+  ok(listDirTabs.every((tabId) => tabId === "tab-a"), "@ directory requests stay scoped to the composer tab");
 
   await act(async () => {
     root.unmount();
@@ -866,11 +870,11 @@ console.log("\ncomposer goal toggle");
   const dom = installDom();
   let listDirCalls = 0;
   mockApp({
-    ListDir: async () => {
+    ListDirForTab: async () => {
       listDirCalls += 1;
       return listDirCalls === 1 ? [fileEntry("manual-refresh-stale.txt")] : [fileEntry("manual-refresh-fresh.txt")];
     },
-    SearchFileRefs: async () => [],
+    SearchFileRefsForTab: async () => [],
   });
   const { root, rerender } = await renderComposer({ fileRefRefreshKey: "0" });
 
@@ -895,8 +899,8 @@ console.log("\ncomposer goal toggle");
   let searchCalls = 0;
   Date.now = () => now;
   mockApp({
-    ListDir: async () => [],
-    SearchFileRefs: async () => {
+    ListDirForTab: async () => [],
+    SearchFileRefsForTab: async () => {
       searchCalls += 1;
       return searchCalls === 1 ? [fileEntry("alpha-old.ts")] : [fileEntry("alpha-new.ts")];
     },
@@ -937,7 +941,7 @@ console.log("\ncomposer goal toggle");
   let thirdListDirResolve: ((entries: DirEntry[]) => void) | undefined;
   let listDirCalls = 0;
   mockApp({
-    ListDir: async () => {
+    ListDirForTab: async () => {
       listDirCalls += 1;
       if (listDirCalls === 1) {
         return new Promise<DirEntry[]>((resolve) => {
@@ -949,7 +953,7 @@ console.log("\ncomposer goal toggle");
         thirdListDirResolve = resolve;
       });
     },
-    SearchFileRefs: async () => [],
+    SearchFileRefsForTab: async () => [],
   });
   const { root, rerender } = await renderComposer({ fileRefRefreshKey: "0" });
 

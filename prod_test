@@ -203,7 +203,16 @@ echo "==> platform: $PLATFORM"
 echo "==> version: $VERSION"
 echo "==> channel: $CHANNEL"
 
-bash scripts/desktop-build.sh "$PLATFORM" "$VERSION" "$CHANNEL"
+# Wails runs `pnpm install` as a child process. CI mode keeps that install
+# deterministic and non-interactive. When stdout is not a TTY (automation),
+# Finder cannot configure the DMG window, so opt into create-dmg's headless
+# path; interactive local builds retain the normal Finder-prettified image.
+if [[ -t 1 ]]; then
+	CI=true bash scripts/desktop-build.sh "$PLATFORM" "$VERSION" "$CHANNEL"
+else
+	CI=true VOLTUI_DMG_SKIP_FINDER=1 \
+		bash scripts/desktop-build.sh "$PLATFORM" "$VERSION" "$CHANNEL"
+fi
 
 echo "==> restored desktop/wails.json"
 echo "==> production-style artifacts are in dist/"

@@ -1,30 +1,37 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-
-function loadPlaywright() {
-  const candidates = ['playwright', '/tmp/volt-gui-pw/node_modules/playwright'];
-  for (const candidate of candidates) {
-    try {
-      return require(candidate);
-    } catch {
-      // Try the next local/runtime install location.
-    }
-  }
-  throw new Error('Playwright is not available. Install it or set NODE_PATH to a Playwright node_modules directory.');
-}
-
-const { chromium } = loadPlaywright();
 
 const args = new Map(process.argv.slice(2).map((arg) => {
   const [key, ...rest] = arg.split('=');
   return [key, rest.join('=') || '1'];
 }));
 
-const baseURL = args.get('--target') || process.env.VOLT_GUI_SMOKE_URL || 'http://127.0.0.1:5176/';
+function loadPlaywright() {
+  const candidates = [...new Set([
+    args.get('--playwright-module'),
+    process.env.VOLT_GUI_PLAYWRIGHT_MODULE,
+    'playwright',
+    '/tmp/volt-gui-pw/node_modules/playwright',
+  ].filter(Boolean))];
+  for (const candidate of candidates) {
+    try {
+      return { api: require(candidate), source: candidate };
+    } catch {
+      // Try the next local/runtime install location.
+    }
+  }
+  throw new Error(`Playwright is not available. Tried: ${candidates.join(', ')}. Install it or pass --playwright-module=/absolute/path/to/playwright.`);
+}
+
+const { api: playwright, source: playwrightSource } = loadPlaywright();
+const { chromium } = playwright;
+
+const baseURL = args.get('--target') || process.env.VOLT_GUI_SMOKE_URL || 'http://127.0.0.1:5174/';
 const outDir = args.get('--out') || path.resolve('output/playwright/volt-gui-ui-feature-smoke');
 const headed = args.has('--headed');
 const results = [];
@@ -225,7 +232,6 @@ async function smokeConfigDialogs(page) {
     ['团队协作', '配置新组', '配置 Agent 团队'],
     ['项目管理', '新建项目', '新建项目'],
     ['客户管理', '新建客户', '新建客户'],
-    ['能力中心', '导入配置', '导入 MCP 配置'],
   ];
   for (const [nav, opener, title] of dialogOpeners) {
     await clickButton(page, nav);
@@ -233,6 +239,14 @@ async function smokeConfigDialogs(page) {
     await assertText(page, title);
     await closeOverlays(page);
   }
+
+  await clickButton(page, '能力中心');
+  await firstVisible(page.getByRole('button', { name: '导入能力配置', exact: true }), 'button 导入能力配置');
+  const capabilityInput = page.locator('input[aria-label="导入能力配置文件"]');
+  if (await capabilityInput.count() !== 1) throw new Error('missing capability import file input');
+  await clickButton(page, '导入 MCP 配置', { exact: true });
+  await assertText(page, '导入 MCP 配置');
+  await closeOverlays(page);
 }
 
 async function smokeProjectsAndCustomers(page) {
@@ -257,7 +271,7 @@ async function smokeProjectsAndCustomers(page) {
   await assertText(page, '客户画像');
   const customerModal = page.locator('.customer-detail-modal').first();
   await customerModal.waitFor({ state: 'visible', timeout: 5000 });
-  for (const tab of [/^项目 \(\d+\)$/, /^资料 \(\d+\)$/, /^日程 \(\d+\)$/, /^待办$/, /^概览$/]) {
+  for (const tab of [/^项目 \(\d+\)$/, /^资料 \(\d+\)$/, /^日程 \(\d+\)$/, /^待办 \(\d+\)$/, /^概览$/]) {
     await clickScopedButton(customerModal, tab);
   }
   await closeOverlays(page);
@@ -293,7 +307,7 @@ async function smokeTeams(page) {
   await firstVisible(page.locator('.team-compose-row textarea[placeholder*="向协作组发送任务"]'), 'team chat composer');
   await fillFirst(page, '.team-compose-row textarea', '请创建一次本地协作运行草稿', 'team composer');
   await clickButton(page, '发送', { exact: true, pause: 400 });
-  await assertText(page, '请创建一次本地协作运行草稿');
+  await assertText(page, '团队 runtime 未连接，请在 Wails 桌面环境中重试。');
   await clickButton(page, '上传文件');
   await clickButton(page, '返回团队大厅');
 }
@@ -307,12 +321,9 @@ async function smokeAgents(page) {
   await fillFirst(page, 'input[aria-label="搜索 Agent 市场"]', '审查', 'agent market search');
   const marketModal = page.locator('.agent-market-modal').first();
   await marketModal.waitFor({ state: 'visible', timeout: 5000 });
-  const download = marketModal.getByRole('button', { name: /下载到本地/, exact: false }).first();
-  if (await download.isVisible().catch(() => false)) {
-    await download.click();
-  } else {
-    await firstVisible(marketModal.getByRole('button', { name: /已下载/, exact: false }), 'downloaded market agent');
-  }
+  const save = await firstVisible(marketModal.getByRole('button', { name: /保存本地模板|已保存/, exact: false }), 'market agent save state');
+  if ((await save.innerText()).includes('保存本地模板')) await save.click();
+  await firstVisible(marketModal.getByRole('button', { name: /已保存/, exact: false }), 'saved market agent');
   await closeOverlays(page);
   await clickButton(page, '蒸馏 Agent');
   for (const step of ['2. 提炼能力', '3. 生成 Agent', '1. 选择样本']) await clickButton(page, step);
@@ -408,7 +419,7 @@ async function smokeViewport(label, viewport) {
   await runStep(page, errors, `${label} initial load`, async () => {
     await page.goto(baseURL, { waitUntil: 'load' });
     await page.locator('.shell').waitFor({ state: 'visible', timeout: 15000 });
-    await assertText(page, 'Work 工作台');
+    await firstVisible(page.getByRole('button', { name: 'Work 工作台', exact: true }), 'Work 工作台 switch');
   });
   await runStep(page, errors, `${label} sidebar project controls`, () => smokeSidebar(page));
   await runStep(page, errors, `${label} work navigation`, () => smokeWorkNavigation(page));
@@ -429,7 +440,48 @@ async function smokeViewport(label, viewport) {
   await page.close();
 }
 
-const browser = await chromium.launch({ headless: !headed });
+function systemChromeExecutable() {
+  const configured = args.get('--chrome-executable') || process.env.VOLT_GUI_CHROME_EXECUTABLE;
+  const candidates = [
+    configured,
+    process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '',
+    process.platform === 'darwin' ? '/Applications/Chromium.app/Contents/MacOS/Chromium' : '',
+    process.platform === 'linux' ? '/usr/bin/google-chrome' : '',
+    process.platform === 'linux' ? '/usr/bin/chromium' : '',
+    process.platform === 'win32' && process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google/Chrome/Application/chrome.exe') : '',
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+async function launchSmokeBrowser() {
+  const mode = args.get('--browser') || process.env.VOLT_GUI_SMOKE_BROWSER || 'auto';
+  if (!['auto', 'playwright', 'system-chrome'].includes(mode)) {
+    throw new Error(`Unsupported browser mode: ${mode}. Use auto, playwright, or system-chrome.`);
+  }
+
+  if (mode !== 'system-chrome') {
+    try {
+      return {
+        instance: await chromium.launch({ headless: !headed }),
+        source: 'Playwright-managed Chromium',
+      };
+    } catch (error) {
+      if (mode === 'playwright') throw error;
+      console.warn(`Playwright-managed Chromium unavailable; trying isolated system Chrome: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const executablePath = systemChromeExecutable();
+  if (!executablePath) {
+    throw new Error('No system Chrome fallback found. Install Playwright Chromium or pass --chrome-executable=/absolute/path.');
+  }
+  return {
+    instance: await chromium.launch({ headless: !headed, executablePath }),
+    source: `system Chrome via Playwright temporary profile (${executablePath})`,
+  };
+}
+
+const { instance: browser, source: browserSource } = await launchSmokeBrowser();
 try {
   await smokeViewport('desktop', { width: 1440, height: 950 });
   await smokeViewport('mobile', { width: 390, height: 844 });
@@ -442,6 +494,8 @@ const summary = {
   runFinishedAt: new Date().toISOString(),
   target: baseURL,
   outDir,
+  playwrightSource,
+  browserSource,
   mode: 'browser-preview-ui-reachability',
   limitation: 'This smoke verifies rendered UI reachability/click safety in browser preview. Wails-bound side effects are verified by Go/Wails tests, not by this browser-only run.',
   total: results.length,

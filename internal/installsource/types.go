@@ -87,6 +87,8 @@ type action struct {
 	Headers       map[string]string `json:"headers,omitempty"`
 	Skills        []string          `json:"skills,omitempty"`
 	SkillCount    int               `json:"skillCount,omitempty"`
+	Commands      []string          `json:"commands,omitempty"`
+	CommandCount  int               `json:"commandCount,omitempty"`
 	Layout        string            `json:"layout,omitempty"`        // canonical_dir|flat_compat|registered_root
 	InstallRoot   string            `json:"installRoot,omitempty"`   // skills root or registered custom root
 	CanonicalPath string            `json:"canonicalPath,omitempty"` // <skill-name>/SKILL.md when applicable

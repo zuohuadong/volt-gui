@@ -77,7 +77,7 @@ func (t *installSourceTool) pluginPackageAction(req request, pkg pluginpkg.Packa
 	if t.reasonixHome != "" {
 		root = pluginpkg.InstallRoot(t.reasonixHome, name)
 	}
-	skills, hooks, mcp := pkg.CapabilityCounts()
+	skills, commands, hooks, mcp := pkg.CapabilityCounts()
 	a := action{
 		Kind:         "plugin",
 		Action:       "install_plugin_package",
@@ -89,12 +89,14 @@ func (t *installSourceTool) pluginPackageAction(req request, pkg pluginpkg.Packa
 		ConfigPath:   pluginpkg.StatePath(t.reasonixHome),
 		Skills:       pkg.Manifest.Skills,
 		SkillCount:   skills,
+		Commands:     pkg.Manifest.Commands,
+		CommandCount: commands,
+		ManifestKind: pkg.ManifestKind,
 		HookCount:    hooks,
 		ToolCount:    mcp,
-		ManifestKind: pkg.ManifestKind,
 		Version:      pkg.Manifest.Version,
 		RiskLevel:    RiskMedium,
-		RiskReasons:  []string{"installs a plugin package that can add skills, hooks, and MCP servers"},
+		RiskReasons:  []string{"installs a plugin package that can add skills, commands, hooks, and MCP servers"},
 	}
 	if a.Mode == "link" {
 		a.RiskReasons = append(a.RiskReasons, "links a plugin package from a mutable local directory")
@@ -167,7 +169,7 @@ func (t *installSourceTool) applyInstallPluginPackage(ctx context.Context, req r
 	act.Target = target
 	act.ManifestKind = pkg.ManifestKind
 	act.Version = pkg.Manifest.Version
-	act.SkillCount, act.HookCount, act.ToolCount = pkg.CapabilityCounts()
+	act.SkillCount, act.CommandCount, act.HookCount, act.ToolCount = pkg.CapabilityCounts()
 	return nil
 }
 

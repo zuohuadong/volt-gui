@@ -59,7 +59,31 @@
 | VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | https://cnb.cool/aizhuliren/volt-gui/-/compare/main...codex/feat-oidc-auth |
 | VOLTGUI-005 | local | aizhuliren/volt-gui | review-merge | Workbench 产品插件框架（通用 upstream 插件层） | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/product-plugin-framework | https://cnb.cool/aizhuliren/volt-gui/-/pull/6 |
 | ANYONG-SYNC-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 GitHub upstream/main 更新并保留暗涌 fork 覆盖 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-RELEASE-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 构建并发布合并 computer-use MCP 与 Bun runtime 的新版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+| ANYONG-RELEASE-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 构建并发布合并 computer-use MCP 与 Bun runtime 的新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.0/latest.json |
+| ANYONG-SYNC-20260710-2 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RELEASE-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 提交推送并发布 Windows Bun staging 修复版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+
+### ANYONG-RELEASE-20260710-3 Task Contract
+
+- 目标：提交当前协调记录，创建 `fix(desktop):` 发布触发提交，推送本地 `main`（含 merge `a3c92dc5`）到 CNB origin，构建并发布 Windows amd64 修复版。
+- 非目标：不改产品代码、不创建 `feat:` minor 版本、不发布 macOS/Linux/CLI、不修改仓库可见性、不强推或覆盖既有 tag。
+- 验收标准：fresh origin 最新桌面 tag 为 `desktop-v0.8.0`；HEAD `fix:` 计算为 `desktop-v0.8.1`；远端 main 与本地 HEAD 一致；CNB pipeline-1/2 成功；tag/Release 存在；资产为 Anyong installer/zip/latest.json；manifest 的版本、canonical installer URL、size、SHA-256 与 Release 资产一致；真实 zip 包含 Bun/N-API/MCP 资源。
+- 协作模式：`pipeline`，explorer 审计版本与触发提交，生产 commit/push 由 orchestrator 主进程执行，独立 verifier 复核候选和 live Release。
+- 相关 skill：`agent-team-delegation-gate`、`cnb-ci-cd`、`xigu-ai-ops`、`anyong-brand-config`；沿用 resync explorer/executor/verifier 证据。
+- 风险：high，涉及远端 main、自动 tag/Release、私有资产和 Windows 安装包；空 `fix:` 触发提交必须位于 push 的最终 HEAD，否则不会发布。
+- 回滚：push 前停止；构建失败时用普通 `fix:` follow-up 修复并产生下一 patch tag，不强推、不重写 tag；错误 Release 通过 CNB 管理撤回。
+- 验证计划：commit scope/diff 检查；fresh origin refs/tags；本地 staging/Go/manifest 门禁；独立候选 verifier；push 后 CNB status API、git refs、Release API、latest.json 与真实 zip 下载验证。
+
+### ANYONG-SYNC-20260710-2 Task Contract
+
+- 目标：在已发布 `desktop-v0.8.0` 的 `main` 上重新 fresh fetch 并合并 GitHub `upstream/main`，保留 Anyong 品牌/CNB/manifest/Bun/N-API 打包覆盖。
+- 非目标：不推送、不触发新发版、不改仓库可见性、不丢弃下游发布修复、不运行会 `add -A`/force push 的旧同步脚本。
+- 验收标准：fresh upstream 头成为本地 `main` 祖先；无未解决冲突；`.cnb.yml` Anyong/CNB canonical URL、`desktop/cmd/sign` env URL 支持、`scripts/desktop-build.sh` Anyong prefix/OEM/portable fallback 与 computer-use Bun/N-API 打包均保留；按实际变更运行测试并由独立 verifier PASS。
+- 协作模式：`pipeline`，explorer 审计 upstream delta/冲突面，executor 完成 merge union，verifier 独立复核，orchestrator 最终裁决。
+- 相关 skill：`agent-team-delegation-gate`、`xigu-ai-ops`、`anyong-brand-config`、`cnb-ci-cd`；遵循现有 Go/Wails/CNB 验证约定。
+- 风险：upstream 可能包含 release-please 版本提交并再次改动 `desktop-build.sh`、sign/updater/NSIS；错误选择 ours/theirs 会破坏 Anyong 发布链或 bundled computer-use runtime。
+- 回滚：合并提交前可 `git merge --abort` 并恢复精确 stash；合并提交后仅用普通 revert 回滚本次 merge，不强推、不覆盖 tag。
+- 验证计划：fresh fetch、merge-tree 冲突预演、`git diff --check`、root/desktop/release tools/frontend 按变更范围测试、品牌/URL/Bun/N-API 关键字审计、独立 verifier。
 
 ### ANYONG-RELEASE-20260710 Task Contract
 

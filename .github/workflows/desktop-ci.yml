@@ -8,6 +8,8 @@ on:
       - ".github/workflows/release-desktop.yml"
       - "desktop/**"
       - "scripts/desktop-build.sh"
+      - "scripts/stage-bun-runtime.mjs"
+      - "scripts/stage-computer-use-mcp.mjs"
   push:
     branches: [main]
     paths:
@@ -15,6 +17,8 @@ on:
       - ".github/workflows/release-desktop.yml"
       - "desktop/**"
       - "scripts/desktop-build.sh"
+      - "scripts/stage-bun-runtime.mjs"
+      - "scripts/stage-computer-use-mcp.mjs"
   workflow_dispatch:
 
 permissions:

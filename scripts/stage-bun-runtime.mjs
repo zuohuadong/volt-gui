@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const outDir = process.argv[2];
@@ -24,13 +24,17 @@ try {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const packages = runtimes.map((runtime) => `${runtime.packageName}@${version}`);
+  const npmArgs = ['install', '--force', '--prefix', installDir, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...packages];
+  const npm = npmInvocation(npmArgs);
   const install = spawnSync(
-    npm,
-    ['install', '--force', '--prefix', installDir, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...packages],
+    npm.command,
+    npm.args,
     { stdio: 'inherit', env: process.env },
   );
+  if (install.error) {
+    console.error(`failed to start npm: ${install.error.message}`);
+  }
   if (install.status !== 0) {
     process.exit(install.status ?? 1);
   }
@@ -82,4 +86,20 @@ function runtimesForTarget(platform) {
 
 function bunRuntime(packageName, targetDir, binaryName = 'bun') {
   return { packageName, targetDir, binaryName };
+}
+
+function npmInvocation(args) {
+  if (process.platform !== 'win32') {
+    return { command: 'npm', args };
+  }
+  const candidates = [
+    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    process.env.npm_execpath,
+  ];
+  const npmCLI = candidates.find((candidate) => candidate && /npm-cli\.js$/i.test(candidate) && existsSync(candidate));
+  if (!npmCLI) {
+    console.error(`npm-cli.js not found beside Node runtime ${process.execPath}`);
+    process.exit(1);
+  }
+  return { command: process.execPath, args: [npmCLI, ...args] };
 }

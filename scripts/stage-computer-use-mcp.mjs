@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const outDir = process.argv[2];
 const version = process.argv[3] || '6.2.0';
@@ -19,12 +19,16 @@ writeFileSync(
   JSON.stringify({ private: true, dependencies: { '@zavora-ai/computer-use-mcp': version } }, null, 2) + '\n',
 );
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const install = spawnSync(npm, ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
+const npmArgs = ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'];
+const npm = npmInvocation(npmArgs);
+const install = spawnSync(npm.command, npm.args, {
   cwd: outDir,
   stdio: 'inherit',
   env: process.env,
 });
+if (install.error) {
+  console.error(`failed to start npm: ${install.error.message}`);
+}
 if (install.status !== 0) {
   process.exit(install.status ?? 1);
 }
@@ -58,6 +62,22 @@ for (const dep of ['@modelcontextprotocol/sdk', 'zod']) {
 
 rmSync(join(outDir, 'package-lock.json'), { force: true });
 console.log(`staged @zavora-ai/computer-use-mcp@${version} with ${nativeFiles.length} native binaries at ${outDir}`);
+
+function npmInvocation(args) {
+  if (process.platform !== 'win32') {
+    return { command: 'npm', args };
+  }
+  const candidates = [
+    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    process.env.npm_execpath,
+  ];
+  const npmCLI = candidates.find((candidate) => candidate && /npm-cli\.js$/i.test(candidate) && existsSync(candidate));
+  if (!npmCLI) {
+    console.error(`npm-cli.js not found beside Node runtime ${process.execPath}`);
+    process.exit(1);
+  }
+  return { command: process.execPath, args: [npmCLI, ...args] };
+}
 
 function expectedNativeFiles(platform) {
   switch (platform) {

@@ -141,6 +141,7 @@ export interface ServerView {
 
 export interface SkillView {
   name: string;
+  displayName?: string;
   description: string;
   scope: string;
   runAs: string;
@@ -728,6 +729,7 @@ export interface MCPServerInput {
   url: string;
   env?: Record<string, string> | null;
   tier: string;
+  enabled?: boolean;
 }
 
 export interface WorkbenchPlugin {

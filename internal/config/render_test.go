@@ -287,6 +287,26 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		{Name: "example", Command: "voltui-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, TrustedReadOnlyTools: []string{"customer_read"}, AutoStart: boolPtr(false), Tier: "background"},
 	}
+	orig.Workbench = WorkbenchConfig{
+		Plugins: []WorkbenchPluginEntry{{
+			ID:           "contract-review",
+			Name:         "Contract Review",
+			Kind:         "native",
+			Entry:        "contract-review",
+			Version:      "v1.2.0",
+			Capabilities: []string{"review", "risk-check"},
+			ProviderIDs:  []string{"legal-mcp"},
+			Config:       map[string]string{"permission": "workspace"},
+			Enabled:      boolPtr(false),
+		}},
+		Providers: []WorkbenchProviderEntry{{
+			ID:           "legal-mcp",
+			Type:         "mcp",
+			Server:       "legal-server",
+			Capabilities: []string{"review"},
+			Env:          map[string]string{"LEGAL_TOKEN": "${LEGAL_TOKEN}"},
+		}},
+	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
 	mm.ChatURL = "http://localhost:8000/v1/chat/completions"
@@ -512,6 +532,28 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if strings.Contains(rendered, "\ntier") {
 		t.Errorf("rendered config should not contain MCP tier fields:\n%s", rendered)
+	}
+	if len(got.Workbench.Plugins) != 1 {
+		t.Fatalf("workbench plugins count = %d, want 1", len(got.Workbench.Plugins))
+	}
+	workbenchPlugin := got.Workbench.Plugins[0]
+	if workbenchPlugin.ID != "contract-review" || workbenchPlugin.Version != "v1.2.0" {
+		t.Errorf("workbench plugin not preserved: %+v", workbenchPlugin)
+	}
+	if len(workbenchPlugin.Capabilities) != 2 || workbenchPlugin.Capabilities[1] != "risk-check" {
+		t.Errorf("workbench plugin capabilities = %+v", workbenchPlugin.Capabilities)
+	}
+	if len(workbenchPlugin.ProviderIDs) != 1 || workbenchPlugin.ProviderIDs[0] != "legal-mcp" {
+		t.Errorf("workbench plugin provider_ids = %+v", workbenchPlugin.ProviderIDs)
+	}
+	if workbenchPlugin.Config["permission"] != "workspace" {
+		t.Errorf("workbench plugin config = %+v", workbenchPlugin.Config)
+	}
+	if workbenchPlugin.Enabled == nil || *workbenchPlugin.Enabled {
+		t.Errorf("workbench plugin enabled = %+v, want false", workbenchPlugin.Enabled)
+	}
+	if len(got.Workbench.Providers) != 1 || got.Workbench.Providers[0].Env["LEGAL_TOKEN"] != "${LEGAL_TOKEN}" {
+		t.Errorf("workbench providers not preserved: %+v", got.Workbench.Providers)
 	}
 }
 

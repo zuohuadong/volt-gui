@@ -725,6 +725,8 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		}
 	}
 
+	renderWorkbenchConfig(&b, c.Workbench)
+
 	return b.String()
 }
 
@@ -1154,7 +1156,83 @@ func RenderTOMLProjectDelta(c *Config) string {
 		b.WriteString("\n")
 	}
 
+	renderWorkbenchConfig(&b, c.Workbench)
+
 	return b.String()
+}
+
+func renderWorkbenchConfig(b *strings.Builder, cfg WorkbenchConfig) {
+	for _, plugin := range cfg.Plugins {
+		if strings.TrimSpace(plugin.ID) == "" && strings.TrimSpace(plugin.Name) == "" {
+			continue
+		}
+		b.WriteString("[[workbench.plugins]]\n")
+		if strings.TrimSpace(plugin.ID) != "" {
+			fmt.Fprintf(b, "id = %q\n", plugin.ID)
+		}
+		if strings.TrimSpace(plugin.Name) != "" {
+			fmt.Fprintf(b, "name = %q\n", plugin.Name)
+		}
+		if strings.TrimSpace(plugin.Kind) != "" {
+			fmt.Fprintf(b, "kind = %q\n", plugin.Kind)
+		}
+		if strings.TrimSpace(plugin.Entry) != "" {
+			fmt.Fprintf(b, "entry = %q\n", plugin.Entry)
+		}
+		if strings.TrimSpace(plugin.Version) != "" {
+			fmt.Fprintf(b, "version = %q\n", plugin.Version)
+		}
+		if len(plugin.Capabilities) > 0 {
+			fmt.Fprintf(b, "capabilities = %s\n", renderStringArray(plugin.Capabilities))
+		}
+		if len(plugin.ProviderIDs) > 0 {
+			fmt.Fprintf(b, "provider_ids = %s\n", renderStringArray(plugin.ProviderIDs))
+		}
+		if len(plugin.Config) > 0 {
+			fmt.Fprintf(b, "config = %s\n", renderStringMap(plugin.Config))
+		}
+		if plugin.Enabled != nil {
+			fmt.Fprintf(b, "enabled = %v\n", *plugin.Enabled)
+		}
+		b.WriteString("\n")
+	}
+	for _, provider := range cfg.Providers {
+		if strings.TrimSpace(provider.ID) == "" && strings.TrimSpace(provider.Server) == "" && strings.TrimSpace(provider.URL) == "" {
+			continue
+		}
+		b.WriteString("[[workbench.providers]]\n")
+		if strings.TrimSpace(provider.ID) != "" {
+			fmt.Fprintf(b, "id = %q\n", provider.ID)
+		}
+		if strings.TrimSpace(provider.Type) != "" {
+			fmt.Fprintf(b, "type = %q\n", provider.Type)
+		}
+		if strings.TrimSpace(provider.Server) != "" {
+			fmt.Fprintf(b, "server = %q\n", provider.Server)
+		}
+		if strings.TrimSpace(provider.URL) != "" {
+			fmt.Fprintf(b, "url = %q\n", provider.URL)
+		}
+		if strings.TrimSpace(provider.Command) != "" {
+			fmt.Fprintf(b, "command = %q\n", provider.Command)
+		}
+		if len(provider.Args) > 0 {
+			fmt.Fprintf(b, "args = %s\n", renderStringArray(provider.Args))
+		}
+		if len(provider.Capabilities) > 0 {
+			fmt.Fprintf(b, "capabilities = %s\n", renderStringArray(provider.Capabilities))
+		}
+		if len(provider.Headers) > 0 {
+			fmt.Fprintf(b, "headers = %s\n", renderStringMap(provider.Headers))
+		}
+		if len(provider.Env) > 0 {
+			fmt.Fprintf(b, "env = %s\n", renderStringMap(provider.Env))
+		}
+		if len(provider.Config) > 0 {
+			fmt.Fprintf(b, "config = %s\n", renderStringMap(provider.Config))
+		}
+		b.WriteString("\n")
+	}
 }
 
 func renderPricingInline(p *provider.Pricing) string {

@@ -5673,6 +5673,7 @@ type ToolView struct {
 // SkillView is one discoverable skill for the drawer.
 type SkillView struct {
 	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
@@ -5681,6 +5682,7 @@ type SkillView struct {
 
 type SkillRootSkillView struct {
 	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	RunAs       string `json:"runAs"`
@@ -5720,6 +5722,8 @@ func (a *App) MCPServers() []ServerView {
 // SkillsSettings returns the skills management snapshot without MCP status.
 func (a *App) SkillsSettings() SkillsSettingsView {
 	out := SkillsSettingsView{Skills: []SkillView{}, SkillRoots: []SkillRootView{}}
+	rootViews := a.cachedSkillRootsView()
+	out.SkillRoots = rootViews
 	a.mu.RLock()
 	tab := a.activeTabLocked()
 	var ctrl control.SessionAPI
@@ -5728,6 +5732,7 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 	}
 	a.mu.RUnlock()
 	if ctrl == nil {
+		out.Skills = skillViewsFromRoots(rootViews, nil)
 		return out
 	}
 
@@ -5739,14 +5744,48 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 			}
 		}
 	}
+	seen := map[string]bool{}
 	for _, s := range ctrl.AllSkills() {
 		out.Skills = append(out.Skills, SkillView{
-			Name: s.Name, Description: s.Description,
+			Name: s.Name, DisplayName: s.DisplayName, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
 			Enabled: !disabled[config.SkillNameKey(s.Name)],
 		})
+		seen[config.SkillNameKey(s.Name)] = true
 	}
-	out.SkillRoots = a.cachedSkillRootsView()
+	for _, s := range skillViewsFromRoots(rootViews, disabled) {
+		if key := config.SkillNameKey(s.Name); key != "" && !seen[key] {
+			out.Skills = append(out.Skills, s)
+			seen[key] = true
+		}
+	}
+	return out
+}
+
+func skillViewsFromRoots(roots []SkillRootView, disabled map[string]bool) []SkillView {
+	out := []SkillView{}
+	seen := map[string]bool{}
+	for _, root := range roots {
+		for _, item := range root.SkillItems {
+			key := config.SkillNameKey(item.Name)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			isDisabled := false
+			if disabled != nil {
+				isDisabled = disabled[key]
+			}
+			out = append(out, SkillView{
+				Name:        item.Name,
+				DisplayName: item.DisplayName,
+				Description: item.Description,
+				Scope:       item.Scope,
+				RunAs:       item.RunAs,
+				Enabled:     !isDisabled,
+			})
+		}
+	}
 	return out
 }
 
@@ -5756,7 +5795,7 @@ func (a *App) mcpServersView() []ServerView {
 	tab := a.activeTabLocked()
 	if tab == nil {
 		a.mu.RUnlock()
-		return out
+		return configuredMCPServerViewsForRoot(a.activeWorkspaceRoot())
 	}
 	ctrl := tab.Ctrl
 	disabled := make(map[string]ServerView, len(tab.disabledMCP))
@@ -5768,7 +5807,7 @@ func (a *App) mcpServersView() []ServerView {
 	tabID := tab.ID
 	a.mu.RUnlock()
 	if ctrl == nil {
-		return out
+		return configuredMCPServerViewsForRoot(workspaceRoot)
 	}
 	seen := map[string]bool{}
 	connected := map[string]bool{}
@@ -5881,6 +5920,30 @@ func mcpStartIntent(p config.PluginEntry) string {
 		return "off"
 	}
 	return "automatic"
+}
+
+func configuredMCPServerViewsForRoot(root string) []ServerView {
+	configuredEntries := []config.PluginEntry{}
+	if cfg, err := config.LoadForRoot(root); err == nil {
+		configuredEntries = builtinmcp.AppendDefaultEnabled(configuredEntries, cfg.Plugins)
+		configuredEntries = append(configuredEntries, cfg.Plugins...)
+	}
+	out := []ServerView{}
+	seen := map[string]bool{}
+	for _, p := range configuredEntries {
+		if seen[p.Name] {
+			continue
+		}
+		seen[p.Name] = true
+		status := "disabled"
+		startIntent := "off"
+		if p.ShouldAutoStart() {
+			status = "deferred"
+			startIntent = mcpStartIntent(p)
+		}
+		out = append(out, withPluginConfig(ServerView{Name: p.Name, Status: status, StartIntent: startIntent, RuntimeState: "idle"}, p))
+	}
+	return orderServerViews(out, nil)
 }
 
 func mcpRuntimeState(status string) string {
@@ -6002,6 +6065,7 @@ func skillRootsViewFrom(cwd string, cfg, userCfg *config.Config) []SkillRootView
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
 			Name:        sk.Name,
+			DisplayName: sk.DisplayName,
 			Description: sk.Description,
 			Scope:       string(sk.Scope),
 			RunAs:       string(sk.RunAs),
@@ -6330,6 +6394,8 @@ type MCPServerInput struct {
 	URL                  string            `json:"url"`
 	Env                  map[string]string `json:"env"`
 	Headers              map[string]string `json:"headers"`
+	Tier                 string            `json:"tier"`
+	Enabled              *bool             `json:"enabled"`
 	TrustedReadOnlyTools []string          `json:"trustedReadOnlyTools"`
 }
 
@@ -6337,10 +6403,7 @@ type MCPServerInput struct {
 // Add). Returns the number of tools it exposed.
 func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 	ctrl := a.activeCtrl()
-	if ctrl == nil {
-		return 0, fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
+	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) {
 		return 0, rebuildControllerActiveWorkError("MCP server")
 	}
 	entry := config.PluginEntry{
@@ -6351,11 +6414,21 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		URL:                  in.URL,
 		Env:                  in.Env,
 		Headers:              in.Headers,
+		Tier:                 normalizeMCPTier(in.Tier),
 		TrustedReadOnlyTools: uniqueStrings(in.TrustedReadOnlyTools),
+	}
+	if in.Enabled != nil {
+		entry.AutoStart = in.Enabled
 	}
 	entry, _ = config.NormalizePluginCommandLine(entry)
 	if err := a.saveDesktopMCPServer(entry); err != nil {
 		return 0, err
+	}
+	if in.Enabled != nil && !*in.Enabled {
+		return 0, nil
+	}
+	if ctrl == nil {
+		return 0, nil
 	}
 	return ctrl.ConnectMCPServer(entry)
 }
@@ -6364,10 +6437,7 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 // identity; callers must remove + add if they want to rename a server.
 func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	ctrl := a.activeCtrl()
-	if ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
+	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
 	if strings.TrimSpace(in.Name) != "" && strings.TrimSpace(in.Name) != name {
@@ -6384,7 +6454,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	updated.Command = strings.TrimSpace(in.Command)
 	updated.Args = append([]string(nil), in.Args...)
 	updated.URL = strings.TrimSpace(in.URL)
-	updated.Tier = ""
+	updated.Tier = normalizeMCPTier(in.Tier)
 	if in.Env != nil {
 		updated.Env = in.Env
 	}
@@ -6393,6 +6463,9 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if in.TrustedReadOnlyTools != nil {
 		updated.TrustedReadOnlyTools = uniqueStrings(in.TrustedReadOnlyTools)
+	}
+	if in.Enabled != nil {
+		updated.AutoStart = in.Enabled
 	}
 	updated, _ = config.NormalizePluginCommandLine(updated)
 	if updated.Type == "stdio" {
@@ -6403,6 +6476,9 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if err := a.saveDesktopMCPServer(updated); err != nil {
 		return err
+	}
+	if ctrl == nil {
+		return nil
 	}
 
 	a.mu.RLock()
@@ -6416,7 +6492,7 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	if wasConnected {
 		ctrl.DisconnectMCPServer(name)
 	}
-	if !sessionDisabled {
+	if !sessionDisabled && updated.ShouldAutoStart() {
 		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
 			recordMCPFailure(ctrl, updated, err)
 			return nil
@@ -6601,6 +6677,10 @@ func (a *App) UntrustMCPServerTool(name, toolName string) error {
 // for this session, off disconnects it (config untouched either way — like Claude
 // Code's per-conversation enable/disable, it resets on the next session start).
 func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
+	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(name)
+	if err != nil {
+		return err
+	}
 	a.mu.RLock()
 	tab := a.activeTabLocked()
 	var ctrl control.SessionAPI
@@ -6610,15 +6690,21 @@ func (a *App) SetMCPServerEnabled(name string, enabled bool) error {
 		hostKey = tab.SharedHostKey
 	}
 	a.mu.RUnlock()
-	if tab == nil || ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
+	if ctrl != nil && controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
-	configuredEntry, hasConfiguredEntry, err := a.desktopMCPServerForEdit(name)
-	if err != nil {
-		return err
+	if hasConfiguredEntry {
+		configuredEntry.AutoStart = &enabled
+		if err := a.saveDesktopMCPServer(configuredEntry); err != nil {
+			return err
+		}
+	}
+	if tab == nil || ctrl == nil {
+		// A runtime-only MCP can remain briefly in the frontend after its
+		// workspace closes. There is no live connection left to change, and the
+		// following frontend refresh removes that stale row. Configured entries
+		// have already been persisted above.
+		return nil
 	}
 	if enabled {
 		_, err := a.connectConfiguredMCPServerForTab(tab, name)

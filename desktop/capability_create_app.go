@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"voltui/internal/config"
@@ -65,11 +66,14 @@ func (a *App) CreateSkillPackage(input SkillPackageInput) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("skill name is required")
 	}
-	root := filepath.Join(filepath.Dir(config.UserConfigPath()), "skills", slugifyAgentID(name))
+	skillID := slugifyAgentID(name)
+	root := filepath.Join(filepath.Dir(config.UserConfigPath()), "skills", skillID)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf("# %s\n\n%s\n\n## Run As\n%s\n", name, strings.TrimSpace(input.Description), defaultString(strings.TrimSpace(input.RunAs), "workflow"))
+	description := strings.TrimSpace(input.Description)
+	runAs := normalizeSkillPackageRunAs(input.RunAs)
+	body := fmt.Sprintf("---\nname: %s\ntitle: %s\ndescription: %s\nrunAs: %s\n---\n\n# %s\n\n%s\n", strconv.Quote(skillID), strconv.Quote(name), strconv.Quote(description), runAs, name, description)
 	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(body), 0o644); err != nil {
 		return "", err
 	}
@@ -77,7 +81,16 @@ func (a *App) CreateSkillPackage(input SkillPackageInput) (string, error) {
 		return "", err
 	}
 	if input.Enabled {
-		_ = a.SetSkillEnabled(name, true)
+		_ = a.SetSkillEnabled(skillID, true)
 	}
 	return root, nil
+}
+
+func normalizeSkillPackageRunAs(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "subagent":
+		return "subagent"
+	default:
+		return "inline"
+	}
 }

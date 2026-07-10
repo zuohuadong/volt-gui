@@ -207,6 +207,52 @@ func TestWorkbenchDeleteCustomerRemovesRecord(t *testing.T) {
 	}
 }
 
+func TestWorkbenchReportUpdateExportAndDelete(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	saved, err := app.SaveWorkbenchReport(WorkbenchReportInput{
+		Title:  "单篇报告闭环",
+		Status: "草稿",
+		Body:   "初始正文",
+	})
+	if err != nil {
+		t.Fatalf("SaveWorkbenchReport create: %v", err)
+	}
+	updated, err := app.SaveWorkbenchReport(WorkbenchReportInput{
+		ID:     saved.ID,
+		Title:  "单篇报告闭环更新",
+		Status: "已生成",
+		Body:   "更新正文",
+	})
+	if err != nil {
+		t.Fatalf("SaveWorkbenchReport update: %v", err)
+	}
+	if updated.CreatedAt != saved.CreatedAt {
+		t.Fatalf("report update should preserve CreatedAt: before=%q after=%q", saved.CreatedAt, updated.CreatedAt)
+	}
+	if updated.UpdatedAt == "" {
+		t.Fatalf("report update should set UpdatedAt: %+v", updated)
+	}
+	reportPath, err := app.ExportWorkbenchReport(updated.ID)
+	if err != nil {
+		t.Fatalf("ExportWorkbenchReport: %v", err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("ExportWorkbenchReport path not written: %v", err)
+	}
+	if err := app.DeleteWorkbenchReport(updated.ID); err != nil {
+		t.Fatalf("DeleteWorkbenchReport: %v", err)
+	}
+	reloaded, err := app.ListWorkbenchData()
+	if err != nil {
+		t.Fatalf("ListWorkbenchData: %v", err)
+	}
+	if containsReport(reloaded.Reports, updated.ID) {
+		t.Fatalf("deleted report still present: %+v", reloaded.Reports)
+	}
+}
+
 func TestWorkbenchTeamRoomAndChatPersist(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	app := &App{}

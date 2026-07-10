@@ -225,7 +225,7 @@ async function smokeConfigDialogs(page) {
     ['团队协作', '配置新组', '配置 Agent 团队'],
     ['项目管理', '新建项目', '新建项目'],
     ['客户管理', '新建客户', '新建客户'],
-    ['能力中心', '导入配置', '批量导入'],
+    ['能力中心', '导入配置', '导入 MCP 配置'],
   ];
   for (const [nav, opener, title] of dialogOpeners) {
     await clickButton(page, nav);

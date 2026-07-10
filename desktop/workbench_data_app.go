@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -375,6 +376,32 @@ func (a *App) SaveWorkbenchReport(input WorkbenchReportInput) (WorkbenchReportVi
 	return report, saveWorkbenchData(data)
 }
 
+func (a *App) DeleteWorkbenchReport(id string) error {
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("report id is required")
+	}
+	deleted := ""
+	next := make([]WorkbenchReportView, 0, len(data.Reports))
+	for _, report := range data.Reports {
+		if report.ID == id {
+			deleted = report.Title
+			continue
+		}
+		next = append(next, report)
+	}
+	if deleted == "" {
+		return fmt.Errorf("report %q not found", id)
+	}
+	data.Reports = next
+	appendOperationLog(&data, "删除报告", deleted, "我的", "成功")
+	return saveWorkbenchData(data)
+}
+
 func (a *App) SaveKnowledgeDocument(input WorkbenchKnowledgeDocumentInput) (WorkbenchKnowledgeDocumentView, error) {
 	data, err := loadWorkbenchData()
 	if err != nil {
@@ -483,6 +510,27 @@ func (a *App) ExportWorkbenchReports() (string, error) {
 		return "", err
 	}
 	return writeWorkbenchExport("reports", data.Reports)
+}
+
+func (a *App) ExportWorkbenchReport(id string) (string, error) {
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return "", err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("report id is required")
+	}
+	for _, report := range data.Reports {
+		if report.ID == id {
+			appendOperationLog(&data, "导出报告", report.Title, "我的", "成功")
+			if err := saveWorkbenchData(data); err != nil {
+				return "", err
+			}
+			return writeWorkbenchExport("report-"+slugifyAgentID(report.Title), report)
+		}
+	}
+	return "", fmt.Errorf("report %q not found", id)
 }
 
 func (a *App) SaveTeamRoom(input WorkbenchTeamRoomView) (WorkbenchTeamRoomView, error) {
@@ -759,6 +807,13 @@ func saveReportInto(data *WorkbenchDataView, input WorkbenchReportInput) (Workbe
 	}
 	now := time.Now().Format(time.RFC3339)
 	id := defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(slugifyAgentID(title), reportIDs(data.Reports)))
+	createdAt := now
+	for _, report := range data.Reports {
+		if report.ID == id {
+			createdAt = defaultString(report.CreatedAt, now)
+			break
+		}
+	}
 	next := WorkbenchReportView{
 		ID:         id,
 		Title:      title,
@@ -773,7 +828,7 @@ func saveReportInto(data *WorkbenchDataView, input WorkbenchReportInput) (Workbe
 		Format:     defaultString(strings.TrimSpace(input.Format), "Markdown"),
 		Priority:   defaultString(strings.TrimSpace(input.Priority), "中"),
 		DueAt:      strings.TrimSpace(input.DueAt),
-		CreatedAt:  now,
+		CreatedAt:  createdAt,
 		UpdatedAt:  now,
 	}
 	replaceOrPrependReport(data, next)

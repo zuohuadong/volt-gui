@@ -781,6 +781,56 @@ func (c *Controller) SubmitUserTurn(input, display string) {
 	c.runRefTurn(input, display)
 }
 
+// RecordLocalTurn records a completed local answer without entering the model
+// runner. It uses the normal chat event lifecycle so rich frontends can render
+// and recover the turn exactly like a provider-backed response.
+func (c *Controller) RecordLocalTurn(input, response string) (err error) {
+	input = strings.TrimSpace(input)
+	response = strings.TrimSpace(response)
+	if input == "" {
+		return errors.New("local turn input is empty")
+	}
+	if response == "" {
+		return errors.New("local turn response is empty")
+	}
+
+	c.mu.Lock()
+	if c.running || c.rotating {
+		c.mu.Unlock()
+		return ErrTurnRunning
+	}
+	if c.executor == nil {
+		c.mu.Unlock()
+		return errors.New("local turn requires an active session")
+	}
+	c.running = true
+	c.canceling = false
+	c.mu.Unlock()
+
+	c.sink.Emit(event.Event{Kind: event.TurnStarted})
+	defer func() {
+		c.mu.Lock()
+		c.running = false
+		c.cancel = nil
+		c.canceling = false
+		c.mu.Unlock()
+		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
+	}()
+
+	session := c.executor.Session()
+	if session == nil {
+		return errors.New("local turn session is unavailable")
+	}
+	session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	session.Add(provider.Message{Role: provider.RoleAssistant, Content: response})
+	if err := c.SnapshotActivity(); err != nil {
+		return err
+	}
+	c.sink.Emit(event.Event{Kind: event.Text, Text: response})
+	c.sink.Emit(event.Event{Kind: event.Message, Text: response})
+	return nil
+}
+
 func (c *Controller) submit(input, display, editedOriginal string) {
 	trimmed := strings.TrimSpace(input)
 	if note, ok := MemoryQuickAddNote(trimmed); ok {

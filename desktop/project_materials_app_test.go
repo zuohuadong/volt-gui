@@ -104,6 +104,61 @@ func TestSaveProjectMaterialIndexesLocalKnowledge(t *testing.T) {
 	}
 }
 
+func TestSaveProjectMaterialIndexesWorkspaceRelativeAttachmentOutsideCWD(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	attachmentPath := filepath.Join(projectRoot, ".voltui", "attachments", "knowledge-material.md")
+	if err := os.MkdirAll(filepath.Dir(attachmentPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(attachmentPath, []byte("工作区相对资料必须在活动项目根目录中提取并建立知识索引。"), 0o644); err != nil {
+		t.Fatalf("write workspace material: %v", err)
+	}
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+	saved, err := app.SaveProjectMaterial(WorkbenchProjectMaterialInput{
+		ProjectID: "volt-gui",
+		Title:     "活动工作区资料索引",
+		Category:  "知识库",
+		Source:    "local files",
+		FileName:  "knowledge-material.md",
+		FilePath:  ".voltui/attachments/knowledge-material.md",
+		MimeType:  "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("SaveProjectMaterial() error = %v", err)
+	}
+	if saved.FilePath != ".voltui/attachments/knowledge-material.md" {
+		t.Fatalf("saved file path = %q, want workspace-relative path", saved.FilePath)
+	}
+	if saved.Status != "已索引" {
+		t.Fatalf("SaveProjectMaterial() status = %q, want 已索引", saved.Status)
+	}
+
+	results, err := app.SearchWorkbench("活动项目根目录")
+	if err != nil {
+		t.Fatalf("SearchWorkbench() error = %v", err)
+	}
+	for _, result := range results {
+		if result.Title == saved.Title && result.Scope == "知识库 / FTS5" {
+			return
+		}
+	}
+	t.Fatalf("SearchWorkbench() did not include indexed workspace-relative material: %+v", results)
+}
+
 func TestDeleteProjectMaterialRemovesPersistedItem(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

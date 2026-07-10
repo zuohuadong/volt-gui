@@ -18,7 +18,16 @@ import (
 )
 
 const maxImageAttachmentBytes = 10 * 1024 * 1024
-const maxFileAttachmentBytes = 25 * 1024 * 1024
+
+// maxFileAttachmentBytes is the size limit for files copied from a native path.
+// Keep this distinct from the data-URL limit: a 64 MiB browser data URL would
+// occupy substantially more memory and cross the desktop IPC boundary at once.
+// MaxFileAttachmentBytes is the hard cap for files copied from a native path.
+// Callers that select files before copying should use the same boundary.
+const MaxFileAttachmentBytes = 64 * 1024 * 1024
+
+const maxFileAttachmentBytes = MaxFileAttachmentBytes
+const maxFileAttachmentDataURLBytes = 25 * 1024 * 1024
 const maxAttachmentCreateAttempts = 1000
 
 var attachmentPathSeq atomic.Uint64
@@ -35,9 +44,16 @@ func SaveAttachmentDataURL(origName, dataURL string) (string, error) {
 	if !strings.HasPrefix(dataURL, "data:") || i < 0 {
 		return "", fmt.Errorf("unsupported pasted file")
 	}
-	raw, err := base64.StdEncoding.DecodeString(dataURL[i+len(marker):])
+	encoded := dataURL[i+len(marker):]
+	if base64.StdEncoding.DecodedLen(len(encoded)) > maxFileAttachmentDataURLBytes {
+		return "", fmt.Errorf("pasted attachment must not exceed 25 MiB; use native file import")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", fmt.Errorf("decode pasted file: %w", err)
+	}
+	if len(raw) > maxFileAttachmentDataURLBytes {
+		return "", fmt.Errorf("pasted attachment must not exceed 25 MiB; use native file import")
 	}
 	return SaveAttachmentBytes(origName, raw)
 }
@@ -48,7 +64,7 @@ func SaveAttachmentBytes(origName string, raw []byte) (string, error) {
 
 func SaveAttachmentBytesInRoot(root, origName string, raw []byte) (string, error) {
 	if len(raw) == 0 || len(raw) > maxFileAttachmentBytes {
-		return "", fmt.Errorf("attachment must be between 1 byte and 25 MB")
+		return "", attachmentFileSizeError()
 	}
 	ext := strings.ToLower(filepath.Ext(origName))
 	if !safeAttachmentExt.MatchString(ext) {
@@ -128,7 +144,7 @@ func saveAttachmentBytesInRoot(root, ext string, raw []byte) (string, error) {
 func SaveImageFile(path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pasted image source is unavailable; select it again")
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("pasted image path must not be a symlink")
@@ -138,87 +154,128 @@ func SaveImageFile(path string) (string, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pasted image source cannot be read; select it again")
 	}
 	defer f.Close()
 	opened, err := f.Stat()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pasted image source changed while opening")
 	}
 	if !os.SameFile(info, opened) {
 		return "", fmt.Errorf("pasted image changed while opening")
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, maxImageAttachmentBytes+1))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("pasted image source cannot be read; select it again")
 	}
 	if len(raw) == 0 || len(raw) > maxImageAttachmentBytes {
 		return "", fmt.Errorf("pasted image must be between 1 byte and 10 MB")
 	}
 	if after, err := f.Stat(); err != nil {
-		return "", err
+		return "", fmt.Errorf("pasted image source changed while reading")
 	} else if !os.SameFile(opened, after) || after.Size() != opened.Size() {
 		return "", fmt.Errorf("pasted image changed while reading")
 	}
 	return SaveImageBytes("", raw)
 }
 
+// SaveAttachmentFile copies a native file after validating it at copy time.
+// Callers that need to bind the copy to a prior native selection should use
+// SaveAttachmentFileWithExpectedInfo instead.
 func SaveAttachmentFile(path string) (string, error) {
+	return saveAttachmentFile(path, nil)
+}
+
+// SaveAttachmentFileWithExpectedInfo copies a native file only when it is still
+// the same regular file that was selected earlier. expected is checked before
+// opening, against the opened descriptor, and against the path after copying so
+// an atomic replacement, symlink swap, or size change cannot be accepted.
+func SaveAttachmentFileWithExpectedInfo(path string, expected os.FileInfo) (string, error) {
+	if expected == nil {
+		return "", fmt.Errorf("attachment selection is unavailable; select it again")
+	}
+	return saveAttachmentFile(path, expected)
+}
+
+func saveAttachmentFile(path string, expected os.FileInfo) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("attachment source is unavailable; select it again")
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("attachment path must not be a symlink")
 	}
-	if info.IsDir() || info.Size() <= 0 || info.Size() > maxFileAttachmentBytes {
-		return "", fmt.Errorf("attachment must be between 1 byte and 25 MB")
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxFileAttachmentBytes {
+		return "", attachmentFileSizeError()
+	}
+	if expected != nil && !sameAttachmentFile(expected, info) {
+		return "", fmt.Errorf("attachment changed after selection; select it again")
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("attachment source cannot be read; select it again")
 	}
 	defer f.Close()
 	opened, err := f.Stat()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("attachment source changed while opening")
 	}
 	if !os.SameFile(info, opened) {
 		return "", fmt.Errorf("attachment changed while opening")
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, maxFileAttachmentBytes+1))
-	if err != nil {
-		return "", err
-	}
-	if len(raw) == 0 || len(raw) > maxFileAttachmentBytes {
-		return "", fmt.Errorf("attachment must be between 1 byte and 25 MB")
-	}
-	if after, err := f.Stat(); err != nil {
-		return "", err
-	} else if !os.SameFile(opened, after) || after.Size() != opened.Size() {
-		return "", fmt.Errorf("attachment changed while reading")
+	if expected != nil && !sameAttachmentFile(expected, opened) {
+		return "", fmt.Errorf("attachment changed after selection; select it again")
 	}
 	ext := strings.ToLower(filepath.Ext(path))
 	if !safeAttachmentExt.MatchString(ext) {
 		ext = ".bin"
 	}
 	if err := ensureAttachmentRoot(); err != nil {
-		return "", err
+		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
 	}
 	rel, dst, err := createAttachmentFile(ext)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
 	}
-	if _, err := dst.Write(raw); err != nil {
+	keepDestination := false
+	defer func() {
+		if keepDestination {
+			return
+		}
 		_ = dst.Close()
 		_ = os.Remove(rel)
-		return "", err
+	}()
+
+	written, err := io.Copy(dst, io.LimitReader(f, maxFileAttachmentBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("attachment source cannot be read; select it again")
+	}
+	if written == 0 || written > maxFileAttachmentBytes || written != opened.Size() {
+		return "", fmt.Errorf("attachment changed while reading")
+	}
+	if after, err := f.Stat(); err != nil {
+		return "", fmt.Errorf("attachment changed while reading")
+	} else if !os.SameFile(opened, after) || after.Size() != opened.Size() {
+		return "", fmt.Errorf("attachment changed while reading")
+	}
+	if final, err := os.Lstat(path); err != nil {
+		return "", fmt.Errorf("attachment changed while reading")
+	} else if final.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, final) || final.Size() != info.Size() || (expected != nil && !sameAttachmentFile(expected, final)) {
+		return "", fmt.Errorf("attachment changed while reading")
 	}
 	if err := dst.Close(); err != nil {
-		_ = os.Remove(rel)
-		return "", err
+		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
 	}
+	keepDestination = true
 	return filepath.ToSlash(rel), nil
+}
+
+func sameAttachmentFile(expected, actual os.FileInfo) bool {
+	return expected != nil && actual != nil && os.SameFile(expected, actual) && expected.Size() == actual.Size()
+}
+
+func attachmentFileSizeError() error {
+	return fmt.Errorf("attachment must be between 1 byte and 64 MiB")
 }
 
 func SaveClipboardImage() (string, error) {

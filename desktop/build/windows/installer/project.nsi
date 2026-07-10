@@ -83,6 +83,9 @@ OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Name of the installer
 !define VOLTUI_BUNDLED_ENV "bundled.env"
 !define VOLTUI_COMPUTER_USE_MCP_DIR "computer-use-mcp"
 !define VOLTUI_COMPUTER_USE_RUNTIME_DIR "computer-use-runtime"
+!define VOLTUI_COREUTILS_DIR "coreutils"
+!define VOLTUI_COREUTILS_SYSTEM_INSTALLER "coreutils-system-installer.exe"
+!define VOLTUI_COREUTILS_INSTALL_SHORTCUT "Install Microsoft Coreutils (Administrator).lnk"
 !define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
@@ -203,8 +206,24 @@ Section
     !else
     !warning "${VOLTUI_COMPUTER_USE_RUNTIME_DIR} was not found; bundled computer-use Bun runtime will be unavailable."
     !endif
+    ; Coreutils is a required offline payload. It stays private to VoltUI unless
+    ; an administrator explicitly runs the bundled upstream installer; do not
+    ; silently alter PATH or trigger UAC during routine VoltUI updates.
+    !if /FileExists "${VOLTUI_COREUTILS_DIR}\voltui-coreutils-path.txt"
+    !if /FileExists "${VOLTUI_COREUTILS_DIR}\${VOLTUI_COREUTILS_SYSTEM_INSTALLER}"
+    RMDir /r "$INSTDIR\${VOLTUI_COREUTILS_DIR}"
+    SetOutPath "$INSTDIR\${VOLTUI_COREUTILS_DIR}"
+    File /r "${VOLTUI_COREUTILS_DIR}\*"
+    SetOutPath $INSTDIR
+    !else
+    !error "Required Coreutils system installer is missing from the Windows build resources."
+    !endif
+    !else
+    !error "Required Coreutils runtime is missing from the Windows build resources."
+    !endif
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortcut "$SMPROGRAMS\${VOLTUI_COREUTILS_INSTALL_SHORTCUT}" "$INSTDIR\${VOLTUI_COREUTILS_DIR}\${VOLTUI_COREUTILS_SYSTEM_INSTALLER}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     !insertmacro wails.associateFiles
@@ -224,8 +243,12 @@ Section "uninstall"
     Delete "$INSTDIR\${VOLTUI_BUNDLED_ENV}"
     RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
     RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_RUNTIME_DIR}"
+    ; This only removes VoltUI's private copy. A separately administrator-
+    ; installed Microsoft Coreutils instance is intentionally left untouched.
+    RMDir /r "$INSTDIR\${VOLTUI_COREUTILS_DIR}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
+    Delete "$SMPROGRAMS\${VOLTUI_COREUTILS_INSTALL_SHORTCUT}"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
     !insertmacro wails.unassociateFiles

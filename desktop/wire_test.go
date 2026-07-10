@@ -75,6 +75,18 @@ func TestToWireToolResult(t *testing.T) {
 	}
 }
 
+func TestToWireToolResultIncludesDuration(t *testing.T) {
+	e := event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "1", Output: "ok", DurationMs: 1250}}
+	w := toWire(e)
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"durationMs":1250`) {
+		t.Fatalf("tool result JSON = %s, want durationMs", b)
+	}
+}
+
 func TestToWireToolProgress(t *testing.T) {
 	e := event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "1", Output: "chunk"}}
 	w := toWire(e)

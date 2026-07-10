@@ -113,6 +113,15 @@ func isolateDesktopUserDirs(t *testing.T) string {
 	return home
 }
 
+func findMCPServerViewInList(servers []ServerView, name string) (ServerView, bool) {
+	for _, server := range servers {
+		if server.Name == name {
+			return server, true
+		}
+	}
+	return ServerView{}, false
+}
+
 func primarySessionFiles(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -6219,6 +6228,65 @@ func TestCapabilitiesShowsDefaultBuiltInComputerUse(t *testing.T) {
 	}
 }
 
+func TestMCPServersIncludesConfiguredServerWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	enabled := false
+	if _, err := app.AddMCPServer(MCPServerInput{
+		Name:      "local-tools",
+		Transport: "stdio",
+		Command:   "npx",
+		Args:      []string{"-y", "local-tools-mcp"},
+		Enabled:   &enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	view := app.MCPServers()
+	for _, server := range view {
+		if server.Name == "local-tools" {
+			if server.Status != "disabled" || server.Command != "npx" {
+				t.Fatalf("configured MCP server = %+v, want disabled local-tools command npx", server)
+			}
+			return
+		}
+	}
+	t.Fatalf("MCPServers without active session = %+v, want configured disabled local-tools", view)
+}
+
+func TestMCPServersIncludesConfiguredServerWhenActiveTabHasNoController(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	app.setTestCtrl(nil, "")
+	enabled := false
+	if _, err := app.AddMCPServer(MCPServerInput{
+		Name:      "loading-tools",
+		Transport: "stdio",
+		Command:   "npx",
+		Args:      []string{"-y", "loading-tools-mcp"},
+		Enabled:   &enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	view := app.MCPServers()
+	for _, server := range view {
+		if server.Name == "loading-tools" {
+			if server.Status != "disabled" || server.Command != "npx" {
+				t.Fatalf("configured MCP server = %+v, want disabled loading-tools command npx", server)
+			}
+			return
+		}
+	}
+	t.Fatalf("MCPServers with active tab but no controller = %+v, want configured loading-tools", view)
+}
+
 func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
 	home := isolateDesktopUserDirs(t)
 	voltuiHome := filepath.Join(home, ".voltui")
@@ -6466,7 +6534,7 @@ url = %q
 		t.Fatal("shared host client was removed by a per-tab disable")
 	}
 	view := app.Capabilities()
-	if len(view.Servers) != 1 || view.Servers[0].Name != "h" || view.Servers[0].Status != "disabled" {
+	if server, ok := findMCPServerViewInList(view.Servers, "h"); !ok || server.Status != "disabled" {
 		t.Fatalf("Capabilities after disable = %+v, want h disabled for the active tab", view.Servers)
 	}
 
@@ -6477,7 +6545,7 @@ url = %q
 		t.Fatal("active tab did not re-register h tools from the existing shared client")
 	}
 	view = app.Capabilities()
-	if len(view.Servers) != 1 || view.Servers[0].Name != "h" || view.Servers[0].Status != "connected" {
+	if server, ok := findMCPServerViewInList(view.Servers, "h"); !ok || server.Status != "connected" {
 		t.Fatalf("Capabilities after re-enable = %+v, want h connected for the active tab", view.Servers)
 	}
 }
@@ -6813,6 +6881,195 @@ func TestAddMCPServerPersistsRemoteHeaders(t *testing.T) {
 		}
 	}
 	t.Fatalf("stripe MCP missing from view: %+v", view)
+}
+
+func TestAddMCPServerPersistsWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	enabled := false
+	tools, err := app.AddMCPServer(MCPServerInput{
+		Name:      "capability-mcp",
+		Transport: "stdio",
+		Command:   "npx",
+		Args:      []string{"capability-server"},
+		Enabled:   &enabled,
+	})
+	if err != nil {
+		t.Fatalf("AddMCPServer without active session: %v", err)
+	}
+	if tools != 0 {
+		t.Fatalf("tools = %d, want 0 without active session", tools)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := findPluginEntry(cfg.Plugins, "capability-mcp")
+	if !ok {
+		t.Fatalf("capability-mcp plugin missing from config: %+v", cfg.Plugins)
+	}
+	if p.Command != "npx" || !reflect.DeepEqual(p.Args, []string{"capability-server"}) {
+		t.Fatalf("capability-mcp command = %q args = %+v", p.Command, p.Args)
+	}
+	if p.AutoStart == nil || *p.AutoStart {
+		t.Fatalf("capability-mcp auto_start = %+v, want false", p.AutoStart)
+	}
+}
+
+func TestAddMCPServerRecordsConnectionFailureAfterSavingConfig(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	_, err := app.AddMCPServer(MCPServerInput{
+		Name:      "broken-import",
+		Transport: "stdio",
+		Command:   "voltui-missing-mcp-binary",
+	})
+	if err == nil {
+		t.Fatal("AddMCPServer should report the live connection failure")
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, ok := findPluginEntry(cfg.Plugins, "broken-import"); !ok || saved.Command != "voltui-missing-mcp-binary" {
+		t.Fatalf("saved MCP config = %+v, found=%v", saved, ok)
+	}
+
+	for _, server := range app.Capabilities().Servers {
+		if server.Name == "broken-import" {
+			if server.Status != "failed" {
+				t.Fatalf("server status = %q, want failed; server = %+v", server.Status, server)
+			}
+			return
+		}
+	}
+	t.Fatalf("failed MCP missing from Capabilities: %+v", app.Capabilities().Servers)
+}
+
+func TestUpdateMCPServerPersistsWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "voltui.toml"), []byte(`
+[[plugins]]
+name = "capability-mcp"
+command = "old"
+args = ["serve"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	enabled := false
+	if err := app.UpdateMCPServer("capability-mcp", MCPServerInput{
+		Name:      "capability-mcp",
+		Transport: "stdio",
+		Command:   "npx",
+		Args:      []string{"capability-server"},
+		Enabled:   &enabled,
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer without active session: %v", err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := findPluginEntry(cfg.Plugins, "capability-mcp")
+	if !ok {
+		t.Fatalf("capability-mcp plugin missing from config: %+v", cfg.Plugins)
+	}
+	if p.Command != "npx" || !reflect.DeepEqual(p.Args, []string{"capability-server"}) {
+		t.Fatalf("capability-mcp command = %q args = %+v", p.Command, p.Args)
+	}
+	if p.AutoStart == nil || *p.AutoStart {
+		t.Fatalf("capability-mcp auto_start = %+v, want false", p.AutoStart)
+	}
+}
+
+func TestSetMCPServerEnabledPersistsWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "voltui.toml"), []byte(`
+[[plugins]]
+name = "capability-mcp"
+command = "npx"
+args = ["capability-server"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	if err := app.SetMCPServerEnabled("capability-mcp", false); err != nil {
+		t.Fatalf("SetMCPServerEnabled without active session: %v", err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := findPluginEntry(cfg.Plugins, "capability-mcp")
+	if !ok {
+		t.Fatalf("capability-mcp plugin missing from config: %+v", cfg.Plugins)
+	}
+	if p.AutoStart == nil || *p.AutoStart {
+		t.Fatalf("capability-mcp auto_start = %+v, want false", p.AutoStart)
+	}
+}
+
+func TestSetMCPServerEnabledPersistsDefaultOfficeMCPWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	if err := app.SetMCPServerEnabled("office", false); err != nil {
+		t.Fatalf("SetMCPServerEnabled(office,false) without active session: %v", err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := findPluginEntry(cfg.Plugins, "office")
+	if !ok {
+		t.Fatalf("office plugin missing from config: %+v", cfg.Plugins)
+	}
+	if p.AutoStart == nil || *p.AutoStart {
+		t.Fatalf("office auto_start = %+v, want false", p.AutoStart)
+	}
+	for _, server := range app.MCPServers() {
+		if server.Name == "office" {
+			if server.Status != "disabled" || server.StartIntent != "off" {
+				t.Fatalf("office view = %+v, want disabled off after refresh", server)
+			}
+			return
+		}
+	}
+	t.Fatalf("office missing from MCPServers after disabling")
+}
+
+func TestSetMCPServerEnabledAllowsStaleRuntimeServerWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	if err := app.SetMCPServerEnabled("stale-runtime-server", false); err != nil {
+		t.Fatalf("SetMCPServerEnabled stale runtime server without active session: %v", err)
+	}
 }
 
 func TestCapabilitiesMarksBackgroundRemoteMCPAuthPossible(t *testing.T) {

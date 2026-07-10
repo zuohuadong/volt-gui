@@ -7254,7 +7254,7 @@ func persistedTabTokenMode(mode string) string {
 
 func normalizeToolApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case control.ToolApprovalAuto:
+	case control.ToolApprovalAuto, "auto-approve":
 		return control.ToolApprovalAuto
 	case control.ToolApprovalYolo, "full", "full-access", "bypass":
 		return control.ToolApprovalYolo

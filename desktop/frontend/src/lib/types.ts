@@ -728,6 +728,8 @@ export interface MCPServerInput {
   args: string[];
   url: string;
   env?: Record<string, string> | null;
+  headers?: Record<string, string> | null;
+  trustedReadOnlyTools?: string[];
   tier: string;
   enabled?: boolean;
 }
@@ -1120,8 +1122,20 @@ export interface TranscriptItem {
   title?: string;
   pending?: boolean;
   createdAtMs?: number;
+  updatedAtMs?: number;
   readOnly?: boolean;
   parentId?: string;
+  durationMs?: number;
+  truncated?: boolean;
+  error?: string;
+  toolOutput?: string;
+  toolSubject?: string;
+  toolSummary?: string;
+  toolId?: string;
+  archived?: boolean;
+  archiveLoading?: boolean;
+  archiveLoaded?: boolean;
+  archiveLoadError?: string;
 }
 
 export interface WireAskOption {
@@ -1252,6 +1266,28 @@ export interface HistoryMessage {
   role: string;
   content: string;
   reasoning?: string;
+  toolCalls?: HistoryToolCall[];
+  toolCallId?: string;
+  toolName?: string;
+  toolResultArchived?: boolean;
+  toolResultError?: string;
+}
+
+export interface HistoryToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+  subject?: string;
+  summary?: string;
+  diff?: string;
+  added?: number;
+  removed?: number;
+  argumentsArchived?: boolean;
+}
+
+export interface ToolResultData {
+  args: string;
+  output: string;
 }
 
 export interface CheckpointMeta {

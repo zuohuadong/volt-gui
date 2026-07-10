@@ -55,15 +55,16 @@ type wireAsk struct {
 }
 
 type wireTool struct {
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name"`
-	Args      string `json:"args,omitempty"`
-	Output    string `json:"output,omitempty"`
-	Err       string `json:"err,omitempty"`
-	ReadOnly  bool   `json:"readOnly"`
-	Truncated bool   `json:"truncated,omitempty"`
-	Partial   bool   `json:"partial,omitempty"`
-	ParentID  string `json:"parentId,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Name       string `json:"name"`
+	Args       string `json:"args,omitempty"`
+	Output     string `json:"output,omitempty"`
+	Err        string `json:"err,omitempty"`
+	ReadOnly   bool   `json:"readOnly"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	DurationMs int64  `json:"durationMs,omitempty"`
+	Partial    bool   `json:"partial,omitempty"`
+	ParentID   string `json:"parentId,omitempty"`
 }
 
 type wireUsage struct {
@@ -150,7 +151,7 @@ func toWire(e event.Event) wireEvent {
 		w.Tool = &wireTool{
 			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
 			Output: e.Tool.Output, Err: e.Tool.Err,
-			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
+			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated, DurationMs: e.Tool.DurationMs,
 			Partial: e.Tool.Partial, ParentID: e.Tool.ParentID,
 		}
 	case event.Usage:

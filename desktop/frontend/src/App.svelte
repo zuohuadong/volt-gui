@@ -65,6 +65,11 @@
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import { app, onAgentEvent, onWorkspaceReady } from "./lib/bridge";
   import { t } from "./lib/i18n";
+  import {
+    backendToolApprovalModeToComposer,
+    composerToolApprovalModeToBackend,
+  } from "./lib/tool-approval-mode";
+  import type { ComposerToolApprovalMode } from "./lib/tool-approval-mode";
   import type {
     ActivityMode,
     AgentInput,
@@ -129,6 +134,7 @@
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
+  const MAX_DATA_URL_PROJECT_MATERIAL_BYTES = 25 * 1024 * 1024;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
   type CodeWorkbenchAction = "conversation" | "overview" | "workspace" | "context" | "changes" | "checkpoints" | "models" | "settings";
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
@@ -169,6 +175,17 @@
     SaveProjectMaterial?: (input: WorkbenchProjectMaterialInput) => Promise<WorkbenchProjectMaterial>;
     SaveProjectMaterialsBatch?: (input: WorkbenchProjectMaterialBatchInput) => Promise<WorkbenchProjectMaterial[]>;
     DeleteProjectMaterial?: (id: string) => Promise<void>;
+  };
+  type PickedProjectMaterialFile = {
+    selectionToken?: string;
+    path?: string;
+    name: string;
+    size: number;
+    mimeType: string;
+  };
+  type ProjectMaterialFileBindings = {
+    PickProjectMaterialFile?: () => Promise<PickedProjectMaterialFile>;
+    ImportProjectMaterialFile?: (selectionToken: string) => Promise<PickedProjectMaterialFile>;
   };
   type AutomationPersistenceBindings = {
     ListAutomations?: () => Promise<WorkbenchAutomation[]>;
@@ -274,7 +291,8 @@
   let commands = $state<CommandInfo[]>([]);
   let selectedModel = $state("");
   let linkedProject = $state("");
-  let workPermission = $state("auto-approve");
+  let previewWorkPermission = $state<ComposerToolApprovalMode>("ask");
+  let permissionChanging = $state(false);
   let linkedCustomer = $state("");
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
@@ -298,16 +316,19 @@
   let selectedCapabilityId = $state("git-panel");
   let capabilityDetailOpen = $state(false);
   let capabilityCreateOpen = $state(false);
+  let capabilityImportOpen = $state(false);
   let capabilityCreateName = $state("新建插件");
   let capabilityCreateGroup = $state("插件");
   let capabilityCreateVersion = $state("v0.1");
   let capabilityCreateScope = $state("desktop/frontend");
   let capabilityCreateEntry = $state("plugin.json");
+  let capabilityCreateTransport = $state<"stdio" | "http" | "sse">("stdio");
+  let capabilityCreateArgs = $state("");
   let capabilityCreateStatus = $state("启用");
   let capabilityCreateDescription = $state("");
-  let capabilityCreateMcpArgs = $state("");
   let capabilityCreateMcpEnv = $state("");
   let capabilityImportInput = $state<HTMLInputElement | undefined>();
+  let capabilityImportText = $state("");
   let resourceTab = $state<ResourceTab>("resources");
   let resourceSearch = $state("");
   let collapsedWorkspaceSections = $state<string[]>([]);
@@ -385,6 +406,11 @@
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const currentComposerTab = $derived(activeConversationTabId ? tabs.find((tab) => tab.id === activeConversationTabId) ?? activeTab : activeTab);
+  const composerWorkPermission = $derived(
+    hasWailsBindings()
+      ? backendToolApprovalModeToComposer(currentComposerTab?.toolApprovalMode)
+      : previewWorkPermission,
+  );
   const composerDisabledReason = $derived(
     hasWailsBindings() && currentComposerTab && currentComposerTab.ready === false
       ? "工作区正在准备中，请稍后发送"
@@ -555,6 +581,7 @@
   let materialDraftStatus = $state("待复核");
   let materialDraftDesc = $state("");
   let materialDraftFile = $state<File | undefined>();
+  let materialDraftNativeFile = $state<PickedProjectMaterialFile | undefined>();
   let materialDraftFileLabel = $state("");
   let ingestDraftProjectId = $state("");
   let ingestDraftCategory = $state("项目资料");
@@ -748,38 +775,6 @@
     { id: "ops", name: "运营增长团队", type: "企业", contact: "增长负责人", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", owner: "增长项目", stage: "跟进中", region: "本地", matters: 3, materials: 8, events: 2, todos: 4, reports: 1, risk: "中风险", riskLevel: "medium", status: "active", createdAt: "2026-06-08", lastTouch: "2 小时前", lastContact: "2 小时前", nextAction: "复核发布素材", address: "运营项目群", note: "负责客户触达、发布材料和小程序增长相关任务，需保留交付前验证记录。", desc: "运营增长项目主体。", tags: ["运营", "增长"], projectIds: ["lurefree"] },
     { id: "founder", name: "个人创始人项目", type: "自然人", contact: "创始人本人", phone: "138-0000-0003", email: "founder@example.com", industry: "个人委托", owner: "产品工作台", stage: "待确认", region: "远程", matters: 1, materials: 5, events: 1, todos: 2, reports: 0, risk: "高风险", riskLevel: "high", status: "active", createdAt: "2026-06-12", lastTouch: "今天", lastContact: "今天", nextAction: "确认需求边界", address: "远程访谈记录", note: "需求边界变化频繁，任务进入执行前需补齐确认记录与风险说明。", desc: "个人委托项目主体。", tags: ["个人", "待确认"], projectIds: [] },
   ]);
-  const customerMaterialRows = [
-    { customerId: "internal", title: "Volt GUI 客户需求纪要", category: "访谈记录", source: "workspace", status: "已索引", updatedAt: "28 分钟前", desc: "整理导航、客户管理和项目管理的最新确认口径。" },
-    { customerId: "internal", title: "桌面前端验证证据包", category: "交付资料", source: "desktop/frontend", status: "已同步", updatedAt: "今天", desc: "包含 Svelte 检查、构建、浏览器 DOM 与控制台验证记录。" },
-    { customerId: "internal", title: "AORISTLAWER 参考映射", category: "参考资料", source: "aoristlawer", status: "已关联", updatedAt: "昨天", desc: "记录客户详情、项目详情和创建弹窗的对照关系。" },
-    { customerId: "internal", title: "风险与回滚说明", category: "复核资料", source: "memory", status: "待复核", updatedAt: "昨天", desc: "用于补齐交付前风险说明和可回退边界。" },
-    { customerId: "ops", title: "小程序发布清单", category: "交付资料", source: "lurefree", status: "已索引", updatedAt: "2 小时前", desc: "汇总包体、地图交互和发布前验收项。" },
-    { customerId: "ops", title: "客户触达话术", category: "运营资料", source: "local", status: "草稿", updatedAt: "今天", desc: "用于增长团队跟进项目状态和确认上线窗口。" },
-    { customerId: "ops", title: "发布复核附件", category: "附件", source: "workspace", status: "待清理", updatedAt: "昨天", desc: "保留预览、问题记录和人工确认材料。" },
-    { customerId: "founder", title: "创始人访谈记录", category: "访谈记录", source: "remote", status: "已索引", updatedAt: "今天", desc: "记录需求边界、预算和变更口径。" },
-    { customerId: "founder", title: "执行前确认单", category: "确认资料", source: "manual", status: "待确认", updatedAt: "今天", desc: "进入任务前需要客户再次确认范围和验收标准。" },
-  ];
-  const customerScheduleRows = [
-    { customerId: "internal", title: "桌面端体验复盘", date: "06-20", time: "10:30", place: "研发工作台", state: "今日", desc: "确认客户管理和项目管理补齐范围。" },
-    { customerId: "internal", title: "构建验证窗口", date: "06-20", time: "16:00", place: "本地预览", state: "待开始", desc: "跑完前端门禁并检查 127.0.0.1 预览。" },
-    { customerId: "internal", title: "交付前确认", date: "06-21", time: "14:00", place: "项目群", state: "已排期", desc: "确认详情页标签内容和资料联动。" },
-    { customerId: "ops", title: "发布素材复核", date: "06-20", time: "15:30", place: "运营项目群", state: "今日", desc: "复核小程序发布材料与客户触达节奏。" },
-    { customerId: "ops", title: "增长任务同步", date: "06-22", time: "11:00", place: "线上会议", state: "已排期", desc: "同步地图、包体和发布排期风险。" },
-    { customerId: "founder", title: "需求边界确认", date: "06-20", time: "18:00", place: "远程会议", state: "待确认", desc: "确认任务进入执行前的范围冻结条件。" },
-  ];
-  let customerTodoRows = $state([
-    { customerId: "internal", title: "补齐客户详情五个标签页", due: "今天", priority: "高", state: "进行中", desc: "对照 AORISTLAWER 的客户详情结构补足面板内容。" },
-    { customerId: "internal", title: "运行 Svelte autofixer", due: "今天", priority: "中", state: "待处理", desc: "确认新增模板满足 Svelte 5 语法。" },
-    { customerId: "internal", title: "执行前端构建门禁", due: "今天", priority: "中", state: "待处理", desc: "运行 check、build 和 diff 空白检查。" },
-    { customerId: "internal", title: "浏览器验证客户详情", due: "今天", priority: "中", state: "待处理", desc: "检查标签切换、内容可见性和控制台错误。" },
-    { customerId: "internal", title: "回写验收结论", due: "明天", priority: "低", state: "待处理", desc: "把验证证据同步到客户档案和交付说明。" },
-    { customerId: "ops", title: "复核小程序发布材料", due: "今天", priority: "高", state: "进行中", desc: "确认发布附件、预览记录和客户触达话术。" },
-    { customerId: "ops", title: "整理增长任务清单", due: "明天", priority: "中", state: "待处理", desc: "把运营动作拆成可执行任务。" },
-    { customerId: "ops", title: "同步项目日程", due: "06-22", priority: "中", state: "待处理", desc: "补齐下次会议、验收窗口和风险提醒。" },
-    { customerId: "ops", title: "更新客户周报", due: "06-23", priority: "低", state: "待处理", desc: "同步项目状态、资料清理和下一步。" },
-    { customerId: "founder", title: "确认需求边界", due: "今天", priority: "高", state: "待确认", desc: "进入执行前冻结范围、交付物和验收标准。" },
-    { customerId: "founder", title: "补齐风险说明", due: "明天", priority: "中", state: "待处理", desc: "记录频繁变更带来的排期和交付风险。" },
-  ]);
   const filteredProjects = $derived(projectCards.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
     const matchSearch = !keyword || [project.name, project.code, project.client, project.owner, project.stage, project.desc, project.category, project.court, project.priority, project.risk, project.agent].some((value) => value.toLowerCase().includes(keyword));
@@ -813,7 +808,7 @@
   );
 
   function latestTranscriptUpdatedAtMs(items?: TranscriptItem[]) {
-    const times = (items ?? []).map((item) => item.createdAtMs).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const times = (items ?? []).map((item) => item.updatedAtMs ?? item.createdAtMs).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
     return times.length ? Math.max(...times) : undefined;
   }
 
@@ -1130,9 +1125,35 @@
   function handleMaterialFileChange(event: Event) {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     materialDraftFile = file;
+    materialDraftNativeFile = undefined;
     materialDraftFileLabel = file ? `${file.name} / ${formatFileSize(file.size)}` : "";
     if (file && !materialDraftTitle.trim()) materialDraftTitle = file.name.replace(/\.[^.]+$/, "") || file.name;
     if (file) materialDraftSource = file.name;
+  }
+  async function pickProjectMaterialFile() {
+    if (!hasWailsBindings()) return;
+    const picker = projectMaterialFileBindings()?.PickProjectMaterialFile;
+    if (typeof picker !== "function") {
+      showWorkbenchNotice("原生资料选择接口未就绪，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    try {
+      const file = await picker();
+      if (!file.selectionToken) return;
+      materialDraftNativeFile = file;
+      materialDraftFile = undefined;
+      materialDraftFileLabel = `${file.name} / ${formatFileSize(file.size)}`;
+      if (!materialDraftTitle.trim()) materialDraftTitle = file.name.replace(/\.[^.]+$/, "") || file.name;
+      materialDraftSource = file.name;
+    } catch (error) {
+      showWorkbenchNotice(`选择资料文件失败：${formatErrorMessage(error)}`);
+    }
+  }
+  function materialFileUploadError(fileName: string, error: unknown) {
+    const detail = formatErrorMessage(error);
+    if (detail.includes("between 1 byte and 64 MiB")) return `资料文件“${fileName}”未导入：单个文件不能超过 64 MiB。`;
+    if (detail.includes("25 MiB")) return `资料文件“${fileName}”未导入：浏览器 data URL 导入最多支持 25 MiB，请在桌面端重新选择文件。`;
+    return `资料文件“${fileName}”未导入。请确认文件仍可读取且当前工作区可写：${detail}`;
   }
   function handleIngestFilesChange(event: Event) {
     const files = Array.from((event.currentTarget as HTMLInputElement).files ?? []);
@@ -1420,6 +1441,9 @@
   function projectMaterialPersistenceBindings(): ProjectMaterialPersistenceBindings | undefined {
     return typeof window === "undefined" ? undefined : window.go?.main?.App as ProjectMaterialPersistenceBindings | undefined;
   }
+  function projectMaterialFileBindings(): ProjectMaterialFileBindings | undefined {
+    return typeof window === "undefined" ? undefined : window.go?.main?.App as ProjectMaterialFileBindings | undefined;
+  }
   function automationPersistenceBindings(): AutomationPersistenceBindings | undefined {
     return typeof window === "undefined" ? undefined : window.go?.main?.App as AutomationPersistenceBindings | undefined;
   }
@@ -1482,11 +1506,6 @@
     return todoItems
       .filter((todo) => todo.projectId === projectId)
       .map((todo) => ({ projectId, title: todo.title, due: todoDue(todo), priority: todo.priority, state: todoStatusLabel(todo.status), desc: todoDescription(todo) }));
-  }
-  function todoCustomerRows(customerId: string) {
-    return todoItems
-      .filter((todo) => todo.customerId === customerId)
-      .map((todo) => ({ customerId, title: todo.title, due: todoDue(todo), priority: todo.priority, state: todoStatusLabel(todo.status), desc: todoDescription(todo) }));
   }
   function scheduleDialogContext() {
     const linkedProjectName = linkedProject.trim();
@@ -1621,9 +1640,11 @@
       if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return undefined;
       return hour * 60 + minute;
     };
-    const start = toMinutes(matches[0]);
+    const [startMatch, endMatch] = matches;
+    if (!startMatch) return undefined;
+    const start = toMinutes(startMatch);
     if (start === undefined) return undefined;
-    const parsedEnd = matches[1] ? toMinutes(matches[1]) : undefined;
+    const parsedEnd = endMatch ? toMinutes(endMatch) : undefined;
     const end = parsedEnd === undefined ? start + 60 : parsedEnd <= start ? parsedEnd + 24 * 60 : parsedEnd;
     return { start, end };
   }
@@ -2406,7 +2427,7 @@
 
   function sanitizeTranscript(items: unknown): TranscriptItem[] | undefined {
     if (!Array.isArray(items)) return undefined;
-    return items
+    return trimTranscriptItems(items
       .filter(isRecord)
       .map((item) => {
         const role = sanitizeTranscriptRole(item.role);
@@ -2420,9 +2441,31 @@
           readOnly: Boolean(item.readOnly),
           parentId: typeof item.parentId === "string" ? item.parentId : undefined,
           createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : undefined,
+          updatedAtMs: typeof item.updatedAtMs === "number" ? item.updatedAtMs : undefined,
+          durationMs: typeof item.durationMs === "number" ? item.durationMs : undefined,
+          truncated: Boolean(item.truncated),
+          error: typeof item.error === "string" ? item.error : undefined,
+          toolOutput: typeof item.toolOutput === "string" ? item.toolOutput : undefined,
+          toolSubject: typeof item.toolSubject === "string" ? item.toolSubject : undefined,
+          toolSummary: typeof item.toolSummary === "string" ? item.toolSummary : undefined,
+          toolId: typeof item.toolId === "string" ? item.toolId : undefined,
+          archived: Boolean(item.archived),
+          archiveLoading: Boolean(item.archiveLoading),
+          archiveLoaded: Boolean(item.archiveLoaded),
+          archiveLoadError: typeof item.archiveLoadError === "string" ? item.archiveLoadError : undefined,
         };
-      })
-      .slice(-MAX_TRANSCRIPT_ITEMS);
+      }));
+  }
+
+  // A long file scan can emit hundreds of tool events. Keep user and final
+  // responses useful by discarding old transient tool evidence before dialogue.
+  function trimTranscriptItems(items: TranscriptItem[]) {
+    const next = [...items];
+    while (next.length > MAX_TRANSCRIPT_ITEMS) {
+      const transientIndex = next.findIndex((item) => item.role === "tool" || item.role === "reasoning");
+      next.splice(transientIndex >= 0 ? transientIndex : 0, 1);
+    }
+    return next;
   }
 
   function transcriptHasContent(items?: TranscriptItem[]) {
@@ -2558,6 +2601,13 @@
     restoreSidebarState();
     pruneEmptyDraftSidebarConversations();
     sidebarStateHydrated = true;
+    const handleNativeMaterialFilePicker = (event: MouseEvent) => {
+      const target = event.target;
+      if (!hasWailsBindings() || !(target instanceof HTMLInputElement) || target.type !== "file" || target.getAttribute("aria-label") !== "选择资料文件") return;
+      event.preventDefault();
+      void pickProjectMaterialFile();
+    };
+    document.addEventListener("click", handleNativeMaterialFilePicker, true);
 
     if (!hasWailsBindings()) {
       brand = defaultBrand;
@@ -2565,7 +2615,10 @@
       const previewTick = window.setInterval(() => {
         nowMs = Date.now();
       }, 1000);
-      return () => window.clearInterval(previewTick);
+      return () => {
+        window.clearInterval(previewTick);
+        document.removeEventListener("click", handleNativeMaterialFilePicker, true);
+      };
     }
 
     // Check auth gate first — if [auth] is configured and no valid token exists,
@@ -2591,6 +2644,7 @@
       if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       unsubscribeEvents();
       unsubscribeReady();
+      document.removeEventListener("click", handleNativeMaterialFilePicker, true);
     };
   });
 
@@ -2662,10 +2716,7 @@
 
   function appendTranscript(item: TranscriptItem) {
     transcript.push(item);
-    if (transcript.length > MAX_TRANSCRIPT_ITEMS) {
-      // Keep the most recent items; drop from the front.
-      transcript.splice(0, transcript.length - MAX_TRANSCRIPT_ITEMS);
-    }
+    transcript = trimTranscriptItems(transcript);
     saveActiveSidebarConversationTranscript();
     scrollConversationToBottom();
   }
@@ -3914,6 +3965,7 @@
     materialDraftStatus = "待复核";
     materialDraftDesc = "";
     materialDraftFile = undefined;
+    materialDraftNativeFile = undefined;
     materialDraftFileLabel = "";
   }
   function resetIngestDraft() {
@@ -4160,23 +4212,42 @@
     let uploadedFileSize = 0;
     let uploadedMimeType = "";
     if (fromResourceCenter) {
-      if (!materialDraftFile) {
+      const nativeFile = materialDraftNativeFile;
+      const browserFile = materialDraftFile;
+      if (!nativeFile && !browserFile) {
         showWorkbenchNotice("请选择要上传的资料文件。");
         return;
       }
-      if (!hasWailsBindings()) {
-        showWorkbenchNotice("请在桌面端上传资料文件。");
-        return;
-      }
       try {
-        const dataUrl = await readFileAsDataURL(materialDraftFile);
-        uploadedFilePath = await app().SavePastedFile(materialDraftFile.name, dataUrl);
-        uploadedFileName = materialDraftFile.name;
-        uploadedFileSize = materialDraftFile.size;
-        uploadedMimeType = materialDraftFile.type;
+        if (nativeFile?.selectionToken) {
+          const importFile = projectMaterialFileBindings()?.ImportProjectMaterialFile;
+          if (typeof importFile !== "function") {
+            showWorkbenchNotice("原生资料导入接口未就绪，请重启桌面 dev 窗口后重试。");
+            return;
+          }
+          const imported = await importFile(nativeFile.selectionToken);
+          uploadedFilePath = imported.path || "";
+          uploadedFileName = imported.name;
+          uploadedFileSize = imported.size;
+          uploadedMimeType = imported.mimeType;
+        } else if (browserFile) {
+          if (browserFile.size > MAX_DATA_URL_PROJECT_MATERIAL_BYTES) {
+            showWorkbenchNotice(`资料文件“${browserFile.name}”未导入：浏览器 data URL 导入最多支持 25 MiB；桌面端原生选择支持最高 64 MiB。`);
+            return;
+          }
+          if (!hasWailsBindings()) {
+            showWorkbenchNotice("浏览器预览不能写入资料库；请在 Volt GUI 桌面端导入文件。");
+            return;
+          }
+          const dataUrl = await readFileAsDataURL(browserFile);
+          uploadedFilePath = await app().SavePastedFile(browserFile.name, dataUrl);
+          uploadedFileName = browserFile.name;
+          uploadedFileSize = browserFile.size;
+          uploadedMimeType = browserFile.type;
+        }
       } catch (error) {
         console.error("Failed to upload project material file", error);
-        showWorkbenchNotice("资料文件上传失败，请稍后重试。");
+        showWorkbenchNotice(materialFileUploadError(nativeFile?.name || browserFile?.name || "未命名文件", error));
         return;
       }
     }
@@ -4218,10 +4289,10 @@
         projectDetailOpen = true;
       }
       configDialog = undefined;
-      showWorkbenchNotice(`已新增资料：${saved.title}`);
+      showWorkbenchNotice(saved.status === "索引失败" ? `资料已复制并保存，但知识库索引失败：${saved.title}。请检查文件格式和文本内容。` : `已新增资料：${saved.title}`);
     } catch (error) {
       console.error("Failed to save project material", error);
-      showWorkbenchNotice("新增资料失败，请稍后重试。");
+      showWorkbenchNotice(`资料入库失败：${formatErrorMessage(error)}`);
     }
   }
   async function submitIngestDraft() {
@@ -5006,12 +5077,6 @@
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, typeof raw === "string" ? raw : JSON.stringify(raw)]));
   }
-  function capabilityMCPTransport() {
-    const value = capabilityCreateGroup.trim().toLowerCase();
-    if (value === "http" || value === "streamable-http") return "http";
-    if (value === "sse") return "sse";
-    return "stdio";
-  }
   function parseCapabilityMCPArgs(value: string) {
     const text = value.trim();
     if (!text) return [];
@@ -5133,13 +5198,20 @@
     if (!name) return false;
     const enabled = typeof item.enabled === "boolean" ? item.enabled : capabilityChoiceEnabled(String(item.status ?? "启用"));
     if (type.includes("mcp")) {
-      const transport = String(item.transport ?? "stdio") === "http" ? "http" : "stdio";
+      const rawTransport = String(item.transport ?? item.type ?? "stdio").trim().toLowerCase();
+      const transport = rawTransport === "streamable-http" ? "http" : rawTransport;
+      if (transport !== "stdio" && transport !== "http" && transport !== "sse") {
+        throw new Error(`不支持的 MCP 传输方式：${rawTransport || "stdio"}`);
+      }
       const mcpInput: MCPServerInput = {
         name,
         transport,
         command: String(item.command ?? item.entry ?? ""),
-        args: Array.isArray(item.args) ? item.args.map(String) : [],
+        args: stringList(item.args),
         url: String(item.url ?? ""),
+        env: stringRecord(item.env),
+        headers: stringRecord(item.headers),
+        trustedReadOnlyTools: stringList(item.trusted_read_only_tools ?? item.trustedReadOnlyTools),
         tier: String(item.tier ?? item.scope ?? "workspace"),
         enabled,
       };
@@ -5174,9 +5246,10 @@
     capabilityCreateGroup = kind === "mcp" ? "stdio" : capabilityLabel(kind);
     capabilityCreateVersion = "v0.1";
     capabilityCreateScope = kind === "mcp" ? "background" : kind === "skill" ? "workflow" : "desktop/frontend";
-    capabilityCreateEntry = kind === "mcp" ? "npx mcp-server" : kind === "skill" ? "SKILL.md" : "plugin.json";
+    capabilityCreateEntry = kind === "mcp" ? "" : kind === "skill" ? "SKILL.md" : "plugin.json";
+    capabilityCreateTransport = "stdio";
+    capabilityCreateArgs = "";
     capabilityCreateStatus = "启用";
-    capabilityCreateMcpArgs = "";
     capabilityCreateMcpEnv = "";
     capabilityCreateDescription =
       kind === "skill"
@@ -5185,23 +5258,114 @@
   }
   function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; if (capabilityCreateOpen) resetCapabilityCreateForm(kind); }
   function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); resetCapabilityCreateForm(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
+  function openMCPConfigImport() {
+    switchCapabilityTab("mcp");
+    capabilityCreateOpen = false;
+    capabilityImportText = "";
+    capabilityImportOpen = true;
+  }
+  function stringRecord(value: unknown): Record<string, string> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  }
+  function stringList(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean) : [];
+  }
+  function parseMCPConfig(raw: string): MCPServerInput[] {
+    let document: unknown;
+    try {
+      document = JSON.parse(raw);
+    } catch {
+      throw new Error("配置不是有效的 JSON。");
+    }
+    if (!document || typeof document !== "object" || Array.isArray(document)) throw new Error("配置根节点必须是对象。");
+    const servers = (document as Record<string, unknown>).mcpServers;
+    if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new Error("未找到 mcpServers 配置对象。");
+    const entries = Object.entries(servers as Record<string, unknown>);
+    if (!entries.length) throw new Error("mcpServers 中没有可导入的服务。");
+    return entries.map(([name, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`MCP ${name} 的配置必须是对象。`);
+      const spec = value as Record<string, unknown>;
+      const rawTransport = typeof spec.type === "string" ? spec.type.trim().toLowerCase() : "stdio";
+      const transport = rawTransport === "streamable-http" ? "http" : rawTransport;
+      if (transport !== "stdio" && transport !== "http" && transport !== "sse") throw new Error(`MCP ${name} 使用了不支持的传输方式：${rawTransport || "stdio"}。`);
+      const command = typeof spec.command === "string" ? spec.command.trim() : "";
+      const url = typeof spec.url === "string" ? spec.url.trim() : "";
+      if (transport === "stdio" && !command) throw new Error(`MCP ${name} 缺少 stdio 启动命令。`);
+      if (transport !== "stdio" && !url) throw new Error(`MCP ${name} 缺少服务 URL。`);
+      return {
+        name: name.trim(),
+        transport,
+        command,
+        args: stringList(spec.args),
+        url,
+        env: stringRecord(spec.env),
+        headers: stringRecord(spec.headers),
+        trustedReadOnlyTools: stringList(spec.trusted_read_only_tools ?? spec.trustedReadOnlyTools),
+        tier: "workspace",
+      };
+    }).filter((entry) => entry.name);
+  }
+  async function handleMCPConfigFileChange(event: Event) {
+    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    if (!file) return;
+    try {
+      capabilityImportText = await file.text();
+    } catch (error) {
+      showWorkbenchNotice(`读取配置文件失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function submitMCPConfigImport() {
+    let entries: MCPServerInput[];
+    try {
+      entries = parseMCPConfig(capabilityImportText.trim());
+    } catch (error) {
+      showWorkbenchNotice(formatErrorMessage(error));
+      return;
+    }
+    if (!hasWailsBindings()) {
+      showWorkbenchNotice("请在 Volt GUI 桌面端导入 MCP 配置。");
+      return;
+    }
+    const failures: string[] = [];
+    for (const entry of entries) {
+      try {
+        await app().AddMCPServer(entry);
+      } catch (error) {
+        console.error("Failed to import MCP server", entry.name, error);
+        failures.push(entry.name);
+      }
+    }
+    await refreshCapabilities();
+    capabilityImportOpen = false;
+    showWorkbenchNotice(failures.length ? `已提交 ${entries.length} 个 MCP 配置；${failures.join("、")} 连接失败，可在列表中查看并重试。` : `已导入 ${entries.length} 个 MCP 配置。`);
+  }
   async function submitCapabilityCreate() {
     const name = capabilityCreateName.trim();
-    if (!name) return;
+    if (!name) {
+      showWorkbenchNotice("请填写 MCP 或能力名称。");
+      return;
+    }
     const enabled = capabilityChoiceEnabled(capabilityCreateStatus);
     try {
       if (capabilityTab === "plugin") {
         const input: WorkbenchPluginInput = { id: capabilitySlug(name, `plugin-${Date.now()}`), name, kind: capabilityCreateGroup.trim() || "native", entry: capabilityCreateEntry.trim() || name, version: capabilityCreateVersion.trim() || "v0.1", capabilities: capabilityDescriptionParts(capabilityCreateDescription), enabled };
         await app().SaveWorkbenchPlugin(input);
       } else if (capabilityTab === "mcp") {
-        const transport = capabilityMCPTransport();
+        const entry = capabilityCreateEntry.trim();
+        if (!entry) {
+          showWorkbenchNotice(capabilityCreateTransport === "stdio" ? "请填写 MCP 启动命令。" : "请填写 MCP 服务 URL。");
+          return;
+        }
         await app().AddMCPServer({
           name,
-          transport,
-          command: transport === "stdio" ? capabilityCreateEntry.trim() : "",
-          args: transport === "stdio" ? parseCapabilityMCPArgs(capabilityCreateMcpArgs) : [],
-          url: transport === "stdio" ? "" : capabilityCreateEntry.trim(),
+          transport: capabilityCreateTransport,
+          command: capabilityCreateTransport === "stdio" ? entry : "",
+          args: capabilityCreateTransport === "stdio" ? parseCapabilityMCPArgs(capabilityCreateArgs) : [],
+          url: capabilityCreateTransport === "stdio" ? "" : entry,
           env: parseCapabilityMCPEnv(capabilityCreateMcpEnv),
+          headers: {},
+          trustedReadOnlyTools: [],
           tier: "background",
           enabled,
         });
@@ -5212,10 +5376,17 @@
       capabilityCreateOpen = false;
       await refreshCapabilities();
       await refreshSkillStatus();
+      showWorkbenchNotice(capabilityTab === "mcp" ? `已创建 MCP：${name}` : `已创建${capabilityLabel(capabilityTab)}：${name}`);
     } catch (error) {
       console.error("Failed to create capability", error);
       await refreshCapabilities();
       await refreshSkillStatus();
+      if (capabilityTab === "mcp") {
+        const saved = capabilityBuckets.mcp.some((item) => item.id === name);
+        showWorkbenchNotice(saved ? `MCP 已保存，但当前连接失败：${formatErrorMessage(error)}` : `创建 MCP 失败：${formatErrorMessage(error)}`);
+      } else {
+        showWorkbenchNotice(`创建${capabilityLabel(capabilityTab)}失败：${formatErrorMessage(error)}`);
+      }
     }
   }
   function configDialogIntro() {
@@ -5300,27 +5471,101 @@
     return `tool-${id ?? Date.now()}`;
   }
 
+  async function loadArchivedToolEvidence(item: TranscriptItem) {
+    const toolID = item.toolId?.trim();
+    const tabID = currentTranscriptTabId();
+    if (!item.archived || item.archiveLoaded || item.archiveLoading || !toolID || !tabID) return;
+
+    updateTranscriptItem(item.id, { archiveLoading: true, archiveLoadError: undefined });
+    try {
+      if (!hasWailsBindings()) throw new Error("归档详情只能在桌面端会话中加载。");
+      const evidence = await app().ToolResultForTab(tabID, toolID);
+      if (!evidence) throw new Error("归档详情当前不可用。");
+      if (currentTranscriptTabId() !== tabID) return;
+      updateTranscriptItem(item.id, {
+        body: evidence.args || item.body,
+        toolOutput: evidence.output,
+        archiveLoading: false,
+        archiveLoaded: true,
+        archiveLoadError: undefined,
+      });
+    } catch (error) {
+      if (currentTranscriptTabId() !== tabID) return;
+      updateTranscriptItem(item.id, {
+        archiveLoading: false,
+        archiveLoadError: formatErrorMessage(error),
+      });
+    }
+  }
+
   function historyToTranscript(messages: HistoryMessage[]): TranscriptItem[] {
-    const visible = messages.filter((message) => {
+    const toolResults = new Map(messages
+      .filter((message) => message.role === "tool" && Boolean(message.toolCallId))
+      .map((message) => [message.toolCallId as string, message]));
+    const restored: TranscriptItem[] = [];
+
+    for (const [index, message] of messages.entries()) {
       const hasContent = message.content.trim() !== "";
       const hasReasoning = (message.reasoning ?? "").trim() !== "";
-      return (message.role === "user" && hasContent) || (message.role === "assistant" && (hasContent || hasReasoning));
-    });
-    if (!visible.length) return welcomeTranscript();
-    return visible.map((message, index) => ({
-      id: `history-${index}`,
-      role: message.role === "user" ? "user" : "assistant",
-      body: message.role === "user" ? stripComposerContextPrefix(message.content) : message.content,
-      title: message.reasoning ? "assistant + reasoning" : undefined,
-      pending: false,
-    }));
+      if (message.role === "user" && hasContent) {
+        restored.push({
+          id: `history-${index}`,
+          role: "user",
+          body: stripComposerContextPrefix(message.content),
+          pending: false,
+        });
+        continue;
+      }
+      if (message.role === "assistant") {
+        if (hasContent || hasReasoning) {
+          restored.push({
+            id: `history-${index}`,
+            role: "assistant",
+            body: message.content,
+            title: message.reasoning ? "assistant + reasoning" : undefined,
+            pending: false,
+          });
+        }
+        for (const [toolIndex, call] of (message.toolCalls ?? []).entries()) {
+          const result = call.id ? toolResults.get(call.id) : undefined;
+          const archived = Boolean(result?.toolResultArchived || call.argumentsArchived);
+          restored.push({
+            id: `history-tool-${index}-${call.id || toolIndex}`,
+            role: "tool",
+            title: call.name || result?.toolName || "tool",
+            body: call.arguments || "",
+            pending: false,
+            toolSubject: call.subject,
+            toolSummary: call.summary,
+            toolId: call.id || undefined,
+            toolOutput: archived && !result?.toolResultError ? undefined : result?.content || undefined,
+            error: result?.toolResultError,
+            archived,
+          });
+        }
+        continue;
+      }
+      if (message.role === "tool" && !message.toolCallId) {
+        restored.push({
+          id: `history-tool-${index}`,
+          role: "tool",
+          title: message.toolName || "tool",
+          body: "",
+          pending: false,
+          toolOutput: message.content || undefined,
+          error: message.toolResultError,
+          archived: Boolean(message.toolResultArchived),
+        });
+      }
+    }
+    return restored.length ? restored : welcomeTranscript();
   }
 
   function historyHasVisibleContent(messages: HistoryMessage[]) {
     return messages.some((message) => {
       const hasContent = message.content.trim() !== "";
       const hasReasoning = (message.reasoning ?? "").trim() !== "";
-      return (message.role === "user" && hasContent) || (message.role === "assistant" && (hasContent || hasReasoning));
+      return (message.role === "user" && hasContent) || (message.role === "assistant" && (hasContent || hasReasoning || (message.toolCalls?.length ?? 0) > 0)) || message.role === "tool";
     });
   }
 
@@ -5360,12 +5605,15 @@
     if (event.kind === "tool_dispatch" && event.tool) {
       const id = toolTranscriptId(event.tool.id);
       const existing = transcript.find((item) => item.id === id);
+      const now = Date.now();
       if (existing) {
         existing.title = event.tool.name;
         existing.body = event.tool.args ?? existing.body;
+        existing.toolId = event.tool.id;
         existing.pending = true;
         existing.readOnly = event.tool.readOnly;
         existing.parentId = event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined;
+        existing.updatedAtMs = now;
         scrollConversationToBottom();
         return;
       }
@@ -5374,17 +5622,68 @@
         role: "tool",
         title: event.tool.name,
         body: event.tool.args ?? "",
+        toolId: event.tool.id,
         pending: true,
+        createdAtMs: now,
+        updatedAtMs: now,
         readOnly: event.tool.readOnly,
         parentId: event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined,
       });
     }
+    if (event.kind === "tool_progress" && event.tool) {
+      const id = toolTranscriptId(event.tool.id);
+      const now = Date.now();
+      const tool = transcript.find((item) => item.id === id);
+      if (!tool) {
+        appendTranscript({
+          id,
+          role: "tool",
+          title: event.tool.name,
+          body: event.tool.args ?? "",
+          toolId: event.tool.id,
+          pending: true,
+          createdAtMs: now,
+          updatedAtMs: now,
+          readOnly: event.tool.readOnly,
+          parentId: event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined,
+          toolOutput: event.tool.output ?? "",
+        });
+      } else {
+        tool.toolOutput = mergeStreamingText(tool.toolOutput ?? "", event.tool.output ?? "");
+        tool.pending = true;
+        tool.updatedAtMs = now;
+        scrollConversationToBottom();
+      }
+    }
     if (event.kind === "tool_result" && event.tool) {
-      const tool = transcript.find((item) => item.id === toolTranscriptId(event.tool?.id));
-      if (tool) {
-        tool.body += event.tool.output ? `\n${event.tool.output}` : "";
-        tool.body += event.tool.err ? `\n${event.tool.err}` : "";
+      const id = toolTranscriptId(event.tool.id);
+      const now = Date.now();
+      const tool = transcript.find((item) => item.id === id);
+      if (!tool) {
+        appendTranscript({
+          id,
+          role: "tool",
+          title: event.tool.name,
+          body: event.tool.args ?? "",
+          toolId: event.tool.id,
+          pending: false,
+          createdAtMs: now,
+          updatedAtMs: now,
+          readOnly: event.tool.readOnly,
+          parentId: event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined,
+          durationMs: event.tool.durationMs,
+          truncated: event.tool.truncated,
+          error: event.tool.err,
+          toolOutput: event.tool.output,
+        });
+      } else {
+        tool.toolId = event.tool.id;
+        tool.toolOutput = mergeStreamingText(tool.toolOutput ?? "", event.tool.output ?? "");
+        tool.error = event.tool.err || undefined;
+        tool.durationMs = event.tool.durationMs;
+        tool.truncated = event.tool.truncated;
         tool.pending = false;
+        tool.updatedAtMs = now;
         scrollConversationToBottom();
       }
     }
@@ -5411,7 +5710,12 @@
       } else if (event.err) {
         finishTurnWithError(event.err);
       }
-      for (const item of transcript) item.pending = false;
+      const completedAtMs = Date.now();
+      for (const item of transcript) {
+        if (!item.pending) continue;
+        item.pending = false;
+        item.updatedAtMs = completedAtMs;
+      }
       if (restoreDraftOnTurnDone && submittedDraft) {
         if (!input.trim()) input = submittedDraft.display;
         appendTranscript({ id: `draft-${Date.now()}`, role: "notice", body: "Draft restored after cancellation." });
@@ -5605,6 +5909,39 @@
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]) || next;
     } catch {
       // The optimistic selectedModel is still valid; the next refresh will hydrate metadata.
+    }
+  }
+
+  async function setComposerWorkPermission(next: ComposerToolApprovalMode) {
+    if (permissionChanging || next === composerWorkPermission) return;
+    if (next === "full-access" && typeof window !== "undefined" && !window.confirm("完全访问权限会自动批准工具调用。仍可能对受保护操作请求批准。是否继续？")) return;
+
+    if (!hasWailsBindings()) {
+      previewWorkPermission = next;
+      return;
+    }
+
+    const tabID = currentComposerTab?.id || activeTab?.id;
+    if (!tabID) {
+      showWorkbenchNotice("当前没有可设置工作权限的会话。");
+      return;
+    }
+
+    const backendMode = composerToolApprovalModeToBackend(next);
+    permissionChanging = true;
+    try {
+      await app().SetToolApprovalModeForTab(tabID, backendMode);
+      tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, toolApprovalMode: backendMode } : tab);
+      try {
+        tabs = await app().ListTabs();
+      } catch {
+        // The backend accepted the change; retain the confirmed local tab state
+        // until the next normal refresh can read the complete tab list.
+      }
+    } catch (error) {
+      showWorkbenchNotice(`工作权限切换失败：${formatErrorMessage(error)}`);
+    } finally {
+      permissionChanging = false;
     }
   }
 
@@ -5816,6 +6153,7 @@
                 onApprove={answerApproval}
                 onAnswerAsk={answerAsk}
                 onDismissAsk={() => (pendingAsk = undefined)}
+                onLoadArchivedTool={loadArchivedToolEvidence}
               />
             </div>
             <div class="stage__composer conversation-composer">
@@ -5836,8 +6174,9 @@
                 projectOptions={newTaskProjectOptions}
                 selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                 onProjectChange={linkProjectById}
-                {workPermission}
-                onWorkPermissionChange={(value) => (workPermission = value)}
+                workPermission={composerWorkPermission}
+                {permissionChanging}
+                onWorkPermissionChange={setComposerWorkPermission}
                 onOpenResources={openResourceCenterFromComposer}
                 {activityMode}
               />
@@ -6032,8 +6371,9 @@
                         projectOptions={newTaskProjectOptions}
                         selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                         onProjectChange={linkProjectById}
-                        {workPermission}
-                        onWorkPermissionChange={(value) => (workPermission = value)}
+                        workPermission={composerWorkPermission}
+                        {permissionChanging}
+                        onWorkPermissionChange={setComposerWorkPermission}
                         onOpenResources={openResourceCenterFromComposer}
                         {activityMode}
                       />
@@ -6122,8 +6462,9 @@
                       projectOptions={newTaskProjectOptions}
                       selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                       onProjectChange={linkProjectById}
-                      {workPermission}
-                      onWorkPermissionChange={(value) => (workPermission = value)}
+                      workPermission={composerWorkPermission}
+                      {permissionChanging}
+                      onWorkPermissionChange={setComposerWorkPermission}
                       onOpenResources={openResourceCenterFromComposer}
                       {activityMode}
                     />
@@ -6589,9 +6930,10 @@
                   </label>
                   <div class="capability-hub-header__actions">
                     <input bind:this={capabilityImportInput} class="visually-hidden" type="file" accept=".json,application/json" aria-label="导入能力配置文件" onchange={handleCapabilityImportFile} />
-                    <button type="button" onclick={openCapabilityImportPicker}><Upload size={15} /> 导入配置</button>
+                    <button type="button" onclick={openCapabilityImportPicker}><Upload size={15} /> 导入能力配置</button>
+                    <button type="button" onclick={openMCPConfigImport}><Upload size={15} /> 导入 MCP 配置</button>
                     <button type="button" onclick={() => void refreshCapabilities()}><RefreshCw size={15} /> 刷新状态</button>
-                    <button type="button" onclick={() => (capabilityCreateOpen = true)}><CirclePlus size={15} /> {capabilityCreateLabel(capabilityTab)}</button>
+                    <button type="button" onclick={() => startCapabilityCreate(capabilityTab)}><CirclePlus size={15} /> {capabilityCreateLabel(capabilityTab)}</button>
                   </div>
                 </header>
                 <div class="capability-stats">
@@ -6703,8 +7045,9 @@
                   projectOptions={newTaskProjectOptions}
                   selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
                   onProjectChange={linkProjectById}
-                  {workPermission}
-                  onWorkPermissionChange={(value) => (workPermission = value)}
+                  workPermission={composerWorkPermission}
+                  {permissionChanging}
+                  onWorkPermissionChange={setComposerWorkPermission}
                   onOpenResources={openResourceCenterFromComposer}
                   {activityMode}
                 />
@@ -7477,6 +7820,19 @@
         </div>
       {/if}
 
+      {#if capabilityImportOpen}
+        <div class="modal-backdrop">
+          <section class="config-modal capability-create-modal">
+            <header><div><span>MCP Config Import</span><strong>导入 MCP 配置</strong></div><button type="button" onclick={() => (capabilityImportOpen = false)}>x</button></header>
+            <div class="config-grid capability-create-form">
+              <label class="wide material-file-field"><span>选择 .mcp.json 文件</span><div class="material-file-picker"><input type="file" accept="application/json,.json" aria-label="选择 MCP 配置文件" onchange={handleMCPConfigFileChange} /><strong>选择配置文件</strong><span>也可以直接粘贴配置内容</span></div><em>支持 Claude/Codex 兼容的 <code>mcpServers</code> 格式；可导入 stdio、HTTP 和 SSE 服务。</em></label>
+              <label class="wide">配置内容 *<textarea rows="12" bind:value={capabilityImportText} placeholder={'{\n  "mcpServers": {\n    "example": { "command": "npx", "args": ["-y", "@scope/mcp-server"] }\n  }\n}'}></textarea></label>
+            </div>
+            <footer><button type="button" onclick={() => (capabilityImportOpen = false)}>取消</button><button type="button" onclick={() => void submitMCPConfigImport()}>导入 MCP 配置</button></footer>
+          </section>
+        </div>
+      {/if}
+
       {#if capabilityCreateOpen}
         <div class="modal-backdrop">
           <section class="config-modal capability-create-modal">
@@ -7486,26 +7842,26 @@
               <button class:active={capabilityTab === "mcp"} type="button" onclick={() => switchCapabilityTab("mcp")}>MCP</button>
               <button class:active={capabilityTab === "skill"} type="button" onclick={() => switchCapabilityTab("skill")}>SKILL</button>
             </div>
-            {#if capabilityTab === "mcp"}
-              <div class="config-grid capability-create-form">
-                <label>名称<input bind:value={capabilityCreateName} placeholder="如 playwright-mcp" /></label>
-                <label>连接方式<select bind:value={capabilityCreateGroup}><option value="stdio">stdio</option><option value="http">http</option><option value="sse">sse</option></select></label>
-                <label class="wide">命令 / URL<input bind:value={capabilityCreateEntry} placeholder={capabilityMCPTransport() === "stdio" ? "npx -y @playwright/mcp@latest" : "https://example.com/mcp"} /></label>
-                <label class="wide">参数<textarea rows="3" bind:value={capabilityCreateMcpArgs} placeholder="stdio 可填：&#10;--stdio&#10;或 JSON 数组：[&quot;--stdio&quot;]" disabled={capabilityMCPTransport() !== "stdio"}></textarea></label>
+            <div class="config-grid capability-create-form">
+              {#if capabilityTab === "mcp"}
+                <label>名称 *<input bind:value={capabilityCreateName} placeholder="例如 filesystem" /></label>
+                <label>传输方式 *<select bind:value={capabilityCreateTransport}><option value="stdio">stdio（本地命令）</option><option value="http">HTTP（Streamable HTTP）</option><option value="sse">SSE</option></select></label>
+                {#if capabilityCreateTransport === "stdio"}
+                  <label class="wide">启动命令 *<input bind:value={capabilityCreateEntry} placeholder="例如 npx 或 /usr/local/bin/mcp-server" /></label>
+                  <label class="wide">启动参数（每行一个或 JSON 数组）<textarea rows="3" bind:value={capabilityCreateArgs} placeholder={'例如\n-y\n@modelcontextprotocol/server-filesystem\n/你的工作目录'}></textarea></label>
+                {:else}
+                  <label class="wide">服务 URL *<input bind:value={capabilityCreateEntry} placeholder={capabilityCreateTransport === "http" ? "https://example.com/mcp" : "https://example.com/sse"} /></label>
+                {/if}
                 <label class="wide">环境变量<textarea rows="3" bind:value={capabilityCreateMcpEnv} placeholder="一行一个 KEY=VALUE，例如：&#10;GITHUB_TOKEN=your-token"></textarea></label>
                 <label>启动状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
-                <label class="wide">说明<textarea rows="3" bind:value={capabilityCreateDescription} placeholder="说明这个 MCP 提供什么能力、需要什么授权。"></textarea></label>
-              </div>
-            {:else if capabilityTab === "skill"}
-              <div class="config-grid capability-create-form">
+                <label class="wide">配置说明<textarea rows="4" bind:value={capabilityCreateDescription} placeholder="可选：记录服务用途、授权方式或重连注意事项"></textarea></label>
+              {:else if capabilityTab === "skill"}
                 <label>名称<input bind:value={capabilityCreateName} placeholder="如 contract-review" /></label>
                 <label>运行方式<select bind:value={capabilityCreateScope}><option value="workflow">workflow</option><option value="prompt">prompt</option><option value="tool">tool</option></select></label>
                 <label>入口文件<input bind:value={capabilityCreateEntry} placeholder="SKILL.md" readonly /></label>
                 <label>启动状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
                 <label class="wide">说明<textarea rows="4" bind:value={capabilityCreateDescription} placeholder="描述 Skill 的使用场景、输入输出、执行步骤和注意事项。"></textarea></label>
-              </div>
-            {:else}
-              <div class="config-grid capability-create-form">
+              {:else}
                 <label>名称<input bind:value={capabilityCreateName} /></label>
                 <label>分组<input bind:value={capabilityCreateGroup} /></label>
                 <label>版本<input bind:value={capabilityCreateVersion} /></label>
@@ -7513,8 +7869,8 @@
                 <label>入口路径<input bind:value={capabilityCreateEntry} /></label>
                 <label>默认状态<select bind:value={capabilityCreateStatus}><option>启用</option><option>待配置</option><option>需授权</option></select></label>
                 <label class="wide">配置说明<textarea rows="4" bind:value={capabilityCreateDescription}></textarea></label>
-              </div>
-            {/if}
+              {/if}
+            </div>
             <footer><button type="button" onclick={() => (capabilityCreateOpen = false)}>取消</button><button type="button" onclick={() => void submitCapabilityCreate()}>创建并挂载</button></footer>
           </section>
         </div>

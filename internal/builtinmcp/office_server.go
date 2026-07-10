@@ -117,6 +117,89 @@ func officeTools() []map[string]any {
 			"annotations": map[string]any{"readOnlyHint": true, "title": "office_list_apps"},
 		},
 		{
+			"name":        "office_read_spreadsheet",
+			"description": "Read a local .xlsx or BIFF8 .xls (Excel 97-2003) workbook without Microsoft Office, COM, Python, or network access. Use this first for spreadsheet analysis: select a worksheet, inspect headers, and read bounded rows instead of computer-use scripts.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":     map[string]any{"type": "string", "description": "Local .xlsx or BIFF8 .xls file path."},
+					"sheet":    map[string]any{"type": "string", "description": "Worksheet name. Defaults to the first worksheet."},
+					"max_rows": map[string]any{"type": "integer", "minimum": 1, "maximum": officeXLSXMaxRows, "description": "Maximum data rows to return; defaults to 50."},
+				},
+				"required": []string{"path"},
+			},
+			"annotations": map[string]any{"readOnlyHint": true, "title": "office_read_spreadsheet"},
+		},
+		{
+			"name":        "office_count_spreadsheet_column",
+			"description": "Count non-empty values and return per-value counts for an exact column header in a local .xlsx or BIFF8 .xls (Excel 97-2003) worksheet. This works without Microsoft Office or COM and should be used before computer-use scripts.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":   map[string]any{"type": "string", "description": "Local .xlsx or BIFF8 .xls file path."},
+					"sheet":  map[string]any{"type": "string", "description": "Worksheet name. Defaults to the first worksheet."},
+					"column": map[string]any{"type": "string", "description": "Exact column header to count, for example 设备责任人."},
+				},
+				"required": []string{"path", "column"},
+			},
+			"annotations": map[string]any{"readOnlyHint": true, "title": "office_count_spreadsheet_column"},
+		},
+		{
+			"name":        "office_read_xlsx",
+			"description": "Compatibility reader for a local .xlsx workbook without Office, COM, or Python. Prefer office_read_spreadsheet when the file may be .xls or .xlsx.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":     map[string]any{"type": "string", "description": "Local .xlsx file path."},
+					"sheet":    map[string]any{"type": "string", "description": "Worksheet name. Defaults to the first worksheet."},
+					"max_rows": map[string]any{"type": "integer", "minimum": 1, "maximum": officeXLSXMaxRows, "description": "Maximum data rows to return; defaults to 50."},
+				},
+				"required": []string{"path"},
+			},
+			"annotations": map[string]any{"readOnlyHint": true, "title": "office_read_xlsx"},
+		},
+		{
+			"name":        "office_count_xlsx_column",
+			"description": "Compatibility counter for an exact column header in a local .xlsx worksheet. Prefer office_count_spreadsheet_column when the file may be .xls or .xlsx.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":   map[string]any{"type": "string", "description": "Local .xlsx file path."},
+					"sheet":  map[string]any{"type": "string", "description": "Worksheet name. Defaults to the first worksheet."},
+					"column": map[string]any{"type": "string", "description": "Exact column header to count, for example 设备责任人."},
+				},
+				"required": []string{"path", "column"},
+			},
+			"annotations": map[string]any{"readOnlyHint": true, "title": "office_count_xlsx_column"},
+		},
+		{
+			"name":        "office_read_document",
+			"description": "Read paragraphs and tables from a local .docx file without Microsoft Office, COM, Python, or network access. Legacy .doc files must be saved as .docx first.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":           map[string]any{"type": "string", "description": "Local .docx file path."},
+					"max_blocks":     map[string]any{"type": "integer", "minimum": 1, "maximum": officeDocumentMaxBlocks, "description": "Maximum paragraph or table blocks to return; defaults to 100."},
+					"max_table_rows": map[string]any{"type": "integer", "minimum": 1, "maximum": officeDocumentMaxTableRows, "description": "Maximum rows to return per table; defaults to 100."},
+				},
+				"required": []string{"path"},
+			},
+			"annotations": map[string]any{"readOnlyHint": true, "title": "office_read_document"},
+		},
+		{
+			"name":        "office_read_presentation",
+			"description": "Read slides, titles, text blocks, and tables from a local .pptx file without Microsoft Office, COM, Python, or network access. Legacy .ppt files must be saved as .pptx first.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":       map[string]any{"type": "string", "description": "Local .pptx file path."},
+					"max_slides": map[string]any{"type": "integer", "minimum": 1, "maximum": officePresentationMaxSlides, "description": "Maximum slides to return; defaults to 20."},
+				},
+				"required": []string{"path"},
+			},
+			"annotations": map[string]any{"readOnlyHint": true, "title": "office_read_presentation"},
+		},
+		{
 			"name":        "office_open_document",
 			"description": "Open a local document with the OS default opener or a requested office suite. Supports Microsoft Office, WPS Office, and LibreOffice when installed.",
 			"inputSchema": map[string]any{
@@ -170,6 +253,18 @@ func callOfficeTool(params json.RawMessage) (any, *timeRPCError) {
 	switch p.Name {
 	case "office_list_apps":
 		text, err = officeListApps()
+	case "office_read_spreadsheet":
+		text, err = officeReadSpreadsheet(p.Arguments)
+	case "office_count_spreadsheet_column":
+		text, err = officeCountSpreadsheetColumn(p.Arguments)
+	case "office_read_xlsx":
+		text, err = officeReadXLSX(p.Arguments)
+	case "office_count_xlsx_column":
+		text, err = officeCountXLSXColumn(p.Arguments)
+	case "office_read_document":
+		text, err = officeReadDocument(p.Arguments)
+	case "office_read_presentation":
+		text, err = officeReadPresentation(p.Arguments)
 	case "office_open_document":
 		text, err = officeOpenDocument(p.Arguments)
 	case "office_convert_to_pdf":

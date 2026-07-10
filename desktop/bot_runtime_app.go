@@ -76,6 +76,10 @@ func (a *App) refreshBotRuntime() {
 	if a.botRuntime == nil {
 		return
 	}
+	var watcherVersion uint64
+	if a.botBridge != nil {
+		watcherVersion = a.botBridge.watcherVersion()
+	}
 	cfg, err := a.loadDesktopBotConfig()
 	if err != nil {
 		a.botRuntime.stop("error", err.Error())
@@ -87,7 +91,7 @@ func (a *App) refreshBotRuntime() {
 	if a.botBridge != nil {
 		// 配置是订阅的持久化事实源：每次运行时重算前重新种子，桌面重启后
 		// /desktop watch 的订阅继续生效。
-		a.botBridge.seedWatchers(bridgeRoutesFromConfig(cfg.Bot.DesktopWatchers))
+		a.botBridge.seedWatchers(bridgeRoutesFromConfig(cfg.Bot.DesktopWatchers), watcherVersion)
 		bridge = a.botBridge
 	}
 	_ = a.botRuntime.apply(a.bootContext(), cfg, globalTabWorkspaceRoot(), a.persistRemoteBotToolApprovalMode, bridge)

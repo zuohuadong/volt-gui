@@ -21,14 +21,15 @@ type bridgeNotifyCall struct {
 }
 
 type bridgeTestEnv struct {
-	hub       *botBridgeHub
-	notified  chan bridgeNotifyCall
-	approves  chan [2]string // [tabID, id+":"+allow]
-	answers   chan [2]string // [tabID, id]
-	driven    chan [2]string // [tabID, text]
-	announced chan [2]string // [tabID, text]
-	persisted chan []bot.DesktopWatchRoute
-	driveErr  error
+	hub        *botBridgeHub
+	notified   chan bridgeNotifyCall
+	approves   chan [2]string // [tabID, id+":"+allow]
+	answers    chan [2]string // [tabID, id]
+	driven     chan [2]string // [tabID, text]
+	announced  chan [2]string // [tabID, text]
+	persisted  chan []bot.DesktopWatchRoute
+	driveErr   error
+	persistErr error
 }
 
 func tabsToSessions(tabs []TabMeta) []bot.DesktopSessionInfo {
@@ -82,8 +83,9 @@ func newBridgeTestEnvSessions(sessions []bot.DesktopSessionInfo) *bridgeTestEnv 
 		announce: func(tabID, text string) {
 			env.announced <- [2]string{tabID, text}
 		},
-		persistWatchers: func(routes []bot.DesktopWatchRoute) {
+		persistWatchers: func(routes []bot.DesktopWatchRoute) error {
 			env.persisted <- routes
+			return env.persistErr
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -206,6 +208,27 @@ func TestBridgeApprovalShowsSubjectInDM(t *testing.T) {
 	call := env.waitNotification(t)
 	if !strings.Contains(call.msg.Text, "rm -rf build") {
 		t.Fatalf("DM notification should show the command line: %q", call.msg.Text)
+	}
+}
+
+func TestBridgeAskRedactsPromptAndOptionsInGroup(t *testing.T) {
+	env := newBridgeTestEnvSessions([]bot.DesktopSessionInfo{{TabID: "tab-1", Label: "会话一"}})
+	if err := env.hub.SetWatch(testGroupRoute(), true); err != nil {
+		t.Fatalf("SetWatch: %v", err)
+	}
+	<-env.persisted
+	env.hub.observe("tab-1", event.Event{Kind: event.AskRequest, Ask: event.Ask{
+		ID: "redacted-ask",
+		Questions: []event.AskQuestion{{
+			ID: "q1", Prompt: "INTERNAL_ONLY_PROMPT", Options: []event.AskOption{{Label: "CHOICE_INTERNAL"}},
+		}},
+	}})
+	call := env.waitNotification(t)
+	if strings.Contains(call.msg.Text, "INTERNAL_ONLY_PROMPT") || strings.Contains(call.msg.Text, "CHOICE_INTERNAL") {
+		t.Fatalf("group notification leaked ask details: %q", call.msg.Text)
+	}
+	if call.msg.Card != nil {
+		t.Fatal("group ask notification must not include option buttons")
 	}
 }
 
@@ -404,13 +427,60 @@ func TestBridgeSetWatchPersistsAndSeedRestores(t *testing.T) {
 
 	// 模拟重启:全新 hub 从配置种子恢复。
 	env2 := newBridgeTestEnv(nil)
-	env2.hub.seedWatchers([]bot.DesktopWatchRoute{route})
+	env2.hub.seedWatchers([]bot.DesktopWatchRoute{route}, env2.hub.watcherVersion())
 	if !env2.hub.Watching(route) {
 		t.Fatal("seeded hub should be watching the persisted route")
 	}
 	env2.hub.observe("tab-x", event.Event{Kind: event.TurnDone})
 	if call := env2.waitNotification(t); !strings.Contains(call.msg.Text, "✅") {
 		t.Fatalf("seeded watcher did not receive notifications: %q", call.msg.Text)
+	}
+}
+
+func TestBridgeSeedDoesNotOverwriteNewerRuntimeWatch(t *testing.T) {
+	env := newBridgeTestEnv(nil)
+	route := testWatchRoute()
+	staleVersion := env.hub.watcherVersion()
+	if err := env.hub.SetWatch(route, true); err != nil {
+		t.Fatalf("SetWatch: %v", err)
+	}
+	<-env.persisted
+
+	// Simulate a runtime refresh carrying a config snapshot loaded before the
+	// watch command persisted. It must not erase the newer in-process route.
+	env.hub.seedWatchers(nil, staleVersion)
+	if !env.hub.Watching(route) {
+		t.Fatal("stale config seed overwrote the newer runtime subscription")
+	}
+}
+
+func TestBridgeSeedPreservesWatchAfterPersistFailure(t *testing.T) {
+	env := newBridgeTestEnv(nil)
+	env.persistErr = errors.New("disk unavailable")
+	route := testWatchRoute()
+	if err := env.hub.SetWatch(route, true); err == nil {
+		t.Fatal("SetWatch should report the persistence failure")
+	}
+	<-env.persisted
+
+	env.hub.seedWatchers(nil, env.hub.watcherVersion())
+	if !env.hub.Watching(route) {
+		t.Fatal("disk snapshot erased a runtime watch whose persistence failed")
+	}
+}
+
+func TestBridgeSeedAppliesFreshExternalConfig(t *testing.T) {
+	env := newBridgeTestEnv(nil)
+	route := testWatchRoute()
+	version := env.hub.watcherVersion()
+	env.hub.seedWatchers([]bot.DesktopWatchRoute{route}, version)
+	if !env.hub.Watching(route) {
+		t.Fatal("initial config seed did not apply")
+	}
+
+	env.hub.seedWatchers(nil, version)
+	if env.hub.Watching(route) {
+		t.Fatal("fresh external config update did not replace the watcher set")
 	}
 }
 

@@ -119,9 +119,9 @@ func (b bash) Description() string {
 			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n"+
 			"  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n"+
 			"  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0)."+
-			bashToolSteer, shellName, chaining)
+			bashToolSteer+bundledCoreutilsDescriptionHint(), shellName, chaining)
 	}
-	return "Execute a command in the shell and return combined stdout/stderr." + bashToolSteer
+	return "Execute a command in the shell and return combined stdout/stderr." + bashToolSteer + bundledCoreutilsDescriptionHint()
 }
 
 // bashToolSteer points the model at the cross-platform built-in tools instead of
@@ -513,6 +513,10 @@ func commandPreview(cmd string) string {
 func bashCommandEnv(ctx context.Context) []string {
 	env := os.Environ()
 	if runtime.GOOS == "windows" {
+		if coreutilsBin := bundledCoreutilsBin(); coreutilsBin != "" {
+			currentPath, _ := envValue(env, "PATH")
+			env = setEnvValue(env, "PATH", mergePathLists(coreutilsBin, currentPath))
+		}
 		return env
 	}
 	currentPath, _ := envValue(env, "PATH")
@@ -522,6 +526,13 @@ func bashCommandEnv(ctx context.Context) []string {
 		}
 	}
 	return env
+}
+
+func bundledCoreutilsDescriptionHint() string {
+	if bundledCoreutilsBin() == "" {
+		return ""
+	}
+	return " VoltUI has an offline Coreutils runtime for its command child processes; PowerShell aliases still win for names such as ls/cat, so use ls.exe or the explicit executable name when native Coreutils behavior is required."
 }
 
 func defaultBashShellPATH(ctx context.Context) string {

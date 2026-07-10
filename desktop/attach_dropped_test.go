@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,109 @@ func TestSavePastedImageUsesActiveWorkspaceRoot(t *testing.T) {
 	}
 	if !strings.HasPrefix(preview, "data:image/png;base64,") {
 		t.Fatalf("preview = %q, want png data URL", preview)
+	}
+}
+
+func TestImportProjectMaterialFileUsesActiveWorkspaceRoot(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "report.pdf")
+	content := []byte("%PDF-1.7 project material")
+	if err := os.WriteFile(source, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+
+	selected, err := app.registerProjectMaterialSelection(source)
+	if err != nil {
+		t.Fatalf("registerProjectMaterialSelection: %v", err)
+	}
+	got, err := app.ImportProjectMaterialFile(selected.SelectionToken)
+	if err != nil {
+		t.Fatalf("ImportProjectMaterialFile: %v", err)
+	}
+	if got.Name != "report.pdf" || got.Size != int64(len(content)) || got.MimeType != "application/pdf" {
+		t.Fatalf("metadata = %+v, want report.pdf, %d bytes, application/pdf", got, len(content))
+	}
+	if !strings.HasPrefix(got.Path, ".voltui/attachments/") || !strings.HasSuffix(got.Path, ".pdf") {
+		t.Fatalf("stored path = %q, want .voltui/attachments/*.pdf", got.Path)
+	}
+	stored, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(got.Path)))
+	if err != nil {
+		t.Fatalf("read stored PDF: %v", err)
+	}
+	if string(stored) != string(content) {
+		t.Fatalf("stored PDF bytes = %q, want %q", stored, content)
+	}
+	if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(got.Path))); !os.IsNotExist(err) {
+		t.Fatalf("project material should not be saved under launch root, stat err=%v", err)
+	}
+}
+
+func TestImportProjectMaterialFileRejectsReplacedSelectionWithoutLeakingSourcePath(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "report.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7 original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+
+	selected, err := app.registerProjectMaterialSelection(source)
+	if err != nil {
+		t.Fatalf("registerProjectMaterialSelection: %v", err)
+	}
+	if selected.SelectionToken == "" {
+		t.Fatal("selection token is empty")
+	}
+	encoded, err := json.Marshal(selected)
+	if err != nil {
+		t.Fatalf("marshal selected material: %v", err)
+	}
+	if strings.Contains(string(encoded), source) {
+		t.Fatalf("picker result leaked source path: %s", encoded)
+	}
+
+	replacement := source + ".replacement"
+	if err := os.WriteFile(replacement, []byte("%PDF-1.7 replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, source); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.ImportProjectMaterialFile(selected.SelectionToken); err == nil {
+		t.Fatal("replacement after selection should be rejected")
+	} else if strings.Contains(err.Error(), source) {
+		t.Fatalf("import error leaked source path: %v", err)
+	}
+	if _, err := app.ImportProjectMaterialFile(selected.SelectionToken); err == nil {
+		t.Fatal("selection token should be one-time")
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".voltui", "attachments")); !os.IsNotExist(err) {
+		t.Fatalf("rejected source should not create an attachment, stat err=%v", err)
 	}
 }
 

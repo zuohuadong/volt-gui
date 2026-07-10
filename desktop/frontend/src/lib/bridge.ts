@@ -27,6 +27,7 @@ import type {
   SlashArgItem,
   TabMeta,
   TopicMeta,
+  ToolResultData,
   UpdateInfo,
   UpdateProgress,
   UserInfo,
@@ -72,6 +73,14 @@ import type {
   WorkspaceChangesView,
 } from "./types";
 
+type ProjectMaterialFile = {
+  selectionToken?: string;
+  path?: string;
+  name: string;
+  size: number;
+  mimeType: string;
+};
+
 interface AppBindings {
   Brand(): Promise<BrandInfo>;
   SubmitToTab(tabID: string, input: string): Promise<void>;
@@ -96,6 +105,7 @@ interface AppBindings {
   ListSessions(): Promise<SessionMeta[]>;
   ResumeSessionForTab(tabID: string, path: string): Promise<HistoryMessage[]>;
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
+  ToolResultForTab(tabID: string, toolID: string): Promise<ToolResultData | null>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
   Rewind(turn: number, scope: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
@@ -103,6 +113,7 @@ interface AppBindings {
   EffortForTab(tabID: string): Promise<EffortInfo>;
   SetEffortForTab(tabID: string, level: string): Promise<void>;
   SetModeForTab(tabID: string, mode: string): Promise<void>;
+  SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
   GoalForTab(tabID: string): Promise<GoalInfo>;
   StartGoalForTab(tabID: string, objective: string): Promise<void>;
   ContinueGoalForTab(tabID: string): Promise<void>;
@@ -121,6 +132,8 @@ interface AppBindings {
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
+  PickProjectMaterialFile(): Promise<ProjectMaterialFile>;
+  ImportProjectMaterialFile(selectionToken: string): Promise<ProjectMaterialFile>;
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
   ContextPanel(tabID: string): Promise<ContextPanelInfo>;

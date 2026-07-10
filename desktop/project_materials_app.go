@@ -62,7 +62,13 @@ func (a *App) ListProjectMaterials() ([]WorkbenchProjectMaterialView, error) {
 }
 
 func (a *App) SaveProjectMaterial(input WorkbenchProjectMaterialInput) (WorkbenchProjectMaterialView, error) {
-	return saveProjectMaterialInput(input)
+	var saved WorkbenchProjectMaterialView
+	err := a.withActiveWorkspaceDo(func() error {
+		var err error
+		saved, err = saveProjectMaterialInput(input)
+		return err
+	})
+	return saved, err
 }
 
 func (a *App) SaveProjectMaterialsBatch(inputs []WorkbenchProjectMaterialInput) ([]WorkbenchProjectMaterialView, error) {
@@ -70,12 +76,18 @@ func (a *App) SaveProjectMaterialsBatch(inputs []WorkbenchProjectMaterialInput) 
 		return nil, errors.New("material batch is empty")
 	}
 	saved := make([]WorkbenchProjectMaterialView, 0, len(inputs))
-	for _, input := range inputs {
-		material, err := saveProjectMaterialInput(input)
-		if err != nil {
-			return nil, err
+	err := a.withActiveWorkspaceDo(func() error {
+		for _, input := range inputs {
+			material, err := saveProjectMaterialInput(input)
+			if err != nil {
+				return err
+			}
+			saved = append(saved, material)
 		}
-		saved = append(saved, material)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return saved, nil
 }

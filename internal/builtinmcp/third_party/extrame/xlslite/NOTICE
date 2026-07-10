@@ -1,0 +1,17 @@
+VoltUI XLS Lite
+================
+
+This directory contains a deliberately reduced and hardened local fork used
+only for read-only BIFF8 `.xls` spreadsheet extraction. It is derived from:
+
+- github.com/extrame/xls at 4a6cf263071b975a90abf74ca3e804b48243be28
+- github.com/extrame/ole2 at d69429661ad7efb189d2ad8074c867265009d0a4
+
+Both upstream projects are licensed under the Apache License, Version 2.0.
+The full license is in LICENSE.
+
+VoltUI modifications: removed the upstream process-terminating, stdout, and
+debug logging paths; replaced unchecked OLE/BIFF reads with bounded error
+returns; and retained only the compound-file and read-only cell extraction
+needed by the Office MCP. This fork does not invoke Office, COM, Python, or
+network services.

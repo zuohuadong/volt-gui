@@ -6902,6 +6902,43 @@ func TestAddMCPServerPersistsWithoutActiveSession(t *testing.T) {
 	}
 }
 
+func TestAddMCPServerRecordsConnectionFailureAfterSavingConfig(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
+	defer app.activeCtrl().Close()
+
+	_, err := app.AddMCPServer(MCPServerInput{
+		Name:      "broken-import",
+		Transport: "stdio",
+		Command:   "voltui-missing-mcp-binary",
+	})
+	if err == nil {
+		t.Fatal("AddMCPServer should report the live connection failure")
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, ok := findPluginEntry(cfg.Plugins, "broken-import"); !ok || saved.Command != "voltui-missing-mcp-binary" {
+		t.Fatalf("saved MCP config = %+v, found=%v", saved, ok)
+	}
+
+	for _, server := range app.Capabilities().Servers {
+		if server.Name == "broken-import" {
+			if server.Status != "failed" {
+				t.Fatalf("server status = %q, want failed; server = %+v", server.Status, server)
+			}
+			return
+		}
+	}
+	t.Fatalf("failed MCP missing from Capabilities: %+v", app.Capabilities().Servers)
+}
+
 func TestUpdateMCPServerPersistsWithoutActiveSession(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

@@ -9,6 +9,19 @@ in the LICENSE file).
 Portions of the original software have been modified by the VoltUI
 Contributors. The original MIT license terms continue to apply.
 
+This project also incorporates a reduced, modified read-only `.xls` parser
+derived from github.com/extrame/xls (commit
+4a6cf263071b975a90abf74ca3e804b48243be28) and github.com/extrame/ole2
+(commit d69429661ad7efb189d2ad8074c867265009d0a4). Those components are
+licensed under the Apache License, Version 2.0. Their source attribution and
+license are retained in `internal/builtinmcp/third_party/extrame/xlslite/`.
+
+Windows desktop artifacts also redistribute the unmodified Microsoft Coreutils
+for Windows release v2026.6.16 (https://github.com/microsoft/coreutils), under
+the MIT License. The release asset names, source URLs, and SHA-256 values are
+pinned in scripts/stage-coreutils.mjs; the component's license is retained in
+third_party/coreutils/LICENSE and is copied into each Windows payload.
+
 --- BEGIN: Original MIT License from DeepSeek-Reasonix ---
 
 MIT License

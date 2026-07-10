@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, Wrench, X } from "@lucide/svelte";
+  import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, X } from "@lucide/svelte";
   import MarkdownView from "./MarkdownView.svelte";
+  import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
   let {
@@ -13,6 +14,7 @@
     onApprove,
     onAnswerAsk,
     onDismissAsk,
+    onLoadArchivedTool,
   }: {
     items: TranscriptItem[];
     loading: boolean;
@@ -22,11 +24,13 @@
     onApprove: (allow: boolean, session: boolean, persist: boolean) => void;
     onAnswerAsk: (answers: QuestionAnswer[]) => void;
     onDismissAsk: () => void;
+    onLoadArchivedTool?: (item: TranscriptItem) => void | Promise<void>;
   } = $props();
 
   let selectedAnswer = $state("");
   let selectedAskId = $state("");
   let nowMs = $state(Date.now());
+  let openToolIDs = $state<ToolOpenState>({});
 
   const question = $derived(ask?.questions[0]);
   const askAnswer = $derived(question ? [{ questionId: question.id, selected: selectedAnswer ? [selectedAnswer] : [] }] : []);
@@ -43,6 +47,31 @@
   const visibleItems = $derived(
     items.filter((item) => item.role !== "system" && (item.title ?? "").toLowerCase() !== "usage" && !item.id.startsWith("usage-")),
   );
+  type TranscriptRenderEntry =
+    | { kind: "item"; id: string; item: TranscriptItem }
+    | { kind: "file-activity"; id: string; items: TranscriptItem[] };
+  const visibleRootItems = $derived(visibleItems.filter((item) => !(item.role === "tool" && item.parentId)));
+  const transcriptEntries = $derived.by(() => {
+    const entries: TranscriptRenderEntry[] = [];
+    for (let index = 0; index < visibleRootItems.length; index += 1) {
+      const item = visibleRootItems[index];
+      if (!isRootFileInspection(item)) {
+        entries.push({ kind: "item", id: item.id, item });
+        continue;
+      }
+      const group = [item];
+      while (index + 1 < visibleRootItems.length && isRootFileInspection(visibleRootItems[index + 1])) {
+        index += 1;
+        group.push(visibleRootItems[index]);
+      }
+      if (group.length > 1) {
+        entries.push({ kind: "file-activity", id: `file-activity-${group[0].id}`, items: group });
+      } else {
+        entries.push({ kind: "item", id: item.id, item });
+      }
+    }
+    return entries;
+  });
 
   $effect(() => {
     if ((ask?.id ?? "") !== selectedAskId) {
@@ -136,8 +165,18 @@
     }
   }
 
+  function normalizedToolName(name: string) {
+    return name.toLowerCase().replace(/^functions\./, "").replace(/^tool_/, "").trim();
+  }
+
   function shortToolName(name: string) {
-    return name.replace(/^functions\./, "").replace(/^tool_/, "").replace(/_/g, " ").trim() || "工具";
+    const normalized = normalizedToolName(name);
+    if (normalized === "read_file" || normalized === "get_file") return "读取文件";
+    if (["ls", "list", "list_dir", "list_files"].includes(normalized)) return "查看目录";
+    if (["glob", "find_files"].includes(normalized)) return "匹配文件";
+    if (["search", "grep", "rg", "search_files", "file_search"].includes(normalized)) return "搜索文件";
+    if (normalized === "stat_file") return "查看文件信息";
+    return normalized.replace(/_/g, " ").trim() || "工具";
   }
 
   function commandAction(command: string) {
@@ -157,24 +196,76 @@
     return command.replace(/\s+/g, " ").trim();
   }
 
+  function isToolCancellation(error?: string) {
+    const normalized = (error ?? "").trim().toLowerCase();
+    return normalized.includes("cancelled") || normalized.includes("canceled") || normalized.includes("已取消") || normalized.includes("操作已取消");
+  }
+
   function toolDisplay(item: TranscriptItem) {
     const name = item.title ?? "tool";
     const { args, output } = parseLeadingToolArgs(item);
     const command = typeof args?.command === "string" ? args.command : "";
     const path = typeof args?.path === "string" ? args.path : typeof args?.file === "string" ? args.file : "";
     const query = typeof args?.query === "string" ? args.query : typeof args?.pattern === "string" ? args.pattern : "";
-    const fallback = shortToolName(name);
-    const action = command ? commandAction(command) : path ? `${fallback}文件` : query ? `${fallback}：${query}` : fallback;
-    const detail = command ? compactCommand(command) : path || query || "";
-    const status = item.pending ? "正在执行" : output ? "已完成" : "已记录";
+    const actionName = shortToolName(name);
+    const action = command ? commandAction(command) : query ? `${actionName}：${query}` : actionName;
+    const detail = command ? compactCommand(command) : path || query || item.toolSubject || "";
+    const renderedOutput = item.toolOutput ?? output;
+    const cancelled = isToolCancellation(item.error);
+    const status = item.pending ? "正在执行" : cancelled ? "已取消" : item.error ? "失败" : renderedOutput || item.toolSummary ? "已完成" : "已记录";
     return {
       action,
       detail,
-      output,
+      output: renderedOutput,
       status,
-      tool: shortToolName(name),
+      tool: actionName,
       readOnly: item.readOnly,
+      summary: item.toolSummary,
+      error: item.error,
+      cancelled,
+      durationMs: item.durationMs,
+      truncated: item.truncated,
+      archived: item.archived,
+      archiveLoading: item.archiveLoading,
+      archiveLoaded: item.archiveLoaded,
+      archiveLoadError: item.archiveLoadError,
     };
+  }
+
+  function isRootFileInspection(item: TranscriptItem) {
+    if (item.role !== "tool" || item.parentId) return false;
+    return ["read_file", "get_file", "ls", "list", "list_dir", "list_files", "glob", "find_files", "search", "grep", "rg", "search_files", "file_search", "stat_file"].includes(normalizedToolName(item.title ?? ""));
+  }
+
+  function formatDuration(ms: number) {
+    const seconds = Math.max(0, Math.round(ms / 100) / 10);
+    if (seconds < 60) return `${seconds || 0.1} 秒`;
+    return `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`;
+  }
+
+  function fileActivityStatus(group: TranscriptItem[]) {
+    if (group.some((item) => item.pending)) return "正在检查";
+    if (group.some((item) => item.error && !isToolCancellation(item.error))) return "检查失败";
+    const cancelled = group.filter((item) => isToolCancellation(item.error));
+    if (cancelled.length === group.length) return "已取消";
+    if (cancelled.length > 0) return "部分已取消";
+    return "检查完成";
+  }
+
+  function fileActivityLatestTarget(group: TranscriptItem[]) {
+    const latest = group[group.length - 1];
+    if (!latest) return "文件";
+    const tool = toolDisplay(latest);
+    return tool.detail || tool.tool;
+  }
+
+  function fileActivityTiming(group: TranscriptItem[]) {
+    const first = Math.min(...group.map((item) => item.createdAtMs ?? nowMs));
+    const last = Math.max(...group.map((item) => item.updatedAtMs ?? item.createdAtMs ?? first));
+    if (group.some((item) => item.pending)) return `无进展 ${formatDuration(nowMs - last)}`;
+    const reportedDuration = group.reduce((total, item) => total + (item.durationMs ?? 0), 0);
+    const elapsed = reportedDuration || Math.max(0, last - first);
+    return elapsed > 0 ? `耗时 ${formatDuration(elapsed)}` : "已完成";
   }
 
   function pendingLabel(item: TranscriptItem) {
@@ -196,133 +287,136 @@
   function isLikelyStalled(item: TranscriptItem) {
     return pendingElapsedMs(item) >= 120000;
   }
+
+  function handleToolToggle(event: Event, item: TranscriptItem) {
+    const details = event.currentTarget;
+    if (!(details instanceof HTMLDetailsElement)) return;
+    openToolIDs = setToolOpenState(openToolIDs, item.id, details.open);
+    if (!details.open || !item.archived || item.archiveLoaded || item.archiveLoading) return;
+    void onLoadArchivedTool?.(item);
+  }
 </script>
 
-<section class="transcript" aria-busy={sending || loading}>
-  {#each visibleItems as item (item.id)}
-    {#if !(item.role === "tool" && item.parentId) && !isRawAskPayload(item)}
-      <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`} data-tool-id={item.role === "tool" ? item.id : undefined}>
-        {#if item.pending && !item.body.trim()}
-          <div class="pending-status" role="status" aria-live="polite">
-            <LoaderCircle size={15} />
-            <strong>{pendingLabel(item)}</strong>
-            <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可能卡住了，可点击停止后重试" : "结果会自动显示"}</em>
-          </div>
-        {:else if item.role === "tool"}
-          {@const tool = toolDisplay(item)}
-          <details class="thinking-card tool-call-card" open={item.pending}>
-            <summary>
-              <span class="thinking-card__icon"><Terminal size={16} /></span>
-              <div>
-                <strong>{tool.action}</strong>
-                <em>{tool.tool}{item.pending ? " · 正在执行" : ""}</em>
-              </div>
-              <ChevronDown class="thinking-card__chevron" size={16} />
-            </summary>
-            <div class="thinking-card__body">
-              <div class="thinking-step">
-                <span></span>
-                <div>
-                  <strong>Thought</strong>
-                  <p>{tool.action}{tool.readOnly ? " · 只读" : ""}</p>
-                  {#if tool.detail}<code>{tool.detail}</code>{/if}
-                  {#if tool.output}<pre>{tool.output}</pre>{/if}
-                </div>
-              </div>
-            </div>
-          </details>
-        {:else if item.role === "reasoning"}
-          <details class="thinking-card reasoning-card" open={item.pending}>
-            <summary>
-              <span class="thinking-card__icon"><BrainCircuit size={16} /></span>
-              <div>
-                <strong>思考过程</strong>
-              </div>
-              <ChevronDown class="thinking-card__chevron" size={16} />
-            </summary>
-            <div class="thinking-card__body">
-              <div class="thinking-step">
-                <span></span>
-                <div>
-                  <MarkdownView text={item.body} />
-                </div>
-              </div>
-            </div>
-          </details>
-        {:else}
-          {@const renderedWrite = markdownWriteResult(item)}
-          {#if renderedWrite}
-            <div class="tool-document-result">
-              <MarkdownView text={renderedWrite.content} />
-              <footer>
-                <strong>已写入 Markdown 文件</strong>
-                <span>{renderedWrite.bytes} bytes</span>
-                <code>{renderedWrite.writtenPath || renderedWrite.path}</code>
-              </footer>
-            </div>
-          {:else}
-            <MarkdownView text={item.body} />
-            {#if item.pending && item.role === "assistant"}
-              <div class="pending-inline-status" role="status" aria-live="polite">
-                <LoaderCircle size={13} />
-                <span>{isLikelyStalled(item) ? "处理时间较长" : "正在继续处理"}</span>
-                <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可点击停止后重试" : "后续内容会自动更新"}</em>
-              </div>
-            {/if}
+{#snippet toolEvidence(item: TranscriptItem)}
+  {@const tool = toolDisplay(item)}
+  <details class="thinking-card tool-call-card" open={isToolDetailsOpen(openToolIDs, item.id, item.pending)} ontoggle={(event) => handleToolToggle(event, item)}>
+    <summary>
+      <span class="thinking-card__icon"><Terminal size={16} /></span>
+      <div>
+        <strong>{tool.action}</strong>
+        <em>{tool.tool} · {tool.status}{#if tool.durationMs !== undefined} · {formatDuration(tool.durationMs)}{/if}{#if tool.archived && !tool.archiveLoaded} · {tool.archiveLoading ? "正在加载归档详情" : "结果已归档，展开可加载详情"}{/if}{#if tool.truncated} · 输出已截断{/if}</em>
+      </div>
+      <ChevronDown class="thinking-card__chevron" size={16} />
+    </summary>
+    <div class="thinking-card__body">
+      <div class="thinking-step">
+        <span></span>
+        <div>
+          <strong>执行内容</strong>
+          <p>{tool.action}{tool.readOnly ? " · 只读" : ""}</p>
+          {#if tool.detail}<code>{tool.detail}</code>{/if}
+          {#if tool.summary}<p class="tool-summary">{tool.summary}</p>{/if}
+          {#if tool.archived && !tool.archiveLoaded && !tool.output}
+            <p class="tool-archive-status">{tool.archiveLoading ? "正在加载归档详情…" : tool.archiveLoadError || "结果已归档，展开时加载完整参数和输出。"}</p>
           {/if}
-        {/if}
-        {#if item.role === "tool" && subcallsByParent.get(item.id)?.length}
-          <div class="tool-subcalls" aria-label={`Subcalls for ${item.title || item.id}`}>
-            {#each subcallsByParent.get(item.id) ?? [] as child (child.id)}
-              <article class={`message message--tool message--subtool${child.pending ? " is-pending" : ""}`} data-parent-tool-id={item.id}>
-                {#if child.pending && !child.body.trim()}
-                  <div class="pending-status pending-status--compact" role="status" aria-live="polite">
-                    <LoaderCircle size={14} />
-                    <strong>{pendingLabel(child)}</strong>
-                  </div>
-                {:else if child.role === "tool"}
-                  {@const childTool = toolDisplay(child)}
-                  <details class="thinking-card tool-call-card tool-call-card--sub" open={child.pending}>
-                    <summary>
-                      <span class="thinking-card__icon"><Wrench size={15} /></span>
-                      <div>
-                        <strong>{childTool.action}</strong>
-                        <em>{childTool.tool}{child.pending ? " · 正在执行" : ""}</em>
-                      </div>
-                      <ChevronDown class="thinking-card__chevron" size={15} />
-                    </summary>
-                    <div class="thinking-card__body">
-                      <div class="thinking-step">
-                        <span></span>
-                        <div>
-                          <strong>Thought</strong>
-                          <p>{childTool.action}{childTool.readOnly ? " · 只读" : ""}</p>
-                          {#if childTool.detail}<code>{childTool.detail}</code>{/if}
-                          {#if childTool.output}<pre>{childTool.output}</pre>{/if}
-                        </div>
-                      </div>
-                    </div>
-                  </details>
-                {:else}
-                  {@const renderedChildWrite = markdownWriteResult(child)}
-                  {#if renderedChildWrite}
-                    <div class="tool-document-result">
-                      <MarkdownView text={renderedChildWrite.content} />
-                      <footer>
-                        <strong>已写入 Markdown 文件</strong>
-                        <span>{renderedChildWrite.bytes} bytes</span>
-                        <code>{renderedChildWrite.writtenPath || renderedChildWrite.path}</code>
-                      </footer>
-                    </div>
-                  {:else}
-                    <MarkdownView text={child.body} />
-                  {/if}
-                {/if}
-              </article>
+          {#if tool.output}<pre>{tool.output}</pre>{/if}
+          {#if tool.error}<p class={tool.cancelled ? "tool-cancelled" : "tool-error"}>{tool.cancelled ? `已取消：${tool.error}` : tool.error}</p>{/if}
+        </div>
+      </div>
+    </div>
+  </details>
+{/snippet}
+
+<section class="transcript" aria-busy={sending || loading}>
+  {#each transcriptEntries as entry (entry.id)}
+    {#if entry.kind === "file-activity"}
+      <article class="message message--tool file-activity" aria-label="文件检查活动">
+        <details class="file-activity__details">
+          <summary>
+            <span class="thinking-card__icon"><Terminal size={16} /></span>
+            <div>
+              <strong>文件检查</strong>
+              <em>{entry.items.length} 项 · {fileActivityStatus(entry.items)} · 最近：{fileActivityLatestTarget(entry.items)} · {fileActivityTiming(entry.items)}</em>
+            </div>
+            <ChevronDown class="thinking-card__chevron" size={16} />
+          </summary>
+          <div class="file-activity__evidence">
+            {#each entry.items as toolItem (toolItem.id)}
+              {@render toolEvidence(toolItem)}
             {/each}
           </div>
-        {/if}
+        </details>
       </article>
+    {:else}
+      {@const item = entry.item}
+      {#if !isRawAskPayload(item)}
+        <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`} data-tool-id={item.role === "tool" ? item.id : undefined}>
+          {#if item.pending && !item.body.trim()}
+            <div class="pending-status" role="status" aria-live="polite">
+              <LoaderCircle size={15} />
+              <strong>{pendingLabel(item)}</strong>
+              <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可能卡住了，可点击停止后重试" : "结果会自动显示"}</em>
+            </div>
+          {:else if item.role === "tool"}
+            {@render toolEvidence(item)}
+          {:else if item.role === "reasoning"}
+            <details class="thinking-card reasoning-card" open={item.pending}>
+              <summary>
+                <span class="thinking-card__icon"><BrainCircuit size={16} /></span>
+                <div>
+                  <strong>思考过程</strong>
+                </div>
+                <ChevronDown class="thinking-card__chevron" size={16} />
+              </summary>
+              <div class="thinking-card__body">
+                <div class="thinking-step">
+                  <span></span>
+                  <div>
+                    <MarkdownView text={item.body} />
+                  </div>
+                </div>
+              </div>
+            </details>
+          {:else}
+            {@const renderedWrite = markdownWriteResult(item)}
+            {#if renderedWrite}
+              <div class="tool-document-result">
+                <MarkdownView text={renderedWrite.content} />
+                <footer>
+                  <strong>已写入 Markdown 文件</strong>
+                  <span>{renderedWrite.bytes} bytes</span>
+                  <code>{renderedWrite.writtenPath || renderedWrite.path}</code>
+                </footer>
+              </div>
+            {:else}
+              <MarkdownView text={item.body} />
+              {#if item.pending && item.role === "assistant"}
+                <div class="pending-inline-status" role="status" aria-live="polite">
+                  <LoaderCircle size={13} />
+                  <span>{isLikelyStalled(item) ? "处理时间较长" : "正在继续处理"}</span>
+                  <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可点击停止后重试" : "后续内容会自动更新"}</em>
+                </div>
+              {/if}
+            {/if}
+          {/if}
+          {#if item.role === "tool" && subcallsByParent.get(item.id)?.length}
+            <div class="tool-subcalls" aria-label={`Subcalls for ${item.title || item.id}`}>
+              {#each subcallsByParent.get(item.id) ?? [] as child (child.id)}
+                <article class={`message message--tool message--subtool${child.pending ? " is-pending" : ""}`} data-parent-tool-id={item.id}>
+                  {#if child.pending && !child.body.trim()}
+                    <div class="pending-status pending-status--compact" role="status" aria-live="polite">
+                      <LoaderCircle size={14} />
+                      <strong>{pendingLabel(child)}</strong>
+                    </div>
+                  {:else}
+                    {@render toolEvidence(child)}
+                  {/if}
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </article>
+      {/if}
     {/if}
   {/each}
 
@@ -423,6 +517,57 @@
   .message--tool.is-pending {
     border-color: transparent;
     background: transparent;
+  }
+
+  .file-activity {
+    padding-left: 22px;
+  }
+
+  .file-activity__details {
+    color: #4b5565;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  .file-activity__details summary {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 14px;
+    align-items: center;
+    gap: 8px;
+    width: min(100%, 760px);
+    min-height: 38px;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .file-activity__details summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .file-activity__details summary strong {
+    display: block;
+    color: #2f3540;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .file-activity__details summary em {
+    display: block;
+    overflow: hidden;
+    color: #7c828c;
+    font-size: 11px;
+    font-style: normal;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-activity__evidence {
+    display: grid;
+    gap: 8px;
+    margin: 8px 0 4px 30px;
+    padding: 6px 0 4px 14px;
+    border-left: 1px solid #d7dee8;
   }
 
   .pending-status {
@@ -639,6 +784,37 @@
     margin-right: 8px;
     color: #6b7280;
     font-weight: 600;
+  }
+
+  .thinking-step .tool-summary,
+  .thinking-step .tool-archive-status,
+  .thinking-step .tool-cancelled,
+  .thinking-step .tool-error {
+    margin-top: 8px;
+    margin-bottom: 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #f1f5f9;
+    color: #566171;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .thinking-step .tool-error {
+    background: #fdf2f2;
+    color: #a13b3b;
+  }
+
+  .thinking-step .tool-cancelled {
+    background: #f8f5ee;
+    color: #7a6240;
+  }
+
+  .thinking-step .tool-summary::before,
+  .thinking-step .tool-archive-status::before,
+  .thinking-step .tool-cancelled::before,
+  .thinking-step .tool-error::before {
+    display: none;
   }
 
   .thinking-step code,

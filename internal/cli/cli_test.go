@@ -966,29 +966,43 @@ func TestAppendEnvUpsertHandlesExportPrefix(t *testing.T) {
 	}
 }
 
-// TestGroupByFamily verifies the wizard groups the default preset into
-// "xigu" (internal gateway), "deepseek" (flash + pro), and "mimo" (pro + flash),
-// preserving the order each family first appears in.
+// TestGroupByFamily verifies the wizard preserves the semantic default provider
+// names as standalone families, while still grouping GLM under the internal
+// gateway and DeepSeek's flash + pro SKUs together. Family order follows the
+// order each provider first appears in the default preset.
 func TestGroupByFamily(t *testing.T) {
 	order, members, info := groupByFamily(config.Default().Providers)
 
-	if got := order; !reflect.DeepEqual(got, []string{"xigu", "deepseek", "mimo-pro", "mimo-flash"}) {
-		t.Fatalf("family order = %v, want [xigu deepseek mimo-pro mimo-flash]", got)
+	wantOrder := []string{"qwen-thinking", "xigu", "qwen-fast", "image-gen", "deepseek", "mimo-pro", "mimo-flash"}
+	if !reflect.DeepEqual(order, wantOrder) {
+		t.Fatalf("family order = %v, want %v", order, wantOrder)
 	}
-	if got := members["xigu"]; !reflect.DeepEqual(got, []int{0, 1, 2, 3}) {
-		t.Errorf("xigu members = %v, want [0 1 2 3]", got)
+
+	wantMembers := map[string][]int{
+		"qwen-thinking": {0},
+		"xigu":          {1},
+		"qwen-fast":     {2},
+		"image-gen":     {3},
+		"deepseek":      {4, 5},
+		"mimo-pro":      {6},
+		"mimo-flash":    {7},
 	}
-	if got := members["deepseek"]; !reflect.DeepEqual(got, []int{4, 5}) {
-		t.Errorf("deepseek members = %v, want [4 5]", got)
+	wantNames := map[string]string{
+		"qwen-thinking": "qwen-thinking",
+		"xigu":          "西谷内网",
+		"qwen-fast":     "qwen-fast",
+		"image-gen":     "image-gen",
+		"deepseek":      "DeepSeek",
+		"mimo-pro":      "mimo-pro",
+		"mimo-flash":    "mimo-flash",
 	}
-	if got := members["mimo-pro"]; !reflect.DeepEqual(got, []int{6}) {
-		t.Errorf("mimo-pro members = %v, want [6]", got)
-	}
-	if got := members["mimo-flash"]; !reflect.DeepEqual(got, []int{7}) {
-		t.Errorf("mimo-flash members = %v, want [7]", got)
-	}
-	if info["xigu"].name != "西谷内网" || info["deepseek"].name != "DeepSeek" || info["mimo-pro"].name != "mimo-pro" || info["mimo-flash"].name != "mimo-flash" {
-		t.Errorf("display names = %q / %q / %q / %q", info["xigu"].name, info["deepseek"].name, info["mimo-pro"].name, info["mimo-flash"].name)
+	for _, family := range wantOrder {
+		if got := members[family]; !reflect.DeepEqual(got, wantMembers[family]) {
+			t.Errorf("%s members = %v, want %v", family, got, wantMembers[family])
+		}
+		if got := info[family].name; got != wantNames[family] {
+			t.Errorf("%s display name = %q, want %q", family, got, wantNames[family])
+		}
 	}
 }
 

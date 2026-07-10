@@ -67,7 +67,7 @@
 | ANYONG-RUNTIME-BRAND-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复暗涌发行版运行时仍自称 Volt/VoltUI | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
-| ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+| ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
 
 ### ANYONG-RELEASE-20260710-4 Task Contract
 
@@ -84,6 +84,7 @@
 - 验证计划：fresh local/tracking/live refs 与 tag/release 基线；root/desktop Go test+vet、brand/linker 专项、Coreutils/Bun/computer-use stage 脚本测试、frontend check/build、YAML/shell/Node 语法、manifest/release tools 测试、secret scan；candidate verifier；push 后持续读取 CNB build/tag/Release，下载 `latest.json`、installer 和 zip 完成 size/SHA-256/内容/OEM 品牌验证；live verifier。
 - context_isolation：explorer 写 `.mailbox/045-release-explorer-result.md`；candidate verifier 写 `.mailbox/046-release-candidate-verifier-result.md`；live verifier 写 `.mailbox/047-release-live-verifier-result.md`；不向子代理传递凭据值，产物证据以文件路径+哈希/元数据交付。
 - interruption_recovery：子代理或 CNB 构建超时时，`last_stable_artifact` 为 Task Contract、candidate commit、push porcelain、live tag/Release JSON、已下载资产哈希；子代理可重派一次，不切换 Claude/WorkBuddy；持续无 live 发布证据则保持 running/PARTIAL，不声称完成。
+- completion_evidence：explorer `.mailbox/045-release-explorer-result.md` PASS；candidate verifier `.mailbox/046-release-candidate-verifier-result.md` PASS；prepare `b33ae8cc` + trigger `fd940e230a601b09ae46d3c7413c7540057ac7e0` fast-forward push；CNB build `cnb-hog-1jt6641eb` overall、pipeline-1/2 和所有 release 业务 stage success；live `main`/`desktop-v0.8.2` 均指向 trigger；Release 非 draft/prerelease 且精确三资产；installer=`87227719` bytes / `e08ae2ac...79a0`，ZIP=`86975522` bytes / `073f1d10...b5ca`，`latest.json`=`428` bytes / `9d500092...f276`；manifest `v0.8.2` 的 canonical URL/size/SHA 与 installer 一致；ZIP 包含 Anyong.exe、update helper、computer-use `6.2.0`/N-API、Bun `1.3.14`、Coreutils `2026.6.16`；`go version -m`/二进制扫描证明 `GOOS=windows GOARCH=amd64`、`main.version=v0.8.2` 与 OEM 中文品牌 linker 默认；live verifier `.mailbox/047-release-live-verifier-result.md` PASS，保护 stash 保留。
 
 ### ANYONG-PUSH-20260710 Task Contract
 

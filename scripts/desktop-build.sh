@@ -27,6 +27,7 @@ arch="${PLATFORM#*/}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="${DESKTOP_APP_NAME:-VoltUI}"  # release bundle/artifact name (forks override via DESKTOP_APP_NAME)
+RUNTIME_BRAND="${VOLTUI_BRAND_NAME:-VoltUI}"
 BINNAME="voltui-desktop"      # wails.json outputfilename -> linux binary name
 COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
 BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"
@@ -84,7 +85,7 @@ numver="${VERSION#v}"; numver="${numver%%-*}"
 node -e 'const fs=require("fs"),f="wails.json",j=JSON.parse(fs.readFileSync(f,"utf8"));j.info.productVersion=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$numver"
 
 # NSIS installer is Windows-only (Wails requires a single windows target for -nsis).
-ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
+ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL -X 'voltui/internal/config.defaultBrandName=$RUNTIME_BRAND'"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then

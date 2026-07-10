@@ -62,6 +62,79 @@
 | ANYONG-RELEASE-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 构建并发布合并 computer-use MCP 与 Bun runtime 的新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.0/latest.json |
 | ANYONG-SYNC-20260710-2 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 | ANYONG-RELEASE-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 提交推送并发布 Windows Bun staging 修复版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.1/latest.json |
+| ANYONG-VLLM-TOOLS-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复 9010 网关后 Qwen vLLM 自动工具调用 400 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+| ANYONG-CHAT-OUTPUT-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 诊断暗涌桌面对话重复输出与工具调用报错 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RUNTIME-BRAND-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复暗涌发行版运行时仍自称 Volt/VoltUI | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | running | codex | gpt-5.3-codex | - | review-high | main | - |
+
+### ANYONG-PUSH-20260710 Task Contract
+
+- 目标：将已验证的 upstream merge `b556405d` 与当前 OEM 运行时品牌修复/协作记录形成一个明确提交，push 到 CNB `origin/main`，并以 live remote ref 验证成功。
+- 非目标：不触发或创建新 `desktop-v*` Release，不部署/发布安装包，不改写业务实现，不提交 mailbox/运行态文件，不暴露或写入 token，不 force push。
+- 验收标准：fresh remote `main` 在 push 前仍为 `6ac16313`；暂存范围恰好为 `desktop/windows_update_handoff_test.go`、`internal/config/brand_test.go`、`internal/config/config.go`、`scripts/desktop-build.sh`、`tasks.md`、`progress.md`；提交信息为 `fix(desktop): embed OEM runtime brand default [skip-release]`；push 后 live `refs/heads/main` 等于本地 HEAD，合并提交和 brand 提交均在远程历史中；`[skip-release]` 被 `.cnb.yml` 明确识别，本轮不生成新发布 tag。
+- 协作模式：`pipeline`。explorer 只读审计提交范围、release-skip 逻辑、remote 分歧和鉴权恢复方案；commit/push 属外部写入，由 orchestrator 主进程执行；verifier 独立复核 local/remote refs、commit 内容和无新 release tag；orchestrator 最终裁决。
+- 预计文件：仅上述六个已验证 dirty 文件进入新提交；已有 merge `b556405d` 与其 upstream 祖先随 push 发布到 remote history。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`anyong-brand-config`、`xigu-ai-ops`；提交遵循 Conventional Commits、配置优先和上游通用性约定。本轮不编辑/分析 `.svelte`，不激活 Svelte 编写 skill。
+- 风险：high，涉及 CNB 远程 `main` 外部写入和每次 push 的 CI；当前 `origin` URL 带 `cnb@` 会命中过期凭据并伪装成 `Repository Not Found`，而 macOS Keychain 的 host-only 凭据已证明可读 remote。
+- 鉴权策略：仅将本地 `origin` URL 从带用户名的 `https://cnb@cnb.cool/...` 调整为无 userinfo 的 `https://cnb.cool/...`，使 Git 命中 Keychain host-only 凭据；不读取/输出 token 值，不修改远程仓库权限。
+- 回滚：push 前任何门禁失败则停止；push 后如需回退产品改动，以普通 revert 提交撤销，不重写历史；本地 remote URL 可恢复为原值，但不恢复失效凭据。
+- 验证计划：Keychain-only `ls-remote/fetch`、remote ahead/behind；提交前 `git diff --check`、root/desktop Go 测试与 vet、brand 专项、Coreutils Node、frontend check/build 证据；精确 staged-file 清单与 secret 扫描；push 后 `ls-remote origin refs/heads/main`、commit range/tag 复核和独立 verifier。
+- context_isolation：explorer 将结果写入 `.mailbox/042-push-explorer-result.md`；verifier 只读 final local/remote 状态并写 `.mailbox/043-push-verifier-result.md`；子代理不接收凭据内容，不执行 push。
+- interruption_recovery：若 explorer/verifier 超时，保留 mailbox error；`last_stable_artifact` 为 Task Contract、本地 commit、push porcelain/live ref 输出；orchestrator 可重派一次，不切换 Claude/WorkBuddy，缺 verifier 时不声称完成。
+
+### ANYONG-SYNC-20260710-3 Task Contract
+
+- 目标：在 fresh fetch `git@github.com:zuohuadong/volt-gui.git` 后，将 `upstream/main` 的新增提交合并到本地 `main`，同时原样保护当前未提交的 OEM 运行时品牌修复和协作记录。
+- 非目标：不提交、不 push、不发布；不运行会 `git add -A` / force push 的旧同步脚本；不借合并改写已完成但未提交的品牌实现。
+- 验收标准：fresh `upstream/main` 成为本地 `main` 祖先；无未解决冲突或冲突标记；合并前六个未提交文件的改动在合并后仍存在且语义不变；品牌仍通过 BrandConfig/OEM build default 配置实现；按 upstream 实际变更范围运行真实验证，并获得独立 verifier 证据。
+- 协作模式：`pipeline`。explorer 只读审计 fresh delta、merge-tree 冲突面和本地改动保护点；executor 在隔离 worktree 中完成 merge 及必要的 union 解决；verifier 独立复核合并历史、本地 diff 恢复和测试；orchestrator 最终裁决。
+- 预计影响：Git 历史、upstream 实际增量文件；不主动修改产品文件。当前未提交保护集为 `desktop/windows_update_handoff_test.go`、`internal/config/brand_test.go`、`internal/config/config.go`、`scripts/desktop-build.sh`、`tasks.md`、`progress.md`。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`anyong-brand-config`、`xigu-ai-ops`；按项目 Go/Wails/Astro 边界和上游优先约定执行。本轮若仅合并既有 `.svelte` 提交而不手工编辑，不激活 Svelte 编写 skill。
+- 风险：medium，upstream 可能与 OEM 品牌默认、桌面构建或发布覆盖同文件；当前工作树不干净，直接 merge 可能覆盖或混入未提交工作。
+- 回滚：用命名 stash 和隔离 sync worktree 保护本地改动；merge 未完成时可 abort/删除临时 worktree；merge 提交已进入 `main` 后如需回退，只用普通 revert，不 reset/force push。
+- 验证计划：`git fetch upstream`、ahead/behind 与 commit 审计、`git merge-tree`、`git diff --check`、冲突标记扫描；按变更范围运行 root/desktop/frontend/site 窄门禁；比对 stash 前后本地 diff；独立 verifier 给出 PASS/FAIL/PARTIAL。
+- context_isolation：所有子代理 isolated；explorer 将结果写入 `.mailbox/039-upstream-explorer-result.md`；executor 仅读取 Task Contract/explorer mailbox 并只写隔离 worktree；verifier 只读最终仓库与命名 stash 证据。
+- interruption_recovery：原生 executor 已完成预期 `App.svelte` 冲突 union 但未写 mailbox/提交即停滞；orchestrator 中断后以该已暂存 merge 为 `last_stable_artifact`，重做全部门禁、创建 `b556405d`、快进 `main` 并恢复 stash。失败记录为 `.mailbox/040-upstream-executor-result.md`，独立 verifier `.mailbox/041-upstream-verifier-result.md` 最终 PASS；未切换 Claude/WorkBuddy。
+- completion_evidence：explorer `.mailbox/039-upstream-explorer-result.md`；merge `b556405d15f9b7de7a5e103d61bc3dda074cd47f`；`upstream/main=909fbc9f` 已为 `main` 祖先且 marker 一致；root/desktop `go test ./...` 与 `go vet ./...`、Coreutils Node 5/5、frontend check/build、brand 专项、shell 语法和 `git diff --check` 通过；六个 dirty 文件恢复，保护 stash `255991ae` 仍保留，未 push/未发布。
+
+### ANYONG-RUNTIME-BRAND-20260710 Task Contract
+
+- 目标：让使用 `VOLTUI_BRAND_NAME="西谷智灯暗涌系统"` 构建的桌面发行版在没有安装机环境变量、且用户未显式配置 `[brand]` 时，运行时 `BrandName()`、系统提示词和助手自我介绍仍使用西谷智灯暗涌系统，不再回退或自行引入 `Volt` / `VoltUI`。
+- 非目标：不把西谷智灯暗涌系统硬编码进通用 Go/Svelte 产品逻辑；不修改模型服务、9010 路由、BrandConfig 用户覆盖能力、安装包文件名前缀或现有 UI 视觉品牌；本轮不发布、不提交、不 push。
+- 验收标准：先有失败测试证明当前 build-time 品牌不会成为运行时默认；实现后满足 `进程环境变量 > 用户 [brand] 配置 > OEM 构建默认 > VoltUI`；默认系统提示词包含 OEM 品牌且不含 `You are VoltUI`；桌面构建脚本安全注入含中文/空格的品牌 linker value；品牌未配置时 upstream 行为仍为 VoltUI；有测试防止模型使用未配置旧昵称。
+- 协作模式：`pipeline`。explorer 只读确认最小通用设计和 linker/提示词边界；executor 独占允许文件执行 red-green-refactor；verifier 独立检查 diff、测试和打包命令；orchestrator 最终裁决。
+- 预计文件：`internal/config/config.go`、`internal/config/brand_test.go`、`scripts/desktop-build.sh`、桌面构建脚本专项测试；如需通用身份提示，仅限 `internal/boot/boot.go` 及其测试。不得修改 `.cnb.yml` 中现有品牌值或前端硬编码。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-tdd`、`agent-team-automation`、`anyong-brand-config`；遵循 Go `gofmt`、最小 diff、配置优先、上游通用能力优先。未涉及 `.svelte` 编辑，因此禁用 `svelte-code-writer` / `svelte-core-bestpractices`。
+- 风险：medium，改动影响所有 OEM 白标发行版的默认品牌和系统提示词；linker quoting 错误可能导致构建失败，优先级错误可能覆盖用户自定义品牌。
+- 回滚：移除 OEM 默认变量及 `desktop-build.sh` linker 注入即可恢复当前 VoltUI fallback；不迁移或改写用户配置。
+- 验证计划：TDD red/green 覆盖 OEM 默认、env/config 覆盖、未配置 fallback、系统提示词身份；`go test ./internal/config`、必要的 `go test ./internal/boot`、`cd desktop && go test .`、shell/脚本专项测试、含中文空格 linker smoke、`bash -n scripts/desktop-build.sh`、`git diff --check`。
+- context_isolation：所有子代理 isolated；explorer 通过 `.mailbox/036-runtime-brand-explorer-result.md` 交付设计；executor 仅读取该 mailbox 与 Task Contract；verifier 只读当前 diff和验证输出。
+- interruption_recovery：若子代理超时，`last_stable_artifact` 为 Task Contract、已有品牌测试和对应 mailbox error；Codex CLI 已在上一任务出现启动超时，因此优先使用当前 Codex 原生子代理，不切换 Claude/WorkBuddy；失败时由 orchestrator 重派一次或标记 PARTIAL。
+
+### ANYONG-CHAT-OUTPUT-20260710 Task Contract
+
+- 目标：基于用户截图，定位“自动工具调用 400 提示仍可见”以及助手将同一自我介绍近乎完整重复两遍的真实产生层，区分历史错误提示、模型原始输出、OpenAI 兼容流解析、Agent 事件汇聚和 Svelte Transcript 渲染问题。
+- 非目标：本轮诊断阶段不修改产品源码、不重启或改写生产服务、不变更 9010 路由/鉴权/模型映射，也不把模型重复简单归因于截图或用户操作。
+- 验收标准：形成可复现或可证伪的最小反馈环；列出并逐一检验 3-5 个假设；给出截图证据、相关 file:line、可用的真实 9010/本地测试证据；确认根因或明确剩余唯一缺失的运行时证据；产出后续 TDD 回归 seam。
+- 协作模式：`pipeline`。orchestrator 负责截图解读、现有任务/运行时证据核对和最终裁决；explorer 只读检查 provider -> agent event -> desktop transcript 链路并提交 mailbox；如确认需要修复，再另行进入 `agent-team-tdd` executor -> verifier。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-diagnose`、`agent-team-automation`、`xigu-ai-ops`；遵循 Go/Wails/Svelte 既有边界与上游优先原则。诊断若需要改动 `.svelte`，后续必须加载 `svelte-code-writer` 和 `svelte-core-bestpractices`。
+- 风险：medium，症状同时覆盖模型服务和用户可见桌面对话；仅凭截图可能混淆旧 400 提示与修复后的新响应，错误归因会导致无效客户端补丁。
+- 回滚：本轮只读诊断无产品回滚；协调记录可按任务状态归档。临时诊断产物必须放在非产品路径并在结论前清理或明确标记。
+- 验证计划：检查当前 live 9010 能力与既有 VLLM 修复状态；用截图中的最小问句和工具请求分别验证无工具/有工具流；对照 OpenAI SSE 原始文本、Agent `event.Text`/`event.Message`、持久化 History 与 `mergeStreamingText`；运行相关 Go/前端窄测试或只读 harness。
+- context_isolation：explorer 使用 isolated context，仅共享截图路径、Task Contract、仓库路径和允许读取的 provider/agent/desktop/frontend 文件。
+- interruption_recovery：explorer 超时或输出不完整时读取 `.mailbox/035-chat-output-explorer-result.md` 的 error evidence；以当前截图、既有 `ANYONG-VLLM-TOOLS-20260710` live 记录和主进程复现结果为 last_stable_artifact，必要时重派一次，否则标记 PARTIAL。
+
+### ANYONG-VLLM-TOOLS-20260710 Task Contract
+
+- 目标：保持桌面端与默认 provider 继续请求 `http://192.168.1.47:9010/v1` GoModel 网关，修复其后 `vllm-qwen36-gpu4.service` / `vllm-qwen36-gpu5.service` 因未启用自动工具解析而对 Volt Agent `tools` 请求返回 HTTP 400 的运行时故障。
+- 非目标：不把桌面端改为直连 8001/8005；不绕过 GoModel 鉴权、别名和路由；不使用 `tool_choice=none` 静默禁用工具；不修改 GLM、图像模型、GoModel 数据库或仓库产品源码。
+- 验收标准：修复前通过 9010 复现精确错误；两个 Qwen unit 均启用 `--enable-auto-tool-choice` 和与现有 XML tool template 匹配的 parser；服务重启后 active/healthy；8001、8005 以及带鉴权的 9010 请求不再返回该 400；至少一个经 9010 的工具请求产生有效 completion/tool-call 响应；原 unit 有可用备份和明确回滚命令。
+- 协作模式：`pipeline`。explorer 只读审计 parser、路由和回滚；生产服务器备份、编辑、重启由 orchestrator 主进程执行；独立 verifier 只读复核 live 服务与 9010 行为。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-tdd`、`xigu-ai-ops`；沿用项目 Go/Wails/Volt 上游一致性原则，运行时配置优先，不在 fork 中私有特判。
+- 风险：high，涉及正在提供内部模型能力的 GPU4/GPU5 systemd 服务；重启会产生短暂不可用，错误 parser 可能导致文本可生成但工具调用无法结构化。
+- 回滚：修改前复制两个 unit 为带时间戳的 root-only 备份；任一服务启动/健康/工具 smoke 失败时恢复对应备份，执行 `systemctl daemon-reload` 并重启；不修改 9010 GoModel 服务和路由。
+- 验证计划：TDD red 为当前 9010 function-tool 请求的精确 400；green 为 8001/8005 与 9010 的 HTTP/JSON/SSE smoke、systemd active 状态和日志无 parser 启动错误；最后由独立 verifier 复核，仓库运行态记录经 `git diff --check` 检查。
 
 ### ANYONG-RELEASE-20260710-3 Task Contract
 

@@ -192,6 +192,15 @@ func (c *Config) AuthEnabled() bool {
 		strings.TrimSpace(c.Auth.ClientID) != ""
 }
 
+var defaultBrandName = "VoltUI"
+
+func compiledDefaultBrandName() string {
+	if name := strings.TrimSpace(defaultBrandName); name != "" {
+		return name
+	}
+	return "VoltUI"
+}
+
 func (c *Config) BrandName() string {
 	if v := firstEnv("VOLTUI_BRAND_NAME", "REASONIX_BRAND_NAME"); v != "" {
 		return v
@@ -199,7 +208,7 @@ func (c *Config) BrandName() string {
 	if v := strings.TrimSpace(c.Brand.Name); v != "" {
 		return v
 	}
-	return "VoltUI"
+	return compiledDefaultBrandName()
 }
 
 func (c *Config) BrandShortName() string {
@@ -1730,7 +1739,7 @@ func Default() *Config {
 		ConfigVersion:    4,
 		DefaultModel:     "qwen-thinking",
 		CredentialsStore: CredentialsStoreAuto,
-		Brand:            BrandConfig{Name: "VoltUI"},
+		Brand:            BrandConfig{Name: compiledDefaultBrandName()},
 		Auth:             AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},
 		UI:               UIConfig{Theme: "auto"},
 		Notifications: NotificationsConfig{

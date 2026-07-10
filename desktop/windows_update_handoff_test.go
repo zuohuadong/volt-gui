@@ -84,3 +84,19 @@ func TestDesktopBuildScriptCompilesAndPackagesWindowsUpdateHelper(t *testing.T) 
 		}
 	}
 }
+
+func TestDesktopBuildScriptInjectsRuntimeBrandDefault(t *testing.T) {
+	data, err := os.ReadFile("../scripts/desktop-build.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		`RUNTIME_BRAND="${VOLTUI_BRAND_NAME:-VoltUI}"`,
+		`ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL -X 'voltui/internal/config.defaultBrandName=$RUNTIME_BRAND'"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("desktop-build.sh missing %q", want)
+		}
+	}
+}

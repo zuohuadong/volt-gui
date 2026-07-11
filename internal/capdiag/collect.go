@@ -416,8 +416,8 @@ func collectPlugins(reasonixHome string, disp func(string) string) (PluginPackag
 			rep.Packages = append(rep.Packages, info)
 			continue
 		}
-		sk, hk, mcp := pkg.CapabilityCounts()
-		info.Skills, info.Hooks, info.MCPServers = sk, hk, mcp
+		sk, commands, hk, mcp := pkg.CapabilityCounts()
+		info.Skills, info.Commands, info.Hooks, info.MCPServers = sk, commands, hk, mcp
 		if p.ManifestKind == "" {
 			info.ManifestKind = pkg.ManifestKind
 		}

@@ -2621,6 +2621,7 @@ function makeMockApp(): AppBindings {
             enabled: p.enabled,
             root: p.root || "<external>/plugin",
             skills: p.skills ?? 0,
+            commands: 0,
             hooks: p.hooks ?? 0,
             mcp_servers: p.mcpServers ?? 0,
             status: p.enabled ? "ok" : "disabled",

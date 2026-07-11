@@ -62,8 +62,8 @@ func RenderText(r Report) string {
 
 	fmt.Fprintf(&b, "Plugins (%d)\n", len(r.Plugins.Packages))
 	for _, p := range r.Plugins.Packages {
-		fmt.Fprintf(&b, "  - %s enabled=%v status=%s skills=%d hooks=%d mcp=%d\n",
-			p.Name, p.Enabled, p.Status, p.Skills, p.Hooks, p.MCPServers)
+		fmt.Fprintf(&b, "  - %s enabled=%v status=%s skills=%d commands=%d hooks=%d mcp=%d\n",
+			p.Name, p.Enabled, p.Status, p.Skills, p.Commands, p.Hooks, p.MCPServers)
 		fmt.Fprintf(&b, "    root: %s\n", p.Root)
 	}
 	if len(r.Plugins.Packages) == 0 {

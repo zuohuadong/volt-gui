@@ -155,6 +155,7 @@ type PluginPackageInfo struct {
 	Root         string   `json:"root"`
 	ManifestKind string   `json:"manifest_kind,omitempty"`
 	Skills       int      `json:"skills"`
+	Commands     int      `json:"commands"`
 	Hooks        int      `json:"hooks"`
 	MCPServers   int      `json:"mcp_servers"`
 	Warnings     []string `json:"warnings,omitempty"`

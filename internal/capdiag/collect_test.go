@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/capdiag"
 	"reasonix/internal/hook"
+	"reasonix/internal/pluginpkg"
 )
 
 func TestCollectStaticNoNetworkSideEffects(t *testing.T) {
@@ -219,6 +220,40 @@ func TestUnknownHookEventIsReported(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected hook.unknown_event, issues=%+v", r.Issues)
+	}
+}
+
+func TestPluginPackageCommandsAreReported(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	reasonixHome := filepath.Join(home, ".reasonix")
+	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_HOME", reasonixHome)
+
+	pluginRoot := filepath.Join(reasonixHome, "plugins", "demo")
+	write(t, filepath.Join(pluginRoot, pluginpkg.NativeManifest), `{"name":"demo","commands":["commands"]}`)
+	write(t, filepath.Join(pluginRoot, "commands", "ship.md"), "---\ndescription: ship it\n---\nShip $ARGUMENTS\n")
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name: "demo", Root: "plugins/demo", ManifestKind: "reasonix", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := capdiag.Collect(capdiag.Options{
+		Root: root, HomeDir: home, ReasonixHomeDir: reasonixHome,
+	})
+	if len(r.Plugins.Packages) != 1 {
+		t.Fatalf("plugin packages = %+v, want demo", r.Plugins.Packages)
+	}
+	pkg := r.Plugins.Packages[0]
+	if pkg.Commands != 1 {
+		t.Fatalf("plugin commands = %d, want 1", pkg.Commands)
+	}
+	if r.Commands.Winners != 1 {
+		t.Fatalf("command winners = %d, want plugin command", r.Commands.Winners)
+	}
+	if text := capdiag.RenderText(r); !strings.Contains(text, "commands=1") {
+		t.Fatalf("text report omitted plugin commands:\n%s", text)
 	}
 }
 

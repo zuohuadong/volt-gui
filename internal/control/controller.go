@@ -176,8 +176,12 @@ type Controller struct {
 	mu        sync.Mutex
 	cancel    context.CancelFunc
 	running   bool
-	finishing bool // TurnDone is still being delivered; reject a replacement turn
+	finishing bool // TurnDone is still being delivered; park a replacement turn
 	canceling bool
+	// parkedTurns holds turn bodies that arrived during the finishing window,
+	// FIFO. finishGuardedTurn starts the oldest one as it closes the window
+	// (see runGuarded/finishGuardedTurn); close() discards any remainder.
+	parkedTurns []func(ctx context.Context) error
 	// rotating is set under mu while NewSession/ClearSession swap the executor
 	// session out. Checking running once and then swapping later leaves a
 	// TOCTOU window: a turn can start (running=false at check time) during the
@@ -569,22 +573,68 @@ func (c *Controller) beginCheckpoint(input string) {
 
 // --- commands (frontend → controller) ---
 
+// admissionResult classifies what runGuarded did with a turn body.
+type admissionResult int
+
+const (
+	// turnStarted: admission was open; the turn is running now.
+	turnStarted admissionResult = iota
+	// turnParked: the body landed inside the finishing window (TurnDone was
+	// being delivered) and will start the moment the window closes. From the
+	// caller's perspective the turn WILL run — nothing was lost.
+	turnParked
+	// turnDroppedRunning: a turn is genuinely in flight. Deliberately silent,
+	// as before: interactive frontends prevent this with their own
+	// steer/queue UX, and internal opportunistic callers (goal-loop
+	// continuations, replays) rely on a quiet no-op.
+	turnDroppedRunning
+	// turnDroppedRotating: the executor session is being swapped out
+	// (NewSession/ClearSession). The input's intended session is ambiguous,
+	// so it is refused with a user-visible Notice asking to resend rather
+	// than silently running against a session the user didn't see.
+	turnDroppedRotating
+)
+
 // runGuarded runs body on a background goroutine under a fresh cancellable
 // context, guarding against concurrent turns and emitting a TurnDone event when
-// it finishes (Err set on failure; nil also for a user Cancel). A no-op if a
-// turn is already in flight.
-func (c *Controller) runGuarded(body func(ctx context.Context) error) {
+// it finishes (Err set on failure; nil also for a user Cancel).
+//
+// Admission is NOT first-come-first-served across all states — see
+// admissionResult. In particular, a body arriving during the finishing window
+// is parked, not dropped: TurnDone is emitted inside that window, so every
+// caller that reacts to TurnDone by submitting again (a frontend's queued
+// auto-send, a bot, a fast Enter) would otherwise race a silent drop. That
+// exact loss was observed in CI and reproduced on a clean main-v2 worktree,
+// and the desktop composer already carries a workaround gating its auto-send
+// on submitDisabled rather than turn_done (Composer.tsx).
+func (c *Controller) runGuarded(body func(ctx context.Context) error) admissionResult {
 	c.mu.Lock()
-	if c.running || c.finishing || c.rotating {
+	if c.rotating {
 		c.mu.Unlock()
-		return
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "input was not accepted: the session is being switched — please resend"})
+		return turnDroppedRotating
+	}
+	if c.running {
+		c.mu.Unlock()
+		return turnDroppedRunning
+	}
+	if c.finishing {
+		c.parkedTurns = append(c.parkedTurns, body)
+		c.mu.Unlock()
+		return turnParked
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.running = true
 	c.canceling = false
 	c.mu.Unlock()
+	c.spawnGuardedTurn(ctx, cancel, body)
+	return turnStarted
+}
 
+// spawnGuardedTurn launches an admitted turn body plus its autosave companion.
+// The caller must already have claimed admission (running=true) under c.mu.
+func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.CancelFunc, body func(ctx context.Context) error) {
 	c.autosaveWG.Add(1)
 	go func() {
 		defer c.autosaveWG.Done()
@@ -606,6 +656,14 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 // sink fan-out may detach per-turn transports; allowing a replacement turn in
 // after running=false but before that fan-out completed let the old completion
 // clear or inherit the replacement turn's transport.
+//
+// When the window closes, the oldest parked turn (if any) is started under the
+// SAME critical section that clears finishing: opening the gate first and then
+// re-admitting would let an unrelated submit slip in ahead and bounce the
+// parked turn back to a drop. Remaining parked turns drain one per
+// finishGuardedTurn, preserving FIFO order. Rotation cannot interleave here:
+// beginRotation refuses while running or finishing, and the drain flips
+// finishing directly into running.
 func (c *Controller) finishGuardedTurn(err error) {
 	c.mu.Lock()
 	c.running = false
@@ -617,7 +675,18 @@ func (c *Controller) finishGuardedTurn(err error) {
 	defer func() {
 		c.mu.Lock()
 		c.finishing = false
+		if len(c.parkedTurns) == 0 {
+			c.mu.Unlock()
+			return
+		}
+		next := c.parkedTurns[0]
+		c.parkedTurns = c.parkedTurns[1:]
+		ctx, cancel := context.WithCancel(context.Background())
+		c.cancel = cancel
+		c.running = true
+		c.canceling = false
 		c.mu.Unlock()
+		c.spawnGuardedTurn(ctx, cancel, next)
 	}()
 	c.sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
 }
@@ -4018,6 +4087,9 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		started := c.startedOnce
+		// A parked turn must not start against a controller that is being torn
+		// down; a running turn finishing after close would otherwise drain it.
+		c.parkedTurns = nil
 		c.mu.Unlock()
 		if fireSessionEnd && started {
 			c.hooks.SessionEnd(context.Background())

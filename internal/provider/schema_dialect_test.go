@@ -96,13 +96,47 @@ func TestNormalizeLegacyTupleItemsLeavesUnconvertedDialectAlone(t *testing.T) {
 }
 
 func TestNormalizeLegacyTupleItemsLeavesUnknownDialectAlone(t *testing.T) {
+	// An unknown dialect may define its own tuple semantics; a partial rewrite
+	// (keywords converted, declaration kept) would be self-contradictory, so
+	// the whole resource comes back byte-identical.
 	raw := json.RawMessage(`{"$schema":"https://example.com/custom-dialect","type":"array","items":[{"type":"string"}]}`)
+	if got := NormalizeLegacyTupleItemsForDraft202012(raw); string(got) != string(raw) {
+		t.Fatalf("custom-dialect resource was rewritten:\n in: %s\nout: %s", raw, got)
+	}
+}
+
+func TestNormalizeLegacyTupleItemsSkipsNestedUnknownDialectResource(t *testing.T) {
+	// The custom-dialect embedded resource stays untouched while a sibling in
+	// the (default 2020-12) enclosing schema still converts.
+	raw := json.RawMessage(`{"type":"object","$defs":{"custom":{"$schema":"https://example.com/custom-dialect","type":"array","items":[{"type":"string"}]},"pair":{"type":"array","items":[{"type":"number"}]}}}`)
 	var schema map[string]any
 	if err := json.Unmarshal(NormalizeLegacyTupleItemsForDraft202012(raw), &schema); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got := schema["$schema"]; got != "https://example.com/custom-dialect" {
-		t.Fatalf("$schema = %v, custom dialects must not be rewritten", got)
+	defs := schema["$defs"].(map[string]any)
+	custom := defs["custom"].(map[string]any)
+	if _, ok := custom["items"].([]any); !ok {
+		t.Fatalf("custom resource's tuple items were rewritten: %v", custom)
+	}
+	if _, exists := custom["prefixItems"]; exists {
+		t.Fatalf("custom resource gained prefixItems: %v", custom)
+	}
+	pair := defs["pair"].(map[string]any)
+	if _, ok := pair["prefixItems"].([]any); !ok {
+		t.Fatalf("sibling resource was not converted: %v", pair)
+	}
+}
+
+func TestNormalizeLegacyTupleItemsRepairsExplicit202012(t *testing.T) {
+	// Array-form items under an explicit 2020-12 declaration is malformed
+	// input; repairing it keeps the declaration as-is.
+	raw := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"array","items":[{"type":"string"}]}`)
+	var schema map[string]any
+	if err := json.Unmarshal(NormalizeLegacyTupleItemsForDraft202012(raw), &schema); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got := schema["$schema"]; got != "https://json-schema.org/draft/2020-12/schema" {
+		t.Fatalf("$schema = %v, want 2020-12 kept", got)
 	}
 	if _, ok := schema["prefixItems"].([]any); !ok {
 		t.Fatalf("prefixItems missing: %v", schema)
@@ -118,12 +152,13 @@ func TestNormalizeLegacyTupleItemsCanonicalByteFastPath(t *testing.T) {
 		t.Fatal("schema without items must return the input bytes unchanged")
 	}
 
-	// Memoized conversion: repeated calls yield identical bytes.
+	// Conversion is deterministic across calls (no process-global cache holds
+	// externally supplied schema bytes).
 	tuple := json.RawMessage(`{"type":"array","items":[{"type":"string"}]}`)
 	first := NormalizeLegacyTupleItemsForDraft202012(tuple)
 	second := NormalizeLegacyTupleItemsForDraft202012(tuple)
 	if string(first) != string(second) {
-		t.Fatalf("memoized conversion diverged:\n1: %s\n2: %s", first, second)
+		t.Fatalf("conversion diverged:\n1: %s\n2: %s", first, second)
 	}
 	if string(first) == string(tuple) {
 		t.Fatalf("tuple schema was not converted: %s", first)

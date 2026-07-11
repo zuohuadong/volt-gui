@@ -6064,7 +6064,6 @@ body > .mermaid-diagram--fullscreen {
   flex: 0 0 auto;
 }
 
-.composer-task-mode-trigger__prefix,
 .composer-task-mode-trigger__value {
   min-width: 0;
   overflow: hidden;
@@ -6075,10 +6074,6 @@ body > .mermaid-diagram--fullscreen {
 .composer-task-mode-trigger__value {
   color: var(--fg);
   font-weight: var(--composer-control-font-weight);
-}
-
-.composer-task-mode-trigger__separator {
-  color: var(--fg-faint);
 }
 
 .composer-task-mode-trigger:hover:not(:disabled),
@@ -6362,11 +6357,6 @@ body > .mermaid-diagram--fullscreen {
     flex-basis: 68px;
     width: 68px;
     max-width: 68px;
-  }
-
-  .composer-task-mode-trigger__prefix,
-  .composer-task-mode-trigger__separator {
-    display: none;
   }
 
   .composer-meta__divider {

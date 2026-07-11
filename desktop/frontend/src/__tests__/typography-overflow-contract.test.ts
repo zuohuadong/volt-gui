@@ -200,10 +200,6 @@ ok(
   /@container\s*\(max-width:\s*760px\)[\s\S]*?\.composer-meta__control--model\s*\{[\s\S]*?flex\s*:\s*0 1 auto[\s\S]*?width\s*:\s*fit-content[\s\S]*?max-width\s*:\s*min\(240px,\s*42vw\)[\s\S]*?\.composer-meta__control--profile\s*\{[\s\S]*?max-width\s*:\s*126px[\s\S]*?\.composer-meta__control--intent\s*\{[\s\S]*?max-width\s*:\s*128px[\s\S]*?\.composer-meta__control--effort\s*\{[\s\S]*?display\s*:\s*none[\s\S]*?\.composer-meta__control--more\s*\{[\s\S]*?display\s*:\s*inline-flex/.test(styles),
   "composer compact controls activate at the capped theme width",
 );
-ok(
-  /@container\s*\(max-width:\s*460px\)[\s\S]*?\.composer-task-mode-trigger__prefix,[\s\S]*?\.composer-task-mode-trigger__separator\s*\{[\s\S]*?display\s*:\s*none/.test(styles),
-  "task category prefix collapses only at the narrow breakpoint",
-);
 eq(finalDeclaration(".md table", "overflow-x"), "auto", "markdown tables scroll horizontally");
 eq(finalDeclaration(".code", "overflow"), "auto", "code blocks scroll instead of widening the layout");
 ok(

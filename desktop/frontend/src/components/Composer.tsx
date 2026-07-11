@@ -3202,8 +3202,6 @@ export function Composer({
                   title={intentMenuOpen || intentMenuClosing ? undefined : taskModeTriggerLabel}
                 >
                   <TaskModeIcon size={14} aria-hidden="true" />
-                  <span className="composer-task-mode-trigger__prefix">{t("composer.taskModePrefix")}</span>
-                  <span className="composer-task-mode-trigger__separator" aria-hidden="true">·</span>
                   <span className="composer-task-mode-trigger__value">{t(taskModeShortKey)}</span>
                   <ChevronsUpDown size={11} aria-hidden="true" />
                 </button>

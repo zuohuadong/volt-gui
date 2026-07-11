@@ -1591,7 +1591,6 @@ export const zhTW: Record<DictKey, string> = {
   "composer.modeFullAccess": "完全",
   "composer.modeFullAccessTitle": "完全存取會跳過所有工具權限審批；ask 問題和計劃確認仍會等待",
   "composer.intentMenuTitle": "執行方式",
-  "composer.taskModePrefix": "執行",
   "composer.taskModeTrigger": "執行方式 · {mode}",
   "composer.taskModeDirect": "直接 · 邊做邊推進",
   "composer.taskModeDirectShort": "直接",

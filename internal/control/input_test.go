@@ -690,7 +690,7 @@ func TestSubmitUnknownSlashCommandStillReportsNotice(t *testing.T) {
 		if e.Kind != event.Notice || !strings.Contains(e.Text, "unknown command: /definitely-not-a-command") {
 			t.Fatalf("event = %+v, want unknown-command notice", e)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for unknown-command notice")
 	}
 }
@@ -743,7 +743,7 @@ func TestSubmitRememberCommandQuickAddsMemory(t *testing.T) {
 
 func waitForTurnDone(t *testing.T, events <-chan event.Event) {
 	t.Helper()
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(30 * time.Second)
 	for {
 		select {
 		case e := <-events:

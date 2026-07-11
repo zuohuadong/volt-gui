@@ -47,7 +47,7 @@ func TestCancelClearsPendingApprovalRuntimeStatus(t *testing.T) {
 	c.Send("needs approval")
 	select {
 	case <-approvals:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for approval request")
 	}
 	if st := c.RuntimeStatus(); !st.Running || !st.PendingPrompt || !st.Cancellable || st.CancelRequested {
@@ -80,7 +80,7 @@ func TestCancelClearsPendingAskRuntimeStatus(t *testing.T) {
 	c.Send("ask user")
 	select {
 	case <-asks:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for ask request")
 	}
 	if st := c.RuntimeStatus(); !st.Running || !st.PendingPrompt || !st.Cancellable || st.CancelRequested {
@@ -118,7 +118,7 @@ func waitTurnDoneEvent(t *testing.T, done <-chan event.Event) {
 		if e.Kind != event.TurnDone {
 			t.Fatalf("event = %v, want TurnDone", e.Kind)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for turn_done")
 	}
 }

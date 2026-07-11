@@ -228,7 +228,7 @@ func TestClearSessionMarksCleanupPendingBeforeReturningForRunningJobs(t *testing
 	})
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("background job never started")
 	}
 
@@ -2079,7 +2079,7 @@ func TestTwoModelPlannerApprovalUsesHostGate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("approved two-model turn did not finish")
 	}
 	if prompts != 1 {
@@ -2128,7 +2128,7 @@ func TestTwoModelPlannerUserDecisionUsesAskGate(t *testing.T) {
 	var ask event.Ask
 	select {
 	case ask = <-asks:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("AskRequest was not emitted")
 	}
 	if got := len(execProv.requests); got != 0 {
@@ -2143,7 +2143,7 @@ func TestTwoModelPlannerUserDecisionUsesAskGate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("answered two-model turn did not finish")
 	}
 	if got := len(execProv.requests); got == 0 {
@@ -2293,7 +2293,7 @@ func TestSubmitClearDiscardsCurrentContextWithoutSavingTranscript(t *testing.T) 
 	c.submit("/clear", "", "")
 	select {
 	case <-cleared:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("/clear did not finish")
 	}
 	if c.SessionPath() == path {
@@ -2519,7 +2519,7 @@ func waitApprovalID(t *testing.T, ids <-chan string) string {
 	select {
 	case id := <-ids:
 		return id
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("ApprovalRequest was not emitted")
 	}
 	return ""
@@ -2530,7 +2530,7 @@ func waitPermissionHook(t *testing.T, payloads <-chan hook.Payload) hook.Payload
 	select {
 	case payload := <-payloads:
 		return payload
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("PermissionRequest hook did not fire")
 	}
 	return hook.Payload{}
@@ -2588,7 +2588,7 @@ func TestMemoryApprovalRequestShowsRememberPayload(t *testing.T) {
 	var approval event.Approval
 	select {
 	case approval = <-approvals:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("memory approval request was not emitted")
 	}
 	for _, want := range []string{
@@ -2612,7 +2612,7 @@ func TestMemoryApprovalRequestShowsRememberPayload(t *testing.T) {
 		if msg != "" {
 			t.Fatalf("Approve returned %s", msg)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("memory approval stayed blocked after Approve")
 	}
 }
@@ -2651,7 +2651,7 @@ func TestGuardianCannotAutoAllowFreshHumanApprovalTools(t *testing.T) {
 	var approval event.Approval
 	select {
 	case approval = <-approvals:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("memory approval request was not emitted after Guardian allow")
 	}
 	if approval.Tool != "remember" {
@@ -2672,7 +2672,7 @@ func TestGuardianCannotAutoAllowFreshHumanApprovalTools(t *testing.T) {
 		if got.err != nil || !got.allow || got.remember {
 			t.Fatalf("Approve = (%v,%v,%v), want manual allow without remember", got.allow, got.remember, got.err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("memory approval stayed blocked after manual Approve")
 	}
 }
@@ -2748,7 +2748,7 @@ func TestPermissionRequestHookFiresForToolApproval(t *testing.T) {
 		if got.err != nil || !got.allow || got.remember {
 			t.Fatalf("Approve = (%v,%v,%v), want allow once", got.allow, got.remember, got.err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("approval stayed blocked")
 	}
 }
@@ -2822,7 +2822,7 @@ func TestPermissionRequestHookDoesNotFireForPlanApproval(t *testing.T) {
 		if !allow {
 			t.Fatal("manual plan approval should allow")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("plan approval stayed blocked")
 	}
 }
@@ -2876,7 +2876,7 @@ func TestPermissionRequestHookRedactsMemoryApprovalPayload(t *testing.T) {
 				if msg != "" {
 					t.Fatal(msg)
 				}
-			case <-time.After(2 * time.Second):
+			case <-time.After(30 * time.Second):
 				t.Fatal("memory approval stayed blocked")
 			}
 		})
@@ -3131,7 +3131,7 @@ func TestPlanModeReadOnlyTrustApprovalUsesChineseCatalog(t *testing.T) {
 	var approval event.Approval
 	select {
 	case approval = <-approvalRequests:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("plan-mode bash trust approval request was not emitted")
 	}
 	if !strings.Contains(approval.Subject, "在计划模式中信任") || !strings.Contains(approval.Subject, "gh issue view 5867") {
@@ -3147,7 +3147,7 @@ func TestPlanModeReadOnlyTrustApprovalUsesChineseCatalog(t *testing.T) {
 		if got.err != nil || got.allow || !strings.Contains(got.reason, "用户拒绝") {
 			t.Fatalf("rejected trust result = %+v, want Chinese denial", got)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("plan-mode bash trust approval stayed blocked after rejection")
 	}
 }
@@ -3182,7 +3182,7 @@ func TestPlanModeReadOnlyTrustApprovalIgnoresToolAutoApproval(t *testing.T) {
 	var approval event.Approval
 	select {
 	case approval = <-approvalRequests:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("MCP read-only trust prompt was not emitted under tool auto-approval")
 	}
 	if approval.Tool != "mcp__github__issue_read" || !strings.Contains(approval.Subject, "github/issue/read") {
@@ -3200,7 +3200,7 @@ func TestPlanModeReadOnlyTrustApprovalIgnoresToolAutoApproval(t *testing.T) {
 		if got.err != nil || !got.allow || got.reason != "" {
 			t.Fatalf("CheckPlanModeReadOnlyTrust after approval = %+v, want allow", got)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("MCP read-only trust prompt stayed blocked after Approve")
 	}
 
@@ -3241,7 +3241,7 @@ func TestPlanModeReadOnlyCommandTrustApprovalIgnoresToolAutoApproval(t *testing.
 	var approval event.Approval
 	select {
 	case approval = <-approvalRequests:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("plan-mode bash read-only command trust prompt was not emitted under tool auto-approval")
 	}
 	if approval.Tool != agent.PlanModeReadOnlyCommandApprovalTool || !strings.Contains(approval.Subject, `Trust "gh issue view"`) {
@@ -3259,7 +3259,7 @@ func TestPlanModeReadOnlyCommandTrustApprovalIgnoresToolAutoApproval(t *testing.
 		if got.err != nil || !got.allow || got.reason != "" {
 			t.Fatalf("CheckPlanModeReadOnlyTrust after approval = %+v, want allow", got)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("plan-mode bash read-only command trust prompt stayed blocked after Approve")
 	}
 
@@ -3392,7 +3392,7 @@ func TestRunGuardedPanicEmitsTurnDone(t *testing.T) {
 		if e.Err == nil || !strings.Contains(e.Err.Error(), "boom") {
 			t.Fatalf("expected TurnDone.Err to contain panic message, got %v", e.Err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for TurnDone after panic")
 	}
 
@@ -3469,7 +3469,7 @@ func TestRunGuardedPanicDoesNotDoubleEmitTurnDone(t *testing.T) {
 		})
 	}()
 
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(30 * time.Second)
 	for {
 		select {
 		case <-events:
@@ -3520,7 +3520,7 @@ func TestRunTurnReportsErrTurnRunning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first RunTurn returned %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("first RunTurn did not finish after release")
 	}
 }

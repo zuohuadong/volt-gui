@@ -455,7 +455,6 @@ export const en = {
   "composer.modeFullAccess": "full",
   "composer.modeFullAccessTitle": "Full access skips all tool permission approvals; ask questions and plan confirmations still wait",
   "composer.intentMenuTitle": "Execution method",
-  "composer.taskModePrefix": "Execute",
   "composer.taskModeTrigger": "Execution method · {mode}",
   "composer.taskModeDirect": "Direct · Work as you go",
   "composer.taskModeDirectShort": "Direct",

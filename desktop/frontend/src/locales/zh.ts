@@ -456,7 +456,6 @@ export const zh: Record<DictKey, string> = {
   "composer.modeFullAccess": "完全",
   "composer.modeFullAccessTitle": "完全访问会跳过所有工具权限审批；ask 问题和计划确认仍会等待",
   "composer.intentMenuTitle": "执行方式",
-  "composer.taskModePrefix": "执行",
   "composer.taskModeTrigger": "执行方式 · {mode}",
   "composer.taskModeDirect": "直接 · 边做边推进",
   "composer.taskModeDirectShort": "直接",

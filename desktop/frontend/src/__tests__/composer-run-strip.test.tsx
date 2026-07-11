@@ -166,6 +166,15 @@ console.log("\ncomposer run strip");
   eq(profileTrigger.textContent?.trim(), "Balanced", "standalone control shows only the current profile");
   eq(profileTrigger.getAttribute("aria-label"), "Work mode · Balanced", "work mode trigger keeps its full accessible name");
   ok(profileTrigger.querySelector(".lucide-scale") !== null, "balanced work mode uses a distinct balance icon");
+  await act(async () => {
+    profileTrigger.focus();
+    await flushTimers();
+  });
+  eq(document.querySelector('[role="tooltip"]')?.textContent, "Work mode · Balanced: Full tools, model-directed execution", "work mode tooltip combines category, value, and summary");
+  await act(async () => {
+    profileTrigger.blur();
+    await flushTimers();
+  });
 
   await act(async () => {
     profileTrigger.click();

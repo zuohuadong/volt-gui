@@ -1162,7 +1162,7 @@ export const en = {
   "settings.subagentDepthOne": "1 layer",
   "settings.subagentDepthTwo": "2 layers",
   "settings.defaultToolApprovalMode": "New session approval",
-  "settings.defaultToolApprovalModeHint": "Saved to your global settings file and used only for new sessions; switching or restoring an existing session will not overwrite its Ask / Auto / Yolo state.",
+  "settings.defaultToolApprovalModeHint": "Defaults to Auto when unset. Saved globally and used only for new sessions; existing sessions keep their Ask / Auto / Yolo state.",
   "settings.defaultToolApprovalMode.ask": "Ask",
   "settings.defaultToolApprovalMode.auto": "Auto",
   "settings.defaultToolApprovalMode.yolo": "Yolo",

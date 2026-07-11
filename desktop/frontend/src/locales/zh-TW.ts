@@ -861,7 +861,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.subagentDepthOne": "1 層",
   "settings.subagentDepthTwo": "2 層",
   "settings.defaultToolApprovalMode": "新會話預設審批",
-  "settings.defaultToolApprovalModeHint": "保存在全域設定中，僅用於新建會話；切換或恢復已有會話時不會覆蓋其 Ask / Auto / Yolo 狀態。",
+  "settings.defaultToolApprovalModeHint": "未設定時預設為自動。保存在全域設定中，僅用於新建會話；已有會話會保留其詢問、自動或 Yolo 狀態。",
   "settings.defaultToolApprovalMode.ask": "詢問",
   "settings.defaultToolApprovalMode.auto": "自動",
   "settings.defaultToolApprovalMode.yolo": "Yolo",

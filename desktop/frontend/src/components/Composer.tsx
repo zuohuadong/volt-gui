@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { ArrowRight, ArrowUp, Check, ChevronDown, ChevronUp, ChevronsUpDown, ClipboardCheck, CornerDownRight, Eye, FileText, Folder, Gauge, List, MessageSquare, Scale, Search, Shield, ShieldAlert, ShieldCheck, Square, Target, Trash2, X } from "lucide-react";
+import { ArrowRight, ArrowUp, Check, ChevronDown, ChevronUp, ChevronsUpDown, CornerDownRight, Equal, Eye, FileText, Flag, Folder, Gauge, List, MessageSquare, Search, Shield, ShieldAlert, ShieldCheck, Square, Target, Trash2, X } from "lucide-react";
 import { asArray } from "../lib/array";
 import { filterAtMatches } from "../lib/atMatches";
 import { DedupIndex, sha256 } from "../lib/attachDedup";
@@ -2500,7 +2500,7 @@ export function Composer({
     : tokenMode === "delivery"
       ? "composer.runtimeProfileDeliveryTooltipSummary"
       : "composer.runtimeProfileBalancedTooltipSummary";
-  const RuntimeProfileIcon = tokenMode === "economy" ? Gauge : tokenMode === "delivery" ? ClipboardCheck : Scale;
+  const RuntimeProfileIcon = tokenMode === "economy" ? Gauge : tokenMode === "delivery" ? Flag : Equal;
   const runtimeProfileTriggerLabel = t("composer.runtimeProfileTrigger", { mode: t(runtimeProfileShortKey) });
   const runtimeProfileTooltipLabel = t("composer.controlTooltip", {
     category: t("composer.runtimeProfileTitle"),
@@ -2754,8 +2754,8 @@ export function Composer({
           <div className="composer-access-menu__label">{t("composer.runtimeProfileTitle")}</div>
           {([
             ["economy", Gauge, "composer.runtimeProfileEconomy", "composer.runtimeProfileEconomyDesc"],
-            ["full", Scale, "composer.runtimeProfileBalanced", "composer.runtimeProfileBalancedDesc"],
-            ["delivery", ClipboardCheck, "composer.runtimeProfileDelivery", "composer.runtimeProfileDeliveryDesc"],
+            ["full", Equal, "composer.runtimeProfileBalanced", "composer.runtimeProfileBalancedDesc"],
+            ["delivery", Flag, "composer.runtimeProfileDelivery", "composer.runtimeProfileDeliveryDesc"],
           ] as const).map(([profile, Icon, titleKey, descKey]) => (
             <button
               key={profile}
@@ -2767,7 +2767,7 @@ export function Composer({
               title={t(descKey)}
               aria-checked={tokenMode === profile}
             >
-              <Icon size={16} />
+              <Icon size={16} strokeWidth={1.75} />
               <span className="composer-access-menu__copy">
                 <span className="composer-access-menu__title">{t(titleKey)}</span>
                 <span className="composer-access-menu__desc">{t(descKey)}</span>
@@ -3236,7 +3236,7 @@ export function Composer({
                   aria-label={runtimeProfileTriggerLabel}
                   title={profileMenuOpen || profileMenuClosing ? undefined : runtimeProfileTriggerLabel}
                 >
-                  <RuntimeProfileIcon size={14} aria-hidden="true" />
+                  <RuntimeProfileIcon size={14} strokeWidth={1.75} aria-hidden="true" />
                   <span className="composer-profile-trigger__label">
                     <span className="composer-profile-trigger__value">{t(runtimeProfileShortKey)}</span>
                   </span>

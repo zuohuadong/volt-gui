@@ -1164,7 +1164,7 @@ export const zh: Record<DictKey, string> = {
   "settings.subagentDepthOne": "1 层",
   "settings.subagentDepthTwo": "2 层",
   "settings.defaultToolApprovalMode": "新会话默认审批",
-  "settings.defaultToolApprovalModeHint": "保存在全局设置中，仅用于新建会话；切换或恢复已有会话时不会覆盖其 Ask / Auto / Yolo 状态。",
+  "settings.defaultToolApprovalModeHint": "未设置时默认为自动。保存在全局设置中，仅用于新建会话；已有会话会保留其询问、自动或 Yolo 状态。",
   "settings.defaultToolApprovalMode.ask": "询问",
   "settings.defaultToolApprovalMode.auto": "自动",
   "settings.defaultToolApprovalMode.yolo": "Yolo",

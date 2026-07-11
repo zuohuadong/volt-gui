@@ -83,16 +83,10 @@ func CollectSkillHealthWarnings(opts SkillHealthOptions) []string {
 				out = append(out, fmt.Sprintf("skill %q allowed-tools references %q which is not in the current registry", name, at))
 			}
 		}
-		// Illegal profiles values (parser drops them; raw frontmatter may still
-		// leave empty Profiles when only illegal values were provided — detect
-		// via a sentinel only when Profiles was explicitly empty after illegal input
-		// is not available here; instead check known invalid residual).
-		for _, p := range sk.Profiles {
-			switch strings.ToLower(strings.TrimSpace(p)) {
-			case "economy", "balanced", "delivery":
-			default:
-				out = append(out, fmt.Sprintf("skill %q has illegal profiles value %q", name, p))
-			}
+		// The parser drops illegal profiles values from Profiles but preserves
+		// them in InvalidProfiles precisely so this check can reach them.
+		for _, p := range sk.InvalidProfiles {
+			out = append(out, fmt.Sprintf("skill %q has illegal profiles value %q (valid: economy, balanced, delivery)", name, p))
 		}
 	}
 

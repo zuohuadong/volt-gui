@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"reasonix/internal/evidence"
 	"reasonix/internal/tool"
@@ -48,6 +49,24 @@ func (*ReviewReportTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
+	// reviewed_paths is a host-verified claim, not a model attestation: every
+	// path must be backed by a successful read/diff receipt in this subagent's
+	// own evidence ledger. Without that check a subagent could "cover" files
+	// it never opened and the parent delivery gate would trust it.
+	led, ok := evidence.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("review_report requires the host evidence ledger; submit it from inside a review subagent run")
+	}
+	var unread []string
+	for _, p := range report.ReviewedPaths {
+		if led.HasHostObservedPath(p) {
+			continue
+		}
+		unread = append(unread, p)
+	}
+	if len(unread) > 0 {
+		return "", fmt.Errorf("review_report rejected: no host-observed read evidence for: %s — read these files (or run git diff on them) before reporting them as reviewed", strings.Join(unread, ", "))
+	}
 	// Evidence is recorded by the agent host from the tool call args; this
 	// result is a human-readable confirmation for the subagent transcript.
 	msg := fmt.Sprintf("review_report accepted: kind=%s verdict=%s paths=%d findings=%d",
@@ -56,6 +75,18 @@ func (*ReviewReportTool) Execute(ctx context.Context, args json.RawMessage) (str
 		msg += " (blocking — parent delivery will require fixes and re-review)"
 	}
 	return msg, nil
+}
+
+// ReviewReportKindForSkill maps a review-capable skill name to the report kind
+// its subagent must submit before finishing; empty means no requirement.
+func ReviewReportKindForSkill(name string) evidence.ReviewKind {
+	switch name {
+	case "review":
+		return evidence.ReviewKindReview
+	case "security-review", "security_review":
+		return evidence.ReviewKindSecurity
+	}
+	return ""
 }
 
 var _ tool.Tool = (*ReviewReportTool)(nil)
@@ -67,4 +98,13 @@ func AttachReviewReportTool(reg *tool.Registry) {
 		return
 	}
 	reg.Add(NewReviewReportTool())
+}
+
+// HasSuccessfulReviewReport reports whether this agent's evidence ledger holds
+// a successful review_report of the given kind.
+func (a *Agent) HasSuccessfulReviewReport(kind evidence.ReviewKind) bool {
+	if a == nil || a.evidence == nil {
+		return false
+	}
+	return a.evidence.HasSuccessfulReviewReportOfKind(kind)
 }

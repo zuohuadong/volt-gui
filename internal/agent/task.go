@@ -884,6 +884,14 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		return "", fmt.Errorf("sub-agent: %w", err)
 	}
 	mergeChildEvidence(ctx, sub)
+	// Review/security subagents must hand back a typed report the parent's
+	// delivery gate can verify; prose alone would leave the gate demanding a
+	// review forever with no way to tell why it never arrives.
+	if kind := opts.RequireReviewReportKind; kind != "" {
+		if !sub.HasSuccessfulReviewReport(kind) {
+			return "", fmt.Errorf("%s subagent finished without submitting review_report (kind=%s); re-run it and call review_report with the host-read paths before finishing", kind, kind)
+		}
+	}
 	// Walk the session backwards for the last assistant message with content —
 	// that's the sub-agent's final answer. Intermediate assistant messages with
 	// tool_calls but no text don't count.

@@ -13,6 +13,7 @@ func TestCollectSkillHealthWarnings(t *testing.T) {
 	warns := CollectSkillHealthWarnings(SkillHealthOptions{
 		Skills: []skill.Skill{
 			{Name: "empty", Description: ""},
+			{Name: "typo-profile", Description: "ok", InvalidProfiles: []string{"deliverx"}},
 			{
 				Name:             "conflict",
 				Description:      "ok",
@@ -48,6 +49,7 @@ func TestCollectSkillHealthWarnings(t *testing.T) {
 		`multiple require skills share identical triggers`,
 		`MCP server "broken" is in a host-failed state`,
 		`MCP server "stale" schema cache fingerprint mismatched`,
+		`skill "typo-profile" has illegal profiles value "deliverx"`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("warnings missing %q:\n%s", want, joined)

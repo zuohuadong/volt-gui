@@ -101,6 +101,20 @@ func (a *Audit) RecordMCPProxy(inspect, call, failed bool) {
 	}
 }
 
+// RecordRouterUsage accumulates the semantic router's own model spend:
+// prompt/completion tokens, priced cost, and wall-clock latency per call.
+func (a *Audit) RecordRouterUsage(promptTokens, completionTokens int, cost float64, latencyMs int64) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.RouterPromptTokens += promptTokens
+	a.RouterCompletionTokens += completionTokens
+	a.RouterCost += cost
+	a.RouterLatencyMs += latencyMs
+}
+
 // RecordReviewBlock records blocking structured review outcomes.
 func (a *Audit) RecordReviewBlock(security bool) {
 	if a == nil {

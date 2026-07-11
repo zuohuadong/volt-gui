@@ -140,6 +140,8 @@ type Controller struct {
 	// Capability routing (Delivery hybrid route). Not part of the provider-visible
 	// prefix; only seeds the turn-scoped ledger and optional semantic router.
 	pluginCfg       []config.PluginEntry
+	capCachedTools  map[string][]plugin.CachedTool
+	capCacheHashOK  map[string]bool
 	semanticRouter  *capability.SemanticRouter
 	capabilityAudit *capability.Audit
 

@@ -916,6 +916,11 @@ type Options struct {
 	// CapabilityAudit is the optional non-persisted metrics sink for routing.
 	CapabilityAudit *capability.Audit
 
+	// RequireReviewReportKind, when non-empty, makes RunSubAgentWithSession fail
+	// unless the subagent recorded a successful review_report of this kind —
+	// review/security subagents must return typed, host-verifiable reports.
+	RequireReviewReportKind evidence.ReviewKind
+
 	// ReasoningLanguage controls visible reasoning language preference as transient
 	// user-turn context. Empty/auto injects nothing.
 	ReasoningLanguage string
@@ -1446,6 +1451,13 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 			writer, hasWriter = -1, true
 			deliveryVerificationOnly = true
 		}
+		// Required/preferred capability gates apply before the no-writer fast
+		// path below: a user-required Skill/MCP must not be skippable by
+		// answering from ordinary reads alone.
+		if msg := a.capabilityGateFailure(); msg != "" {
+			out.applies = true
+			missing = append(missing, msg)
+		}
 	}
 	if !hasWriter {
 		if len(missing) > 0 {
@@ -1484,9 +1496,7 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 			out.missingReview++
 			missing = append(missing, msg)
 		}
-		if msg := a.capabilityGateFailure(); msg != "" {
-			missing = append(missing, msg)
-		}
+		// The capability gate already ran before the no-writer fast path above.
 	}
 	for _, check := range a.projectChecks {
 		if deliveryVerificationOnly {
@@ -2612,6 +2622,45 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			}
 			body, truncMsg := truncateToolOutput(result)
 			return toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
+		}
+	}
+
+	// A proxy resolution can point at a write-capable target even though the
+	// proxy tool itself reports read-only: the pre-resolution plan-mode check
+	// above only judged the proxy's own claim. Re-run the policy against the
+	// real target's name, read-only flag, trust, and safety before any gate
+	// lets the call through.
+	if resolved.TargetName != "" && a.planMode.Load() {
+		safety := planmode.PlanSafetyUnknown
+		if c, ok := execTool.(tool.PlanModeClassifier); ok {
+			if c.PlanModeSafe() {
+				safety = planmode.PlanSafetySafe
+			} else {
+				safety = planmode.PlanSafetyUnsafe
+			}
+		}
+		untrusted := false
+		if u, ok := execTool.(tool.PlanModeUntrustedReadOnly); ok {
+			untrusted = u.PlanModeUntrustedReadOnly()
+		}
+		if decision := a.planModeDecision(permName, resolved.ReadOnly, untrusted, safety, permArgs); decision.Blocked {
+			trustAllowed := false
+			if resolved.ReadOnly && untrusted && safety != planmode.PlanSafetyUnsafe {
+				resolvedCall := provider.ToolCall{ID: call.ID, Name: permName, Arguments: string(permArgs)}
+				if allow, outcome, handled := a.checkPlanModeMCPReadOnlyTrust(ctx, resolvedCall, execTool); handled {
+					if !allow {
+						return outcome
+					}
+					trustAllowed = true
+				}
+			}
+			if !trustAllowed {
+				return toolOutcome{
+					output:  decision.Message,
+					blocked: true,
+					errMsg:  "blocked: plan mode is read-only",
+				}
+			}
 		}
 	}
 

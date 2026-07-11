@@ -84,6 +84,9 @@ type Skill struct {
 	// Profiles restricts availability to economy|balanced|delivery. Empty means
 	// the skill is eligible in every profile.
 	Profiles []string
+	// InvalidProfiles preserves rejected profiles frontmatter values so doctor
+	// can warn about typos; the parser drops them from Profiles silently.
+	InvalidProfiles []string
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -495,7 +498,7 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 	if desc == "" {
 		fmt.Fprintf(s.stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
 	}
-	return Skill{
+	sk := Skill{
 		Name:         name,
 		Description:  desc,
 		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
@@ -514,8 +517,9 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		NeedsFreshData: parseBoolFrontmatter(fm[skillFrontmatterNeedsFreshData]),
 		Cost:           parseCost(fm[skillFrontmatterCost]),
 		Requires:       parseCSVFrontmatter(fm[skillFrontmatterRequires]),
-		Profiles:       parseProfilesFrontmatter(fm[skillFrontmatterProfiles]),
-	}, true
+	}
+	sk.Profiles, sk.InvalidProfiles = parseProfilesFrontmatter(fm[skillFrontmatterProfiles])
+	return sk, true
 }
 
 const (
@@ -768,9 +772,10 @@ func parseAutoUse(raw string) string {
 	}
 }
 
-// parseProfilesFrontmatter keeps only economy|balanced|delivery values.
-func parseProfilesFrontmatter(raw string) []string {
-	var out []string
+// parseProfilesFrontmatter keeps only economy|balanced|delivery values and
+// returns the rejected ones separately so doctor can surface typos instead of
+// the parser hiding them.
+func parseProfilesFrontmatter(raw string) (valid, invalid []string) {
 	seen := map[string]bool{}
 	for _, p := range parseCSVFrontmatter(raw) {
 		p = strings.ToLower(strings.TrimSpace(p))
@@ -778,11 +783,17 @@ func parseProfilesFrontmatter(raw string) []string {
 		case "economy", "balanced", "delivery":
 			if !seen[p] {
 				seen[p] = true
-				out = append(out, p)
+				valid = append(valid, p)
+			}
+		case "":
+		default:
+			if !seen[p] {
+				seen[p] = true
+				invalid = append(invalid, p)
 			}
 		}
 	}
-	return out
+	return valid, invalid
 }
 
 func parseBoolFrontmatter(raw string) bool {

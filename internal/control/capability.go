@@ -7,6 +7,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/capability"
 	"reasonix/internal/config"
+	"reasonix/internal/plugin"
 )
 
 func (c *Controller) withCapabilityRoute(composed, routeInput string) string {
@@ -50,6 +51,11 @@ func (c *Controller) routeCapabilities(routeInput string) capability.RouteDecisi
 	if c.pluginCfg != nil {
 		opts.Plugins = c.pluginCfg
 	}
+	// Cached MCP tool schemas (loaded once in WireCapabilityRouting) let
+	// auto_start=false servers contribute concrete mcp-tool candidates to
+	// deterministic and semantic routing before any connection exists.
+	opts.CachedTools = c.capCachedTools
+	opts.CacheHashOK = c.capCacheHashOK
 	if h := c.Host(); h != nil {
 		opts.Connected = map[string]bool{}
 		for _, n := range h.ServerNames() {
@@ -89,12 +95,15 @@ func (c *Controller) routeCapabilities(routeInput string) capability.RouteDecisi
 }
 
 // WireCapabilityRouting attaches Delivery hybrid routing helpers. Safe to call
-// with nil semantic router (deterministic only).
-func (c *Controller) WireCapabilityRouting(plugins []config.PluginEntry, router *capability.SemanticRouter, audit *capability.Audit) {
+// with nil semantic router (deterministic only). specs are the boot-converted
+// plugin specs; their persisted schema caches are loaded once here so every
+// routing turn can offer cached tools of not-yet-started servers.
+func (c *Controller) WireCapabilityRouting(plugins []config.PluginEntry, specs []plugin.Spec, router *capability.SemanticRouter, audit *capability.Audit) {
 	if c == nil {
 		return
 	}
 	c.pluginCfg = append([]config.PluginEntry(nil), plugins...)
+	c.capCachedTools, c.capCacheHashOK = capability.LoadCachedToolsForSpecs(specs)
 	c.semanticRouter = router
 	c.capabilityAudit = audit
 }

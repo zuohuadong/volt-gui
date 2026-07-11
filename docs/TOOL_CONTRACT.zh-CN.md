@@ -44,7 +44,14 @@ go test ./internal/tool -run TestBuiltinToolContractDocumentation
 `use_capability`（inspect/call/decline），用于在不改变 provider 可见 Schema 的前提下发现和调用
 按需 MCP（含 `auto_start=false`）。Delivery 还会增加稳定执行合约，并由宿主运行时强制执行：变更和
 验证命令必须先建立验收标准；变更后的工作必须完成复查、验证并通过带证据的 `complete_step` 签收；
-Skill/MCP 的 require/prefer 路由受门禁约束；中/高风险改动强制结构化 review/security_review。
+Skill/MCP 的 require/prefer 路由受门禁约束（只读回答同样不能跳过 require 能力）；中/高风险改动
+强制结构化 review/security_review，且 `review_report` 的 `reviewed_paths` 必须有宿主观测到的
+read/diff 证据。
+
+`use_capability` 的解析阶段无副作用：对未连接服务器的 `action=call` 只生成惰性目标，plan mode 会
+对真实目标重新执行只读校验，服务器进程只在权限门禁与 PreToolUse Hook 放行之后才启动。按需启动的
+子进程随会话存活（不会随单次调用结束而退出）；`action=inspect` 对已连接服务器列出实时工具，未连接
+时只读取缓存 schema，绝不启动进程。
 
 `ask`, `explore`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,

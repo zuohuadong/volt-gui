@@ -49,8 +49,18 @@ execution contract enforced by the host: state-changing and verification
 commands need acceptance criteria; changed work cannot finalize without
 post-change review, verification, and an evidence-backed `complete_step`
 sign-off; Skill/MCP `require`/`prefer` routes are gated with host-proven
-evidence; and medium/high-risk mutations force structured `review` /
-`security_review` results via the review-only `review_report` tool.
+evidence (including read-only answers — ordinary reads never skip a required
+capability); and medium/high-risk mutations force structured `review` /
+`security_review` results via the review-only `review_report` tool, whose
+`reviewed_paths` must be backed by host-observed read/diff receipts.
+
+`use_capability` resolution is side-effect free: `action=call` on a
+not-yet-connected server resolves to a deferred target, plan mode re-checks
+the real target's read-only classification, and the server process starts only
+after the permission gate and PreToolUse hooks approve the call. On-demand
+children share the session lifetime (they outlive the starting call and exit
+with the session); `action=inspect` lists live tools for connected servers and
+cached schemas otherwise, never starting a process.
 
 `ask`, `explore`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,

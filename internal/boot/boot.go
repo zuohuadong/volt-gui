@@ -758,8 +758,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
+		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		// Delivery risk gates consume typed reports; outside Delivery a casual
+		// /review run may finish with prose only.
+		if runOptions.DeliveryProfile {
+			runOptions.RequireReviewReportKind = agent.ReviewReportKindForSkill(sk.Name)
+		}
 		return agent.RunSubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task,
-			subagentSkillOptions(sctx, steps, price, ctxWin, childDepth), agent.NestedSink(sctx, event.Discard))
+			runOptions, agent.NestedSink(sctx, event.Discard))
 	}
 	// Writer-capable subagent skills reuse the sub-agent machinery via this
 	// runner: an isolated loop with the skill body as system prompt, a tool set
@@ -849,8 +855,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				steps = 5
 			}
 		}
+		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		// Delivery risk gates consume typed reports; outside Delivery a casual
+		// /review run may finish with prose only.
+		if runOptions.DeliveryProfile {
+			runOptions.RequireReviewReportKind = agent.ReviewReportKindForSkill(sk.Name)
+		}
 		answer, err := agent.RunSubAgentWithSession(sctx, prov, subReg, run.Session, task,
-			subagentSkillOptions(sctx, steps, price, ctxWin, childDepth), agent.NestedSink(sctx, event.Discard))
+			runOptions, agent.NestedSink(sctx, event.Discard))
 		if err != nil {
 			return "", errors.Join(err, subagentStore.SaveFailed(run))
 		}
@@ -1058,21 +1070,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// on-demand MCP servers connect through the proxy.
 	var capLedger *capability.Ledger
 	var capAudit *capability.Audit
+	var capSpecs []plugin.Spec
 	if tokenDelivery {
 		capLedger = capability.NewLedger()
 		capAudit = &capability.Audit{}
-		connected := map[string]bool{}
-		if pluginHost != nil {
-			for _, n := range pluginHost.ServerNames() {
-				connected[n] = true
-			}
-		}
 		failed := map[string]string{}
 		if pluginHost != nil {
 			for _, f := range pluginHost.Failures() {
 				failed[f.Name] = f.Error
 			}
 		}
+		// The proxy and the catalog share the boot-converted specs (env
+		// expansion, workspace overrides, timeouts, trusted read-only tools) —
+		// every configured server, including auto_start=false, is proxy-callable.
+		capSpecs = PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
+		cachedTools, cacheHashOK := capability.LoadCachedToolsForSpecs(capSpecs)
 		catalogFn := func() capability.Catalog {
 			conn := map[string]bool{}
 			if pluginHost != nil {
@@ -1081,16 +1093,20 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				}
 			}
 			return capability.BuildCatalog(capability.CatalogOptions{
-				Tools:     reg.ContractEntries(),
-				Skills:    skillStore.List(),
-				Plugins:   cfg.Plugins,
-				Profile:   capability.ProfileDelivery,
-				Connected: conn,
-				Failed:    failed,
+				Tools:       reg.ContractEntries(),
+				Skills:      skillStore.List(),
+				Plugins:     cfg.Plugins,
+				Profile:     capability.ProfileDelivery,
+				Connected:   conn,
+				Failed:      failed,
+				CachedTools: cachedTools,
+				CacheHashOK: cacheHashOK,
 			})
 		}
-		reg.Add(agent.NewUseCapabilityTool(pluginHost, cfg.Plugins, reg, capLedger, capAudit, catalogFn))
-		_ = connected
+		// ctx is the session-scoped boot context (the lifetime PluginCtx hands
+		// the controller): on-demand MCP children must survive the tool call
+		// that starts them and die with the session, not a resolve timeout.
+		reg.Add(agent.NewUseCapabilityTool(ctx, pluginHost, capSpecs, reg, capLedger, capAudit, catalogFn))
 	}
 
 	execSess := agent.NewSession(sysPrompt)
@@ -1252,14 +1268,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		var router *capability.SemanticRouter
 		// Prefer agent.subagent_models["capability-router"] when configured.
 		if modelRef := strings.TrimSpace(cfg.Agent.SubagentModels["capability-router"]); modelRef != "" {
-			if p, _, _, err := resolveSubagentProvider(modelRef, strings.TrimSpace(cfg.Agent.SubagentEfforts["capability-router"])); err == nil && p != nil {
-				router = &capability.SemanticRouter{Provider: p, Sink: sink, Model: modelRef}
+			if p, price, _, err := resolveSubagentProvider(modelRef, strings.TrimSpace(cfg.Agent.SubagentEfforts["capability-router"])); err == nil && p != nil {
+				router = &capability.SemanticRouter{Provider: p, Sink: sink, Model: modelRef, Pricing: price, Audit: capAudit}
 			}
 		}
 		if router == nil {
-			router = &capability.SemanticRouter{Provider: execProv, Sink: sink}
+			// Fallback to the executor's provider — and its pricing, so router
+			// usage events never display as zero-cost.
+			router = &capability.SemanticRouter{Provider: execProv, Sink: sink, Pricing: entry.Price, Audit: capAudit}
 		}
-		ctrl.WireCapabilityRouting(cfg.Plugins, router, capAudit)
+		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, router, capAudit)
 	}
 	return ctrl, nil
 }

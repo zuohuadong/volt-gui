@@ -5,7 +5,7 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Composer, composerPickFileEntry } from "../components/Composer";
-import { InvocationKindsContext, UserMessage } from "../components/Message";
+import { InvocationMetadataContext, UserMessage } from "../components/Message";
 import { LocaleProvider } from "../lib/i18n";
 import { ToastProvider } from "../lib/toast";
 import type { AppBindings } from "../lib/bridge";
@@ -1063,7 +1063,7 @@ console.log("\ncomposer goal toggle");
 
   availableCommands = [
     ...availableCommands,
-    { name: "my-formatter", description: "Formats code the way I like it", kind: "subagent" },
+    { name: "my-formatter", description: "Formats code the way I like it", kind: "subagent", color: "amber" },
   ];
   const initialCommandsCalls = commandsCalls;
   await rerender({ workspaceScopeKey: "runtime-1" });
@@ -1133,6 +1133,16 @@ console.log("\ncomposer goal toggle");
   eq(textarea.value, "/mcp ", "management commands keep the existing inline argument flow");
   ok(document.querySelector(".invocation-display--composer") === null, "management commands do not become selected abilities");
 
+  await replaceComposerDraft(rerender, 2005, "/my-formatter");
+  await waitFor("colored subagent command menu", () => Boolean(document.querySelector(".slashmenu")));
+  textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error("composer textarea did not render for colored subagent");
+  await act(async () => {
+    textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await flushTimers();
+  });
+  ok(document.querySelector<HTMLElement>(".invocation-display--composer")?.style.getPropertyValue("--invocation-color") === "#d59a2f", "selected custom subagent uses its configured color");
+
   await act(async () => {
     root.unmount();
   });
@@ -1163,19 +1173,20 @@ console.log("\ncomposer goal toggle");
   await act(async () => {
     root.render(
       <LocaleProvider>
-        <InvocationKindsContext.Provider value={{ "my-formatter": "subagent" }}>
+        <InvocationMetadataContext.Provider value={{ "my-formatter": { kind: "subagent", color: "amber" } }}>
           <UserMessage
             id="h2"
             text="Format this file"
             submitText={"以下是用户引用的历史会话上下文：\n\n[会话：Earlier]\n...\n\n---\n\n当前用户问题：\n/my-formatter Format this file"}
           />
-        </InvocationKindsContext.Provider>
+        </InvocationMetadataContext.Provider>
       </LocaleProvider>,
     );
     await flushTimers();
   });
   ok(document.querySelector(".invocation-display--message")?.textContent?.includes("My Formatter") === true, "history and trash previews recover selected abilities after referenced-session context");
   ok(document.querySelector(".invocation-display--subagent") !== null, "restored custom subagents keep their command type styling");
+  ok(document.querySelector<HTMLElement>(".invocation-display--subagent")?.style.getPropertyValue("--invocation-color") === "#d59a2f", "restored custom subagents keep their configured color");
 
   await act(async () => {
     root.render(

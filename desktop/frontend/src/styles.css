@@ -5743,7 +5743,7 @@ body > .mermaid-diagram--fullscreen {
   gap: 4px;
   min-width: 0;
   max-width: 100%;
-  color: var(--accent);
+  color: var(--invocation-color, var(--accent));
 }
 .invocation-display--composer {
   min-height: 24px;
@@ -5755,7 +5755,11 @@ body > .mermaid-diagram--fullscreen {
 }
 .invocation-display--subagent,
 .invocation-display--subagent .invocation-display__name {
-  color: var(--ok);
+  color: var(--invocation-color, var(--ok));
+}
+.invocation-display--custom-color,
+.invocation-display--custom-color .invocation-display__name {
+  color: color-mix(in srgb, var(--invocation-color) 68%, var(--fg));
 }
 .invocation-display--message .invocation-display__name {
   font-size: 13px;
@@ -5779,7 +5783,7 @@ body > .mermaid-diagram--fullscreen {
 .invocation-display__name {
   min-width: 0;
   overflow: hidden;
-  color: var(--accent);
+  color: var(--invocation-color, var(--accent));
   font-size: 15px;
   font-weight: 590;
   line-height: 1.35;
@@ -5787,7 +5791,7 @@ body > .mermaid-diagram--fullscreen {
   white-space: nowrap;
 }
 .invocation-display--subagent .invocation-display__name {
-  color: var(--ok);
+  color: var(--invocation-color, var(--ok));
 }
 .invocation-display__source {
   flex: 0 1 auto;

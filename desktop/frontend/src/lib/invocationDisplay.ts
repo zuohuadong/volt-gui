@@ -1,13 +1,15 @@
 import type { CommandInfo } from "./types";
 
 export type InvocationKind = "skill" | "subagent";
-export type InvocationKindMap = Readonly<Record<string, InvocationKind>>;
+export type InvocationMetadata = { kind: InvocationKind; color?: string };
+export type InvocationMetadataMap = Readonly<Record<string, InvocationMetadata>>;
 
 export type InvocationDisplay = {
   name: string;
   label: string;
   source?: string;
   kind?: InvocationKind;
+  color?: string;
 };
 
 export type ComposerInvocation = {
@@ -42,6 +44,7 @@ export function invocationDisplayForCommand(command: CommandInfo): InvocationDis
     label: invocationLabel(command.name),
     source: command.plugin || command.name.split(":").slice(0, -1).join(":") || undefined,
     kind: command.kind === "subagent" ? "subagent" : "skill",
+    color: command.color,
   };
 }
 
@@ -149,7 +152,7 @@ function segmentsForSelection(
   display: string,
   matches: SlashMatch[],
   mask: number,
-  invocationKinds: InvocationKindMap,
+  invocationMetadata: InvocationMetadataMap,
 ): InvocationTextSegment[] | null {
   const selected = matches.filter((_, index) => (mask & (1 << index)) !== 0);
   if (selected.length === 0) return null;
@@ -194,7 +197,8 @@ function segmentsForSelection(
         name: match.name,
         label: invocationLabel(match.name),
         source: match.name.includes(":") ? match.name.split(":").slice(0, -1).join(":") : undefined,
-        kind: invocationKinds[match.name] ?? (knownSubagents.has(match.name) ? "subagent" : "skill"),
+        kind: invocationMetadata[match.name]?.kind ?? (knownSubagents.has(match.name) ? "subagent" : "skill"),
+        color: invocationMetadata[match.name]?.color,
       },
     });
     textCursor = offset;
@@ -208,7 +212,7 @@ function segmentsForSelection(
 export function invocationSegmentsFromMessage(
   displayText: string,
   submitText?: string,
-  invocationKinds: InvocationKindMap = {},
+  invocationMetadata: InvocationMetadataMap = {},
 ): InvocationTextSegment[] {
   const display = displayText.trim();
   const submit = invocationBody(submitText?.trim() ?? "");
@@ -218,7 +222,7 @@ export function invocationSegmentsFromMessage(
   if (matches.length === 0 || matches.length > 10) return [{ type: "text", content: display, start: 0 }];
   const masks = 1 << matches.length;
   for (let mask = masks - 1; mask > 0; mask -= 1) {
-    const segments = segmentsForSelection(submit, display, matches, mask, invocationKinds);
+    const segments = segmentsForSelection(submit, display, matches, mask, invocationMetadata);
     if (segments) return segments;
   }
   return [{ type: "text", content: display, start: 0 }];

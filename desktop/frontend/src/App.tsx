@@ -92,7 +92,7 @@ import {
   type TokenMode,
   type ToolApprovalMode,
 } from "./lib/types";
-import type { InvocationKindMap } from "./lib/invocationDisplay";
+import type { InvocationMetadataMap } from "./lib/invocationDisplay";
 import {
   composerProfileFromMeta,
   composerProfileFromTab,
@@ -1359,21 +1359,23 @@ export default function App() {
   }, []);
 
   const [pendingPlanRevisionsByTab, setPendingPlanRevisionsByTab] = useState<Record<string, string>>({});
-  const [invocationKindsByTab, setInvocationKindsByTab] = useState<Record<string, InvocationKindMap>>({});
+  const [invocationMetadataByTab, setInvocationMetadataByTab] = useState<Record<string, InvocationMetadataMap>>({});
   const pendingPlanRevisionSendingTabsRef = useRef(new Set<string>());
   const [footerHeight, setFooterHeight] = useState(0);
   const footerHeightRef = useRef(0);
   const footerRef = useRef<HTMLElement>(null);
   const activeTabIdRef = useRef(activeTabId);
   const commitThenSendRef = useRef<(tabId: string, displayText: string, submitText?: string) => Promise<void>>(async () => {});
-  const handleInvocationKindsChange = useCallback((kinds: InvocationKindMap) => {
+  const handleInvocationMetadataChange = useCallback((metadata: InvocationMetadataMap) => {
     const sourceTabId = activeTabIdRef.current;
     if (!sourceTabId) return;
-    setInvocationKindsByTab((current) => {
+    setInvocationMetadataByTab((current) => {
       const previous = current[sourceTabId] ?? {};
-      const names = Object.keys(kinds);
-      if (names.length === Object.keys(previous).length && names.every((name) => previous[name] === kinds[name])) return current;
-      return { ...current, [sourceTabId]: kinds };
+      const names = Object.keys(metadata);
+      if (names.length === Object.keys(previous).length && names.every((name) => (
+        previous[name]?.kind === metadata[name]?.kind && previous[name]?.color === metadata[name]?.color
+      ))) return current;
+      return { ...current, [sourceTabId]: metadata };
     });
   }, []);
   const rightDockDetailActive = rightDockMode !== "context" && workspacePreviewActive;
@@ -3711,7 +3713,7 @@ export default function App() {
                 olderHistoryCount={state.historyStartTurn}
                 loadingOlderHistory={state.historyOlderLoading}
                 onLoadOlderHistory={() => activeTabId && loadOlderHistory(activeTabId)}
-                invocationKinds={activeTabId ? invocationKindsByTab[activeTabId] : undefined}
+                invocationMetadata={activeTabId ? invocationMetadataByTab[activeTabId] : undefined}
               />
             )}
           </main>
@@ -3817,7 +3819,7 @@ export default function App() {
               tabId={activeTabId}
               effort={state.effort}
               onSend={handleSend}
-              onInvocationKindsChange={handleInvocationKindsChange}
+              onInvocationMetadataChange={handleInvocationMetadataChange}
               onSteer={handleSteer}
               onCancel={cancel}
               onCycleMode={cycleMode}

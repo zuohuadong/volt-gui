@@ -5604,6 +5604,7 @@ type CommandInfo struct {
 	Kind        string `json:"kind"`            // "builtin" | "custom" | "mcp" | "skill" | "subagent"
 	Group       string `json:"group,omitempty"` // menu group; older frontends can ignore it
 	Plugin      string `json:"plugin,omitempty"`
+	Color       string `json:"color,omitempty"`
 }
 
 // Commands lists the slash commands available this session — built-in actions,
@@ -5647,7 +5648,7 @@ func (a *App) Commands() []CommandInfo {
 		if kind == "subagent" {
 			group = "subagents"
 		}
-		out = append(out, CommandInfo{Name: s.SlashName(), Description: s.Description, Kind: kind, Group: group, Plugin: s.Plugin})
+		out = append(out, CommandInfo{Name: s.SlashName(), Description: s.Description, Kind: kind, Group: group, Plugin: s.Plugin, Color: s.Color})
 	}
 	for _, c := range ctrl.Commands() {
 		if c.Hidden {

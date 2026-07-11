@@ -422,6 +422,7 @@ export const en = {
   "subagents.inherited": "Inherited",
   "subagents.resetOverride": "Restore default",
   "subagents.customTitle": "Your subagents",
+  "subagents.customHint": "Subagent profiles you created or loaded; editable profiles can be managed here.",
   "subagents.noCustom": "No custom subagents yet.",
   "subagents.noMatches": "No matching subagents.",
   "subagents.externalManaged": "Managed in Skills",

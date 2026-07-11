@@ -177,54 +177,59 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
 
       {!formOpen && (
         <>
-          <div className="cap-skills-head">
-            <div className="cap-skills-head__copy">
-              <div className="cap-skills-head__title">{t("subagents.builtinTitle")}</div>
-              <div className="cap-skills-head__summary">{t("subagents.builtinHint")}</div>
+          <section className="subagents-profile-group" aria-labelledby="subagents-custom-title">
+            <div className="cap-skills-head">
+              <div className="cap-skills-head__copy">
+                <h3 id="subagents-custom-title" className="cap-skills-head__title">{t("subagents.customTitle")}</h3>
+                <div className="cap-skills-head__summary">{t("subagents.customHint")}</div>
+              </div>
             </div>
-          </div>
-          {builtins.length > 0 && (
-            <div className="cap-skills">
-              {builtins.map((sk) => (
-                <BuiltinSubagentRow
-                  key={sk.name}
-                  skill={sk}
-                  s={s}
-                  busy={busy}
-                  onSetModel={(ref) => void mutate(() => app.SetSubagentProfileModel(sk.name, ref))}
-                  onSetEffort={(level) => void mutate(() => app.SetSubagentProfileEffort(sk.name, level))}
-                  onReset={() => void mutate(async () => {
-                    if (sk.configuredModel) await app.SetSubagentProfileModel(sk.name, "");
-                    if (sk.configuredEffort) await app.SetSubagentProfileEffort(sk.name, "");
-                  })}
-                />
-              ))}
-            </div>
-          )}
+            {custom.length === 0 && external.length === 0 ? (
+              <div className="mem-empty">{query.trim() ? t("subagents.noMatches") : t("subagents.noCustom")}</div>
+            ) : (
+              <div className="cap-skills">
+                {custom.map((sk) => (
+                  <CustomSubagentRow
+                    key={`${sk.scope}:${sk.name}`}
+                    skill={sk}
+                    busy={busy}
+                    onEdit={() => { setAdding(false); setEditingSkill(sk); }}
+                    onDelete={() => void mutate(() => app.DeleteSubagentProfile(sk.name, sk.scope))}
+                  />
+                ))}
+                {external.map((sk) => (
+                  <CustomSubagentRow key={`${sk.scope}:${sk.name}`} skill={sk} busy={busy} externallyManaged />
+                ))}
+              </div>
+            )}
+          </section>
 
-          <div className="cap-skills-head">
-            <div className="cap-skills-head__copy">
-              <div className="cap-skills-head__title">{t("subagents.customTitle")}</div>
+          <section className="subagents-profile-group" aria-labelledby="subagents-builtin-title">
+            <div className="cap-skills-head">
+              <div className="cap-skills-head__copy">
+                <h3 id="subagents-builtin-title" className="cap-skills-head__title">{t("subagents.builtinTitle")}</h3>
+                <div className="cap-skills-head__summary">{t("subagents.builtinHint")}</div>
+              </div>
             </div>
-          </div>
-          {custom.length === 0 && external.length === 0 ? (
-            <div className="mem-empty">{query.trim() ? t("subagents.noMatches") : t("subagents.noCustom")}</div>
-          ) : (
-            <div className="cap-skills">
-              {custom.map((sk) => (
-                <CustomSubagentRow
-                  key={`${sk.scope}:${sk.name}`}
-                  skill={sk}
-                  busy={busy}
-                  onEdit={() => { setAdding(false); setEditingSkill(sk); }}
-                  onDelete={() => void mutate(() => app.DeleteSubagentProfile(sk.name, sk.scope))}
-                />
-              ))}
-              {external.map((sk) => (
-                <CustomSubagentRow key={`${sk.scope}:${sk.name}`} skill={sk} busy={busy} externallyManaged />
-              ))}
-            </div>
-          )}
+            {builtins.length > 0 && (
+              <div className="cap-skills">
+                {builtins.map((sk) => (
+                  <BuiltinSubagentRow
+                    key={sk.name}
+                    skill={sk}
+                    s={s}
+                    busy={busy}
+                    onSetModel={(ref) => void mutate(() => app.SetSubagentProfileModel(sk.name, ref))}
+                    onSetEffort={(level) => void mutate(() => app.SetSubagentProfileEffort(sk.name, level))}
+                    onReset={() => void mutate(async () => {
+                      if (sk.configuredModel) await app.SetSubagentProfileModel(sk.name, "");
+                      if (sk.configuredEffort) await app.SetSubagentProfileEffort(sk.name, "");
+                    })}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
         </>
       )}
     </section>

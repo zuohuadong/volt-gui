@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/url"
 	"strings"
-	"sync"
 )
 
 // IsMiMoEndpoint reports whether rawURL points at an official Xiaomi MiMo API
@@ -20,21 +19,18 @@ func IsMiMoEndpoint(rawURL string) bool {
 	return host != "xiaomimimo.com" && strings.HasSuffix(host, ".xiaomimimo.com")
 }
 
-// normalizedSchemaCache memoizes NormalizeLegacyTupleItemsForDraft202012
-// results keyed by the input bytes. Tool schemas come from the registry's
-// one-time canonicalization and are byte-stable across turns, while the MiMo
-// builders call the normalizer for every tool on every request — without the
-// memo each turn re-parses the full tool surface (~hundreds of schemas). The
-// cache is bounded by the set of distinct schemas seen and the function is
-// pure, so process-wide sharing is safe and deterministic.
-var normalizedSchemaCache sync.Map // string -> json.RawMessage
-
 // NormalizeLegacyTupleItemsForDraft202012 rewrites only the pre-2020-12 tuple
 // keywords in a JSON Schema. It is intentionally separate from
 // CanonicalizeSchema: provider implementations must opt in only after the target
 // endpoint's schema dialect is known, so other vendors keep their original tool
 // schema bytes and cache prefixes. A schema that needs no rewrite is returned
 // with its input bytes unchanged, byte for byte.
+//
+// There is deliberately no memoization: MCP schemas are externally supplied
+// bytes, and a process-global cache keyed by them would accumulate without
+// bound across projects, sessions, and server reconnects in a long-lived
+// desktop process. The lexical gate below keeps the common no-op case at zero
+// parses, and the rare legacy-tuple schema is cheap to re-convert per request.
 func NormalizeLegacyTupleItemsForDraft202012(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
@@ -44,21 +40,18 @@ func NormalizeLegacyTupleItemsForDraft202012(raw json.RawMessage) json.RawMessag
 	if !bytes.Contains(raw, []byte(`"items"`)) {
 		return raw
 	}
-	if cached, ok := normalizedSchemaCache.Load(string(raw)); ok {
-		return cached.(json.RawMessage)
-	}
 	var schema any
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return raw
 	}
-	result := raw
-	if normalizeDraft202012Schema(schema) {
-		if out, err := json.Marshal(schema); err == nil {
-			result = json.RawMessage(out)
-		}
+	if !normalizeDraft202012Schema(schema) {
+		return raw
 	}
-	normalizedSchemaCache.Store(string(raw), result)
-	return result
+	out, err := json.Marshal(schema)
+	if err != nil {
+		return raw
+	}
+	return json.RawMessage(out)
 }
 
 // normalizeDraft202012Schema rewrites legacy tuple keywords in place and
@@ -72,6 +65,19 @@ func normalizeDraft202012Schema(value any) bool {
 	schema, ok := value.(map[string]any)
 	if !ok {
 		return false
+	}
+	// Classify the resource's own dialect BEFORE touching anything: for an
+	// unknown/custom $schema this code cannot know whether the dialect defines
+	// 2020-12 tuple semantics, and a partial rewrite (keywords converted,
+	// declaration kept) would be self-contradictory in the other direction.
+	// JSON Schema requires processors to switch modes per dialect or leave the
+	// resource alone — so the whole custom resource, subtree included, stays
+	// untouched. Known legacy drafts and 2020-12 itself (where array-form
+	// items is simply malformed input worth repairing) proceed.
+	if decl, ok := schema["$schema"].(string); ok {
+		if !isLegacyJSONSchemaDialect(decl) && !isDraft202012Dialect(decl) {
+			return false
+		}
 	}
 	changed := false
 
@@ -142,13 +148,11 @@ func normalizeDraft202012Schema(value any) bool {
 }
 
 // isLegacyJSONSchemaDialect reports whether decl names a pre-2020-12 JSON
-// Schema dialect. Unknown or custom dialect URIs are left untouched — this
-// normalizer only understands the official drafts' tuple semantics.
+// Schema dialect. Unknown or custom dialect URIs make the whole resource
+// off-limits — this normalizer only understands the official drafts' tuple
+// semantics.
 func isLegacyJSONSchemaDialect(decl string) bool {
-	d := strings.TrimSuffix(strings.TrimSpace(decl), "#")
-	d = strings.TrimPrefix(d, "http://")
-	d = strings.TrimPrefix(d, "https://")
-	switch d {
+	switch normalizeDialectURI(decl) {
 	case "json-schema.org/schema",
 		"json-schema.org/draft-03/schema",
 		"json-schema.org/draft-04/schema",
@@ -158,6 +162,17 @@ func isLegacyJSONSchemaDialect(decl string) bool {
 		return true
 	}
 	return false
+}
+
+// isDraft202012Dialect reports whether decl names the 2020-12 dialect itself.
+func isDraft202012Dialect(decl string) bool {
+	return normalizeDialectURI(decl) == "json-schema.org/draft/2020-12/schema"
+}
+
+func normalizeDialectURI(decl string) string {
+	d := strings.TrimSuffix(strings.TrimSpace(decl), "#")
+	d = strings.TrimPrefix(d, "http://")
+	return strings.TrimPrefix(d, "https://")
 }
 
 func isSchemaObjectOrBool(value any) bool {

@@ -3,6 +3,7 @@ package evidence
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -193,4 +194,58 @@ func (l *Ledger) HasStructuredReviewAfter(kind ReviewKind, after int, requiredPa
 func (l *Ledger) HasSuccessfulStructuredReviewAfter(kind ReviewKind, after int, requiredPaths []string) bool {
 	ok, blocking, _ := l.HasStructuredReviewAfter(kind, after, requiredPaths)
 	return ok && !blocking
+}
+
+// HasSuccessfulReviewReportOfKind reports whether any successful review_report
+// receipt of the given kind exists, regardless of mutation ordering or path
+// coverage. Subagent completion gates use it: a review subagent that never
+// submitted a typed report must fail its parent tool call instead of returning
+// prose the delivery gate cannot verify.
+func (l *Ledger) HasSuccessfulReviewReportOfKind(kind ReviewKind) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range l.receipts {
+		if !r.Success || r.ToolName != "review_report" {
+			continue
+		}
+		parsed, err := ParseReviewReport(r.Args)
+		if err != nil {
+			continue
+		}
+		if parsed.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// HasHostObservedPath reports whether the host recorded a successful receipt
+// naming path: a read or write receipt whose extracted paths match exactly
+// after normalization or by slash-suffix (relative refs vs fuller observed
+// paths), or a bash receipt whose command mentions the path. review_report
+// uses it so "reviewed_paths" is host-verified reading, not a model claim.
+func (l *Ledger) HasHostObservedPath(path string) bool {
+	p := normalizePath(path)
+	if l == nil || p == "" {
+		return false
+	}
+	needle := strings.ToLower(filepath.ToSlash(p))
+	l.mu.Lock()
+	for _, r := range l.receipts {
+		if !r.Success || (!r.Read && !r.Write) {
+			continue
+		}
+		for _, rp := range r.Paths {
+			o := strings.ToLower(filepath.ToSlash(normalizePath(rp)))
+			if o == needle || strings.HasSuffix(o, "/"+needle) || strings.HasSuffix(needle, "/"+o) {
+				l.mu.Unlock()
+				return true
+			}
+		}
+	}
+	l.mu.Unlock()
+	return l.HasSuccessfulBashMentioningPaths([]string{path})
 }

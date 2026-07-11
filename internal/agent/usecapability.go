@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"reasonix/internal/capability"
-	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/plugin"
 	"reasonix/internal/tool"
@@ -21,8 +20,16 @@ import (
 type UseCapabilityTool struct {
 	mu sync.Mutex
 
-	host     *plugin.Host
-	plugins  []config.PluginEntry
+	host *plugin.Host
+	// lifeCtx is the session-scoped context that owns on-demand MCP child
+	// processes (mirrors lazySpawn.ctx): a proxied server must outlive the tool
+	// call that started it and die with the session, not with a resolve-phase
+	// timeout. nil falls back to context.Background() for direct/test use.
+	lifeCtx context.Context
+	// specs are the boot-converted plugin specs (env expansion, workspace
+	// overrides, timeouts, trusted read-only tools). The proxy never rebuilds
+	// specs from raw config entries — that would fork the conversion logic.
+	specs    []plugin.Spec
 	registry *tool.Registry // live registry for already-exposed MCP tools
 	ledger   *capability.Ledger
 	audit    *capability.Audit
@@ -32,11 +39,14 @@ type UseCapabilityTool struct {
 	connected map[string]bool
 }
 
-// NewUseCapabilityTool builds the Delivery-only capability proxy.
-func NewUseCapabilityTool(host *plugin.Host, plugins []config.PluginEntry, reg *tool.Registry, ledger *capability.Ledger, audit *capability.Audit, catalog func() capability.Catalog) *UseCapabilityTool {
+// NewUseCapabilityTool builds the Delivery-only capability proxy. lifeCtx is
+// the session-scoped context that owns on-demand MCP subprocess lifetimes;
+// specs must be the same boot-converted specs used for auto-started servers.
+func NewUseCapabilityTool(lifeCtx context.Context, host *plugin.Host, specs []plugin.Spec, reg *tool.Registry, ledger *capability.Ledger, audit *capability.Audit, catalog func() capability.Catalog) *UseCapabilityTool {
 	return &UseCapabilityTool{
 		host:      host,
-		plugins:   append([]config.PluginEntry(nil), plugins...),
+		lifeCtx:   lifeCtx,
+		specs:     append([]plugin.Spec(nil), specs...),
 		registry:  reg,
 		ledger:    ledger,
 		audit:     audit,
@@ -186,45 +196,68 @@ func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, err
 			"tool_name":   e.ToolName,
 			"auto_start":  e.AutoStart,
 		}, "", "  ")
-		// For MCP without ready tools, attempt a restricted handshake to list tools.
+		// For MCP entries, list tools without side effects: live tools when the
+		// server is already connected, cached schema otherwise. Inspect runs
+		// during call resolution — before permission and hook gates — so it must
+		// never start a subprocess or open a network connection.
 		if e.Kind == capability.KindMCPServer || e.Kind == capability.KindMCPTool {
 			server := e.Source
 			if server == "" {
 				server = e.ConnectName
 			}
 			if server != "" {
-				tools, err := t.ensureServerTools(ctx, server)
-				if err != nil {
-					return string(b) + "\n\nHandshake failed: " + err.Error(), nil
-				}
-				type toolInfo struct {
-					ID          string          `json:"id"`
-					Name        string          `json:"name"`
-					Description string          `json:"description"`
-					ReadOnly    bool            `json:"read_only"`
-					Schema      json.RawMessage `json:"input_schema,omitempty"`
-				}
-				var list []toolInfo
-				for _, tl := range tools {
-					raw := ""
-					if m, ok := tl.(tool.MCPMetadata); ok {
-						raw = m.MCPRawToolName()
+				if t.host != nil && t.host.HasClient(server) {
+					tools, err := t.host.ToolsFor(ctx, server)
+					if err != nil {
+						return string(b) + "\n\nTool listing failed: " + err.Error(), nil
 					}
-					list = append(list, toolInfo{
-						ID:          "mcp-tool:" + server + "/" + raw,
-						Name:        tl.Name(),
-						Description: tl.Description(),
-						ReadOnly:    tl.ReadOnly(),
-						Schema:      tl.Schema(),
-					})
+					var list []inspectToolInfo
+					for _, tl := range tools {
+						raw := ""
+						if m, ok := tl.(tool.MCPMetadata); ok {
+							raw = m.MCPRawToolName()
+						}
+						list = append(list, inspectToolInfo{
+							ID:          "mcp-tool:" + server + "/" + raw,
+							Name:        tl.Name(),
+							Description: tl.Description(),
+							ReadOnly:    tl.ReadOnly(),
+							Schema:      tl.Schema(),
+						})
+					}
+					extra, _ := json.MarshalIndent(list, "", "  ")
+					return string(b) + "\n\nTools:\n" + string(extra), nil
 				}
-				extra, _ := json.MarshalIndent(list, "", "  ")
-				return string(b) + "\n\nTools:\n" + string(extra), nil
+				if spec, ok := t.specFor(server); ok {
+					if cs, ok := plugin.LoadCachedSchema(server, plugin.SpecFingerprint(spec)); ok && len(cs.Tools) > 0 {
+						var list []inspectToolInfo
+						for _, ct := range cs.Tools {
+							list = append(list, inspectToolInfo{
+								ID:          "mcp-tool:" + server + "/" + ct.Name,
+								Name:        plugin.ToolPrefix(server) + normalizeToolToken(ct.Name),
+								Description: ct.Description,
+								ReadOnly:    ct.ReadOnly,
+								Schema:      ct.Schema,
+							})
+						}
+						extra, _ := json.MarshalIndent(list, "", "  ")
+						return string(b) + "\n\nTools (from cached schema; server not started):\n" + string(extra), nil
+					}
+					return string(b) + "\n\nServer not connected and no cached tool schema; action=call with mcp-tool:" + server + "/<tool> connects on demand after approval.", nil
+				}
 			}
 		}
 		return string(b), nil
 	}
 	return "", fmt.Errorf("unknown capability_id %q", id)
+}
+
+type inspectToolInfo struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	ReadOnly    bool            `json:"read_only"`
+	Schema      json.RawMessage `json:"input_schema,omitempty"`
 }
 
 func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args json.RawMessage, base tool.ResolvedCall) (tool.ResolvedCall, error) {
@@ -267,59 +300,138 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 			}
 		}
 	}
-	tools, err := t.ensureServerTools(ctx, server)
-	if err != nil {
-		base.Unavailable = true
-		base.UnavailableReason = err.Error()
-		base.SkipExecute = true
-		base.Result = "capability unavailable: " + err.Error()
-		base.TargetName = modelName
-		// Conservative: uncached tools are writers until handshake succeeds.
-		base.ReadOnly = false
-		if t.ledger != nil {
-			t.ledger.MarkUnavailable(id, err.Error())
+	// Server already connected (auto-started or a previous proxy call):
+	// resolving against live tools is side-effect-free.
+	if t.host != nil && t.host.HasClient(server) {
+		tools, err := t.host.ToolsFor(ctx, server)
+		if err != nil {
+			return t.resolveUnavailable(base, id, modelName, err.Error()), nil
 		}
-		if t.audit != nil {
-			t.audit.RecordMCPProxy(false, true, true)
+		target := findMCPTool(tools, raw, modelName)
+		if target == nil {
+			return t.resolveUnavailable(base, id, modelName, fmt.Sprintf("MCP tool %q not found on server %q", raw, server)), nil
 		}
-		return base, nil
-	}
-	var target tool.Tool
-	for _, tl := range tools {
-		if m, ok := tl.(tool.MCPMetadata); ok {
-			if m.MCPRawToolName() == raw || normalizeToolToken(m.MCPRawToolName()) == normalizeToolToken(raw) {
-				target = tl
-				base.TargetName = tl.Name()
-				break
-			}
-		}
-		if tl.Name() == modelName {
-			target = tl
-			base.TargetName = modelName
-			break
-		}
-	}
-	if target == nil {
-		msg := fmt.Sprintf("MCP tool %q not found on server %q", raw, server)
-		base.Unavailable = true
-		base.UnavailableReason = msg
-		base.SkipExecute = true
-		base.Result = "capability unavailable: " + msg
-		base.TargetName = modelName
-		base.ReadOnly = false
-		if t.ledger != nil {
-			t.ledger.MarkUnavailable(id, msg)
+		base.Target = target
+		base.TargetName = target.Name()
+		base.ReadOnly = target.ReadOnly()
+		if len(args) == 0 {
+			base.Args = json.RawMessage(`{}`)
+		} else {
+			base.Args = args
 		}
 		return base, nil
 	}
-	base.Target = target
-	base.ReadOnly = target.ReadOnly()
+	// Unconnected server: resolution must stay pure — no subprocess, no network.
+	// Return a deferred target that connects in Execute, after the permission
+	// gate and PreToolUse hooks have approved the real target name/arguments.
+	spec, ok := t.specFor(server)
+	if !ok {
+		return t.resolveUnavailable(base, id, modelName, fmt.Sprintf("MCP server %q is not configured", server)), nil
+	}
+	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName}
+	base.Target = lazy
+	base.TargetName = modelName
+	// Conservative: an unstarted tool counts as a writer unless the user
+	// explicitly trusted it read-only in config (spec-level trust, the same
+	// source live remote tools honor).
+	base.ReadOnly = lazy.ReadOnly()
 	if len(args) == 0 {
 		base.Args = json.RawMessage(`{}`)
 	} else {
 		base.Args = args
 	}
 	return base, nil
+}
+
+// resolveUnavailable fills the host-proven unavailable shape shared by the
+// side-effect-free resolution failures (missing config, unknown tool).
+func (t *UseCapabilityTool) resolveUnavailable(base tool.ResolvedCall, id, modelName, reason string) tool.ResolvedCall {
+	base.Unavailable = true
+	base.UnavailableReason = reason
+	base.SkipExecute = true
+	base.Result = "capability unavailable: " + reason
+	base.TargetName = modelName
+	base.ReadOnly = false
+	if t.ledger != nil {
+		t.ledger.MarkUnavailable(id, reason)
+	}
+	if t.audit != nil {
+		t.audit.RecordMCPProxy(false, true, true)
+	}
+	return base
+}
+
+// findMCPTool matches a server's tool list by raw MCP name (exact or
+// normalized) or by the namespaced model-visible name.
+func findMCPTool(tools []tool.Tool, raw, modelName string) tool.Tool {
+	for _, tl := range tools {
+		if m, ok := tl.(tool.MCPMetadata); ok {
+			if m.MCPRawToolName() == raw || normalizeToolToken(m.MCPRawToolName()) == normalizeToolToken(raw) {
+				return tl
+			}
+		}
+		if tl.Name() == modelName {
+			return tl
+		}
+	}
+	return nil
+}
+
+// onDemandMCPTool defers MCP server startup to Execute so permission and hook
+// gates always run before any subprocess or network side effect. It reports
+// itself read-only only under config-level trust; everything else is treated
+// as a writer until the live handshake proves otherwise, so plan mode and
+// permission prompts see the conservative classification.
+type onDemandMCPTool struct {
+	proxy     *UseCapabilityTool
+	spec      plugin.Spec
+	server    string
+	raw       string
+	modelName string
+}
+
+func (o *onDemandMCPTool) Name() string { return o.modelName }
+
+func (o *onDemandMCPTool) Description() string {
+	return "on-demand MCP tool " + o.server + "/" + o.raw + " (connects after approval)"
+}
+
+func (o *onDemandMCPTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+
+func (o *onDemandMCPTool) ReadOnly() bool {
+	return o.spec.ReadOnlyToolNames[o.raw] || o.spec.ReadOnlyModelToolNames[o.modelName]
+}
+
+// PlanModeUntrustedReadOnly is false because ReadOnly() is true only under an
+// explicit user config assertion (trusted_read_only_tools), never a server
+// hint — there is no server yet.
+func (o *onDemandMCPTool) PlanModeUntrustedReadOnly() bool { return false }
+
+// MCPServerName/MCPRawToolName expose the deferred target for audit and
+// plan-mode trust prompts (tool.MCPMetadata).
+func (o *onDemandMCPTool) MCPServerName() string  { return o.server }
+func (o *onDemandMCPTool) MCPRawToolName() string { return o.raw }
+
+func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	tools, err := o.proxy.ensureServerTools(ctx, o.server)
+	if err != nil {
+		if o.proxy.ledger != nil {
+			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, err.Error())
+		}
+		if o.proxy.audit != nil {
+			o.proxy.audit.RecordMCPProxy(false, true, true)
+		}
+		return "", err
+	}
+	target := findMCPTool(tools, o.raw, o.modelName)
+	if target == nil {
+		msg := fmt.Sprintf("MCP tool %q not found on server %q", o.raw, o.server)
+		if o.proxy.ledger != nil {
+			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, msg)
+		}
+		return "", fmt.Errorf("%s", msg)
+	}
+	return target.Execute(ctx, args)
 }
 
 func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string) ([]tool.Tool, error) {
@@ -338,10 +450,17 @@ func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string
 	if !ok {
 		return nil, fmt.Errorf("MCP server %q is not configured", server)
 	}
-	// On-demand connect with a short startup budget; tools stay off main registry.
-	startCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// On-demand connect: the handshake gets a short budget, but the child
+	// process lifetime belongs to the session-scoped lifeCtx — canceling the
+	// handshake context after connect must not kill a stdio server the tool
+	// call is about to use. Tools stay off the main registry.
+	life := t.lifeCtx
+	if life == nil {
+		life = context.Background()
+	}
+	handshakeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	tools, err := t.host.Add(startCtx, spec)
+	tools, err := t.host.AddWithLifecycle(life, handshakeCtx, spec)
 	if err != nil {
 		if plugin.IsServerAlreadyConnected(err) {
 			return t.host.ToolsFor(ctx, server)
@@ -357,18 +476,14 @@ func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string
 	return t.host.ToolsFor(ctx, server)
 }
 
+// specFor looks up the boot-converted spec for server. The proxy deliberately
+// holds []plugin.Spec, not raw config entries: env expansion, workspace
+// overrides, call timeouts, and trusted read-only tool names all live in the
+// shared conversion and must not be re-derived here.
 func (t *UseCapabilityTool) specFor(server string) (plugin.Spec, bool) {
-	for _, p := range t.plugins {
-		if p.Name == server {
-			return plugin.Spec{
-				Name:    p.Name,
-				Type:    p.Type,
-				Command: p.Command,
-				Args:    append([]string(nil), p.Args...),
-				Env:     p.Env,
-				URL:     p.URL,
-				Headers: p.Headers,
-			}, true
+	for _, s := range t.specs {
+		if s.Name == server {
+			return s, true
 		}
 	}
 	return plugin.Spec{}, false

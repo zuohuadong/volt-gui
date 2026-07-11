@@ -814,6 +814,9 @@ func TestSkillRoutingMetadataParsesButStaysOutOfIndex(t *testing.T) {
 	if got := strings.Join(sk.Profiles, ","); got != "delivery,balanced,economy" {
 		t.Fatalf("Profiles = %q (invalid values should be dropped)", got)
 	}
+	if got := strings.Join(sk.InvalidProfiles, ","); got != "invalid" {
+		t.Fatalf("InvalidProfiles = %q (rejected values must be preserved for doctor)", got)
+	}
 	index := IndexBlock([]Skill{sk})
 	for _, forbidden := range []string{"code review", "auto-use", "needs-fresh-data", "mcp-server:github", "profiles"} {
 		if strings.Contains(index, forbidden) {

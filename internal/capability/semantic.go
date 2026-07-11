@@ -27,6 +27,11 @@ type SemanticRouter struct {
 	Sink     event.Sink
 	Model    string
 	Effort   string
+	// Pricing prices the router's own usage events; without it the routing
+	// cost always displays as zero.
+	Pricing *provider.Pricing
+	// Audit receives router token/cost/latency counters (RecordRouterUsage).
+	Audit *Audit
 
 	mu    sync.Mutex
 	cache map[string]semanticCacheEntry
@@ -149,6 +154,7 @@ func (r *SemanticRouter) callModel(ctx context.Context, input string, candidates
 		_ = r.Model
 	}
 
+	start := time.Now()
 	ch, err := r.Provider.Stream(ctx, req)
 	if err != nil {
 		return nil, err
@@ -170,12 +176,18 @@ func (r *SemanticRouter) callModel(ctx context.Context, input string, candidates
 			}
 		}
 	}
-	if usage != nil && r.Sink != nil {
-		r.Sink.Emit(event.Event{
-			Kind:        event.Usage,
-			Usage:       usage,
-			UsageSource: event.UsageSourceCapabilityRouter,
-		})
+	if usage != nil {
+		if r.Audit != nil {
+			r.Audit.RecordRouterUsage(usage.PromptTokens, usage.CompletionTokens, r.Pricing.Cost(usage), time.Since(start).Milliseconds())
+		}
+		if r.Sink != nil {
+			r.Sink.Emit(event.Event{
+				Kind:        event.Usage,
+				Usage:       usage,
+				Pricing:     r.Pricing,
+				UsageSource: event.UsageSourceCapabilityRouter,
+			})
+		}
 	}
 	return parseSemanticIDs(text.String())
 }

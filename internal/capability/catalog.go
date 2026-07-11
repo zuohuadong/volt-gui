@@ -42,6 +42,30 @@ type CatalogOptions struct {
 	CacheHashOK map[string]bool                // server → fingerprint match
 }
 
+// LoadCachedToolsForSpecs loads the persisted MCP schema caches for the given
+// boot-converted specs, keyed by server name, plus the per-server fingerprint
+// match state. Fingerprint-mismatched caches are still returned (with
+// CacheHashOK=false) so MCPServerEntries can mark them stale instead of
+// hiding them; servers without a usable cache are simply absent. Call once at
+// session start and reuse — the cache lives on disk.
+func LoadCachedToolsForSpecs(specs []plugin.Spec) (map[string][]plugin.CachedTool, map[string]bool) {
+	cached := map[string][]plugin.CachedTool{}
+	hashOK := map[string]bool{}
+	for _, s := range specs {
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			continue
+		}
+		cs, ok, match := plugin.LoadCachedSchemaAny(name, plugin.SpecFingerprint(s))
+		if !ok || len(cs.Tools) == 0 {
+			continue
+		}
+		cached[name] = cs.Tools
+		hashOK[name] = match
+	}
+	return cached, hashOK
+}
+
 // BuildCatalog assembles the unified capability directory.
 func BuildCatalog(opts CatalogOptions) Catalog {
 	profile := opts.Profile

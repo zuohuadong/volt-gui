@@ -7,6 +7,10 @@ import (
 	"testing"
 
 	"reasonix/internal/capability"
+	"reasonix/internal/event"
+	"reasonix/internal/evidence"
+	"reasonix/internal/plugin"
+	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
 
@@ -21,7 +25,7 @@ func TestUseCapabilityDeclineAndInspect(t *testing.T) {
 	ledger.SeedCandidates(capability.RouteDecision{Candidates: []capability.RouteCandidate{
 		{Entry: capability.Entry{ID: "skill:review"}, Policy: capability.AutoUsePrefer},
 	}})
-	tl := NewUseCapabilityTool(nil, nil, tool.NewRegistry(), ledger, nil, func() capability.Catalog {
+	tl := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), ledger, nil, func() capability.Catalog {
 		return capability.Catalog{Entries: []capability.Entry{{
 			ID: "skill:review", Kind: capability.KindSkill, Name: "review", Description: "review code", Status: capability.StatusReady,
 		}}}
@@ -50,7 +54,7 @@ func TestUseCapabilityProxyHonorsRealMCPPermissionDeny(t *testing.T) {
 	// Register a fake MCP tool in the registry so resolve uses it without host.
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "mcp__github__search_issues", readOnly: true})
-	tl := NewUseCapabilityTool(nil, nil, reg, capability.NewLedger(), nil, nil)
+	tl := NewUseCapabilityTool(context.Background(), nil, nil, reg, capability.NewLedger(), nil, nil)
 
 	resolved, err := tl.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:github/search_issues","arguments":{}}`))
 	if err != nil {
@@ -71,11 +75,164 @@ func TestUseCapabilityProxyHonorsRealMCPPermissionDeny(t *testing.T) {
 
 func TestReviewReportToolValidatesSchema(t *testing.T) {
 	tl := NewReviewReportTool()
-	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":[]}`)); err == nil {
+	led := evidence.NewLedger()
+	led.Record(evidence.ReceiptFromToolCall("read_file", json.RawMessage(`{"path":"a.go"}`), true, true))
+	ctx := evidence.WithLedger(context.Background(), led)
+	if _, err := tl.Execute(ctx, json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":[]}`)); err == nil {
 		t.Fatal("empty reviewed_paths should fail")
 	}
-	out, err := tl.Execute(context.Background(), json.RawMessage(`{"kind":"security","verdict":"block","reviewed_paths":["a.go"],"findings":[{"severity":"critical","summary":"secret"}]}`))
+	out, err := tl.Execute(ctx, json.RawMessage(`{"kind":"security","verdict":"block","reviewed_paths":["a.go"],"findings":[{"severity":"critical","summary":"secret"}]}`))
 	if err != nil || !strings.Contains(out, "blocking") {
 		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+func TestReviewReportRequiresHostReadEvidence(t *testing.T) {
+	tl := NewReviewReportTool()
+	// No ledger on ctx: fail closed.
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":["a.go"]}`)); err == nil {
+		t.Fatal("expected failure without a host evidence ledger")
+	}
+	led := evidence.NewLedger()
+	ctx := evidence.WithLedger(context.Background(), led)
+	// Claimed paths without any host-observed read: rejected, names the path.
+	_, err := tl.Execute(ctx, json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":["internal/agent/agent.go"]}`))
+	if err == nil || !strings.Contains(err.Error(), "internal/agent/agent.go") {
+		t.Fatalf("expected fake-coverage rejection naming the path, got %v", err)
+	}
+	// A successful read receipt makes the same report acceptable.
+	led.Record(evidence.ReceiptFromToolCall("read_file", json.RawMessage(`{"path":"internal/agent/agent.go"}`), true, true))
+	if _, err := tl.Execute(ctx, json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":["internal/agent/agent.go"]}`)); err != nil {
+		t.Fatalf("host-read path should be accepted: %v", err)
+	}
+	// A git-diff bash receipt also counts as host observation.
+	led2 := evidence.NewLedger()
+	led2.Record(evidence.ReceiptFromToolCall("bash", json.RawMessage(`{"command":"git diff -- internal/boot/boot.go"}`), true, true))
+	ctx2 := evidence.WithLedger(context.Background(), led2)
+	if _, err := tl.Execute(ctx2, json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":["internal/boot/boot.go"]}`)); err != nil {
+		t.Fatalf("diffed path should be accepted: %v", err)
+	}
+}
+
+func TestRunSubAgentRequiresReviewReport(t *testing.T) {
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{{Type: provider.ChunkText, Text: "looks fine"}, {Type: provider.ChunkDone}},
+	}}
+	_, err := RunSubAgentWithSession(context.Background(), prov, tool.NewRegistry(), NewSession("sys"), "review it",
+		Options{RequireReviewReportKind: evidence.ReviewKindReview}, event.Discard)
+	if err == nil || !strings.Contains(err.Error(), "review_report") {
+		t.Fatalf("expected missing-report failure, got %v", err)
+	}
+}
+
+func TestUseCapabilityResolveCallIsSideEffectFree(t *testing.T) {
+	host := plugin.NewHost()
+	defer host.Close()
+	specs := []plugin.Spec{{
+		Name:              "lazy",
+		Type:              "stdio",
+		Command:           "reasonix-test-definitely-missing-binary",
+		ReadOnlyToolNames: map[string]bool{"read_thing": true},
+	}}
+	tl := NewUseCapabilityTool(context.Background(), host, specs, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+
+	resolved, err := tl.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:lazy/do_write","arguments":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.SkipExecute || resolved.Target == nil {
+		t.Fatalf("expected a deferred target, got %+v", resolved)
+	}
+	if resolved.ReadOnly {
+		t.Fatal("unstarted, untrusted tool must resolve as a writer")
+	}
+	if host.HasClient("lazy") {
+		t.Fatal("ResolveCall must not start the MCP server")
+	}
+	// Config-trusted read-only tool keeps its trust without a handshake.
+	roResolved, err := tl.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:lazy/read_thing"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !roResolved.ReadOnly {
+		t.Fatal("spec-trusted read-only tool should resolve read-only")
+	}
+	if host.HasClient("lazy") {
+		t.Fatal("read-only resolution must not start the MCP server either")
+	}
+	// Execution is where the connect finally happens — and fails for the
+	// missing binary, marking the capability unavailable.
+	ledger := capability.NewLedger()
+	tl.ledger = ledger
+	if _, err := resolved.Target.Execute(context.Background(), resolved.Args); err == nil {
+		t.Fatal("expected connect failure for missing binary")
+	}
+	if e, ok := ledger.Get("mcp-tool:lazy/do_write"); !ok || e.Outcome != capability.OutcomeUnavailable {
+		t.Fatalf("expected unavailable outcome, got %+v ok=%v", e, ok)
+	}
+}
+
+func TestUseCapabilityInspectDoesNotStartServer(t *testing.T) {
+	host := plugin.NewHost()
+	defer host.Close()
+	specs := []plugin.Spec{{Name: "lazy", Type: "stdio", Command: "reasonix-test-definitely-missing-binary"}}
+	tl := NewUseCapabilityTool(context.Background(), host, specs, tool.NewRegistry(), capability.NewLedger(), nil, func() capability.Catalog {
+		return capability.Catalog{Entries: []capability.Entry{{
+			ID: "mcp-server:lazy", Kind: capability.KindMCPServer, Name: "lazy", Source: "lazy", Status: capability.StatusConfigured,
+		}}}
+	})
+	out, err := tl.Execute(context.Background(), json.RawMessage(`{"action":"inspect","capability_id":"mcp-server:lazy"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host.HasClient("lazy") {
+		t.Fatal("inspect must not start the MCP server")
+	}
+	if !strings.Contains(out, "not connected") {
+		t.Fatalf("inspect output should say the server is not connected: %q", out)
+	}
+}
+
+func TestPlanModeBlocksWriteMCPThroughUseCapability(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "mcp__github__create_issue", readOnly: false})
+	reg.Add(fakeTool{name: "mcp__github__search_issues", readOnly: true})
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, reg, capability.NewLedger(), nil, nil)
+	reg.Add(uc)
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
+	a.planMode.Store(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:github/create_issue","arguments":{}}`,
+	})
+	if !out.blocked {
+		t.Fatalf("plan mode must block a write MCP tool behind the proxy, got %+v", out)
+	}
+	if !strings.Contains(out.errMsg, "plan mode") {
+		t.Fatalf("errMsg = %q", out.errMsg)
+	}
+	// A trusted read-only target still passes through the proxy in plan mode.
+	out = a.executeOne(context.Background(), provider.ToolCall{
+		ID: "2", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:github/search_issues","arguments":{}}`,
+	})
+	if out.blocked {
+		t.Fatalf("trusted read-only proxy call should pass in plan mode, got %+v", out)
+	}
+}
+
+func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
+	reg := tool.NewRegistry()
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
+		Options{DeliveryProfile: true, CapabilityLedger: capability.NewLedger()}, event.Discard)
+	a.SeedCapabilityRoute(capability.RouteDecision{Candidates: []capability.RouteCandidate{
+		{Entry: capability.Entry{ID: "skill:review"}, Policy: capability.AutoUseRequire},
+	}})
+	// Only ordinary reads happened — no writer. The require gate must still hold.
+	a.evidence.Record(evidence.ReceiptFromToolCall("read_file", json.RawMessage(`{"path":"a.go"}`), true, true))
+	check := a.finalReadinessCheck()
+	if !strings.Contains(check.reason, "required capabilities") {
+		t.Fatalf("read-only answer must not skip the require gate; reason = %q", check.reason)
 	}
 }

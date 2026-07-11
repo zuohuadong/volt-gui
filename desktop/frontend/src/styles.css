@@ -6548,6 +6548,15 @@ body > .mermaid-diagram--fullscreen {
   width: min(284px, calc(100vw - 16px));
 }
 
+.composer-profile-menu .composer-access-menu__desc {
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-intent-menu__item,
 .composer-profile-menu__item {
   height: auto;

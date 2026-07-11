@@ -179,6 +179,9 @@ eq(finalDeclaration(".composer-intent-menu", "width"), "min(284px, calc(100vw - 
 eq(finalDeclaration(".composer-profile-menu", "width"), "min(284px, calc(100vw - 16px))", "work mode menu uses the shared menu width");
 eq(finalDeclaration(".composer-access-menu__desc", "white-space"), "normal", "menu descriptions can wrap onto a second line");
 eq(finalDeclaration(".composer-access-menu__desc", "text-overflow"), "clip", "menu descriptions no longer use single-line ellipsis");
+eq(finalDeclaration(".composer-profile-menu .composer-access-menu__desc", "font-size"), "12px", "work mode summaries use the shared control text size");
+eq(finalDeclaration(".composer-profile-menu .composer-access-menu__desc", "color"), "var(--fg-dim)", "work mode summaries remain readable as secondary text");
+eq(finalDeclaration(".composer-profile-menu .composer-access-menu__desc", "white-space"), "nowrap", "work mode summaries stay on one scannable line");
 eq(finalDeclaration(".composer-task-mode-trigger:focus-visible", "box-shadow"), "var(--focus-ring)", "task method selector uses the shared keyboard focus ring");
 eq(finalDeclaration(".composer-profile-trigger:focus-visible", "box-shadow"), "var(--focus-ring)", "work mode selector uses the shared keyboard focus ring");
 eq(finalDeclaration(".composer-meta .modelsw__trigger:focus-visible", "box-shadow"), "var(--focus-ring)", "model and effort selectors use the shared keyboard focus ring");

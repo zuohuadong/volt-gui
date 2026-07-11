@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/memory"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
+	"reasonix/internal/secrets"
 	"reasonix/internal/skill"
 )
 
@@ -652,17 +653,20 @@ func sanitizeErrTextWithPaths(s, workspace, home string) string {
 		}
 	}
 
-	// PATH=... (often embedded in stdio resolve errors).
+	// PATH=... (often embedded in stdio resolve errors; not a credential, so
+	// the shared redactor below leaves it alone).
 	s = redactKeyValue(s, "PATH=")
 	s = redactKeyValue(s, "path=")
 
-	// Common credential shapes.
+	// Transport errors embed arbitrary HTTP bodies and stdio stderr, so run
+	// the product-wide credential recognizer (KEY=value and JSON
+	// "key":"value" forms, Authorization schemes, Cookie/Set-Cookie values,
+	// Bearer/JWT/vendor token shapes) instead of a second, narrower list.
+	s = secrets.Redact(s)
+
+	// The shared Bearer pattern only masks tokens of 16+ chars; diagnostics
+	// text can afford to redact shorter bearer tokens too.
 	s = redactBearer(s)
-	s = redactKeyValue(s, "Authorization=")
-	s = redactKeyValue(s, "authorization=")
-	s = redactKeyValue(s, "token=")
-	s = redactKeyValue(s, "api_key=")
-	s = redactKeyValue(s, "apikey=")
 
 	// Absolute paths: rewrite with displayPath when possible.
 	s = redactAbsolutePaths(s, workspace, home)

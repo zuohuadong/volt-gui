@@ -338,6 +338,7 @@ export const zhTW: Record<DictKey, string> = {
   "subagents.inherited": "繼承中",
   "subagents.resetOverride": "恢復預設",
   "subagents.customTitle": "自訂子智慧體",
+  "subagents.customHint": "你建立或載入的子智慧體 Profile；可編輯項目可以在這裡管理。",
   "subagents.noCustom": "還沒有自訂子智慧體。",
   "subagents.noMatches": "沒有相符的子智慧體。",
   "subagents.externalManaged": "在 Skills 中管理",

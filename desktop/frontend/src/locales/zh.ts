@@ -423,6 +423,7 @@ export const zh: Record<DictKey, string> = {
   "subagents.inherited": "继承中",
   "subagents.resetOverride": "恢复默认",
   "subagents.customTitle": "自定义子智能体",
+  "subagents.customHint": "你创建或加载的子智能体 Profile；可编辑项可以在这里管理。",
   "subagents.noCustom": "还没有自定义子智能体。",
   "subagents.noMatches": "没有匹配的子智能体。",
   "subagents.externalManaged": "在 Skills 中管理",

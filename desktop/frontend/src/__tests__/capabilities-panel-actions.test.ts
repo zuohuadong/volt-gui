@@ -1,4 +1,5 @@
 import { JSDOM } from "jsdom";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -24,6 +25,12 @@ ok(firstCustomSelection.size === subagentTools.length, "first custom-mode use sh
 const savedCustomSelection = selectToolsOnFirstCustomUse(new Set(["read_file", "edit_file"]), subagentTools, true);
 ok(savedCustomSelection.size === 2 && !savedCustomSelection.has("bash"), "saved custom tool selections should be preserved");
 ok(selectToolsOnFirstCustomUse(new Set(), subagentTools, true).size === 0, "returning to custom mode should preserve a deliberate empty selection");
+
+const subagentsSource = readFileSync(new URL("../components/SubagentsPanel.tsx", import.meta.url), "utf8");
+const customGroupIndex = subagentsSource.indexOf('aria-labelledby="subagents-custom-title"');
+const builtinGroupIndex = subagentsSource.indexOf('aria-labelledby="subagents-builtin-title"');
+ok(customGroupIndex >= 0 && builtinGroupIndex > customGroupIndex, "custom subagents should render before built-in subagents");
+ok((subagentsSource.match(/className="subagents-profile-group"/g) ?? []).length === 2, "custom and built-in subagents should use separate sections");
 
 function server(status: ServerView["status"]): ServerView {
   return {

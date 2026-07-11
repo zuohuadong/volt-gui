@@ -2495,20 +2495,35 @@ export function Composer({
     : tokenMode === "delivery"
       ? "composer.runtimeProfileDeliveryShort"
       : "composer.runtimeProfileBalancedShort";
-  const runtimeProfileDescKey = tokenMode === "economy"
-    ? "composer.runtimeProfileEconomyDesc"
+  const runtimeProfileTooltipSummaryKey = tokenMode === "economy"
+    ? "composer.runtimeProfileEconomyTooltipSummary"
     : tokenMode === "delivery"
-      ? "composer.runtimeProfileDeliveryDesc"
-      : "composer.runtimeProfileBalancedDesc";
+      ? "composer.runtimeProfileDeliveryTooltipSummary"
+      : "composer.runtimeProfileBalancedTooltipSummary";
   const RuntimeProfileIcon = tokenMode === "economy" ? Gauge : tokenMode === "delivery" ? ClipboardCheck : Scale;
   const runtimeProfileTriggerLabel = t("composer.runtimeProfileTrigger", { mode: t(runtimeProfileShortKey) });
+  const runtimeProfileTooltipLabel = t("composer.controlTooltip", {
+    category: t("composer.runtimeProfileTitle"),
+    mode: t(runtimeProfileShortKey),
+    summary: t(runtimeProfileTooltipSummaryKey),
+  });
   const taskModeShortKey = collaborationMode === "plan"
     ? "composer.taskModePlanShort"
     : collaborationMode === "goal"
       ? "composer.taskModeGoalShort"
       : "composer.taskModeDirectShort";
+  const taskModeTooltipSummaryKey = collaborationMode === "plan"
+    ? "composer.taskModePlanTooltipSummary"
+    : collaborationMode === "goal"
+      ? "composer.taskModeGoalTooltipSummary"
+      : "composer.taskModeDirectTooltipSummary";
   const TaskModeIcon = collaborationMode === "plan" ? List : collaborationMode === "goal" ? Target : ArrowRight;
   const taskModeTriggerLabel = t("composer.taskModeTrigger", { mode: t(taskModeShortKey) });
+  const taskModeTooltipLabel = t("composer.controlTooltip", {
+    category: t("composer.intentMenuTitle"),
+    mode: t(taskModeShortKey),
+    summary: t(taskModeTooltipSummaryKey),
+  });
   const effortLevels = asArray(effort?.levels);
   const currentEffort = effort?.current || "auto";
   const compactEffortTitle = currentEffort === "auto"
@@ -3189,7 +3204,7 @@ export function Composer({
         <div className={composerMetaClass}>
           <div className="composer-meta__params">
             <div className="composer-meta__control composer-meta__control--intent">
-              <Tooltip label={t("composer.intentMenuTitle")} disabled={intentMenuOpen || intentMenuClosing}>
+              <Tooltip label={taskModeTooltipLabel} disabled={intentMenuOpen || intentMenuClosing}>
                 <button
                   ref={intentMenuAnchorRef}
                   type="button"
@@ -3208,7 +3223,7 @@ export function Composer({
               </Tooltip>
             </div>
             <div className="composer-meta__control composer-meta__control--profile">
-              <Tooltip label={t(runtimeProfileDescKey)} disabled={profileMenuOpen || profileMenuClosing}>
+              <Tooltip label={runtimeProfileTooltipLabel} disabled={profileMenuOpen || profileMenuClosing}>
                 <button
                   ref={profileMenuAnchorRef}
                   type="button"

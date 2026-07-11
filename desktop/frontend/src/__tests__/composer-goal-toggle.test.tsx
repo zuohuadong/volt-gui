@@ -227,6 +227,15 @@ console.log("\ncomposer goal toggle");
   if (!intentButton) throw new Error("composer intent button did not render");
   eq(intentButton.textContent?.trim(), "Standard", "execution method trigger shows only the current method");
   eq(intentButton.getAttribute("aria-label"), "Execution method · Standard", "execution method trigger keeps its full accessible name");
+  await act(async () => {
+    intentButton.focus();
+    await flushTimers();
+  });
+  eq(document.querySelector('[role="tooltip"]')?.textContent, "Execution method · Standard: Analyze and act as you go", "execution method tooltip combines category, value, and summary");
+  await act(async () => {
+    intentButton.blur();
+    await flushTimers();
+  });
 
   await act(async () => {
     intentButton.click();

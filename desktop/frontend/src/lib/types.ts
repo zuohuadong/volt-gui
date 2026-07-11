@@ -590,6 +590,7 @@ export interface CommandInfo {
   kind: "builtin" | "custom" | "mcp" | "skill" | "subagent";
   group?: "actions" | "management" | "subagents" | "skills" | "integrations";
   plugin?: string;
+  color?: string;
 }
 
 export interface DirEntry {

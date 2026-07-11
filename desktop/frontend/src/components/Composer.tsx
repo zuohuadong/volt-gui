@@ -544,7 +544,7 @@ export function Composer({
   cacheHitTokens,
   cacheMissTokens,
   balance,
-  onInvocationKindsChange,
+  onInvocationMetadataChange,
 }: {
   running: boolean;
   collaborationMode: CollaborationMode;
@@ -557,7 +557,7 @@ export function Composer({
   tabId?: string;
   effort?: EffortInfo;
   onSend: (displayText: string, submitText?: string, tabId?: string) => void | Promise<void>;
-  onInvocationKindsChange?: (kinds: Record<string, "skill" | "subagent">) => void;
+  onInvocationMetadataChange?: (metadata: Record<string, { kind: "skill" | "subagent"; color?: string }>) => void;
   onSteer?: (submitText: string, tabId?: string) => void | Promise<void>;
   // Returns the un-sent text when cancelling before the server replied (so it can
   // be restored to the input); undefined for a normal cancel.
@@ -936,12 +936,15 @@ export function Composer({
     };
   }, [ready, cwd, running, workspaceScopeKey]);
   useEffect(() => {
-    onInvocationKindsChange?.(Object.fromEntries(
+    onInvocationMetadataChange?.(Object.fromEntries(
       commands
         .filter(commandUsesStructuredInvocation)
-        .map((command) => [command.name, command.kind === "subagent" ? "subagent" : "skill"]),
+        .map((command) => [command.name, {
+          kind: command.kind === "subagent" ? "subagent" : "skill",
+          color: command.color,
+        }]),
     ));
-  }, [commands, onInvocationKindsChange]);
+  }, [commands, onInvocationMetadataChange]);
 
   const slashQuery = useMemo(() => {
     if (invocations.length > 0) return richSlashQuery?.query ?? null;

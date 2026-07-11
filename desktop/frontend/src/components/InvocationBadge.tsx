@@ -1,5 +1,7 @@
 import { Bot, WandSparkles, X } from "lucide-react";
+import type { CSSProperties } from "react";
 import type { InvocationDisplay } from "../lib/invocationDisplay";
+import { projectColorValue } from "../lib/projectColors";
 import { useT } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
@@ -17,8 +19,14 @@ export function InvocationBadge({
   variant: "composer" | "message";
 }) {
   const t = useT();
+  const accent = projectColorValue(invocation.color);
   return (
-    <span className={`invocation-display invocation-display--${variant} invocation-display--${kind}`} role="group" aria-label={t("composer.selectedInvocation")}>
+    <span
+      className={`invocation-display invocation-display--${variant} invocation-display--${kind}${accent ? " invocation-display--custom-color" : ""}`}
+      role="group"
+      aria-label={t("composer.selectedInvocation")}
+      style={accent ? { "--invocation-color": accent } as CSSProperties : undefined}
+    >
       <Tooltip label={description || `/${invocation.name}`}>
         <span className="invocation-display__identity">
           {kind === "subagent"

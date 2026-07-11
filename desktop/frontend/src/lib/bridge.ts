@@ -2595,6 +2595,7 @@ function makeMockApp(): AppBindings {
           description: skill.description,
           kind: skill.runAs === "subagent" ? "subagent" : "skill",
           group: skill.runAs === "subagent" ? "subagents" : "skills",
+          color: skill.color,
         });
       }
       return commands;

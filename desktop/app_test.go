@@ -227,7 +227,7 @@ func TestCommandsIncludesEffortNotThinking(t *testing.T) {
 func TestCommandsClassifiesSubagentSkills(t *testing.T) {
 	ctrl := control.New(control.Options{Skills: []skill.Skill{
 		{Name: "init", Description: "inline skill", RunAs: skill.RunInline},
-		{Name: "explore", Description: "isolated skill", RunAs: skill.RunSubagent},
+		{Name: "explore", Description: "isolated skill", RunAs: skill.RunSubagent, Color: "amber"},
 	}})
 	defer ctrl.Close()
 	app := NewApp()
@@ -235,15 +235,20 @@ func TestCommandsClassifiesSubagentSkills(t *testing.T) {
 
 	kinds := map[string]string{}
 	groups := map[string]string{}
+	colors := map[string]string{}
 	for _, cmd := range app.Commands() {
 		kinds[cmd.Name] = cmd.Kind
 		groups[cmd.Name] = cmd.Group
+		colors[cmd.Name] = cmd.Color
 	}
 	if kinds["init"] != "skill" {
 		t.Fatalf("inline skill kind = %q, want skill", kinds["init"])
 	}
 	if kinds["explore"] != "subagent" {
 		t.Fatalf("subagent skill kind = %q, want subagent", kinds["explore"])
+	}
+	if colors["explore"] != "amber" {
+		t.Fatalf("subagent skill color = %q, want amber", colors["explore"])
 	}
 	if groups["new"] != "actions" {
 		t.Fatalf("new command group = %q, want actions", groups["new"])

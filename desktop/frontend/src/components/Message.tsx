@@ -16,14 +16,14 @@ import { useGSAPCollapse } from "../lib/useGSAPCollapse";
 import { displayReasoningText } from "../lib/reasoningDisplay";
 import { stripMemoryCompilerExecution } from "../lib/memoryCompilerDisplay";
 import { visibleTranscriptMemoryCitations } from "../lib/memoryCitationVisibility";
-import { invocationSegmentsFromMessage, type InvocationKindMap } from "../lib/invocationDisplay";
+import { invocationSegmentsFromMessage, type InvocationMetadataMap } from "../lib/invocationDisplay";
 import type { Item, MessageActionScope } from "../lib/useController";
 import type { CheckpointMeta, MemoryCitation } from "../lib/types";
 import { InvocationBadge } from "./InvocationBadge";
 
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
 export type TurnActionMenu = "summary" | "rewind";
-export const InvocationKindsContext = createContext<InvocationKindMap>({});
+export const InvocationMetadataContext = createContext<InvocationMetadataMap>({});
 type ImSourceMessage = {
   provider: string;
   label: string;
@@ -196,12 +196,12 @@ export function UserMessage({
   editDisabled?: boolean;
 }) {
   const t = useT();
-  const invocationKinds = useContext(InvocationKindsContext);
+  const invocationMetadata = useContext(InvocationMetadataContext);
   const imSource = parseImSourceMessage(text);
   const actionText = stripMemoryCompilerExecution(imSource?.text ?? text);
   const hasMemoryCompiler = Boolean(submitText?.includes("<memory-compiler-execution>"));
   const { text: displayText, attachments } = parseAttachmentRefsForDisplay(actionText);
-  const invocationSegments = imSource ? [] : invocationSegmentsFromMessage(displayText, submitText, invocationKinds);
+  const invocationSegments = imSource ? [] : invocationSegmentsFromMessage(displayText, submitText, invocationMetadata);
   const hasInvocationSegments = invocationSegments.some((segment) => segment.type === "invocation");
   const orderedAttachments = sortDisplayAttachments(attachments);
   const sourceLabel = imSource ? imSourceLabel(imSource, t) : "";

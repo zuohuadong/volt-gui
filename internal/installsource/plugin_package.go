@@ -287,9 +287,12 @@ func installCopiedPlugin(pkg pluginpkg.Package, sourceRoot, target string, repla
 	}
 	// Swap staged tree into place. The backup rename keeps the previous
 	// install restorable until the new tree has landed; both renames stay on
-	// one filesystem (same parent dir), so each is atomic.
-	backup := target + ".pre-replace"
-	_ = os.RemoveAll(backup) // stale leftover from an interrupted prior swap
+	// one filesystem (same parent dir), so each is atomic. The backup name
+	// derives from the staging dir: dot-prefixed and randomized, it can never
+	// pass IsValidName, so it cannot collide with a sibling plugin's install
+	// dir (plugin names may legally contain dots, e.g. "foo.pre-replace") and
+	// needs no pre-cleanup that could delete such a neighbor.
+	backup := staging + ".old"
 	hadOld := false
 	if _, err := os.Lstat(target); err == nil {
 		hadOld = true

@@ -1907,3 +1907,64 @@ func TestFailedReplaceKeepsExistingPluginInstall(t *testing.T) {
 		}
 	}
 }
+
+// TestBackupPathCannotCollideWithSiblingPlugin pins the backup-naming
+// contract: plugin names may legally contain dots, so a plugin literally
+// named "foo.pre-replace" must survive an update of plugin "foo" — the swap
+// backup must use a name no valid plugin can occupy.
+func TestBackupPathCannotCollideWithSiblingPlugin(t *testing.T) {
+	fooV1 := t.TempDir()
+	writeFile(t, filepath.Join(fooV1, ".claude-plugin", "plugin.json"), `{"name": "foo", "version": "1.0.0"}`)
+	writeFile(t, filepath.Join(fooV1, "commands", "plan.md"), "---\ndescription: plan\n---\nPlan")
+	fooV2 := t.TempDir()
+	writeFile(t, filepath.Join(fooV2, ".claude-plugin", "plugin.json"), `{"name": "foo", "version": "2.0.0"}`)
+	writeFile(t, filepath.Join(fooV2, "commands", "plan.md"), "---\ndescription: plan\n---\nPlan v2")
+	sibling := t.TempDir()
+	writeFile(t, filepath.Join(sibling, ".claude-plugin", "plugin.json"), `{"name": "foo.pre-replace", "version": "1.0.0"}`)
+	writeFile(t, filepath.Join(sibling, "commands", "keep.md"), "---\ndescription: keep\n---\nKeep")
+
+	project := t.TempDir()
+	home := t.TempDir()
+	tl := NewTool(Options{ProjectRoot: project, HomeDir: home})
+	tool := tl.(*installSourceTool)
+	sources := map[string]string{
+		"https://github.com/acme/foo":     fooV1,
+		"https://github.com/acme/sibling": sibling,
+	}
+	tool.preparePlugin = func(ctx context.Context, source, mode string) (string, string, func(), error) {
+		return sources[source], "cafe-" + source, func() {}, nil
+	}
+
+	for _, source := range []string{"https://github.com/acme/foo", "https://github.com/acme/sibling"} {
+		resp := execInstall(t, tl, map[string]any{"source": source, "kind": "plugin", "apply": true})
+		if !resp.OK || resp.Status != "done" {
+			t.Fatalf("install %s = %+v", source, resp)
+		}
+	}
+
+	sources["https://github.com/acme/foo"] = fooV2
+	update := execInstall(t, tl, map[string]any{
+		"source":  "https://github.com/acme/foo",
+		"kind":    "plugin",
+		"apply":   true,
+		"replace": true,
+	})
+	if !update.OK || update.Status != "done" {
+		t.Fatalf("update = %+v", update)
+	}
+
+	siblingRoot := filepath.Join(home, ".reasonix", "plugins", "foo.pre-replace")
+	if _, err := os.Stat(filepath.Join(siblingRoot, "commands", "keep.md")); err != nil {
+		t.Fatalf("sibling plugin's files must survive the update of foo: %v", err)
+	}
+	if _, ok, _ := pluginpkg.FindInstalled(filepath.Join(home, ".reasonix"), "foo.pre-replace"); !ok {
+		t.Fatal("sibling plugin must stay registered")
+	}
+	pkg, _, err := pluginpkg.ParseDir(filepath.Join(home, ".reasonix", "plugins", "foo"))
+	if err != nil {
+		t.Fatalf("ParseDir foo: %v", err)
+	}
+	if pkg.Manifest.Version != "2.0.0" {
+		t.Fatalf("foo version = %q, want the update applied", pkg.Manifest.Version)
+	}
+}

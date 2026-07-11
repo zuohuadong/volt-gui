@@ -231,8 +231,12 @@ Reports rewrite paths as:
 
 They never intentionally emit usernames, full external paths, environment
 variable **values**, header **values**, tokens, or URL query strings. MCP
-entries list env/header **keys** only. Prefer copying report JSON into issues
-or chat over pasting raw config files.
+entries list env/header **keys** only. Error text that may carry raw HTTP
+response bodies or MCP stderr passes through the product-wide secret redactor
+(Authorization schemes, Bearer/JWT/vendor tokens, `KEY=value` and JSON
+`"key":"value"` credential forms, Cookie/Set-Cookie values) and is truncated to
+400 characters. Prefer copying report JSON into issues or chat over pasting raw
+config files.
 
 ## What is *not* diagnosed here
 

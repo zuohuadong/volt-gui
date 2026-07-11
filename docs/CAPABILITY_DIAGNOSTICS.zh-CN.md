@@ -198,7 +198,10 @@ Issue 含稳定 `code`、`severity`、`subsystem`、`source`、`message`、`reme
 
 路径显示为 `<workspace>/...`、`~/...` 或 `<external>/basename`。
 不输出用户名、完整外部路径、环境变量值、Header 值、token、URL query。
-MCP 仅列出 env/header 的 **key**。向 issue / 聊天贴报告时，优先复制诊断 JSON，
+MCP 仅列出 env/header 的 **key**。可能携带 HTTP 响应体或 MCP stderr 的
+错误文本会先经过全局密钥脱敏器（Authorization、Bearer/JWT/厂商 token、
+`KEY=value` 与 JSON `"key":"value"` 凭据形态、Cookie/Set-Cookie 值），
+再截断到 400 字符。向 issue / 聊天贴报告时，优先复制诊断 JSON，
 不要贴原始配置文件。
 
 ## 不在本诊断范围内的事项

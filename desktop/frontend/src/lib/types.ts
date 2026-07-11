@@ -651,7 +651,7 @@ export interface GitCommitDetailView {
 export interface ComposerInsertRequest {
   id: number;
   text: string;
-  mode?: "insert" | "replace";
+  mode?: "insert" | "replace" | "prefix";
 }
 
 // MCP & Skills drawer (desktop/app.go Capabilities) — the GUI counterpart to

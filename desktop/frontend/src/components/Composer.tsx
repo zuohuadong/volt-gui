@@ -1252,6 +1252,12 @@ export function Composer({
       replaceComposerText(insertRequest.text);
       return;
     }
+    if (insertRequest.mode === "prefix") {
+      const prefix = `${insertRequest.text.trimEnd()} `;
+      const current = textRef.current;
+      setTextCaretEnd(current ? prefix + current : prefix);
+      return;
+    }
     const ref = parseWorkspaceReference(insertRequest.text);
     if (ref) {
       addWorkspaceReference(ref);

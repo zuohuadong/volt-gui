@@ -458,6 +458,10 @@ export const zh: Record<DictKey, string> = {
   "subagents.tryItPlaceholder": "给它一个一次性任务——隔离且只读运行…",
   "subagents.run": "运行",
   "subagents.running": "运行中…",
+  "subagents.invocationLabel": "在聊天中输入",
+  "subagents.invocationExample": "/{name} <任务>",
+  "subagents.copyInvocation": "复制命令",
+  "subagents.useInChat": "在聊天中使用",
 
   // 欢迎 / 空状态
   "welcome.title": "一个编码智能体",

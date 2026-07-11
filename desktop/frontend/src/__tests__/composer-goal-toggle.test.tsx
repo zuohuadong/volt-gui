@@ -224,6 +224,10 @@ console.log("\ncomposer goal toggle");
   await rerender({ insertRequest: { id: 1, text: "ship the release notes", mode: "replace" } });
   eq(textarea.value, "ship the release notes", "insert request populates the composer draft");
 
+  await rerender({ insertRequest: { id: 2, text: "/reviewer ", mode: "prefix" } });
+  eq(textarea.value, "/reviewer ship the release notes", "prefix insert preserves the draft as a subagent task");
+  eq(calls.send.length, 0, "prefix insert does not send the subagent task");
+
   const intentButton = document.querySelector(".composer-action-trigger") as HTMLButtonElement | null;
   if (!intentButton) throw new Error("composer intent button did not render");
 
@@ -242,7 +246,7 @@ console.log("\ncomposer goal toggle");
 
   eq(calls.send.length, 0, "enabling goal mode with a draft does not send");
   eq(calls.setCollaborationMode.join(","), "goal", "enabling goal mode switches only the collaboration axis");
-  eq(textarea.value, "ship the release notes", "enabling goal mode preserves the draft text");
+  eq(textarea.value, "/reviewer ship the release notes", "enabling goal mode preserves the prefixed draft text");
 
   await act(async () => {
     root.unmount();

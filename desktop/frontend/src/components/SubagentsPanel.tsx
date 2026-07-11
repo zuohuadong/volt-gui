@@ -8,6 +8,7 @@ import type { MCPToolView, SettingsView, SkillView, SubagentProfileInput } from 
 
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { AnchoredPopover } from "./AnchoredPopover";
+import { CopyButton } from "./CopyButton";
 import { allRefs, EFFORT_PRESETS, ModelPicker, toRef } from "./SettingsPanel";
 import { Tooltip } from "./Tooltip";
 
@@ -62,7 +63,7 @@ function shortModelRef(ref: string): string {
 // the Skills tab uses and filters client-side — the underlying file is the
 // same, just shown through a different lens — rather than adding a
 // redundant, parallel backend list endpoint.
-export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
+export function SubagentsSettingsPage({ s, onUseInChat }: { s: SettingsView; onUseInChat: (command: string) => void }) {
   const t = useT();
   const [skills, setSkills] = useState<SkillView[] | null>(null);
   const [tools, setTools] = useState<MCPToolView[]>([]);
@@ -197,10 +198,11 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
                     busy={busy}
                     onEdit={() => { setAdding(false); setEditingSkill(sk); }}
                     onDelete={() => void mutate(() => app.DeleteSubagentProfile(sk.name, sk.scope))}
+                    onUseInChat={onUseInChat}
                   />
                 ))}
                 {external.map((sk) => (
-                  <CustomSubagentRow key={`${sk.scope}:${sk.name}`} skill={sk} busy={busy} externallyManaged />
+                  <CustomSubagentRow key={`${sk.scope}:${sk.name}`} skill={sk} busy={busy} externallyManaged onUseInChat={onUseInChat} />
                 ))}
               </div>
             )}
@@ -227,6 +229,7 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
                       if (sk.configuredModel) await app.SetSubagentProfileModel(sk.name, "");
                       if (sk.configuredEffort) await app.SetSubagentProfileEffort(sk.name, "");
                     })}
+                    onUseInChat={onUseInChat}
                   />
                 ))}
               </div>
@@ -235,6 +238,24 @@ export function SubagentsSettingsPage({ s }: { s: SettingsView }) {
         </>
       )}
     </section>
+  );
+}
+
+function SubagentInvocation({ name, onUseInChat }: { name: string; onUseInChat: (command: string) => void }) {
+  const t = useT();
+  const command = `/${name} `;
+  const example = t("subagents.invocationExample", { name });
+  return (
+    <div className="subagents-invocation">
+      <div className="subagents-invocation__command">
+        <span>{t("subagents.invocationLabel")}</span>
+        <code>{example}</code>
+        <CopyButton text={example} label={t("subagents.copyInvocation")} className="subagents-invocation__copy" />
+      </div>
+      <button className="btn btn--small" type="button" onClick={() => onUseInChat(command)}>
+        {t("subagents.useInChat")}
+      </button>
+    </div>
   );
 }
 
@@ -330,6 +351,7 @@ function BuiltinSubagentRow({
   onSetModel,
   onSetEffort,
   onReset,
+  onUseInChat,
 }: {
   skill: SkillView;
   s: SettingsView;
@@ -337,6 +359,7 @@ function BuiltinSubagentRow({
   onSetModel: (ref: string) => void;
   onSetEffort: (level: string) => void;
   onReset: () => void;
+  onUseInChat: (command: string) => void;
 }) {
   const t = useT();
   const toolsLabel = toolsSummaryLabel(skill.allowedTools, t);
@@ -360,6 +383,7 @@ function BuiltinSubagentRow({
         </span>
       </div>
       <div className="cap-skill-card__desc">{builtinDescription(skill.name, skill.description, t)}</div>
+      <SubagentInvocation name={skill.name} onUseInChat={onUseInChat} />
       <div className="subagents-builtin-overrides">
         <div className="subagents-builtin-overrides__field">
           <span className="subagents-builtin-overrides__field-label">{t("subagents.model")}</span>
@@ -408,12 +432,14 @@ function CustomSubagentRow({
   onEdit,
   onDelete,
   externallyManaged = false,
+  onUseInChat,
 }: {
   skill: SkillView;
   busy: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
   externallyManaged?: boolean;
+  onUseInChat: (command: string) => void;
 }) {
   const t = useT();
   const toolsLabel = toolsSummaryLabel(skill.allowedTools, t);
@@ -455,6 +481,7 @@ function CustomSubagentRow({
         )}
       </div>
       <div className="cap-skill-card__desc">{skill.description}</div>
+      <SubagentInvocation name={skill.name} onUseInChat={onUseInChat} />
     </div>
   );
 }

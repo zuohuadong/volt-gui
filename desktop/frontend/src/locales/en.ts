@@ -457,6 +457,10 @@ export const en = {
   "subagents.tryItPlaceholder": "Give it a one-off task — runs isolated and read-only…",
   "subagents.run": "Run",
   "subagents.running": "Running…",
+  "subagents.invocationLabel": "Invoke in chat",
+  "subagents.invocationExample": "/{name} <task>",
+  "subagents.copyInvocation": "Copy command",
+  "subagents.useInChat": "Use in chat",
 
   // welcome / empty state
   "welcome.title": "A coding agent",

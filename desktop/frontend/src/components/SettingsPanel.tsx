@@ -78,6 +78,7 @@ export function SettingsPanel({
   initialFocus,
   agentRunning = false,
   desktopPlatform,
+  onUseSubagent,
 }: {
   onClose: () => void;
   onChanged: (settings?: SettingsView | null) => void;
@@ -85,6 +86,7 @@ export function SettingsPanel({
   initialFocus?: SettingsInitialFocus;
   agentRunning?: boolean;
   desktopPlatform: DesktopPlatform;
+  onUseSubagent: (command: string) => void;
 }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
@@ -102,8 +104,15 @@ export function SettingsPanel({
   const [customFontName, setCustomFontNameState] = useState<string>(getCustomFontName());
   const [customMonoFontName, setCustomMonoFontNameState] = useState<string>(getCustomMonoFontName());
   const [tab, setTab] = useState<SettingsTab>(initialTab === "providers" ? "models" : initialTab ?? "general");
-  // Play the modal exit animation, then let the parent unmount us.
-  const { status, requestClose } = useDeferredClose(onClose, 240);
+  const pendingSubagentCommandRef = useRef<string | null>(null);
+  // Play the modal exit animation, then let the parent unmount us and focus
+  // the composer with the selected slash command.
+  const { status, requestClose } = useDeferredClose(() => {
+    const command = pendingSubagentCommandRef.current;
+    pendingSubagentCommandRef.current = null;
+    onClose();
+    if (command) onUseSubagent(command);
+  }, 240);
   const zoomSaveSeq = useRef(0);
 
   const reload = useCallback(async () => {
@@ -251,7 +260,10 @@ export function SettingsPanel({
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} initialFocus={initialFocus} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MCPServersSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SkillsSettingsPage /></Suspense></SettingsPageShell>}
-                {tab === "subagents" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SubagentsSettingsPage s={s} /></Suspense></SettingsPageShell>}
+                {tab === "subagents" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SubagentsSettingsPage s={s} onUseInChat={(command) => {
+                  pendingSubagentCommandRef.current = command;
+                  requestClose();
+                }} /></Suspense></SettingsPageShell>}
                 {tab === "plugins" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><PluginsSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MemorySettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "hooks" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><HooksSection onChanged={onChanged} /></SettingsPageShell>}

@@ -11866,6 +11866,42 @@ body > .mermaid-diagram--fullscreen {
   align-items: center;
   gap: 6px;
 }
+.subagents-invocation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 0 33px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-elev) 48%, transparent);
+}
+.subagents-invocation__command {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+.subagents-invocation__command code {
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subagents-invocation__copy {
+  flex: 0 0 auto;
+  min-height: 24px;
+  background: transparent;
+}
+.subagents-invocation__copy .copybtn__label-inline {
+  max-width: 80px;
+}
 .subagents-tryit-row {
   display: flex;
   align-items: center;
@@ -11898,6 +11934,13 @@ body > .mermaid-diagram--fullscreen {
   }
   .subagents-builtin-overrides {
     grid-template-columns: 1fr;
+  }
+  .subagents-invocation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .subagents-invocation > .btn {
+    align-self: flex-start;
   }
   .subagents-builtin-overrides__status {
     min-height: 0;

@@ -1415,6 +1415,13 @@ export default function App() {
       ? planRevisionInsertRequest.request
       : null;
   const composerInsertRequest = activeTabId ? composerInsertRequestsByTab[activeTabId] ?? null : null;
+  const prefillSubagentCommand = useCallback((command: string) => {
+    if (!activeTabId) return;
+    setComposerInsertRequestsByTab((current) => ({
+      ...current,
+      [activeTabId]: { id: Date.now(), text: command, mode: "prefix" },
+    }));
+  }, [activeTabId]);
   const composerSessionKey = useMemo(() => {
     return composerDraftKeyForTab(activeTab, activeTabId);
   }, [activeTab, activeTabId]);
@@ -3988,6 +3995,7 @@ export default function App() {
             initialFocus={settingsFocus ?? undefined}
             agentRunning={state.running}
             desktopPlatform={desktopPlatform}
+            onUseSubagent={prefillSubagentCommand}
             onClose={() => {
               setSettingsFocus(null);
               setSettingsTarget(null);

@@ -35,6 +35,8 @@ ok((subagentsSource.match(/className="subagents-profile-group"/g) ?? []).length 
 ok(subagentsSource.includes('className="btn btn--small subagents-reset-override"'), "override status and reset should share one compact action");
 ok(subagentsStyles.includes("repeat(2, minmax(200px, 1fr)) 152px"), "built-in subagent pickers should use equal columns and reserve one stable status column");
 ok(subagentsSource.includes('className="settings-model-picker subagents-effort-picker"'), "effort and model overrides should share the same picker interaction pattern");
+ok(subagentsSource.includes("<SubagentInvocation name={skill.name}"), "every subagent card should show its chat invocation affordance");
+ok(subagentsSource.includes("onUseInChat(command)"), "subagent cards should send their slash command to the chat composer");
 
 function server(status: ServerView["status"]): ServerView {
   return {

@@ -92,8 +92,12 @@ type Controller struct {
 	// skills owns the session's discovered skills (enabled subset, full set, and
 	// the reloadable stores) — the skills slice of the Capabilities concern. See
 	// skill.go.
-	skills skillSet
-	hooks  *hook.Runner // session hook runner; nil-safe (no hooks configured)
+	skills              skillSet
+	skillRunner         skill.SubagentRunner
+	readOnlySkillRunner skill.SubagentRunner
+	skillProfile        skill.ProfileResolver
+	slashSkillSeq       atomic.Uint64
+	hooks               *hook.Runner // session hook runner; nil-safe (no hooks configured)
 	// hookContexts carries one-shot lifecycle hook context into the next real
 	// user turn without changing the cache-stable system prompt.
 	hookContexts []string
@@ -359,9 +363,16 @@ type Options struct {
 	AllSkills     []skill.Skill
 	SkillStore    *skill.Store
 	AllSkillStore *skill.Store
-	Hooks         *hook.Runner
-	Memory        *memory.Set
-	Cleanup       func()
+	// SkillRunner executes a runAs=subagent skill in an isolated child loop.
+	// ReadOnlySkillRunner is the plan-mode-safe variant used by direct slash
+	// invocation while planning; SkillProfile supplies model/effort display
+	// metadata for the synthetic top-level run_skill event.
+	SkillRunner         skill.SubagentRunner
+	ReadOnlySkillRunner skill.SubagentRunner
+	SkillProfile        skill.ProfileResolver
+	Hooks               *hook.Runner
+	Memory              *memory.Set
+	Cleanup             func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
 	BalanceURL    string
@@ -457,6 +468,9 @@ func New(opts Options) *Controller {
 		sessionPath:                       opts.SessionPath,
 		commands:                          atomic.Pointer[[]command.Command]{},
 		skills:                            newSkillSet(opts.Skills, opts.AllSkills, opts.SkillStore, opts.AllSkillStore),
+		skillRunner:                       opts.SkillRunner,
+		readOnlySkillRunner:               opts.ReadOnlySkillRunner,
+		skillProfile:                      opts.SkillProfile,
 		hooks:                             opts.Hooks,
 		memory:                            newMemoryManager(opts.Memory),
 		cleanup:                           opts.Cleanup,
@@ -829,6 +843,20 @@ func (c *Controller) runTurnWithRawDisplay(ctx context.Context, input, raw, disp
 	return newTurnOrchestrator(c).runTurnWithRawDisplay(ctx, input, raw, display)
 }
 
+func (c *Controller) runSubagentSkillSlash(sk skill.Skill, task, raw, display string) {
+	c.runGuarded(func(ctx context.Context) error {
+		planMode := c.PlanMode()
+		runner := c.skillRunner
+		if planMode {
+			runner = c.readOnlySkillRunner
+		}
+		if runner == nil {
+			return fmt.Errorf("subagent skill runner is unavailable for /%s", sk.Name)
+		}
+		return newTurnOrchestrator(c).runSubagentSkillGoalLoop(ctx, sk, task, raw, display, runner, planMode)
+	})
+}
+
 // toolWasCalledLastTurn reports whether the most recent assistant message
 // contained any tool calls, indicating the agent made observable progress.
 func (c *Controller) toolWasCalledLastTurn() bool {
@@ -885,6 +913,74 @@ func (c *Controller) SubmitHTTP(input string) {
 // text for transcript replay when controller-side composition expands input.
 func (c *Controller) SubmitDisplay(display, input string) {
 	c.submit(input, display, "")
+}
+
+// SubmitInvocationDisplay executes composer-selected invocation entities
+// independently of slash-command parsing. Plain string submit entry points keep
+// their existing behavior for CLI, HTTP, and backward-compatible clients.
+func (c *Controller) SubmitInvocationDisplay(display, input string, invocations []InvocationRequest) {
+	c.submitInvocations(input, display, invocations)
+}
+
+func (c *Controller) submitInvocations(input, display string, requests []InvocationRequest) {
+	if len(requests) == 0 {
+		c.SubmitDisplay(display, input)
+		return
+	}
+	ordered := append([]InvocationRequest(nil), requests...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Offset < ordered[j].Offset })
+	inline := make([]skill.Skill, 0, len(ordered))
+	subagents := make([]skill.Skill, 0, len(ordered))
+	for _, request := range ordered {
+		sk, _, ok := c.resolveSkillInvocation("/" + strings.TrimSpace(request.Name))
+		if !ok {
+			c.notice("unknown invocation: /" + strings.TrimSpace(request.Name))
+			return
+		}
+		kind := "skill"
+		if sk.RunAs == skill.RunSubagent {
+			kind = "subagent"
+		}
+		if request.Kind != kind {
+			c.notice(fmt.Sprintf("invocation /%s is %s, not %s", sk.SlashName(), kind, request.Kind))
+			return
+		}
+		if sk.RunAs == skill.RunSubagent {
+			subagents = append(subagents, sk)
+		} else {
+			inline = append(inline, sk)
+		}
+	}
+
+	parts := make([]string, 0, len(inline)+1)
+	for _, sk := range inline {
+		parts = append(parts, skill.Render(sk, ""))
+	}
+	if strings.TrimSpace(input) != "" {
+		parts = append(parts, input)
+	}
+	composed := strings.Join(parts, "\n\n")
+	if len(subagents) == 0 {
+		c.runGuarded(func(ctx context.Context) error {
+			return c.runGoalLoopWithRawDisplay(ctx, composed, input, display)
+		})
+		return
+	}
+	if strings.TrimSpace(input) == "" {
+		c.notice("subagent invocation requires a task")
+		return
+	}
+	c.runGuarded(func(ctx context.Context) error {
+		planMode := c.PlanMode()
+		runner := c.skillRunner
+		if planMode {
+			runner = c.readOnlySkillRunner
+		}
+		if runner == nil {
+			return fmt.Errorf("subagent skill runner is unavailable")
+		}
+		return newTurnOrchestrator(c).runSubagentSkillTurnsGoalLoop(ctx, subagents, composed, input, display, runner, planMode)
+	})
 }
 
 // SubmitEditedDisplay is SubmitDisplay for an inline-edited prompt. The model
@@ -1074,7 +1170,16 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 			})
 			return
 		}
-		if sent, ok := c.RunSkill(trimmed); ok {
+		if sk, task, ok := c.resolveSkillInvocation(trimmed); ok {
+			if sk.RunAs == skill.RunSubagent {
+				if strings.TrimSpace(task) == "" {
+					c.notice("usage: /" + sk.Name + " <task>")
+					return
+				}
+				c.runSubagentSkillSlash(sk, task, trimmed, display)
+				return
+			}
+			sent := skill.Render(sk, task)
 			c.runGuarded(func(ctx context.Context) error {
 				return runGoalLoop(ctx, sent, sent, display)
 			})
@@ -1509,6 +1614,50 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 	c.markInFlightTurn(startMessages, true)
 	defer c.clearInFlightTurn()
 	return c.runner.Run(ctx, c.withCapabilityRoute(input, rawInput))
+}
+
+// RunSubagentProfile executes one named runAs=subagent skill synchronously and
+// returns only its final answer. It is the headless CLI counterpart to explicit
+// slash invocation: the child keeps an isolated session, while the caller owns
+// stdout rendering and exit status. readOnly selects the preview-safe runner
+// used by `reasonix subagent try`.
+func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, readOnly bool) (string, error) {
+	name = strings.TrimSpace(name)
+	task = strings.TrimSpace(task)
+	if name == "" {
+		return "", fmt.Errorf("subagent name is required")
+	}
+	if task == "" {
+		return "", fmt.Errorf("subagent task is required")
+	}
+	sk, ok := c.skills.bySlashName(name)
+	if !ok {
+		return "", fmt.Errorf("unknown or disabled subagent profile %q", name)
+	}
+	if sk.RunAs != skill.RunSubagent {
+		return "", fmt.Errorf("skill %q is not runAs=subagent", name)
+	}
+	runner := c.skillRunner
+	if readOnly {
+		runner = c.readOnlySkillRunner
+	}
+	if runner == nil {
+		return "", fmt.Errorf("subagent skill runner is unavailable for %q", name)
+	}
+
+	c.maybeSessionStart(ctx)
+	parentSession := c.parentSessionID()
+	ctx = agent.WithParentSession(ctx, parentSession)
+	ctx = jobs.WithSession(ctx, parentSession)
+	ctx = agent.WithUserImages(ctx, c.inputImages(task))
+	ctx = agent.WithResponseLanguagePreference(ctx, c.responseLanguage)
+	ctx = agent.WithReasoningLanguagePreference(ctx, c.reasoningLanguage)
+	ctx = agent.WithSubagentDepth(ctx, 0)
+	answer, err := runner(ctx, sk, task, skill.SubagentRunOptions{HostInitiated: true})
+	if err != nil {
+		return "", err
+	}
+	return tool.GuardSubagentHostDecisionText(answer), nil
 }
 
 // Cancel aborts the in-flight turn. A goroutine blocked awaiting approval
@@ -3864,6 +4013,40 @@ func (c *Controller) SetSkillEnabled(name string, enabled bool) error {
 		return err
 	}
 	return cfg.SaveTo(config.UserConfigPath())
+}
+
+// CreateSkill writes a new skill file at the given scope and returns its
+// path. Skills()/AllSkills()/RunSkill() read the live store on demand, so the
+// new skill is usable (by name) immediately with no rebuild; the caller
+// should still rebuild the controller for the pinned Skills index and tool
+// registry to reflect it on the model's next turn, mirroring how
+// SetSkillEnabled's callers already rebuild after a config change.
+func (c *Controller) CreateSkill(name string, scope skill.Scope, content string) (string, error) {
+	w := c.skills.writer()
+	if w == nil {
+		return "", fmt.Errorf("no writable skill store in this session")
+	}
+	return w.CreateWithContent(name, scope, content)
+}
+
+// UpdateSkill overwrites an existing user-authored skill file in place. See
+// skill.Store.UpdateContent for the builtin-refusal and scope-match rules.
+func (c *Controller) UpdateSkill(name string, scope skill.Scope, content string) error {
+	w := c.skills.writer()
+	if w == nil {
+		return fmt.Errorf("no writable skill store in this session")
+	}
+	return w.UpdateContent(name, scope, content)
+}
+
+// DeleteSkill removes a user-authored skill file at the given scope. See
+// skill.Store.Delete for the builtin-refusal and scope-match rules.
+func (c *Controller) DeleteSkill(name string, scope skill.Scope) error {
+	w := c.skills.writer()
+	if w == nil {
+		return fmt.Errorf("no writable skill store in this session")
+	}
+	return w.Delete(name, scope)
 }
 
 // HookRunner returns the session's hook runner (nil-safe; may hold zero hooks),

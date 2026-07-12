@@ -226,7 +226,7 @@ func TestFinalReadinessBudgetExtendsOnlyWithProgress(t *testing.T) {
 }
 
 func TestPreviewStripsDeliveryMarkerAndSyntheticTurns(t *testing.T) {
-	first := "你是谁？\n\n" + deliveryRuntimeMarker
+	first := "你是谁？\n\n" + DeliveryRuntimeMarker
 	if got := UserPreviewText(first); got != "你是谁？" {
 		t.Fatalf("UserPreviewText kept framing: %q", got)
 	}
@@ -241,9 +241,9 @@ func TestPreviewStripsDeliveryMarkerAndSyntheticTurns(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "sys"},
 		{Role: provider.RoleUser, Content: first},
 		{Role: provider.RoleAssistant, Content: "hi"},
-		{Role: provider.RoleUser, Content: finalReadinessRetryMessage("missing receipts") + "\n\n" + deliveryRuntimeMarker},
+		{Role: provider.RoleUser, Content: finalReadinessRetryMessage("missing receipts") + "\n\n" + DeliveryRuntimeMarker},
 		{Role: provider.RoleUser, Content: MidTurnSteerPrefix + "\nslow down"},
-		{Role: provider.RoleUser, Content: "帮我写一个魂斗罗游戏\n\n" + deliveryRuntimeMarker},
+		{Role: provider.RoleUser, Content: "帮我写一个魂斗罗游戏\n\n" + DeliveryRuntimeMarker},
 	}
 	preview, turns := SessionPreviewFromMessages(msgs)
 	if preview != "你是谁？" {

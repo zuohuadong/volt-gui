@@ -50,7 +50,12 @@ const maxExecutorHandoffNudges = 1
 const memoryCompilerInjectionMax = 5
 const memoryCompilerInjectionCooldown = 30 * time.Second
 
-const deliveryRuntimeMarker = `<delivery-runtime>
+// DeliveryRuntimeMarker is the delivery-mode contract block appended to user
+// turns (withTurnPreferences). Exported as the single source of truth for the
+// byte-exact suffix strip in preview derivation and for cross-package tests;
+// its text is cache-frozen — changing it breaks steer replay matching and the
+// prefix stability of every live delivery session.
+const DeliveryRuntimeMarker = `<delivery-runtime>
 This session is in delivery-first mode. Before any state-changing tool call,
 establish concrete, verifiable acceptance criteria with todo_write. After the
 change, inspect the result, run relevant verification, and sign off each step
@@ -758,7 +763,7 @@ func (a *Agent) withTurnPreferences(input string) string {
 	}
 	input = WithReasoningLanguage(input, lang)
 	if a.deliveryProfile && !strings.Contains(input, "<delivery-runtime>") {
-		input = strings.TrimSpace(input) + "\n\n" + deliveryRuntimeMarker
+		input = strings.TrimSpace(input) + "\n\n" + DeliveryRuntimeMarker
 	}
 	return input
 }
@@ -856,7 +861,7 @@ func SteerText(content string) (string, bool) {
 		if after, found := strings.CutPrefix(s, MidTurnSteerPrefix); found {
 			// Strip only the "\n" separator, preserving the user's original text.
 			after = strings.TrimPrefix(after, "\n")
-			if trimmed, cut := strings.CutSuffix(after, "\n\n"+deliveryRuntimeMarker); cut {
+			if trimmed, cut := strings.CutSuffix(after, "\n\n"+DeliveryRuntimeMarker); cut {
 				after = trimmed
 			}
 			return after, true

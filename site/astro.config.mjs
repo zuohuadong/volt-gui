@@ -1,8 +1,7 @@
 import { defineConfig } from 'astro/config';
 
-// Served from GitHub Pages under the repo subpath.
 export default defineConfig({
-  site: 'https://esengine.github.io',
-  base: '/voltui',
+  site: 'https://zuohuadong.github.io',
+  base: '/volt-gui',
   build: { assets: 'static' },
 });

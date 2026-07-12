@@ -1,0 +1,47 @@
+---
+import Base from '../layouts/Base.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Base title="Capabilities — VoltUI" titleEn="Capabilities — VoltUI" titleZh="产品能力 — VoltUI" bodyClass="product-page capabilities-page" description="The model, code intelligence, tool, safety and memory capabilities inside VoltUI.">
+  <SiteHeader active="capabilities" />
+  <main>
+    <section class="page-hero wrap">
+      <div class="eyebrow"><span class="l-en">One agent workbench</span><span class="l-zh">一个智能体工作台</span></div>
+      <h1><span class="l-en">From understanding code to <em>verified delivery.</em></span><span class="l-zh">从理解代码到<em>验证交付。</em></span></h1>
+      <p class="lede"><span class="l-en">VoltUI connects models, repository intelligence, tools, approvals and durable context in one workflow — through terminal, desktop or enterprise messaging.</span><span class="l-zh">VoltUI 将模型、代码库智能、工具、审批与持久上下文连接成一条工作流，并通过终端、桌面端或企业 IM 使用。</span></p>
+    </section>
+
+    <section class="wrap product-section">
+      <div class="workflow-line">
+        <div><b>01</b><strong><span class="l-en">Understand</span><span class="l-zh">理解</span></strong><span>CodeGraph · files · memory</span></div>
+        <div><b>02</b><strong><span class="l-en">Plan</span><span class="l-zh">规划</span></strong><span>planner model · evidence</span></div>
+        <div><b>03</b><strong><span class="l-en">Act</span><span class="l-zh">执行</span></strong><span>tools · MCP · browser</span></div>
+        <div><b>04</b><strong><span class="l-en">Approve</span><span class="l-zh">审批</span></strong><span>permissions · sandbox</span></div>
+        <div><b>05</b><strong><span class="l-en">Verify</span><span class="l-zh">验证</span></strong><span>tests · checkpoint · evidence</span></div>
+      </div>
+    </section>
+
+    <section class="wrap product-section">
+      <div class="section-head"><div class="eyebrow"><span class="l-en">Core capabilities</span><span class="l-zh">核心能力</span></div><h2><span class="l-en">Built around real repository work.</span><span class="l-zh">围绕真实代码库工作构建。</span></h2></div>
+      <div class="capability-list">
+        <article><span class="cap-index">01</span><div><h3><span class="l-en">Multi-model providers</span><span class="l-zh">多模型 Provider</span></h3><p><span class="l-en">OpenAI-compatible and Anthropic endpoints, multiple models per provider, model discovery, reasoning effort and vision flags.</span><span class="l-zh">支持 OpenAI 兼容与 Anthropic 端点、单 Provider 多模型、模型发现、推理强度与视觉能力标记。</span></p></div><code>[[providers]]</code></article>
+        <article><span class="cap-index">02</span><div><h3><span class="l-en">Planner and executor pairing</span><span class="l-zh">规划器与执行器协作</span></h3><p><span class="l-en">Use a separate planning model for complex tasks while the executor keeps ownership of implementation and verification.</span><span class="l-zh">复杂任务可使用独立规划模型，执行模型继续负责实现与验证。</span></p></div><code>planner_model</code></article>
+        <article><span class="cap-index">03</span><div><h3>CodeGraph</h3><p><span class="l-en">Tree-sitter symbol and call-graph search without an embedding service or per-query model cost.</span><span class="l-zh">基于 tree-sitter 的符号与调用图搜索，不依赖嵌入服务，也不产生查询模型费用。</span></p></div><code>codegraph_*</code></article>
+        <article><span class="cap-index">04</span><div><h3><span class="l-en">Checkpoints and rewind</span><span class="l-zh">检查点与回退</span></h3><p><span class="l-en">Snapshot-based edit safety lets users return to a known state after broad or experimental changes.</span><span class="l-zh">基于快照的编辑安全网，让用户在大范围或实验性修改后回到已知状态。</span></p></div><code>/rewind</code></article>
+        <article><span class="cap-index">05</span><div><h3><span class="l-en">Plan mode, permissions and sandbox</span><span class="l-zh">计划模式、权限与沙箱</span></h3><p><span class="l-en">Keep a session read-only until approval, gate tool calls and confine writers to the workspace.</span><span class="l-zh">批准前保持会话只读，逐个管控工具调用，并将写操作限制在工作区内。</span></p></div><code>ask · allow · deny</code></article>
+        <article><span class="cap-index">06</span><div><h3><span class="l-en">MCP, skills and hooks</span><span class="l-zh">MCP、技能与钩子</span></h3><p><span class="l-en">Bring internal services into the tool registry, package repeatable expertise and automate PreToolUse, PostToolUse and Stop events.</span><span class="l-zh">把内部服务接入工具注册表，将重复经验封装成技能，并自动化 PreToolUse、PostToolUse 与 Stop 事件。</span></p></div><code>.mcp.json</code></article>
+        <article><span class="cap-index">07</span><div><h3><span class="l-en">Memory and session history</span><span class="l-zh">记忆与会话历史</span></h3><p><span class="l-en">Project instructions, automatic memory and persisted sessions keep context available without hiding it in a remote service.</span><span class="l-zh">项目指令、自动记忆与持久会话让上下文持续可用，无需隐藏在远程服务中。</span></p></div><code>VOLTUI.md</code></article>
+        <article><span class="cap-index">08</span><div><h3><span class="l-en">Browser and desktop automation</span><span class="l-zh">浏览器与桌面自动化</span></h3><p><span class="l-en">Render internal JavaScript apps, interact through CDP and use approval-gated host controls when repository work reaches outside the terminal.</span><span class="l-zh">渲染内网 JavaScript 应用，通过 CDP 交互，并在代码工作延伸到终端之外时使用审批管控的主机工具。</span></p></div><code>browser_control</code></article>
+      </div>
+    </section>
+
+    <section class="wrap product-section surfaces-section">
+      <div class="section-head left"><div class="eyebrow"><span class="l-en">Multiple surfaces</span><span class="l-zh">多种使用入口</span></div><h2><span class="l-en">The same agent contract, wherever work starts.</span><span class="l-zh">工作从哪里开始，都使用同一套智能体契约。</span></h2></div>
+      <div class="surface-grid"><a href={`${base}/docs/`}><strong>CLI / TUI</strong><span><span class="l-en">Fast repository-native sessions and automation.</span><span class="l-zh">快速、贴近代码库的会话与自动化。</span></span></a><div><strong>Wails Desktop</strong><span><span class="l-en">Rich transcript, composer, diffs and approval UI.</span><span class="l-zh">富文本会话、编辑器、差异与审批界面。</span></span></div><a href={`${base}/enterprise/`}><strong>Enterprise IM</strong><span><span class="l-en">QQ, Feishu and Weixin gateways for task entry and control.</span><span class="l-zh">通过 QQ、飞书与微信网关进入任务和控制流程。</span></span></a></div>
+    </section>
+  </main>
+  <SiteFooter />
+</Base>

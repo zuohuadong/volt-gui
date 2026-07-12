@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.12.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.11.2...desktop-v0.12.0) (2026-07-12)
+
+
+### Features
+
+* add default office MCP ([33ca50f](https://github.com/zuohuadong/volt-gui/commit/33ca50fc7803f2edef1b71525e94f67b3f3b0636))
+* add deterministic calculation tool ([904d081](https://github.com/zuohuadong/volt-gui/commit/904d0815210e0b35f18d582e91fe71b15ac6b77b))
+* add local knowledge index and capability status ([3652607](https://github.com/zuohuadong/volt-gui/commit/3652607899d4d74ead2bb0492e81a7cacdc0d5f3))
+* add local usage reporting ([e0615a0](https://github.com/zuohuadong/volt-gui/commit/e0615a0567c80e80361d147b7a75ea4385b210e3))
+* bundle computer-use MCP plugin ([3070b49](https://github.com/zuohuadong/volt-gui/commit/3070b49d46cf292ade09288d73c369b736c3e4bc))
+* **desktop:** add Cloudflare Drop publish plugin ([1d7243c](https://github.com/zuohuadong/volt-gui/commit/1d7243cceaee1d2701b3c573f941b1b907df34fb))
+* **desktop:** bundle Bun runtime for computer-use MCP ([8d10ae9](https://github.com/zuohuadong/volt-gui/commit/8d10ae9571e7c571cf4d7c4ec44ec65e0f7b9960))
+* **desktop:** improve offline workbench workflows ([876031f](https://github.com/zuohuadong/volt-gui/commit/876031fd51be4e4de7138a8c45d01108aa75b96e))
+* persist workbench capabilities ([b218cf4](https://github.com/zuohuadong/volt-gui/commit/b218cf40c5179ca9fbce9ae09b4b6cec52a0b602))
+* **site:** add multi-page product website ([00af214](https://github.com/zuohuadong/volt-gui/commit/00af214207aa2eda1e17bfb8ad7ae2752d1b9f6a))
+* **skills:** improve capability discovery metadata ([40f24f6](https://github.com/zuohuadong/volt-gui/commit/40f24f6b12d7764a0f7668970fbd6090d0e606cc))
+* **skills:** improve capability discovery metadata ([51113be](https://github.com/zuohuadong/volt-gui/commit/51113bebf2bf2c6127747b5c24c38c4b5286db3b))
+* sync runtime and desktop updates ([a1c8def](https://github.com/zuohuadong/volt-gui/commit/a1c8def0d60c11f1fbbb830c3c71af69455c8eee))
+* sync verified upstream updates and Cloudflare Drop publish ([d2a64d4](https://github.com/zuohuadong/volt-gui/commit/d2a64d4a43ddd22a1706eb823fed6c97527cacc5))
+* **sync:** port verified reasonix updates ([d9b4ffe](https://github.com/zuohuadong/volt-gui/commit/d9b4ffe7c3fa50f799cf71f58dd28815e86b86d3))
+
+
+### Bug Fixes
+
+* improve calendar scheduling interactions ([61d0224](https://github.com/zuohuadong/volt-gui/commit/61d0224db69a734b1044d0b314ebe809fc114f89))
+* repair cross-platform regressions and smoke coverage ([9553777](https://github.com/zuohuadong/volt-gui/commit/95537774edf4f4a0df718c17135732643e58025e))
+* **skill:** ignore title-only Claude markdown ([909fbc9](https://github.com/zuohuadong/volt-gui/commit/909fbc9f0757aa85e77a6ec89663ab1625a68352))
+* stabilize desktop knowledge workflows ([b9fe986](https://github.com/zuohuadong/volt-gui/commit/b9fe986fddf6b06ff97843cebc17e1d129040f3e))
+* support Bun staging on Windows ([f81f770](https://github.com/zuohuadong/volt-gui/commit/f81f7705dfec6c86b5c2c421ec6b75eca7d6ef13))
+
+
+### CI
+
+* test Bun staging changes ([fc186e6](https://github.com/zuohuadong/volt-gui/commit/fc186e6b1ba7d0f116ecf48dad6c4b7512fa78d1))
+
+
+### Chores
+
+* **deps:** bump astro from 7.0.6 to 7.0.7 in /site in the npm group ([d0dd7a9](https://github.com/zuohuadong/volt-gui/commit/d0dd7a90c9127ae558999c00c211a0e8170e7f7f))
+* **deps:** bump astro from 7.0.6 to 7.0.7 in /site in the npm group ([f39d2de](https://github.com/zuohuadong/volt-gui/commit/f39d2de5133358d92d0909724e927b6c7a530068))
+* **deps:** bump the go group across 1 directory with 5 updates ([1e69536](https://github.com/zuohuadong/volt-gui/commit/1e69536ed0e03faa43ef0d264cb224ed9768d28b))
+* **deps:** bump the go group across 1 directory with 5 updates ([81bcb70](https://github.com/zuohuadong/volt-gui/commit/81bcb7089aef53c8affb65843e19f0b6f4703917))
+* **deps:** bump the go group with 9 updates ([d45810a](https://github.com/zuohuadong/volt-gui/commit/d45810a5d666a7bd684a192149981f9e88a63fc3))
+* **deps:** bump the go group with 9 updates ([800237c](https://github.com/zuohuadong/volt-gui/commit/800237c0c3bf1501fe3fc72483a0a8f56bd1de60))
+* **deps:** bump the npm group in /desktop/frontend with 4 updates ([91f9bbe](https://github.com/zuohuadong/volt-gui/commit/91f9bbe66c7fcdd91a978dcd3d433c0841efd389))
+* **deps:** bump the npm group in /desktop/frontend with 4 updates ([563f5f9](https://github.com/zuohuadong/volt-gui/commit/563f5f91b3965c4b88499502f186301b2b95390a))
+
 ## [0.11.2](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.11.1...desktop-v0.11.2) (2026-07-07)
 
 

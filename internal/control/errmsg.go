@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
@@ -46,8 +47,9 @@ func explainError(err error) error {
 			msg = fmt.Sprintf("%s (%s)", msg, authErr.KeyEnv)
 		}
 		// Relays explain *why* auth failed in the body ("token expired", key
-		// not entitled to the model) — as diagnostic here as on APIError.
-		if reason := providerBodyReason(authErr.Body); reason != "" {
+		// not entitled to the model) — as diagnostic here as on APIError, but
+		// auth bodies also echo credentials, so scrub key material first.
+		if reason := redactAuthReason(providerBodyReason(authErr.Body)); reason != "" {
 			return fmt.Errorf("%s\n%s", msg, reason)
 		}
 		return errors.New(msg)
@@ -71,6 +73,36 @@ func apiErrorReason(e *provider.APIError) string {
 		return e.ToolContext
 	}
 	return reason + "\n" + e.ToolContext
+}
+
+// Auth failure bodies are where servers echo credentials: providers include a
+// masked tail ("Your api key: ****ae54 is invalid") and a sloppy relay can
+// reflect the full key it received. Both narrow or reveal the key, and the
+// displayed turn error can travel further than the user's terminal (bot
+// forwarding, shared screenshots).
+var (
+	// maskedFragmentRe matches a provider-masked credential and any visible
+	// prefix/suffix around the stars ("****ae54", "sk-ab****").
+	maskedFragmentRe = regexp.MustCompile(`[A-Za-z0-9._-]*\*{2,}[A-Za-z0-9._-]*`)
+	// keyTokenRe matches key-shaped runs; real keys virtually always contain a
+	// digit, which redactAuthReason requires so digit-free identifiers like
+	// "invalid_authentication_token" stay readable.
+	keyTokenRe = regexp.MustCompile(`[A-Za-z0-9_-]{16,}`)
+	digitRe    = regexp.MustCompile(`[0-9]`)
+)
+
+// redactAuthReason scrubs key material from an auth-failure reason before
+// display. Deliberately applied only to 401/403 bodies: other statuses don't
+// carry credentials, and 400 schema errors legitimately contain long
+// identifiers that this scrub would mangle.
+func redactAuthReason(s string) string {
+	s = maskedFragmentRe.ReplaceAllString(s, "****")
+	return keyTokenRe.ReplaceAllStringFunc(s, func(tok string) string {
+		if digitRe.MatchString(tok) {
+			return "****"
+		}
+		return tok
+	})
 }
 
 // providerBodyReason pulls the human reason from an OpenAI/Anthropic-shaped error

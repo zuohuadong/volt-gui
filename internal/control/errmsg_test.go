@@ -48,6 +48,14 @@ func TestExplainError(t *testing.T) {
 		}
 	}
 
+	authEcho := explainError(&provider.AuthError{Provider: "deepseek", KeyEnv: "DEEPSEEK_API_KEY", Status: 401, HasKey: true, Body: `{"error":{"message":"Authentication Fails, Your api key: ****ae54 is invalid"}}`})
+	if !strings.Contains(authEcho.Error(), "Authentication Fails") {
+		t.Errorf("401 should keep the readable reason, got %q", authEcho.Error())
+	}
+	if strings.Contains(authEcho.Error(), "ae54") {
+		t.Errorf("401 must not surface the masked key tail, got %q", authEcho.Error())
+	}
+
 	for _, status := range []int{400, 422, 429, 500, 503} {
 		got := explainError(&provider.APIError{Provider: "p", Status: status})
 		if got.Error() == "" || got.Error() == (&provider.APIError{Provider: "p", Status: status}).Error() {
@@ -113,5 +121,21 @@ func TestExplainError(t *testing.T) {
 	plain := errors.New("some other failure")
 	if explainError(plain) != plain {
 		t.Error("unknown errors should pass through unchanged")
+	}
+}
+
+func TestRedactAuthReason(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"masked tail", "Your api key: ****ae54 is invalid", "Your api key: **** is invalid"},
+		{"masked prefix form", "key sk-ab**** was rejected", "key **** was rejected"},
+		{"full key echoed by a relay", "Invalid key sk-proj-abc123def456ghi789 provided", "Invalid key **** provided"},
+		{"digit-free identifier survives", "code: invalid_authentication_token", "code: invalid_authentication_token"},
+		{"short tokens survive", "token expired at gateway", "token expired at gateway"},
+		{"empty", "", ""},
+	}
+	for _, c := range cases {
+		if got := redactAuthReason(c.in); got != c.want {
+			t.Errorf("%s: redactAuthReason(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
 	}
 }

@@ -1,0 +1,88 @@
+---
+import Base from '../layouts/Base.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Base
+  title="Compute & usage — VoltUI"
+  titleEn="Compute & usage — VoltUI"
+  titleZh="算力用量 — VoltUI"
+  bodyClass="product-page usage-page"
+  description="A local, content-free ledger for model requests, tokens, cache efficiency and estimated cost. No central server required.">
+  <SiteHeader active="usage" />
+
+  <main>
+    <section class="page-hero wrap">
+      <div class="eyebrow"><span class="l-en">Local model accounting</span><span class="l-zh">本地模型调用账本</span></div>
+      <h1><span class="l-en">See where your AI compute <em>actually goes.</em></span><span class="l-zh">看清每一份 AI 算力<em>用在何处。</em></span></h1>
+      <p class="lede"><span class="l-en">VoltUI records content-free usage telemetry on your machine: requests, tokens, cache hit and miss, reasoning tokens and estimated cost. No prompt text, tool output or central service is required.</span><span class="l-zh">VoltUI 在本机记录不含内容的用量数据：请求、Token、缓存命中与未命中、推理 Token 和预估成本。无需上传提示词、工具输出，也无需中心服务。</span></p>
+      <div class="hero-cta">
+        <a class="btn btn-dark" href={`${base}/docs/#usage`}><span class="l-en">Use the report</span><span class="l-zh">使用用量报表</span></a>
+        <a class="btn btn-line" href={`${base}/capabilities/`}><span class="l-en">Explore capabilities</span><span class="l-zh">查看产品能力</span></a>
+      </div>
+    </section>
+
+    <section class="wrap product-section">
+      <div class="demo-label"><span class="dot"></span><span class="l-en">Product demo · representative local data</span><span class="l-zh">产品演示 · 代表性本地数据</span></div>
+      <div class="usage-console">
+        <div class="console-head">
+          <div><span class="l-en">Last 30 days</span><span class="l-zh">最近 30 天</span></div>
+          <div class="console-filter"><span><span class="l-en">All models</span><span class="l-zh">全部模型</span></span><span><span class="l-en">Local ledger</span><span class="l-zh">本地账本</span></span></div>
+        </div>
+        <div class="stat-strip">
+          <div><strong>1,284</strong><span><span class="l-en">Requests</span><span class="l-zh">请求数</span></span></div>
+          <div><strong>42.8M</strong><span><span class="l-en">Total tokens</span><span class="l-zh">总 Token</span></span></div>
+          <div><strong>86.4%</strong><span><span class="l-en">Cache hit</span><span class="l-zh">缓存命中</span></span></div>
+          <div><strong>¥31.42</strong><span><span class="l-en">Estimated cost</span><span class="l-zh">预估成本</span></span></div>
+        </div>
+        <div class="console-grid">
+          <div class="trend-panel">
+            <div class="panel-title"><span class="l-en">Token usage by day</span><span class="l-zh">每日 Token 用量</span></div>
+            <div class="trend-chart" aria-label="Demo token usage chart">
+              <div class="chart-line line-1"></div><div class="chart-line line-2"></div><div class="chart-line line-3"></div>
+              <div class="chart-bars">
+                <span style="--h:42%"></span><span style="--h:58%"></span><span style="--h:48%"></span><span style="--h:76%"></span><span style="--h:66%"></span><span style="--h:88%"></span><span style="--h:72%"></span><span style="--h:94%"></span><span style="--h:64%"></span><span style="--h:82%"></span><span style="--h:70%"></span><span style="--h:90%"></span>
+              </div>
+              <div class="chart-axis"><span>Jun 14</span><span>Jun 21</span><span>Jun 28</span><span>Jul 13</span></div>
+            </div>
+          </div>
+          <div class="breakdown-panel">
+            <div class="panel-title"><span class="l-en">By model</span><span class="l-zh">按模型</span></div>
+            <div class="model-row"><span class="model-dot blue"></span><span>deepseek-v4-flash</span><strong>52%</strong></div>
+            <div class="model-row"><span class="model-dot green"></span><span>qwen3-235b-a22b</span><strong>28%</strong></div>
+            <div class="model-row"><span class="model-dot violet"></span><span>glm-4-plus</span><strong>14%</strong></div>
+            <div class="model-row"><span class="model-dot gray"></span><span>planner / others</span><strong>6%</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap product-section split-section">
+      <div class="section-copy">
+        <div class="eyebrow"><span class="l-en">Product integration</span><span class="l-zh">与产品直接结合</span></div>
+        <h2><span class="l-en">A shared usage model, with CLI reporting today.</span><span class="l-zh">统一用量模型，CLI 报表现已可用。</span></h2>
+        <p><span class="l-en">CLI chat, run and serve surfaces append normalized events to the shared JSONL ledger. Desktop currently keeps compatible per-session telemetry in <code>*.telemetry.json</code>; connecting it to the shared report is a planned product step, not a shipped dashboard.</span><span class="l-zh">CLI 的 chat、run 与 serve 入口会把标准化事件追加到共享 JSONL 账本。桌面端当前保存兼容的单会话 <code>*.telemetry.json</code> 数据；接入共享报表是后续产品步骤，并非已经交付的桌面仪表盘。</span></p>
+      </div>
+      <div class="flow-stack">
+        <div><b>01</b><span><strong><span class="l-en">Provider response</span><span class="l-zh">模型响应</span></strong><small>prompt · completion · cache · reasoning</small></span></div>
+        <div><b>02</b><span><strong><span class="l-en">Normalized usage event</span><span class="l-zh">标准化用量事件</span></strong><small>model · source · surface · pricing</small></span></div>
+        <div><b>03</b><span><strong><span class="l-en">CLI content-free ledger</span><span class="l-zh">CLI 无内容账本</span></strong><small>~/.voltui/usage/usage.jsonl</small></span></div>
+        <div><b>04</b><span><strong><span class="l-en">CLI report · desktop planned</span><span class="l-zh">CLI 报表 · 桌面接入规划中</span></strong><small>by day · model · source · surface</small></span></div>
+      </div>
+    </section>
+
+    <section class="wrap product-section">
+      <div class="section-head left"><div class="eyebrow"><span class="l-en">What is measured</span><span class="l-zh">当前测量范围</span></div><h2><span class="l-en">Useful signals, honest boundaries.</span><span class="l-zh">有用的数据，明确的边界。</span></h2></div>
+      <div class="boundary-grid">
+        <div class="boundary yes"><h3><span class="l-en">Available today</span><span class="l-zh">当前已支持</span></h3><ul><li><span class="l-en">Requests and total tokens</span><span class="l-zh">请求数与总 Token</span></li><li><span class="l-en">Prompt, completion and reasoning tokens</span><span class="l-zh">输入、输出与推理 Token</span></li><li><span class="l-en">Cache hit and cache miss</span><span class="l-zh">缓存命中与未命中</span></li><li><span class="l-en">Estimated cost by currency</span><span class="l-zh">按币种预估成本</span></li><li><span class="l-en">Breakdowns by day, model, source and surface</span><span class="l-zh">按天、模型、来源和使用界面聚合</span></li><li><span class="l-en">Optional DeepSeek-style wallet balance</span><span class="l-zh">可选的 DeepSeek-style 账户余额</span></li></ul></div>
+        <div class="boundary no"><h3><span class="l-en">Not claimed today</span><span class="l-zh">当前不宣称支持</span></h3><ul><li><span class="l-en">GPU utilization or VRAM monitoring</span><span class="l-zh">GPU 利用率或显存监控</span></li><li><span class="l-en">Cluster node health and queue depth</span><span class="l-zh">集群节点健康与队列深度</span></li><li><span class="l-en">Centralized team quotas</span><span class="l-zh">中心化团队配额</span></li><li><span class="l-en">Cloud-hosted prompt analytics</span><span class="l-zh">云端提示词分析</span></li><li><span class="l-en">Automatic provider billing reconciliation</span><span class="l-zh">自动模型账单对账</span></li></ul></div>
+      </div>
+    </section>
+
+    <section class="wrap product-section"><div class="command-band"><div><span class="l-en">Inspect the same local ledger from the terminal.</span><span class="l-zh">直接从终端查看同一份本地账本。</span></div><code>$ voltui usage --since 30d</code><code>$ voltui usage --json</code></div></section>
+  </main>
+
+  <SiteFooter />
+</Base>

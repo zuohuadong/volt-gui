@@ -57,6 +57,26 @@
   });
 
   /* download / channel tabs */
+  const heroTabs = Array.from(document.querySelectorAll(".htab"));
+  const heroPanels = Array.from(document.querySelectorAll(".hpanel"));
+  heroTabs.forEach((tab) => {
+    const activateHeroTab = () => {
+      heroTabs.forEach((item) => item.classList.toggle("on", item.dataset.h === tab.dataset.h));
+      heroTabs.forEach((item) => item.setAttribute("aria-selected", String(item.dataset.h === tab.dataset.h)));
+      heroPanels.forEach((panel) => panel.classList.toggle("on", panel.dataset.h === tab.dataset.h));
+      tab.focus();
+    };
+    tab.addEventListener("click", activateHeroTab);
+    tab.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const current = heroTabs.indexOf(tab);
+      const delta = event.key === "ArrowRight" ? 1 : -1;
+      const next = heroTabs[(current + delta + heroTabs.length) % heroTabs.length];
+      next.click();
+    });
+  });
+
   const tabs = Array.from(document.querySelectorAll(".dl-tab"));
   const panes = Array.from(document.querySelectorAll(".dl-pane"));
   const activatePane = (name) => {

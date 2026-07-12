@@ -1,0 +1,48 @@
+---
+import Base from '../layouts/Base.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Base title="Enterprise deployment — VoltUI" titleEn="Enterprise deployment — VoltUI" titleZh="企业部署 — VoltUI" bodyClass="product-page enterprise-page" description="Offline-first, pre-packaged and white-label AI coding agent deployment for enterprise intranets.">
+  <SiteHeader active="enterprise" />
+  <main>
+    <section class="page-hero wrap">
+      <div class="eyebrow"><span class="l-en">Enterprise intranet ready</span><span class="l-zh">面向企业内网</span></div>
+      <h1><span class="l-en">Package once. Deploy to <em>every developer.</em></span><span class="l-zh">打包一次，交付给<em>每一位开发者。</em></span></h1>
+      <p class="lede"><span class="l-en">Connect VoltUI to models already running behind your firewall, ship a prepared client and keep code, tools and operating policy inside the enterprise boundary.</span><span class="l-zh">将 VoltUI 接入防火墙后的现有模型，分发预配置客户端，让代码、工具与运行策略留在企业边界内。</span></p>
+      <div class="hero-cta"><a class="btn btn-dark" href={`${base}/docs/#config`}><span class="l-en">Configure a provider</span><span class="l-zh">配置模型服务</span></a><a class="btn btn-line" href={`${base}/capabilities/`}><span class="l-en">See the agent stack</span><span class="l-zh">查看智能体能力</span></a></div>
+    </section>
+
+    <section class="wrap product-section">
+      <div class="deployment-map">
+        <div class="deploy-node admin"><span>01</span><strong><span class="l-en">Platform team</span><span class="l-zh">平台团队</span></strong><small>voltui.toml · brand · policy</small></div>
+        <div class="deploy-arrow">→</div>
+        <div class="deploy-node package"><span>02</span><strong><span class="l-en">Prepared package</span><span class="l-zh">预配置安装包</span></strong><small>single binary · desktop · offline tools</small></div>
+        <div class="deploy-arrow">→</div>
+        <div class="deploy-node users"><span>03</span><strong><span class="l-en">Developer fleet</span><span class="l-zh">开发者终端</span></strong><small>Windows 10 · macOS · Linux</small></div>
+        <div class="deploy-arrow">→</div>
+        <div class="deploy-node models"><span>04</span><strong><span class="l-en">Internal model gateway</span><span class="l-zh">内部模型网关</span></strong><small>Qwen · DeepSeek · GLM · vLLM</small></div>
+      </div>
+    </section>
+
+    <section class="wrap product-section">
+      <div class="section-head"><div class="eyebrow"><span class="l-en">Operational fit</span><span class="l-zh">企业落地能力</span></div><h2><span class="l-en">Designed for controlled rollout.</span><span class="l-zh">为可控部署而设计。</span></h2></div>
+      <div class="enterprise-list">
+        <article><span>01</span><div><h3><span class="l-en">Offline-first runtime</span><span class="l-zh">离线优先运行</span></h3><p><span class="l-en">The Go CLI is a static binary. Runtime does not require npm, auto-downloads or telemetry services.</span><span class="l-zh">Go CLI 是静态二进制，运行时不依赖 npm、自动下载或遥测服务。</span></p></div></article>
+        <article><span>02</span><div><h3><span class="l-en">Windows 10 first</span><span class="l-zh">Windows 10 优先</span></h3><p><span class="l-en">Use pre-installed Edge for browser automation, with Windows path handling and RDP/VDI-friendly operation.</span><span class="l-zh">使用系统自带 Edge 进行浏览器自动化，并适配 Windows 路径与 RDP/VDI 环境。</span></p></div></article>
+        <article><span>03</span><div><h3><span class="l-en">Configuration as policy</span><span class="l-zh">配置即策略</span></h3><p><span class="l-en">Providers, model defaults, tools, plugins, permissions and sandbox boundaries live in a reviewable TOML file.</span><span class="l-zh">Provider、默认模型、工具、插件、权限和沙箱边界都放在可审查的 TOML 文件中。</span></p></div></article>
+        <article><span>04</span><div><h3><span class="l-en">White-label and OEM</span><span class="l-zh">白标与 OEM</span></h3><p><span class="l-en">Replace product name, wordmark, logo and tray icon through config or environment variables.</span><span class="l-zh">通过配置或环境变量替换产品名、字标、Logo 与托盘图标。</span></p></div></article>
+        <article><span>05</span><div><h3><span class="l-en">Credential protection</span><span class="l-zh">凭据保护</span></h3><p><span class="l-en">Keep keys in environment-backed credential sources, redact secret-shaped tool output and filter sensitive subprocess environment variables.</span><span class="l-zh">将密钥保存在环境凭据源中，对疑似秘密的工具输出脱敏，并过滤子进程敏感环境变量。</span></p></div></article>
+        <article><span>06</span><div><h3><span class="l-en">Permissions and audit-friendly control</span><span class="l-zh">权限与可审计控制</span></h3><p><span class="l-en">Allow, ask and deny rules combine with workspace confinement and visible approval flows.</span><span class="l-zh">Allow、Ask 与 Deny 规则结合工作区约束和可见审批流程。</span></p></div></article>
+      </div>
+    </section>
+
+    <section class="wrap product-section split-section rollout-section">
+      <div class="section-copy"><div class="eyebrow"><span class="l-en">Rollout path</span><span class="l-zh">落地路径</span></div><h2><span class="l-en">Start with one team, keep the contract portable.</span><span class="l-zh">从一个团队开始，保持契约可复制。</span></h2><p><span class="l-en">VoltUI does not require a central control plane for the first rollout. A reviewed configuration and prepared package are enough; centralized reporting can remain a later enterprise capability.</span><span class="l-zh">首次部署不需要中心控制平面。一份审查过的配置和预制安装包即可开始；中心化报表可以作为后续企业能力。</span></p></div>
+      <ol class="rollout-steps"><li><b>1</b><span><strong><span class="l-en">Connect a model</span><span class="l-zh">接入模型</span></strong><small>OpenAI-compatible or Anthropic endpoint</small></span></li><li><b>2</b><span><strong><span class="l-en">Define tools and policy</span><span class="l-zh">定义工具与策略</span></strong><small>MCP · permissions · sandbox</small></span></li><li><b>3</b><span><strong><span class="l-en">Apply company identity</span><span class="l-zh">应用企业品牌</span></strong><small>name · logo · wordmark · icon</small></span></li><li><b>4</b><span><strong><span class="l-en">Package and distribute</span><span class="l-zh">打包与分发</span></strong><small>Windows · macOS · Linux</small></span></li></ol>
+    </section>
+  </main>
+  <SiteFooter />
+</Base>

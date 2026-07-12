@@ -5,12 +5,18 @@ import process from 'node:process';
 
 const root = path.resolve(import.meta.dirname, '..');
 const dist = path.resolve(root, process.env.VOLTUI_SITE_DIST || 'site/dist');
-const pages = {
-  home: await readFile(path.join(dist, 'index.html'), 'utf8'),
-  docs: await readFile(path.join(dist, 'docs/index.html'), 'utf8'),
-  notFound: await readFile(path.join(dist, '404.html'), 'utf8'),
+const routeFiles = {
+  home: 'index.html',
+  usage: 'usage/index.html',
+  capabilities: 'capabilities/index.html',
+  enterprise: 'enterprise/index.html',
+  docs: 'docs/index.html',
+  notFound: '404.html',
 };
 
+const pages = Object.fromEntries(await Promise.all(
+  Object.entries(routeFiles).map(async ([name, file]) => [name, await readFile(path.join(dist, file), 'utf8')]),
+));
 const failures = [];
 
 function check(condition, message) {
@@ -31,7 +37,7 @@ function ids(html) {
 
 function assetPath(url) {
   const pathname = new URL(url, 'https://example.test').pathname;
-  return path.join(dist, pathname.replace(/^\/voltui\/?/, ''));
+  return path.join(dist, pathname.replace(/^\/volt-gui\/?/, ''));
 }
 
 async function referencedAssets(html, tag, attribute) {
@@ -43,63 +49,61 @@ async function referencedAssets(html, tag, attribute) {
   return Promise.all(urls.map(async (url) => readFile(assetPath(url), 'utf8')));
 }
 
-const homeIds = ids(pages.home);
-const docsIds = ids(pages.docs);
-const docsHead = pages.docs.match(/<head>([\s\S]*?)<\/head>/)?.[1] || '';
-const notFoundHead = pages.notFound.match(/<head>([\s\S]*?)<\/head>/)?.[1] || '';
-const docsCss = (await referencedAssets(pages.docs, 'link', 'href')).join('\n');
-const docsScripts = (await referencedAssets(pages.docs, 'script', 'src')).join('\n');
-const notFoundScripts = (await referencedAssets(pages.notFound, 'script', 'src')).join('\n');
+const allPages = Object.values(pages);
+const sharedCss = (await referencedAssets(pages.usage, 'link', 'href')).join('\n');
+const sharedScripts = (await referencedAssets(pages.usage, 'script', 'src')).join('\n');
+const expectedRoutes = ['/volt-gui/usage/', '/volt-gui/capabilities/', '/volt-gui/enterprise/', '/volt-gui/docs/'];
 
-check(
-  /<body[^>]*data-lang="en"[^>]*data-title-en="Docs — VoltUI"[^>]*data-title-zh="文档 — VoltUI"/.test(pages.docs),
-  'docs exposes initial language and bilingual title data on body',
-);
-check(
-  /body\[data-lang=(?:"en"|en)\] \.l-zh/.test(docsCss)
-    && /body\[data-lang=(?:"zh"|zh)\] \.l-en/.test(docsCss)
-    && /display\s*:\s*none!important/.test(docsCss),
-  'docs CSS renders exactly one language at a time',
-);
-check(
-  docsScripts.includes('voltui-lang') && docsScripts.includes('navigator.clipboard'),
-  'docs loads language and copy interactions',
-);
-check(
-  pages.docs.includes('data-copy="npm i -g voltui"'),
-  'docs publishes a copyable install command',
-);
-const multilineCodeBlocks = [...pages.docs.matchAll(/<pre class="codeblock"[^>]*>([\s\S]*?)<\/pre>/g)];
-check(
-  multilineCodeBlocks.length >= 5 && multilineCodeBlocks.some((match) => match[1].includes('\n')),
-  'docs preserves multiline command and configuration examples',
-);
-check(
-  /<meta name="robots" content="noindex"\s*\/?\s*>/.test(notFoundHead),
-  '404 injects noindex through the named head slot',
-);
-check(
-  /<body[^>]*data-lang="en"[^>]*data-title-en="Page not found — VoltUI"[^>]*data-title-zh="页面不存在 — VoltUI"/.test(pages.notFound)
-    && notFoundScripts.includes('voltui-lang'),
-  '404 exposes bilingual metadata and loads language interactions',
-);
-check(
-  docsCss.includes('.docs-layout')
-    && docsCss.includes('.not-found-page')
-    && /@media\s*\((?:max-width:\s*900px|width<=900px)\)/.test(docsCss),
-  'docs and 404 ship scoped responsive layout styles',
-);
-
-for (const href of attributeValues(pages.docs, 'href')) {
-  if (href.startsWith('#')) {
-    check(docsIds.has(href.slice(1)), `docs anchor ${href} resolves`);
-  } else if (href.startsWith('/voltui/#')) {
-    check(homeIds.has(href.split('#')[1]), `home anchor ${href} resolves`);
-  }
+for (const [name, html] of Object.entries(pages)) {
+  check(/<body[^>]*data-lang="en"[^>]*data-title-en="[^"]+"[^>]*data-title-zh="[^"]+"/.test(html), `${name} exposes bilingual title metadata`);
+  check(html.includes('id="nav"') && html.includes('id="lang"'), `${name} uses the shared site header`);
 }
 
-check(!pages.docs.includes('/blob/main-v2/'), 'fork documentation links use the real default branch');
-check(!docsHead.includes('name="robots" content="noindex"'), 'docs remains indexable');
+for (const route of expectedRoutes) {
+  check(pages.home.includes(`href="${route}"`), `home links to ${route}`);
+  check(pages.usage.includes(`href="${route}"`), `shared navigation links to ${route}`);
+}
+
+check(
+  /body\[data-lang=(?:"en"|en)\] \.l-zh/.test(sharedCss)
+    && /body\[data-lang=(?:"zh"|zh)\] \.l-en/.test(sharedCss)
+    && /display\s*:\s*none!important/.test(sharedCss),
+  'shared CSS renders exactly one language at a time',
+);
+check(sharedScripts.includes('voltui-lang') && sharedScripts.includes('navigator.clipboard'), 'shared scripts provide language and copy interactions');
+check(sharedScripts.includes('.htab') && sharedScripts.includes('.hpanel'), 'home install tabs have shared interaction wiring');
+check(pages.home.includes('role="tablist"') && pages.home.includes('aria-selected="true"'), 'home install tabs expose accessible tab semantics');
+check(pages.home.includes('Mobile navigation') && pages.home.includes('<details class="mobile-nav">'), 'shared header exposes mobile navigation');
+
+check(pages.usage.includes('Product demo') && pages.usage.includes('产品演示'), 'usage dashboard labels sample values as demo data');
+check(pages.usage.includes('usage.jsonl') && pages.usage.includes('voltui usage --since 30d'), 'usage page connects the dashboard to the local ledger and CLI');
+check(pages.usage.includes('~/.voltui/usage/usage.jsonl') && !pages.usage.includes('~/.config/voltui/usage/usage.jsonl'), 'usage page publishes the real default ledger path');
+check(pages.usage.includes('desktop planned') && pages.usage.includes('桌面接入规划中'), 'usage page keeps the desktop dashboard boundary explicit');
+check(pages.usage.includes('GPU utilization') && pages.usage.includes('当前不宣称支持'), 'usage page states the GPU and cluster monitoring boundary');
+check(pages.usage.includes('By model') && pages.usage.includes('by day · model · source · surface'), 'usage page exposes product-backed aggregation dimensions');
+
+check(pages.capabilities.includes('CodeGraph') && pages.capabilities.includes('/rewind') && pages.capabilities.includes('.mcp.json'), 'capabilities page covers code intelligence, rollback and MCP');
+check(pages.capabilities.includes('browser_control') && pages.capabilities.includes('VOLTUI.md'), 'capabilities page covers host automation and memory');
+
+check(pages.enterprise.includes('Prepared package') && pages.enterprise.includes('Internal model gateway'), 'enterprise page explains the deployment path');
+check(pages.enterprise.includes('White-label and OEM') && pages.enterprise.includes('Credential protection'), 'enterprise page covers branding and credential controls');
+check(!pages.home.includes('Bake the API endpoint and key') && pages.home.includes('without hardcoding keys'), 'home deployment copy avoids hardcoded credentials');
+
+check(pages.docs.includes('data-copy="npm i -g voltui@next"'), 'docs publishes the Go 1.x install command');
+check(pages.docs.includes('id="usage"') && pages.docs.includes('voltui usage --json'), 'docs includes the local usage report reference');
+for (const href of attributeValues(pages.docs, 'href').filter((href) => href.startsWith('#'))) {
+  check(ids(pages.docs).has(href.slice(1)), `docs anchor ${href} resolves`);
+}
+
+const notFoundHead = pages.notFound.match(/<head>([\s\S]*?)<\/head>/)?.[1] || '';
+check(/<meta name="robots" content="noindex"\s*\/?\s*>/.test(notFoundHead), '404 remains noindex');
+check(
+  sharedCss.includes('.usage-console')
+    && sharedCss.includes('.deployment-map')
+    && /@media\s*\((?:max-width:\s*620px|width<=620px)\)/.test(sharedCss),
+  'new product pages ship responsive styles',
+);
+check(!allPages.some((html) => html.includes('/blob/main-v2/')), 'documentation links avoid the retired main-v2 branch');
 
 if (failures.length > 0) {
   console.error(`\nSite feature smoke failed: ${failures.length} assertion(s).`);

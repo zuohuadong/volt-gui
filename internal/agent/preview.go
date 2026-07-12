@@ -9,7 +9,7 @@ import (
 var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)(?:\s+[^>]*)?>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route)>\s*\n?`)
 
 // stripTrailingDeliveryRuntime removes the exact delivery-runtime marker the
-// agent appends to user turns in delivery mode (agent.go deliveryRuntimeMarker).
+// agent appends to user turns in delivery mode (agent.go DeliveryRuntimeMarker).
 // Unlike the prefix blocks it trails the user text, so preview/title derivation
 // needs a suffix cut — leaving it produced session titles like
 // "你是谁？ <delivery-run…". The cut is byte-exact rather than a regex: a lazy
@@ -19,7 +19,7 @@ var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|rea
 // so user messages discussing it carry no host suffix at all.)
 func stripTrailingDeliveryRuntime(s string) string {
 	trimmed := strings.TrimRight(s, " \t\r\n")
-	if cut, ok := strings.CutSuffix(trimmed, deliveryRuntimeMarker); ok {
+	if cut, ok := strings.CutSuffix(trimmed, DeliveryRuntimeMarker); ok {
 		return strings.TrimRight(cut, " \t\r\n")
 	}
 	return s

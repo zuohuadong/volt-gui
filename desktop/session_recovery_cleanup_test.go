@@ -389,7 +389,9 @@ func TestTopicTitleUserTurnsSkipHostFraming(t *testing.T) {
 	path := filepath.Join(dir, "session.jsonl")
 	s := agent.NewSession("sys")
 	// Delivery-mode first turn: user text with the trailing runtime marker.
-	s.Add(provider.Message{Role: provider.RoleUser, Content: "你是谁？\n\n<delivery-runtime>\nThis session is in delivery-first mode.\n</delivery-runtime>"})
+	// Built from the exported constant — the preview strip is byte-exact, so a
+	// paraphrased marker would (correctly) not be stripped.
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "你是谁？\n\n" + agent.DeliveryRuntimeMarker})
 	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "reply"})
 	// Host-injected readiness nudge, persisted as role user.
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: x"})

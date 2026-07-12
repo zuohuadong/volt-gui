@@ -7,6 +7,7 @@ package encoding
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -141,6 +142,22 @@ func Decode(data []byte, enc Kind) []byte {
 	// UTF8 and LossyUTF8 both pass through — LossyUTF8 is already
 	// "best effort" and Go strings can hold arbitrary bytes.
 	return data
+}
+
+// DecodeToUTF8 converts text-like file bytes to UTF-8 using the shared
+// detection cascade before they are handed to strict configuration parsers.
+func DecodeToUTF8(data []byte) []byte {
+	enc, raw := Detect(data)
+	return Decode(raw, enc)
+}
+
+// ReadFileUTF8 reads path and converts supported text encodings to UTF-8.
+func ReadFileUTF8(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return DecodeToUTF8(data), nil
 }
 
 // Decoder returns a streaming transform.Transformer for the given encoding,

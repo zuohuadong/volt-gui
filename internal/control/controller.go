@@ -1748,12 +1748,13 @@ func (c *Controller) Steer(text string) {
 	if exec == nil {
 		return
 	}
-	if running {
-		exec.Steer(text)
+	// exec.Steer reports false when no turn is accepting steers — either the
+	// frontend's runningRef was stale, or the turn exited between our running
+	// check and the enqueue. Convert to a new turn so the text is never
+	// silently parked in a queue no loop will consume.
+	if running && exec.Steer(text) {
 		return
 	}
-	// Agent not running — frontend's runningRef was stale.
-	// Convert to a new turn so the user gets a response.
 	go func() { c.SubmitDisplay(text, text) }()
 }
 

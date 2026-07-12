@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/jobs"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
@@ -45,8 +46,8 @@ func TestTaskToolReturnsSubAgentFinalAnswer(t *testing.T) {
 	// The sub-agent must have received the prompt as its user message and
 	// the configured system prompt at the top — proving the session was
 	// fresh, not the parent's.
-	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != "test-sys-prompt" {
-		t.Errorf("first message = %+v, want system 'test-sys-prompt'", sys)
+	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != instruction.WithCalculationPolicy("test-sys-prompt") {
+		t.Errorf("first message = %+v, want custom system prompt plus calculation policy", sys)
 	}
 	if got := lastUser(sub.lastReq); !strings.Contains(got, `<subagent-context event="SubagentStart">`) || !strings.HasSuffix(got, "find callers of Foo") {
 		t.Errorf("sub-agent user = %q, want SubagentStart context plus prompt", got)
@@ -65,8 +66,8 @@ func TestTaskToolInjectsWorkspaceContextIntoSubagentPrompt(t *testing.T) {
 	if _, err := task.Execute(testTaskContext(), []byte(`{"prompt":"inspect project"}`)); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != "sys" {
-		t.Fatalf("system prompt = %+v, want original prompt", sys)
+	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != instruction.WithCalculationPolicy("sys") {
+		t.Fatalf("system prompt = %+v, want original prompt plus calculation policy", sys)
 	}
 	got := lastUser(sub.lastReq)
 	if !strings.Contains(got, `<workspace-context event="SubagentWorkspace">`) ||
@@ -381,7 +382,7 @@ func TestReadOnlyTaskToolRunsEphemerallyWithReadOnlyRegistry(t *testing.T) {
 	if strings.Contains(out, "Subagent reference") {
 		t.Fatalf("read_only_task should not persist transcript refs: %q", out)
 	}
-	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != DefaultReadOnlyTaskSystemPrompt {
+	if sys := sub.lastReq.Messages[0]; sys.Role != provider.RoleSystem || sys.Content != instruction.WithCalculationPolicy(DefaultReadOnlyTaskSystemPrompt) {
 		t.Fatalf("read_only_task system prompt = %+v, want read-only prompt", sys)
 	}
 	if got := lastUser(sub.lastReq); !strings.Contains(got, "Current workspace: ") || !strings.HasSuffix(got, "inspect callers") {

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
 )
@@ -98,6 +100,32 @@ func TestParallelTasksForegroundCompletesAndClosesWorkers(t *testing.T) {
 	}
 }
 
+func TestParallelTasksIncludeCalculationPolicy(t *testing.T) {
+	prov := &parallelPromptProvider{}
+	task := newTestTaskTool(t, prov, tool.NewRegistry(), "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry())
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+
+	_, err := parallel.Execute(ctx, json.RawMessage(`{
+		"tasks": [
+			{"prompt": "first"},
+			{"prompt": "second"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	systems := prov.systemPrompts()
+	if len(systems) != 2 {
+		t.Fatalf("parallel child prompts = %d, want 2", len(systems))
+	}
+	for i, system := range systems {
+		if !strings.Contains(system, instruction.CalculationPolicy) {
+			t.Fatalf("parallel child %d missing calculation policy: %q", i+1, system)
+		}
+	}
+}
+
 func TestParallelTasksCancelReturnsPartialAggregate(t *testing.T) {
 	task := newTestTaskTool(t, promptRoutingProvider{}, tool.NewRegistry(), "sys", "", "", nil)
 	parallel := NewParallelTasksTool(task, tool.NewRegistry())
@@ -153,6 +181,32 @@ func (parallelStaticProvider) Stream(context.Context, provider.Request) (<-chan 
 	ch <- provider.Chunk{Type: provider.ChunkDone}
 	close(ch)
 	return ch, nil
+}
+
+type parallelPromptProvider struct {
+	mu      sync.Mutex
+	systems []string
+}
+
+func (*parallelPromptProvider) Name() string { return "parallel-prompt" }
+
+func (p *parallelPromptProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.mu.Lock()
+	if len(req.Messages) > 0 {
+		p.systems = append(p.systems, req.Messages[0].Content)
+	}
+	p.mu.Unlock()
+	ch := make(chan provider.Chunk, 2)
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: "ok"}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
+	close(ch)
+	return ch, nil
+}
+
+func (p *parallelPromptProvider) systemPrompts() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.systems...)
 }
 
 type promptRoutingProvider struct{}

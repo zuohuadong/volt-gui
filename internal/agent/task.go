@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/jobs"
 	"voltui/internal/planmode"
 	"voltui/internal/provider"
@@ -219,6 +220,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
 	}
+	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 	return &TaskTool{
 		prov:                prov,
 		pricing:             pricing,
@@ -387,7 +389,7 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err != nil {
 		return "", fmt.Errorf("read-only sub-agent profile: %w", err)
 	}
-	return r.task.runSubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(DefaultReadOnlyTaskSystemPrompt), childDepth)
+	return r.task.runSubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(instruction.WithCalculationPolicy(DefaultReadOnlyTaskSystemPrompt)), childDepth)
 }
 
 // childMaxSteps resolves a sub-agent's step budget. An explicit request wins.

@@ -271,6 +271,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	sysPrompt += "\n\n" + config.UserDecisionPolicy
 	sysPrompt += "\n\n" + config.LanguagePolicy
+	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
 		sysPrompt += "\n\n" + workspaceLine
 	}
@@ -751,7 +752,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				steps = 5
 			}
 		}
-		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
+		sysPrompt := instruction.WithCalculationPolicy(agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body)
 		return agent.RunSubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task,
 			subagentSkillOptions(sctx, steps, price, ctxWin, childDepth), agent.NestedSink(sctx, event.Discard))
 	}
@@ -790,6 +791,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		continueFrom := strings.TrimSpace(runOpts.ContinueFrom)
 		legacyForkFrom := strings.TrimSpace(runOpts.ForkFrom)
+		skillPrompt := instruction.WithCalculationPolicy(sk.Body)
 		if continueFrom != "" && legacyForkFrom != "" {
 			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 		}
@@ -804,7 +806,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			if continueFrom != "" || legacyForkFrom != "" {
 				return "", fmt.Errorf("subagent continuation requires a persisted session; none is active in this run")
 			}
-			run = agent.EphemeralSubagentRun(sk.Body)
+			run = agent.EphemeralSubagentRun(skillPrompt)
 		} else {
 			identityModel, identityEffort := subagentIdentity(modelRef, effortRef)
 			spec := agent.SubagentSpec{
@@ -813,7 +815,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				WorkspaceRoot:    root,
 				ParentSession:    parentSession,
 				ParentToolCallID: parentID,
-				SystemPrompt:     sk.Body,
+				SystemPrompt:     skillPrompt,
 				Registry:         subReg,
 				Model:            identityModel,
 				Effort:           identityEffort,

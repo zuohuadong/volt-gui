@@ -17,6 +17,7 @@ import { useScrollManager } from "../lib/useScrollManager";
 import { buildTurnGroups, compactQuestionText, createWarmLayerState, lastQuestionTurn, questionAnchorId, questionTurnsById, scrollVersion, warmColdPageForTurn, warmLayerWithColdPageAtLeast, warmLayerWithExpandedTurn, warmLayerWithNextColdPage, warmPagination, warmUserPreview, type QuestionAnchor, type TurnGroup, type WarmLayerState } from "../lib/transcriptGrouping";
 import { appendTurnActionCopyText } from "../lib/turnActionCopy";
 import { displayReasoningText } from "../lib/reasoningDisplay";
+import { observeScrollContentSize } from "../lib/scrollContentObserver";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
@@ -429,6 +430,11 @@ export function Transcript({
     if (!creationMode) return;
     syncCreationScrollbarMetrics();
   }, [creationMode, items.length, syncCreationScrollbarMetrics]);
+
+  useEffect(() => {
+    if (!creationMode || !scrollRef.current) return;
+    return observeScrollContentSize(scrollRef.current, syncCreationScrollbarMetrics);
+  }, [creationMode, scrollRef, syncCreationScrollbarMetrics]);
 
   const handleCreationScrollbarThumbPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!creationMode) return;

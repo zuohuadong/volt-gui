@@ -826,6 +826,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 		}
 		parentID, _, _, _ := agent.CallContext(sctx)
+		if runOpts.HostInitiated {
+			parentID = ""
+		}
 		parentSession := agent.ParentSession(sctx)
 		var run *agent.SubagentRun
 		if subagentStore == nil || parentSession == "" {
@@ -1263,6 +1266,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		AllSkills:              allSkills,
 		SkillStore:             skillStore,
 		AllSkillStore:          allSkillStore,
+		SkillRunner:            skillRunner,
+		ReadOnlySkillRunner:    readOnlySkillRunner,
+		SkillProfile:           skillProfile,
 		Hooks:                  hookRunner,
 		Memory:                 mem,
 		Cleanup:                cleanup,
@@ -1470,7 +1476,7 @@ func firstNonEmpty(vals ...string) string {
 
 func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
 	if cfg != nil {
-		for _, key := range subagentModelKeys(sk.Name) {
+		for _, key := range SubagentModelKeys(sk.Name) {
 			if m := strings.TrimSpace(cfg.Agent.SubagentModels[key]); m != "" {
 				return m
 			}
@@ -1487,7 +1493,7 @@ func subagentModelRef(cfg *config.Config, sk skill.Skill) string {
 
 func subagentEffortRef(cfg *config.Config, sk skill.Skill) string {
 	if cfg != nil {
-		for _, key := range subagentModelKeys(sk.Name) {
+		for _, key := range SubagentModelKeys(sk.Name) {
 			if e := strings.TrimSpace(cfg.Agent.SubagentEfforts[key]); e != "" {
 				return e
 			}
@@ -1502,7 +1508,14 @@ func subagentEffortRef(cfg *config.Config, sk skill.Skill) string {
 	return strings.TrimSpace(cfg.Agent.SubagentEffort)
 }
 
-func subagentModelKeys(name string) []string {
+// SubagentModelKeys returns the cfg.Agent.SubagentModels/SubagentEfforts map
+// keys that resolve for a subagent name, in precedence order: the exact name
+// first, then its underscore/hyphen alias variants (the dedicated tool
+// security_review dispatches the skill security-review, so either spelling in
+// config must reach it). Any surface that reads OR clears these maps must
+// iterate this same key set — an exact-key delete leaves an alias entry
+// silently active.
+func SubagentModelKeys(name string) []string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil

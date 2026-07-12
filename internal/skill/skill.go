@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"reasonix/internal/config"
+	"reasonix/internal/fileutil"
 	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/frontmatter"
 )
@@ -77,6 +78,13 @@ type Skill struct {
 	// command policy at execution time (frontmatter `read-only:`). This is a
 	// tool-boundary contract, not a prompt promise.
 	ReadOnly bool
+	Color    string // optional display tag for UI surfaces (frontmatter `color:`); no runtime effect
+	// Invocation gates whether this skill enters the pinned Skills index the
+	// model reads every turn. "auto" (default) behaves like every skill always
+	// has. "manual" keeps the skill invocable by name (/<name>, run_skill) but
+	// invisible to model-initiated discovery — for user-authored subagent
+	// profiles meant to be triggered deliberately, not autonomously.
+	Invocation string // auto | manual (frontmatter `invocation:`)
 	// Routing metadata is intentionally kept out of the cache-stable Skills
 	// index; it feeds per-turn capability hints only.
 	Triggers         []string
@@ -726,6 +734,8 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		AutoUse:        parseAutoUse(fm[skillFrontmatterAutoUse]),
 		NeedsFreshData: parseBoolFrontmatter(fm[skillFrontmatterNeedsFreshData]),
 		Cost:           parseCost(fm[skillFrontmatterCost]),
+		Color:          strings.TrimSpace(fm[skillFrontmatterColor]),
+		Invocation:     parseInvocation(fm[skillFrontmatterInvocation]),
 		Requires:       parseCSVFrontmatter(fm[skillFrontmatterRequires]),
 	}
 	sk.Profiles, sk.InvalidProfiles = parseProfilesFrontmatter(fm[skillFrontmatterProfiles])
@@ -747,6 +757,8 @@ const (
 	skillFrontmatterAutoUse          = "auto-use"
 	skillFrontmatterNeedsFreshData   = "needs-fresh-data"
 	skillFrontmatterCost             = "cost"
+	skillFrontmatterColor            = "color"
+	skillFrontmatterInvocation       = "invocation"
 	skillFrontmatterRequires         = "requires"
 	skillFrontmatterProfiles         = "profiles"
 )
@@ -766,6 +778,8 @@ var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterAutoUse,
 	skillFrontmatterNeedsFreshData,
 	skillFrontmatterCost,
+	skillFrontmatterColor,
+	skillFrontmatterInvocation,
 	skillFrontmatterRequires,
 	skillFrontmatterProfiles,
 }
@@ -858,6 +872,113 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 		return "", err
 	}
 	return folder, nil
+}
+
+// UpdateContent overwrites an existing user-authored skill's file contents in
+// place. Refuses built-ins and a scope mismatch, mirroring Delete's rules —
+// see Delete for why a mismatch must refuse rather than silently target the
+// wrong file.
+func (s *Store) UpdateContent(name string, scope Scope, content string) error {
+	if scope == ScopeBuiltin {
+		return fmt.Errorf("skill %q is built in and cannot be edited", name)
+	}
+	sk, ok := s.Read(name)
+	if !ok {
+		return fmt.Errorf("skill %q not found", name)
+	}
+	if sk.Scope != scope {
+		return fmt.Errorf("skill %q resolves at scope %q, not %q — refusing to edit a different scope's file", name, sk.Scope, scope)
+	}
+	if sk.Path == "" || sk.Path == "(builtin)" {
+		return fmt.Errorf("skill %q has no file to update", name)
+	}
+	if err := s.validateMutablePath(sk.Path, scope); err != nil {
+		return fmt.Errorf("skill %q cannot be edited: %w", name, err)
+	}
+	info, err := os.Stat(sk.Path)
+	if err != nil {
+		return err
+	}
+	return fileutil.AtomicWriteFile(sk.Path, []byte(content), info.Mode().Perm())
+}
+
+// validateMutablePath rejects writes through linked files or directories. Skill
+// discovery intentionally follows symlinks for read compatibility, but editing
+// one must never replace content outside the configured scope root.
+func (s *Store) validateMutablePath(path string, scope Scope) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	for _, root := range s.roots() {
+		if root.Scope != scope {
+			continue
+		}
+		absRoot, err := filepath.Abs(root.Dir)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absRoot, absPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		current := absRoot
+		parts := []string{"."}
+		if rel != "." {
+			parts = strings.Split(rel, string(filepath.Separator))
+		}
+		for _, part := range parts {
+			if part != "." {
+				current = filepath.Join(current, part)
+			}
+			info, err := os.Lstat(current)
+			if err != nil {
+				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("path uses symbolic link %s", current)
+			}
+		}
+		realRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			return err
+		}
+		realPath, err := filepath.EvalSymlinks(absPath)
+		if err != nil {
+			return err
+		}
+		realRel, err := filepath.Rel(realRoot, realPath)
+		if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("resolved path is outside scope root %s", absRoot)
+		}
+		return nil
+	}
+	return fmt.Errorf("path is outside configured %s skill roots", scope)
+}
+
+// Delete removes a user-authored skill. Refuses built-ins (no file backs
+// them) and refuses when the resolved skill's actual scope doesn't match the
+// requested one — e.g. a project-scope delete for a name that only resolves
+// at global scope, which would otherwise silently no-op against the wrong
+// file while a same-named project-scope shadow kept showing up in List().
+func (s *Store) Delete(name string, scope Scope) error {
+	if scope == ScopeBuiltin {
+		return fmt.Errorf("skill %q is built in and cannot be deleted", name)
+	}
+	sk, ok := s.Read(name)
+	if !ok {
+		return fmt.Errorf("skill %q not found", name)
+	}
+	if sk.Scope != scope {
+		return fmt.Errorf("skill %q resolves at scope %q, not %q — refusing to delete a different scope's file", name, sk.Scope, scope)
+	}
+	if sk.Path == "" || sk.Path == "(builtin)" {
+		return fmt.Errorf("skill %q has no file to delete", name)
+	}
+	if filepath.Base(sk.Path) == SkillFile {
+		return os.RemoveAll(filepath.Dir(sk.Path)) // directory-layout skill: <name>/SKILL.md + siblings
+	}
+	return os.Remove(sk.Path) // legacy flat <name>.md skill
 }
 
 func (s *Store) globalSkillsRoot() string {
@@ -1022,6 +1143,15 @@ func parseCost(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// parseInvocation maps frontmatter to an invocation mode. Anything other than
+// "manual" (including absent) is "auto" — the existing, universal behavior.
+func parseInvocation(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "manual") {
+		return "manual"
+	}
+	return "auto"
 }
 
 // parseRunAs maps frontmatter to a run mode. An unknown value defaults to the

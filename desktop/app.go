@@ -49,6 +49,7 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
+	"reasonix/internal/tool"
 )
 
 // eventChannel is the Wails runtime event name the frontend subscribes to for the
@@ -142,6 +143,12 @@ type App struct {
 	// swap time (the tab pointer is unchanged), so the loser's controller
 	// would replace the winner's and leak it without Close.
 	runtimeRebuildMu sync.Mutex
+
+	// tryRunMu guards tryRunCancel — the cancel handle for the single
+	// in-flight settings-page subagent try run (TrySubagentProfile /
+	// CancelTrySubagentProfile).
+	tryRunMu     sync.Mutex
+	tryRunCancel context.CancelFunc
 
 	// deferredRebuild tracks tabs whose settings were saved but whose runtime
 	// could not refresh because the session lease was held by another process.
@@ -316,6 +323,19 @@ func (a *App) ensureMediaTokenStore() *mediaTokenStore {
 		a.mediaTokens = newMediaTokenStore()
 	}
 	return a.mediaTokens
+}
+
+// jsProfilingMiddleware opts every asset response into the JS Self-Profiling
+// document policy so the frontend performance monitor can attach sampled stacks
+// to long-task reports. Chromium WebViews (WebView2) honor it; WebKit ignores
+// both the header and the API, so the frontend degrades to unattributed reports.
+func (a *App) jsProfilingMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Document-Policy", "js-profiling")
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // workspaceMediaMiddleware returns an HTTP middleware that intercepts
@@ -959,6 +979,30 @@ func (a *App) SubmitDisplayToTab(tabID, display, input string) error {
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	ctrl.SubmitDisplay(display, input)
+	a.finishTabTurnStart(tab, ctrl)
+	return nil
+}
+
+// InvocationRequest is the Wails-bound form of a composer invocation entity.
+type InvocationRequest struct {
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Offset int    `json:"offset"`
+}
+
+func (a *App) SubmitInvocationsToTab(tabID, display, input string, invocations []InvocationRequest) error {
+	tab, ctrl, err := a.beginTabTurn(tabID, true)
+	if err != nil {
+		return err
+	}
+	a.ensureTabTopicIndexedForUserTurn(tab)
+	requests := make([]control.InvocationRequest, 0, len(invocations))
+	for _, invocation := range invocations {
+		requests = append(requests, control.InvocationRequest{
+			Name: invocation.Name, Kind: invocation.Kind, Offset: invocation.Offset,
+		})
+	}
+	ctrl.SubmitInvocationDisplay(display, input, requests)
 	a.finishTabTurnStart(tab, ctrl)
 	return nil
 }
@@ -4154,6 +4198,7 @@ type HistoryMessage struct {
 	Role               string                    `json:"role"`
 	Content            string                    `json:"content"`
 	Detail             string                    `json:"detail,omitempty"`
+	Code               string                    `json:"code,omitempty"`
 	SubmitText         string                    `json:"submitText,omitempty"`
 	CheckpointTurn     *int                      `json:"checkpointTurn,omitempty"`
 	Reasoning          string                    `json:"reasoning,omitempty"`
@@ -4421,8 +4466,17 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 		if m.Role == provider.RoleAssistant && len(m.MemoryCitations) > 0 {
 			hm.MemoryCitations = append([]provider.MemoryCitation(nil), m.MemoryCitations...)
 		}
-		if m.Role == provider.RoleUser && content != m.Content && !agent.ContainsMemoryCompilerExecution(m.Content) {
-			hm.SubmitText = m.Content
+		if m.Role == provider.RoleUser && content != m.Content {
+			if agent.ContainsMemoryCompilerExecution(m.Content) {
+				// Never expose the compiler contract itself. A safely unwrapped
+				// slash invocation is useful display metadata, though: it lets the
+				// frontend restore the selected skill/subagent in history and trash.
+				if replay := control.StripComposePrefixes(m.Content); strings.HasPrefix(strings.TrimSpace(replay), "/") && replay != content {
+					hm.SubmitText = replay
+				}
+			} else {
+				hm.SubmitText = m.Content
+			}
 		}
 		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
 			hm.ToolCalls = make([]HistoryToolCall, len(m.ToolCalls))
@@ -4930,6 +4984,7 @@ type previewEventRecord struct {
 	UpdatedAtSnake   json.RawMessage           `json:"updated_at"`
 	Text             string                    `json:"text"`
 	Detail           string                    `json:"detail"`
+	Code             string                    `json:"code"`
 	Content          string                    `json:"content"`
 	Reasoning        string                    `json:"reasoning"`
 	ReasoningContent string                    `json:"reasoningContent"`
@@ -5037,7 +5092,7 @@ func previewEventSessionMessages(path string) ([]HistoryMessage, bool, error) {
 			if level != "warn" {
 				level = "info"
 			}
-			out = append(out, HistoryMessage{Role: "notice", Level: level, Content: firstNonEmpty(rec.Text, rec.Content), Detail: rec.Detail})
+			out = append(out, HistoryMessage{Role: "notice", Level: level, Content: firstNonEmpty(rec.Text, rec.Content), Detail: rec.Detail, Code: rec.Code})
 		case "compaction_started":
 			c := rec.compactionPayload()
 			out = append(out, HistoryMessage{Role: "compaction", Pending: true, Trigger: c.Trigger})
@@ -5590,8 +5645,11 @@ func (a *App) SetToolApprovalModeForTab(tabID, mode string) {
 type CommandInfo struct {
 	Name        string `json:"name"` // without the leading slash
 	Description string `json:"description"`
-	Hint        string `json:"hint,omitempty"` // argument hint, if any
-	Kind        string `json:"kind"`           // "builtin" | "custom" | "mcp"
+	Hint        string `json:"hint,omitempty"`  // argument hint, if any
+	Kind        string `json:"kind"`            // "builtin" | "custom" | "mcp" | "skill" | "subagent"
+	Group       string `json:"group,omitempty"` // menu group; older frontends can ignore it
+	Plugin      string `json:"plugin,omitempty"`
+	Color       string `json:"color,omitempty"`
 }
 
 // Commands lists the slash commands available this session — built-in actions,
@@ -5599,22 +5657,22 @@ type CommandInfo struct {
 // autocomplete menu.
 func (a *App) Commands() []CommandInfo {
 	out := []CommandInfo{
-		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin"},
-		{Name: "clear", Description: i18n.M.CmdClear, Kind: "builtin"},
-		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin"},
-		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin"},
-		{Name: "provider", Description: i18n.M.CmdProvider, Kind: "builtin"},
-		{Name: "effort", Description: i18n.M.CmdEffort, Kind: "builtin"},
-		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin"},
-		{Name: "migrate", Description: i18n.M.CmdMigrate, Kind: "builtin"},
-		{Name: "goal", Description: i18n.M.CmdGoal, Kind: "builtin"},
-		{Name: "remember", Description: i18n.M.CmdRemember, Kind: "builtin"},
-		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin"},
-		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin"},
-		{Name: "plugins", Description: i18n.M.CmdPlugins, Kind: "builtin"},
-		{Name: "theme", Description: i18n.M.CmdTheme, Kind: "builtin"},
-		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin"},
-		{Name: "reload-cmd", Description: i18n.M.CmdReloadCmd, Kind: "builtin"},
+		{Name: "new", Description: i18n.M.CmdNew, Kind: "builtin", Group: "actions"},
+		{Name: "clear", Description: i18n.M.CmdClear, Kind: "builtin", Group: "actions"},
+		{Name: "compact", Description: i18n.M.CmdCompact, Kind: "builtin", Group: "actions"},
+		{Name: "model", Description: i18n.M.CmdModel, Kind: "builtin", Group: "actions"},
+		{Name: "provider", Description: i18n.M.CmdProvider, Kind: "builtin", Group: "management"},
+		{Name: "effort", Description: i18n.M.CmdEffort, Kind: "builtin", Group: "actions"},
+		{Name: "memory", Description: i18n.M.CmdMemory, Kind: "builtin", Group: "management"},
+		{Name: "migrate", Description: i18n.M.CmdMigrate, Kind: "builtin", Group: "management"},
+		{Name: "goal", Description: i18n.M.CmdGoal, Kind: "builtin", Group: "actions"},
+		{Name: "remember", Description: i18n.M.CmdRemember, Kind: "builtin", Group: "management"},
+		{Name: "mcp", Description: i18n.M.CmdMcp, Kind: "builtin", Group: "integrations"},
+		{Name: "hooks", Description: i18n.M.CmdHooks, Kind: "builtin", Group: "management"},
+		{Name: "plugins", Description: i18n.M.CmdPlugins, Kind: "builtin", Group: "integrations"},
+		{Name: "theme", Description: i18n.M.CmdTheme, Kind: "builtin", Group: "management"},
+		{Name: "skill", Description: i18n.M.CmdSkill, Kind: "builtin", Group: "skills"},
+		{Name: "reload-cmd", Description: i18n.M.CmdReloadCmd, Kind: "builtin", Group: "management"},
 	}
 	a.mu.RLock()
 	ctrl := a.activeCtrlLocked()
@@ -5622,19 +5680,30 @@ func (a *App) Commands() []CommandInfo {
 	if ctrl == nil {
 		return out
 	}
-	// Skills are invocable as /<name> (the model runs inline ones; subagent ones
+	// Skills are invocable as slash commands (the model runs inline ones; subagent ones
 	// run isolated). Listing them here is what surfaces /init, /explore, … in the
-	// composer's slash menu; selecting one submits "/<name>", which the controller
+	// composer's slash menu; selecting one submits its displayed slash name, which the controller
 	// resolves via RunSkill.
-	for _, s := range ctrl.Skills() {
-		out = append(out, CommandInfo{Name: s.Name, Description: s.Description, Kind: "skill"})
+	for _, s := range ctrl.SlashSkills() {
+		kind := "skill"
+		if s.RunAs == skill.RunSubagent {
+			kind = "subagent"
+		}
+		group := "skills"
+		if kind == "subagent" {
+			group = "subagents"
+		}
+		out = append(out, CommandInfo{Name: s.SlashName(), Description: s.Description, Kind: kind, Group: group, Plugin: s.Plugin, Color: s.Color})
 	}
 	for _, c := range ctrl.Commands() {
-		out = append(out, CommandInfo{Name: c.Name, Description: c.Description, Hint: c.ArgHint, Kind: "custom"})
+		if c.Hidden {
+			continue
+		}
+		out = append(out, CommandInfo{Name: c.Name, Description: c.Description, Hint: c.ArgHint, Kind: "custom", Group: "skills", Plugin: c.Plugin})
 	}
 	if h := ctrl.Host(); h != nil {
 		for _, p := range h.Prompts() {
-			out = append(out, CommandInfo{Name: p.Name, Description: p.Description, Kind: "mcp"})
+			out = append(out, CommandInfo{Name: p.Name, Description: p.Description, Kind: "mcp", Group: "integrations"})
 		}
 	}
 	return out
@@ -5759,20 +5828,47 @@ type ToolView struct {
 	ReadOnlyHint bool   `json:"readOnlyHint,omitempty"`
 }
 
-// SkillView is one discoverable skill for the drawer.
+// SkillView is one discoverable skill for the drawer. Also backs the
+// Subagents settings surface: the frontend filters this same list to
+// RunAs=="subagent" rather than calling a second, redundant endpoint.
 type SkillView struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-	RunAs       string `json:"runAs"`
-	Enabled     bool   `json:"enabled"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Scope        string   `json:"scope"`
+	RunAs        string   `json:"runAs"`
+	Enabled      bool     `json:"enabled"`
+	Plugin       string   `json:"plugin,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Effort       string   `json:"effort,omitempty"`
+	AllowedTools []string `json:"allowedTools,omitempty"`
+	Color        string   `json:"color,omitempty"`
+	// Invocation is the user-facing slash name; InvocationMode preserves the
+	// frontmatter policy used by the subagent profile editor.
+	Invocation     string `json:"invocation,omitempty"`
+	InvocationMode string `json:"invocationMode,omitempty"`
+	// Body is the skill's full markdown body (post-frontmatter) — the
+	// subagent profile editor pre-fills its system-prompt field from this.
+	Body string `json:"body,omitempty"`
+	// ConfiguredModel/ConfiguredEffort are the per-name overrides from
+	// cfg.Agent.SubagentModels/SubagentEfforts (internal/boot's
+	// subagentModelRef/subagentEffortRef read the same map at dispatch time).
+	// This is the only lever for a built-in subagent's model/effort, since
+	// built-ins have no editable frontmatter file to carry Model/Effort.
+	ConfiguredModel  string `json:"configuredModel,omitempty"`
+	ConfiguredEffort string `json:"configuredEffort,omitempty"`
 }
 
 type SkillRootSkillView struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-	RunAs       string `json:"runAs"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Scope        string   `json:"scope"`
+	RunAs        string   `json:"runAs"`
+	Plugin       string   `json:"plugin,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Effort       string   `json:"effort,omitempty"`
+	AllowedTools []string `json:"allowedTools,omitempty"`
+	Color        string   `json:"color,omitempty"`
+	Invocation   string   `json:"invocation,omitempty"`
 }
 
 // SkillRootView is one skill discovery root for the drawer's Sources section.
@@ -5821,21 +5917,81 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 	}
 
 	disabled := map[string]bool{}
+	var configuredModels, configuredEfforts map[string]string
 	if cfg, err := config.Load(); err == nil {
 		for _, name := range cfg.Skills.DisabledSkills {
 			if key := config.SkillNameKey(name); key != "" {
 				disabled[key] = true
 			}
 		}
+		configuredModels = cfg.Agent.SubagentModels
+		configuredEfforts = cfg.Agent.SubagentEfforts
 	}
 	for _, s := range ctrl.AllSkills() {
-		out.Skills = append(out.Skills, SkillView{
+		view := SkillView{
 			Name: s.Name, Description: s.Description,
 			Scope: string(s.Scope), RunAs: string(s.RunAs),
-			Enabled: !disabled[config.SkillNameKey(s.Name)],
-		})
+			Enabled:          !disabled[config.SkillNameKey(s.Name)],
+			Plugin:           s.Plugin,
+			Model:            s.Model,
+			Effort:           s.Effort,
+			AllowedTools:     append([]string{}, s.AllowedTools...),
+			Color:            s.Color,
+			Invocation:       "/" + s.SlashName(),
+			InvocationMode:   s.Invocation,
+			ConfiguredModel:  subagentOverrideFor(configuredModels, s.Name),
+			ConfiguredEffort: subagentOverrideFor(configuredEfforts, s.Name),
+		}
+		// Body feeds only the Subagents editor's prompt prefill. Inline skills
+		// fold references/ into Body at load time (hundreds of KB for a rich
+		// skill library), and every Capabilities/Settings fetch would ship all
+		// of it across the JSON bridge for nothing.
+		if s.RunAs == skill.RunSubagent {
+			view.Body = s.Body
+		}
+		out.Skills = append(out.Skills, view)
 	}
 	out.SkillRoots = a.cachedSkillRootsView()
+	return out
+}
+
+// subagentOverrideFor resolves a per-name subagent override with the same
+// underscore/hyphen alias fallback the runtime dispatch uses
+// (boot.SubagentModelKeys) — an exact-key read would show a legacy
+// `security_review` config entry as "inherit default" while it still won at
+// dispatch time.
+func subagentOverrideFor(overrides map[string]string, name string) string {
+	for _, key := range boot.SubagentModelKeys(name) {
+		if v := strings.TrimSpace(overrides[key]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// AvailableSubagentTools lists the tool names a subagent profile's
+// "available tools" picker may offer. Scoped to compile-time builtins for
+// v1 — MCP/plugin tools are per-session/per-connection and would need a new
+// live-registry accessor on control.Capabilities to enumerate safely; a
+// profile's allowed-tools already degrades gracefully (FilterRegistry drops
+// unknown names silently) if extended to MCP names by hand later. Tools that
+// are always excluded from every subagent regardless of an explicit
+// allowlist (agent.AlwaysHiddenSubagentTools) are left out entirely — they'd
+// be a selectable no-op otherwise.
+func (a *App) AvailableSubagentTools() []ToolView {
+	hidden := map[string]bool{}
+	for _, name := range agent.AlwaysHiddenSubagentTools() {
+		hidden[name] = true
+	}
+	entries := tool.BuiltinContractEntries()
+	out := make([]ToolView, 0, len(entries))
+	for _, e := range entries {
+		if hidden[e.Name] {
+			continue
+		}
+		out = append(out, ToolView{Name: e.Name, Description: e.Description, ReadOnlyHint: e.ReadOnly})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -6087,23 +6243,33 @@ func skillRootsViewFrom(cwd string, cfg, userCfg *config.Config) []SkillRootView
 		excluded = cfg.SkillExcludedPaths()
 		maxDepth = cfg.SkillMaxDepth()
 	}
-	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth, DisableBuiltins: true, Stderr: io.Discard})
+	var pluginPaths map[string][]string
+	if cfg != nil {
+		pluginPaths = cfg.PluginPackageSkillOwners()
+	}
+	st := skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths, ExcludedPaths: excluded, MaxDepth: maxDepth, DisableBuiltins: true, Stderr: io.Discard})
 	counts := map[string]int{}
 	skillItems := map[string][]SkillRootSkillView{}
 	roots := st.Roots()
-	for _, sk := range st.List() {
+	for _, sk := range st.SlashList() {
 		root := skillDisplayRoot(sk, roots)
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
-			Name:        sk.Name,
-			Description: sk.Description,
-			Scope:       string(sk.Scope),
-			RunAs:       string(sk.RunAs),
+			Name:         sk.Name,
+			Description:  sk.Description,
+			Scope:        string(sk.Scope),
+			RunAs:        string(sk.RunAs),
+			Plugin:       sk.Plugin,
+			Model:        sk.Model,
+			Effort:       sk.Effort,
+			AllowedTools: append([]string{}, sk.AllowedTools...),
+			Color:        sk.Color,
+			Invocation:   "/" + sk.SlashName(),
 		})
 	}
 	for root := range skillItems {
 		sort.Slice(skillItems[root], func(i, j int) bool {
-			return skillItems[root][i].Name < skillItems[root][j].Name
+			return skillItems[root][i].Invocation < skillItems[root][j].Invocation
 		})
 	}
 	userConfigured := map[string]bool{}
@@ -6171,6 +6337,7 @@ func skillRootsCacheKey(cwd string, cfg, userCfg *config.Config) string {
 	type cacheKey struct {
 		CWD       string   `json:"cwd"`
 		Custom    []string `json:"custom"`
+		Plugins   []string `json:"plugins"`
 		Excluded  []string `json:"excluded"`
 		MaxDepth  int      `json:"maxDepth"`
 		UserPaths []string `json:"userPaths"`
@@ -6178,6 +6345,12 @@ func skillRootsCacheKey(cwd string, cfg, userCfg *config.Config) string {
 	key := cacheKey{CWD: config.CanonicalSkillPath(cwd), MaxDepth: 3}
 	if cfg != nil {
 		key.Custom = canonicalSkillPaths(cfg.SkillCustomPaths())
+		for path, owners := range cfg.PluginPackageSkillOwners() {
+			for _, owner := range owners {
+				key.Plugins = append(key.Plugins, config.CanonicalSkillPath(path)+"\x00"+owner)
+			}
+		}
+		sort.Strings(key.Plugins)
 		key.Excluded = canonicalSkillPaths(cfg.SkillExcludedPaths())
 		key.MaxDepth = cfg.SkillMaxDepth()
 	}
@@ -6186,7 +6359,7 @@ func skillRootsCacheKey(cwd string, cfg, userCfg *config.Config) string {
 	}
 	b, err := json.Marshal(key)
 	if err != nil {
-		return fmt.Sprintf("%s|%v|%v|%d|%v", key.CWD, key.Custom, key.Excluded, key.MaxDepth, key.UserPaths)
+		return fmt.Sprintf("%s|%v|%v|%v|%d|%v", key.CWD, key.Custom, key.Plugins, key.Excluded, key.MaxDepth, key.UserPaths)
 	}
 	return string(b)
 }

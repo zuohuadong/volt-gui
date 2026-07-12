@@ -40,7 +40,7 @@ export const RIGHT_DOCK_MIN_RENDER_WIDTH = 280;
 // Creation tree mode may render below the classic 280 floor when the viewport squeezes.
 export const CREATION_RIGHT_DOCK_MIN_RENDER_WIDTH = 236;
 export const RIGHT_DOCK_MAX_WIDTH = 860;
-const WORKSPACE_PANEL_DEFAULT_OPEN = false;
+const WORKSPACE_PANEL_DEFAULT_OPEN = true;
 
 export function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));

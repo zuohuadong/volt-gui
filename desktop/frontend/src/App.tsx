@@ -37,18 +37,21 @@ import {
 import { useToast } from "./lib/toast";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
-import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, useI18n, useT, type Translator } from "./lib/i18n";
-import { localizedBackendNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
+import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
+import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
-import { Transcript } from "./components/Transcript";
+import { NoticeCard, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
 import { TodoPanel } from "./components/TodoPanel";
-import { ApprovalModal, approvalToolLabel } from "./components/ApprovalModal";
+import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
 import { UndoRewindBanner } from "./components/UndoRewindBanner";
 import { ClearContextCard } from "./components/ClearContextCard";
+
+/** Footer decision surface kinds. Priority: tool/plan approval > ask > clear context. */
+type DecisionSurfaceKind = "tool_approval" | "plan_approval" | "ask" | "clear_context";
 import { StatusBar } from "./components/StatusBar";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -89,6 +92,7 @@ import {
   type TokenMode,
   type ToolApprovalMode,
 } from "./lib/types";
+import type { InvocationMetadataMap, StructuredInvocationSubmit } from "./lib/invocationDisplay";
 import {
   composerProfileFromMeta,
   composerProfileFromTab,
@@ -173,19 +177,28 @@ function noticePreviewMockEnabled(): boolean {
 }
 
 function noticePreviewItems(): Item[] {
-  const notice = (index: number, level: "info" | "warn", text: string, detail: string): Item => ({
+  const notice = (index: number, level: "info" | "warn", text: string, detail: string, code?: string): Item => ({
     kind: "notice",
     id: `notice-preview-${index}`,
     level,
-    text: localizedBackendNoticeText(text),
+    text: localizedNoticeText(text, code),
     detail,
   });
   return [
-    notice(0, "info", "Task status needs one more check; asking the assistant to finish or explain what is blocking it.", "final-answer readiness blocked: latest successful todo_write still has incomplete items: UI spinner in_progress, settings persistence pending"),
-    notice(1, "info", "No visible answer was produced; asking the assistant to respond again.", "empty final answer blocked: qwen3.7-plus returned no visible answer text (finish=stop, reasoning=2314 chars); retrying"),
-    notice(2, "info", "The assistant answered before taking action; asking it to use the required tools.", "executor handoff: assistant produced a proposal before running required repository commands; nudged to execute"),
-    notice(3, "info", "Tool round limit reached; asking the assistant to summarize progress.", "tool budget reached after 128 tool calls; requesting a progress summary before continuing"),
-    notice(4, "info", "The assistant is stuck retrying a blocked action; asking it to change approach.", "loop guard: repeated command failure matched the same stderr signature across 3 attempts"),
+    {
+      kind: "notice",
+      id: "notice-preview-delivery",
+      level: "info",
+      variant: "delivery",
+      title: t("notice.deliveryIncompleteTitle"),
+      text: t("notice.deliveryIncompleteBody"),
+      detail: "final-answer readiness failed 3 times: missing verification, review_report, and complete_step receipts",
+      action: "continue_delivery",
+    },
+    notice(1, "info", "No visible answer was produced; asking the assistant to respond again.", "empty final answer blocked: qwen3.7-plus returned no visible answer text (finish=stop, reasoning=2314 chars); retrying", "empty_final"),
+    notice(2, "info", "The assistant answered before taking action; asking it to use the required tools.", "executor handoff: assistant produced a proposal before running required repository commands; nudged to execute", "executor_handoff"),
+    notice(3, "info", "Tool round limit reached; asking the assistant to summarize progress.", "tool budget reached after 128 tool calls; requesting a progress summary before continuing", "tool_budget"),
+    notice(4, "info", "The assistant is stuck retrying a blocked action; asking it to change approach.", "loop guard: repeated command failure matched the same stderr signature across 3 attempts", "loop_guard"),
     notice(5, "info", "Context is getting large; preserving cache until cleanup is needed.", "context window 82% full; deferred cleanup to preserve reusable prompt cache"),
     notice(6, "info", "Context cleanup skipped for now.", "cleanup skipped: recent turn included unresolved user approval state"),
     notice(7, "info", "Automatic context cleanup paused because the context window is too small.", "configured compact threshold exceeds current model context window; auto cleanup paused for this model"),
@@ -211,7 +224,7 @@ function noticePreviewItems(): Item[] {
   ];
 }
 
-function NoticePreviewPanel({ detailsLabel }: { detailsLabel: string }) {
+function NoticePreviewPanel() {
   return (
     <div
       style={{
@@ -224,20 +237,7 @@ function NoticePreviewPanel({ detailsLabel }: { detailsLabel: string }) {
       <div style={{ maxWidth: 920, margin: "0 auto" }}>
         {noticePreviewItems().map((item) => {
           if (item.kind !== "notice") return null;
-          return (
-            <div key={item.id} className={`notice-line notice-line--${item.level}`} data-entrance="true">
-              <span className="notice-line__icon">{item.level === "warn" ? "⚠ " : "ℹ "}</span>
-              <div className="notice-line__text">
-                {item.text}
-                {item.detail ? (
-                  <details className="notice-line__details">
-                    <summary>{detailsLabel}</summary>
-                    <div>{item.detail}</div>
-                  </details>
-                ) : null}
-              </div>
-            </div>
-          );
+          return <NoticeCard key={item.id} item={item} onAction={item.action ? () => undefined : undefined} />;
         })}
       </div>
     </div>
@@ -1179,6 +1179,8 @@ export default function App() {
   const [workspaceTogglePressed, setWorkspaceTogglePressed] = useState(false);
   const [clearContextPending, setClearContextPending] = useState(false);
   const topicRenameSkipCommitRef = useRef(false);
+  const prevDecisionSurfaceRef = useRef<DecisionSurfaceKind | null>(null);
+  const decisionSurfaceRef = useRef<DecisionSurfaceKind | null>(null);
   const topicRenameCommitHandledRef = useRef(false);
   const appRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -1361,12 +1363,25 @@ export default function App() {
   }, []);
 
   const [pendingPlanRevisionsByTab, setPendingPlanRevisionsByTab] = useState<Record<string, string>>({});
+  const [invocationMetadataByTab, setInvocationMetadataByTab] = useState<Record<string, InvocationMetadataMap>>({});
   const pendingPlanRevisionSendingTabsRef = useRef(new Set<string>());
   const [footerHeight, setFooterHeight] = useState(0);
   const footerHeightRef = useRef(0);
   const footerRef = useRef<HTMLElement>(null);
   const activeTabIdRef = useRef(activeTabId);
-  const commitThenSendRef = useRef<(tabId: string, displayText: string, submitText?: string) => Promise<void>>(async () => {});
+  const commitThenSendRef = useRef<(tabId: string, displayText: string, submitText?: string, structured?: StructuredInvocationSubmit) => Promise<void>>(async () => {});
+  const handleInvocationMetadataChange = useCallback((metadata: InvocationMetadataMap) => {
+    const sourceTabId = activeTabIdRef.current;
+    if (!sourceTabId) return;
+    setInvocationMetadataByTab((current) => {
+      const previous = current[sourceTabId] ?? {};
+      const names = Object.keys(metadata);
+      if (names.length === Object.keys(previous).length && names.every((name) => (
+        previous[name]?.kind === metadata[name]?.kind && previous[name]?.color === metadata[name]?.color
+      ))) return current;
+      return { ...current, [sourceTabId]: metadata };
+    });
+  }, []);
   const rightDockDetailActive = rightDockMode !== "context" && workspacePreviewActive;
   const preferredWorkspacePanelWidth = rightDockDetailActive ? rightDockPreviewWidth : rightDockTreeWidth;
   const rightDockTreeMinWidth = desktopLayoutStyle === "creation" ? CREATION_RIGHT_DOCK_TREE_MIN_WIDTH : RIGHT_DOCK_TREE_MIN_WIDTH;
@@ -1423,6 +1438,13 @@ export default function App() {
       ? planRevisionInsertRequest.request
       : null;
   const composerInsertRequest = activeTabId ? composerInsertRequestsByTab[activeTabId] ?? null : null;
+  const prefillSubagentCommand = useCallback((command: string) => {
+    if (!activeTabId) return;
+    setComposerInsertRequestsByTab((current) => ({
+      ...current,
+      [activeTabId]: { id: Date.now(), text: command, mode: "prefix" },
+    }));
+  }, [activeTabId]);
   const composerSessionKey = useMemo(() => {
     return composerDraftKeyForTab(activeTab, activeTabId);
   }, [activeTab, activeTabId]);
@@ -1482,6 +1504,38 @@ export default function App() {
   const toolApprovalMode = composerProfile.toolApprovalMode;
   const tokenMode: TokenMode = composerProfile.tokenMode;
   const controllerReady = state.meta?.ready === true && !state.backendActivationPending;
+  // Single footer decision surface. Composer stays mounted underneath and is
+  // only visually/a11y-hidden so per-session draft caches survive.
+  const decisionSurface = useMemo((): DecisionSurfaceKind | null => {
+    if (state.approval) {
+      return state.approval.tool === "exit_plan_mode" ? "plan_approval" : "tool_approval";
+    }
+    if (state.ask) return "ask";
+    if (clearContextPending) return "clear_context";
+    return null;
+  }, [clearContextPending, state.approval, state.ask]);
+  decisionSurfaceRef.current = decisionSurface;
+  useEffect(() => {
+    // Close composer menus/popovers when a decision takes over the footer.
+    if (decisionSurface) {
+      closeTransientOverlays();
+      prevDecisionSurfaceRef.current = decisionSurface;
+      return;
+    }
+    // Restore composer focus on the next frame only if the tab did not switch
+    // and no new decision arrived (remote resolution / rapid consecutive prompts).
+    const hadDecision = prevDecisionSurfaceRef.current != null;
+    prevDecisionSurfaceRef.current = null;
+    if (!hadDecision) return;
+    const tabAtRelease = activeTabId;
+    const frame = requestAnimationFrame(() => {
+      if (decisionSurfaceRef.current != null) return;
+      if (activeTabIdRef.current !== tabAtRelease) return;
+      const input = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+      input?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeTabId, closeTransientOverlays, decisionSurface]);
   const patchActiveComposerProfile = useCallback(
     (patch: Partial<Omit<ComposerProfile, "pending">>, pendingFields: ComposerProfileField[]) => {
       if (!activeTabId) return;
@@ -1562,16 +1616,17 @@ export default function App() {
     [activeTabId, patchActiveComposerProfile, syncModeToController],
   );
   const applyCollaborationMode = useCallback(
-    (m: CollaborationMode): Promise<void> => {
+    async (m: CollaborationMode): Promise<void> => {
       userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, m === "plan");
       if (m === "goal") {
         patchActiveComposerProfile({ collaborationMode: "normal", goalDraftMode: true, goal: "" }, ["collaborationMode", "goal"]);
         return setControllerCollaborationMode("normal");
       }
       patchActiveComposerProfile({ collaborationMode: m, goalDraftMode: false, goal: "" }, ["collaborationMode", "goal"]);
-      return setControllerCollaborationMode(m);
+      if (goal.trim()) await clearControllerGoal();
+      await setControllerCollaborationMode(m);
     },
-    [activeTabId, patchActiveComposerProfile, setControllerCollaborationMode],
+    [activeTabId, clearControllerGoal, goal, patchActiveComposerProfile, setControllerCollaborationMode],
   );
   const applyToolApprovalMode = useCallback(
     (m: ToolApprovalMode) => {
@@ -1653,8 +1708,9 @@ export default function App() {
   // successful top-level todo_write result; failed or still-running attempts do
   // not advance the canonical panel state. Incomplete lists are always shown so
   // a stale local dismissal cannot hide work that still blocks final readiness;
-  // completed lists collapse automatically and can then be dismissed. The
-  // dismissal key is still based on stable todo content/state so history reloads
+  // every new list starts collapsed while its header keeps showing live progress
+  // and the current task; completed lists can then be dismissed. The dismissal
+  // key is still based on stable todo content/state so history reloads
   // do not resurrect the same finished list under a different event id. The
   // batch key ignores status changes so progress within the same task list does
   // not look like a brand-new task batch. Dismissal and open state are scoped to
@@ -1802,7 +1858,7 @@ export default function App() {
   // (/skill, /hooks, /mcp) — goes straight to Submit, which the controller
   // resolves (a turn, or a listing Notice).
   const handleSend = useCallback(
-    async (displayText: string, submitText = displayText, requestedTabId = activeTabId) => {
+    async (displayText: string, submitText = displayText, requestedTabId = activeTabId, structured?: StructuredInvocationSubmit) => {
       const sourceTabId = requestedTabId || activeTabId;
       if (!sourceTabId) throw new Error(t("composer.workspaceStarting"));
       const trimmed = displayText.trim();
@@ -1898,7 +1954,7 @@ export default function App() {
       await setControllerCollaborationModeForTab(sourceTabId, controllerComposerProfileCollaborationMode(composerProfile));
       await setControllerToolApprovalModeForTab(sourceTabId, toolApprovalMode);
       if (goal.trim()) await setControllerGoalForTab(sourceTabId, goal);
-      await commitThenSendRef.current(sourceTabId, trimmed, submitText.trim());
+      await commitThenSendRef.current(sourceTabId, trimmed, submitText.trim(), structured);
     },
     [activeTabId, applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, runShellForTab,
       setControllerCollaborationModeForTab, setControllerGoalForTab, setControllerToolApprovalModeForTab, switchModel, t, toolApprovalMode, showToast],
@@ -2494,7 +2550,7 @@ export default function App() {
   }, [state.items]);
 
   // send wrapper: commits any pending optimistic rewind before sending.
-  const commitThenSend = useCallback(async (sourceTabId: string, displayText: string, submitText?: string) => {
+  const commitThenSend = useCallback(async (sourceTabId: string, displayText: string, submitText?: string, structured?: StructuredInvocationSubmit) => {
     const sourceTab = tabMetas.find((tab) => tab.id === sourceTabId);
     if (!sourceTab) throw new Error(t("composer.workspaceStarting"));
     if (sourceTab.readOnly) throw new Error(t("composer.readOnlyChannel"));
@@ -2522,7 +2578,7 @@ export default function App() {
         setProjectRevision((v) => v + 1);
       }
     }
-    await sendToTab(sourceTabId, displayText, submitText);
+    await sendToTab(sourceTabId, displayText, submitText, undefined, structured);
   }, [rewindForTab, sendToTab, setRewindCommittingForTab, setRewindStateForTab, t, tabMetas]);
 
   const handleTranscriptPrompt = useCallback((text: string) => {
@@ -3597,18 +3653,20 @@ export default function App() {
               </div>
               </>
               )}
-              <Tooltip label={t("workspace.changedTab")}>
-                <button
-                  className="topicbar__action-btn topicbar__action-btn--label"
-                  type="button"
-                  aria-label={t("workspace.changedTab")}
-                  aria-pressed={workspacePanelRenderable && rightDockMode === "changed"}
-                  onClick={() => openRightDockMode("changed")}
-                >
-                  <GitBranch size={14} />
-                  <span>{t("workspace.changedTab")}</span>
-                </button>
-              </Tooltip>
+              {!sidebarCreation && (
+                <Tooltip label={t("workspace.changedTab")}>
+                  <button
+                    className="topicbar__action-btn topicbar__action-btn--label"
+                    type="button"
+                    aria-label={t("workspace.changedTab")}
+                    aria-pressed={workspacePanelRenderable && rightDockMode === "changed"}
+                    onClick={() => openRightDockMode("changed")}
+                  >
+                    <GitBranch size={14} />
+                    <span>{t("workspace.changedTab")}</span>
+                  </button>
+                </Tooltip>
+              )}
               <Tooltip label={t("shortcuts.cheatsheetTitle")}>
                 <button
                   className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
@@ -3625,13 +3683,17 @@ export default function App() {
               </Tooltip>
               <Tooltip label={t("topicBar.command")}>
                 <button
-                  className="topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
+                  className={
+                    sidebarCreation
+                      ? "topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
+                      : "topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
+                  }
                   type="button"
                   aria-label={t("topicBar.command")}
                   onClick={() => void openPalette()}
                 >
                   <Command size={14} />
-                  <span>{t("topicBar.command")}</span>
+                  {!sidebarCreation && <span>{t("topicBar.command")}</span>}
                 </button>
               </Tooltip>
               {sidebarCreation && (
@@ -3671,7 +3733,7 @@ export default function App() {
                 onOpenSession={() => void openSidebarImConnectionSession(sidebarImDetailConnection)}
               />
             ) : noticePreviewMockEnabled() ? (
-              <NoticePreviewPanel detailsLabel={t("notice.details")} />
+              <NoticePreviewPanel />
             ) : (
               <Transcript
                 items={displayItems}
@@ -3696,6 +3758,7 @@ export default function App() {
                 olderHistoryCount={state.historyStartTurn}
                 loadingOlderHistory={state.historyOlderLoading}
                 onLoadOlderHistory={() => activeTabId && loadOlderHistory(activeTabId)}
+                invocationMetadata={activeTabId ? invocationMetadataByTab[activeTabId] : undefined}
               />
             )}
           </main>
@@ -3728,7 +3791,8 @@ export default function App() {
                 }}
               />
             )}
-            {state.approval && (
+            {decisionSurface === "tool_approval" || decisionSurface === "plan_approval"
+              ? state.approval && (
               <ApprovalModal
                 key={`${activeTabId ?? ""}:${state.approval.id}`}
                 approval={state.approval}
@@ -3759,8 +3823,9 @@ export default function App() {
                 }}
                 toolApprovalMode={toolApprovalMode}
               />
-            )}
-            {state.ask && (
+              )
+            : decisionSurface === "ask"
+              ? state.ask && (
               <AskCard
                 key={`${activeTabId ?? ""}:${state.ask.id}`}
                 ask={state.ask}
@@ -3770,15 +3835,23 @@ export default function App() {
                   cancel();
                 }}
               />
-            )}
-            {clearContextPending && (
+              )
+            : decisionSurface === "clear_context" ? (
               <ClearContextCard
                 onCancel={cancelClearContext}
                 onConfirm={() => {
                   void confirmClearContext();
                 }}
               />
-            )}
+            ) : null}
+            {/* Composer stays mounted under a decision so per-session draft
+                caches (text, attachments, paste blocks, guidance) survive. */}
+            <div
+              className={decisionSurface ? "composer-decision-host composer-decision-host--hidden" : "composer-decision-host"}
+              hidden={Boolean(decisionSurface) || undefined}
+              inert={decisionSurface ? true : undefined}
+              aria-hidden={decisionSurface ? true : undefined}
+            >
             <Composer
               running={state.running || rewindCommitting}
               collaborationMode={collaborationMode}
@@ -3791,6 +3864,7 @@ export default function App() {
               tabId={activeTabId}
               effort={state.effort}
               onSend={handleSend}
+              onInvocationMetadataChange={handleInvocationMetadataChange}
               onSteer={handleSteer}
               onCancel={cancel}
               onCycleMode={cycleMode}
@@ -3804,15 +3878,17 @@ export default function App() {
               onSetTokenMode={applyTokenMode}
               insertRequest={composerInsertRequest}
               readOnly={Boolean(activeTab?.readOnly)}
-              disabled={rewindCommitting || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+              disabled={rewindCommitting || state.messageAction != null || Boolean(decisionSurface)}
               submitDisabled={!controllerReady}
-              decisionPending={rewindCommitting || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
+              decisionPending={rewindCommitting || state.messageAction != null || Boolean(decisionSurface)}
               ready={controllerReady}
               turnStartAt={state.turnStartAt}
+              turnWaitAccumMs={state.turnWaitAccumMs}
+              promptWaitStartedAt={state.promptWaitStartedAt}
               turnTokens={state.turnTokens}
+              turnArgChars={state.turnArgChars}
               retry={state.retry}
-              pendingApprovalLabel={state.approval ? approvalToolLabel(state.approval.tool, t) : null}
-              pendingAsk={state.ask != null}
+              suspendedByDecision={Boolean(decisionSurface)}
               transientDismissSignal={transientOverlayDismissSignal}
               sessionKey={composerSessionKey}
               workspaceScopeKey={workspaceScopeKey}
@@ -3827,6 +3903,7 @@ export default function App() {
               cacheMissTokens={state.usage?.cacheMissTokens}
               balance={state.balance}
             />
+            </div>
             <StatusBar
               context={state.context}
               usage={state.usage}
@@ -3925,6 +4002,7 @@ export default function App() {
                   balance={state.balance}
                   sessionGen={state.sessionGen}
                   refreshKey={dockRefreshKey}
+                  usageSeq={state.usageSeq}
                 />
               ) : (
                 <WorkspacePanel
@@ -3946,6 +4024,7 @@ export default function App() {
                   refreshKey={dockRefreshKey}
                   initialViewMode={rightDockMode === "changed" ? "changed" : "files"}
                   showViewTabs={false}
+                  creationMode={sidebarCreation}
                 />
               )}
             </div>
@@ -3980,6 +4059,7 @@ export default function App() {
             initialFocus={settingsFocus ?? undefined}
             agentRunning={state.running}
             desktopPlatform={desktopPlatform}
+            onUseSubagent={prefillSubagentCommand}
             onClose={() => {
               setSettingsFocus(null);
               setSettingsTarget(null);

@@ -79,9 +79,9 @@ ok(
 );
 
 ok(
-  /const WORKSPACE_PANEL_DEFAULT_OPEN = false;/.test(layoutStoreSource) &&
+  /const WORKSPACE_PANEL_DEFAULT_OPEN = true;/.test(layoutStoreSource) &&
     /workspacePanelOpen:\s*WORKSPACE_PANEL_DEFAULT_OPEN/.test(layoutStoreSource),
-  "right dock starts collapsed on launch",
+  "right dock starts expanded on launch",
 );
 
 ok(
@@ -204,8 +204,8 @@ ok(
 );
 
 ok(
-  /commitThenSendRef\.current\(sourceTabId, trimmed, submitText\.trim\(\)\)/.test(appSource) &&
-    /sendToTab\(sourceTabId, displayText, submitText\)/.test(appSource) &&
+  /commitThenSendRef\.current\(sourceTabId, trimmed, submitText\.trim\(\), structured\)/.test(appSource) &&
+    /sendToTab\(sourceTabId, displayText, submitText, undefined, structured\)/.test(appSource) &&
     /onSteer=\{handleSteer\}/.test(appSource) &&
     /composerInsertRequestsByTab\[activeTabId\]/.test(appSource) &&
     /consumedInsertIdByDraftRef\.current\[draftKey\]/.test(composerSource),

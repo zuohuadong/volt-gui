@@ -315,6 +315,7 @@
   let lastWorkLayer = $state<WorkLayer>("today");
   let capabilityTab = $state<CapabilityTab>("plugin");
   let capabilitySearch = $state("");
+  let capabilityTag = $state("");
   let selectedCapabilityId = $state("git-panel");
   let capabilityDetailOpen = $state(false);
 	let cloudflareDropPreflight = $state<CloudflareDropPreflight | undefined>();
@@ -871,7 +872,7 @@
       ? linkedProject || activeTab?.workspaceName || t.common.global
       : activeTab?.workspaceName || t.common.global,
   );
-  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
+  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; executionReadOnly?: boolean; tags?: string[]; examplePrompts?: string[]; runAs?: string; autoUse?: string; needsFreshData?: boolean; cost?: string; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
   type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
   const defaultCapabilityBuckets: CapabilityBuckets = {
     plugin: [
@@ -5016,6 +5017,13 @@
       path: skill.name,
       permission: skill.runAs || "按 Skill 定义",
       enabled: skill.enabled,
+      executionReadOnly: skill.readOnly,
+      tags: skill.tags ?? [],
+      examplePrompts: skill.examplePrompts ?? [],
+      runAs: skill.runAs,
+      autoUse: skill.autoUse,
+      needsFreshData: skill.needsFreshData,
+      cost: skill.cost,
     };
   }
   async function refreshCapabilities() {
@@ -5036,6 +5044,7 @@
       if (!capabilityBuckets[capabilityTab].some((item) => item.id === selectedCapabilityId)) {
         selectedCapabilityId = capabilityBuckets[capabilityTab][0]?.id || "";
       }
+      if (capabilityTag && !capabilitySkillTags().includes(capabilityTag)) capabilityTag = "";
     } catch (error) {
       console.error("Failed to refresh capabilities", error);
       capabilityBuckets = defaultCapabilityBuckets;
@@ -5045,10 +5054,24 @@
   function capabilityEnabledCount() { return allCapabilities().filter((item) => item.enabled).length; }
   function currentCapabilityList() { return capabilityBuckets[capabilityTab]; }
   function currentCapability() { return currentCapabilityList().find((item) => item.id === selectedCapabilityId) ?? currentCapabilityList()[0]; }
+  function capabilitySkillTags() {
+    const tags = new Map<string, string>();
+    for (const item of capabilityBuckets.skill) {
+      for (const tag of item.tags ?? []) {
+        const value = tag.trim();
+        const key = value.toLowerCase();
+        if (value && !tags.has(key)) tags.set(key, value);
+      }
+    }
+    return [...tags.values()].sort((left, right) => left.localeCompare(right)).slice(0, 24);
+  }
   function filteredCapabilities() {
     const keyword = capabilitySearch.trim().toLowerCase();
-    if (!keyword) return currentCapabilityList();
-    return currentCapabilityList().filter((item) => [item.name, item.desc, item.status, item.source, item.scope, item.path].some((value) => value.toLowerCase().includes(keyword)));
+    return currentCapabilityList().filter((item) => {
+      if (capabilityTab === "skill" && capabilityTag && !(item.tags ?? []).some((tag) => tag.toLowerCase() === capabilityTag.toLowerCase())) return false;
+      if (!keyword) return true;
+      return [item.name, item.desc, item.status, item.source, item.scope, item.path, ...(item.tags ?? []), ...(item.examplePrompts ?? [])].some((value) => value.toLowerCase().includes(keyword));
+    });
   }
   function capabilityStatusTone(item: CapabilityItem) {
     if (item.enabled) return "enabled";
@@ -5364,7 +5387,7 @@
         ? "描述 Skill 的使用场景、输入输出、执行步骤和注意事项。"
         : `${capabilitySubtitle(kind)}：先登记元数据，再配置权限，最后挂载到 Agent 与新建对话。`;
   }
-  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; if (capabilityCreateOpen) resetCapabilityCreateForm(kind); }
+  function switchCapabilityTab(kind: CapabilityTab) { capabilityTab = kind; capabilitySearch = ""; capabilityTag = ""; selectedCapabilityId = capabilityBuckets[kind][0]?.id || ""; capabilityDetailOpen = false; if (capabilityCreateOpen) resetCapabilityCreateForm(kind); }
   function startCapabilityCreate(kind: CapabilityTab) { switchCapabilityTab(kind); resetCapabilityCreateForm(kind); openWorkLayer("capabilities"); capabilityCreateOpen = true; }
   function openMCPConfigImport() {
     switchCapabilityTab("mcp");
@@ -7034,7 +7057,7 @@
                   </div>
                   <label class="capability-search">
                     <Search size={15} />
-                    <input bind:value={capabilitySearch} placeholder={`搜索${capabilityLabel(capabilityTab)}名称 / 描述 / 来源`} />
+                    <input bind:value={capabilitySearch} placeholder={capabilityTab === "skill" ? "搜索 SKILL 名称 / 描述 / 标签 / 示例提示" : `搜索${capabilityLabel(capabilityTab)}名称 / 描述 / 来源`} />
                   </label>
                   <div class="capability-hub-header__actions">
                     <input bind:this={capabilityImportInput} class="visually-hidden" type="file" accept=".json,application/json" aria-label="导入能力配置文件" onchange={handleCapabilityImportFile} />
@@ -7078,6 +7101,15 @@
                       <div><span>{capabilityLabel(capabilityTab)} Catalog</span><strong>{capabilityLabel(capabilityTab)} 目录</strong><p>展示本地来源、版本、权限和连接状态；远程分发能力暂不伪装成已上线。</p></div>
                       <button type="button" onclick={() => startCapabilityCreate(capabilityTab)}><Plus size={14} /> 添加{capabilityLabel(capabilityTab)}</button>
                     </header>
+                    {#if capabilityTab === "skill" && capabilitySkillTags().length > 0}
+                      <div class="capability-tag-filter" aria-label="Skill 标签筛选">
+                        <span>标签筛选</span>
+                        <button class:active={!capabilityTag} type="button" aria-pressed={!capabilityTag} onclick={() => (capabilityTag = "")}>全部</button>
+                        {#each capabilitySkillTags() as tag (tag)}
+                          <button class:active={capabilityTag === tag} type="button" aria-pressed={capabilityTag === tag} onclick={() => (capabilityTag = capabilityTag === tag ? "" : tag)}>{tag}</button>
+                        {/each}
+                      </div>
+                    {/if}
                     <div class="capability-list capability-market-list">
                       {#if filteredCapabilities().length > 0}
                       {#each filteredCapabilities() as item (item.id)}
@@ -7087,6 +7119,9 @@
                             <span class="capability-title-line"><strong>{item.name}</strong><b>{capabilityLabel(capabilityTab)}</b></span>
                             <em>{item.desc}</em>
                             <span class="capability-badges"><b>{item.version}</b><b>{item.source}</b><b>{item.scope}</b></span>
+                            {#if capabilityTab === "skill" && item.tags?.length}
+                              <span class="capability-tag-list">{#each item.tags as tag (tag)}<b>{tag}</b>{/each}</span>
+                            {/if}
                           </span>
                           <span class="capability-row__side">
                             <i class={`capability-state capability-state--${capabilityStatusTone(item)}`}>{item.status}</i>
@@ -7728,8 +7763,27 @@
                   <b>{selectedCapability.version}</b>
                   <b>{selectedCapability.source}</b>
                   <b>{selectedCapability.scope}</b>
+                  {#if capabilityTab === "skill"}{#each selectedCapability.tags ?? [] as tag (tag)}<b>{tag}</b>{/each}{/if}
                 </div>
               </div>
+              {#if capabilityTab === "skill"}
+                <section class="capability-skill-metadata">
+                  <header><ShieldCheck size={16} /><strong>风险与执行元数据</strong></header>
+                  <dl>
+                    <div><dt>执行方式</dt><dd>{selectedCapability.runAs || "inline"}</dd></div>
+                    <div><dt>文件权限</dt><dd>{selectedCapability.executionReadOnly ? "只读执行" : "未限制为只读"}</dd></div>
+                    <div><dt>自动使用</dt><dd>{selectedCapability.autoUse || "未声明"}</dd></div>
+                    <div><dt>新鲜数据</dt><dd>{selectedCapability.needsFreshData ? "需要实时或最新数据" : "未要求最新数据"}</dd></div>
+                    <div><dt>成本提示</dt><dd>{selectedCapability.cost || "未声明"}</dd></div>
+                  </dl>
+                </section>
+                {#if selectedCapability.examplePrompts?.length}
+                  <section class="capability-example-prompts">
+                    <header><Sparkles size={16} /><strong>示例提示</strong></header>
+                    <ol>{#each selectedCapability.examplePrompts as prompt (prompt)}<li>{prompt}</li>{/each}</ol>
+                  </section>
+                {/if}
+              {/if}
               <section class="capability-install-flow">
                 <header><Workflow size={16} /><strong>安装与连接流程</strong></header>
                 {#each capabilityInstallSteps as step, index (indexedKey(step.id, index))}
@@ -12309,6 +12363,43 @@
     align-content: start;
   }
 
+  .capability-tag-filter,
+  .capability-tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .capability-tag-filter {
+    align-items: center;
+    margin: 0 0 12px;
+  }
+
+  .capability-tag-filter > span {
+    margin-right: 2px;
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 750;
+  }
+
+  .capability-tag-filter button,
+  .capability-tag-list b {
+    min-height: 24px;
+    padding: 0 9px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 999px;
+    background: hsl(220 20% 98%);
+    color: var(--aorist-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .capability-tag-filter button.active {
+    border-color: color-mix(in srgb, var(--aorist-primary) 36%, var(--aorist-line));
+    background: hsl(220 70% 96%);
+    color: var(--aorist-primary);
+  }
+
   .capability-list {
     display: grid;
     gap: 8px;
@@ -12476,6 +12567,69 @@
     background: hsl(220 20% 96%);
     color: var(--aorist-muted);
     font-size: 11px;
+  }
+
+  .capability-skill-metadata,
+  .capability-example-prompts {
+    display: grid;
+    gap: 8px;
+  }
+
+  .capability-skill-metadata header,
+  .capability-example-prompts header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--aorist-ink);
+    font-size: 13px;
+  }
+
+  .capability-skill-metadata header :global(svg),
+  .capability-example-prompts header :global(svg) {
+    color: var(--aorist-primary);
+  }
+
+  .capability-skill-metadata dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+  }
+
+  .capability-skill-metadata dl div {
+    padding: 9px 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+  }
+
+  .capability-skill-metadata dt {
+    color: var(--aorist-muted);
+    font-size: 11px;
+  }
+
+  .capability-skill-metadata dd {
+    margin: 4px 0 0;
+    color: var(--aorist-ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .capability-example-prompts ol {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+    padding-left: 22px;
+  }
+
+  .capability-example-prompts li {
+    padding: 8px 10px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: hsl(220 20% 98%);
+    color: var(--aorist-ink);
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .capability-install-flow,

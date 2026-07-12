@@ -1646,7 +1646,11 @@ export function Composer({
         invocations: invocationRequests(trimmedDraft.invocations),
       } satisfies StructuredInvocationSubmit : undefined;
       if (running) {
-        const guidanceText = displayText.trim();
+        // An entity-only submit has an empty displayText (entities live
+        // outside the text model); fall back to the serialized slash form so
+        // the queue shows the invocation instead of silently dropping it
+        // while clearSubmittedDraft wipes the composer.
+        const guidanceText = displayText.trim() || (structured?.display.trim() ?? "");
         const guidanceSubmitText = submitText.trim();
         if (guidanceText) {
           const id = nextGuidanceId.current++;
@@ -2351,14 +2355,34 @@ export function Composer({
     return token.from;
   };
 
-  const closeDirectPastChats = () => {
-    const caret = clearDirectPastChatToken();
+  const dismissDirectPastChats = () => {
+    // Keep the literal token text — "#6310" may be an issue number or a
+    // heading, not a session query. Dismissing only closes the panel;
+    // `dismissed` suppresses reopening until the query changes, the same
+    // contract as the slash and @ menus. Selecting a session (pickSession)
+    // is the only path that consumes the token.
+    setDismissed(true);
     setDirectPastChats(false);
     setShowPastChats(false);
     setPastChatQuery("");
     setActive(0);
-    setComposerSelection(caret);
+    requestAnimationFrame(focusComposerInput);
   };
+
+  // The typed panel follows the live token: typing in the composer extends
+  // the query, and deleting the token (or ending it with whitespace) closes
+  // the panel instead of leaving it open on a stale query.
+  useEffect(() => {
+    if (!directPastChats) return;
+    if (pastChatTokenQuery === null) {
+      setDirectPastChats(false);
+      setShowPastChats(false);
+      setPastChatQuery("");
+      setActive(0);
+      return;
+    }
+    setPastChatQuery(pastChatTokenQuery);
+  }, [directPastChats, pastChatTokenQuery]);
 
   const insertContentTrigger = (trigger: "@" | "#" | "/") => {
     const selection = getInputSelection();
@@ -2628,7 +2652,7 @@ export function Composer({
       if (e.key === "Escape") {
         e.preventDefault();
         if (menuMode === "pastChats") {
-          closeDirectPastChats();
+          dismissDirectPastChats();
         } else if (showPastChats) {
           setPastChatQuery("");
           setShowPastChats(false);
@@ -2669,7 +2693,7 @@ export function Composer({
       } else if (e.key === "Enter" || e.key === "Tab") {
         pickActive();
       } else if (e.key === "Escape") {
-        if (menuMode === "pastChats") closeDirectPastChats();
+        if (menuMode === "pastChats") dismissDirectPastChats();
         else {
           setPastChatQuery("");
           setShowPastChats(false);
@@ -3126,7 +3150,13 @@ export function Composer({
                     type="text"
                     placeholder="搜索历史会话…"
                     value={pastChatQuery}
-                    autoFocus
+                    // In the token-driven flows (typed "#" or the content-menu
+                    // action) focus must stay in the composer: typing there
+                    // extends the token and filters the list, and stealing
+                    // focus mid-word hijacks ordinary "#123" text. Only the
+                    // @-flow subpanel, which has no composer token to type
+                    // into, moves focus here.
+                    autoFocus={!directPastChats}
                     onChange={(ev) => {
                       setPastChatQuery(ev.target.value);
                       setActive(0);
@@ -3187,7 +3217,7 @@ export function Composer({
               className="slashmenu__item slashmenu__item--back"
               onMouseDown={(ev) => {
                 ev.preventDefault();
-                if (menuMode === "pastChats") closeDirectPastChats();
+                if (menuMode === "pastChats") dismissDirectPastChats();
                 else {
                   setPastChatQuery("");
                   setShowPastChats(false);
@@ -3443,11 +3473,21 @@ export function Composer({
                   style={textareaStyle}
                   onChange={(nextText, nextInvocations) => {
                     resetPromptHistoryNavigation();
+                    const hadInvocations = invocationsRef.current.length > 0;
                     textRef.current = nextText;
                     invocationsRef.current = nextInvocations;
                     setText(nextText);
                     setInvocations(nextInvocations);
                     if (composerPrompt) setComposerPrompt(null);
+                    if (hadInvocations && nextInvocations.length === 0) {
+                      // Removing the last entity unmounts the rich input and
+                      // swaps the plain textarea back in; without an explicit
+                      // handoff the focused editable disappears and the next
+                      // keystrokes land on <body>. RichComposerInput reports
+                      // the removal caret through onSelectionChange before
+                      // this onChange fires.
+                      setComposerSelection(Math.min(lastSelectionRef.current.start, nextText.length));
+                    }
                   }}
                   onSelectionChange={(selection, query) => {
                     setRichSelection(selection);

@@ -86,6 +86,14 @@ func (a *App) CreateSubagentProfile(input SubagentProfileInput) (string, error) 
 	if ctrl == nil {
 		return "", fmt.Errorf("no active session")
 	}
+	// Refuse before writing anything: the post-save RefreshSkills rebuild is
+	// rejected while the controller has a running turn, pending prompt, or
+	// background jobs, and a profile file already written by then would strand
+	// the UI — the save reports failure, the list never refreshes, and a retry
+	// hits "already exists". Same precheck order as applyConfigChange.
+	if err := a.ensureActiveTabRebuildAllowed("subagents"); err != nil {
+		return "", err
+	}
 	occupied := make([]string, 0)
 	for _, existing := range ctrl.AllSkills() {
 		occupied = append(occupied, existing.Name, existing.SlashName())
@@ -157,6 +165,11 @@ func (a *App) UpdateSubagentProfile(name, scope string, input SubagentProfileInp
 	if ctrl == nil {
 		return fmt.Errorf("no active session")
 	}
+	// See CreateSubagentProfile: refuse before writing so a busy-rejected
+	// rebuild can't leave the file changed while the UI reports failure.
+	if err := a.ensureActiveTabRebuildAllowed("subagents"); err != nil {
+		return err
+	}
 	found := false
 	for _, sk := range ctrl.AllSkills() {
 		if config.SkillNameKey(sk.Name) != config.SkillNameKey(name) {
@@ -211,6 +224,12 @@ func (a *App) DeleteSubagentProfile(name, scope string) error {
 	_, ctrl := a.activeTabAndCtrl()
 	if ctrl == nil {
 		return fmt.Errorf("no active session")
+	}
+	// See CreateSubagentProfile: refuse before deleting so a busy-rejected
+	// rebuild can't remove the file while the UI reports failure and keeps
+	// listing the profile.
+	if err := a.ensureActiveTabRebuildAllowed("subagents"); err != nil {
+		return err
 	}
 	// Re-resolve the target and apply the full profile-identity check before
 	// deleting: the generic DeleteSkill removes any user skill matching

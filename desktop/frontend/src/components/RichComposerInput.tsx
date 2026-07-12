@@ -182,10 +182,18 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
 }, ref) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingSelectionRef = useRef<PendingSelection>(null);
+  // True between compositionstart and compositionend. While an IME is
+  // composing, the browser owns the DOM text node and the selection: syncing
+  // the controlled model (a re-render patches the composing text node) or
+  // restoring the selection (removeAllRanges/addRange) cancels or commits the
+  // composition mid-word, so every model→DOM and DOM→model path below stays
+  // silent until compositionend performs one authoritative resync.
+  const composingRef = useRef(false);
   const known = useMemo(() => new Map(invocations.map((invocation) => [invocation.id, invocation])), [invocations]);
   const ordered = useMemo(() => sortComposerInvocations(invocations), [invocations]);
 
   const reportSelection = () => {
+    if (composingRef.current) return;
     const root = rootRef.current;
     if (!root) return;
     const selection = selectionFromDom(root, known);
@@ -223,6 +231,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   }), [invocations, known, text]);
 
   useLayoutEffect(() => {
+    if (composingRef.current) return;
     const pending = pendingSelectionRef.current;
     const root = rootRef.current;
     if (!pending || !root) return;
@@ -232,15 +241,57 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     reportSelection();
   }, [ordered, text]);
 
-  const onInput = (_event: FormEvent<HTMLDivElement>) => {
+  // Selection is reported before onChange so the parent sees the fresh caret
+  // when handling the model change — it matters when a change empties the
+  // invocation list and the parent must hand focus/caret to the plain
+  // textarea that replaces this component.
+  const syncFromDom = () => {
     const root = rootRef.current;
     if (!root) return;
     const selection = selectionFromDom(root, known);
     const next = modelFromDom(root, known);
     pendingSelectionRef.current = selection;
-    onChange(next.text, next.invocations);
     onSelectionChange(selection, slashQueryAt(next.text, selection));
+    onChange(next.text, next.invocations);
   };
+
+  const onInput = (event: FormEvent<HTMLDivElement>) => {
+    // Chrome fires the commit's final input event before compositionend with
+    // isComposing still true; the compositionend handler owns that resync.
+    if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
+    syncFromDom();
+  };
+
+  // Composition tracking uses native listeners rather than React's synthetic
+  // onCompositionStart/onCompositionEnd: React's composition plugin decides at
+  // module load whether CompositionEvent exists and otherwise synthesizes from
+  // key events, and the IME guard must not depend on that fallback. The ref
+  // indirection keeps the mount-once listeners reading the current props and
+  // model instead of a stale first-render closure.
+  const compositionHandlersRef = useRef({ start: () => {}, end: () => {} });
+  compositionHandlersRef.current = {
+    start: () => {
+      composingRef.current = true;
+      onCompositionStart();
+    },
+    end: () => {
+      composingRef.current = false;
+      onCompositionEnd();
+      syncFromDom();
+    },
+  };
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const start = () => compositionHandlersRef.current.start();
+    const end = () => compositionHandlersRef.current.end();
+    root.addEventListener("compositionstart", start);
+    root.addEventListener("compositionend", end);
+    return () => {
+      root.removeEventListener("compositionstart", start);
+      root.removeEventListener("compositionend", end);
+    };
+  }, []);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Backspace" && !event.nativeEvent.isComposing) {
@@ -253,6 +304,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
             event.preventDefault();
             const next = invocations.filter((invocation) => invocation.id !== target.id);
             pendingSelectionRef.current = { start: selection.start, end: selection.start };
+            onSelectionChange({ start: selection.start, end: selection.start }, null);
             onChange(text, next);
             return;
           }
@@ -281,6 +333,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
           description={item.command.description}
           onRemove={() => {
             pendingSelectionRef.current = { start: offset, end: offset };
+            onSelectionChange({ start: offset, end: offset }, null);
             onChange(text, invocations.filter((candidate) => candidate.id !== item.id));
           }}
           variant="composer"
@@ -322,8 +375,6 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
       onClick={reportSelection}
       onFocus={reportSelection}
       onPaste={onPaste}
-      onCompositionStart={onCompositionStart}
-      onCompositionEnd={onCompositionEnd}
     >
       {children}
     </div>

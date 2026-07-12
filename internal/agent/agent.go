@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,13 @@ import (
 const maxToolOutputBytes = 32 * 1024
 
 const maxFinalReadinessBlocks = 3
+
+// maxFinalReadinessBlocksWithProgress is the hard cap on readiness retries when
+// the model keeps producing new host-observable receipts between blocks. A
+// converging turn (edit → verify → review still catching up to the latest
+// mutation) deserves more nudges than a stuck one; a turn that stalls with no
+// new receipts still fails at maxFinalReadinessBlocks.
+const maxFinalReadinessBlocksWithProgress = 6
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 3
 const maxExecutorHandoffNudges = 1
@@ -373,6 +381,12 @@ type Agent struct {
 	deliveryCriteriaEstablished bool
 	deliveryTaskExpected        bool
 	deliveryMutationExpected    bool
+
+	// preserveEvidenceOnce makes the next Run keep the turn evidence ledger
+	// instead of resetting it. RunSubAgentWithSession sets it before a
+	// review_report completion nudge so the retry can cite the read receipts
+	// the subagent already earned; consumed (cleared) by that Run.
+	preserveEvidenceOnce bool
 
 	// capabilityLedger tracks require/prefer outcomes for this user turn only.
 	// Never serialized into prompts or session state.
@@ -1174,12 +1188,20 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.steerConsumed = false
 	a.steerRunActive = true
 	a.steerMu.Unlock()
-	if a.evidence != nil {
+	if a.evidence != nil && !a.preserveEvidenceOnce {
 		a.evidence.Reset()
 	}
+	a.preserveEvidenceOnce = false
 	a.deliveryCriteriaEstablished = a.hasIncompleteCanonicalCriteria()
-	a.deliveryTaskExpected = deliveryTaskNeedsEvidence(rawInput)
-	a.deliveryMutationExpected = deliveryTaskNeedsMutation(rawInput)
+	// Classify delivery expectations from the user's task text only. Host
+	// framing (subagent/workspace context blocks, the delivery-runtime marker)
+	// contains incidental action verbs — "file tools resolve relative paths"
+	// once classified every workspace-wrapped subagent prompt as a mutation
+	// request and deadlocked read-only subagents on a state change they are
+	// not allowed to make.
+	classifierInput := classifierTaskText(rawInput)
+	a.deliveryTaskExpected = deliveryTaskNeedsEvidence(classifierInput)
+	a.deliveryMutationExpected = deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
 	a.repeatSuccessCounts = nil
 	a.blockedTurnStreak = 0
 	a.loopGuardArmed = false
@@ -1238,6 +1260,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx)})
 
 	finalReadinessBlocks := 0
+	readinessReceiptMark := -1
 	emptyFinalBlocks := 0
 	handoffNudges := 0
 	usedAnyTool := false
@@ -1317,9 +1340,20 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		if len(calls) == 0 {
 			readiness := a.finalReadinessCheck()
 			if readiness.reason != "" {
+				// A block only counts against the base budget when the model made
+				// no host-observable progress since the previous block. A turn that
+				// keeps earning receipts (fix → verify → review the newest edit) is
+				// converging and gets extra nudges up to the hard cap; a stalled
+				// turn still fails after maxFinalReadinessBlocks.
+				progressed := readinessReceiptMark >= 0 && a.evidence != nil && a.evidence.Len() > readinessReceiptMark
+				if a.evidence != nil {
+					readinessReceiptMark = a.evidence.Len()
+				}
 				finalReadinessBlocks++
+				exhausted := finalReadinessBlocks >= maxFinalReadinessBlocksWithProgress ||
+					(finalReadinessBlocks >= maxFinalReadinessBlocks && !progressed)
 				result := evidence.ReadinessBlocked
-				if finalReadinessBlocks >= maxFinalReadinessBlocks {
+				if exhausted {
 					result = evidence.ReadinessErrored
 					event.RecordReadinessAudit(a.sink, readiness.audit(result, false))
 					return &FinalReadinessError{Attempts: finalReadinessBlocks, Reason: readiness.reason}
@@ -1700,6 +1734,46 @@ func (a *Agent) hasIncompleteCanonicalCriteria() bool {
 	a.todoMu.Lock()
 	defer a.todoMu.Unlock()
 	return len(a.todoState) > 0 && len(evidence.IncompleteTodos(a.todoState)) > 0
+}
+
+// reClassifierHostBlock matches the host-generated framing blocks prepended to
+// sub-agent prompts (subagent start context, workspace context). They are
+// transport framing, not task text, and must not feed intent classification.
+var reClassifierHostBlock = regexp.MustCompile(`^\s*<(subagent-context|workspace-context)\b[^>]*>[\s\S]*?</(subagent-context|workspace-context)>\s*`)
+
+// classifierTaskText reduces a raw Run input to the task text the delivery
+// classifiers should judge: leading transient/user-preference blocks, host
+// subagent framing blocks, and the trailing delivery-runtime marker are all
+// host transport, not user intent.
+func classifierTaskText(input string) string {
+	s := StripTransientUserBlocks(input)
+	for {
+		next := reClassifierHostBlock.ReplaceAllString(s, "")
+		if next == s {
+			break
+		}
+		s = next
+	}
+	if trimmed, cut := strings.CutSuffix(strings.TrimSpace(s), deliveryRuntimeMarker); cut {
+		s = trimmed
+	}
+	return strings.TrimSpace(s)
+}
+
+// registryHasWriterTools reports whether any registered tool can mutate state.
+// A strictly read-only registry (read_only_task / read_only_skill subagents)
+// can never satisfy a "state change required" delivery expectation, so that
+// expectation must not be armed for it.
+func registryHasWriterTools(reg *tool.Registry) bool {
+	if reg == nil {
+		return false
+	}
+	for _, name := range reg.Names() {
+		if t, ok := reg.Get(name); ok && !t.ReadOnly() {
+			return true
+		}
+	}
+	return false
 }
 
 func deliveryTaskNeedsEvidence(input string) bool {
@@ -2098,6 +2172,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	var calls []provider.ToolCall
 	var usage *provider.Usage
 	var partialToolStarted bool
+	var lastArgProgress time.Time
 	finishReasoning := func() (stored, display string) {
 		original := reasoning.String()
 		display = original
@@ -2159,6 +2234,18 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			if tc := chunk.ToolCall; tc != nil {
 				a.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
 					ID: tc.ID, Name: tc.Name, ReadOnly: a.toolReadOnly(tc.Name), Partial: true,
+				}})
+			}
+		case provider.ChunkToolCallArgsDelta:
+			partialToolStarted = true
+			// Liveness ticks while a large argument payload streams: re-emit the
+			// partial dispatch with the cumulative size (time-throttled) so the
+			// UI can show progress instead of a dead counter for the duration of
+			// a 30KB write_file body.
+			if tc := chunk.ToolCall; tc != nil && time.Since(lastArgProgress) >= 250*time.Millisecond {
+				lastArgProgress = time.Now()
+				a.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
+					ID: tc.ID, Name: tc.Name, ReadOnly: a.toolReadOnly(tc.Name), Partial: true, ArgChars: chunk.ArgChars,
 				}})
 			}
 		case provider.ChunkToolCall:

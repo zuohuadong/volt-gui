@@ -13,14 +13,14 @@ require voltui v0.0.0
 
 require (
 	fyne.io/systray v1.12.2
-	github.com/coreos/go-oidc/v3 v3.19.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/minio/selfupdate v0.6.0
-	github.com/wailsapp/wails/v2 v2.12.0
-	golang.org/x/mod v0.37.0
+	github.com/wailsapp/wails/v2 v2.13.0
+	golang.org/x/mod v0.38.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.46.0
-	golang.org/x/text v0.38.0
+	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.40.0
 )
 
 require (
@@ -39,7 +39,7 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/labstack/echo/v4 v4.15.2 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
-	github.com/larksuite/oapi-sdk-go/v3 v3.9.5 // indirect
+	github.com/larksuite/oapi-sdk-go/v3 v3.9.9 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect
 	github.com/leaanthony/gosod v1.0.4 // indirect
 	github.com/leaanthony/slicer v1.6.0 // indirect
@@ -60,9 +60,9 @@ require (
 	github.com/wailsapp/go-webview2 v1.0.23 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/image v0.43.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/image v0.44.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

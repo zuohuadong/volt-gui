@@ -708,3 +708,62 @@ func TestDeleteSubagentProfileWrongScopeFailsSafely(t *testing.T) {
 		t.Fatal("profile should survive a refused scope-mismatched delete")
 	}
 }
+
+// Profile CRUD must refuse up front while the controller has active runtime
+// work: the post-save RefreshSkills rebuild would be rejected anyway, and a
+// file already written (or deleted) by then strands the UI — the save reports
+// failure, the list never refreshes, and a create retry hits "already
+// exists". Mirrors the applyConfigChange precheck contract.
+func TestSubagentProfileCRUDRefusesWhileControllerBusy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	st := skill.New(skill.Options{HomeDir: home})
+	runner := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	a := NewApp()
+	a.setTestCtrl(control.New(control.Options{Runner: runner, AllSkillStore: st, SkillStore: st}), "")
+	ctrl := a.activeCtrl()
+	defer ctrl.Close()
+
+	if _, err := a.CreateSubagentProfile(SubagentProfileInput{
+		Name: "busy-target", Description: "d", SystemPrompt: "body", Scope: "global",
+	}); err != nil {
+		t.Fatalf("create while idle: %v", err)
+	}
+
+	ctrl.Submit("work")
+	<-runner.started
+
+	if _, err := a.CreateSubagentProfile(SubagentProfileInput{
+		Name: "busy-new", Description: "d", SystemPrompt: "body", Scope: "global",
+	}); err == nil || !strings.Contains(err.Error(), "before changing subagents") {
+		t.Fatalf("busy create error = %v, want the active-work guard", err)
+	}
+	if _, ok := st.Read("busy-new"); ok {
+		t.Fatal("busy-rejected create must not write the profile file")
+	}
+	if err := a.UpdateSubagentProfile("busy-target", "global", SubagentProfileInput{
+		Description: "changed", SystemPrompt: "changed body",
+	}); err == nil || !strings.Contains(err.Error(), "before changing subagents") {
+		t.Fatalf("busy update error = %v, want the active-work guard", err)
+	}
+	if sk, ok := st.Read("busy-target"); !ok || sk.Description != "d" {
+		t.Fatalf("busy-rejected update must leave the file unchanged, got %+v ok=%v", sk, ok)
+	}
+	if err := a.DeleteSubagentProfile("busy-target", "global"); err == nil || !strings.Contains(err.Error(), "before changing subagents") {
+		t.Fatalf("busy delete error = %v, want the active-work guard", err)
+	}
+	if _, ok := st.Read("busy-target"); !ok {
+		t.Fatal("busy-rejected delete must keep the profile file")
+	}
+
+	close(runner.release)
+	waitNotRunning(t, ctrl)
+
+	if _, err := a.CreateSubagentProfile(SubagentProfileInput{
+		Name: "busy-new", Description: "d", SystemPrompt: "body", Scope: "global",
+	}); err != nil {
+		t.Fatalf("create after the turn settled: %v", err)
+	}
+}

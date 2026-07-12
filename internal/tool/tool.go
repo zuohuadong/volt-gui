@@ -32,6 +32,15 @@ type Tool interface {
 	ReadOnly() bool
 }
 
+// ImageTool is an optional extension for tools whose result includes images.
+// The returned data URLs remain separate from the textual result so normal
+// output truncation can never splice a base64 payload. The agent forwards them
+// only to providers that have vision enabled.
+type ImageTool interface {
+	Tool
+	ExecuteWithImages(ctx context.Context, args json.RawMessage) (text string, images []string, err error)
+}
+
 // Previewer is an optional capability a writer Tool may implement: given the
 // same raw JSON args Execute would receive, compute the file change the call
 // *would* make — without touching disk. A front-end uses it to show an approval

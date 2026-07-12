@@ -354,6 +354,18 @@ func TestAuthErrorWithKeyEnv(t *testing.T) {
 	}
 }
 
+func TestAuthErrorBodyStaysOutOfError(t *testing.T) {
+	// Body carries a display-layer reason, but Error() is an ambient diagnostic
+	// string and must not leak echoed credential material into logs or traces.
+	e := &AuthError{Provider: "relay", Status: 401, Body: `{"error":{"message":"Your api key: ****ae54 has expired"}}`}
+	if e.Body == "" {
+		t.Fatal("Body should carry the server's reason")
+	}
+	if msg := e.Error(); contains(msg, "ae54") || contains(msg, "{") {
+		t.Errorf("AuthError.Error() must not include body content: %s", msg)
+	}
+}
+
 func TestAuthErrorWithoutKeyEnv(t *testing.T) {
 	e := &AuthError{Provider: "openai", Status: 403}
 	msg := e.Error()

@@ -328,6 +328,11 @@ type Agent struct {
 	steerMu       sync.Mutex
 	steerQueue    []string
 	steerConsumed bool
+	// steerRunActive is true while Run is executing. Steer only queues while
+	// it is set; once the turn's exit flush has drained the queue, later
+	// steers are rejected so the caller can deliver them as a regular turn
+	// instead of leaving them in a queue no loop will ever consume.
+	steerRunActive bool
 
 	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
 	// complete_step validate that cited evidence happened before the claim.
@@ -820,12 +825,21 @@ func SteerText(content string) (string, bool) {
 	return after, true
 }
 
-// Steer queues a message for mid-turn injection.
-func (a *Agent) Steer(text string) {
+// Steer queues a message for mid-turn injection. It reports whether an active
+// turn accepted the text; on false nothing was queued and the caller must
+// deliver it another way (typically as a new turn). Without the active check,
+// a steer landing in the window between the turn's exit flush and the
+// controller observing running=false would sit in the queue unconsumed and
+// unpersisted — invisible to both the model and history.
+func (a *Agent) Steer(text string) bool {
 	a.steerMu.Lock()
 	defer a.steerMu.Unlock()
+	if !a.steerRunActive {
+		return false
+	}
 	a.steerQueue = append(a.steerQueue, text)
 	a.steerConsumed = false
+	return true
 }
 
 // SteerConsumed returns true when the steer queue became empty after the last consume.
@@ -847,11 +861,24 @@ func (a *Agent) consumeSteer() (string, bool) {
 	return t, true
 }
 
-func (a *Agent) clearSteerQueue() {
+// flushSteerQueue ends the turn's steer intake: it drains whatever is still
+// queued and persists each entry to the session, exactly as the in-loop
+// consume would have (#6238 — a dropped steer vanished from both the model's
+// context and history). The flushed steers reach the model on the next turn;
+// the Steer event keeps the transcript honest about when they arrived.
+func (a *Agent) flushSteerQueue() {
 	a.steerMu.Lock()
-	defer a.steerMu.Unlock()
+	pending := a.steerQueue
 	a.steerQueue = nil
-	a.steerConsumed = false
+	if len(pending) > 0 {
+		a.steerConsumed = true
+	}
+	a.steerRunActive = false
+	a.steerMu.Unlock()
+	for _, text := range pending {
+		a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(midTurnSteerMessage(text))})
+		a.sink.Emit(event.Event{Kind: event.Steer, Text: text})
+	}
 }
 
 func (a *Agent) steerQueueLen() int {
@@ -1100,9 +1127,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		}
 		return 1
 	}
-	defer a.clearSteerQueue()
+	defer a.flushSteerQueue()
 	a.steerMu.Lock()
 	a.steerConsumed = false
+	a.steerRunActive = true
 	a.steerMu.Unlock()
 	if a.evidence != nil {
 		a.evidence.Reset()

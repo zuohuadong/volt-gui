@@ -2,9 +2,12 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
+
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 // loadDotEnv loads VoltUI's global credentials. Workspace .env values returned
@@ -96,13 +99,10 @@ func legacyUserCredentialsPath() string {
 }
 
 func loadDotEnvFileAs(path string, source CredentialSource) {
-	f, err := os.Open(path)
-	if err != nil {
+	sc, ok := dotEnvScanner(path)
+	if !ok {
 		return
 	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -130,14 +130,12 @@ func loadDotEnvFileAs(path string, source CredentialSource) {
 }
 
 func readDotEnvFileMap(path string, allow func(string) bool) map[string]string {
-	f, err := os.Open(path)
-	if err != nil {
+	sc, ok := dotEnvScanner(path)
+	if !ok {
 		return nil
 	}
-	defer f.Close()
 
 	out := map[string]string{}
-	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -161,13 +159,10 @@ func readDotEnvFileMap(path string, allow func(string) bool) map[string]string {
 }
 
 func envFileValue(path, wantKey string) (string, bool) {
-	f, err := os.Open(path)
-	if err != nil {
+	sc, ok := dotEnvScanner(path)
+	if !ok {
 		return "", false
 	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -186,4 +181,15 @@ func envFileValue(path, wantKey string) (string, bool) {
 		return val, true
 	}
 	return "", false
+}
+
+// dotEnvScanner keeps VoltUI's line-oriented dotenv parser and credential
+// source tracking intact while decoding user-edited Windows text encodings
+// before scanning assignments.
+func dotEnvScanner(path string) (*bufio.Scanner, bool) {
+	raw, err := fileencoding.ReadFileUTF8(path)
+	if err != nil {
+		return nil, false
+	}
+	return bufio.NewScanner(bytes.NewReader(raw)), true
 }

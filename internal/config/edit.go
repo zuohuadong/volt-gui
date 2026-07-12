@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"voltui/internal/fileutil"
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/mcpdiag"
 	"voltui/internal/netclient"
 	"voltui/internal/permission"
@@ -948,7 +949,7 @@ func (c *Config) saveProjectIncremental(path string) error {
 		return fmt.Errorf("save: empty config path")
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
@@ -1107,7 +1108,7 @@ func WritePermissionsSection(path string, allow []string) error {
 		return fmt.Errorf("write permissions: empty config path")
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err

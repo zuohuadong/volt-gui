@@ -8,6 +8,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1328,10 +1329,18 @@ func (t *remoteTool) Schema() json.RawMessage {
 }
 
 func (t *remoteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	text, _, err := t.ExecuteWithImages(ctx, args)
+	return text, err
+}
+
+// ExecuteWithImages implements tool.ImageTool. MCP image result items are
+// carried separately from text so tool-output truncation cannot corrupt their
+// base64 payload before a vision provider sees it.
+func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage) (string, []string, error) {
 	var argMap map[string]any
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &argMap); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
+			return "", nil, fmt.Errorf("invalid args: %w", err)
 		}
 	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{
@@ -1339,32 +1348,88 @@ func (t *remoteTool) Execute(ctx context.Context, args json.RawMessage) (string,
 		"arguments": argMap,
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	return parseToolResult(res)
 }
 
-// parseToolResult flattens an MCP tools/call result into plain text.
-func parseToolResult(res json.RawMessage) (string, error) {
+const (
+	maxToolResultImageBytes = 4 << 20
+	maxToolResultImages     = 5
+)
+
+var toolResultImageMimes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+// parseToolResult flattens an MCP tools/call result into text and validated
+// image data URLs. Every image is represented in text too, allowing non-vision
+// models to receive a safe placeholder rather than raw base64.
+func parseToolResult(res json.RawMessage) (string, []string, error) {
 	var out struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Data     string `json:"data"`
+			MimeType string `json:"mimeType"`
 		} `json:"content"`
 		IsError bool `json:"isError"`
 	}
 	if err := json.Unmarshal(res, &out); err != nil {
-		return "", fmt.Errorf("decode tool result: %w", err)
+		return "", nil, fmt.Errorf("decode tool result: %w", err)
 	}
 	var sb strings.Builder
+	var images []string
 	for _, c := range out.Content {
-		if c.Type == "text" {
+		switch c.Type {
+		case "text":
 			sb.WriteString(c.Text)
+		case "image":
+			placeholder, url := toolResultImage(c.MimeType, c.Data, len(images))
+			sb.WriteString(placeholder)
+			if url != "" {
+				images = append(images, url)
+			}
 		}
 	}
 	text := sb.String()
 	if out.IsError {
-		return text, fmt.Errorf("plugin tool reported error: %s", text)
+		return text, images, fmt.Errorf("plugin tool reported error: %s", text)
 	}
-	return text, nil
+	return text, images, nil
+}
+
+// toolResultImage validates one MCP image result. Invalid, unsupported, or
+// over-budget images degrade to short text and never reach provider requests.
+func toolResultImage(mime, data string, kept int) (placeholder, url string) {
+	if kept >= maxToolResultImages {
+		return "[image omitted: per-result image limit reached]", ""
+	}
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if mime == "" {
+		mime = "image/png"
+	}
+	if !toolResultImageMimes[mime] {
+		return "[image omitted: unsupported type " + mime + "]", ""
+	}
+	data = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t', ' ':
+			return -1
+		}
+		return r
+	}, data)
+	if data == "" {
+		return "[image omitted: no data]", ""
+	}
+	if len(data) > maxToolResultImageBytes {
+		return fmt.Sprintf("[image omitted: %d bytes exceeds the %d-byte limit]", len(data), maxToolResultImageBytes), ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+		return "[image omitted: invalid base64]", ""
+	}
+	return "[image: " + mime + "]", "data:" + mime + ";base64," + data
 }

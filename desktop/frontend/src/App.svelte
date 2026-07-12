@@ -93,6 +93,8 @@
     WireEvent,
     WorkbenchPluginInput,
     WorkbenchPlugin,
+	CloudflareDropPreflight,
+	WorkbenchJob,
     WorkbenchTodo,
     WorkbenchTodoInput,
     WorkbenchProject,
@@ -315,6 +317,10 @@
   let capabilitySearch = $state("");
   let selectedCapabilityId = $state("git-panel");
   let capabilityDetailOpen = $state(false);
+	let cloudflareDropPreflight = $state<CloudflareDropPreflight | undefined>();
+	let cloudflareDropJob = $state<WorkbenchJob | undefined>();
+	let cloudflareDropPreviewURL = $state("");
+	let cloudflareDropWorking = $state(false);
   let capabilityCreateOpen = $state(false);
   let capabilityImportOpen = $state(false);
   let capabilityCreateName = $state("新建插件");
@@ -5163,6 +5169,108 @@
       showWorkbenchNotice("更新能力状态失败，请检查配置或当前会话状态。");
     }
   }
+	function isCloudflareDropCapability(item?: CapabilityItem) {
+		return capabilityTab === "plugin" && item?.id === "cloudflare-drop-publish";
+	}
+	async function pickCloudflareDropSource(kind: "folder" | "zip") {
+		if (!hasWailsBindings()) {
+			showWorkbenchNotice("当前环境未连接桌面后端，无法执行本地预检。");
+			return;
+		}
+		cloudflareDropWorking = true;
+		try {
+			const preflight = kind === "folder"
+				? await app().PickCloudflareDropFolder()
+				: await app().PickCloudflareDropZIP();
+			if (!preflight.sourceName) return;
+			cloudflareDropPreflight = preflight;
+			cloudflareDropJob = undefined;
+			cloudflareDropPreviewURL = "";
+			showWorkbenchNotice(cloudflareDropPreflight.valid ? "本地预检通过；下一步可创建发布流程。" : "本地预检未通过，请修正后重新选择。");
+		} catch (error) {
+			console.error("Failed to preflight Cloudflare Drop source", error);
+			showWorkbenchNotice(`本地预检失败：${formatErrorMessage(error)}`);
+		} finally {
+			cloudflareDropWorking = false;
+		}
+	}
+	async function createCloudflareDropJob() {
+		const preflight = cloudflareDropPreflight;
+		if (!preflight?.valid || !hasWailsBindings()) {
+			showWorkbenchNotice("请先完成通过的本地预检。");
+			return;
+		}
+		cloudflareDropWorking = true;
+		try {
+			cloudflareDropJob = await app().CreateWorkbenchJob({
+				pluginId: "cloudflare-drop-publish",
+				kind: "static-preview",
+				scenario: "Cloudflare Drop 静态预览",
+				mode: "manual",
+				metadata: {
+					sourceName: preflight.sourceName,
+					sourceType: preflight.sourceType,
+					preflight,
+					handoff: "official-page",
+				},
+				steps: [
+					{
+						id: "local-preflight",
+						name: "本地预检",
+						status: "done",
+						input: { sourceName: preflight.sourceName, sourceType: preflight.sourceType },
+						output: { ...preflight },
+					},
+					{ id: "web-handoff", name: "网页内重新选择并发布" },
+					{ id: "preview-url", name: "记录最终预览 URL（可选）" },
+				],
+			});
+			showWorkbenchNotice("发布流程已保存；打开官网后请在网页内重新选择源文件。");
+		} catch (error) {
+			console.error("Failed to create Cloudflare Drop job", error);
+			showWorkbenchNotice(`创建发布流程失败：${formatErrorMessage(error)}`);
+		} finally {
+			cloudflareDropWorking = false;
+		}
+	}
+	async function handoffToCloudflareDrop() {
+		if (!cloudflareDropJob || !hasWailsBindings()) {
+			showWorkbenchNotice("请先创建发布流程。");
+			return;
+		}
+		cloudflareDropWorking = true;
+		try {
+			await app().OpenCloudflareDrop();
+			cloudflareDropJob = await app().UpdateWorkbenchStep(cloudflareDropJob.id, "web-handoff", {
+				status: "done",
+				output: { destination: "Cloudflare Drop official page", sourceSelection: "在网页内重新选择源文件" },
+			});
+			showWorkbenchNotice("已打开官方 Drop 页面；请自行选择源文件、确认条款并发布。");
+		} catch (error) {
+			console.error("Failed to open Cloudflare Drop", error);
+			showWorkbenchNotice(`打开官方页面失败：${formatErrorMessage(error)}`);
+		} finally {
+			cloudflareDropWorking = false;
+		}
+	}
+	async function saveCloudflareDropPreviewURL() {
+		if (!cloudflareDropJob || !hasWailsBindings()) {
+			showWorkbenchNotice("请先创建发布流程。");
+			return;
+		}
+		const previewURL = cloudflareDropPreviewURL.trim();
+		try {
+			const parsed = new URL(previewURL);
+			if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("URL 必须使用 HTTP 或 HTTPS");
+			cloudflareDropJob = await app().UpdateWorkbenchStep(cloudflareDropJob.id, "preview-url", {
+				status: "done",
+				output: { previewURL },
+			});
+			showWorkbenchNotice("最终预览 URL 已记录到发布流程；VoltUI 不会访问或打开该 URL。");
+		} catch (error) {
+			showWorkbenchNotice(`无法记录预览 URL：${formatErrorMessage(error)}`);
+		}
+	}
   function openCapabilityImportPicker() {
     capabilityImportInput?.click();
   }
@@ -7631,6 +7739,35 @@
                   </article>
                 {/each}
               </section>
+							{#if isCloudflareDropCapability(selectedCapability)}
+								<section class="capability-install-flow">
+									<header><Archive size={16} /><strong>Cloudflare Drop 发布流程</strong></header>
+									<p>VoltUI 只在本机预检文件夹或 ZIP；不会上传文件、调用未公开 API、替你确认条款，且打开后必须在官方网页内重新选择源文件。</p>
+									{#if !selectedCapability.enabled}
+										<article><span>1</span><div><strong>先启用插件</strong><p>启用后才可选择本地源文件、执行预检或打开官方页面。</p></div></article>
+									{:else}
+										<div class="capability-detail__meta">
+											<button type="button" disabled={cloudflareDropWorking} onclick={() => void pickCloudflareDropSource("folder")}><Folder size={14} /> 选择目录并预检</button>
+											<button type="button" disabled={cloudflareDropWorking} onclick={() => void pickCloudflareDropSource("zip")}><Archive size={14} /> 选择 ZIP 并预检</button>
+										</div>
+										{#if cloudflareDropPreflight}
+											<article class:done={cloudflareDropPreflight.valid}>
+												<span>{#if cloudflareDropPreflight.valid}<Check size={13} />{:else}!{/if}</span>
+												<div><strong>{cloudflareDropPreflight.valid ? "本地预检通过" : "本地预检未通过"}</strong><p>{cloudflareDropPreflight.sourceName} / {cloudflareDropPreflight.sourceType === "zip" ? "ZIP" : "目录"} / {cloudflareDropPreflight.fileCount} 个文件 / {formatFileSize(cloudflareDropPreflight.totalBytes)}</p></div>
+											</article>
+											{#if cloudflareDropPreflight.largestFileName}<p>最大文件：{cloudflareDropPreflight.largestFileName} / {formatFileSize(cloudflareDropPreflight.largestFileBytes)}；根目录 index.html：{cloudflareDropPreflight.hasRootIndex ? "已找到" : "未找到"}</p>{/if}
+											{#if cloudflareDropPreflight.issues.length > 0}<p>问题：{cloudflareDropPreflight.issues.join("；")}</p>{/if}
+											<button type="button" disabled={!cloudflareDropPreflight.valid || cloudflareDropWorking} onclick={() => void createCloudflareDropJob()}>创建发布流程</button>
+										{/if}
+										{#if cloudflareDropJob}
+											<article class="done"><span><Check size={13} /></span><div><strong>发布流程已保存</strong><p>本地源路径未保存；工作台仅保留展示名、预检统计和官网交接记录。</p></div></article>
+											<button type="button" disabled={cloudflareDropWorking} onclick={() => void handoffToCloudflareDrop()}>打开官方 Cloudflare Drop 页面</button>
+											<label>最终预览 URL（可选；仅记录，不会访问或打开）<input bind:value={cloudflareDropPreviewURL} inputmode="url" placeholder="https://…" /></label>
+											<button type="button" disabled={cloudflareDropWorking || !cloudflareDropPreviewURL.trim()} onclick={() => void saveCloudflareDropPreviewURL()}>记录最终预览 URL</button>
+										{/if}
+									{/if}
+								</section>
+							{/if}
               <section class="capability-agent-binding">
                 <header><Zap size={16} /><strong>绑定 Agent</strong></header>
                 {#each agentCards.slice(0, 3) as agent (agent.id)}

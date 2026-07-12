@@ -15,9 +15,14 @@ import (
 
 type toolCallReasoningRequiredProvider struct {
 	*testutil.MockProvider
+	warnOnMissingToolCallReasoning bool
 }
 
 func (p toolCallReasoningRequiredProvider) RequiresToolCallReasoning() bool { return true }
+
+func (p toolCallReasoningRequiredProvider) WarnOnMissingToolCallReasoning() bool {
+	return p.warnOnMissingToolCallReasoning
+}
 
 func echoRegistry() *tool.Registry {
 	reg := tool.NewRegistry()
@@ -542,7 +547,10 @@ func TestRunWarnsAndContinuesOnMissingToolCallReasoning(t *testing.T) {
 		testutil.Turn{Text: "done"},
 	)
 	sink := &recordSink{}
-	a := New(toolCallReasoningRequiredProvider{mp}, echoRegistry(), NewSession(""), Options{}, sink)
+	a := New(toolCallReasoningRequiredProvider{
+		MockProvider:                   mp,
+		warnOnMissingToolCallReasoning: true,
+	}, echoRegistry(), NewSession(""), Options{}, sink)
 
 	if err := a.Run(context.Background(), "go"); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -565,6 +573,30 @@ func TestRunWarnsAndContinuesOnMissingToolCallReasoning(t *testing.T) {
 	if !warned {
 		t.Fatal("missing-reasoning tool_calls turn should emit a warn notice")
 	}
+	if calls := mp.CallCount(); calls != 2 {
+		t.Fatalf("provider calls = %d, want 2 so the loop continues after the warning", calls)
+	}
+}
+
+func TestRunSkipsMissingToolCallReasoningWarningWhenPolicyDisablesIt(t *testing.T) {
+	mp := testutil.NewMock("deepseek-compatible-proxy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"text":"hi"}`}}},
+		testutil.Turn{Text: "done"},
+	)
+	sink := &recordSink{}
+	a := New(toolCallReasoningRequiredProvider{MockProvider: mp}, echoRegistry(), NewSession(""), Options{}, sink)
+
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Level == event.LevelWarn && strings.Contains(e.Text, "without reasoning_content") {
+			t.Fatal("warning policy disabled, but missing-reasoning tool_calls emitted a warning")
+		}
+	}
+	if calls := mp.CallCount(); calls != 2 {
+		t.Fatalf("provider calls = %d, want 2 so replay remains required even when warnings are disabled", calls)
+	}
 }
 
 func TestRunPreservesOriginalRequiredToolCallReasoningAcrossHook(t *testing.T) {
@@ -578,7 +610,7 @@ func TestRunPreservesOriginalRequiredToolCallReasoningAcrossHook(t *testing.T) {
 		testutil.Turn{Text: "done"},
 	)
 	h := &stubHooks{hasPostLLM: true, postLLMOut: "translated display"}
-	a := New(toolCallReasoningRequiredProvider{mp}, echoRegistry(), NewSession(""), Options{Hooks: h}, event.Discard)
+	a := New(toolCallReasoningRequiredProvider{MockProvider: mp}, echoRegistry(), NewSession(""), Options{Hooks: h}, event.Discard)
 
 	if err := a.Run(context.Background(), "go"); err != nil {
 		t.Fatalf("Run: %v", err)

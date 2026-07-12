@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
 )
@@ -180,7 +181,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 				return
 			}
 
-			sess := NewSession(DefaultReadOnlyTaskSystemPrompt)
+			sess := NewSession(instruction.WithCalculationPolicy(DefaultReadOnlyTaskSystemPrompt))
 			output, runErr := RunSubAgentWithSession(ctx, prov, subReg, sess, p.taskTool.withWorkspaceContext(t.Prompt),
 				p.taskTool.subagentOptions(ctx, max, pricing, ctxWin, childDepth), nested)
 

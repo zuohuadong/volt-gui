@@ -248,6 +248,24 @@ func (c *client) RequiresToolCallReasoning() bool {
 	return c != nil && c.deepseek && c.thinkingType != "disabled"
 }
 
+func (c *client) WarnOnMissingToolCallReasoning() bool {
+	return c.RequiresToolCallReasoning() && expectsDeepSeekToolCallReasoning(c.model)
+}
+
+func expectsDeepSeekToolCallReasoning(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if !strings.Contains(model, "deepseek") || strings.Contains(model, "flash") {
+		return false
+	}
+	// "-pro" must end a name segment: a bare Contains would also match the
+	// deepseek-prover math models, which do not emit tool-call reasoning.
+	return strings.Contains(model, "reasoner") ||
+		strings.Contains(model, "deepseek-r1") ||
+		strings.HasSuffix(model, "-pro") ||
+		strings.Contains(model, "-pro-") ||
+		strings.Contains(model, "-pro.")
+}
+
 func (c *client) sendOpts() provider.SendOptions {
 	return provider.SendOptions{
 		Provider:   c.name,
@@ -483,8 +501,24 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	// carry an assistant tool_calls turn whose results never landed, which DeepSeek
 	// rejects with a 400 ("must be followed by tool messages …").
 	src := provider.SanitizeToolPairing(req.Messages)
-	msgs := make([]chatMessage, len(src))
-	for i, m := range src {
+	msgs := make([]chatMessage, 0, len(src))
+	// Chat Completions accepts only plain text under role "tool". Preserve the
+	// paired tool-result run, then add tool images in one synthetic user message.
+	var pendingToolImages []string
+	flushToolImages := func() {
+		if len(pendingToolImages) == 0 {
+			return
+		}
+		msgs = append(msgs, chatMessage{
+			Role:    "user",
+			Content: imageContentParts("Images returned by the preceding tool call(s):", pendingToolImages, c.visionDetail),
+		})
+		pendingToolImages = nil
+	}
+	for _, m := range src {
+		if m.Role != provider.RoleTool {
+			flushToolImages()
+		}
 		cm := chatMessage{
 			Role:       string(m.Role),
 			ToolCallID: m.ToolCallID,
@@ -518,8 +552,12 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		case m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || m.Content != "":
 			cm.Content = m.Content
 		}
-		msgs[i] = cm
+		msgs = append(msgs, cm)
+		if c.vision && m.Role == provider.RoleTool {
+			pendingToolImages = append(pendingToolImages, m.Images...)
+		}
 	}
+	flushToolImages()
 
 	var tools []chatTool
 	for _, t := range req.Tools {
@@ -603,7 +641,24 @@ func (c *client) buildResponsesRequest(req provider.Request) responsesRequest {
 	src := provider.SanitizeToolPairing(req.Messages)
 	var instructions []string
 	input := make([]any, 0, len(src))
+	// Like Chat Completions, Responses function_call_output items are text-only.
+	// Keep every paired output adjacent to its call and inject the associated
+	// images as one following user message, never between tool results.
+	var pendingToolImages []string
+	flushToolImages := func() {
+		if len(pendingToolImages) == 0 {
+			return
+		}
+		input = append(input, responsesMessageItem{
+			Role:    string(provider.RoleUser),
+			Content: responsesInputContent("Images returned by the preceding tool call(s):", pendingToolImages, true, c.visionDetail),
+		})
+		pendingToolImages = nil
+	}
 	for _, m := range src {
+		if m.Role != provider.RoleTool {
+			flushToolImages()
+		}
 		switch m.Role {
 		case provider.RoleSystem:
 			if strings.TrimSpace(m.Content) != "" {
@@ -634,8 +689,12 @@ func (c *client) buildResponsesRequest(req provider.Request) responsesRequest {
 				CallID: m.ToolCallID,
 				Output: m.Content,
 			})
+			if c.vision {
+				pendingToolImages = append(pendingToolImages, m.Images...)
+			}
 		}
 	}
+	flushToolImages()
 
 	var tools []responsesTool
 	for _, t := range req.Tools {

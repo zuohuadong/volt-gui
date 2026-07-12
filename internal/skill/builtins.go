@@ -278,7 +278,7 @@ func appendUniqueToolNames(base []string, extra ...string) []string {
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
-	readCodeTools := []string{"read_file", "ls", "glob", "grep", "code_index"}
+	readCodeTools := []string{"calculate", "read_file", "ls", "glob", "grep", "code_index"}
 	reviewTools := append(append([]string(nil), readCodeTools...), "bash")
 	return []Skill{
 		{

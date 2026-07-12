@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 // TestComposeEmptyIsIdentity is the cache-first invariant: with no memory at
@@ -69,6 +71,20 @@ func TestDiscoverPrecedenceOrder(t *testing.T) {
 	}
 }
 
+func TestDiscoverDecodesGB18030PrimaryDoc(t *testing.T) {
+	proj := t.TempDir()
+	mustMkdir(t, filepath.Join(proj, ".git"))
+	body := "# 项目约定\n\n始终使用中文回答。"
+	if err := os.WriteFile(filepath.Join(proj, "AGENTS.md"), fileencoding.Encode(body, fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	set := Load(Options{CWD: proj})
+	if len(set.Docs) != 1 || !strings.Contains(set.Docs[0].Body, "始终使用中文回答") {
+		t.Fatalf("decoded docs = %+v", set.Docs)
+	}
+}
+
 func TestDiscoverLoadsReasonixUserMemory(t *testing.T) {
 	root := t.TempDir()
 	user := filepath.Join(root, "voltui")
@@ -110,6 +126,20 @@ func TestImportResolution(t *testing.T) {
 	}
 	if strings.Contains(body, "@shared.md") {
 		t.Fatalf("import directive left in body: %q", body)
+	}
+}
+
+func TestImportResolutionDecodesGB18030Doc(t *testing.T) {
+	proj := t.TempDir()
+	mustMkdir(t, filepath.Join(proj, ".git"))
+	if err := os.WriteFile(filepath.Join(proj, "shared.md"), fileencoding.Encode("共享约定", fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(proj, "AGENTS.md"), "@shared.md")
+
+	set := Load(Options{CWD: proj})
+	if len(set.Docs) != 1 || !strings.Contains(set.Docs[0].Body, "共享约定") {
+		t.Fatalf("GB18030 import not inlined: %+v", set.Docs)
 	}
 }
 

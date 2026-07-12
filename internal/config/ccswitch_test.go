@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 func TestCCSwitchRowsToPlugins(t *testing.T) {
@@ -91,6 +93,48 @@ func TestLoadCCSwitchLegacyConfig(t *testing.T) {
 	}
 	if got[0].Name != "@modelcontextprotocol/server-time" || got[0].Command != "uvx" {
 		t.Fatalf("entry = %+v", got[0])
+	}
+}
+
+func TestLoadCCSwitchLegacyConfigDecodesGB18030(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{
+		"mcp": {
+			"servers": {
+				"file-index": {
+					"name": "文件索引",
+					"server": {
+						"type": "stdio",
+						"command": "工具.exe",
+						"args": ["--目录", "中文参数"],
+						"env": {"标签": "中文环境"}
+					},
+					"apps": {"codex": true}
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(path, fileencoding.Encode(body, fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadCCSwitchLegacyConfig(path)
+	if err != nil {
+		t.Fatalf("loadCCSwitchLegacyConfig: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("entries = %d, want 1: %+v", len(got), got)
+	}
+	want := PluginEntry{
+		Name:    "文件索引",
+		Type:    "stdio",
+		Command: "工具.exe",
+		Args:    []string{"--目录", "中文参数"},
+		Env:     map[string]string{"标签": "中文环境"},
+	}
+	if !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("entry = %+v, want %+v", got[0], want)
 	}
 }
 

@@ -57,3 +57,13 @@ func TestExtractHostChecksIsCaseInsensitive(t *testing.T) {
 		t.Fatalf("case-insensitive heading not extracted: %#v", checks)
 	}
 }
+
+func TestWithCalculationPolicyAppendsPolicyOnce(t *testing.T) {
+	got := WithCalculationPolicy("BASE")
+	if !strings.HasPrefix(got, "BASE\n\n") || !strings.Contains(got, CalculationPolicy) {
+		t.Fatalf("calculation policy was not appended: %q", got)
+	}
+	if twice := WithCalculationPolicy(got); twice != got {
+		t.Fatalf("calculation policy appended twice:\n%s", twice)
+	}
+}

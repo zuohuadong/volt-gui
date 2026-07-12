@@ -36,6 +36,7 @@ import type {
   WorkbenchJob,
   WorkbenchPluginInput,
   WorkbenchPlugin,
+	CloudflareDropPreflight,
   WorkbenchProvider,
   SkillPackageInput,
   WorkbenchTodo,
@@ -216,6 +217,9 @@ interface AppBindings {
   Forget(name: string): Promise<void>;
   WorkbenchPlugins(): Promise<WorkbenchPlugin[]>;
   SaveWorkbenchPlugin(input: WorkbenchPluginInput): Promise<void>;
+	PickCloudflareDropFolder(): Promise<CloudflareDropPreflight>;
+	PickCloudflareDropZIP(): Promise<CloudflareDropPreflight>;
+	OpenCloudflareDrop(): Promise<void>;
   CreateSkillPackage(input: SkillPackageInput): Promise<string>;
   WorkbenchProviders(): Promise<WorkbenchProvider[]>;
   ListWorkbenchJobs(): Promise<WorkbenchJob[]>;

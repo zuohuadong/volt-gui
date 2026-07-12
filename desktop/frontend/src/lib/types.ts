@@ -146,6 +146,26 @@ export interface SkillView {
   scope: string;
   runAs: string;
   enabled: boolean;
+  tags?: string[];
+  examplePrompts?: string[];
+  readOnly: boolean;
+  autoUse?: string;
+  needsFreshData: boolean;
+  cost?: string;
+}
+
+export interface SkillRootSkillView {
+  name: string;
+  displayName?: string;
+  description: string;
+  scope: string;
+  runAs: string;
+  tags?: string[];
+  examplePrompts?: string[];
+  readOnly: boolean;
+  autoUse?: string;
+  needsFreshData: boolean;
+  cost?: string;
 }
 
 export interface SkillRootView {
@@ -155,6 +175,7 @@ export interface SkillRootView {
   status: string;
   configured: boolean;
   skills: number;
+  skillItems?: SkillRootSkillView[];
   warning?: string;
 }
 

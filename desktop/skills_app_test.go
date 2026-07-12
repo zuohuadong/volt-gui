@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"voltui/internal/config"
@@ -34,7 +35,7 @@ func TestSkillRootsViewCountsProjectSkills(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "proj.md"), []byte("---\ndescription: project\n---\nbody"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "proj.md"), []byte("---\ndescription: project\ntags: review, local\nexample-prompts:\n  - Check this project, including risks\nread-only: true\nauto-use: suggest\nneeds-fresh-data: true\ncost: medium\n---\nbody"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	wd, err := os.Getwd()
@@ -56,10 +57,70 @@ func TestSkillRootsViewCountsProjectSkills(t *testing.T) {
 			if len(r.SkillItems) != 1 || r.SkillItems[0].Name != "proj" || r.SkillItems[0].Description != "project" {
 				t.Fatalf("project root skill items = %+v", r.SkillItems)
 			}
+			item := r.SkillItems[0]
+			if strings.Join(item.Tags, ",") != "review,local" || strings.Join(item.ExamplePrompts, "|") != "Check this project, including risks" {
+				t.Fatalf("project root discovery metadata = %+v", item)
+			}
+			if !item.ReadOnly || item.AutoUse != "suggest" || !item.NeedsFreshData || item.Cost != "medium" {
+				t.Fatalf("project root execution metadata = %+v", item)
+			}
 			return
 		}
 	}
 	t.Fatalf("project skill root %q not found in %+v", root, roots)
+}
+
+func TestCapabilitiesProjectsSkillMetadataWithoutActiveSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	project := t.TempDir()
+	root := filepath.Join(project, ".voltui", "skills")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "metadata.md"), []byte("---\ndescription: searchable skill\ntags:\n  - research\n  - writing\nexample-prompts:\n  - Summarize this workspace\nread-only: true\nauto-use: prefer\nneeds-fresh-data: true\ncost: low\n---\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+
+	view := NewApp().Capabilities()
+	for _, sk := range view.Skills {
+		if sk.Name != "metadata" {
+			continue
+		}
+		if strings.Join(sk.Tags, ",") != "research,writing" || strings.Join(sk.ExamplePrompts, "|") != "Summarize this workspace" {
+			t.Fatalf("discovery metadata = %+v", sk)
+		}
+		if !sk.ReadOnly || sk.AutoUse != "prefer" || !sk.NeedsFreshData || sk.Cost != "low" || !sk.Enabled {
+			t.Fatalf("execution metadata = %+v", sk)
+		}
+		return
+	}
+	t.Fatalf("metadata skill missing without active session: %+v", view.Skills)
+}
+
+func TestCloneSkillRootViewsDeepCopiesDiscoveryMetadata(t *testing.T) {
+	original := []SkillRootView{{
+		Dir: "/skills",
+		SkillItems: []SkillRootSkillView{{
+			Name:           "metadata",
+			Tags:           []string{"research"},
+			ExamplePrompts: []string{"Summarize this workspace"},
+		}},
+	}}
+
+	cloned := cloneSkillRootViews(original)
+	cloned[0].SkillItems[0].Tags[0] = "changed"
+	cloned[0].SkillItems[0].ExamplePrompts[0] = "changed"
+	if original[0].SkillItems[0].Tags[0] != "research" || original[0].SkillItems[0].ExamplePrompts[0] != "Summarize this workspace" {
+		t.Fatalf("clone mutated source metadata: %+v", original)
+	}
 }
 
 func TestCreateSkillPackageAppearsInCapabilitiesWithoutActiveSession(t *testing.T) {
@@ -329,7 +390,7 @@ func TestCapabilitiesIncludesDisabledSkills(t *testing.T) {
 			{Name: "explore", Description: "enabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent},
 		},
 		AllSkills: []skill.Skill{
-			{Name: "explore", Description: "enabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent},
+			{Name: "explore", Description: "enabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent, Tags: []string{"analysis"}, ExamplePrompts: []string{"Explore this repository"}, ReadOnly: true, AutoUse: "suggest", NeedsFreshData: true, Cost: "low"},
 			{Name: "review", Description: "disabled", Scope: skill.ScopeBuiltin, RunAs: skill.RunSubagent},
 		},
 	}), "")
@@ -363,6 +424,15 @@ func TestCapabilitiesIncludesDisabledSkills(t *testing.T) {
 	}
 	assertSkillStates(t, settingsView.Skills)
 	assertSkillStates(t, a.Capabilities().Skills)
+	for _, sk := range settingsView.Skills {
+		if sk.Name == "explore" {
+			if strings.Join(sk.Tags, ",") != "analysis" || strings.Join(sk.ExamplePrompts, "|") != "Explore this repository" || !sk.ReadOnly || sk.AutoUse != "suggest" || !sk.NeedsFreshData || sk.Cost != "low" {
+				t.Fatalf("active-session skill metadata = %+v", sk)
+			}
+			return
+		}
+	}
+	t.Fatal("explore skill missing from active-session projection")
 }
 
 func TestSkillsSettingsRefreshInvalidatesSkillRootsCache(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 const ccSwitchDir = ".cc-switch"
@@ -172,7 +174,7 @@ func ccSwitchRowsToPlugins(rows []ccSwitchMCPRow) ([]PluginEntry, error) {
 }
 
 func loadCCSwitchLegacyConfig(path string) ([]PluginEntry, error) {
-	b, err := os.ReadFile(path)
+	b, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return nil, err
 	}

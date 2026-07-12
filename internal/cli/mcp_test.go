@@ -3,12 +3,14 @@ package cli
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/plugin"
@@ -97,6 +99,230 @@ func TestTokenizeArgs(t *testing.T) {
 	// Single quotes work too, and surrounding whitespace collapses.
 	if got := tokenizeArgs("  a  'b c'  d "); !reflect.DeepEqual(got, []string{"a", "b c", "d"}) {
 		t.Fatalf("tokenizeArgs single-quote = %v", got)
+	}
+}
+
+func TestMCPGetStdioRedactsEnvAndKeepsOrder(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	_ = captureStdout(t, func() {
+		if rc := mcpAddCLI([]string{
+			"open-design",
+			"--env", "OPEN_DESIGN_TOKEN=placeholder-value",
+			"--env", "OD_DAEMON_URL=http://127.0.0.1:7456",
+			"node", "open-design-mcp.js", "--stdio",
+		}); rc != 0 {
+			t.Fatalf("mcp add rc = %d, want 0", rc)
+		}
+	})
+
+	configPath := "voltui.toml"
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config before get: %v", err)
+	}
+	getOut := captureStdout(t, func() {
+		if rc := Run([]string{"mcp", "get", "open-design"}, "test-version"); rc != 0 {
+			t.Fatalf("mcp get rc = %d, want 0", rc)
+		}
+	})
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config after get: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("mcp get changed config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	for _, want := range []string{
+		"name: open-design",
+		"type: stdio",
+		"command: node",
+		"args: open-design-mcp.js",
+		"      --stdio",
+		"OD_DAEMON_URL=http://127.0.0.1:7456",
+		"OPEN_DESIGN_TOKEN=<redacted>",
+	} {
+		if !strings.Contains(getOut, want) {
+			t.Fatalf("mcp get output missing %q:\n%s", want, getOut)
+		}
+	}
+	if strings.Contains(getOut, "placeholder-value") {
+		t.Fatalf("mcp get leaked sensitive env value:\n%s", getOut)
+	}
+	if strings.Index(getOut, "OD_DAEMON_URL=") > strings.Index(getOut, "OPEN_DESIGN_TOKEN=") {
+		t.Fatalf("mcp get env output is not sorted:\n%s", getOut)
+	}
+}
+
+func TestMCPGetMissingServerFails(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	errOut := captureStderr(t, func() {
+		if rc := mcpCommand([]string{"get", "open-design"}); rc != 1 {
+			t.Fatalf("mcp get missing rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, `no MCP server named "open-design"`) {
+		t.Fatalf("mcp get missing stderr = %q", errOut)
+	}
+}
+
+func TestMCPGetRemoteRedactsAuthMaterialAndKeepsHeaderOrder(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	_ = captureStdout(t, func() {
+		if rc := mcpAddCLI([]string{
+			"stripe",
+			"--http", "https://mcp.example.test/mcp?access_token=access-secret&key=key-secret&workspace=main",
+			"--header", "X-Workspace=main",
+			"--header", "Authorization=Bearer header-secret",
+		}); rc != 0 {
+			t.Fatalf("mcp add remote rc = %d, want 0", rc)
+		}
+	})
+
+	getOut := captureStdout(t, func() {
+		if rc := mcpCommand([]string{"get", "stripe"}); rc != 0 {
+			t.Fatalf("mcp get remote rc = %d, want 0", rc)
+		}
+	})
+	for _, want := range []string{
+		"type: http",
+		"workspace=main",
+		"access_token=%3Credacted%3E",
+		"key=%3Credacted%3E",
+		"Authorization=<redacted>",
+		"X-Workspace=main",
+	} {
+		if !strings.Contains(getOut, want) {
+			t.Fatalf("mcp get remote output missing %q:\n%s", want, getOut)
+		}
+	}
+	for _, secret := range []string{"access-secret", "key-secret", "Bearer header-secret"} {
+		if strings.Contains(getOut, secret) {
+			t.Fatalf("mcp get leaked %q:\n%s", secret, getOut)
+		}
+	}
+	if strings.Index(getOut, "Authorization=") > strings.Index(getOut, "X-Workspace=") {
+		t.Fatalf("mcp get header output is not sorted:\n%s", getOut)
+	}
+}
+
+func TestMCPGetUsesEffectiveConfigSourcesWithoutBuiltins(t *testing.T) {
+	isolateCLIConfigHome(t)
+	userPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(`[[plugins]]
+name = "shared"
+command = "user-bin"
+
+[[plugins]]
+name = "user-only"
+command = "user-only-bin"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("voltui.toml", []byte(`[[plugins]]
+name = "shared"
+command = "project-bin"
+
+[[plugins]]
+name = "project-only"
+command = "project-only-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".mcp.json", []byte(`{
+  "mcpServers": {
+    "shared": {"type": "http", "url": "https://mcp.example.test/ignored"},
+    "mcp-only": {"type": "http", "url": "https://mcp.example.test/effective"}
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePaths := []string{userPath, "voltui.toml", ".mcp.json"}
+	sourceBefore := make(map[string]string, len(sourcePaths))
+	for _, path := range sourcePaths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read config source %s before get: %v", path, err)
+		}
+		sourceBefore[path] = string(raw)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		want    string
+		notWant string
+	}{
+		{name: "shared", want: "command: project-bin", notWant: "user-bin"},
+		{name: "user-only", want: "command: user-only-bin"},
+		{name: "project-only", want: "command: project-only-bin"},
+		{name: "mcp-only", want: "url: https://mcp.example.test/effective"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureStdout(t, func() {
+				if rc := mcpCommand([]string{"get", tc.name}); rc != 0 {
+					t.Fatalf("mcp get %s rc = %d, want 0", tc.name, rc)
+				}
+			})
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("mcp get %s output missing %q:\n%s", tc.name, tc.want, out)
+			}
+			if tc.notWant != "" && strings.Contains(out, tc.notWant) {
+				t.Fatalf("mcp get %s output unexpectedly contains %q:\n%s", tc.name, tc.notWant, out)
+			}
+		})
+	}
+
+	errOut := captureStderr(t, func() {
+		if rc := mcpCommand([]string{"get", builtinmcp.TimeName}); rc != 1 {
+			t.Fatalf("mcp get built-in rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "no MCP server named") {
+		t.Fatalf("mcp get built-in stderr = %q", errOut)
+	}
+
+	for _, path := range sourcePaths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read config source %s after get: %v", path, err)
+		}
+		if string(raw) != sourceBefore[path] {
+			t.Fatalf("mcp get changed config source %s", path)
+		}
+	}
+}
+
+func TestMCPListRedactsRemoteQuerySecrets(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	_ = captureStdout(t, func() {
+		if rc := mcpAddCLI([]string{
+			"remote",
+			"--http", "https://mcp.example.test/mcp?access_token=list-access-secret&key=list-key-secret&workspace=main",
+		}); rc != 0 {
+			t.Fatalf("mcp add remote rc = %d, want 0", rc)
+		}
+	})
+
+	out := captureStdout(t, func() {
+		if rc := mcpList(); rc != 0 {
+			t.Fatalf("mcp list rc = %d, want 0", rc)
+		}
+	})
+	for _, want := range []string{"remote", "workspace=main", "access_token=%3Credacted%3E", "key=%3Credacted%3E"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("mcp list output missing %q:\n%s", want, out)
+		}
+	}
+	for _, secret := range []string{"list-access-secret", "list-key-secret"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("mcp list leaked %q:\n%s", secret, out)
+		}
 	}
 }
 

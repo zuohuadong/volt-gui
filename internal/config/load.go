@@ -8,8 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/provider"
 )
 
@@ -39,17 +38,20 @@ func LoadForRoot(root string) (*Config, error) {
 	}
 
 	var tomlSources []string
+	userDefaultModelExplicit := false
 	if uc := userConfigLoadPath(); uc != "" {
 		tomlSources = append(tomlSources, uc)
 		if err := mergeRuntimeTOMLFile(cfg, uc); err != nil {
 			return nil, err
 		}
+		userDefaultModelExplicit = tomlFileDefinesKey(uc, "default_model")
 	}
 	globalMaxSteps := cfg.Agent.MaxSteps
 	globalPlannerMaxSteps := cfg.Agent.PlannerMaxSteps
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
 	globalAutoPlan := cfg.Agent.AutoPlan
 	globalSecrets := cfg.Secrets
+	userDefaultModel := cfg.DefaultModel
 	if cfg.Secrets.RedactToolOutput != nil {
 		v := *cfg.Secrets.RedactToolOutput
 		globalSecrets.RedactToolOutput = &v
@@ -70,7 +72,7 @@ func LoadForRoot(root string) (*Config, error) {
 	// voltui.toml must not be able to disable redaction or flip on the
 	// workflow-breaking env/path protections.
 	cfg.Secrets = globalSecrets
-	// toml.DecodeFile replaces [[plugins]] wholesale, so cfg.Plugins now holds
+	// TOML decoding replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project voltui.toml doesn't drop the global config's MCP servers.
 	plugins, err := mergeTOMLPlugins(tomlSources)
@@ -121,6 +123,9 @@ func LoadForRoot(root string) (*Config, error) {
 	backfillDeepSeekOfficialPrices(cfg)
 	normalizeEffortConfig(cfg)
 	backfillDeepSeekPro(cfg)
+	if userDefaultModelExplicit {
+		restoreUnresolvableProjectDefaultModel(cfg, userDefaultModel)
+	}
 	cfg.CredentialsStore = credentialsStoreMode()
 	cfg.setExpansionEnv(expansionEnv)
 	resolveProviderCredentialsForRoot(root, cfg)
@@ -172,6 +177,46 @@ func userAutoPlanMode() string {
 	default:
 		return "off"
 	}
+}
+
+// restoreUnresolvableProjectDefaultModel falls back to the user-global
+// default_model when a project voltui.toml overrides it with a reference no
+// configured provider serves. Older persistence paths wrote a full project
+// config and pinned the built-in default_model into it; after the user replaced
+// the built-in providers, that stale value prevented the project from booting.
+// The fallback is in-memory only: the project file is untouched, and a
+// resolvable project override still wins. The ignored value is retained so boot
+// can show a warning.
+//
+// Callers must invoke this only when the user config explicitly defines
+// default_model. Falling back to the built-in default would silently hide a
+// broken project reference when the project file is the only config, which must
+// keep the actionable boot error.
+func restoreUnresolvableProjectDefaultModel(c *Config, userDefault string) {
+	if c == nil || c.DefaultModel == userDefault {
+		return
+	}
+	if _, ok := c.ResolveModel(c.DefaultModel); ok {
+		return
+	}
+	if _, ok := c.ResolveModel(userDefault); !ok {
+		return
+	}
+	c.ignoredProjectDefaultModel = c.DefaultModel
+	c.DefaultModel = userDefault
+}
+
+// tomlFileDefinesKey reports whether the TOML file at path explicitly defines
+// the given key. Missing or unparseable files report false. It deliberately
+// shares decodeTOMLFile with runtime loading so Windows BOM, UTF-16, and
+// GB18030 config files retain the same semantics.
+func tomlFileDefinesKey(path string, key ...string) bool {
+	var f Config
+	meta, err := decodeTOMLFile(path, &f)
+	if err != nil {
+		return false
+	}
+	return meta.IsDefined(key...)
 }
 
 // backfillDeepSeekPro restores deepseek-pro for configs the pre-fix setup wizard
@@ -288,7 +333,7 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 			continue
 		}
 		var f Config
-		if _, err := toml.DecodeFile(path, &f); err != nil {
+		if _, err := decodeTOMLFile(path, &f); err != nil {
 			return nil, fmt.Errorf("config %s: %w", path, err)
 		}
 		for _, p := range f.Plugins {
@@ -320,7 +365,7 @@ func mergeTOMLProviders(paths []string) ([]ProviderEntry, map[string]providerSou
 			continue
 		}
 		var f Config
-		if _, err := toml.DecodeFile(path, &f); err != nil {
+		if _, err := decodeTOMLFile(path, &f); err != nil {
 			return nil, nil, nil, false, fmt.Errorf("config %s: %w", path, err)
 		}
 		if len(f.Providers) == 0 {
@@ -373,7 +418,7 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 			continue
 		}
 		var f Config
-		meta, err := toml.DecodeFile(path, &f)
+		meta, err := decodeTOMLFile(path, &f)
 		if err != nil {
 			return nil, false, fmt.Errorf("config %s: %w", path, err)
 		}
@@ -496,7 +541,7 @@ func mergeFile(cfg *Config, path string) error {
 	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	if _, err := decodeTOMLFile(path, cfg); err != nil {
 		return fmt.Errorf("config %s: %w", path, err)
 	}
 	return nil
@@ -531,7 +576,7 @@ func migrateLegacyMCPTiersFile(path string) error {
 	if err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return err
 	}

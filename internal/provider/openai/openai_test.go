@@ -1215,6 +1215,61 @@ func TestBuildRequestAlwaysSendsReasoningKeyOnDeepSeekToolCalls(t *testing.T) {
 	}
 }
 
+func TestWarnOnMissingToolCallReasoningMatchesDeepSeekModelFamily(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		want  bool
+	}{
+		{name: "exact flash", model: "deepseek-v4-flash", want: false},
+		{name: "namespaced flash", model: "deepseek/deepseek-v4-flash", want: false},
+		{name: "exact pro", model: "deepseek-v4-pro", want: true},
+		{name: "namespaced pro", model: "deepseek/deepseek-v4-pro", want: true},
+		{name: "mixed case pro", model: "deepseek-ai/DeepSeek-V4-Pro", want: true},
+		{name: "reasoner", model: "deepseek-reasoner", want: true},
+		{name: "r1", model: "deepseek-ai/DeepSeek-R1-0528", want: true},
+		{name: "generic deepseek", model: "deepseek-chat", want: false},
+		{name: "gateway deepseek v3", model: "deepseek-ai/DeepSeek-V3.2", want: false},
+		{name: "prover is not pro", model: "deepseek-ai/DeepSeek-Prover-V2", want: false},
+		{name: "dated pro variant", model: "deepseek-v4-pro-0923", want: true},
+		{name: "dotted pro variant", model: "deepseek-v4-pro.1", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := New(provider.Config{
+				Name:    "deepseek-proxy",
+				BaseURL: "https://gateway.example/v1",
+				Model:   tc.model,
+				APIKey:  "k",
+				Extra:   map[string]any{"reasoning_protocol": "deepseek"},
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if !provider.RequiresToolCallReasoning(p) {
+				t.Fatal("DeepSeek protocol should keep conservative reasoning_content replay for tool-call turns")
+			}
+			if got := provider.WarnOnMissingToolCallReasoning(p); got != tc.want {
+				t.Fatalf("WarnOnMissingToolCallReasoning() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	p, err := New(provider.Config{
+		Name:    "deepseek-v4-pro-openai-protocol",
+		BaseURL: "https://gateway.example/v1",
+		Model:   "deepseek-v4-pro",
+		APIKey:  "k",
+		Extra:   map[string]any{"reasoning_protocol": "openai"},
+	})
+	if err != nil {
+		t.Fatalf("New OpenAI protocol: %v", err)
+	}
+	if provider.WarnOnMissingToolCallReasoning(p) {
+		t.Fatal("OpenAI protocol should not warn using DeepSeek reasoning_content policy")
+	}
+}
+
 // TestBuildRequestRoundTripsDeepSeekToolCallReasoning keeps the healthy-path
 // bytes intact: when the session has the provider-issued reasoning, it is
 // replayed verbatim on the tool_calls turn.

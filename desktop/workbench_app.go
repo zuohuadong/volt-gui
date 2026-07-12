@@ -11,11 +11,15 @@ import (
 
 func (a *App) WorkbenchPlugins() []workbench.Plugin {
 	cfg := a.workbenchConfig()
-	out := make([]workbench.Plugin, 0, len(cfg.Workbench.Plugins))
+	out := make([]workbench.Plugin, 0, len(cfg.Workbench.Plugins)+1)
+	hasCloudflareDrop := false
 	for _, p := range cfg.Workbench.Plugins {
 		id := strings.TrimSpace(p.ID)
 		if id == "" {
 			continue
+		}
+		if id == cloudflareDropPluginID {
+			hasCloudflareDrop = true
 		}
 		out = append(out, workbench.Plugin{
 			ID:           id,
@@ -28,6 +32,9 @@ func (a *App) WorkbenchPlugins() []workbench.Plugin {
 			Config:       cloneStringMap(p.Config),
 			Enabled:      p.IsEnabled(),
 		})
+	}
+	if !hasCloudflareDrop {
+		out = append(out, builtinCloudflareDropPlugin())
 	}
 	return out
 }

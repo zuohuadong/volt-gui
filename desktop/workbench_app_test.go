@@ -39,8 +39,12 @@ env = { ASSET_TOKEN = "${ASSET_TOKEN}" }
 	app.activeTabID = tab.ID
 
 	plugins := app.WorkbenchPlugins()
-	if len(plugins) != 1 || plugins[0].ID != "content-studio" || !plugins[0].Enabled {
+	contentStudio, ok := findWorkbenchPlugin(plugins, "content-studio")
+	if len(plugins) != 2 || !ok || !contentStudio.Enabled {
 		t.Fatalf("WorkbenchPlugins = %+v", plugins)
+	}
+	if cloudflareDrop, ok := findWorkbenchPlugin(plugins, cloudflareDropPluginID); !ok || cloudflareDrop.Enabled {
+		t.Fatalf("WorkbenchPlugins Cloudflare Drop = %+v", plugins)
 	}
 	providers := app.WorkbenchProviders()
 	if len(providers) != 1 || providers[0].ID != "asset-mcp" || len(providers[0].HeaderKeys) != 1 || providers[0].HeaderKeys[0] != "Authorization" {
@@ -101,8 +105,8 @@ func TestWorkbenchBindingsFallbackWhenConfigMissing(t *testing.T) {
 		t.Fatalf("save user config: %v", err)
 	}
 	app := NewApp()
-	if got := app.WorkbenchPlugins(); len(got) != 0 {
-		t.Fatalf("WorkbenchPlugins = %+v, want empty", got)
+	if got := app.WorkbenchPlugins(); len(got) != 1 || got[0].ID != cloudflareDropPluginID || got[0].Enabled {
+		t.Fatalf("WorkbenchPlugins = %+v, want default-disabled Cloudflare Drop plugin", got)
 	}
 	if got := app.ListWorkbenchJobs(); len(got) != 0 {
 		t.Fatalf("ListWorkbenchJobs = %+v, want empty", got)
@@ -128,10 +132,13 @@ func TestWorkbenchPluginSavePersistsEnabledState(t *testing.T) {
 		t.Fatalf("SaveWorkbenchPlugin create: %v", err)
 	}
 	plugins := app.WorkbenchPlugins()
-	if len(plugins) != 1 {
-		t.Fatalf("WorkbenchPlugins length = %d, want 1: %+v", len(plugins), plugins)
+	if len(plugins) != 2 {
+		t.Fatalf("WorkbenchPlugins length = %d, want 2: %+v", len(plugins), plugins)
 	}
-	plugin := plugins[0]
+	plugin, ok := findWorkbenchPlugin(plugins, input.ID)
+	if !ok {
+		t.Fatalf("WorkbenchPlugins missing saved plugin: %+v", plugins)
+	}
 	if plugin.ID != input.ID || plugin.Name != input.Name || !plugin.Enabled {
 		t.Fatalf("WorkbenchPlugins saved plugin = %+v", plugin)
 	}
@@ -148,10 +155,20 @@ func TestWorkbenchPluginSavePersistsEnabledState(t *testing.T) {
 		t.Fatalf("SaveWorkbenchPlugin update: %v", err)
 	}
 	plugins = app.WorkbenchPlugins()
-	if len(plugins) != 1 {
-		t.Fatalf("WorkbenchPlugins after update length = %d, want 1: %+v", len(plugins), plugins)
+	if len(plugins) != 2 {
+		t.Fatalf("WorkbenchPlugins after update length = %d, want 2: %+v", len(plugins), plugins)
 	}
-	if plugins[0].Enabled || plugins[0].Version != "v1.2.1" {
-		t.Fatalf("WorkbenchPlugins updated plugin = %+v", plugins[0])
+	plugin, ok = findWorkbenchPlugin(plugins, input.ID)
+	if !ok || plugin.Enabled || plugin.Version != "v1.2.1" {
+		t.Fatalf("WorkbenchPlugins updated plugin = %+v", plugins)
 	}
+}
+
+func findWorkbenchPlugin(plugins []workbench.Plugin, id string) (workbench.Plugin, bool) {
+	for _, plugin := range plugins {
+		if plugin.ID == id {
+			return plugin, true
+		}
+	}
+	return workbench.Plugin{}, false
 }

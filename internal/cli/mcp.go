@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
 
 	"voltui/internal/builtinmcp"
@@ -148,9 +150,10 @@ func tokenizeArgs(s string) []string {
 	return out
 }
 
-// mcpCommand implements `voltui mcp <add|remove|list>`. It edits config only
-// (validate → UpsertPlugin/RemovePlugin → Save); the server connects on the next
-// session start. For a live connect inside an open chat, use `/mcp add`.
+// mcpCommand implements `voltui mcp <add|remove|list|get>`. Mutating commands
+// edit config only (validate → UpsertPlugin/RemovePlugin → Save); the server
+// connects on the next session start. For a live connect inside an open chat,
+// use `/mcp add`.
 func mcpCommand(args []string) int {
 	if len(args) == 0 {
 		mcpUsage()
@@ -161,6 +164,8 @@ func mcpCommand(args []string) int {
 		return mcpList()
 	case "add":
 		return mcpAddCLI(args[1:])
+	case "get":
+		return mcpGetCLI(args[1:])
 	case "remove", "rm":
 		return mcpRemoveCLI(args[1:])
 	case "import":
@@ -211,7 +216,7 @@ func mcpList() int {
 			line := strings.TrimSpace(p.Command + " " + strings.Join(p.Args, " "))
 			fmt.Printf("%-16s (stdio)%s%s  %s\n", p.Name, auto, builtIn, line)
 		} else {
-			fmt.Printf("%-16s (%s)%s%s  %s\n", p.Name, typ, auto, builtIn, p.URL)
+			fmt.Printf("%-16s (%s)%s%s  %s\n", p.Name, typ, auto, builtIn, redactMCPURL(p.URL))
 		}
 		listed++
 	}
@@ -219,6 +224,132 @@ func mcpList() int {
 		fmt.Println("no MCP servers configured")
 	}
 	return 0
+}
+
+// mcpGetCLI reports one effective user-configured MCP server. It intentionally
+// reads only config.Load().Plugins: unlike `mcp list`, this is not a runtime
+// inventory and must not include built-in MCP servers or modify configuration.
+func mcpGetCLI(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: voltui mcp get <name>")
+		return 2
+	}
+	name := args[0]
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	for _, p := range cfg.Plugins {
+		if p.Name != name {
+			continue
+		}
+		printMCPEntry(p)
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "no MCP server named %q in config\n", name)
+	return 1
+}
+
+func printMCPEntry(p config.PluginEntry) {
+	typ := p.Type
+	if typ == "" {
+		typ = "stdio"
+	}
+	fmt.Printf("name: %s\n", p.Name)
+	fmt.Printf("type: %s\n", typ)
+	if typ == "stdio" {
+		fmt.Printf("command: %s\n", p.Command)
+		if len(p.Args) > 0 {
+			fmt.Printf("args: %s\n", strings.Join(p.Args, "\n      "))
+		}
+		if len(p.Env) > 0 {
+			fmt.Println("env:")
+			for _, k := range sortedMapKeys(p.Env) {
+				fmt.Printf("  %s=%s\n", k, redactMCPConfigValue(k, p.Env[k]))
+			}
+		}
+	} else {
+		fmt.Printf("url: %s\n", redactMCPURL(p.URL))
+		if len(p.Headers) > 0 {
+			fmt.Println("headers:")
+			for _, k := range sortedMapKeys(p.Headers) {
+				fmt.Printf("  %s=%s\n", k, redactMCPConfigValue(k, p.Headers[k]))
+			}
+		}
+	}
+	if !p.ShouldAutoStart() {
+		fmt.Println("auto_start: false")
+	}
+}
+
+func sortedMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func redactMCPConfigValue(key, value string) string {
+	if looksSensitiveMCPKey(key) || looksSensitiveMCPValue(value) {
+		return "<redacted>"
+	}
+	return value
+}
+
+func looksSensitiveMCPKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	for _, needle := range []string{"auth", "token", "secret", "credential", "api_key", "api-key", "apikey", "cookie"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksSensitiveMCPQueryKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), "key") || looksSensitiveMCPKey(key)
+}
+
+func looksSensitiveMCPValue(value string) bool {
+	lower := strings.ToLower(value)
+	for _, needle := range []string{"access_token", "id_token", "refresh_token", "api_key", "api-key", "apikey", "bearer "} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactMCPURL redacts only known sensitive query keys. URL userinfo and
+// arbitrary query values remain untouched so the CLI does not guess at secrets.
+func redactMCPURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return raw
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u == nil {
+		if looksSensitiveMCPValue(raw) {
+			return "<redacted>"
+		}
+		return raw
+	}
+	q := u.Query()
+	changed := false
+	for key := range q {
+		if looksSensitiveMCPQueryKey(key) {
+			q.Set(key, "<redacted>")
+			changed = true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func mcpAddCLI(args []string) int {
@@ -272,6 +403,7 @@ func mcpUsage() {
 
 Usage:
   voltui mcp list
+  voltui mcp get <name>
   voltui mcp add <name> <command> [args...]        stdio server
   voltui mcp add <name> --http <url> [--header K=V] remote (Streamable HTTP)
   voltui mcp add <name> --sse  <url>               remote (legacy SSE)

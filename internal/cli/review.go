@@ -11,6 +11,7 @@ import (
 	"voltui/internal/boot"
 	"voltui/internal/config"
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/skill"
 	"voltui/internal/tool"
 )
@@ -77,14 +78,14 @@ func reviewCommand(args []string) int {
 	}
 
 	// 5. Build a review-scoped sub-agent registry.
-	reg := buildReviewSubagentRegistry(reviewSk)
+	reg := buildReviewSubagentRegistry(reviewSk, cfg)
 
 	// 6. Prepare the review prompt.
 	task := buildReviewTask(diff, *instructions)
 
 	// 7. Run the review subagent.
 	ctx := context.Background()
-	result, err := agent.RunSubAgentWithSession(ctx, prov, reg, agent.NewSession(reviewSk.Body), task, agent.Options{
+	result, err := agent.RunSubAgentWithSession(ctx, prov, reg, agent.NewSession(reviewSystemPrompt(reviewSk.Body)), task, agent.Options{
 		MaxSteps:      12,
 		Temperature:   cfg.Agent.Temperature,
 		Pricing:       entry.Price,
@@ -99,12 +100,19 @@ func reviewCommand(args []string) int {
 	return 0
 }
 
-func buildReviewSubagentRegistry(reviewSk skill.Skill, _ ...*config.Config) *tool.Registry {
+func reviewSystemPrompt(body string) string {
+	return instruction.WithCalculationPolicy(body)
+}
+
+func buildReviewSubagentRegistry(reviewSk skill.Skill, configs ...*config.Config) *tool.Registry {
 	// The shared helper strips subagent-unavailable background capabilities while
 	// preserving foreground bash. This direct CLI path does not go through boot,
 	// so it first builds the small parent set from the review skill allow-list.
 	parentReg := tool.NewRegistry()
 	for _, name := range reviewSk.AllowedTools {
+		if len(configs) > 0 && !reviewToolEnabled(configs[0], name) {
+			continue
+		}
 		if tl, ok := tool.LookupBuiltin(name); ok {
 			parentReg.Add(tl)
 		}
@@ -113,6 +121,18 @@ func buildReviewSubagentRegistry(reviewSk skill.Skill, _ ...*config.Config) *too
 		return agent.ReadOnlySubagentToolRegistry(parentReg, reviewSk.AllowedTools)
 	}
 	return agent.SubagentToolRegistry(parentReg, reviewSk.AllowedTools)
+}
+
+func reviewToolEnabled(cfg *config.Config, name string) bool {
+	if cfg == nil || len(cfg.Tools.Enabled) == 0 {
+		return true
+	}
+	for _, enabled := range cfg.Tools.Enabled {
+		if strings.TrimSpace(enabled) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // getReviewDiff runs the appropriate git diff command and returns its output.

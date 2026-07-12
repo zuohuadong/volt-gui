@@ -799,6 +799,18 @@ export interface WorkbenchPluginInput {
   enabled: boolean;
 }
 
+export interface CloudflareDropPreflight {
+  sourceName: string;
+  sourceType: "folder" | "zip" | string;
+  hasRootIndex: boolean;
+  fileCount: number;
+  totalBytes: number;
+  largestFileName: string;
+  largestFileBytes: number;
+  valid: boolean;
+  issues: string[];
+}
+
 export interface SkillPackageInput {
   name: string;
   description: string;

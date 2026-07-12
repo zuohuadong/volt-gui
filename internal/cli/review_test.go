@@ -7,8 +7,16 @@ import (
 	"testing"
 
 	"voltui/internal/config"
+	"voltui/internal/instruction"
 	"voltui/internal/skill"
 )
+
+func TestReviewSystemPromptIncludesCalculationPolicy(t *testing.T) {
+	got := reviewSystemPrompt("review instructions")
+	if !strings.Contains(got, "review instructions") || !strings.Contains(got, instruction.CalculationPolicy) {
+		t.Fatalf("review system prompt missing required content: %q", got)
+	}
+}
 
 func TestBuildReviewTask(t *testing.T) {
 	// Small diff.
@@ -64,6 +72,18 @@ func TestBuildReviewSubagentRegistryUsesForegroundOnlyBash(t *testing.T) {
 	}
 	if _, err := bash.Execute(context.Background(), json.RawMessage(`{"command":"sleep 1","run_in_background":true}`)); err == nil || !strings.Contains(err.Error(), "background bash is unavailable in subagents") {
 		t.Fatalf("review subagent background bash should return a clear error, got %v", err)
+	}
+}
+
+func TestBuildReviewSubagentRegistryIncludesCalculateUnlessExplicitlyDisabled(t *testing.T) {
+	sk := skill.Skill{ReadOnly: true, AllowedTools: []string{"calculate", "read_file"}}
+	if _, ok := buildReviewSubagentRegistry(sk, config.Default()).Get("calculate"); !ok {
+		t.Fatal("default review registry must include calculate")
+	}
+	cfg := config.Default()
+	cfg.Tools.Enabled = []string{"read_file"}
+	if _, ok := buildReviewSubagentRegistry(sk, cfg).Get("calculate"); ok {
+		t.Fatal("explicit tools.enabled allowlist must be able to exclude calculate")
 	}
 }
 

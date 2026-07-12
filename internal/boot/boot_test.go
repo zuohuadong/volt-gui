@@ -24,6 +24,7 @@ import (
 	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/memory"
 	"voltui/internal/netclient"
 	"voltui/internal/plugin"
@@ -1400,6 +1401,7 @@ func defaultFullBootToolNames() []string {
 		"ask",
 		"bash",
 		"bash_output",
+		"calculate",
 		"code_index",
 		"complete_step",
 		"delete_range",
@@ -1448,6 +1450,7 @@ func economyBootToolNames() []string {
 		"ask",
 		"bash",
 		"bash_output",
+		"calculate",
 		"code_index",
 		"complete_step",
 		"connect_tool_source",
@@ -1514,6 +1517,7 @@ command = "voltui-missing-mockmcp"
 		"ask",
 		"bash",
 		"bash_output",
+		"calculate",
 		"code_index",
 		"complete_step",
 		"connect_tool_source",
@@ -1539,7 +1543,7 @@ command = "voltui-missing-mockmcp"
 	if got := toolSchemaNames(req.Tools); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("economy first request tool order changed\ngot  %v\nwant %v", got, wantTools)
 	}
-	for _, want := range []string{"connect_tool_source", "read_file", "grep", "edit_file", "bash", "slash_command", "ask"} {
+	for _, want := range []string{"calculate", "connect_tool_source", "read_file", "grep", "edit_file", "bash", "slash_command", "ask"} {
 		if !requestHasTool(req, want) {
 			t.Fatalf("economy first request missing tool %q; tools=%v", want, toolSchemaNames(req.Tools))
 		}
@@ -2409,7 +2413,7 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	if i := strings.Index(sys, "\n\n# Skills"); i >= 0 {
 		base = sys[:i]
 	}
-	// The language policy, user-decision policy, and current-workspace line are
+	// The calculation, language, user-decision, and current-workspace policies are
 	// always appended at boot; strip them so this assertion is purely about
 	// whether project/ancestor memory leaked into the base.
 	base = stripEnvironmentBlock(base)
@@ -2514,6 +2518,34 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildCalculationPolicyIsAppended(t *testing.T) {
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	if sys := systemMessage(ctrl.History()); !strings.Contains(sys, instruction.CalculationPolicy) {
+		t.Fatalf("calculation policy missing from system prompt:\n%s", sys)
+	}
+}
+
 func TestBuildAppendsUserDecisionPolicyToCustomSystemPrompt(t *testing.T) {
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -2561,6 +2593,7 @@ func systemMessage(msgs []provider.Message) string {
 func stripLanguagePolicy(s string) string {
 	s = strings.TrimSpace(s)
 	for _, policy := range []string{
+		instruction.CalculationPolicy,
 		config.LanguagePolicy,
 		config.UserDecisionPolicy,
 	} {

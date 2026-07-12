@@ -30,7 +30,7 @@ const (
 type Message struct {
 	Role             Role     `json:"role"`
 	Content          string   `json:"content,omitempty"`
-	Images           []string `json:"images,omitempty"`            // data URLs (data:<mime>;base64,…); embedded only for vision-capable models
+	Images           []string `json:"images,omitempty"`            // data URLs on user attachments and tool image results; embedded only for vision-capable models
 	ReasoningContent string   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
 	// ReasoningSignature is an opaque, provider-issued proof that ReasoningContent
 	// is genuine model output. Anthropic requires the signed thinking block be
@@ -639,6 +639,28 @@ func RequiresToolCallReasoning(p Provider) bool {
 	return ok && policy.RequiresToolCallReasoning()
 }
 
+// MissingToolCallReasoningWarningPolicy is optionally implemented by providers
+// whose replay protocol requires reasoning_content, but whose active model may
+// not reliably emit it. Request serialization should stay conservative while
+// user-visible diagnostics can be quieter for models where missing reasoning is
+// expected behavior.
+type MissingToolCallReasoningWarningPolicy interface {
+	WarnOnMissingToolCallReasoning() bool
+}
+
+// WarnOnMissingToolCallReasoning reports whether a tool_calls turn with empty
+// reasoning_content should surface a visible warning.
+func WarnOnMissingToolCallReasoning(p Provider) bool {
+	if nilutil.IsNil(p) {
+		return false
+	}
+	policy, ok := p.(MissingToolCallReasoningWarningPolicy)
+	if ok {
+		return policy.WarnOnMissingToolCallReasoning()
+	}
+	return RequiresToolCallReasoning(p)
+}
+
 // Config is a resolved provider instance configuration.
 type Config struct {
 	Name    string         // instance name, e.g. "deepseek"
@@ -650,15 +672,19 @@ type Config struct {
 
 // AuthError reports that a provider rejected the API key (HTTP 401/403). Its
 // message is already user-facing and actionable — it names the provider and,
-// when known, the environment variable the key comes from — so the CLI can
-// surface it verbatim instead of dumping a raw status body. Providers should
-// return this (rather than a generic status error) for auth failures.
+// when known, the environment variable the key comes from — and it carries the
+// server's reason as Body. Body is deliberately not part of Error(): providers
+// can echo masked key fragments in auth responses, while Error() often reaches
+// logs, status lines, and traces. Display layers must extract and redact Body
+// explicitly when they choose to show it. Providers should return this (rather
+// than a generic status error) for auth failures.
 type AuthError struct {
 	Provider  string // the provider instance name, e.g. "deepseek"
 	KeyEnv    string // the api_key_env the key is read from, when known
 	KeySource string // human-readable source of KeyEnv, when known
 	Status    int    // the HTTP status (401 or 403)
 	HasKey    bool   // a non-empty key was sent — the server rejected it, vs. no key configured at all
+	Body      string // trimmed response-body snippet; display layers must redact it before showing it
 }
 
 func (e *AuthError) Error() string {

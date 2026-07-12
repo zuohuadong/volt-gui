@@ -24,6 +24,7 @@ const tokenEconomyPrompt = `Token economy mode is on. Keep the default tool surf
 var tokenEconomyCoreBuiltins = []string{
 	"bash",
 	"bash_output",
+	"calculate",
 	"code_index",
 	"complete_step",
 	"edit_file",

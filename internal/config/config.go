@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"voltui/internal/fileutil"
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/netclient"
 	"voltui/internal/provider"
 )
@@ -65,9 +66,20 @@ type Config struct {
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
 
-	providerSources          map[string]providerSourceScope
-	shadowedProjectProviders []ProviderEntry
-	expansionEnv             map[string]string
+	providerSources            map[string]providerSourceScope
+	shadowedProjectProviders   []ProviderEntry
+	ignoredProjectDefaultModel string
+	expansionEnv               map[string]string
+}
+
+// IgnoredProjectDefaultModel returns the project voltui.toml default_model
+// that LoadForRoot ignored because no configured provider serves it (see
+// restoreUnresolvableProjectDefaultModel), or "" when none was ignored.
+func (c *Config) IgnoredProjectDefaultModel() string {
+	if c == nil {
+		return ""
+	}
+	return c.ignoredProjectDefaultModel
 }
 
 // SecretsConfig controls the credential protection layers. It is a user-global
@@ -2072,7 +2084,7 @@ func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(resolveRoot(root), path)
 		}
-		b, err := os.ReadFile(path)
+		b, err := fileencoding.ReadFileUTF8(path)
 		if err != nil {
 			return "", fmt.Errorf("system_prompt_file: %w", err)
 		}

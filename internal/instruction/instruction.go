@@ -7,6 +7,24 @@ import (
 	"voltui/internal/memory"
 )
 
+// CalculationPolicy keeps numeric answers reproducible across the main agent,
+// planner, and sub-agent prompts. It is conditional because explicit tool
+// allowlists may intentionally remove calculate from a specialized agent.
+const CalculationPolicy = `Calculation policy: when the calculate tool is available, you MUST call it whenever an answer depends on a computed numeric result. This includes arithmetic, percentages, ratios, totals, formula evaluation, estimates that should be reproducible, and verification of numeric reasoning. For money, billing, tax, discounts, interest, exchange rates, allocation, or settlement, always use mode=finance with explicit scale and rounding; never rely on mental arithmetic or binary floating point. Symbolic explanation and proofs may be reasoned about normally, but verify every final numeric value with calculate. If calculate is unavailable, do not invent a precision-sensitive result; state the limitation or hand the calculation to an agent that has the tool.`
+
+// WithCalculationPolicy appends the standing policy without duplicating it on
+// prompts that pass through more than one construction layer.
+func WithCalculationPolicy(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if strings.Contains(prompt, CalculationPolicy) {
+		return prompt
+	}
+	if prompt == "" {
+		return CalculationPolicy
+	}
+	return prompt + "\n\n" + CalculationPolicy
+}
+
 // VerifyCheck is a host-observable project check extracted from structured
 // project memory. It is runtime-only and is not serialized into prompts.
 type VerifyCheck struct {

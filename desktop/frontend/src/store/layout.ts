@@ -14,7 +14,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { create } from "zustand";
 
-import { loadLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
+import { loadLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 
 import { applySetState } from "./setState";
 
@@ -108,9 +108,7 @@ export function saveSidebarCollapsed(collapsed: boolean): void {
 }
 
 function loadSidebarWidth(): number {
-  // Fallback uses the Creation floor so first-run / cleared prefs open narrow.
-  // Classic still lifts widths below SIDEBAR_MIN_WIDTH (264) in App.
-  return loadLayoutSize("sidebarWidthGraphite", defaultCreationSidebarWidth(), clampStoredSidebarWidth);
+  return loadLayoutSize("sidebarWidthGraphite", defaultSidebarWidth(), clampStoredSidebarWidth);
 }
 
 export function saveSidebarWidth(width: number): void {
@@ -118,9 +116,7 @@ export function saveSidebarWidth(width: number): void {
 }
 
 function loadRightDockTreeWidth(): number {
-  // Fallback opens at the Creation floor so first-run / cleared prefs stay narrow.
-  // Classic/workbench still lift widths below 300 in App.
-  return loadLayoutSize("rightDockTreeWidth", defaultCreationRightDockTreeWidth(), clampStoredRightDockTreeWidth);
+  return loadLayoutSize("rightDockTreeWidth", defaultRightDockTreeWidth(), clampStoredRightDockTreeWidth);
 }
 
 export function saveRightDockTreeWidth(width: number): void {
@@ -181,3 +177,13 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   setWorkspacePreviewActive: (update) => set((s) => ({ workspacePreviewActive: applySetState(s.workspacePreviewActive, update) })),
   setRightDockMode: (update) => set((s) => ({ rightDockMode: applySetState(s.rightDockMode, update) })),
 }));
+
+export function applyLayoutStyleDefaults(style: "classic" | "workbench" | "creation"): void {
+  const state = useLayoutStore.getState();
+  if (loadOptionalLayoutSize("sidebarWidthGraphite", clampStoredSidebarWidth) === null) {
+    state.setSidebarWidth(style === "creation" ? defaultCreationSidebarWidth() : defaultSidebarWidth());
+  }
+  if (loadOptionalLayoutSize("rightDockTreeWidth", clampStoredRightDockTreeWidth) === null) {
+    state.setRightDockTreeWidth(style === "creation" ? defaultCreationRightDockTreeWidth() : defaultRightDockTreeWidth());
+  }
+}

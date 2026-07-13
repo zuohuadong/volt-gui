@@ -6274,6 +6274,27 @@ func TestMCPServersIncludesConfiguredServerWithoutActiveSession(t *testing.T) {
 	t.Fatalf("MCPServers without active session = %+v, want configured disabled local-tools", view)
 }
 
+func TestAddMCPServerRejectsPluginManifestCommand(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	_, err := app.AddMCPServer(MCPServerInput{
+		Name:      "invalid-plugin-manifest",
+		Transport: "stdio",
+		Command:   "plugin.json",
+	})
+	if err == nil || !strings.Contains(err.Error(), "plugin manifest") {
+		t.Fatalf("AddMCPServer(plugin.json) error = %v, want plugin manifest validation", err)
+	}
+	for _, server := range app.MCPServers() {
+		if server.Name == "invalid-plugin-manifest" {
+			t.Fatalf("invalid MCP command was persisted: %+v", server)
+		}
+	}
+}
+
 func TestMCPServersIncludesConfiguredServerWhenActiveTabHasNoController(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)

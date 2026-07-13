@@ -140,9 +140,24 @@ func TestWorkbenchExportsWriteFiles(t *testing.T) {
 		t.Fatalf("ExportOperationLogs path not written: %v", err)
 	}
 
+	if _, err := app.ExportWorkbenchReports(); err == nil {
+		t.Fatal("ExportWorkbenchReports should reject unapproved reports")
+	}
+	reports, err := app.ListWorkbenchReports()
+	if err != nil {
+		t.Fatalf("ListWorkbenchReports: %v", err)
+	}
+	for _, report := range reports {
+		if _, err := app.ReviewWorkbenchReport(report.ID, "submit", "测试审批人", "提交导出审批"); err != nil {
+			t.Fatalf("submit report %s: %v", report.ID, err)
+		}
+		if _, err := app.ReviewWorkbenchReport(report.ID, "approve", "测试审批人", "允许导出"); err != nil {
+			t.Fatalf("approve report %s: %v", report.ID, err)
+		}
+	}
 	reportPath, err := app.ExportWorkbenchReports()
 	if err != nil {
-		t.Fatalf("ExportWorkbenchReports: %v", err)
+		t.Fatalf("ExportWorkbenchReports after approval: %v", err)
 	}
 	if _, err := os.Stat(reportPath); err != nil {
 		t.Fatalf("ExportWorkbenchReports path not written: %v", err)
@@ -262,6 +277,12 @@ func TestWorkbenchReportUpdateExportAndDelete(t *testing.T) {
 	if updated.UpdatedAt == "" {
 		t.Fatalf("report update should set UpdatedAt: %+v", updated)
 	}
+	if _, err := app.ReviewWorkbenchReport(updated.ID, "submit", "测试审批人", "请审批"); err != nil {
+		t.Fatalf("submit report: %v", err)
+	}
+	if _, err := app.ReviewWorkbenchReport(updated.ID, "approve", "测试审批人", "允许导出"); err != nil {
+		t.Fatalf("approve report: %v", err)
+	}
 	reportPath, err := app.ExportWorkbenchReport(updated.ID)
 	if err != nil {
 		t.Fatalf("ExportWorkbenchReport: %v", err)
@@ -278,6 +299,141 @@ func TestWorkbenchReportUpdateExportAndDelete(t *testing.T) {
 	}
 	if containsReport(reloaded.Reports, updated.ID) {
 		t.Fatalf("deleted report still present: %+v", reloaded.Reports)
+	}
+}
+
+func TestWorkbenchReportReviewStateTransitionsPersist(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	report, err := app.SaveWorkbenchReport(WorkbenchReportInput{Title: "审批状态流转", Body: "初始正文", ArtifactStyleID: "brief-v1"})
+	if err != nil {
+		t.Fatalf("SaveWorkbenchReport: %v", err)
+	}
+	if report.ReviewStatus != reportReviewStatusDraft || report.ReviewStage != reportReviewStageDesign || report.StyleApproved {
+		t.Fatalf("new report should start as design draft: %+v", report)
+	}
+	if _, err := app.ReviewWorkbenchReport(report.ID, "approve", "审批人", "跳过提交"); err == nil {
+		t.Fatal("approve should reject draft reports")
+	}
+	submitted, err := app.ReviewWorkbenchReport(report.ID, "submit", "提交人", "请审核设计")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if submitted.ReviewStatus != reportReviewStatusSubmitted || submitted.ReviewStage != reportReviewStageDesign || submitted.StyleApproved {
+		t.Fatalf("unexpected submitted report: %+v", submitted)
+	}
+	approved, err := app.ReviewWorkbenchReport(report.ID, "approve", "审批人", "设计通过，可导出")
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if !reportHasExportApproval(approved) || approved.ReviewedBy != "审批人" || approved.ReviewedAt == "" {
+		t.Fatalf("unexpected approved report: %+v", approved)
+	}
+	reloaded, err := app.ListWorkbenchData()
+	if err != nil {
+		t.Fatalf("ListWorkbenchData: %v", err)
+	}
+	for _, item := range reloaded.Reports {
+		if item.ID == report.ID && item.ReviewStatus == reportReviewStatusApproved && item.ReviewComment == "设计通过，可导出" {
+			return
+		}
+	}
+	t.Fatalf("reviewed report was not persisted: %+v", reloaded.Reports)
+}
+
+func TestWorkbenchReportSaveInvalidatesExportApproval(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	input := WorkbenchReportInput{
+		Title:           "审批失效",
+		Status:          "已生成",
+		Owner:           "测试负责人",
+		Desc:            "初始摘要",
+		Body:            "初始正文",
+		Kind:            "风险报告",
+		ProjectID:       "volt-gui",
+		CustomerID:      "internal",
+		Source:          "manual",
+		Format:          "Markdown",
+		Priority:        "高",
+		DueAt:           "2026-07-31",
+		ArtifactStyleID: "brief-v1",
+	}
+	report, err := app.SaveWorkbenchReport(input)
+	if err != nil {
+		t.Fatalf("SaveWorkbenchReport: %v", err)
+	}
+	approveReportForExport(t, app, report.ID)
+
+	input.ID = report.ID
+	unchanged, err := app.SaveWorkbenchReport(input)
+	if err != nil {
+		t.Fatalf("SaveWorkbenchReport unchanged: %v", err)
+	}
+	if !reportHasExportApproval(unchanged) {
+		t.Fatalf("unchanged report should keep approval: %+v", unchanged)
+	}
+
+	changes := []struct {
+		name  string
+		apply func(*WorkbenchReportInput)
+	}{
+		{name: "title", apply: func(next *WorkbenchReportInput) { next.Title = "审批失效（更新）" }},
+		{name: "summary", apply: func(next *WorkbenchReportInput) { next.Desc = "更新摘要" }},
+		{name: "body", apply: func(next *WorkbenchReportInput) { next.Body = "更新正文" }},
+		{name: "format", apply: func(next *WorkbenchReportInput) { next.Format = "HTML" }},
+		{name: "style", apply: func(next *WorkbenchReportInput) { next.ArtifactStyleID = "brief-v2" }},
+	}
+	for _, change := range changes {
+		t.Run(change.name, func(t *testing.T) {
+			nextInput := input
+			change.apply(&nextInput)
+			changed, err := app.SaveWorkbenchReport(nextInput)
+			if err != nil {
+				t.Fatalf("SaveWorkbenchReport %s change: %v", change.name, err)
+			}
+			if changed.ReviewStatus != reportReviewStatusDraft || changed.StyleApproved || changed.ReviewedBy != "" {
+				t.Fatalf("%s change should invalidate approval: %+v", change.name, changed)
+			}
+			if _, err := app.ExportWorkbenchReport(report.ID); err == nil || !strings.Contains(err.Error(), "not approved") {
+				t.Fatalf("%s change should block export: %v", change.name, err)
+			}
+			input = nextInput
+			approveReportForExport(t, app, report.ID)
+		})
+	}
+}
+
+func TestWorkbenchReportExportRequiresApproval(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	report, err := app.SaveWorkbenchReport(WorkbenchReportInput{Title: "导出门禁", Body: "待导出正文"})
+	if err != nil {
+		t.Fatalf("SaveWorkbenchReport: %v", err)
+	}
+	if _, err := app.ExportWorkbenchReport(report.ID); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Fatalf("single export should reject unapproved report: %v", err)
+	}
+	approveReportForExport(t, app, report.ID)
+	path, err := app.ExportWorkbenchReport(report.ID)
+	if err != nil {
+		t.Fatalf("ExportWorkbenchReport after approval: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("approved report export was not written: %v", err)
+	}
+}
+
+func approveReportForExport(t *testing.T, app *App, id string) {
+	t.Helper()
+	if _, err := app.ReviewWorkbenchReport(id, "submit", "测试审批人", "提交审批"); err != nil {
+		t.Fatalf("submit report %s: %v", id, err)
+	}
+	if _, err := app.ReviewWorkbenchReport(id, "approve", "测试审批人", "允许导出"); err != nil {
+		t.Fatalf("approve report %s: %v", id, err)
 	}
 }
 

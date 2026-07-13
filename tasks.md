@@ -70,7 +70,7 @@
 | ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
 | ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
 | ANYONG-SYNC-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-RELEASE-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+| ANYONG-RELEASE-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.9.1/latest.json |
 
 ### ANYONG-RELEASE-20260713 Task Contract
 
@@ -87,6 +87,7 @@
 - 验证计划：fresh live refs/tags/Release；精确版本计算；现有 workflow/YAML/site 与 release tools 门禁；candidate verifier；创建空 `fix(desktop): release upstream Node 26 workflow update` trigger；guarded fast-forward push；轮询 CNB build/tag/Release；下载 manifest、installer、ZIP 校验 API hash/本地 SHA、manifest、ZIP 内容与 OEM 品牌；live verifier。
 - context_isolation：explorer 写 `.mailbox/054-release-explorer-result.md`；candidate verifier 写 `.mailbox/055-release-candidate-verifier-result.md`；live verifier 写 `.mailbox/056-release-live-verifier-result.md`；均不接收凭据内容。
 - interruption_recovery：子代理 timeout/error 时读取 mailbox，最多重派一次；`last_stable_artifact` 为 Task Contract、candidate commit、push porcelain、live ref/tag/Release JSON、已下载资产；生产操作由 orchestrator 恢复，缺少 live/verifier 证据时保持 running/PARTIAL。
+- completion_evidence：prepare `0b7c5247` 与 trigger `e9fac34bd82f9ab035b8c51aa5eeffe281a6b004` 已普通 fast-forward push；CNB build `cnb-bdo-1jtckikfp` overall、pipeline-1/2、`desktop-build`、`windows-release-tools-test`、`resolve-release`、`install-desktop-release-deps`、`build-windows-desktop`、`generate-manifest`、`publish-cnb-release` 全部 success。live tag `desktop-v0.9.1` 指向 trigger；Release 非 draft/prerelease且精确三资产：installer=`87334833` bytes / `1db22d31...d48e2`，ZIP=`87084598` / `67e08aa7...9aa0`，manifest=`428` / `dc879edb...3522`；manifest `v0.9.1` URL/size/SHA 与 installer 一致；ZIP 4090 entries，含 Anyong.exe、update helper、computer-use MCP 6.2.0/Windows N-API、Bun、Coreutils 2026.6.16；PE/Go build info 证明 Windows amd64、`main.version=v0.9.1` 和 OEM 中文 linker 默认。CLI explorer/candidate sidecar 多次启动 timeout，orchestrator 依 deterministic evidence 接管；原生 candidate verifier `.mailbox/055c-release-candidate-native-verifier-result.md` 与 live verifier `.mailbox/056-release-live-native-verifier-result.md` PASS。非阻断：本地 `desktop-v0.9.1` tag 来自其他 remote 且指向旧对象，本轮未移动；远端 CNB tag 正确。最终裁决 PASS。
 
 ### ANYONG-SYNC-20260713 Task Contract
 

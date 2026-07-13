@@ -19,9 +19,11 @@ func TestGenManifest(t *testing.T) {
 		"VoltUI-darwin-arm64.zip",
 		"VoltUI-darwin-amd64.zip",
 		"VoltUI-windows-amd64-installer.exe",
-		"VoltUI-windows-amd64.zip", // portable download, not the updater channel
+		"VoltUI-windows-amd64.zip",               // portable download, not the updater channel
+		"VoltUI-windows-amd64-prerequisites.zip", // offline runtimes, not the updater channel
 		"VoltUI-windows-arm64-installer.exe",
-		"VoltUI-windows-arm64.zip", // portable download, not the updater channel
+		"VoltUI-windows-arm64.zip",               // portable download, not the updater channel
+		"VoltUI-windows-arm64-prerequisites.zip", // offline runtimes, not the updater channel
 		"VoltUI-linux-amd64.tar.gz",
 		"VoltUI-linux-amd64.deb",             // human download, not the updater channel
 		"VoltUI-linux-amd64.tar.gz.checksum", // sidecar, must be skipped
@@ -65,8 +67,8 @@ func TestGenManifest(t *testing.T) {
 	if win.SHA256 == "" || win.Size == 0 {
 		t.Fatalf("windows asset missing digest/size: %+v", win)
 	}
-	// The Windows updater channel is the per-arch -installer.exe; the portable .zip
-	// must not shadow the windows-arm64 key.
+	// The Windows updater channel is the per-arch -installer.exe; portable and
+	// prerequisite ZIPs must not shadow the windows-arm64 key.
 	arm, ok := m.Platforms["windows-arm64"]
 	if !ok {
 		t.Fatal("windows-arm64 missing")

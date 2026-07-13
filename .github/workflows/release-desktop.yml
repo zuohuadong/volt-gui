@@ -93,6 +93,9 @@ jobs:
         with:
           version: 10
 
+      - name: Test Windows prerequisites staging contract
+        run: node --test scripts/stage-windows-prerequisites.test.mjs
+
       # Linux: WebKitGTK 4.1 toolchain (-tags webkit2_41 in desktop-build.sh).
       # 4.1 ships from ubuntu-22.04 on and is the only one present on 24.04+/Fedora 40+.
       - name: Install Linux build deps

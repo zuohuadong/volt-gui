@@ -70,6 +70,23 @@
 | ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
 | ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
 | ANYONG-SYNC-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RELEASE-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | running | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+
+### ANYONG-RELEASE-20260713 Task Contract
+
+- 目标：将已验证的 upstream merge 与协调提交推送到 CNB `origin/main`，创建最终 `fix(desktop):` release trigger，由 CNB Windows-only 流水线构建并发布新的 Anyong 桌面版本。
+- 非目标：不发布 macOS/Linux/CLI，不恢复 GitHub `release-desktop.yml`，不改仓库可见性，不 force push、不重写或覆盖既有 tag，不输出 Git/CNB/签名/OEM secret，不修改本轮已验证的产品代码和 workflow 语义。
+- 验收标准：push 前 fresh live `origin/main=9e18bcb5`、最新 CNB desktop tag/Release 为 `desktop-v0.9.0`；最终 HEAD 为 `fix(desktop):` trigger 并按 `.cnb.yml` 计算 `desktop-v0.9.1`；本地 candidate verifier PASS；普通 fast-forward push 后 live main 对齐；CNB pipeline-1/2 与所有 release stages success；tag/Release `desktop-v0.9.1` 指向 trigger；Release 精确包含 Anyong installer、ZIP、`latest.json`；manifest 版本/URL/size/SHA 与 installer 一致；真实 ZIP 保留 Anyong.exe、update helper、computer-use MCP/N-API、Bun、Coreutils/OEM runtime；独立 live verifier PASS。
+- 协作模式：`pipeline`。explorer 只读审计版本、触发、CI、鉴权和回滚；commit/push、CNB 监控与认证下载由 orchestrator 执行；candidate verifier 独立复核 push 前候选；live verifier 独立复核远端 ref/tag/Release/资产；生产凭据和外部写入不委派。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`xigu-ai-ops`；遵循 Conventional Commits、配置优先、`DESKTOP_APP_NAME=Anyong`、CNB Windows amd64 Wails/NSIS 发布边界。
+- Stack/Deployment Profile：沿用 Go CLI + Wails v2 desktop + Svelte frontend；部署目标为 CNB Linux Docker runner 交叉构建 Windows amd64，使用 minisign/CNB Release API 发布私有资产；不选择新技术栈、数据库或托管平台。
+- 版本基线：live CNB `origin` 最新 tag 与 Release 均为 `desktop-v0.9.0`；本地 `desktop-v0.12.0` 来自 GitHub upstream tag 且未存在于 origin，不能作为 CNB 版本基线。最终 `fix:` trigger 目标为 `desktop-v0.9.1`。
+- Secrets Strategy：Git 使用已有 credential helper；CNB token、minisign key/password、`XIGU_API_KEY` 仅由本地 credential/CNB secret 注入；命令输出只保留状态、commit/tag、资产元数据和哈希，不显示 secret 值，不读取 `bundled.env` 内容。
+- 风险：high，涉及远端 `main`、自动 tag/Release、Windows 原生打包、签名和私有资产；失败可能留下已 push 但未发布、部分 tag、空 Release 或资产不完整状态；本地 upstream/origin 同名历史 tag 冲突会误导版本判断。
+- 回滚：push 前失败则停止；push 后不改写历史或旧 tag，使用普通 `fix:` follow-up 修复并发布下一 patch；若 Release 部分生成，先保留证据并仅在明确需要时通过 CNB 管理面撤下，不 force push。
+- 验证计划：fresh live refs/tags/Release；精确版本计算；现有 workflow/YAML/site 与 release tools 门禁；candidate verifier；创建空 `fix(desktop): release upstream Node 26 workflow update` trigger；guarded fast-forward push；轮询 CNB build/tag/Release；下载 manifest、installer、ZIP 校验 API hash/本地 SHA、manifest、ZIP 内容与 OEM 品牌；live verifier。
+- context_isolation：explorer 写 `.mailbox/054-release-explorer-result.md`；candidate verifier 写 `.mailbox/055-release-candidate-verifier-result.md`；live verifier 写 `.mailbox/056-release-live-verifier-result.md`；均不接收凭据内容。
+- interruption_recovery：子代理 timeout/error 时读取 mailbox，最多重派一次；`last_stable_artifact` 为 Task Contract、candidate commit、push porcelain、live ref/tag/Release JSON、已下载资产；生产操作由 orchestrator 恢复，缺少 live/verifier 证据时保持 running/PARTIAL。
 
 ### ANYONG-SYNC-20260713 Task Contract
 

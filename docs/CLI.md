@@ -192,7 +192,8 @@ single-key shortcuts.
 
 | Key | Action |
 | --- | --- |
-| `Up` / `Down`, `j` / `k`, `Ctrl+P` / `Ctrl+N` | Move through picker or approval rows. |
+| `Up` / `Down`, `Ctrl+P` / `Ctrl+N` | Move through picker or approval rows. |
+| `j` / `k` | Move while the search is empty; after search input starts, enter `j` / `k` as query text. |
 | Type | Filter a searchable picker. |
 | `Enter` | Select the highlighted row. |
 | `Esc` | Cancel the current picker or approval. |

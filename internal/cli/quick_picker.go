@@ -65,14 +65,26 @@ func (p *quickPicker) handleKey(msg tea.KeyPressMsg) quickPickerResult {
 		return quickPickerResult{}
 	}
 	items := p.filteredItems()
-	switch msg.String() {
+	key := msg.String()
+	// Match Claude Code's searchable menus: bare j/k navigate until a search
+	// starts, then become ordinary query characters. Arrows and Ctrl+P/N always
+	// remain available for navigation.
+	if p.query == "" {
+		switch key {
+		case "k":
+			key = "up"
+		case "j":
+			key = "down"
+		}
+	}
+	switch key {
 	case "esc":
 		return quickPickerResult{cancelled: true}
-	case "up", "k", "ctrl+p":
+	case "up", "ctrl+p":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "j", "ctrl+n":
+	case "down", "ctrl+n":
 		if p.selected < len(items)-1 {
 			p.selected++
 		}

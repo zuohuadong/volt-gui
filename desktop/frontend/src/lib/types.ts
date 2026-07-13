@@ -1077,7 +1077,18 @@ export type WireEventKind =
   | "retrying"
   | "steer"
   | "memory_compiler_stats"
-  | "guardian_assessment";
+  | "guardian_assessment"
+  | "browser_credential_request"
+  | "browser_verification_request";
+
+export interface WireBrowserPrompt {
+  id: string;
+  origin: string;
+  url?: string;
+  hasSaved?: boolean;
+  usernameHint?: string;
+  reason?: string;
+}
 
 export interface WireCacheDiagnostics {
   prefixHash: string;
@@ -1152,6 +1163,7 @@ export interface WireEvent {
     subject: string;
   };
   ask?: WireAsk;
+  browserPrompt?: WireBrowserPrompt;
   usage?: {
     promptTokens?: number;
     completionTokens?: number;
@@ -1233,6 +1245,12 @@ export interface WireApproval {
   tool: string;
   subject: string;
   reason?: string;
+}
+
+export interface BrowserCredentialView {
+  origin: string;
+  username: string;
+  updatedAt?: string;
 }
 
 export interface CommandInfo {

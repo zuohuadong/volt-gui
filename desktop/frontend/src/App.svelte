@@ -63,6 +63,8 @@
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
   import Transcript from "./components/Transcript.svelte";
+  import BrowserCredentialSettings from "./components/BrowserCredentialSettings.svelte";
+  import BrowserInteractionPrompt from "./components/BrowserInteractionPrompt.svelte";
   import TrustedIntranetSettings from "./components/TrustedIntranetSettings.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import { app, onAgentEvent, onWorkspaceReady } from "./lib/bridge";
@@ -86,6 +88,7 @@
     AgentInput,
     AgentView,
     BrandInfo,
+    BrowserCredentialView,
     CapabilitiesView,
     CheckpointMeta,
     CommandInfo,
@@ -102,6 +105,7 @@
     TrustedIntranetSiteView,
     WireApproval,
     WireAsk,
+    WireBrowserPrompt,
     WireEvent,
     WorkbenchPluginInput,
     WorkbenchPlugin,
@@ -330,6 +334,10 @@
   let diffPreview = $state<WorkspaceDiffView | undefined>();
   let pendingApproval = $state<WireApproval | undefined>();
   let pendingAsk = $state<WireAsk | undefined>();
+  let pendingBrowserCredential = $state<WireBrowserPrompt | undefined>();
+  let pendingBrowserVerification = $state<WireBrowserPrompt | undefined>();
+  let browserCredentials = $state<BrowserCredentialView[]>([]);
+  let browserCredentialRemoving = $state("");
   let loading = $state(true);
   let needsAuth = $state<boolean | null>(null);
   let sending = $state(false);
@@ -467,7 +475,7 @@
     syncArtifactReview(selectedReport());
   });
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
-  const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
+  const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk) || Boolean(pendingBrowserCredential) || Boolean(pendingBrowserVerification));
   const showActiveTranscript = $derived(((activityMode === "code" && newTaskConversationActive) || (activityMode === "work" && workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || newTaskConversationActive));
   const brandName = $derived(brand.name?.trim() || "VoltUI");
   const brandShortName = $derived(brand.shortName?.trim() || brandName);
@@ -2187,6 +2195,22 @@
     }
   }
 
+  async function removeBrowserCredential(credential: BrowserCredentialView) {
+    if (!hasWailsBindings()) return;
+    browserCredentialRemoving = credential.origin;
+    settingsMessage = "";
+    modelSettingsError = "";
+    try {
+      await app().RemoveBrowserCredential(credential.origin);
+      browserCredentials = await app().ListBrowserCredentials();
+      settingsMessage = `已删除 ${credential.origin} 的浏览器登录凭据。`;
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      browserCredentialRemoving = "";
+    }
+  }
+
   function providerDraftFromView(provider?: ProviderView): ModelProviderDraft {
     if (!provider) return emptyModelProviderDraft();
     return {
@@ -2281,6 +2305,11 @@
     modelSettingsMessage = "";
     try {
       modelSettings = await app().Settings();
+      try {
+        browserCredentials = await app().ListBrowserCredentials();
+      } catch {
+        browserCredentials = [];
+      }
       syncSettingsDraft(modelSettings);
     } catch (error) {
       modelSettingsError = error instanceof Error ? error.message : String(error);
@@ -2999,6 +3028,8 @@
     sending = false;
     pendingApproval = undefined;
     pendingAsk = undefined;
+    pendingBrowserCredential = undefined;
+    pendingBrowserVerification = undefined;
     submittedDraft = undefined;
     restoreDraftOnTurnDone = false;
     draftConversationThread = undefined;
@@ -6014,6 +6045,8 @@
     transcript = historyToTranscript(history);
     pendingApproval = undefined;
     pendingAsk = undefined;
+    pendingBrowserCredential = undefined;
+    pendingBrowserVerification = undefined;
     scrollConversationToBottom("auto");
   }
 
@@ -6027,6 +6060,8 @@
       }
       pendingApproval = undefined;
       pendingAsk = undefined;
+      pendingBrowserCredential = undefined;
+      pendingBrowserVerification = undefined;
       ensurePendingAssistant();
     }
     if (event.kind === "reasoning" && event.reasoning) {
@@ -6130,6 +6165,18 @@
     }
     if (event.kind === "ask_request" && event.ask) {
       pendingAsk = event.ask;
+      sending = false;
+      scrollConversationToBottom();
+    }
+    if (event.kind === "browser_credential_request" && event.browserPrompt) {
+      pendingBrowserCredential = event.browserPrompt;
+      pendingBrowserVerification = undefined;
+      sending = false;
+      scrollConversationToBottom();
+    }
+    if (event.kind === "browser_verification_request" && event.browserPrompt) {
+      pendingBrowserVerification = event.browserPrompt;
+      pendingBrowserCredential = undefined;
       sending = false;
       scrollConversationToBottom();
     }
@@ -6318,6 +6365,16 @@
       void cancel();
       return;
     }
+    if (pendingBrowserCredential) {
+      event.preventDefault();
+      void submitBrowserCredential("", "", false);
+      return;
+    }
+    if (pendingBrowserVerification) {
+      event.preventDefault();
+      void completeBrowserVerification(false);
+      return;
+    }
     if (pendingApproval) {
       event.preventDefault();
       void answerApproval(false, false, false);
@@ -6393,6 +6450,20 @@
     const ask = pendingAsk;
     pendingAsk = undefined;
     await app().AnswerQuestionForTab(activeTab.id, ask.id, answers);
+  }
+
+  async function submitBrowserCredential(username: string, password: string, save: boolean) {
+    if (!activeTab || !pendingBrowserCredential) return;
+    const prompt = pendingBrowserCredential;
+    pendingBrowserCredential = undefined;
+    await app().SubmitBrowserCredentialTab(activeTab.id, prompt.id, username, password, save);
+  }
+
+  async function completeBrowserVerification(continued: boolean) {
+    if (!activeTab || !pendingBrowserVerification) return;
+    const prompt = pendingBrowserVerification;
+    pendingBrowserVerification = undefined;
+    await app().CompleteBrowserVerificationTab(activeTab.id, prompt.id, continued);
   }
 
   async function openCodeInspector() {
@@ -6591,6 +6662,16 @@
                 onDismissAsk={() => (pendingAsk = undefined)}
                 onLoadArchivedTool={loadArchivedToolEvidence}
               />
+              {#if pendingBrowserCredential || pendingBrowserVerification}
+                {#key pendingBrowserCredential?.id ?? pendingBrowserVerification?.id}
+                  <BrowserInteractionPrompt
+                    credential={pendingBrowserCredential}
+                    verification={pendingBrowserVerification}
+                    onSubmitCredential={submitBrowserCredential}
+                    onCompleteVerification={completeBrowserVerification}
+                  />
+                {/key}
+              {/if}
             </div>
             <div class="stage__composer conversation-composer">
               <Composer
@@ -8203,6 +8284,11 @@
                         sites={modelSettings?.network?.trustedIntranet?.sites ?? []}
                         removingKey={trustedIntranetRemoving}
                         onRemove={removeTrustedIntranetSite}
+                      />
+                      <BrowserCredentialSettings
+                        credentials={browserCredentials}
+                        removingOrigin={browserCredentialRemoving}
+                        onRemove={removeBrowserCredential}
                       />
                     </div>
                   {:else}

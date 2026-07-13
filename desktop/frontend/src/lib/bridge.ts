@@ -5,6 +5,7 @@
 import type {
   CommandInfo,
   BrandInfo,
+  BrowserCredentialView,
   ContextPanelInfo,
   DirEntry,
   DroppedItem,
@@ -123,6 +124,8 @@ interface AppBindings {
   ClearGoalForTab(tabID: string): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
+  SubmitBrowserCredentialTab(tabID: string, id: string, username: string, password: string, save: boolean): Promise<void>;
+  CompleteBrowserVerificationTab(tabID: string, id: string, continued: boolean): Promise<void>;
   Commands(): Promise<CommandInfo[]>;
   SlashArgs(input: string): Promise<{ items: SlashArgItem[]; from: number }>;
   ListDir(rel: string): Promise<DirEntry[]>;
@@ -220,6 +223,8 @@ interface AppBindings {
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[], shell: string): Promise<void>;
   RemoveTrustedIntranetSite(site: TrustedIntranetSiteView): Promise<void>;
+  ListBrowserCredentials(): Promise<BrowserCredentialView[]>;
+  RemoveBrowserCredential(origin: string): Promise<void>;
   NeedsAuth(): Promise<boolean>;
   StartOIDCLogin(): Promise<void>;
   CancelOIDCLogin(): Promise<void>;

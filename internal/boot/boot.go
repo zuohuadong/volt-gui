@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"voltui/internal/agent"
+	"voltui/internal/browserauth"
 	"voltui/internal/builtinmcp"
 	"voltui/internal/command"
 	"voltui/internal/config"
@@ -98,6 +99,9 @@ type Options struct {
 	// so each tab loads its own config/skills/hooks without changing the process
 	// cwd — enabling concurrent multi-project sessions.
 	WorkspaceRoot string
+	// AgentProfile overlays the selected desktop/thread profile onto this
+	// controller. Empty profile fields inherit the normal configuration.
+	AgentProfile *AgentProfile
 	// ExtraPlugins are session-scoped MCP servers supplied by a host transport
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to voltui.toml.
@@ -314,6 +318,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
+	sysPrompt = applyAgentProfilePrompt(sysPrompt, opts.AgentProfile)
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their
 	// one-liner index into the same cache-stable prefix — names + descriptions
@@ -324,17 +329,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		CustomPaths:   cfg.SkillCustomPaths(),
 		ExcludedPaths: cfg.SkillExcludedPaths(),
 		DisabledNames: cfg.DisabledSkillNames(),
+		AllowedNames:  agentProfileSkillNames(opts.AgentProfile),
 		MaxDepth:      cfg.SkillMaxDepth(),
 		Stderr:        opts.Stderr,
 	})
 	skills := skillStore.List()
-	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), ExcludedPaths: cfg.SkillExcludedPaths(), AllowedNames: agentProfileSkillNames(opts.AgentProfile), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
 	allSkills := allSkillStore.List()
 	if !tokenEconomy {
 		sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 	}
 
 	reg := tool.NewRegistry()
+	reg.SetAllowPolicy(agentProfileToolAllowPolicy(opts.AgentProfile))
 	writeRoots := cfg.WriteRootsForRoot(root)
 	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)
 	// managedConfig names the Reasonix-owned config FILES (config.toml,
@@ -1164,6 +1171,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Shell:                  shell,
 		PlanModeAllowedTools:   cfg.Agent.PlanModeAllowedTools,
 		ApprovalTimeout:        opts.ApprovalTimeout,
+		BrowserCredentialVault: browserauth.NewVault(),
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},

@@ -32,6 +32,7 @@ import (
 	"voltui/internal/agent"
 	"voltui/internal/autoresearch"
 	"voltui/internal/billing"
+	"voltui/internal/browserauth"
 	"voltui/internal/builtinmcp"
 	"voltui/internal/checkpoint"
 	"voltui/internal/command"
@@ -142,8 +143,9 @@ type Controller struct {
 	// goals owns the active goal's FSM (status, intercepts, idle/turn counters)
 	// and its persistence, behind its own mutex so a per-turn goal save never
 	// stalls an approval or status poll on c.mu. See goal.go.
-	goals        goalMachine
-	autoResearch *autoresearch.Store
+	goals          goalMachine
+	browserPrompts browserPromptManager
+	autoResearch   *autoresearch.Store
 
 	// workspaceRoot is the workspace root: the base for resolving @-refs and slash
 	// path refs, the working directory for user "!" shell commands and custom
@@ -412,6 +414,9 @@ type Options struct {
 	// terminal. Bot/headless frontends set a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// BrowserCredentialVault stores browser login credentials exclusively in the
+	// OS keyring. nil keeps interactive login ephemeral.
+	BrowserCredentialVault *browserauth.Vault
 }
 
 // New builds a Controller. A nil Sink is replaced with event.Discard.
@@ -465,6 +470,7 @@ func New(opts Options) *Controller {
 		workspaceRoot:                     opts.WorkspaceRoot,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
+		browserPrompts:                    newBrowserPromptManager(opts.BrowserCredentialVault, opts.ApprovalTimeout),
 	}
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
@@ -1461,6 +1467,7 @@ func (c *Controller) Run(ctx context.Context, input string) error {
 // Cancel aborts the in-flight turn. A goroutine blocked awaiting approval
 // unblocks via the cancelled context.
 func (c *Controller) Cancel() {
+	c.browserPrompts.clearAll()
 	c.mu.Lock()
 	cancel := c.cancel
 	if cancel != nil {
@@ -1519,7 +1526,7 @@ func (c *Controller) CancelRequested() bool {
 // PendingPrompt reports whether the current turn is blocked waiting for a user
 // approval, plan approval, memory approval, or ask-tool answer.
 func (c *Controller) PendingPrompt() bool {
-	return c.approval.hasPending()
+	return c.approval.hasPending() || c.browserPrompts.hasPending()
 }
 
 // RuntimeStatus reports the active work owned by the foreground controller.
@@ -1528,7 +1535,7 @@ func (c *Controller) RuntimeStatus() RuntimeStatus {
 	running := c.running
 	canceling := c.canceling
 	c.mu.Unlock()
-	pending := c.approval.hasPending()
+	pending := c.approval.hasPending() || c.browserPrompts.hasPending()
 	backgroundJobs := len(c.Jobs())
 	return RuntimeStatus{
 		Running:         running,
@@ -1566,12 +1573,14 @@ func (c *Controller) EnableInteractiveApproval() {
 	escapeApprover := sandboxEscapeApprover{c}
 	configApprover := managedConfigWriteApprover{c}
 	intranetApprover := trustedIntranetApprover{c}
+	browserProvider := tool.BrowserInteractionProvider(c)
 	if c.executor != nil {
 		c.executor.SetGate(c.newInteractiveGate())
 		c.executor.SetPlanModeReadOnlyTrustGate(trustGate)
 		c.executor.SetSandboxEscapeApprover(escapeApprover)
 		c.executor.SetConfigWriteApprover(configApprover)
 		c.executor.SetTrustedIntranetApprover(intranetApprover)
+		c.executor.SetBrowserInteractionProvider(browserProvider)
 		c.executor.SetAsker(c)
 	}
 	if setter, ok := c.runner.(interface {
@@ -1593,6 +1602,11 @@ func (c *Controller) EnableInteractiveApproval() {
 		SetTrustedIntranetApprover(tool.TrustedIntranetApprover)
 	}); ok {
 		setter.SetTrustedIntranetApprover(intranetApprover)
+	}
+	if setter, ok := c.runner.(interface {
+		SetBrowserInteractionProvider(tool.BrowserInteractionProvider)
+	}); ok {
+		setter.SetBrowserInteractionProvider(browserProvider)
 	}
 }
 
@@ -1700,6 +1714,13 @@ func (c *Controller) ReplayPendingPrompts() {
 	}
 	for _, a := range asks {
 		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
+	}
+	credentials, verifications := c.browserPrompts.snapshot()
+	for _, prompt := range credentials {
+		c.sink.Emit(event.Event{Kind: event.BrowserCredentialRequest, BrowserPrompt: prompt})
+	}
+	for _, prompt := range verifications {
+		c.sink.Emit(event.Event{Kind: event.BrowserVerificationRequest, BrowserPrompt: prompt})
 	}
 }
 
@@ -2508,7 +2529,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		return "", c.rewindFail(err)
 	}
 	forkPreview, forkTurns := agent.SessionPreviewFromMessages(forked)
-	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
+	forkMeta := agent.BranchMeta{
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         turn,
@@ -2516,7 +2537,11 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		Preview:          forkPreview,
 		Turns:            forkTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
-	}); err != nil {
+	}
+	if parentMeta, ok, loadErr := agent.LoadBranchMeta(parentPath); loadErr == nil && ok {
+		forkMeta.InheritAgentProfile(parentMeta)
+	}
+	if err := agent.SaveBranchMeta(newPath, forkMeta); err != nil {
 		return "", c.rewindFail(err)
 	}
 	if switchToFork {
@@ -2589,7 +2614,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		return "", c.rewindFail(err)
 	}
 	branchPreview, branchTurns := agent.SessionPreviewFromMessages(branched)
-	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
+	branchMeta := agent.BranchMeta{
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         -1,
@@ -2597,7 +2622,11 @@ func (c *Controller) Branch(name string) (string, error) {
 		Preview:          branchPreview,
 		Turns:            branchTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
-	}); err != nil {
+	}
+	if parentMeta, ok, loadErr := agent.LoadBranchMeta(parentPath); loadErr == nil && ok {
+		branchMeta.InheritAgentProfile(parentMeta)
+	}
+	if err := agent.SaveBranchMeta(newPath, branchMeta); err != nil {
 		return "", c.rewindFail(err)
 	}
 	// See snapshotMu: the swap must not interleave with an in-flight save.

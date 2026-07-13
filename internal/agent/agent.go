@@ -320,6 +320,10 @@ type Agent struct {
 	// complete_step validate that cited evidence happened before the claim.
 	evidence *evidence.Ledger
 
+	// browserInteractionProvider supplies credentials and human verification via
+	// a secure in-process channel. nil keeps browser login fail-closed.
+	browserInteractionProvider tool.BrowserInteractionProvider
+
 	// todoState is the host's canonical task list: the latest successful
 	// todo_write with completions applied by complete_step. Unlike the per-turn
 	// ledger it survives turn boundaries and compaction (it never rides in the
@@ -669,6 +673,13 @@ func (a *Agent) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
 	a.configWriteApprover = g
 }
 
+func (a *Agent) SetBrowserInteractionProvider(provider tool.BrowserInteractionProvider) {
+	if nilutil.IsNil(provider) {
+		provider = nil
+	}
+	a.browserInteractionProvider = provider
+}
+
 func (a *Agent) SetTrustedIntranetApprover(g tool.TrustedIntranetApprover) {
 	if nilutil.IsNil(g) {
 		g = nil
@@ -885,6 +896,10 @@ type Options struct {
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
+	// BrowserInteractionProvider supplies browser credentials and verification
+	// prompts. nil keeps login requests fail-closed in headless sessions.
+	BrowserInteractionProvider tool.BrowserInteractionProvider
+
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks []instruction.VerifyCheck
 
@@ -986,6 +1001,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		maxSubagentDepth = NormalizeMaxSubagentDepth(maxSubagentDepth)
 	}
 	subagentDepth := opts.SubagentDepth
+	browserInteractionProvider := opts.BrowserInteractionProvider
+	if nilutil.IsNil(browserInteractionProvider) {
+		browserInteractionProvider = nil
+	}
 	if subagentDepth < 0 {
 		subagentDepth = 0
 	}
@@ -1006,6 +1025,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		trustedIntranetApprover:     trustedIntranetApprover,
 		hooks:                       hooks,
 		jobs:                        opts.Jobs,
+		browserInteractionProvider:  browserInteractionProvider,
 		evidence:                    evidence.NewLedger(),
 		projectChecks:               append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		contextWindow:               opts.ContextWindow,
@@ -2482,6 +2502,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.evidence != nil {
 		cctx = evidence.WithLedger(cctx, a.evidence)
 		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
+		if a.browserInteractionProvider != nil {
+			cctx = tool.WithBrowserInteractionProvider(cctx, a.browserInteractionProvider)
+		}
 	}
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)

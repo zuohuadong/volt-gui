@@ -6089,6 +6089,9 @@ func TestSubmitToTabHistoryDisplaysRawInputAfterMemoryCompose(t *testing.T) {
 
 func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	isolateDesktopUserDirs(t)
+	if err := saveAgents([]PersistentAgentView{{ID: "reviewer", Name: "Reviewer", Status: "已启用", Desc: "Review carefully."}}); err != nil {
+		t.Fatal(err)
+	}
 
 	workspace := robustTempDir(t)
 	if err := os.WriteFile(filepath.Join(workspace, "voltui.toml"), []byte(""), 0o644); err != nil {
@@ -6117,6 +6120,9 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	app.tabs["test"].WorkspaceRoot = workspace
 	app.tabs["test"].TopicID = "topic_source"
 	app.tabs["test"].TopicTitle = "Source topic"
+	app.tabs["test"].AgentProfileID = "reviewer"
+	app.tabs["test"].AgentProfileName = "Reviewer"
+	app.tabs["test"].AgentProfileBaseModel = "base/model"
 	defer ctrl.Close()
 
 	ctrl.Submit("first")
@@ -6127,6 +6133,19 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	waitNotRunning(t, ctrl)
 	if got := len(ctrl.History()); got != 5 {
 		t.Fatalf("source history len before fork = %d, want 5", got)
+	}
+	profileChangedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	parentMeta, err := agent.EnsureBranchMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentMeta.AgentProfileID = "reviewer"
+	parentMeta.AgentProfileName = "Reviewer"
+	parentMeta.AgentProfileBaseModel = "base/model"
+	parentMeta.AgentProfileUpdatedAt = profileChangedAt
+	parentMeta.AgentProfileHistory = []agent.AgentProfileSwitch{{ProfileID: "reviewer", ProfileName: "Reviewer", ModelRef: "profile/model", Action: "select", ChangedAt: time.Now().UTC()}}
+	if err := agent.SaveBranchMetaPreserveUpdated(path, parentMeta); err != nil {
+		t.Fatal(err)
 	}
 
 	meta, err := app.Fork(1)
@@ -6147,6 +6166,15 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	}
 	if got, want := meta.TopicTitle, "Source topic · 分叉"; got != want {
 		t.Fatalf("fork topic title = %q, want %q", got, want)
+	}
+	if meta.AgentProfileID != "reviewer" || meta.AgentProfileName != "Reviewer" || meta.AgentProfileBaseModel != "base/model" {
+		t.Fatalf("fork tab meta lost agent profile: %+v", meta)
+	}
+	app.mu.RLock()
+	forkTab := app.tabs[meta.ID]
+	app.mu.RUnlock()
+	if forkTab == nil || forkTab.AgentProfileID != "reviewer" || forkTab.AgentProfileName != "Reviewer" || forkTab.AgentProfileBaseModel != "base/model" {
+		t.Fatalf("fork workspace tab lost agent profile: %+v", forkTab)
 	}
 
 	var forkPath string
@@ -6173,6 +6201,12 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 			}
 			if m.Scope != "project" || m.WorkspaceRoot != workspace || m.TopicTitle != "Source topic · 分叉" {
 				t.Fatalf("fork topic meta = %+v", m)
+			}
+			if m.AgentProfileID != "reviewer" || m.AgentProfileName != "Reviewer" || m.AgentProfileBaseModel != "base/model" || m.AgentProfileUpdatedAt != profileChangedAt {
+				t.Fatalf("fork branch meta lost agent profile: %+v", m)
+			}
+			if len(m.AgentProfileHistory) != 1 || m.AgentProfileHistory[0].ModelRef != "profile/model" {
+				t.Fatalf("fork branch meta lost agent profile history: %+v", m.AgentProfileHistory)
 			}
 		}
 	}

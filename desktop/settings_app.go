@@ -1582,6 +1582,10 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		}
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model: model, RequireKey: false,
 		Sink:                     snap.sink,
@@ -1589,6 +1593,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

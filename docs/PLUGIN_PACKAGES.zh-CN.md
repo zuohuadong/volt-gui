@@ -204,13 +204,42 @@ VoltUI 原生插件在根目录声明 `voltui-plugin.json`：
 
 相对路径都按插件根目录解析。VoltUI 安装插件时不会执行第三方安装脚本。
 
-## Codex 兼容
+## Codex 与 Claude 兼容
 
-VoltUI 也会读取 `.codex-plugin/plugin.json`。对于 Superpowers 这类插件，
-VoltUI 会映射：
+VoltUI 也会读取 `.codex-plugin/plugin.json` 和 `.claude-plugin/plugin.json`。
+VoltUI 尚未映射的 Claude 插件能力（`agents/`、`hooks/hooks.json`、
+`.mcp.json`）会以安装警告的形式提示，而不是被静默丢弃。GitHub 仓库若在
+`.claude-plugin/marketplace.json` 中通过 `./plugins/example` 或
+`plugins/example` 这类相对字符串列出多个插件，可以直接从仓库根目录安装；
+预检会在写入前逐项展示安装动作。填写可选安装名称时，可只选择 marketplace
+中的同名插件。外部/object 来源、npm、`strict: false` 以及其他高级
+marketplace 来源协议暂未实现：整库安装时这类条目会跳过并给出警告，
+按名称选中这类条目时则直接报错。
+对于 Superpowers 和 Claude 风格 skill 包，VoltUI 会映射：
 
-- `skills` 到 VoltUI skill root。
+- `skills` 到 VoltUI skill root。Claude 清单若未声明 `skills` 字段，会回退到
+  约定目录 `skills/`（或 `.claude/skills/`），与 Claude 自身的自动发现一致。
+  插件 skill 统一以 `/<插件名>:<技能名>` 展示和调用。无歧义的 `/<技能名>`
+  仍作为隐藏兼容别名接受输入；项目和用户 skill 保留短名称，多个插件导出的
+  同名 skill 则只能通过各自的限定名称独立调用。这一用户侧命名空间不会改变
+  模型 skill 索引或 `run_skill` 工具使用的内部短标识。
+- `commands/`（以及 `.claude/commands/`）映射为 VoltUI 自定义斜杠命令：每个
+  `<name>.md` 提示词模板统一以 `/<插件名>:<命令名>` 展示和调用，frontmatter 的
+  `description` / `argument-hint` 以及 `$ARGUMENTS` / `$1..$N` 替换均生效。
+  当短名称没有歧义时，`/<命令名>` 仍作为隐藏兼容别名接受输入，但不会出现在
+  补全、帮助、桌面菜单、ACP 命令发现或提供给模型的命令清单中。用户和项目命令
+  始终占有自己的短名称；多个插件导出同名命令时不会生成短名称别名。显式自定义
+  命令也可以占用限定名称，Desktop 插件详情会报告该冲突。原生
+  `voltui-plugin.json` 清单也可以通过 `"commands"` 路径列表显式声明。
 - 如果存在 `hooks/session-start-codex`，映射为 VoltUI `SessionStart` hook。
+- 插件根目录的 `CLAUDE.md` 会映射为内置的 `SessionStart` 上下文 hook。
+  VoltUI 会直接读取该文件，不通过 shell 命令。
+- `.claude/settings.json` 里的 command hooks 会按同名事件映射到 VoltUI hooks。
+  Claude 的 `matcher` 字段会映射到 VoltUI `match`；hook 命令以插件根目录作为
+  `cwd` 执行；Claude `timeout` 按秒解析。
+
+不支持的 Claude hook item type 会跳过并产生 warning。VoltUI 不会执行第三方安装脚本。
+
 
 插件 hook 会收到这些环境变量：
 

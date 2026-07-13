@@ -96,6 +96,10 @@ type Options struct {
 	CustomPaths     []string
 	ExcludedPaths   []string
 	DisabledNames   []string
+	// AllowedNames is a session-scoped canonical skill allowlist. Empty keeps
+	// the inherited full skill surface; non-empty values restrict both listing
+	// and direct invocation through Read.
+	AllowedNames    []string
 	MaxDepth        int
 	DisableBuiltins bool // suppress shipped built-ins (test-only knob)
 	// Stderr is the writer for diagnostic warnings. When nil, defaults to
@@ -112,6 +116,7 @@ type Store struct {
 	customPaths     []string
 	excludedPaths   map[string]bool
 	disabled        map[string]bool
+	allowed         map[string]bool
 	maxDepth        int
 	disableBuiltins bool
 	stderr          io.Writer
@@ -162,6 +167,7 @@ func New(opts Options) *Store {
 		customPaths:     custom,
 		excludedPaths:   excluded,
 		disabled:        disabledNameSet(opts.DisabledNames),
+		allowed:         allowedNameSet(opts.AllowedNames),
 		maxDepth:        normalizeMaxDepth(opts.MaxDepth),
 		disableBuiltins: opts.DisableBuiltins,
 		stderr:          stderr,
@@ -258,8 +264,22 @@ func disabledNameSet(names []string) map[string]bool {
 	return out
 }
 
+func allowedNameSet(names []string) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range names {
+		if key := config.SkillNameKey(name); key != "" {
+			out[key] = true
+		}
+	}
+	return out
+}
+
 func (s *Store) disabledName(name string) bool {
 	return s.disabled[config.SkillNameKey(name)]
+}
+
+func (s *Store) allowedName(name string) bool {
+	return len(s.allowed) == 0 || s.allowed[config.SkillNameKey(name)]
 }
 
 func normalizeMaxDepth(depth int) int {
@@ -310,7 +330,7 @@ func (s *Store) List() []Skill {
 			continue
 		}
 		for _, sk := range s.discoverRoot(r) {
-			if s.disabledName(sk.Name) {
+			if s.disabledName(sk.Name) || !s.allowedName(sk.Name) {
 				continue
 			}
 			if _, dup := byName[sk.Name]; !dup {
@@ -320,7 +340,7 @@ func (s *Store) List() []Skill {
 	}
 	if !s.disableBuiltins {
 		for _, sk := range builtinSkills() {
-			if s.disabledName(sk.Name) {
+			if s.disabledName(sk.Name) || !s.allowedName(sk.Name) {
 				continue
 			}
 			if _, dup := byName[sk.Name]; !dup {
@@ -343,6 +363,9 @@ func (s *Store) Read(name string) (Skill, bool) {
 		return Skill{}, false
 	}
 	if s.disabledName(name) {
+		return Skill{}, false
+	}
+	if !s.allowedName(name) {
 		return Skill{}, false
 	}
 	for _, sk := range s.List() {

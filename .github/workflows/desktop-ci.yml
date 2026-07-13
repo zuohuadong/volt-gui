@@ -12,11 +12,17 @@ on:
       - "internal/**"
       - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/check-runtime-mocks.mjs"
+      - "scripts/check-runtime-mocks.test.mjs"
       - "scripts/prod-test.test.mjs"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
       - "scripts/stage-coreutils.mjs"
       - "scripts/stage-coreutils.test.mjs"
+      - "scripts/stage-windows-prerequisites.mjs"
+      - "scripts/stage-windows-prerequisites.test.mjs"
+      - "scripts/ui-feature-smoke.mjs"
+      - "scripts/workbench-crud-smoke.mjs"
       - "third_party/coreutils/**"
   push:
     branches: [main]
@@ -29,11 +35,17 @@ on:
       - "internal/**"
       - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/check-runtime-mocks.mjs"
+      - "scripts/check-runtime-mocks.test.mjs"
       - "scripts/prod-test.test.mjs"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
       - "scripts/stage-coreutils.mjs"
       - "scripts/stage-coreutils.test.mjs"
+      - "scripts/stage-windows-prerequisites.mjs"
+      - "scripts/stage-windows-prerequisites.test.mjs"
+      - "scripts/ui-feature-smoke.mjs"
+      - "scripts/workbench-crud-smoke.mjs"
       - "third_party/coreutils/**"
   workflow_dispatch:
 
@@ -75,8 +87,17 @@ jobs:
         with:
           version: 10
 
+      - name: Runtime production mock gate
+        if: matrix.name == 'linux-amd64'
+        run: |
+          node --test scripts/check-runtime-mocks.test.mjs
+          node scripts/check-runtime-mocks.mjs
+
       - name: Test Coreutils staging contract
         run: node --test scripts/stage-coreutils.test.mjs
+
+      - name: Test Windows prerequisites staging contract
+        run: node --test scripts/stage-windows-prerequisites.test.mjs
 
       - name: Test local production packaging contract
         if: runner.os == 'macOS'

@@ -282,6 +282,10 @@ type Agent struct {
 	// may write a VoltUI-managed config file outside the workspace roots.
 	configWriteApprover tool.ConfigWriteApprover
 
+	// trustedIntranetApprover, when non-nil, can ask the user whether web_fetch
+	// may connect to one exact locally-resolved private destination.
+	trustedIntranetApprover tool.TrustedIntranetApprover
+
 	// hooks, when non-nil, fires PreToolUse / PostToolUse shell hooks around each
 	// tool call. nil disables hook firing.
 	hooks ToolHooks
@@ -315,6 +319,10 @@ type Agent struct {
 	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
 	// complete_step validate that cited evidence happened before the claim.
 	evidence *evidence.Ledger
+
+	// browserInteractionProvider supplies credentials and human verification via
+	// a secure in-process channel. nil keeps browser login fail-closed.
+	browserInteractionProvider tool.BrowserInteractionProvider
 
 	// todoState is the host's canonical task list: the latest successful
 	// todo_write with completions applied by complete_step. Unlike the per-turn
@@ -665,6 +673,20 @@ func (a *Agent) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
 	a.configWriteApprover = g
 }
 
+func (a *Agent) SetBrowserInteractionProvider(provider tool.BrowserInteractionProvider) {
+	if nilutil.IsNil(provider) {
+		provider = nil
+	}
+	a.browserInteractionProvider = provider
+}
+
+func (a *Agent) SetTrustedIntranetApprover(g tool.TrustedIntranetApprover) {
+	if nilutil.IsNil(g) {
+		g = nil
+	}
+	a.trustedIntranetApprover = g
+}
+
 func (a *Agent) withTurnPreferences(input string) string {
 	if a == nil {
 		return input
@@ -852,6 +874,10 @@ type Options struct {
 	// files outside the workspace roots. nil keeps fail-closed behavior.
 	ConfigWriteApprover tool.ConfigWriteApprover
 
+	// TrustedIntranetApprover confirms web_fetch access to one exact private
+	// host/IP/port tuple. nil keeps private destinations fail-closed.
+	TrustedIntranetApprover tool.TrustedIntranetApprover
+
 	// Context management. ContextWindow <= 0 disables compaction. Ratios and
 	// RecentKeep fall back to defaults when unset.
 	ContextWindow       int
@@ -869,6 +895,10 @@ type Options struct {
 
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
+
+	// BrowserInteractionProvider supplies browser credentials and verification
+	// prompts. nil keeps login requests fail-closed in headless sessions.
+	BrowserInteractionProvider tool.BrowserInteractionProvider
 
 	// ProjectChecks are host-observable structured checks extracted during boot.
 	ProjectChecks []instruction.VerifyCheck
@@ -952,6 +982,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(configWriteApprover) {
 		configWriteApprover = nil
 	}
+	trustedIntranetApprover := opts.TrustedIntranetApprover
+	if nilutil.IsNil(trustedIntranetApprover) {
+		trustedIntranetApprover = nil
+	}
 	hooks := opts.Hooks
 	if nilutil.IsNil(hooks) {
 		hooks = nil
@@ -967,6 +1001,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		maxSubagentDepth = NormalizeMaxSubagentDepth(maxSubagentDepth)
 	}
 	subagentDepth := opts.SubagentDepth
+	browserInteractionProvider := opts.BrowserInteractionProvider
+	if nilutil.IsNil(browserInteractionProvider) {
+		browserInteractionProvider = nil
+	}
 	if subagentDepth < 0 {
 		subagentDepth = 0
 	}
@@ -984,8 +1022,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		planModeReadOnlyTrust:       planModeReadOnlyTrust,
 		sandboxEscapeApprover:       sandboxEscapeApprover,
 		configWriteApprover:         configWriteApprover,
+		trustedIntranetApprover:     trustedIntranetApprover,
 		hooks:                       hooks,
 		jobs:                        opts.Jobs,
+		browserInteractionProvider:  browserInteractionProvider,
 		evidence:                    evidence.NewLedger(),
 		projectChecks:               append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		contextWindow:               opts.ContextWindow,
@@ -2463,6 +2503,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		cctx = evidence.WithLedger(cctx, a.evidence)
 		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
 	}
+	if a.browserInteractionProvider != nil {
+		cctx = tool.WithBrowserInteractionProvider(cctx, a.browserInteractionProvider)
+	}
 	if len(a.projectChecks) > 0 {
 		cctx = instruction.WithChecks(cctx, a.projectChecks)
 	}
@@ -2474,6 +2517,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if a.configWriteApprover != nil {
 		cctx = tool.WithConfigWriteApprover(cctx, a.configWriteApprover)
+	}
+	if a.trustedIntranetApprover != nil {
+		cctx = tool.WithTrustedIntranetApprover(cctx, a.trustedIntranetApprover)
 	}
 	if v := a.responseLanguage.Load(); v != nil {
 		if lang, ok := v.(string); ok {

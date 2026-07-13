@@ -127,9 +127,9 @@ func TestToWireUsageWithPricing(t *testing.T) {
 }
 
 func TestToWireApprovalRequest(t *testing.T) {
-	e := event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "42", Tool: "bash", Subject: "rm"}}
+	e := event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "42", Tool: "bash", Subject: "rm", Reason: "需要用户确认"}}
 	w := toWire(e)
-	if w.Approval == nil || w.Approval.ID != "42" || w.Approval.Tool != "bash" {
+	if w.Approval == nil || w.Approval.ID != "42" || w.Approval.Tool != "bash" || w.Approval.Reason != "需要用户确认" {
 		t.Errorf("approval = %+v", w.Approval)
 	}
 }

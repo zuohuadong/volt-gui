@@ -222,13 +222,54 @@ VoltUI plugins can declare `voltui-plugin.json` at the plugin root:
 Relative paths are resolved inside the plugin root. VoltUI does not run
 third-party install scripts during plugin installation.
 
-## Codex Compatibility
+## Codex & Claude Compatibility
 
-VoltUI also reads Codex plugin manifests at `.codex-plugin/plugin.json`.
-For packages such as Superpowers, VoltUI maps:
+VoltUI also reads Codex plugin manifests at `.codex-plugin/plugin.json` and
+Claude plugin manifests at `.claude-plugin/plugin.json`. Claude plugin
+capabilities VoltUI does not map yet (`agents/`,
+`hooks/hooks.json`, `.mcp.json`) surface as install warnings instead of being
+silently dropped. GitHub-hosted multi-plugin marketplaces with a
+`.claude-plugin/marketplace.json` can be installed from the repository root
+when their plugin entries use relative string sources such as
+`./plugins/example` or `plugins/example`; preview shows one action per plugin
+before anything is written. Set the optional install name to a marketplace
+plugin name to select only that entry. External/object, npm, `strict: false`,
+and other advanced marketplace source protocols are not implemented yet:
+those entries are skipped with a warning during a full-marketplace install,
+and reported as an error when one of them is selected by name. For packages
+such as Superpowers and Claude-style skill packs, VoltUI maps:
 
-- `skills` to VoltUI skill roots.
+- `skills` to VoltUI skill roots. A Claude manifest that declares no
+  `skills` field falls back to the conventional `skills/` (or `.claude/skills/`)
+  directory, matching Claude's own auto-discovery. Plugin skills are displayed
+  and invoked canonically as `/<plugin>:<skill>`. An unambiguous `/<skill>` is
+  still accepted as a hidden compatibility alias; project and user skills keep
+  their short names, while same-name skills from multiple plugins remain
+  independently addressable only by their qualified names. This user-facing
+  namespace does not change the bare skill identifiers in the model skill index
+  or the `run_skill` tool.
+- `commands/` (and `.claude/commands/`) to VoltUI custom slash commands: each
+  `<name>.md` prompt template is displayed and invoked canonically as
+  `/<plugin>:<name>`, with frontmatter `description` / `argument-hint` and
+  `$ARGUMENTS` / `$1..$N` substitution honored. An unambiguous `/<name>` remains
+  accepted as a hidden compatibility alias, but it is omitted from completion,
+  help, desktop menus, ACP command discovery, and the model-visible command
+  list. User- and project-authored commands own their short names, and no short
+  alias is created when multiple plugins export the same command name. An
+  explicit custom command can also occupy the qualified name; desktop plugin
+  details report that conflict. Native `voltui-plugin.json` manifests can
+  declare the same thing explicitly with a `"commands"` path list.
 - `hooks/session-start-codex` to the VoltUI `SessionStart` hook when present.
+- A plugin-root `CLAUDE.md` file to a built-in `SessionStart` context hook. The
+  file is read directly by VoltUI, without spawning a shell command.
+- `.claude/settings.json` command hooks to VoltUI hook events when the event
+  names match. Claude's `matcher` field maps to VoltUI `match`; hook commands
+  run as shell commands with the plugin root as `cwd`; Claude `timeout` values
+  are interpreted as seconds.
+
+Unsupported Claude hook item types are skipped with a warning. VoltUI does not
+run third-party install scripts.
+
 
 Plugin hooks receive these environment variables:
 

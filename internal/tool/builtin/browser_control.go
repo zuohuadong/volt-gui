@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"voltui/internal/browserauth"
 	"voltui/internal/tool"
 )
 
@@ -36,6 +38,13 @@ func (browserControl) Schema() json.RawMessage {
   "url":{"type":"string","description":"Optional absolute URL beginning with http:// or https://. Defaults to about:blank."},
   "headless":{"type":"boolean","description":"Run the browser headlessly. Default true.","default":true},
   "wait":{"type":"integer","description":"Additional milliseconds to wait before returning visible text (default 0, max 10000).","default":0},
+  "login":{"type":"object","description":"Securely request credentials from the user or OS keyring and fill the login form. Credentials are never tool arguments.","properties":{
+    "username_selector":{"type":"string","description":"CSS selector for the username field."},
+    "password_selector":{"type":"string","description":"CSS selector for the password field."},
+    "submit_selector":{"type":"string","description":"CSS selector for the login submit control."},
+    "verification":{"type":"string","enum":["auto","always","never"],"description":"Pause for manual CAPTCHA/MFA completion automatically, always, or never.","default":"auto"},
+    "post_submit_wait_ms":{"type":"integer","description":"Milliseconds to wait after submit before verification detection (default 1000, max 10000).","default":1000}
+  },"required":["username_selector","password_selector","submit_selector"]},
   "actions":{"type":"array","description":"Ordered browser actions.","items":{"type":"object","properties":{
     "type":{"type":"string","enum":["click","type","press","wait","screenshot"],"description":"Action type."},
     "selector":{"type":"string","description":"CSS selector for click. If omitted, x/y coordinates are used."},
@@ -70,6 +79,25 @@ func (b browserControl) Execute(ctx context.Context, args json.RawMessage) (stri
 			return "", fmt.Errorf("url must be an absolute http(s) address")
 		}
 	}
+	var interaction tool.BrowserInteractionProvider
+	if p.Login != nil {
+		provider, ok := tool.BrowserInteractionProviderFrom(ctx)
+		if !ok {
+			return "", fmt.Errorf("interactive browser login requires a user-facing credential provider")
+		}
+		interaction = provider
+		if err := p.Login.validate(); err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(p.ScreenshotPath) != "" {
+			return "", fmt.Errorf("secure browser login cannot capture screenshots in the credential-bearing browser call")
+		}
+		for _, action := range p.Actions {
+			if strings.EqualFold(strings.TrimSpace(action.Type), "screenshot") {
+				return "", fmt.Errorf("secure browser login cannot capture screenshots in the credential-bearing browser call")
+			}
+		}
+	}
 	bin, err := findBrowserBin()
 	if err != nil {
 		return fmt.Sprintf("(no browser found: %s - install Chromium or set VOLTUI_BROWSER_PATH)", err), nil
@@ -78,15 +106,48 @@ func (b browserControl) Execute(ctx context.Context, args json.RawMessage) (stri
 	browserMu.Lock()
 	defer browserMu.Unlock()
 
-	return runBrowserControl(ctx, bin, p, b.roots, b.workDir)
+	return runBrowserControl(ctx, bin, p, b.roots, b.workDir, interaction)
 }
 
 type browserControlRequest struct {
 	URL            string                 `json:"url"`
 	Headless       *bool                  `json:"headless"`
 	Wait           int                    `json:"wait"`
+	Login          *browserLoginRequest   `json:"login"`
 	Actions        []browserControlAction `json:"actions"`
 	ScreenshotPath string                 `json:"screenshot_path"`
+}
+
+type browserLoginRequest struct {
+	UsernameSelector string `json:"username_selector"`
+	PasswordSelector string `json:"password_selector"`
+	SubmitSelector   string `json:"submit_selector"`
+	Verification     string `json:"verification"`
+	PostSubmitWaitMS int    `json:"post_submit_wait_ms"`
+}
+
+func (r *browserLoginRequest) validate() error {
+	if r == nil {
+		return nil
+	}
+	if strings.TrimSpace(r.UsernameSelector) == "" || strings.TrimSpace(r.PasswordSelector) == "" || strings.TrimSpace(r.SubmitSelector) == "" {
+		return fmt.Errorf("browser login requires username_selector, password_selector, and submit_selector")
+	}
+	switch strings.ToLower(strings.TrimSpace(r.Verification)) {
+	case "", "auto":
+		r.Verification = "auto"
+	case "always", "never":
+		r.Verification = strings.ToLower(strings.TrimSpace(r.Verification))
+	default:
+		return fmt.Errorf("browser login verification must be auto, always, or never")
+	}
+	if r.PostSubmitWaitMS <= 0 {
+		r.PostSubmitWaitMS = 1000
+	}
+	if r.PostSubmitWaitMS > 10000 {
+		r.PostSubmitWaitMS = 10000
+	}
+	return nil
 }
 
 type browserControlAction struct {
@@ -100,15 +161,29 @@ type browserControlAction struct {
 	Path     string  `json:"path"`
 }
 
-func runBrowserControl(ctx context.Context, bin string, req browserControlRequest, roots []string, workDir string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, browserTimeout+30*time.Second)
+func runBrowserControl(ctx context.Context, bin string, req browserControlRequest, roots []string, workDir string, interaction tool.BrowserInteractionProvider) (string, error) {
+	timeout := browserTimeout + 30*time.Second
+	if req.Login != nil {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	headless := true
 	if req.Headless != nil {
 		headless = *req.Headless
 	}
-	cmd := exec.CommandContext(ctx, bin, browserLaunchArgs(headless)...)
+	if req.Login != nil && req.Login.Verification != "never" {
+		headless = false
+	}
+	profileDir, err := os.MkdirTemp("", "voltui-browser-profile-*")
+	if err != nil {
+		return "", fmt.Errorf("browser_control: create isolated browser profile: %w", err)
+	}
+	defer os.RemoveAll(profileDir)
+	launchArgs := browserLaunchArgs(headless)
+	launchArgs = append(launchArgs[:len(launchArgs)-1], "--user-data-dir="+profileDir, launchArgs[len(launchArgs)-1])
+	cmd := exec.CommandContext(ctx, bin, launchArgs...)
 	cmd.Env = append(os.Environ(),
 		"QT_QPA_PLATFORM=offscreen",
 		"CHROME_CRASHPAD_PIPE=",
@@ -160,6 +235,64 @@ func runBrowserControl(ctx context.Context, bin string, req browserControlReques
 	if _, err := client.evaluateText(ctx, 0); err != nil {
 		return "", err
 	}
+	secret := ""
+	if req.Login != nil {
+		loginURL, err := currentBrowserURL(ctx, &client)
+		if err != nil {
+			return "", fmt.Errorf("browser_control: resolve login page URL: %w", err)
+		}
+		origin, err := browserauth.NormalizeOrigin(loginURL)
+		if err != nil {
+			return "", err
+		}
+		credential, err := interaction.RequestBrowserCredential(ctx, tool.BrowserCredentialRequest{
+			Origin: origin,
+			URL:    loginURL,
+			Reason: "该浏览器自动化需要登录；凭据仅通过本机安全通道提供。",
+		})
+		if err != nil {
+			return "", fmt.Errorf("browser_control: credential request failed")
+		}
+		secret = credential.Password
+		currentURL, err := currentBrowserURL(ctx, &client)
+		if err != nil {
+			return "", fmt.Errorf("browser_control: revalidate login page URL: %w", err)
+		}
+		currentOrigin, err := browserauth.NormalizeOrigin(currentURL)
+		if err != nil || currentOrigin != origin {
+			return "", fmt.Errorf("browser_control: login page origin changed before credential fill")
+		}
+		if err := performBrowserLogin(ctx, &client, *req.Login, credential, origin); err != nil {
+			return "", fmt.Errorf("browser_control: login failed: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(req.Login.PostSubmitWaitMS) * time.Millisecond):
+		}
+		if currentURL, currentErr := currentBrowserURL(ctx, &client); currentErr == nil {
+			if currentOrigin, originErr := browserauth.NormalizeOrigin(currentURL); originErr == nil && currentOrigin == origin {
+				_ = clearBrowserPasswordField(ctx, &client, req.Login.PasswordSelector, origin)
+			}
+		}
+		needsVerification := req.Login.Verification == "always"
+		reason := "需要用户完成验证码、扫码或 MFA"
+		if req.Login.Verification == "auto" {
+			needsVerification, reason = pollBrowserVerification(ctx, &client, 3*time.Second, 250*time.Millisecond)
+		}
+		if needsVerification {
+			verificationOrigin, verificationURL := origin, loginURL
+			if currentURL, currentErr := currentBrowserURL(ctx, &client); currentErr == nil {
+				if currentOrigin, originErr := browserauth.NormalizeOrigin(currentURL); originErr == nil {
+					verificationOrigin, verificationURL = currentOrigin, currentURL
+				}
+			}
+			continued, err := interaction.WaitBrowserVerification(ctx, tool.BrowserVerificationRequest{Origin: verificationOrigin, URL: verificationURL, Reason: reason})
+			if err != nil || !continued {
+				return "", fmt.Errorf("browser_control: browser verification cancelled")
+			}
+		}
+	}
 
 	var saved []string
 	for i, action := range req.Actions {
@@ -196,7 +329,204 @@ func runBrowserControl(ctx context.Context, bin string, req browserControlReques
 	if len(saved) > 0 {
 		text += "\n\nScreenshots: " + strings.Join(saved, ", ")
 	}
-	return text, nil
+	return redactBrowserSecret(text, secret), nil
+}
+
+type browserValueEvaluator interface {
+	evaluateValue(context.Context, string) (json.RawMessage, error)
+}
+
+func currentBrowserURL(ctx context.Context, evaluator browserValueEvaluator) (string, error) {
+	raw, err := evaluator.evaluateValue(ctx, "window.location.href")
+	if err != nil {
+		return "", err
+	}
+	var currentURL string
+	if err := json.Unmarshal(raw, &currentURL); err != nil || strings.TrimSpace(currentURL) == "" {
+		return "", fmt.Errorf("parse current browser URL")
+	}
+	return currentURL, nil
+}
+
+func performBrowserLogin(ctx context.Context, evaluator browserValueEvaluator, login browserLoginRequest, credential tool.BrowserCredential, expectedOrigin string) error {
+	expectedURL, err := url.Parse(expectedOrigin)
+	if err != nil || expectedURL.Hostname() == "" || expectedURL.Port() == "" {
+		return fmt.Errorf("invalid expected browser login origin")
+	}
+	selectors, _ := json.Marshal(map[string]string{
+		"username": login.UsernameSelector,
+		"password": login.PasswordSelector,
+		"submit":   login.SubmitSelector,
+	})
+	values, _ := json.Marshal(map[string]string{"username": credential.Username, "password": credential.Password})
+	expected, _ := json.Marshal(map[string]string{
+		"origin":   expectedOrigin,
+		"protocol": expectedURL.Scheme + ":",
+		"hostname": strings.ToLower(strings.TrimSuffix(expectedURL.Hostname(), ".")),
+		"port":     expectedURL.Port(),
+	})
+	expr := fmt.Sprintf(`(() => {
+  const selectors = %s;
+  const values = %s;
+  const expected = %s;
+  const currentHostname = location.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const currentPort = location.port || (location.protocol === "https:" ? "443" : location.protocol === "http:" ? "80" : "");
+  if (location.protocol !== expected.protocol || currentHostname !== expected.hostname || currentPort !== expected.port) {
+    return {ok:false, error:"browser login origin changed before credential fill"};
+  }
+  const username = document.querySelector(selectors.username);
+  const password = document.querySelector(selectors.password);
+  const submit = document.querySelector(selectors.submit);
+  if (!username || !password || !submit) return {ok:false, error:"login form selector not found"};
+  if (!(password instanceof HTMLInputElement) || password.type !== "password") {
+    return {ok:false, error:"password selector must target input[type=password]"};
+  }
+  const setValue = (element, value) => {
+    const proto = Object.getPrototypeOf(element);
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(element, value); else element.value = value;
+    element.dispatchEvent(new Event("input", {bubbles:true}));
+    element.dispatchEvent(new Event("change", {bubbles:true}));
+  };
+  setValue(username, values.username);
+  setValue(password, values.password);
+  submit.click();
+  return {ok:true};
+})()`, string(selectors), string(values), string(expected))
+	raw, err := evaluator.evaluateValue(ctx, expr)
+	if err != nil {
+		return errors.New(redactBrowserSecret(err.Error(), credential.Password))
+	}
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("parse browser login result")
+	}
+	if !result.OK {
+		return errors.New(redactBrowserSecret(result.Error, credential.Password))
+	}
+	return nil
+}
+
+func redactBrowserSecret(value, secret string) string {
+	if secret == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, secret, "[REDACTED]")
+}
+
+func clearBrowserPasswordField(ctx context.Context, evaluator browserValueEvaluator, selector, expectedOrigin string) error {
+	expectedURL, err := url.Parse(expectedOrigin)
+	if err != nil || expectedURL.Hostname() == "" || expectedURL.Port() == "" {
+		return fmt.Errorf("invalid expected browser login origin")
+	}
+	selectorJSON, _ := json.Marshal(selector)
+	expected, _ := json.Marshal(map[string]string{
+		"protocol": expectedURL.Scheme + ":",
+		"hostname": strings.ToLower(strings.TrimSuffix(expectedURL.Hostname(), ".")),
+		"port":     expectedURL.Port(),
+	})
+	expr := fmt.Sprintf(`(() => {
+  const expected = %s;
+  const currentHostname = location.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const currentPort = location.port || (location.protocol === "https:" ? "443" : location.protocol === "http:" ? "80" : "");
+  if (location.protocol !== expected.protocol || currentHostname !== expected.hostname || currentPort !== expected.port) return false;
+  const password = document.querySelector(%s);
+  if (!(password instanceof HTMLInputElement) || password.type !== "password") return false;
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(password), "value")?.set;
+  if (setter) setter.call(password, ""); else password.value = "";
+  password.dispatchEvent(new Event("input", {bubbles:true}));
+  password.dispatchEvent(new Event("change", {bubbles:true}));
+  return true;
+})()`, string(expected), string(selectorJSON))
+	_, err = evaluator.evaluateValue(ctx, expr)
+	return err
+}
+
+type browserVerificationSignals struct {
+	VisibleText string   `json:"visibleText"`
+	Attributes  []string `json:"attributes"`
+}
+
+func collectBrowserVerificationSignals(ctx context.Context, evaluator browserValueEvaluator) (browserVerificationSignals, error) {
+	raw, err := evaluator.evaluateValue(ctx, `(() => ({
+  visibleText: document.body ? document.body.innerText.slice(0, 20000) : "",
+  attributes: Array.from(document.querySelectorAll("input, iframe, [id], [class]"), (element) => [
+    element.getAttribute("autocomplete"), element.getAttribute("name"), element.getAttribute("id"),
+    element.getAttribute("class"), element.getAttribute("src"), element.getAttribute("title")
+  ].filter(Boolean).join(" ")).filter(Boolean).slice(0, 500)
+}))()`)
+	if err != nil {
+		return browserVerificationSignals{}, err
+	}
+	var signals browserVerificationSignals
+	if err := json.Unmarshal(raw, &signals); err != nil {
+		return browserVerificationSignals{}, fmt.Errorf("parse browser verification signals")
+	}
+	return signals, nil
+}
+
+func detectBrowserVerification(signals browserVerificationSignals) (bool, string) {
+	haystack := strings.ToLower(signals.VisibleText + " " + strings.Join(signals.Attributes, " "))
+	checks := []struct {
+		needle string
+		reason string
+	}{
+		{"one-time-code", "检测到一次性验证码输入"},
+		{"captcha", "检测到验证码"},
+		{"recaptcha", "检测到验证码"},
+		{"hcaptcha", "检测到验证码"},
+		{"mfa", "检测到 MFA 验证"},
+		{"otp", "检测到一次性验证码"},
+		{"two-factor", "检测到二次验证"},
+		{"2fa", "检测到二次验证"},
+		{"verification code", "检测到验证码"},
+		{"验证码", "检测到验证码"},
+		{"扫码", "检测到扫码验证"},
+		{"二维码", "检测到扫码验证"},
+		{"二次验证", "检测到二次验证"},
+	}
+	for _, check := range checks {
+		if strings.Contains(haystack, check.needle) {
+			return true, check.reason
+		}
+	}
+	return false, ""
+}
+
+func pollBrowserVerification(ctx context.Context, evaluator browserValueEvaluator, timeout, interval time.Duration) (bool, string) {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		signals, err := collectBrowserVerificationSignals(ctx, evaluator)
+		if err == nil {
+			lastErr = nil
+			if needed, reason := detectBrowserVerification(signals); needed {
+				return true, reason
+			}
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return true, "无法确认是否存在验证码或 MFA，请人工检查浏览器窗口"
+			}
+			return false, ""
+		}
+		select {
+		case <-ctx.Done():
+			return true, "无法确认是否存在验证码或 MFA，请人工检查浏览器窗口"
+		case <-time.After(interval):
+		}
+	}
 }
 
 func browserLaunchArgs(headless bool) []string {

@@ -19,6 +19,7 @@ type Event struct {
 	Usage           *Usage           `json:"usage,omitempty"`
 	Approval        *Approval        `json:"approval,omitempty"`
 	Ask             *Ask             `json:"ask,omitempty"`
+	BrowserPrompt   *BrowserPrompt   `json:"browserPrompt,omitempty"`
 	Compaction      *Compaction      `json:"compaction,omitempty"`
 	Guardian        *Guardian        `json:"guardian,omitempty"`
 	Err             string           `json:"err,omitempty"`
@@ -94,6 +95,11 @@ func ToWire(e event.Event) Event {
 		w.Approval = &Approval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Reason: e.Approval.Reason}
 	case event.AskRequest:
 		w.Ask = ToWireAsk(e.Ask)
+	case event.BrowserCredentialRequest, event.BrowserVerificationRequest:
+		w.BrowserPrompt = &BrowserPrompt{
+			ID: e.BrowserPrompt.ID, Origin: e.BrowserPrompt.Origin, URL: e.BrowserPrompt.URL,
+			HasSaved: e.BrowserPrompt.HasSaved, UsernameHint: e.BrowserPrompt.UsernameHint, Reason: e.BrowserPrompt.Reason,
+		}
 	case event.CompactionStarted, event.CompactionDone:
 		w.Compaction = &Compaction{
 			Trigger: e.Compaction.Trigger, Messages: e.Compaction.Messages,
@@ -120,6 +126,17 @@ type MemoryCitation struct {
 	LineEnd   int    `json:"lineEnd,omitempty"`
 	Note      string `json:"note,omitempty"`
 	Kind      string `json:"kind,omitempty"`
+}
+
+// BrowserPrompt is intentionally metadata-only. Passwords never enter the
+// shared event contract.
+type BrowserPrompt struct {
+	ID           string `json:"id"`
+	Origin       string `json:"origin"`
+	URL          string `json:"url,omitempty"`
+	HasSaved     bool   `json:"hasSaved,omitempty"`
+	UsernameHint string `json:"usernameHint,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 // MemoryCompiler is the JSON form of content-free Memory v5 usage metrics.
@@ -322,24 +339,26 @@ func ToWireCacheDiagnostics(d *event.CacheDiagnostics) *CacheDiagnostics {
 }
 
 var kindNames = map[event.Kind]string{
-	event.TurnStarted:              "turn_started",
-	event.Reasoning:                "reasoning",
-	event.Text:                     "text",
-	event.Message:                  "message",
-	event.ToolDispatch:             "tool_dispatch",
-	event.ToolResult:               "tool_result",
-	event.Usage:                    "usage",
-	event.Notice:                   "notice",
-	event.Phase:                    "phase",
-	event.ApprovalRequest:          "approval_request",
-	event.AskRequest:               "ask_request",
-	event.TurnDone:                 "turn_done",
-	event.CompactionStarted:        "compaction_started",
-	event.CompactionDone:           "compaction_done",
-	event.ToolProgress:             "tool_progress",
-	event.MCPSurfaceReady:          "mcp_surface_ready",
-	event.Retrying:                 "retrying",
-	event.Steer:                    "steer",
-	event.MemoryCompilerStatsEvent: "memory_compiler_stats",
-	event.GuardianAssessment:       "guardian_assessment",
+	event.TurnStarted:                "turn_started",
+	event.Reasoning:                  "reasoning",
+	event.Text:                       "text",
+	event.Message:                    "message",
+	event.ToolDispatch:               "tool_dispatch",
+	event.ToolResult:                 "tool_result",
+	event.Usage:                      "usage",
+	event.Notice:                     "notice",
+	event.Phase:                      "phase",
+	event.ApprovalRequest:            "approval_request",
+	event.AskRequest:                 "ask_request",
+	event.TurnDone:                   "turn_done",
+	event.CompactionStarted:          "compaction_started",
+	event.CompactionDone:             "compaction_done",
+	event.ToolProgress:               "tool_progress",
+	event.MCPSurfaceReady:            "mcp_surface_ready",
+	event.Retrying:                   "retrying",
+	event.Steer:                      "steer",
+	event.MemoryCompilerStatsEvent:   "memory_compiler_stats",
+	event.GuardianAssessment:         "guardian_assessment",
+	event.BrowserCredentialRequest:   "browser_credential_request",
+	event.BrowserVerificationRequest: "browser_verification_request",
 }

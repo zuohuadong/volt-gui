@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -47,6 +48,11 @@ func TestRunTeamRuntimePersistsAgentOutputs(t *testing.T) {
 		return prov, "test/model", nil
 	}
 	defer func() { newTeamRuntimeProvider = restore }()
+	for _, agent := range []PersistentAgentInput{{ID: "code-review", Name: "审查员", Status: "已启用"}, {ID: "research", Name: "研究员", Status: "已启用"}} {
+		if _, err := app.SaveAgent(agent); err != nil {
+			t.Fatalf("SaveAgent: %v", err)
+		}
+	}
 
 	room, err := app.SaveTeamRoom(WorkbenchTeamRoomView{Title: "真实 runtime 测试组", MemberIDs: []string{"code-review", "research"}, Avatars: []string{"C", "R"}})
 	if err != nil {
@@ -58,6 +64,17 @@ func TestRunTeamRuntimePersistsAgentOutputs(t *testing.T) {
 	}
 	if result.Run.Status != "completed" || len(result.Run.Events) < 5 {
 		t.Fatalf("runtime did not complete with events: %+v", result.Run)
+	}
+	if len(result.Run.Artifacts) != 2 {
+		t.Fatalf("runtime did not persist real artifacts: %+v", result.Run.Artifacts)
+	}
+	for _, artifact := range result.Run.Artifacts {
+		if artifact.Path == "" || artifact.Status != "已写入" {
+			t.Fatalf("artifact missing durable path/status: %+v", artifact)
+		}
+		if _, err := os.Stat(artifact.Path); err != nil {
+			t.Fatalf("artifact file not written: %v", err)
+		}
 	}
 	if result.Room.RunState != "已完成" {
 		t.Fatalf("room state not updated: %+v", result.Room)
@@ -74,6 +91,14 @@ func TestRunTeamRuntimePersistsAgentOutputs(t *testing.T) {
 	}
 }
 
+func TestRunTeamRuntimeRejectsEmptyModelOutput(t *testing.T) {
+	provider := &scriptedTeamRuntimeProvider{replies: []string{""}}
+	_, err := runTeamRuntimeAgent(context.Background(), provider, WorkbenchTeamRoomView{Title: "测试"}, PersistentAgentView{Name: "测试 Agent"}, "任务", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "no visible content") {
+		t.Fatalf("empty model output error = %v", err)
+	}
+}
+
 func TestRunTeamRuntimeRecordsProviderFailures(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	app := &App{}
@@ -82,6 +107,9 @@ func TestRunTeamRuntimeRecordsProviderFailures(t *testing.T) {
 		return &scriptedTeamRuntimeProvider{err: errors.New("provider offline")}, "test/model", nil
 	}
 	defer func() { newTeamRuntimeProvider = restore }()
+	if _, err := app.SaveAgent(PersistentAgentInput{ID: "code-review", Name: "审查员", Status: "已启用"}); err != nil {
+		t.Fatalf("SaveAgent: %v", err)
+	}
 
 	room, err := app.SaveTeamRoom(WorkbenchTeamRoomView{Title: "失败 runtime 测试组", MemberIDs: []string{"code-review"}})
 	if err != nil {

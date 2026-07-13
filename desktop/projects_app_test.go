@@ -13,8 +13,8 @@ func TestSaveWorkbenchProjectPersistsProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListWorkbenchProjects initial: %v", err)
 	}
-	if len(initial) == 0 {
-		t.Fatal("ListWorkbenchProjects initial returned no seed projects")
+	if len(initial) != 0 {
+		t.Fatalf("ListWorkbenchProjects initial seeded runtime data: %+v", initial)
 	}
 
 	saved, err := app.SaveWorkbenchProject(WorkbenchProjectInput{

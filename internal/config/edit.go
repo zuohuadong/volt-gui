@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 
@@ -161,6 +162,34 @@ func (c *Config) UpsertProvider(e ProviderEntry) error {
 	}
 	c.Providers = append(c.Providers, e)
 	return nil
+}
+
+// UpsertProviderPreservingRuntime applies persisted provider fields while
+// retaining credentials and capability state resolved by the latest config
+// load. It is used when replaying an optimistic edit log onto fresh state.
+func (c *Config) UpsertProviderPreservingRuntime(e ProviderEntry) error {
+	if current, ok := c.Provider(e.Name); ok && strings.TrimSpace(current.APIKeyEnv) == strings.TrimSpace(e.APIKeyEnv) {
+		e.resolvedAPIKey = current.resolvedAPIKey
+		e.resolvedSource = current.resolvedSource
+		e.visionOverride = current.visionOverride
+	}
+	return c.UpsertProvider(e)
+}
+
+// ProviderEntryConfigSnapshot strips process-only state from a provider copy so
+// optimistic edit logs never retain resolved credential values.
+func ProviderEntryConfigSnapshot(entry ProviderEntry) ProviderEntry {
+	entry.resolvedAPIKey = ""
+	entry.resolvedSource = CredentialSource{}
+	entry.visionOverride = nil
+	return entry
+}
+
+// ProviderEntriesConfigEqual compares persisted provider configuration while
+// ignoring credentials and capability state resolved only for the current
+// process. Setup uses it for optimistic conflict detection during replay.
+func ProviderEntriesConfigEqual(a, b ProviderEntry) bool {
+	return reflect.DeepEqual(ProviderEntryConfigSnapshot(a), ProviderEntryConfigSnapshot(b))
 }
 
 // SetProviderEffort updates a provider's provider-specific thinking effort knob.
@@ -391,12 +420,16 @@ func (c *Config) SetProviderThinking(name, thinking string) error {
 // proxy settings are rejected here so the desktop panel cannot save a config that
 // would break provider startup.
 func (c *Config) SetNetwork(n NetworkConfig) error {
+	trusted := c.Network.TrustedIntranet
 	n.ProxyMode = netclient.NormalizeMode(n.ProxyMode)
 	n.ProxyURL = strings.TrimSpace(n.ProxyURL)
 	n.NoProxy = strings.TrimSpace(n.NoProxy)
 	n.Proxy.Type = strings.ToLower(strings.TrimSpace(n.Proxy.Type))
 	n.Proxy.Server = strings.TrimSpace(n.Proxy.Server)
 	n.Proxy.Username = strings.TrimSpace(n.Proxy.Username)
+	if !n.TrustedIntranet.Enabled && len(n.TrustedIntranet.Sites) == 0 {
+		n.TrustedIntranet = trusted
+	}
 	c.Network = n
 	return netclient.Validate(c.NetworkProxySpec())
 }
@@ -504,6 +537,8 @@ func validateProvider(e ProviderEntry) error {
 		return fmt.Errorf("provider %q: base_url is required", e.Name)
 	case !providerHasAnyModel(e):
 		return fmt.Errorf("provider %q: model is required", e.Name)
+	case strings.TrimSpace(e.APIKeyEnv) != "" && !IsValidCredentialKey(e.APIKeyEnv):
+		return fmt.Errorf("provider %q: api_key_env %q is not a valid environment variable name", e.Name, e.APIKeyEnv)
 	}
 	if _, err := NormalizeAPISurface(e.APISurface); err != nil {
 		return fmt.Errorf("provider %q: %w", e.Name, err)
@@ -970,7 +1005,8 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	removePlugins := len(c.Plugins) == 0 && tomlBodyHasSection(body, "plugins")
 	removeSandboxBash := shouldRemoveIneffectiveProjectSandboxBash(body, c)
-	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash {
+	writeProviderAccess := c.Desktop.ProviderAccess != nil
+	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !writeProviderAccess {
 		return nil // no changes to write
 	}
 
@@ -983,6 +1019,9 @@ func (c *Config) saveProjectIncremental(path string) error {
 	}
 	if removeSandboxBash {
 		body = removeTOMLSectionKey(body, "sandbox", "bash")
+	}
+	if writeProviderAccess {
+		body = upsertTOMLSectionKey(body, "desktop", "provider_access", "provider_access = "+renderStringArray(c.Desktop.ProviderAccess))
 	}
 	return writeConfigFile(path, body)
 }
@@ -1176,6 +1215,40 @@ func replaceTOMLSection(body, sectionName, newContent string) string {
 		return body[:span.start] + newContent + body[end:]
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + newContent
+}
+
+func upsertTOMLSectionKey(body, sectionName, key, line string) string {
+	line = strings.TrimRight(line, "\r\n") + "\n"
+	spans := tomlLineSpans(body)
+	sectionIdx := -1
+	sectionEnd := len(body)
+	for i, span := range spans {
+		name, isArray, ok := tomlEditSectionHeader(span.text)
+		if ok {
+			if sectionIdx >= 0 {
+				sectionEnd = span.start
+				break
+			}
+			if !isArray && name == sectionName {
+				sectionIdx = i
+			}
+			continue
+		}
+		if sectionIdx >= 0 {
+			if got, _, ok := tomlKeyValue(span.text); ok && got == key {
+				return body[:span.start] + line + body[span.end:]
+			}
+		}
+	}
+	if sectionIdx < 0 {
+		block := fmt.Sprintf("[%s]\n%s", sectionName, line)
+		return replaceTOMLSection(body, sectionName, block)
+	}
+	prefix := body[:sectionEnd]
+	if prefix != "" && !strings.HasSuffix(prefix, "\n") {
+		prefix += "\n"
+	}
+	return prefix + line + body[sectionEnd:]
 }
 
 func removeTOMLSection(body, sectionName string) string {
@@ -1407,6 +1480,12 @@ func isUserConfigPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// IsUserConfigPath reports whether path is one of Reasonix's current or legacy
+// user-global config locations. Other paths use project-scoped rendering.
+func IsUserConfigPath(path string) bool {
+	return isUserConfigPath(path)
 }
 
 // Save writes the configuration back to the file it was loaded from

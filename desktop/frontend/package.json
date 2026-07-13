@@ -8,6 +8,8 @@
     "build": "vite build",
     "build:release": "vite build",
     "check": "svelte-check --no-tsconfig --ignore \"node_modules,dist\"",
+    "check:runtime-mocks": "node ../../scripts/check-runtime-mocks.mjs",
+    "test:runtime-mock-gate": "node --test ../../scripts/check-runtime-mocks.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

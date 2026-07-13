@@ -94,6 +94,12 @@ const (
 	// GuardianAssessment reports the outcome of a guardian sub-agent safety review.
 	// Carries GuardianResult payload (Outcome, RiskLevel, Rationale, etc.).
 	GuardianAssessment
+	// BrowserCredentialRequest asks an interactive host for a credential through
+	// a dedicated secure channel. BrowserPrompt contains metadata only.
+	BrowserCredentialRequest
+	// BrowserVerificationRequest asks the user to complete MFA/CAPTCHA/QR-code
+	// verification in the still-running headed browser.
+	BrowserVerificationRequest
 	// KindCount is a sentinel one past the last real Kind. New event kinds must
 	// be inserted above it so completeness tests cover them automatically.
 	KindCount
@@ -178,6 +184,17 @@ type Ask struct {
 	Questions []AskQuestion
 }
 
+// BrowserPrompt is the metadata-only payload for browser credential and manual
+// verification prompts. Passwords are intentionally impossible to represent.
+type BrowserPrompt struct {
+	ID           string
+	Origin       string
+	URL          string
+	HasSaved     bool
+	UsernameHint string
+	Reason       string
+}
+
 // Compaction carries a context-compaction pass for the CompactionStarted /
 // CompactionDone events. On CompactionStarted only Trigger is set. On
 // CompactionDone, Messages/Summary/Archive are filled in (an aborted pass leaves
@@ -255,16 +272,18 @@ type Event struct {
 	// session (Usage events only), so a frontend can show the aggregate hit-rate
 	// — which doesn't crater on a short turn or after compaction — alongside
 	// Usage's single-turn numbers.
-	SessionHit   int        // Usage: cumulative cache-hit prompt tokens this session
-	SessionMiss  int        // Usage: cumulative cache-miss prompt tokens this session
-	Level        Level      // Notice
-	Approval     Approval   // ApprovalRequest
-	Ask          Ask        // AskRequest
-	Err          error      // TurnDone: non-nil on failure
-	Compaction   Compaction // Compaction
-	Guardian     GuardianResult
-	RetryAttempt int // Retrying: 1-based attempt about to be made
-	RetryMax     int // Retrying: total attempts before giving up
+	SessionHit    int           // Usage: cumulative cache-hit prompt tokens this session
+	SessionMiss   int           // Usage: cumulative cache-miss prompt tokens this session
+	Level         Level         // Notice
+	Approval      Approval      // ApprovalRequest
+	Ask           Ask           // AskRequest
+	BrowserPrompt BrowserPrompt // BrowserCredentialRequest / BrowserVerificationRequest
+	Err           error         // TurnDone: non-nil on failure
+	Compaction    Compaction    // Compaction
+	Guardian      GuardianResult
+	RetryAttempt  int // Retrying: 1-based attempt about to be made
+	RetryMax      int // Retrying: total attempts before giving up
+
 }
 
 // MemoryCompilerStats is intentionally limited to counts and estimated token

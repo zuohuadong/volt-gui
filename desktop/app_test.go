@@ -1036,6 +1036,51 @@ func TestSettingsSurfacesOfficialProviderTemplatesSeparately(t *testing.T) {
 	}
 }
 
+func TestSettingsProvidersOnlyIncludesDesktopProviderAccess(t *testing.T) {
+	t.Run("explicit empty access", func(t *testing.T) {
+		isolateDesktopUserDirs(t)
+		if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+			t.Fatalf("mkdir config dir: %v", err)
+		}
+		if err := os.WriteFile(config.UserConfigPath(), []byte(`
+[desktop]
+provider_access = []
+`), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		if got := NewApp().Settings().Providers; len(got) != 0 {
+			t.Fatalf("Settings().Providers = %+v, want no providers for explicit empty provider_access", got)
+		}
+	})
+
+	t.Run("custom access", func(t *testing.T) {
+		isolateDesktopUserDirs(t)
+		if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+			t.Fatalf("mkdir config dir: %v", err)
+		}
+		if err := os.WriteFile(config.UserConfigPath(), []byte(`
+[desktop]
+provider_access = ["custom-real"]
+
+[[providers]]
+name = "custom-real"
+kind = "openai"
+base_url = "https://models.example.test/v1"
+models = ["real-model"]
+default = "real-model"
+api_key_env = "CUSTOM_REAL_API_KEY"
+`), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		got := NewApp().Settings().Providers
+		if names := providerNamesFromView(got); !reflect.DeepEqual(names, []string{"custom-real"}) {
+			t.Fatalf("Settings().Providers names = %+v, want only desktop.provider_access entries", names)
+		}
+	})
+}
+
 func TestSettingsRepairsLegacyOfficialProviderWithoutModel(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "DEEPSEEK_API_KEY", "sk-test")
@@ -1325,18 +1370,8 @@ api_key_env = "MIMO_API_KEY"
 		t.Fatalf("mimo-api preset view = %+v, want name-conflict because a different same-name provider exists", presetView)
 	}
 
-	var providerView *ProviderView
-	for i := range view.Providers {
-		if view.Providers[i].Name == "mimo-api" {
-			providerView = &view.Providers[i]
-			break
-		}
-	}
-	if providerView == nil {
-		t.Fatal("mimo-api provider view missing")
-	}
-	if providerView.Added {
-		t.Fatalf("mimo-api provider Added = true, want false until provider_access explicitly enables it")
+	if len(view.Providers) != 0 {
+		t.Fatalf("Settings().Providers = %+v, want providers without provider_access hidden from the configured channel list", view.Providers)
 	}
 }
 
@@ -6072,6 +6107,9 @@ func TestSubmitToTabHistoryDisplaysRawInputAfterMemoryCompose(t *testing.T) {
 
 func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	isolateDesktopUserDirs(t)
+	if err := saveAgents([]PersistentAgentView{{ID: "reviewer", Name: "Reviewer", Status: "已启用", Desc: "Review carefully."}}); err != nil {
+		t.Fatal(err)
+	}
 
 	workspace := robustTempDir(t)
 	if err := os.WriteFile(filepath.Join(workspace, "voltui.toml"), []byte(""), 0o644); err != nil {
@@ -6100,6 +6138,9 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	app.tabs["test"].WorkspaceRoot = workspace
 	app.tabs["test"].TopicID = "topic_source"
 	app.tabs["test"].TopicTitle = "Source topic"
+	app.tabs["test"].AgentProfileID = "reviewer"
+	app.tabs["test"].AgentProfileName = "Reviewer"
+	app.tabs["test"].AgentProfileBaseModel = "base/model"
 	defer ctrl.Close()
 
 	ctrl.Submit("first")
@@ -6110,6 +6151,19 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	waitNotRunning(t, ctrl)
 	if got := len(ctrl.History()); got != 5 {
 		t.Fatalf("source history len before fork = %d, want 5", got)
+	}
+	profileChangedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	parentMeta, err := agent.EnsureBranchMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentMeta.AgentProfileID = "reviewer"
+	parentMeta.AgentProfileName = "Reviewer"
+	parentMeta.AgentProfileBaseModel = "base/model"
+	parentMeta.AgentProfileUpdatedAt = profileChangedAt
+	parentMeta.AgentProfileHistory = []agent.AgentProfileSwitch{{ProfileID: "reviewer", ProfileName: "Reviewer", ModelRef: "profile/model", Action: "select", ChangedAt: time.Now().UTC()}}
+	if err := agent.SaveBranchMetaPreserveUpdated(path, parentMeta); err != nil {
+		t.Fatal(err)
 	}
 
 	meta, err := app.Fork(1)
@@ -6130,6 +6184,15 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	}
 	if got, want := meta.TopicTitle, "Source topic · 分叉"; got != want {
 		t.Fatalf("fork topic title = %q, want %q", got, want)
+	}
+	if meta.AgentProfileID != "reviewer" || meta.AgentProfileName != "Reviewer" || meta.AgentProfileBaseModel != "base/model" {
+		t.Fatalf("fork tab meta lost agent profile: %+v", meta)
+	}
+	app.mu.RLock()
+	forkTab := app.tabs[meta.ID]
+	app.mu.RUnlock()
+	if forkTab == nil || forkTab.AgentProfileID != "reviewer" || forkTab.AgentProfileName != "Reviewer" || forkTab.AgentProfileBaseModel != "base/model" {
+		t.Fatalf("fork workspace tab lost agent profile: %+v", forkTab)
 	}
 
 	var forkPath string
@@ -6156,6 +6219,12 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 			}
 			if m.Scope != "project" || m.WorkspaceRoot != workspace || m.TopicTitle != "Source topic · 分叉" {
 				t.Fatalf("fork topic meta = %+v", m)
+			}
+			if m.AgentProfileID != "reviewer" || m.AgentProfileName != "Reviewer" || m.AgentProfileBaseModel != "base/model" || m.AgentProfileUpdatedAt != profileChangedAt {
+				t.Fatalf("fork branch meta lost agent profile: %+v", m)
+			}
+			if len(m.AgentProfileHistory) != 1 || m.AgentProfileHistory[0].ModelRef != "profile/model" {
+				t.Fatalf("fork branch meta lost agent profile history: %+v", m.AgentProfileHistory)
 			}
 		}
 	}
@@ -6255,6 +6324,27 @@ func TestMCPServersIncludesConfiguredServerWithoutActiveSession(t *testing.T) {
 		}
 	}
 	t.Fatalf("MCPServers without active session = %+v, want configured disabled local-tools", view)
+}
+
+func TestAddMCPServerRejectsPluginManifestCommand(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	app := NewApp()
+	_, err := app.AddMCPServer(MCPServerInput{
+		Name:      "invalid-plugin-manifest",
+		Transport: "stdio",
+		Command:   "plugin.json",
+	})
+	if err == nil || !strings.Contains(err.Error(), "plugin manifest") {
+		t.Fatalf("AddMCPServer(plugin.json) error = %v, want plugin manifest validation", err)
+	}
+	for _, server := range app.MCPServers() {
+		if server.Name == "invalid-plugin-manifest" {
+			t.Fatalf("invalid MCP command was persisted: %+v", server)
+		}
+	}
 }
 
 func TestMCPServersIncludesConfiguredServerWhenActiveTabHasNoController(t *testing.T) {

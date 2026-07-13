@@ -197,7 +197,8 @@ type App struct {
 	projectMaterialSelectionsMu sync.Mutex
 	projectMaterialSelections   map[string]projectMaterialSelection
 
-	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+	heartbeat           *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+	automationScheduler *AutomationScheduler
 }
 
 type skillRootsCache struct {
@@ -411,6 +412,11 @@ func (a *App) startup(ctx context.Context) {
 
 	a.heartbeat = newHeartbeatEngine(a)
 	a.heartbeat.Start()
+	if err := skipMissedAutomationRuns(time.Now()); err != nil {
+		slog.Warn("desktop: skip missed automation runs", "err", err)
+	}
+	a.automationScheduler = newAutomationScheduler(a)
+	a.automationScheduler.Start()
 
 	a.mu.Lock()
 	a.tabsRestored = make(chan struct{})
@@ -644,6 +650,9 @@ func (a *App) restoreOrBuildTabs() {
 				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, id)
 			}
 			tab.model = entry.Model
+			tab.AgentProfileID = strings.TrimSpace(entry.AgentProfileID)
+			tab.AgentProfileName = strings.TrimSpace(entry.AgentProfileName)
+			tab.AgentProfileBaseModel = strings.TrimSpace(entry.AgentProfileBaseModel)
 			tab.effort = cloneStringPtr(entry.Effort)
 			tab.tokenMode = boot.NormalizeTokenMode(entry.TokenMode)
 			tab.mode = persistedTabMode(entry.Mode)
@@ -739,6 +748,9 @@ func (a *App) shutdown(context.Context) {
 	a.stopMainThreadWatchdog()
 	if a.heartbeat != nil {
 		a.heartbeat.Stop()
+	}
+	if a.automationScheduler != nil {
+		a.automationScheduler.Stop()
 	}
 	a.stopBotRuntime()
 	a.stopTray()
@@ -1700,6 +1712,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	// Snapshot the tab profile under a.mu: bound methods write these fields
 	// under the lock while this rebuild runs off-lock.
 	snap := a.tabRuntimeSnapshot(tab)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	oldSink := snap.sink
 	if oldSink != nil {
 		// Rebind under the runtime key, matching the id cloneDetachedRuntimeTab
@@ -1733,6 +1749,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -2004,6 +2021,9 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	workspaceRoot := sourceTab.WorkspaceRoot
 	sourceTitle := sourceTab.TopicTitle
 	model := sourceTab.model
+	agentProfileID := sourceTab.AgentProfileID
+	agentProfileName := sourceTab.AgentProfileName
+	agentProfileBaseModel := sourceTab.AgentProfileBaseModel
 	effort := cloneStringPtr(sourceTab.effort)
 	mode := currentTabMode(sourceTab)
 	toolApprovalMode := currentTabToolApprovalMode(sourceTab)
@@ -2029,6 +2049,9 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	m.WorkspaceRoot = workspaceRoot
 	m.TopicID = topicID
 	m.TopicTitle = topicTitle
+	m.AgentProfileID = agentProfileID
+	m.AgentProfileName = agentProfileName
+	m.AgentProfileBaseModel = agentProfileBaseModel
 	if err := agent.SaveBranchMeta(newPath, m); err != nil {
 		return TabMeta{}, err
 	}
@@ -2037,18 +2060,21 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	a.mu.Lock()
 	tabID := a.newUniqueTabIDLocked()
 	tab := &WorkspaceTab{
-		ID:               tabID,
-		Scope:            scope,
-		WorkspaceRoot:    workspaceRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitle,
-		SessionPath:      newPath,
-		model:            model,
-		effort:           effort,
-		mode:             mode,
-		toolApprovalMode: toolApprovalMode,
-		disabledMCP:      disabledMCP,
-		mcpOrder:         mcpOrder,
+		ID:                    tabID,
+		Scope:                 scope,
+		WorkspaceRoot:         workspaceRoot,
+		TopicID:               topicID,
+		TopicTitle:            topicTitle,
+		SessionPath:           newPath,
+		AgentProfileID:        agentProfileID,
+		AgentProfileName:      agentProfileName,
+		AgentProfileBaseModel: agentProfileBaseModel,
+		model:                 model,
+		effort:                effort,
+		mode:                  mode,
+		toolApprovalMode:      toolApprovalMode,
+		disabledMCP:           disabledMCP,
+		mcpOrder:              mcpOrder,
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 	a.tabs[tabID] = tab
@@ -6345,10 +6371,10 @@ func (a *App) ReloadCommands() error {
 	return ctrl.ReloadCommands(a.ctx)
 }
 
-// SetSkillEnabled persists a skill toggle and rebuilds the controller so the
-// prompt index, slash menu, and skill tools reflect it immediately.
+// SetSkillEnabled persists a skill toggle independently from runtime reloads.
+// A broken MCP must not prevent the Skill's configured state from being saved.
 func (a *App) SetSkillEnabled(name string, enabled bool) error {
-	err := a.applyConfigChange(func(c *config.Config) error {
+	err := a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetSkillEnabled(name, enabled)
 	})
 	if err == nil {
@@ -6887,6 +6913,9 @@ func (a *App) desktopMCPServerForEdit(name string) (config.PluginEntry, bool, er
 }
 
 func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
+	if err := validateDesktopMCPServer(entry); err != nil {
+		return err
+	}
 	if a.desktopMCPServerOwnedByProjectMCPJSON(entry.Name) {
 		_, err := config.UpsertMCPJSONPlugin(projectMCPJSONPathForRoot(a.activeWorkspaceRoot()), entry)
 		return err
@@ -6909,6 +6938,18 @@ func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
 	}
 	_, err := a.removeProjectMCPOverride(entry.Name)
 	return err
+}
+
+func validateDesktopMCPServer(entry config.PluginEntry) error {
+	if normalizeMCPTransport(entry.Type) != "stdio" {
+		return nil
+	}
+	command := strings.TrimSpace(entry.Command)
+	switch strings.ToLower(filepath.Base(command)) {
+	case "plugin.json", "voltui-plugin.json":
+		return fmt.Errorf("MCP command %q is a plugin manifest, not an executable command", command)
+	}
+	return nil
 }
 
 func (a *App) removeDesktopMCPServer(name string) (bool, error) {
@@ -7455,6 +7496,10 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	// Preserve the shared plugin host across controller rebuilds — the tab
 	// stays in the same workspace root, so MCP processes must not be restarted.
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
@@ -7464,6 +7509,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(effortOverride),
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7496,6 +7542,9 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 	tab.Ctrl = newCtrl
 	tab.model = name
+	if strings.TrimSpace(tab.AgentProfileID) != "" {
+		tab.AgentProfileBaseModel = name
+	}
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
 	// Supersede any in-flight startup build: it would otherwise finish later,
@@ -7612,6 +7661,10 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		carried = oldCtrl.History()
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -7620,6 +7673,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           &effort,
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7740,6 +7794,10 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		carried = oldCtrl.History()
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -7748,6 +7806,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                mode,
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

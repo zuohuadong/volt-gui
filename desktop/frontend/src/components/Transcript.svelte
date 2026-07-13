@@ -424,17 +424,26 @@
     <article class="decision-shelf">
       <div>
         <ShieldAlert size={18} />
-        <strong>{approval.tool === "exit_plan_mode" ? "Plan approval" : "Tool approval"}</strong>
+        <strong>{approval.tool === "trusted_intranet_access" ? "内网站点授权" : approval.tool === "exit_plan_mode" ? "Plan approval" : "Tool approval"}</strong>
         <span>{approval.tool}</span>
       </div>
       {#if approval.subject}
         <pre>{approval.subject}</pre>
       {/if}
+      {#if approval.reason}
+        <p class="decision-reason">{approval.reason}</p>
+      {/if}
       <div class="decision-actions">
-        <button type="button" onclick={() => onApprove(true, false, false)}><Check size={14} /> Allow once</button>
-        <button type="button" onclick={() => onApprove(true, true, false)}>Allow session</button>
-        <button type="button" onclick={() => onApprove(true, true, true)}>Persist</button>
-        <button type="button" onclick={() => onApprove(false, false, false)}><X size={14} /> Deny</button>
+        {#if approval.tool === "trusted_intranet_access"}
+          <button type="button" onclick={() => onApprove(true, false, false)}><Check size={14} /> 仅本次允许</button>
+          <button type="button" onclick={() => onApprove(true, true, true)}>永久允许</button>
+          <button type="button" onclick={() => onApprove(false, false, false)}><X size={14} /> 拒绝</button>
+        {:else}
+          <button type="button" onclick={() => onApprove(true, false, false)}><Check size={14} /> Allow once</button>
+          <button type="button" onclick={() => onApprove(true, true, false)}>Allow session</button>
+          <button type="button" onclick={() => onApprove(true, true, true)}>Persist</button>
+          <button type="button" onclick={() => onApprove(false, false, false)}><X size={14} /> Deny</button>
+        {/if}
       </div>
     </article>
   {/if}
@@ -1008,6 +1017,13 @@
     color: #475467;
     font-size: 12px;
     white-space: pre-wrap;
+  }
+
+  .decision-reason {
+    margin: -4px 0 0;
+    color: #5f6673;
+    font-size: 13px;
+    line-height: 1.55;
   }
 
   .tool-subcalls {

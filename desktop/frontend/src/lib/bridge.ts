@@ -1,10 +1,11 @@
-// Wails binding bridge — no mock fallback. This module only works inside a
+// Wails binding bridge — no fabricated fallback data. This module only works inside a
 // Wails desktop runtime. For browser-only development, the Wails dev server
 // (wails dev) provides the real bindings on localhost.
 
 import type {
   CommandInfo,
   BrandInfo,
+  BrowserCredentialView,
   ContextPanelInfo,
   BrandView,
   DirEntry,
@@ -29,6 +30,7 @@ import type {
   TabMeta,
   TopicMeta,
   ToolResultData,
+  TrustedIntranetSiteView,
   UpdateInfo,
   UpdateProgress,
   UserInfo,
@@ -61,6 +63,7 @@ import type {
   KnowledgeStatus,
   WorkbenchReport,
   WorkbenchReportInput,
+  WorkbenchRegulation,
   WorkbenchSearchResult,
   WorkbenchSyncJob,
   WorkbenchTeamChatMessage,
@@ -122,6 +125,8 @@ interface AppBindings {
   ClearGoalForTab(tabID: string): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
+  SubmitBrowserCredentialTab(tabID: string, id: string, username: string, password: string, save: boolean): Promise<void>;
+  CompleteBrowserVerificationTab(tabID: string, id: string, continued: boolean): Promise<void>;
   Commands(): Promise<CommandInfo[]>;
   SlashArgs(input: string): Promise<{ items: SlashArgItem[]; from: number }>;
   ListDir(rel: string): Promise<DirEntry[]>;
@@ -163,9 +168,16 @@ interface AppBindings {
   DeleteCustomer(id: string): Promise<void>;
   ListCalendarEvents(): Promise<WorkbenchCalendarEvent[]>;
   SaveCalendarEvent(input: WorkbenchCalendarEventInput): Promise<WorkbenchCalendarEvent>;
+  DeleteCalendarEvent(id: string): Promise<void>;
   ListWorkbenchReports(): Promise<WorkbenchReport[]>;
   SaveWorkbenchReport(input: WorkbenchReportInput): Promise<WorkbenchReport>;
+  ReviewWorkbenchReport(id: string, action: string, reviewedBy: string, comment: string): Promise<WorkbenchReport>;
   SaveKnowledgeDocument(input: WorkbenchKnowledgeDocumentInput): Promise<WorkbenchKnowledgeDocument>;
+  ListRegulations(): Promise<WorkbenchRegulation[]>;
+  SaveRegulation(input: WorkbenchRegulation): Promise<WorkbenchRegulation>;
+  RenderRegulation(id: string, variables: Record<string, string>): Promise<string>;
+  DeleteRegulation(id: string): Promise<void>;
+  RenderKnowledgeDocument(id: string, variables: Record<string, string>): Promise<string>;
   KnowledgeBase(): Promise<KnowledgeBaseView>;
   KnowledgeStatus(): Promise<KnowledgeStatus>;
   ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument>;
@@ -177,15 +189,22 @@ interface AppBindings {
   ExportWorkbenchReports(): Promise<string>;
   ExportWorkbenchReport(id: string): Promise<string>;
   DeleteWorkbenchReport(id: string): Promise<void>;
+  ListTeamRooms(): Promise<WorkbenchTeamRoom[]>;
   SaveTeamRoom(input: WorkbenchTeamRoom): Promise<WorkbenchTeamRoom>;
+  DeleteTeamRoom(id: string): Promise<void>;
+  ListTeamRuns(teamID: string): Promise<WorkbenchTeamRun[]>;
   SaveTeamRun(input: WorkbenchTeamRun): Promise<WorkbenchTeamRun>;
+  DeleteTeamRun(id: string): Promise<void>;
+  ControlTeamRun(runID: string, action: string): Promise<WorkbenchTeamRuntimeResult>;
+  ListTeamChatMessages(teamID: string): Promise<WorkbenchTeamChatMessage[]>;
   SaveTeamChatMessage(input: WorkbenchTeamChatMessage): Promise<WorkbenchTeamChatMessage>;
+  DeleteTeamChatMessage(id: string): Promise<void>;
   RunTeamRuntime(input: WorkbenchTeamRuntimeInput): Promise<WorkbenchTeamRuntimeResult>;
   DistillAgentFromTodo(input: WorkbenchTodoInput, skillNames: string[]): Promise<AgentView>;
   AddMCPServer(input: MCPServerInput): Promise<number>;
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
-  RetryMCPServer(name: string): Promise<void>;
+  ReconnectMCPServer(name: string): Promise<void>;
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
@@ -197,12 +216,16 @@ interface AppBindings {
   SetPlannerModel(ref: string): Promise<void>;
   SaveProvider(provider: ProviderView): Promise<void>;
   DeleteProvider(name: string): Promise<void>;
+  RemoveProviderAccess(name: string): Promise<void>;
   FetchProviderModels(provider: ProviderView): Promise<string[]>;
   SetProviderKey(apiKeyEnv: string, value: string): Promise<string>;
   SetPermissionMode(mode: string): Promise<void>;
   AddPermissionRule(list: string, rule: string): Promise<void>;
   RemovePermissionRule(list: string, rule: string): Promise<void>;
   SetSandbox(bash: string, network: boolean, workspaceRoot: string, allowWrite: string[], shell: string): Promise<void>;
+  RemoveTrustedIntranetSite(site: TrustedIntranetSiteView): Promise<void>;
+  ListBrowserCredentials(): Promise<BrowserCredentialView[]>;
+  RemoveBrowserCredential(origin: string): Promise<void>;
   NeedsAuth(): Promise<boolean>;
   StartOIDCLogin(): Promise<void>;
   CancelOIDCLogin(): Promise<void>;
@@ -252,7 +275,7 @@ function bindings(): AppBindings {
   const real = typeof window === "undefined" ? undefined : window.go?.main?.App;
   if (!real) {
     throw new Error(
-      "Wails bindings are unavailable. Run inside `wails dev` or `wails build` — the Svelte workbench no longer ships a browser mock.",
+      "Wails bindings are unavailable. Run inside `wails dev` or `wails build` — browser-only mode does not fabricate desktop data.",
     );
   }
   return real;

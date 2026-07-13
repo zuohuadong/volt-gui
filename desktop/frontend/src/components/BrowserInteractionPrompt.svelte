@@ -95,14 +95,14 @@
   header > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #eef4fa; color: #294f75; }
   header div { min-width: 0; }
   header strong { display: block; font-size: 14px; }
-  header p { margin: 3px 0 0; color: var(--muted, #6b7280); font-size: 12px; overflow-wrap: anywhere; }
-  .browser-prompt__reason, .browser-prompt__detail { margin: 12px 0; color: var(--muted, #5f6875); font-size: 12px; line-height: 1.65; }
+  header p { margin: 3px 0 0; color: var(--muted-foreground, #6b7280); font-size: 12px; overflow-wrap: anywhere; }
+  .browser-prompt__reason, .browser-prompt__detail { margin: 12px 0; color: var(--muted-foreground, #5f6875); font-size: 12px; line-height: 1.65; }
   form { display: grid; gap: 10px; }
-  label { display: grid; gap: 6px; color: var(--muted, #5f6875); font-size: 12px; }
+  label { display: grid; gap: 6px; color: var(--muted-foreground, #5f6875); font-size: 12px; }
   label span, .browser-prompt__save-note { display: flex; align-items: center; gap: 6px; }
   input { width: 100%; box-sizing: border-box; border: 1px solid var(--border, #d9dce2); border-radius: 10px; padding: 10px 11px; background: var(--surface, #fff); color: inherit; }
   input:focus { outline: 2px solid rgb(49 91 136 / 18%); border-color: #527ba4; }
-  .browser-prompt__save-note { margin: 0; color: var(--muted, #66717e); font-size: 11px; line-height: 1.5; }
+  .browser-prompt__save-note { margin: 0; color: var(--muted-foreground, #66717e); font-size: 11px; line-height: 1.5; }
   .browser-prompt__actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
   button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; border: 1px solid var(--border, #d9dce2); border-radius: 10px; padding: 0 12px; background: var(--surface, #fff); color: inherit; cursor: pointer; }
   button.primary { border-color: #20262d; background: #20262d; color: #fff; }

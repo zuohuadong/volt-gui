@@ -196,6 +196,27 @@ func TestBrowserCredentialEmptyPasswordAndCancelFailClosed(t *testing.T) {
 	}
 }
 
+func TestBrowserCredentialPromptCloseFailsClosed(t *testing.T) {
+	c, events := newBrowserPromptController(&promptKeyringBackend{})
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.RequestBrowserCredential(context.Background(), tool.BrowserCredentialRequest{
+			Origin: "https://example.com", URL: "https://example.com/login",
+		})
+		errCh <- err
+	}()
+	_ = waitBrowserPromptEvent(t, events, event.BrowserCredentialRequest)
+
+	c.Close()
+
+	if err := <-errCh; err == nil {
+		t.Fatal("closed credential prompt should fail closed")
+	}
+	if c.PendingPrompt() {
+		t.Fatal("browser prompt remained pending after Close")
+	}
+}
+
 func TestBrowserVerificationPromptReplayAndCompletion(t *testing.T) {
 	c, events := newBrowserPromptController(&promptKeyringBackend{})
 	result := make(chan bool, 1)

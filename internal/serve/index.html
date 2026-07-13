@@ -948,15 +948,20 @@ function post(path, body) {
 }
 // Follow streaming output only while the user is pinned to the bottom of the
 // transcript; scrolling up detaches so history stays readable mid-stream.
-// force re-pins (own message sent, session loaded, blocking action prompts
-// such as approval/ask — they require user action and their key handler is
-// document-level, so they must never sit off-screen). Scrolls are instant: a
-// smooth animation lags behind rapid chunks, and its intermediate positions
-// would read as "not at bottom" and break pin detection.
+// Detach triggers on wheel intent (any upward notch on scrollable content),
+// not only on position: during fast streaming every frame re-bottoms the
+// viewport, so a slow trackpad drag would never accumulate the 40px position
+// delta. force re-pins (own message sent, session loaded, action prompts,
+// click feedback) and wins over a concurrent user scroll — an approval needs
+// a decision and its key handler is document-level, so it must not sit
+// off-screen. Scrolls are instant: a smooth animation lags behind rapid
+// chunks, and its intermediate positions would read as "not at bottom" and
+// break pin detection.
 let pinnedToBottom=true;
 function atBottom() { return log.scrollHeight-log.scrollTop-log.clientHeight<40; }
 log.addEventListener('scroll',()=>{pinnedToBottom=atBottom();});
-function scrollDown(force) { if(force)pinnedToBottom=true; if(!pinnedToBottom)return; requestAnimationFrame(()=>{if(!pinnedToBottom)return; log.scrollTo({top:log.scrollHeight,behavior:'instant'});});}
+log.addEventListener('wheel',e=>{if(e.deltaY<0&&log.scrollHeight>log.clientHeight)pinnedToBottom=false;},{passive:true});
+function scrollDown(force) { if(force)pinnedToBottom=true; if(!pinnedToBottom)return; requestAnimationFrame(()=>{if(force)pinnedToBottom=true; else if(!pinnedToBottom)return; log.scrollTo({top:log.scrollHeight,behavior:'instant'});});}
 function hideWelcome() { if(welcome) welcome.style.display='none';}
 function showWelcome() { if(welcome) welcome.style.display='';}
 // Global single-key shortcuts must stay dead while the user is typing (the
@@ -992,7 +997,7 @@ function showNotice(text, tone) {
   hideWelcome();
   const n=el('div','notice'+(tone==='warn'?' notice--warn':''),text);
   log.appendChild(n);
-  scrollDown();
+  scrollDown(true); // synchronous feedback to a user action — always reveal
 }
 function updateActionAvailability() {
   setActionDisabled('btn-compact', running || !hasVisibleHistory, running ? __('thinking') : __('no_conversation'));
@@ -1155,6 +1160,12 @@ function dangerousBashCommand(command) {
     || /^dd\s+if=/.test(command)
     || /^fdisk\b/.test(command);
 }
+// A turn's approval/ask prompts die with the turn: cancel (composer Esc, stop
+// button) or turn end must remove the cards and their key listeners, or a
+// stale card keeps soliciting a decision for a dead request and the approval
+// key listener would resolve it on a later unrelated keypress.
+let pendingPrompts=[];
+function clearPendingPrompts(){pendingPrompts.splice(0).forEach(fn=>fn());}
 function showApproval(a) {
   const d=el('div','approval');
   const prefix = a.tool === 'bash' ? bashCommandPrefix(a.subject) : '';
@@ -1173,7 +1184,9 @@ function showApproval(a) {
   actions.push('<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> '+__('deny')+'</button>');
   d.innerHTML='<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">'+__('approval_title')+'</span></div><div class="approval__subject">'+escHtml(a.tool)+(a.subject?' — '+escHtml(a.subject):'')+'</div><div class="approval__actions">'+actions.join('')+'</div>';
   log.appendChild(d);scrollDown(true);
-  const resolve=payload=>{post('/approve',Object.assign({id:a.id},payload));d.remove();document.removeEventListener('keydown',onkey);};
+  const cleanup=()=>{pendingPrompts=pendingPrompts.filter(f=>f!==cleanup);d.remove();document.removeEventListener('keydown',onkey);};
+  pendingPrompts.push(cleanup);
+  const resolve=payload=>{post('/approve',Object.assign({id:a.id},payload));cleanup();};
   d.querySelectorAll('.approval__btn').forEach(btn=>{btn.onclick=()=>resolve({allow:btn.dataset.allow==='true',session:btn.dataset.session==='true',persist:btn.dataset.persist==='true',scope:btn.dataset.scope||''});});
   const onkey=e=>{if(!isPlainKey(e))return; const k=e.key.toLowerCase();if(k==='y'||k==='1'){resolve({allow:true,session:false});}else if(k==='a'||k==='2'){resolve({allow:true,session:true});}else if(hasPrefix&&k==='3'){resolve({allow:true,session:true,scope:'prefix'});}else if(k==='p'||(!hasPrefix&&k==='3')||(hasPrefix&&k==='4')){resolve({allow:true,session:true,persist:true,scope:hasPrefix?'prefix':''});}else if(k==='n'||k==='escape'||(!hasPrefix&&k==='4')||(hasPrefix&&k==='5')){resolve({allow:false,session:false});}};
   document.addEventListener('keydown',onkey);
@@ -1182,6 +1195,7 @@ function showApproval(a) {
 // ── ask ──
 function showAsk(ask) {
   const d=el('div','ask');
+  const cleanup=()=>{pendingPrompts=pendingPrompts.filter(f=>f!==cleanup);d.remove();};
   ask.questions.forEach(q=>{
     const qDiv=el('div'); qDiv.appendChild(el('div','ask__prompt',q.prompt));
     const opts=el('div','ask__options'); const selected=new Set();
@@ -1193,10 +1207,11 @@ function showAsk(ask) {
     qDiv.appendChild(opts);
     const submit=el('button','ask__submit',__('submit')); submit.disabled=true;
     opts.addEventListener('click',()=>{submit.disabled=selected.size===0;});
-    submit.onclick=()=>{const answers=ask.questions.map(qq=>({questionId:qq.id,selected:Array.from(selected).map(i=>qq.options[i].label)}));post('/answer',{id:ask.id,answers});d.remove();};
+    submit.onclick=()=>{const answers=ask.questions.map(qq=>({questionId:qq.id,selected:Array.from(selected).map(i=>qq.options[i].label)}));post('/answer',{id:ask.id,answers});cleanup();};
     qDiv.appendChild(submit); d.appendChild(qDiv);
   });
   log.appendChild(d);scrollDown(true);
+  pendingPrompts.push(cleanup);
 }
 
 // ── compaction ──
@@ -1280,23 +1295,27 @@ function applyRewind() {
 
 document.addEventListener('keydown',e=>{
   const overlay=$('#rewind-overlay'); if(!overlay)return;
-  // Modifier chords (copy/reload/devtools) must not drive the picker — a bare
-  // Cmd+C would otherwise hit a scope key and apply a rewind. Target is not
-  // checked: double-Esc opens the picker from the focused composer, so the
-  // picker intentionally owns plain keys regardless of focus.
-  if(e.ctrlKey||e.metaKey||e.altKey)return;
-  if(e.key==='Escape'){e.preventDefault();if(rewindStage===0)overlay.remove();else{rewindStage=0;renderRewindPicker();}return;}
+  // The picker is modal and runs in the capture phase: plain keys it owns are
+  // swallowed before they reach the composer underneath — Enter would
+  // otherwise both send the composer draft and advance the picker, and
+  // letters would type into the hidden draft. Modifier chords
+  // (copy/reload/devtools), IME composition, and non-printable keys (F5, Tab)
+  // pass through — a bare Cmd+C must not hit a scope key and apply a rewind.
+  if(e.ctrlKey||e.metaKey||e.altKey||e.isComposing||e.key==='Process')return;
+  if(!(e.key==='Escape'||e.key==='Enter'||e.key==='ArrowDown'||e.key==='ArrowUp'||e.key.length===1))return;
+  e.preventDefault();e.stopPropagation();
+  if(e.key==='Escape'){if(rewindStage===0)overlay.remove();else{rewindStage=0;renderRewindPicker();}return;}
   if(rewindStage===0){
-    if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();rewindSelected=Math.min(rewindSelected+1,rewindCheckpoints.length-1);renderRewindPicker();}
-    if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();rewindSelected=Math.max(rewindSelected-1,0);renderRewindPicker();}
-    if(e.key==='Enter'){e.preventDefault();rewindStage=1;rewindScope=0;renderRewindPicker();}
+    if(e.key==='j'||e.key==='ArrowDown'){rewindSelected=Math.min(rewindSelected+1,rewindCheckpoints.length-1);renderRewindPicker();}
+    if(e.key==='k'||e.key==='ArrowUp'){rewindSelected=Math.max(rewindSelected-1,0);renderRewindPicker();}
+    if(e.key==='Enter'){rewindStage=1;rewindScope=0;renderRewindPicker();}
   } else {
-    if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();rewindScope=Math.min(rewindScope+1,SCOPES.length-1);renderRewindPicker();}
-    if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();rewindScope=Math.max(rewindScope-1,0);renderRewindPicker();}
-    if(e.key==='Enter'){e.preventDefault();applyRewind();}
-    const idx=SCOPES.findIndex(s=>s.key===e.key); if(idx>=0){e.preventDefault();rewindScope=idx;applyRewind();}
+    if(e.key==='j'||e.key==='ArrowDown'){rewindScope=Math.min(rewindScope+1,SCOPES.length-1);renderRewindPicker();}
+    if(e.key==='k'||e.key==='ArrowUp'){rewindScope=Math.max(rewindScope-1,0);renderRewindPicker();}
+    if(e.key==='Enter'){applyRewind();}
+    const idx=SCOPES.findIndex(s=>s.key===e.key); if(idx>=0){rewindScope=idx;applyRewind();}
   }
-});
+},true);
 
 // ── slash menu ──
 let slashOpen=false, slashIndex=0, slashFiltered=[];
@@ -1349,7 +1368,7 @@ es.onmessage=ev=>{setConnState('connected');
   const e=JSON.parse(ev.data);
   if(e.kind!=='retrying')clearRetrying();
   switch(e.kind){
-    case 'turn_started': setRunning(true); finalizeMsg(); toolCards={}; todosDismissed=false; break;
+    case 'turn_started': setRunning(true); clearPendingPrompts(); finalizeMsg(); toolCards={}; todosDismissed=false; break;
     case 'reasoning': appendReasoning(e.reasoning||e.text||''); break;
     case 'text': currentReasoning=null; appendText(e.text||''); break;
     case 'message': finalizeMsg(); break;
@@ -1378,7 +1397,7 @@ es.onmessage=ev=>{setConnState('connected');
     case 'compaction_started': showCompaction({trigger:e.compaction?.trigger}); break;
     case 'compaction_done': showCompaction(e.compaction||{}); break;
     case 'retrying': setRetrying(e.retryAttempt,e.retryMax); break;
-    case 'turn_done': finalizeMsg(); setRunning(false); if(e.err){log.appendChild(el('div','msg--error','✗ '+e.err));scrollDown();} fetchStatus(); fetchTodos(); refreshCheckpointAvailability(); break;
+    case 'turn_done': clearPendingPrompts(); finalizeMsg(); setRunning(false); if(e.err){log.appendChild(el('div','msg--error','✗ '+e.err));scrollDown();} fetchStatus(); fetchTodos(); refreshCheckpointAvailability(); break;
   }
 };
 es.onerror=()=>{

@@ -74,6 +74,7 @@ const lineRules = [
     id: 'seed-source',
     message: '运行时记录不能以 source="seed" 注入业务数据',
     pattern: /\bsource\s*[:=]\s*["']seed["']/i,
+    allowLegacyCleanup: true,
   },
   {
     id: 'seed-factory',
@@ -96,6 +97,7 @@ const lineRules = [
     id: 'legacy-agent-seed-record',
     message: '发现已知默认 Agent 业务记录',
     pattern: /\b(?:id|ID)\s*:\s*["'](?:code-review|research|automation)["'][^\n]*(?:代码审查 Agent|资料研究 Agent|自动化 Agent)/,
+    allowLegacyCleanup: true,
     pathPrefix: 'desktop/',
   },
   {
@@ -109,6 +111,7 @@ const lineRules = [
     id: 'fabricated-status-metric',
     message: '发现伪造成功状态或运行指标',
     pattern: /最近一次通过|\b(?:runs|Runs)\s*:\s*128\b|\b(?:progress|Progress)\s*:\s*["']64%["']/,
+    allowLegacyCleanup: true,
   },
   {
     id: 'browser-fake-success',
@@ -209,9 +212,110 @@ function decodeUnicodeEscapes(value) {
   });
 }
 
-function lineAllowsLegacyCleanup(lines, index) {
-  if (lines[index].includes(RUNTIME_MOCK_ALLOW_MARKER)) return true;
-  return index > 0 && lines[index - 1].includes(RUNTIME_MOCK_ALLOW_MARKER);
+const legacyCleanupFunctionsByFile = new Map([
+  ['desktop/agents_app.go', new Set(['isLegacySeedAgent'])],
+  ['desktop/todos_app.go', new Set(['isLegacySeedTodo'])],
+  ['desktop/projects_app.go', new Set(['isLegacySeedProject'])],
+  ['desktop/project_materials_app.go', new Set(['isLegacySeedProjectMaterial'])],
+  ['desktop/automations_app.go', new Set(['isLegacySeedAutomation'])],
+  ['desktop/workbench_data_app.go', new Set([
+    'migrateLegacyWorkbenchSeeds',
+    'filterLegacyCalendarEvents',
+    'filterLegacyReports',
+    'filterLegacyKnowledgeDocuments',
+    'filterLegacyRegulations',
+    'filterLegacySyncJobs',
+    'filterLegacyOperationLogs',
+    'filterLegacyTeamRooms',
+    'filterLegacyTeamMessages',
+  ])],
+]);
+
+function enclosingGoFunctionRange(lines, index) {
+  for (let start = index; start >= 0; start -= 1) {
+    const match = lines[start].match(/^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+    if (!match) continue;
+    let balance = 0;
+    for (let lineIndex = start; lineIndex <= index; lineIndex += 1) {
+      balance += (lines[lineIndex].match(/\{/g) ?? []).length;
+      balance -= (lines[lineIndex].match(/\}/g) ?? []).length;
+      if (lineIndex < index && balance <= 0) return null;
+    }
+    if (balance <= 0) return null;
+    let end = index;
+    for (let lineIndex = index + 1; lineIndex < lines.length; lineIndex += 1) {
+      balance += (lines[lineIndex].match(/\{/g) ?? []).length;
+      balance -= (lines[lineIndex].match(/\}/g) ?? []).length;
+      end = lineIndex;
+      if (balance <= 0) break;
+    }
+    return { name: match[1], start, end };
+  }
+  return null;
+}
+
+function isPureExpectedFingerprint(lines, index, functionRange) {
+  const line = lines[index];
+  if (!/^\s*expected\s*:=\s*(?:PersistentAgentView|Workbench(?:Todo|Project|Automation|Customer|CalendarEvent|Report|KnowledgeDocument|Regulation|SyncJob|OperationLog|TeamRoom|TeamChatMessage)View)\s*\{.*\}\s*$/.test(line)) return false;
+  if (/\b(?:append|copy|make|new|delete|panic|recover|go|defer)\b|\b[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(line.replace(/^\s*expected\s*:=\s*[A-Za-z0-9_]+/, ''))) return false;
+  let boundary = functionRange.end;
+  for (let lineIndex = index + 1; lineIndex <= functionRange.end; lineIndex += 1) {
+    if (/^\s*(?:case\b|default\s*:|expected\s*:=)/.test(lines[lineIndex])) {
+      boundary = lineIndex;
+      break;
+    }
+  }
+  const uses = lines.slice(index + 1, boundary).filter((candidate) => /\bexpected\b/.test(candidate));
+  if (uses.length !== 1) return false;
+  const consumer = uses[0].trim();
+  return /^return\s+reflect\.DeepEqual\([A-Za-z_][A-Za-z0-9_]*,\s*expected\)$/.test(consumer)
+    || /^legacy\s*=\s*legacySeedTimestampsMatch\(item\.CreatedAt,\s*item\.UpdatedAt\)\s*&&\s*reflect\.DeepEqual\(item,\s*expected\)$/.test(consumer)
+    || /^legacy\s*=\s*item\.(?:CreatedAt|UpdatedAt)\s*!=\s*""\s*&&\s*reflect\.DeepEqual\(item,\s*expected\)$/.test(consumer)
+    || /^legacy\s*=\s*legacySeedTimestampsMatch\(item\.CreatedAt,\s*item\.UpdatedAt\)\s*&&\s*legacyReportMatches\(item,\s*expected\)$/.test(consumer)
+    || /^legacy\s*=\s*legacySeedTimestampsMatch\(item\.CreatedAt,\s*item\.UpdatedAt\)\s*&&\s*legacyKnowledgeDocumentMatches\(item,\s*expected,\s*\[\]string\{[^{}]*\}\)$/.test(consumer);
+}
+
+function isPureMaterialFingerprintEntry(lines, index, functionRange) {
+  const line = lines[index];
+  if (!/^\s*["'][^"']+["']\s*:\s*\{.*\}\s*,?\s*$/.test(line)) return false;
+  if (/\b[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(line)) return false;
+  let mapStart = -1;
+  for (let lineIndex = index - 1; lineIndex >= functionRange.start; lineIndex -= 1) {
+    if (/^\s*expected\s*:=\s*map\[string\]WorkbenchProjectMaterialView\s*\{\s*$/.test(lines[lineIndex])) {
+      mapStart = lineIndex;
+      break;
+    }
+  }
+  if (mapStart < 0) return false;
+  let balance = 0;
+  let mapEnd = -1;
+  for (let lineIndex = mapStart; lineIndex <= functionRange.end; lineIndex += 1) {
+    balance += (lines[lineIndex].match(/\{/g) ?? []).length;
+    balance -= (lines[lineIndex].match(/\}/g) ?? []).length;
+    if (balance === 0) {
+      mapEnd = lineIndex;
+      break;
+    }
+  }
+  if (mapEnd < index) return false;
+  const tail = lines.slice(mapEnd + 1, functionRange.end + 1);
+  const expectedUses = tail.filter((candidate) => /\bexpected\b/.test(candidate));
+  const fingerprintUses = tail.filter((candidate) => /\bfingerprint\b/.test(candidate));
+  return expectedUses.length === 1
+    && /^\s*fingerprint,\s*ok\s*:=\s*expected\[strings\.TrimSpace\(material\.ID\)\]\s*$/.test(expectedUses[0])
+    && fingerprintUses.length === 2
+    && fingerprintUses.some((candidate) => /^\s*return\s+ok\s*&&\s*reflect\.DeepEqual\(material,\s*fingerprint\)\s*$/.test(candidate));
+}
+
+function lineAllowsLegacyCleanup(relative, lines, index) {
+  const hasMarker = lines[index].includes(RUNTIME_MOCK_ALLOW_MARKER)
+    || (index > 0 && lines[index - 1].includes(RUNTIME_MOCK_ALLOW_MARKER));
+  if (!hasMarker) return false;
+  const allowedFunctions = legacyCleanupFunctionsByFile.get(relative);
+  const functionRange = enclosingGoFunctionRange(lines, index);
+  if (!functionRange || !allowedFunctions?.has(functionRange.name)) return false;
+  return isPureExpectedFingerprint(lines, index, functionRange)
+    || isPureMaterialFingerprintEntry(lines, index, functionRange);
 }
 
 function locationForOffset(content, offset) {
@@ -233,7 +337,7 @@ export async function scanRuntimeMocks({ root = repositoryRoot } = {}) {
         if (rule.pathPrefix && !relative.startsWith(rule.pathPrefix)) continue;
         const match = decoded.match(rule.pattern);
         if (!match) continue;
-        if (rule.allowLegacyCleanup && lineAllowsLegacyCleanup(lines, index)) continue;
+        if (rule.allowLegacyCleanup && lineAllowsLegacyCleanup(relative, lines, index)) continue;
         findings.push({
           rule: rule.id,
           message: rule.message,

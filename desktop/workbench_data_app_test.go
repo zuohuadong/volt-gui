@@ -540,10 +540,11 @@ func TestLegacyWorkbenchSeedMigrationPersistsRemovalAndPreservesCustomizedID(t *
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	const stamp = "2026-06-15T08:00:00Z"
 	data := WorkbenchDataView{Customers: []WorkbenchCustomerView{
-		{ID: "internal", Name: "内部研发团队", Email: "dev@example.com", Desc: "Volt GUI 研发与验证主体。"},
+		{ID: "internal", Name: "内部研发团队", Type: "企业", Contact: "产品负责人", Phone: "internal", Email: "dev@example.com", Risk: "低风险", RiskLevel: "low", Status: "active", Owner: "产品工作台", Stage: "活跃", Industry: "研发", Region: "本地", Address: "局域网本地客户档案", Note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", Desc: "Volt GUI 研发与验证主体。", ProjectIDs: []string{"volt-gui", "homepage"}, Matters: 2, Materials: 4, Events: 2, Todos: 5, Reports: 2, LastTouch: "刚刚", LastContact: "刚刚", NextAction: "继续验证工作台功能", Tags: []string{"内部", "研发"}, CreatedAt: stamp, UpdatedAt: stamp},
 		{ID: "ops", Name: "用户自定义运营团队", Email: "owner@example.com", Desc: "真实数据"},
-	}}
+	}, Initialized: true}
 	b, _ := json.Marshal(data)
 	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatal(err)

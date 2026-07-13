@@ -13,10 +13,10 @@ func TestFreshAgentStoreIsEmpty(t *testing.T) {
 	}
 }
 
-func TestNormalizeAgentClearsLegacySeededMockModelOnly(t *testing.T) {
+func TestNormalizeAgentPreservesConfiguredModelForAllIDs(t *testing.T) {
 	seeded := normalizeAgent(PersistentAgentView{ID: "code-review", Provider: "OpenAI", Model: "GPT-4o"})
-	if seeded.Provider != "" || seeded.Model != "" {
-		t.Fatalf("legacy seeded agent kept provider/model %q/%q", seeded.Provider, seeded.Model)
+	if seeded.Provider != "OpenAI" || seeded.Model != "GPT-4o" {
+		t.Fatalf("same-ID custom agent provider/model = %q/%q, want preserved", seeded.Provider, seeded.Model)
 	}
 
 	custom := normalizeAgent(PersistentAgentView{ID: "custom-agent", Provider: "OpenAI", Model: "GPT-4o"})

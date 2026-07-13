@@ -1212,6 +1212,29 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		a.evidence.Reset()
 	}
 	a.preserveEvidenceOnce = false
+	// Re-lease this session's background-job mutations that no turn has
+	// committed yet. The Reset above just wiped any lease a failed or
+	// cancelled turn held (its ledger is gone), and a process restart starts
+	// from an empty ledger too — in both cases the job manager still marks the
+	// job's evidence uncommitted. Without re-injecting it here, a turn that
+	// never re-issues wait/bash_output (the model has no reason to if it
+	// doesn't know a mutation is still pending) would ship the background
+	// change without the final-readiness gate ever seeing it. Plan-mode turns
+	// skip this like collectBackgroundEvidence does: writers are blocked, so
+	// arming delivery sign-off demands here would deadlock the turn.
+	if a.evidence != nil && a.jobs != nil && !a.planMode.Load() {
+		session := jobs.SessionFromContext(ctx)
+		for _, jobID := range a.jobs.PendingEvidenceJobIDsForSession(session) {
+			summary, ready := a.jobs.TryLeaseEvidenceForSession(session, jobID)
+			if !ready {
+				continue
+			}
+			if !a.evidence.NoteBackgroundLease(session, jobID) {
+				continue
+			}
+			a.evidence.MergeChild(summary)
+		}
+	}
 	// Commit background-job evidence leases only after this turn delivers.
 	// wait/bash_output merge a finished background writer's receipts into the
 	// ledger provisionally; if the turn reaches a final answer (runErr == nil)

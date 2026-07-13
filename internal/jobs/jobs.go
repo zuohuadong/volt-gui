@@ -1664,23 +1664,74 @@ func PublishEvidence(ctx context.Context, summary evidence.ChildEvidenceSummary)
 // committed job returns empty so a re-poll after successful delivery does not
 // re-demand review.
 func (m *Manager) LeaseEvidenceForSession(parentSession, id string) evidence.ChildEvidenceSummary {
+	summary, _ := m.tryLeaseEvidenceForSession(parentSession, id)
+	return summary
+}
+
+// TryLeaseEvidenceForSession is LeaseEvidenceForSession plus a ready flag that
+// separates "terminal evidence available" (possibly empty — a committed job or
+// one with no mutations) from "not ready to lease yet": unknown job, still
+// running, or killed but its run goroutine has not yet flushed PublishEvidence
+// and closed done. KillForSession flips status to Killed synchronously, well
+// before the goroutine actually returns, so a bash_output poll that lands in
+// that window must not treat the empty read as final. Callers that record a
+// lease (collectBackgroundEvidence) must gate on ready so they never note a
+// lease before the evidence exists — noting it early would let a later commit
+// drain evidence nobody ever merged or reviewed.
+func (m *Manager) TryLeaseEvidenceForSession(parentSession, id string) (evidence.ChildEvidenceSummary, bool) {
+	return m.tryLeaseEvidenceForSession(parentSession, id)
+}
+
+func (m *Manager) tryLeaseEvidenceForSession(parentSession, id string) (evidence.ChildEvidenceSummary, bool) {
 	j := m.get(parentSession, id)
 	if j == nil {
-		return evidence.ChildEvidenceSummary{}
+		return evidence.ChildEvidenceSummary{}, false
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	select {
 	case <-j.done:
 	default:
-		return evidence.ChildEvidenceSummary{}
+		return evidence.ChildEvidenceSummary{}, false
 	}
 	if j.evidenceCommitted {
-		return evidence.ChildEvidenceSummary{}
+		return evidence.ChildEvidenceSummary{}, true
 	}
 	out := make([]evidence.Receipt, len(j.evidence.Receipts))
 	copy(out, j.evidence.Receipts)
-	return evidence.ChildEvidenceSummary{Receipts: out}
+	return evidence.ChildEvidenceSummary{Receipts: out}, true
+}
+
+// PendingEvidenceJobIDsForSession returns the IDs of parentSession's terminal
+// jobs that carry uncommitted mutation evidence — a prior turn leased it but
+// never delivered (the turn failed or was cancelled, and the next turn's Reset
+// wiped it from the per-turn ledger), or the process restarted before any turn
+// collected it at all. The agent re-leases these at the start of every turn so
+// a turn that never calls wait/bash_output still surfaces the pending mutation
+// to its final-readiness checks instead of silently shipping it unreviewed.
+func (m *Manager) PendingEvidenceJobIDsForSession(parentSession string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []string
+	for _, key := range m.order {
+		j := m.jobs[key]
+		if j == nil || !sessionMatches(parentSession, j.SessionID) {
+			continue
+		}
+		j.mu.Lock()
+		terminal := false
+		select {
+		case <-j.done:
+			terminal = true
+		default:
+		}
+		pending := terminal && !j.evidenceCommitted && len(j.evidence.Receipts) > 0
+		j.mu.Unlock()
+		if pending {
+			ids = append(ids, j.ID)
+		}
+	}
+	return ids
 }
 
 // CommitEvidenceForSession permanently consumes a terminal job's evidence after

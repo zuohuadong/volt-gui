@@ -176,6 +176,76 @@ func TestBackgroundKill(t *testing.T) {
 	}
 }
 
+// kill_shell flips a job's status to Killed synchronously, well before its
+// cancelled run goroutine actually unwinds, flushes PublishEvidence, and closes
+// done. A bash_output poll that lands in that window must not note an empty
+// lease: the ledger's lease is idempotent per turn, so noting it early would
+// dedupe away every later retry in this same turn while the job's real
+// mutation evidence is still forthcoming — and a turn that goes on to deliver
+// would then commit (permanently drain) evidence nobody ever merged or
+// reviewed. This deterministically drives that exact window with channels
+// instead of a timing race.
+func TestKilledJobBashOutputDoesNotNoteLeaseBeforeEvidenceIsReady(t *testing.T) {
+	m := jobs.NewManager(event.Discard)
+	defer m.Close()
+	ledger := evidence.NewLedger()
+	ctx := jobs.WithManager(context.Background(), m)
+	ctx = jobs.WithSession(ctx, "session")
+	ctx = evidence.WithLedger(ctx, ledger)
+
+	cancelSeen := make(chan struct{})
+	release := make(chan struct{})
+	j := m.StartForSession("session", "task", "writer", func(jobCtx context.Context, _ io.Writer) (string, error) {
+		<-jobCtx.Done()
+		close(cancelSeen)
+		// Simulate a job that keeps unwinding (e.g. a subprocess still tearing
+		// down) after cancellation is requested but before it actually returns.
+		<-release
+		jobs.PublishEvidence(jobCtx, evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+			ToolName: "write_file", Success: true, Mutation: true, Write: true, Paths: []string{"changed.go"},
+		}}})
+		return "", context.Canceled
+	})
+
+	if _, err := (killShell{}).Execute(ctx, []byte(`{"job_id":"`+j.ID+`"}`)); err != nil {
+		t.Fatalf("kill_shell: %v", err)
+	}
+	<-cancelSeen // the goroutine observed the cancellation but has not returned
+
+	// bash_output lands in the unwinding window: status already reports Killed,
+	// but the job's done channel is not closed yet and no evidence exists.
+	bo, err := bashOutput{}.Execute(ctx, []byte(`{"job_id":"`+j.ID+`"}`))
+	if err != nil {
+		t.Fatalf("bash_output during unwind: %v", err)
+	}
+	if !strings.Contains(bo, "killed") {
+		t.Fatalf("bash_output during unwind = %q, want killed status", bo)
+	}
+	if ledger.Summary().HasMutation() {
+		t.Fatal("bash_output merged mutation evidence before the job was ready")
+	}
+	if leases := ledger.BackgroundLeases(); len(leases) != 0 {
+		t.Fatalf("bash_output noted a lease before the job was ready: %+v", leases)
+	}
+
+	close(release)
+	if res := m.WaitForSession(context.Background(), "session", []string{j.ID}, 5); len(res) != 1 || res[0].Status != jobs.Killed {
+		t.Fatalf("post-unwind wait = %+v, want one killed result", res)
+	}
+
+	// A later retry — the model calling bash_output again, or the next turn's
+	// automatic re-lease — must still find the evidence, not a dead dedupe entry.
+	if _, err := (bashOutput{}).Execute(ctx, []byte(`{"job_id":"`+j.ID+`"}`)); err != nil {
+		t.Fatalf("bash_output after unwind: %v", err)
+	}
+	if !ledger.Summary().HasMutation() {
+		t.Fatal("bash_output did not collect the killed job's evidence once it became ready")
+	}
+	if leases := ledger.BackgroundLeases(); len(leases) != 1 {
+		t.Fatalf("leases = %+v, want exactly one lease recorded", leases)
+	}
+}
+
 // Without a manager on the context the background tools degrade to a clear error
 // rather than panicking.
 func TestBackgroundToolsNoManager(t *testing.T) {

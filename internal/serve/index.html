@@ -141,6 +141,7 @@ input,textarea{font:inherit;color:inherit}
 
 /* approval */
 .approval{background:var(--panel);border:1px solid var(--accent);border-radius:var(--radius-lg);padding:12px 14px;margin:8px 0;box-shadow:var(--shadow-md);animation:msg-in .2s ease}
+.approval:focus{outline:none}
 .approval__header{display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .approval__icon{color:var(--warning);width:16px;height:16px}
 .approval__title{font-weight:600;font-size:13px}
@@ -1184,11 +1185,24 @@ function showApproval(a) {
   actions.push('<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> '+__('deny')+'</button>');
   d.innerHTML='<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">'+__('approval_title')+'</span></div><div class="approval__subject">'+escHtml(a.tool)+(a.subject?' — '+escHtml(a.subject):'')+'</div><div class="approval__actions">'+actions.join('')+'</div>';
   log.appendChild(d);scrollDown(true);
-  const cleanup=()=>{pendingPrompts=pendingPrompts.filter(f=>f!==cleanup);d.remove();document.removeEventListener('keydown',onkey);};
+  // The advertised Y/A/P/N keys need a non-text-entry target (isPlainKey), but
+  // the composer is autofocused, so in the default state every shortcut would
+  // just type into the draft. Move focus onto the card so the keys route here —
+  // unless the user is mid-entry (a non-empty composer draft, or any other
+  // text field such as the session search): stealing focus there would turn
+  // their next keystroke into an unintended approval. Cleanup hands focus back
+  // to the composer only when it still sits inside the card, so a user who
+  // deliberately moved elsewhere is not yanked back.
+  d.tabIndex=-1;
+  if(!isTextEntry(document.activeElement)||(document.activeElement===input&&!input.value))d.focus({preventScroll:true});
+  const cleanup=()=>{pendingPrompts=pendingPrompts.filter(f=>f!==cleanup);const hadFocus=d.contains(document.activeElement);d.remove();document.removeEventListener('keydown',onkey);if(hadFocus)input.focus();};
   pendingPrompts.push(cleanup);
   const resolve=payload=>{post('/approve',Object.assign({id:a.id},payload));cleanup();};
   d.querySelectorAll('.approval__btn').forEach(btn=>{btn.onclick=()=>resolve({allow:btn.dataset.allow==='true',session:btn.dataset.session==='true',persist:btn.dataset.persist==='true',scope:btn.dataset.scope||''});});
-  const onkey=e=>{if(!isPlainKey(e))return; const k=e.key.toLowerCase();if(k==='y'||k==='1'){resolve({allow:true,session:false});}else if(k==='a'||k==='2'){resolve({allow:true,session:true});}else if(hasPrefix&&k==='3'){resolve({allow:true,session:true,scope:'prefix'});}else if(k==='p'||(!hasPrefix&&k==='3')||(hasPrefix&&k==='4')){resolve({allow:true,session:true,persist:true,scope:hasPrefix?'prefix':''});}else if(k==='n'||k==='escape'||(!hasPrefix&&k==='4')||(hasPrefix&&k==='5')){resolve({allow:false,session:false});}};
+  // A consumed shortcut must preventDefault: cleanup refocuses the composer
+  // synchronously, and the keystroke's default text insertion runs after
+  // keydown — without it the approving key lands in the draft as a stray char.
+  const onkey=e=>{if(!isPlainKey(e))return; const k=e.key.toLowerCase(); let payload=null;if(k==='y'||k==='1'){payload={allow:true,session:false};}else if(k==='a'||k==='2'){payload={allow:true,session:true};}else if(hasPrefix&&k==='3'){payload={allow:true,session:true,scope:'prefix'};}else if(k==='p'||(!hasPrefix&&k==='3')||(hasPrefix&&k==='4')){payload={allow:true,session:true,persist:true,scope:hasPrefix?'prefix':''};}else if(k==='n'||k==='escape'||(!hasPrefix&&k==='4')||(hasPrefix&&k==='5')){payload={allow:false,session:false};}if(payload){e.preventDefault();resolve(payload);}};
   document.addEventListener('keydown',onkey);
 }
 

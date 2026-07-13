@@ -45,6 +45,45 @@ func TestNormalizeOptionalResumeArg(t *testing.T) {
 	}
 }
 
+func TestHasLeadingPrintFlag(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-p", "task"}, true},
+		{[]string{"--print", "task"}, true},
+		{[]string{"--model", "x", "-p", "task"}, true},
+		{[]string{"--effort", "max", "--print"}, true},
+		{[]string{"--model", "x", "task"}, false},
+		{[]string{"--", "-p"}, false}, // after -- it is a literal prompt token
+		{[]string{"--model", "x", "--", "-p"}, false},
+	}
+	for _, tc := range cases {
+		if got := hasLeadingPrintFlag(tc.args); got != tc.want {
+			t.Fatalf("hasLeadingPrintFlag(%#v) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestStripLeadingPrintFlag(t *testing.T) {
+	cases := []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"-p", "task"}, []string{"task"}},
+		{[]string{"--model", "x", "-p", "task"}, []string{"--model", "x", "task"}},
+		{[]string{"--print", "--model", "x"}, []string{"--model", "x"}},
+		// Only the first print token is dropped; a later "--print" after "--" is prompt text.
+		{[]string{"-p", "--", "--print"}, []string{"--", "--print"}},
+		{[]string{"--model", "x", "task"}, []string{"--model", "x", "task"}},
+	}
+	for _, tc := range cases {
+		if got := stripLeadingPrintFlag(tc.args); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("stripLeadingPrintFlag(%#v) = %#v, want %#v", tc.args, got, tc.want)
+		}
+	}
+}
+
 func TestResolveSessionQueryByIDAndPreview(t *testing.T) {
 	dir := t.TempDir()
 	first := saveQueryTestSession(t, dir, "alpha-session.jsonl", "fix provider configuration")

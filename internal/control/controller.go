@@ -1898,6 +1898,13 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 	default:
 		policy.Mode = permission.Ask
 	}
+	// A session allowlist (e.g. --allowed-tools) must never satisfy a tool that
+	// requires fresh human approval on every call — memory remember/forget, plan
+	// approval, sandbox escape, managed config write. SessionAllow is checked
+	// before Ask in Policy.Decide, so leaving those entries in would let
+	// `--allowed-tools remember` write memory with no prompt. Strip them so the
+	// forced Ask rules below stay authoritative.
+	policy.SessionAllow = rulesWithoutFreshHumanApproval(policy.SessionAllow)
 	policy.Ask = append(policy.Ask,
 		permission.Rule{Tool: memoryRememberTool},
 		permission.Rule{Tool: memoryForgetTool},
@@ -1919,6 +1926,50 @@ type denyPermissionApprover struct{}
 
 func (denyPermissionApprover) Approve(context.Context, string, string, json.RawMessage) (bool, bool, error) {
 	return false, false, nil
+}
+
+// rulesWithoutFreshHumanApproval drops any session-allow rule that targets a
+// tool requiring fresh human approval, so an explicit allowlist cannot bypass
+// the always-prompt contract for those tools.
+func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
+	if len(rules) == 0 {
+		return rules
+	}
+	filtered := make([]permission.Rule, 0, len(rules))
+	for _, r := range rules {
+		if RequiresFreshHumanApprovalTool(r.Tool) {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
+}
+
+// ApplyHeadlessApprovalMode configures the executor gate for a non-interactive
+// (`reasonix run`) session from an explicit --permission-mode. Unlike
+// EnableInteractiveApproval it installs no blocking approver, asker, or
+// fresh-approval prompt: there is no key loop to answer them, and the default
+// infinite approval timeout would wedge the run forever on an Ask rule, the
+// `ask` tool, or a sandbox/config approval. Modes map straight onto a headless
+// gate — auto/yolo/bypass let the writer fallback through (Ask decisions already
+// resolve to allow under the nil-approver gate), dontAsk denies what would
+// otherwise ask — while deny rules and fresh-human tools stay enforced by the
+// gate for every mode.
+func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
+	mode = normalizeToolApprovalMode(mode)
+	c.approval.setMode(mode)
+	if c.executor == nil {
+		return
+	}
+	policy := c.policy
+	switch mode {
+	case ToolApprovalAuto, ToolApprovalYolo:
+		policy.Mode = permission.Allow
+		c.executor.SetGate(NewHeadlessPermissionGate(policy))
+	case ToolApprovalDontAsk:
+		policy.Mode = permission.Deny
+		c.executor.SetGate(&freshHumanHeadlessGate{gate: permission.NewGate(policy, denyPermissionApprover{})})
+	}
 }
 
 func (c *Controller) refreshInteractiveGate() {

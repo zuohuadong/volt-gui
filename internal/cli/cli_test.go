@@ -381,6 +381,27 @@ func TestRunPrintAliasDispatchesRunFlags(t *testing.T) {
 	}
 }
 
+// TestRunPrintFlagAfterLeadingFlagsDispatchesRun covers `reasonix --model X -p`:
+// a print flag trailing other top-level flags must still route to `run --print`,
+// not into the interactive session parser (which has no -p and returns 2).
+func TestRunPrintFlagAfterLeadingFlagsDispatchesRun(t *testing.T) {
+	isolateCLIConfigHome(t)
+	prev := runInteractiveSession
+	t.Cleanup(func() { runInteractiveSession = prev })
+	runInteractiveSession = func([]string) int {
+		t.Fatal("print flag after leading flags must not route to the interactive session")
+		return 0
+	}
+	errOut := captureStderr(t, func() {
+		if rc := Run([]string{"--model", "x", "-p", "-h"}, "test-version"); rc != 2 {
+			t.Fatalf("Run(--model x -p -h) rc = %d, want 2", rc)
+		}
+	})
+	if !strings.Contains(errOut, "Usage of run:") {
+		t.Fatalf("--model x -p should dispatch to one-shot run flags, got:\n%s", errOut)
+	}
+}
+
 func TestParsePermissionModeClaudeAliases(t *testing.T) {
 	tests := map[string]cliPermissionMode{
 		"ask":               {approval: control.ToolApprovalAsk},

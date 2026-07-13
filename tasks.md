@@ -69,7 +69,7 @@
 | ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
 | ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
 | ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
-| ANYONG-SYNC-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | running | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-SYNC-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
 
 ### ANYONG-SYNC-20260713 Task Contract
 
@@ -83,6 +83,7 @@
 - 验证计划：fresh fetch、ahead/behind 与 `git merge-tree` 预演；按 touched modules 运行 root/desktop Go、frontend/site、workflow/script 专项门禁；品牌/CNB/runtime 关键边界审计；`git diff --check`；独立 verifier。
 - context_isolation：explorer 写 `.mailbox/051-upstream-explorer-result.md`；verifier 写 `.mailbox/052-upstream-verifier-result.md`；均为 isolated 只读上下文，不传递凭据。
 - interruption_recovery：若子代理失败或超时，读取对应 mailbox error；`last_stable_artifact` 为本 Task Contract、fresh refs、merge commit 或验证日志；重派一次仍失败则标记 PARTIAL，不切换其他 runtime。
+- completion_evidence：fresh `upstream/main=310604d5` 的单提交 Node 26 workflow 更新已通过 merge `0056604c` 合入本地 `main`；`.agents/AGENTS.local.md` 语义 union 保留 CNB Windows-only release 段并更新 Site Node 26，`.github/workflows/release-desktop.yml` 按 fork 边界继续删除，`.upstream-sync-marker` 对齐 upstream tip。验证通过：workflow contract 4/4、全部 GitHub workflow YAML 解析、Astro site 6 页构建、ancestor/marker/release boundary/diff checks。Explorer 首次 runtime timeout，重派 `.mailbox/051b-upstream-explorer-result.md` 完成审计；executor `.mailbox/051c-upstream-executor-result.md` 启动超时后由 orchestrator 接管；verifier 经 timeout/命令 allow-list 恢复后 `.mailbox/052c-upstream-verifier-result.md` 最终 PASS。未 push、未发布；最终裁决 PASS。
 
 ### ANYONG-SYNC-20260711 Task Contract
 

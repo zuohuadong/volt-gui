@@ -1,5 +1,6 @@
 # Agent Progress Log
 
+[2026-07-13T09:44:17+0800] [codex] [done:ANYONG-SYNC-20260713] 已将 fresh `upstream/main=310604d5` 合并到本地 `main`，merge commit `0056604c`。上游仅包含 GitHub Actions Node 26 升级；冲突裁决保留 Anyong CNB Windows-only 发布边界：`release-desktop.yml` 继续删除，`.agents/AGENTS.local.md` 同时保留 CNB release 段并更新 Site Node 26，`.upstream-sync-marker` 已对齐。验证：`node scripts/ci-workflows.test.mjs` 4/4、全部 workflow YAML 解析、Astro site 6 页 build、ancestor/marker/diff/fork boundary checks 全部通过。Explorer `.mailbox/051b-upstream-explorer-result.md` 完成审计；executor runtime timeout 后由 orchestrator 接管；独立 verifier `.mailbox/052c-upstream-verifier-result.md` PASS。未 push、未发布；最终裁决 PASS。
 [2026-07-13T09:17:01+0800] [codex] [running:ANYONG-SYNC-20260713] 已建立 fresh upstream merge Task Contract；本轮只合并并验证本地 `main`，不 push、不发布。Delegation Decision：跨模块上游同步为 medium risk，采用 explorer → orchestrator merge → independent verifier，保护 Anyong BrandConfig、CNB Windows-only 发布覆盖和 fork runtime 资源。
 
 > 多 Workspace Agent 协调日志。每个 Agent 在开始和完成任务时更新此文件。

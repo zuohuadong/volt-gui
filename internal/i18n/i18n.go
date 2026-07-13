@@ -356,19 +356,50 @@ type Messages struct {
 	SkillPickerStatusUnreadable  string // "unreadable" path status label
 
 	// init wizard
-	SelectProvidersLabel  string // multi-select label
-	EnterAPIKeysHeader    string // header before the per-env-var prompts
-	MissingKeyIntro       string // shown when re-running the key step on a configured setup
-	WroteFileFmt          string // "Wrote %s" — used for voltui.toml and .env both
-	SetupComplete         string // success line at end of init
-	SetupCancelled        string // shown when the user aborts the wizard
-	TryHintFmt            string // "Try: %s" — %s = command to try (styled)
-	NextHint              string // non-interactive post-write hint
-	ConfirmReconfigureFmt string // "%s already exists. Reconfigure and overwrite?"
-	KeepingExisting       string // when the user declines to overwrite
-	NotOverwritingFmt     string // non-interactive overwrite refusal
-
-	// model fetching
+	SelectProvidersLabel       string // multi-select label
+	EnterAPIKeysHeader         string // header before the per-env-var prompts
+	MissingKeyIntro            string // shown when re-running the key step on a configured setup
+	WroteFileFmt               string // "Wrote %s" — used for voltui.toml and .env both
+	SetupComplete              string // success line at end of init
+	SetupCancelled             string // shown when the user aborts the wizard
+	TryHintFmt                 string // "Try: %s" — %s = command to try (styled)
+	NextHint                   string // non-interactive post-write hint
+	ConfirmReconfigureFmt      string // "%s already exists. Reconfigure and overwrite?"
+	KeepingExisting            string // when the user declines to overwrite
+	NotOverwritingFmt          string // non-interactive overwrite refusal
+	SetupManagerTitle          string
+	SetupAddOpenAI             string
+	SetupAddAnthropic          string
+	SetupProviderExistsFmt     string
+	SetupSaveExit              string
+	SetupSaveExitDesc          string
+	SetupCancel                string
+	SetupCancelDesc            string
+	SetupModelsUnit            string
+	SetupKeySet                string
+	SetupKeyMissing            string
+	SetupDefaultBadge          string
+	SetupProviderActionsFmt    string
+	SetupEditProvider          string
+	SetupUpdateKey             string
+	SetupTestRefresh           string
+	SetupSetDefault            string
+	SetupRemoveProvider        string
+	SetupBack                  string
+	SetupPromptModels          string
+	SetupSharedKeyWarningFmt   string
+	SetupPromptAPIKeyFmt       string
+	SetupSelectDefaultModel    string
+	SetupConfirmRemoveFmt      string
+	SetupSummaryTitle          string
+	SetupSummaryAddedFmt       string
+	SetupSummaryEditedFmt      string
+	SetupSummaryRemovedFmt     string
+	SetupSummaryDefaultFmt     string
+	SetupSummaryKeysFmt        string
+	SetupSummaryNoChanges      string
+	SetupConfirmSave           string
+	SetupConcurrentChangeFmt   string
 	FetchingModelsFmt          string // "Fetching models for %s..."
 	FetchModelsSuccessFmt      string // "Found %d models for %s"
 	FetchModelsFailedFmt       string // "Failed to fetch models for %s: %v"
@@ -381,6 +412,8 @@ type Messages struct {
 	SkipStaleCustomEntryFmt    string // "skipping stale %q entry from voltui.toml (pointing at %s) — please remove it"
 	APIKeyAlreadySetFmt        string // "reusing existing value for %s"
 	APIKeyResetPromptFmt       string // "Re-enter %s?"
+	InvalidAPIKeyEnvFmt        string // "%q is not a valid API Key variable name..."
+	RepairedAPIKeyEnvFmt       string // "provider %s: replaced invalid api_key_env %q with %q"
 
 	// custom provider
 	CustomProviderLabel  string // "Custom Model"

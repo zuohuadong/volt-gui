@@ -41,26 +41,29 @@ import (
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID                  string             // stable random id
-	Scope               string             // "project" | "global"
-	WorkspaceRoot       string             // project root dir (empty for global)
-	SharedHostKey       string             // opaque key for the shared plugin host (set by buildTabController)
-	TopicID             string             // topic within the project
-	TopicTitle          string             // display title
-	SessionPath         string             // exact .jsonl file this tab continues
-	ReadOnly            bool               // true for external channel transcripts opened for browsing
-	Ctrl                control.SessionAPI // nil while booting / on error
-	Label               string             // model label (for the tab badge)
-	Ready               bool               // true once boot.Build completes
-	StartupErr          string             // build error, surfaced to the frontend
-	StartupErrLeaseHeld bool               // true when StartupErr can be retried after a session lease releases
-	sessionLease        *agent.SessionLease
-	sessionLeaseMu      sync.Mutex
-	sink                *tabEventSink      // routes events with this tab's ID
-	buildCancel         context.CancelFunc // cancels in-flight boot for tabs removed before Ready
-	buildGeneration     uint64             // identifies the current in-flight build
-	removed             bool               // set when the visible tab is pruned/closed before build completes
-	reconcileMu         sync.Mutex         // serializes stale controller workspace repair for this tab
+	ID                    string             // stable random id
+	Scope                 string             // "project" | "global"
+	WorkspaceRoot         string             // project root dir (empty for global)
+	SharedHostKey         string             // opaque key for the shared plugin host (set by buildTabController)
+	TopicID               string             // topic within the project
+	TopicTitle            string             // display title
+	SessionPath           string             // exact .jsonl file this tab continues
+	AgentProfileID        string             // selected runtime profile for this thread
+	AgentProfileName      string             // audit/display snapshot; ID remains canonical
+	AgentProfileBaseModel string             // inherited thread model restored when profile clears
+	ReadOnly              bool               // true for external channel transcripts opened for browsing
+	Ctrl                  control.SessionAPI // nil while booting / on error
+	Label                 string             // model label (for the tab badge)
+	Ready                 bool               // true once boot.Build completes
+	StartupErr            string             // build error, surfaced to the frontend
+	StartupErrLeaseHeld   bool               // true when StartupErr can be retried after a session lease releases
+	sessionLease          *agent.SessionLease
+	sessionLeaseMu        sync.Mutex
+	sink                  *tabEventSink      // routes events with this tab's ID
+	buildCancel           context.CancelFunc // cancels in-flight boot for tabs removed before Ready
+	buildGeneration       uint64             // identifies the current in-flight build
+	removed               bool               // set when the visible tab is pruned/closed before build completes
+	reconcileMu           sync.Mutex         // serializes stale controller workspace repair for this tab
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -471,31 +474,34 @@ func cloneDetachedRuntimeTab(tab *WorkspaceTab, key, path string) *WorkspaceTab 
 	tab.telemMu.Unlock()
 
 	return &WorkspaceTab{
-		ID:                  detachedRuntimeTabID(key),
-		Scope:               tab.Scope,
-		WorkspaceRoot:       tab.WorkspaceRoot,
-		SharedHostKey:       tab.SharedHostKey,
-		TopicID:             tab.TopicID,
-		TopicTitle:          tab.TopicTitle,
-		SessionPath:         canonicalTabSessionPath(path),
-		Ctrl:                tab.Ctrl,
-		Label:               tab.Label,
-		Ready:               tab.Ready,
-		StartupErr:          tab.StartupErr,
-		StartupErrLeaseHeld: tab.StartupErrLeaseHeld,
-		sink:                tab.sink,
-		ActivityStatus:      tab.ActivityStatus,
-		readTelemetry:       readTelemetry,
-		usageTelemetry:      usageTelemetry,
-		telemetrySessionKey: telemetrySessionKey,
-		model:               tab.model,
-		effort:              cloneStringPtr(tab.effort),
-		tokenMode:           tab.tokenMode,
-		mode:                tab.mode,
-		goal:                tab.goal,
-		toolApprovalMode:    tab.toolApprovalMode,
-		disabledMCP:         cloneServerViewMap(tab.disabledMCP),
-		mcpOrder:            append([]string(nil), tab.mcpOrder...),
+		ID:                    detachedRuntimeTabID(key),
+		Scope:                 tab.Scope,
+		WorkspaceRoot:         tab.WorkspaceRoot,
+		SharedHostKey:         tab.SharedHostKey,
+		TopicID:               tab.TopicID,
+		TopicTitle:            tab.TopicTitle,
+		SessionPath:           canonicalTabSessionPath(path),
+		AgentProfileID:        tab.AgentProfileID,
+		AgentProfileName:      tab.AgentProfileName,
+		AgentProfileBaseModel: tab.AgentProfileBaseModel,
+		Ctrl:                  tab.Ctrl,
+		Label:                 tab.Label,
+		Ready:                 tab.Ready,
+		StartupErr:            tab.StartupErr,
+		StartupErrLeaseHeld:   tab.StartupErrLeaseHeld,
+		sink:                  tab.sink,
+		ActivityStatus:        tab.ActivityStatus,
+		readTelemetry:         readTelemetry,
+		usageTelemetry:        usageTelemetry,
+		telemetrySessionKey:   telemetrySessionKey,
+		model:                 tab.model,
+		effort:                cloneStringPtr(tab.effort),
+		tokenMode:             tab.tokenMode,
+		mode:                  tab.mode,
+		goal:                  tab.goal,
+		toolApprovalMode:      tab.toolApprovalMode,
+		disabledMCP:           cloneServerViewMap(tab.disabledMCP),
+		mcpOrder:              append([]string(nil), tab.mcpOrder...),
 	}
 }
 
@@ -1429,39 +1435,42 @@ type wireEventTab struct {
 
 // TabMeta is the frontend-facing shape of one tab.
 type TabMeta struct {
-	ID                string                   `json:"id"`
-	Scope             string                   `json:"scope"`
-	WorkspaceRoot     string                   `json:"workspaceRoot"`
-	WorkspaceName     string                   `json:"workspaceName"`
-	WorkspacePath     string                   `json:"workspacePath,omitempty"`
-	GitBranch         string                   `json:"gitBranch,omitempty"`
-	TopicID           string                   `json:"topicId"`
-	TopicTitle        string                   `json:"topicTitle"`
-	SessionPath       string                   `json:"sessionPath,omitempty"`
-	ReadOnly          bool                     `json:"readOnly,omitempty"`
-	ProjectColor      string                   `json:"projectColor,omitempty"`
-	Label             string                   `json:"label"`
-	Ready             bool                     `json:"ready"`
-	Running           bool                     `json:"running"`
-	PendingPrompt     bool                     `json:"pendingPrompt,omitempty"`
-	BackgroundJobs    int                      `json:"backgroundJobs,omitempty"`
-	CancelRequested   bool                     `json:"cancelRequested,omitempty"`
-	Cancellable       bool                     `json:"cancellable"`
-	Mode              string                   `json:"mode"`
-	CollaborationMode string                   `json:"collaborationMode"`
-	ToolApprovalMode  string                   `json:"toolApprovalMode"`
-	TokenMode         string                   `json:"tokenMode"`
-	Goal              string                   `json:"goal,omitempty"`
-	GoalStatus        string                   `json:"goalStatus,omitempty"`
-	ImageInputEnabled bool                     `json:"imageInputEnabled"`
-	AutoResearch      *AutoResearchCompactView `json:"autoResearch,omitempty"`
-	Recovered         bool                     `json:"recovered,omitempty"`
-	RecoveryReason    string                   `json:"recoveryReason,omitempty"`
-	RecoveryDigest    string                   `json:"recoveryDigest,omitempty"`
-	RecoveryParentID  string                   `json:"recoveryParentId,omitempty"`
-	StartupErr        string                   `json:"startupErr,omitempty"`
-	Active            bool                     `json:"active"`
-	Cwd               string                   `json:"cwd"`
+	ID                    string                   `json:"id"`
+	Scope                 string                   `json:"scope"`
+	WorkspaceRoot         string                   `json:"workspaceRoot"`
+	WorkspaceName         string                   `json:"workspaceName"`
+	WorkspacePath         string                   `json:"workspacePath,omitempty"`
+	GitBranch             string                   `json:"gitBranch,omitempty"`
+	TopicID               string                   `json:"topicId"`
+	TopicTitle            string                   `json:"topicTitle"`
+	SessionPath           string                   `json:"sessionPath,omitempty"`
+	AgentProfileID        string                   `json:"agentProfileId,omitempty"`
+	AgentProfileName      string                   `json:"agentProfileName,omitempty"`
+	AgentProfileBaseModel string                   `json:"agentProfileBaseModel,omitempty"`
+	ReadOnly              bool                     `json:"readOnly,omitempty"`
+	ProjectColor          string                   `json:"projectColor,omitempty"`
+	Label                 string                   `json:"label"`
+	Ready                 bool                     `json:"ready"`
+	Running               bool                     `json:"running"`
+	PendingPrompt         bool                     `json:"pendingPrompt,omitempty"`
+	BackgroundJobs        int                      `json:"backgroundJobs,omitempty"`
+	CancelRequested       bool                     `json:"cancelRequested,omitempty"`
+	Cancellable           bool                     `json:"cancellable"`
+	Mode                  string                   `json:"mode"`
+	CollaborationMode     string                   `json:"collaborationMode"`
+	ToolApprovalMode      string                   `json:"toolApprovalMode"`
+	TokenMode             string                   `json:"tokenMode"`
+	Goal                  string                   `json:"goal,omitempty"`
+	GoalStatus            string                   `json:"goalStatus,omitempty"`
+	ImageInputEnabled     bool                     `json:"imageInputEnabled"`
+	AutoResearch          *AutoResearchCompactView `json:"autoResearch,omitempty"`
+	Recovered             bool                     `json:"recovered,omitempty"`
+	RecoveryReason        string                   `json:"recoveryReason,omitempty"`
+	RecoveryDigest        string                   `json:"recoveryDigest,omitempty"`
+	RecoveryParentID      string                   `json:"recoveryParentId,omitempty"`
+	StartupErr            string                   `json:"startupErr,omitempty"`
+	Active                bool                     `json:"active"`
+	Cwd                   string                   `json:"cwd"`
 }
 
 func enrichTabMeta(meta TabMeta) TabMeta {
@@ -1482,28 +1491,31 @@ func enrichTabMetas(metas []TabMeta) []TabMeta {
 
 func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	m := TabMeta{
-		ID:                tab.ID,
-		Scope:             tab.Scope,
-		WorkspaceRoot:     tab.WorkspaceRoot,
-		WorkspaceName:     workspaceName(tab.WorkspaceRoot),
-		WorkspacePath:     tab.WorkspaceRoot,
-		TopicID:           tab.TopicID,
-		TopicTitle:        tab.TopicTitle,
-		SessionPath:       tab.currentSessionPath(),
-		ReadOnly:          tab.ReadOnly,
-		Label:             tab.Label,
-		Ready:             tab.Ready,
-		Mode:              currentTabMode(tab),
-		CollaborationMode: currentTabCollaborationMode(tab),
-		ToolApprovalMode:  currentTabToolApprovalMode(tab),
-		TokenMode:         currentTabTokenMode(tab),
-		Goal:              currentTabGoal(tab),
-		GoalStatus:        currentTabGoalStatus(tab),
-		ImageInputEnabled: tabImageInputEnabled(tab),
-		AutoResearch:      compactAutoResearch(tab),
-		StartupErr:        tab.StartupErr,
-		Active:            active,
-		Cwd:               tab.WorkspaceRoot,
+		ID:                    tab.ID,
+		Scope:                 tab.Scope,
+		WorkspaceRoot:         tab.WorkspaceRoot,
+		WorkspaceName:         workspaceName(tab.WorkspaceRoot),
+		WorkspacePath:         tab.WorkspaceRoot,
+		TopicID:               tab.TopicID,
+		TopicTitle:            tab.TopicTitle,
+		SessionPath:           tab.currentSessionPath(),
+		AgentProfileID:        tab.AgentProfileID,
+		AgentProfileName:      tab.AgentProfileName,
+		AgentProfileBaseModel: tab.AgentProfileBaseModel,
+		ReadOnly:              tab.ReadOnly,
+		Label:                 tab.Label,
+		Ready:                 tab.Ready,
+		Mode:                  currentTabMode(tab),
+		CollaborationMode:     currentTabCollaborationMode(tab),
+		ToolApprovalMode:      currentTabToolApprovalMode(tab),
+		TokenMode:             currentTabTokenMode(tab),
+		Goal:                  currentTabGoal(tab),
+		GoalStatus:            currentTabGoalStatus(tab),
+		ImageInputEnabled:     tabImageInputEnabled(tab),
+		AutoResearch:          compactAutoResearch(tab),
+		StartupErr:            tab.StartupErr,
+		Active:                active,
+		Cwd:                   tab.WorkspaceRoot,
 	}
 	switch tab.Scope {
 	case "global":
@@ -2739,6 +2751,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	tabTopicID := tab.TopicID
 	tabSessionPath := tab.SessionPath
 	tabModel := tab.model
+	tabAgentProfileID := tab.AgentProfileID
 	tabSink := tab.sink
 	a.mu.RUnlock()
 
@@ -2752,6 +2765,24 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	// Load config for this tab's workspace root.
 	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		leaseHeld := false
+		a.mu.Lock()
+		if a.tabBuildSupersededLocked(tab, buildGeneration) {
+			a.mu.Unlock()
+			return
+		}
+		leaseHeld = setTabStartupError(tab, err)
+		tab.Ready = true
+		tab.releaseSessionLease()
+		a.mu.Unlock()
+		if leaseHeld {
+			a.scheduleDeferredStartupBuild(tab.ID)
+		}
+		a.emitReady(wailsCtx, tab.ID)
+		return
+	}
+	buildAgentProfile, buildAgentView, err := runtimeAgentProfile(tabAgentProfileID)
 	if err != nil {
 		leaseHeld := false
 		a.mu.Lock()
@@ -2842,7 +2873,6 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			model = resolved
 		}
 	}
-
 	// Acquire a shared plugin host for this workspace root so MCP processes
 	// are launched once per root, not once per tab. SharedHostKey is an a.mu-
 	// guarded field (takeTabSharedHostKey reads it under the lock during
@@ -2861,6 +2891,9 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	}
 	tab.model = model
 	tab.Label = model
+	if buildAgentView != nil {
+		tab.AgentProfileName = strings.TrimSpace(buildAgentView.Name)
+	}
 	tab.SharedHostKey = rootKey
 	buildEffort := cloneStringPtr(tab.effort)
 	buildTokenMode := boot.NormalizeTokenMode(tab.tokenMode)
@@ -2882,6 +2915,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		SessionDir:               sessionDir,
 		EffortOverride:           cloneStringPtr(buildEffort),
 		TokenMode:                buildTokenMode,
+		AgentProfile:             buildAgentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -3776,18 +3810,21 @@ type desktopProjectFile struct {
 }
 
 type desktopTabEntry struct {
-	ID               string  `json:"id"`
-	Scope            string  `json:"scope"`
-	WorkspaceRoot    string  `json:"workspaceRoot"`
-	TopicID          string  `json:"topicId"`
-	SessionPath      string  `json:"sessionPath,omitempty"`
-	ReadOnly         bool    `json:"readOnly,omitempty"`
-	Model            string  `json:"model,omitempty"`
-	Effort           *string `json:"effort,omitempty"`
-	TokenMode        string  `json:"tokenMode,omitempty"`
-	Mode             string  `json:"mode,omitempty"`
-	Goal             string  `json:"goal,omitempty"`
-	ToolApprovalMode string  `json:"toolApprovalMode,omitempty"`
+	ID                    string  `json:"id"`
+	Scope                 string  `json:"scope"`
+	WorkspaceRoot         string  `json:"workspaceRoot"`
+	TopicID               string  `json:"topicId"`
+	SessionPath           string  `json:"sessionPath,omitempty"`
+	AgentProfileID        string  `json:"agentProfileId,omitempty"`
+	AgentProfileName      string  `json:"agentProfileName,omitempty"`
+	AgentProfileBaseModel string  `json:"agentProfileBaseModel,omitempty"`
+	ReadOnly              bool    `json:"readOnly,omitempty"`
+	Model                 string  `json:"model,omitempty"`
+	Effort                *string `json:"effort,omitempty"`
+	TokenMode             string  `json:"tokenMode,omitempty"`
+	Mode                  string  `json:"mode,omitempty"`
+	Goal                  string  `json:"goal,omitempty"`
+	ToolApprovalMode      string  `json:"toolApprovalMode,omitempty"`
 }
 
 type desktopTabsFile struct {
@@ -3839,18 +3876,21 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 	for _, id := range a.orderedTabIDsLocked() {
 		if tab := a.tabs[id]; tab != nil {
 			entries = append(entries, desktopTabEntry{
-				ID:               tab.ID,
-				Scope:            tab.Scope,
-				WorkspaceRoot:    tab.WorkspaceRoot,
-				TopicID:          tab.TopicID,
-				SessionPath:      tab.currentSessionPath(),
-				ReadOnly:         tab.ReadOnly,
-				Model:            tab.model,
-				Effort:           cloneStringPtr(tab.effort),
-				TokenMode:        persistedTabTokenMode(currentTabTokenMode(tab)),
-				Mode:             persistedTabMode(currentTabMode(tab)),
-				Goal:             persistedTabGoal(tab),
-				ToolApprovalMode: persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
+				ID:                    tab.ID,
+				Scope:                 tab.Scope,
+				WorkspaceRoot:         tab.WorkspaceRoot,
+				TopicID:               tab.TopicID,
+				SessionPath:           tab.currentSessionPath(),
+				AgentProfileID:        tab.AgentProfileID,
+				AgentProfileName:      tab.AgentProfileName,
+				AgentProfileBaseModel: tab.AgentProfileBaseModel,
+				ReadOnly:              tab.ReadOnly,
+				Model:                 tab.model,
+				Effort:                cloneStringPtr(tab.effort),
+				TokenMode:             persistedTabTokenMode(currentTabTokenMode(tab)),
+				Mode:                  persistedTabMode(currentTabMode(tab)),
+				Goal:                  persistedTabGoal(tab),
+				ToolApprovalMode:      persistedToolApprovalMode(currentTabToolApprovalMode(tab)),
 			})
 		}
 	}
@@ -4973,6 +5013,9 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 		topicID := tab.TopicID
 		topicTitle := tab.TopicTitle
 		model := strings.TrimSpace(tab.model)
+		agentProfileID := strings.TrimSpace(tab.AgentProfileID)
+		agentProfileName := strings.TrimSpace(tab.AgentProfileName)
+		agentProfileBaseModel := strings.TrimSpace(tab.AgentProfileBaseModel)
 		tokenMode := persistedTabTokenMode(boot.NormalizeTokenMode(tab.tokenMode))
 		mode := normalizeTabMode(tab.mode)
 		toolApprovalMode := normalizeToolApprovalMode(tab.toolApprovalMode)
@@ -4993,18 +5036,28 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 		if scope == "global" {
 			workspaceRoot = ""
 		}
-		return agent.BranchMeta{
-			Name:             agent.RecoveryBranchDefaultName,
-			Scope:            scope,
-			WorkspaceRoot:    workspaceRoot,
-			TopicID:          topicID,
-			TopicTitle:       topicTitle,
-			Model:            model,
-			TokenMode:        tokenMode,
-			Mode:             persistedTabMode(mode),
-			ToolApprovalMode: persistedToolApprovalMode(toolApprovalMode),
-			Goal:             goal,
+		meta := agent.BranchMeta{
+			Name:                  agent.RecoveryBranchDefaultName,
+			Scope:                 scope,
+			WorkspaceRoot:         workspaceRoot,
+			TopicID:               topicID,
+			TopicTitle:            topicTitle,
+			Model:                 model,
+			AgentProfileID:        agentProfileID,
+			AgentProfileName:      agentProfileName,
+			AgentProfileBaseModel: agentProfileBaseModel,
+			TokenMode:             tokenMode,
+			Mode:                  persistedTabMode(mode),
+			ToolApprovalMode:      persistedToolApprovalMode(toolApprovalMode),
+			Goal:                  goal,
 		}
+		if parent, ok, err := agent.LoadBranchMeta(req.OriginalPath); err == nil && ok {
+			meta.InheritAgentProfile(parent)
+			meta.AgentProfileID = agentProfileID
+			meta.AgentProfileName = agentProfileName
+			meta.AgentProfileBaseModel = agentProfileBaseModel
+		}
+		return meta
 	}
 }
 
@@ -7139,24 +7192,27 @@ func currentTabTokenMode(tab *WorkspaceTab) string {
 // fixed for #5955). Controller methods are invoked on the snapshot's ctrl
 // AFTER unlocking, never while holding a.mu.
 type tabRuntimeSnapshot struct {
-	ctrl             control.SessionAPI
-	sink             *tabEventSink
-	label            string
-	ready            bool
-	readOnly         bool
-	startupErr       string
-	scope            string
-	workspaceRoot    string
-	sessionPath      string
-	topicID          string
-	topicTitle       string
-	sharedHostKey    string
-	model            string
-	effort           *string
-	tokenMode        string
-	mode             string
-	goal             string
-	toolApprovalMode string
+	ctrl                  control.SessionAPI
+	sink                  *tabEventSink
+	label                 string
+	ready                 bool
+	readOnly              bool
+	startupErr            string
+	scope                 string
+	workspaceRoot         string
+	sessionPath           string
+	topicID               string
+	topicTitle            string
+	sharedHostKey         string
+	agentProfileID        string
+	agentProfileName      string
+	agentProfileBaseModel string
+	model                 string
+	effort                *string
+	tokenMode             string
+	mode                  string
+	goal                  string
+	toolApprovalMode      string
 }
 
 // snapshotTabRuntimeLocked copies the racy per-tab fields. Callers must hold
@@ -7166,24 +7222,27 @@ func snapshotTabRuntimeLocked(tab *WorkspaceTab) tabRuntimeSnapshot {
 		return tabRuntimeSnapshot{}
 	}
 	return tabRuntimeSnapshot{
-		ctrl:             tab.Ctrl,
-		sink:             tab.sink,
-		label:            tab.Label,
-		ready:            tab.Ready,
-		readOnly:         tab.ReadOnly,
-		startupErr:       tab.StartupErr,
-		scope:            tab.Scope,
-		workspaceRoot:    tab.WorkspaceRoot,
-		sessionPath:      tab.SessionPath,
-		topicID:          tab.TopicID,
-		topicTitle:       tab.TopicTitle,
-		sharedHostKey:    tab.SharedHostKey,
-		model:            tab.model,
-		effort:           cloneStringPtr(tab.effort),
-		tokenMode:        tab.tokenMode,
-		mode:             tab.mode,
-		goal:             tab.goal,
-		toolApprovalMode: tab.toolApprovalMode,
+		ctrl:                  tab.Ctrl,
+		sink:                  tab.sink,
+		label:                 tab.Label,
+		ready:                 tab.Ready,
+		readOnly:              tab.ReadOnly,
+		startupErr:            tab.StartupErr,
+		scope:                 tab.Scope,
+		workspaceRoot:         tab.WorkspaceRoot,
+		sessionPath:           tab.SessionPath,
+		topicID:               tab.TopicID,
+		topicTitle:            tab.TopicTitle,
+		sharedHostKey:         tab.SharedHostKey,
+		agentProfileID:        tab.AgentProfileID,
+		agentProfileName:      tab.AgentProfileName,
+		agentProfileBaseModel: tab.AgentProfileBaseModel,
+		model:                 tab.model,
+		effort:                cloneStringPtr(tab.effort),
+		tokenMode:             tab.tokenMode,
+		mode:                  tab.mode,
+		goal:                  tab.goal,
+		toolApprovalMode:      tab.toolApprovalMode,
 	}
 }
 
@@ -7414,15 +7473,19 @@ func (a *App) saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 	a.mu.RLock()
 	ctrl := tab.Ctrl
 	snap := tabSessionMetaSnapshot{
-		path:             path,
-		scope:            tab.Scope,
-		workspaceRoot:    tab.WorkspaceRoot,
-		topicID:          tab.TopicID,
-		topicTitle:       tab.TopicTitle,
-		tokenMode:        boot.NormalizeTokenMode(tab.tokenMode),
-		mode:             normalizeTabMode(tab.mode),
-		toolApprovalMode: normalizeToolApprovalMode(tab.toolApprovalMode),
-		goal:             strings.TrimSpace(tab.goal),
+		path:                  path,
+		scope:                 tab.Scope,
+		workspaceRoot:         tab.WorkspaceRoot,
+		topicID:               tab.TopicID,
+		topicTitle:            tab.TopicTitle,
+		tokenMode:             boot.NormalizeTokenMode(tab.tokenMode),
+		mode:                  normalizeTabMode(tab.mode),
+		toolApprovalMode:      normalizeToolApprovalMode(tab.toolApprovalMode),
+		goal:                  strings.TrimSpace(tab.goal),
+		model:                 strings.TrimSpace(tab.model),
+		agentProfileID:        strings.TrimSpace(tab.AgentProfileID),
+		agentProfileName:      strings.TrimSpace(tab.AgentProfileName),
+		agentProfileBaseModel: strings.TrimSpace(tab.AgentProfileBaseModel),
 	}
 	a.mu.RUnlock()
 	if ctrl != nil {
@@ -7438,15 +7501,19 @@ func (a *App) saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 }
 
 type tabSessionMetaSnapshot struct {
-	path             string
-	scope            string
-	workspaceRoot    string
-	topicID          string
-	topicTitle       string
-	tokenMode        string
-	mode             string
-	toolApprovalMode string
-	goal             string
+	path                  string
+	scope                 string
+	workspaceRoot         string
+	topicID               string
+	topicTitle            string
+	tokenMode             string
+	mode                  string
+	toolApprovalMode      string
+	goal                  string
+	model                 string
+	agentProfileID        string
+	agentProfileName      string
+	agentProfileBaseModel string
 }
 
 func (a *App) saveTabSessionMetaForCurrentSession(tab *WorkspaceTab) error {
@@ -7477,6 +7544,10 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 	mode := normalizeTabMode(tab.mode)
 	toolApprovalMode := normalizeToolApprovalMode(tab.toolApprovalMode)
 	goal := strings.TrimSpace(tab.goal)
+	model := strings.TrimSpace(tab.model)
+	agentProfileID := strings.TrimSpace(tab.AgentProfileID)
+	agentProfileName := strings.TrimSpace(tab.AgentProfileName)
+	agentProfileBaseModel := strings.TrimSpace(tab.AgentProfileBaseModel)
 	a.mu.RUnlock()
 	if readOnly {
 		return tabSessionMetaSnapshot{}, false
@@ -7529,15 +7600,19 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 		return tabSessionMetaSnapshot{}, false
 	}
 	return tabSessionMetaSnapshot{
-		path:             path,
-		scope:            scope,
-		workspaceRoot:    workspaceRoot,
-		topicID:          topicID,
-		topicTitle:       topicTitle,
-		tokenMode:        tokenMode,
-		mode:             mode,
-		toolApprovalMode: toolApprovalMode,
-		goal:             goal,
+		path:                  path,
+		scope:                 scope,
+		workspaceRoot:         workspaceRoot,
+		topicID:               topicID,
+		topicTitle:            topicTitle,
+		tokenMode:             tokenMode,
+		mode:                  mode,
+		toolApprovalMode:      toolApprovalMode,
+		goal:                  goal,
+		model:                 model,
+		agentProfileID:        agentProfileID,
+		agentProfileName:      agentProfileName,
+		agentProfileBaseModel: agentProfileBaseModel,
 	}, true
 }
 
@@ -7576,6 +7651,12 @@ func saveTabSessionMetaSnapshot(snap tabSessionMetaSnapshot) error {
 	m.Mode = persistedTabMode(snap.mode)
 	m.ToolApprovalMode = persistedToolApprovalMode(snap.toolApprovalMode)
 	m.Goal = strings.TrimSpace(snap.goal)
+	if model := strings.TrimSpace(snap.model); model != "" {
+		m.Model = model
+	}
+	m.AgentProfileID = strings.TrimSpace(snap.agentProfileID)
+	m.AgentProfileName = strings.TrimSpace(snap.agentProfileName)
+	m.AgentProfileBaseModel = strings.TrimSpace(snap.agentProfileBaseModel)
 	if err := agent.SaveBranchMetaPreserveUpdated(snap.path, m); err != nil {
 		return err
 	}
@@ -7601,10 +7682,13 @@ func tabSessionMetaPathForSession(runtimeDir, sessionDir, sessionPath string) st
 }
 
 type tabSessionProfile struct {
-	tokenMode        string
-	mode             string
-	toolApprovalMode string
-	goal             string
+	tokenMode             string
+	mode                  string
+	toolApprovalMode      string
+	goal                  string
+	agentProfileID        string
+	agentProfileName      string
+	agentProfileBaseModel string
 }
 
 func defaultTabSessionProfile() tabSessionProfile {
@@ -7624,6 +7708,9 @@ func tabSessionProfileFromMeta(sessionPath string, meta agent.BranchMeta) tabSes
 		profile.toolApprovalMode = control.ToolApprovalYolo
 	}
 	profile.goal = runningTabSessionGoal(sessionPath, meta.Goal)
+	profile.agentProfileID = strings.TrimSpace(meta.AgentProfileID)
+	profile.agentProfileName = strings.TrimSpace(meta.AgentProfileName)
+	profile.agentProfileBaseModel = strings.TrimSpace(meta.AgentProfileBaseModel)
 	return profile
 }
 
@@ -7647,6 +7734,9 @@ func applyTabSessionProfile(tab *WorkspaceTab, profile tabSessionProfile) {
 	}
 	tab.mode = tabModeFromAxes(tabModeHasPlan(tab.mode), tab.toolApprovalMode == control.ToolApprovalYolo)
 	tab.goal = strings.TrimSpace(profile.goal)
+	tab.AgentProfileID = strings.TrimSpace(profile.agentProfileID)
+	tab.AgentProfileName = strings.TrimSpace(profile.agentProfileName)
+	tab.AgentProfileBaseModel = strings.TrimSpace(profile.agentProfileBaseModel)
 }
 
 func persistedTabGoal(tab *WorkspaceTab) string {

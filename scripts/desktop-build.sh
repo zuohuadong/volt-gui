@@ -9,6 +9,7 @@
 #            <App>-darwin-universal.dmg                  (drag-to-install; human download)
 #   Windows: <App>-windows-<arch>-installer.exe          (NSIS per-user installer; updater channel)
 #            <App>-windows-<arch>.zip                    (portable human download)
+#            <App>-windows-<arch>-prerequisites.zip     (offline Microsoft runtimes)
 #   Linux:   <App>-linux-<arch>.tar.gz                   (bare binary; updater channel)
 #            <App>-linux-<arch>.deb                      (Debian/Ubuntu package; human download)
 # <App> defaults to "VoltUI"; forks override with DESKTOP_APP_NAME (e.g. "Anyong").
@@ -36,10 +37,13 @@ COMPUTER_USE_MCP_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-mcp"
 COMPUTER_USE_RUNTIME_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-runtime"
 COREUTILS_TMP=""
 COREUTILS_RESOURCE=""
+WINDOWS_PREREQUISITES_TMP=""
+WINDOWS_PREREQUISITES_RESOURCE=""
 
 cleanup() {
 	rm -rf "$COMPUTER_USE_MCP_TMP"
 	[ -z "$COREUTILS_TMP" ] || rm -rf "$COREUTILS_TMP"
+	[ -z "$WINDOWS_PREREQUISITES_TMP" ] || rm -rf "$WINDOWS_PREREQUISITES_TMP"
 }
 trap cleanup EXIT
 
@@ -91,8 +95,12 @@ UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
 	COREUTILS_TMP="$(mktemp -d)"
 	COREUTILS_RESOURCE="$COREUTILS_TMP/coreutils"
+	WINDOWS_PREREQUISITES_TMP="$(mktemp -d)"
+	WINDOWS_PREREQUISITES_RESOURCE="$WINDOWS_PREREQUISITES_TMP/prerequisites"
 	echo "==> stage bundled Microsoft Coreutils"
 	node "$ROOT/scripts/stage-coreutils.mjs" "$COREUTILS_RESOURCE" "$PLATFORM"
+	echo "==> stage offline Microsoft Windows prerequisites"
+	node "$ROOT/scripts/stage-windows-prerequisites.mjs" "$WINDOWS_PREREQUISITES_RESOURCE" "$PLATFORM"
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
@@ -227,6 +235,9 @@ windows)
 		( cd "$staging" && zip -q -r "$ROOT/dist/${APPNAME}-windows-${arch}.zip" . )
 	fi
 	rm -rf "$staging"
+	prerequisites_win=$(cygpath -w "$WINDOWS_PREREQUISITES_RESOURCE")
+	prerequisites_zip_win=$(cygpath -w "$ROOT/dist/${APPNAME}-windows-${arch}-prerequisites.zip")
+	powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$prerequisites_win\\*' -DestinationPath '$prerequisites_zip_win'"
 	;;
 linux)
 	copy_computer_use_mcp "build/computer-use-mcp"

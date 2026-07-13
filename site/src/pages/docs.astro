@@ -29,6 +29,7 @@ try {
         <a href="#install"><span class="l-en">Installation</span><span class="l-zh">安装</span></a>
         <a href="#quickstart"><span class="l-en">Quick start</span><span class="l-zh">快速上手</span></a>
         <a href="#config"><span class="l-en">Configuration</span><span class="l-zh">配置</span></a>
+        <a href="#offline"><span class="l-en">Enterprise offline</span><span class="l-zh">企业离线准备</span></a>
       </div>
       <div class="side-group">
         <span class="gh"><span class="l-en">Concepts</span><span class="l-zh">核心概念</span></span>
@@ -57,6 +58,15 @@ npm i -g voltui@next
 brew install esengine/voltui/voltui</pre>
       <div class="callout"><span class="ico">!</span><span><span class="l-en">The npm <code>latest</code> tag is pinned at <strong>v0.53</strong> — a deprecated line that no longer receives updates. All 1.x releases (currently <strong>v{goVer}</strong>, a single Go binary with no Node runtime) ship on <code>@next</code>.</span><span class="l-zh">npm 的 <code>latest</code> 标签固定在 <strong>v0.53</strong>——该线已废弃、不再更新。所有 1.x 版本(当前 <strong>v{goVer}</strong>,单 Go 二进制、无需 Node)均发布在 <code>@next</code> 渠道。</span></span></div>
       <p><span class="l-en">Prefer a GUI? Desktop apps for macOS, Windows, and Linux are on the <a href={`${base}/#top`}>download page</a>.</span><span class="l-zh">想用图形界面?macOS、Windows、Linux 桌面端请前往<a href={`${base}/#top`}>下载页</a>。</span></p>
+
+      <h2 id="offline"><span class="l-en">Enterprise offline preparation</span><span class="l-zh">企业离线准备</span></h2>
+      <p><span class="l-en">Public npm, Homebrew and release downloads are convenient acquisition paths, not requirements for an enterprise runtime. For a private or air-gapped network, administrators should acquire and verify artifacts in a connected preparation zone, then distribute them through an internal software repository, endpoint manager or approved offline media.</span><span class="l-zh">公网 npm、Homebrew 与 Release 下载是便捷的获取方式，不是企业运行时要求。对于内网或隔离网络，管理员应在联网准备区获取并校验制品，再通过内部软件仓库、终端管理系统或获批离线介质分发。</span></p>
+      <div class="offline-doc-grid">
+        <article><strong>CLI / TUI</strong><p><span class="l-en">Distribute the platform-specific Go binary plus reviewed configuration. The CLI does not require Node at runtime.</span><span class="l-zh">分发对应平台的 Go 二进制与经审查配置；CLI 运行时不需要 Node。</span></p></article>
+        <article><strong>Wails Desktop</strong><p><span class="l-en">Distribute the built desktop application and validate platform WebView requirements, signing and your upgrade path.</span><span class="l-zh">分发已构建的桌面应用，并验证平台 WebView 依赖、签名与升级路径。</span></p></article>
+      </div>
+      <p><span class="l-en">Prepare provider templates, credential injection, permissions, approved MCP servers and any required executables before rollout. Do not hardcode credentials in packages.</span><span class="l-zh">部署前准备 Provider 模板、凭据注入、权限、已批准的 MCP 服务及其所需可执行文件。不要在软件包中硬编码凭据。</span></p>
+      <div class="callout"><span class="ico">i</span><span><span class="l-en"><strong>CodeGraph is optional.</strong> It downloads an external runtime on first use in a connected environment. Offline deployments must install or pre-cache that runtime in advance; VoltUI's core repository workflow does not require CodeGraph.</span><span class="l-zh"><strong>CodeGraph 是可选能力。</strong> 在联网环境中首次使用会下载外部运行时；离线部署必须提前安装或预缓存。VoltUI 的核心代码库工作流不依赖 CodeGraph。</span></span></div>
 
       <h2 id="quickstart"><span class="l-en">Quick start</span><span class="l-zh">快速上手</span></h2>
       <p><span class="l-en">First run is minimal — <code>voltui setup</code> walks you through picking a provider and keys. Then point VoltUI at a repo and start a session:</span><span class="l-zh">首次运行很简单——<code>voltui setup</code> 引导你选择 provider 与密钥。然后指向仓库、开始会话:</span></p>

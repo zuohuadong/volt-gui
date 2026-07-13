@@ -17,26 +17,31 @@ import (
 // navigable conversation tree. The conversation itself remains in the .jsonl
 // file; metadata lives beside it at <session>.meta.
 type BranchMeta struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name,omitempty"`
-	ParentID         string    `json:"parent_id,omitempty"`
-	ForkTurn         int       `json:"fork_turn,omitempty"`
-	ForkMessageIndex int       `json:"fork_message_index,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	Scope            string    `json:"scope,omitempty"`
-	WorkspaceRoot    string    `json:"workspace_root,omitempty"`
-	TopicID          string    `json:"topic_id,omitempty"`
-	TopicTitle       string    `json:"topic_title,omitempty"`
-	CustomTitle      string    `json:"custom_title,omitempty"`
-	Model            string    `json:"model,omitempty"`
-	TokenMode        string    `json:"token_mode,omitempty"`
-	Mode             string    `json:"mode,omitempty"`
-	ToolApprovalMode string    `json:"tool_approval_mode,omitempty"`
-	Goal             string    `json:"goal,omitempty"`
-	Recovered        bool      `json:"recovered,omitempty"`
-	RecoveryReason   string    `json:"recovery_reason,omitempty"`
-	RecoveryDigest   string    `json:"recovery_digest,omitempty"`
+	ID                    string               `json:"id"`
+	Name                  string               `json:"name,omitempty"`
+	ParentID              string               `json:"parent_id,omitempty"`
+	ForkTurn              int                  `json:"fork_turn,omitempty"`
+	ForkMessageIndex      int                  `json:"fork_message_index,omitempty"`
+	CreatedAt             time.Time            `json:"created_at"`
+	UpdatedAt             time.Time            `json:"updated_at"`
+	Scope                 string               `json:"scope,omitempty"`
+	WorkspaceRoot         string               `json:"workspace_root,omitempty"`
+	TopicID               string               `json:"topic_id,omitempty"`
+	TopicTitle            string               `json:"topic_title,omitempty"`
+	CustomTitle           string               `json:"custom_title,omitempty"`
+	Model                 string               `json:"model,omitempty"`
+	TokenMode             string               `json:"token_mode,omitempty"`
+	Mode                  string               `json:"mode,omitempty"`
+	ToolApprovalMode      string               `json:"tool_approval_mode,omitempty"`
+	Goal                  string               `json:"goal,omitempty"`
+	AgentProfileID        string               `json:"agent_profile_id,omitempty"`
+	AgentProfileName      string               `json:"agent_profile_name,omitempty"`
+	AgentProfileBaseModel string               `json:"agent_profile_base_model,omitempty"`
+	AgentProfileUpdatedAt string               `json:"agent_profile_updated_at,omitempty"`
+	AgentProfileHistory   []AgentProfileSwitch `json:"agent_profile_history,omitempty"`
+	Recovered             bool                 `json:"recovered,omitempty"`
+	RecoveryReason        string               `json:"recovery_reason,omitempty"`
+	RecoveryDigest        string               `json:"recovery_digest,omitempty"`
 	// RecoveryDepth counts how many recovery forks separate this branch from a
 	// normal session (1 = forked from a normal session). SaveRecoveryBranch
 	// refuses to fork past SessionRecoveryMaxDepth so a conflict loop cannot
@@ -64,6 +69,34 @@ type BranchMeta struct {
 	Turns        int               `json:"turns,omitempty"`
 	Preview      string            `json:"preview,omitempty"`
 	InFlightTurn *InFlightTurnMeta `json:"in_flight_turn,omitempty"`
+}
+
+// AgentProfileSwitch is an auditable record of a thread runtime changing its
+// selected Agent Profile. The main transcript remains provider-compatible;
+// profile evidence stays in the branch sidecar.
+type AgentProfileSwitch struct {
+	ProfileID      string    `json:"profile_id,omitempty"`
+	ProfileName    string    `json:"profile_name,omitempty"`
+	ModelRef       string    `json:"model_ref,omitempty"`
+	ToolIDs        []string  `json:"tool_ids,omitempty"`
+	SkillNames     []string  `json:"skill_names,omitempty"`
+	MemoryScopes   []string  `json:"memory_scopes,omitempty"`
+	PermissionMode string    `json:"permission_mode,omitempty"`
+	Action         string    `json:"action"`
+	ChangedAt      time.Time `json:"changed_at"`
+}
+
+// InheritAgentProfile copies the profile snapshot and audit trail to a fork or
+// recovery branch so rebuilding the same thread lineage never drops policy.
+func (m *BranchMeta) InheritAgentProfile(parent BranchMeta) {
+	if m == nil {
+		return
+	}
+	m.AgentProfileID = parent.AgentProfileID
+	m.AgentProfileName = parent.AgentProfileName
+	m.AgentProfileBaseModel = parent.AgentProfileBaseModel
+	m.AgentProfileUpdatedAt = parent.AgentProfileUpdatedAt
+	m.AgentProfileHistory = append([]AgentProfileSwitch(nil), parent.AgentProfileHistory...)
 }
 
 // BranchMetaCountsVersion is stamped into BranchMeta.SchemaVersion whenever a

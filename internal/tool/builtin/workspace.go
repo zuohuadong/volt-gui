@@ -33,6 +33,7 @@ type Workspace struct {
 	BashTimeout     time.Duration
 	Search          SearchSpec
 	ProxySpec       netclient.ProxySpec
+	TrustedIntranet TrustedIntranetPolicy
 	ReadPaths       *PathResolver
 	SessionGuard    SessionDataGuard
 	// ManagedConfig names the VoltUI-owned config files the file-writers may
@@ -74,7 +75,7 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 		"ls":                 listDir{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots},
 		"glob":               globTool{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots},
 		"grep":               grepTool{workDir: w.Dir, paths: w.ReadPaths, rg: w.Search.RgPath, forbidRoots: forbidRoots, sb: w.Bash},
-		"web_fetch":          webFetch{proxySpec: w.ProxySpec},
+		"web_fetch":          webFetch{proxySpec: w.ProxySpec, trustedIntranet: w.TrustedIntranet},
 		"browser_control":    browserControl{workDir: w.Dir, roots: roots},
 		"desktop_screenshot": desktopScreenshot{workDir: w.Dir, roots: roots},
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,7 +140,7 @@ func saveProjectMaterialInput(input WorkbenchProjectMaterialInput) (WorkbenchPro
 		Category:    defaultString(strings.TrimSpace(input.Category), "项目资料"),
 		Source:      defaultString(strings.TrimSpace(input.Source), "manual"),
 		Status:      defaultString(strings.TrimSpace(input.Status), "待复核"),
-		UpdatedAt:   "刚刚",
+		UpdatedAt:   nowISO,
 		Desc:        strings.TrimSpace(input.Desc),
 		FileName:    strings.TrimSpace(input.FileName),
 		FilePath:    strings.TrimSpace(input.FilePath),
@@ -220,12 +221,12 @@ func projectMaterialsPath() (string, error) {
 func loadProjectMaterials() ([]WorkbenchProjectMaterialView, error) {
 	path, err := projectMaterialsPath()
 	if err != nil {
-		return defaultProjectMaterials(), nil
+		return []WorkbenchProjectMaterialView{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultProjectMaterials(), nil
+			return []WorkbenchProjectMaterialView{}, nil
 		}
 		return nil, err
 	}
@@ -234,13 +235,23 @@ func loadProjectMaterials() ([]WorkbenchProjectMaterialView, error) {
 		return nil, err
 	}
 	materials := make([]WorkbenchProjectMaterialView, 0, len(disk.Materials))
+	migrated := false
 	for _, material := range disk.Materials {
+		if isLegacySeedProjectMaterial(material) {
+			migrated = true
+			continue
+		}
 		material = normalizeProjectMaterial(material)
 		if material.ID != "" {
 			materials = append(materials, material)
 		}
 	}
 	sortProjectMaterials(materials)
+	if migrated {
+		if err := saveProjectMaterials(materials); err != nil {
+			return nil, err
+		}
+	}
 	return materials, nil
 }
 
@@ -273,17 +284,28 @@ func saveProjectMaterials(materials []WorkbenchProjectMaterialView) error {
 	return fileutil.ReplaceFile(tmpPath, path)
 }
 
-func defaultProjectMaterials() []WorkbenchProjectMaterialView {
-	now := time.Now().Format(time.RFC3339)
-	return []WorkbenchProjectMaterialView{
-		{ID: "volt-gui-aoristlawer-map", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "AORISTLAWER 项目详情源码对照", Category: "参考资料", Source: "MatterDetailPage.tsx", Status: "已关联", UpdatedAt: "28 分钟前", Desc: "映射概览、资料、日程、报告、待办五个标签页。", CreatedAt: now, UpdatedISO: now},
-		{ID: "volt-gui-ia-notes", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "Volt GUI 工作台 IA 调整记录", Category: "需求资料", Source: "App.svelte", Status: "已索引", UpdatedAt: "今天", Desc: "覆盖项目管理、客户管理、能力中心与资料中心入口调整。", CreatedAt: now, UpdatedISO: now},
-		{ID: "volt-gui-quality-gate", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "桌面前端质量门禁说明", Category: "验证资料", Source: "desktop/frontend", Status: "已同步", UpdatedAt: "今天", Desc: "记录 Svelte 检查、Vite 构建和本地预览回归要求。", CreatedAt: now, UpdatedISO: now},
-		{ID: "volt-gui-relation-sample", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "客户与项目关联样例", Category: "业务资料", Source: "local", Status: "待复核", UpdatedAt: "昨天", Desc: "用于验证项目详情与客户详情之间的跳转和任务关联。", CreatedAt: now, UpdatedISO: now},
-		{ID: "lurefree-release-checklist", ProjectID: "lurefree", ProjectName: "Lurefree 小程序发布", Title: "小程序发布清单", Category: "发布资料", Source: "lurefree", Status: "已索引", UpdatedAt: "2 小时前", Desc: "包体、地图交互、图钉资产与发布前检查记录。", CreatedAt: now, UpdatedISO: now},
-		{ID: "lurefree-map-regression", ProjectID: "lurefree", ProjectName: "Lurefree 小程序发布", Title: "地图交互回归记录", Category: "验证资料", Source: "dist/wx", Status: "待复核", UpdatedAt: "今天", Desc: "确认运行产物和源码行为一致。", CreatedAt: now, UpdatedISO: now},
-		{ID: "homepage-restore-log", ProjectID: "homepage", ProjectName: "品牌主页恢复与部署", Title: "历史版本恢复记录", Category: "归档资料", Source: "_restore-backups", Status: "已归档", UpdatedAt: "昨天", Desc: "记录恢复来源、构建验证和无截图校验边界。", CreatedAt: now, UpdatedISO: now},
+func isLegacySeedProjectMaterial(material WorkbenchProjectMaterialView) bool {
+	if material.CreatedAt == "" || material.CreatedAt != material.UpdatedISO {
+		return false
 	}
+	expected := map[string]WorkbenchProjectMaterialView{
+		// runtime-mock-guard: allow-legacy-cleanup
+		"volt-gui-aoristlawer-map": {ID: "volt-gui-aoristlawer-map", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "AORISTLAWER 项目详情源码对照", Category: "参考资料", Source: "MatterDetailPage.tsx", Status: "已关联", UpdatedAt: "28 分钟前", Desc: "映射概览、资料、日程、报告、待办五个标签页。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+		// runtime-mock-guard: allow-legacy-cleanup
+		"volt-gui-ia-notes": {ID: "volt-gui-ia-notes", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "Volt GUI 工作台 IA 调整记录", Category: "需求资料", Source: "App.svelte", Status: "已索引", UpdatedAt: "今天", Desc: "覆盖项目管理、客户管理、能力中心与资料中心入口调整。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+		// runtime-mock-guard: allow-legacy-cleanup
+		"volt-gui-quality-gate": {ID: "volt-gui-quality-gate", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "桌面前端质量门禁说明", Category: "验证资料", Source: "desktop/frontend", Status: "已同步", UpdatedAt: "今天", Desc: "记录 Svelte 检查、Vite 构建和本地预览回归要求。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+		// runtime-mock-guard: allow-legacy-cleanup
+		"volt-gui-relation-sample": {ID: "volt-gui-relation-sample", ProjectID: "volt-gui", ProjectName: "Volt GUI 桌面端重构", Title: "客户与项目关联样例", Category: "业务资料", Source: "local", Status: "待复核", UpdatedAt: "昨天", Desc: "用于验证项目详情与客户详情之间的跳转和任务关联。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+		// runtime-mock-guard: allow-legacy-cleanup
+		"lurefree-release-checklist": {ID: "lurefree-release-checklist", ProjectID: "lurefree", ProjectName: "Lurefree 小程序发布", Title: "小程序发布清单", Category: "发布资料", Source: "lurefree", Status: "已索引", UpdatedAt: "2 小时前", Desc: "包体、地图交互、图钉资产与发布前检查记录。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+		// runtime-mock-guard: allow-legacy-cleanup
+		"lurefree-map-regression": {ID: "lurefree-map-regression", ProjectID: "lurefree", ProjectName: "Lurefree 小程序发布", Title: "地图交互回归记录", Category: "验证资料", Source: "dist/wx", Status: "待复核", UpdatedAt: "今天", Desc: "确认运行产物和源码行为一致。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+		// runtime-mock-guard: allow-legacy-cleanup
+		"homepage-restore-log": {ID: "homepage-restore-log", ProjectID: "homepage", ProjectName: "品牌主页恢复与部署", Title: "历史版本恢复记录", Category: "归档资料", Source: "_restore-backups", Status: "已归档", UpdatedAt: "昨天", Desc: "记录恢复来源、构建验证和无截图校验边界。", CreatedAt: material.CreatedAt, UpdatedISO: material.UpdatedISO},
+	}
+	fingerprint, ok := expected[strings.TrimSpace(material.ID)]
+	return ok && reflect.DeepEqual(material, fingerprint)
 }
 
 func normalizeProjectMaterial(material WorkbenchProjectMaterialView) WorkbenchProjectMaterialView {
@@ -300,7 +322,7 @@ func normalizeProjectMaterial(material WorkbenchProjectMaterialView) WorkbenchPr
 	material.Category = defaultString(strings.TrimSpace(material.Category), "项目资料")
 	material.Source = defaultString(strings.TrimSpace(material.Source), "manual")
 	material.Status = defaultString(strings.TrimSpace(material.Status), "待复核")
-	material.UpdatedAt = defaultString(strings.TrimSpace(material.UpdatedAt), "刚刚")
+	material.UpdatedAt = defaultString(strings.TrimSpace(material.UpdatedAt), material.UpdatedISO)
 	material.Desc = strings.TrimSpace(material.Desc)
 	material.FileName = strings.TrimSpace(material.FileName)
 	material.FilePath = strings.TrimSpace(material.FilePath)

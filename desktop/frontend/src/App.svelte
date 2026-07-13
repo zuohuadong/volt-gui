@@ -25,6 +25,7 @@
     Crown,
     Database,
     Download,
+    Ellipsis,
     FileText,
     Folder,
     FolderKanban,
@@ -62,6 +63,9 @@
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
   import Transcript from "./components/Transcript.svelte";
+  import BrowserCredentialSettings from "./components/BrowserCredentialSettings.svelte";
+  import BrowserInteractionPrompt from "./components/BrowserInteractionPrompt.svelte";
+  import TrustedIntranetSettings from "./components/TrustedIntranetSettings.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import { app, onAgentEvent, onWorkspaceReady } from "./lib/bridge";
   import { t } from "./lib/i18n";
@@ -70,11 +74,21 @@
     composerToolApprovalModeToBackend,
   } from "./lib/tool-approval-mode";
   import type { ComposerToolApprovalMode } from "./lib/tool-approval-mode";
+  import { modelCardsFromConfiguredProviders } from "./lib/model-catalog";
+  import type { ModelCard } from "./lib/model-catalog";
+  import {
+    filterModelProviders,
+    modelCandidatesForProvider,
+    modelProviderStatusLabel,
+    modelProviderSummary,
+  } from "./lib/model-management";
+  import type { ModelProviderFilter } from "./lib/model-management";
   import type {
     ActivityMode,
     AgentInput,
     AgentView,
     BrandInfo,
+    BrowserCredentialView,
     CapabilitiesView,
     CheckpointMeta,
     CommandInfo,
@@ -88,8 +102,10 @@
     SettingsView,
     TabMeta,
     TranscriptItem,
+    TrustedIntranetSiteView,
     WireApproval,
     WireAsk,
+    WireBrowserPrompt,
     WireEvent,
     WorkbenchPluginInput,
     WorkbenchPlugin,
@@ -126,7 +142,6 @@
     WorkbenchTeamRuntimeInput,
     WorkbenchTeamRuntimeResult,
     WorkbenchTeamRun,
-    WorkbenchTeamRunEvent as TeamRunEvent,
     WorkbenchTeamRunStatus as TeamRunStatus,
     WorkspaceDiffView,
     WorkspaceChangesView,
@@ -142,22 +157,22 @@
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
   type CapabilityTab = "plugin" | "mcp" | "skill";
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
+  type ReportCenterTab = "design" | "list";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
   type ArtifactCanvasMode = "select" | "pan";
-  type ArtifactReviewStageId = "copy" | "draft" | "design" | "export";
-  type ArtifactReviewStage = { id: ArtifactReviewStageId; label: string; status: string };
+  type ArtifactReviewStageId = "draft" | "design" | "review" | "export";
+  type ArtifactReviewStage = { id: ArtifactReviewStageId; label: string };
   type ArtifactReviewFinding = { id: string; label: string; target: string; status: string; x: number; y: number };
-  type ArtifactStyleOption = { id: string; name: string; templateVersion: string; brandKitVersion: string; rationale: string };
+  type ArtifactStyleOption = { id: string; name: string; rationale: string };
   type AgentMarketItem = Pick<AgentView, "id" | "name" | "role" | "runs" | "status" | "desc"> & { category: string; source: string; version: string; tags: string[]; localPath: string };
   type SidebarConversation = { id: string; title: string; updatedAt: string; updatedAtMs?: number; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
   type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
   type SidebarStateSnapshot = { version: 1; projects: SidebarProject[]; activeProjectId: string; activeConversationId: string; sort: SidebarProjectSort; dockCollapsed: boolean };
   type SidebarProjectSort = "recent" | "name" | "conversations";
-  type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "knowledge" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
+  type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "knowledge" | "regulation" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
   type SettingPanel = "general" | "runtime" | "models";
-  type ModelCard = { name: string; provider: string; role: string; status: string; ref?: string };
   type CalendarMonthCell = { key: string; day: number; date: string; inMonth: boolean; isToday: boolean; events: WorkbenchCalendarEvent[] };
   type CalendarEventInterval = { event: WorkbenchCalendarEvent; date: string; start: number; end: number };
   type CalendarConflictGroup = { date: string; start: number; end: number; events: WorkbenchCalendarEvent[] };
@@ -202,18 +217,32 @@
     DeleteCustomer?: (id: string) => Promise<void>;
     ListCalendarEvents?: () => Promise<WorkbenchCalendarEvent[]>;
     SaveCalendarEvent?: (input: WorkbenchCalendarEventInput) => Promise<WorkbenchCalendarEvent>;
+    DeleteCalendarEvent?: (id: string) => Promise<void>;
     ListWorkbenchReports?: () => Promise<WorkbenchReport[]>;
     SaveWorkbenchReport?: (input: WorkbenchReportInput) => Promise<WorkbenchReport>;
+    ReviewWorkbenchReport?: (id: string, action: "submit" | "approve" | "return", reviewedBy: string, comment: string) => Promise<WorkbenchReport>;
     SaveKnowledgeDocument?: (input: WorkbenchKnowledgeDocumentInput) => Promise<WorkbenchKnowledgeDocument>;
+    ListRegulations?: () => Promise<WorkbenchRegulation[]>;
+    SaveRegulation?: (input: WorkbenchRegulation) => Promise<WorkbenchRegulation>;
+    RenderRegulation?: (id: string, variables: Record<string, string>) => Promise<string>;
+    DeleteRegulation?: (id: string) => Promise<void>;
+    RenderKnowledgeDocument?: (id: string, variables: Record<string, string>) => Promise<string>;
     RunWorkbenchSync?: (scope: string) => Promise<WorkbenchSyncJob[]>;
     SearchWorkbench?: (query: string) => Promise<WorkbenchSearchResult[]>;
     ExportOperationLogs?: () => Promise<string>;
     ExportWorkbenchReports?: () => Promise<string>;
     ExportWorkbenchReport?: (id: string) => Promise<string>;
     DeleteWorkbenchReport?: (id: string) => Promise<void>;
+    ListTeamRooms?: () => Promise<WorkbenchTeamRoom[]>;
     SaveTeamRoom?: (input: WorkbenchTeamRoom) => Promise<WorkbenchTeamRoom>;
+    DeleteTeamRoom?: (id: string) => Promise<void>;
+    ListTeamRuns?: (teamID: string) => Promise<WorkbenchTeamRun[]>;
     SaveTeamRun?: (input: WorkbenchTeamRun) => Promise<WorkbenchTeamRun>;
+    DeleteTeamRun?: (id: string) => Promise<void>;
+    ControlTeamRun?: (runID: string, action: string) => Promise<WorkbenchTeamRuntimeResult>;
+    ListTeamChatMessages?: (teamID: string) => Promise<WorkbenchTeamChatMessage[]>;
     SaveTeamChatMessage?: (input: WorkbenchTeamChatMessage) => Promise<WorkbenchTeamChatMessage>;
+    DeleteTeamChatMessage?: (id: string) => Promise<void>;
     RunTeamRuntime?: (input: WorkbenchTeamRuntimeInput) => Promise<WorkbenchTeamRuntimeResult>;
     DistillAgentFromTodo?: (input: WorkbenchTodoInput, skillNames: string[]) => Promise<AgentView>;
   };
@@ -229,7 +258,7 @@
   const defaultBrand: BrandInfo = { name: "西谷智灯暗涌系统", shortName: "暗涌" };
   const automationKindOptions = ["验证自动化", "质量门禁", "工程验证", "浏览器验证", "定时巡检", "报告生成", "自定义自动化"];
   const automationStatusOptions = ["待配置", "运行中", "已暂停", "已停用", "失败", "已完成"];
-  const automationOwnerOptions = ["自动化 Agent", "代码审查 Agent", "Browser 插件", "资料研究 Agent"];
+  const automationOwnerOptions = ["未分配", "当前用户"];
   const automationScheduleModeOptions = [
     { value: "manual", label: "手动触发" },
     { value: "once", label: "一次性定时" },
@@ -305,6 +334,10 @@
   let diffPreview = $state<WorkspaceDiffView | undefined>();
   let pendingApproval = $state<WireApproval | undefined>();
   let pendingAsk = $state<WireAsk | undefined>();
+  let pendingBrowserCredential = $state<WireBrowserPrompt | undefined>();
+  let pendingBrowserVerification = $state<WireBrowserPrompt | undefined>();
+  let browserCredentials = $state<BrowserCredentialView[]>([]);
+  let browserCredentialRemoving = $state("");
   let loading = $state(true);
   let needsAuth = $state<boolean | null>(null);
   let sending = $state(false);
@@ -346,9 +379,14 @@
   let modelSettings = $state<SettingsView | undefined>();
   let modelSettingsLoading = $state(false);
   let modelSettingsError = $state("");
+  let modelSettingsMessage = $state("");
+  let modelProviderSearch = $state("");
+  let modelProviderFilter = $state<ModelProviderFilter>("all");
+  let modelDefaultSelections = $state<Record<string, string>>({});
   let settingsPanel = $state<SettingPanel>("general");
   let settingsDraft = $state<SettingsDraft>(emptySettingsDraft());
   let settingsSaving = $state(false);
+  let trustedIntranetRemoving = $state("");
   let settingsMessage = $state("");
   let modelDraft = $state<ModelProviderDraft>(emptyModelProviderDraft());
   let modelDraftEditing = $state(false);
@@ -360,8 +398,8 @@
   let teamConfigTitle = $state<string | undefined>();
   let teamBuilderName = $state("");
   let teamBuilderSearch = $state("");
-  let teamBuilderMemberIds = $state<string[]>(["code-review", "research"]);
-  let teamBuilderLeaderId = $state("code-review");
+  let teamBuilderMemberIds = $state<string[]>([]);
+  let teamBuilderLeaderId = $state("");
   let teamChatInput = $state("");
   let teamChatModel = $state("");
   let teamChatAttachments = $state<string[]>([]);
@@ -376,28 +414,38 @@
   let agentWizardDraftName = $state("");
   let agentWizardDraftDescription = $state("");
   let agentWizardVibe = $state("");
-  let selectedAgentId = $state("code-review");
+  let selectedAgentId = $state("");
   let selectedCoreFile = $state("SYSTEM.md");
   let configDialog = $state<ConfigDialog | undefined>();
+  let configValidationField = $state("");
+  let configValidationMessage = $state("");
   let scheduleDraftTitleValue = $state("");
   let scheduleDraftDate = $state("");
   let scheduleDraftTimeValue = $state("");
   let scheduleDraftType = $state("");
   let scheduleDraftPlaceValue = $state("");
   let selectedScheduleEventId = $state<string | undefined>();
-  let selectedProjectId = $state("volt-gui");
-  let selectedCustomerId = $state("internal");
+  let regulationDraftId = $state("");
+  let regulationDraftTitle = $state("");
+  let regulationDraftCategory = $state("规则");
+  let regulationDraftStatus = $state("草稿");
+  let regulationDraftTags = $state("");
+  let regulationDraftContent = $state("");
+  let regulationPreviewText = $state("");
+  let selectedProjectId = $state("");
+  let selectedCustomerId = $state("");
   let projectSearch = $state("");
   let customerSearch = $state("");
   let customerDetailTab = $state<CustomerDetailTab>("overview");
   let projectDetailTab = $state<ProjectDetailTab>("overview");
   let projectStatusFilter = $state<"all" | "active" | "closed">("all");
+  let openProjectActionMenuId = $state("");
   let projectDetailOpen = $state(false);
   let customerDetailOpen = $state(false);
   let selectedTeamTitle = $state<string | undefined>();
   let distillStep = $state(1);
-  let agentProvider = $state("OpenAI");
-  let agentModel = $state("GPT-4o");
+  let agentProvider = $state("");
+  let agentModel = $state("");
   let agentAvatar = $state("C");
   let nowMs = $state(Date.now());
   let submittedDraft = $state<{ display: string; submission: string } | undefined>();
@@ -423,8 +471,11 @@
       ? "工作区正在准备中，请稍后发送"
       : "",
   );
+  $effect(() => {
+    syncArtifactReview(selectedReport());
+  });
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
-  const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
+  const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk) || Boolean(pendingBrowserCredential) || Boolean(pendingBrowserVerification));
   const showActiveTranscript = $derived(((activityMode === "code" && newTaskConversationActive) || (activityMode === "work" && workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || newTaskConversationActive));
   const brandName = $derived(brand.name?.trim() || "VoltUI");
   const brandShortName = $derived(brand.shortName?.trim() || brandName);
@@ -485,7 +536,7 @@
   }
 
   const workspaceNav = [
-    { title: "工作处理", items: [{ label: "今日概览", layer: "today", icon: "today" }, { label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "待办事项", layer: "todos", icon: "todos" }, { label: "自动化", layer: "automations", icon: "automations", badge: "3" }] },
+    { title: "工作处理", items: [{ label: "今日概览", layer: "today", icon: "today" }, { label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "待办事项", layer: "todos", icon: "todos" }, { label: "自动化", layer: "automations", icon: "automations" }] },
     { title: "业务资料", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }, { label: "资料中心", layer: "resources", icon: "resources", resourceTab: "resources" }, { label: "知识库", layer: "resources", icon: "knowledge", resourceTab: "knowledge" }] },
     { title: "协作交付", items: [{ label: "团队协作", layer: "teams", icon: "teams" }, { label: "日程日历", layer: "calendar", icon: "calendar" }, { label: "报告中心", layer: "reports", icon: "reports" }] },
     { title: "Agent 能力", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }] },
@@ -539,11 +590,7 @@
   };
   const collapsibleWorkspaceSections = new Set(["业务资料", "协作交付", "Agent 能力"]);
   const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
-  let todoItems = $state<WorkbenchTodo[]>([
-    { id: "todo-preview-load", title: "验证桌面预览加载状态", description: "确认浏览器模式无需 Wails 绑定也能进入工作台", dueLabel: "今天", status: "in_progress", priority: "中", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "seed" },
-    { id: "todo-agent-template", title: "整理 Agent 创建模板", description: "补齐工具、技能、核心文件与模型配置", dueLabel: "16:00", status: "pending", priority: "中", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "seed" },
-    { id: "todo-link-review", title: "复核项目与客户关联", description: "检查新建对话中的关联入口", dueLabel: "明天", status: "pending", priority: "中", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "seed" },
-  ]);
+  let todoItems = $state<WorkbenchTodo[]>([]);
   let todoDraftTitle = $state("");
   let todoDraftProjectId = $state("");
   let todoDraftPriority = $state("中");
@@ -612,7 +659,12 @@
   let artifactCanvasPanY = $state(0);
   let selectedArtifactStage = $state<ArtifactReviewStageId>("design");
   let selectedArtifactStyleId = $state("brand-systematic");
+  let artifactReviewJob = $state<WorkbenchJob | undefined>();
   let artifactStyleApproved = $state(false);
+  let artifactReviewComment = $state("");
+  let artifactReviewSaving = $state(false);
+  let artifactReviewReportKey = $state("");
+  let reportCenterTab = $state<ReportCenterTab>("design");
   let reportDraftId = $state("");
   let reportDraftTitle = $state("");
   let reportDraftKind = $state("项目风险报告");
@@ -661,27 +713,18 @@
   const knowledgeSourceOptions = ["manual", "内部制度", "项目复盘", "客户访谈", "会议纪要", "资料整理", "URL", "订阅源"];
   const knowledgeTagOptions = ["验收 / 项目管理", "合同 / 风险", "客户沟通", "项目复盘", "交付规范", "业务流程", "内部规则", "常见问题"];
   const artifactReviewStages: ArtifactReviewStage[] = [
-    { id: "copy", label: "文案", status: "已审" },
-    { id: "draft", label: "草稿", status: "可退回" },
-    { id: "design", label: "设计", status: "审查中" },
-    { id: "export", label: "导出", status: "待门禁" },
+    { id: "draft", label: "草稿" },
+    { id: "design", label: "设计" },
+    { id: "review", label: "复核" },
+    { id: "export", label: "导出" },
   ];
   const artifactStyleOptions: ArtifactStyleOption[] = [
-    { id: "brand-systematic", name: "品牌系统化", templateVersion: "template.v3", brandKitVersion: "brand-kit.2026.07", rationale: "适合报告、PPT 和长图统一复用，信息密度更高。" },
-    { id: "launch-editorial", name: "发布叙事", templateVersion: "template.v2", brandKitVersion: "brand-kit.2026.07", rationale: "适合活动海报与故事板，主视觉更突出。" },
-    { id: "compliance-plain", name: "合规简明", templateVersion: "template.v1", brandKitVersion: "brand-kit.2026.06", rationale: "适合审查材料，强调证据、免责声明和留痕。" },
+    { id: "brand-systematic", name: "品牌系统化", rationale: "适合报告、PPT 和长图统一复用，信息密度更高。" },
+    { id: "launch-editorial", name: "发布叙事", rationale: "适合活动海报与故事板，主视觉更突出。" },
+    { id: "compliance-plain", name: "合规简明", rationale: "适合审查材料，强调证据、免责声明和留痕。" },
   ];
-  const artifactReviewFindings: ArtifactReviewFinding[] = [
-    { id: "copy-claim", label: "文案断言", target: "slide:cover/title", status: "需证据", x: 26, y: 25 },
-    { id: "brand-logo", label: "品牌标识", target: "layer:logo", status: "已通过", x: 78, y: 22 },
-    { id: "cta-safe-area", label: "安全区", target: "scene:cta/footer", status: "待复核", x: 68, y: 76 },
-  ];
-  let runningAutomations = $state<WorkbenchAutomation[]>([
-    { id: "preflight-validation", title: "提交前验证自动化", desc: "参考 Codex 自动化，把前端门禁、构建、空白检查和浏览器日志验证串成一个可复用的自动化任务。", status: "运行中", kind: "验证自动化", owner: "自动化 Agent", startedAtMs: Date.now() - 5400000, cadence: "每次 UI 改动后", schedule: "手动触发 / 提交前", scope: "desktop/frontend", environment: "local workspace", command: "autofixer -> npm run check -> npm run build -> browser logs", result: "最近一次通过", lastRun: "刚刚", nextRun: "等待下一次改动", steps: ["Svelte autofixer", "类型检查", "生产构建", "浏览器 DOM / 控制台验证"], logs: ["0 errors / 0 warnings", "构建通过，保留已知 @theme warning", "浏览器 warn/error 为空"] },
-    { id: "desktop-frontend-gate", title: "桌面前端质量门禁", desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查，覆盖 UI 改动能真正交付的部分。", status: "运行中", kind: "质量门禁", owner: "代码审查 Agent", startedAtMs: Date.now() - 11880000, cadence: "每次前端改动后", schedule: "改动后手动复跑", scope: "desktop/frontend", environment: "local workspace", command: "npm run check / npm run build / git diff --check", result: "通过", lastRun: "12 分钟前", nextRun: "下一次前端改动", steps: ["npm run check", "npm run build", "git diff --check"], logs: ["svelte-check 通过", "Vite build 通过", "无空白错误"] },
-    { id: "wails-go-gate", title: "Wails 与 Go 模块门禁", desc: "分别检查根 Go CLI/TUI 与 desktop Wails 模块，避免桌面端改动影响 CLI、绑定层或嵌入资源。", status: "待配置", kind: "工程验证", owner: "代码审查 Agent", startedAtMs: Date.now() - 3120000, cadence: "涉及 Go 或 Wails 绑定时", schedule: "按需触发", scope: "go.mod / desktop/go.mod", environment: "local workspace", command: "go test ./... / cd desktop && go test ./...", result: "待接入", lastRun: "未运行", nextRun: "绑定层改动后", steps: ["根模块 go test", "desktop 模块 go test", "Wails 绑定检查"], logs: ["等待启用"] },
-    { id: "local-preview-regression", title: "本地预览回归检查", desc: "启动 127.0.0.1:5174 后检查 DOM、控制台和关键导航，确认浏览器预览模式不依赖 Wails 绑定。", status: "运行中", kind: "浏览器验证", owner: "Browser 插件", startedAtMs: Date.now() - 1620000, cadence: "UI 导航或任务流变更后", schedule: "预览刷新后", scope: "Vite dev server / 浏览器 DOM", environment: "in-app browser", command: "HTTP 200 / DOM snapshot / console warnings", result: "通过", lastRun: "5 分钟前", nextRun: "下一次页面改动", steps: ["刷新本地预览", "检查关键 DOM", "读取 warn/error 日志"], logs: ["页面可访问", "关键节点存在", "控制台无错误"] },
-  ]);
+  const artifactReviewFindings: ArtifactReviewFinding[] = [];
+  let runningAutomations = $state<WorkbenchAutomation[]>([]);
   const primaryAutomation = $derived(runningAutomations[0]);
   let automationDialogMode = $state<"create" | "edit">("edit");
   let automationDraft = $state<AutomationDraft>({
@@ -690,6 +733,9 @@
     status: "待配置",
     kind: "自定义自动化",
     owner: "自动化 Agent",
+    projectId: "",
+    projectName: "",
+    createTodoOnFailure: false,
     cadence: "",
     schedule: "手动触发",
     scheduleMode: "manual",
@@ -703,37 +749,25 @@
     stepsText: "",
     logsText: "",
   });
-  const defaultAgentCards: AgentView[] = [
-    { id: "code-review", name: "代码审查 Agent", role: "内置", runs: 128, status: "已启用", desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", avatar: "C", provider: "OpenAI", model: "GPT-4o", tools: ["workspace", "git", "terminal"], skills: ["code-review"], coreFiles: ["AGENTS.md"], builtIn: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { id: "research", name: "资料研究 Agent", role: "自定义", runs: 64, status: "已启用", desc: "汇总文档、网页和项目资料，输出可执行摘要。", avatar: "R", provider: "OpenAI", model: "GPT-4o", tools: ["web", "workspace"], skills: ["research"], coreFiles: ["references"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { id: "automation", name: "自动化 Agent", role: "已蒸馏", runs: 37, status: "已停用", desc: "把重复工作转为可配置的计划任务和监控。", avatar: "A", provider: "OpenAI", model: "GPT-4o", tools: ["terminal", "scheduler"], skills: ["workflow"], coreFiles: ["automations"], builtIn: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  ];
-  let agentCards = $state<AgentView[]>(defaultAgentCards);
+  let agentCards = $state<AgentView[]>([]);
   const agentMarketItems: AgentMarketItem[] = [
-    { id: "requirement-planner", name: "需求拆解 Agent", role: "市场", runs: 0, status: "未下载", category: "产品规划", source: "Agent Market", version: "v1.2", desc: "把模糊需求整理成目标、非目标、验收标准和执行步骤，适合新项目启动。", tags: ["需求", "规划", "验收"], localPath: ".volt/agents/requirement-planner.agent.json" },
-    { id: "delivery-review", name: "交付审查 Agent", role: "市场", runs: 0, status: "未下载", category: "文档审查", source: "Agent Market", version: "v1.0", desc: "检查需求、协议和交付条款中的风险点，输出修改建议和待确认清单。", tags: ["交付", "风险", "审查"], localPath: ".volt/agents/delivery-review.agent.json" },
-    { id: "customer-followup", name: "客户跟进 Agent", role: "市场", runs: 0, status: "未下载", category: "客户运营", source: "Agent Market", version: "v1.1", desc: "根据客户状态生成跟进话术、待办和复盘摘要，适合客户管理工作流。", tags: ["客户", "跟进", "运营"], localPath: ".volt/agents/customer-followup.agent.json" },
-    { id: "data-analyst", name: "数据分析 Agent", role: "市场", runs: 0, status: "未下载", category: "数据分析", source: "Agent Market", version: "v0.9", desc: "读取表格、日志和指标数据，生成可执行洞察、异常解释和下一步实验。", tags: ["数据", "指标", "分析"], localPath: ".volt/agents/data-analyst.agent.json" },
-    { id: "qa-verifier", name: "测试验证 Agent", role: "市场", runs: 0, status: "未下载", category: "质量验证", source: "Agent Market", version: "v1.3", desc: "把检查命令、浏览器验证和失败处理整理成复用门禁，适合提交前验证。", tags: ["测试", "构建", "门禁"], localPath: ".volt/agents/qa-verifier.agent.json" },
-    { id: "meeting-scheduler", name: "会议纪要 Agent", role: "市场", runs: 0, status: "未下载", category: "协作效率", source: "Agent Market", version: "v1.0", desc: "把会议记录压缩为决策、负责人、截止时间和下一次沟通议程。", tags: ["会议", "纪要", "协作"], localPath: ".volt/agents/meeting-scheduler.agent.json" },
+    { id: "requirement-planner", name: "需求拆解 Agent", role: "模板", runs: 0, status: "可安装", category: "产品规划", source: "内置模板", version: "v1.2", desc: "把模糊需求整理成目标、非目标、验收标准和执行步骤，适合新项目启动。", tags: ["需求", "规划", "验收"], localPath: ".volt/agents/requirement-planner.agent.json" },
+    { id: "delivery-review", name: "交付审查 Agent", role: "模板", runs: 0, status: "可安装", category: "文档审查", source: "内置模板", version: "v1.0", desc: "检查需求、协议和交付条款中的风险点，输出修改建议和待确认清单。", tags: ["交付", "风险", "审查"], localPath: ".volt/agents/delivery-review.agent.json" },
+    { id: "customer-followup", name: "客户跟进 Agent", role: "模板", runs: 0, status: "可安装", category: "客户运营", source: "内置模板", version: "v1.1", desc: "根据客户状态生成跟进话术、待办和复盘摘要，适合客户管理工作流。", tags: ["客户", "跟进", "运营"], localPath: ".volt/agents/customer-followup.agent.json" },
+    { id: "data-analyst", name: "数据分析 Agent", role: "模板", runs: 0, status: "可安装", category: "数据分析", source: "内置模板", version: "v0.9", desc: "读取表格、日志和指标数据，生成可执行洞察、异常解释和下一步实验。", tags: ["数据", "指标", "分析"], localPath: ".volt/agents/data-analyst.agent.json" },
+    { id: "qa-verifier", name: "测试验证 Agent", role: "模板", runs: 0, status: "可安装", category: "质量验证", source: "内置模板", version: "v1.3", desc: "把检查命令、浏览器验证和失败处理整理成复用门禁，适合提交前验证。", tags: ["测试", "构建", "门禁"], localPath: ".volt/agents/qa-verifier.agent.json" },
+    { id: "meeting-scheduler", name: "会议纪要 Agent", role: "模板", runs: 0, status: "可安装", category: "协作效率", source: "内置模板", version: "v1.0", desc: "把会议记录压缩为决策、负责人、截止时间和下一次沟通议程。", tags: ["会议", "纪要", "协作"], localPath: ".volt/agents/meeting-scheduler.agent.json" },
   ];
-  const newTaskQuickTasks = [
-    { agentId: "code-review", agent: "代码审查 Agent", title: "审查当前改动", prompt: "请阅读当前仓库变更，按严重程度列出风险、回归点和缺失测试。" },
-    { agentId: "research", agent: "资料研究 Agent", title: "整理项目资料", prompt: "请汇总当前项目资料，输出关键结论、待确认事项和下一步执行清单。" },
-    { agentId: "automation", agent: "自动化 Agent", title: "配置项目验证自动化", prompt: "请把 Volt GUI 可执行的检查流程整理为自动化，包含触发条件、验证命令、输出证据和失败处理。" },
-  ];
-  let projectCards = $state<WorkbenchProject[]>([
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", code: "PRJ-2026-0615", client: "内部研发", stage: "进行中", owner: "产品工作台", desc: "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建对话。", category: "桌面端重构", court: "研发工作台", budget: "1,200,000", acceptedAt: "2026-06-15", status: "active", progress: 78, priority: "高", risk: "中风险", updatedAt: "28 分钟前", nextStep: "完成项目管理页深化并做构建验证", agent: "代码审查 Agent", materials: 12, todos: 5, events: 3, reports: 4, timeline: ["AORISTLAWER 参考界面已完成源码对照", "新建对话与代码状态入口已统一", "项目管理页进入深化验收"] },
-    { id: "lurefree", name: "Lurefree 小程序发布", code: "PRJ-2026-0610", client: "运营团队", stage: "验证中", owner: "增长项目", desc: "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。", category: "小程序发布", court: "增长项目组", budget: "350,000", acceptedAt: "2026-06-10", status: "active", progress: 64, priority: "中", risk: "低风险", updatedAt: "2 小时前", nextStep: "补齐地图与详情页回归清单", agent: "资料研究 Agent", materials: 8, todos: 4, events: 2, reports: 2, timeline: ["地图交互问题已纳入检查", "发布材料进入复核", "等待小程序预览确认"] },
-    { id: "homepage", name: "品牌主页恢复与部署", code: "PRJ-2026-0601", client: "市场团队", stage: "已归档", owner: "官网项目", desc: "恢复历史版本、验证构建并保留无截图校验流程。", category: "官网运营", court: "市场中台", budget: "180,000", acceptedAt: "2026-06-01", status: "closed", progress: 100, priority: "低", risk: "已关闭", updatedAt: "昨天", nextStep: "仅保留归档和复盘记录", agent: "自动化 Agent", materials: 5, todos: 0, events: 1, reports: 3, timeline: ["历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"] },
-  ]);
-  let sidebarProjects = $state<SidebarProject[]>([
-    { id: "volt-gui", name: "Volt GUI 桌面端重构", updatedAtMs: Date.now(), expanded: true, conversations: [{ id: "volt-gui-review", title: "审查当前改动", updatedAt: "刚刚", updatedAtMs: Date.now() }, { id: "volt-gui-ui", title: "侧边栏 UI 调整", updatedAt: "今天", updatedAtMs: Date.now() - 2 * 60 * 60 * 1000 }] },
-    { id: "lurefree", name: "Lurefree 小程序发布", updatedAtMs: Date.now() - 3600000, expanded: false, conversations: [{ id: "lurefree-release", title: "发布资料复核", updatedAt: "昨天", updatedAtMs: Date.now() - 24 * 60 * 60 * 1000 }] },
-    { id: "homepage", name: "品牌主页恢复与部署", updatedAtMs: Date.now() - 7200000, expanded: false, conversations: [{ id: "homepage-archive", title: "归档复盘", updatedAt: "昨天", updatedAtMs: Date.now() - 26 * 60 * 60 * 1000 }] },
-  ]);
-  let activeSidebarProjectId = $state("volt-gui");
-  let activeSidebarConversationId = $state("volt-gui-review");
+  const newTaskQuickTasks = $derived(agentCards.slice(0, 3).map((agent) => ({
+    agentId: agent.id,
+    agent: agent.name,
+    title: `使用 ${agent.name}`,
+    prompt: `请根据当前真实项目上下文执行任务，并给出可验证的结果。`,
+  })));
+  let projectCards = $state<WorkbenchProject[]>([]);
+  let sidebarProjects = $state<SidebarProject[]>([]);
+  let activeSidebarProjectId = $state("");
+  let activeSidebarConversationId = $state("");
   let sidebarProjectDraft = $state("");
   let sidebarProjectCreateOpen = $state(false);
   let sidebarProjectDockCollapsed = $state(false);
@@ -742,46 +776,8 @@
   let editingSidebarProjectId = $state("");
   let sidebarProjectRenameDraft = $state("");
   let sidebarProjectRenameInput = $state<HTMLInputElement | undefined>();
-  let projectMaterialRows = $state<WorkbenchProjectMaterial[]>([
-    { id: "volt-gui-aoristlawer-map", projectId: "volt-gui", title: "AORISTLAWER 项目详情源码对照", category: "参考资料", source: "MatterDetailPage.tsx", status: "已关联", updatedAt: "28 分钟前", desc: "映射概览、资料、日程、报告、待办五个标签页。" },
-    { id: "volt-gui-ia-notes", projectId: "volt-gui", title: "Volt GUI 工作台 IA 调整记录", category: "需求资料", source: "App.svelte", status: "已索引", updatedAt: "今天", desc: "覆盖项目管理、客户管理、能力中心与资料中心入口调整。" },
-    { id: "volt-gui-quality-gate", projectId: "volt-gui", title: "桌面前端质量门禁说明", category: "验证资料", source: "desktop/frontend", status: "已同步", updatedAt: "今天", desc: "记录 Svelte 检查、Vite 构建和本地预览回归要求。" },
-    { id: "volt-gui-relation-sample", projectId: "volt-gui", title: "客户与项目关联样例", category: "业务资料", source: "local", status: "待复核", updatedAt: "昨天", desc: "用于验证项目详情与客户详情之间的跳转和任务关联。" },
-    { id: "lurefree-release-checklist", projectId: "lurefree", title: "小程序发布清单", category: "发布资料", source: "lurefree", status: "已索引", updatedAt: "2 小时前", desc: "包体、地图交互、图钉资产与发布前检查记录。" },
-    { id: "lurefree-map-regression", projectId: "lurefree", title: "地图交互回归记录", category: "验证资料", source: "dist/wx", status: "待复核", updatedAt: "今天", desc: "确认运行产物和源码行为一致。" },
-    { id: "homepage-restore-log", projectId: "homepage", title: "历史版本恢复记录", category: "归档资料", source: "_restore-backups", status: "已归档", updatedAt: "昨天", desc: "记录恢复来源、构建验证和无截图校验边界。" },
-  ]);
-  const projectScheduleRows = [
-    { projectId: "volt-gui", title: "项目详情标签验收", date: "06-20", time: "13:30", place: "本地预览", state: "今日", desc: "检查五个标签页可切换并显示对应内容。" },
-    { projectId: "volt-gui", title: "前端门禁复跑", date: "06-20", time: "16:00", place: "desktop/frontend", state: "待开始", desc: "执行 autofixer、check、build 与 diff 空白检查。" },
-    { projectId: "volt-gui", title: "交付确认", date: "06-21", time: "10:00", place: "项目群", state: "已排期", desc: "同步 AORISTLAWER 参考补齐结果和剩余风险。" },
-    { projectId: "lurefree", title: "发布素材复核", date: "06-20", time: "15:30", place: "运营项目群", state: "今日", desc: "核对发布附件和预览记录。" },
-    { projectId: "lurefree", title: "上线窗口确认", date: "06-22", time: "11:00", place: "线上会议", state: "已排期", desc: "确认小程序提交和风险提醒。" },
-    { projectId: "homepage", title: "归档复盘", date: "06-24", time: "14:00", place: "官网项目", state: "已排期", desc: "整理恢复记录和发布边界。" },
-  ];
-  const projectReportRows = [
-    { projectId: "volt-gui", title: "项目风险分析报告", type: "风险报告", status: "已生成", owner: "代码审查 Agent", updatedAt: "28 分钟前", summary: "聚焦 UI 改动范围、Svelte 模板风险和验证缺口。" },
-    { projectId: "volt-gui", title: "项目自动化运行报告", type: "验证报告", status: "待复核", owner: "自动化 Agent", updatedAt: "今天", summary: "汇总前端门禁、Go/Wails 边界和浏览器预览证据。" },
-    { projectId: "volt-gui", title: "AORISTLAWER 对照报告", type: "参考报告", status: "草稿", owner: "资料研究 Agent", updatedAt: "今天", summary: "说明 MatterDetailPage 的功能如何落到 Volt 项目详情。" },
-    { projectId: "volt-gui", title: "客户运营周报", type: "周报", status: "草稿", owner: "运营 Agent", updatedAt: "昨天", summary: "记录客户关联、项目状态和下一步触达动作。" },
-    { projectId: "lurefree", title: "发布风险分析", type: "风险报告", status: "已生成", owner: "资料研究 Agent", updatedAt: "2 小时前", summary: "覆盖包体、地图交互和发布资料完整性。" },
-    { projectId: "lurefree", title: "增长任务周报", type: "周报", status: "草稿", owner: "运营 Agent", updatedAt: "今天", summary: "整理触达节奏和下一轮任务。" },
-    { projectId: "homepage", title: "恢复复盘报告", type: "归档报告", status: "已归档", owner: "自动化 Agent", updatedAt: "昨天", summary: "总结恢复来源、构建验证和后续维护边界。" },
-  ];
-  let projectTodoRows = $state([
-    { projectId: "volt-gui", title: "补齐项目详情五个标签页", due: "今天", priority: "高", state: "进行中", desc: "让资料、日程、报告、待办都具备可见内容和操作入口。" },
-    { projectId: "volt-gui", title: "执行 Svelte autofixer", due: "今天", priority: "中", state: "待处理", desc: "确认新增模板满足 Svelte 5 语法。" },
-    { projectId: "volt-gui", title: "运行前端构建门禁", due: "今天", priority: "中", state: "待处理", desc: "执行 check、build 和 diff 空白检查。" },
-    { projectId: "volt-gui", title: "浏览器验证项目详情", due: "今天", priority: "中", state: "待处理", desc: "检查截图中的标签页切换和控制台日志。" },
-    { projectId: "volt-gui", title: "整理交付说明", due: "明天", priority: "低", state: "待处理", desc: "记录本次参考 AORISTLAWER 的落地范围。" },
-    { projectId: "lurefree", title: "复核发布资料", due: "今天", priority: "高", state: "进行中", desc: "确认发布前材料和验收证据。" },
-    { projectId: "lurefree", title: "同步上线排期", due: "06-22", priority: "中", state: "待处理", desc: "更新客户与运营团队的提醒。" },
-  ]);
-  let customerCards = $state<WorkbenchCustomer[]>([
-    { id: "internal", name: "内部研发团队", type: "企业", contact: "产品负责人", phone: "010-0000-0001", email: "dev@example.com", industry: "研发工具", owner: "产品工作台", stage: "活跃", region: "本地", matters: 4, materials: 12, events: 3, todos: 5, reports: 2, risk: "低风险", riskLevel: "low", status: "active", createdAt: "2026-06-01", lastTouch: "28 分钟前", lastContact: "28 分钟前", nextAction: "继续验证工作台功能", address: "局域网本地客户档案", note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", desc: "Volt GUI 研发与验证主体。", tags: ["内部", "研发"], projectIds: ["volt-gui", "homepage"] },
-    { id: "ops", name: "运营增长团队", type: "企业", contact: "增长负责人", phone: "010-0000-0002", email: "ops@example.com", industry: "增长运营", owner: "增长项目", stage: "跟进中", region: "本地", matters: 3, materials: 8, events: 2, todos: 4, reports: 1, risk: "中风险", riskLevel: "medium", status: "active", createdAt: "2026-06-08", lastTouch: "2 小时前", lastContact: "2 小时前", nextAction: "复核发布素材", address: "运营项目群", note: "负责客户触达、发布材料和小程序增长相关任务，需保留交付前验证记录。", desc: "运营增长项目主体。", tags: ["运营", "增长"], projectIds: ["lurefree"] },
-    { id: "founder", name: "个人创始人项目", type: "自然人", contact: "创始人本人", phone: "138-0000-0003", email: "founder@example.com", industry: "个人委托", owner: "产品工作台", stage: "待确认", region: "远程", matters: 1, materials: 5, events: 1, todos: 2, reports: 0, risk: "高风险", riskLevel: "high", status: "active", createdAt: "2026-06-12", lastTouch: "今天", lastContact: "今天", nextAction: "确认需求边界", address: "远程访谈记录", note: "需求边界变化频繁，任务进入执行前需补齐确认记录与风险说明。", desc: "个人委托项目主体。", tags: ["个人", "待确认"], projectIds: [] },
-  ]);
+  let projectMaterialRows = $state<WorkbenchProjectMaterial[]>([]);
+  let customerCards = $state<WorkbenchCustomer[]>([]);
   const filteredProjects = $derived(projectCards.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
     const matchSearch = !keyword || [project.name, project.code, project.client, project.owner, project.stage, project.desc, project.category, project.court, project.priority, project.risk, project.agent].some((value) => value.toLowerCase().includes(keyword));
@@ -874,32 +870,10 @@
   );
   type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; executionReadOnly?: boolean; tags?: string[]; examplePrompts?: string[]; runAs?: string; autoUse?: string; needsFreshData?: boolean; cost?: string; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
   type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
-  const defaultCapabilityBuckets: CapabilityBuckets = {
-    plugin: [
-      { id: "git-panel", name: "Git 变更面板", desc: "读取 diff、生成审查清单，并将结果回写到对话上下文。", status: "已启用", version: "v1.6", source: "内置插件", scope: "新建对话", sync: "刚刚同步", path: "desktop/frontend", permission: "读写 diff / 只读提交历史", enabled: true },
-      { id: "browser-preview", name: "浏览器预览", desc: "打开本地页面、检查 DOM 状态和控制台错误。", status: "已启用", version: "v1.2", source: "Browser 插件", scope: "本地预览", sync: "5 分钟前", path: "127.0.0.1", permission: "本地页面读取 / 点击验证", enabled: true },
-      { id: "resource-ingest", name: "资料导入助手", desc: "把文档、规范、客户资料导入资料中心并建立索引。", status: "待配置", version: "v0.8", source: "工作台插件", scope: "资料中心", sync: "待授权", path: "resources/import", permission: "上传文件 / 建立索引", enabled: false },
-    ],
-    mcp: [
-      { id: "filesystem-mcp", name: "文件系统 MCP", desc: "读取项目文档、源码片段和本地结构化资源。", status: "已连接", version: "v2.1", source: "本地 MCP", scope: "workspace", sync: "在线", path: "E:/workspace/volt-gui", permission: "只读项目文件 / 精确补丁", enabled: true },
-      { id: "automation-mcp", name: "自动化 MCP", desc: "触发定时任务、运行监控和线程唤醒回调。", status: "已连接", version: "v1.0", source: "Codex Desktop", scope: "任务中心", sync: "在线", path: "automations", permission: "查看和配置自动化", enabled: true },
-      { id: "aorist-sync-mcp", name: "AORIST 同步 MCP", desc: "同步模型、Agent、项目和客户资料的跨端状态。", status: "开发中", version: "v0.4", source: "外部服务", scope: "同步中心", sync: "等待远程同步后端", path: "api.aorist.net", permission: "后端同步服务 / API Token", enabled: false },
-    ],
-    skill: [
-      { id: "frontend-design", name: "frontend-design", desc: "高质量前端界面重构，约束视觉层级、动效与响应式。", status: "已安装", version: "v1.8", source: "Codex Skill", scope: "UI 重构", sync: "已加载", path: "skills/frontend-design", permission: "读取设计约定 / 修改前端文件", enabled: true },
-      { id: "webapp-testing", name: "webapp-testing", desc: "本地预览、浏览器验证和控制台错误检查。", status: "可用", version: "v1.1", source: "Testing Skill", scope: "质量验证", sync: "可调用", path: "skills/webapp-testing", permission: "浏览器只读检查 / 交互验证", enabled: true },
-      { id: "team-run-automation", name: "team-run-automation", desc: "把协作任务、执行日志、人工确认和结果归档打包为团队运行技能。", status: "待安装", version: "v0.7", source: "本地技能", scope: "团队协作", sync: "待导入", path: "skills/team-run", permission: "任务运行 / 进度日志", enabled: false },
-    ],
-  };
-  let capabilityBuckets = $state<CapabilityBuckets>(defaultCapabilityBuckets);
-  const capabilityInstallSteps = [
-    { id: "install_files", label: "安装文件", desc: "写入插件包、版本元数据和本地资源清单。" },
-    { id: "install_dependencies", label: "安装依赖", desc: "检查 CLI、Skill 文件和运行时依赖是否可用。" },
-    { id: "connect", label: "连接 MCP", desc: "复用或创建 MCP Server，并完成连接状态校验。" },
-    { id: "authorize", label: "授权", desc: "校验连接器权限、API Token 和工作区访问范围。" },
-    { id: "create_agent", label: "创建 Agent", desc: "按能力模板生成可调用的 Agent 或任务入口。" },
-    { id: "bind_agents", label: "绑定 Agent", desc: "把能力挂载到 Agent 中心和新建对话流程。" },
-  ];
+  function emptyCapabilityBuckets(): CapabilityBuckets {
+    return { plugin: [], mcp: [], skill: [] };
+  }
+  let capabilityBuckets = $state<CapabilityBuckets>(emptyCapabilityBuckets());
   const wizardTabs = [{ id: "identity", label: "助手特征" }, { id: "tools", label: "基础工具" }, { id: "skills", label: "业务技能" }, { id: "files", label: "核心文件" }];
   const avatarPresets = ["C", "R", "A", "M", "S", "P"];
   const vibePresets = ["精准执行", "研究严谨", "客户友好", "表达简洁"];
@@ -910,14 +884,12 @@
     "MEMORY.md": "# Memory\n\nReuse relevant project memory and verify drift-prone facts.",
     "WORKFLOW.md": "# Workflow\n\nExplore, plan, execute, verify.",
   };
-  const modelProviders = ["OpenAI", "Claude", "Gemini", "Qwen", "Moonshot", "Zhipu"];
-  const modelOptions: Record<string, string[]> = { OpenAI: ["GPT-4o", "GPT-4o-mini", "o3-mini"], Claude: ["Claude Sonnet 4.6", "Claude Opus 4"], Gemini: ["Gemini 2.5 Pro", "Gemini 2.5 Flash"], Qwen: ["Qwen-Max", "Qwen-Plus"], Moonshot: ["Moonshot v1"], Zhipu: ["GLM-4"] };
   type AgentToolCard = { id: string; title: string; desc: string; active: boolean; available: boolean; reason?: string };
   const defaultToolCards: AgentToolCard[] = [
-    { id: "files", title: "本地文件与资料", desc: "读取仓库、附件和项目知识库", active: true, available: true },
-    { id: "terminal", title: "终端执行", desc: "运行构建、测试和安全命令", active: true, available: true },
-    { id: "browser", title: "浏览器预览", desc: "打开本地页面并检查加载状态", active: true, available: true },
-    { id: "memory", title: "长期记忆", desc: "复用项目约定和历史决策", active: false, available: false },
+    { id: "files", title: "本地文件与资料", desc: "读取仓库、附件和项目知识库", active: true, available: false, reason: "未连接桌面后端" },
+    { id: "terminal", title: "终端执行", desc: "运行构建、测试和安全命令", active: true, available: false, reason: "未连接桌面后端" },
+    { id: "browser", title: "浏览器预览", desc: "打开本地页面并检查加载状态", active: true, available: false, reason: "未连接桌面后端" },
+    { id: "memory", title: "长期记忆", desc: "复用项目约定和历史决策", active: false, available: false, reason: "未连接桌面后端" },
   ];
   let toolCards = $state<AgentToolCard[]>(defaultToolCards);
   type AgentSkillCard = { id: string; title: string; version: string; desc: string; active: boolean; available: boolean; reason?: string; source?: string };
@@ -927,28 +899,12 @@
     { id: "automation", title: "Automation Ops", version: "未加载", desc: "配置计划任务、监控和运行记录。", active: false, available: false },
   ];
   let skillCards = $state<AgentSkillCard[]>(defaultSkillCards);
-  let calendarEvents = $state<WorkbenchCalendarEvent[]>([
-    { id: "version-review", day: "09", title: "版本评审会议", time: "09:30", type: "meeting", place: "线上会议室" },
-    { id: "customer-workflow", day: "12", title: "客户工作流复盘", time: "14:00", type: "deadline", place: "项目群" },
-    { id: "automation-review", day: "18", title: "自动化验收", time: "16:30", type: "review", place: "研发工作台" },
-  ]);
+  let calendarEvents = $state<WorkbenchCalendarEvent[]>([]);
   let calendarMonthCursor = $state(startOfMonth(new Date()));
   const calendarWeekdays = ["一", "二", "三", "四", "五", "六", "日"];
-  let reportCards = $state<WorkbenchReport[]>([
-    { id: "project-risk", title: "项目风险分析报告", status: "已生成", owner: "代码审查 Agent", desc: "覆盖变更风险、测试缺口、回滚建议。" },
-    { id: "customer-weekly", title: "客户运营周报", status: "草稿", owner: "运营 Agent", desc: "整理客户触达、项目状态与内容草案。" },
-    { id: "automation-run", title: "项目自动化运行报告", status: "待复核", owner: "自动化 Agent", desc: "汇总前端门禁、Go/Wails 门禁和本地预览回归的执行证据。" },
-  ]);
-  let regulationItems = $state<WorkbenchRegulation[]>([
-    { id: "desktop-security", title: "桌面端安全执行规范", category: "内部规则", status: "现行有效", tags: "权限 / 沙箱 / 审计" },
-    { id: "agent-acceptance", title: "Agent 协作验收标准", category: "流程规范", status: "试行", tags: "任务 / 验证 / 交付" },
-    { id: "customer-boundary", title: "客户数据使用边界", category: "合规要求", status: "现行有效", tags: "客户 / 数据 / 留痕" },
-  ]);
-  let documentItems = $state<WorkbenchKnowledgeDocument[]>([
-    { id: "requirement-template", title: "需求澄清记录模板", type: "模板", count: 18, status: "可用" },
-    { id: "project-retro", title: "项目复盘记录", type: "归档", count: 42, status: "已索引" },
-    { id: "automation-config", title: "项目自动化配置说明", type: "说明", count: 9, status: "已更新" },
-  ]);
+  let reportCards = $state<WorkbenchReport[]>([]);
+  let documentItems = $state<WorkbenchKnowledgeDocument[]>([]);
+  let regulationItems = $state<WorkbenchRegulation[]>([]);
   let knowledgeStatus = $state<KnowledgeStatus>({
     path: "",
     sqlite: false,
@@ -1003,18 +959,11 @@
     const keyword = resourceSearch.trim().toLowerCase();
     return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.category, item.status, item.tags);
   }));
-  function defaultKnowledgeMaterialIds(id?: string) {
-    if (id === "requirement-template") return ["volt-gui-ia-notes", "volt-gui-relation-sample"];
-    if (id === "project-retro") return ["homepage-restore-log", "volt-gui-aoristlawer-map"];
-    if (id === "automation-config") return ["volt-gui-quality-gate", "lurefree-map-regression"];
-    return [];
-  }
   function selectedKnowledgeDocument() {
     return documentItems.find((item) => item.id === selectedKnowledgeDocumentId) ?? documentItems[0];
   }
   function knowledgeDocumentMaterialIds(item?: WorkbenchKnowledgeDocument) {
-    const ids = item?.materialIds?.length ? item.materialIds : defaultKnowledgeMaterialIds(item?.id);
-    return Array.from(new Set(ids.filter(Boolean)));
+    return Array.from(new Set((item?.materialIds ?? []).filter(Boolean)));
   }
   function knowledgeDocumentMaterials(item?: WorkbenchKnowledgeDocument) {
     const ids = new Set(knowledgeDocumentMaterialIds(item));
@@ -1026,55 +975,31 @@
     return Number(item?.chunkCount ?? item?.count ?? 0);
   }
   const selectedMaterialDetails = $derived(projectMaterialRows.filter((material) => material.id === selectedMaterialDetailId));
-  let teamRooms = $state<WorkbenchTeamRoom[]>([
-    { id: "product-lab", title: "产品研发组", members: 3, active: "模板已就绪", desc: "围绕桌面端体验、代码质量和发布节奏组织多 Agent 协作。", leader: "代码审查 Agent", leaderId: "code-review", status: "模板", topic: "桌面端体验复核", queue: "0 个运行节点", memberIds: ["code-review", "research", "automation"], avatars: ["C", "R", "A"], mode: "协调者编排", sharedContext: "项目资料库 / 当前变更", runState: "待运行", nextCheckpoint: "发送任务后生成运行草稿", outcome: "等待首次运行", controls: ["暂停", "继续", "终止", "重新分配"], artifacts: ["报告草稿", "待办清单", "资料归档"], steps: [
-      { id: "triage", title: "拆解目标", owner: "代码审查 Agent", status: "待运行", detail: "明确目标、非目标、验收标准和风险边界。" },
-      { id: "research", title: "补充资料", owner: "资料研究 Agent", status: "待运行", detail: "读取关联资料并给出可引用依据。" },
-      { id: "verify", title: "验证闭环", owner: "自动化 Agent", status: "待运行", detail: "生成检查命令、产物路径和失败处理建议。" },
-    ] },
-    { id: "ops-growth", title: "运营增长组", members: 2, active: "需补上下文", desc: "处理客户触达、内容草案和项目跟进，适合从资料到待办的轻量协作。", leader: "资料研究 Agent", leaderId: "research", status: "待补充", topic: "客户运营协同", queue: "0 个运行节点", memberIds: ["research", "automation"], avatars: ["R", "A"], mode: "串行交接", sharedContext: "客户资料 / 报告模板", runState: "未启动", nextCheckpoint: "绑定客户或项目资料", outcome: "等待配置资料", controls: ["暂停", "继续", "终止"], artifacts: ["跟进话术", "待办清单"], steps: [
-      { id: "brief", title: "整理背景", owner: "资料研究 Agent", status: "待补充", detail: "收集客户状态、历史沟通和当前目标。" },
-      { id: "actions", title: "生成行动", owner: "自动化 Agent", status: "待运行", detail: "把建议转为待办、日程和跟进记录。" },
-    ] },
-    { id: "delivery-review", title: "交付审查组", members: 3, active: "可创建审查运行", desc: "审查项目风险、交付记录和验收标准，输出可归档的审查结论。", leader: "自动化 Agent", leaderId: "automation", status: "模板", topic: "项目验收复盘", queue: "0 个运行节点", memberIds: ["automation", "code-review", "research"], avatars: ["A", "C", "R"], mode: "审查后汇总", sharedContext: "项目记录 / 验收报告", runState: "待运行", nextCheckpoint: "选择交付对象", outcome: "等待审查任务", controls: ["暂停", "继续", "终止", "批准高风险工具"], artifacts: ["审查报告", "风险清单", "归档记录"], steps: [
-      { id: "collect", title: "收集证据", owner: "资料研究 Agent", status: "待运行", detail: "汇总交付文档、记录和待确认项。" },
-      { id: "risk", title: "风险审查", owner: "代码审查 Agent", status: "待运行", detail: "识别缺失验证、范围漂移和回滚风险。" },
-      { id: "archive", title: "归档结果", owner: "自动化 Agent", status: "待运行", detail: "形成报告、待办和后续跟踪入口。" },
-    ] },
-  ]);
-  let teamChatMessages = $state<WorkbenchTeamChatMessage[]>([
-    { id: "product-lab-system-1", teamId: "product-lab", role: "agent", agentId: "code-review", agentName: "代码审查 Agent", agentAvatar: "C", content: "当前是协作组模板预览。发送任务后会生成运行草稿，真实执行需要接入 Agent runtime。" },
-    { id: "product-lab-system-2", teamId: "product-lab", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "我会在运行中负责资料依据、上下文摘要和待确认问题，不再引用未验证的外部页面结构。" },
-    { id: "ops-growth-system-1", teamId: "ops-growth", role: "agent", agentId: "research", agentName: "资料研究 Agent", agentAvatar: "R", content: "请先绑定客户或项目资料，协作运行会基于真实上下文生成跟进建议。" },
-    { id: "delivery-review-system-1", teamId: "delivery-review", role: "agent", agentId: "automation", agentName: "自动化 Agent", agentAvatar: "A", content: "审查组会把验证、报告和归档拆成可观察节点，目前展示的是运行计划而非已执行结果。" },
-  ]);
+  let teamRooms = $state<WorkbenchTeamRoom[]>([]);
+  let teamChatMessages = $state<WorkbenchTeamChatMessage[]>([]);
   let teamRuns = $state<WorkbenchTeamRun[]>([]);
   const filteredTeamBuilderAgents = $derived(agentCards.filter((agent) => {
     const keyword = teamBuilderSearch.trim().toLowerCase();
     return !keyword || [agent.name, agent.role, agent.desc].some((value) => value.toLowerCase().includes(keyword));
   }));
-  const providerKindOptions = $derived(modelSettings?.providerKinds?.length ? modelSettings.providerKinds : ["openai", "anthropic"]);
-  const modelCards = $derived(modelCardsFromSettings());
+  const providerKindOptions = $derived(Array.from(new Set(["openai", ...(modelSettings?.providerKinds?.length ? modelSettings.providerKinds : ["anthropic"])])));
+  const modelCards = $derived(hasWailsBindings()
+    ? modelCardsFromConfiguredProviders(modelSettings?.providers ?? [], modelSettings?.defaultModel || selectedModel)
+    : []);
+  const modelManagementSummary = $derived(modelProviderSummary(modelSettings?.providers ?? []));
+  const filteredModelProviders = $derived(filterModelProviders(
+    modelSettings?.providers ?? [],
+    modelProviderSearch,
+    modelProviderFilter,
+  ));
   const settingGroups = $derived(settingGroupsFromSettings());
-  let operationLogs = $state<WorkbenchOperationLog[]>([
-    { id: "create-agent", action: "创建 Agent", target: "代码审查 Agent", user: "我的", time: "刚刚", result: "成功" },
-    { id: "update-automation", action: "更新自动化", target: "桌面前端质量门禁", user: "我的", time: "12 分钟前", result: "成功" },
-    { id: "link-project", action: "关联项目", target: "Volt GUI 桌面端重构", user: "我的", time: "28 分钟前", result: "成功" },
-  ]);
-  let searchResults = $state<WorkbenchSearchResult[]>([
-    { title: "Agent 创建与配置", scope: "Agent 中心", snippet: "助手特征、基础工具、业务技能、核心文件均可配置。" },
-    { title: "项目管理入口", scope: "业务管理", snippet: "项目可点击关联到新建对话。" },
-    { title: "能力中心 MCP 管理", scope: "能力中心", snippet: "插件、MCP、SKILL 顶部横向切换。" },
-  ]);
+  let operationLogs = $state<WorkbenchOperationLog[]>([]);
+  let searchResults = $state<WorkbenchSearchResult[]>([]);
   const displayedSearchResults = $derived(searchResults.filter((item) => {
     const keyword = resourceSearch.trim().toLowerCase();
     return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.scope, item.snippet);
   }));
-  let syncJobs = $state<WorkbenchSyncJob[]>([
-    { id: "memory-sync", title: "记忆与核心文件同步", status: "已完成", progress: "100%", time: "5 分钟前" },
-    { id: "material-index", title: "资料库索引", status: "运行中", progress: "64%", time: "正在执行" },
-    { id: "model-refresh", title: "模型配置刷新", status: "排队中", progress: "0%", time: "等待中" },
-  ]);
+  let syncJobs = $state<WorkbenchSyncJob[]>([]);
   const ingestJobs = $derived(projectMaterialRows.map((material) => ({
     title: material.fileName ? `导入 ${material.fileName}` : `入库 ${material.title}`,
     source: projectCards.find((project) => project.id === material.projectId)?.name ?? material.projectName ?? material.source,
@@ -1091,6 +1016,9 @@
 
   function hasWailsBindings() {
     return typeof window !== "undefined" && Boolean(window.go?.main?.App);
+  }
+  function desktopBackendUnavailable(feature: string) {
+    showWorkbenchNotice(`${feature}不可用：未连接桌面后端，请在 Wails 桌面运行环境中重试。`);
   }
   function normalizeBrandInfo(value?: BrandInfo | null): BrandInfo {
     // Treat generic "VoltUI" as unset so the fork default brand takes over
@@ -1143,7 +1071,10 @@
     if (file) materialDraftSource = file.name;
   }
   async function pickProjectMaterialFile() {
-    if (!hasWailsBindings()) return;
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("选择资料文件");
+      return;
+    }
     const picker = projectMaterialFileBindings()?.PickProjectMaterialFile;
     if (typeof picker !== "function") {
       showWorkbenchNotice("原生资料选择接口未就绪，请重启桌面 dev 窗口后重试。");
@@ -1177,7 +1108,13 @@
     return projectCards.find((project) => project.id === material.projectId)?.name ?? material.projectName ?? "未关联项目";
   }
   function materialPath(material?: WorkbenchProjectMaterial) {
-    return material?.filePath || material?.source || "";
+    return material?.filePath?.trim() || "";
+  }
+  function materialHasLocalFile(material?: WorkbenchProjectMaterial) {
+    return Boolean(materialPath(material));
+  }
+  function materialFileActionHint(material?: WorkbenchProjectMaterial) {
+    return materialHasLocalFile(material) ? "打开关联的本地文件" : "该资料未附加本地文件，不能执行此操作";
   }
   function openMaterialDetail(id: string) {
     selectedMaterialDetailId = id;
@@ -1194,23 +1131,6 @@
   }
   function matchesWorkbenchKeyword(keyword: string, ...values: Array<string | number | undefined>) {
     return values.some((value) => String(value ?? "").toLowerCase().includes(keyword));
-  }
-  function localWorkbenchSearch(query: string): WorkbenchSearchResult[] {
-    const keyword = query.trim().toLowerCase();
-    const results: WorkbenchSearchResult[] = [];
-    const add = (title: string, scope: string, snippet = "") => {
-      if (!keyword || matchesWorkbenchKeyword(keyword, title, scope, snippet)) results.push({ title, scope, snippet });
-    };
-    for (const project of projectCards) add(project.name, "项目管理", `${project.client} / ${project.stage} / ${project.desc}`);
-    for (const customer of customerCards) add(customer.name, "客户管理", `${customer.contact} / ${customer.industry} / ${customer.note || customer.desc}`);
-    for (const todo of todoItems) add(todo.title, "待办事项", todoDescription(todo));
-    for (const material of projectMaterialRows) add(material.title, "资料库", `${material.category} / ${material.source} / ${material.desc}`);
-    for (const document of documentItems) add(document.title, "文档知识", `${document.type} / ${document.status} / ${document.description || ""}`);
-    for (const regulation of regulationItems) add(regulation.title, "规范知识", `${regulation.category} / ${regulation.tags}`);
-    for (const report of reportCards) add(report.title, "报告中心", `${report.status} / ${report.owner} / ${report.desc}`);
-    for (const event of calendarEvents) add(event.title, "日程日历", `${event.day} 日 ${event.time} / ${event.place} / ${event.status || event.type}`);
-    for (const team of teamRooms) add(team.title, "团队协作", `${team.topic} / ${team.desc} / ${team.status}`);
-    return results.slice(0, 50);
   }
   function openSearchResult(result: WorkbenchSearchResult) {
     const scope = result.scope.toLowerCase();
@@ -1305,18 +1225,16 @@
   }
   async function runWorkbenchSearch(query = resourceSearch) {
     const search = workbenchDataPersistenceBindings()?.SearchWorkbench;
+    if (typeof search !== "function") {
+      desktopBackendUnavailable("工作台检索");
+      return;
+    }
     try {
-      if (typeof search === "function") {
-        const results = await search(query.trim());
-        if (Array.isArray(results)) {
-          searchResults = results;
-          return;
-        }
-      }
-      searchResults = localWorkbenchSearch(query);
+      const results = await search(query.trim());
+      searchResults = Array.isArray(results) ? results : [];
     } catch (error) {
       console.error("Failed to search workbench", error);
-      searchResults = localWorkbenchSearch(query);
+      showWorkbenchNotice(`工作台检索失败：${formatErrorMessage(error)}`);
     }
   }
   function normalizeKnowledgeDocumentForUI(document: WorkbenchKnowledgeDocument): WorkbenchKnowledgeDocument {
@@ -1402,8 +1320,8 @@
     try {
       await app().OpenWorkspacePath(path);
     } catch (error) {
-      console.error("Failed to open material file", error);
-      showWorkbenchNotice("打开资料失败，请确认文件仍存在。");
+      console.warn("Unable to open material file", error);
+      showWorkbenchNotice("打开资料失败：关联文件不存在、已被移动，或当前资料未附加本地文件。");
     }
   }
   async function revealMaterialFile(material?: WorkbenchProjectMaterial) {
@@ -1420,16 +1338,20 @@
         if (typeof revealPath !== "function") throw new Error("RevealPath unavailable");
         await revealPath(path);
       } catch (error) {
-        console.error("Failed to reveal material file", error);
-        showWorkbenchNotice("定位资料失败，请确认文件仍存在。");
+        console.warn("Unable to reveal material file", error);
+        showWorkbenchNotice("定位资料失败：关联文件不存在、已被移动，或当前资料未附加本地文件。");
       }
     }
   }
   async function deleteMaterial(material?: WorkbenchProjectMaterial) {
     if (!material) return;
+    const deleteMaterialBinding = projectMaterialPersistenceBindings()?.DeleteProjectMaterial;
+    if (typeof deleteMaterialBinding !== "function") {
+      desktopBackendUnavailable("删除资料");
+      return;
+    }
     try {
-      const deleteMaterialBinding = projectMaterialPersistenceBindings()?.DeleteProjectMaterial;
-      if (typeof deleteMaterialBinding === "function") await deleteMaterialBinding(material.id);
+      await deleteMaterialBinding(material.id);
       projectMaterialRows = projectMaterialRows.filter((item) => item.id !== material.id);
       projectCards = projectCards.map((project) =>
         project.id === material.projectId ? { ...project, materials: Math.max(0, project.materials - 1), updatedAt: "刚刚" } : project,
@@ -1472,6 +1394,16 @@
     workbenchNoticeTimer = window.setTimeout(() => {
       if (workbenchNotice === message) workbenchNotice = "";
     }, 2800);
+  }
+  function clearConfigValidation() {
+    configValidationField = "";
+    configValidationMessage = "";
+  }
+  function showConfigValidation(field: string, message: string) {
+    configValidationField = field;
+    configValidationMessage = message;
+    if (typeof document === "undefined") return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-config-field="${field}"]`)?.focus());
   }
   function todoStatusLabel(status: string) {
     if (status === "in_progress") return "进行中";
@@ -1556,15 +1488,20 @@
     return projectName || customerName || "工作";
   }
   async function syncWorkbench(scope = "工作台") {
+    const runSync = workbenchDataPersistenceBindings()?.RunWorkbenchSync;
+    if (typeof runSync !== "function") {
+      desktopBackendUnavailable(`${scope}同步`);
+      return;
+    }
     try {
-      if (hasWailsBindings()) {
-        void refreshModelSettings();
-        const runSync = workbenchDataPersistenceBindings()?.RunWorkbenchSync;
-        if (typeof runSync === "function") {
-          syncJobs = await runSync(scope);
-          await refreshWorkbenchData();
-        }
-      }
+      void refreshModelSettings();
+      const backendScope = scope === "知识库订阅源"
+        ? "知识索引校验"
+        : scope === "日程日历" || scope === "同步中心" || scope === "工作台"
+          ? "工作台数据"
+          : scope;
+      syncJobs = await runSync(backendScope);
+      await refreshWorkbenchData();
       showWorkbenchNotice(`${scope}已完成同步。`);
     } catch (error) {
       console.error("Failed to sync workbench", error);
@@ -1572,34 +1509,38 @@
     }
   }
   async function exportOperationLog() {
+    const exportLogs = workbenchDataPersistenceBindings()?.ExportOperationLogs;
+    if (typeof exportLogs !== "function") {
+      desktopBackendUnavailable("导出操作记录");
+      return;
+    }
     try {
-      const exportLogs = workbenchDataPersistenceBindings()?.ExportOperationLogs;
-      if (typeof exportLogs === "function") {
-        const path = await exportLogs();
-        showWorkbenchNotice(`已导出 ${operationLogs.length} 条操作记录：${path}`);
-        return;
-      }
-      showWorkbenchNotice(`已生成 ${operationLogs.length} 条操作记录导出。`);
+      const path = await exportLogs();
+      showWorkbenchNotice(`已导出 ${operationLogs.length} 条操作记录：${path}`);
     } catch (error) {
       console.error("Failed to export operation logs", error);
       showWorkbenchNotice("导出操作记录失败。");
     }
   }
   async function exportReports() {
+    const exportReportsBinding = workbenchDataPersistenceBindings()?.ExportWorkbenchReports;
+    if (typeof exportReportsBinding !== "function") {
+      desktopBackendUnavailable("导出报告");
+      return;
+    }
+    const unapprovedReports = reportCards.filter((report) => !reportCanExport(report));
+    if (unapprovedReports.length) {
+      showWorkbenchNotice(`还有 ${unapprovedReports.length} 篇报告待审批，暂不能批量导出。`);
+      return;
+    }
     try {
-      const exportReportsBinding = workbenchDataPersistenceBindings()?.ExportWorkbenchReports;
-      if (typeof exportReportsBinding === "function") {
-        const path = await exportReportsBinding();
-        await refreshWorkbenchData();
-        openWorkLayer("operationLog");
-        showWorkbenchNotice(`已导出 ${reportCards.length} 份报告：${path}`);
-        return;
-      }
+      const path = await exportReportsBinding();
+      await refreshWorkbenchData();
       openWorkLayer("operationLog");
-      showWorkbenchNotice(`已将 ${reportCards.length} 份报告加入导出队列。`);
+      showWorkbenchNotice(`已导出 ${reportCards.length} 份报告：${path}`);
     } catch (error) {
       console.error("Failed to export reports", error);
-      showWorkbenchNotice("导出报告失败。");
+      showWorkbenchNotice(reportExportErrorMessage(error, true));
     }
   }
   async function openCalendarEvent(event: (typeof calendarEvents)[number]) {
@@ -1758,6 +1699,30 @@
     ].filter(Boolean).join(" / ");
     showWorkbenchNotice(`已打开文档知识：${item.title}`);
   }
+  function templateRenderVariables(label: string) {
+    const raw = window.prompt(`输入${label}渲染变量（JSON 对象）`, "{}");
+    if (raw === null) return undefined;
+    const parsed = JSON.parse(raw || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("渲染变量必须是 JSON 对象");
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [key, String(value)]));
+  }
+  async function renderKnowledgeDocument(item: WorkbenchKnowledgeDocument) {
+    const renderDocument = workbenchDataPersistenceBindings()?.RenderKnowledgeDocument;
+    if (typeof renderDocument !== "function") {
+      desktopBackendUnavailable("渲染知识模板");
+      return;
+    }
+    try {
+      const variables = templateRenderVariables("知识模板");
+      if (!variables) return;
+      knowledgePreviewTitle = `${item.title} · 渲染结果`;
+      knowledgePreviewDescription = await renderDocument(item.id, variables);
+      selectedKnowledgeDocumentId = item.id;
+      showWorkbenchNotice(`已渲染知识模板：${item.title}`);
+    } catch (error) {
+      showWorkbenchNotice(`渲染知识模板失败：${formatErrorMessage(error)}`);
+    }
+  }
   function toggleTemplateMaterial(materialId: string) {
     templateDraftMaterialIds = templateDraftMaterialIds.includes(materialId)
       ? templateDraftMaterialIds.filter((id) => id !== materialId)
@@ -1828,6 +1793,9 @@
       status: task?.status ?? "待配置",
       kind: task?.kind ?? "自定义自动化",
       owner: task?.owner ?? "自动化 Agent",
+      projectId: task?.projectId ?? "",
+      projectName: task?.projectName ?? "",
+      createTodoOnFailure: Boolean(task?.createTodoOnFailure),
       startedAtMs: task?.startedAtMs,
       cadence: task?.cadence ?? "",
       schedule: task?.schedule ?? "手动触发",
@@ -1851,6 +1819,12 @@
     automationDialog = task?.id ?? "new";
     automationDraft = automationDraftFromTask(task);
   }
+  function setAutomationDraftProject(projectId: string) {
+    const project = projectCards.find((item) => item.id === projectId);
+    automationDraft.projectId = project?.id ?? "";
+    automationDraft.projectName = project?.name ?? "";
+    if (!project) automationDraft.createTodoOnFailure = false;
+  }
   function automationDraftInput(): WorkbenchAutomationInput {
     return {
       id: automationDialogMode === "edit" ? automationDraft.id : undefined,
@@ -1859,6 +1833,9 @@
       status: automationDraft.status?.trim() || "待配置",
       kind: automationDraft.kind?.trim() || "自定义自动化",
       owner: automationDraft.owner?.trim() || "自动化 Agent",
+      projectId: automationDraft.projectId?.trim(),
+      projectName: automationDraft.projectName?.trim(),
+      createTodoOnFailure: Boolean(automationDraft.createTodoOnFailure),
       startedAtMs: automationDraft.startedAtMs,
       cadence: automationDraft.cadence?.trim(),
       schedule: automationDraft.schedule?.trim() || "手动触发",
@@ -1880,79 +1857,51 @@
       showWorkbenchNotice("请填写自动化任务名称。");
       return;
     }
+    const saveAutomation = automationPersistenceBindings()?.SaveAutomation;
+    if (typeof saveAutomation !== "function") {
+      desktopBackendUnavailable("保存自动化任务");
+      return;
+    }
+    if (input.createTodoOnFailure && !input.projectId) {
+      showWorkbenchNotice("启用失败后创建待办时，请先关联项目。");
+      return;
+    }
     try {
-      const saveAutomation = automationPersistenceBindings()?.SaveAutomation;
-      const persisted = typeof saveAutomation === "function";
-      const now = new Date().toISOString();
-      const saved = persisted
-        ? await saveAutomation(input)
-        : { ...input, id: input.id || `automation-${Date.now()}`, startedAtMs: input.startedAtMs || Date.now(), createdAt: now, updatedAt: now } as WorkbenchAutomation;
+      const saved = await saveAutomation(input);
       runningAutomations = [saved, ...runningAutomations.filter((item) => item.id !== saved.id)];
       automationDialog = undefined;
-      showWorkbenchNotice(persisted ? `已保存自动化任务：${saved.title}` : `已保存自动化任务：${saved.title}。重启桌面 dev 窗口后会启用持久化。`);
+      showWorkbenchNotice(`已保存自动化任务：${saved.title}`);
     } catch (error) {
       console.error("Failed to save automation", error);
-      showWorkbenchNotice("保存自动化任务失败，请稍后重试。");
-    }
-  }
-  async function toggleAutomationTask(taskId: string) {
-    let nextStatus = "";
-    const task = runningAutomations.find((item) => item.id === taskId);
-    if (!task) return;
-    const isRunning = task.status === "运行中";
-    nextStatus = isRunning ? "已暂停" : "运行中";
-    const input: WorkbenchAutomationInput = {
-      ...task,
-      status: nextStatus,
-      result: isRunning ? "已暂停" : "已启动",
-      lastRun: "刚刚",
-      nextRun: isRunning ? "等待手动恢复" : task.nextRun,
-    };
-    try {
-      const saveAutomation = automationPersistenceBindings()?.SaveAutomation;
-      const saved = typeof saveAutomation === "function"
-        ? await saveAutomation(input)
-        : { ...task, ...input, updatedAt: new Date().toISOString() };
-      runningAutomations = runningAutomations.map((item) => item.id === taskId ? saved as WorkbenchAutomation : item);
-      showWorkbenchNotice(`${task.title}已${nextStatus === "运行中" ? "启动" : "暂停"}。`);
-    } catch (error) {
-      console.error("Failed to toggle automation", error);
-      showWorkbenchNotice("更新自动化任务状态失败，请稍后重试。");
+      showWorkbenchNotice(`保存自动化任务失败：${formatErrorMessage(error)}`);
     }
   }
   async function runAutomationNow(taskId?: string) {
     if (!taskId) return;
+    const runAutomation = automationPersistenceBindings()?.RunAutomationNow;
+    if (typeof runAutomation !== "function") {
+      desktopBackendUnavailable("立即执行自动化任务");
+      return;
+    }
     try {
-      const runAutomation = automationPersistenceBindings()?.RunAutomationNow;
-      const saveAutomation = automationPersistenceBindings()?.SaveAutomation;
-      if (typeof runAutomation === "function") {
-        const saved = await runAutomation(taskId);
-        runningAutomations = runningAutomations.map((item) => item.id === taskId ? saved : item);
-        automationDraft = automationDraftFromTask(saved);
-        showWorkbenchNotice(`${saved.title} 已执行。`);
-        return;
-      }
-      if (typeof saveAutomation === "function") {
-        const task = runningAutomations.find((item) => item.id === taskId);
-        if (!task) return;
-        const saved = await saveAutomation({ ...task, result: "等待桌面后端执行", lastRun: "刚刚" });
-        runningAutomations = runningAutomations.map((item) => item.id === taskId ? saved : item);
-        showWorkbenchNotice("当前桌面绑定不支持立即执行，请重启桌面 dev 窗口。");
-      }
+      const saved = await runAutomation(taskId);
+      runningAutomations = runningAutomations.map((item) => item.id === taskId ? saved : item);
+      automationDraft = automationDraftFromTask(saved);
+      showWorkbenchNotice(`${saved.title} 已执行。`);
     } catch (error) {
       console.error("Failed to run automation", error);
       showWorkbenchNotice("执行自动化任务失败，请检查命令配置。");
     }
   }
   async function deleteAutomationTask(taskId: string) {
-    if (runningAutomations.length <= 1) {
-      showWorkbenchNotice("至少保留一个自动化任务。");
+    const task = runningAutomations.find((item) => item.id === taskId);
+    const deleteAutomation = automationPersistenceBindings()?.DeleteAutomation;
+    if (typeof deleteAutomation !== "function") {
+      desktopBackendUnavailable("删除自动化任务");
       return;
     }
-    const task = runningAutomations.find((item) => item.id === taskId);
     try {
-      const deleteAutomation = automationPersistenceBindings()?.DeleteAutomation;
-      if (typeof deleteAutomation === "function") await deleteAutomation(taskId);
+      await deleteAutomation(taskId);
       runningAutomations = runningAutomations.filter((item) => item.id !== taskId);
       if (automationDialog === taskId) automationDialog = undefined;
       showWorkbenchNotice(task ? `${task.title}已删除。` : "自动化任务已删除。");
@@ -2036,7 +1985,7 @@
       apiKeyEnv: "CUSTOM_API_KEY",
       apiKeyValue: "",
       modelsUrl: "",
-      apiSurface: "chat_completions",
+      apiSurface: "responses",
       responsesUrl: "",
       priority: "0",
       fetchedModels: [],
@@ -2064,28 +2013,48 @@
     return model ? `${provider.name}/${model}` : provider.name;
   }
 
-  function isDefaultModelRef(provider: ProviderView, model = providerDefaultModel(provider)) {
-    const current = modelSettings?.defaultModel || selectedModel;
-    return current === provider.name || current === providerRef(provider, model) || current === model;
+  function selectedProviderModel(provider: ProviderView) {
+    const candidates = modelCandidatesForProvider(
+      provider,
+      modelSettings?.defaultModel || selectedModel,
+      modelSettings?.providers ?? [],
+    );
+    const pending = modelDefaultSelections[provider.name];
+    if (pending && candidates.some((candidate) => candidate.name === pending)) return pending;
+    return candidates.find((candidate) => candidate.isDefault)?.name
+      || candidates.find((candidate) => candidate.name === provider.default)?.name
+      || candidates[0]?.name
+      || "";
   }
 
-  function modelCardsFromSettings(): ModelCard[] {
-    if (!hasWailsBindings()) return [];
-    return (modelSettings?.providers ?? []).flatMap((provider) => {
-      const providerModels = provider.models?.length ? provider.models : provider.default ? [provider.default] : [];
-      return providerModels.map((model) => ({
-        name: model,
-        provider: provider.name,
-        role: isDefaultModelRef(provider, model) ? "默认对话模型" : `${provider.kind || "provider"} / ${provider.baseUrl || "未配置 endpoint"}`,
-        status: provider.configured ? (provider.keySet ? "已连接" : "免密/本地") : provider.requiresKey ? "缺少 Key" : "未启用",
-        ref: providerRef(provider, model),
-      }));
-    });
+  function handleProviderModelSelection(provider: ProviderView, event: Event) {
+    modelDefaultSelections[provider.name] = (event.currentTarget as HTMLSelectElement).value;
   }
 
+  function configuredAgentModel(agent?: AgentView): ModelCard | undefined {
+    if (agent?.model) {
+      const exact = modelCards.find((model) => (model.name === agent.model || model.ref === agent.model)
+        && (!agent.provider || model.provider === agent.provider));
+      if (exact) return exact;
+    }
+    return modelCards.find((model) => model.role === "默认对话模型") ?? modelCards[0];
+  }
+
+  function setAgentModel(model?: ModelCard) {
+    agentProvider = model?.provider ?? "";
+    agentModel = model?.name ?? "";
+  }
+
+  function selectedAgentModelRef() {
+    return modelCards.find((model) => model.provider === agentProvider && model.name === agentModel)?.ref ?? "";
+  }
+
+  function handleAgentModelChange(event: Event) {
+    setAgentModel(modelCards.find((model) => model.ref === (event.currentTarget as HTMLSelectElement).value));
+  }
   function settingGroupsFromSettings(): SettingGroup[] {
     const providerCount = modelSettings?.providers.length ?? modelCards.length;
-    const configuredProviders = modelSettings?.providers.filter((provider) => provider.configured).length ?? 0;
+    const configuredProviders = modelProviderSummary(modelSettings?.providers ?? []).configured;
     return [
       {
         id: "general",
@@ -2103,7 +2072,7 @@
         id: "models",
         title: "模型接口",
         desc: "Provider、API Key 环境变量和默认模型。",
-        status: providerCount ? `${configuredProviders}/${providerCount} 可用` : "待配置",
+        status: providerCount ? `${configuredProviders}/${providerCount} 已配置` : "待配置",
       },
     ];
   }
@@ -2174,7 +2143,7 @@
       return;
     }
     if (!hasWailsBindings()) {
-      settingsMessage = "浏览器预览已应用草稿；进入桌面运行时后会写入真实配置。";
+      settingsMessage = "设置未保存：未连接桌面后端，请在 Wails 桌面运行环境中重试。";
       return;
     }
     settingsSaving = true;
@@ -2210,6 +2179,39 @@
       modelSettingsError = error instanceof Error ? error.message : String(error);
     } finally {
       settingsSaving = false;
+    }
+  }
+
+  async function removeTrustedIntranetSite(site: TrustedIntranetSiteView) {
+    if (!hasWailsBindings()) return;
+    const key = `${site.host}|${site.cidrs.join(",")}|${site.ports.join(",")}`;
+    trustedIntranetRemoving = key;
+    settingsMessage = "";
+    modelSettingsError = "";
+    try {
+      await app().RemoveTrustedIntranetSite(site);
+      await refreshModelSettings();
+      settingsMessage = `已撤销 ${site.host} 的永久内网授权。`;
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      trustedIntranetRemoving = "";
+    }
+  }
+
+  async function removeBrowserCredential(credential: BrowserCredentialView) {
+    if (!hasWailsBindings()) return;
+    browserCredentialRemoving = credential.origin;
+    settingsMessage = "";
+    modelSettingsError = "";
+    try {
+      await app().RemoveBrowserCredential(credential.origin);
+      browserCredentials = await app().ListBrowserCredentials();
+      settingsMessage = `已删除 ${credential.origin} 的浏览器登录凭据。`;
+    } catch (error) {
+      modelSettingsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      browserCredentialRemoving = "";
     }
   }
 
@@ -2304,8 +2306,14 @@
     if (!hasWailsBindings()) return;
     modelSettingsLoading = true;
     modelSettingsError = "";
+    modelSettingsMessage = "";
     try {
       modelSettings = await app().Settings();
+      try {
+        browserCredentials = await app().ListBrowserCredentials();
+      } catch {
+        browserCredentials = [];
+      }
       syncSettingsDraft(modelSettings);
     } catch (error) {
       modelSettingsError = error instanceof Error ? error.message : String(error);
@@ -2378,10 +2386,15 @@
   async function setDefaultModelProvider(provider: ProviderView, model = providerDefaultModel(provider)) {
     if (!hasWailsBindings()) return;
     modelSettingsError = "";
+    modelSettingsMessage = "";
     try {
-      await app().SetDefaultModel(providerRef(provider, model));
+      const nextRef = providerRef(provider, model);
+      await app().SetDefaultModel(nextRef);
+      selectedModel = nextRef;
+      modelDefaultSelections[provider.name] = model;
       await refreshModelSettings();
       await refresh();
+      modelSettingsMessage = `已将 ${provider.name} / ${model} 设为默认，并切换当前会话。`;
     } catch (error) {
       modelSettingsError = error instanceof Error ? error.message : String(error);
     }
@@ -2389,11 +2402,20 @@
 
   async function deleteModelProvider(provider: ProviderView) {
     if (!hasWailsBindings()) return;
+    const confirmMessage = provider.builtIn
+      ? `移除内置渠道“${provider.name}”？它会从当前配置和模型列表隐藏，默认模型可能自动调整；内置能力与环境变量中的密钥不会被删除。`
+      : `删除渠道“${provider.name}”？渠道下的模型会从列表移除，默认模型可能自动调整；环境变量中的密钥不会被删除。`;
+    if (typeof window !== "undefined" && !window.confirm(confirmMessage)) return;
     modelSettingsError = "";
+    modelSettingsMessage = "";
     try {
-      await app().DeleteProvider(provider.name);
+      await app().RemoveProviderAccess(provider.name);
+      delete modelDefaultSelections[provider.name];
       await refreshModelSettings();
       await refresh();
+      modelSettingsMessage = provider.builtIn
+        ? `内置渠道“${provider.name}”已从当前配置移除。`
+        : `渠道“${provider.name}”已删除。`;
     } catch (error) {
       modelSettingsError = error instanceof Error ? error.message : String(error);
     }
@@ -2577,37 +2599,6 @@
     }
   }
 
-  function hydrateBrowserPreview() {
-    const previewTab: TabMeta = {
-      id: "preview-tab",
-      scope: "project",
-      workspaceRoot: "E:\\workspace\\volt-gui",
-      workspaceName: "volt-gui",
-      topicId: "preview-topic",
-      topicTitle: "Preview conversation",
-      active: true,
-      running: false,
-    };
-    tabs = [previewTab];
-    models = [{ name: "GPT-4o", label: "GPT-4o", current: true }];
-    selectedModel = "GPT-4o";
-    commands = [
-      { name: "model", kind: "builtin", description: "Select model" },
-      { name: "effort", kind: "builtin", description: "Set reasoning effort" },
-      { name: "skill", kind: "builtin", description: "Manage skills" },
-      { name: "mcp", kind: "builtin", description: "Manage MCP" },
-    ];
-    applyToolAvailability({
-      files: { available: true, reason: "浏览器预览可用" },
-      terminal: { available: true, reason: "浏览器预览可用" },
-      browser: { available: true, reason: "浏览器预览可用" },
-      memory: { available: false, reason: "浏览器预览未连接桌面记忆后端" },
-    });
-    agentCards = defaultAgentCards;
-    needsAuth = false;
-    loading = false;
-  }
-
   onMount(() => {
     restoreSidebarState();
     pruneEmptyDraftSidebarConversations();
@@ -2622,7 +2613,18 @@
 
     if (!hasWailsBindings()) {
       brand = defaultBrand;
-      hydrateBrowserPreview();
+      tabs = [];
+      models = [];
+      commands = [];
+      agentCards = [];
+      applyToolAvailability({
+        files: { available: false, reason: "未连接桌面后端" },
+        terminal: { available: false, reason: "未连接桌面后端" },
+        browser: { available: false, reason: "未连接桌面后端" },
+        memory: { available: false, reason: "未连接桌面后端" },
+      });
+      needsAuth = false;
+      loading = false;
       const previewTick = window.setInterval(() => {
         nowMs = Date.now();
       }, 1000);
@@ -2940,7 +2942,7 @@
   }
 
   function bindSidebarConversationThread(projectId: string, conversationId: string): Promise<TabMeta | undefined> {
-    if (!hasWailsBindings()) return Promise.resolve(activeTab);
+    if (!hasWailsBindings()) return Promise.resolve(undefined);
     const key = conversationThreadKey(projectId, conversationId);
     const existing = conversationThreadRequests.get(key);
     if (existing) return existing;
@@ -3030,6 +3032,8 @@
     sending = false;
     pendingApproval = undefined;
     pendingAsk = undefined;
+    pendingBrowserCredential = undefined;
+    pendingBrowserVerification = undefined;
     submittedDraft = undefined;
     restoreDraftOnTurnDone = false;
     draftConversationThread = undefined;
@@ -3455,22 +3459,89 @@
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
   function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
   function projectSchedules(project = selectedProject()) {
-    const persisted = calendarEvents
+    return calendarEvents
       .filter((item) => item.projectId === project.id)
       .map((item) => ({ projectId: project.id, title: item.title, date: item.day, time: item.time, place: item.place, state: item.status || item.type, desc: item.desc || item.type }));
-    return persisted.length ? persisted : projectScheduleRows.filter((item) => item.projectId === project.id);
   }
   function projectReports(project = selectedProject()) {
-    const persisted = reportCards
-      .filter((item) => !item.projectId || item.projectId === project.id)
+    return reportCards
+      .filter((item) => item.projectId === project.id)
       .map((item) => ({ projectId: project.id, title: item.title, type: item.kind || "分析报告", status: item.status, owner: item.owner, updatedAt: item.updatedAt || "刚刚", summary: item.desc }));
-    return persisted.length ? persisted : projectReportRows.filter((item) => item.projectId === project.id);
   }
   function selectedReport() { return reportCards.find((report) => report.id === selectedReportId) ?? reportCards[0]; }
+  async function refreshArtifactReviewJob(reportId = selectedReport()?.id) {
+    if (!reportId || !hasWailsBindings()) {
+      artifactReviewJob = undefined;
+      return;
+    }
+    try {
+      const jobs = await app().ListWorkbenchJobs();
+      artifactReviewJob = [...jobs]
+        .reverse()
+        .find((job) => job.kind === "artifact-review" && job.metadata?.reportId === reportId);
+    } catch (error) {
+      console.error("Failed to load artifact review job", error);
+    }
+  }
+  async function ensureArtifactReviewJob() {
+    const report = selectedReport();
+    if (!report) throw new Error("请先选择报告");
+    if (artifactReviewJob?.metadata?.reportId === report.id) return artifactReviewJob;
+    const style = selectedArtifactStyle();
+    const created = await app().CreateWorkbenchJob({
+      kind: "artifact-review",
+      scenario: `审查报告产物：${report.title}`,
+      templateId: style.id,
+      mode: "manual",
+      metadata: { reportId: report.id, reportTitle: report.title },
+      steps: [
+        { id: "draft", name: "报告草稿", status: "done", output: { reportId: report.id } },
+        { id: "design", name: "样式审查", status: "waiting_approval", input: { styleId: style.id } },
+        { id: "review", name: "人工复核", status: "draft" },
+        { id: "export", name: "导出门禁", status: "draft" },
+      ],
+    });
+    artifactReviewJob = created;
+    return created;
+  }
+  function selectReport(reportId: string) {
+    selectedReportId = reportId;
+    artifactReviewJob = undefined;
+    void refreshArtifactReviewJob(reportId);
+  }
   function reportProject(report = selectedReport()) { return report ? projectCards.find((project) => project.id === report.projectId) : undefined; }
   function reportCustomer(report = selectedReport()) { return report ? customerCards.find((customer) => customer.id === report.customerId) : undefined; }
-  function reportUpdatedAt(report = selectedReport()) { return report?.updatedAt || report?.createdAt || "??"; }
   function reportDueAt(report = selectedReport()) { return report?.dueAt?.trim() ? report.dueAt.replace("T", " ") : "未设置"; }
+  function reportCanExport(report?: WorkbenchReport) {
+    return Boolean(report?.reviewStatus === "approved" && report.reviewStage === "export" && report.styleApproved);
+  }
+  function unapprovedReportCount() {
+    return reportCards.filter((report) => !reportCanExport(report)).length;
+  }
+  function reportExportDisabledReason(report = selectedReport()) {
+    return reportCanExport(report) ? "报告已通过审批，可以导出" : "报告尚未通过审批，暂不能导出";
+  }
+  function reportExportErrorMessage(error: unknown, batch = false) {
+    const detail = formatErrorMessage(error);
+    if (detail.includes("is not approved for export")) {
+      return batch ? "批量导出失败：仍有报告未通过审批。" : "导出失败：该报告尚未通过审批。";
+    }
+    return `导出报告失败：${detail}`;
+  }
+  function reportTimestamp(value?: string) {
+    const source = value?.trim();
+    if (!source) return "未记录";
+    const date = new Date(source);
+    if (Number.isNaN(date.getTime())) return source;
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date).replaceAll("/", "-");
+  }
   function reportBodyLines(report = selectedReport()) {
     const body = report?.body?.trim() || report?.desc?.trim();
     return body ? body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : ["暂无报告正文。"];
@@ -3483,7 +3554,7 @@
     reportDraftStatus = report.status || "草稿";
     reportDraftProjectId = report.projectId || "";
     reportDraftCustomerId = report.customerId || "";
-    reportDraftOwner = report.owner || agentCards.find((agent) => agent.id === selectedAgentId)?.name || "自动化 Agent";
+    reportDraftOwner = report.owner || agentCards.find((agent) => agent.id === selectedAgentId)?.name || "";
     reportDraftSource = report.source || "工作台数据";
     reportDraftFormat = report.format || "Markdown";
     reportDraftPriority = report.priority || "中";
@@ -3494,6 +3565,10 @@
   }
   async function exportReport(report = selectedReport()) {
     if (!report) return;
+    if (!reportCanExport(report)) {
+      showWorkbenchNotice("该报告尚未通过审批，暂不能导出。");
+      return;
+    }
     const exportReportBinding = workbenchDataPersistenceBindings()?.ExportWorkbenchReport;
     if (typeof exportReportBinding !== "function") {
       showWorkbenchNotice("当前环境未连接单篇报告导出接口。");
@@ -3505,20 +3580,22 @@
       showWorkbenchNotice(`已导出报告：${path}`);
     } catch (error) {
       console.error("Failed to export report", error);
-      showWorkbenchNotice("导出报告失败，请稍后重试。");
+      showWorkbenchNotice(reportExportErrorMessage(error));
     }
   }
   async function deleteReport(report = selectedReport()) {
     if (!report) return;
     if (!window.confirm(`确认删除报告“${report.title}”？`)) return;
     const deleteReportBinding = workbenchDataPersistenceBindings()?.DeleteWorkbenchReport;
+    if (typeof deleteReportBinding !== "function") {
+      desktopBackendUnavailable("删除报告");
+      return;
+    }
     try {
-      if (typeof deleteReportBinding === "function") {
-        await deleteReportBinding(report.id);
-      }
+      await deleteReportBinding(report.id);
       reportCards = reportCards.filter((item) => item.id !== report.id);
       selectedReportId = reportCards[0]?.id ?? "";
-      if (typeof deleteReportBinding === "function") await refreshWorkbenchData();
+      await refreshWorkbenchData();
       showWorkbenchNotice(`已删除报告：${report.title}`);
     } catch (error) {
       console.error("Failed to delete report", error);
@@ -3527,6 +3604,132 @@
   }
   function selectedArtifactStyle() {
     return artifactStyleOptions.find((style) => style.id === selectedArtifactStyleId) ?? artifactStyleOptions[0];
+  }
+  function syncArtifactReview(report = selectedReport()) {
+    const key = report ? `${report.id}:${report.updatedAt || ""}:${report.reviewStatus || ""}:${report.artifactStyleId || ""}` : "";
+    if (!report || artifactReviewReportKey === key) return;
+    artifactReviewReportKey = key;
+    selectedArtifactStyleId = report.artifactStyleId || artifactStyleOptions[0]?.id || "";
+    selectedArtifactStage = report.reviewStage === "export" ? "export" : "design";
+    artifactStyleApproved = Boolean(report.styleApproved);
+    artifactReviewComment = report.reviewComment || "";
+  }
+  function artifactReviewStatus(report = selectedReport()) {
+    return report?.reviewStatus || "draft";
+  }
+  function artifactReviewStatusLabel(report = selectedReport()) {
+    const status = artifactReviewStatus(report);
+    if (status === "submitted") return "等待审批";
+    if (status === "approved") return "已批准";
+    if (status === "returned") return "已退回";
+    return "草稿待提交";
+  }
+  function reportInputForArtifactStyle(report: WorkbenchReport, artifactStyleId: string): WorkbenchReportInput {
+    return {
+      id: report.id,
+      title: report.title,
+      status: report.status,
+      owner: report.owner,
+      desc: report.desc,
+      body: report.body || "",
+      kind: report.kind || "",
+      projectId: report.projectId || "",
+      customerId: report.customerId || "",
+      source: report.source || "",
+      format: report.format || "",
+      priority: report.priority || "",
+      dueAt: report.dueAt || "",
+      artifactStyleId,
+    };
+  }
+  async function selectArtifactStyle(styleId: string) {
+    const report = selectedReport();
+    if (!report || artifactReviewSaving || styleId === selectedArtifactStyleId) return;
+    const saveReport = workbenchDataPersistenceBindings()?.SaveWorkbenchReport;
+    if (typeof saveReport !== "function") {
+      showWorkbenchNotice("当前环境未连接报告设计保存接口。");
+      return;
+    }
+    artifactReviewSaving = true;
+    try {
+      const saved = await saveReport(reportInputForArtifactStyle(report, styleId));
+      reportCards = reportCards.map((item) => item.id === saved.id ? saved : item);
+      selectedArtifactStyleId = saved.artifactStyleId || styleId;
+      selectedArtifactStage = saved.reviewStage === "export" ? "export" : "design";
+      artifactStyleApproved = Boolean(saved.styleApproved);
+      artifactReviewComment = saved.reviewComment || "";
+      if (artifactReviewJob && hasWailsBindings()) {
+        try {
+          artifactReviewJob = await app().UpdateWorkbenchStep(artifactReviewJob.id, "design", {
+            status: "draft",
+            input: { styleId: selectedArtifactStyleId },
+            output: { styleId: selectedArtifactStyleId },
+          });
+        } catch (error) {
+          console.error("Failed to sync artifact style job", error);
+        }
+      }
+      showWorkbenchNotice("已保存报告样式，审批状态已按实际内容更新。");
+    } catch (error) {
+      console.error("Failed to save report design", error);
+      showWorkbenchNotice(`保存报告样式失败：${formatErrorMessage(error)}`);
+    } finally {
+      artifactReviewSaving = false;
+    }
+  }
+  async function reviewArtifact(action: "submit" | "approve" | "return") {
+    const report = selectedReport();
+    const reviewReport = workbenchDataPersistenceBindings()?.ReviewWorkbenchReport;
+    if (!report || artifactReviewSaving) return;
+    if (typeof reviewReport !== "function") {
+      showWorkbenchNotice("当前环境未连接报告审批接口，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    artifactReviewSaving = true;
+    try {
+      const saved = await reviewReport(report.id, action, "当前用户", artifactReviewComment.trim());
+      reportCards = reportCards.map((item) => item.id === saved.id ? saved : item);
+      artifactReviewReportKey = `${saved.id}:${saved.updatedAt || ""}:${saved.reviewStatus || ""}:${saved.artifactStyleId || ""}`;
+      selectedArtifactStyleId = saved.artifactStyleId || selectedArtifactStyleId;
+      selectedArtifactStage = saved.reviewStage === "export" ? "export" : "design";
+      artifactStyleApproved = Boolean(saved.styleApproved);
+      artifactReviewComment = saved.reviewComment || "";
+      if (hasWailsBindings()) {
+        try {
+          const job = await ensureArtifactReviewJob();
+          if (action === "submit") {
+            artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "design", {
+              status: "waiting_approval",
+              input: { styleId: selectedArtifactStyleId },
+              output: { styleId: selectedArtifactStyleId, styleName: selectedArtifactStyle().name },
+            });
+          } else if (action === "approve") {
+            const pendingJob = await app().UpdateWorkbenchStep(job.id, "design", {
+              status: "waiting_approval",
+              input: { styleId: selectedArtifactStyleId },
+              output: { styleId: selectedArtifactStyleId, styleName: selectedArtifactStyle().name },
+            });
+            artifactReviewJob = await app().ApproveWorkbenchStep(pendingJob.id, "design");
+          } else {
+            artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "design", {
+              status: "draft",
+              input: { styleId: selectedArtifactStyleId },
+              output: { styleId: selectedArtifactStyleId, returned: true },
+            });
+            artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "export", { status: "draft", output: {} });
+          }
+        } catch (error) {
+          console.error("Failed to sync artifact review job", error);
+        }
+      }
+      const notice = action === "submit" ? "报告设计已提交审批。" : action === "approve" ? "报告设计已批准，可以导出。" : "报告设计已退回草稿。";
+      showWorkbenchNotice(notice);
+    } catch (error) {
+      console.error("Failed to review report design", error);
+      showWorkbenchNotice(`报告审批失败：${formatErrorMessage(error)}`);
+    } finally {
+      artifactReviewSaving = false;
+    }
   }
   function artifactKindLabel(report = selectedReport()) {
     const text = [report?.kind, report?.format, report?.title].filter(Boolean).join(" ").toLowerCase();
@@ -3538,10 +3741,20 @@
   function artifactStageLabel() {
     return artifactReviewStages.find((stage) => stage.id === selectedArtifactStage)?.label ?? "设计";
   }
+  function artifactStageStatus(stageId: ArtifactReviewStageId) {
+    const status = artifactReviewJob?.steps.find((step) => step.id === stageId)?.status;
+    if (status === "done") return "已完成";
+    if (status === "waiting_approval") return "待批准";
+    if (status === "running") return "进行中";
+    if (status === "failed") return "失败";
+    if (status === "draft") return "草稿";
+    return "未开始";
+  }
   function setArtifactStage(stageId: ArtifactReviewStageId) {
-    selectedArtifactStage = stageId;
+    const report = selectedReport();
+    selectedArtifactStage = report?.reviewStage === "export" ? "export" : "design";
     if (stageId !== "export") return;
-    if (!artifactStyleApproved) showWorkbenchNotice("样式门禁未通过，导出阶段仍需人工批准。");
+    if (!report?.styleApproved) showWorkbenchNotice("报告尚未通过设计审批，不能进入导出阶段。");
   }
   function updateArtifactZoom(delta: number) {
     artifactCanvasZoom = Math.min(160, Math.max(60, artifactCanvasZoom + delta));
@@ -3567,21 +3780,18 @@
     artifactCanvasPanY = Math.max(-72, Math.min(72, artifactCanvasPanY + dy));
   }
   function approveArtifactStyle() {
-    artifactStyleApproved = true;
-    selectedArtifactStage = "design";
-    showWorkbenchNotice(`已批准样式：${selectedArtifactStyle().name}`);
+    void reviewArtifact("approve");
   }
   function returnArtifactToDraft() {
-    artifactStyleApproved = false;
-    selectedArtifactStage = "draft";
-    showWorkbenchNotice("已退回草稿阶段，保留当前产物坐标与审查意见。");
+    void reviewArtifact("return");
   }
   function artifactExportState() {
+    if (artifactReviewStatus() === "submitted") return "审批中";
     if (!artifactStyleApproved) return "样式待批准";
     if (selectedArtifactStage !== "export") return "等待导出阶段";
     return "可导出";
   }
-  function projectTodos(project = selectedProject()) { return [...todoProjectRows(project.id), ...projectTodoRows.filter((item) => item.projectId === project.id)]; }
+  function projectTodos(project = selectedProject()) { return todoProjectRows(project.id); }
   function selectedCustomer() { return customerCards.find((customer) => customer.id === selectedCustomerId) ?? customerCards[0]; }
   function customerProjectIdSet(customer = selectedCustomer()) {
     return new Set([...(customer?.projectIds ?? []), ...projectCards.filter((project) => project.client === customer?.name).map((project) => project.id)].filter(Boolean));
@@ -3656,25 +3866,10 @@
   }
   function teamRunArtifacts(team = selectedTeamRoom()) {
     const run = activeTeamRun(team);
-    if (run) return run.artifacts;
-    return (team?.artifacts ?? []).map((title) => ({ id: title, title, type: "预留产物", status: "待生成" }));
+    return run?.artifacts ?? [];
   }
   function teamRunEvents(team = selectedTeamRoom()) {
     return activeTeamRun(team)?.events ?? [];
-  }
-  function addTeamRunEvent(runId: string, actor: string, type: string, detail: string) {
-    const event: TeamRunEvent = { id: `${runId}-${Date.now()}`, time: "刚刚", actor, type, detail };
-    teamRuns = teamRuns.map((run) => run.id === runId ? { ...run, updatedAt: "刚刚", events: [...run.events, event] } : run);
-  }
-  async function persistTeamRun(run: WorkbenchTeamRun) {
-    const saveRun = workbenchDataPersistenceBindings()?.SaveTeamRun;
-    if (typeof saveRun !== "function") return run;
-    return await saveRun(run);
-  }
-  async function persistTeamRoom(room: WorkbenchTeamRoom) {
-    const saveRoom = workbenchDataPersistenceBindings()?.SaveTeamRoom;
-    if (typeof saveRoom !== "function") return room;
-    return await saveRoom(room);
   }
   async function applyTeamRunControl(control: string, team = selectedTeamRoom()) {
     if (!team) return;
@@ -3683,113 +3878,53 @@
       if (control === "创建运行") openTeamChat(team.title);
       return;
     }
-    const leaderName = teamLeader(team)?.name ?? "协调者";
-    const currentIndex = Math.max(0, team.steps.findIndex((step) => step.id === run.currentStepId));
-    const nextStep = team.steps[Math.min(currentIndex + 1, team.steps.length - 1)];
-    let nextStatus: TeamRunStatus = run.status;
-    let runState = team.runState;
-    let nextCheckpoint = team.nextCheckpoint;
-    let outcome = team.outcome;
-    let eventType = control;
-    let eventDetail = "";
-    let nextCurrentStepId = run.currentStepId;
-
-    if (control === "启动" || control === "继续") {
-      nextStatus = "running";
-      runState = "运行中";
-      nextCheckpoint = "等待成员输出或人工确认";
-      outcome = "运行中";
-      eventDetail = control === "启动" ? "运行草稿已启动，开始按节点推进。" : "暂停的运行已继续。";
-    } else if (control === "暂停") {
-      nextStatus = "paused";
-      runState = "已暂停";
-      nextCheckpoint = "继续、重新分配或终止";
-      outcome = "等待人工处理";
-      eventDetail = "运行已暂停，后续节点不会继续推进。";
-    } else if (control === "终止") {
-      nextStatus = "stopped";
-      runState = "已终止";
-      nextCheckpoint = "查看已有结果或重新创建运行";
-      outcome = "已终止";
-      eventDetail = "运行已终止，未完成节点标记为跳过。";
-    } else if (control === "重新分配") {
-      nextStatus = run.status === "paused" ? "paused" : "running";
-      runState = nextStatus === "paused" ? "已暂停" : "运行中";
-      nextCheckpoint = `已重新分配给 ${nextStep.owner}`;
-      nextCurrentStepId = nextStep.id;
-      outcome = "重新分配中";
-      eventDetail = `当前节点已重新分配给 ${nextStep.owner}。`;
-    } else if (control === "批准高风险工具") {
-      nextStatus = "running";
-      runState = "等待工具结果";
-      nextCheckpoint = "等待工具结果回写";
-      outcome = "人工已批准";
-      eventDetail = "高风险工具调用已人工批准，等待执行结果回写。";
-    } else if (control === "完成") {
-      nextStatus = "completed";
-      runState = "已完成";
-      nextCheckpoint = "归档报告、待办或资料";
-      outcome = "已生成可沉淀结果";
-      eventDetail = "运行已完成，可以沉淀报告、待办和资料记录。";
-    } else if (control === "查看结果") {
+    const controlTeamRun = workbenchDataPersistenceBindings()?.ControlTeamRun;
+    if (typeof controlTeamRun !== "function") {
+      desktopBackendUnavailable("更新团队运行");
+      return;
+    }
+    if (control === "查看结果") {
       showWorkbenchNotice(`${team.title} 当前结果：${run.artifacts.map((item) => `${item.title}(${item.status})`).join("、")}`);
       return;
     }
-
-    const nextRun = { ...run, status: nextStatus, updatedAt: "刚刚", currentStepId: nextCurrentStepId };
-    teamRuns = teamRuns.map((item) => item.id === run.id ? nextRun : item);
-    let nextRoom: WorkbenchTeamRoom | undefined;
-    teamRooms = teamRooms.map((item) => item.id === team.id ? {
-      ...item,
-      status: teamRunStatusLabel(nextStatus),
-      active: nextStatus === "running" ? "运行中" : teamRunStatusLabel(nextStatus),
-      runState,
-      nextCheckpoint,
-      outcome,
-      steps: item.steps.map((step) => {
-        if (nextStatus === "stopped" && step.status !== "已完成") return { ...step, status: "已跳过" };
-        if (step.id === nextCurrentStepId) return { ...step, status: nextStatus === "paused" ? "已暂停" : nextStatus === "completed" ? "已完成" : "执行中" };
-        return step;
-      }),
-    } : item);
-    nextRoom = teamRooms.find((item) => item.id === team.id);
-    addTeamRunEvent(run.id, leaderName, eventType, eventDetail);
     try {
-      const latestRun = teamRuns.find((item) => item.id === run.id) ?? nextRun;
-      await persistTeamRun(latestRun);
-      if (nextRoom) await persistTeamRoom(nextRoom);
-      await refreshWorkbenchData();
+      const result = await controlTeamRun(run.id, control);
+      teamRooms = teamRooms.map((item) => item.id === result.room.id ? result.room : item);
+      teamRuns = [result.run, ...teamRuns.filter((item) => item.id !== result.run.id)];
+      if (result.messages.length) {
+        const ids = new Set(result.messages.map((message) => message.id));
+        teamChatMessages = [...teamChatMessages.filter((message) => !ids.has(message.id)), ...result.messages];
+      }
+      showWorkbenchNotice(`${result.room.title}：${teamRunStatusLabel(result.run.status)}`);
     } catch (error) {
       console.error("Failed to persist team run control", error);
+      showWorkbenchNotice(`更新团队运行失败：${formatErrorMessage(error)}`);
     }
-    showWorkbenchNotice(`${team.title}：${eventDetail}`);
   }
-  async function archiveTeamRunArtifact(artifactId: string, team = selectedTeamRoom()) {
+  async function openTeamRunArtifact(artifactId: string, team = selectedTeamRoom()) {
     const run = activeTeamRun(team);
     if (!run) return;
-    teamRuns = teamRuns.map((item) => item.id === run.id ? {
-      ...item,
-      artifacts: item.artifacts.map((artifact) => artifact.id === artifactId ? { ...artifact, status: "已归档" } : artifact),
-    } : item);
     const artifact = run.artifacts.find((item) => item.id === artifactId);
-    addTeamRunEvent(run.id, "工作台", "归档", `${artifact?.title ?? "运行产物"}已沉淀到工作台。`);
-    try {
-      const latestRun = teamRuns.find((item) => item.id === run.id);
-      if (latestRun) {
-        await persistTeamRun(latestRun);
-        await refreshWorkbenchData();
-      }
-    } catch (error) {
-      console.error("Failed to persist archived team artifact", error);
+    if (!artifact?.path) {
+      showWorkbenchNotice(`${artifact?.title ?? "运行产物"}尚无可打开的真实路径。`);
+      return;
     }
-    showWorkbenchNotice(`${artifact?.title ?? "运行产物"}已标记为归档。`);
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("打开团队产物");
+      return;
+    }
+    try {
+      await app().RevealPath(artifact.path);
+    } catch (error) {
+      showWorkbenchNotice(`打开团队产物失败：${formatErrorMessage(error)}`);
+    }
   }
   function openTeamBuilder(teamTitle?: string) {
     const team = teamRooms.find((item) => item.title === teamTitle);
     teamConfigTitle = teamTitle;
     teamBuilderName = team?.title ?? "";
-    teamBuilderMemberIds = team?.memberIds ? [...team.memberIds] : ["code-review", "research"];
-    teamBuilderLeaderId = team?.leaderId ?? team?.memberIds?.[0] ?? "code-review";
+    teamBuilderMemberIds = team?.memberIds ? [...team.memberIds] : [];
+    teamBuilderLeaderId = team?.leaderId ?? team?.memberIds?.[0] ?? "";
     teamBuilderSearch = "";
     configDialog = "team";
   }
@@ -3812,17 +3947,35 @@
     selectedTeamTitle = teamTitle;
     teamViewMode = "chat";
   }
-  function deleteTeam(teamId: string) {
-    const nextTeams = teamRooms.filter((team) => team.id !== teamId);
-    teamRooms = nextTeams;
-    if (!nextTeams.some((team) => team.title === selectedTeamTitle)) {
-      selectedTeamTitle = nextTeams[0]?.title;
-      if (teamViewMode === "chat" && !selectedTeamTitle) teamViewMode = "teams";
+  async function deleteTeam(teamId: string) {
+    const deleteRoom = workbenchDataPersistenceBindings()?.DeleteTeamRoom;
+    if (typeof deleteRoom !== "function") {
+      desktopBackendUnavailable("删除团队");
+      return;
+    }
+    try {
+      await deleteRoom(teamId);
+      const nextTeams = teamRooms.filter((team) => team.id !== teamId);
+      teamRooms = nextTeams;
+      if (!nextTeams.some((team) => team.title === selectedTeamTitle)) {
+        selectedTeamTitle = nextTeams[0]?.title;
+        if (teamViewMode === "chat" && !selectedTeamTitle) teamViewMode = "teams";
+      }
+      showWorkbenchNotice("团队已删除。");
+    } catch (error) {
+      showWorkbenchNotice(`删除团队失败：${formatErrorMessage(error)}`);
     }
   }
   function addTeamChatAttachment() {
-    const nextIndex = teamChatAttachments.length + 1;
-    teamChatAttachments = [...teamChatAttachments, `待关联材料-${nextIndex}.md`];
+    const material = projectMaterialRows.find((item) => {
+      const reference = item.filePath || item.id;
+      return !teamChatAttachments.includes(reference);
+    });
+    if (!material) {
+      showWorkbenchNotice("暂无可关联的真实项目资料，请先在资料库导入文件。");
+      return;
+    }
+    teamChatAttachments = [...teamChatAttachments, material.filePath || material.id];
   }
   function removeTeamChatAttachment(index: number) {
     teamChatAttachments = teamChatAttachments.filter((_, itemIndex) => itemIndex !== index);
@@ -3912,13 +4065,19 @@
         detail: index === 0 ? "确认目标、约束和验收标准。" : "按角色补充上下文、建议和验证结果。",
       })),
     };
-    teamRooms = teamConfigTitle ? teamRooms.map((team) => team.title === teamConfigTitle ? nextTeam : team) : [nextTeam, ...teamRooms];
-    selectedTeamTitle = nextTeam.title;
-    configDialog = undefined;
-    teamConfigTitle = undefined;
+    const saveRoom = workbenchDataPersistenceBindings()?.SaveTeamRoom;
+    if (typeof saveRoom !== "function") {
+      desktopBackendUnavailable("保存协作组");
+      return;
+    }
     try {
-      await persistTeamRoom(nextTeam);
+      const saved = await saveRoom(nextTeam);
+      teamRooms = teamConfigTitle ? teamRooms.map((team) => team.title === teamConfigTitle ? saved : team) : [saved, ...teamRooms];
+      selectedTeamTitle = saved.title;
+      configDialog = undefined;
+      teamConfigTitle = undefined;
       await refreshWorkbenchData();
+      showWorkbenchNotice(`已保存协作组：${saved.title}`);
     } catch (error) {
       console.error("Failed to persist team", error);
       showWorkbenchNotice("保存协作组失败，请稍后重试。");
@@ -3966,6 +4125,18 @@
     scheduleDraftTimeValue = event.time || "";
     scheduleDraftType = event.type || "";
     scheduleDraftPlaceValue = event.place || "";
+  }
+  function resetRegulationDraft(item?: WorkbenchRegulation) {
+    regulationDraftId = item?.id ?? "";
+    regulationDraftTitle = item?.title ?? "";
+    regulationDraftCategory = item?.category || "规则";
+    regulationDraftStatus = item?.status || "草稿";
+    regulationDraftTags = item?.tags ?? "";
+    regulationDraftContent = item?.content ?? "";
+  }
+  function openRegulationEditor(item?: WorkbenchRegulation) {
+    resetRegulationDraft(item);
+    configDialog = "regulation";
   }
   function resetMaterialDraft() {
     const project = selectedProject();
@@ -4051,7 +4222,7 @@
     projectDraftProgress = "0";
     projectDraftPriority = "中";
     projectDraftRisk = "低风险";
-    projectDraftAgent = agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "自动化 Agent";
+    projectDraftAgent = agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "";
     projectDraftNextStep = "";
     projectDraftDesc = "";
   }
@@ -4066,7 +4237,7 @@
     reportDraftStatus = "草稿";
     reportDraftProjectId = selectedProjectId || project?.id || "";
     reportDraftCustomerId = selectedCustomerId || customer?.id || "";
-    reportDraftOwner = agent?.name || "自动化 Agent";
+    reportDraftOwner = agent?.name || "";
     reportDraftSource = "工作台数据";
     reportDraftFormat = "Markdown";
     reportDraftPriority = "中";
@@ -4086,8 +4257,10 @@
     templateDraftMaterialIds = [];
   }
   function openConfigDialog(kind: ConfigDialog) {
+    clearConfigValidation();
     configDialog = kind;
     if (kind === "schedule") resetScheduleDraft();
+    if (kind === "regulation") resetRegulationDraft();
     if (kind === "todo") resetTodoDraft();
     if (kind === "project") resetProjectDraft();
     if (kind === "customer") resetCustomerDraft();
@@ -4115,10 +4288,77 @@
     activeSidebarConversationId = "";
     syncSidebarProjectContext(sidebarProject);
   }
+  function projectPersistenceInput(project: WorkbenchProject, status: "active" | "closed"): WorkbenchProjectInput {
+    return {
+      id: project.id,
+      name: project.name,
+      code: project.code,
+      client: project.client,
+      stage: status === "closed" ? "已归档" : project.stage === "已归档" ? "进行中" : project.stage,
+      owner: project.owner,
+      desc: project.desc,
+      category: project.category,
+      court: project.court,
+      budget: project.budget,
+      acceptedAt: project.acceptedAt,
+      status,
+      progress: project.progress,
+      priority: project.priority,
+      risk: project.risk,
+      nextStep: project.nextStep,
+      agent: project.agent,
+      materials: project.materials,
+      todos: project.todos,
+      events: project.events,
+      reports: project.reports,
+      timeline: project.timeline,
+    };
+  }
+  async function updateProjectStatus(project: WorkbenchProject, status: "active" | "closed") {
+    const saveProject = projectPersistenceBindings()?.SaveWorkbenchProject;
+    if (typeof saveProject !== "function") {
+      showWorkbenchNotice("当前环境未连接项目保存接口，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    try {
+      const saved = await saveProject(projectPersistenceInput(project, status));
+      projectCards = projectCards.map((item) => item.id === saved.id ? saved : item);
+      syncSidebarProjectFromWorkbench(saved);
+      openProjectActionMenuId = "";
+      projectStatusFilter = status === "closed" ? "closed" : "active";
+      showWorkbenchNotice(status === "closed" ? `已归档项目：${saved.name}` : `已恢复进行中：${saved.name}`);
+    } catch (error) {
+      console.error("Failed to update project status", error);
+      showWorkbenchNotice(`更新项目状态失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function deleteProject(project: WorkbenchProject) {
+    if (typeof window !== "undefined" && !window.confirm(`确定删除项目“${project.name}”吗？此操作不会删除已关联的资料、日程、报告和待办记录。`)) return;
+    const deleteProjectBinding = projectPersistenceBindings()?.DeleteWorkbenchProject;
+    if (typeof deleteProjectBinding !== "function") {
+      showWorkbenchNotice("当前环境未连接项目删除接口，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    try {
+      await deleteProjectBinding(project.id);
+      const remainingProjects = projectCards.filter((item) => item.id !== project.id);
+      projectCards = remainingProjects;
+      sidebarProjects = sidebarProjects.filter((item) => item.id !== project.id);
+      if (selectedProjectId === project.id) {
+        selectedProjectId = remainingProjects[0]?.id ?? "";
+        projectDetailOpen = false;
+      }
+      openProjectActionMenuId = "";
+      showWorkbenchNotice(`已删除项目：${project.name}`);
+    } catch (error) {
+      console.error("Failed to delete project", error);
+      showWorkbenchNotice(`删除项目失败：${formatErrorMessage(error)}`);
+    }
+  }
   async function submitProjectDraft() {
     const name = projectDraftName.trim();
     if (!name) {
-      showWorkbenchNotice("请填写项目名称。");
+      showConfigValidation("project-name", "请填写项目名称后再确认。");
       return;
     }
     const progress = Number(projectDraftProgress);
@@ -4145,13 +4385,13 @@
       reports: 0,
       timeline: ["项目已创建"],
     };
+    const saveProject = projectPersistenceBindings()?.SaveWorkbenchProject;
+    if (typeof saveProject !== "function") {
+      desktopBackendUnavailable("新建项目");
+      return;
+    }
     try {
-      const saveProject = projectPersistenceBindings()?.SaveWorkbenchProject;
-      const persisted = typeof saveProject === "function";
-      const now = new Date().toISOString();
-      const saved = persisted
-        ? await saveProject(input)
-        : { ...input, id: `project-${Date.now()}`, updatedAt: "刚刚", createdAt: now, updatedISO: now, materials: 0, todos: 0, events: 0, reports: 0, timeline: input.timeline ?? [] } as WorkbenchProject;
+      const saved = await saveProject(input);
       projectCards = [saved, ...projectCards.filter((project) => project.id !== saved.id)];
       selectedProjectId = saved.id;
       projectDetailTab = "overview";
@@ -4159,7 +4399,7 @@
       configDialog = undefined;
       workLayer = "projects";
       syncSidebarProjectFromWorkbench(saved);
-      showWorkbenchNotice(persisted ? `已新建项目：${saved.name}` : `已新建项目：${saved.name}。重启桌面 dev 窗口后会启用持久化。`);
+      showWorkbenchNotice(`已新建项目：${saved.name}`);
     } catch (error) {
       console.error("Failed to save project", error);
       showWorkbenchNotice("新建项目失败，请稍后重试。");
@@ -4191,16 +4431,17 @@
       model: selectedModel || agentModel,
       source: "workbench",
     };
+    const saveTodo = todoPersistenceBindings()?.SaveTodo;
+    if (typeof saveTodo !== "function") {
+      desktopBackendUnavailable("新增待办");
+      return;
+    }
     try {
-      const saveTodo = todoPersistenceBindings()?.SaveTodo;
-      const persisted = typeof saveTodo === "function";
-      const saved = persisted
-        ? await saveTodo(input)
-        : { ...input, id: `todo-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: input.status ?? "pending" } as WorkbenchTodo;
+      const saved = await saveTodo(input);
       todoItems = [saved, ...todoItems.filter((todo) => todo.id !== saved.id)];
       configDialog = undefined;
       workLayer = "todos";
-      showWorkbenchNotice(persisted ? `已新增待办：${title}` : `已新增待办：${title}。重启桌面 dev 窗口后会启用持久化。`);
+      showWorkbenchNotice(`已新增待办：${title}`);
     } catch (error) {
       console.error("Failed to save todo", error);
       showWorkbenchNotice("新增待办失败，请稍后重试。");
@@ -4208,25 +4449,26 @@
   }
   async function submitMaterialDraft() {
     const fromResourceCenter = configDialog === "resource";
+    const uploadProjectFile = configDialog === "resource" || configDialog === "dossier";
     const title = materialDraftTitle.trim();
     if (!title) {
-      showWorkbenchNotice("请填写资料名称。");
+      showConfigValidation("material-title", "请填写资料名称后再确认。");
       return;
     }
     const project = projectCards.find((item) => item.id === materialDraftProjectId) ?? selectedProject();
     if (!project?.id) {
-      showWorkbenchNotice("请先选择归属项目。");
+      showConfigValidation("material-project", "请选择资料归属项目后再确认。");
       return;
     }
     let uploadedFilePath = "";
     let uploadedFileName = "";
     let uploadedFileSize = 0;
     let uploadedMimeType = "";
-    if (fromResourceCenter) {
+    if (uploadProjectFile) {
       const nativeFile = materialDraftNativeFile;
       const browserFile = materialDraftFile;
       if (!nativeFile && !browserFile) {
-        showWorkbenchNotice("请选择要上传的资料文件。");
+        showConfigValidation("material-file", "请选择要上传的资料文件后再确认。");
         return;
       }
       try {
@@ -4278,7 +4520,7 @@
     try {
       const saveMaterial = projectMaterialPersistenceBindings()?.SaveProjectMaterial;
       if (typeof saveMaterial !== "function") {
-        showWorkbenchNotice("资料持久化接口未就绪，请重启桌面 dev 窗口后重试。");
+        desktopBackendUnavailable("资料入库");
         return;
       }
       const saved = await saveMaterial(input);
@@ -4308,21 +4550,21 @@
   }
   async function submitIngestDraft() {
     if (!ingestDraftFiles.length) {
-      showWorkbenchNotice("请选择要批量导入的资料文件。");
+      showConfigValidation("ingest-files", "请选择至少一个资料文件后再确认导入。");
       return;
     }
     const project = projectCards.find((item) => item.id === ingestDraftProjectId) ?? selectedProject();
     if (!project?.id) {
-      showWorkbenchNotice("请先选择归属项目。");
+      showConfigValidation("ingest-project", "请选择导入资料的归属项目后再确认。");
       return;
     }
     if (!hasWailsBindings()) {
-      showWorkbenchNotice("请在桌面端批量导入资料文件。");
+      desktopBackendUnavailable("批量导入资料");
       return;
     }
     const saveBatch = projectMaterialPersistenceBindings()?.SaveProjectMaterialsBatch;
     if (typeof saveBatch !== "function") {
-      showWorkbenchNotice("批量导入接口未就绪，请重启桌面 dev 窗口后重试。");
+      desktopBackendUnavailable("批量导入资料");
       return;
     }
     try {
@@ -4366,20 +4608,20 @@
     const saveCustomer = workbenchDataPersistenceBindings()?.SaveCustomer;
     const name = customerDraftName.trim();
     if (!name) {
-      showWorkbenchNotice("请填写客户名称。");
+      showConfigValidation("customer-name", "请填写客户名称后再保存。");
       return;
     }
     const projectIds = customerDraftProjectId ? [customerDraftProjectId] : [];
     const input: WorkbenchCustomerInput = {
       name,
       type: customerDraftType.trim() || "企业",
-      contact: customerDraftContact.trim() || "联系人",
+      contact: customerDraftContact.trim(),
       phone: customerDraftPhone.trim(),
       email: customerDraftEmail.trim(),
       risk: customerDraftRisk.trim() || "低风险",
       riskLevel: customerRiskLevel(customerDraftRisk),
       status: customerDraftStatus || "active",
-      owner: customerDraftOwner.trim() || "我的",
+      owner: customerDraftOwner.trim(),
       stage: customerDraftStage.trim() || "跟进中",
       industry: customerDraftIndustry.trim(),
       region: customerDraftRegion.trim(),
@@ -4393,11 +4635,12 @@
       lastContact: "刚刚",
       tags: splitDraftList(customerDraftTags),
     };
+    if (typeof saveCustomer !== "function") {
+      desktopBackendUnavailable("新建客户");
+      return;
+    }
     try {
-      const now = new Date().toISOString();
-      const saved = typeof saveCustomer === "function"
-        ? await saveCustomer(input)
-        : { ...input, id: `customer-${Date.now()}`, email: "", industry: "", region: "", address: "", note: "", materials: 0, events: 0, reports: 0, nextAction: "", createdAt: now, updatedAt: now } as WorkbenchCustomer;
+      const saved = await saveCustomer(input);
       customerCards = [saved, ...customerCards.filter((customer) => customer.id !== saved.id)];
       selectedCustomerId = saved.id;
       customerDetailOpen = true;
@@ -4428,10 +4671,12 @@
       status: existingEvent?.status || "待开始",
       desc: existingEvent?.desc || configDialogIntro(),
     };
+    if (typeof saveEvent !== "function") {
+      desktopBackendUnavailable(existingEvent ? "更新日程" : "新建日程");
+      return;
+    }
     try {
-      const saved = typeof saveEvent === "function"
-        ? await saveEvent(input)
-        : { ...input, id: input.id || `schedule-${Date.now()}`, createdAt: existingEvent?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchCalendarEvent;
+      const saved = await saveEvent(input);
       calendarEvents = [saved, ...calendarEvents.filter((event) => event.id !== saved.id)];
       workLayer = "calendar";
       configDialog = undefined;
@@ -4442,18 +4687,105 @@
       showWorkbenchNotice("新建日程失败，请稍后重试。");
     }
   }
+  async function deleteSelectedCalendarEvent() {
+    const event = selectedScheduleEventId ? calendarEvents.find((item) => item.id === selectedScheduleEventId) : undefined;
+    if (!event) return;
+    const deleteEvent = workbenchDataPersistenceBindings()?.DeleteCalendarEvent;
+    if (typeof deleteEvent !== "function") {
+      desktopBackendUnavailable("删除日程");
+      return;
+    }
+    if (!window.confirm(`确认删除日程“${event.title}”？`)) return;
+    try {
+      await deleteEvent(event.id);
+      calendarEvents = calendarEvents.filter((item) => item.id !== event.id);
+      selectedScheduleEventId = undefined;
+      configDialog = undefined;
+      showWorkbenchNotice(`已删除日程：${event.title}`);
+    } catch (error) {
+      console.error("Failed to delete calendar event", error);
+      showWorkbenchNotice(`删除日程失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function submitRegulationDraft() {
+    const saveRegulation = workbenchDataPersistenceBindings()?.SaveRegulation;
+    const title = regulationDraftTitle.trim();
+    if (!title) {
+      showWorkbenchNotice("请填写规范标题。");
+      return;
+    }
+    if (!regulationDraftContent.trim()) {
+      showWorkbenchNotice("请填写规范正文。");
+      return;
+    }
+    if (typeof saveRegulation !== "function") {
+      desktopBackendUnavailable(regulationDraftId ? "更新规范" : "新建规范");
+      return;
+    }
+    try {
+      const saved = await saveRegulation({
+        id: regulationDraftId,
+        title,
+        category: regulationDraftCategory.trim() || "规则",
+        status: regulationDraftStatus.trim() || "草稿",
+        tags: regulationDraftTags.trim(),
+        content: regulationDraftContent.trim(),
+      });
+      regulationItems = [saved, ...regulationItems.filter((item) => item.id !== saved.id)];
+      regulationPreviewText = saved.content ?? "";
+      configDialog = undefined;
+      showWorkbenchNotice(`${regulationDraftId ? "已更新规范" : "已新建规范"}：${saved.title}`);
+      regulationDraftId = "";
+    } catch (error) {
+      console.error("Failed to save regulation", error);
+      showWorkbenchNotice(`保存规范失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function previewRegulation(item: WorkbenchRegulation) {
+    const renderRegulation = workbenchDataPersistenceBindings()?.RenderRegulation;
+    if (typeof renderRegulation !== "function") {
+      desktopBackendUnavailable("渲染规范");
+      return;
+    }
+    try {
+      const variables = templateRenderVariables("规范");
+      if (!variables) return;
+      regulationPreviewText = await renderRegulation(item.id, variables);
+      showWorkbenchNotice(`已渲染规范：${item.title}`);
+    } catch (error) {
+      console.error("Failed to render regulation", error);
+      showWorkbenchNotice(`渲染规范失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function deleteRegulation(item: WorkbenchRegulation) {
+    const deleteRegulationBinding = workbenchDataPersistenceBindings()?.DeleteRegulation;
+    if (typeof deleteRegulationBinding !== "function") {
+      desktopBackendUnavailable("删除规范");
+      return;
+    }
+    if (!window.confirm(`确认删除规范“${item.title}”？`)) return;
+    try {
+      await deleteRegulationBinding(item.id);
+      regulationItems = regulationItems.filter((candidate) => candidate.id !== item.id);
+      regulationPreviewText = "";
+      showWorkbenchNotice(`已删除规范：${item.title}`);
+    } catch (error) {
+      console.error("Failed to delete regulation", error);
+      showWorkbenchNotice(`删除规范失败：${formatErrorMessage(error)}`);
+    }
+  }
   async function submitReportDraft() {
     const saveReport = workbenchDataPersistenceBindings()?.SaveWorkbenchReport;
     const title = reportDraftTitle.trim();
     if (!title) {
-      showWorkbenchNotice("请填写报告标题。");
+      showConfigValidation("report-title", "请填写报告标题后再确认。");
       return;
     }
     const input: WorkbenchReportInput = {
       id: reportDraftId || undefined,
       title,
       status: reportDraftStatus.trim() || "草稿",
-      owner: reportDraftOwner.trim() || "自动化 Agent",
+      owner: reportDraftOwner.trim(),
       desc: reportDraftDesc.trim(),
       body: reportDraftBody.trim(),
       kind: reportDraftKind.trim() || "分析报告",
@@ -4464,10 +4796,12 @@
       priority: reportDraftPriority.trim() || "中",
       dueAt: reportDraftDueAt.trim(),
     };
+    if (typeof saveReport !== "function") {
+      desktopBackendUnavailable(input.id ? "更新报告" : "新建报告");
+      return;
+    }
     try {
-      const saved = typeof saveReport === "function"
-        ? await saveReport(input)
-        : { ...input, id: input.id || `report-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchReport;
+      const saved = await saveReport(input);
       reportCards = [saved, ...reportCards.filter((report) => report.id !== saved.id)];
       selectedReportId = saved.id;
       workLayer = "reports";
@@ -4483,7 +4817,7 @@
     const saveDocument = workbenchDataPersistenceBindings()?.SaveKnowledgeDocument;
     const title = templateDraftTitle.trim();
     if (!title) {
-      showWorkbenchNotice("请填写模板名称。");
+      showConfigValidation("template-title", "请填写模板名称后再确认。");
       return;
     }
     const input: WorkbenchKnowledgeDocumentInput = {
@@ -4497,10 +4831,12 @@
       tags: templateDraftTags.trim(),
       materialIds: templateDraftMaterialIds,
     };
+    if (typeof saveDocument !== "function") {
+      desktopBackendUnavailable("新建文档模板");
+      return;
+    }
     try {
-      const saved = typeof saveDocument === "function"
-        ? await saveDocument(input)
-        : { ...input, id: `template-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as WorkbenchKnowledgeDocument;
+      const saved = await saveDocument(input);
       documentItems = [saved, ...documentItems.filter((item) => item.id !== saved.id)];
       await refreshKnowledgeBase();
       selectedKnowledgeDocumentId = saved.id;
@@ -4519,11 +4855,11 @@
     const title = knowledgeDraftTitle.trim();
     const content = knowledgeDraftContent.trim();
     if (!title) {
-      showWorkbenchNotice("请填写知识标题。");
+      showConfigValidation("knowledge-title", "请填写知识标题后再确认导入。");
       return;
     }
     if (!content && !knowledgeDraftDescription.trim()) {
-      showWorkbenchNotice("请填写知识内容或摘要。");
+      showConfigValidation("knowledge-content", "请填写知识正文或摘要后再确认导入。");
       return;
     }
     const importKnowledge = knowledgePersistenceBindings()?.ImportKnowledgeDocument;
@@ -4560,28 +4896,25 @@
       return;
     }
     const selectedSkills = skillCards.filter((skill) => skill.active).map((skill) => skill.title);
+    const distillAgent = workbenchDataPersistenceBindings()?.DistillAgentFromTodo;
+    if (typeof distillAgent !== "function") {
+      desktopBackendUnavailable("蒸馏 Agent");
+      return;
+    }
     try {
-      const distillAgent = workbenchDataPersistenceBindings()?.DistillAgentFromTodo;
-      if (typeof distillAgent === "function") {
-        const saved = await distillAgent({
-          title: todo.title,
-          description: todoDescription(todo),
-          priority: todo.priority,
-          dueLabel: todoDue(todo),
-          status: todo.status,
-          projectId: todo.projectId,
-          projectName: todo.projectName,
-          customerId: todo.customerId,
-          customerName: todo.customerName,
-        }, selectedSkills);
-        await refreshAgents();
-        selectedAgentId = saved.id;
-      } else {
-        const now = new Date().toISOString();
-        const localAgent: AgentView = { id: `distilled-${Date.now()}`, name: `${todo.title} Agent`, role: "已蒸馏", runs: 0, status: "已启用", desc: todoDescription(todo), avatar: "D", tools: ["本地文件与资料"], skills: selectedSkills, coreFiles: ["AGENTS.md"], builtIn: false, createdAt: now, updatedAt: now };
-        agentCards = [localAgent, ...agentCards];
-        selectedAgentId = localAgent.id;
-      }
+      const saved = await distillAgent({
+        title: todo.title,
+        description: todoDescription(todo),
+        priority: todo.priority,
+        dueLabel: todoDue(todo),
+        status: todo.status,
+        projectId: todo.projectId,
+        projectName: todo.projectName,
+        customerId: todo.customerId,
+        customerName: todo.customerName,
+      }, selectedSkills);
+      await refreshAgents();
+      selectedAgentId = saved.id;
       configDialog = undefined;
       workLayer = "agents";
       showWorkbenchNotice(`已生成蒸馏 Agent：${todo.title} Agent`);
@@ -4600,6 +4933,7 @@
     if (configDialog === "dossier" || configDialog === "resource") return void submitMaterialDraft();
     if (configDialog === "customer") return void submitCustomerDraft();
     if (configDialog === "schedule") return void submitScheduleDraft();
+    if (configDialog === "regulation") return void submitRegulationDraft();
     if (configDialog === "report") return void submitReportDraft();
     if (configDialog === "template") return void submitTemplateDraft();
     if (configDialog === "distill") return void submitDistillDraft();
@@ -4612,6 +4946,7 @@
     if (configDialog === "model") return modelDraftEditing ? "编辑模型渠道" : "添加模型渠道";
     if (configDialog === "ingest") return "批量导入";
     if (configDialog === "knowledge") return "导入知识";
+    if (configDialog === "regulation") return regulationDraftId ? "编辑规范" : "新建规范";
     if (configDialog === "resource") return "上传资料";
     if (configDialog === "template") return "新建文档模板";
     if (configDialog === "project") return "新建项目";
@@ -4622,6 +4957,9 @@
     if (configDialog === "selectCustomer") return "选择客户";
     if (configDialog === "distill") return "Agent 蒸馏向导";
     return "配置";
+  }
+  function usesGenericConfigDialog(kind: ConfigDialog | undefined) {
+    return Boolean(kind && kind !== "customer" && kind !== "regulation" && kind !== "schedule");
   }
   function formatRuntime(startedAtMs: number) { const m = Math.max(1, Math.floor((nowMs - startedAtMs) / 60000)); const h = Math.floor(m / 60); return h ? `${h} 小时 ${m % 60} 分钟` : `${m} 分钟`; }
   function automationDialogTitle() {
@@ -4678,7 +5016,7 @@
         available: false,
         active: false,
         version: "未加载",
-        reason: "浏览器预览未连接桌面 Skill 后端",
+        reason: "未连接桌面后端",
       }));
       return;
     }
@@ -4707,10 +5045,10 @@
   async function refreshToolStatus() {
     if (!hasWailsBindings()) {
       applyToolAvailability({
-        files: { available: true, reason: "浏览器预览可用" },
-        terminal: { available: true, reason: "浏览器预览可用" },
-        browser: { available: true, reason: "浏览器预览可用" },
-        memory: { available: false, reason: "浏览器预览未连接桌面记忆后端" },
+        files: { available: false, reason: "未连接桌面后端" },
+        terminal: { available: false, reason: "未连接桌面后端" },
+        browser: { available: false, reason: "未连接桌面后端" },
+        memory: { available: false, reason: "未连接桌面后端" },
       });
       return;
     }
@@ -4752,8 +5090,7 @@
     agentWizardVibe = agent?.vibe ?? "";
     agentWizardTab = "identity";
     agentAvatar = agent?.avatar ?? "C";
-    agentProvider = agent?.provider ?? "OpenAI";
-    agentModel = agent?.model ?? modelOptions.OpenAI?.[0] ?? "GPT-4o";
+    setAgentModel(configuredAgentModel(agent));
     setToolSelectionFromAgent(agent);
     setSkillSelectionFromAgent(agent);
     agentWizardOpen = true;
@@ -4762,19 +5099,18 @@
   }
   async function refreshAgents() {
     if (!hasWailsBindings()) {
-      agentCards = defaultAgentCards;
+      agentCards = [];
       return;
     }
     try {
       const agents = await app().ListAgents();
-      agentCards = agents.length ? agents : defaultAgentCards;
+      agentCards = Array.isArray(agents) ? agents : [];
       if (!agentCards.some((agent) => agent.id === selectedAgentId)) {
         selectedAgentId = agentCards[0]?.id ?? "";
       }
       downloadedMarketAgentIds = agentMarketItems.filter((item) => agentCards.some((agent) => agent.id === item.id)).map((item) => item.id);
     } catch (error) {
       console.error("Failed to load agents", error);
-      agentCards = defaultAgentCards;
     }
   }
   async function refreshTodos() {
@@ -4792,14 +5128,13 @@
     if (typeof projectApi?.ListWorkbenchProjects !== "function") return;
     try {
       const projects = await projectApi.ListWorkbenchProjects();
-      if (!Array.isArray(projects) || !projects.length) return;
-      projectCards = projects;
+      projectCards = Array.isArray(projects) ? projects : [];
       const now = Date.now();
-      const missingSidebarProjects = projects
+      const missingSidebarProjects = projectCards
         .filter((project) => !sidebarProjects.some((item) => item.id === project.id || item.name === project.name))
         .map((project) => ({ id: project.id, name: project.name, updatedAtMs: now, expanded: false, conversations: [] as SidebarConversation[] }));
       if (missingSidebarProjects.length) sidebarProjects = [...sidebarProjects, ...missingSidebarProjects];
-      if (selectedProjectId && !projects.some((project) => project.id === selectedProjectId)) selectedProjectId = projects[0]?.id ?? "";
+      if (selectedProjectId && !projectCards.some((project) => project.id === selectedProjectId)) selectedProjectId = projectCards[0]?.id ?? "";
     } catch (error) {
       console.error("Failed to load projects", error);
     }
@@ -4819,7 +5154,7 @@
     if (typeof automationApi?.ListAutomations !== "function") return;
     try {
       const automations = await automationApi.ListAutomations();
-      if (Array.isArray(automations) && automations.length) runningAutomations = automations;
+      runningAutomations = Array.isArray(automations) ? automations : [];
     } catch (error) {
       console.error("Failed to load automations", error);
     }
@@ -4832,18 +5167,19 @@
     }
     try {
       const data = await withTimeout(workbenchApi.ListWorkbenchData(), "workbench data refresh timed out", 8_000);
-      if (Array.isArray(data.customers) && data.customers.length) customerCards = data.customers;
-      if (Array.isArray(data.calendarEvents) && data.calendarEvents.length) calendarEvents = data.calendarEvents;
-      if (Array.isArray(data.reports) && data.reports.length) reportCards = data.reports;
-      if (Array.isArray(data.knowledgeDocuments) && data.knowledgeDocuments.length) documentItems = data.knowledgeDocuments;
-      if (Array.isArray(data.regulations) && data.regulations.length) regulationItems = data.regulations;
-      if (Array.isArray(data.syncJobs) && data.syncJobs.length) syncJobs = data.syncJobs;
-      if (Array.isArray(data.operationLogs) && data.operationLogs.length) operationLogs = data.operationLogs;
-      if (Array.isArray(data.teamRooms) && data.teamRooms.length) teamRooms = data.teamRooms;
-      if (Array.isArray(data.teamRuns)) teamRuns = data.teamRuns;
-      if (Array.isArray(data.teamChatMessages) && data.teamChatMessages.length) teamChatMessages = data.teamChatMessages;
+      customerCards = Array.isArray(data.customers) ? data.customers : [];
+      calendarEvents = Array.isArray(data.calendarEvents) ? data.calendarEvents : [];
+      reportCards = Array.isArray(data.reports) ? data.reports : [];
+      documentItems = Array.isArray(data.knowledgeDocuments) ? data.knowledgeDocuments : [];
+      regulationItems = Array.isArray(data.regulations) ? data.regulations : [];
+      syncJobs = Array.isArray(data.syncJobs) ? data.syncJobs : [];
+      operationLogs = Array.isArray(data.operationLogs) ? data.operationLogs : [];
+      teamRooms = Array.isArray(data.teamRooms) ? data.teamRooms : [];
+      teamRuns = Array.isArray(data.teamRuns) ? data.teamRuns : [];
+      teamChatMessages = Array.isArray(data.teamChatMessages) ? data.teamChatMessages : [];
       if (!customerCards.some((customer) => customer.id === selectedCustomerId)) selectedCustomerId = customerCards[0]?.id ?? "";
       if (!teamRooms.some((team) => team.title === selectedTeamTitle)) selectedTeamTitle = teamRooms[0]?.title ?? "";
+      await refreshArtifactReviewJob(selectedReport()?.id);
       await refreshKnowledgeBase();
       await runWorkbenchSearch(resourceSearch);
     } catch (error) {
@@ -4869,11 +5205,7 @@
       coreFiles: current?.coreFiles ?? coreFiles,
     };
     if (!hasWailsBindings()) {
-      const now = new Date().toISOString();
-      const localAgent: AgentView = { ...input, id: input.id || `agent-${Date.now()}`, role: input.role || "自定义", status: input.status || "已启用", desc: input.desc || "尚未分配具体职能。", runs: current?.runs ?? 0, tools: input.tools ?? [], skills: input.skills ?? [], coreFiles: input.coreFiles ?? [], builtIn: current?.builtIn ?? false, createdAt: current?.createdAt ?? now, updatedAt: now };
-      agentCards = current ? agentCards.map((agent) => agent.id === current.id ? localAgent : agent) : [localAgent, ...agentCards];
-      selectedAgentId = localAgent.id;
-      agentWizardOpen = false;
+      desktopBackendUnavailable("保存 Agent");
       return;
     }
     try {
@@ -4885,6 +5217,19 @@
       console.error("Failed to save agent", error);
     }
   }
+  async function deleteAgent(agent: AgentView) {
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("删除 Agent");
+      return;
+    }
+    try {
+      await app().DeleteAgent(agent.id);
+      await refreshAgents();
+      showWorkbenchNotice(`已删除 Agent：${agent.name}`);
+    } catch (error) {
+      showWorkbenchNotice(`删除 Agent 失败：${formatErrorMessage(error)}`);
+    }
+  }
   function filteredAgentMarketItems() {
     const keyword = agentMarketSearch.trim().toLowerCase();
     if (!keyword) return agentMarketItems;
@@ -4894,42 +5239,25 @@
     return downloadedMarketAgentIds.includes(item.id) || agentCards.some((agent) => agent.id === item.id);
   }
   async function downloadMarketAgent(item: AgentMarketItem) {
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("安装内置 Agent 模板");
+      return;
+    }
     if (!agentCards.some((agent) => agent.id === item.id)) {
-      const marketAgent: AgentInput = { id: item.id, name: item.name, role: item.role, status: "已下载", desc: item.desc, avatar: item.name.slice(0, 1), provider: "OpenAI", model: modelOptions.OpenAI?.[0] ?? "GPT-4o", tools: [], skills: item.tags, coreFiles: [] };
-      if (hasWailsBindings()) {
-        try {
-          await app().SaveAgent(marketAgent);
-          await refreshAgents();
-        } catch (error) {
-          console.error("Failed to persist market agent", error);
-        }
-      } else {
-        const now = new Date().toISOString();
-        agentCards = [{ ...marketAgent, id: item.id, role: item.role, runs: 0, status: "已下载", desc: item.desc, tools: [], skills: item.tags, coreFiles: [], builtIn: false, createdAt: now, updatedAt: now }, ...agentCards];
+      const configuredModel = configuredAgentModel();
+      const marketAgent: AgentInput = { id: item.id, name: item.name, role: "内置模板", status: "已启用", desc: item.desc, avatar: item.name.slice(0, 1), provider: configuredModel?.provider ?? "", model: configuredModel?.name ?? "", tools: [], skills: item.tags, coreFiles: [] };
+      try {
+        await app().SaveAgent(marketAgent);
+        await refreshAgents();
+      } catch (error) {
+        console.error("Failed to persist built-in agent template", error);
+        showWorkbenchNotice(`安装内置 Agent 模板失败：${formatErrorMessage(error)}`);
+        return;
       }
     }
     if (!downloadedMarketAgentIds.includes(item.id)) downloadedMarketAgentIds = [...downloadedMarketAgentIds, item.id];
     selectedAgentId = item.id;
-    const payload = {
-      id: item.id,
-      name: item.name,
-      role: item.role,
-      category: item.category,
-      version: item.version,
-      desc: item.desc,
-      tags: item.tags,
-      installedAt: new Date().toISOString(),
-      localPath: item.localPath,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${item.id}.agent.json`;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    showWorkbenchNotice(`已安装内置 Agent 模板：${item.name}`);
   }
   function capabilityLabel(kind: CapabilityTab) { return kind === "plugin" ? "插件" : kind === "mcp" ? "MCP" : "SKILL"; }
   function capabilityCreateLabel(kind: CapabilityTab) { return kind === "plugin" ? "创建插件" : kind === "mcp" ? "创建MCP" : "创建SKILL"; }
@@ -5032,7 +5360,7 @@
   }
   async function refreshCapabilities() {
     if (!hasWailsBindings()) {
-      capabilityBuckets = defaultCapabilityBuckets;
+      capabilityBuckets = emptyCapabilityBuckets();
       return;
     }
     try {
@@ -5051,7 +5379,6 @@
       if (capabilityTag && !capabilitySkillTags().includes(capabilityTag)) capabilityTag = "";
     } catch (error) {
       console.error("Failed to refresh capabilities", error);
-      capabilityBuckets = defaultCapabilityBuckets;
     }
   }
   function allCapabilities() { return [...capabilityBuckets.plugin, ...capabilityBuckets.mcp, ...capabilityBuckets.skill]; }
@@ -5091,10 +5418,13 @@
     if (item.status.includes("待安装")) return "安装";
     return "启用";
   }
-  function capabilityStepDone(item: CapabilityItem, index: number) {
-    if (item.enabled) return true;
-    const currentIndex = item.status.includes("授权") ? 2 : item.status.includes("配置") ? 1 : 0;
-    return index <= currentIndex;
+  function capabilityStatusChecks(item: CapabilityItem) {
+    const bindingCount = capabilityAgentBindingList(item).length;
+    return [
+      { id: "discovered", label: "真实配置已发现", desc: `${item.source} / ${item.path}`, done: true },
+      { id: "runtime", label: "运行时状态", desc: item.sync || item.status, done: item.enabled },
+      { id: "bindings", label: "Agent 绑定", desc: bindingCount ? `${bindingCount} 个 Agent 已绑定` : "尚未绑定 Agent", done: bindingCount > 0 },
+    ];
   }
   function capabilityChoiceEnabled(value: string) {
     const text = value.trim().toLowerCase();
@@ -5161,8 +5491,8 @@
       desc: agent.desc,
       avatar: agent.avatar ?? agent.name.slice(0, 1),
       vibe: agent.vibe ?? "",
-      provider: agent.provider ?? "OpenAI",
-      model: agent.model ?? agentModel,
+      provider: agent.provider ?? "",
+      model: agent.model ?? "",
       tools: [...tools],
       skills: [...skills],
       coreFiles: agent.coreFiles ?? [],
@@ -5185,8 +5515,14 @@
       } else if (capabilityTab === "mcp") {
         await app().SetMCPServerEnabled(item.id, enabled);
       } else {
-        await app().SetSkillEnabled(item.name, enabled);
-        await app().RefreshSkills();
+        // Skill 的展示名称可由 frontmatter 的 title 覆盖，持久化开关必须使用稳定的内部名称。
+        await app().SetSkillEnabled(item.id, enabled);
+        try {
+          await app().RefreshSkills();
+        } catch (error) {
+          // 开关已保存；无关的运行时连接异常不应阻断能力状态刷新。
+          console.warn("Skill runtime refresh failed after saving its enabled state", error);
+        }
       }
       await refreshCapabilities();
       await refreshSkillStatus();
@@ -5713,6 +6049,8 @@
     transcript = historyToTranscript(history);
     pendingApproval = undefined;
     pendingAsk = undefined;
+    pendingBrowserCredential = undefined;
+    pendingBrowserVerification = undefined;
     scrollConversationToBottom("auto");
   }
 
@@ -5726,6 +6064,8 @@
       }
       pendingApproval = undefined;
       pendingAsk = undefined;
+      pendingBrowserCredential = undefined;
+      pendingBrowserVerification = undefined;
       ensurePendingAssistant();
     }
     if (event.kind === "reasoning" && event.reasoning) {
@@ -5832,6 +6172,18 @@
       sending = false;
       scrollConversationToBottom();
     }
+    if (event.kind === "browser_credential_request" && event.browserPrompt) {
+      pendingBrowserCredential = event.browserPrompt;
+      pendingBrowserVerification = undefined;
+      sending = false;
+      scrollConversationToBottom();
+    }
+    if (event.kind === "browser_verification_request" && event.browserPrompt) {
+      pendingBrowserVerification = event.browserPrompt;
+      pendingBrowserCredential = undefined;
+      sending = false;
+      scrollConversationToBottom();
+    }
     if (event.kind === "notice" && event.text) {
       appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: event.text });
     }
@@ -5909,8 +6261,13 @@
   async function send(displayText?: string, submitText?: string) {
     const text = (displayText ?? input).trim();
     const submission = (submitText ?? text).trim();
-    if (!text || !submission || !activeTab) return;
+    if (!text || !submission) return;
     if (sending) return;
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("发送消息");
+      return;
+    }
+    if (!activeTab) return;
     if (composerDisabledReason) {
       appendTranscript({ id: `workspace-starting-${Date.now()}`, role: "notice", body: composerDisabledReason });
       focusComposer();
@@ -5930,14 +6287,6 @@
     input = "";
     appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
     ensurePendingAssistant();
-    if (!hasWailsBindings()) {
-      updateLastAssistant("浏览器预览已收到这条消息。真实模型调用、工具执行和文件写入需要在 Wails 桌面运行环境中完成。");
-      for (const item of transcript) item.pending = false;
-      sending = false;
-      submittedDraft = undefined;
-      saveActiveSidebarConversationTranscript();
-      return;
-    }
     try {
       const targetTab = await ensureConversationThreadForSend(text);
       if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
@@ -6020,6 +6369,16 @@
       void cancel();
       return;
     }
+    if (pendingBrowserCredential) {
+      event.preventDefault();
+      void submitBrowserCredential("", "", false);
+      return;
+    }
+    if (pendingBrowserVerification) {
+      event.preventDefault();
+      void completeBrowserVerification(false);
+      return;
+    }
     if (pendingApproval) {
       event.preventDefault();
       void answerApproval(false, false, false);
@@ -6033,8 +6392,11 @@
 
   async function switchModel(event: Event) {
     const next = (event.currentTarget as HTMLSelectElement).value;
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("切换模型");
+      return;
+    }
     selectedModel = next;
-    if (!hasWailsBindings()) return;
     const tabID = currentComposerTab?.id || activeTab?.id;
     if (!tabID || !next) return;
     await app().SetModelForTab(tabID, next);
@@ -6052,7 +6414,7 @@
     if (next === "full-access" && typeof window !== "undefined" && !window.confirm("完全访问权限会自动批准工具调用。仍可能对受保护操作请求批准。是否继续？")) return;
 
     if (!hasWailsBindings()) {
-      previewWorkPermission = next;
+      desktopBackendUnavailable("切换工作权限");
       return;
     }
 
@@ -6092,6 +6454,20 @@
     const ask = pendingAsk;
     pendingAsk = undefined;
     await app().AnswerQuestionForTab(activeTab.id, ask.id, answers);
+  }
+
+  async function submitBrowserCredential(username: string, password: string, save: boolean) {
+    if (!activeTab || !pendingBrowserCredential) return;
+    const prompt = pendingBrowserCredential;
+    pendingBrowserCredential = undefined;
+    await app().SubmitBrowserCredentialTab(activeTab.id, prompt.id, username, password, save);
+  }
+
+  async function completeBrowserVerification(continued: boolean) {
+    if (!activeTab || !pendingBrowserVerification) return;
+    const prompt = pendingBrowserVerification;
+    pendingBrowserVerification = undefined;
+    await app().CompleteBrowserVerificationTab(activeTab.id, prompt.id, continued);
   }
 
   async function openCodeInspector() {
@@ -6290,6 +6666,16 @@
                 onDismissAsk={() => (pendingAsk = undefined)}
                 onLoadArchivedTool={loadArchivedToolEvidence}
               />
+              {#if pendingBrowserCredential || pendingBrowserVerification}
+                {#key pendingBrowserCredential?.id ?? pendingBrowserVerification?.id}
+                  <BrowserInteractionPrompt
+                    credential={pendingBrowserCredential}
+                    verification={pendingBrowserVerification}
+                    onSubmitCredential={submitBrowserCredential}
+                    onCompleteVerification={completeBrowserVerification}
+                  />
+                {/key}
+              {/if}
             </div>
             <div class="stage__composer conversation-composer">
               <Composer
@@ -6320,10 +6706,15 @@
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined}>
             <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{brandText(workbenchModeCopy[activityMode].eyebrow)}</span><strong>{activityMode === "code" ? "Code 工作台" : currentWorkLayerLabel()}</strong></div><p>{activityMode === "code" ? "面向研发用户的代码上下文、diff、检查点和执行权限控制台。" : workbenchModeCopy.work.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> 代码状态</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
-            {#if workbenchNotice}<div class="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
+            {#if workbenchNotice}<div class="workbench-notice" data-testid="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if activityMode === "work" && workLayer === "reports"}
               {@const activeReport = selectedReport()}
               {@const activeStyle = selectedArtifactStyle()}
+              <div class="capability-tabs report-center-tabs" role="tablist" aria-label="报告中心视图">
+                <button class:active={reportCenterTab === "design"} type="button" role="tab" aria-selected={reportCenterTab === "design"} onclick={() => (reportCenterTab = "design")}>报告设计</button>
+                <button class:active={reportCenterTab === "list"} type="button" role="tab" aria-selected={reportCenterTab === "list"} onclick={() => (reportCenterTab = "list")}>报告列表 <em>{reportCards.length}</em></button>
+              </div>
+              {#if reportCenterTab === "design"}
               <section class="artifact-review-workbench" aria-label="产物审查工作台">
                 <header class="artifact-review-head">
                   <div>
@@ -6335,7 +6726,7 @@
                     {#each artifactReviewStages as stage (stage.id)}
                       <button class:active={selectedArtifactStage === stage.id} type="button" role="tab" aria-selected={selectedArtifactStage === stage.id} onclick={() => setArtifactStage(stage.id)}>
                         <span>{stage.label}</span>
-                        <em>{stage.status}</em>
+                        <em>{artifactStageStatus(stage.id)}</em>
                       </button>
                     {/each}
                   </div>
@@ -6369,7 +6760,7 @@
                         <div class="artifact-page-meta">
                           <span>{artifactKindLabel(activeReport)}</span>
                           <strong>{activeReport?.title ?? "未选择报告"}</strong>
-                          <em>{activeStyle.name} / {activeStyle.templateVersion}</em>
+                          <em>{activeStyle.name}</em>
                         </div>
                         <div class="artifact-page-layout">
                           <section>
@@ -6378,8 +6769,8 @@
                             <p>{activeReport?.desc || "这里展示格式中立的产物预览，审查状态与视口缩放互不绑定。"}</p>
                           </section>
                           <aside>
-                            <span>Brand Kit</span>
-                            <strong>{activeStyle.brandKitVersion}</strong>
+                            <span>样式选择</span>
+                            <strong>{activeStyle.name}</strong>
                             <em>{artifactExportState()}</em>
                           </aside>
                         </div>
@@ -6396,20 +6787,33 @@
                     <section class="artifact-style-gate">
                       <header>
                         <span>Style Gate</span>
-                        <strong>{artifactStyleApproved ? "样式已批准" : "等待样式批准"}</strong>
+                        <strong>{artifactReviewStatusLabel(activeReport)}</strong>
                       </header>
                       <div class="artifact-style-list">
                         {#each artifactStyleOptions as style (style.id)}
-                          <button class:active={selectedArtifactStyleId === style.id} type="button" onclick={() => { selectedArtifactStyleId = style.id; artifactStyleApproved = false; }}>
+                          <button class:active={selectedArtifactStyleId === style.id} type="button" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) === "submitted" || artifactReviewStatus(activeReport) === "approved"} onclick={() => void selectArtifactStyle(style.id)}>
                             <strong>{style.name}</strong>
-                            <span>{style.templateVersion} / {style.brandKitVersion}</span>
+                            <span>{style.id}</span>
                             <em>{style.rationale}</em>
                           </button>
                         {/each}
                       </div>
+                      <label class="artifact-review-note">
+                        <span>审批意见</span>
+                        <textarea bind:value={artifactReviewComment} rows="3" placeholder="提交说明或退回原因会随审批记录保存" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) === "approved"}></textarea>
+                      </label>
+                      {#if activeReport?.reviewedBy || activeReport?.reviewedAt}
+                        <p class="artifact-review-meta">最近审批：{activeReport?.reviewedBy || "当前用户"}{activeReport?.reviewedAt ? ` · ${activeReport.reviewedAt.replace("T", " ")}` : ""}</p>
+                      {/if}
                       <div class="artifact-gate-actions">
-                        <button type="button" onclick={returnArtifactToDraft}>退回草稿</button>
-                        <button type="button" onclick={approveArtifactStyle}>批准样式</button>
+                        <button type="button" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) !== "submitted"} onclick={returnArtifactToDraft}>退回草稿</button>
+                        {#if artifactReviewStatus(activeReport) === "draft" || artifactReviewStatus(activeReport) === "returned"}
+                          <button type="button" disabled={artifactReviewSaving} onclick={() => void reviewArtifact("submit")}>提交审批</button>
+                        {:else if artifactReviewStatus(activeReport) === "submitted"}
+                          <button type="button" disabled={artifactReviewSaving} onclick={approveArtifactStyle}>批准样式</button>
+                        {:else}
+                          <button type="button" disabled>已批准</button>
+                        {/if}
                       </div>
                     </section>
 
@@ -6431,6 +6835,7 @@
                   </aside>
                 </div>
               </section>
+              {/if}
             {/if}
             {#if activityMode === "code"}
               <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
@@ -6451,7 +6856,7 @@
                   <div class="code-workbench-status-grid" aria-label="Code 工作台状态">
                     <button type="button" onclick={() => openCodeWorkbenchAction("models")}>
                       <BrainCircuit size={16} />
-                      <span><strong>{selectedModel || modelSettings?.defaultModel || agentModel}</strong><em>{modelSettings ? `${modelSettings.providers.filter((provider) => provider.configured).length}/${modelSettings.providers.length} 个渠道可用` : "模型渠道未连接桌面后端"}</em></span>
+                      <span><strong>{selectedModel || modelSettings?.defaultModel || agentModel}</strong><em>{modelSettings ? `${modelProviderSummary(modelSettings.providers).configured}/${modelSettings.providers.length} 个渠道已配置` : "模型渠道未连接桌面后端"}</em></span>
                     </button>
                     <button type="button" onclick={() => openCodeWorkbenchAction("settings")}>
                       <ShieldCheck size={16} />
@@ -6533,6 +6938,7 @@
             {:else if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todayTodoItems() as item (item.id)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{todoDescription(item)}</em></span><b>{todoStatusLabel(item.status)}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => openAutomationDialog(item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={isCurrentMonthDayToday(day)}><b>{day}</b>{#each calendarEventsForCurrentMonthDay(day) as event, eventIndex (calendarEventKey(event, eventIndex))}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
+              {#if currentAgent}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
               <section class="aorist-page new-task-page agent-assistant-page">
                 <div class="agent-assistant-shell">
@@ -6608,7 +7014,16 @@
                   <p class="agent-assistant-disclaimer">Volt GUI 由 AI 驱动生成，请结合构建、测试和人工复核采纳执行建议。</p>
                 </div>
               </section>
-            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button" onclick={() => openConfigDialog("todo")}>新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.id)}<article><div><strong>{item.title}</strong><p>{todoDescription(item)}</p><em>{todoDue(item)}</em></div><span>{todoStatusLabel(item.status)}</span></article>{/each}</div></section>
+              {:else}
+                <section class="aorist-page new-task-page agent-assistant-page">
+                  <article class="detail-empty">
+                    <strong>尚未配置 Agent</strong>
+                    <p>{hasWailsBindings() ? "请先创建 Agent，并配置可用模型后再开始真实对话。" : "未连接桌面后端。请在 Wails 桌面运行环境中创建 Agent、配置模型并开始对话。"}</p>
+                    <button type="button" onclick={() => openWorkLayer("agents")}>前往 Agent 中心</button>
+                  </article>
+                </section>
+              {/if}
+            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button" onclick={() => openConfigDialog("todo")}>新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.id)}<article><div><strong>{item.title}</strong><p>{todoDescription(item)}</p><em>{todoDue(item)}</em></div><span>{todoStatusLabel(item.status)}</span></article>{:else}<article class="detail-empty"><strong>暂无待办</strong><p>新增待办后会通过桌面后端持久化并显示在这里。</p></article>{/each}</div></section>
             {:else if workLayer === "automations"}
               <section class="aorist-page">
                 <div class="aorist-toolbar">
@@ -6621,11 +7036,11 @@
                     <article><span>验证自动化</span><strong>{runningAutomations.filter((item) => item.kind.includes("验证")).length}</strong><em>已接入门禁</em></article>
                     <article><span>最近结果</span><strong>{primaryAutomation?.result ?? "待运行"}</strong><em>{primaryAutomation?.lastRun ?? "未运行"}</em></article>
                   </section>
+                  <p class="automation-scheduler-note">定时自动化仅在 Volt GUI 桌面应用保持运行时执行；应用关闭期间不会运行或补跑。</p>
 
                   <div class="automation-layout">
                     <section class="automation-task-list" aria-label="自动化任务列表">
                       {#each runningAutomations as item (item.id)}
-                        {@const isRunning = item.status === "运行中"}
                         <div class:active={automationDialog === item.id} class="automation-card automation-task-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") openAutomationDialog(item.id); }} onclick={() => openAutomationDialog(item.id)}>
                           <header>
                             <span>{item.kind}</span>
@@ -6637,6 +7052,7 @@
                             <dt>触发方式</dt><dd>{item.schedule}</dd>
                             <dt>工作区</dt><dd>{item.scope}</dd>
                             <dt>执行命令</dt><dd>{automationCommandLabel(item.command)}</dd>
+                            <dt>关联项目</dt><dd>{item.projectName || "未关联"}</dd>
                             <dt>下一次</dt><dd>{item.nextRun}</dd>
                           </dl>
                           <div class="automation-step-strip">
@@ -6645,7 +7061,7 @@
                             {/each}
                           </div>
                           <footer role="presentation" onkeydown={(event) => event.stopPropagation()} onclick={(event) => event.stopPropagation()}>
-                            <button type="button" onclick={() => void toggleAutomationTask(item.id)}>{isRunning ? "暂停" : "开始"}</button>
+                            <button type="button" onclick={() => void runAutomationNow(item.id)}>立即执行</button>
                             <button type="button" onclick={() => openAutomationDialog(item.id)}>编辑</button>
                             <button type="button" onclick={() => void deleteAutomationTask(item.id)}>删除</button>
                           </footer>
@@ -6661,7 +7077,7 @@
                 <div class="aorist-toolbar agent-center-toolbar">
                   <label class="aorist-search"><Search size={16} /><input aria-label="搜索 Agent" placeholder="输入 Agent 名称或职责" /></label>
                   <div>
-                    <button type="button" onclick={() => { agentMarketSearch = ""; agentMarketOpen = true; }}><Blocks size={15} /> Agent 市场（开发中）</button>
+                    <button type="button" onclick={() => { agentMarketSearch = ""; agentMarketOpen = true; }}><Blocks size={15} /> 内置 Agent 模板</button>
                     <button type="button" onclick={() => { distillStep = 1; openConfigDialog("distill"); }}>蒸馏 Agent</button>
                     <button type="button" onclick={() => openAgentWizard()}>创建 Agent</button>
                   </div>
@@ -6670,7 +7086,7 @@
                   {#each agentCards as agent (agent.id)}
                     {@const AgentIcon = agentIcon(agent.id)}
                     <div class="agent-card" role="button" tabindex="0" onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") openAgentWizard(agent.id); }} onclick={() => openAgentWizard(agent.id)}>
-                      <header><span><AgentIcon size={19} /></span><div><strong>{agent.name}</strong><em>{agent.role}</em></div><button type="button" onclick={(event) => event.stopPropagation()}><Trash2 size={14} /></button></header>
+                      <header><span><AgentIcon size={19} /></span><div><strong>{agent.name}</strong><em>{agent.role}</em></div><button type="button" aria-label={`删除 Agent ${agent.name}`} onclick={(event) => { event.stopPropagation(); void deleteAgent(agent); }}><Trash2 size={14} /></button></header>
                       <p>{agent.desc}</p>
                       <footer><span><Zap size={13} /> {agent.runs} 次运行</span><b>{agent.status}</b></footer>
                     </div>
@@ -6696,17 +7112,31 @@
                 </div>
                 <div class="project-list-panel project-list-panel--single">
                   {#each filteredProjects as project (project.id)}
-                    <button class="management-card matter-card project-matter-card" type="button" onclick={() => { selectedProjectId = project.id; projectDetailTab = "overview"; projectDetailOpen = true; }}>
-                      <span class="management-card__icon"><FolderKanban size={20} /></span>
-                      <div class="management-card__body">
-                        <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
-                        <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span><em>{project.priority}优先级</em><em class:riskHigh={project.risk === "中风险"}>{project.risk}</em></div>
-                        <p>{project.court || project.desc}</p>
-                        <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>客户：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
-                        <div class="project-progress-line"><i style={`--progress:${project.progress}%`}></i><span>{project.progress}%</span></div>
+                    <article class="management-card matter-card project-matter-card">
+                      <button class="project-matter-card__open" type="button" onclick={() => { openProjectActionMenuId = ""; selectedProjectId = project.id; projectDetailTab = "overview"; projectDetailOpen = true; }}>
+                        <span class="management-card__icon"><FolderKanban size={20} /></span>
+                        <div class="management-card__body">
+                          <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
+                          <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span><em>{project.priority}优先级</em><em class:riskHigh={project.risk === "中风险"}>{project.risk}</em></div>
+                          <p>{project.court || project.desc}</p>
+                          <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>客户：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
+                          <div class="project-progress-line"><i style={`--progress:${project.progress}%`}></i><span>{project.progress}%</span></div>
+                        </div>
+                      </button>
+                      <div class="project-card-more">
+                        <button type="button" class="project-card-more__trigger" aria-label={`项目操作：${project.name}`} aria-expanded={openProjectActionMenuId === project.id} onclick={() => (openProjectActionMenuId = openProjectActionMenuId === project.id ? "" : project.id)}><Ellipsis size={18} /></button>
+                        {#if openProjectActionMenuId === project.id}
+                          <div class="project-card-action-menu" role="menu">
+                            {#if project.status === "closed"}
+                              <button type="button" role="menuitem" onclick={() => void updateProjectStatus(project, "active")}><RotateCcw size={14} />恢复进行中</button>
+                            {:else}
+                              <button type="button" role="menuitem" onclick={() => void updateProjectStatus(project, "closed")}><Archive size={14} />归档</button>
+                            {/if}
+                            <button type="button" role="menuitem" class="danger" onclick={() => void deleteProject(project)}><Trash2 size={14} />删除</button>
+                          </div>
+                        {/if}
                       </div>
-                      <b>›</b>
-                    </button>
+                    </article>
                   {:else}
                     <article class="detail-empty"><strong>未找到匹配项目</strong><p>换一个关键词，或新建项目后再关联到任务。</p></article>
                   {/each}
@@ -6746,7 +7176,7 @@
                 </div>
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page calendar-page"><div class="aorist-toolbar calendar-toolbar"><div><span>Calendar</span><strong>日程日历 · {calendarMonthLabel()}</strong></div><div><button type="button" onclick={() => shiftCalendarMonth(-1)}>上月</button><button type="button" onclick={resetCalendarMonth}>今天</button><button type="button" onclick={() => shiftCalendarMonth(1)}>下月</button><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarMonthEvents().length}</strong><em>{calendarMonthLabel()} / 会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todayTodoItems().length}</strong><em>仅统计今天截止</em></article><article><span>冲突提醒</span><strong>{calendarConflictGroups().length}</strong><em>{calendarConflictSummary()}</em></article></div><div class="calendar-board"><div class="calendar-grid calendar-month-grid">{#each calendarWeekdays as weekday (weekday)}<div class="calendar-weekday">{weekday}</div>{/each}{#each calendarMonthCells() as cell (cell.key)}<article class:today={cell.isToday} class:muted={!cell.inMonth}><b>{cell.day}</b>{#each cell.events as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="calendar-event-chip" type="button" onclick={() => openCalendarEvent(event)}>{event.time} {event.title}</button>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each upcomingCalendarEvents() as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{calendarEventFullDate(event).slice(8, 10) || event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{:else}<article class="detail-empty"><strong>暂无近日安排</strong><p>当前月份暂无近期日程。</p></article>{/each}</aside></div></section>
-            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => (selectedReportId = report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportUpdatedAt()}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta"><div><span>报告 ID</span><strong>{selectedReport()?.id}</strong></div><div><span>创建时间</span><strong>{selectedReport()?.createdAt || "未记录"}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
+            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{selectedReport()?.id || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
   <div class="resource-section-top">
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
     <div class="resource-actions"><button type="button" onclick={() => openConfigDialog("knowledge")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
@@ -6768,19 +7198,32 @@
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
                 <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
               </dl>
-              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button><button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
+              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button><button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
           {:else}
             <article class="detail-empty"><strong>暂无文档模板</strong><p>点击新建模板后会在这里显示。</p></article>
           {/each}
         </div>
       </section>
-      <section><header><span>Regulation Knowledge</span><strong>规范知识</strong></header><div class="aorist-list">{#each filteredRegulations as item, itemIndex (indexedKey(item.id || item.title, itemIndex))}<article><div><strong>{item.title}</strong><p>{item.category} / {item.tags}</p><em>{item.status}</em></div><span>{item.category}</span></article>{/each}</div></section>
+      <section>
+        <header><span>Regulation Knowledge</span><strong>规范知识</strong><button type="button" onclick={() => openRegulationEditor()}>新建规范</button></header>
+        <div class="aorist-list">
+          {#each filteredRegulations as item, itemIndex (indexedKey(item.id || item.title, itemIndex))}
+            <article>
+              <div><strong>{item.title}</strong><p>{item.category} / {item.tags || "未设置标签"}</p><em>{item.status}</em></div>
+              <div class="knowledge-card-actions"><button type="button" onclick={() => void previewRegulation(item)}>预览</button><button type="button" onclick={() => openRegulationEditor(item)}>编辑</button><button type="button" onclick={() => void deleteRegulation(item)}>删除</button></div>
+            </article>
+          {:else}
+            <article class="detail-empty"><strong>暂无规范知识</strong><p>新建规范后会通过桌面后端持久化并显示在这里。</p></article>
+          {/each}
+        </div>
+        {#if regulationPreviewText}<article class="knowledge-preview"><strong>规范渲染预览</strong><pre>{regulationPreviewText}</pre></article>{/if}
+      </section>
     </div>
     <aside class="knowledge-preview knowledge-detail-panel">
       {#if selectedKnowledgeDocument()}
         {@const doc = selectedKnowledgeDocument()}
-        <header><span>Template Detail</span><button type="button" onclick={() => editKnowledgeDocument(doc)}>编辑</button></header>
+        <header><span>Template Detail</span><div><button type="button" onclick={() => void renderKnowledgeDocument(doc)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(doc)}>编辑</button></div></header>
         <strong>{doc.title}</strong>
         <p>{doc.description || `${doc.type} / ${knowledgeDocumentCount(doc)} 份关联资料 / ${doc.status}`}</p>
         <dl>
@@ -6796,7 +7239,7 @@
           <header><span>关联文档</span><strong>{knowledgeDocumentCount(doc)} 份</strong></header>
           <div>
             {#each knowledgeDocumentMaterials(doc) as material (material.id)}
-              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {material.updatedAt}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" onclick={() => void openMaterialFile(material)}>打开文件</button></article>
+              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {material.updatedAt}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button></article>
             {:else}
               <p>该模板尚未关联资料。</p>
             {/each}
@@ -6973,7 +7416,7 @@
                             <strong>沉淀结果</strong>
                             <div>
                               {#each teamRunArtifacts(runningTeam) as artifact (artifact.id)}
-                                <button type="button" disabled={!currentTeamRun || artifact.status === "已归档"} onclick={() => archiveTeamRunArtifact(artifact.id, runningTeam)}>
+                                <button type="button" disabled={!currentTeamRun || !artifact.path} onclick={() => void openTeamRunArtifact(artifact.id, runningTeam)}>
                                   {artifact.title}<em>{artifact.status}</em>
                                 </button>
                               {/each}
@@ -7020,7 +7463,102 @@
                   {/if}
                 {/if}
               </section>
-            {:else if workLayer === "models"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Models</span><strong>模型管理</strong></div><div><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加渠道</button><button type="button" onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新状态</button></div></div>{#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}<div class="aorist-stats"><article><span>模型数量</span><strong>{modelCards.length}</strong><em>真实可选模型</em></article><article><span>渠道数量</span><strong>{modelSettings?.providers.length ?? 0}</strong><em>{hasWailsBindings() ? "真实配置" : "未连接桌面后端"}</em></article><article><span>密钥状态</span><strong>{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0}</strong><em>可用渠道</em></article></div>{#if modelSettingsLoading}<div class="content__loading"><Loader2 size={16} /> 正在读取模型配置...</div>{:else if !hasWailsBindings()}<article class="detail-empty"><strong>未连接桌面后端</strong><p>模型管理只展示真实配置。请在 Wails 桌面运行环境中读取、添加和保存模型渠道。</p></article>{:else if !(modelSettings?.providers.length)}<article class="detail-empty"><strong>尚未配置模型渠道</strong><p>添加 OpenAI-compatible 或 Anthropic-compatible 渠道后，聊天输入框会立即出现可选模型。</p><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加第一个渠道</button></article>{:else}<div class="aorist-card-grid">{#each modelSettings?.providers ?? [] as provider (provider.name)}<article class="capability-item"><span>{provider.configured ? "可用" : provider.requiresKey ? "缺少 Key" : "未启用"}</span><strong>{provider.name}</strong><p>{provider.kind} / {provider.baseUrl || "未配置 Base URL"}</p><p>Key: {provider.apiKeyEnv || "无"} / 上下文: {provider.contextWindow || "-"} / 优先级: {provider.priority ?? 0}</p><div class="model-chip-list">{#each provider.models as model, modelIndex (indexedKey(model, modelIndex))}<button class:active={isDefaultModelRef(provider, model)} type="button" onclick={() => void setDefaultModelProvider(provider, model)}>{model}{#if isDefaultModelRef(provider, model)}<Check size={13} />{/if}</button>{/each}</div><button type="button" onclick={() => openModelProviderDialog(provider)}><Pencil size={14} /> 编辑渠道</button><button type="button" onclick={() => void setDefaultModelProvider(provider)}><Check size={14} /> 设为默认</button><button type="button" onclick={() => void deleteModelProvider(provider)}><Trash2 size={14} /> 删除</button></article>{/each}</div>{/if}</section>
+            {:else if workLayer === "models"}
+              <section class="aorist-page model-management-page">
+                <div class="model-management-toolbar">
+                  <div>
+                    <span>Models</span>
+                    <strong>模型管理</strong>
+                    <p>先确认渠道是否已配置，再选择默认对话模型。这里不代表接口已经通过网络连通测试。</p>
+                  </div>
+                  <div class="model-management-toolbar__actions">
+                    <button type="button" disabled={modelSettingsLoading} onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新配置</button>
+                    <button class="primary" type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加渠道</button>
+                  </div>
+                </div>
+
+                <div class="model-management-summary" aria-label="模型渠道摘要">
+                  <article><span>渠道总数</span><strong>{modelManagementSummary.total}</strong><em>{modelManagementSummary.models} 个已登记模型</em></article>
+                  <article><span>已配置</span><strong>{modelManagementSummary.configured}</strong><em>Key 已设置或渠道免密</em></article>
+                  <article class:needs-attention={modelManagementSummary.pending > 0}><span>待处理</span><strong>{modelManagementSummary.pending}</strong><em>需要补充 Key 后再使用</em></article>
+                </div>
+
+                {#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}
+                {#if modelSettingsMessage}<div class="model-inline-notice" aria-live="polite"><Check size={15} /> {modelSettingsMessage}</div>{/if}
+
+                <div class="model-management-controls">
+                  <label class="model-provider-search"><Search size={16} /><input bind:value={modelProviderSearch} aria-label="搜索渠道或模型" placeholder="搜索渠道、模型或 Base URL" /></label>
+                  <div class="model-provider-filters" role="group" aria-label="按配置状态筛选">
+                    <button class:active={modelProviderFilter === "all"} type="button" aria-pressed={modelProviderFilter === "all"} onclick={() => (modelProviderFilter = "all")}>全部</button>
+                    <button class:active={modelProviderFilter === "configured"} type="button" aria-pressed={modelProviderFilter === "configured"} onclick={() => (modelProviderFilter = "configured")}>已配置</button>
+                    <button class:active={modelProviderFilter === "missing-key"} type="button" aria-pressed={modelProviderFilter === "missing-key"} onclick={() => (modelProviderFilter = "missing-key")}>缺少 Key</button>
+                  </div>
+                  <span>{filteredModelProviders.length} / {modelManagementSummary.total} 个渠道</span>
+                </div>
+
+                {#if modelSettingsLoading}
+                  <div class="content__loading"><Loader2 size={16} /> 正在读取模型配置...</div>
+                {:else if !hasWailsBindings()}
+                  <article class="detail-empty"><strong>未连接桌面后端</strong><p>模型管理只展示真实配置。请在 Wails 桌面运行环境中读取、添加和保存模型渠道。</p></article>
+                {:else if !(modelSettings?.providers.length)}
+                  <article class="detail-empty"><strong>尚未配置模型渠道</strong><p>添加 OpenAI-compatible 或 Anthropic-compatible 渠道后，聊天输入框会立即出现可选模型。</p><button type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加第一个渠道</button></article>
+                {:else if !filteredModelProviders.length}
+                  <article class="detail-empty"><strong>没有匹配的渠道</strong><p>调整关键词或状态筛选后再试。</p><button type="button" onclick={() => { modelProviderSearch = ""; modelProviderFilter = "all"; }}>清除筛选</button></article>
+                {:else}
+                  <div class="model-provider-list">
+                    {#each filteredModelProviders as provider (provider.name)}
+                      {@const status = modelProviderStatusLabel(provider)}
+                      {@const candidates = modelCandidatesForProvider(provider, modelSettings?.defaultModel || selectedModel, modelSettings?.providers ?? [])}
+                      {@const currentDefault = candidates.find((candidate) => candidate.isDefault)}
+                      {@const selectedProviderModelName = selectedProviderModel(provider)}
+                      <article class:requires-attention={status === "缺少 Key"} class="model-provider-row">
+                        <header>
+                          <div class="model-provider-identity">
+                            <span class:configured={status === "已配置"} class:keyless={status === "免密"} class:missing={status === "缺少 Key"}>{status}</span>
+                            <div><strong>{provider.name}</strong><em>{provider.kind || "provider"} · {candidates.length} 个模型</em></div>
+                            {#if currentDefault}<b><Check size={13} /> 当前默认：{currentDefault.name}</b>{/if}
+                          </div>
+                          <details class="model-provider-actions">
+                            <summary aria-label={`${provider.name} 更多操作`}>更多 <ChevronDown size={14} /></summary>
+                            <div>
+                              <button type="button" onclick={() => openModelProviderDialog(provider)}><Pencil size={14} /> 编辑渠道</button>
+                              <button class="danger" type="button" onclick={() => void deleteModelProvider(provider)}><Trash2 size={14} /> {provider.builtIn ? "移除渠道" : "删除渠道"}</button>
+                            </div>
+                          </details>
+                        </header>
+
+                        <div class="model-provider-default-control">
+                          <label>
+                            <span>默认对话模型</span>
+                            <select value={selectedProviderModelName} disabled={!candidates.length} onchange={(event) => handleProviderModelSelection(provider, event)}>
+                              {#each candidates as candidate (candidate.ref)}<option value={candidate.name}>{candidate.name}{candidate.isDefault ? "（当前默认）" : ""}</option>{/each}
+                            </select>
+                          </label>
+                          <button type="button" title={status === "缺少 Key" ? "请先编辑渠道并补充 API Key" : "同时设为全局默认并切换当前会话"} disabled={!selectedProviderModelName || status === "缺少 Key" || currentDefault?.name === selectedProviderModelName} onclick={() => void setDefaultModelProvider(provider, selectedProviderModelName)}>
+                            <Check size={14} /> {currentDefault?.name === selectedProviderModelName ? "当前默认" : "设为默认并切换"}
+                          </button>
+                        </div>
+
+                        <details class="model-provider-details">
+                          <summary>查看渠道详情 <span>Endpoint、Key 环境变量与完整模型列表</span><ChevronDown size={14} /></summary>
+                          <div>
+                            <dl>
+                              <div><dt>Base URL</dt><dd>{provider.baseUrl || "未配置"}</dd></div>
+                              <div><dt>Key 环境变量</dt><dd>{provider.apiKeyEnv || "免密"}{provider.apiKeyEnv ? provider.keySet ? " · 已设置" : " · 未设置" : ""}</dd></div>
+                              <div><dt>上下文窗口</dt><dd>{provider.contextWindow ? provider.contextWindow.toLocaleString() : "未设置"}</dd></div>
+                              <div><dt>优先级</dt><dd>{provider.priority ?? 0}</dd></div>
+                            </dl>
+                            <div class="model-provider-models">
+                              <span>模型列表</span>
+                              <div>{#each candidates as candidate (candidate.ref)}<span class:current={candidate.isDefault}>{candidate.name}{#if candidate.isDefault}<Check size={12} />{/if}</span>{/each}</div>
+                            </div>
+                          </div>
+                        </details>
+                      </article>
+                    {/each}
+                  </div>
+                {/if}
+              </section>
             {:else if workLayer === "settings"}
               <section class="aorist-page settings-page">
                 <div class="aorist-toolbar">
@@ -7311,16 +7849,39 @@
               </dl>
             </div>
             <footer>
-              <button type="button" onclick={() => void openMaterialFile(material)}>打开文件</button>
-              <button type="button" onclick={() => void revealMaterialFile(material)}>定位文件</button>
-              <button type="button" onclick={() => void copyMaterialPath(material)}>复制路径</button>
+              <button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button>
+              <button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void revealMaterialFile(material)}>定位文件</button>
+              <button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void copyMaterialPath(material)}>复制路径</button>
               <button type="button" class="danger" onclick={() => void deleteMaterial(material)}>删除资料</button>
             </footer>
           </section>
         </div>
       {/each}
       {#if automationDialog}
-        <div class="modal-backdrop"><section class="config-modal automation-config-modal"><header><div><span>Automation Task</span><strong>{automationDialogTitle()}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>任务名称<input bind:value={automationDraft.title} /></label><label>任务类型<select bind:value={automationDraft.kind}>{#each automationKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>运行状态<select bind:value={automationDraft.status}>{#each automationStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<select bind:value={automationDraft.owner}>{#each automationOwnerOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>调度模式<select bind:value={automationDraft.scheduleMode}>{#each automationScheduleModeOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label><label>下次运行时间<input type="datetime-local" bind:value={automationDraft.nextRunAt} disabled={automationDraft.scheduleMode === "manual"} /></label><label>覆盖范围<input bind:value={automationDraft.scope} /></label><label>触发条件<input bind:value={automationDraft.cadence} /></label><label>执行环境<select bind:value={automationDraft.environment}><option value="local workspace">local workspace</option><option value="desktop/frontend">desktop/frontend</option><option value="desktop">desktop</option><option value="repo root">repo root</option></select></label><label>验证命令<select bind:value={automationDraft.command}>{#each automationCommandOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label><label class="wide">任务说明<textarea rows="4" bind:value={automationDraft.desc}></textarea></label><label class="wide">运行步骤<textarea rows="4" bind:value={automationDraft.stepsText}></textarea></label><label class="wide">运行日志<textarea rows="3" bind:value={automationDraft.logsText} readonly></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button>{#if automationDialogMode === "edit"}<button type="button" onclick={() => void runAutomationNow(automationDraft.id)}>立即执行</button>{/if}<button type="button" onclick={() => void saveAutomationDraft()}>保存配置</button></footer></section></div>
+        <div class="modal-backdrop">
+          <section class="config-modal automation-config-modal">
+            <header><div><span>Automation Task</span><strong>{automationDialogTitle()}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header>
+            <div class="config-grid">
+              <label>任务名称<input bind:value={automationDraft.title} /></label>
+              <label>任务类型<select bind:value={automationDraft.kind}>{#each automationKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>运行状态<select bind:value={automationDraft.status}>{#each automationStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>负责人<select bind:value={automationDraft.owner}>{#each automationOwnerOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>关联项目<select value={automationDraft.projectId} onchange={(event) => setAutomationDraftProject((event.currentTarget as HTMLSelectElement).value)}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label>
+              <label class="automation-failure-todo"><span>失败后创建待办</span><input type="checkbox" disabled={!automationDraft.projectId} bind:checked={automationDraft.createTodoOnFailure} /><em>将自动创建关联项目的高优先级待办</em></label>
+              <label>调度模式<select bind:value={automationDraft.scheduleMode}>{#each automationScheduleModeOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label>
+              <label>下次运行时间<input type="datetime-local" bind:value={automationDraft.nextRunAt} disabled={automationDraft.scheduleMode === "manual"} /></label>
+              <p class="wide automation-scheduler-note">定时任务只会在 Volt GUI 桌面应用保持运行时执行；应用关闭期间不会执行或补跑。</p>
+              <label>覆盖范围<input bind:value={automationDraft.scope} /></label>
+              <label>触发条件<input bind:value={automationDraft.cadence} /></label>
+              <label>执行环境<select bind:value={automationDraft.environment}><option value="local workspace">local workspace</option><option value="desktop/frontend">desktop/frontend</option><option value="desktop">desktop</option><option value="repo root">repo root</option></select></label>
+              <label>验证命令<select bind:value={automationDraft.command}>{#each automationCommandOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label>
+              <label class="wide">任务说明<textarea rows="4" bind:value={automationDraft.desc}></textarea></label>
+              <label class="wide">运行步骤<textarea rows="4" bind:value={automationDraft.stepsText}></textarea></label>
+              <label class="wide">运行日志<textarea rows="3" bind:value={automationDraft.logsText} readonly></textarea></label>
+            </div>
+            <footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button>{#if automationDialogMode === "edit"}<button type="button" onclick={() => void runAutomationNow(automationDraft.id)}>立即执行</button>{/if}<button type="button" onclick={() => void saveAutomationDraft()}>保存配置</button></footer>
+          </section>
+        </div>
       {/if}
       {#if projectDetailOpen}
         {@const project = selectedProject()}
@@ -7343,7 +7904,6 @@
               </div>
               <div class="project-detail-actions">
                 <button type="button" onclick={() => linkProjectToTask(project.name)}><Activity size={14} /> 发起项目任务</button>
-                <button type="button" onclick={() => openConfigDialog("dossier")}><Plus size={14} /> 新增资料</button>
               </div>
             </header>
             <aside class="detail-panel project-detail-panel">
@@ -7353,23 +7913,23 @@
               <section class="detail-summary project-detail-summary">
                 <article><span>项目阶段</span><strong>{project.stage}</strong></article>
                 <article><span>项目类型</span><strong>{project.category}</strong></article>
-                <article><span>关联资料</span><strong>{project.materials} 份</strong></article>
-                <article><span>待办事项</span><strong>{project.todos} 项</strong></article>
+                <article><span>关联资料</span><strong>{linkedProjectMaterials.length} 份</strong></article>
+                <article><span>待办事项</span><strong>{linkedProjectTodos.length} 项</strong></article>
               </section>
               <div class="project-detail-body">
                 <main class="project-detail-main">
                   <div class="detail-tabs" role="tablist" aria-label="项目详情标签">
                     <button class:active={projectDetailTab === "overview"} type="button" onclick={() => (projectDetailTab = "overview")}>概览</button>
-                    <button class:active={projectDetailTab === "materials"} type="button" onclick={() => (projectDetailTab = "materials")}>资料 ({project.materials})</button>
-                    <button class:active={projectDetailTab === "schedules"} type="button" onclick={() => (projectDetailTab = "schedules")}>日程 ({project.events})</button>
-                    <button class:active={projectDetailTab === "reports"} type="button" onclick={() => (projectDetailTab = "reports")}>报告 ({project.reports})</button>
-                    <button class:active={projectDetailTab === "todos"} type="button" onclick={() => (projectDetailTab = "todos")}>待办</button>
+                    <button class:active={projectDetailTab === "materials"} type="button" onclick={() => (projectDetailTab = "materials")}>资料 ({linkedProjectMaterials.length})</button>
+                    <button class:active={projectDetailTab === "schedules"} type="button" onclick={() => (projectDetailTab = "schedules")}>日程 ({linkedProjectSchedules.length})</button>
+                    <button class:active={projectDetailTab === "reports"} type="button" onclick={() => (projectDetailTab = "reports")}>报告 ({linkedProjectReports.length})</button>
+                    <button class:active={projectDetailTab === "todos"} type="button" onclick={() => (projectDetailTab = "todos")}>待办 ({linkedProjectTodos.length})</button>
                   </div>
                   {#if projectDetailTab === "overview"}
                     <section class="project-detail-card">
                       <h3><FileText size={15} /> 项目概览</h3>
                       <p>当前项目数据来自本地工作台记录。请在资料、报告和任务页补充可复核的上下文、执行记录与交付证据。</p>
-                      <div class="project-detail-metrics"><article><FileText size={14} /><strong>{project.materials}</strong><span>资料</span></article><article><Database size={14} /><strong>{project.reports}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
+                      <div class="project-detail-metrics"><article><FileText size={14} /><strong>{linkedProjectMaterials.length}</strong><span>资料</span></article><article><Database size={14} /><strong>{linkedProjectReports.length}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
                     </section>
                     <section class="project-detail-card project-detail-risk">
                       <h3><ShieldCheck size={15} /> 本地风控备忘</h3>
@@ -7384,13 +7944,13 @@
                   {:else if projectDetailTab === "materials"}
                     <section class="project-detail-card project-tab-panel">
                       <header class="project-section-head">
-                        <div><h3><Database size={15} /> 项目资料库</h3><p>对标 LinkedResourceLibrary：展示项目关联资料，完整 {project.materials} 份继续在资料中心索引。</p></div>
+                        <div><h3><Database size={15} /> 项目资料库</h3><p>展示当前项目关联的 {linkedProjectMaterials.length} 份资料，并同步在资料中心索引。</p></div>
                         <button type="button" onclick={() => openConfigDialog("dossier")}><Plus size={13} /> 新增资料</button>
                       </header>
                       <div class="project-resource-toolbar"><span>已展示 {linkedProjectMaterials.length} 份资料</span><button type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>打开资料中心</button></div>
                       <div class="project-detail-list">
                         {#each linkedProjectMaterials as material (material.id)}
-                          <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>
+                          <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; selectedResourceCategory = ""; resourceSearch = ""; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
                             <b>{material.status}<small>{material.updatedAt}</small></b>
@@ -7724,11 +8284,21 @@
                       <label class="wide">额外可写目录
                         <textarea rows="4" bind:value={settingsDraft.sandboxAllowWrite} placeholder="每行一个路径，或用逗号分隔"></textarea>
                       </label>
+                      <TrustedIntranetSettings
+                        sites={modelSettings?.network?.trustedIntranet?.sites ?? []}
+                        removingKey={trustedIntranetRemoving}
+                        onRemove={removeTrustedIntranetSite}
+                      />
+                      <BrowserCredentialSettings
+                        credentials={browserCredentials}
+                        removingOrigin={browserCredentialRemoving}
+                        onRemove={removeBrowserCredential}
+                      />
                     </div>
                   {:else}
                     <div class="user-panel-list settings-model-list">
                       <article><div><strong>默认模型</strong><p>{modelSettings?.defaultModel || selectedModel || agentModel}</p><em>在模型管理中修改默认对话模型。</em></div><button type="button" onclick={() => { userPanelDialog = undefined; openWorkLayer("models"); }}>打开模型管理</button></article>
-                      <article><div><strong>模型渠道</strong><p>{modelSettings?.providers.length ?? 0} 个渠道，{modelSettings?.providers.filter((provider) => provider.configured).length ?? 0} 个可用</p><em>可添加 OpenAI-compatible 或 Anthropic-compatible 接口。</em></div><button type="button" onclick={() => openModelProviderDialog()}>添加渠道</button></article>
+                      <article><div><strong>模型渠道</strong><p>{modelSettings?.providers.length ?? 0} 个渠道，{modelProviderSummary(modelSettings?.providers ?? []).configured} 个已配置</p><em>可添加 OpenAI-compatible 或 Anthropic-compatible 接口。</em></div><button type="button" onclick={() => openModelProviderDialog()}>添加渠道</button></article>
                     </div>
                   {/if}
                 </section>
@@ -7789,10 +8359,10 @@
                 {/if}
               {/if}
               <section class="capability-install-flow">
-                <header><Workflow size={16} /><strong>安装与连接流程</strong></header>
-                {#each capabilityInstallSteps as step, index (indexedKey(step.id, index))}
-                  <article class:done={capabilityStepDone(selectedCapability, index)}>
-                    <span>{#if capabilityStepDone(selectedCapability, index)}<Check size={13} />{:else}{index + 1}{/if}</span>
+                <header><Workflow size={16} /><strong>真实状态检查</strong></header>
+                {#each capabilityStatusChecks(selectedCapability) as step, index (indexedKey(step.id, index))}
+                  <article class:done={step.done}>
+                    <span>{#if step.done}<Check size={13} />{:else}{index + 1}{/if}</span>
                     <div><strong>{step.label}</strong><p>{step.desc}</p></div>
                   </article>
                 {/each}
@@ -7854,7 +8424,7 @@
           <section class="config-modal customer-create-modal">
             <header><div><span>Customer</span><strong>{configDialogTitle()}</strong><p>填写客户档案、联系方式、风险状态和关联项目后保存到客户管理。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
             <div class="config-grid">
-              <label>客户名称 *<input bind:value={customerDraftName} placeholder="例如 内部研发团队" /></label>
+              <label class:invalid={configValidationField === "customer-name"}>客户名称 *<input data-config-field="customer-name" aria-invalid={configValidationField === "customer-name"} bind:value={customerDraftName} placeholder="例如 内部研发团队" /></label>
               <label>客户类型<select bind:value={customerDraftType}>{#each customerTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
               <label>联系人<input bind:value={customerDraftContact} placeholder="例如 产品负责人" /></label>
               <label>联系电话<input bind:value={customerDraftPhone} placeholder="例如 138-0000-0000" /></label>
@@ -7872,11 +8442,35 @@
               <label class="wide">备注<textarea rows="3" bind:value={customerDraftNote} placeholder="记录客户背景、沟通偏好、风险提示等"></textarea></label>
               <label class="wide">客户说明<textarea rows="4" bind:value={customerDraftDesc} placeholder="补充客户画像、业务目标、合作范围或验收口径"></textarea></label>
             </div>
-            <footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={confirmConfigDialog}>保存客户</button></footer>
+            <footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" onclick={confirmConfigDialog}>保存客户</button></footer>
           </section>
         </div>
       {/if}
-      {#if configDialog && configDialog !== "customer"}
+      {#if configDialog === "regulation"}
+        <div class="modal-backdrop">
+          <section class="config-modal">
+            <header><div><span>Regulation</span><strong>{configDialogTitle()}</strong><p>规范正文会持久化到桌面工作台，并可通过变量进行真实渲染。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
+            <div class="config-grid">
+              <label>规范标题 *<input bind:value={regulationDraftTitle} placeholder="例如 交付验收规范" /></label>
+              <label>分类<input bind:value={regulationDraftCategory} placeholder="规则 / 制度 / 流程" /></label>
+              <label>状态<select bind:value={regulationDraftStatus}><option>草稿</option><option>可用</option><option>已归档</option></select></label>
+              <label>标签<input bind:value={regulationDraftTags} placeholder="用 / 或逗号分隔" /></label>
+              <label class="wide">规范正文 *<textarea rows="10" bind:value={regulationDraftContent} placeholder="可使用变量占位符，由桌面后端渲染"></textarea></label>
+            </div>
+            <footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => void submitRegulationDraft()}>保存规范</button></footer>
+          </section>
+        </div>
+      {/if}
+      {#if configDialog === "schedule"}
+        <div class="modal-backdrop">
+          <section class="config-modal schedule-modal">
+            <header><div><span>Calendar</span><strong>{configDialogTitle()}</strong><p>日程保存、更新和删除均通过桌面后端持久化。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
+            <div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>
+            <footer>{#if selectedScheduleEventId}<button class="danger" type="button" onclick={() => void deleteSelectedCalendarEvent()}>删除日程</button>{/if}<button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => void submitScheduleDraft()}>{selectedScheduleEventId ? "保存修改" : "新建日程"}</button></footer>
+          </section>
+        </div>
+      {/if}
+      {#if usesGenericConfigDialog(configDialog)}
         <div class="modal-backdrop"><section class="config-modal" class:team-modal={configDialog === "team"} class:model-provider-modal={configDialog === "model"} class:schedule-modal={configDialog === "schedule"}><header><div><span>{configDialog === "team" ? "协作组" : configDialog === "model" ? "Model Channel" : "Workbench Dialog"}</span><strong>{configDialogTitle()}</strong>{#if configDialog === "team"}<p>设置团队名称并添加至少一个智能体。你可以将其中一个设为负责拆解、分配和汇总的协调者。</p>{:else if configDialog === "model"}<p>一个渠道对应一个模型来源：填写 Base URL、API Key 和该来源下的多个模型后保存。</p>{/if}</div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>{#if configDialog === "selectProject"}<div class="select-list"><p>{configDialogIntro()}</p>{#each projectCards as project (project.id)}<button type="button" onclick={() => { linkProjectToTask(project.name); configDialog = undefined; }}><strong>{project.name}</strong><span>{project.client} / {project.stage}</span></button>{/each}</div>{:else if configDialog === "selectCustomer"}<div class="select-list"><p>{configDialogIntro()}</p>{#each customerCards as customer (customer.id)}<button type="button" onclick={() => { linkCustomerToTask(customer.name); configDialog = undefined; }}><strong>{customer.name}</strong><span>{customer.phone} / {customer.risk}</span></button>{/each}</div>{:else if configDialog === "distill"}<div class="distill-panel"><p>{configDialogIntro()}</p><div class="distill-steps"><button class:active={distillStep === 1} type="button" onclick={() => (distillStep = 1)}>1. 选择样本</button><button class:active={distillStep === 2} type="button" onclick={() => (distillStep = 2)}>2. 提炼能力</button><button class:active={distillStep === 3} type="button" onclick={() => (distillStep = 3)}>3. 生成 Agent</button></div>{#if distillStep === 1}<div class="wizard-skill-list">{#each todoItems as item (item.id)}<button type="button" onclick={() => selectDistillSample(item)}><div><strong>{item.title}</strong><p>{todoDescription(item)}</p></div><em>{todoStatusLabel(item.status)}</em></button>{/each}</div>{:else if distillStep === 2}<div class="wizard-card-grid">{#each skillCards as skill (skill.id)}<button class:active={skill.active} type="button" onclick={() => toggleDistillSkill(skill.id)}><strong>{skill.title}</strong><span>{skill.desc}</span><em>{skill.version}</em></button>{/each}</div>{:else}<div class="wizard-preview distill-preview"><span>Agent Preview</span><div><b><Workflow size={24} /></b><strong>蒸馏任务 Agent</strong><em>{agentModel}</em><p>从已完成任务、工具调用和项目资料中抽取可复用工作流。</p></div></div>{/if}</div>{:else if configDialog === "team"}
   <div class="team-builder">
     <section>
@@ -7954,8 +8548,14 @@
       <label>默认模型<input bind:value={modelDraft.defaultModel} placeholder="默认使用第一个模型" /></label>
       <label>渠道优先级<input bind:value={modelDraft.priority} inputmode="numeric" placeholder="0" /></label>
       <label>上下文窗口<input bind:value={modelDraft.contextWindow} inputmode="numeric" placeholder="128000" /></label>
-      <label>请求 API<select bind:value={modelDraft.apiSurface}><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option></select></label>
-      {#if modelDraft.apiSurface === "responses"}<label>Responses URL<input bind:value={modelDraft.responsesUrl} placeholder="默认 base_url + /responses" /></label>{/if}
+      <label>API 端点类型<select bind:value={modelDraft.apiSurface}><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option></select></label>
+      {#if modelDraft.apiSurface === "responses"}
+        <label>
+          Responses API 端点
+          <input bind:value={modelDraft.responsesUrl} placeholder="默认 base_url + /responses" />
+          <small>将请求路由到 /responses，而非 /chat/completions</small>
+        </label>
+      {/if}
       <label>Reasoning Protocol<input bind:value={modelDraft.reasoningProtocol} placeholder="auto / none / openai" /></label>
       <label>默认 Effort<input bind:value={modelDraft.defaultEffort} placeholder="auto / high / max" /></label>
       <label class="wide">支持的 Effort<textarea rows="2" bind:value={modelDraft.supportedEffortsText} placeholder="逗号或换行分隔，例如 high, max"></textarea></label>
@@ -7963,23 +8563,23 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else if configDialog === "report"}<div class="config-grid"><label>报告标题 *<input bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label>知识标题 *<input bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide">正文 *<textarea rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label>模板名称 *<input bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field"><span>选择文件 *</span><div class="material-file-picker"><input type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label>归属项目<select bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label>资料名称 *<input bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource"}<label class="wide material-file-field"><span>选择文件 *</span><div class="material-file-picker"><input type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label>归属项目<select bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label>项目名称 *<input bind:value={projectDraftName} placeholder="例如 客户门户上线" /></label><label>项目编号<input bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（或摘要）*<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} bind:value={projectDraftName} placeholder="例如 客户门户上线" /></label><label>项目编号<input bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
-        <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentWizardMode === "create" ? "创建 Agent" : agentWizardName()}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input bind:value={agentWizardDraftName} /></label><label>系统设定指示词<textarea rows="4" bind:value={agentWizardDraftDescription}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>协作风格</span>{#each vibePresets as vibe (vibe)}<button class:active={agentWizardVibe === vibe} type="button" aria-pressed={agentWizardVibe === vibe} onclick={() => (agentWizardVibe = vibe)}>{vibe}</button>{/each}</div><div class="pill-group"><span>模型底座</span>{#each modelProviders as provider (provider)}<button class:active={agentProvider === provider} type="button" onclick={() => { agentProvider = provider; agentModel = modelOptions[provider]?.[0] || agentModel; }}>{provider}</button>{/each}</div><select value={agentModel} onchange={(event) => (agentModel = (event.currentTarget as HTMLSelectElement).value)}>{#each modelOptions[agentProvider] || [] as model (model)}<option value={model}>{model}</option>{/each}</select></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentWizardName() || "未命名 Agent"}</strong><em>{agentModel}</em><p>{agentWizardDescription() || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} class:unavailable={!tool.available} type="button" disabled={!tool.available} title={tool.reason} onclick={() => toggleAgentTool(tool.id)}><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.available ? (tool.active ? "已启用" : "未启用") : "不可用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} class:unavailable={!skill.available} type="button" disabled={!skill.available} title={skill.reason} onclick={() => toggleAgentSkill(skill.id)}><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.available ? (skill.active ? "已挂载" : "未挂载") : "不可用"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file, fileIndex (indexedKey(file, fileIndex))}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => void saveAgentWizard()}>完成并部署</button></footer></section></div>
+        <div class="modal-backdrop"><section class="agent-wizard"><header class="agent-wizard__header"><div class="wizard-avatar"><WizardAvatarIcon size={22} /></div><div><strong>{agentWizardMode === "create" ? "创建 Agent" : agentWizardName()}</strong><span>创建与配置 Agent</span></div><button type="button" onclick={() => (agentWizardOpen = false)}>x</button></header><div class="agent-wizard__body"><nav class="wizard-tabs">{#each wizardTabs as tab (tab.id)}<button class:active={agentWizardTab === tab.id} type="button" onclick={() => (agentWizardTab = tab.id)}>{tab.label}</button>{/each}</nav><div class="wizard-panel">{#if agentWizardTab === "identity"}<div class="wizard-identity"><div class="wizard-form"><label>智能体名称<input bind:value={agentWizardDraftName} /></label><label>系统设定指示词<textarea rows="4" bind:value={agentWizardDraftDescription}></textarea></label><div class="pill-group"><span>智能体头像</span>{#each avatarPresets as avatar (avatar)}{@const AvatarOptionIcon = avatarIcon(avatar)}<button class:active={agentAvatar === avatar} type="button" aria-label={`选择头像 ${avatar}`} onclick={() => (agentAvatar = avatar)}><AvatarOptionIcon size={15} /></button>{/each}</div><div class="pill-group"><span>协作风格</span>{#each vibePresets as vibe (vibe)}<button class:active={agentWizardVibe === vibe} type="button" aria-pressed={agentWizardVibe === vibe} onclick={() => (agentWizardVibe = vibe)}>{vibe}</button>{/each}</div><label>模型底座{#if modelCards.length}<select value={selectedAgentModelRef()} onchange={handleAgentModelChange}>{#each modelCards as model (model.ref)}<option value={model.ref}>{model.provider} / {model.name}</option>{/each}</select>{:else}<span>尚未配置可用模型渠道，请先在模型管理中添加渠道。</span>{/if}</label></div><aside class="wizard-preview"><span>身份预览</span><div><b><WizardAvatarIcon size={28} /></b><strong>{agentWizardName() || "未命名 Agent"}</strong><em>{agentModel || "未配置模型"}</em><p>{agentWizardDescription() || "尚未分配具体职能。"}</p></div></aside></div>{:else if agentWizardTab === "tools"}<div class="wizard-card-grid">{#each toolCards as tool (tool.id)}<button class:active={tool.active} class:unavailable={!tool.available} type="button" disabled={!tool.available} title={tool.reason} onclick={() => toggleAgentTool(tool.id)}><strong>{tool.title}</strong><span>{tool.desc}</span><em>{tool.available ? (tool.active ? "已启用" : "未启用") : "不可用"}</em></button>{/each}</div>{:else if agentWizardTab === "skills"}<div class="wizard-skill-list">{#each skillCards as skill (skill.id)}<button class:active={skill.active} class:unavailable={!skill.available} type="button" disabled={!skill.available} title={skill.reason} onclick={() => toggleAgentSkill(skill.id)}><div><strong>{skill.title}</strong><span>{skill.version}</span><p>{skill.desc}</p></div><em>{skill.available ? (skill.active ? "已挂载" : "未挂载") : "不可用"}</em></button>{/each}</div>{:else}<div class="wizard-files"><nav>{#each coreFiles as file, fileIndex (indexedKey(file, fileIndex))}<button class:active={selectedCoreFile === file} type="button" onclick={() => (selectedCoreFile = file)}>{file}</button>{/each}</nav><pre>{coreFileContent[selectedCoreFile]}</pre></div>{/if}</div></div><footer class="agent-wizard__footer"><button type="button" onclick={() => (agentWizardOpen = false)}>取消</button><button type="button" onclick={() => void saveAgentWizard()}>完成并部署</button></footer></section></div>
       {/if}
       {#if agentMarketOpen}
         <div class="modal-backdrop">
-          <div class="config-modal agent-market-modal" role="dialog" aria-modal="true" aria-label="Agent 市场">
+          <div class="config-modal agent-market-modal" role="dialog" aria-modal="true" aria-label="内置 Agent 模板">
             <header>
-              <div><span>Agent Market</span><strong>Agent 市场（开发中）</strong></div>
+              <div><span>Built-in Templates</span><strong>内置 Agent 模板</strong></div>
               <button type="button" onclick={() => (agentMarketOpen = false)}>x</button>
             </header>
             <div class="agent-market-toolbar">
-              <label class="aorist-search agent-market-search"><Search size={16} /><input bind:value={agentMarketSearch} aria-label="搜索 Agent 市场" placeholder="搜索 Agent 类型、能力或来源" /></label>
+              <label class="aorist-search agent-market-search"><Search size={16} /><input bind:value={agentMarketSearch} aria-label="搜索内置 Agent 模板" placeholder="搜索 Agent 类型、能力或来源" /></label>
               <div class="agent-market-stats">
-                <span>{downloadedMarketAgentIds.length} 已保存</span>
+                <span>{downloadedMarketAgentIds.length} 已安装</span>
                 <span>{agentMarketItems.length} 个本地模板</span>
               </div>
             </div>
@@ -8002,7 +8602,7 @@
                   <footer>
                     <small>本地模板包 / 远程市场开发中</small>
                     <button class:downloaded type="button" onclick={() => downloadMarketAgent(item)}>
-                      {#if downloaded}<Check size={14} /> 已保存{:else}<Download size={14} /> 保存本地模板{/if}
+                      {#if downloaded}<Check size={14} /> 已安装{:else}<Download size={14} /> 安装模板{/if}
                     </button>
                   </footer>
                 </article>
@@ -8937,6 +9537,7 @@
   .config-grid .percent-input{display:grid;grid-template-columns:minmax(0,1fr)auto;align-items:center;height:36px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827;overflow:hidden}.config-grid .percent-input input{height:34px;border:0;border-radius:0;background:transparent}.config-grid .percent-input span{padding:0 12px;color:#5f6774;font-size:13px}
   .config-grid .material-file-field{gap:8px}.material-file-picker{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;min-height:42px;padding:4px 12px 4px 4px;border:1px solid #d9dee8;border-radius:12px;background:#fff;color:#111827;overflow:hidden}.material-file-picker:hover{border-color:#bfdbfe;background:#f8fbff}.material-file-picker input{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:pointer}.material-file-picker strong{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border-radius:9px;background:#111827;color:#fff;font-size:13px;font-weight:650;white-space:nowrap}.material-file-picker span{min-width:0;overflow:hidden;color:#667085;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.material-file-field em{color:#7b8494;font-size:12px;font-style:normal}
   .artifact-review-workbench{display:grid;gap:14px;padding:16px 20px;border-bottom:1px solid rgba(226,232,240,.9);background:#f7f9fc}.artifact-review-head{display:grid;grid-template-columns:minmax(260px,1fr) auto;align-items:end;gap:14px}.artifact-review-head span,.artifact-style-gate header span,.artifact-coordinate-list header span,.artifact-page-meta span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.artifact-review-head strong{display:block;margin-top:4px;color:#111827;font-size:18px;line-height:1.22}.artifact-review-head p{margin:4px 0 0;color:#667085;font-size:12px}.artifact-stage-tabs{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.artifact-stage-tabs button{display:grid;gap:2px;min-width:70px;min-height:42px;padding:6px 10px;border:1px solid #dbe3ee;border-radius:10px;background:#fff;color:#344054;text-align:left}.artifact-stage-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-stage-tabs span{color:inherit;font-size:12px;font-weight:800;letter-spacing:0;text-transform:none}.artifact-stage-tabs em{color:#7b8494;font-size:10px;font-style:normal}.artifact-review-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.38fr);gap:14px;align-items:stretch}.artifact-canvas-shell,.artifact-review-side section{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 10px 24px rgba(15,23,42,.045)}.artifact-canvas-shell{display:grid;grid-template-rows:auto minmax(320px,1fr);min-width:0;overflow:hidden}.artifact-canvas-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #e5eaf2;background:#fff}.artifact-mode-switch,.artifact-tool-buttons,.artifact-pan-pad{display:flex;align-items:center;gap:6px}.artifact-canvas-toolbar button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#344054}.artifact-canvas-toolbar button.active,.artifact-canvas-toolbar button:hover:not(:disabled){border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-canvas-toolbar button:disabled{cursor:not-allowed;opacity:.45}.artifact-canvas-toolbar strong{min-width:48px;color:#111827;font-size:12px;text-align:center}.artifact-canvas-viewport{display:grid;place-items:center;min-height:320px;padding:20px;overflow:hidden;background:linear-gradient(90deg,rgba(226,232,240,.55) 1px,transparent 1px),linear-gradient(180deg,rgba(226,232,240,.55) 1px,transparent 1px),#f8fafc;background-size:28px 28px}.artifact-canvas-viewport[data-mode=pan]{cursor:grab}.artifact-canvas-page{position:relative;width:min(620px,100%);aspect-ratio:16/10;padding:22px;border:1px solid #cbd5e1;border-radius:16px;background:linear-gradient(135deg,#fff 0%,#f8fbff 58%,#eef4ff 100%);box-shadow:0 22px 50px rgba(15,23,42,.14);transform:translate(var(--artifact-pan-x),var(--artifact-pan-y)) scale(var(--artifact-zoom));transform-origin:center;transition:transform .16s ease}.artifact-page-meta{display:grid;gap:4px}.artifact-page-meta strong{overflow:hidden;color:#0f172a;font-size:18px;text-overflow:ellipsis;white-space:nowrap}.artifact-page-meta em{color:#667085;font-size:12px;font-style:normal}.artifact-page-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;margin-top:22px}.artifact-page-layout section,.artifact-page-layout aside{min-height:150px;padding:16px;border:1px solid #e5e7eb;border-radius:14px;background:rgba(255,255,255,.76)}.artifact-page-layout b{color:#1d4ed8;font-size:12px}.artifact-page-layout h3{margin:12px 0 8px;color:#111827;font-size:24px;line-height:1.12}.artifact-page-layout p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.artifact-page-layout aside{display:grid;align-content:center;gap:8px}.artifact-page-layout aside span{color:#7b8494;font-size:11px}.artifact-page-layout aside strong{color:#111827;font-size:14px}.artifact-page-layout aside em{display:inline-flex;width:max-content;padding:4px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-style:normal}.artifact-marker{position:absolute;left:var(--marker-x);top:var(--marker-y);max-width:110px;transform:translate(-50%,-50%);padding:5px 8px;border:1px solid #f59e0b;border-radius:999px;background:#fffbeb;color:#92400e;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 8px 16px rgba(146,64,14,.16)}.artifact-review-side{display:grid;grid-template-rows:auto 1fr;gap:14px;min-width:0}.artifact-review-side section{padding:14px}.artifact-style-gate header,.artifact-coordinate-list header{margin-bottom:10px}.artifact-style-gate header strong,.artifact-coordinate-list header strong{display:block;margin-top:4px;color:#111827;font-size:15px}.artifact-style-list{display:grid;gap:8px}.artifact-style-list button{display:grid;gap:5px;width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;text-align:left}.artifact-style-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-style-list strong{color:#111827;font-size:13px}.artifact-style-list span,.artifact-style-list em{color:#667085;font-size:11px;font-style:normal;line-height:1.45}.artifact-gate-actions{display:flex;gap:8px;margin-top:10px}.artifact-gate-actions button{flex:1;min-height:34px;border:1px solid #d8e2ef;border-radius:10px;background:#fff;color:#344054;font-weight:750}.artifact-gate-actions button:last-child{border-color:#2563eb;background:#2563eb;color:#fff}.artifact-coordinate-list{display:grid;align-content:start;gap:8px}.artifact-coordinate-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff}.artifact-coordinate-list article strong{display:block;color:#111827;font-size:13px}.artifact-coordinate-list article p{margin:3px 0 0;overflow:hidden;color:#667085;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.artifact-coordinate-list article span{padding:4px 8px;border-radius:999px;background:#f3f4f6;color:#344054;font-size:11px;white-space:nowrap}@media(max-width:1120px){.artifact-review-head,.artifact-review-grid{grid-template-columns:1fr}.artifact-stage-tabs{justify-content:flex-start}.artifact-review-side{grid-template-columns:1fr 1fr;grid-template-rows:auto}}@media(max-width:720px){.artifact-review-workbench{padding:12px 14px}.artifact-canvas-toolbar{align-items:flex-start;flex-direction:column}.artifact-review-side,.artifact-page-layout{grid-template-columns:1fr}.artifact-canvas-page{aspect-ratio:4/5}.artifact-stage-tabs button{min-width:0;flex:1 1 120px}}
+  .report-center-tabs{margin:12px 18px 0;align-self:start}.aorist-workbench[data-current-work-layer="reports"] .artifact-review-workbench{box-sizing:border-box;height:calc(100vh - 164px);min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}.aorist-workbench[data-current-work-layer="reports"] .artifact-review-grid{min-height:0}.aorist-workbench[data-current-work-layer="reports"] .artifact-review-side{align-self:start}@media(max-width:720px){.aorist-workbench[data-current-work-layer="reports"] .artifact-review-workbench{height:calc(100vh - 152px)}}
   .report-center-layout{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);gap:18px}.report-list-panel,.report-detail-panel{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.92);box-shadow:0 10px 24px rgba(15,23,42,.045)}.report-list-panel,.report-detail-panel{padding:16px}.report-list-panel header{margin-bottom:12px}.report-list-panel header strong{display:block;color:#111827;font-size:15px}.report-list-panel header span{display:block;margin-top:4px;color:#7b8494;font-size:12px}.report-card-list{display:grid;gap:10px}.report-card-list button{width:100%;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;text-align:left;cursor:pointer}.report-card-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.18)}.report-card-list span,.report-detail-panel header>em{display:inline-flex;align-items:center;width:max-content;padding:5px 10px;border-radius:999px;background:#f3f4f6;color:#111827;font-size:12px;font-style:normal}.report-card-list strong{display:block;margin-top:12px;color:#111827;font-size:16px}.report-card-list p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.55}.report-card-list em{display:block;margin-top:12px;color:#111827;font-size:12px;font-style:italic}.report-detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.report-detail-panel header span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.report-detail-panel header strong{display:block;margin-top:7px;color:#111827;font-size:22px;line-height:1.25}.report-detail-panel header p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.7}.report-detail-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}.report-detail-summary article,.report-detail-meta div{padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}.report-detail-summary span,.report-detail-meta span,.report-detail-body>span{display:block;color:#7b8494;font-size:11px}.report-detail-summary strong,.report-detail-meta strong{display:block;margin-top:6px;color:#111827;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail-body{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.report-detail-body p{margin:10px 0 0;color:#374151;font-size:13px;line-height:1.75}.report-detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.report-detail-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:14px}.report-detail-actions button{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid #dbe4ef;border-radius:9px;background:#fff;color:#1f2937;font-size:12px;cursor:pointer}.report-detail-actions button:hover{border-color:#93c5fd;background:#f8fbff}.report-detail-actions button.danger{border-color:#fecaca;color:#b91c1c;background:#fff7f7}@media(max-width:1100px){.report-center-layout{grid-template-columns:1fr}.report-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.report-detail-summary,.report-detail-meta{grid-template-columns:1fr}}
 
   .detail-empty{padding:18px;border:1px dashed #cbd5e1;border-radius:16px;background:rgba(248,250,252,.78);color:#5f6774}.detail-empty strong{display:block;color:#111827}.detail-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}.detail-modal{width:min(840px,calc(100vw - 44px));padding:18px}.detail-modal>.detail-panel{margin-top:14px;background:rgba(255,255,255,.88)}
@@ -11038,6 +11639,101 @@
 
   .project-matter-card {
     border-radius: 10px;
+  }
+
+  .project-matter-card {
+    position: relative;
+    gap: 16px;
+    padding: 16px;
+    overflow: visible;
+  }
+
+  .project-matter-card__open {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    flex: 1;
+    min-width: 0;
+    gap: 16px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .project-card-more {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    margin-top: 6px;
+    padding: 0;
+    opacity: 0;
+    transition: opacity .16s ease;
+  }
+
+  .project-matter-card:hover .project-card-more,
+  .project-card-more:focus-within {
+    opacity: 1;
+  }
+
+  .project-card-more__trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--aorist-muted);
+  }
+
+  .project-card-more__trigger:hover,
+  .project-card-more__trigger[aria-expanded="true"] {
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg-soft);
+    color: var(--aorist-ink);
+  }
+
+  .project-card-action-menu {
+    position: absolute;
+    top: 42px;
+    right: 10px;
+    z-index: 6;
+    display: grid;
+    min-width: 128px;
+    padding: 5px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, .14);
+  }
+
+  .project-card-action-menu button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--aorist-ink);
+    font-size: 12px;
+    text-align: left;
+  }
+
+  .project-card-action-menu button:hover {
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .project-card-action-menu button.danger {
+    color: #b42318;
+  }
+
+  .project-card-action-menu button.danger:hover {
+    background: #fff1f3;
   }
 
   .project-card-title {
@@ -17212,6 +17908,38 @@
     width: min(780px, calc(100vw - 44px));
   }
 
+  .automation-scheduler-note {
+    margin: 0;
+    padding: 9px 10px;
+    border: 1px solid #dbe4ef;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .automation-failure-todo {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    align-items: center;
+  }
+
+  .automation-failure-todo input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--aorist-primary);
+  }
+
+  .automation-failure-todo em {
+    grid-column: 1 / -1;
+    color: #7b8494;
+    font-size: 11px;
+    font-style: normal;
+    line-height: 1.4;
+  }
+
   @media (max-width: 720px) {
     .automation-overview,
     .automation-task-list {
@@ -19545,4 +20273,597 @@
   .shell .config-modal.schedule-modal > footer{margin-top:0;padding:12px 22px;border-top:1px solid #edf0f5;background:#fff}
   .shell .calendar-page > .aorist-stats{grid-template-columns:repeat(3,minmax(0,1fr));width:100%}
   .shell .calendar-page > .aorist-stats article{min-width:0}
-  @media(max-width:720px){.shell .calendar-page > .aorist-stats,.shell .config-modal.schedule-modal > .schedule-config-grid{grid-template-columns:1fr}}</style>
+  @media(max-width:720px){.shell .calendar-page > .aorist-stats,.shell .config-modal.schedule-modal > .schedule-config-grid{grid-template-columns:1fr}}
+
+  .model-management-page {
+    background: #f7f8fb;
+  }
+
+  .model-management-page > * {
+    width: min(1120px, 100%);
+    margin-inline: auto;
+  }
+
+  .model-management-toolbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 4px 0 18px;
+    border-bottom: 1px solid #e4e7ec;
+  }
+
+  .model-management-toolbar > div:first-child {
+    min-width: 0;
+  }
+
+  .model-management-toolbar span {
+    color: #667085;
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .model-management-toolbar strong {
+    display: block;
+    margin-top: 4px;
+    color: #101828;
+    font-size: 22px;
+    line-height: 1.25;
+    letter-spacing: -0.025em;
+  }
+
+  .model-management-toolbar p {
+    max-width: 680px;
+    margin: 7px 0 0;
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .model-management-toolbar__actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  .model-management-toolbar__actions button,
+  .model-provider-default-control button,
+  .model-provider-actions button,
+  .model-management-page .detail-empty button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 13px;
+    border: 1px solid #d0d5dd;
+    border-radius: 9px;
+    background: #ffffff;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .model-management-toolbar__actions button.primary {
+    border-color: #101828;
+    background: #101828;
+    color: #ffffff;
+  }
+
+  .model-management-toolbar__actions button:hover:not(:disabled),
+  .model-provider-default-control button:hover:not(:disabled),
+  .model-provider-actions button:hover,
+  .model-management-page .detail-empty button:hover {
+    border-color: #98a2b3;
+    background: #f9fafb;
+  }
+
+  .model-management-toolbar__actions button.primary:hover:not(:disabled) {
+    border-color: #344054;
+    background: #344054;
+  }
+
+  .model-management-toolbar__actions button:disabled,
+  .model-provider-default-control button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .model-management-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .model-management-summary article {
+    min-width: 0;
+    padding: 13px 15px;
+    border: 1px solid #e4e7ec;
+    border-radius: 12px;
+    background: #ffffff;
+  }
+
+  .model-management-summary article.needs-attention {
+    border-color: #fed7aa;
+    background: #fffaf5;
+  }
+
+  .model-management-summary span,
+  .model-management-summary em {
+    display: block;
+    color: #667085;
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .model-management-summary strong {
+    display: block;
+    margin: 5px 0 2px;
+    color: #101828;
+    font-size: 23px;
+    line-height: 1;
+  }
+
+  .model-inline-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #abefc6;
+    border-radius: 10px;
+    background: #ecfdf3;
+    color: #067647;
+    font-size: 12px;
+  }
+
+  .model-management-controls {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) auto auto;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+  }
+
+  .model-provider-search {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    height: 38px;
+    padding: 0 11px;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #667085;
+  }
+
+  .model-provider-search input {
+    min-width: 0;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #101828;
+    font-size: 12px;
+  }
+
+  .model-provider-filters {
+    display: flex;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+    background: #ffffff;
+  }
+
+  .model-provider-filters button {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #667085;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .model-provider-filters button.active {
+    background: #101828;
+    color: #ffffff;
+  }
+
+  .model-management-controls > span {
+    color: #667085;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .model-provider-list {
+    margin-top: 12px;
+    overflow: visible;
+    border: 1px solid #dfe3e8;
+    border-radius: 13px;
+    background: #ffffff;
+  }
+
+  .model-provider-row {
+    min-width: 0;
+    padding: 15px 17px;
+    border-bottom: 1px solid #eaecf0;
+  }
+
+  .model-provider-row:last-child {
+    border-bottom: 0;
+  }
+
+  .model-provider-row.requires-attention {
+    box-shadow: inset 3px 0 #f79009;
+  }
+
+  .model-provider-row > header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .model-provider-identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .model-provider-identity > span,
+  .model-provider-identity > b {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .model-provider-identity > span.configured {
+    background: #ecfdf3;
+    color: #067647;
+  }
+
+  .model-provider-identity > span.keyless {
+    background: #eff8ff;
+    color: #175cd3;
+  }
+
+  .model-provider-identity > span.missing {
+    background: #fff4ed;
+    color: #b54708;
+  }
+
+  .model-provider-identity > div {
+    min-width: 0;
+  }
+
+  .model-provider-identity strong,
+  .model-provider-identity em {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .model-provider-identity strong {
+    color: #101828;
+    font-size: 14px;
+  }
+
+  .model-provider-identity em {
+    margin-top: 3px;
+    color: #667085;
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .model-provider-identity > b {
+    max-width: 300px;
+    overflow: hidden;
+    background: #f2f4f7;
+    color: #344054;
+    text-overflow: ellipsis;
+  }
+
+  .model-provider-actions {
+    position: relative;
+  }
+
+  .model-provider-actions summary,
+  .model-provider-details summary {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .model-provider-actions summary::-webkit-details-marker,
+  .model-provider-details summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .model-provider-actions summary {
+    gap: 5px;
+    min-height: 32px;
+    padding: 0 9px;
+    border: 1px solid #d0d5dd;
+    border-radius: 8px;
+    color: #475467;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .model-provider-actions[open] summary {
+    border-color: #98a2b3;
+  }
+
+  .model-provider-actions[open] summary :global(svg),
+  .model-provider-details[open] summary > :global(svg) {
+    transform: rotate(180deg);
+  }
+
+  .model-provider-actions > div {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 8;
+    display: grid;
+    gap: 4px;
+    width: 150px;
+    padding: 6px;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 12px 24px rgba(16, 24, 40, 0.12);
+  }
+
+  .model-provider-actions button {
+    justify-content: flex-start;
+    min-height: 32px;
+    width: 100%;
+    border: 0;
+  }
+
+  .model-provider-actions button.danger {
+    color: #b42318;
+  }
+
+  .model-provider-default-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 10px;
+    margin-top: 13px;
+    padding-left: 82px;
+  }
+
+  .model-provider-default-control label {
+    display: grid;
+    grid-template-columns: auto minmax(220px, 420px);
+    align-items: center;
+    justify-content: start;
+    gap: 10px;
+    min-width: 0;
+    color: #667085;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .model-provider-default-control select {
+    min-width: 0;
+    height: 36px;
+    padding: 0 30px 0 10px;
+    border: 1px solid #d0d5dd;
+    border-radius: 9px;
+    background: #ffffff;
+    color: #101828;
+    font-size: 12px;
+    text-overflow: ellipsis;
+  }
+
+  .model-provider-details {
+    margin: 12px 0 0 82px;
+    border-top: 1px solid #eaecf0;
+  }
+
+  .model-provider-details > summary {
+    gap: 7px;
+    min-height: 36px;
+    color: #475467;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .model-provider-details > summary span {
+    margin-right: auto;
+    color: #98a2b3;
+    font-weight: 450;
+  }
+
+  .model-provider-details > div {
+    display: grid;
+    gap: 12px;
+    padding: 3px 0 4px;
+  }
+
+  .model-provider-details dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 18px;
+    margin: 0;
+  }
+
+  .model-provider-details dl div {
+    min-width: 0;
+  }
+
+  .model-provider-details dt,
+  .model-provider-models > span {
+    color: #98a2b3;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .model-provider-details dd {
+    margin: 3px 0 0;
+    overflow-wrap: anywhere;
+    color: #344054;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .model-provider-models > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 7px;
+  }
+
+  .model-provider-models > div > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 4px 8px;
+    overflow: hidden;
+    border: 1px solid #e4e7ec;
+    border-radius: 999px;
+    background: #f9fafb;
+    color: #475467;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .model-provider-models > div > span.current {
+    border-color: #b2ccff;
+    background: #eff4ff;
+    color: #3538cd;
+  }
+
+  .model-management-page button:focus-visible,
+  .model-management-page select:focus-visible,
+  .model-management-page summary:focus-visible,
+  .model-provider-search:focus-within {
+    outline: 2px solid #2e90fa;
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 900px) {
+    .model-management-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .model-management-toolbar__actions {
+      justify-content: flex-end;
+    }
+
+    .model-management-controls {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .model-management-controls > span {
+      grid-column: 1 / -1;
+      justify-self: end;
+    }
+
+    .model-provider-default-control,
+    .model-provider-details {
+      padding-left: 0;
+      margin-left: 0;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .model-management-page {
+      padding: 14px;
+    }
+
+    .model-management-summary,
+    .model-management-controls,
+    .model-provider-default-control,
+    .model-provider-details dl {
+      grid-template-columns: 1fr;
+    }
+
+    .model-management-toolbar__actions,
+    .model-management-toolbar__actions button,
+    .model-provider-default-control button {
+      width: 100%;
+    }
+
+    .model-management-controls > span {
+      grid-column: auto;
+      justify-self: start;
+    }
+
+    .model-provider-filters {
+      width: 100%;
+    }
+
+    .model-provider-filters button {
+      flex: 1 1 0;
+    }
+
+    .model-provider-row {
+      padding: 14px;
+    }
+
+    .model-provider-identity {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .model-provider-identity > div {
+      flex: 1 1 140px;
+    }
+
+    .model-provider-identity > b {
+      order: 3;
+      width: 100%;
+      max-width: none;
+      white-space: normal;
+    }
+
+    .model-provider-default-control label {
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+
+    .model-provider-default-control select {
+      width: 100%;
+    }
+
+    .model-provider-details > summary span {
+      display: none;
+    }
+
+    .model-provider-actions > div {
+      right: 0;
+      width: min(170px, calc(100vw - 56px));
+    }
+  }
+  .artifact-review-note{display:grid;gap:6px;margin-top:10px}.artifact-review-note span{color:#667085;font-size:11px;font-weight:650}.artifact-review-note textarea{width:100%;min-height:68px;resize:vertical;box-sizing:border-box;padding:8px 9px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#1f2937;font:inherit;font-size:12px;line-height:1.45}.artifact-review-note textarea:focus{outline:none;border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-review-note textarea:disabled,.artifact-style-list button:disabled,.artifact-gate-actions button:disabled{cursor:not-allowed;opacity:.55}.artifact-review-meta{margin:8px 0 0;color:#667085;font-size:11px;line-height:1.45}
+  .report-detail-meta{grid-template-columns:minmax(0,1.35fr) minmax(144px,.65fr);gap:8px;margin-top:12px}.report-detail-meta div{min-width:0;padding:10px 12px;border-radius:10px}.report-detail-meta span{font-size:10px;font-weight:600}.report-detail-meta strong{min-width:0;margin-top:4px;overflow:hidden;color:#344054;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0;text-overflow:ellipsis;white-space:nowrap}
+  .report-center-page .aorist-toolbar button:disabled,.report-detail-actions button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}.report-detail-actions .report-export-state{margin-right:auto;color:#b54708;font-size:11px;font-weight:600}.report-detail-actions .report-export-state.ready{color:#027a48}
+  .config-grid label.invalid>input,.config-grid label.invalid>textarea,.config-grid label.invalid>select,.config-grid label.invalid .material-file-picker{border-color:#fda4af;background:#fff7f7}.config-grid label.invalid>input:focus,.config-grid label.invalid>textarea:focus,.config-grid label.invalid>select:focus{outline:none;border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.12)}.config-modal>footer .config-validation-message{margin:0 auto 0 0;color:#b42318;font-size:12px;font-weight:600;line-height:1.35}
+  .resource-detail-modal footer button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}
+</style>

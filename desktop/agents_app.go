@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -156,12 +157,12 @@ func agentsPath() (string, error) {
 func loadAgents() ([]PersistentAgentView, error) {
 	path, err := agentsPath()
 	if err != nil {
-		return defaultAgents(), nil
+		return []PersistentAgentView{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultAgents(), nil
+			return []PersistentAgentView{}, nil
 		}
 		return nil, err
 	}
@@ -169,8 +170,13 @@ func loadAgents() ([]PersistentAgentView, error) {
 	if err := json.Unmarshal(b, &disk); err != nil {
 		return nil, err
 	}
-	agents := mergeDefaultAgents(disk.Agents)
+	agents := migrateLegacySeedAgents(disk.Agents)
 	sortAgents(agents)
+	if len(agents) != len(disk.Agents) {
+		if err := saveAgents(agents); err != nil {
+			return nil, err
+		}
+	}
 	return agents, nil
 }
 
@@ -203,21 +209,12 @@ func saveAgents(agents []PersistentAgentView) error {
 	return fileutil.ReplaceFile(tmpPath, path)
 }
 
-func defaultAgents() []PersistentAgentView {
-	now := time.Now().Format(time.RFC3339)
-	return []PersistentAgentView{
-		{ID: "code-review", Name: "代码审查 Agent", Role: "内置", Runs: 128, Status: "已启用", Desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", Avatar: "C", Provider: "OpenAI", Model: "GPT-4o", Tools: []string{"workspace", "git", "terminal"}, Skills: []string{"code-review"}, CoreFiles: []string{"AGENTS.md"}, BuiltIn: true, CreatedAt: now, UpdatedAt: now},
-		{ID: "research", Name: "资料研究 Agent", Role: "自定义", Runs: 64, Status: "已启用", Desc: "汇总文档、网页和项目资料，输出可执行摘要。", Avatar: "R", Provider: "OpenAI", Model: "GPT-4o", Tools: []string{"web", "workspace"}, Skills: []string{"research"}, CoreFiles: []string{"references"}, CreatedAt: now, UpdatedAt: now},
-		{ID: "automation", Name: "自动化 Agent", Role: "已蒸馏", Runs: 37, Status: "已停用", Desc: "把重复工作转为可配置的计划任务和监控。", Avatar: "A", Provider: "OpenAI", Model: "GPT-4o", Tools: []string{"terminal", "scheduler"}, Skills: []string{"workflow"}, CoreFiles: []string{"automations"}, CreatedAt: now, UpdatedAt: now},
-	}
-}
-
-func mergeDefaultAgents(saved []PersistentAgentView) []PersistentAgentView {
+func migrateLegacySeedAgents(saved []PersistentAgentView) []PersistentAgentView {
 	byID := map[string]PersistentAgentView{}
-	for _, agent := range defaultAgents() {
-		byID[agent.ID] = normalizeAgent(agent)
-	}
 	for _, agent := range saved {
+		if isLegacySeedAgent(agent) {
+			continue
+		}
 		agent = normalizeAgent(agent)
 		if agent.ID == "" {
 			continue
@@ -229,6 +226,38 @@ func mergeDefaultAgents(saved []PersistentAgentView) []PersistentAgentView {
 		out = append(out, agent)
 	}
 	return out
+}
+
+func isLegacySeedAgent(agent PersistentAgentView) bool {
+	if agent.CreatedAt == "" || agent.CreatedAt != agent.UpdatedAt {
+		return false
+	}
+	// runtime-mock-guard: allow-legacy-cleanup
+	modelIsLegacySeed := (strings.TrimSpace(agent.Provider) == "" && strings.TrimSpace(agent.Model) == "") ||
+		// runtime-mock-guard: allow-legacy-cleanup
+		(strings.EqualFold(strings.TrimSpace(agent.Provider), "OpenAI") && strings.EqualFold(strings.TrimSpace(agent.Model), "GPT-4o"))
+	if !modelIsLegacySeed {
+		return false
+	}
+	switch strings.TrimSpace(agent.ID) {
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "code-review":
+		// runtime-mock-guard: allow-legacy-cleanup
+		expected := PersistentAgentView{ID: "code-review", Name: "代码审查 Agent", Role: "内置", Runs: 128, Status: "已启用", Desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", Avatar: "C", Provider: agent.Provider, Model: agent.Model, Tools: []string{"workspace", "git", "terminal"}, Skills: []string{"code-review"}, CoreFiles: []string{"AGENTS.md"}, BuiltIn: true, CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt}
+		return reflect.DeepEqual(agent, expected)
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "research":
+		// runtime-mock-guard: allow-legacy-cleanup
+		expected := PersistentAgentView{ID: "research", Name: "资料研究 Agent", Role: "自定义", Runs: 64, Status: "已启用", Desc: "汇总文档、网页和项目资料，输出可执行摘要。", Avatar: "R", Provider: agent.Provider, Model: agent.Model, Tools: []string{"web", "workspace"}, Skills: []string{"research"}, CoreFiles: []string{"references"}, CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt}
+		return reflect.DeepEqual(agent, expected)
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "automation":
+		// runtime-mock-guard: allow-legacy-cleanup
+		expected := PersistentAgentView{ID: "automation", Name: "自动化 Agent", Role: "已蒸馏", Runs: 37, Status: "已停用", Desc: "把重复工作转为可配置的计划任务和监控。", Avatar: "A", Provider: agent.Provider, Model: agent.Model, Tools: []string{"terminal", "scheduler"}, Skills: []string{"workflow"}, CoreFiles: []string{"automations"}, CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt}
+		return reflect.DeepEqual(agent, expected)
+	default:
+		return false
+	}
 }
 
 func normalizeAgent(agent PersistentAgentView) PersistentAgentView {
@@ -248,7 +277,6 @@ func normalizeAgent(agent PersistentAgentView) PersistentAgentView {
 	agent.UpdatedAt = defaultString(agent.UpdatedAt, agent.CreatedAt)
 	return agent
 }
-
 func sortAgents(agents []PersistentAgentView) {
 	sort.SliceStable(agents, func(i, j int) bool {
 		if agents[i].BuiltIn != agents[j].BuiltIn {

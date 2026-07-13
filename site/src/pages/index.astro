@@ -2,213 +2,117 @@
 import Base from '../layouts/Base.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import SiteFooter from '../components/SiteFooter.astro';
-const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const R2 = 'https://dl.voltui.io/latest';
-const repo = 'https://github.com/zuohuadong/volt-gui';
 
-let goVer = '1.17';
-try {
-  const r = await fetch(`${R2}/latest.json`);
-  if (r.ok) { const d = await r.json(); goVer = String(d.version || '').replace(/^v/, '') || goVer; }
-} catch {}
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const repo = 'https://github.com/zuohuadong/volt-gui';
 ---
 <Base
-  title="VoltUI — Enterprise AI coding agent for your intranet"
-  titleEn="VoltUI — Enterprise AI coding agent for your intranet"
+  title="VoltUI — Enterprise AI coding agent for private networks"
+  titleEn="VoltUI — Enterprise AI coding agent for private networks"
   titleZh="VoltUI — 面向企业内网的 AI 编码 Agent"
   bodyClass="home-page"
-  description="Offline-first, multi-model AI coding agent for enterprise intranets. Single Go binary, Windows 10 ready, white-label deployment, MCP plugins, usage tracking. MIT licensed.">
+  description="VoltUI is an open-source AI coding agent and local workbench for enterprise intranets, private model gateways and prepared offline deployment.">
 
   <SiteHeader active="home" />
 
-  <a id="top"></a>
-  <header class="hero wrap">
-    <div class="kicker"><span class="dot"></span><span class="l-en">Open source · MIT · v{goVer} · Single Go binary</span><span class="l-zh">开源 · MIT · v{goVer} · 单 Go 二进制</span></div>
-    <h1>
-      <span class="l-en">AI coding agent for your <em>enterprise intranet</em>.</span>
-      <span class="l-zh">面向<em>企业内网</em>的 AI 编码 Agent。</span>
-    </h1>
-    <p class="lede">
-      <span class="l-en">Offline-first, multi-model, Windows-ready. Deploy one binary — every developer on your intranet is productive. DeepSeek, Qwen, GLM, Claude, any OpenAI-compatible endpoint.</span>
-      <span class="l-zh">离线优先、多模型、Windows 开箱即用。下发一个二进制，内网全员上手。支持 DeepSeek、通义千问、智谱 GLM、Claude 及任何 OpenAI 兼容端点。</span>
-    </p>
-    <div class="hi">
-      <div class="hi-tabs" role="tablist" aria-label="Installation method">
-        <button class="htab on" id="tab-npm" data-h="npm" role="tab" aria-selected="true" aria-controls="panel-npm">npm</button>
-        <button class="htab" id="tab-brew" data-h="brew" role="tab" aria-selected="false" aria-controls="panel-brew">Homebrew</button>
-        <button class="htab" id="tab-dl" data-h="dl" role="tab" aria-selected="false" aria-controls="panel-dl"><span class="l-en">Download</span><span class="l-zh">下载</span></button>
+  <main>
+    <section id="top" class="enterprise-hero wrap">
+      <div class="hero-copy">
+        <div class="kicker"><span class="dot"></span><span class="l-en">Open source · Local workbench · Private-network ready</span><span class="l-zh">开源 · 本地工作台 · 面向企业内网</span></div>
+        <h1><span class="l-en">Bring AI coding into your <em>enterprise boundary.</em></span><span class="l-zh">把 AI 编码能力带进<em>企业边界。</em></span></h1>
+        <p class="lede"><span class="l-en">Connect private model gateways, repository context, governed tools and local usage records in one prepared client — without making public SaaS or a cloud control plane part of the core workflow.</span><span class="l-zh">将内网模型网关、代码库上下文、受控工具与本地用量记录装进一个预配置客户端——核心工作流无需依赖公网 SaaS 或云控制面。</span></p>
+        <div class="hero-cta start">
+          <a class="btn btn-dark" href={base + '/enterprise/'}><span class="l-en">Plan an enterprise rollout</span><span class="l-zh">规划企业部署</span></a>
+          <a class="btn btn-line" href={base + '/capabilities/'}><span class="l-en">Review product capabilities</span><span class="l-zh">查看产品能力</span></a>
+        </div>
+        <p class="hero-note"><span class="l-en">Offline means administrators prepare the client, plugins and required runtimes in advance. Once connected to an internal model endpoint, the core workflow does not require public package managers, telemetry services or a cloud-only control plane.</span><span class="l-zh">这里的“离线”是指管理员提前准备客户端、插件与所需运行时；接入内部模型端点后，核心工作流不依赖公网包管理、遥测服务或仅云端可用的控制平面。</span></p>
       </div>
-      <div class="hi-body">
-        <div class="hpanel on" id="panel-npm" data-h="npm" role="tabpanel" aria-labelledby="tab-npm">
-          <div class="cmdgroup">
-            <div class="cmdtag pre"><span class="l-en">v{goVer} · Go binary</span><span class="l-zh">v{goVer} · Go 二进制</span></div>
-            <div class="cmdrow"><span class="hcmd"><span class="p">$ </span>npm i -g voltui@next</span><button class="cp" data-copy="npm i -g voltui@next"><span class="l-en">Copy</span><span class="l-zh">复制</span></button></div>
-            <div class="cmdrow"><span class="hcmd"><span class="p">$ </span>voltui</span><button class="cp" data-copy="voltui"><span class="l-en">Copy</span><span class="l-zh">复制</span></button></div>
-          </div>
-        </div>
-        <div class="hpanel" id="panel-brew" data-h="brew" role="tabpanel" aria-labelledby="tab-brew">
-          <div class="cmdgroup">
-            <div class="cmdtag pre"><span class="l-en">v{goVer} only</span><span class="l-zh">仅 v{goVer}</span></div>
-            <div class="cmdrow"><span class="hcmd"><span class="p">$ </span>brew install esengine/voltui/voltui</span><button class="cp" data-copy="brew install esengine/voltui/voltui"><span class="l-en">Copy</span><span class="l-zh">复制</span></button></div>
-            <div class="cmdrow"><span class="hcmd"><span class="p">$ </span>voltui</span><button class="cp" data-copy="voltui"><span class="l-en">Copy</span><span class="l-zh">复制</span></button></div>
-          </div>
-        </div>
-        <div class="hpanel" id="panel-dl" data-h="dl" role="tabpanel" aria-labelledby="tab-dl">
-          <div class="dlgroup">
-            <div class="dllabel"><span class="dot ok"></span><span class="l-en">Desktop · v{goVer}</span><span class="l-zh">桌面端 · v{goVer}</span></div>
-            <div class="dlrow">
-              <a class="hdl" href={`${R2}/VoltUI-darwin-arm64.zip`}>macOS · Apple Silicon</a>
-              <a class="hdl" href={`${R2}/VoltUI-windows-amd64-installer.exe`}>Windows · x64</a>
-              <a class="hdl" href={`${R2}/VoltUI-linux-amd64.tar.gz`}>Linux · x64</a>
-            </div>
-            <a class="dlmore" href={`${repo}/releases/latest`}><span class="l-en">All releases →</span><span class="l-zh">全部版本 →</span></a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </header>
 
-  <!-- Bento Grid: Product Capabilities -->
-  <section id="features" class="bento-section wrap reveal">
-    <div class="section-head">
-      <h2><span class="l-en">Built for how teams actually ship.</span><span class="l-zh">为团队实际交付而生。</span></h2>
-      <p class="section-sub"><span class="l-en">Every capability maps to a real pain point in enterprise AI adoption.</span><span class="l-zh">每个能力都直指企业 AI 落地的真实痛点。</span></p>
-      <a class="section-link" href={`${base}/capabilities/`}><span class="l-en">Explore all capabilities →</span><span class="l-zh">查看全部产品能力 →</span></a>
-    </div>
-    <div class="bento">
-      <!-- Hero card: multi-model -->
-      <div class="card hero-card span-2 row-2">
-        <div>
-          <span class="tag"><span class="l-en">Any model · one config</span><span class="l-zh">任意模型 · 一行配置</span></span>
-          <div class="icon">⇄</div>
-          <h3><span class="l-en">Multi-model, no lock-in</span><span class="l-zh">多模型，不绑定</span></h3>
-          <p><span class="l-en">DeepSeek, Qwen, GLM, Claude, MiMo, Ollama, vLLM — any OpenAI-compatible or Anthropic endpoint. One <code>[[providers]]</code> entry per model. Two-model collaboration (executor + planner) in a single line.</span><span class="l-zh">DeepSeek、通义千问、智谱 GLM、Claude、MiMo、Ollama、vLLM —— 任何 OpenAI 兼容或 Anthropic 端点。每个模型一个 <code>[[providers]]</code> 配置项。双模型协同（执行器 + 规划器）一行开启。</span></p>
+      <div class="hero-system" aria-label="VoltUI enterprise deployment overview">
+        <div class="system-head"><span class="system-status"></span><span class="l-en">Private-network workspace</span><span class="l-zh">企业内网工作区</span><small><span class="l-en">Prepared by platform team</span><span class="l-zh">由平台团队预先准备</span></small></div>
+        <div class="system-stack">
+          <div class="system-row primary"><span class="system-index">01</span><div><strong><span class="l-en">Prepared VoltUI client</span><span class="l-zh">预配置 VoltUI 客户端</span></strong><small>CLI / TUI · Wails Desktop</small></div><span class="system-tag"><span class="l-en">local</span><span class="l-zh">本地</span></span></div>
+          <div class="system-link"><span></span><b><span class="l-en">reviewed config &amp; policy</span><span class="l-zh">经审查的配置与策略</span></b><span></span></div>
+          <div class="system-row"><span class="system-index">02</span><div><strong><span class="l-en">Repository and approved tools</span><span class="l-zh">代码库与已批准工具</span></strong><small>workspace · MCP · skills · permissions</small></div><span class="system-tag"><span class="l-en">inside</span><span class="l-zh">边界内</span></span></div>
+          <div class="system-link"><span></span><b><span class="l-en">enterprise network</span><span class="l-zh">企业网络</span></b><span></span></div>
+          <div class="system-row dark"><span class="system-index">03</span><div><strong><span class="l-en">Internal model gateway</span><span class="l-zh">内部模型网关</span></strong><small>OpenAI-compatible · Anthropic · vLLM</small></div><span class="system-tag"><span class="l-en">your endpoint</span><span class="l-zh">自有端点</span></span></div>
         </div>
-        <div class="models">
-          <span>DeepSeek</span><span>Qwen</span><span>GLM</span><span>Claude</span><span>MiMo</span><span>Ollama</span><span>vLLM</span>
+        <div class="system-foot"><span>allow · ask · deny</span><span>usage.jsonl</span><span>VOLTUI.md</span></div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="VoltUI product facts">
+      <div class="wrap trust-grid">
+        <div><strong>MIT</strong><span><span class="l-en">open source</span><span class="l-zh">开源许可</span></span></div>
+        <div><strong>Go</strong><span><span class="l-en">single-binary CLI</span><span class="l-zh">单二进制 CLI</span></span></div>
+        <div><strong>Wails</strong><span><span class="l-en">prepared desktop client</span><span class="l-zh">预打包桌面端</span></span></div>
+        <div><strong>TOML</strong><span><span class="l-en">reviewable policy</span><span class="l-zh">可审查策略</span></span></div>
+        <div><strong>Local</strong><span><span class="l-en">usage and sessions</span><span class="l-zh">用量与会话</span></span></div>
+      </div>
+    </section>
+
+    <section id="value" class="wrap home-section reveal">
+      <div class="home-section-head">
+        <div><div class="eyebrow"><span class="l-en">Enterprise value</span><span class="l-zh">企业价值</span></div><h2><span class="l-en">A usable AI workbench, inside the constraints you already have.</span><span class="l-zh">在既有企业约束内，交付真正可用的 AI 工作台。</span></h2></div>
+        <p><span class="l-en">VoltUI focuses on the client-side contract: how models, code, tools, permissions and evidence meet at each developer endpoint.</span><span class="l-zh">VoltUI 聚焦客户端侧的工作契约：让模型、代码、工具、权限和证据在每个开发者终端汇合。</span></p>
+      </div>
+      <div class="value-grid mobile-rail">
+        <article><span class="value-no">01</span><h3><span class="l-en">Keep model choice portable</span><span class="l-zh">模型选择可迁移</span></h3><p><span class="l-en">Use private OpenAI-compatible or Anthropic endpoints without binding the workflow to one vendor.</span><span class="l-zh">接入企业自有的 OpenAI 兼容或 Anthropic 端点，不把工作流绑定到单一厂商。</span></p></article>
+        <article><span class="value-no">02</span><h3><span class="l-en">Prepare once, distribute safely</span><span class="l-zh">一次准备，受控分发</span></h3><p><span class="l-en">Package reviewed provider templates, tool policy, plugins and company identity for managed endpoints.</span><span class="l-zh">将经审查的 Provider 模板、工具策略、插件与企业品牌打包到受管终端。</span></p></article>
+        <article><span class="value-no">03</span><h3><span class="l-en">Make actions reviewable</span><span class="l-zh">让操作可审查</span></h3><p><span class="l-en">Plan mode, allow/ask/deny rules, workspace confinement and checkpoints keep changes visible and reversible.</span><span class="l-zh">计划模式、Allow/Ask/Deny、工作区约束与检查点让变更可见、可回退。</span></p></article>
+        <article><span class="value-no">04</span><h3><span class="l-en">Measure locally</span><span class="l-zh">在本地衡量</span></h3><p><span class="l-en">Record model-call usage without storing conversation content, and report by day, model, source and surface.</span><span class="l-zh">不存储会话内容，在本地记录模型调用，并按天、模型、来源与入口出报表。</span></p></article>
+      </div>
+    </section>
+
+    <section class="network-section reveal">
+      <div class="wrap network-grid">
+        <div class="section-copy"><div class="eyebrow"><span class="l-en">Deployment topology</span><span class="l-zh">企业网络拓扑</span></div><h2><span class="l-en">Public internet is a preparation path, not a runtime dependency.</span><span class="l-zh">公网用于准备，不成为运行时依赖。</span></h2><p><span class="l-en">Administrators can mirror installers, plugin packages and optional runtimes into an internal software repository. Developers then work through the prepared client and the enterprise model gateway.</span><span class="l-zh">管理员可将安装包、插件包和可选运行时镜像到内部软件仓库。开发者随后通过预配置客户端与企业模型网关工作。</span></p><a class="section-link" href={base + '/enterprise/'}><span class="l-en">See delivery options and boundaries →</span><span class="l-zh">查看交付方式与能力边界 →</span></a></div>
+        <div class="network-map">
+          <div class="network-zone prep"><span class="zone-label"><span class="l-en">Preparation zone</span><span class="l-zh">准备区</span></span><div><strong><span class="l-en">Release artifacts</span><span class="l-zh">发布制品</span></strong><small>client · plugins · optional runtimes</small></div><div><strong><span class="l-en">Internal software repository</span><span class="l-zh">内部软件仓库</span></strong><small>mirrored and reviewed by administrators</small></div></div>
+          <div class="network-gate"><span><span class="l-en">controlled import</span><span class="l-zh">受控导入</span></span></div>
+          <div class="network-zone runtime"><span class="zone-label"><span class="l-en">Enterprise runtime zone</span><span class="l-zh">企业运行区</span></span><div><strong><span class="l-en">Developer endpoints</span><span class="l-zh">开发者终端</span></strong><small>prepared CLI or Wails Desktop</small></div><div class="emphasis"><strong><span class="l-en">Internal model gateway</span><span class="l-zh">内部模型网关</span></strong><small>credentials injected at deployment</small></div></div>
         </div>
       </div>
+    </section>
 
-      <!-- Usage card -->
-      <div class="card usage-card row-2">
-        <span class="demo-pill"><span class="l-en">Demo</span><span class="l-zh">演示</span></span>
-        <div class="icon">◇</div>
-        <h3><span class="l-en">Usage & cost visible</span><span class="l-zh">用量与成本可见</span></h3>
-        <p><span class="l-en">Per-turn token accounting with cache hit/miss breakdown. <code>voltui usage</code> reports by day, model, and source.</span><span class="l-zh">逐回合 token 统计，缓存命中/未命中拆分。<code>voltui usage</code> 按天、模型、来源出报表。</span></p>
-        <div class="metrics">
-          <div class="metric"><div class="v">Hit / Miss</div><div class="l"><span class="l-en">cache breakdown</span><span class="l-zh">缓存命中拆分</span></div></div>
-          <div class="metric"><div class="v">¥ · $</div><div class="l"><span class="l-en">cost by currency</span><span class="l-zh">按币种预估成本</span></div></div>
+    <section class="wrap home-section reveal">
+      <div class="home-section-head compact"><div><div class="eyebrow"><span class="l-en">Roles and outcomes</span><span class="l-zh">角色与结果</span></div><h2><span class="l-en">One rollout, clear responsibilities.</span><span class="l-zh">一套部署，明确每个角色的责任。</span></h2></div></div>
+      <div class="role-matrix" role="table" aria-label="Enterprise role capability matrix">
+        <div class="matrix-row head" role="row"><span role="columnheader"><span class="l-en">Role</span><span class="l-zh">角色</span></span><span role="columnheader"><span class="l-en">What they prepare or use</span><span class="l-zh">准备或使用什么</span></span><span role="columnheader"><span class="l-en">Product outcome</span><span class="l-zh">产品结果</span></span></div>
+        <div class="matrix-row" role="row"><strong role="cell"><span class="l-en">Platform administrator</span><span class="l-zh">平台管理员</span></strong><span role="cell"><span class="l-en">Provider templates, credential sources, permissions, approved plugins</span><span class="l-zh">Provider 模板、凭据源、权限、已批准插件</span></span><span role="cell"><span class="l-en">Repeatable endpoint onboarding</span><span class="l-zh">可复制的终端接入</span></span></div>
+        <div class="matrix-row" role="row"><strong role="cell"><span class="l-en">Security / compliance</span><span class="l-zh">安全 / 合规</span></strong><span role="cell"><span class="l-en">Allow/ask/deny rules, sandbox boundary, local usage records</span><span class="l-zh">Allow/Ask/Deny、沙箱边界、本地用量记录</span></span><span role="cell"><span class="l-en">Reviewable operating contract</span><span class="l-zh">可审查的运行契约</span></span></div>
+        <div class="matrix-row" role="row"><strong role="cell"><span class="l-en">Developer</span><span class="l-zh">开发者</span></strong><span role="cell"><span class="l-en">Repository sessions, tools, checkpoints, memory and model selection</span><span class="l-zh">代码库会话、工具、检查点、记忆与模型选择</span></span><span role="cell"><span class="l-en">A ready-to-work local agent</span><span class="l-zh">开箱可用的本地 Agent</span></span></div>
+      </div>
+    </section>
+
+    <section class="wrap home-section reveal">
+      <div class="home-section-head"><div><div class="eyebrow"><span class="l-en">Typical scenarios</span><span class="l-zh">典型场景</span></div><h2><span class="l-en">Start where private code and internal systems meet.</span><span class="l-zh">从私有代码与内部系统交汇处开始。</span></h2></div><p><span class="l-en">The same local kernel supports focused repository work through terminal, desktop and approved enterprise messaging gateways.</span><span class="l-zh">同一本地内核可通过终端、桌面端与已批准的企业 IM 网关承载代码库工作。</span></p></div>
+      <div class="scenario-grid mobile-rail">
+        <article><span class="scenario-label">CLI / TUI</span><h3><span class="l-en">Repository-native engineering</span><span class="l-zh">贴近代码库的工程工作</span></h3><p><span class="l-en">Understand, plan, edit, test and rewind without leaving the terminal workflow.</span><span class="l-zh">在终端工作流中完成理解、规划、编辑、测试与回退。</span></p></article>
+        <article><span class="scenario-label">Wails Desktop</span><h3><span class="l-en">Managed local workbench</span><span class="l-zh">受管本地工作台</span></h3><p><span class="l-en">Use prepared providers, rich transcripts, diffs, approvals and workspace resources in a packaged client.</span><span class="l-zh">在预打包客户端中使用预置 Provider、富会话、差异、审批与工作区资源。</span></p></article>
+        <article><span class="scenario-label">MCP / IM</span><h3><span class="l-en">Connect approved internal services</span><span class="l-zh">连接已批准的内部服务</span></h3><p><span class="l-en">Expose controlled tools and task entry points without turning them into a public cloud dependency.</span><span class="l-zh">接入受控工具与任务入口，而不把它们变成公网云依赖。</span></p></article>
+      </div>
+    </section>
+
+    <section class="boundary-section reveal">
+      <div class="wrap">
+        <div class="home-section-head"><div><div class="eyebrow"><span class="l-en">Current product boundary</span><span class="l-zh">当前产品边界</span></div><h2><span class="l-en">Be precise about what is ready today.</span><span class="l-zh">明确区分今天可用与尚未承诺。</span></h2></div><p><span class="l-en">VoltUI is a local enterprise workbench and distribution foundation. It is not presented as a complete centralized enterprise suite.</span><span class="l-zh">VoltUI 是本地企业工作台与分发基础，不宣称已经是完整的中心化企业套件。</span></p></div>
+        <div class="boundary-grid">
+          <article class="boundary yes"><h3><span class="l-en">Available foundation</span><span class="l-zh">已具备的基础</span></h3><ul><li><span class="l-en">Private model endpoints and multi-model configuration</span><span class="l-zh">私有模型端点与多模型配置</span></li><li><span class="l-en">Prepared CLI and Wails desktop delivery</span><span class="l-zh">预配置 CLI 与 Wails 桌面端交付</span></li><li><span class="l-en">Permissions, workspace sandbox and checkpoints</span><span class="l-zh">权限、工作区沙箱与检查点</span></li><li><span class="l-en">Local usage ledger without conversation content</span><span class="l-zh">不含会话内容的本地用量账本</span></li></ul></article>
+          <article class="boundary no"><h3><span class="l-en">Not claimed as complete</span><span class="l-zh">当前不宣称完整提供</span></h3><ul><li><span class="l-en">Centralized organization-wide audit console</span><span class="l-zh">组织级中心化审计控制台</span></li><li><span class="l-en">Team quotas, GPU or cluster observability</span><span class="l-zh">团队配额、GPU 或集群观测</span></li><li><span class="l-en">Zero-preparation use in a fully air-gapped network</span><span class="l-zh">完全隔离网络中的零准备使用</span></li><li><span class="l-en">CodeGraph as a default offline runtime</span><span class="l-zh">将 CodeGraph 作为默认离线运行时</span></li></ul></article>
         </div>
-        <div class="bars">
-          <div class="bar-row"><span class="name">deepseek-v4</span><div class="bar"><div class="fill" style="width:52%"></div></div><span class="amt">52%</span></div>
-          <div class="bar-row"><span class="name">qwen3-235b</span><div class="bar"><div class="fill" style="width:28%"></div></div><span class="amt">28%</span></div>
-          <div class="bar-row"><span class="name">glm-4-plus</span><div class="bar"><div class="fill" style="width:14%"></div></div><span class="amt">14%</span></div>
-        </div>
-        <a class="card-link" href={`${base}/usage/`}><span class="l-en">Open compute & usage →</span><span class="l-zh">查看算力用量 →</span></a>
+        <p class="boundary-note"><strong>CodeGraph</strong> <span class="l-en">is an optional runtime that must be installed or pre-cached by administrators for offline use. Core repository work does not depend on it.</span><span class="l-zh">是可选运行时；离线使用时需要管理员提前安装或预缓存。核心代码库工作不依赖它。</span></p>
       </div>
+    </section>
 
-      <!-- CodeGraph -->
-      <div class="card">
-        <div class="icon">⬡</div>
-        <h3><span class="l-en">Code intelligence</span><span class="l-zh">代码智能</span></h3>
-        <p><span class="l-en">Tree-sitter symbol/call-graph search — no embedding service, zero API cost. Auto-indexed on first use.</span><span class="l-zh">基于 tree-sitter 的符号/调用图搜索 —— 无需嵌入服务，零 API 成本。首次使用自动索引。</span></p>
+    <section class="wrap reveal">
+      <div class="rollout-cta">
+        <div><span class="eyebrow"><span class="l-en">Three-step rollout</span><span class="l-zh">三步落地</span></span><h2><span class="l-en">Prepare the endpoint contract, then scale it.</span><span class="l-zh">先准备终端契约，再逐步复制。</span></h2></div>
+        <ol><li><b>1</b><span><strong><span class="l-en">Connect the internal model</span><span class="l-zh">接入内部模型</span></strong><small><span class="l-en">Validate endpoint, model and credential injection.</span><span class="l-zh">验证端点、模型与凭据注入。</span></small></span></li><li><b>2</b><span><strong><span class="l-en">Prepare client and policy</span><span class="l-zh">准备客户端与策略</span></strong><small><span class="l-en">Bundle configuration, approved tools, plugins and optional runtimes.</span><span class="l-zh">打包配置、已批准工具、插件与可选运行时。</span></small></span></li><li><b>3</b><span><strong><span class="l-en">Pilot, verify and distribute</span><span class="l-zh">试点、验证并分发</span></strong><small><span class="l-en">Start with one team and expand from observed evidence.</span><span class="l-zh">从一个团队开始，基于实际证据扩展。</span></small></span></li></ol>
+        <div class="cta-actions"><a class="btn btn-white" href={base + '/enterprise/'}><span class="l-en">Open deployment guide</span><span class="l-zh">打开部署指南</span></a><a class="btn btn-out" href={base + '/docs/'}><span class="l-en">Read technical docs</span><span class="l-zh">阅读技术文档</span></a><a class="text-link" href={repo}>GitHub ↗</a></div>
       </div>
-
-      <!-- Checkpoints -->
-      <div class="card">
-        <div class="icon">↶</div>
-        <h3><span class="l-en">Checkpoints & rewind</span><span class="l-zh">检查点与回退</span></h3>
-        <p><span class="l-en">Snapshot-based edit safety net. Press Esc-Esc or <code>/rewind</code> to undo any change.</span><span class="l-zh">基于快照的编辑安全网。按 Esc-Esc 或 <code>/rewind</code> 撤销任何改动。</span></p>
-      </div>
-
-      <!-- Plan mode -->
-      <div class="card">
-        <div class="icon">☑</div>
-        <h3><span class="l-en">Plan mode + sandbox</span><span class="l-zh">计划模式 + 沙箱</span></h3>
-        <p><span class="l-en">Writers jailed to the workspace. <code>/plan</code> gates the session read-only until you approve.</span><span class="l-zh">写工具关进工作区。<code>/plan</code> 进只读门，批准前不写盘。</span></p>
-      </div>
-
-      <!-- MCP plugins -->
-      <div class="card">
-        <div class="icon">⬢</div>
-        <h3><span class="l-en">MCP plugins</span><span class="l-zh">MCP 插件</span></h3>
-        <p><span class="l-en">External tools over stdio, SSE, or streamable HTTP. Drop in an <code>.mcp.json</code> and go.</span><span class="l-zh">外部工具通过 stdio、SSE、streamable HTTP 接入。放一个 <code>.mcp.json</code> 即可。</span></p>
-      </div>
-
-      <!-- Skills -->
-      <div class="card">
-        <div class="icon">★</div>
-        <h3><span class="l-en">Skills & hooks</span><span class="l-zh">技能与钩子</span></h3>
-        <p><span class="l-en">Markdown skill scripts with isolated tools. PreToolUse / PostToolUse / Stop hooks for workflow automation.</span><span class="l-zh">Markdown 技能脚本与隔离工具。PreToolUse / PostToolUse / Stop 钩子用于工作流自动化。</span></p>
-      </div>
-
-      <!-- Memory -->
-      <div class="card">
-        <div class="icon">◈</div>
-        <h3><span class="l-en">Memory across sessions</span><span class="l-zh">跨会话记忆</span></h3>
-        <p><span class="l-en"><code>VOLTUI.md</code> hierarchy + auto-memory store, folded into the cache-stable prefix so context carries across sessions.</span><span class="l-zh"><code>VOLTUI.md</code> 层级 + 自动记忆存储，折叠进缓存稳定前缀，跨会话保持上下文。</span></p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Enterprise Section -->
-  <section id="enterprise" class="ent-section wrap reveal">
-    <div class="section-head">
-      <h2><span class="l-en">Deploy once. Everyone's productive.</span><span class="l-zh">部署一次，全员上手。</span></h2>
-      <p class="section-sub"><span class="l-en">Built for enterprises running LLMs behind a firewall.</span><span class="l-zh">为在防火墙后运行大模型的企业打造。</span></p>
-      <a class="section-link" href={`${base}/enterprise/`}><span class="l-en">See the enterprise rollout →</span><span class="l-zh">查看企业部署方案 →</span></a>
-    </div>
-    <div class="ent-grid">
-      <div class="card">
-        <div class="icon">⚙</div>
-        <h3><span class="l-en">Pre-packaged deployment</span><span class="l-zh">打包即部署</span></h3>
-        <p><span class="l-en">Preconfigure the model endpoint and operating policy, then inject credentials through environment variables or the credential store at deployment. Distribute a ready-to-run package without hardcoding keys.</span><span class="l-zh">预置模型地址与运行策略，在部署时通过环境变量或凭据存储注入密钥。分发开箱即用的安装包，不在二进制中硬编码 Key。</span></p>
-      </div>
-      <div class="card">
-        <div class="icon">🔋</div>
-        <h3><span class="l-en">Offline-first</span><span class="l-zh">离线优先</span></h3>
-        <p><span class="l-en">No npm, no auto-downloads, no telemetry calls. Works entirely behind corporate firewalls. <code>CGO_ENABLED=0</code> static binary.</span><span class="l-zh">无 npm、无自动下载、无遥测回传，完全在防火墙内运行。<code>CGO_ENABLED=0</code> 静态二进制。</span></p>
-      </div>
-      <div class="card">
-        <div class="icon">⌘</div>
-        <h3><span class="l-en">Windows 10 first</span><span class="l-zh">Windows 10 优先</span></h3>
-        <p><span class="l-en">Edge (Chromium) pre-installed on Win10 — <code>browser_navigate</code> works out of the box. Windows path detection, RDP/VDI friendly.</span><span class="l-zh">Win10 自带 Edge（Chromium 内核）—— <code>browser_navigate</code> 零配置可用。Windows 路径检测，RDP/VDI 友好。</span></p>
-      </div>
-      <div class="card">
-        <div class="icon">◇</div>
-        <h3><span class="l-en">White-label / OEM</span><span class="l-zh">白标 / OEM</span></h3>
-        <p><span class="l-en">Replace product name and logos via config — no rebuild. <code>[brand] name</code>, <code>logo_path</code>, <code>VOLTUI_BRAND_NAME</code> env var.</span><span class="l-zh">通过配置替换产品名和 Logo —— 无需重新编译。<code>[brand] name</code>、<code>logo_path</code>、<code>VOLTUI_BRAND_NAME</code> 环境变量。</span></p>
-      </div>
-      <div class="card">
-        <div class="icon">☰</div>
-        <h3><span class="l-en">Config-driven</span><span class="l-zh">配置驱动</span></h3>
-        <p><span class="l-en">Providers, tools, permissions, plugins — all in <code>voltui.toml</code>. No hardcoded models. One file per team, checked into the repo.</span><span class="l-zh">Provider、工具、权限、插件 —— 全部在 <code>voltui.toml</code> 中声明。无硬编码模型。一个文件管一个团队，直接提交仓库。</span></p>
-      </div>
-      <div class="card">
-        <div class="icon">⬗</div>
-        <h3><span class="l-en">IM bot integration</span><span class="l-zh">IM 机器人集成</span></h3>
-        <p><span class="l-en">QQ, Feishu, WeChat bot gateways built-in. Developers trigger tasks and approve actions directly from IM.</span><span class="l-zh">内置 QQ、飞书、微信机器人网关。开发者直接在 IM 中触发任务和审批操作。</span></p>
-      </div>
-    </div>
-  </section>
-
-  <!-- CTA Band -->
-  <section id="install" class="wrap reveal">
-    <div class="cta-band">
-      <h2><span class="l-en">Start in one line.</span><span class="l-zh">一行开始。</span></h2>
-      <p><span class="l-en">Point it at your internal model endpoint and leave it running.</span><span class="l-zh">指向你的内部模型端点，然后让它跑着。</span></p>
-      <div class="cta-row">
-        <a class="btn btn-white" href={`${base}/docs/`}><span class="l-en">Read the docs</span><span class="l-zh">阅读文档</span></a>
-        <a class="btn btn-out" href={repo}><span class="l-en">Star on GitHub</span><span class="l-zh">GitHub 加星</span></a>
-      </div>
-      <div style="margin-top:28px">
-        <div class="cmdrow" style="display:inline-flex;align-items:center;gap:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:10px 14px">
-          <span class="hcmd" style="color:rgba(255,255,255,.85)"><span class="p" style="color:rgba(255,255,255,.3)">$ </span>npm i -g voltui@next</span>
-          <button class="cp" data-copy="npm i -g voltui@next" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.6)"><span class="l-en">Copy</span><span class="l-zh">复制</span></button>
-        </div>
-      </div>
-    </div>
-  </section>
+    </section>
+  </main>
 
   <SiteFooter />
 </Base>

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -22,62 +23,69 @@ import (
 const automationsFile = "automations.json"
 
 const (
-	automationStatusPending = "\u5f85\u914d\u7f6e"
-	automationStatusRunning = "\u8fd0\u884c\u4e2d"
-	automationStatusPaused  = "\u5df2\u6682\u505c"
-	automationStatusFailed  = "\u5931\u8d25"
-	automationStatusDone    = "\u5df2\u5b8c\u6210"
-	automationKindDefault   = "\u81ea\u5b9a\u4e49\u81ea\u52a8\u5316"
-	automationOwnerDefault  = "\u81ea\u52a8\u5316 Agent"
-	automationResultPending = "\u5f85\u8fd0\u884c"
-	automationLastRunNever  = "\u672a\u8fd0\u884c"
-	automationNextConfigure = "\u7b49\u5f85\u914d\u7f6e"
+	automationStatusPending  = "\u5f85\u914d\u7f6e"
+	automationStatusRunning  = "\u8fd0\u884c\u4e2d"
+	automationStatusPaused   = "\u5df2\u6682\u505c"
+	automationStatusDisabled = "\u5df2\u505c\u7528"
+	automationStatusFailed   = "\u5931\u8d25"
+	automationStatusDone     = "\u5df2\u5b8c\u6210"
+	automationKindDefault    = "\u81ea\u5b9a\u4e49\u81ea\u52a8\u5316"
+	automationOwnerDefault   = "\u81ea\u52a8\u5316 Agent"
+	automationResultPending  = "\u5f85\u8fd0\u884c"
+	automationLastRunNever   = "\u672a\u8fd0\u884c"
+	automationNextConfigure  = "\u7b49\u5f85\u914d\u7f6e"
 )
 
 type WorkbenchAutomationView struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Desc         string   `json:"desc"`
-	Status       string   `json:"status"`
-	Kind         string   `json:"kind"`
-	Owner        string   `json:"owner"`
-	StartedAtMs  int64    `json:"startedAtMs"`
-	Cadence      string   `json:"cadence"`
-	Schedule     string   `json:"schedule"`
-	ScheduleMode string   `json:"scheduleMode,omitempty"`
-	Scope        string   `json:"scope"`
-	Environment  string   `json:"environment"`
-	Command      string   `json:"command"`
-	NextRunAt    string   `json:"nextRunAt,omitempty"`
-	Result       string   `json:"result"`
-	LastRun      string   `json:"lastRun"`
-	NextRun      string   `json:"nextRun"`
-	Steps        []string `json:"steps"`
-	Logs         []string `json:"logs"`
-	CreatedAt    string   `json:"createdAt"`
-	UpdatedAt    string   `json:"updatedAt"`
+	ID                  string   `json:"id"`
+	Title               string   `json:"title"`
+	Desc                string   `json:"desc"`
+	Status              string   `json:"status"`
+	Kind                string   `json:"kind"`
+	Owner               string   `json:"owner"`
+	ProjectID           string   `json:"projectId,omitempty"`
+	ProjectName         string   `json:"projectName,omitempty"`
+	CreateTodoOnFailure bool     `json:"createTodoOnFailure"`
+	StartedAtMs         int64    `json:"startedAtMs"`
+	Cadence             string   `json:"cadence"`
+	Schedule            string   `json:"schedule"`
+	ScheduleMode        string   `json:"scheduleMode,omitempty"`
+	Scope               string   `json:"scope"`
+	Environment         string   `json:"environment"`
+	Command             string   `json:"command"`
+	NextRunAt           string   `json:"nextRunAt,omitempty"`
+	Result              string   `json:"result"`
+	LastRun             string   `json:"lastRun"`
+	NextRun             string   `json:"nextRun"`
+	Steps               []string `json:"steps"`
+	Logs                []string `json:"logs"`
+	CreatedAt           string   `json:"createdAt"`
+	UpdatedAt           string   `json:"updatedAt"`
 }
 
 type WorkbenchAutomationInput struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Desc         string   `json:"desc"`
-	Status       string   `json:"status"`
-	Kind         string   `json:"kind"`
-	Owner        string   `json:"owner"`
-	StartedAtMs  int64    `json:"startedAtMs"`
-	Cadence      string   `json:"cadence"`
-	Schedule     string   `json:"schedule"`
-	ScheduleMode string   `json:"scheduleMode"`
-	Scope        string   `json:"scope"`
-	Environment  string   `json:"environment"`
-	Command      string   `json:"command"`
-	NextRunAt    string   `json:"nextRunAt"`
-	Result       string   `json:"result"`
-	LastRun      string   `json:"lastRun"`
-	NextRun      string   `json:"nextRun"`
-	Steps        []string `json:"steps"`
-	Logs         []string `json:"logs"`
+	ID                  string   `json:"id"`
+	Title               string   `json:"title"`
+	Desc                string   `json:"desc"`
+	Status              string   `json:"status"`
+	Kind                string   `json:"kind"`
+	Owner               string   `json:"owner"`
+	ProjectID           string   `json:"projectId"`
+	ProjectName         string   `json:"projectName"`
+	CreateTodoOnFailure bool     `json:"createTodoOnFailure"`
+	StartedAtMs         int64    `json:"startedAtMs"`
+	Cadence             string   `json:"cadence"`
+	Schedule            string   `json:"schedule"`
+	ScheduleMode        string   `json:"scheduleMode"`
+	Scope               string   `json:"scope"`
+	Environment         string   `json:"environment"`
+	Command             string   `json:"command"`
+	NextRunAt           string   `json:"nextRunAt"`
+	Result              string   `json:"result"`
+	LastRun             string   `json:"lastRun"`
+	NextRun             string   `json:"nextRun"`
+	Steps               []string `json:"steps"`
+	Logs                []string `json:"logs"`
 }
 
 type automationsDiskFile struct {
@@ -179,6 +187,9 @@ func (a *App) RunAutomationNow(id string) (WorkbenchAutomationView, error) {
 		if automation.ID != id {
 			continue
 		}
+		if normalizeAutomationStatus(automation.Status) == automationStatusDisabled {
+			return WorkbenchAutomationView{}, errors.New("automation is disabled")
+		}
 		updated := executeAutomation(automation, time.Now(), false)
 		automations[i] = updated
 		sortAutomations(automations)
@@ -215,6 +226,29 @@ func saveAutomationInput(input WorkbenchAutomationInput) (WorkbenchAutomationVie
 			return WorkbenchAutomationView{}, errors.New("scheduled automation requires a valid next run time")
 		}
 	}
+	projectID := strings.TrimSpace(input.ProjectID)
+	projectName := strings.TrimSpace(input.ProjectName)
+	if projectID != "" {
+		projects, err := loadWorkbenchProjects()
+		if err != nil {
+			return WorkbenchAutomationView{}, err
+		}
+		matched := false
+		for _, project := range projects {
+			if project.ID != projectID {
+				continue
+			}
+			projectName = project.Name
+			matched = true
+			break
+		}
+		if !matched {
+			return WorkbenchAutomationView{}, errors.New("automation project not found")
+		}
+	}
+	if input.CreateTodoOnFailure && projectID == "" {
+		return WorkbenchAutomationView{}, errors.New("failure todo requires a project")
+	}
 	automations, err := loadAutomations()
 	if err != nil {
 		return WorkbenchAutomationView{}, err
@@ -229,27 +263,30 @@ func saveAutomationInput(input WorkbenchAutomationInput) (WorkbenchAutomationVie
 		startedAtMs = time.Now().UnixMilli()
 	}
 	next := WorkbenchAutomationView{
-		ID:           id,
-		Title:        title,
-		Desc:         strings.TrimSpace(input.Desc),
-		Status:       normalizeAutomationStatus(input.Status),
-		Kind:         defaultString(strings.TrimSpace(input.Kind), automationKindDefault),
-		Owner:        defaultString(strings.TrimSpace(input.Owner), automationOwnerDefault),
-		StartedAtMs:  startedAtMs,
-		Cadence:      strings.TrimSpace(input.Cadence),
-		Schedule:     defaultString(strings.TrimSpace(input.Schedule), automationScheduleLabel(scheduleMode)),
-		ScheduleMode: scheduleMode,
-		Scope:        strings.TrimSpace(input.Scope),
-		Environment:  defaultString(strings.TrimSpace(input.Environment), "local workspace"),
-		Command:      command,
-		NextRunAt:    nextRunAt,
-		Result:       defaultString(strings.TrimSpace(input.Result), automationResultPending),
-		LastRun:      defaultString(strings.TrimSpace(input.LastRun), automationLastRunNever),
-		NextRun:      defaultString(strings.TrimSpace(input.NextRun), automationNextRunLabel(scheduleMode, nextRunAt)),
-		Steps:        cleanAutomationLines(input.Steps),
-		Logs:         cleanAutomationLines(input.Logs),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:                  id,
+		Title:               title,
+		Desc:                strings.TrimSpace(input.Desc),
+		Status:              normalizeAutomationStatus(input.Status),
+		Kind:                defaultString(strings.TrimSpace(input.Kind), automationKindDefault),
+		Owner:               defaultString(strings.TrimSpace(input.Owner), automationOwnerDefault),
+		ProjectID:           projectID,
+		ProjectName:         projectName,
+		CreateTodoOnFailure: input.CreateTodoOnFailure,
+		StartedAtMs:         startedAtMs,
+		Cadence:             strings.TrimSpace(input.Cadence),
+		Schedule:            defaultString(strings.TrimSpace(input.Schedule), automationScheduleLabel(scheduleMode)),
+		ScheduleMode:        scheduleMode,
+		Scope:               strings.TrimSpace(input.Scope),
+		Environment:         defaultString(strings.TrimSpace(input.Environment), "local workspace"),
+		Command:             command,
+		NextRunAt:           nextRunAt,
+		Result:              defaultString(strings.TrimSpace(input.Result), automationResultPending),
+		LastRun:             defaultString(strings.TrimSpace(input.LastRun), automationLastRunNever),
+		NextRun:             defaultString(strings.TrimSpace(input.NextRun), automationNextRunLabel(scheduleMode, nextRunAt)),
+		Steps:               cleanAutomationLines(input.Steps),
+		Logs:                cleanAutomationLines(input.Logs),
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	if next.Desc == "" {
 		next.Desc = "\u5f85\u8865\u5145\u81ea\u52a8\u5316\u4efb\u52a1\u8bf4\u660e\u3002"
@@ -311,9 +348,10 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 	if !ok {
 		automation.Status = automationStatusFailed
 		automation.Result = "Unsupported command"
-		automation.LastRun = "just now"
+		automation.LastRun = time.Now().Format(time.RFC3339)
 		automation.UpdatedAt = now.Format(time.RFC3339)
 		automation.Logs = appendAutomationLog(automation.Logs, "Unsupported command: "+automation.Command)
+		appendAutomationFailureTodoLog(&automation)
 		return automation
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -326,6 +364,7 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 		automation.Status = automationStatusFailed
 		automation.Result = "Failed: " + err.Error()
 		automation.Logs = appendAutomationLog(automation.Logs, fmt.Sprintf("%s failed: %s\n%s", spec.Label, err.Error(), output))
+		appendAutomationFailureTodoLog(&automation)
 	} else {
 		automation.Result = "Passed"
 		automation.Logs = appendAutomationLog(automation.Logs, fmt.Sprintf("%s passed\n%s", spec.Label, output))
@@ -333,13 +372,82 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 			automation.Status = automationStatusDone
 		}
 	}
-	automation.LastRun = "just now"
+	automation.LastRun = time.Now().Format(time.RFC3339)
 	automation.UpdatedAt = now.Format(time.RFC3339)
 	if scheduled {
 		automation.NextRunAt = nextAutomationRunAt(automation, now)
 		automation.NextRun = automationNextRunLabel(normalizeAutomationScheduleMode(automation.ScheduleMode), automation.NextRunAt)
 	}
 	return automation
+}
+
+// skipMissedAutomationRuns advances schedules that elapsed while the desktop app was closed.
+// The desktop scheduler intentionally does not replay missed work after startup.
+func skipMissedAutomationRuns(now time.Time) error {
+	automations, err := loadAutomations()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i, automation := range automations {
+		if !isAutomationRunning(automation.Status) || normalizeAutomationScheduleMode(automation.ScheduleMode) == "manual" {
+			continue
+		}
+		next, err := parseAutomationTime(automation.NextRunAt)
+		if err != nil || next.After(now) {
+			continue
+		}
+		if normalizeAutomationScheduleMode(automation.ScheduleMode) == "once" {
+			automation.Status = automationStatusPaused
+			automation.NextRunAt = ""
+			automation.NextRun = "已跳过，请重新安排"
+		} else {
+			for !next.After(now) {
+				nextRunAt := nextAutomationRunAt(automation, next)
+				next, err = parseAutomationTime(nextRunAt)
+				if err != nil {
+					return err
+				}
+			}
+			automation.NextRunAt = next.Format(time.RFC3339)
+			automation.NextRun = automationNextRunLabel(automation.ScheduleMode, automation.NextRunAt)
+		}
+		automation.Result = "已跳过：应用关闭期间未执行"
+		automation.UpdatedAt = now.Format(time.RFC3339)
+		automation.Logs = appendAutomationLog(automation.Logs, "Skipped missed schedule because the desktop app was closed")
+		automations[i] = automation
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	sortAutomations(automations)
+	return saveAutomations(automations)
+}
+
+func appendAutomationFailureTodoLog(automation *WorkbenchAutomationView) {
+	if !automation.CreateTodoOnFailure {
+		return
+	}
+	if strings.TrimSpace(automation.ProjectID) == "" {
+		automation.Logs = appendAutomationLog(automation.Logs, "Failure todo skipped: no project is linked")
+		return
+	}
+	_, err := (&App{}).SaveTodo(WorkbenchTodoInput{
+		Title:       "处理自动化失败：" + automation.Title,
+		Description: fmt.Sprintf("自动化“%s”执行失败。\n结果：%s\n请查看自动化运行日志并处理后重新执行。", automation.Title, automation.Result),
+		ProjectID:   automation.ProjectID,
+		ProjectName: automation.ProjectName,
+		Priority:    "高",
+		DueLabel:    "尽快处理",
+		Status:      "pending",
+		Source:      "automation:" + automation.ID,
+	})
+	if err != nil {
+		automation.Logs = appendAutomationLog(automation.Logs, "Failed to create failure todo: "+err.Error())
+		return
+	}
+	automation.Logs = appendAutomationLog(automation.Logs, "Created follow-up todo for the linked project")
 }
 
 func automationCommandSpecFor(command string) (automationCommandSpec, bool) {
@@ -452,12 +560,12 @@ func automationsPath() (string, error) {
 func loadAutomations() ([]WorkbenchAutomationView, error) {
 	path, err := automationsPath()
 	if err != nil {
-		return defaultAutomations(), nil
+		return []WorkbenchAutomationView{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultAutomations(), nil
+			return []WorkbenchAutomationView{}, nil
 		}
 		return nil, err
 	}
@@ -466,16 +574,23 @@ func loadAutomations() ([]WorkbenchAutomationView, error) {
 		return nil, err
 	}
 	automations := make([]WorkbenchAutomationView, 0, len(disk.Automations))
+	migrated := false
 	for _, automation := range disk.Automations {
+		if isLegacySeedAutomation(automation) {
+			migrated = true
+			continue
+		}
 		automation = normalizeAutomation(automation)
 		if automation.ID != "" {
 			automations = append(automations, automation)
 		}
 	}
-	if len(automations) == 0 {
-		return defaultAutomations(), nil
-	}
 	sortAutomations(automations)
+	if migrated {
+		if err := saveAutomations(automations); err != nil {
+			return nil, err
+		}
+	}
 	return automations, nil
 }
 
@@ -508,12 +623,23 @@ func saveAutomations(automations []WorkbenchAutomationView) error {
 	return fileutil.ReplaceFile(tmpPath, path)
 }
 
-func defaultAutomations() []WorkbenchAutomationView {
-	now := time.Now()
-	createdAt := now.Format(time.RFC3339)
-	return []WorkbenchAutomationView{
-		{ID: "preflight-validation", Title: "\u63d0\u4ea4\u524d\u9a8c\u8bc1\u81ea\u52a8\u5316", Desc: "\u5c06\u524d\u7aef\u95e8\u7981\u3001\u6784\u5efa\u3001\u7a7a\u767d\u68c0\u67e5\u548c\u6d4f\u89c8\u5668\u65e5\u5fd7\u9a8c\u8bc1\u4e32\u6210\u53ef\u590d\u7528\u4efb\u52a1\u3002", Status: automationStatusRunning, Kind: "\u9a8c\u8bc1\u81ea\u52a8\u5316", Owner: automationOwnerDefault, StartedAtMs: now.Add(-90 * time.Minute).UnixMilli(), Cadence: "\u6bcf\u6b21 UI \u6539\u52a8\u540e", Schedule: "\u624b\u52a8\u89e6\u53d1 / \u63d0\u4ea4\u524d", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "\u6700\u8fd1\u4e00\u6b21\u901a\u8fc7", LastRun: "\u521a\u521a", NextRun: "\u7b49\u5f85\u4e0b\u4e00\u6b21\u6539\u52a8", Steps: []string{"Svelte check", "build", "browser verification"}, Logs: []string{"0 errors / 0 warnings"}, CreatedAt: createdAt, UpdatedAt: createdAt},
-		{ID: "desktop-frontend-gate", Title: "\u684c\u9762\u524d\u7aef\u8d28\u91cf\u95e8\u7981", Desc: "\u9488\u5bf9 desktop/frontend \u6267\u884c Svelte \u7c7b\u578b\u68c0\u67e5\u3001Vite \u6784\u5efa\u548c\u5dee\u5f02\u7a7a\u767d\u68c0\u67e5\u3002", Status: automationStatusRunning, Kind: "\u8d28\u91cf\u95e8\u7981", Owner: "\u4ee3\u7801\u5ba1\u67e5 Agent", StartedAtMs: now.Add(-198 * time.Minute).UnixMilli(), Cadence: "\u6bcf\u6b21\u524d\u7aef\u6539\u52a8\u540e", Schedule: "\u6539\u52a8\u540e\u624b\u52a8\u590d\u8dd1", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "\u901a\u8fc7", LastRun: "12 \u5206\u949f\u524d", NextRun: "\u4e0b\u4e00\u6b21\u524d\u7aef\u6539\u52a8", Steps: []string{"pnpm check", "pnpm build", "git diff --check"}, Logs: []string{"svelte-check passed"}, CreatedAt: createdAt, UpdatedAt: createdAt},
+func isLegacySeedAutomation(automation WorkbenchAutomationView) bool {
+	if automation.CreatedAt == "" || automation.CreatedAt != automation.UpdatedAt || automation.StartedAtMs <= 0 {
+		return false
+	}
+	switch strings.TrimSpace(automation.ID) {
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "preflight-validation":
+		// runtime-mock-guard: allow-legacy-cleanup
+		expected := WorkbenchAutomationView{ID: "preflight-validation", Title: "提交前验证自动化", Desc: "将前端门禁、构建、空白检查和浏览器日志验证串成可复用任务。", Status: automationStatusRunning, Kind: "验证自动化", Owner: automationOwnerDefault, StartedAtMs: automation.StartedAtMs, Cadence: "每次 UI 改动后", Schedule: "手动触发 / 提交前", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "最近一次通过", LastRun: "刚刚", NextRun: "等待下一次改动", Steps: []string{"Svelte check", "build", "browser verification"}, Logs: []string{"0 errors / 0 warnings"}, CreatedAt: automation.CreatedAt, UpdatedAt: automation.UpdatedAt}
+		return reflect.DeepEqual(automation, expected)
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "desktop-frontend-gate":
+		// runtime-mock-guard: allow-legacy-cleanup
+		expected := WorkbenchAutomationView{ID: "desktop-frontend-gate", Title: "桌面前端质量门禁", Desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查。", Status: automationStatusRunning, Kind: "质量门禁", Owner: "代码审查 Agent", StartedAtMs: automation.StartedAtMs, Cadence: "每次前端改动后", Schedule: "改动后手动复跑", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "通过", LastRun: "12 分钟前", NextRun: "下一次前端改动", Steps: []string{"pnpm check", "pnpm build", "git diff --check"}, Logs: []string{"svelte-check passed"}, CreatedAt: automation.CreatedAt, UpdatedAt: automation.UpdatedAt}
+		return reflect.DeepEqual(automation, expected)
+	default:
+		return false
 	}
 }
 
@@ -557,6 +683,8 @@ func normalizeAutomationStatus(value string) string {
 		return automationStatusRunning
 	case automationStatusPaused, "paused":
 		return automationStatusPaused
+	case automationStatusDisabled, "disabled":
+		return automationStatusDisabled
 	case automationStatusFailed, "failed":
 		return automationStatusFailed
 	case automationStatusDone, "done", "completed":

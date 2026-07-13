@@ -135,13 +135,25 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		fmt.Fprintf(&b, "check_updates = %v   # desktop: check for new versions on startup\n", c.DesktopCheckUpdates())
 		fmt.Fprintf(&b, "telemetry = %v   # desktop: anonymous launch ping (install id + version + OS); never content\n", c.DesktopTelemetry())
 		fmt.Fprintf(&b, "metrics = %v   # desktop: aggregate desktop metrics (anonymous signal/bucket counts); never content\n", c.DesktopMetrics())
-		if len(c.Desktop.ProviderAccess) > 0 {
+		// A non-nil empty slice is intentional: provider_access = [] means the
+		// user removed every desktop access entry. Omitting it would make the next
+		// load treat the config as legacy and infer access again.
+		if c.Desktop.ProviderAccess != nil {
 			fmt.Fprintf(&b, "provider_access = %s   # desktop settings: providers shown on Settings > Model > Access\n", renderStringArray(c.Desktop.ProviderAccess))
 		}
 		fmt.Fprintf(&b, "expand_thinking = %v   # desktop: show reasoning text expanded by default; false = collapsed\n", c.Desktop.ExpandThinking)
 		fmt.Fprintf(&b, "display_mode = %q   # desktop: standard|compact transcript display mode\n", c.DesktopDisplayMode())
 		b.WriteString("\n")
+	} else if c.Desktop.ProviderAccess != nil {
+		// provider_access is intentionally mergeable across user and project
+		// configs. It is the only desktop field written to reasonix.toml: local
+		// providers then appear in that workspace's desktop model switcher without
+		// copying user-global appearance or security preferences into the project.
+		b.WriteString("[desktop]\n")
+		fmt.Fprintf(&b, "provider_access = %s   # providers available to this workspace in the desktop model switcher\n\n", renderStringArray(c.Desktop.ProviderAccess))
+	}
 
+	if scope != RenderScopeProject {
 		b.WriteString("[notifications]\n")
 		fmt.Fprintf(&b, "enabled = %v   # system notifications for CLI and desktop turns; default off\n", c.Notifications.Enabled)
 		fmt.Fprintf(&b, "turn_done = %v   # notify when a turn finishes\n", c.Notifications.TurnDone)
@@ -190,6 +202,17 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}
 		b.WriteString("\n")
+		if scope != RenderScopeProject && (c.Network.TrustedIntranet.Enabled || len(c.Network.TrustedIntranet.Sites) > 0) {
+			b.WriteString("[network.trusted_intranet]\n")
+			fmt.Fprintf(&b, "enabled = %v   # user-approved private web_fetch targets\n", c.Network.TrustedIntranet.Enabled)
+			for _, site := range c.TrustedIntranetSites() {
+				b.WriteString("\n[[network.trusted_intranet.sites]]\n")
+				fmt.Fprintf(&b, "host = %q\n", site.Host)
+				fmt.Fprintf(&b, "cidrs = %s\n", renderStringArray(site.CIDRs))
+				fmt.Fprintf(&b, "ports = %s\n", renderIntArray(site.Ports))
+			}
+			b.WriteString("\n")
+		}
 	}
 	if shouldRenderEnvironment(c, defaults, scope) {
 		renderEnvironmentConfig(&b, c.Environment)
@@ -1437,6 +1460,19 @@ func renderStringArray(ss []string) string {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%q", s)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func renderIntArray(values []int) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, value := range values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", value)
 	}
 	b.WriteByte(']')
 	return b.String()

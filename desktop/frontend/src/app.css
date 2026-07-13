@@ -55,6 +55,37 @@ button {
   cursor: pointer;
 }
 
+/* 系统设置的模型入口使用与弹窗次级操作一致的按钮样式，避免 WebView2 回退到原生控件外观。 */
+.settings-model-list article > button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--aorist-line-strong);
+  border-radius: 6px;
+  background: var(--aorist-card-bg);
+  color: var(--aorist-ink);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.settings-model-list article > button:hover {
+  border-color: var(--aorist-line-strong);
+  background: var(--aorist-primary-soft);
+  color: var(--aorist-primary);
+}
+
+.settings-model-list article > button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--aorist-primary) 55%, transparent);
+  outline-offset: 2px;
+}
+
 /* === Shared icon button === */
 .icon-button {
   display: grid;

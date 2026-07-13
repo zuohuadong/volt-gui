@@ -165,6 +165,7 @@ type Registry struct {
 	order     []string
 	canon     map[string]json.RawMessage
 	suspended map[string]bool
+	allow     func(string) bool
 }
 
 // NewRegistry returns an empty registry.
@@ -180,6 +181,9 @@ func (r *Registry) Add(t Tool) {
 	defer r.mu.Unlock()
 
 	name := t.Name()
+	if r.allow != nil && !r.allow(name) {
+		return
+	}
 	for prefix := range r.suspended {
 		if strings.HasPrefix(name, prefix) {
 			return
@@ -190,6 +194,30 @@ func (r *Registry) Add(t Tool) {
 	}
 	r.tools[name] = t
 	r.canon[name] = provider.CanonicalizeSchema(t.Schema())
+}
+
+// SetAllowPolicy installs a per-run capability boundary. Existing tools that
+// no longer satisfy policy are removed immediately, and every later Add call
+// (including asynchronous MCP registration) is checked against the same
+// policy. A nil policy restores the inherited unrestricted registry.
+func (r *Registry) SetAllowPolicy(policy func(string) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.allow = policy
+	if policy == nil {
+		return
+	}
+	kept := r.order[:0]
+	for _, name := range r.order {
+		if policy(name) {
+			kept = append(kept, name)
+			continue
+		}
+		delete(r.tools, name)
+		delete(r.canon, name)
+	}
+	r.order = kept
 }
 
 // MCPNamePrefix is the namespace every MCP tool name carries: the

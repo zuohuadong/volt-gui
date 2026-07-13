@@ -856,6 +856,22 @@ type NetworkConfig struct {
 	// process environment instead.
 	NoProxy string             `toml:"no_proxy"`
 	Proxy   NetworkProxyConfig `toml:"proxy"`
+	// TrustedIntranet is a user-global allowlist for web_fetch targets that
+	// resolve to RFC1918 or IPv6 ULA addresses. Project config is never allowed
+	// to override it (see LoadForRoot), because cloned repositories are not a
+	// trust boundary.
+	TrustedIntranet TrustedIntranetConfig `toml:"trusted_intranet"`
+}
+
+type TrustedIntranetConfig struct {
+	Enabled bool                        `toml:"enabled"`
+	Sites   []TrustedIntranetSiteConfig `toml:"sites"`
+}
+
+type TrustedIntranetSiteConfig struct {
+	Host  string   `toml:"host"`
+	CIDRs []string `toml:"cidrs"`
+	Ports []int    `toml:"ports"`
 }
 
 // NetworkProxyConfig is the structured custom-proxy editor shape. Password is
@@ -2107,6 +2123,9 @@ func (c *Config) Validate(model string) error {
 	}
 	if e.BaseURL == "" {
 		return fmt.Errorf("provider %q: base_url is required", model)
+	}
+	if strings.TrimSpace(e.APIKeyEnv) != "" && !IsValidCredentialKey(e.APIKeyEnv) {
+		return fmt.Errorf("provider %q: api_key_env %q is invalid; use letters, numbers, and underscores, not a model name", model, e.APIKeyEnv)
 	}
 	if e.RequiresAPIKey() && e.APIKey() == "" {
 		return fmt.Errorf("provider %q: missing env %s", model, e.APIKeyEnv)

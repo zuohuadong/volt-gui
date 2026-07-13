@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.12.0...desktop-v0.12.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **windows:** add offline prerequisite bundle ([e12d527](https://github.com/zuohuadong/volt-gui/commit/e12d52739f02e79696b0fece6098a246268630e0))
+
+
+### CI
+
+* upgrade workflows to Node.js 26 ([310604d](https://github.com/zuohuadong/volt-gui/commit/310604d5dae331268bf20d749c5eca9057afa90a))
+
 ## [0.12.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.11.2...desktop-v0.12.0) (2026-07-12)
 
 

@@ -71,9 +71,20 @@ check(
   'shared CSS renders exactly one language at a time',
 );
 check(sharedScripts.includes('voltui-lang') && sharedScripts.includes('navigator.clipboard'), 'shared scripts provide language and copy interactions');
-check(sharedScripts.includes('.htab') && sharedScripts.includes('.hpanel'), 'home install tabs have shared interaction wiring');
-check(pages.home.includes('role="tablist"') && pages.home.includes('aria-selected="true"'), 'home install tabs expose accessible tab semantics');
 check(pages.home.includes('Mobile navigation') && pages.home.includes('<details class="mobile-nav">'), 'shared header exposes mobile navigation');
+check(
+  pages.home.indexOf('Capabilities') < pages.home.indexOf('Enterprise deployment')
+    && pages.home.indexOf('Enterprise deployment') < pages.home.indexOf('Security &amp; usage'),
+  'shared navigation prioritizes capabilities, enterprise deployment, security and usage',
+);
+
+check(pages.home.includes('enterprise-hero') && pages.home.includes('Private-network workspace'), 'home opens with an enterprise split hero and deployment overview');
+check(pages.home.includes('single-binary CLI') && pages.home.includes('prepared desktop client'), 'home distinguishes the Go CLI from the prepared Wails desktop client');
+check(pages.home.includes('Public internet is a preparation path') && pages.home.includes('controlled import'), 'home explains the enterprise network preparation topology');
+check(pages.home.includes('Platform administrator') && pages.home.includes('Security / compliance') && pages.home.includes('Developer'), 'home includes an enterprise role matrix');
+check(pages.home.includes('Typical scenarios') && pages.home.includes('Current product boundary'), 'home includes scenarios and explicit product boundaries');
+check(pages.home.includes('Three-step rollout') && pages.home.includes('Pilot, verify and distribute'), 'home ends with a three-step enterprise rollout');
+check(!pages.home.includes('npm i -g') && !pages.home.includes('brew install'), 'home no longer leads with public package-manager installation');
 
 check(pages.usage.includes('Product demo') && pages.usage.includes('产品演示'), 'usage dashboard labels sample values as demo data');
 check(pages.usage.includes('usage.jsonl') && pages.usage.includes('voltui usage --since 30d'), 'usage page connects the dashboard to the local ledger and CLI');
@@ -84,12 +95,17 @@ check(pages.usage.includes('By model') && pages.usage.includes('by day · model 
 
 check(pages.capabilities.includes('CodeGraph') && pages.capabilities.includes('/rewind') && pages.capabilities.includes('.mcp.json'), 'capabilities page covers code intelligence, rollback and MCP');
 check(pages.capabilities.includes('browser_control') && pages.capabilities.includes('VOLTUI.md'), 'capabilities page covers host automation and memory');
+check(pages.capabilities.includes('Optional runtime') && pages.capabilities.includes('core repository work does not depend on it'), 'capabilities keeps the CodeGraph offline boundary explicit');
 
-check(pages.enterprise.includes('Prepared package') && pages.enterprise.includes('Internal model gateway'), 'enterprise page explains the deployment path');
-check(pages.enterprise.includes('White-label and OEM') && pages.enterprise.includes('Credential protection'), 'enterprise page covers branding and credential controls');
-check(!pages.home.includes('Bake the API endpoint and key') && pages.home.includes('without hardcoding keys'), 'home deployment copy avoids hardcoded credentials');
+check(pages.enterprise.includes('Internal distribution') && pages.enterprise.includes('Internal model gateway'), 'enterprise page separates preparation, distribution and runtime');
+check(pages.enterprise.includes('Single Go binary') && pages.enterprise.includes('Prepared application'), 'enterprise page distinguishes CLI and desktop delivery');
+check(pages.enterprise.includes('Credential source') && pages.enterprise.includes('do not bake keys into packages'), 'enterprise page covers credential-safe preparation');
+check(pages.enterprise.includes('CodeGraph') && pages.enterprise.includes('install or pre-cache'), 'enterprise page states the optional CodeGraph runtime boundary');
+check(!pages.home.includes('complete centralized enterprise suite') || pages.home.includes('not presented as a complete centralized enterprise suite'), 'home does not claim a complete centralized enterprise suite');
 
 check(pages.docs.includes('data-copy="npm i -g voltui@next"'), 'docs publishes the Go 1.x install command');
+check(pages.docs.includes('id="offline"') && pages.docs.includes('Enterprise offline preparation'), 'docs retains public install methods and adds enterprise offline preparation');
+check(pages.docs.includes('CodeGraph is optional') && pages.docs.includes('pre-cache'), 'docs explains the optional CodeGraph offline preparation');
 check(pages.docs.includes('id="usage"') && pages.docs.includes('voltui usage --json'), 'docs includes the local usage report reference');
 for (const href of attributeValues(pages.docs, 'href').filter((href) => href.startsWith('#'))) {
   check(ids(pages.docs).has(href.slice(1)), `docs anchor ${href} resolves`);
@@ -99,9 +115,11 @@ const notFoundHead = pages.notFound.match(/<head>([\s\S]*?)<\/head>/)?.[1] || ''
 check(/<meta name="robots" content="noindex"\s*\/?\s*>/.test(notFoundHead), '404 remains noindex');
 check(
   sharedCss.includes('.usage-console')
-    && sharedCss.includes('.deployment-map')
+    && sharedCss.includes('.enterprise-hero')
+    && sharedCss.includes('.topology-flow')
+    && sharedCss.includes('.mobile-rail')
     && /@media\s*\((?:max-width:\s*620px|width<=620px)\)/.test(sharedCss),
-  'new product pages ship responsive styles',
+  'enterprise-first product pages ship responsive styles',
 );
 check(!allPages.some((html) => html.includes('/blob/main-v2/')), 'documentation links avoid the retired main-v2 branch');
 

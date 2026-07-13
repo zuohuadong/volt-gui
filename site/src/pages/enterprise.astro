@@ -5,43 +5,84 @@ import SiteFooter from '../components/SiteFooter.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
-<Base title="Enterprise deployment — VoltUI" titleEn="Enterprise deployment — VoltUI" titleZh="企业部署 — VoltUI" bodyClass="product-page enterprise-page" description="Offline-first, pre-packaged and white-label AI coding agent deployment for enterprise intranets.">
+<Base
+  title="Enterprise deployment — VoltUI"
+  titleEn="Enterprise deployment — VoltUI"
+  titleZh="企业部署 — VoltUI"
+  bodyClass="product-page enterprise-page"
+  description="Plan a prepared VoltUI rollout for enterprise intranets, private model gateways and offline-capable developer endpoints.">
   <SiteHeader active="enterprise" />
   <main>
-    <section class="page-hero wrap">
-      <div class="eyebrow"><span class="l-en">Enterprise intranet ready</span><span class="l-zh">面向企业内网</span></div>
-      <h1><span class="l-en">Package once. Deploy to <em>every developer.</em></span><span class="l-zh">打包一次，交付给<em>每一位开发者。</em></span></h1>
-      <p class="lede"><span class="l-en">Connect VoltUI to models already running behind your firewall, ship a prepared client and keep code, tools and operating policy inside the enterprise boundary.</span><span class="l-zh">将 VoltUI 接入防火墙后的现有模型，分发预配置客户端，让代码、工具与运行策略留在企业边界内。</span></p>
-      <div class="hero-cta"><a class="btn btn-dark" href={`${base}/docs/#config`}><span class="l-en">Configure a provider</span><span class="l-zh">配置模型服务</span></a><a class="btn btn-line" href={`${base}/capabilities/`}><span class="l-en">See the agent stack</span><span class="l-zh">查看智能体能力</span></a></div>
+    <section class="page-hero wrap enterprise-decision-hero">
+      <div class="eyebrow"><span class="l-en">Enterprise deployment decision</span><span class="l-zh">企业部署决策</span></div>
+      <h1><span class="l-en">Deliver a prepared AI workbench — <em>not another cloud dependency.</em></span><span class="l-zh">交付预配置 AI 工作台，<em>而不是增加云端依赖。</em></span></h1>
+      <p class="lede"><span class="l-en">VoltUI connects managed developer endpoints to models and services already available inside your network. Start with a reviewed client contract, validate one team, then expand through your existing software distribution path.</span><span class="l-zh">VoltUI 将受管开发者终端连接到企业网络内已有的模型与服务。先确定一份经审查的客户端契约，在一个团队完成验证，再通过既有软件分发体系扩展。</span></p>
+      <div class="hero-cta"><a class="btn btn-dark" href="#rollout"><span class="l-en">Review the rollout path</span><span class="l-zh">查看落地路径</span></a><a class="btn btn-line" href={base + '/docs/#offline'}><span class="l-en">Open offline preparation docs</span><span class="l-zh">查看离线准备文档</span></a></div>
     </section>
 
     <section class="wrap product-section">
-      <div class="deployment-map">
-        <div class="deploy-node admin"><span>01</span><strong><span class="l-en">Platform team</span><span class="l-zh">平台团队</span></strong><small>voltui.toml · brand · policy</small></div>
-        <div class="deploy-arrow">→</div>
-        <div class="deploy-node package"><span>02</span><strong><span class="l-en">Prepared package</span><span class="l-zh">预配置安装包</span></strong><small>single binary · desktop · offline tools</small></div>
-        <div class="deploy-arrow">→</div>
-        <div class="deploy-node users"><span>03</span><strong><span class="l-en">Developer fleet</span><span class="l-zh">开发者终端</span></strong><small>Windows 10 · macOS · Linux</small></div>
-        <div class="deploy-arrow">→</div>
-        <div class="deploy-node models"><span>04</span><strong><span class="l-en">Internal model gateway</span><span class="l-zh">内部模型网关</span></strong><small>Qwen · DeepSeek · GLM · vLLM</small></div>
+      <div class="offline-definition">
+        <div><span class="offline-mark">OFFLINE</span><h2><span class="l-en">A prepared operating mode, not a zero-preparation promise.</span><span class="l-zh">一种预先准备的运行方式，不是“零准备”承诺。</span></h2></div>
+        <p><span class="l-en">Administrators prepare the client, configuration, approved plugins and required runtimes before distribution. Once the endpoint can reach an internal model gateway, core repository work does not need public SaaS, public package managers, telemetry services or a cloud-only control plane.</span><span class="l-zh">管理员在分发前准备客户端、配置、已批准插件与所需运行时。终端接通内部模型网关后，核心代码库工作无需公网 SaaS、公共包管理器、遥测服务或仅云端可用的控制平面。</span></p>
+      </div>
+    </section>
+
+    <section class="enterprise-topology product-section">
+      <div class="wrap">
+        <div class="section-head"><div class="eyebrow"><span class="l-en">Reference topology</span><span class="l-zh">参考拓扑</span></div><h2><span class="l-en">Separate preparation, distribution and runtime.</span><span class="l-zh">把准备、分发与运行清晰分开。</span></h2></div>
+        <div class="topology-flow">
+          <article><span class="topology-no">01</span><div><strong><span class="l-en">Platform preparation</span><span class="l-zh">平台侧准备</span></strong><p><span class="l-en">Select release artifacts, provider templates, credential sources, permissions, plugins and optional runtimes.</span><span class="l-zh">选择发布制品、Provider 模板、凭据源、权限、插件与可选运行时。</span></p><small>admin workstation · review pipeline</small></div></article>
+          <span class="topology-arrow">→</span>
+          <article><span class="topology-no">02</span><div><strong><span class="l-en">Internal distribution</span><span class="l-zh">内部分发</span></strong><p><span class="l-en">Mirror packages into your software repository, endpoint manager or offline media workflow.</span><span class="l-zh">将软件包镜像到内部软件仓库、终端管理系统或离线介质流程。</span></p><small>MDM · software center · internal mirror</small></div></article>
+          <span class="topology-arrow">→</span>
+          <article class="runtime-node"><span class="topology-no">03</span><div><strong><span class="l-en">Developer runtime</span><span class="l-zh">开发者运行环境</span></strong><p><span class="l-en">The prepared CLI or desktop client works with local repositories and approved tools.</span><span class="l-zh">预配置 CLI 或桌面端处理本地代码库与已批准工具。</span></p><small>Windows · macOS · Linux</small></div></article>
+          <span class="topology-arrow">→</span>
+          <article class="gateway-node"><span class="topology-no">04</span><div><strong><span class="l-en">Internal model gateway</span><span class="l-zh">内部模型网关</span></strong><p><span class="l-en">OpenAI-compatible, Anthropic or privately hosted model endpoints remain under enterprise control.</span><span class="l-zh">OpenAI 兼容、Anthropic 或私有部署模型端点继续由企业控制。</span></p><small>Qwen · DeepSeek · GLM · vLLM</small></div></article>
+        </div>
       </div>
     </section>
 
     <section class="wrap product-section">
-      <div class="section-head"><div class="eyebrow"><span class="l-en">Operational fit</span><span class="l-zh">企业落地能力</span></div><h2><span class="l-en">Designed for controlled rollout.</span><span class="l-zh">为可控部署而设计。</span></h2></div>
-      <div class="enterprise-list">
-        <article><span>01</span><div><h3><span class="l-en">Offline-first runtime</span><span class="l-zh">离线优先运行</span></h3><p><span class="l-en">The Go CLI is a static binary. Runtime does not require npm, auto-downloads or telemetry services.</span><span class="l-zh">Go CLI 是静态二进制，运行时不依赖 npm、自动下载或遥测服务。</span></p></div></article>
-        <article><span>02</span><div><h3><span class="l-en">Windows 10 first</span><span class="l-zh">Windows 10 优先</span></h3><p><span class="l-en">Use pre-installed Edge for browser automation, with Windows path handling and RDP/VDI-friendly operation.</span><span class="l-zh">使用系统自带 Edge 进行浏览器自动化，并适配 Windows 路径与 RDP/VDI 环境。</span></p></div></article>
-        <article><span>03</span><div><h3><span class="l-en">Configuration as policy</span><span class="l-zh">配置即策略</span></h3><p><span class="l-en">Providers, model defaults, tools, plugins, permissions and sandbox boundaries live in a reviewable TOML file.</span><span class="l-zh">Provider、默认模型、工具、插件、权限和沙箱边界都放在可审查的 TOML 文件中。</span></p></div></article>
-        <article><span>04</span><div><h3><span class="l-en">White-label and OEM</span><span class="l-zh">白标与 OEM</span></h3><p><span class="l-en">Replace product name, wordmark, logo and tray icon through config or environment variables.</span><span class="l-zh">通过配置或环境变量替换产品名、字标、Logo 与托盘图标。</span></p></div></article>
-        <article><span>05</span><div><h3><span class="l-en">Credential protection</span><span class="l-zh">凭据保护</span></h3><p><span class="l-en">Keep keys in environment-backed credential sources, redact secret-shaped tool output and filter sensitive subprocess environment variables.</span><span class="l-zh">将密钥保存在环境凭据源中，对疑似秘密的工具输出脱敏，并过滤子进程敏感环境变量。</span></p></div></article>
-        <article><span>06</span><div><h3><span class="l-en">Permissions and audit-friendly control</span><span class="l-zh">权限与可审计控制</span></h3><p><span class="l-en">Allow, ask and deny rules combine with workspace confinement and visible approval flows.</span><span class="l-zh">Allow、Ask 与 Deny 规则结合工作区约束和可见审批流程。</span></p></div></article>
+      <div class="section-head"><div class="eyebrow"><span class="l-en">Delivery choices</span><span class="l-zh">交付形态</span></div><h2><span class="l-en">Choose the endpoint experience without blurring runtime boundaries.</span><span class="l-zh">选择终端体验，同时保持运行边界清晰。</span></h2></div>
+      <div class="delivery-grid">
+        <article><div class="delivery-title"><span>CLI / TUI</span><b><span class="l-en">Single Go binary</span><span class="l-zh">单 Go 二进制</span></b></div><h3><span class="l-en">Smallest offline core</span><span class="l-zh">最小离线核心</span></h3><p><span class="l-en">The CLI/TUI is the simplest distribution unit for repository-native sessions. It does not require a Node runtime at execution time.</span><span class="l-zh">CLI/TUI 是最精简的代码库会话分发单元，执行时不需要 Node 运行时。</span></p><ul><li><span class="l-en">Good fit for terminals, scripts and managed developer images</span><span class="l-zh">适合终端、脚本与受管开发者镜像</span></li><li><span class="l-en">Provider and policy remain reviewable configuration</span><span class="l-zh">Provider 与策略保持为可审查配置</span></li></ul></article>
+        <article><div class="delivery-title"><span>Wails Desktop</span><b><span class="l-en">Prepared application</span><span class="l-zh">预打包应用</span></b></div><h3><span class="l-en">Managed local workbench</span><span class="l-zh">受管本地工作台</span></h3><p><span class="l-en">The desktop app packages the Go kernel with a Wails user interface. Administrators should distribute the built client and account for platform WebView requirements.</span><span class="l-zh">桌面端将 Go 内核与 Wails 界面打包。管理员应分发已构建客户端，并纳入各平台 WebView 依赖。</span></p><ul><li><span class="l-en">Rich transcripts, approvals, diffs and resource management</span><span class="l-zh">富会话、审批、差异与资源管理</span></li><li><span class="l-en">Platform-specific packaging and validation still apply</span><span class="l-zh">仍需执行平台专项打包与验证</span></li></ul></article>
       </div>
     </section>
 
-    <section class="wrap product-section split-section rollout-section">
-      <div class="section-copy"><div class="eyebrow"><span class="l-en">Rollout path</span><span class="l-zh">落地路径</span></div><h2><span class="l-en">Start with one team, keep the contract portable.</span><span class="l-zh">从一个团队开始，保持契约可复制。</span></h2><p><span class="l-en">VoltUI does not require a central control plane for the first rollout. A reviewed configuration and prepared package are enough; centralized reporting can remain a later enterprise capability.</span><span class="l-zh">首次部署不需要中心控制平面。一份审查过的配置和预制安装包即可开始；中心化报表可以作为后续企业能力。</span></p></div>
-      <ol class="rollout-steps"><li><b>1</b><span><strong><span class="l-en">Connect a model</span><span class="l-zh">接入模型</span></strong><small>OpenAI-compatible or Anthropic endpoint</small></span></li><li><b>2</b><span><strong><span class="l-en">Define tools and policy</span><span class="l-zh">定义工具与策略</span></strong><small>MCP · permissions · sandbox</small></span></li><li><b>3</b><span><strong><span class="l-en">Apply company identity</span><span class="l-zh">应用企业品牌</span></strong><small>name · logo · wordmark · icon</small></span></li><li><b>4</b><span><strong><span class="l-en">Package and distribute</span><span class="l-zh">打包与分发</span></strong><small>Windows · macOS · Linux</small></span></li></ol>
+    <section class="wrap product-section">
+      <div class="section-head"><div class="eyebrow"><span class="l-en">Operating contract</span><span class="l-zh">运行契约</span></div><h2><span class="l-en">What administrators decide before distribution.</span><span class="l-zh">管理员在分发前需要确定什么。</span></h2></div>
+      <div class="contract-grid">
+        <article><span>01</span><h3><span class="l-en">Model and gateway</span><span class="l-zh">模型与网关</span></h3><p><span class="l-en">Base URL, model identifiers, protocol compatibility and reasoning/vision flags.</span><span class="l-zh">Base URL、模型标识、协议兼容性以及推理/视觉能力标记。</span></p></article>
+        <article><span>02</span><h3><span class="l-en">Credential source</span><span class="l-zh">凭据来源</span></h3><p><span class="l-en">Inject secrets from environment-backed or endpoint-managed sources; do not bake keys into packages.</span><span class="l-zh">从环境或终端管理的凭据源注入密钥，不把 Key 固化进软件包。</span></p></article>
+        <article><span>03</span><h3><span class="l-en">Tool permissions</span><span class="l-zh">工具权限</span></h3><p><span class="l-en">Define allow, ask and deny rules, workspace roots, approval posture and blocked operations.</span><span class="l-zh">定义 Allow、Ask、Deny、工作区根目录、审批姿态与禁止操作。</span></p></article>
+        <article><span>04</span><h3><span class="l-en">Approved extensions</span><span class="l-zh">批准的扩展</span></h3><p><span class="l-en">Pre-package local skills, MCP servers, hooks and any runtime they need.</span><span class="l-zh">预先打包本地技能、MCP 服务、钩子及其所需运行时。</span></p></article>
+        <article><span>05</span><h3><span class="l-en">Update channel</span><span class="l-zh">更新通道</span></h3><p><span class="l-en">Use your internal mirror or endpoint management process for controlled upgrades and rollback.</span><span class="l-zh">通过内部镜像或终端管理流程完成受控升级与回滚。</span></p></article>
+        <article><span>06</span><h3><span class="l-en">Local evidence</span><span class="l-zh">本地证据</span></h3><p><span class="l-en">Decide how local usage records, session files and diagnostic output are retained or collected.</span><span class="l-zh">确定本地用量、会话文件与诊断输出的保留或采集方式。</span></p></article>
+      </div>
+    </section>
+
+    <section class="enterprise-boundaries product-section">
+      <div class="wrap split-section">
+        <div class="section-copy"><div class="eyebrow"><span class="l-en">Offline boundary</span><span class="l-zh">离线能力边界</span></div><h2><span class="l-en">Keep optional runtimes optional.</span><span class="l-zh">让可选运行时保持可选。</span></h2><p><span class="l-en">Core file, shell, permission, checkpoint, memory and provider workflows ship with VoltUI. Features that depend on an external executable or service must be included in the enterprise preparation plan.</span><span class="l-zh">核心文件、Shell、权限、检查点、记忆与 Provider 工作流随 VoltUI 交付。依赖外部可执行文件或服务的能力，必须纳入企业准备计划。</span></p></div>
+        <div class="runtime-boundary-list">
+          <article><span class="ready"><span class="l-en">Core</span><span class="l-zh">核心</span></span><div><strong><span class="l-en">Repository agent workflow</span><span class="l-zh">代码库 Agent 工作流</span></strong><small><span class="l-en">Included in the prepared VoltUI client.</span><span class="l-zh">包含在预配置 VoltUI 客户端中。</span></small></div></article>
+          <article><span class="prepare"><span class="l-en">Prepare</span><span class="l-zh">需准备</span></span><div><strong>CodeGraph</strong><small><span class="l-en">Optional runtime; install or pre-cache it before offline use. It is not required for the core workflow.</span><span class="l-zh">可选运行时；离线使用前需安装或预缓存，核心工作流不依赖它。</span></small></div></article>
+          <article><span class="prepare"><span class="l-en">Prepare</span><span class="l-zh">需准备</span></span><div><strong><span class="l-en">MCP servers and browser runtimes</span><span class="l-zh">MCP 服务与浏览器运行时</span></strong><small><span class="l-en">Package approved executables and confirm platform availability.</span><span class="l-zh">打包已批准的可执行文件，并确认平台可用性。</span></small></div></article>
+          <article><span class="external"><span class="l-en">Internal</span><span class="l-zh">内网</span></span><div><strong><span class="l-en">Model service</span><span class="l-zh">模型服务</span></strong><small><span class="l-en">VoltUI still requires a reachable model endpoint; offline does not mean model-free.</span><span class="l-zh">VoltUI 仍需连接可达的模型端点；离线不等于无需模型服务。</span></small></div></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="rollout" class="wrap product-section">
+      <div class="section-head"><div class="eyebrow"><span class="l-en">Pilot path</span><span class="l-zh">试点路径</span></div><h2><span class="l-en">Validate evidence before expanding scope.</span><span class="l-zh">先验证证据，再扩大范围。</span></h2></div>
+      <ol class="enterprise-rollout">
+        <li><b>1</b><div><strong><span class="l-en">Confirm the network contract</span><span class="l-zh">确认网络契约</span></strong><p><span class="l-en">Validate endpoint reachability, TLS trust, protocol compatibility and credential injection.</span><span class="l-zh">验证端点可达性、TLS 信任、协议兼容与凭据注入。</span></p></div></li>
+        <li><b>2</b><div><strong><span class="l-en">Build the prepared package</span><span class="l-zh">构建预配置包</span></strong><p><span class="l-en">Include client, configuration, approved plugins, internal documentation and optional runtimes.</span><span class="l-zh">包含客户端、配置、已批准插件、内部文档与可选运行时。</span></p></div></li>
+        <li><b>3</b><div><strong><span class="l-en">Run a controlled pilot</span><span class="l-zh">执行受控试点</span></strong><p><span class="l-en">Test installation, model calls, permissions, rollback and diagnostic collection with one team.</span><span class="l-zh">在一个团队验证安装、模型调用、权限、回滚与诊断采集。</span></p></div></li>
+        <li><b>4</b><div><strong><span class="l-en">Distribute through existing controls</span><span class="l-zh">通过既有控制体系分发</span></strong><p><span class="l-en">Publish to your software center or endpoint manager with a documented upgrade and rollback path.</span><span class="l-zh">发布到企业软件中心或终端管理系统，并记录升级与回滚路径。</span></p></div></li>
+      </ol>
+      <div class="enterprise-next"><div><strong><span class="l-en">Need technical preparation details?</span><span class="l-zh">需要技术准备细节？</span></strong><p><span class="l-en">The documentation keeps public installation methods and enterprise offline preparation in separate sections.</span><span class="l-zh">文档将公网安装方式与企业离线准备放在不同章节说明。</span></p></div><a class="btn btn-dark" href={base + '/docs/#offline'}><span class="l-en">Read offline preparation</span><span class="l-zh">阅读离线准备</span></a></div>
     </section>
   </main>
   <SiteFooter />

@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -83,10 +86,10 @@ func (a *App) RunTeamRuntime(input WorkbenchTeamRuntimeInput) (WorkbenchTeamRunt
 		UpdatedAt:     now.Format(time.RFC3339),
 		CurrentStepID: firstTeamStepID(room),
 		Events: []WorkbenchTeamRunEventView{
-			{ID: runID + "-created", Time: "刚刚", Actor: "用户", Type: "创建运行", Detail: "发起任务：" + task},
-			{ID: runID + "-runtime", Time: "刚刚", Actor: "协作运行台", Type: "启动 runtime", Detail: fmt.Sprintf("使用 %s 调用 %d 个团队成员。", defaultString(modelLabel, "当前模型"), len(members))},
+			{ID: runID + "-created", Time: now.Format(time.RFC3339), Actor: "用户", Type: "创建运行", Detail: "发起任务：" + task},
+			{ID: runID + "-runtime", Time: now.Format(time.RFC3339), Actor: "协作运行台", Type: "启动 runtime", Detail: fmt.Sprintf("使用 %s 调用 %d 个团队成员。", defaultString(modelLabel, "当前模型"), len(members))},
 		},
-		Artifacts: teamRuntimeArtifacts(room, runID),
+		Artifacts: []WorkbenchTeamRunArtifactView{},
 	}
 
 	userMessage, err := saveTeamChatMessageInto(&data, WorkbenchTeamChatMessageView{
@@ -105,7 +108,7 @@ func (a *App) RunTeamRuntime(input WorkbenchTeamRuntimeInput) (WorkbenchTeamRunt
 		run.CurrentStepID = teamStepIDForMember(room, index)
 		run.Events = append(run.Events, WorkbenchTeamRunEventView{
 			ID:     fmt.Sprintf("%s-%s-start", runID, member.ID),
-			Time:   "刚刚",
+			Time:   time.Now().Format(time.RFC3339),
 			Actor:  member.Name,
 			Type:   "开始执行",
 			Detail: fmt.Sprintf("%s 正在处理团队任务。", member.Name),
@@ -114,7 +117,7 @@ func (a *App) RunTeamRuntime(input WorkbenchTeamRuntimeInput) (WorkbenchTeamRunt
 		if callErr != nil {
 			run.Events = append(run.Events, WorkbenchTeamRunEventView{
 				ID:     fmt.Sprintf("%s-%s-error", runID, member.ID),
-				Time:   "刚刚",
+				Time:   time.Now().Format(time.RFC3339),
 				Actor:  member.Name,
 				Type:   "执行失败",
 				Detail: callErr.Error(),
@@ -148,7 +151,7 @@ func (a *App) RunTeamRuntime(input WorkbenchTeamRuntimeInput) (WorkbenchTeamRunt
 		}
 		run.Events = append(run.Events, WorkbenchTeamRunEventView{
 			ID:     fmt.Sprintf("%s-%s-done", runID, member.ID),
-			Time:   "刚刚",
+			Time:   time.Now().Format(time.RFC3339),
 			Actor:  member.Name,
 			Type:   "完成输出",
 			Detail: fmt.Sprintf("%s 已返回执行结果。", member.Name),
@@ -159,12 +162,16 @@ func (a *App) RunTeamRuntime(input WorkbenchTeamRuntimeInput) (WorkbenchTeamRunt
 	run.UpdatedAt = time.Now().Format(time.RFC3339)
 	if successes == 0 {
 		run.Status = "stopped"
-		run.Events = append(run.Events, WorkbenchTeamRunEventView{ID: runID + "-failed", Time: "刚刚", Actor: "协作运行台", Type: "运行失败", Detail: "所有团队成员调用失败，请检查模型配置、网络或 API Key。"})
+		run.Events = append(run.Events, WorkbenchTeamRunEventView{ID: runID + "-failed", Time: time.Now().Format(time.RFC3339), Actor: "协作运行台", Type: "运行失败", Detail: "所有团队成员调用失败，请检查模型配置、网络或 API Key。"})
 	} else {
-		run.Status = "completed"
-		run.Events = append(run.Events, WorkbenchTeamRunEventView{ID: runID + "-completed", Time: "刚刚", Actor: "协作运行台", Type: "运行完成", Detail: fmt.Sprintf("%d/%d 个团队成员完成输出。", successes, len(members))})
-		for i := range run.Artifacts {
-			run.Artifacts[i].Status = "已生成"
+		artifacts, artifactErr := persistTeamRunArtifacts(run, memberOutputs)
+		if artifactErr != nil {
+			run.Status = "stopped"
+			run.Events = append(run.Events, WorkbenchTeamRunEventView{ID: runID + "-artifact-error", Time: time.Now().Format(time.RFC3339), Actor: "协作运行台", Type: "产物持久化失败", Detail: artifactErr.Error()})
+		} else {
+			run.Status = "completed"
+			run.Artifacts = artifacts
+			run.Events = append(run.Events, WorkbenchTeamRunEventView{ID: runID + "-completed", Time: time.Now().Format(time.RFC3339), Actor: "协作运行台", Type: "运行完成", Detail: fmt.Sprintf("%d/%d 个团队成员完成输出，产物已写入本地文件。", successes, len(members))})
 		}
 	}
 	if savedRun, err := saveTeamRunInto(&data, run); err == nil {
@@ -269,13 +276,21 @@ func runTeamRuntimeAgent(parent context.Context, prov provider.Provider, room Wo
 				return strings.TrimSpace(text.String()), chunk.Err
 			}
 		case provider.ChunkDone:
-			return defaultString(strings.TrimSpace(text.String()), "已完成本节点分析，但模型没有返回可见内容。"), nil
+			result := strings.TrimSpace(text.String())
+			if result == "" {
+				return "", errors.New("model returned no visible content")
+			}
+			return result, nil
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return strings.TrimSpace(text.String()), err
 	}
-	return defaultString(strings.TrimSpace(text.String()), "已完成本节点分析，但模型没有返回可见内容。"), nil
+	result := strings.TrimSpace(text.String())
+	if result == "" {
+		return "", errors.New("model returned no visible content")
+	}
+	return result, nil
 }
 
 func teamRuntimeMembers(room WorkbenchTeamRoomView, agents []PersistentAgentView) []PersistentAgentView {
@@ -301,22 +316,38 @@ func teamRuntimeMembers(room WorkbenchTeamRoomView, agents []PersistentAgentView
 	return out
 }
 
-func teamRuntimeArtifacts(room WorkbenchTeamRoomView, runID string) []WorkbenchTeamRunArtifactView {
-	titles := room.Artifacts
-	if len(titles) == 0 {
-		titles = []string{"团队结论", "行动清单", "资料归档"}
+func persistTeamRunArtifacts(run WorkbenchTeamRunView, outputs []string) ([]WorkbenchTeamRunArtifactView, error) {
+	dir, err := workbenchExportsDir()
+	if err != nil {
+		return nil, err
 	}
-	out := make([]WorkbenchTeamRunArtifactView, 0, len(titles))
-	for i, title := range titles {
-		typ := "资料"
-		if i == 0 {
-			typ = "报告"
-		} else if i == 1 {
-			typ = "待办"
-		}
-		out = append(out, WorkbenchTeamRunArtifactView{ID: fmt.Sprintf("%s-artifact-%d", runID, i), Title: title, Type: typ, Status: "生成中"})
+	dir = filepath.Join(dir, "team-runs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
 	}
-	return out
+	base := defaultString(slugifyAgentID(run.ID), "team-run")
+	markdownPath := filepath.Join(dir, base+".md")
+	markdown := "# " + run.Title + "\n\n## 任务\n\n" + run.Task + "\n\n## 成员输出\n\n" + strings.Join(outputs, "\n\n") + "\n"
+	if err := os.WriteFile(markdownPath, []byte(markdown), 0o644); err != nil {
+		return nil, err
+	}
+	jsonPath := filepath.Join(dir, base+".json")
+	payload, err := json.MarshalIndent(struct {
+		RunID   string   `json:"runId"`
+		TeamID  string   `json:"teamId"`
+		Task    string   `json:"task"`
+		Outputs []string `json:"outputs"`
+	}{RunID: run.ID, TeamID: run.TeamID, Task: run.Task, Outputs: outputs}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(jsonPath, payload, 0o644); err != nil {
+		return nil, err
+	}
+	return []WorkbenchTeamRunArtifactView{
+		{ID: run.ID + "-markdown", Title: run.Title + " 团队输出", Type: "Markdown", Status: "已写入", Path: markdownPath},
+		{ID: run.ID + "-json", Title: run.Title + " 结构化输出", Type: "JSON", Status: "已写入", Path: jsonPath},
+	}, nil
 }
 
 func bumpTeamRuntimeAgent(agents []PersistentAgentView, id string) []PersistentAgentView {

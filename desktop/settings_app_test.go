@@ -562,6 +562,7 @@ func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Desktop.ProviderAccess = []string{"custom"}
 	cfg.Providers = []config.ProviderEntry{{
 		Name:         "custom",
 		Kind:         "openai",

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 )
 
 type recordingSink struct {
@@ -60,6 +61,114 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition not met within deadline")
+}
+
+func TestStartForSessionStampsJobContext(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+	seen := make(chan string, 1)
+	j := m.StartForSession("session-a", "task", "scoped", func(ctx context.Context, _ io.Writer) (string, error) {
+		seen <- SessionFromContext(ctx)
+		return "done", nil
+	})
+	if got := <-seen; got != "session-a" {
+		t.Fatalf("job context session = %q, want session-a", got)
+	}
+	if res := m.WaitForSession(context.Background(), "session-a", []string{j.ID}, 5); len(res) != 1 || res[0].Status != Done {
+		t.Fatalf("job result = %+v, want done", res)
+	}
+}
+
+func TestReserveStartForSessionIsAtomic(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+
+	const callers = 16
+	start := make(chan struct{})
+	releases := make(chan func(), callers)
+	results := make(chan bool, callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			<-start
+			release, _, ok := m.ReserveStartForSession("session-a", "task", 3)
+			if ok {
+				releases <- release
+			}
+			results <- ok
+		}()
+	}
+	close(start)
+	reserved := 0
+	for i := 0; i < callers; i++ {
+		if <-results {
+			reserved++
+		}
+	}
+	if reserved != 3 {
+		t.Fatalf("concurrent reservations = %d, want exactly 3", reserved)
+	}
+	for i := 0; i < reserved; i++ {
+		(<-releases)()
+	}
+	if release, running, ok := m.ReserveStartForSession("session-a", "task", 3); !ok || running != 0 {
+		t.Fatalf("reservation after release = (running=%d, ok=%v), want (0, true)", running, ok)
+	} else {
+		release()
+	}
+}
+
+func TestReserveStartForSessionCountsKilledJobUntilExit(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+	exit := make(chan struct{})
+	j := m.StartForSession("session-a", "task", "unwinding", func(context.Context, io.Writer) (string, error) {
+		<-exit
+		return "done", nil
+	})
+	if !m.KillForSession("session-a", j.ID) {
+		t.Fatal("KillForSession did not find running job")
+	}
+	if release, running, ok := m.ReserveStartForSession("session-a", "task", 1); ok {
+		release()
+		t.Fatal("reserved a replacement while killed writer goroutine was still running")
+	} else if running != 1 {
+		t.Fatalf("unwinding writer count = %d, want 1", running)
+	}
+	close(exit)
+	if res := m.WaitForSession(context.Background(), "session-a", []string{j.ID}, 5); len(res) != 1 || res[0].Status != Killed {
+		t.Fatalf("killed job result = %+v", res)
+	}
+	if release, running, ok := m.ReserveStartForSession("session-a", "task", 1); !ok || running != 0 {
+		t.Fatalf("reservation after exit = (running=%d, ok=%v), want (0, true)", running, ok)
+	} else {
+		release()
+	}
+}
+
+func TestTakeEvidenceWaitsForKilledJobExit(t *testing.T) {
+	m := NewManager(event.Discard)
+	defer m.Close()
+	exit := make(chan struct{})
+	j := m.StartForSession("session-a", "task", "partial writer", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-exit
+		PublishEvidence(ctx, evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+			ToolName: "write_file", Success: true, Mutation: true, Paths: []string{"partial.go"},
+		}}})
+		return "stopped", nil
+	})
+	if !m.KillForSession("session-a", j.ID) {
+		t.Fatal("KillForSession did not find running job")
+	}
+	if early := m.TakeEvidenceForSession("session-a", j.ID); len(early.Receipts) != 0 {
+		t.Fatalf("collected evidence before killed job exited: %+v", early)
+	}
+	close(exit)
+	if res := m.WaitForSession(context.Background(), "session-a", []string{j.ID}, 5); len(res) != 1 || res[0].Status != Killed {
+		t.Fatalf("killed job result = %+v", res)
+	}
+	if got := m.TakeEvidenceForSession("session-a", j.ID); !got.HasMutation() {
+		t.Fatalf("partial evidence lost after killed job exit: %+v", got)
+	}
 }
 
 func TestStalledWarningIgnoresReturnedJobBeforeTerminalStatusPublished(t *testing.T) {

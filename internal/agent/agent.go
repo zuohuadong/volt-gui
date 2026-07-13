@@ -2463,9 +2463,10 @@ type toolCallBatch struct {
 // partitionToolCalls keeps provider order while letting contiguous known
 // read-only tools run together. Unknown and writer tools are single-call serial
 // batches so they cannot reorder around reads or produce surprising errors.
-// complete_step and todo_write are read-only but never join a parallel run: they
-// read the turn's evidence ledger, so every prior call's receipt must be recorded
-// before they run.
+// complete_step and todo_write read the turn's evidence ledger. wait and
+// bash_output can merge a background task's receipts into that ledger. These
+// evidence-sensitive tools never join a parallel run, so provider order stays
+// receipt order.
 func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallBatch {
 	var batches []toolCallBatch
 	for i := 0; i < len(calls); {
@@ -2485,7 +2486,8 @@ func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallB
 }
 
 func parallelisable(r *tool.Registry, name string) bool {
-	if name == "complete_step" || name == "todo_write" {
+	switch name {
+	case "complete_step", "todo_write", "wait", "bash_output":
 		return false
 	}
 	t, ok := r.Get(name)

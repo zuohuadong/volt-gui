@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/secrets"
 )
@@ -129,6 +130,9 @@ type Job struct {
 	artifactComplete bool
 	artifactErr      string
 	tombstone        bool
+
+	evidence      evidence.ChildEvidenceSummary
+	evidenceTaken bool
 }
 
 // Manager is the session's background-job table. It is safe for concurrent use.
@@ -148,6 +152,7 @@ type Manager struct {
 	artifactDirs map[string]string
 	loaded       map[string]bool
 	tempRoot     string
+	reservations map[string]int
 
 	stalledWarning time.Duration
 	teardownGrace  time.Duration
@@ -200,6 +205,7 @@ func NewManager(sink event.Sink, opts ...Option) *Manager {
 		jobs:          map[string]*Job{},
 		destroying:    map[string]bool{},
 		artifactDirs:  map[string]string{},
+		reservations:  map[string]int{},
 		loaded:        map[string]bool{},
 		tempRoot:      tempRoot,
 		teardownGrace: DefaultTeardownGrace,
@@ -266,6 +272,8 @@ func (m *Manager) StartForSession(parentSession, kind, label string, run func(ct
 		artifactComplete: artifactErr == "",
 		artifactErr:      artifactErr,
 	}
+	ctx = WithSession(ctx, parentSession)
+	ctx = context.WithValue(ctx, jobCtxKey{}, j)
 	key := jobKey(parentSession, id)
 	m.jobs[key] = j
 	m.order = append(m.order, key)
@@ -813,6 +821,50 @@ func (m *Manager) RunningForSession(parentSession string) []View {
 		j.mu.Unlock()
 	}
 	return out
+}
+
+// ReserveStartForSession atomically reserves capacity for a job start. The
+// caller must release the reservation after StartForSession has registered the
+// job (or when setup fails). Running jobs and in-flight start reservations both
+// count toward limit, so concurrent callers cannot overshoot it.
+func (m *Manager) ReserveStartForSession(parentSession, kind string, limit int) (release func(), running int, ok bool) {
+	if limit <= 0 {
+		return func() {}, 0, true
+	}
+	parentSession = strings.TrimSpace(parentSession)
+	key := jobKey(parentSession, kind)
+	m.mu.Lock()
+	for _, jobKey := range m.order {
+		j := m.jobs[jobKey]
+		if j == nil || !sessionMatches(parentSession, j.SessionID) || j.Kind != kind {
+			continue
+		}
+		select {
+		case <-j.done:
+		default:
+			running++
+		}
+	}
+	running += m.reservations[key]
+	if running >= limit {
+		m.mu.Unlock()
+		return func() {}, running, false
+	}
+	m.reservations[key]++
+	m.mu.Unlock()
+
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			m.mu.Lock()
+			m.reservations[key]--
+			if m.reservations[key] == 0 {
+				delete(m.reservations, key)
+			}
+			m.mu.Unlock()
+		})
+	}
+	return release, running, true
 }
 
 // HasUnfinishedForSession reports whether parentSession owns any job whose
@@ -1484,6 +1536,7 @@ func jobKey(parentSession, id string) string {
 
 type ctxKey struct{}
 type sessionCtxKey struct{}
+type jobCtxKey struct{}
 
 // WithManager stamps ctx with the job manager so tools can reach it via
 // FromContext. The agent sets this on every tool call's context.
@@ -1509,4 +1562,41 @@ func WithSession(ctx context.Context, parentSession string) context.Context {
 func SessionFromContext(ctx context.Context) string {
 	session, _ := ctx.Value(sessionCtxKey{}).(string)
 	return strings.TrimSpace(session)
+}
+
+// PublishEvidence attaches a background agent's host-observed receipts to its
+// job. The receipts stay independent of the parent turn ledger until the
+// parent collects the terminal result with wait or bash_output.
+func PublishEvidence(ctx context.Context, summary evidence.ChildEvidenceSummary) {
+	j, _ := ctx.Value(jobCtxKey{}).(*Job)
+	if j == nil || len(summary.Receipts) == 0 {
+		return
+	}
+	j.mu.Lock()
+	j.evidence.Receipts = append(j.evidence.Receipts, summary.Receipts...)
+	j.mu.Unlock()
+}
+
+// TakeEvidenceForSession returns a terminal job's evidence exactly once. This
+// prevents repeated wait/bash_output calls from duplicating receipts in the
+// collecting turn's ledger.
+func (m *Manager) TakeEvidenceForSession(parentSession, id string) evidence.ChildEvidenceSummary {
+	j := m.get(parentSession, id)
+	if j == nil {
+		return evidence.ChildEvidenceSummary{}
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	select {
+	case <-j.done:
+	default:
+		return evidence.ChildEvidenceSummary{}
+	}
+	if j.evidenceTaken {
+		return evidence.ChildEvidenceSummary{}
+	}
+	j.evidenceTaken = true
+	out := make([]evidence.Receipt, len(j.evidence.Receipts))
+	copy(out, j.evidence.Receipts)
+	return evidence.ChildEvidenceSummary{Receipts: out}
 }

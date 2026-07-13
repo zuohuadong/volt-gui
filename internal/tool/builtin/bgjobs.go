@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
 	"reasonix/internal/tool"
 )
@@ -58,6 +59,9 @@ func (bashOutput) Execute(ctx context.Context, args json.RawMessage) (string, er
 	text, status, found := jm.OutputForSession(jobs.SessionFromContext(ctx), p.JobID)
 	if !found {
 		return "", fmt.Errorf("no background job %q", p.JobID)
+	}
+	if status != jobs.Running {
+		collectBackgroundEvidence(ctx, jm, p.JobID)
 	}
 	if p.Filter != "" && text != "" {
 		filtered, err := filterLines(text, p.Filter)
@@ -160,6 +164,9 @@ func (waitJob) Execute(ctx context.Context, args json.RawMessage) (string, error
 	}
 	var b strings.Builder
 	for i, r := range results {
+		if r.Status != jobs.Running {
+			collectBackgroundEvidence(ctx, jm, r.ID)
+		}
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
@@ -173,4 +180,12 @@ func (waitJob) Execute(ctx context.Context, args json.RawMessage) (string, error
 		}
 	}
 	return b.String(), nil
+}
+
+func collectBackgroundEvidence(ctx context.Context, jm *jobs.Manager, jobID string) {
+	ledger, ok := evidence.FromContext(ctx)
+	if !ok || ledger == nil || jm == nil {
+		return
+	}
+	ledger.MergeChild(jm.TakeEvidenceForSession(jobs.SessionFromContext(ctx), jobID))
 }

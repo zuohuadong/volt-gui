@@ -65,14 +65,12 @@ func TestClassifyMutationRisk(t *testing.T) {
 		t.Fatalf("auth risk = %s, want high", got)
 	}
 
-	// A path-less bash write cannot be scored by path but is usually a routine
-	// content edit: it warrants review (medium), not the security_review
-	// protocol that High demands.
+	// A path-less bash write cannot be scored by path, so it remains high risk.
 	opaque := []Receipt{
 		{ToolName: "bash", Success: true, Mutation: true, Command: "some-unknown-writer"},
 	}
-	if got := ClassifyMutationRisk(opaque, 0); got != RiskMedium {
-		t.Fatalf("opaque risk = %s, want medium", got)
+	if got := ClassifyMutationRisk(opaque, 0); got != RiskHigh {
+		t.Fatalf("opaque risk = %s, want high", got)
 	}
 
 	// Privileged/opaque tools keep escalating to High even without paths.

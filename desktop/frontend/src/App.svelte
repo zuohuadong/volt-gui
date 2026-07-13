@@ -25,6 +25,7 @@
     Crown,
     Database,
     Download,
+    Ellipsis,
     FileText,
     Folder,
     FolderKanban,
@@ -152,6 +153,7 @@
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
   type CapabilityTab = "plugin" | "mcp" | "skill";
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
+  type ReportCenterTab = "design" | "list";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
   type ArtifactCanvasMode = "select" | "pan";
@@ -214,6 +216,7 @@
     DeleteCalendarEvent?: (id: string) => Promise<void>;
     ListWorkbenchReports?: () => Promise<WorkbenchReport[]>;
     SaveWorkbenchReport?: (input: WorkbenchReportInput) => Promise<WorkbenchReport>;
+    ReviewWorkbenchReport?: (id: string, action: "submit" | "approve" | "return", reviewedBy: string, comment: string) => Promise<WorkbenchReport>;
     SaveKnowledgeDocument?: (input: WorkbenchKnowledgeDocumentInput) => Promise<WorkbenchKnowledgeDocument>;
     ListRegulations?: () => Promise<WorkbenchRegulation[]>;
     SaveRegulation?: (input: WorkbenchRegulation) => Promise<WorkbenchRegulation>;
@@ -406,6 +409,8 @@
   let selectedAgentId = $state("");
   let selectedCoreFile = $state("SYSTEM.md");
   let configDialog = $state<ConfigDialog | undefined>();
+  let configValidationField = $state("");
+  let configValidationMessage = $state("");
   let scheduleDraftTitleValue = $state("");
   let scheduleDraftDate = $state("");
   let scheduleDraftTimeValue = $state("");
@@ -426,6 +431,7 @@
   let customerDetailTab = $state<CustomerDetailTab>("overview");
   let projectDetailTab = $state<ProjectDetailTab>("overview");
   let projectStatusFilter = $state<"all" | "active" | "closed">("all");
+  let openProjectActionMenuId = $state("");
   let projectDetailOpen = $state(false);
   let customerDetailOpen = $state(false);
   let selectedTeamTitle = $state<string | undefined>();
@@ -457,6 +463,9 @@
       ? "工作区正在准备中，请稍后发送"
       : "",
   );
+  $effect(() => {
+    syncArtifactReview(selectedReport());
+  });
   const hasConversation = $derived(transcript.some((item) => item.id !== "system-welcome" && item.role !== "system"));
   const showTranscript = $derived(hasConversation || sending || Boolean(pendingApproval) || Boolean(pendingAsk));
   const showActiveTranscript = $derived(((activityMode === "code" && newTaskConversationActive) || (activityMode === "work" && workLayer === "newTask" && newTaskConversationActive)) && (showTranscript || newTaskConversationActive));
@@ -643,6 +652,11 @@
   let selectedArtifactStage = $state<ArtifactReviewStageId>("design");
   let selectedArtifactStyleId = $state("brand-systematic");
   let artifactReviewJob = $state<WorkbenchJob | undefined>();
+  let artifactStyleApproved = $state(false);
+  let artifactReviewComment = $state("");
+  let artifactReviewSaving = $state(false);
+  let artifactReviewReportKey = $state("");
+  let reportCenterTab = $state<ReportCenterTab>("design");
   let reportDraftId = $state("");
   let reportDraftTitle = $state("");
   let reportDraftKind = $state("项目风险报告");
@@ -701,10 +715,6 @@
     { id: "launch-editorial", name: "发布叙事", rationale: "适合活动海报与故事板，主视觉更突出。" },
     { id: "compliance-plain", name: "合规简明", rationale: "适合审查材料，强调证据、免责声明和留痕。" },
   ];
-  const artifactStyleApproved = $derived.by(() => {
-    const styleStep = artifactReviewJob?.steps.find((step) => step.id === "design");
-    return styleStep?.status === "done" && styleStep.output?.styleId === selectedArtifactStyleId;
-  });
   const artifactReviewFindings: ArtifactReviewFinding[] = [];
   let runningAutomations = $state<WorkbenchAutomation[]>([]);
   const primaryAutomation = $derived(runningAutomations[0]);
@@ -714,7 +724,10 @@
     desc: "",
     status: "待配置",
     kind: "自定义自动化",
-    owner: "",
+    owner: "自动化 Agent",
+    projectId: "",
+    projectName: "",
+    createTodoOnFailure: false,
     cadence: "",
     schedule: "手动触发",
     scheduleMode: "manual",
@@ -1082,7 +1095,13 @@
     return projectCards.find((project) => project.id === material.projectId)?.name ?? material.projectName ?? "未关联项目";
   }
   function materialPath(material?: WorkbenchProjectMaterial) {
-    return material?.filePath || material?.source || "";
+    return material?.filePath?.trim() || "";
+  }
+  function materialHasLocalFile(material?: WorkbenchProjectMaterial) {
+    return Boolean(materialPath(material));
+  }
+  function materialFileActionHint(material?: WorkbenchProjectMaterial) {
+    return materialHasLocalFile(material) ? "打开关联的本地文件" : "该资料未附加本地文件，不能执行此操作";
   }
   function openMaterialDetail(id: string) {
     selectedMaterialDetailId = id;
@@ -1288,8 +1307,8 @@
     try {
       await app().OpenWorkspacePath(path);
     } catch (error) {
-      console.error("Failed to open material file", error);
-      showWorkbenchNotice("打开资料失败，请确认文件仍存在。");
+      console.warn("Unable to open material file", error);
+      showWorkbenchNotice("打开资料失败：关联文件不存在、已被移动，或当前资料未附加本地文件。");
     }
   }
   async function revealMaterialFile(material?: WorkbenchProjectMaterial) {
@@ -1306,8 +1325,8 @@
         if (typeof revealPath !== "function") throw new Error("RevealPath unavailable");
         await revealPath(path);
       } catch (error) {
-        console.error("Failed to reveal material file", error);
-        showWorkbenchNotice("定位资料失败，请确认文件仍存在。");
+        console.warn("Unable to reveal material file", error);
+        showWorkbenchNotice("定位资料失败：关联文件不存在、已被移动，或当前资料未附加本地文件。");
       }
     }
   }
@@ -1362,6 +1381,16 @@
     workbenchNoticeTimer = window.setTimeout(() => {
       if (workbenchNotice === message) workbenchNotice = "";
     }, 2800);
+  }
+  function clearConfigValidation() {
+    configValidationField = "";
+    configValidationMessage = "";
+  }
+  function showConfigValidation(field: string, message: string) {
+    configValidationField = field;
+    configValidationMessage = message;
+    if (typeof document === "undefined") return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-config-field="${field}"]`)?.focus());
   }
   function todoStatusLabel(status: string) {
     if (status === "in_progress") return "进行中";
@@ -1486,6 +1515,11 @@
       desktopBackendUnavailable("导出报告");
       return;
     }
+    const unapprovedReports = reportCards.filter((report) => !reportCanExport(report));
+    if (unapprovedReports.length) {
+      showWorkbenchNotice(`还有 ${unapprovedReports.length} 篇报告待审批，暂不能批量导出。`);
+      return;
+    }
     try {
       const path = await exportReportsBinding();
       await refreshWorkbenchData();
@@ -1493,7 +1527,7 @@
       showWorkbenchNotice(`已导出 ${reportCards.length} 份报告：${path}`);
     } catch (error) {
       console.error("Failed to export reports", error);
-      showWorkbenchNotice("导出报告失败。");
+      showWorkbenchNotice(reportExportErrorMessage(error, true));
     }
   }
   async function openCalendarEvent(event: (typeof calendarEvents)[number]) {
@@ -1746,7 +1780,10 @@
       desc: task?.desc ?? "",
       status: task?.status ?? "待配置",
       kind: task?.kind ?? "自定义自动化",
-      owner: task?.owner ?? "",
+      owner: task?.owner ?? "自动化 Agent",
+      projectId: task?.projectId ?? "",
+      projectName: task?.projectName ?? "",
+      createTodoOnFailure: Boolean(task?.createTodoOnFailure),
       startedAtMs: task?.startedAtMs,
       cadence: task?.cadence ?? "",
       schedule: task?.schedule ?? "手动触发",
@@ -1770,6 +1807,12 @@
     automationDialog = task?.id ?? "new";
     automationDraft = automationDraftFromTask(task);
   }
+  function setAutomationDraftProject(projectId: string) {
+    const project = projectCards.find((item) => item.id === projectId);
+    automationDraft.projectId = project?.id ?? "";
+    automationDraft.projectName = project?.name ?? "";
+    if (!project) automationDraft.createTodoOnFailure = false;
+  }
   function automationDraftInput(): WorkbenchAutomationInput {
     return {
       id: automationDialogMode === "edit" ? automationDraft.id : undefined,
@@ -1777,7 +1820,10 @@
       desc: automationDraft.desc.trim(),
       status: automationDraft.status?.trim() || "待配置",
       kind: automationDraft.kind?.trim() || "自定义自动化",
-      owner: automationDraft.owner?.trim(),
+      owner: automationDraft.owner?.trim() || "自动化 Agent",
+      projectId: automationDraft.projectId?.trim(),
+      projectName: automationDraft.projectName?.trim(),
+      createTodoOnFailure: Boolean(automationDraft.createTodoOnFailure),
       startedAtMs: automationDraft.startedAtMs,
       cadence: automationDraft.cadence?.trim(),
       schedule: automationDraft.schedule?.trim() || "手动触发",
@@ -1804,6 +1850,10 @@
       desktopBackendUnavailable("保存自动化任务");
       return;
     }
+    if (input.createTodoOnFailure && !input.projectId) {
+      showWorkbenchNotice("启用失败后创建待办时，请先关联项目。");
+      return;
+    }
     try {
       const saved = await saveAutomation(input);
       runningAutomations = [saved, ...runningAutomations.filter((item) => item.id !== saved.id)];
@@ -1811,7 +1861,7 @@
       showWorkbenchNotice(`已保存自动化任务：${saved.title}`);
     } catch (error) {
       console.error("Failed to save automation", error);
-      showWorkbenchNotice("保存自动化任务失败，请稍后重试。");
+      showWorkbenchNotice(`保存自动化任务失败：${formatErrorMessage(error)}`);
     }
   }
   async function runAutomationNow(taskId?: string) {
@@ -3426,8 +3476,37 @@
   }
   function reportProject(report = selectedReport()) { return report ? projectCards.find((project) => project.id === report.projectId) : undefined; }
   function reportCustomer(report = selectedReport()) { return report ? customerCards.find((customer) => customer.id === report.customerId) : undefined; }
-  function reportUpdatedAt(report = selectedReport()) { return report?.updatedAt || report?.createdAt || "??"; }
   function reportDueAt(report = selectedReport()) { return report?.dueAt?.trim() ? report.dueAt.replace("T", " ") : "未设置"; }
+  function reportCanExport(report?: WorkbenchReport) {
+    return Boolean(report?.reviewStatus === "approved" && report.reviewStage === "export" && report.styleApproved);
+  }
+  function unapprovedReportCount() {
+    return reportCards.filter((report) => !reportCanExport(report)).length;
+  }
+  function reportExportDisabledReason(report = selectedReport()) {
+    return reportCanExport(report) ? "报告已通过审批，可以导出" : "报告尚未通过审批，暂不能导出";
+  }
+  function reportExportErrorMessage(error: unknown, batch = false) {
+    const detail = formatErrorMessage(error);
+    if (detail.includes("is not approved for export")) {
+      return batch ? "批量导出失败：仍有报告未通过审批。" : "导出失败：该报告尚未通过审批。";
+    }
+    return `导出报告失败：${detail}`;
+  }
+  function reportTimestamp(value?: string) {
+    const source = value?.trim();
+    if (!source) return "未记录";
+    const date = new Date(source);
+    if (Number.isNaN(date.getTime())) return source;
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date).replaceAll("/", "-");
+  }
   function reportBodyLines(report = selectedReport()) {
     const body = report?.body?.trim() || report?.desc?.trim();
     return body ? body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : ["暂无报告正文。"];
@@ -3451,6 +3530,10 @@
   }
   async function exportReport(report = selectedReport()) {
     if (!report) return;
+    if (!reportCanExport(report)) {
+      showWorkbenchNotice("该报告尚未通过审批，暂不能导出。");
+      return;
+    }
     const exportReportBinding = workbenchDataPersistenceBindings()?.ExportWorkbenchReport;
     if (typeof exportReportBinding !== "function") {
       showWorkbenchNotice("当前环境未连接单篇报告导出接口。");
@@ -3462,7 +3545,7 @@
       showWorkbenchNotice(`已导出报告：${path}`);
     } catch (error) {
       console.error("Failed to export report", error);
-      showWorkbenchNotice("导出报告失败，请稍后重试。");
+      showWorkbenchNotice(reportExportErrorMessage(error));
     }
   }
   async function deleteReport(report = selectedReport()) {
@@ -3487,6 +3570,132 @@
   function selectedArtifactStyle() {
     return artifactStyleOptions.find((style) => style.id === selectedArtifactStyleId) ?? artifactStyleOptions[0];
   }
+  function syncArtifactReview(report = selectedReport()) {
+    const key = report ? `${report.id}:${report.updatedAt || ""}:${report.reviewStatus || ""}:${report.artifactStyleId || ""}` : "";
+    if (!report || artifactReviewReportKey === key) return;
+    artifactReviewReportKey = key;
+    selectedArtifactStyleId = report.artifactStyleId || artifactStyleOptions[0]?.id || "";
+    selectedArtifactStage = report.reviewStage === "export" ? "export" : "design";
+    artifactStyleApproved = Boolean(report.styleApproved);
+    artifactReviewComment = report.reviewComment || "";
+  }
+  function artifactReviewStatus(report = selectedReport()) {
+    return report?.reviewStatus || "draft";
+  }
+  function artifactReviewStatusLabel(report = selectedReport()) {
+    const status = artifactReviewStatus(report);
+    if (status === "submitted") return "等待审批";
+    if (status === "approved") return "已批准";
+    if (status === "returned") return "已退回";
+    return "草稿待提交";
+  }
+  function reportInputForArtifactStyle(report: WorkbenchReport, artifactStyleId: string): WorkbenchReportInput {
+    return {
+      id: report.id,
+      title: report.title,
+      status: report.status,
+      owner: report.owner,
+      desc: report.desc,
+      body: report.body || "",
+      kind: report.kind || "",
+      projectId: report.projectId || "",
+      customerId: report.customerId || "",
+      source: report.source || "",
+      format: report.format || "",
+      priority: report.priority || "",
+      dueAt: report.dueAt || "",
+      artifactStyleId,
+    };
+  }
+  async function selectArtifactStyle(styleId: string) {
+    const report = selectedReport();
+    if (!report || artifactReviewSaving || styleId === selectedArtifactStyleId) return;
+    const saveReport = workbenchDataPersistenceBindings()?.SaveWorkbenchReport;
+    if (typeof saveReport !== "function") {
+      showWorkbenchNotice("当前环境未连接报告设计保存接口。");
+      return;
+    }
+    artifactReviewSaving = true;
+    try {
+      const saved = await saveReport(reportInputForArtifactStyle(report, styleId));
+      reportCards = reportCards.map((item) => item.id === saved.id ? saved : item);
+      selectedArtifactStyleId = saved.artifactStyleId || styleId;
+      selectedArtifactStage = saved.reviewStage === "export" ? "export" : "design";
+      artifactStyleApproved = Boolean(saved.styleApproved);
+      artifactReviewComment = saved.reviewComment || "";
+      if (artifactReviewJob && hasWailsBindings()) {
+        try {
+          artifactReviewJob = await app().UpdateWorkbenchStep(artifactReviewJob.id, "design", {
+            status: "draft",
+            input: { styleId: selectedArtifactStyleId },
+            output: { styleId: selectedArtifactStyleId },
+          });
+        } catch (error) {
+          console.error("Failed to sync artifact style job", error);
+        }
+      }
+      showWorkbenchNotice("已保存报告样式，审批状态已按实际内容更新。");
+    } catch (error) {
+      console.error("Failed to save report design", error);
+      showWorkbenchNotice(`保存报告样式失败：${formatErrorMessage(error)}`);
+    } finally {
+      artifactReviewSaving = false;
+    }
+  }
+  async function reviewArtifact(action: "submit" | "approve" | "return") {
+    const report = selectedReport();
+    const reviewReport = workbenchDataPersistenceBindings()?.ReviewWorkbenchReport;
+    if (!report || artifactReviewSaving) return;
+    if (typeof reviewReport !== "function") {
+      showWorkbenchNotice("当前环境未连接报告审批接口，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    artifactReviewSaving = true;
+    try {
+      const saved = await reviewReport(report.id, action, "当前用户", artifactReviewComment.trim());
+      reportCards = reportCards.map((item) => item.id === saved.id ? saved : item);
+      artifactReviewReportKey = `${saved.id}:${saved.updatedAt || ""}:${saved.reviewStatus || ""}:${saved.artifactStyleId || ""}`;
+      selectedArtifactStyleId = saved.artifactStyleId || selectedArtifactStyleId;
+      selectedArtifactStage = saved.reviewStage === "export" ? "export" : "design";
+      artifactStyleApproved = Boolean(saved.styleApproved);
+      artifactReviewComment = saved.reviewComment || "";
+      if (hasWailsBindings()) {
+        try {
+          const job = await ensureArtifactReviewJob();
+          if (action === "submit") {
+            artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "design", {
+              status: "waiting_approval",
+              input: { styleId: selectedArtifactStyleId },
+              output: { styleId: selectedArtifactStyleId, styleName: selectedArtifactStyle().name },
+            });
+          } else if (action === "approve") {
+            const pendingJob = await app().UpdateWorkbenchStep(job.id, "design", {
+              status: "waiting_approval",
+              input: { styleId: selectedArtifactStyleId },
+              output: { styleId: selectedArtifactStyleId, styleName: selectedArtifactStyle().name },
+            });
+            artifactReviewJob = await app().ApproveWorkbenchStep(pendingJob.id, "design");
+          } else {
+            artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "design", {
+              status: "draft",
+              input: { styleId: selectedArtifactStyleId },
+              output: { styleId: selectedArtifactStyleId, returned: true },
+            });
+            artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "export", { status: "draft", output: {} });
+          }
+        } catch (error) {
+          console.error("Failed to sync artifact review job", error);
+        }
+      }
+      const notice = action === "submit" ? "报告设计已提交审批。" : action === "approve" ? "报告设计已批准，可以导出。" : "报告设计已退回草稿。";
+      showWorkbenchNotice(notice);
+    } catch (error) {
+      console.error("Failed to review report design", error);
+      showWorkbenchNotice(`报告审批失败：${formatErrorMessage(error)}`);
+    } finally {
+      artifactReviewSaving = false;
+    }
+  }
   function artifactKindLabel(report = selectedReport()) {
     const text = [report?.kind, report?.format, report?.title].filter(Boolean).join(" ").toLowerCase();
     if (/ppt|deck|slide|演示|幻灯/.test(text)) return "Deck Slides";
@@ -3507,24 +3716,10 @@
     return "未开始";
   }
   function setArtifactStage(stageId: ArtifactReviewStageId) {
-    selectedArtifactStage = stageId;
+    const report = selectedReport();
+    selectedArtifactStage = report?.reviewStage === "export" ? "export" : "design";
     if (stageId !== "export") return;
-    if (!artifactStyleApproved) showWorkbenchNotice("样式门禁未通过，导出阶段仍需人工批准。");
-  }
-  async function selectArtifactStyle(styleId: string) {
-    const previousStyleId = selectedArtifactStyleId;
-    selectedArtifactStyleId = styleId;
-    if (!artifactReviewJob || !hasWailsBindings()) return;
-    try {
-      artifactReviewJob = await app().UpdateWorkbenchStep(artifactReviewJob.id, "design", {
-        status: "draft",
-        input: { styleId },
-        output: { styleId },
-      });
-    } catch (error) {
-      selectedArtifactStyleId = previousStyleId;
-      showWorkbenchNotice(`切换产物样式失败：${formatErrorMessage(error)}`);
-    }
+    if (!report?.styleApproved) showWorkbenchNotice("报告尚未通过设计审批，不能进入导出阶段。");
   }
   function updateArtifactZoom(delta: number) {
     artifactCanvasZoom = Math.min(160, Math.max(60, artifactCanvasZoom + delta));
@@ -3549,45 +3744,14 @@
     artifactCanvasPanX = Math.max(-96, Math.min(96, artifactCanvasPanX + dx));
     artifactCanvasPanY = Math.max(-72, Math.min(72, artifactCanvasPanY + dy));
   }
-  async function approveArtifactStyle() {
-    if (!hasWailsBindings()) {
-      desktopBackendUnavailable("批准产物样式");
-      return;
-    }
-    try {
-      let job = await ensureArtifactReviewJob();
-      job = await app().UpdateWorkbenchStep(job.id, "design", {
-        status: "waiting_approval",
-        input: { styleId: selectedArtifactStyleId },
-        output: { styleId: selectedArtifactStyleId, styleName: selectedArtifactStyle().name },
-      });
-      artifactReviewJob = await app().ApproveWorkbenchStep(job.id, "design");
-      selectedArtifactStage = "design";
-      showWorkbenchNotice(`已批准样式：${selectedArtifactStyle().name}`);
-    } catch (error) {
-      showWorkbenchNotice(`批准产物样式失败：${formatErrorMessage(error)}`);
-    }
+  function approveArtifactStyle() {
+    void reviewArtifact("approve");
   }
-  async function returnArtifactToDraft() {
-    if (!hasWailsBindings()) {
-      desktopBackendUnavailable("退回产物草稿");
-      return;
-    }
-    try {
-      const job = await ensureArtifactReviewJob();
-      artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "design", {
-        status: "draft",
-        input: { styleId: selectedArtifactStyleId },
-        output: { styleId: selectedArtifactStyleId, returned: true },
-      });
-      artifactReviewJob = await app().UpdateWorkbenchStep(job.id, "export", { status: "draft", output: {} });
-      selectedArtifactStage = "draft";
-      showWorkbenchNotice("已将产物审查退回草稿阶段。");
-    } catch (error) {
-      showWorkbenchNotice(`退回产物草稿失败：${formatErrorMessage(error)}`);
-    }
+  function returnArtifactToDraft() {
+    void reviewArtifact("return");
   }
   function artifactExportState() {
+    if (artifactReviewStatus() === "submitted") return "审批中";
     if (!artifactStyleApproved) return "样式待批准";
     if (selectedArtifactStage !== "export") return "等待导出阶段";
     return "可导出";
@@ -4058,6 +4222,7 @@
     templateDraftMaterialIds = [];
   }
   function openConfigDialog(kind: ConfigDialog) {
+    clearConfigValidation();
     configDialog = kind;
     if (kind === "schedule") resetScheduleDraft();
     if (kind === "regulation") resetRegulationDraft();
@@ -4088,10 +4253,77 @@
     activeSidebarConversationId = "";
     syncSidebarProjectContext(sidebarProject);
   }
+  function projectPersistenceInput(project: WorkbenchProject, status: "active" | "closed"): WorkbenchProjectInput {
+    return {
+      id: project.id,
+      name: project.name,
+      code: project.code,
+      client: project.client,
+      stage: status === "closed" ? "已归档" : project.stage === "已归档" ? "进行中" : project.stage,
+      owner: project.owner,
+      desc: project.desc,
+      category: project.category,
+      court: project.court,
+      budget: project.budget,
+      acceptedAt: project.acceptedAt,
+      status,
+      progress: project.progress,
+      priority: project.priority,
+      risk: project.risk,
+      nextStep: project.nextStep,
+      agent: project.agent,
+      materials: project.materials,
+      todos: project.todos,
+      events: project.events,
+      reports: project.reports,
+      timeline: project.timeline,
+    };
+  }
+  async function updateProjectStatus(project: WorkbenchProject, status: "active" | "closed") {
+    const saveProject = projectPersistenceBindings()?.SaveWorkbenchProject;
+    if (typeof saveProject !== "function") {
+      showWorkbenchNotice("当前环境未连接项目保存接口，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    try {
+      const saved = await saveProject(projectPersistenceInput(project, status));
+      projectCards = projectCards.map((item) => item.id === saved.id ? saved : item);
+      syncSidebarProjectFromWorkbench(saved);
+      openProjectActionMenuId = "";
+      projectStatusFilter = status === "closed" ? "closed" : "active";
+      showWorkbenchNotice(status === "closed" ? `已归档项目：${saved.name}` : `已恢复进行中：${saved.name}`);
+    } catch (error) {
+      console.error("Failed to update project status", error);
+      showWorkbenchNotice(`更新项目状态失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function deleteProject(project: WorkbenchProject) {
+    if (typeof window !== "undefined" && !window.confirm(`确定删除项目“${project.name}”吗？此操作不会删除已关联的资料、日程、报告和待办记录。`)) return;
+    const deleteProjectBinding = projectPersistenceBindings()?.DeleteWorkbenchProject;
+    if (typeof deleteProjectBinding !== "function") {
+      showWorkbenchNotice("当前环境未连接项目删除接口，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    try {
+      await deleteProjectBinding(project.id);
+      const remainingProjects = projectCards.filter((item) => item.id !== project.id);
+      projectCards = remainingProjects;
+      sidebarProjects = sidebarProjects.filter((item) => item.id !== project.id);
+      if (selectedProjectId === project.id) {
+        selectedProjectId = remainingProjects[0]?.id ?? "";
+        projectDetailOpen = false;
+      }
+      openProjectActionMenuId = "";
+      showWorkbenchNotice(`已删除项目：${project.name}`);
+    } catch (error) {
+      console.error("Failed to delete project", error);
+      showWorkbenchNotice(`删除项目失败：${formatErrorMessage(error)}`);
+    }
+  }
   async function submitProjectDraft() {
     const name = projectDraftName.trim();
     if (!name) {
-      showWorkbenchNotice("请填写项目名称。");
+      showConfigValidation("project-name", "请填写项目名称后再确认。");
       return;
     }
     const progress = Number(projectDraftProgress);
@@ -4182,25 +4414,26 @@
   }
   async function submitMaterialDraft() {
     const fromResourceCenter = configDialog === "resource";
+    const uploadProjectFile = configDialog === "resource" || configDialog === "dossier";
     const title = materialDraftTitle.trim();
     if (!title) {
-      showWorkbenchNotice("请填写资料名称。");
+      showConfigValidation("material-title", "请填写资料名称后再确认。");
       return;
     }
     const project = projectCards.find((item) => item.id === materialDraftProjectId) ?? selectedProject();
     if (!project?.id) {
-      showWorkbenchNotice("请先选择归属项目。");
+      showConfigValidation("material-project", "请选择资料归属项目后再确认。");
       return;
     }
     let uploadedFilePath = "";
     let uploadedFileName = "";
     let uploadedFileSize = 0;
     let uploadedMimeType = "";
-    if (fromResourceCenter) {
+    if (uploadProjectFile) {
       const nativeFile = materialDraftNativeFile;
       const browserFile = materialDraftFile;
       if (!nativeFile && !browserFile) {
-        showWorkbenchNotice("请选择要上传的资料文件。");
+        showConfigValidation("material-file", "请选择要上传的资料文件后再确认。");
         return;
       }
       try {
@@ -4282,12 +4515,12 @@
   }
   async function submitIngestDraft() {
     if (!ingestDraftFiles.length) {
-      showWorkbenchNotice("请选择要批量导入的资料文件。");
+      showConfigValidation("ingest-files", "请选择至少一个资料文件后再确认导入。");
       return;
     }
     const project = projectCards.find((item) => item.id === ingestDraftProjectId) ?? selectedProject();
     if (!project?.id) {
-      showWorkbenchNotice("请先选择归属项目。");
+      showConfigValidation("ingest-project", "请选择导入资料的归属项目后再确认。");
       return;
     }
     if (!hasWailsBindings()) {
@@ -4340,7 +4573,7 @@
     const saveCustomer = workbenchDataPersistenceBindings()?.SaveCustomer;
     const name = customerDraftName.trim();
     if (!name) {
-      showWorkbenchNotice("请填写客户名称。");
+      showConfigValidation("customer-name", "请填写客户名称后再保存。");
       return;
     }
     const projectIds = customerDraftProjectId ? [customerDraftProjectId] : [];
@@ -4510,7 +4743,7 @@
     const saveReport = workbenchDataPersistenceBindings()?.SaveWorkbenchReport;
     const title = reportDraftTitle.trim();
     if (!title) {
-      showWorkbenchNotice("请填写报告标题。");
+      showConfigValidation("report-title", "请填写报告标题后再确认。");
       return;
     }
     const input: WorkbenchReportInput = {
@@ -4549,7 +4782,7 @@
     const saveDocument = workbenchDataPersistenceBindings()?.SaveKnowledgeDocument;
     const title = templateDraftTitle.trim();
     if (!title) {
-      showWorkbenchNotice("请填写模板名称。");
+      showConfigValidation("template-title", "请填写模板名称后再确认。");
       return;
     }
     const input: WorkbenchKnowledgeDocumentInput = {
@@ -4587,11 +4820,11 @@
     const title = knowledgeDraftTitle.trim();
     const content = knowledgeDraftContent.trim();
     if (!title) {
-      showWorkbenchNotice("请填写知识标题。");
+      showConfigValidation("knowledge-title", "请填写知识标题后再确认导入。");
       return;
     }
     if (!content && !knowledgeDraftDescription.trim()) {
-      showWorkbenchNotice("请填写知识内容或摘要。");
+      showConfigValidation("knowledge-content", "请填写知识正文或摘要后再确认导入。");
       return;
     }
     const importKnowledge = knowledgePersistenceBindings()?.ImportKnowledgeDocument;
@@ -5247,8 +5480,14 @@
       } else if (capabilityTab === "mcp") {
         await app().SetMCPServerEnabled(item.id, enabled);
       } else {
-        await app().SetSkillEnabled(item.name, enabled);
-        await app().RefreshSkills();
+        // Skill 的展示名称可由 frontmatter 的 title 覆盖，持久化开关必须使用稳定的内部名称。
+        await app().SetSkillEnabled(item.id, enabled);
+        try {
+          await app().RefreshSkills();
+        } catch (error) {
+          // 开关已保存；无关的运行时连接异常不应阻断能力状态刷新。
+          console.warn("Skill runtime refresh failed after saving its enabled state", error);
+        }
       }
       await refreshCapabilities();
       await refreshSkillStatus();
@@ -6386,6 +6625,11 @@
             {#if activityMode === "work" && workLayer === "reports"}
               {@const activeReport = selectedReport()}
               {@const activeStyle = selectedArtifactStyle()}
+              <div class="capability-tabs report-center-tabs" role="tablist" aria-label="报告中心视图">
+                <button class:active={reportCenterTab === "design"} type="button" role="tab" aria-selected={reportCenterTab === "design"} onclick={() => (reportCenterTab = "design")}>报告设计</button>
+                <button class:active={reportCenterTab === "list"} type="button" role="tab" aria-selected={reportCenterTab === "list"} onclick={() => (reportCenterTab = "list")}>报告列表 <em>{reportCards.length}</em></button>
+              </div>
+              {#if reportCenterTab === "design"}
               <section class="artifact-review-workbench" aria-label="产物审查工作台">
                 <header class="artifact-review-head">
                   <div>
@@ -6458,20 +6702,33 @@
                     <section class="artifact-style-gate">
                       <header>
                         <span>Style Gate</span>
-                        <strong>{artifactStyleApproved ? "样式已批准" : "等待样式批准"}</strong>
+                        <strong>{artifactReviewStatusLabel(activeReport)}</strong>
                       </header>
                       <div class="artifact-style-list">
                         {#each artifactStyleOptions as style (style.id)}
-                          <button class:active={selectedArtifactStyleId === style.id} type="button" onclick={() => void selectArtifactStyle(style.id)}>
+                          <button class:active={selectedArtifactStyleId === style.id} type="button" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) === "submitted" || artifactReviewStatus(activeReport) === "approved"} onclick={() => void selectArtifactStyle(style.id)}>
                             <strong>{style.name}</strong>
                             <span>{style.id}</span>
                             <em>{style.rationale}</em>
                           </button>
                         {/each}
                       </div>
+                      <label class="artifact-review-note">
+                        <span>审批意见</span>
+                        <textarea bind:value={artifactReviewComment} rows="3" placeholder="提交说明或退回原因会随审批记录保存" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) === "approved"}></textarea>
+                      </label>
+                      {#if activeReport?.reviewedBy || activeReport?.reviewedAt}
+                        <p class="artifact-review-meta">最近审批：{activeReport?.reviewedBy || "当前用户"}{activeReport?.reviewedAt ? ` · ${activeReport.reviewedAt.replace("T", " ")}` : ""}</p>
+                      {/if}
                       <div class="artifact-gate-actions">
-                        <button type="button" onclick={returnArtifactToDraft}>退回草稿</button>
-                        <button type="button" onclick={approveArtifactStyle}>批准样式</button>
+                        <button type="button" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) !== "submitted"} onclick={returnArtifactToDraft}>退回草稿</button>
+                        {#if artifactReviewStatus(activeReport) === "draft" || artifactReviewStatus(activeReport) === "returned"}
+                          <button type="button" disabled={artifactReviewSaving} onclick={() => void reviewArtifact("submit")}>提交审批</button>
+                        {:else if artifactReviewStatus(activeReport) === "submitted"}
+                          <button type="button" disabled={artifactReviewSaving} onclick={approveArtifactStyle}>批准样式</button>
+                        {:else}
+                          <button type="button" disabled>已批准</button>
+                        {/if}
                       </div>
                     </section>
 
@@ -6493,6 +6750,7 @@
                   </aside>
                 </div>
               </section>
+              {/if}
             {/if}
             {#if activityMode === "code"}
               <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
@@ -6693,6 +6951,7 @@
                     <article><span>验证自动化</span><strong>{runningAutomations.filter((item) => item.kind.includes("验证")).length}</strong><em>已接入门禁</em></article>
                     <article><span>最近结果</span><strong>{primaryAutomation?.result ?? "待运行"}</strong><em>{primaryAutomation?.lastRun ?? "未运行"}</em></article>
                   </section>
+                  <p class="automation-scheduler-note">定时自动化仅在 Volt GUI 桌面应用保持运行时执行；应用关闭期间不会运行或补跑。</p>
 
                   <div class="automation-layout">
                     <section class="automation-task-list" aria-label="自动化任务列表">
@@ -6708,6 +6967,7 @@
                             <dt>触发方式</dt><dd>{item.schedule}</dd>
                             <dt>工作区</dt><dd>{item.scope}</dd>
                             <dt>执行命令</dt><dd>{automationCommandLabel(item.command)}</dd>
+                            <dt>关联项目</dt><dd>{item.projectName || "未关联"}</dd>
                             <dt>下一次</dt><dd>{item.nextRun}</dd>
                           </dl>
                           <div class="automation-step-strip">
@@ -6767,17 +7027,31 @@
                 </div>
                 <div class="project-list-panel project-list-panel--single">
                   {#each filteredProjects as project (project.id)}
-                    <button class="management-card matter-card project-matter-card" type="button" onclick={() => { selectedProjectId = project.id; projectDetailTab = "overview"; projectDetailOpen = true; }}>
-                      <span class="management-card__icon"><FolderKanban size={20} /></span>
-                      <div class="management-card__body">
-                        <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
-                        <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span><em>{project.priority}优先级</em><em class:riskHigh={project.risk === "中风险"}>{project.risk}</em></div>
-                        <p>{project.court || project.desc}</p>
-                        <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>客户：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
-                        <div class="project-progress-line"><i style={`--progress:${project.progress}%`}></i><span>{project.progress}%</span></div>
+                    <article class="management-card matter-card project-matter-card">
+                      <button class="project-matter-card__open" type="button" onclick={() => { openProjectActionMenuId = ""; selectedProjectId = project.id; projectDetailTab = "overview"; projectDetailOpen = true; }}>
+                        <span class="management-card__icon"><FolderKanban size={20} /></span>
+                        <div class="management-card__body">
+                          <div class="project-card-title"><strong>{project.name}</strong><em>{project.code}</em></div>
+                          <div class="management-badges"><span>{project.category}</span><span>{project.stage}</span><em>{project.priority}优先级</em><em class:riskHigh={project.risk === "中风险"}>{project.risk}</em></div>
+                          <p>{project.court || project.desc}</p>
+                          <div class="management-meta"><span><CalendarDays size={13} />{project.acceptedAt}</span><span><BriefcaseBusiness size={13} />¥{project.budget}</span><span>客户：{project.client}</span><span>执行 Agent：{project.agent}</span></div>
+                          <div class="project-progress-line"><i style={`--progress:${project.progress}%`}></i><span>{project.progress}%</span></div>
+                        </div>
+                      </button>
+                      <div class="project-card-more">
+                        <button type="button" class="project-card-more__trigger" aria-label={`项目操作：${project.name}`} aria-expanded={openProjectActionMenuId === project.id} onclick={() => (openProjectActionMenuId = openProjectActionMenuId === project.id ? "" : project.id)}><Ellipsis size={18} /></button>
+                        {#if openProjectActionMenuId === project.id}
+                          <div class="project-card-action-menu" role="menu">
+                            {#if project.status === "closed"}
+                              <button type="button" role="menuitem" onclick={() => void updateProjectStatus(project, "active")}><RotateCcw size={14} />恢复进行中</button>
+                            {:else}
+                              <button type="button" role="menuitem" onclick={() => void updateProjectStatus(project, "closed")}><Archive size={14} />归档</button>
+                            {/if}
+                            <button type="button" role="menuitem" class="danger" onclick={() => void deleteProject(project)}><Trash2 size={14} />删除</button>
+                          </div>
+                        {/if}
                       </div>
-                      <b>›</b>
-                    </button>
+                    </article>
                   {:else}
                     <article class="detail-empty"><strong>未找到匹配项目</strong><p>换一个关键词，或新建项目后再关联到任务。</p></article>
                   {/each}
@@ -6817,7 +7091,7 @@
                 </div>
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page calendar-page"><div class="aorist-toolbar calendar-toolbar"><div><span>Calendar</span><strong>日程日历 · {calendarMonthLabel()}</strong></div><div><button type="button" onclick={() => shiftCalendarMonth(-1)}>上月</button><button type="button" onclick={resetCalendarMonth}>今天</button><button type="button" onclick={() => shiftCalendarMonth(1)}>下月</button><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarMonthEvents().length}</strong><em>{calendarMonthLabel()} / 会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todayTodoItems().length}</strong><em>仅统计今天截止</em></article><article><span>冲突提醒</span><strong>{calendarConflictGroups().length}</strong><em>{calendarConflictSummary()}</em></article></div><div class="calendar-board"><div class="calendar-grid calendar-month-grid">{#each calendarWeekdays as weekday (weekday)}<div class="calendar-weekday">{weekday}</div>{/each}{#each calendarMonthCells() as cell (cell.key)}<article class:today={cell.isToday} class:muted={!cell.inMonth}><b>{cell.day}</b>{#each cell.events as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="calendar-event-chip" type="button" onclick={() => openCalendarEvent(event)}>{event.time} {event.title}</button>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each upcomingCalendarEvents() as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{calendarEventFullDate(event).slice(8, 10) || event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{:else}<article class="detail-empty"><strong>暂无近日安排</strong><p>当前月份暂无近期日程。</p></article>{/each}</aside></div></section>
-            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportUpdatedAt()}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta"><div><span>报告 ID</span><strong>{selectedReport()?.id}</strong></div><div><span>创建时间</span><strong>{selectedReport()?.createdAt || "未记录"}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
+            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{selectedReport()?.id || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
   <div class="resource-section-top">
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
     <div class="resource-actions"><button type="button" onclick={() => openConfigDialog("knowledge")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
@@ -6880,7 +7154,7 @@
           <header><span>关联文档</span><strong>{knowledgeDocumentCount(doc)} 份</strong></header>
           <div>
             {#each knowledgeDocumentMaterials(doc) as material (material.id)}
-              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {material.updatedAt}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" onclick={() => void openMaterialFile(material)}>打开文件</button></article>
+              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {material.updatedAt}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button></article>
             {:else}
               <p>该模板尚未关联资料。</p>
             {/each}
@@ -7490,16 +7764,39 @@
               </dl>
             </div>
             <footer>
-              <button type="button" onclick={() => void openMaterialFile(material)}>打开文件</button>
-              <button type="button" onclick={() => void revealMaterialFile(material)}>定位文件</button>
-              <button type="button" onclick={() => void copyMaterialPath(material)}>复制路径</button>
+              <button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button>
+              <button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void revealMaterialFile(material)}>定位文件</button>
+              <button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void copyMaterialPath(material)}>复制路径</button>
               <button type="button" class="danger" onclick={() => void deleteMaterial(material)}>删除资料</button>
             </footer>
           </section>
         </div>
       {/each}
       {#if automationDialog}
-        <div class="modal-backdrop"><section class="config-modal automation-config-modal"><header><div><span>Automation Task</span><strong>{automationDialogTitle()}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header><div class="config-grid"><label>任务名称<input bind:value={automationDraft.title} /></label><label>任务类型<select bind:value={automationDraft.kind}>{#each automationKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>运行状态<select bind:value={automationDraft.status}>{#each automationStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<select bind:value={automationDraft.owner}>{#each automationOwnerOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>调度模式<select bind:value={automationDraft.scheduleMode}>{#each automationScheduleModeOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label><label>下次运行时间<input type="datetime-local" bind:value={automationDraft.nextRunAt} disabled={automationDraft.scheduleMode === "manual"} /></label><label>覆盖范围<input bind:value={automationDraft.scope} /></label><label>触发条件<input bind:value={automationDraft.cadence} /></label><label>执行环境<select bind:value={automationDraft.environment}><option value="local workspace">local workspace</option><option value="desktop/frontend">desktop/frontend</option><option value="desktop">desktop</option><option value="repo root">repo root</option></select></label><label>验证命令<select bind:value={automationDraft.command}>{#each automationCommandOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label><label class="wide">任务说明<textarea rows="4" bind:value={automationDraft.desc}></textarea></label><label class="wide">运行步骤<textarea rows="4" bind:value={automationDraft.stepsText}></textarea></label><label class="wide">运行日志<textarea rows="3" bind:value={automationDraft.logsText} readonly></textarea></label></div><footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button>{#if automationDialogMode === "edit"}<button type="button" onclick={() => void runAutomationNow(automationDraft.id)}>立即执行</button>{/if}<button type="button" onclick={() => void saveAutomationDraft()}>保存配置</button></footer></section></div>
+        <div class="modal-backdrop">
+          <section class="config-modal automation-config-modal">
+            <header><div><span>Automation Task</span><strong>{automationDialogTitle()}</strong></div><button type="button" onclick={() => (automationDialog = undefined)}>x</button></header>
+            <div class="config-grid">
+              <label>任务名称<input bind:value={automationDraft.title} /></label>
+              <label>任务类型<select bind:value={automationDraft.kind}>{#each automationKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>运行状态<select bind:value={automationDraft.status}>{#each automationStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>负责人<select bind:value={automationDraft.owner}>{#each automationOwnerOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+              <label>关联项目<select value={automationDraft.projectId} onchange={(event) => setAutomationDraftProject((event.currentTarget as HTMLSelectElement).value)}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label>
+              <label class="automation-failure-todo"><span>失败后创建待办</span><input type="checkbox" disabled={!automationDraft.projectId} bind:checked={automationDraft.createTodoOnFailure} /><em>将自动创建关联项目的高优先级待办</em></label>
+              <label>调度模式<select bind:value={automationDraft.scheduleMode}>{#each automationScheduleModeOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label>
+              <label>下次运行时间<input type="datetime-local" bind:value={automationDraft.nextRunAt} disabled={automationDraft.scheduleMode === "manual"} /></label>
+              <p class="wide automation-scheduler-note">定时任务只会在 Volt GUI 桌面应用保持运行时执行；应用关闭期间不会执行或补跑。</p>
+              <label>覆盖范围<input bind:value={automationDraft.scope} /></label>
+              <label>触发条件<input bind:value={automationDraft.cadence} /></label>
+              <label>执行环境<select bind:value={automationDraft.environment}><option value="local workspace">local workspace</option><option value="desktop/frontend">desktop/frontend</option><option value="desktop">desktop</option><option value="repo root">repo root</option></select></label>
+              <label>验证命令<select bind:value={automationDraft.command}>{#each automationCommandOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label>
+              <label class="wide">任务说明<textarea rows="4" bind:value={automationDraft.desc}></textarea></label>
+              <label class="wide">运行步骤<textarea rows="4" bind:value={automationDraft.stepsText}></textarea></label>
+              <label class="wide">运行日志<textarea rows="3" bind:value={automationDraft.logsText} readonly></textarea></label>
+            </div>
+            <footer><button type="button" onclick={() => (automationDialog = undefined)}>取消</button>{#if automationDialogMode === "edit"}<button type="button" onclick={() => void runAutomationNow(automationDraft.id)}>立即执行</button>{/if}<button type="button" onclick={() => void saveAutomationDraft()}>保存配置</button></footer>
+          </section>
+        </div>
       {/if}
       {#if projectDetailOpen}
         {@const project = selectedProject()}
@@ -7522,7 +7819,6 @@
               </div>
               <div class="project-detail-actions">
                 <button type="button" onclick={() => linkProjectToTask(project.name)}><Activity size={14} /> 发起项目任务</button>
-                <button type="button" onclick={() => openConfigDialog("dossier")}><Plus size={14} /> 新增资料</button>
               </div>
             </header>
             <aside class="detail-panel project-detail-panel">
@@ -7532,23 +7828,23 @@
               <section class="detail-summary project-detail-summary">
                 <article><span>项目阶段</span><strong>{project.stage}</strong></article>
                 <article><span>项目类型</span><strong>{project.category}</strong></article>
-                <article><span>关联资料</span><strong>{project.materials} 份</strong></article>
-                <article><span>待办事项</span><strong>{project.todos} 项</strong></article>
+                <article><span>关联资料</span><strong>{linkedProjectMaterials.length} 份</strong></article>
+                <article><span>待办事项</span><strong>{linkedProjectTodos.length} 项</strong></article>
               </section>
               <div class="project-detail-body">
                 <main class="project-detail-main">
                   <div class="detail-tabs" role="tablist" aria-label="项目详情标签">
                     <button class:active={projectDetailTab === "overview"} type="button" onclick={() => (projectDetailTab = "overview")}>概览</button>
-                    <button class:active={projectDetailTab === "materials"} type="button" onclick={() => (projectDetailTab = "materials")}>资料 ({project.materials})</button>
-                    <button class:active={projectDetailTab === "schedules"} type="button" onclick={() => (projectDetailTab = "schedules")}>日程 ({project.events})</button>
-                    <button class:active={projectDetailTab === "reports"} type="button" onclick={() => (projectDetailTab = "reports")}>报告 ({project.reports})</button>
-                    <button class:active={projectDetailTab === "todos"} type="button" onclick={() => (projectDetailTab = "todos")}>待办</button>
+                    <button class:active={projectDetailTab === "materials"} type="button" onclick={() => (projectDetailTab = "materials")}>资料 ({linkedProjectMaterials.length})</button>
+                    <button class:active={projectDetailTab === "schedules"} type="button" onclick={() => (projectDetailTab = "schedules")}>日程 ({linkedProjectSchedules.length})</button>
+                    <button class:active={projectDetailTab === "reports"} type="button" onclick={() => (projectDetailTab = "reports")}>报告 ({linkedProjectReports.length})</button>
+                    <button class:active={projectDetailTab === "todos"} type="button" onclick={() => (projectDetailTab = "todos")}>待办 ({linkedProjectTodos.length})</button>
                   </div>
                   {#if projectDetailTab === "overview"}
                     <section class="project-detail-card">
                       <h3><FileText size={15} /> 项目概览</h3>
                       <p>当前项目数据来自本地工作台记录。请在资料、报告和任务页补充可复核的上下文、执行记录与交付证据。</p>
-                      <div class="project-detail-metrics"><article><FileText size={14} /><strong>{project.materials}</strong><span>资料</span></article><article><Database size={14} /><strong>{project.reports}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
+                      <div class="project-detail-metrics"><article><FileText size={14} /><strong>{linkedProjectMaterials.length}</strong><span>资料</span></article><article><Database size={14} /><strong>{linkedProjectReports.length}</strong><span>报告</span></article><article><Activity size={14} /><strong>{project.progress}%</strong><span>进度</span></article></div>
                     </section>
                     <section class="project-detail-card project-detail-risk">
                       <h3><ShieldCheck size={15} /> 本地风控备忘</h3>
@@ -7563,13 +7859,13 @@
                   {:else if projectDetailTab === "materials"}
                     <section class="project-detail-card project-tab-panel">
                       <header class="project-section-head">
-                        <div><h3><Database size={15} /> 项目资料库</h3><p>对标 LinkedResourceLibrary：展示项目关联资料，完整 {project.materials} 份继续在资料中心索引。</p></div>
+                        <div><h3><Database size={15} /> 项目资料库</h3><p>展示当前项目关联的 {linkedProjectMaterials.length} 份资料，并同步在资料中心索引。</p></div>
                         <button type="button" onclick={() => openConfigDialog("dossier")}><Plus size={13} /> 新增资料</button>
                       </header>
                       <div class="project-resource-toolbar"><span>已展示 {linkedProjectMaterials.length} 份资料</span><button type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>打开资料中心</button></div>
                       <div class="project-detail-list">
                         {#each linkedProjectMaterials as material (material.id)}
-                          <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; }}>
+                          <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; selectedResourceCategory = ""; resourceSearch = ""; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
                             <b>{material.status}<small>{material.updatedAt}</small></b>
@@ -8038,7 +8334,7 @@
           <section class="config-modal customer-create-modal">
             <header><div><span>Customer</span><strong>{configDialogTitle()}</strong><p>填写客户档案、联系方式、风险状态和关联项目后保存到客户管理。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
             <div class="config-grid">
-              <label>客户名称 *<input bind:value={customerDraftName} placeholder="例如 内部研发团队" /></label>
+              <label class:invalid={configValidationField === "customer-name"}>客户名称 *<input data-config-field="customer-name" aria-invalid={configValidationField === "customer-name"} bind:value={customerDraftName} placeholder="例如 内部研发团队" /></label>
               <label>客户类型<select bind:value={customerDraftType}>{#each customerTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
               <label>联系人<input bind:value={customerDraftContact} placeholder="例如 产品负责人" /></label>
               <label>联系电话<input bind:value={customerDraftPhone} placeholder="例如 138-0000-0000" /></label>
@@ -8056,7 +8352,7 @@
               <label class="wide">备注<textarea rows="3" bind:value={customerDraftNote} placeholder="记录客户背景、沟通偏好、风险提示等"></textarea></label>
               <label class="wide">客户说明<textarea rows="4" bind:value={customerDraftDesc} placeholder="补充客户画像、业务目标、合作范围或验收口径"></textarea></label>
             </div>
-            <footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={confirmConfigDialog}>保存客户</button></footer>
+            <footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" onclick={confirmConfigDialog}>保存客户</button></footer>
           </section>
         </div>
       {/if}
@@ -8177,7 +8473,7 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else if configDialog === "report"}<div class="config-grid"><label>报告标题 *<input bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label>知识标题 *<input bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide">正文 *<textarea rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label>模板名称 *<input bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field"><span>选择文件 *</span><div class="material-file-picker"><input type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label>归属项目<select bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label>资料名称 *<input bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource"}<label class="wide material-file-field"><span>选择文件 *</span><div class="material-file-picker"><input type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label>归属项目<select bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label>项目名称 *<input bind:value={projectDraftName} placeholder="例如 客户门户上线" /></label><label>项目编号<input bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（或摘要）*<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} bind:value={projectDraftName} placeholder="例如 客户门户上线" /></label><label>项目编号<input bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -9151,6 +9447,7 @@
   .config-grid .percent-input{display:grid;grid-template-columns:minmax(0,1fr)auto;align-items:center;height:36px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827;overflow:hidden}.config-grid .percent-input input{height:34px;border:0;border-radius:0;background:transparent}.config-grid .percent-input span{padding:0 12px;color:#5f6774;font-size:13px}
   .config-grid .material-file-field{gap:8px}.material-file-picker{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;min-height:42px;padding:4px 12px 4px 4px;border:1px solid #d9dee8;border-radius:12px;background:#fff;color:#111827;overflow:hidden}.material-file-picker:hover{border-color:#bfdbfe;background:#f8fbff}.material-file-picker input{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;opacity:0;cursor:pointer}.material-file-picker strong{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border-radius:9px;background:#111827;color:#fff;font-size:13px;font-weight:650;white-space:nowrap}.material-file-picker span{min-width:0;overflow:hidden;color:#667085;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.material-file-field em{color:#7b8494;font-size:12px;font-style:normal}
   .artifact-review-workbench{display:grid;gap:14px;padding:16px 20px;border-bottom:1px solid rgba(226,232,240,.9);background:#f7f9fc}.artifact-review-head{display:grid;grid-template-columns:minmax(260px,1fr) auto;align-items:end;gap:14px}.artifact-review-head span,.artifact-style-gate header span,.artifact-coordinate-list header span,.artifact-page-meta span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.artifact-review-head strong{display:block;margin-top:4px;color:#111827;font-size:18px;line-height:1.22}.artifact-review-head p{margin:4px 0 0;color:#667085;font-size:12px}.artifact-stage-tabs{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.artifact-stage-tabs button{display:grid;gap:2px;min-width:70px;min-height:42px;padding:6px 10px;border:1px solid #dbe3ee;border-radius:10px;background:#fff;color:#344054;text-align:left}.artifact-stage-tabs button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-stage-tabs span{color:inherit;font-size:12px;font-weight:800;letter-spacing:0;text-transform:none}.artifact-stage-tabs em{color:#7b8494;font-size:10px;font-style:normal}.artifact-review-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.38fr);gap:14px;align-items:stretch}.artifact-canvas-shell,.artifact-review-side section{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 10px 24px rgba(15,23,42,.045)}.artifact-canvas-shell{display:grid;grid-template-rows:auto minmax(320px,1fr);min-width:0;overflow:hidden}.artifact-canvas-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #e5eaf2;background:#fff}.artifact-mode-switch,.artifact-tool-buttons,.artifact-pan-pad{display:flex;align-items:center;gap:6px}.artifact-canvas-toolbar button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#344054}.artifact-canvas-toolbar button.active,.artifact-canvas-toolbar button:hover:not(:disabled){border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.artifact-canvas-toolbar button:disabled{cursor:not-allowed;opacity:.45}.artifact-canvas-toolbar strong{min-width:48px;color:#111827;font-size:12px;text-align:center}.artifact-canvas-viewport{display:grid;place-items:center;min-height:320px;padding:20px;overflow:hidden;background:linear-gradient(90deg,rgba(226,232,240,.55) 1px,transparent 1px),linear-gradient(180deg,rgba(226,232,240,.55) 1px,transparent 1px),#f8fafc;background-size:28px 28px}.artifact-canvas-viewport[data-mode=pan]{cursor:grab}.artifact-canvas-page{position:relative;width:min(620px,100%);aspect-ratio:16/10;padding:22px;border:1px solid #cbd5e1;border-radius:16px;background:linear-gradient(135deg,#fff 0%,#f8fbff 58%,#eef4ff 100%);box-shadow:0 22px 50px rgba(15,23,42,.14);transform:translate(var(--artifact-pan-x),var(--artifact-pan-y)) scale(var(--artifact-zoom));transform-origin:center;transition:transform .16s ease}.artifact-page-meta{display:grid;gap:4px}.artifact-page-meta strong{overflow:hidden;color:#0f172a;font-size:18px;text-overflow:ellipsis;white-space:nowrap}.artifact-page-meta em{color:#667085;font-size:12px;font-style:normal}.artifact-page-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;margin-top:22px}.artifact-page-layout section,.artifact-page-layout aside{min-height:150px;padding:16px;border:1px solid #e5e7eb;border-radius:14px;background:rgba(255,255,255,.76)}.artifact-page-layout b{color:#1d4ed8;font-size:12px}.artifact-page-layout h3{margin:12px 0 8px;color:#111827;font-size:24px;line-height:1.12}.artifact-page-layout p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.artifact-page-layout aside{display:grid;align-content:center;gap:8px}.artifact-page-layout aside span{color:#7b8494;font-size:11px}.artifact-page-layout aside strong{color:#111827;font-size:14px}.artifact-page-layout aside em{display:inline-flex;width:max-content;padding:4px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-style:normal}.artifact-marker{position:absolute;left:var(--marker-x);top:var(--marker-y);max-width:110px;transform:translate(-50%,-50%);padding:5px 8px;border:1px solid #f59e0b;border-radius:999px;background:#fffbeb;color:#92400e;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 8px 16px rgba(146,64,14,.16)}.artifact-review-side{display:grid;grid-template-rows:auto 1fr;gap:14px;min-width:0}.artifact-review-side section{padding:14px}.artifact-style-gate header,.artifact-coordinate-list header{margin-bottom:10px}.artifact-style-gate header strong,.artifact-coordinate-list header strong{display:block;margin-top:4px;color:#111827;font-size:15px}.artifact-style-list{display:grid;gap:8px}.artifact-style-list button{display:grid;gap:5px;width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;text-align:left}.artifact-style-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-style-list strong{color:#111827;font-size:13px}.artifact-style-list span,.artifact-style-list em{color:#667085;font-size:11px;font-style:normal;line-height:1.45}.artifact-gate-actions{display:flex;gap:8px;margin-top:10px}.artifact-gate-actions button{flex:1;min-height:34px;border:1px solid #d8e2ef;border-radius:10px;background:#fff;color:#344054;font-weight:750}.artifact-gate-actions button:last-child{border-color:#2563eb;background:#2563eb;color:#fff}.artifact-coordinate-list{display:grid;align-content:start;gap:8px}.artifact-coordinate-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff}.artifact-coordinate-list article strong{display:block;color:#111827;font-size:13px}.artifact-coordinate-list article p{margin:3px 0 0;overflow:hidden;color:#667085;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.artifact-coordinate-list article span{padding:4px 8px;border-radius:999px;background:#f3f4f6;color:#344054;font-size:11px;white-space:nowrap}@media(max-width:1120px){.artifact-review-head,.artifact-review-grid{grid-template-columns:1fr}.artifact-stage-tabs{justify-content:flex-start}.artifact-review-side{grid-template-columns:1fr 1fr;grid-template-rows:auto}}@media(max-width:720px){.artifact-review-workbench{padding:12px 14px}.artifact-canvas-toolbar{align-items:flex-start;flex-direction:column}.artifact-review-side,.artifact-page-layout{grid-template-columns:1fr}.artifact-canvas-page{aspect-ratio:4/5}.artifact-stage-tabs button{min-width:0;flex:1 1 120px}}
+  .report-center-tabs{margin:12px 18px 0;align-self:start}.aorist-workbench[data-current-work-layer="reports"] .artifact-review-workbench{box-sizing:border-box;height:calc(100vh - 164px);min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}.aorist-workbench[data-current-work-layer="reports"] .artifact-review-grid{min-height:0}.aorist-workbench[data-current-work-layer="reports"] .artifact-review-side{align-self:start}@media(max-width:720px){.aorist-workbench[data-current-work-layer="reports"] .artifact-review-workbench{height:calc(100vh - 152px)}}
   .report-center-layout{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);gap:18px}.report-list-panel,.report-detail-panel{border:1px solid #e2e8f0;border-radius:18px;background:rgba(255,255,255,.92);box-shadow:0 10px 24px rgba(15,23,42,.045)}.report-list-panel,.report-detail-panel{padding:16px}.report-list-panel header{margin-bottom:12px}.report-list-panel header strong{display:block;color:#111827;font-size:15px}.report-list-panel header span{display:block;margin-top:4px;color:#7b8494;font-size:12px}.report-card-list{display:grid;gap:10px}.report-card-list button{width:100%;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;text-align:left;cursor:pointer}.report-card-list button.active{border-color:#93c5fd;background:#f8fbff;box-shadow:0 0 0 3px rgba(147,197,253,.18)}.report-card-list span,.report-detail-panel header>em{display:inline-flex;align-items:center;width:max-content;padding:5px 10px;border-radius:999px;background:#f3f4f6;color:#111827;font-size:12px;font-style:normal}.report-card-list strong{display:block;margin-top:12px;color:#111827;font-size:16px}.report-card-list p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.55}.report-card-list em{display:block;margin-top:12px;color:#111827;font-size:12px;font-style:italic}.report-detail-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.report-detail-panel header span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.report-detail-panel header strong{display:block;margin-top:7px;color:#111827;font-size:22px;line-height:1.25}.report-detail-panel header p{margin:8px 0 0;color:#5f6774;font-size:13px;line-height:1.7}.report-detail-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}.report-detail-summary article,.report-detail-meta div{padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc}.report-detail-summary span,.report-detail-meta span,.report-detail-body>span{display:block;color:#7b8494;font-size:11px}.report-detail-summary strong,.report-detail-meta strong{display:block;margin-top:6px;color:#111827;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail-body{margin-top:16px;padding:16px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.report-detail-body p{margin:10px 0 0;color:#374151;font-size:13px;line-height:1.75}.report-detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.report-detail-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:14px}.report-detail-actions button{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid #dbe4ef;border-radius:9px;background:#fff;color:#1f2937;font-size:12px;cursor:pointer}.report-detail-actions button:hover{border-color:#93c5fd;background:#f8fbff}.report-detail-actions button.danger{border-color:#fecaca;color:#b91c1c;background:#fff7f7}@media(max-width:1100px){.report-center-layout{grid-template-columns:1fr}.report-detail-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.report-detail-summary,.report-detail-meta{grid-template-columns:1fr}}
 
   .detail-empty{padding:18px;border:1px dashed #cbd5e1;border-radius:16px;background:rgba(248,250,252,.78);color:#5f6774}.detail-empty strong{display:block;color:#111827}.detail-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}.detail-modal{width:min(840px,calc(100vw - 44px));padding:18px}.detail-modal>.detail-panel{margin-top:14px;background:rgba(255,255,255,.88)}
@@ -11252,6 +11549,101 @@
 
   .project-matter-card {
     border-radius: 10px;
+  }
+
+  .project-matter-card {
+    position: relative;
+    gap: 16px;
+    padding: 16px;
+    overflow: visible;
+  }
+
+  .project-matter-card__open {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    flex: 1;
+    min-width: 0;
+    gap: 16px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .project-card-more {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    margin-top: 6px;
+    padding: 0;
+    opacity: 0;
+    transition: opacity .16s ease;
+  }
+
+  .project-matter-card:hover .project-card-more,
+  .project-card-more:focus-within {
+    opacity: 1;
+  }
+
+  .project-card-more__trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--aorist-muted);
+  }
+
+  .project-card-more__trigger:hover,
+  .project-card-more__trigger[aria-expanded="true"] {
+    border-color: var(--aorist-line);
+    background: var(--aorist-card-bg-soft);
+    color: var(--aorist-ink);
+  }
+
+  .project-card-action-menu {
+    position: absolute;
+    top: 42px;
+    right: 10px;
+    z-index: 6;
+    display: grid;
+    min-width: 128px;
+    padding: 5px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, .14);
+  }
+
+  .project-card-action-menu button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--aorist-ink);
+    font-size: 12px;
+    text-align: left;
+  }
+
+  .project-card-action-menu button:hover {
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .project-card-action-menu button.danger {
+    color: #b42318;
+  }
+
+  .project-card-action-menu button.danger:hover {
+    background: #fff1f3;
   }
 
   .project-card-title {
@@ -17426,6 +17818,38 @@
     width: min(780px, calc(100vw - 44px));
   }
 
+  .automation-scheduler-note {
+    margin: 0;
+    padding: 9px 10px;
+    border: 1px solid #dbe4ef;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .automation-failure-todo {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    align-items: center;
+  }
+
+  .automation-failure-todo input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--aorist-primary);
+  }
+
+  .automation-failure-todo em {
+    grid-column: 1 / -1;
+    color: #7b8494;
+    font-size: 11px;
+    font-style: normal;
+    line-height: 1.4;
+  }
+
   @media (max-width: 720px) {
     .automation-overview,
     .automation-task-list {
@@ -20347,4 +20771,9 @@
       width: min(170px, calc(100vw - 56px));
     }
   }
+  .artifact-review-note{display:grid;gap:6px;margin-top:10px}.artifact-review-note span{color:#667085;font-size:11px;font-weight:650}.artifact-review-note textarea{width:100%;min-height:68px;resize:vertical;box-sizing:border-box;padding:8px 9px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#1f2937;font:inherit;font-size:12px;line-height:1.45}.artifact-review-note textarea:focus{outline:none;border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-review-note textarea:disabled,.artifact-style-list button:disabled,.artifact-gate-actions button:disabled{cursor:not-allowed;opacity:.55}.artifact-review-meta{margin:8px 0 0;color:#667085;font-size:11px;line-height:1.45}
+  .report-detail-meta{grid-template-columns:minmax(0,1.35fr) minmax(144px,.65fr);gap:8px;margin-top:12px}.report-detail-meta div{min-width:0;padding:10px 12px;border-radius:10px}.report-detail-meta span{font-size:10px;font-weight:600}.report-detail-meta strong{min-width:0;margin-top:4px;overflow:hidden;color:#344054;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0;text-overflow:ellipsis;white-space:nowrap}
+  .report-center-page .aorist-toolbar button:disabled,.report-detail-actions button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}.report-detail-actions .report-export-state{margin-right:auto;color:#b54708;font-size:11px;font-weight:600}.report-detail-actions .report-export-state.ready{color:#027a48}
+  .config-grid label.invalid>input,.config-grid label.invalid>textarea,.config-grid label.invalid>select,.config-grid label.invalid .material-file-picker{border-color:#fda4af;background:#fff7f7}.config-grid label.invalid>input:focus,.config-grid label.invalid>textarea:focus,.config-grid label.invalid>select:focus{outline:none;border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.12)}.config-modal>footer .config-validation-message{margin:0 auto 0 0;color:#b42318;font-size:12px;font-weight:600;line-height:1.35}
+  .resource-detail-modal footer button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}
 </style>

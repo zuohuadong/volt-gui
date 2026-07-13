@@ -21,7 +21,16 @@ import (
 	"voltui/internal/fileutil"
 )
 
-const workbenchDataFile = "workbench-data.json"
+const (
+	workbenchDataFile            = "workbench-data.json"
+	defaultReportArtifactStyleID = "default"
+	reportReviewStatusDraft      = "draft"
+	reportReviewStatusSubmitted  = "submitted"
+	reportReviewStatusApproved   = "approved"
+	reportReviewStatusReturned   = "returned"
+	reportReviewStageDesign      = "design"
+	reportReviewStageExport      = "export"
+)
 
 type WorkbenchDataView struct {
 	Customers          []WorkbenchCustomerView          `json:"customers"`
@@ -128,37 +137,45 @@ type WorkbenchCalendarEventInput struct {
 }
 
 type WorkbenchReportView struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Status     string `json:"status"`
-	Owner      string `json:"owner"`
-	Desc       string `json:"desc"`
-	Body       string `json:"body,omitempty"`
-	Kind       string `json:"kind,omitempty"`
-	ProjectID  string `json:"projectId,omitempty"`
-	CustomerID string `json:"customerId,omitempty"`
-	Source     string `json:"source,omitempty"`
-	Format     string `json:"format,omitempty"`
-	Priority   string `json:"priority,omitempty"`
-	DueAt      string `json:"dueAt,omitempty"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Status          string `json:"status"`
+	Owner           string `json:"owner"`
+	Desc            string `json:"desc"`
+	Body            string `json:"body,omitempty"`
+	Kind            string `json:"kind,omitempty"`
+	ProjectID       string `json:"projectId,omitempty"`
+	CustomerID      string `json:"customerId,omitempty"`
+	Source          string `json:"source,omitempty"`
+	Format          string `json:"format,omitempty"`
+	Priority        string `json:"priority,omitempty"`
+	DueAt           string `json:"dueAt,omitempty"`
+	ArtifactStyleID string `json:"artifactStyleId,omitempty"`
+	ReviewStatus    string `json:"reviewStatus"`
+	ReviewStage     string `json:"reviewStage"`
+	StyleApproved   bool   `json:"styleApproved"`
+	ReviewedBy      string `json:"reviewedBy,omitempty"`
+	ReviewedAt      string `json:"reviewedAt,omitempty"`
+	ReviewComment   string `json:"reviewComment,omitempty"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
 }
 
 type WorkbenchReportInput struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Status     string `json:"status"`
-	Owner      string `json:"owner"`
-	Desc       string `json:"desc"`
-	Body       string `json:"body"`
-	Kind       string `json:"kind"`
-	ProjectID  string `json:"projectId"`
-	CustomerID string `json:"customerId"`
-	Source     string `json:"source"`
-	Format     string `json:"format"`
-	Priority   string `json:"priority"`
-	DueAt      string `json:"dueAt"`
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Status          string `json:"status"`
+	Owner           string `json:"owner"`
+	Desc            string `json:"desc"`
+	Body            string `json:"body"`
+	Kind            string `json:"kind"`
+	ProjectID       string `json:"projectId"`
+	CustomerID      string `json:"customerId"`
+	Source          string `json:"source"`
+	Format          string `json:"format"`
+	Priority        string `json:"priority"`
+	DueAt           string `json:"dueAt"`
+	ArtifactStyleID string `json:"artifactStyleId"`
 }
 
 type WorkbenchKnowledgeDocumentView struct {
@@ -412,6 +429,19 @@ func (a *App) SaveWorkbenchReport(input WorkbenchReportInput) (WorkbenchReportVi
 		return WorkbenchReportView{}, err
 	}
 	appendOperationLog(&data, "保存报告", report.Title, "我的", "成功")
+	return report, saveWorkbenchData(data)
+}
+
+func (a *App) ReviewWorkbenchReport(id, action, reviewedBy, comment string) (WorkbenchReportView, error) {
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return WorkbenchReportView{}, err
+	}
+	report, operation, err := reviewWorkbenchReportInto(&data, id, action, reviewedBy, comment)
+	if err != nil {
+		return WorkbenchReportView{}, err
+	}
+	appendOperationLog(&data, operation, report.Title, report.ReviewedBy, "成功")
 	return report, saveWorkbenchData(data)
 }
 
@@ -684,6 +714,9 @@ func (a *App) ExportWorkbenchReports() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := ensureReportsApprovedForExport(data.Reports); err != nil {
+		return "", err
+	}
 	path, err := writeWorkbenchExport("reports-manifest", data.Reports)
 	if err != nil {
 		return "", err
@@ -706,6 +739,9 @@ func (a *App) ExportWorkbenchReport(id string) (string, error) {
 	}
 	for _, report := range data.Reports {
 		if report.ID == id {
+			if !reportHasExportApproval(report) {
+				return "", fmt.Errorf("report %q is not approved for export", id)
+			}
 			path, err := writeWorkbenchReportExport(report)
 			if err != nil {
 				return "", err
@@ -1613,32 +1649,133 @@ func saveReportInto(data *WorkbenchDataView, input WorkbenchReportInput) (Workbe
 	now := time.Now().Format(time.RFC3339)
 	id := defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(slugifyAgentID(title), reportIDs(data.Reports)))
 	createdAt := now
+	var previous WorkbenchReportView
+	found := false
 	for _, report := range data.Reports {
 		if report.ID == id {
 			createdAt = defaultString(report.CreatedAt, now)
+			previous = report
+			found = true
 			break
 		}
 	}
+	artifactStyleID := strings.TrimSpace(input.ArtifactStyleID)
+	if artifactStyleID == "" && found {
+		artifactStyleID = previous.ArtifactStyleID
+	}
 	next := WorkbenchReportView{
-		ID:         id,
-		Title:      title,
-		Status:     defaultString(strings.TrimSpace(input.Status), "草稿"),
-		Owner:      strings.TrimSpace(input.Owner),
-		Desc:       strings.TrimSpace(input.Desc),
-		Body:       strings.TrimSpace(input.Body),
-		Kind:       defaultString(strings.TrimSpace(input.Kind), "分析报告"),
-		ProjectID:  strings.TrimSpace(input.ProjectID),
-		CustomerID: strings.TrimSpace(input.CustomerID),
-		Source:     defaultString(strings.TrimSpace(input.Source), "工作台数据"),
-		Format:     defaultString(strings.TrimSpace(input.Format), "Markdown"),
-		Priority:   defaultString(strings.TrimSpace(input.Priority), "中"),
-		DueAt:      strings.TrimSpace(input.DueAt),
-		CreatedAt:  createdAt,
-		UpdatedAt:  now,
+		ID:              id,
+		Title:           title,
+		Status:          defaultString(strings.TrimSpace(input.Status), "草稿"),
+		Owner:           defaultString(strings.TrimSpace(input.Owner), "自动化 Agent"),
+		Desc:            strings.TrimSpace(input.Desc),
+		Body:            strings.TrimSpace(input.Body),
+		Kind:            defaultString(strings.TrimSpace(input.Kind), "分析报告"),
+		ProjectID:       strings.TrimSpace(input.ProjectID),
+		CustomerID:      strings.TrimSpace(input.CustomerID),
+		Source:          defaultString(strings.TrimSpace(input.Source), "工作台数据"),
+		Format:          defaultString(strings.TrimSpace(input.Format), "Markdown"),
+		Priority:        defaultString(strings.TrimSpace(input.Priority), "中"),
+		DueAt:           strings.TrimSpace(input.DueAt),
+		ArtifactStyleID: defaultString(artifactStyleID, defaultReportArtifactStyleID),
+		ReviewStatus:    reportReviewStatusDraft,
+		ReviewStage:     reportReviewStageDesign,
+		CreatedAt:       createdAt,
+		UpdatedAt:       now,
+	}
+	if found && !reportContentChanged(previous, next) {
+		next.ReviewStatus = previous.ReviewStatus
+		next.ReviewStage = previous.ReviewStage
+		next.StyleApproved = previous.StyleApproved
+		next.ReviewedBy = previous.ReviewedBy
+		next.ReviewedAt = previous.ReviewedAt
+		next.ReviewComment = previous.ReviewComment
 	}
 	replaceOrPrependReport(data, next)
 	sortReports(data.Reports)
 	return next, nil
+}
+
+func reportContentChanged(previous, next WorkbenchReportView) bool {
+	return previous.Title != next.Title ||
+		previous.Status != next.Status ||
+		previous.Owner != next.Owner ||
+		previous.Desc != next.Desc ||
+		previous.Body != next.Body ||
+		previous.Kind != next.Kind ||
+		previous.ProjectID != next.ProjectID ||
+		previous.CustomerID != next.CustomerID ||
+		previous.Source != next.Source ||
+		previous.Format != next.Format ||
+		previous.Priority != next.Priority ||
+		previous.DueAt != next.DueAt ||
+		previous.ArtifactStyleID != next.ArtifactStyleID
+}
+
+func reviewWorkbenchReportInto(data *WorkbenchDataView, id, action, reviewedBy, comment string) (WorkbenchReportView, string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return WorkbenchReportView{}, "", errors.New("report id is required")
+	}
+	action = strings.ToLower(strings.TrimSpace(action))
+	actor := defaultString(strings.TrimSpace(reviewedBy), "我的")
+	now := time.Now().Format(time.RFC3339)
+	for i := range data.Reports {
+		report := &data.Reports[i]
+		if report.ID != id {
+			continue
+		}
+		var operation string
+		switch action {
+		case "submit":
+			if report.ReviewStatus != reportReviewStatusDraft && report.ReviewStatus != reportReviewStatusReturned {
+				return WorkbenchReportView{}, "", fmt.Errorf("report %q cannot be submitted from %q", id, report.ReviewStatus)
+			}
+			report.ReviewStatus = reportReviewStatusSubmitted
+			report.ReviewStage = reportReviewStageDesign
+			report.StyleApproved = false
+			operation = "提交报告审批"
+		case "approve":
+			if report.ReviewStatus != reportReviewStatusSubmitted {
+				return WorkbenchReportView{}, "", fmt.Errorf("report %q cannot be approved from %q", id, report.ReviewStatus)
+			}
+			report.ReviewStatus = reportReviewStatusApproved
+			report.ReviewStage = reportReviewStageExport
+			report.StyleApproved = true
+			operation = "批准报告审批"
+		case "return":
+			if report.ReviewStatus != reportReviewStatusSubmitted {
+				return WorkbenchReportView{}, "", fmt.Errorf("report %q cannot be returned from %q", id, report.ReviewStatus)
+			}
+			report.ReviewStatus = reportReviewStatusReturned
+			report.ReviewStage = reportReviewStageDesign
+			report.StyleApproved = false
+			operation = "退回报告审批"
+		default:
+			return WorkbenchReportView{}, "", fmt.Errorf("unsupported report review action %q", action)
+		}
+		report.ReviewedBy = actor
+		report.ReviewedAt = now
+		report.ReviewComment = strings.TrimSpace(comment)
+		report.UpdatedAt = now
+		next := *report
+		sortReports(data.Reports)
+		return next, operation, nil
+	}
+	return WorkbenchReportView{}, "", fmt.Errorf("report %q not found", id)
+}
+
+func ensureReportsApprovedForExport(reports []WorkbenchReportView) error {
+	for _, report := range reports {
+		if !reportHasExportApproval(report) {
+			return fmt.Errorf("report %q is not approved for export", report.ID)
+		}
+	}
+	return nil
+}
+
+func reportHasExportApproval(report WorkbenchReportView) bool {
+	return report.ReviewStatus == reportReviewStatusApproved && report.ReviewStage == reportReviewStageExport && report.StyleApproved
 }
 
 func saveKnowledgeDocumentInto(data *WorkbenchDataView, input WorkbenchKnowledgeDocumentInput) (WorkbenchKnowledgeDocumentView, error) {
@@ -1880,12 +2017,41 @@ func normalizeReports(reports []WorkbenchReportView) []WorkbenchReportView {
 		report.Source = defaultString(strings.TrimSpace(report.Source), "工作台数据")
 		report.Format = defaultString(strings.TrimSpace(report.Format), "Markdown")
 		report.Priority = defaultString(strings.TrimSpace(report.Priority), "中")
+		report.ArtifactStyleID = defaultString(strings.TrimSpace(report.ArtifactStyleID), defaultReportArtifactStyleID)
+		report.ReviewStatus = normalizeReportReviewStatus(report.ReviewStatus)
+		report.ReviewedBy = strings.TrimSpace(report.ReviewedBy)
+		report.ReviewedAt = strings.TrimSpace(report.ReviewedAt)
+		report.ReviewComment = strings.TrimSpace(report.ReviewComment)
+		switch report.ReviewStatus {
+		case reportReviewStatusApproved:
+			report.ReviewStage = reportReviewStageExport
+			report.StyleApproved = true
+		case reportReviewStatusSubmitted:
+			report.ReviewStage = reportReviewStageDesign
+			report.StyleApproved = false
+		default:
+			report.ReviewStage = reportReviewStageDesign
+			report.StyleApproved = false
+		}
 		report.CreatedAt = defaultString(report.CreatedAt, now)
 		report.UpdatedAt = defaultString(report.UpdatedAt, report.CreatedAt)
 		out = append(out, report)
 	}
 	sortReports(out)
 	return out
+}
+
+func normalizeReportReviewStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case reportReviewStatusSubmitted:
+		return reportReviewStatusSubmitted
+	case reportReviewStatusApproved:
+		return reportReviewStatusApproved
+	case reportReviewStatusReturned:
+		return reportReviewStatusReturned
+	default:
+		return reportReviewStatusDraft
+	}
 }
 
 func normalizeKnowledgeDocuments(items []WorkbenchKnowledgeDocumentView) []WorkbenchKnowledgeDocumentView {

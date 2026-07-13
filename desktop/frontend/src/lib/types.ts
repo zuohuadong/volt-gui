@@ -350,6 +350,9 @@ export interface WorkbenchAutomation {
   status: string;
   kind: string;
   owner: string;
+  projectId?: string;
+  projectName?: string;
+  createTodoOnFailure?: boolean;
   startedAtMs: number;
   cadence: string;
   schedule: string;
@@ -374,6 +377,9 @@ export interface WorkbenchAutomationInput {
   status?: string;
   kind?: string;
   owner?: string;
+  projectId?: string;
+  projectName?: string;
+  createTodoOnFailure?: boolean;
   startedAtMs?: number;
   cadence?: string;
   schedule?: string;
@@ -493,6 +499,13 @@ export interface WorkbenchReport {
   format?: string;
   priority?: string;
   dueAt?: string;
+  artifactStyleId?: string;
+  reviewStatus?: "draft" | "submitted" | "approved" | "returned";
+  reviewStage?: "design" | "export";
+  styleApproved?: boolean;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewComment?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -511,6 +524,7 @@ export interface WorkbenchReportInput {
   format?: string;
   priority?: string;
   dueAt?: string;
+  artifactStyleId?: string;
 }
 
 export interface WorkbenchKnowledgeDocument {

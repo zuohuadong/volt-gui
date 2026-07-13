@@ -167,6 +167,7 @@ interface AppBindings {
   DeleteCalendarEvent(id: string): Promise<void>;
   ListWorkbenchReports(): Promise<WorkbenchReport[]>;
   SaveWorkbenchReport(input: WorkbenchReportInput): Promise<WorkbenchReport>;
+  ReviewWorkbenchReport(id: string, action: string, reviewedBy: string, comment: string): Promise<WorkbenchReport>;
   SaveKnowledgeDocument(input: WorkbenchKnowledgeDocumentInput): Promise<WorkbenchKnowledgeDocument>;
   ListRegulations(): Promise<WorkbenchRegulation[]>;
   SaveRegulation(input: WorkbenchRegulation): Promise<WorkbenchRegulation>;

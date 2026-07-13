@@ -197,7 +197,8 @@ type App struct {
 	projectMaterialSelectionsMu sync.Mutex
 	projectMaterialSelections   map[string]projectMaterialSelection
 
-	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+	heartbeat           *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
+	automationScheduler *AutomationScheduler
 }
 
 type skillRootsCache struct {
@@ -411,6 +412,11 @@ func (a *App) startup(ctx context.Context) {
 
 	a.heartbeat = newHeartbeatEngine(a)
 	a.heartbeat.Start()
+	if err := skipMissedAutomationRuns(time.Now()); err != nil {
+		slog.Warn("desktop: skip missed automation runs", "err", err)
+	}
+	a.automationScheduler = newAutomationScheduler(a)
+	a.automationScheduler.Start()
 
 	a.mu.Lock()
 	a.tabsRestored = make(chan struct{})
@@ -739,6 +745,9 @@ func (a *App) shutdown(context.Context) {
 	a.stopMainThreadWatchdog()
 	if a.heartbeat != nil {
 		a.heartbeat.Stop()
+	}
+	if a.automationScheduler != nil {
+		a.automationScheduler.Stop()
 	}
 	a.stopBotRuntime()
 	a.stopTray()
@@ -6345,10 +6354,10 @@ func (a *App) ReloadCommands() error {
 	return ctrl.ReloadCommands(a.ctx)
 }
 
-// SetSkillEnabled persists a skill toggle and rebuilds the controller so the
-// prompt index, slash menu, and skill tools reflect it immediately.
+// SetSkillEnabled persists a skill toggle independently from runtime reloads.
+// A broken MCP must not prevent the Skill's configured state from being saved.
 func (a *App) SetSkillEnabled(name string, enabled bool) error {
-	err := a.applyConfigChange(func(c *config.Config) error {
+	err := a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetSkillEnabled(name, enabled)
 	})
 	if err == nil {
@@ -6887,6 +6896,9 @@ func (a *App) desktopMCPServerForEdit(name string) (config.PluginEntry, bool, er
 }
 
 func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
+	if err := validateDesktopMCPServer(entry); err != nil {
+		return err
+	}
 	if a.desktopMCPServerOwnedByProjectMCPJSON(entry.Name) {
 		_, err := config.UpsertMCPJSONPlugin(projectMCPJSONPathForRoot(a.activeWorkspaceRoot()), entry)
 		return err
@@ -6909,6 +6921,18 @@ func (a *App) saveDesktopMCPServer(entry config.PluginEntry) error {
 	}
 	_, err := a.removeProjectMCPOverride(entry.Name)
 	return err
+}
+
+func validateDesktopMCPServer(entry config.PluginEntry) error {
+	if normalizeMCPTransport(entry.Type) != "stdio" {
+		return nil
+	}
+	command := strings.TrimSpace(entry.Command)
+	switch strings.ToLower(filepath.Base(command)) {
+	case "plugin.json", "voltui-plugin.json":
+		return fmt.Errorf("MCP command %q is a plugin manifest, not an executable command", command)
+	}
+	return nil
 }
 
 func (a *App) removeDesktopMCPServer(name string) (bool, error) {

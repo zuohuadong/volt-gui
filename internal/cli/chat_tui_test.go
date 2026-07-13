@@ -790,6 +790,42 @@ func TestApprovalArrowKeysMoveVisibleSelection(t *testing.T) {
 	}
 }
 
+// TestApprovalLegacyFourAlwaysDenies pins the documented contract that the
+// legacy numeric 4 rejects an approval even when the current prompt shows fewer
+// than four rows (fresh two-choice prompts, plan approval). Before the fix,
+// pressing 4 on a short prompt was a no-op.
+func TestApprovalLegacyFourAlwaysDenies(t *testing.T) {
+	for _, tool := range []string{"remember", control.SandboxEscapeApprovalTool, "bash"} {
+		m := newTestChatTUI()
+		m.ctrl = control.New(control.Options{})
+		m.pendingApproval = &event.Approval{ID: "a", Tool: tool, Subject: "echo hi"}
+		m.approvalSelection = 0
+		next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: '4'})
+		m = next.(chatTUI)
+		if m.pendingApproval != nil {
+			t.Fatalf("%s: pressing 4 must resolve (deny) the approval, still pending", tool)
+		}
+	}
+}
+
+// TestCompletionMenuCtrlPNMovesSelection covers the Ctrl+P/Ctrl+N contract the
+// docs advertise for the slash/@ completion menu.
+func TestCompletionMenuCtrlPNMovesSelection(t *testing.T) {
+	m := newTestChatTUI()
+	m.completion = completion{active: true, kind: compSlash, items: []compItem{{label: "/mcp"}, {label: "/model"}}, sel: 0}
+
+	next, _ := m.update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+	m = next.(chatTUI)
+	if m.completion.sel != 1 {
+		t.Fatalf("ctrl+n should move completion selection to 1, got %d", m.completion.sel)
+	}
+	next, _ = m.update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	m = next.(chatTUI)
+	if m.completion.sel != 0 {
+		t.Fatalf("ctrl+p should move completion selection back to 0, got %d", m.completion.sel)
+	}
+}
+
 func TestStatusCommandShowsDetailsRemovedFromFooter(t *testing.T) {
 	m := newTestChatTUI()
 	m.modelRef = "provider/model"

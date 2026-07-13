@@ -1036,10 +1036,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// to the textarea and re-filters the menu at the end of Update.
 		if m.completion.active {
 			switch msg.String() {
-			case "up":
+			case "up", "ctrl+p":
 				m.moveCompletion(-1)
 				return m, nil
-			case "down":
+			case "down", "ctrl+n":
 				m.moveCompletion(1)
 				return m, nil
 			case "tab", "enter":
@@ -2443,6 +2443,12 @@ func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		idx := int(lower[0] - '1')
 		if idx < len(choices) {
 			return answer(choices[idx])
+		}
+		// Legacy muscle memory: tool approvals historically numbered deny as 4.
+		// Honor 4 as deny even when the current prompt shows fewer rows, matching
+		// the "legacy 4 still deny" contract in this function's doc comment.
+		if lower == "4" {
+			return answer(approvalChoice{})
 		}
 		return m, nil
 	}

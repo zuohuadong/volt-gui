@@ -73,6 +73,43 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+// hasLeadingPrintFlag reports whether a standalone -p/--print token appears in
+// the top-level flag run, i.e. before any "--" terminator. reasonix has no
+// interactive -p, so its presence means the user wants one-shot print mode even
+// when it trails other flags (`reasonix --model X -p "task"`).
+func hasLeadingPrintFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == "-p" || arg == "--print" {
+			return true
+		}
+	}
+	return false
+}
+
+// stripLeadingPrintFlag drops the first standalone -p/--print token before any
+// "--" terminator, leaving the rest (including everything after "--") untouched.
+// Used when re-routing a top-level invocation to `run --print` so the print flag
+// is not duplicated.
+func stripLeadingPrintFlag(args []string) []string {
+	out := make([]string, 0, len(args))
+	dropped := false
+	for i, arg := range args {
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if !dropped && (arg == "-p" || arg == "--print") {
+			dropped = true
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
 // normalizeOptionalResumeArg gives pflag the optional-value behavior Claude's
 // --resume [value] exposes. Interactive sessions have no positional arguments,
 // so a following non-flag token is unambiguously the resume query.

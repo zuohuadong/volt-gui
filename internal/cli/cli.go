@@ -65,9 +65,13 @@ func Run(args []string, version string) int {
 	if cmd == "--acp" {
 		cmd = "acp"
 	}
-	if cmd == "-p" || cmd == "--print" {
+	// -p/--print is one-shot print mode. reasonix has no interactive -p, so a
+	// print flag anywhere in a leading flag run (no explicit subcommand) routes
+	// the whole set to `run --print` — `reasonix --model X -p "task"` works, not
+	// only `reasonix -p ...`.
+	if cmd == "-p" || cmd == "--print" || (isDefaultInteractiveFlag(cmd) && hasLeadingPrintFlag(args)) {
+		args = append([]string{"run", "--print"}, stripLeadingPrintFlag(args)...)
 		cmd = "run"
-		args = append([]string{"run", "--print"}, args[1:]...)
 	}
 	if len(args) > 0 && isDefaultInteractiveFlag(cmd) {
 		cmd = ""
@@ -486,7 +490,14 @@ func runAgent(args []string) int {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		fmt.Printf("continuing in a session copy: %s\n", copied)
+		// Keep structured (json/stream-json) and --print stdout a single
+		// machine-readable payload: the human copy notice goes to stderr there.
+		// Plain text runs keep it on stdout, where callers scrape the copied path.
+		if format == runOutputText && !*printOnly {
+			fmt.Printf("continuing in a session copy: %s\n", copied)
+		} else {
+			fmt.Fprintf(os.Stderr, "continuing in a session copy: %s\n", copied)
+		}
 		resumePath = copied
 	}
 
@@ -564,9 +575,15 @@ func runAgent(args []string) int {
 		return 1
 	}
 	defer ctrl.Close()
+	// `reasonix run` is headless: there is no key loop to answer approval or ask
+	// prompts, and the approval timeout defaults to infinite. Installing the
+	// interactive approver/asker here would let an Ask rule, the `ask` tool, or a
+	// sandbox/config approval wedge the run forever. Map the mode onto a
+	// non-blocking headless gate instead. Default/ask and acceptEdits already keep
+	// the headless gate (ask decisions resolve to allow); only auto/dontAsk/yolo
+	// need an explicit gate swap.
 	if permissions.approval != control.ToolApprovalAsk {
-		ctrl.EnableInteractiveApproval()
-		applyPermissionMode(ctrl, permissions)
+		ctrl.ApplyHeadlessApprovalMode(permissions.approval)
 	}
 
 	// --resume: load a specific session file (non-interactive, meant for

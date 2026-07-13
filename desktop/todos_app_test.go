@@ -10,8 +10,8 @@ func TestSaveTodoPersistsWorkbenchTodo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTodos initial: %v", err)
 	}
-	if len(initial) == 0 {
-		t.Fatal("ListTodos initial returned no seed todos")
+	if len(initial) != 0 {
+		t.Fatalf("ListTodos initial seeded runtime data: %+v", initial)
 	}
 
 	saved, err := app.SaveTodo(WorkbenchTodoInput{

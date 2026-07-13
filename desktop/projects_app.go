@@ -136,9 +136,9 @@ func saveWorkbenchProjectInput(input WorkbenchProjectInput) (WorkbenchProjectVie
 		Progress:   clampInt(input.Progress, 0, 100),
 		Priority:   normalizeWorkbenchProjectPriority(input.Priority),
 		Risk:       defaultString(strings.TrimSpace(input.Risk), "低风险"),
-		UpdatedAt:  "刚刚",
+		UpdatedAt:  nowISO,
 		NextStep:   strings.TrimSpace(input.NextStep),
-		Agent:      defaultString(strings.TrimSpace(input.Agent), "自动化 Agent"),
+		Agent:      strings.TrimSpace(input.Agent),
 		Materials:  maxInt(input.Materials, 0),
 		Todos:      maxInt(input.Todos, 0),
 		Events:     maxInt(input.Events, 0),
@@ -178,12 +178,12 @@ func workbenchProjectsPath() (string, error) {
 func loadWorkbenchProjects() ([]WorkbenchProjectView, error) {
 	path, err := workbenchProjectsPath()
 	if err != nil {
-		return defaultWorkbenchProjects(), nil
+		return []WorkbenchProjectView{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultWorkbenchProjects(), nil
+			return []WorkbenchProjectView{}, nil
 		}
 		return nil, err
 	}
@@ -192,16 +192,23 @@ func loadWorkbenchProjects() ([]WorkbenchProjectView, error) {
 		return nil, err
 	}
 	projects := make([]WorkbenchProjectView, 0, len(disk.Projects))
+	migrated := false
 	for _, project := range disk.Projects {
+		if isLegacySeedProject(project) {
+			migrated = true
+			continue
+		}
 		project = normalizeWorkbenchProject(project)
 		if project.ID != "" {
 			projects = append(projects, project)
 		}
 	}
-	if len(projects) == 0 {
-		return defaultWorkbenchProjects(), nil
-	}
 	sortWorkbenchProjects(projects)
+	if migrated {
+		if err := saveWorkbenchProjects(projects); err != nil {
+			return nil, err
+		}
+	}
 	return projects, nil
 }
 
@@ -234,12 +241,22 @@ func saveWorkbenchProjects(projects []WorkbenchProjectView) error {
 	return fileutil.ReplaceFile(tmpPath, path)
 }
 
-func defaultWorkbenchProjects() []WorkbenchProjectView {
-	now := time.Now().Format(time.RFC3339)
-	return []WorkbenchProjectView{
-		{ID: "volt-gui", Name: "Volt GUI 桌面端重构", Code: "PRJ-2026-0615", Client: "内部研发", Stage: "进行中", Owner: "产品工作台", Desc: "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建对话。", Category: "桌面端重构", Court: "研发工作台", Budget: "1,200,000", AcceptedAt: "2026-06-15", Status: "active", Progress: 78, Priority: "高", Risk: "中风险", UpdatedAt: "28 分钟前", NextStep: "完成项目管理页深化并做构建验证", Agent: "代码审查 Agent", Materials: 12, Todos: 5, Events: 3, Reports: 4, Timeline: []string{"AORISTLAWER 参考界面已完成源码对照", "新建对话与代码状态入口已统一", "项目管理页进入深化验收"}, CreatedAt: now, UpdatedISO: now},
-		{ID: "lurefree", Name: "Lurefree 小程序发布", Code: "PRJ-2026-0610", Client: "运营团队", Stage: "验证中", Owner: "增长项目", Desc: "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。", Category: "小程序发布", Court: "增长项目组", Budget: "350,000", AcceptedAt: "2026-06-10", Status: "active", Progress: 64, Priority: "中", Risk: "低风险", UpdatedAt: "2 小时前", NextStep: "补齐地图与详情页回归清单", Agent: "资料研究 Agent", Materials: 8, Todos: 4, Events: 2, Reports: 2, Timeline: []string{"地图交互问题已纳入检查", "发布材料进入复核", "等待小程序预览确认"}, CreatedAt: now, UpdatedISO: now},
-		{ID: "homepage", Name: "品牌主页恢复与部署", Code: "PRJ-2026-0601", Client: "市场团队", Stage: "已归档", Owner: "官网项目", Desc: "恢复历史版本、验证构建并保留无截图校验流程。", Category: "官网运营", Court: "市场中台", Budget: "180,000", AcceptedAt: "2026-06-01", Status: "closed", Progress: 100, Priority: "低", Risk: "已关闭", UpdatedAt: "昨天", NextStep: "仅保留归档和复盘记录", Agent: "自动化 Agent", Materials: 5, Todos: 0, Events: 1, Reports: 3, Timeline: []string{"历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"}, CreatedAt: now, UpdatedISO: now},
+func isLegacySeedProject(project WorkbenchProjectView) bool {
+	switch strings.TrimSpace(project.ID) {
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "volt-gui":
+		// runtime-mock-guard: allow-legacy-cleanup
+		return project.Name == "Volt GUI 桌面端重构" && project.Code == "PRJ-2026-0615" && project.Desc == "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建对话。"
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "lurefree":
+		// runtime-mock-guard: allow-legacy-cleanup
+		return project.Name == "Lurefree 小程序发布" && project.Code == "PRJ-2026-0610" && project.Desc == "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。"
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "homepage":
+		// runtime-mock-guard: allow-legacy-cleanup
+		return project.Name == "品牌主页恢复与部署" && project.Code == "PRJ-2026-0601" && project.Desc == "恢复历史版本、验证构建并保留无截图校验流程。"
+	default:
+		return false
 	}
 }
 
@@ -267,9 +284,9 @@ func normalizeWorkbenchProject(project WorkbenchProjectView) WorkbenchProjectVie
 	project.Progress = clampInt(project.Progress, 0, 100)
 	project.Priority = normalizeWorkbenchProjectPriority(project.Priority)
 	project.Risk = defaultString(strings.TrimSpace(project.Risk), "低风险")
-	project.UpdatedAt = defaultString(strings.TrimSpace(project.UpdatedAt), "刚刚")
+	project.UpdatedAt = defaultString(strings.TrimSpace(project.UpdatedAt), project.UpdatedISO)
 	project.NextStep = strings.TrimSpace(project.NextStep)
-	project.Agent = defaultString(strings.TrimSpace(project.Agent), "自动化 Agent")
+	project.Agent = strings.TrimSpace(project.Agent)
 	project.Materials = maxInt(project.Materials, 0)
 	project.Todos = maxInt(project.Todos, 0)
 	project.Events = maxInt(project.Events, 0)

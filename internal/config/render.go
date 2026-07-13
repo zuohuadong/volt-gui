@@ -190,6 +190,17 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}
 		b.WriteString("\n")
+		if scope != RenderScopeProject && (c.Network.TrustedIntranet.Enabled || len(c.Network.TrustedIntranet.Sites) > 0) {
+			b.WriteString("[network.trusted_intranet]\n")
+			fmt.Fprintf(&b, "enabled = %v   # user-approved private web_fetch targets\n", c.Network.TrustedIntranet.Enabled)
+			for _, site := range c.TrustedIntranetSites() {
+				b.WriteString("\n[[network.trusted_intranet.sites]]\n")
+				fmt.Fprintf(&b, "host = %q\n", site.Host)
+				fmt.Fprintf(&b, "cidrs = %s\n", renderStringArray(site.CIDRs))
+				fmt.Fprintf(&b, "ports = %s\n", renderIntArray(site.Ports))
+			}
+			b.WriteString("\n")
+		}
 	}
 	if shouldRenderEnvironment(c, defaults, scope) {
 		renderEnvironmentConfig(&b, c.Environment)
@@ -1437,6 +1448,19 @@ func renderStringArray(ss []string) string {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%q", s)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func renderIntArray(values []int) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, value := range values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", value)
 	}
 	b.WriteByte(']')
 	return b.String()

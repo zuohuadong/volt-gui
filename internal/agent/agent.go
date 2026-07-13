@@ -282,6 +282,10 @@ type Agent struct {
 	// may write a VoltUI-managed config file outside the workspace roots.
 	configWriteApprover tool.ConfigWriteApprover
 
+	// trustedIntranetApprover, when non-nil, can ask the user whether web_fetch
+	// may connect to one exact locally-resolved private destination.
+	trustedIntranetApprover tool.TrustedIntranetApprover
+
 	// hooks, when non-nil, fires PreToolUse / PostToolUse shell hooks around each
 	// tool call. nil disables hook firing.
 	hooks ToolHooks
@@ -665,6 +669,13 @@ func (a *Agent) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
 	a.configWriteApprover = g
 }
 
+func (a *Agent) SetTrustedIntranetApprover(g tool.TrustedIntranetApprover) {
+	if nilutil.IsNil(g) {
+		g = nil
+	}
+	a.trustedIntranetApprover = g
+}
+
 func (a *Agent) withTurnPreferences(input string) string {
 	if a == nil {
 		return input
@@ -852,6 +863,10 @@ type Options struct {
 	// files outside the workspace roots. nil keeps fail-closed behavior.
 	ConfigWriteApprover tool.ConfigWriteApprover
 
+	// TrustedIntranetApprover confirms web_fetch access to one exact private
+	// host/IP/port tuple. nil keeps private destinations fail-closed.
+	TrustedIntranetApprover tool.TrustedIntranetApprover
+
 	// Context management. ContextWindow <= 0 disables compaction. Ratios and
 	// RecentKeep fall back to defaults when unset.
 	ContextWindow       int
@@ -952,6 +967,10 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(configWriteApprover) {
 		configWriteApprover = nil
 	}
+	trustedIntranetApprover := opts.TrustedIntranetApprover
+	if nilutil.IsNil(trustedIntranetApprover) {
+		trustedIntranetApprover = nil
+	}
 	hooks := opts.Hooks
 	if nilutil.IsNil(hooks) {
 		hooks = nil
@@ -984,6 +1003,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		planModeReadOnlyTrust:       planModeReadOnlyTrust,
 		sandboxEscapeApprover:       sandboxEscapeApprover,
 		configWriteApprover:         configWriteApprover,
+		trustedIntranetApprover:     trustedIntranetApprover,
 		hooks:                       hooks,
 		jobs:                        opts.Jobs,
 		evidence:                    evidence.NewLedger(),
@@ -2474,6 +2494,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if a.configWriteApprover != nil {
 		cctx = tool.WithConfigWriteApprover(cctx, a.configWriteApprover)
+	}
+	if a.trustedIntranetApprover != nil {
+		cctx = tool.WithTrustedIntranetApprover(cctx, a.trustedIntranetApprover)
 	}
 	if v := a.responseLanguage.Load(); v != nil {
 		if lang, ok := v.(string); ok {

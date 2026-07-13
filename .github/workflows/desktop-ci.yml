@@ -12,6 +12,8 @@ on:
       - "internal/**"
       - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/check-runtime-mocks.mjs"
+      - "scripts/check-runtime-mocks.test.mjs"
       - "scripts/prod-test.test.mjs"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
@@ -19,6 +21,8 @@ on:
       - "scripts/stage-coreutils.test.mjs"
       - "scripts/stage-windows-prerequisites.mjs"
       - "scripts/stage-windows-prerequisites.test.mjs"
+      - "scripts/ui-feature-smoke.mjs"
+      - "scripts/workbench-crud-smoke.mjs"
       - "third_party/coreutils/**"
   push:
     branches: [main]
@@ -31,6 +35,8 @@ on:
       - "internal/**"
       - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/check-runtime-mocks.mjs"
+      - "scripts/check-runtime-mocks.test.mjs"
       - "scripts/prod-test.test.mjs"
       - "scripts/stage-bun-runtime.mjs"
       - "scripts/stage-computer-use-mcp.mjs"
@@ -38,6 +44,8 @@ on:
       - "scripts/stage-coreutils.test.mjs"
       - "scripts/stage-windows-prerequisites.mjs"
       - "scripts/stage-windows-prerequisites.test.mjs"
+      - "scripts/ui-feature-smoke.mjs"
+      - "scripts/workbench-crud-smoke.mjs"
       - "third_party/coreutils/**"
   workflow_dispatch:
 
@@ -78,6 +86,12 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: 10
+
+      - name: Runtime production mock gate
+        if: matrix.name == 'linux-amd64'
+        run: |
+          node --test scripts/check-runtime-mocks.test.mjs
+          node scripts/check-runtime-mocks.mjs
 
       - name: Test Coreutils staging contract
         run: node --test scripts/stage-coreutils.test.mjs

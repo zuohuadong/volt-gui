@@ -311,7 +311,7 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 	if !ok {
 		automation.Status = automationStatusFailed
 		automation.Result = "Unsupported command"
-		automation.LastRun = "just now"
+		automation.LastRun = time.Now().Format(time.RFC3339)
 		automation.UpdatedAt = now.Format(time.RFC3339)
 		automation.Logs = appendAutomationLog(automation.Logs, "Unsupported command: "+automation.Command)
 		return automation
@@ -333,7 +333,7 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 			automation.Status = automationStatusDone
 		}
 	}
-	automation.LastRun = "just now"
+	automation.LastRun = time.Now().Format(time.RFC3339)
 	automation.UpdatedAt = now.Format(time.RFC3339)
 	if scheduled {
 		automation.NextRunAt = nextAutomationRunAt(automation, now)
@@ -452,12 +452,12 @@ func automationsPath() (string, error) {
 func loadAutomations() ([]WorkbenchAutomationView, error) {
 	path, err := automationsPath()
 	if err != nil {
-		return defaultAutomations(), nil
+		return []WorkbenchAutomationView{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultAutomations(), nil
+			return []WorkbenchAutomationView{}, nil
 		}
 		return nil, err
 	}
@@ -466,16 +466,23 @@ func loadAutomations() ([]WorkbenchAutomationView, error) {
 		return nil, err
 	}
 	automations := make([]WorkbenchAutomationView, 0, len(disk.Automations))
+	migrated := false
 	for _, automation := range disk.Automations {
+		if isLegacySeedAutomation(automation) {
+			migrated = true
+			continue
+		}
 		automation = normalizeAutomation(automation)
 		if automation.ID != "" {
 			automations = append(automations, automation)
 		}
 	}
-	if len(automations) == 0 {
-		return defaultAutomations(), nil
-	}
 	sortAutomations(automations)
+	if migrated {
+		if err := saveAutomations(automations); err != nil {
+			return nil, err
+		}
+	}
 	return automations, nil
 }
 
@@ -508,12 +515,18 @@ func saveAutomations(automations []WorkbenchAutomationView) error {
 	return fileutil.ReplaceFile(tmpPath, path)
 }
 
-func defaultAutomations() []WorkbenchAutomationView {
-	now := time.Now()
-	createdAt := now.Format(time.RFC3339)
-	return []WorkbenchAutomationView{
-		{ID: "preflight-validation", Title: "\u63d0\u4ea4\u524d\u9a8c\u8bc1\u81ea\u52a8\u5316", Desc: "\u5c06\u524d\u7aef\u95e8\u7981\u3001\u6784\u5efa\u3001\u7a7a\u767d\u68c0\u67e5\u548c\u6d4f\u89c8\u5668\u65e5\u5fd7\u9a8c\u8bc1\u4e32\u6210\u53ef\u590d\u7528\u4efb\u52a1\u3002", Status: automationStatusRunning, Kind: "\u9a8c\u8bc1\u81ea\u52a8\u5316", Owner: automationOwnerDefault, StartedAtMs: now.Add(-90 * time.Minute).UnixMilli(), Cadence: "\u6bcf\u6b21 UI \u6539\u52a8\u540e", Schedule: "\u624b\u52a8\u89e6\u53d1 / \u63d0\u4ea4\u524d", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "\u6700\u8fd1\u4e00\u6b21\u901a\u8fc7", LastRun: "\u521a\u521a", NextRun: "\u7b49\u5f85\u4e0b\u4e00\u6b21\u6539\u52a8", Steps: []string{"Svelte check", "build", "browser verification"}, Logs: []string{"0 errors / 0 warnings"}, CreatedAt: createdAt, UpdatedAt: createdAt},
-		{ID: "desktop-frontend-gate", Title: "\u684c\u9762\u524d\u7aef\u8d28\u91cf\u95e8\u7981", Desc: "\u9488\u5bf9 desktop/frontend \u6267\u884c Svelte \u7c7b\u578b\u68c0\u67e5\u3001Vite \u6784\u5efa\u548c\u5dee\u5f02\u7a7a\u767d\u68c0\u67e5\u3002", Status: automationStatusRunning, Kind: "\u8d28\u91cf\u95e8\u7981", Owner: "\u4ee3\u7801\u5ba1\u67e5 Agent", StartedAtMs: now.Add(-198 * time.Minute).UnixMilli(), Cadence: "\u6bcf\u6b21\u524d\u7aef\u6539\u52a8\u540e", Schedule: "\u6539\u52a8\u540e\u624b\u52a8\u590d\u8dd1", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "\u901a\u8fc7", LastRun: "12 \u5206\u949f\u524d", NextRun: "\u4e0b\u4e00\u6b21\u524d\u7aef\u6539\u52a8", Steps: []string{"pnpm check", "pnpm build", "git diff --check"}, Logs: []string{"svelte-check passed"}, CreatedAt: createdAt, UpdatedAt: createdAt},
+func isLegacySeedAutomation(automation WorkbenchAutomationView) bool {
+	switch strings.TrimSpace(automation.ID) {
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "preflight-validation":
+		// runtime-mock-guard: allow-legacy-cleanup
+		return automation.Title == "提交前验证自动化" && automation.Desc == "将前端门禁、构建、空白检查和浏览器日志验证串成可复用任务。"
+	// runtime-mock-guard: allow-legacy-cleanup
+	case "desktop-frontend-gate":
+		// runtime-mock-guard: allow-legacy-cleanup
+		return automation.Title == "桌面前端质量门禁" && automation.Desc == "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查。"
+	default:
+		return false
 	}
 }
 

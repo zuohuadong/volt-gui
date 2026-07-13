@@ -1035,6 +1035,51 @@ func TestSettingsSurfacesOfficialProviderTemplatesSeparately(t *testing.T) {
 	}
 }
 
+func TestSettingsProvidersOnlyIncludesDesktopProviderAccess(t *testing.T) {
+	t.Run("explicit empty access", func(t *testing.T) {
+		isolateDesktopUserDirs(t)
+		if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+			t.Fatalf("mkdir config dir: %v", err)
+		}
+		if err := os.WriteFile(config.UserConfigPath(), []byte(`
+[desktop]
+provider_access = []
+`), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		if got := NewApp().Settings().Providers; len(got) != 0 {
+			t.Fatalf("Settings().Providers = %+v, want no providers for explicit empty provider_access", got)
+		}
+	})
+
+	t.Run("custom access", func(t *testing.T) {
+		isolateDesktopUserDirs(t)
+		if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+			t.Fatalf("mkdir config dir: %v", err)
+		}
+		if err := os.WriteFile(config.UserConfigPath(), []byte(`
+[desktop]
+provider_access = ["custom-real"]
+
+[[providers]]
+name = "custom-real"
+kind = "openai"
+base_url = "https://models.example.test/v1"
+models = ["real-model"]
+default = "real-model"
+api_key_env = "CUSTOM_REAL_API_KEY"
+`), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+
+		got := NewApp().Settings().Providers
+		if names := providerNamesFromView(got); !reflect.DeepEqual(names, []string{"custom-real"}) {
+			t.Fatalf("Settings().Providers names = %+v, want only desktop.provider_access entries", names)
+		}
+	})
+}
+
 func TestSettingsRepairsLegacyOfficialProviderWithoutModel(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "DEEPSEEK_API_KEY", "sk-test")
@@ -1323,18 +1368,8 @@ api_key_env = "MIMO_API_KEY"
 		t.Fatalf("mimo-api preset view = %+v, want name-conflict because a different same-name provider exists", presetView)
 	}
 
-	var providerView *ProviderView
-	for i := range view.Providers {
-		if view.Providers[i].Name == "mimo-api" {
-			providerView = &view.Providers[i]
-			break
-		}
-	}
-	if providerView == nil {
-		t.Fatal("mimo-api provider view missing")
-	}
-	if providerView.Added {
-		t.Fatalf("mimo-api provider Added = true, want false until provider_access explicitly enables it")
+	if len(view.Providers) != 0 {
+		t.Fatalf("Settings().Providers = %+v, want providers without provider_access hidden from the configured channel list", view.Providers)
 	}
 }
 

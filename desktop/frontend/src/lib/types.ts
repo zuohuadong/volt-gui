@@ -520,6 +520,7 @@ export interface WorkbenchKnowledgeDocument {
   count: number;
   status: string;
   description?: string;
+  content?: string;
   source?: string;
   tags?: string;
   fileName?: string;
@@ -541,6 +542,7 @@ export interface WorkbenchKnowledgeDocumentInput {
   count?: number;
   status?: string;
   description?: string;
+  content?: string;
   source?: string;
   tags?: string;
   materialIds?: string[];
@@ -552,6 +554,7 @@ export interface WorkbenchRegulation {
   category: string;
   status: string;
   tags: string;
+  content?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -679,6 +682,7 @@ export interface WorkbenchTeamRunArtifact {
   title: string;
   type: string;
   status: string;
+  path?: string;
 }
 
 export interface WorkbenchTeamRun {
@@ -939,6 +943,21 @@ export interface SandboxView {
   shell?: string;
 }
 
+export interface TrustedIntranetSiteView {
+  host: string;
+  cidrs: string[];
+  ports: number[];
+}
+
+export interface TrustedIntranetSettingsView {
+  enabled: boolean;
+  sites: TrustedIntranetSiteView[];
+}
+
+export interface NetworkSettingsView {
+  trustedIntranet: TrustedIntranetSettingsView;
+}
+
 export interface SettingsView {
   defaultModel: string;
   plannerModel: string;
@@ -949,6 +968,7 @@ export interface SettingsView {
   officialProviders?: ProviderView[];
   permissions: PermissionsView;
   sandbox: SandboxView;
+  network?: NetworkSettingsView;
   desktopLanguage: string;
   desktopLayoutStyle?: string;
   desktopTheme: string;
@@ -1198,6 +1218,7 @@ export interface WireApproval {
   id: string;
   tool: string;
   subject: string;
+  reason?: string;
 }
 
 export interface CommandInfo {

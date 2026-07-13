@@ -123,10 +123,22 @@ type NetworkProxyView struct {
 }
 
 type NetworkView struct {
-	ProxyMode string           `json:"proxyMode"`
-	ProxyURL  string           `json:"proxyUrl"`
-	NoProxy   string           `json:"noProxy"`
-	Proxy     NetworkProxyView `json:"proxy"`
+	ProxyMode       string                      `json:"proxyMode"`
+	ProxyURL        string                      `json:"proxyUrl"`
+	NoProxy         string                      `json:"noProxy"`
+	Proxy           NetworkProxyView            `json:"proxy"`
+	TrustedIntranet TrustedIntranetSettingsView `json:"trustedIntranet"`
+}
+
+type TrustedIntranetSettingsView struct {
+	Enabled bool                      `json:"enabled"`
+	Sites   []TrustedIntranetSiteView `json:"sites"`
+}
+
+type TrustedIntranetSiteView struct {
+	Host  string   `json:"host"`
+	CIDRs []string `json:"cidrs"`
+	Ports []int    `json:"ports"`
 }
 
 type AgentView struct {
@@ -863,6 +875,7 @@ func (a *App) Settings() SettingsView {
 				Username: cfg.Network.Proxy.Username,
 				Password: cfg.Network.Proxy.Password,
 			},
+			TrustedIntranet: trustedIntranetSettingsView(cfg),
 		},
 		Agent:                   AgentView{Temperature: cfg.Agent.Temperature, MaxSteps: cfg.Agent.MaxSteps, PlannerMaxSteps: cfg.Agent.PlannerMaxSteps, MaxSubagentDepth: desktopMaxSubagentDepth(cfg.Agent.MaxSubagentDepth), SystemPrompt: cfg.Agent.SystemPrompt, ColdResumePrune: cfg.ColdResumePruneEnabled(), ReasoningLanguage: cfg.ReasoningLanguage()},
 		Bot:                     botSettingsView(cfg.Bot),
@@ -891,6 +904,9 @@ func (a *App) Settings() SettingsView {
 	v.ProviderPresets = providerPresetViewsForRootWithResolver(cfg, root, resolver)
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
+		if !added[p.Name] {
+			continue
+		}
 		v.Providers = append(v.Providers, providerViewFromEntryForRootWithResolver(*p, isOfficialBuiltInProvider(*p), added[p.Name], root, resolver))
 	}
 	return v
@@ -2715,6 +2731,36 @@ func (a *App) SetNetwork(n NetworkView) error {
 			},
 		})
 	})
+}
+
+func trustedIntranetSettingsView(cfg *config.Config) TrustedIntranetSettingsView {
+	view := TrustedIntranetSettingsView{Sites: []TrustedIntranetSiteView{}}
+	if cfg == nil {
+		return view
+	}
+	view.Enabled = cfg.Network.TrustedIntranet.Enabled
+	for _, site := range cfg.TrustedIntranetSites() {
+		view.Sites = append(view.Sites, TrustedIntranetSiteView{
+			Host:  site.Host,
+			CIDRs: append([]string(nil), site.CIDRs...),
+			Ports: append([]int(nil), site.Ports...),
+		})
+	}
+	return view
+}
+
+// RemoveTrustedIntranetSite revokes one exact permanent host/CIDR/port grant.
+func (a *App) RemoveTrustedIntranetSite(site TrustedIntranetSiteView) error {
+	mutate := func(c *config.Config) error {
+		if !c.RemoveTrustedIntranetSite(config.TrustedIntranetSiteConfig{Host: site.Host, CIDRs: site.CIDRs, Ports: site.Ports}) {
+			return fmt.Errorf("trusted intranet site not found")
+		}
+		return nil
+	}
+	if a.activeCtrl() == nil {
+		return a.applyConfigOnly(mutate)
+	}
+	return a.applyConfigChange(mutate)
 }
 
 func (a *App) SetBotSettings(b BotSettingsView) error {

@@ -391,12 +391,16 @@ func (c *Config) SetProviderThinking(name, thinking string) error {
 // proxy settings are rejected here so the desktop panel cannot save a config that
 // would break provider startup.
 func (c *Config) SetNetwork(n NetworkConfig) error {
+	trusted := c.Network.TrustedIntranet
 	n.ProxyMode = netclient.NormalizeMode(n.ProxyMode)
 	n.ProxyURL = strings.TrimSpace(n.ProxyURL)
 	n.NoProxy = strings.TrimSpace(n.NoProxy)
 	n.Proxy.Type = strings.ToLower(strings.TrimSpace(n.Proxy.Type))
 	n.Proxy.Server = strings.TrimSpace(n.Proxy.Server)
 	n.Proxy.Username = strings.TrimSpace(n.Proxy.Username)
+	if !n.TrustedIntranet.Enabled && len(n.TrustedIntranet.Sites) == 0 {
+		n.TrustedIntranet = trusted
+	}
 	c.Network = n
 	return netclient.Validate(c.NetworkProxySpec())
 }

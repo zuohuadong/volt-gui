@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check:runtime-mocks": "node ../../scripts/check-runtime-mocks.mjs",
+    "test:runtime-mock-gate": "node --test ../../scripts/check-runtime-mocks.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

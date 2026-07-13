@@ -571,6 +571,7 @@ export function ProjectTree({
   const visibleTopicsCollectorRef = useRef<TopicShortcutEntry[]>([]);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const creatingRef = useRef(false);
+  const trashingRef = useRef(false);
   const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);
   useEffect(() => {
     return () => {
@@ -931,6 +932,8 @@ export function ProjectTree({
   };
 
   const trashTopic = async (topicId: string) => {
+    if (trashingRef.current) return;
+    trashingRef.current = true;
     try {
       await app.TrashTopic(topicId);
       setMenuTopic(null);
@@ -940,6 +943,8 @@ export function ProjectTree({
       await onTopicsChanged?.();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      trashingRef.current = false;
     }
   };
 

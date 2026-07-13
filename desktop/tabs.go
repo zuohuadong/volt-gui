@@ -6367,7 +6367,8 @@ func (a *App) deleteTopic(topicID string) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("topic %q not found", topicID)
+		// Topic already removed (e.g. concurrent trash) — idempotent, not an error.
+		return nil
 	}
 	if err := removeTopicFromProjectsFile(topicID); err != nil {
 		return err

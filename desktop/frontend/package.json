@@ -10,6 +10,7 @@
     "check:runtime-mocks": "node ../../scripts/check-runtime-mocks.mjs",
     "test:runtime-mock-gate": "node --test ../../scripts/check-runtime-mocks.test.mjs",
     "preview": "vite preview"
+
   },
   "dependencies": {
     "@lucide/svelte": "^1.24.0",

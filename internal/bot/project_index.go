@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"voltui/internal/agent"
+	"voltui/internal/proc"
+	"voltui/internal/secrets"
 )
 
 const (
@@ -616,6 +618,11 @@ func searchBotProjectsWithRG(ctx context.Context, rg string, projects []botProje
 	}
 	args = append(args, roots...)
 	cmd := exec.CommandContext(ctx, rg, args...)
+	cmd.Env = secrets.ProcessEnv()
+	// The desktop app hosts bot bridges in the GUI process; without this an
+	// rg search flashes a console window on Windows.
+	proc.HideWindow(cmd)
+
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError

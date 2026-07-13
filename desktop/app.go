@@ -650,6 +650,9 @@ func (a *App) restoreOrBuildTabs() {
 				tab = a.createTabEntryWithID("global", globalTabWorkspaceRoot(), entry.TopicID, id)
 			}
 			tab.model = entry.Model
+			tab.AgentProfileID = strings.TrimSpace(entry.AgentProfileID)
+			tab.AgentProfileName = strings.TrimSpace(entry.AgentProfileName)
+			tab.AgentProfileBaseModel = strings.TrimSpace(entry.AgentProfileBaseModel)
 			tab.effort = cloneStringPtr(entry.Effort)
 			tab.tokenMode = boot.NormalizeTokenMode(entry.TokenMode)
 			tab.mode = persistedTabMode(entry.Mode)
@@ -1709,6 +1712,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	// Snapshot the tab profile under a.mu: bound methods write these fields
 	// under the lock while this rebuild runs off-lock.
 	snap := a.tabRuntimeSnapshot(tab)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	oldSink := snap.sink
 	if oldSink != nil {
 		// Rebind under the runtime key, matching the id cloneDetachedRuntimeTab
@@ -1742,6 +1749,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -2013,6 +2021,9 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	workspaceRoot := sourceTab.WorkspaceRoot
 	sourceTitle := sourceTab.TopicTitle
 	model := sourceTab.model
+	agentProfileID := sourceTab.AgentProfileID
+	agentProfileName := sourceTab.AgentProfileName
+	agentProfileBaseModel := sourceTab.AgentProfileBaseModel
 	effort := cloneStringPtr(sourceTab.effort)
 	mode := currentTabMode(sourceTab)
 	toolApprovalMode := currentTabToolApprovalMode(sourceTab)
@@ -2038,6 +2049,9 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	m.WorkspaceRoot = workspaceRoot
 	m.TopicID = topicID
 	m.TopicTitle = topicTitle
+	m.AgentProfileID = agentProfileID
+	m.AgentProfileName = agentProfileName
+	m.AgentProfileBaseModel = agentProfileBaseModel
 	if err := agent.SaveBranchMeta(newPath, m); err != nil {
 		return TabMeta{}, err
 	}
@@ -2046,18 +2060,21 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	a.mu.Lock()
 	tabID := a.newUniqueTabIDLocked()
 	tab := &WorkspaceTab{
-		ID:               tabID,
-		Scope:            scope,
-		WorkspaceRoot:    workspaceRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitle,
-		SessionPath:      newPath,
-		model:            model,
-		effort:           effort,
-		mode:             mode,
-		toolApprovalMode: toolApprovalMode,
-		disabledMCP:      disabledMCP,
-		mcpOrder:         mcpOrder,
+		ID:                    tabID,
+		Scope:                 scope,
+		WorkspaceRoot:         workspaceRoot,
+		TopicID:               topicID,
+		TopicTitle:            topicTitle,
+		SessionPath:           newPath,
+		AgentProfileID:        agentProfileID,
+		AgentProfileName:      agentProfileName,
+		AgentProfileBaseModel: agentProfileBaseModel,
+		model:                 model,
+		effort:                effort,
+		mode:                  mode,
+		toolApprovalMode:      toolApprovalMode,
+		disabledMCP:           disabledMCP,
+		mcpOrder:              mcpOrder,
 	}
 	tab.sink = &tabEventSink{tabID: tabID, app: a}
 	a.tabs[tabID] = tab
@@ -7479,6 +7496,10 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	// Preserve the shared plugin host across controller rebuilds — the tab
 	// stays in the same workspace root, so MCP processes must not be restarted.
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
@@ -7488,6 +7509,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(effortOverride),
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7520,6 +7542,9 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 	tab.Ctrl = newCtrl
 	tab.model = name
+	if strings.TrimSpace(tab.AgentProfileID) != "" {
+		tab.AgentProfileBaseModel = name
+	}
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
 	// Supersede any in-flight startup build: it would otherwise finish later,
@@ -7636,6 +7661,10 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		carried = oldCtrl.History()
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -7644,6 +7673,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           &effort,
 		TokenMode:                snap.currentTokenMode(),
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7764,6 +7794,10 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		carried = oldCtrl.History()
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -7772,6 +7806,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                mode,
+		AgentProfile:             agentProfile,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

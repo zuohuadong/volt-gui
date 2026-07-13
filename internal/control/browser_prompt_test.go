@@ -53,7 +53,7 @@ func (b *promptKeyringBackend) Delete(_, _ string) error {
 func newBrowserPromptController(backend *promptKeyringBackend) (*Controller, <-chan event.Event) {
 	events := make(chan event.Event, 16)
 	c := New(Options{
-		Sink: event.FuncSink(func(e event.Event) { events <- e }),
+		Sink:                   event.FuncSink(func(e event.Event) { events <- e }),
 		BrowserCredentialVault: browserauth.NewVault(browserauth.WithBackend(backend)),
 	})
 	return c, events
@@ -216,4 +216,3 @@ func TestBrowserVerificationPromptReplayAndCompletion(t *testing.T) {
 		t.Fatal("verification completion should continue")
 	}
 }
-

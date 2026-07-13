@@ -107,6 +107,29 @@ async function assertText(page, text, label = text) {
   if (count < 1) throw new Error(`${label} not visible`);
 }
 
+async function assertCount(locator, expected, label) {
+  const count = await locator.count();
+  if (count !== expected) throw new Error(`${label}: expected ${expected}, got ${count}`);
+}
+
+async function assertBackendUnavailableNotice(page, action) {
+  const notice = page.locator('.workbench-notice').last();
+  await notice.waitFor({ state: 'visible', timeout: 5000 });
+  const text = (await notice.innerText()).trim();
+  if (!/未连接桌面后端|Wails 桌面运行环境|桌面端.*重试|桌面后端.*不可用/.test(text)) {
+    throw new Error(`${action}: expected honest backend-unavailable notice, got ${JSON.stringify(text)}`);
+  }
+}
+
+async function openUserMenuItem(page, item) {
+  await closeOverlays(page);
+  const opener = await firstVisible(page.getByRole('button', { name: '打开用户菜单', exact: true }), 'user menu button');
+  await opener.click({ force: true });
+  const menuItem = await firstVisible(page.getByRole('menuitem', { name: item, exact: true }), `user menu item ${item}`);
+  await menuItem.click({ force: true });
+  await page.waitForTimeout(100);
+}
+
 async function assertHealthy(page, label) {
   const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
   if (!bodyText.trim()) throw new Error(`${label}: blank page`);
@@ -169,237 +192,169 @@ async function smokeWorkNavigation(page) {
   const navLabels = ['今日概览', '新建任务', '待办事项', '自动化', '项目管理', '客户管理', '资料中心', '团队协作', '日程日历', '报告中心', 'Agent 中心', '能力中心'];
   for (const label of navLabels) {
     await clickButton(page, label);
-    await assertText(page, label === '新建任务' ? '选一个对话模板' : label.replace('事项', ''));
+    await assertText(page, label === '自动化' ? '自动化任务' : label.replace('事项', ''), label);
   }
 }
 
-async function smokeSidebar(page) {
-  await clickButton(page, /项目排序/);
-  await clickButton(page, /项目排序/);
-  await clickButton(page, /收起项目|展开项目/);
-  await clickButton(page, /收起项目|展开项目/);
-  await clickButton(page, /展开 Lurefree|收起 Lurefree/);
-  await clickButton(page, /展开 Lurefree|收起 Lurefree/);
-  await clickButton(page, /在 Volt GUI 桌面端重构 下新建对话/);
-  await assertText(page, '新建对话');
-  await clickButton(page, /修改 Volt GUI 桌面端重构 任务名称/);
-  const renameInput = page.locator('.sidebar-project-inline-rename input').first();
-  if (await renameInput.isVisible().catch(() => false)) {
-    await renameInput.fill('Volt GUI 桌面端重构');
-    await renameInput.press('Enter');
+async function smokeNoSeedContent(page) {
+  await clickButton(page, 'Work 工作台', { exact: true });
+  await clickButton(page, '今日概览', { exact: true });
+  await page.waitForTimeout(500);
+  const body = await page.locator('body').innerText();
+  const forbidden = [
+    'Volt GUI 桌面端重构',
+    '内部研发团队',
+    'Lurefree 小程序发布',
+    '品牌主页恢复与部署',
+    '产品研发组',
+    '最近一次通过',
+    '128 次运行',
+    '64%',
+  ];
+  for (const text of forbidden) {
+    if (body.includes(text)) throw new Error(`browser preview still renders mock fingerprint: ${text}`);
   }
 }
 
-async function smokeHomeCards(page) {
-  await clickButton(page, '今日概览', { exact: true });
-  await clickButton(page, '查看全部', { exact: true });
-  await assertText(page, '待办事项');
-  await clickButton(page, '今日概览', { exact: true });
-  await clickButton(page, '管理', { exact: true });
-  await assertText(page, /自动化任务|新建自动化任务/, '自动化任务');
-  await clickButton(page, '今日概览', { exact: true });
-  await clickButton(page, '新建待办', { exact: true });
-  await assertText(page, '新建待办');
-  await closeOverlays(page);
-  await clickButton(page, '新建日程', { exact: true });
-  await assertText(page, '新建日程');
-  await closeOverlays(page);
-}
+async function smokeEmptyBusinessSurfaces(page) {
+  const checks = [
+    ['待办事项', '.aorist-page .aorist-list > article:not(.detail-empty)', 'todo records'],
+    ['自动化', '.automation-task-card', 'automation records'],
+    ['项目管理', '.project-matter-card', 'project records'],
+    ['客户管理', '.client-card', 'customer records'],
+    ['日程日历', '.calendar-event-chip, .calendar-board aside .automation-row', 'calendar records'],
+    ['报告中心', '.report-card-list > button', 'report records'],
+    ['资料中心', '.resource-category-card, .knowledge-template-card', 'resource records'],
+    ['团队协作', '.team-list-card', 'team records'],
+    ['Agent 中心', '.agent-grid .agent-card', 'agent records'],
+    ['能力中心', '.capability-row', 'capability records'],
+  ];
+  for (const [nav, selector, label] of checks) {
+    await clickButton(page, nav);
+    await assertCount(page.locator(selector), 0, label);
+  }
 
-async function smokeUserPanels(page) {
-  for (const item of ['模型管理', '系统设置', '同步中心', '操作记录']) {
-    await clickButton(page, '打开用户菜单');
-    await page.getByRole('menuitem', { name: item, exact: true }).click();
-    await page.waitForTimeout(150);
-    await assertText(page, item);
-    if (item === '系统设置') {
-      for (const tab of ['通用', '外观', '权限', '运行时', '模型']) {
-        const tabButton = page.getByRole('button', { name: tab, exact: false }).first();
-        if (await tabButton.isVisible().catch(() => false)) await tabButton.click();
-      }
-    }
+  for (const item of ['同步中心', '操作记录']) {
+    await openUserMenuItem(page, item);
+    await assertCount(page.locator('.aorist-page .aorist-list > article:not(.detail-empty)'), 0, `${item} records`);
     await closeOverlays(page);
   }
 }
 
-async function smokeConfigDialogs(page) {
+async function smokeReachableDialogs(page) {
   const dialogOpeners = [
     ['待办事项', '新增待办', '新建待办'],
     ['日程日历', '新建日程', '新建日程'],
     ['报告中心', '新建报告', '新建分析报告'],
     ['资料中心', '上传资料', '上传资料'],
     ['资料中心', '批量导入', '批量导入'],
-    ['团队协作', '配置新组', '配置 Agent 团队'],
+    ['团队协作', /配置新组|点击开始配置第一组/, '配置 Agent 团队'],
     ['项目管理', '新建项目', '新建项目'],
     ['客户管理', '新建客户', '新建客户'],
   ];
   for (const [nav, opener, title] of dialogOpeners) {
+    await closeOverlays(page);
     await clickButton(page, nav);
     await clickButton(page, opener);
     await assertText(page, title);
     await closeOverlays(page);
   }
 
+  await clickButton(page, 'Agent 中心');
+  await clickButton(page, '创建 Agent');
+  await assertText(page, '创建与配置 Agent');
+  await closeOverlays(page);
+
+  await clickButton(page, '资料中心');
+  await clickButton(page, '知识库', { exact: true });
+  await clickButton(page, '新建规范', { exact: true });
+  await assertText(page, '新建规范');
+  await closeOverlays(page);
+
   await clickButton(page, '能力中心');
   await firstVisible(page.getByRole('button', { name: '导入能力配置', exact: true }), 'button 导入能力配置');
-  const capabilityInput = page.locator('input[aria-label="导入能力配置文件"]');
-  if (await capabilityInput.count() !== 1) throw new Error('missing capability import file input');
+  await assertCount(page.locator('input[aria-label="导入能力配置文件"]'), 1, 'capability import input');
   await clickButton(page, '导入 MCP 配置', { exact: true });
   await assertText(page, '导入 MCP 配置');
   await closeOverlays(page);
 }
 
-async function smokeProjectsAndCustomers(page) {
+async function smokeUnboundWritesAndRun(page) {
+  const hasBindings = await page.evaluate(() => Boolean(window.go?.main?.App));
+  if (hasBindings) throw new Error('browser-preview smoke unexpectedly has Wails bindings');
+
+  await clickButton(page, '待办事项');
+  const todoRows = page.locator('.aorist-page .aorist-list > article:not(.detail-empty)');
+  const beforeTodos = await todoRows.count();
+  await clickButton(page, '新增待办');
+  const todoModal = page.locator('.config-modal').last();
+  await todoModal.locator('input[placeholder*="跟进客户反馈"]').fill('浏览器预览不可落库待办');
+  await clickScopedButton(todoModal, '确认', { exact: true });
+  await assertBackendUnavailableNotice(page, 'save todo');
+  await closeOverlays(page);
+  await clickButton(page, '待办事项');
+  await assertCount(todoRows, beforeTodos, 'unbound todo save must not mutate records');
+
   await clickButton(page, '项目管理');
-  await fillFirst(page, 'input[placeholder*="搜索项目"]', 'volt', 'project search');
-  await clickButton(page, '全部');
-  await clickButton(page, '进行中');
-  await clickButton(page, '已归档');
-  await clickButton(page, '全部');
-  await firstVisible(page.locator('.project-matter-card').filter({ hasText: 'Volt GUI 桌面端重构' }), 'project card').then((card) => card.click());
-  await assertText(page, '项目概览');
-  const projectModal = page.locator('.project-detail-modal').first();
-  await projectModal.waitFor({ state: 'visible', timeout: 5000 });
-  for (const tab of [/^资料 \(\d+\)$/, /^日程 \(\d+\)$/, /^报告 \(\d+\)$/, /^待办$/, /^概览$/]) {
-    await clickScopedButton(projectModal, tab);
-  }
+  const projectRows = page.locator('.project-matter-card');
+  const beforeProjects = await projectRows.count();
+  await clickButton(page, '新建项目');
+  const projectModal = page.locator('.config-modal').last();
+  await projectModal.locator('input[placeholder*="客户门户上线"]').fill('浏览器预览不可落库项目');
+  await clickScopedButton(projectModal, '确认', { exact: true });
+  await assertBackendUnavailableNotice(page, 'save project');
   await closeOverlays(page);
+  await clickButton(page, '项目管理');
+  await assertCount(projectRows, beforeProjects, 'unbound project save must not mutate records');
 
-  await clickButton(page, '客户管理');
-  await fillFirst(page, 'input[placeholder*="搜索客户"]', '内部', 'customer search');
-  await firstVisible(page.locator('.client-card').filter({ hasText: '内部研发团队' }), 'customer card').then((card) => card.click());
-  await assertText(page, '客户画像');
-  const customerModal = page.locator('.customer-detail-modal').first();
-  await customerModal.waitFor({ state: 'visible', timeout: 5000 });
-  for (const tab of [/^项目 \(\d+\)$/, /^资料 \(\d+\)$/, /^日程 \(\d+\)$/, /^待办 \(\d+\)$/, /^概览$/]) {
-    await clickScopedButton(customerModal, tab);
-  }
-  await closeOverlays(page);
+  await clickButton(page, '日程日历');
+  const eventRows = page.locator('.calendar-event-chip, .calendar-board aside .automation-row');
+  const beforeEvents = await eventRows.count();
+  await clickButton(page, '同步', { exact: true });
+  await assertBackendUnavailableNotice(page, 'run calendar sync');
+  await assertCount(eventRows, beforeEvents, 'unbound sync must not fabricate records');
 }
 
-async function smokeResources(page) {
-  await clickButton(page, '资料中心');
-  for (const tab of ['资料库', '知识库', '全文检索', '对话归档', '导入中心']) {
-    await clickButton(page, tab, { exact: true });
-    await assertText(page, tab === '资料库' ? '资料库' : tab);
-  }
-  await clickButton(page, '资料库', { exact: true });
-  await fillFirst(page, 'input[aria-label="检索资料库"]', '项目', 'resource search');
-  await fillFirst(page, 'input[aria-label="检索资料库"]', '', 'resource search clear');
-  await clickButton(page, '知识库', { exact: true });
-  await clickButton(page, '新建模板');
-  await assertText(page, '新建文档模板');
-  await closeOverlays(page);
-  await clickButton(page, '导入中心', { exact: true });
-  await clickButton(page, '查看失败');
-}
-
-async function smokeTeams(page) {
-  await clickButton(page, '团队协作');
-  await clickButton(page, '运行台');
-  await clickButton(page, '刷新运行态');
-  for (const control of ['继续', '暂停', '人工复核']) {
-    const button = page.getByRole('button', { name: control, exact: false }).first();
-    if (await button.isVisible().catch(() => false)) await button.click();
-  }
-  await clickButton(page, '团队模板');
-  await firstVisible(page.locator('.team-card-meta button').filter({ hasText: '创建运行' }), 'team create run').then((button) => button.click());
-  await firstVisible(page.locator('.team-compose-row textarea[placeholder*="向协作组发送任务"]'), 'team chat composer');
-  await fillFirst(page, '.team-compose-row textarea', '请创建一次本地协作运行草稿', 'team composer');
-  await clickButton(page, '发送', { exact: true, pause: 400 });
-  await assertText(page, '团队 runtime 未连接，请在 Wails 桌面环境中重试。');
-  await clickButton(page, '上传文件');
-  await clickButton(page, '返回团队大厅');
-}
-
-async function smokeAgents(page) {
-  await clickButton(page, 'Agent 中心');
-  await fillFirst(page, 'input[aria-label="搜索 Agent"]', '代码', 'agent search');
-  await fillFirst(page, 'input[aria-label="搜索 Agent"]', '', 'agent search clear');
-  await clickButton(page, 'Agent 市场');
-  await assertText(page, 'Agent 市场');
-  await fillFirst(page, 'input[aria-label="搜索 Agent 市场"]', '审查', 'agent market search');
-  const marketModal = page.locator('.agent-market-modal').first();
-  await marketModal.waitFor({ state: 'visible', timeout: 5000 });
-  const save = await firstVisible(marketModal.getByRole('button', { name: /保存本地模板|已保存/, exact: false }), 'market agent save state');
-  if ((await save.innerText()).includes('保存本地模板')) await save.click();
-  await firstVisible(marketModal.getByRole('button', { name: /已保存/, exact: false }), 'saved market agent');
-  await closeOverlays(page);
-  await clickButton(page, '蒸馏 Agent');
-  for (const step of ['2. 提炼能力', '3. 生成 Agent', '1. 选择样本']) await clickButton(page, step);
-  await closeOverlays(page);
-  await clickButton(page, '创建 Agent');
-  for (const tab of ['助手特征', '基础工具', '业务技能', '核心文件']) await clickButton(page, tab);
-  await closeOverlays(page);
-}
-
-async function smokeCapabilities(page) {
-  await clickButton(page, '能力中心');
-  for (const tab of ['插件模块', 'MCP 连接', 'Skill 包']) {
-    await clickButton(page, tab);
-    await fillFirst(page, '.capability-search input', 'git', 'capability search');
-    await fillFirst(page, '.capability-search input', '', 'capability search clear');
-    await clickButton(page, /添加|创建/);
-    await assertText(page, /新建|创建|添加/);
-    await closeOverlays(page);
-  }
-  await clickButton(page, '插件模块');
-  const row = page.locator('.capability-row').first();
-  if (await row.isVisible().catch(() => false)) {
-    await row.click();
-    await assertText(page, '安装与连接流程');
-    const binding = page.locator('.capability-agent-binding button').first();
-    if (await binding.isVisible().catch(() => false)) await binding.click();
-    await closeOverlays(page);
-  }
-}
-
-async function smokeComposer(page) {
-  await clickButton(page, '新建任务');
-  await clickButton(page, 'Code 工作台');
-  await clickButton(page, 'Work 工作台');
+async function smokeComposerDoesNotFakeAssistant(page) {
   await clickButton(page, '新建任务');
   const input = page.getByTestId('composer-input');
-  await input.fill('检查所有功能是否可点击');
-  const plus = page.locator('.composer button').filter({ hasText: /^$/ }).first();
-  if (await plus.isVisible().catch(() => false)) await plus.click().catch(() => {});
-  await page.keyboard.press('Escape').catch(() => {});
+  const inputVisible = await input.isVisible().catch(() => false);
+  if (!inputVisible) {
+    const body = await page.locator('body').innerText();
+    if (/尚未配置.*Agent|请先创建.*Agent|未连接桌面后端|Wails 桌面运行环境/.test(body)) return;
+    throw new Error('new task has neither a composer nor an honest empty/unavailable explanation');
+  }
+  if (await input.isDisabled()) {
+    const body = await page.locator('body').innerText();
+    if (!/未连接|不可用|桌面后端|Wails/.test(body)) throw new Error('disabled composer does not explain the unavailable desktop backend');
+    return;
+  }
+  const assistantMessages = page.locator('.transcript .message--assistant');
+  const before = await assistantMessages.count();
+  await input.fill('浏览器预览不能伪造模型回复');
   await submitComposer(page);
-  await assertText(page, '检查所有功能是否可点击');
+  await page.waitForTimeout(250);
+  const after = await assistantMessages.count();
+  if (after !== before) throw new Error(`unbound composer fabricated ${after - before} assistant message(s)`);
+  const body = await page.locator('body').innerText();
+  if (body.includes('浏览器预览已收到这条消息')) throw new Error('legacy fake assistant reply is still visible');
 }
 
-async function smokeCodeWorkbench(page) {
-  await clickButton(page, 'Code 工作台');
-  await assertText(page, '面向研发的代码工作台');
-  for (const panel of ['总览', 'Workspace / Preview', 'Context', 'Diff', 'Checkpoints']) {
-    await clickButton(page, panel);
+async function smokeUserPanels(page) {
+  for (const item of ['模型管理', '系统设置']) {
+    await openUserMenuItem(page, item);
+    await assertText(page, item);
+    if (item === '模型管理') await assertText(page, '未连接桌面后端');
+    await closeOverlays(page);
   }
-  for (const action of ['代码状态', '上下文窗口', '变更审查', '检查点']) {
-    await clickButton(page, action);
-  }
-  await clickButton(page, '模型渠道');
-  await assertText(page, '模型');
-  await closeOverlays(page);
-  await clickButton(page, '权限沙箱');
-  await assertText(page, '权限');
-  await closeOverlays(page);
-  await clickButton(page, '开始代码对话');
-  const input = page.getByTestId('composer-input');
-  await input.fill('解释当前 diff');
-  await submitComposer(page);
-  await assertText(page, '解释当前 diff');
-  await clickButton(page, 'Work 工作台');
-  await assertText(page, '今日概览');
 }
 
 async function smokeVisibleProbe(page) {
   await clickButton(page, 'Work 工作台').catch(() => {});
   await clickButton(page, '今日概览');
   const before = await collectVisibleControls(page);
-  const safePatterns = [/^查看全部$/, /^管理$/, /^新建待办$/, /^新建日程$/, /^进入 Agent 中心$/, /^Work$/, /^Code$/];
-  for (const pattern of safePatterns) {
-    const item = before.find((control) => pattern.test(control.name));
-    if (!item) continue;
+  for (const pattern of [/^查看全部$/, /^管理$/, /^新建待办$/, /^新建日程$/, /^进入 Agent 中心$/, /^Work$/, /^Code$/]) {
+    if (!before.some((control) => pattern.test(control.name))) continue;
     await clickButton(page, pattern);
     await closeOverlays(page);
     await clickButton(page, '今日概览').catch(() => {});
@@ -412,27 +367,22 @@ async function smokeViewport(label, viewport) {
   const page = await browser.newPage({ viewport });
   const errors = [];
   page.on('console', (msg) => {
-    if (['error'].includes(msg.type())) errors.push(`${msg.type()}: ${msg.text()}`);
+    if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
   });
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
 
-  await runStep(page, errors, `${label} initial load`, async () => {
-    await page.goto(baseURL, { waitUntil: 'load' });
+  await runStep(page, errors, `${label} initial honest-unbound load`, async () => {
+    await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.locator('.shell').waitFor({ state: 'visible', timeout: 15000 });
     await firstVisible(page.getByRole('button', { name: 'Work 工作台', exact: true }), 'Work 工作台 switch');
   });
-  await runStep(page, errors, `${label} sidebar project controls`, () => smokeSidebar(page));
+  await runStep(page, errors, `${label} no seeded business content`, () => smokeNoSeedContent(page));
   await runStep(page, errors, `${label} work navigation`, () => smokeWorkNavigation(page));
-  await runStep(page, errors, `${label} home cards and create dialogs`, () => smokeHomeCards(page));
-  await runStep(page, errors, `${label} user menu panels`, () => smokeUserPanels(page));
-  await runStep(page, errors, `${label} config dialogs`, () => smokeConfigDialogs(page));
-  await runStep(page, errors, `${label} projects and customers`, () => smokeProjectsAndCustomers(page));
-  await runStep(page, errors, `${label} resources center`, () => smokeResources(page));
-  await runStep(page, errors, `${label} teams flow`, () => smokeTeams(page));
-  await runStep(page, errors, `${label} agents flow`, () => smokeAgents(page));
-  await runStep(page, errors, `${label} capabilities flow`, () => smokeCapabilities(page));
-  await runStep(page, errors, `${label} composer flow`, () => smokeComposer(page));
-  await runStep(page, errors, `${label} code workbench`, () => smokeCodeWorkbench(page));
+  await runStep(page, errors, `${label} empty business surfaces`, () => smokeEmptyBusinessSurfaces(page));
+  await runStep(page, errors, `${label} real feature dialogs remain reachable`, () => smokeReachableDialogs(page));
+  await runStep(page, errors, `${label} unbound writes and run stay non-mutating`, () => smokeUnboundWritesAndRun(page));
+  await runStep(page, errors, `${label} unbound composer has no fake assistant`, () => smokeComposerDoesNotFakeAssistant(page));
+  await runStep(page, errors, `${label} backend-dependent user panels are honest`, () => smokeUserPanels(page));
   await runStep(page, errors, `${label} visible safe-click probe`, async () => {
     const meta = await smokeVisibleProbe(page);
     record(`${label} visible controls enumerated`, true, `${meta.beforeCount} before / ${meta.afterCount} after`, { controls: meta.sample });
@@ -496,8 +446,8 @@ const summary = {
   outDir,
   playwrightSource,
   browserSource,
-  mode: 'browser-preview-ui-reachability',
-  limitation: 'This smoke verifies rendered UI reachability/click safety in browser preview. Wails-bound side effects are verified by Go/Wails tests, not by this browser-only run.',
+  mode: 'browser-preview-honest-empty-and-unbound-safety',
+  limitation: 'This browser run verifies honest empty state plus non-mutating unbound writes/runs. Delete and durable CRUD semantics are enforced by the runtime-mock source gate and scripts/workbench-crud-smoke.mjs against temporary Go profiles.',
   total: results.length,
   passed: results.filter((item) => item.ok).length,
   failed: results.filter((item) => !item.ok).length,

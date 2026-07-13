@@ -11,8 +11,8 @@ func TestSaveAutomationPersistsWorkbenchAutomation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAutomations initial: %v", err)
 	}
-	if len(initial) == 0 {
-		t.Fatal("ListAutomations initial returned no seed automations")
+	if len(initial) != 0 {
+		t.Fatalf("ListAutomations initial seeded runtime data: %+v", initial)
 	}
 
 	saved, err := app.SaveAutomation(WorkbenchAutomationInput{

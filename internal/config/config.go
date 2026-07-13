@@ -847,6 +847,22 @@ type NetworkConfig struct {
 	// process environment instead.
 	NoProxy string             `toml:"no_proxy"`
 	Proxy   NetworkProxyConfig `toml:"proxy"`
+	// TrustedIntranet is a user-global allowlist for web_fetch targets that
+	// resolve to RFC1918 or IPv6 ULA addresses. Project config is never allowed
+	// to override it (see LoadForRoot), because cloned repositories are not a
+	// trust boundary.
+	TrustedIntranet TrustedIntranetConfig `toml:"trusted_intranet"`
+}
+
+type TrustedIntranetConfig struct {
+	Enabled bool                        `toml:"enabled"`
+	Sites   []TrustedIntranetSiteConfig `toml:"sites"`
+}
+
+type TrustedIntranetSiteConfig struct {
+	Host  string   `toml:"host"`
+	CIDRs []string `toml:"cidrs"`
+	Ports []int    `toml:"ports"`
 }
 
 // NetworkProxyConfig is the structured custom-proxy editor shape. Password is

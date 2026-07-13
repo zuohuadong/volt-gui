@@ -51,6 +51,7 @@ func LoadForRoot(root string) (*Config, error) {
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
 	globalAutoPlan := cfg.Agent.AutoPlan
 	globalSecrets := cfg.Secrets
+	globalTrustedIntranet := cfg.Network.TrustedIntranet
 	userDefaultModel := cfg.DefaultModel
 	if cfg.Secrets.RedactToolOutput != nil {
 		v := *cfg.Secrets.RedactToolOutput
@@ -72,6 +73,9 @@ func LoadForRoot(root string) (*Config, error) {
 	// voltui.toml must not be able to disable redaction or flip on the
 	// workflow-breaking env/path protections.
 	cfg.Secrets = globalSecrets
+	// Trusted-intranet grants are a fresh user decision. A cloned project's
+	// voltui.toml must never be able to authorize access to LAN services.
+	cfg.Network.TrustedIntranet = globalTrustedIntranet
 	// TOML decoding replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project voltui.toml doesn't drop the global config's MCP servers.

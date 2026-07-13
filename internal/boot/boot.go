@@ -251,6 +251,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err := netclient.Validate(proxySpec); err != nil {
 		return nil, err
 	}
+	intranetPolicy := trustedIntranetPolicy(cfg)
 	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
@@ -361,7 +362,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		enabledBuiltins = tokenEconomyBuiltins(enabledBuiltins)
 	}
 	readPathResolver := builtin.NewPathResolver()
-	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, intranetPolicy, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -984,12 +985,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 					return "web_fetch is disabled by [tools].enabled.", nil
 				}
 				names := addTools(reg, builtin.Workspace{
-					Dir:         root,
-					WriteRoots:  writeRoots,
-					Bash:        bashSpec,
-					BashTimeout: bashTimeout,
-					Search:      searchSpec,
-					ProxySpec:   proxySpec,
+					Dir:             root,
+					WriteRoots:      writeRoots,
+					Bash:            bashSpec,
+					BashTimeout:     bashTimeout,
+					Search:          searchSpec,
+					ProxySpec:       proxySpec,
+					TrustedIntranet: intranetPolicy,
 				}.Tools("web_fetch"))
 				if len(names) == 0 {
 					return "web_fetch is already enabled or unavailable.", nil
@@ -1171,8 +1173,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		OnRememberPlanModeReadOnlyCommand: func(prefix string) control.PlanModeReadOnlyCommandTrustResult {
 			return rememberPlanModeReadOnlyCommand(root, prefix)
 		},
-		SessionRecoveryMeta: opts.SessionRecoveryMeta,
-		OnSessionRecovered:  opts.OnSessionRecovered,
+		OnRememberTrustedIntranet: rememberTrustedIntranet,
+		SessionRecoveryMeta:       opts.SessionRecoveryMeta,
+		OnSessionRecovered:        opts.OnSessionRecovered,
 	}
 	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
 	// that can auto-allow safe Ask decisions and annotate risky ones before
@@ -1216,6 +1219,48 @@ func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
 	}
 	if err := config.WritePermissionsSection(path, edit.Permissions.Allow); err != nil {
 		slog.Warn("save config after permission rule", "err", err)
+		result.Err = err
+		return result
+	}
+	result.Saved = true
+	return result
+}
+
+func trustedIntranetPolicy(cfg *config.Config) builtin.TrustedIntranetPolicy {
+	policy := builtin.TrustedIntranetPolicy{}
+	if cfg == nil || !cfg.Network.TrustedIntranet.Enabled {
+		return policy
+	}
+	policy.Enabled = true
+	for _, site := range cfg.TrustedIntranetSites() {
+		policy.Sites = append(policy.Sites, builtin.TrustedIntranetSite{
+			Host:  site.Host,
+			CIDRs: append([]string(nil), site.CIDRs...),
+			Ports: append([]int(nil), site.Ports...),
+		})
+	}
+	return policy
+}
+
+func rememberTrustedIntranet(req tool.TrustedIntranetRequest) control.TrustedIntranetRememberResult {
+	result := control.TrustedIntranetRememberResult{Request: req, Path: config.UserConfigPath()}
+	if strings.TrimSpace(result.Path) == "" {
+		result.Err = fmt.Errorf("cannot resolve user config path")
+		return result
+	}
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	edit := config.LoadForEditWithoutCredentials(result.Path)
+	changed, err := edit.AddTrustedIntranetSite(req.Host, req.IP, req.Port)
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	if !changed {
+		result.CoveredBy = fmt.Sprintf("%s (%s:%d)", strings.TrimSpace(req.Host), strings.TrimSpace(req.IP), req.Port)
+		return result
+	}
+	if err := edit.SaveTo(result.Path); err != nil {
 		result.Err = err
 		return result
 	}
@@ -1532,7 +1577,7 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 // and makes bash warn when a command references them. managedConfig names the
 // Reasonix-owned config files writable outside writeRoots after a fresh
 // per-write human approval.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, forbidReadRoots []string, readPathResolver *builtin.PathResolver, sessionGuard builtin.SessionDataGuard, managedConfig builtin.ManagedConfigPaths, overlay builtin.FileOverlay, terminal builtin.TerminalRunner) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, trustedIntranet builtin.TrustedIntranetPolicy, forbidReadRoots []string, readPathResolver *builtin.PathResolver, sessionGuard builtin.SessionDataGuard, managedConfig builtin.ManagedConfigPaths, overlay builtin.FileOverlay, terminal builtin.TerminalRunner) {
 	toolNames := enabled
 	if len(toolNames) == 0 {
 		toolNames = defaultBootBuiltinNames()
@@ -1541,7 +1586,7 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
 	if workDir != "" {
-		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, ReadPaths: readPathResolver, SessionGuard: sessionGuard, ManagedConfig: managedConfig, FileOverlay: overlay, Terminal: terminal}
+		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, TrustedIntranet: trustedIntranet, ReadPaths: readPathResolver, SessionGuard: sessionGuard, ManagedConfig: managedConfig, FileOverlay: overlay, Terminal: terminal}
 		for _, t := range ws.Tools(toolNames...) {
 			reg.Add(t)
 		}
@@ -1562,7 +1607,7 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	confined := append(builtin.ConfineWriters(writeRoots, sessionGuard, managedConfig),
 		builtin.ConfineBash(bashSpec, sessionGuard, bashTimeout),
 		builtin.ConfineSearch(searchSpec, bashSpec, forbidReadRoots),
-		builtin.ConfineWebFetch(proxySpec))
+		builtin.ConfineWebFetch(proxySpec, trustedIntranet))
 	confined = append(confined, builtin.ConfineReaders(forbidReadRoots)...)
 	for _, t := range confined {
 		if _, ok := reg.Get(t.Name()); ok {

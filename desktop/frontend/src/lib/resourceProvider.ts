@@ -1,5 +1,5 @@
 import { app } from "./bridge";
-import type { CreateWorkbenchJobInput, MCPServerInput, MemoryView, ProviderView, ResourceRecord, SettingsView, UpdateWorkbenchStepInput, WorkbenchArtifactInput } from "./types";
+import type { CreateWorkbenchJobInput, MCPServerInput, MemoryView, ProviderView, ResourceRecord, SettingsView, UpdateWorkbenchStepInput, WorkbenchArtifactInput, WorkbenchTodo, WorkbenchTodoInput } from "./types";
 
 type BaseRecord = { id: string | number; [key: string]: unknown };
 type GetListParams = { resource: string };
@@ -138,12 +138,36 @@ function memoryEntries(memory: MemoryView): BaseRecord[] {
   return [...facts, ...docs];
 }
 
-// In-memory task queue for the Work dashboard. Backend integration can replace this later.
-let taskRecords: BaseRecord[] = [
-  { id: "task-work-dashboard", title: "Wire Work dashboard tasks", status: "ready", owner: "Workbench", mode: "work", priority: "high", summary: "Expose task queue controls from the svadmin-compatible resource layer." },
-  { id: "task-runtime-smoke", title: "Run Wails runtime smoke", status: "blocked", owner: "Desktop", mode: "work", priority: "high", summary: "Requires a native Wails runtime session to verify bindings beyond browser mock." },
-  { id: "task-code-diff-edges", title: "Review changed-file edge cases", status: "active", owner: "Code dock", mode: "code", priority: "medium", summary: "Rename, staged, binary, and truncated diffs still need richer parity." },
-];
+function todoInputFromData(data: unknown, previous?: BaseRecord): WorkbenchTodoInput {
+  const record = { ...(previous ?? {}), ...asRecordData(data) };
+  const title = String(record.title ?? "").trim();
+  if (!title) throw new Error("待办标题不能为空");
+  return {
+    id: String(record.id ?? "").trim() || undefined,
+    title,
+    description: String(record.description ?? record.summary ?? ""),
+    projectId: String(record.projectId ?? "").trim() || undefined,
+    projectName: String(record.projectName ?? "").trim() || undefined,
+    customerId: String(record.customerId ?? "").trim() || undefined,
+    customerName: String(record.customerName ?? "").trim() || undefined,
+    agentId: String(record.agentId ?? "").trim() || undefined,
+    agentName: String(record.agentName ?? record.owner ?? "").trim() || undefined,
+    model: String(record.model ?? "").trim() || undefined,
+    priority: String(record.priority ?? "中"),
+    dueAt: String(record.dueAt ?? "").trim() || undefined,
+    dueLabel: String(record.dueLabel ?? ""),
+    status: String(record.status ?? "pending"),
+    source: String(record.source ?? "workbench"),
+  };
+}
+
+function todoRecord(todo: WorkbenchTodo): BaseRecord {
+  return { ...todo, id: todo.id, summary: todo.description, owner: todo.agentName ?? "" };
+}
+
+function unsupportedWrite(resource: string, operation: string): never {
+  throw new Error(`资源 ${resource} 不支持 ${operation} 操作`);
+}
 
 // Wails-backed DataProvider implementing the svadmin DataProvider contract.
 // Wails bindings do not support pagination/filter/sort natively, so this
@@ -198,7 +222,7 @@ export const wailsDataProvider: DataProvider = {
         break;
       }
       case "tasks": {
-        data = taskRecords.map((task) => ({ ...task }));
+        data = (await app().ListTodos()).map(todoRecord);
         break;
       }
       case "workbenchPlugins": {
@@ -232,7 +256,8 @@ export const wailsDataProvider: DataProvider = {
       return { data: (await app().GetWorkbenchJob(String(params.id))) as unknown as TData };
     }
     const result = await this.getList({ resource: params.resource });
-    const record = result.data.find((item) => String(item.id) === String(params.id)) ?? ({ id: params.id } as BaseRecord);
+    const record = result.data.find((item) => String(item.id) === String(params.id));
+    if (!record) throw new Error(`未找到资源 ${params.resource}/${params.id}`);
     return { data: record as unknown as TData };
   },
 
@@ -269,7 +294,11 @@ export const wailsDataProvider: DataProvider = {
       const job = await app().CreateWorkbenchJob(data as CreateWorkbenchJobInput);
       return { data: job as unknown as TData };
     }
-    return { data: { id: crypto.randomUUID(), ...(typeof data === "object" && data ? (data as object) : { value: data }) } as unknown as TData };
+    if (resource === "tasks") {
+      const todo = await app().SaveTodo(todoInputFromData(data));
+      return { data: todoRecord(todo) as unknown as TData };
+    }
+    return unsupportedWrite(params.resource, "创建");
   },
 
   async update<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: UpdateParams<TVariables>): Promise<UpdateResult<TData>> {
@@ -294,7 +323,7 @@ export const wailsDataProvider: DataProvider = {
     if (resource === "mcpServers") {
       const record = asRecordData(data);
       if (typeof record.enabled === "boolean") await app().SetMCPServerEnabled(id, record.enabled);
-      if (record.retry === true) await app().RetryMCPServer(id);
+      if (record.retry === true) await app().ReconnectMCPServer(id);
       if (record.transport || record.command || record.url || record.tier || record.args) await app().UpdateMCPServer(id, mcpInputFromData(data, previous));
       return { data: { ...previous, ...record, id } as unknown as TData };
     }
@@ -333,8 +362,8 @@ export const wailsDataProvider: DataProvider = {
     }
     if (resource === "tasks") {
       const record = asRecordData(data);
-      taskRecords = taskRecords.map((task) => (String(task.id) === id ? { ...task, ...record, id } : task));
-      return { data: (taskRecords.find((task) => String(task.id) === id) ?? { id, ...record }) as unknown as TData };
+      const todo = await app().SaveTodo(todoInputFromData({ ...record, id }, previous));
+      return { data: todoRecord(todo) as unknown as TData };
     }
     if (resource === "workbenchJobs") {
       const record = asRecordData(data);
@@ -348,7 +377,7 @@ export const wailsDataProvider: DataProvider = {
         return { data: job as unknown as TData };
       }
     }
-    return { data: { id, ...(typeof data === "object" && data ? (data as object) : { value: data }) } as unknown as TData };
+    return unsupportedWrite(params.resource, "更新");
   },
 
   async deleteOne<TData extends BaseRecord = BaseRecord, TVariables = unknown>(params: DeleteParams<TVariables>): Promise<DeleteResult<TData>> {
@@ -361,6 +390,10 @@ export const wailsDataProvider: DataProvider = {
       const [list, ...rest] = id.split(":");
       const rule = rest.join(":");
       if (list && rule) await app().RemovePermissionRule(list, rule);
+    }
+    if (resource === "tasks") await app().DeleteTodo(id);
+    if (!["providers", "mcpServers", "memory", "permissions", "tasks"].includes(resource)) {
+      return unsupportedWrite(params.resource, "删除");
     }
     return { data: { id } as unknown as TData };
   },

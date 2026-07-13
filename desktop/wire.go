@@ -102,6 +102,7 @@ type wireApproval struct {
 	ID      string `json:"id"`
 	Tool    string `json:"tool"`
 	Subject string `json:"subject"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // kindNames maps the event.Kind enum to stable wire strings.
@@ -173,7 +174,7 @@ func toWire(e event.Event) wireEvent {
 			}
 		}
 	case event.ApprovalRequest:
-		w.Approval = &wireApproval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject}
+		w.Approval = &wireApproval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Reason: e.Approval.Reason}
 	case event.AskRequest:
 		w.Ask = toWireAsk(e.Ask)
 	case event.CompactionStarted, event.CompactionDone:

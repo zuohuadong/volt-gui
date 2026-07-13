@@ -115,6 +115,7 @@ type Controller struct {
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 	onRememberMCPReadOnlyTrust        func(serverName, rawToolName string) MCPReadOnlyTrustResult
 	onRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
+	onRememberTrustedIntranet         func(req tool.TrustedIntranetRequest) TrustedIntranetRememberResult
 	sessionRecoveryMeta               func(SessionRecoveryRequest) agent.BranchMeta
 	onSessionRecovered                func(SessionRecoveryInfo) error
 	recoveryDepthCapNoticeSent        bool
@@ -301,6 +302,14 @@ type PlanModeReadOnlyCommandTrustResult struct {
 	Err       error
 }
 
+type TrustedIntranetRememberResult struct {
+	Request   tool.TrustedIntranetRequest
+	Path      string
+	Saved     bool
+	CoveredBy string
+	Err       error
+}
+
 type SessionRecoveryRequest struct {
 	OriginalPath string
 	Reason       string
@@ -386,6 +395,9 @@ type Options struct {
 	// read-only when the user chooses "always allow" from the plan-mode trust
 	// prompt.
 	OnRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
+	// OnRememberTrustedIntranet persists one exact user-approved host/IP/port
+	// tuple to the user-global config.
+	OnRememberTrustedIntranet func(req tool.TrustedIntranetRequest) TrustedIntranetRememberResult
 	// SessionRecoveryMeta lets a frontend attach scope/topic/profile metadata to
 	// an automatic recovery branch before it is written.
 	SessionRecoveryMeta func(SessionRecoveryRequest) agent.BranchMeta
@@ -442,6 +454,7 @@ func New(opts Options) *Controller {
 		onRemember:                        opts.OnRemember,
 		onRememberMCPReadOnlyTrust:        opts.OnRememberMCPReadOnlyTrust,
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
+		onRememberTrustedIntranet:         opts.OnRememberTrustedIntranet,
 		sessionRecoveryMeta:               opts.SessionRecoveryMeta,
 		onSessionRecovered:                opts.OnSessionRecovered,
 		balanceURL:                        opts.BalanceURL,
@@ -643,6 +656,10 @@ const SandboxEscapeApprovalTool = "sandbox_escape"
 // providers, sandbox rules, permissions, and MCP servers for future sessions,
 // so YOLO/auto approval must never answer it.
 const ManagedConfigWriteApprovalTool = "config_write"
+
+// TrustedIntranetApprovalTool is the fresh-human decision used when web_fetch
+// resolves a target to RFC1918 or IPv6 ULA space.
+const TrustedIntranetApprovalTool = "trusted_intranet_access"
 
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
@@ -1548,11 +1565,13 @@ func (c *Controller) EnableInteractiveApproval() {
 	trustGate := planModeReadOnlyTrustApprover{c}
 	escapeApprover := sandboxEscapeApprover{c}
 	configApprover := managedConfigWriteApprover{c}
+	intranetApprover := trustedIntranetApprover{c}
 	if c.executor != nil {
 		c.executor.SetGate(c.newInteractiveGate())
 		c.executor.SetPlanModeReadOnlyTrustGate(trustGate)
 		c.executor.SetSandboxEscapeApprover(escapeApprover)
 		c.executor.SetConfigWriteApprover(configApprover)
+		c.executor.SetTrustedIntranetApprover(intranetApprover)
 		c.executor.SetAsker(c)
 	}
 	if setter, ok := c.runner.(interface {
@@ -1569,6 +1588,11 @@ func (c *Controller) EnableInteractiveApproval() {
 		SetConfigWriteApprover(tool.ConfigWriteApprover)
 	}); ok {
 		setter.SetConfigWriteApprover(configApprover)
+	}
+	if setter, ok := c.runner.(interface {
+		SetTrustedIntranetApprover(tool.TrustedIntranetApprover)
+	}); ok {
+		setter.SetTrustedIntranetApprover(intranetApprover)
 	}
 }
 
@@ -4191,6 +4215,8 @@ func sandboxEscapeApprovalReason(reason string) string {
 // config files without re-prompting on every incremental edit.
 type managedConfigWriteApprover struct{ c *Controller }
 
+type trustedIntranetApprover struct{ c *Controller }
+
 func (m managedConfigWriteApprover) ApproveManagedConfigWrite(ctx context.Context, req tool.ConfigWriteRequest) (bool, string, error) {
 	subject := managedConfigWriteApprovalSubject(req.Path)
 	args, _ := json.Marshal(map[string]string{"path": req.Path})
@@ -4213,6 +4239,59 @@ func (m managedConfigWriteApprover) ManagedConfigWriteSessionAllowed(_ context.C
 
 func managedConfigWriteApprovalSubject(path string) string {
 	return i18n.M.ConfigWriteSubjectPrefix + strings.TrimSpace(path)
+}
+
+func (t trustedIntranetApprover) ApproveTrustedIntranet(ctx context.Context, req tool.TrustedIntranetRequest) (bool, string, error) {
+	subject := trustedIntranetApprovalSubject(req)
+	args, _ := json.Marshal(req)
+	reason := fmt.Sprintf("目标 %s 解析到私网地址 %s:%d；仅在你明确授权后，本次 web_fetch 才会直连访问。", req.Host, req.IP, req.Port)
+	reply, err := t.c.requestFreshApprovalDecision(ctx, TrustedIntranetApprovalTool, subject, args, reason)
+	if err != nil {
+		return false, "approval aborted", err
+	}
+	if !reply.allow {
+		return false, "user declined trusted intranet access", nil
+	}
+	if reply.persist {
+		if t.c.onRememberTrustedIntranet == nil {
+			return false, "trusted intranet persistence is unavailable", fmt.Errorf("trusted intranet persistence callback is not configured")
+		}
+		result := t.c.onRememberTrustedIntranet(req)
+		t.c.emitTrustedIntranetRememberResult(result)
+		if result.Err != nil {
+			return false, "failed to persist trusted intranet access", result.Err
+		}
+		if !result.Saved && strings.TrimSpace(result.CoveredBy) == "" {
+			return false, "failed to persist trusted intranet access", fmt.Errorf("trusted intranet rule was not saved")
+		}
+		if reply.session {
+			t.c.approval.grantSession(TrustedIntranetApprovalTool, subject)
+		}
+	}
+	return true, "", nil
+}
+
+func (t trustedIntranetApprover) TrustedIntranetSessionAllowed(_ context.Context, req tool.TrustedIntranetRequest) bool {
+	return t.c.approval.preApprovedForDecision(TrustedIntranetApprovalTool, trustedIntranetApprovalSubject(req), true)
+}
+
+func trustedIntranetApprovalSubject(req tool.TrustedIntranetRequest) string {
+	return fmt.Sprintf("允许访问内网站点 %s (%s:%d)", strings.TrimSpace(req.Host), strings.TrimSpace(req.IP), req.Port)
+}
+
+func (c *Controller) emitTrustedIntranetRememberResult(r TrustedIntranetRememberResult) {
+	target := trustedIntranetApprovalSubject(r.Request)
+	if r.Err != nil {
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("保存可信内网站点失败：%s：%v", target, r.Err)})
+		return
+	}
+	if r.Saved {
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("已将可信内网站点保存到 %s：%s", r.Path, target)})
+		return
+	}
+	if strings.TrimSpace(r.CoveredBy) != "" {
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("可信内网站点已存在：%s", r.CoveredBy)})
+	}
 }
 
 func (p planModeReadOnlyTrustApprover) CheckPlanModeReadOnlyTrust(ctx context.Context, req agent.PlanModeReadOnlyTrustRequest) (bool, string, error) {

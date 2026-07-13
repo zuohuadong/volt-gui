@@ -236,6 +236,20 @@ func (c *Coordinator) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
 	}
 }
 
+// SetTrustedIntranetApprover propagates private web_fetch approvals to both
+// tool-using agents in two-model mode.
+func (c *Coordinator) SetTrustedIntranetApprover(g tool.TrustedIntranetApprover) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetTrustedIntranetApprover(g)
+	}
+	if c.executor != nil {
+		c.executor.SetTrustedIntranetApprover(g)
+	}
+}
+
 // Run plans with the planner model, then hands the plan to the executor.
 func (c *Coordinator) Run(ctx context.Context, input string) error {
 	c.sink.Emit(event.Event{Kind: event.TurnStarted})

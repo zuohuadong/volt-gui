@@ -119,6 +119,46 @@ ShowInstDetails show # This will always show the installation details.
     DeleteRegKey HKCU "${UNINST_KEY}"
 !macroend
 
+; Keep the standard installer online-capable, but make bootstrapper failures
+; actionable for intranet users. These registry checks mirror Wails' behavior,
+; so a machine prepared with the separate prerequisites ZIP skips the download.
+!macro voltui.webview2runtime
+    SetRegView 64
+    ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $0 "" 0 voltui_webview_ready
+    ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $0 "" 0 voltui_webview_ready
+
+    SetDetailsPrint both
+    DetailPrint "Installing: Microsoft Edge WebView2 Runtime (online)"
+    SetDetailsPrint listonly
+    InitPluginsDir
+    CreateDirectory "$pluginsdir\webview2bootstrapper"
+    SetOutPath "$pluginsdir\webview2bootstrapper"
+    File "tmp\MicrosoftEdgeWebview2Setup.exe"
+    ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
+    StrCmp $1 0 voltui_webview_ready
+    StrCmp $1 3010 voltui_webview_restart
+    StrCmp $1 1641 voltui_webview_restart
+    StrCmp $1 -2147219198 voltui_webview_ready
+
+    IfSilent voltui_webview_silent voltui_webview_interactive
+
+voltui_webview_interactive:
+    MessageBox MB_OK|MB_ICONSTOP "Microsoft Edge WebView2 Runtime could not be installed online (exit code $1). On an offline or restricted network, extract and run install-prerequisites.cmd from VoltUI-windows-${ARCH}-prerequisites.zip, then run this installer again."
+    Abort "WebView2 Runtime installation failed with exit code $1."
+
+voltui_webview_silent:
+    SetErrorLevel $1
+    Abort "WebView2 Runtime installation failed. Install VoltUI-windows-${ARCH}-prerequisites.zip first."
+
+voltui_webview_restart:
+    SetRebootFlag true
+
+voltui_webview_ready:
+    SetDetailsPrint both
+!macroend
+
 Function .onInit
    !insertmacro wails.checkArchitecture
 
@@ -174,7 +214,7 @@ FunctionEnd
 Section
     !insertmacro wails.setShellContext
 
-    !insertmacro wails.webview2runtime
+    !insertmacro voltui.webview2runtime
 
     Call voltui.waitForExecutableUnlock
 

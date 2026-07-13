@@ -4,13 +4,17 @@ const repo = 'https://github.com/zuohuadong/volt-gui';
 ---
 <footer class="site-footer">
   <div class="wrap foot">
-    <a class="brand" href={`${base}/`}><span class="mk">V</span><span>VoltUI</span></a>
-    <div class="foot-copy">© 2026 VoltUI · <span class="l-en">MIT licensed</span><span class="l-zh">MIT 许可</span></div>
+    <div class="footer-brand-block">
+      <a class="brand" href={base + '/'}><span class="mk">V</span><span>VoltUI</span></a>
+      <p><span class="l-en">Open-source AI coding agent and local workbench for enterprise private networks.</span><span class="l-zh">面向企业内网的开源 AI 编码 Agent 与本地工作台。</span></p>
+    </div>
     <nav class="foot-links" aria-label="Footer navigation">
-      <a href={`${base}/usage/`}><span class="l-en">Usage</span><span class="l-zh">用量</span></a>
-      <a href={`${base}/enterprise/`}><span class="l-en">Enterprise</span><span class="l-zh">企业</span></a>
-      <a href={`${base}/docs/`}><span class="l-en">Docs</span><span class="l-zh">文档</span></a>
+      <a href={base + '/capabilities/'}><span class="l-en">Capabilities</span><span class="l-zh">产品能力</span></a>
+      <a href={base + '/enterprise/'}><span class="l-en">Enterprise deployment</span><span class="l-zh">企业部署</span></a>
+      <a href={base + '/usage/'}><span class="l-en">Security & usage</span><span class="l-zh">安全与用量</span></a>
+      <a href={base + '/docs/'}><span class="l-en">Docs</span><span class="l-zh">文档</span></a>
       <a href={repo}>GitHub</a>
     </nav>
+    <div class="foot-copy">© 2026 VoltUI · <span class="l-en">MIT licensed</span><span class="l-zh">MIT 许可</span></div>
   </div>
 </footer>

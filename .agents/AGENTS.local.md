@@ -14,7 +14,7 @@
 
 - Root module: Go CLI/TUI, `go.mod`, entrypoints in `cmd/`, reusable code in `internal/`.
 - Desktop module: Wails v2 nested module in `desktop/`, with independent `desktop/go.mod` and `desktop/frontend/`.
-- Site: Astro documentation site in `site/`, using npm and Node 22 in CI.
+- Site: Astro documentation site in `site/`, using npm and Node 26 in CI.
 - Release: GitHub Actions currently targets `main-v2`; CNB 镜像仓库同步时不要改动该分支策略，除非任务明确要求。
 
 ## Required Skills

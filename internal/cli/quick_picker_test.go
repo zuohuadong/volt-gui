@@ -34,6 +34,32 @@ func TestQuickPickerNavigationFilterAndConfirm(t *testing.T) {
 	}
 }
 
+func TestQuickPickerVimKeysBecomeTextAfterSearchStarts(t *testing.T) {
+	p := &quickPicker{
+		selected: 1,
+		items: []quickPickerItem{
+			{ID: "one", Label: "Alpha"},
+			{ID: "two", Label: "Beta"},
+			{ID: "three", Label: "Gamma"},
+		},
+	}
+	p.handleKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if p.selected != 0 || p.query != "" {
+		t.Fatalf("empty-query k = selected %d, query %q; want navigation to 0", p.selected, p.query)
+	}
+	p.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if p.selected != 1 || p.query != "" {
+		t.Fatalf("empty-query j = selected %d, query %q; want navigation to 1", p.selected, p.query)
+	}
+
+	p.handleKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	p.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	p.handleKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if p.query != "ajk" {
+		t.Fatalf("search query = %q, want ajk", p.query)
+	}
+}
+
 func TestQuickPickerWindowTracksSelection(t *testing.T) {
 	start, end := quickPickerWindow(20, 18)
 	if start != 12 || end != 20 {

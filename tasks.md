@@ -69,6 +69,20 @@
 | ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
 | ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
 | ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
+| ANYONG-SYNC-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | running | codex | gpt-5.3-codex | - | review-medium | main | - |
+
+### ANYONG-SYNC-20260713 Task Contract
+
+- 目标：fresh fetch `git@github.com:zuohuadong/volt-gui.git` 的 `upstream/main`，将尚未进入 Anyong `main` 的更新合并到当前分支，同时保留配置化 OEM 品牌、CNB Windows-only 发布覆盖和 fork 专属运行时资源。
+- 非目标：不 push、不触发新发布、不 force push、不移动或覆盖既有 tag、不硬编码暗涌品牌到通用源码、不运行会自动提交或推送的旧同步脚本。
+- 验收标准：fresh `upstream/main` 成为本地 `main` 祖先；无未解决冲突；Anyong 品牌/CNB/构建产物命名与 fork 专属资源保持有效；按实际上游改动运行针对性验证及 `git diff --check`；独立 verifier PASS。
+- 协作模式：`pipeline`。explorer 只读审计上游增量、冲突面和 fork 保护边界；orchestrator 执行受控 merge；verifier 独立复核最终 diff、祖先关系和验证结果；不委派远程写入。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`anyong-brand-config`、`xigu-ai-ops`、`cnb-ci-cd`；遵循 Go CLI + Wails desktop + Svelte frontend + Astro site 的既有目录、测试和配置优先约定。
+- 风险：medium，上游更新可能跨 Go、desktop/frontend、site、workflow 和依赖锁文件；错误选择 ours/theirs 可能破坏 Anyong 品牌、CNB 发布链或 bundled runtime。
+- 回滚：合并提交前使用 `git merge --abort`；合并提交后如需回退，仅创建普通 revert，不重写历史；本轮不推送远端。
+- 验证计划：fresh fetch、ahead/behind 与 `git merge-tree` 预演；按 touched modules 运行 root/desktop Go、frontend/site、workflow/script 专项门禁；品牌/CNB/runtime 关键边界审计；`git diff --check`；独立 verifier。
+- context_isolation：explorer 写 `.mailbox/051-upstream-explorer-result.md`；verifier 写 `.mailbox/052-upstream-verifier-result.md`；均为 isolated 只读上下文，不传递凭据。
+- interruption_recovery：若子代理失败或超时，读取对应 mailbox error；`last_stable_artifact` 为本 Task Contract、fresh refs、merge commit 或验证日志；重派一次仍失败则标记 PARTIAL，不切换其他 runtime。
 
 ### ANYONG-SYNC-20260711 Task Contract
 

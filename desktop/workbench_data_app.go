@@ -10,6 +10,7 @@ import (
 	"html"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1242,11 +1243,13 @@ func migrateLegacyWorkbenchSeeds(data WorkbenchDataView) (WorkbenchDataView, boo
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "internal":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Name == "内部研发团队" && item.Email == "dev@example.com" && item.Desc == "Volt GUI 研发与验证主体。"
+			expected := WorkbenchCustomerView{ID: "internal", Name: "内部研发团队", Type: "企业", Contact: "产品负责人", Phone: "internal", Email: "dev@example.com", Risk: "低风险", RiskLevel: "low", Status: "active", Owner: "产品工作台", Stage: "活跃", Industry: "研发", Region: "本地", Address: "局域网本地客户档案", Note: "围绕 Volt GUI 桌面端体验、代码质量和发布节奏维护长期项目上下文。", Desc: "Volt GUI 研发与验证主体。", ProjectIDs: []string{"volt-gui", "homepage"}, Matters: 2, Materials: 4, Events: 2, Todos: 5, Reports: 2, LastTouch: "刚刚", LastContact: "刚刚", NextAction: "继续验证工作台功能", Tags: []string{"内部", "研发"}, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "ops":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Name == "运营增长团队" && item.Email == "ops@example.com" && item.Desc == "负责发布材料、增长活动和客户触达。"
+			expected := WorkbenchCustomerView{ID: "ops", Name: "运营增长团队", Type: "企业", Contact: "增长负责人", Phone: "ops", Email: "ops@example.com", Risk: "中风险", RiskLevel: "medium", Status: "active", Owner: "增长项目", Stage: "跟进中", Industry: "运营", Region: "本地", Address: "运营项目群", Note: "负责发布材料、增长活动和客户触达。", Desc: "负责发布材料、增长活动和客户触达。", ProjectIDs: []string{"lurefree"}, Matters: 1, Materials: 2, Events: 1, Todos: 4, Reports: 1, LastTouch: "今天", LastContact: "今天", NextAction: "复核发布素材", Tags: []string{"运营", "增长"}, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1274,15 +1277,18 @@ func filterLegacyCalendarEvents(items []WorkbenchCalendarEventView, migrated boo
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "version-review":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "版本评审会议" && item.Time == "09:30" && item.Place == "线上会议室"
+			expected := WorkbenchCalendarEventView{ID: "version-review", Day: "09", Title: "版本评审会议", Time: "09:30", Type: "meeting", Place: "线上会议室", Status: "已排期", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "customer-workflow":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "客户工作流复盘" && item.Time == "14:00" && item.Place == "项目群"
+			expected := WorkbenchCalendarEventView{ID: "customer-workflow", Day: "12", Title: "客户工作流复盘", Time: "14:00", Type: "deadline", Place: "项目群", Status: "待开始", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "automation-review":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "自动化验收" && item.Time == "16:30" && item.Place == "研发工作台"
+			expected := WorkbenchCalendarEventView{ID: "automation-review", Day: "18", Title: "自动化验收", Time: "16:30", Type: "review", Place: "研发工作台", Status: "待验收", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1301,15 +1307,18 @@ func filterLegacyReports(items []WorkbenchReportView, migrated bool) ([]Workbenc
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "project-risk":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "项目风险分析报告" && item.Desc == "覆盖变更风险、测试缺口、回滚建议。"
+			expected := WorkbenchReportView{ID: "project-risk", Title: "项目风险分析报告", Status: "已生成", Owner: "代码审查 Agent", Desc: "覆盖变更风险、测试缺口、回滚建议。", Kind: "风险报告", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && legacyReportMatches(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "customer-weekly":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "客户运营周报" && item.Desc == "整理客户触达、项目状态与内容草案。"
+			expected := WorkbenchReportView{ID: "customer-weekly", Title: "客户运营周报", Status: "草稿", Owner: "运营 Agent", Desc: "整理客户触达、项目状态与内容草案。", Kind: "周报", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && legacyReportMatches(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "automation-run":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "项目自动化运行报告" && item.Desc == "汇总前端门禁、Go/Wails 门禁和本地预览回归的执行证据。"
+			expected := WorkbenchReportView{ID: "automation-run", Title: "项目自动化运行报告", Status: "待复核", Owner: "自动化 Agent", Desc: "汇总前端门禁、Go/Wails 门禁和本地预览回归的执行证据。", Kind: "验证报告", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && legacyReportMatches(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1328,15 +1337,18 @@ func filterLegacyKnowledgeDocuments(items []WorkbenchKnowledgeDocumentView, migr
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "requirement-template":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "需求澄清记录模板" && item.Description == "用于记录目标、非目标、验收标准和执行边界。"
+			expected := WorkbenchKnowledgeDocumentView{ID: "requirement-template", Title: "需求澄清记录模板", Type: "模板", Count: 18, Status: "可用", Description: "用于记录目标、非目标、验收标准和执行边界。", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && legacyKnowledgeDocumentMatches(item, expected, []string{"volt-gui-ia-notes", "volt-gui-relation-sample"})
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "project-retro":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "项目复盘记录" && item.Description == "历史项目复盘与交付证据。"
+			expected := WorkbenchKnowledgeDocumentView{ID: "project-retro", Title: "项目复盘记录", Type: "归档", Count: 42, Status: "已索引", Description: "历史项目复盘与交付证据。", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && legacyKnowledgeDocumentMatches(item, expected, []string{"homepage-restore-log", "volt-gui-aoristlawer-map"})
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "automation-config":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "项目自动化配置说明" && item.Description == "工作台自动化任务、运行记录和失败处理。"
+			expected := WorkbenchKnowledgeDocumentView{ID: "automation-config", Title: "项目自动化配置说明", Type: "说明", Count: 9, Status: "已更新", Description: "工作台自动化任务、运行记录和失败处理。", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && legacyKnowledgeDocumentMatches(item, expected, []string{"volt-gui-quality-gate", "lurefree-map-regression"})
 		}
 		if legacy {
 			migrated = true
@@ -1355,15 +1367,18 @@ func filterLegacyRegulations(items []WorkbenchRegulationView, migrated bool) ([]
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "desktop-security":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "桌面端安全执行规范" && item.Tags == "权限 / 沙箱 / 审计"
+			expected := WorkbenchRegulationView{ID: "desktop-security", Title: "桌面端安全执行规范", Category: "内部规则", Status: "现行有效", Tags: "权限 / 沙箱 / 审计", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "agent-acceptance":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "Agent 协作验收标准" && item.Tags == "任务 / 验证 / 交付"
+			expected := WorkbenchRegulationView{ID: "agent-acceptance", Title: "Agent 协作验收标准", Category: "流程规范", Status: "试行", Tags: "任务 / 验证 / 交付", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "customer-boundary":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "客户数据使用边界" && item.Tags == "客户 / 数据 / 留痕"
+			expected := WorkbenchRegulationView{ID: "customer-boundary", Title: "客户数据使用边界", Category: "合规要求", Status: "现行有效", Tags: "客户 / 数据 / 留痕", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1382,15 +1397,18 @@ func filterLegacySyncJobs(items []WorkbenchSyncJobView, migrated bool) ([]Workbe
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "memory-sync":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "记忆与核心文件同步" && item.Progress == "100%"
+			expected := WorkbenchSyncJobView{ID: "memory-sync", Title: "记忆与核心文件同步", Status: "已完成", Progress: "100%", Time: "5 分钟前", UpdatedAt: item.UpdatedAt}
+			legacy = item.UpdatedAt != "" && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "material-index":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "资料库索引" && item.Progress == "64%"
+			expected := WorkbenchSyncJobView{ID: "material-index", Title: "资料库索引", Status: "运行中", Progress: "64%", Time: "正在执行", UpdatedAt: item.UpdatedAt}
+			legacy = item.UpdatedAt != "" && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "model-refresh":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "模型配置刷新" && item.Progress == "0%"
+			expected := WorkbenchSyncJobView{ID: "model-refresh", Title: "模型配置刷新", Status: "排队中", Progress: "0%", Time: "等待中", UpdatedAt: item.UpdatedAt}
+			legacy = item.UpdatedAt != "" && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1409,15 +1427,18 @@ func filterLegacyOperationLogs(items []WorkbenchOperationLogView, migrated bool)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "create-agent":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Action == "创建 Agent" && item.Target == "代码审查 Agent" && item.Time == "刚刚"
+			expected := WorkbenchOperationLogView{ID: "create-agent", Action: "创建 Agent", Target: "代码审查 Agent", User: "我的", Time: "刚刚", Result: "成功", CreatedAt: item.CreatedAt}
+			legacy = item.CreatedAt != "" && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "update-automation":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Action == "更新自动化" && item.Target == "桌面前端质量门禁" && item.Time == "12 分钟前"
+			expected := WorkbenchOperationLogView{ID: "update-automation", Action: "更新自动化", Target: "桌面前端质量门禁", User: "我的", Time: "12 分钟前", Result: "成功", CreatedAt: item.CreatedAt}
+			legacy = item.CreatedAt != "" && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "link-project":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Action == "关联项目" && item.Target == "Volt GUI 桌面端重构" && item.Time == "28 分钟前"
+			expected := WorkbenchOperationLogView{ID: "link-project", Action: "关联项目", Target: "Volt GUI 桌面端重构", User: "我的", Time: "28 分钟前", Result: "成功", CreatedAt: item.CreatedAt}
+			legacy = item.CreatedAt != "" && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1436,11 +1457,13 @@ func filterLegacyTeamRooms(items []WorkbenchTeamRoomView, migrated bool) ([]Work
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "product-lab":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "产品研发组" && item.Desc == "围绕桌面端体验、代码质量和发布节奏组织多 Agent 协作。" && item.LeaderID == "code-review"
+			expected := WorkbenchTeamRoomView{ID: "product-lab", Title: "产品研发组", Members: 3, Active: "模板已就绪", Desc: "围绕桌面端体验、代码质量和发布节奏组织多 Agent 协作。", Leader: "代码审查 Agent", LeaderID: "code-review", Status: "模板", Topic: "桌面端体验复核", Queue: "0 个运行节点", MemberIDs: []string{"code-review", "research", "automation"}, Avatars: []string{"C", "R", "A"}, Mode: "协调者编排", SharedContext: "项目资料库 / 当前变更", RunState: "待运行", NextCheckpoint: "发送任务后生成运行草稿", Outcome: "等待首次运行", Controls: []string{"暂停", "继续", "终止", "重新分配"}, Artifacts: []string{"报告草稿", "待办清单", "资料归档"}, Steps: []WorkbenchTeamRunStepView{{ID: "triage", Title: "拆解目标", Owner: "代码审查 Agent", Status: "待运行", Detail: "明确目标、非目标、验收标准和风险边界。"}, {ID: "research", Title: "补充资料", Owner: "资料研究 Agent", Status: "待运行", Detail: "读取关联资料并给出可引用依据。"}, {ID: "verify", Title: "验证闭环", Owner: "自动化 Agent", Status: "待运行", Detail: "生成检查命令、产物路径和失败处理建议。"}}, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "ops-growth":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.Title == "运营增长组" && item.Desc == "处理客户触达、内容草案和项目跟进。" && item.LeaderID == "research"
+			expected := WorkbenchTeamRoomView{ID: "ops-growth", Title: "运营增长组", Members: 2, Active: "需补上下文", Desc: "处理客户触达、内容草案和项目跟进。", Leader: "资料研究 Agent", LeaderID: "research", Status: "待补充", Topic: "客户运营协同", Queue: "0 个运行节点", MemberIDs: []string{"research", "automation"}, Avatars: []string{"R", "A"}, Mode: "串行交接", SharedContext: "客户资料 / 报告模板", RunState: "未启动", NextCheckpoint: "绑定客户或项目资料", Outcome: "等待配置资料", Controls: []string{"暂停", "继续", "终止"}, Artifacts: []string{"跟进话术", "待办清单"}, Steps: []WorkbenchTeamRunStepView{{ID: "brief", Title: "整理背景", Owner: "资料研究 Agent", Status: "待补充", Detail: "收集客户状态、历史沟通和当前目标。"}, {ID: "actions", Title: "生成行动", Owner: "自动化 Agent", Status: "待运行", Detail: "把建议转为待办、日程和跟进记录。"}}, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+			legacy = legacySeedTimestampsMatch(item.CreatedAt, item.UpdatedAt) && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1459,11 +1482,13 @@ func filterLegacyTeamMessages(items []WorkbenchTeamChatMessageView, migrated boo
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "product-lab-system-1":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.TeamID == "product-lab" && item.Content == "当前是协作组模板预览。发送任务后会生成运行草稿。"
+			expected := WorkbenchTeamChatMessageView{ID: "product-lab-system-1", TeamID: "product-lab", Role: "agent", AgentID: "code-review", AgentName: "代码审查 Agent", AgentAvatar: "C", Content: "当前是协作组模板预览。发送任务后会生成运行草稿。", CreatedAt: item.CreatedAt}
+			legacy = item.CreatedAt != "" && reflect.DeepEqual(item, expected)
 		// runtime-mock-guard: allow-legacy-cleanup
 		case "ops-growth-system-1":
 			// runtime-mock-guard: allow-legacy-cleanup
-			legacy = item.TeamID == "ops-growth" && item.Content == "请先绑定客户或项目资料，协作运行会基于真实上下文生成跟进建议。"
+			expected := WorkbenchTeamChatMessageView{ID: "ops-growth-system-1", TeamID: "ops-growth", Role: "agent", AgentID: "research", AgentName: "资料研究 Agent", AgentAvatar: "R", Content: "请先绑定客户或项目资料，协作运行会基于真实上下文生成跟进建议。", CreatedAt: item.CreatedAt}
+			legacy = item.CreatedAt != "" && reflect.DeepEqual(item, expected)
 		}
 		if legacy {
 			migrated = true
@@ -1472,6 +1497,30 @@ func filterLegacyTeamMessages(items []WorkbenchTeamChatMessageView, migrated boo
 		}
 	}
 	return out, migrated
+}
+
+func legacySeedTimestampsMatch(createdAt, updatedAt string) bool {
+	return createdAt != "" && createdAt == updatedAt
+}
+
+func legacyReportMatches(item, expected WorkbenchReportView) bool {
+	if reflect.DeepEqual(item, expected) {
+		return true
+	}
+	expected.Body = expected.Desc
+	expected.Source = "工作台数据"
+	expected.Format = "Markdown"
+	expected.Priority = "中"
+	return reflect.DeepEqual(item, expected)
+}
+
+func legacyKnowledgeDocumentMatches(item, expected WorkbenchKnowledgeDocumentView, materialIDs []string) bool {
+	if reflect.DeepEqual(item, expected) {
+		return true
+	}
+	expected.MaterialIDs = materialIDs
+	expected.Count = len(materialIDs)
+	return reflect.DeepEqual(item, expected)
 }
 
 func normalizeWorkbenchData(data WorkbenchDataView) WorkbenchDataView {

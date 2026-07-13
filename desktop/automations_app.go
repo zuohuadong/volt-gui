@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -516,15 +517,20 @@ func saveAutomations(automations []WorkbenchAutomationView) error {
 }
 
 func isLegacySeedAutomation(automation WorkbenchAutomationView) bool {
+	if automation.CreatedAt == "" || automation.CreatedAt != automation.UpdatedAt || automation.StartedAtMs <= 0 {
+		return false
+	}
 	switch strings.TrimSpace(automation.ID) {
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "preflight-validation":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return automation.Title == "提交前验证自动化" && automation.Desc == "将前端门禁、构建、空白检查和浏览器日志验证串成可复用任务。"
+		expected := WorkbenchAutomationView{ID: "preflight-validation", Title: "提交前验证自动化", Desc: "将前端门禁、构建、空白检查和浏览器日志验证串成可复用任务。", Status: automationStatusRunning, Kind: "验证自动化", Owner: automationOwnerDefault, StartedAtMs: automation.StartedAtMs, Cadence: "每次 UI 改动后", Schedule: "手动触发 / 提交前", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "最近一次通过", LastRun: "刚刚", NextRun: "等待下一次改动", Steps: []string{"Svelte check", "build", "browser verification"}, Logs: []string{"0 errors / 0 warnings"}, CreatedAt: automation.CreatedAt, UpdatedAt: automation.UpdatedAt}
+		return reflect.DeepEqual(automation, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "desktop-frontend-gate":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return automation.Title == "桌面前端质量门禁" && automation.Desc == "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查。"
+		expected := WorkbenchAutomationView{ID: "desktop-frontend-gate", Title: "桌面前端质量门禁", Desc: "针对 desktop/frontend 执行 Svelte 类型检查、Vite 构建和差异空白检查。", Status: automationStatusRunning, Kind: "质量门禁", Owner: "代码审查 Agent", StartedAtMs: automation.StartedAtMs, Cadence: "每次前端改动后", Schedule: "改动后手动复跑", ScheduleMode: "manual", Scope: "desktop/frontend", Environment: "local workspace", Command: "frontend-check", Result: "通过", LastRun: "12 分钟前", NextRun: "下一次前端改动", Steps: []string{"pnpm check", "pnpm build", "git diff --check"}, Logs: []string{"svelte-check passed"}, CreatedAt: automation.CreatedAt, UpdatedAt: automation.UpdatedAt}
+		return reflect.DeepEqual(automation, expected)
 	default:
 		return false
 	}

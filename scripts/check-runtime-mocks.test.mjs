@@ -87,30 +87,99 @@ test('does not flag tests, generated bindings, testdata or provider presets', as
   });
 });
 
-test('allows known legacy IDs only in an explicitly annotated cleanup condition', async () => {
+test('allows known legacy IDs only in an annotated whitelisted cleanup function', async () => {
   await withFixture({
-    'desktop/legacy_cleanup.go': `
+    'desktop/todos_app.go': `
+      func isLegacySeedTodo(todo Todo) bool {
       // ${RUNTIME_MOCK_ALLOW_MARKER}
-      if id == "todo-preview-load" { continue }
+      expected := WorkbenchTodoView{ID: "todo-preview-load", Source: "seed"}
+      return reflect.DeepEqual(todo, expected)
+      }
     `,
   }, async (root) => {
     assert.deepEqual(await scanRuntimeMocks({ root }), []);
   });
 });
 
-test('a cleanup marker cannot suppress a later legacy seed literal', async () => {
+test('a cleanup marker cannot suppress a seed outside the whitelisted file and function', async () => {
   await withFixture({
     'desktop/legacy_cleanup.go': `
+      func seedRuntimeData() Todo {
       // ${RUNTIME_MOCK_ALLOW_MARKER}
-      if id == "todo-preview-load" { continue }
-
-      if id == "todo-agent-template" { continue }
+      return Todo{ID: "todo-preview-load"}
+      }
+    `,
+    'desktop/todos_app.go': `
+      func seedRuntimeData() Todo {
+      // ${RUNTIME_MOCK_ALLOW_MARKER}
+      return Todo{ID: "todo-agent-template"}
+      }
     `,
   }, async (root) => {
     const findings = await scanRuntimeMocks({ root });
-    assert.equal(findings.length, 1);
-    assert.equal(findings[0].rule, 'legacy-seed-id');
-    assert.match(findings[0].match, /todo-agent-template/);
+    assert.equal(findings.filter((finding) => finding.rule === 'legacy-seed-id').length, 2);
+  });
+});
+
+test('a cleanup marker cannot suppress a seed-shaped return inside an allowed cleanup function', async () => {
+  await withFixture({
+    'desktop/todos_app.go': `
+      func isLegacySeedTodo(todo Todo) bool {
+      // ${RUNTIME_MOCK_ALLOW_MARKER}
+      return Todo{ID: "todo-preview-load"}
+      }
+    `,
+  }, async (root) => {
+    const findings = await scanRuntimeMocks({ root });
+    assert.equal(findings.some((finding) => finding.rule === 'legacy-seed-id'), true);
+  });
+});
+
+test('a cleanup marker cannot suppress side-effect seed injection inside an allowed cleanup function', async () => {
+  await withFixture({
+    'desktop/todos_app.go': `
+      func isLegacySeedTodo(todo Todo) bool {
+      // ${RUNTIME_MOCK_ALLOW_MARKER}
+      if todo.ID == "" { runtimeTodos = append(runtimeTodos, Todo{ID: "todo-preview-load", Source: "seed"}) }
+      return false
+      }
+    `,
+  }, async (root) => {
+    const findings = await scanRuntimeMocks({ root });
+    assert.equal(findings.some((finding) => finding.rule === 'legacy-seed-id'), true);
+    assert.equal(findings.some((finding) => finding.rule === 'seed-source'), true);
+  });
+});
+
+test('a cleanup marker cannot suppress side effects hidden in an expected fingerprint assignment', async () => {
+  await withFixture({
+    'desktop/todos_app.go': `
+      func isLegacySeedTodo(todo Todo) bool {
+      // ${RUNTIME_MOCK_ALLOW_MARKER}
+      expected := append(runtimeTodos, Todo{ID: "todo-preview-load", Source: "seed"})
+      return len(expected) == 0
+      }
+    `,
+  }, async (root) => {
+    const findings = await scanRuntimeMocks({ root });
+    assert.equal(findings.some((finding) => finding.rule === 'legacy-seed-id'), true);
+    assert.equal(findings.some((finding) => finding.rule === 'seed-source'), true);
+  });
+});
+
+test('a pure fingerprint cannot be reused by a side-effecting consumer', async () => {
+  await withFixture({
+    'desktop/todos_app.go': `
+      func isLegacySeedTodo(todo Todo) bool {
+      // ${RUNTIME_MOCK_ALLOW_MARKER}
+      expected := WorkbenchTodoView{ID: "todo-preview-load", Source: "seed"}
+      return reflect.DeepEqual(todo, expected) || persistRuntimeTodo(expected)
+      }
+    `,
+  }, async (root) => {
+    const findings = await scanRuntimeMocks({ root });
+    assert.equal(findings.some((finding) => finding.rule === 'legacy-seed-id'), true);
+    assert.equal(findings.some((finding) => finding.rule === 'seed-source'), true);
   });
 });
 

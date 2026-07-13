@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -242,19 +243,25 @@ func saveWorkbenchProjects(projects []WorkbenchProjectView) error {
 }
 
 func isLegacySeedProject(project WorkbenchProjectView) bool {
+	if project.CreatedAt == "" || project.CreatedAt != project.UpdatedISO {
+		return false
+	}
 	switch strings.TrimSpace(project.ID) {
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "volt-gui":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return project.Name == "Volt GUI 桌面端重构" && project.Code == "PRJ-2026-0615" && project.Desc == "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建对话。"
+		expected := WorkbenchProjectView{ID: "volt-gui", Name: "Volt GUI 桌面端重构", Code: "PRJ-2026-0615", Client: "内部研发", Stage: "进行中", Owner: "产品工作台", Desc: "恢复 AoristLawer 式导航、Agent 与能力中心，并把 Coding 模式统一到新建对话。", Category: "桌面端重构", Court: "研发工作台", Budget: "1,200,000", AcceptedAt: "2026-06-15", Status: "active", Progress: 78, Priority: "高", Risk: "中风险", UpdatedAt: "28 分钟前", NextStep: "完成项目管理页深化并做构建验证", Agent: "代码审查 Agent", Materials: 12, Todos: 5, Events: 3, Reports: 4, Timeline: []string{"AORISTLAWER 参考界面已完成源码对照", "新建对话与代码状态入口已统一", "项目管理页进入深化验收"}, CreatedAt: project.CreatedAt, UpdatedISO: project.UpdatedISO}
+		return reflect.DeepEqual(project, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "lurefree":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return project.Name == "Lurefree 小程序发布" && project.Code == "PRJ-2026-0610" && project.Desc == "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。"
+		expected := WorkbenchProjectView{ID: "lurefree", Name: "Lurefree 小程序发布", Code: "PRJ-2026-0610", Client: "运营团队", Stage: "验证中", Owner: "增长项目", Desc: "小程序包体、地图交互、图钉资产与发布材料进入交付前验证。", Category: "小程序发布", Court: "增长项目组", Budget: "350,000", AcceptedAt: "2026-06-10", Status: "active", Progress: 64, Priority: "中", Risk: "低风险", UpdatedAt: "2 小时前", NextStep: "补齐地图与详情页回归清单", Agent: "资料研究 Agent", Materials: 8, Todos: 4, Events: 2, Reports: 2, Timeline: []string{"地图交互问题已纳入检查", "发布材料进入复核", "等待小程序预览确认"}, CreatedAt: project.CreatedAt, UpdatedISO: project.UpdatedISO}
+		return reflect.DeepEqual(project, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "homepage":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return project.Name == "品牌主页恢复与部署" && project.Code == "PRJ-2026-0601" && project.Desc == "恢复历史版本、验证构建并保留无截图校验流程。"
+		expected := WorkbenchProjectView{ID: "homepage", Name: "品牌主页恢复与部署", Code: "PRJ-2026-0601", Client: "市场团队", Stage: "已归档", Owner: "官网项目", Desc: "恢复历史版本、验证构建并保留无截图校验流程。", Category: "官网运营", Court: "市场中台", Budget: "180,000", AcceptedAt: "2026-06-01", Status: "closed", Progress: 100, Priority: "低", Risk: "已关闭", UpdatedAt: "昨天", NextStep: "仅保留归档和复盘记录", Agent: "自动化 Agent", Materials: 5, Events: 1, Reports: 3, Timeline: []string{"历史版本已恢复", "构建验证已完成", "无截图校验流程已归档"}, CreatedAt: project.CreatedAt, UpdatedISO: project.UpdatedISO}
+		return reflect.DeepEqual(project, expected)
 	default:
 		return false
 	}

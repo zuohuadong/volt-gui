@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -229,6 +229,9 @@ func migrateLegacySeedAgents(saved []PersistentAgentView) []PersistentAgentView 
 }
 
 func isLegacySeedAgent(agent PersistentAgentView) bool {
+	if agent.CreatedAt == "" || agent.CreatedAt != agent.UpdatedAt {
+		return false
+	}
 	// runtime-mock-guard: allow-legacy-cleanup
 	modelIsLegacySeed := (strings.TrimSpace(agent.Provider) == "" && strings.TrimSpace(agent.Model) == "") ||
 		// runtime-mock-guard: allow-legacy-cleanup
@@ -240,15 +243,18 @@ func isLegacySeedAgent(agent PersistentAgentView) bool {
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "code-review":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return agent.Name == "代码审查 Agent" && agent.Role == "内置" && agent.Status == "已启用" && agent.Desc == "阅读仓库上下文，发现风险、缺失测试和回归点。" && agent.Runs == 128 && agent.Avatar == "C" && agent.BuiltIn && slices.Equal(agent.Tools, []string{"workspace", "git", "terminal"}) && slices.Equal(agent.Skills, []string{"code-review"}) && slices.Equal(agent.CoreFiles, []string{"AGENTS.md"})
+		expected := PersistentAgentView{ID: "code-review", Name: "代码审查 Agent", Role: "内置", Runs: 128, Status: "已启用", Desc: "阅读仓库上下文，发现风险、缺失测试和回归点。", Avatar: "C", Provider: agent.Provider, Model: agent.Model, Tools: []string{"workspace", "git", "terminal"}, Skills: []string{"code-review"}, CoreFiles: []string{"AGENTS.md"}, BuiltIn: true, CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt}
+		return reflect.DeepEqual(agent, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "research":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return agent.Name == "资料研究 Agent" && agent.Role == "自定义" && agent.Status == "已启用" && agent.Desc == "汇总文档、网页和项目资料，输出可执行摘要。" && agent.Runs == 64 && agent.Avatar == "R" && !agent.BuiltIn && slices.Equal(agent.Tools, []string{"web", "workspace"}) && slices.Equal(agent.Skills, []string{"research"}) && slices.Equal(agent.CoreFiles, []string{"references"})
+		expected := PersistentAgentView{ID: "research", Name: "资料研究 Agent", Role: "自定义", Runs: 64, Status: "已启用", Desc: "汇总文档、网页和项目资料，输出可执行摘要。", Avatar: "R", Provider: agent.Provider, Model: agent.Model, Tools: []string{"web", "workspace"}, Skills: []string{"research"}, CoreFiles: []string{"references"}, CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt}
+		return reflect.DeepEqual(agent, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "automation":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return agent.Name == "自动化 Agent" && agent.Role == "已蒸馏" && agent.Status == "已停用" && agent.Desc == "把重复工作转为可配置的计划任务和监控。" && agent.Runs == 37 && agent.Avatar == "A" && !agent.BuiltIn && slices.Equal(agent.Tools, []string{"terminal", "scheduler"}) && slices.Equal(agent.Skills, []string{"workflow"}) && slices.Equal(agent.CoreFiles, []string{"automations"})
+		expected := PersistentAgentView{ID: "automation", Name: "自动化 Agent", Role: "已蒸馏", Runs: 37, Status: "已停用", Desc: "把重复工作转为可配置的计划任务和监控。", Avatar: "A", Provider: agent.Provider, Model: agent.Model, Tools: []string{"terminal", "scheduler"}, Skills: []string{"workflow"}, CoreFiles: []string{"automations"}, CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt}
+		return reflect.DeepEqual(agent, expected)
 	default:
 		return false
 	}
@@ -256,11 +262,6 @@ func isLegacySeedAgent(agent PersistentAgentView) bool {
 
 func normalizeAgent(agent PersistentAgentView) PersistentAgentView {
 	agent.ID = strings.TrimSpace(agent.ID)
-	// runtime-mock-guard: allow-legacy-cleanup
-	if legacySeededAgentID(agent.ID) && strings.EqualFold(strings.TrimSpace(agent.Provider), "OpenAI") && strings.EqualFold(strings.TrimSpace(agent.Model), "GPT-4o") {
-		agent.Provider = ""
-		agent.Model = ""
-	}
 	agent.Name = defaultString(strings.TrimSpace(agent.Name), "未命名 Agent")
 	agent.Role = defaultString(strings.TrimSpace(agent.Role), "自定义")
 	agent.Status = defaultString(strings.TrimSpace(agent.Status), "已启用")
@@ -276,17 +277,6 @@ func normalizeAgent(agent PersistentAgentView) PersistentAgentView {
 	agent.UpdatedAt = defaultString(agent.UpdatedAt, agent.CreatedAt)
 	return agent
 }
-
-func legacySeededAgentID(id string) bool {
-	switch id {
-	// runtime-mock-guard: allow-legacy-cleanup
-	case "code-review", "research", "automation":
-		return true
-	default:
-		return false
-	}
-}
-
 func sortAgents(agents []PersistentAgentView) {
 	sort.SliceStable(agents, func(i, j int) bool {
 		if agents[i].BuiltIn != agents[j].BuiltIn {

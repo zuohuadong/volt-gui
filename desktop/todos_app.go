@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -220,6 +221,9 @@ func saveTodos(todos []WorkbenchTodoView) error {
 }
 
 func isLegacySeedTodo(todo WorkbenchTodoView) bool {
+	if todo.CreatedAt == "" || todo.CreatedAt != todo.UpdatedAt {
+		return false
+	}
 	// runtime-mock-guard: allow-legacy-cleanup
 	if strings.TrimSpace(todo.Source) != "seed" {
 		return false
@@ -228,15 +232,18 @@ func isLegacySeedTodo(todo WorkbenchTodoView) bool {
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "todo-preview-load":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return todo.Title == "验证桌面预览加载状态" && todo.Description == "确认浏览器模式无需 Wails 绑定也能进入工作台"
+		expected := WorkbenchTodoView{ID: "todo-preview-load", Title: "验证桌面预览加载状态", Description: "确认浏览器模式无需 Wails 绑定也能进入工作台", DueLabel: "今天", Status: "in_progress", Priority: "中", Source: "seed", CreatedAt: todo.CreatedAt, UpdatedAt: todo.UpdatedAt}
+		return reflect.DeepEqual(todo, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "todo-agent-template":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return todo.Title == "整理 Agent 创建模板" && todo.Description == "补齐工具、技能、核心文件与模型配置"
+		expected := WorkbenchTodoView{ID: "todo-agent-template", Title: "整理 Agent 创建模板", Description: "补齐工具、技能、核心文件与模型配置", DueLabel: "16:00", Status: "pending", Priority: "中", Source: "seed", CreatedAt: todo.CreatedAt, UpdatedAt: todo.UpdatedAt}
+		return reflect.DeepEqual(todo, expected)
 	// runtime-mock-guard: allow-legacy-cleanup
 	case "todo-link-review":
 		// runtime-mock-guard: allow-legacy-cleanup
-		return todo.Title == "复核项目与客户关联" && todo.Description == "检查新建对话中的关联入口"
+		expected := WorkbenchTodoView{ID: "todo-link-review", Title: "复核项目与客户关联", Description: "检查新建对话中的关联入口", DueLabel: "明天", Status: "pending", Priority: "中", Source: "seed", CreatedAt: todo.CreatedAt, UpdatedAt: todo.UpdatedAt}
+		return reflect.DeepEqual(todo, expected)
 	default:
 		return false
 	}

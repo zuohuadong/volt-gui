@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -858,6 +859,54 @@ func TestTaskToolBackgroundCapRefusesFanOut(t *testing.T) {
 	}
 	if res := jm.WaitForSession(context.Background(), "parent-session", []string{jobID}, 5); len(res) != 1 || res[0].Status != jobs.Done {
 		t.Fatalf("post-drain job = %+v, want done", res)
+	}
+}
+
+func TestTaskToolBackgroundSalvagePublishesEvidenceForCollection(t *testing.T) {
+	reg := evidenceRegistry()
+	finalText := []provider.Chunk{{Type: provider.ChunkText, Text: "done, explanations added"}, {Type: provider.ChunkDone}}
+	sub := &scriptedProvider{name: "sub", turns: [][]provider.Chunk{
+		{toolCallChunk("criteria", "todo_write", `{"todos":[{"content":"Add explanations","status":"in_progress"}]}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("write", "write_file", `{"path":"qa/bank.md"}`), {Type: provider.ChunkDone}},
+		finalText,
+		finalText,
+		finalText,
+	}}
+	task := NewTaskTool(sub, nil, reg, 20, 0, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(NewSubagentStore(t.TempDir()), t.TempDir(), "base-model", "base-effort").
+		WithDeliveryProfile(true)
+
+	jm := jobs.NewManager(event.Discard)
+	defer jm.Close()
+	parentLedger := evidence.NewLedger()
+	ctx := testTaskContext()
+	ctx = jobs.WithSession(ctx, "parent-session")
+	ctx = jobs.WithManager(ctx, jm)
+	ctx = evidence.WithLedger(ctx, parentLedger)
+
+	out, err := task.Execute(ctx, []byte(`{"prompt":"add explanations to the question bank","run_in_background":true}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	jobID := extractJobID(out)
+	res := jm.WaitForSession(context.Background(), "parent-session", []string{jobID}, 5)
+	if len(res) != 1 || res[0].Status != jobs.Done || !strings.Contains(res[0].Output, "[unverified]") {
+		t.Fatalf("background salvage = %+v, want done unverified result", res)
+	}
+	if parentLedger.Summary().HasMutation() {
+		t.Fatal("background goroutine wrote directly into the parent turn ledger")
+	}
+
+	summary := jm.TakeEvidenceForSession("parent-session", jobID)
+	if !summary.HasMutation() {
+		t.Fatal("terminal background task did not publish its mutation evidence")
+	}
+	paths := summary.MutationPaths()
+	if len(paths) != 1 || paths[0] != "qa/bank.md" {
+		t.Fatalf("background mutation paths = %v, want qa/bank.md", paths)
+	}
+	if second := jm.TakeEvidenceForSession("parent-session", jobID); len(second.Receipts) != 0 {
+		t.Fatalf("background evidence was collectible twice: %+v", second)
 	}
 }
 

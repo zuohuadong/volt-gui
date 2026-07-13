@@ -79,25 +79,8 @@ const subagentToolBoundarySummary = "Recursive agent/skill tools are exposed onl
 // so a wide fan-out risks conflicting concurrent writes — and feeds the failure
 // cascade where every "needs attention" notice tempts the model into spawning
 // yet more repair tasks. Further sub-tasks can run in the foreground, or start
-// once a running job is collected with wait. The check is advisory (read then
-// start), not atomic; tool rounds are serialized per turn, so at worst a race
-// overshoots by one.
+// once a running job is collected with wait.
 const maxConcurrentBackgroundTasks = 3
-
-// runningBackgroundTasks counts this session's still-running background task
-// jobs. Other job kinds (background bash) do not count against the task cap.
-func runningBackgroundTasks(jm *jobs.Manager, parentSession string) int {
-	if jm == nil {
-		return 0
-	}
-	n := 0
-	for _, v := range jm.RunningForSession(parentSession) {
-		if v.Kind == "task" {
-			n++
-		}
-	}
-	return n
-}
 
 // AlwaysHiddenSubagentTools returns the tool names excluded from every
 // subagent's registry regardless of an explicit allowlist or delegation
@@ -528,12 +511,14 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			}
 			return "", fmt.Errorf("background execution is not available in this context")
 		}
-		if running := runningBackgroundTasks(jm, jobs.SessionFromContext(ctx)); running >= maxConcurrentBackgroundTasks {
+		releaseStart, running, ok := jm.ReserveStartForSession(jobs.SessionFromContext(ctx), "task", maxConcurrentBackgroundTasks)
+		if !ok {
 			if run != nil {
 				run.Release()
 			}
 			return "", fmt.Errorf("%d background tasks are already running for this session (limit %d); collect their results with wait — or run this sub-task in the foreground — before starting more", running, maxConcurrentBackgroundTasks)
 		}
+		defer releaseStart()
 		nested := subSinkFor(parentID, parent)
 		label := p.Description
 		if label == "" {
@@ -545,8 +530,13 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 				return "", err
 			}
 		}
+		parentSession := ParentSession(ctx)
+		backgroundEvidence := evidence.NewLedger()
 		job := jm.StartForSession(jobs.SessionFromContext(ctx), "task", label, func(jobCtx context.Context, _ io.Writer) (result string, err error) {
+			jobCtx = WithParentSession(jobCtx, parentSession)
+			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
 			defer run.Release()
+			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()
 			defer func() {
 				if r := recover(); r != nil {
 					panicErr := fmt.Errorf("internal error: panic: %v\n%s", r, debug.Stack())
@@ -563,6 +553,7 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			}
 			return FormatSubagentRunResult(answer, run, false), nil
 		})
+		releaseStart()
 		if run != nil && run.Ref != "" {
 			return fmt.Sprintf("Started background task %q (%s).\n%s\nIt runs across turns; collect its final answer with wait (or wait will return it once done), and you'll be notified when it finishes.", job.ID, label, FormatSubagentReference(run)), nil
 		}

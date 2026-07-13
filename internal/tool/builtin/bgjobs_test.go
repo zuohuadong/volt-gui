@@ -2,10 +2,12 @@ package builtin
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
 )
 
@@ -48,6 +50,65 @@ func TestBackgroundBashWaitAndOutput(t *testing.T) {
 	}
 	if !strings.Contains(bo, "hello") {
 		t.Errorf("bash_output = %q, want hello", bo)
+	}
+}
+
+func TestWaitMergesBackgroundEvidenceExactlyOnce(t *testing.T) {
+	m := jobs.NewManager(event.Discard)
+	defer m.Close()
+	ledger := evidence.NewLedger()
+	ctx := jobs.WithManager(context.Background(), m)
+	ctx = jobs.WithSession(ctx, "session")
+	ctx = evidence.WithLedger(ctx, ledger)
+
+	j := m.StartForSession("session", "task", "writer", func(jobCtx context.Context, _ io.Writer) (string, error) {
+		jobs.PublishEvidence(jobCtx, evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+			ToolName: "write_file",
+			Success:  true,
+			Mutation: true,
+			Write:    true,
+			Paths:    []string{"changed.go"},
+		}}})
+		return "done", nil
+	})
+
+	args := []byte(`{"job_ids":["` + j.ID + `"]}`)
+	if _, err := (waitJob{}).Execute(ctx, args); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if !ledger.Summary().HasMutation() {
+		t.Fatal("wait did not merge the task job's mutation evidence")
+	}
+	firstLen := ledger.Len()
+	if _, err := (waitJob{}).Execute(ctx, args); err != nil {
+		t.Fatalf("second wait: %v", err)
+	}
+	if got := ledger.Len(); got != firstLen {
+		t.Fatalf("second wait duplicated evidence: len %d -> %d", firstLen, got)
+	}
+}
+
+func TestWaitWithoutLedgerDoesNotConsumeBackgroundEvidence(t *testing.T) {
+	m := jobs.NewManager(event.Discard)
+	defer m.Close()
+	baseCtx := jobs.WithSession(jobs.WithManager(context.Background(), m), "session")
+	j := m.StartForSession("session", "task", "writer", func(jobCtx context.Context, _ io.Writer) (string, error) {
+		jobs.PublishEvidence(jobCtx, evidence.ChildEvidenceSummary{Receipts: []evidence.Receipt{{
+			ToolName: "write_file", Success: true, Mutation: true, Write: true, Paths: []string{"changed.go"},
+		}}})
+		return "done", nil
+	})
+	args := []byte(`{"job_ids":["` + j.ID + `"]}`)
+	if _, err := (waitJob{}).Execute(baseCtx, args); err != nil {
+		t.Fatalf("wait without ledger: %v", err)
+	}
+
+	ledger := evidence.NewLedger()
+	if _, err := (waitJob{}).Execute(evidence.WithLedger(baseCtx, ledger), args); err != nil {
+		t.Fatalf("wait with ledger: %v", err)
+	}
+	if !ledger.Summary().HasMutation() {
+		t.Fatal("wait without a ledger consumed evidence before a collecting turn could merge it")
 	}
 }
 

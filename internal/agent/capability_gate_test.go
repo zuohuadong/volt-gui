@@ -23,10 +23,8 @@ func TestDeliveryReviewGateExplainsOpaqueMutationRecovery(t *testing.T) {
 	reg.Add(fakeTool{name: "security_review", readOnly: true})
 	a := &Agent{deliveryProfile: true, evidence: ledger, tools: reg}
 
-	// A path-less bash write classifies Medium: one structured review is
-	// required, with the recovery guidance for identifying the changed files.
 	got := a.deliveryReviewGateFailure()
-	for _, want := range []string{"medium-risk", "git status --short", "git diff", "mutation did not report file paths"} {
+	for _, want := range []string{"high-risk", "git status --short", "git diff", "mutation did not report file paths"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("review gate = %q, want %q", got, want)
 		}
@@ -41,8 +39,19 @@ func TestDeliveryReviewGateExplainsOpaqueMutationRecovery(t *testing.T) {
 		"reviewed_paths":["internal/agent/agent.go"],
 		"findings":[]
 	}`)})
+	got = a.deliveryReviewGateFailure()
+	if !strings.Contains(got, "security_review") || !strings.Contains(got, "mutation did not report file paths") {
+		t.Fatalf("security review gate = %q, want opaque-mutation recovery guidance", got)
+	}
+
+	ledger.Record(evidence.Receipt{ToolName: "review_report", Success: true, Args: json.RawMessage(`{
+		"kind":"security",
+		"verdict":"pass",
+		"reviewed_paths":["internal/agent/agent.go"],
+		"findings":[]
+	}`)})
 	if got := a.deliveryReviewGateFailure(); got != "" {
-		t.Fatalf("review gate = %q after review report, want ready (opaque is medium, not high)", got)
+		t.Fatalf("review gate = %q after both reports, want ready", got)
 	}
 }
 

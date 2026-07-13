@@ -78,6 +78,8 @@ type Skill struct {
 	AutoUse          string // off | suggest | prefer | require
 	NeedsFreshData   bool
 	Cost             string // low | medium | high (advisory)
+	Tags             []string
+	ExamplePrompts   []string
 }
 
 // IsValidName reports whether name is a usable skill identifier.
@@ -512,6 +514,14 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		AutoUse:        parseAutoUse(fm[skillFrontmatterAutoUse]),
 		NeedsFreshData: parseBoolFrontmatter(fm[skillFrontmatterNeedsFreshData]),
 		Cost:           parseCost(fm[skillFrontmatterCost]),
+		Tags:           parseSkillMetadataList(content, fm[skillFrontmatterTags], skillFrontmatterTags, maxSkillTags, maxSkillTagRunes),
+		ExamplePrompts: parseSkillMetadataList(
+			content,
+			fm[skillFrontmatterExamplePrompts],
+			skillFrontmatterExamplePrompts,
+			maxSkillExamplePrompts,
+			maxSkillExamplePromptRunes,
+		),
 	}, true
 }
 
@@ -541,6 +551,12 @@ const (
 	skillFrontmatterAutoUse          = "auto-use"
 	skillFrontmatterNeedsFreshData   = "needs-fresh-data"
 	skillFrontmatterCost             = "cost"
+	skillFrontmatterTags             = "tags"
+	skillFrontmatterExamplePrompts   = "example-prompts"
+	maxSkillTags                     = 12
+	maxSkillTagRunes                 = 48
+	maxSkillExamplePrompts           = 8
+	maxSkillExamplePromptRunes       = 240
 )
 
 var skillMarkerFrontmatterKeys = []string{
@@ -759,6 +775,125 @@ func parseCSVFrontmatter(raw string) []string {
 		if t := strings.TrimSpace(p); t != "" {
 			out = append(out, t)
 		}
+	}
+	return out
+}
+
+func parseSkillMetadataList(content, raw, key string, maxItems, maxRunes int) []string {
+	values := frontmatterListValues(content, key)
+	if values == nil {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			values = parseFlowFrontmatterList(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")))
+		} else {
+			values = parseCSVFrontmatter(trimmed)
+		}
+	}
+	return normalizeSkillMetadata(values, maxItems, maxRunes)
+}
+
+func parseFlowFrontmatterList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var values []string
+	var item strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if value := strings.TrimSpace(item.String()); value != "" {
+			values = append(values, value)
+		}
+		item.Reset()
+	}
+	for _, r := range raw {
+		if escaped {
+			item.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			switch {
+			case r == '\\' && quote == '"':
+				escaped = true
+			case r == quote:
+				quote = 0
+			default:
+				item.WriteRune(r)
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+		case ',':
+			flush()
+		default:
+			item.WriteRune(r)
+		}
+	}
+	flush()
+	return values
+}
+
+func frontmatterListValues(content, wantKey string) []string {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return nil
+		}
+		key, value, ok := strings.Cut(lines[i], ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), wantKey) || strings.TrimSpace(value) != "" {
+			continue
+		}
+		var values []string
+		for i+1 < len(lines) {
+			next := strings.TrimSpace(lines[i+1])
+			if next == "---" {
+				break
+			}
+			item, ok := strings.CutPrefix(next, "-")
+			if !ok {
+				break
+			}
+			values = append(values, strings.Trim(strings.TrimSpace(item), `"'`))
+			i++
+		}
+		return values
+	}
+	return nil
+}
+
+func normalizeSkillMetadata(values []string, maxItems, maxRunes int) []string {
+	if len(values) == 0 || maxItems <= 0 || maxRunes <= 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(values), maxItems))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if value == "" {
+			continue
+		}
+		runes := []rune(value)
+		if len(runes) > maxRunes {
+			value = string(runes[:maxRunes])
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+		if len(out) == maxItems {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

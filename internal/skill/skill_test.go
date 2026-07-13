@@ -790,6 +790,59 @@ func TestSkillRoutingMetadataParsesButStaysOutOfIndex(t *testing.T) {
 	}
 }
 
+func TestSkillDiscoveryMetadataNormalizesAndBoundsValues(t *testing.T) {
+	home := t.TempDir()
+	longTag := strings.Repeat("标", maxSkillTagRunes+5)
+	longPrompt := strings.Repeat("问", maxSkillExamplePromptRunes+5)
+	writeSkill(t, home, ".voltui/skills/discovery.md", "---\ndescription: discovery\ntags:\n  -  Research  \n  - research\n  - 中文标签\n  - \""+longTag+"\"\n  - one\n  - two\n  - three\n  - four\n  - five\n  - six\n  - seven\n  - eight\n  - nine\n  - ten\nexample-prompts:\n  - \"Summarize this file, including risks\"\n  - summarize this file, including risks\n  - 检查当前实现\n  - \""+longPrompt+"\"\n---\nbody")
+
+	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("discovery")
+	if !ok {
+		t.Fatal("skill not loaded")
+	}
+	if len(sk.Tags) != maxSkillTags {
+		t.Fatalf("Tags count = %d, want %d: %v", len(sk.Tags), maxSkillTags, sk.Tags)
+	}
+	if got := sk.Tags[:3]; strings.Join(got, ",") != "Research,中文标签,"+strings.Repeat("标", maxSkillTagRunes) {
+		t.Fatalf("normalized Tags prefix = %v", got)
+	}
+	if len(sk.ExamplePrompts) != 3 {
+		t.Fatalf("ExamplePrompts = %v, want 3 deduped values", sk.ExamplePrompts)
+	}
+	if sk.ExamplePrompts[0] != "Summarize this file, including risks" {
+		t.Fatalf("YAML list prompt with comma was split: %v", sk.ExamplePrompts)
+	}
+	if got := len([]rune(sk.ExamplePrompts[2])); got != maxSkillExamplePromptRunes {
+		t.Fatalf("long example prompt runes = %d, want %d", got, maxSkillExamplePromptRunes)
+	}
+}
+
+func TestSkillDiscoveryMetadataSupportsSimpleFrontmatterLists(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".voltui/skills/simple.md", "---\ndescription: simple\ntags: [writing, review, writing]\nexample-prompts: [\"Draft a summary, including risks\", 'Check the result']\n---\nbody")
+
+	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("simple")
+	if !ok {
+		t.Fatal("skill not loaded")
+	}
+	if got := strings.Join(sk.Tags, ","); got != "writing,review" {
+		t.Fatalf("Tags = %q", got)
+	}
+	if got := strings.Join(sk.ExamplePrompts, "|"); got != "Draft a summary, including risks|Check the result" {
+		t.Fatalf("ExamplePrompts = %q", got)
+	}
+}
+
+func TestSkillDiscoveryMetadataAloneDoesNotMarkClaudeMarkdownAsSkill(t *testing.T) {
+	home := t.TempDir()
+	writeSkill(t, home, ".claude/skills/notes.md", "---\ntags: [research, notes]\nexample-prompts: [\"Summarize this file, including risks\"]\n---\n# Notes\n\nOrdinary reference material.")
+
+	store := New(Options{HomeDir: home, DisableBuiltins: true})
+	if _, ok := store.Read("notes"); ok {
+		t.Fatal("metadata-only Claude markdown should not be discovered as a skill")
+	}
+}
+
 func TestApplyIndexTruncates(t *testing.T) {
 	var skills []Skill
 	for i := 0; i < 200; i++ {

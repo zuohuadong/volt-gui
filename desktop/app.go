@@ -5688,20 +5688,32 @@ type ToolView struct {
 
 // SkillView is one discoverable skill for the drawer.
 type SkillView struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName,omitempty"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-	RunAs       string `json:"runAs"`
-	Enabled     bool   `json:"enabled"`
+	Name           string   `json:"name"`
+	DisplayName    string   `json:"displayName,omitempty"`
+	Description    string   `json:"description"`
+	Scope          string   `json:"scope"`
+	RunAs          string   `json:"runAs"`
+	Enabled        bool     `json:"enabled"`
+	Tags           []string `json:"tags,omitempty"`
+	ExamplePrompts []string `json:"examplePrompts,omitempty"`
+	ReadOnly       bool     `json:"readOnly"`
+	AutoUse        string   `json:"autoUse,omitempty"`
+	NeedsFreshData bool     `json:"needsFreshData"`
+	Cost           string   `json:"cost,omitempty"`
 }
 
 type SkillRootSkillView struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName,omitempty"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-	RunAs       string `json:"runAs"`
+	Name           string   `json:"name"`
+	DisplayName    string   `json:"displayName,omitempty"`
+	Description    string   `json:"description"`
+	Scope          string   `json:"scope"`
+	RunAs          string   `json:"runAs"`
+	Tags           []string `json:"tags,omitempty"`
+	ExamplePrompts []string `json:"examplePrompts,omitempty"`
+	ReadOnly       bool     `json:"readOnly"`
+	AutoUse        string   `json:"autoUse,omitempty"`
+	NeedsFreshData bool     `json:"needsFreshData"`
+	Cost           string   `json:"cost,omitempty"`
 }
 
 // SkillRootView is one skill discovery root for the drawer's Sources section.
@@ -5763,9 +5775,18 @@ func (a *App) SkillsSettings() SkillsSettingsView {
 	seen := map[string]bool{}
 	for _, s := range ctrl.AllSkills() {
 		out.Skills = append(out.Skills, SkillView{
-			Name: s.Name, DisplayName: s.DisplayName, Description: s.Description,
-			Scope: string(s.Scope), RunAs: string(s.RunAs),
-			Enabled: !disabled[config.SkillNameKey(s.Name)],
+			Name:           s.Name,
+			DisplayName:    s.DisplayName,
+			Description:    s.Description,
+			Scope:          string(s.Scope),
+			RunAs:          string(s.RunAs),
+			Enabled:        !disabled[config.SkillNameKey(s.Name)],
+			Tags:           append([]string(nil), s.Tags...),
+			ExamplePrompts: append([]string(nil), s.ExamplePrompts...),
+			ReadOnly:       s.ReadOnly,
+			AutoUse:        s.AutoUse,
+			NeedsFreshData: s.NeedsFreshData,
+			Cost:           s.Cost,
 		})
 		seen[config.SkillNameKey(s.Name)] = true
 	}
@@ -5793,12 +5814,18 @@ func skillViewsFromRoots(roots []SkillRootView, disabled map[string]bool) []Skil
 				isDisabled = disabled[key]
 			}
 			out = append(out, SkillView{
-				Name:        item.Name,
-				DisplayName: item.DisplayName,
-				Description: item.Description,
-				Scope:       item.Scope,
-				RunAs:       item.RunAs,
-				Enabled:     !isDisabled,
+				Name:           item.Name,
+				DisplayName:    item.DisplayName,
+				Description:    item.Description,
+				Scope:          item.Scope,
+				RunAs:          item.RunAs,
+				Enabled:        !isDisabled,
+				Tags:           append([]string(nil), item.Tags...),
+				ExamplePrompts: append([]string(nil), item.ExamplePrompts...),
+				ReadOnly:       item.ReadOnly,
+				AutoUse:        item.AutoUse,
+				NeedsFreshData: item.NeedsFreshData,
+				Cost:           item.Cost,
 			})
 		}
 	}
@@ -6080,11 +6107,17 @@ func skillRootsViewFrom(cwd string, cfg, userCfg *config.Config) []SkillRootView
 		root := skillDisplayRoot(sk, roots)
 		counts[root]++
 		skillItems[root] = append(skillItems[root], SkillRootSkillView{
-			Name:        sk.Name,
-			DisplayName: sk.DisplayName,
-			Description: sk.Description,
-			Scope:       string(sk.Scope),
-			RunAs:       string(sk.RunAs),
+			Name:           sk.Name,
+			DisplayName:    sk.DisplayName,
+			Description:    sk.Description,
+			Scope:          string(sk.Scope),
+			RunAs:          string(sk.RunAs),
+			Tags:           append([]string(nil), sk.Tags...),
+			ExamplePrompts: append([]string(nil), sk.ExamplePrompts...),
+			ReadOnly:       sk.ReadOnly,
+			AutoUse:        sk.AutoUse,
+			NeedsFreshData: sk.NeedsFreshData,
+			Cost:           sk.Cost,
 		})
 	}
 	for root := range skillItems {
@@ -6191,6 +6224,10 @@ func cloneSkillRootViews(in []SkillRootView) []SkillRootView {
 	for i, r := range in {
 		out[i] = r
 		out[i].SkillItems = append([]SkillRootSkillView(nil), r.SkillItems...)
+		for j := range out[i].SkillItems {
+			out[i].SkillItems[j].Tags = append([]string(nil), r.SkillItems[j].Tags...)
+			out[i].SkillItems[j].ExamplePrompts = append([]string(nil), r.SkillItems[j].ExamplePrompts...)
+		}
 	}
 	return out
 }

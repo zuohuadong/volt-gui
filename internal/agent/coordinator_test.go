@@ -23,6 +23,32 @@ type mockProvider struct {
 	requests []provider.Request
 }
 
+type coordinatorBrowserInteractionStub struct{}
+
+func (*coordinatorBrowserInteractionStub) RequestBrowserCredential(context.Context, tool.BrowserCredentialRequest) (tool.BrowserCredential, error) {
+	return tool.BrowserCredential{}, nil
+}
+
+func (*coordinatorBrowserInteractionStub) WaitBrowserVerification(context.Context, tool.BrowserVerificationRequest) (bool, error) {
+	return true, nil
+}
+
+func TestCoordinatorPropagatesBrowserInteractionProvider(t *testing.T) {
+	plannerAgent := &Agent{}
+	executor := &Agent{}
+	coord := &Coordinator{plannerAgent: plannerAgent, executor: executor}
+	provider := &coordinatorBrowserInteractionStub{}
+
+	coord.SetBrowserInteractionProvider(provider)
+
+	if plannerAgent.browserInteractionProvider != provider {
+		t.Fatal("planner did not receive browser interaction provider")
+	}
+	if executor.browserInteractionProvider != provider {
+		t.Fatal("executor did not receive browser interaction provider")
+	}
+}
+
 func (m *mockProvider) Name() string { return m.name }
 
 func (m *mockProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {

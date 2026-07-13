@@ -89,6 +89,14 @@ func (b browserControl) Execute(ctx context.Context, args json.RawMessage) (stri
 		if err := p.Login.validate(); err != nil {
 			return "", err
 		}
+		if strings.TrimSpace(p.ScreenshotPath) != "" {
+			return "", fmt.Errorf("secure browser login cannot capture screenshots in the credential-bearing browser call")
+		}
+		for _, action := range p.Actions {
+			if strings.EqualFold(strings.TrimSpace(action.Type), "screenshot") {
+				return "", fmt.Errorf("secure browser login cannot capture screenshots in the credential-bearing browser call")
+			}
+		}
 	}
 	bin, err := findBrowserBin()
 	if err != nil {
@@ -229,20 +237,32 @@ func runBrowserControl(ctx context.Context, bin string, req browserControlReques
 	}
 	secret := ""
 	if req.Login != nil {
-		origin, err := browserauth.NormalizeOrigin(targetURL)
+		loginURL, err := currentBrowserURL(ctx, &client)
+		if err != nil {
+			return "", fmt.Errorf("browser_control: resolve login page URL: %w", err)
+		}
+		origin, err := browserauth.NormalizeOrigin(loginURL)
 		if err != nil {
 			return "", err
 		}
 		credential, err := interaction.RequestBrowserCredential(ctx, tool.BrowserCredentialRequest{
 			Origin: origin,
-			URL:    targetURL,
+			URL:    loginURL,
 			Reason: "该浏览器自动化需要登录；凭据仅通过本机安全通道提供。",
 		})
 		if err != nil {
 			return "", fmt.Errorf("browser_control: credential request failed")
 		}
 		secret = credential.Password
-		if err := performBrowserLogin(ctx, &client, *req.Login, credential); err != nil {
+		currentURL, err := currentBrowserURL(ctx, &client)
+		if err != nil {
+			return "", fmt.Errorf("browser_control: revalidate login page URL: %w", err)
+		}
+		currentOrigin, err := browserauth.NormalizeOrigin(currentURL)
+		if err != nil || currentOrigin != origin {
+			return "", fmt.Errorf("browser_control: login page origin changed before credential fill")
+		}
+		if err := performBrowserLogin(ctx, &client, *req.Login, credential, origin); err != nil {
 			return "", fmt.Errorf("browser_control: login failed: %w", err)
 		}
 		select {
@@ -250,16 +270,24 @@ func runBrowserControl(ctx context.Context, bin string, req browserControlReques
 			return "", ctx.Err()
 		case <-time.After(time.Duration(req.Login.PostSubmitWaitMS) * time.Millisecond):
 		}
+		if currentURL, currentErr := currentBrowserURL(ctx, &client); currentErr == nil {
+			if currentOrigin, originErr := browserauth.NormalizeOrigin(currentURL); originErr == nil && currentOrigin == origin {
+				_ = clearBrowserPasswordField(ctx, &client, req.Login.PasswordSelector, origin)
+			}
+		}
 		needsVerification := req.Login.Verification == "always"
 		reason := "需要用户完成验证码、扫码或 MFA"
 		if req.Login.Verification == "auto" {
-			signals, signalErr := collectBrowserVerificationSignals(ctx, &client)
-			if signalErr == nil {
-				needsVerification, reason = detectBrowserVerification(signals)
-			}
+			needsVerification, reason = pollBrowserVerification(ctx, &client, 3*time.Second, 250*time.Millisecond)
 		}
 		if needsVerification {
-			continued, err := interaction.WaitBrowserVerification(ctx, tool.BrowserVerificationRequest{Origin: origin, URL: targetURL, Reason: reason})
+			verificationOrigin, verificationURL := origin, loginURL
+			if currentURL, currentErr := currentBrowserURL(ctx, &client); currentErr == nil {
+				if currentOrigin, originErr := browserauth.NormalizeOrigin(currentURL); originErr == nil {
+					verificationOrigin, verificationURL = currentOrigin, currentURL
+				}
+			}
+			continued, err := interaction.WaitBrowserVerification(ctx, tool.BrowserVerificationRequest{Origin: verificationOrigin, URL: verificationURL, Reason: reason})
 			if err != nil || !continued {
 				return "", fmt.Errorf("browser_control: browser verification cancelled")
 			}
@@ -308,20 +336,51 @@ type browserValueEvaluator interface {
 	evaluateValue(context.Context, string) (json.RawMessage, error)
 }
 
-func performBrowserLogin(ctx context.Context, evaluator browserValueEvaluator, login browserLoginRequest, credential tool.BrowserCredential) error {
+func currentBrowserURL(ctx context.Context, evaluator browserValueEvaluator) (string, error) {
+	raw, err := evaluator.evaluateValue(ctx, "window.location.href")
+	if err != nil {
+		return "", err
+	}
+	var currentURL string
+	if err := json.Unmarshal(raw, &currentURL); err != nil || strings.TrimSpace(currentURL) == "" {
+		return "", fmt.Errorf("parse current browser URL")
+	}
+	return currentURL, nil
+}
+
+func performBrowserLogin(ctx context.Context, evaluator browserValueEvaluator, login browserLoginRequest, credential tool.BrowserCredential, expectedOrigin string) error {
+	expectedURL, err := url.Parse(expectedOrigin)
+	if err != nil || expectedURL.Hostname() == "" || expectedURL.Port() == "" {
+		return fmt.Errorf("invalid expected browser login origin")
+	}
 	selectors, _ := json.Marshal(map[string]string{
 		"username": login.UsernameSelector,
 		"password": login.PasswordSelector,
 		"submit":   login.SubmitSelector,
 	})
 	values, _ := json.Marshal(map[string]string{"username": credential.Username, "password": credential.Password})
+	expected, _ := json.Marshal(map[string]string{
+		"origin":   expectedOrigin,
+		"protocol": expectedURL.Scheme + ":",
+		"hostname": strings.ToLower(strings.TrimSuffix(expectedURL.Hostname(), ".")),
+		"port":     expectedURL.Port(),
+	})
 	expr := fmt.Sprintf(`(() => {
   const selectors = %s;
   const values = %s;
+  const expected = %s;
+  const currentHostname = location.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const currentPort = location.port || (location.protocol === "https:" ? "443" : location.protocol === "http:" ? "80" : "");
+  if (location.protocol !== expected.protocol || currentHostname !== expected.hostname || currentPort !== expected.port) {
+    return {ok:false, error:"browser login origin changed before credential fill"};
+  }
   const username = document.querySelector(selectors.username);
   const password = document.querySelector(selectors.password);
   const submit = document.querySelector(selectors.submit);
   if (!username || !password || !submit) return {ok:false, error:"login form selector not found"};
+  if (!(password instanceof HTMLInputElement) || password.type !== "password") {
+    return {ok:false, error:"password selector must target input[type=password]"};
+  }
   const setValue = (element, value) => {
     const proto = Object.getPrototypeOf(element);
     const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
@@ -333,7 +392,7 @@ func performBrowserLogin(ctx context.Context, evaluator browserValueEvaluator, l
   setValue(password, values.password);
   submit.click();
   return {ok:true};
-})()`, string(selectors), string(values))
+})()`, string(selectors), string(values), string(expected))
 	raw, err := evaluator.evaluateValue(ctx, expr)
 	if err != nil {
 		return errors.New(redactBrowserSecret(err.Error(), credential.Password))
@@ -356,6 +415,34 @@ func redactBrowserSecret(value, secret string) string {
 		return value
 	}
 	return strings.ReplaceAll(value, secret, "[REDACTED]")
+}
+
+func clearBrowserPasswordField(ctx context.Context, evaluator browserValueEvaluator, selector, expectedOrigin string) error {
+	expectedURL, err := url.Parse(expectedOrigin)
+	if err != nil || expectedURL.Hostname() == "" || expectedURL.Port() == "" {
+		return fmt.Errorf("invalid expected browser login origin")
+	}
+	selectorJSON, _ := json.Marshal(selector)
+	expected, _ := json.Marshal(map[string]string{
+		"protocol": expectedURL.Scheme + ":",
+		"hostname": strings.ToLower(strings.TrimSuffix(expectedURL.Hostname(), ".")),
+		"port":     expectedURL.Port(),
+	})
+	expr := fmt.Sprintf(`(() => {
+  const expected = %s;
+  const currentHostname = location.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const currentPort = location.port || (location.protocol === "https:" ? "443" : location.protocol === "http:" ? "80" : "");
+  if (location.protocol !== expected.protocol || currentHostname !== expected.hostname || currentPort !== expected.port) return false;
+  const password = document.querySelector(%s);
+  if (!(password instanceof HTMLInputElement) || password.type !== "password") return false;
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(password), "value")?.set;
+  if (setter) setter.call(password, ""); else password.value = "";
+  password.dispatchEvent(new Event("input", {bubbles:true}));
+  password.dispatchEvent(new Event("change", {bubbles:true}));
+  return true;
+})()`, string(expected), string(selectorJSON))
+	_, err = evaluator.evaluateValue(ctx, expr)
+	return err
 }
 
 type browserVerificationSignals struct {
@@ -407,6 +494,39 @@ func detectBrowserVerification(signals browserVerificationSignals) (bool, string
 		}
 	}
 	return false, ""
+}
+
+func pollBrowserVerification(ctx context.Context, evaluator browserValueEvaluator, timeout, interval time.Duration) (bool, string) {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		signals, err := collectBrowserVerificationSignals(ctx, evaluator)
+		if err == nil {
+			lastErr = nil
+			if needed, reason := detectBrowserVerification(signals); needed {
+				return true, reason
+			}
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return true, "无法确认是否存在验证码或 MFA，请人工检查浏览器窗口"
+			}
+			return false, ""
+		}
+		select {
+		case <-ctx.Done():
+			return true, "无法确认是否存在验证码或 MFA，请人工检查浏览器窗口"
+		case <-time.After(interval):
+		}
+	}
 }
 
 func browserLaunchArgs(headless bool) []string {

@@ -117,8 +117,8 @@ func (m *browserPromptManager) clearAll() {
 	m.mu.Lock()
 	credentials := m.credentials
 	verifications := m.verifications
-	clear(m.credentials)
-	clear(m.verifications)
+	m.credentials = map[string]pendingBrowserCredential{}
+	m.verifications = map[string]pendingBrowserVerification{}
 	m.mu.Unlock()
 	for _, pending := range credentials {
 		pending.reply <- browserCredentialReply{err: errBrowserCredentialCancelled}

@@ -4,15 +4,15 @@ const repo = 'https://github.com/zuohuadong/volt-gui';
 const { active = '' } = Astro.props;
 
 const items = [
-  { key: 'usage', href: `${base}/usage/`, en: 'Compute & usage', zh: '算力用量' },
-  { key: 'capabilities', href: `${base}/capabilities/`, en: 'Capabilities', zh: '产品能力' },
-  { key: 'enterprise', href: `${base}/enterprise/`, en: 'Enterprise', zh: '企业部署' },
-  { key: 'docs', href: `${base}/docs/`, en: 'Docs', zh: '文档' },
+  { key: 'capabilities', href: base + '/capabilities/', en: 'Capabilities', zh: '产品能力' },
+  { key: 'enterprise', href: base + '/enterprise/', en: 'Enterprise deployment', zh: '企业部署' },
+  { key: 'usage', href: base + '/usage/', en: 'Security & usage', zh: '安全与用量' },
+  { key: 'docs', href: base + '/docs/', en: 'Docs', zh: '文档' },
 ];
 ---
 <header id="nav" class="site-nav">
   <div class="wrap nav">
-    <a class="brand" href={`${base}/`} aria-label="VoltUI home"><span class="mk">V</span><span>VoltUI</span></a>
+    <a class="brand" href={base + '/'} aria-label="VoltUI home"><span class="mk">V</span><span>VoltUI</span></a>
     <nav class="nav-links" aria-label="Primary navigation">
       {items.map((item) => (
         <a href={item.href} class:list={{ here: active === item.key }} aria-current={active === item.key ? 'page' : undefined}>
@@ -34,7 +34,7 @@ const items = [
     </details>
     <div class="nav-right">
       <button class="lang" id="lang" type="button" aria-label="Switch language">中文</button>
-      <a class="btn btn-dark" href={`${base}/docs/#install`}><span class="l-en">Get started</span><span class="l-zh">开始使用</span></a>
+      <a class="btn btn-dark" href={base + '/enterprise/'}><span class="l-en">Deployment guide</span><span class="l-zh">部署指南</span></a>
     </div>
   </div>
 </header>

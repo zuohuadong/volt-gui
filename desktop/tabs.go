@@ -5224,6 +5224,9 @@ func deleteTopicCreatedAt(workspaceRoot, topicID string) {
 	if err != nil {
 		return
 	}
+	if _, ok := created[topicID]; !ok {
+		return
+	}
 	delete(created, topicID)
 	_ = saveTopicCreatedAts(workspaceRoot, created)
 }
@@ -6319,56 +6322,40 @@ func (a *App) DeleteTopic(topicID string) error {
 }
 
 func (a *App) deleteTopic(topicID string) error {
+	// Deletion converges on the fully-deleted state instead of keying the
+	// whole cleanup on the title entry: a retry after a partial failure (or a
+	// concurrent duplicate delete) may find the title already gone while the
+	// sources map, created-at entry, sidebar index, or tombstone still need
+	// cleanup, so every step checks its own leftovers.
 	f := loadProjectsFile()
-	found := false
+	roots := make([]string, 0, len(f.Projects)+1)
 	for _, p := range f.Projects {
-		m, err := loadTopicTitlesForUpdate(p.Root)
+		roots = append(roots, p.Root)
+	}
+	roots = append(roots, "")
+	for _, root := range roots {
+		titles, err := loadTopicTitlesForUpdate(root)
 		if err != nil {
 			return err
 		}
-		if _, ok := m[topicID]; ok {
-			delete(m, topicID)
-			if err := saveTopicTitles(p.Root, m); err != nil {
+		if _, ok := titles[topicID]; ok {
+			delete(titles, topicID)
+			if err := saveTopicTitles(root, titles); err != nil {
 				return err
 			}
-			sources, err := loadTopicTitleSourcesForUpdate(p.Root)
-			if err != nil {
-				return err
-			}
-			delete(sources, topicID)
-			if err := saveTopicTitleSources(p.Root, sources); err != nil {
-				return err
-			}
-			deleteTopicCreatedAt(p.Root, topicID)
-			found = true
-			break
 		}
-	}
-	if !found {
-		m, err := loadTopicTitlesForUpdate("")
+		sources, err := loadTopicTitleSourcesForUpdate(root)
 		if err != nil {
 			return err
 		}
-		if _, ok := m[topicID]; ok {
-			delete(m, topicID)
-			if err := saveTopicTitles("", m); err != nil {
-				return err
-			}
-			sources, err := loadTopicTitleSourcesForUpdate("")
-			if err != nil {
-				return err
-			}
+		if _, ok := sources[topicID]; ok {
 			delete(sources, topicID)
-			if err := saveTopicTitleSources("", sources); err != nil {
+			if err := saveTopicTitleSources(root, sources); err != nil {
 				return err
 			}
-			deleteTopicCreatedAt("", topicID)
-			found = true
 		}
-	}
-	if !found {
-		// Topic already removed (e.g. concurrent trash) — idempotent, not an error.
-		return nil
+		deleteTopicCreatedAt(root, topicID)
+		_ = deleteTopicAutoTitleMeta(root, topicID)
 	}
 	if err := removeTopicFromProjectsFile(topicID); err != nil {
 		return err

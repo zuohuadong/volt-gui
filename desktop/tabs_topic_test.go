@@ -357,6 +357,116 @@ func TestDeleteTopicClearsPinnedTopic(t *testing.T) {
 	}
 }
 
+func assertTopicFullyDeleted(t *testing.T, projectRoot, topicID string) {
+	t.Helper()
+	if got := loadTopicTitle(projectRoot, topicID); got != "" {
+		t.Fatalf("topic title = %q, want deleted", got)
+	}
+	if got := loadTopicTitleSources(projectRoot); got[topicID] != "" {
+		t.Fatalf("title source = %q, want deleted (all sources: %v)", got[topicID], got)
+	}
+	if got := loadTopicCreatedAts(projectRoot); got[topicID] != 0 {
+		t.Fatalf("created-at = %d, want deleted (all created: %v)", got[topicID], got)
+	}
+	f := loadProjectsFile()
+	if len(f.Projects) != 1 {
+		t.Fatalf("projects len = %d, want 1", len(f.Projects))
+	}
+	if containsDesktopString(f.Projects[0].Topics, topicID) {
+		t.Fatalf("project topics = %#v, %q should be removed", f.Projects[0].Topics, topicID)
+	}
+	if !containsDesktopString(f.DeletedTopics, topicID) {
+		t.Fatalf("deletedTopics = %#v, want tombstone for %q", f.DeletedTopics, topicID)
+	}
+}
+
+func TestDeleteTopicRetryAfterPartialFailureCompletesCleanup(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_partial_delete"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Doomed"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	if err := setTopicCreatedAt(projectRoot, topicID, 4242); err != nil {
+		t.Fatalf("set created-at: %v", err)
+	}
+	if err := prependTopicInProjectsFile(projectRoot, topicID, false); err != nil {
+		t.Fatalf("index topic: %v", err)
+	}
+
+	// Inject a failure between the title removal and the rest of the cleanup:
+	// swapping the title-sources file for a directory makes its load fail
+	// right after the title entry is already gone.
+	sourcesPath := topicTitleSourcesPath(projectRoot)
+	backupPath := sourcesPath + ".bak"
+	if err := os.Rename(sourcesPath, backupPath); err != nil {
+		t.Fatalf("stash title sources: %v", err)
+	}
+	if err := os.Mkdir(sourcesPath, 0o755); err != nil {
+		t.Fatalf("block title sources: %v", err)
+	}
+
+	app := NewApp()
+	if err := app.DeleteTopic(topicID); err == nil {
+		t.Fatalf("delete with failing title-sources load should report an error")
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "" {
+		t.Fatalf("first attempt should have removed the title, got %q", got)
+	}
+
+	// Heal the fault and retry: the retry must finish the remaining cleanup
+	// instead of treating the missing title entry as an already-finished
+	// deletion.
+	if err := os.Remove(sourcesPath); err != nil {
+		t.Fatalf("unblock title sources: %v", err)
+	}
+	if err := os.Rename(backupPath, sourcesPath); err != nil {
+		t.Fatalf("restore title sources: %v", err)
+	}
+	if err := app.DeleteTopic(topicID); err != nil {
+		t.Fatalf("retry delete: %v", err)
+	}
+	assertTopicFullyDeleted(t, projectRoot, topicID)
+}
+
+func TestDeleteTopicWithoutTitleEntryStillRemovesIndexAndTombstones(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_leftover_delete"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Doomed"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	if err := setTopicCreatedAt(projectRoot, topicID, 4242); err != nil {
+		t.Fatalf("set created-at: %v", err)
+	}
+	if err := prependTopicInProjectsFile(projectRoot, topicID, false); err != nil {
+		t.Fatalf("index topic: %v", err)
+	}
+	// Strip just the title entry to mimic an interrupted earlier deletion:
+	// sources, created-at, and the sidebar index survived it.
+	titles, err := loadTopicTitlesForUpdate(projectRoot)
+	if err != nil {
+		t.Fatalf("load titles: %v", err)
+	}
+	delete(titles, topicID)
+	if err := saveTopicTitles(projectRoot, titles); err != nil {
+		t.Fatalf("save titles: %v", err)
+	}
+
+	if err := NewApp().DeleteTopic(topicID); err != nil {
+		t.Fatalf("delete topic: %v", err)
+	}
+	assertTopicFullyDeleted(t, projectRoot, topicID)
+}
+
 func TestRenameProjectUpdatesSidebarTitle(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

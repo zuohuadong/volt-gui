@@ -235,9 +235,14 @@ windows)
 		( cd "$staging" && zip -q -r "$ROOT/dist/${APPNAME}-windows-${arch}.zip" . )
 	fi
 	rm -rf "$staging"
-	prerequisites_win=$(cygpath -w "$WINDOWS_PREREQUISITES_RESOURCE")
-	prerequisites_zip_win=$(cygpath -w "$ROOT/dist/${APPNAME}-windows-${arch}-prerequisites.zip")
-	powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$prerequisites_win\\*' -DestinationPath '$prerequisites_zip_win'"
+	prerequisites_zip="$ROOT/dist/${APPNAME}-windows-${arch}-prerequisites.zip"
+	if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
+		prerequisites_win=$(cygpath -w "$WINDOWS_PREREQUISITES_RESOURCE")
+		prerequisites_zip_win=$(cygpath -w "$prerequisites_zip")
+		powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$prerequisites_win\\*' -DestinationPath '$prerequisites_zip_win'"
+	else
+		( cd "$WINDOWS_PREREQUISITES_RESOURCE" && zip -q -r "$prerequisites_zip" . )
+	fi
 	;;
 linux)
 	copy_computer_use_mcp "build/computer-use-mcp"

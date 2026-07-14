@@ -15,6 +15,7 @@ import (
 // credentials, emails, tokens, or absolute paths.
 func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 	const metadataSecret = "snapshot-metadata-secret"
+	const snapshotID = "20260715T000000.000000000Z-abcdef123456"
 	secrets := []string{
 		"/Users/someone/dotfiles",
 		"someone@example.com",
@@ -26,13 +27,14 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 		metadataSecret,
 		"secret.finding.code",
 		"secret-severity",
+		snapshotID,
 	}
 	report := repair.DiagnosticReport{
 		GeneratedAt: metadataSecret,
 		Root:        "/Users/someone/dotfiles",
 		Network:     true,
 		Snapshots: []repair.DiagnosticSnapshot{
-			{ID: "20260715T000000.000000000Z-abcdef123456", RecordedAt: metadataSecret, Version: metadataSecret},
+			{ID: snapshotID, RecordedAt: metadataSecret, Version: metadataSecret},
 			{ID: metadataSecret, RecordedAt: metadataSecret, Version: metadataSecret},
 		},
 		PendingUpdate: &repair.DiagnosticUpdate{FromVersion: metadataSecret, ToVersion: metadataSecret},
@@ -54,7 +56,8 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 		},
 	}
 
-	payload, err := json.Marshal(providerSafeReportFrom(report))
+	safeReport, aliases := providerSafeReportFrom(report)
+	payload, err := json.Marshal(safeReport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +73,8 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 		`"scope":"provider"`,
 		`"scope":"plugin"`,
 		`"scope":"derived:tabs"`,
-		`"id":"20260715T000000.000000000Z-abcdef123456"`,
+		`"id":"snapshot-1"`,
+		`"id":"snapshot-2"`,
 		`"pendingUpdate":true`,
 		`"severity":"unknown"`,
 		`"code":"unknown"`,
@@ -80,6 +84,9 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 			t.Fatalf("outbound payload missing %s:\n%s", want, body)
 		}
 	}
+	if aliases["snapshot-1"] != snapshotID || aliases["snapshot-2"] != metadataSecret {
+		t.Fatalf("snapshot alias map = %v", aliases)
+	}
 	for _, forbiddenField := range []string{"generatedAt", "recordedAt", "version", "fromVersion", "toVersion"} {
 		if strings.Contains(body, `"`+forbiddenField+`"`) {
 			t.Fatalf("outbound payload retained free-form field %q:\n%s", forbiddenField, body)
@@ -87,18 +94,31 @@ func TestProviderSafeReportDropsUserControlledContent(t *testing.T) {
 	}
 }
 
-func TestProviderSafeSnapshotID(t *testing.T) {
-	cases := map[string]bool{
-		"20260715T000000.000000000Z-abcdef123456": true,
-		"20260229T000000.000000000Z-abcdef123456": false,
-		"20260715T000000.000000000Z-ABCDEF123456": false,
-		"20260715T000000.000000000Z-abcdef12345g": false,
-		"someone@example.com":                     false,
+func TestResolveProviderSnapshotAliases(t *testing.T) {
+	const snapshotID = "20260715T000000.000000000Z-abcdef123456"
+	plan, err := repair.DecodeRepairPlan([]byte(`{
+		"schemaVersion": 1,
+		"summary": "restore newest snapshot",
+		"actions": [
+			{"type":"repair_config","scope":"global","reason":"invalid config"},
+			{"type":"restore_snapshot","snapshotId":"snapshot-1","reason":"known-good config"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for id, want := range cases {
-		if got := providerSafeSnapshotID(id); got != want {
-			t.Errorf("providerSafeSnapshotID(%q) = %v, want %v", id, got, want)
-		}
+	resolved, err := resolveProviderSnapshotAliases(plan, map[string]string{"snapshot-1": snapshotID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Actions[1].SnapshotID; got != snapshotID {
+		t.Fatalf("resolved snapshot ID = %q, want %q", got, snapshotID)
+	}
+	if got := plan.Actions[1].SnapshotID; got != "snapshot-1" {
+		t.Fatalf("alias resolution mutated source plan: %q", got)
+	}
+	if _, err := resolveProviderSnapshotAliases(plan, nil); err == nil {
+		t.Fatal("unknown snapshot alias was accepted")
 	}
 }
 

@@ -152,7 +152,11 @@ func requestRepairPlan(ctx context.Context, root, modelRef string, report repair
 	if err != nil {
 		return repair.RepairPlan{}, err
 	}
-	payload, _ := json.Marshal(providerSafeReportFrom(report))
+	safeReport, snapshotAliases := providerSafeReportFrom(report)
+	payload, err := json.Marshal(safeReport)
+	if err != nil {
+		return repair.RepairPlan{}, err
+	}
 	stream, err := p.Stream(ctx, provider.Request{
 		Messages: []provider.Message{
 			{Role: provider.RoleSystem, Content: repairPlanSystemPrompt},
@@ -175,7 +179,11 @@ func requestRepairPlan(ctx context.Context, root, modelRef string, report repair
 			}
 		}
 	}
-	return repair.DecodeRepairPlan([]byte(out.String()))
+	plan, err := repair.DecodeRepairPlan([]byte(out.String()))
+	if err != nil {
+		return repair.RepairPlan{}, err
+	}
+	return resolveProviderSnapshotAliases(plan, snapshotAliases)
 }
 
 func loadAIProviderConfig(root string) (*config.Config, error) {
@@ -200,7 +208,7 @@ func loadAIProviderConfig(root string) (*config.Config, error) {
 const repairPlanSystemPrompt = `You are a Reasonix recovery planner. Return JSON only, matching exactly:
 {"schemaVersion":1,"summary":"...","actions":[{"type":"...","scope":"","snapshotId":"","target":"","reason":"..."}]}
 The user message is a diagnostic report whose findings carry only a severity, a machine code (e.g. config.invalid_toml, derived.invalid_json, update related codes), and a generic scope; pick actions from those codes.
-Snapshots are ordered newest first; pendingUpdate=true means rollback_update is available.
+Snapshot IDs are host-issued aliases ordered newest first; pendingUpdate=true means rollback_update is available.
 Allowed actions only (return an empty actions array when no safe action applies):
 - repair_config with scope global or project
 - restore_snapshot with snapshotId
@@ -212,7 +220,7 @@ Never request shell commands, credential changes, session-content edits, arbitra
 // It deliberately carries no free-form diagnostic strings or state metadata:
 // finding messages can quote config lines, URLs, commands, and permission
 // rules, while snapshot and update metadata can be edited on disk. Only fixed
-// diagnostic vocabulary, booleans, and generated snapshot IDs leave the
+// diagnostic vocabulary, booleans, and host-issued snapshot aliases leave the
 // machine.
 type providerSafeReport struct {
 	Root          string                 `json:"root"`
@@ -232,7 +240,7 @@ type providerSafeFinding struct {
 	Scope    string `json:"scope,omitempty"`
 }
 
-func providerSafeReportFrom(report repair.DiagnosticReport) providerSafeReport {
+func providerSafeReportFrom(report repair.DiagnosticReport) (providerSafeReport, map[string]string) {
 	safe := providerSafeReport{
 		Root:          "<project>",
 		Network:       report.Network,
@@ -240,9 +248,12 @@ func providerSafeReportFrom(report repair.DiagnosticReport) providerSafeReport {
 		PendingUpdate: report.PendingUpdate != nil,
 		Findings:      make([]providerSafeFinding, 0, len(report.Findings)),
 	}
+	snapshotAliases := make(map[string]string, len(report.Snapshots))
 	for _, snapshot := range report.Snapshots {
-		if providerSafeSnapshotID(snapshot.ID) {
-			safe.Snapshots = append(safe.Snapshots, providerSafeSnapshot{ID: snapshot.ID})
+		if strings.TrimSpace(snapshot.ID) != "" {
+			alias := fmt.Sprintf("snapshot-%d", len(safe.Snapshots)+1)
+			safe.Snapshots = append(safe.Snapshots, providerSafeSnapshot{ID: alias})
+			snapshotAliases[alias] = snapshot.ID
 		}
 	}
 	for _, finding := range report.Findings {
@@ -252,24 +263,24 @@ func providerSafeReportFrom(report repair.DiagnosticReport) providerSafeReport {
 			Scope:    providerSafeScope(finding.Scope),
 		})
 	}
-	return safe
+	return safe, snapshotAliases
 }
 
-func providerSafeSnapshotID(id string) bool {
-	const timestampLayout = "20060102T150405.000000000Z"
-	const hashLength = 12
-	if len(id) != len(timestampLayout)+1+hashLength || id[len(timestampLayout)] != '-' {
-		return false
-	}
-	if _, err := time.Parse(timestampLayout, id[:len(timestampLayout)]); err != nil {
-		return false
-	}
-	for _, ch := range id[len(timestampLayout)+1:] {
-		if !('0' <= ch && ch <= '9') && !('a' <= ch && ch <= 'f') {
-			return false
+func resolveProviderSnapshotAliases(plan repair.RepairPlan, aliases map[string]string) (repair.RepairPlan, error) {
+	resolved := plan
+	resolved.Actions = append([]repair.RepairPlanAction(nil), plan.Actions...)
+	for i := range resolved.Actions {
+		action := &resolved.Actions[i]
+		if action.Type != "restore_snapshot" {
+			continue
 		}
+		id, ok := aliases[action.SnapshotID]
+		if !ok {
+			return repair.RepairPlan{}, fmt.Errorf("AI repair plan referenced unknown snapshot alias %q", action.SnapshotID)
+		}
+		action.SnapshotID = id
 	}
-	return true
+	return resolved, nil
 }
 
 func providerSafeSeverity(severity string) string {

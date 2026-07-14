@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"reasonix/internal/control"
 )
 
 func TestExpandPastedBlocksImage(t *testing.T) {
@@ -70,8 +72,11 @@ func TestPastedFileRefShellEscapedSpaces(t *testing.T) {
 	}
 	escaped := strings.ReplaceAll(path, " ", `\ `)
 
-	if got, ok := pastedFileRef(escaped); !ok || got != "@"+filepath.Clean(path) {
-		t.Fatalf("pastedFileRef(shell escaped pdf) = %q, %v; want @%s", got, ok, filepath.Clean(path))
+	// The returned ref keeps whitespace escaped so it survives @-token parsing
+	// on submit (control.parseRefTokens unescapes it back to the real path).
+	want := "@" + control.EscapeRefPath(filepath.Clean(path))
+	if got, ok := pastedFileRef(escaped); !ok || got != want {
+		t.Fatalf("pastedFileRef(shell escaped pdf) = %q, %v; want %s", got, ok, want)
 	}
 }
 

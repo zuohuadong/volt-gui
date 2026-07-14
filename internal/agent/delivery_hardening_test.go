@@ -119,6 +119,35 @@ func TestReadOnlyRegistryDisarmsMutationExpectation(t *testing.T) {
 	}
 }
 
+func TestDeliveryPlanModeReturnsProposalBeforeExecutionReadiness(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeReadFileTool{})
+	reg.Add(fakeWriterTool{})
+	proposal := "1. Fix the parser\n   - update a.go\n   - run the focused tests"
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{{Type: provider.ChunkText, Text: proposal}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession("sys"), Options{DeliveryProfile: true}, event.Discard)
+	a.SetPlanMode(true)
+
+	if err := a.Run(context.Background(), "fix the parser bug in a.go"); err != nil {
+		t.Fatalf("delivery plan proposal was blocked by execution readiness: %v", err)
+	}
+	if prov.call != 1 {
+		t.Fatalf("provider calls = %d, want 1 without readiness retries in plan mode", prov.call)
+	}
+	if got := lastAssistantContent(a.Session()); got != proposal {
+		t.Fatalf("last assistant text = %q, want proposal %q", got, proposal)
+	}
+
+	// Approval disables plan mode before the controller starts execution. The
+	// same delivery expectations must become enforceable again at that boundary.
+	a.SetPlanMode(false)
+	if got := a.finalReadinessFailure(); !strings.Contains(got, "state change") {
+		t.Fatalf("execution readiness did not resume after plan mode: %q", got)
+	}
+}
+
 func TestRunSubAgentReviewReportNudgeRecovers(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeReadFileTool{})

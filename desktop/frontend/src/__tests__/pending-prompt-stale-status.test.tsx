@@ -88,28 +88,46 @@ const replayed = reducer(withApproval, { type: "event", e: planApprovalEvent });
 eq(replayed.promptArrivedAt, withApproval.promptArrivedAt, "same-id replay keeps the original arrival time");
 eq(replayed.promptArrivedId, "plan-1", "same-id replay keeps the anchor id");
 
-// #6432 reverse race: user answers, a delayed replay of the answered prompt
-// re-arms it, then the authoritative idle snapshot (fetched after the answer,
-// before the delayed replay) must still clear the resolved prompt, and a later
-// turn_done must not resurrect it.
+// #6432 reverse race: user answers, a delayed replay of the SAME answered
+// prompt id must not re-arm it at all — no downstream snapshot or turn_done
+// is guaranteed to ever get a chance to disprove it (round 2 review: an idle
+// snapshot dispatched before the replay has nothing to reject, and a fresh
+// running=true/pendingPrompt=false snapshot never touches approval/ask).
 {
   const armed = reducer({ ...initialState }, { type: "event", e: planApprovalEvent });
   const originalArrival = armed.promptArrivedAt!;
   const answeredEarly = reducer(armed, { type: "clearApproval" });
-  const authoritativeIdleAt = promptEventClock();
-  const zombie = reducer(answeredEarly, { type: "event", e: planApprovalEvent });
-  eq(zombie.promptArrivedAt, originalArrival, "delayed replay of an answered prompt does not advance the anchor");
-  ok(authoritativeIdleAt > originalArrival, "authoritative idle snapshot is newer than the original arrival");
-  const reconciled = reducer(zombie, { ...idleStatus, snapshotAt: authoritativeIdleAt });
-  eq(reconciled.approval, undefined, "authoritative idle after the answer clears the resurrected approval");
-  eq(reconciled.running, false, "authoritative idle after the answer ends the blocked state");
-  const afterTurnDone = reducer(reconciled, { type: "event", e: { kind: "turn_done" } as WireEvent });
-  eq(afterTurnDone.approval, undefined, "turn_done cannot resurrect an already-reconciled plan approval");
-  // Ordering variant: turn_done arrives BEFORE the authoritative idle snapshot.
-  const keptByTurnDone = reducer(zombie, { type: "event", e: { kind: "turn_done" } as WireEvent });
-  eq(keptByTurnDone.approval?.id, "plan-1", "turn_done still keeps a plan approval it cannot yet disprove");
-  const clearedLate = reducer(keptByTurnDone, { ...idleStatus, snapshotAt: promptEventClock() });
-  eq(clearedLate.approval, undefined, "a later authoritative idle clears the zombie kept by turn_done");
+  eq(answeredEarly.resolvedPromptId, "plan-1", "answering records the resolved prompt id");
+  const replayed = reducer(answeredEarly, { type: "event", e: planApprovalEvent });
+  eq(replayed.approval, undefined, "a same-id replay of an answered prompt is ignored, not re-armed");
+  eq(replayed.running, answeredEarly.running, "an ignored replay leaves running/turnActive exactly as the answer left them");
+  eq(replayed.promptArrivedAt, originalArrival, "an ignored replay leaves the original anchor untouched");
+  const afterTurnDone = reducer(replayed, { type: "event", e: { kind: "turn_done" } as WireEvent });
+  eq(afterTurnDone.approval, undefined, "turn_done cannot resurrect a replay that was never re-armed");
+
+  // Round 2, sequence 1: an idle snapshot dispatched between the answer and
+  // the delayed replay has nothing to reject (no live approval to compare
+  // against) — the replay must still be suppressed when it lands after.
+  const idleBetween = reducer(answeredEarly, { ...idleStatus, snapshotAt: promptEventClock() });
+  const replayAfterIdle = reducer(idleBetween, { type: "event", e: planApprovalEvent });
+  eq(replayAfterIdle.approval, undefined, "a replay landing after an already-applied idle snapshot is still ignored");
+  const afterTurnDone2 = reducer(replayAfterIdle, { type: "event", e: { kind: "turn_done" } as WireEvent });
+  eq(afterTurnDone2.approval, undefined, "turn_done stays clear after the idle-then-replay ordering");
+
+  // Round 2, sequence 2: a fresh running=true/pendingPrompt=false snapshot
+  // (backend genuinely executing the approved plan, no prompt pending) must
+  // not be able to inherit a zombie approval, because there is none to inherit.
+  const busySnapshot = reducer(answeredEarly, {
+    type: "backend_status",
+    running: true,
+    pendingPrompt: false,
+    backgroundJobs: 0,
+    cancelRequested: false,
+    cancellable: true,
+    snapshotAt: promptEventClock(),
+  });
+  const replayDuringBusy = reducer(busySnapshot, { type: "event", e: planApprovalEvent });
+  eq(replayDuringBusy.approval, undefined, "a replay during a genuinely busy, non-pending turn is still ignored");
 }
 
 // A genuinely new prompt (different id) after an answer re-anchors, so its own

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   assetsForTarget,
   renderInstallScript,
+  renderReadme,
   sha256,
   stageWindowsPrerequisites,
   verifyAsset,
@@ -79,27 +80,57 @@ test('stages a deterministic offline prerequisite directory from injected local 
     mkdirSync(cache, { recursive: true });
     writeFileSync(join(cache, assets.vcRuntime.name), vc);
     writeFileSync(join(cache, assets.webview2.name), webview2);
-    await stageWindowsPrerequisites(out, 'windows/amd64', { assets, cacheDir: cache });
+    await stageWindowsPrerequisites(out, 'windows/amd64', {
+      assets,
+      cacheDir: cache,
+      productName: '西谷智灯暗涌系统',
+      bundleVersion: 'v1.0.0',
+      releaseTag: 'prerequisites-v1.0.0',
+      artifactName: 'Anyong-windows-amd64-prerequisites-v1.0.0.zip',
+      releaseURL: 'https://example.invalid/prerequisites-v1.0.0/bundle.zip',
+    });
 
     assert.equal(readFileSync(join(out, assets.vcRuntime.name), 'utf8'), 'vc-fixture');
     assert.equal(readFileSync(join(out, assets.webview2.name), 'utf8'), 'webview2-fixture');
     const metadata = JSON.parse(readFileSync(join(out, 'metadata.json'), 'utf8'));
     assert.deepEqual(metadata.installOrder, ['vcRuntime', 'webview2']);
-    assert.match(readFileSync(join(out, 'README.txt'), 'utf8'), /先安装此 prerequisites 包，再运行同一个 VoltUI 在线安装包/);
+    assert.equal(metadata.schemaVersion, 2);
+    assert.equal(metadata.bundleVersion, 'v1.0.0');
+    assert.equal(metadata.releaseTag, 'prerequisites-v1.0.0');
+    assert.equal(metadata.productName, '西谷智灯暗涌系统');
+    assert.equal(metadata.artifactName, 'Anyong-windows-amd64-prerequisites-v1.0.0.zip');
+    assert.deepEqual(metadata.sources, {
+      vcRuntime: assets.vcRuntime.url,
+      webview2: assets.webview2.url,
+    });
+    assert.doesNotMatch(JSON.stringify(metadata), new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    const readme = readFileSync(join(out, 'README.txt'), 'utf8');
+    assert.match(readme, /西谷智灯暗涌系统 Windows 前置依赖离线包/);
+    assert.match(readme, /独立版本：prerequisites-v1\.0\.0/);
     assert.match(readFileSync(join(out, 'SHA256SUMS.txt'), 'utf8'), new RegExp(`${sha256(vc)}  VC_redist\\.x64\\.exe`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('packages Windows prerequisites with zip when Windows shell tools are unavailable', {
+test('renders configurable product wording without changing pinned assets', () => {
+  const assets = assetsForTarget('windows/amd64');
+  const script = renderInstallScript(assets, { productName: 'Anyong Desktop' });
+  const readme = renderReadme('windows/amd64', assets, {
+    productName: 'Anyong Desktop',
+    bundleVersion: 'v1.0.0',
+  });
+  assert.match(script, /run the Anyong Desktop installer/);
+  assert.doesNotMatch(script, /run the VoltUI installer/);
+  assert.match(readme, /Anyong Desktop Windows 前置依赖离线包（windows\/amd64，v1\.0\.0）/);
+});
+
+test('full mocked desktop build does not stage or emit prerequisites assets', {
   skip: process.platform === 'win32',
 }, () => {
-  const fixture = join(tmpdir(), `voltui-prerequisites-package-${process.pid}-${Date.now()}`);
+  const fixture = join(tmpdir(), `desktop-without-prerequisites-${process.pid}-${Date.now()}`);
   const bin = join(fixture, 'bin');
   const script = join(fixture, 'scripts', 'desktop-build.sh');
-  const zipCapture = join(fixture, 'zip-calls.txt');
-
   try {
     mkdirSync(join(fixture, 'desktop'), { recursive: true });
     mkdirSync(join(fixture, 'scripts'), { recursive: true });
@@ -124,10 +155,8 @@ case "$1" in
     printf 'installer\n' > "$2/coreutils-system-installer.exe"
     ;;
   */stage-windows-prerequisites.mjs)
-    mkdir -p "$2"
-    printf 'vc\n' > "$2/VC_redist.x64.exe"
-    printf 'webview2\n' > "$2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
-    printf '{}\n' > "$2/metadata.json"
+    echo 'desktop build must not stage prerequisites' >&2
+    exit 97
     ;;
 esac
 `);
@@ -147,59 +176,48 @@ mkdir -p build/bin
 : > build/bin/voltui-desktop.exe
 `);
     writeExecutable(join(bin, 'zip'), String.raw`#!/usr/bin/env bash
-printf 'cwd=%s\nargs=%s\n' "$PWD" "$*" >> "$ZIP_CAPTURE"
-case "$PWD" in
-  */prerequisites)
-    [ -f VC_redist.x64.exe ]
-    [ -f MicrosoftEdgeWebView2RuntimeInstallerX64.exe ]
-    [ -f metadata.json ]
-    ;;
-esac
 mkdir -p "$(dirname "$3")"
 : > "$3"
 `);
 
-    const env = {
-      ...process.env,
-      PATH: `${bin}:/usr/bin:/bin`,
-      DESKTOP_APP_NAME: 'VoltUI',
-      ZIP_CAPTURE: zipCapture,
-    };
     const result = spawnSync(script, ['windows/amd64', 'v1.2.3'], {
       cwd: fixture,
-      env,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        DESKTOP_APP_NAME: 'Anyong',
+      },
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
-
-    const zipCalls = readFileSync(zipCapture, 'utf8');
-    assert.match(zipCalls, /cwd=.*\/prerequisites/);
-    assert.match(zipCalls, /args=-q -r .*\/dist\/VoltUI-windows-amd64-prerequisites\.zip \./);
+    assert.deepEqual(readdirSync(join(fixture, 'dist')).sort(), [
+      'Anyong-windows-amd64-installer.exe',
+      'Anyong-windows-amd64.zip',
+    ]);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
 });
 
-test('Windows packaging publishes prerequisites separately while keeping the online installer', () => {
+test('desktop packaging excludes prerequisites while keeping the online WebView2 bootstrapper', () => {
   const buildScript = readFileSync(new URL('./desktop-build.sh', import.meta.url), 'utf8');
   const installer = readFileSync(new URL('../desktop/build/windows/installer/project.nsi', import.meta.url), 'utf8');
   const desktopCI = readFileSync(new URL('../.github/workflows/desktop-ci.yml', import.meta.url), 'utf8');
   const cnb = readFileSync(new URL('../.cnb.yml', import.meta.url), 'utf8');
-  const prerequisitesBlock = buildScript.slice(
-    buildScript.indexOf('prerequisites_zip='),
-    buildScript.indexOf('\n\t;;', buildScript.indexOf('prerequisites_zip=')),
-  );
+  const version = readFileSync(new URL('../desktop/prerequisites-version.txt', import.meta.url), 'utf8').trim();
+  const desktopReadme = readFileSync(new URL('../desktop/README.md', import.meta.url), 'utf8');
 
   assert.match(buildScript, /-nsis -webview2 embed/);
-  assert.match(buildScript, /\$\{APPNAME\}-windows-\$\{arch\}-prerequisites\.zip/);
-  assert.match(prerequisitesBlock, /command -v cygpath/);
-  assert.match(prerequisitesBlock, /command -v powershell\.exe/);
-  assert.match(prerequisitesBlock, /cygpath -w "\$prerequisites_zip"/);
-  assert.match(prerequisitesBlock, /cd "\$WINDOWS_PREREQUISITES_RESOURCE"/);
-  assert.match(prerequisitesBlock, /zip -q -r "\$prerequisites_zip" \./);
+  assert.doesNotMatch(buildScript, /stage-windows-prerequisites/);
+  assert.doesNotMatch(buildScript, /WINDOWS_PREREQUISITES_/);
+  assert.doesNotMatch(buildScript, /-prerequisites\.zip/);
   assert.match(installer, /ReadRegStr \$0 HKLM.+EdgeUpdate.+"pv"/);
-  assert.match(installer, /VoltUI-windows-\$\{ARCH\}-prerequisites\.zip/);
+  assert.match(installer, /separately versioned Windows prerequisites ZIP/);
+  assert.doesNotMatch(installer, /VoltUI-windows-\$\{ARCH\}-prerequisites\.zip/);
   assert.match(desktopCI, /stage-windows-prerequisites\.test\.mjs/);
-  assert.match(cnb, /apt-get install -y[\s\S]*\bzip\b/);
+  assert.match(cnb, /tag_push:/);
+  assert.match(cnb, /--make-latest=false/);
   assert.match(cnb, /scripts\/desktop-build\.sh windows\/amd64 "\$VERSION"/);
+  assert.match(cnb, /scripts\/build-windows-prerequisites\.sh windows\/amd64/);
+  assert.match(desktopReadme, new RegExp('current bundle version is `' + version.replaceAll('.', '\\.') + '`'));
 });

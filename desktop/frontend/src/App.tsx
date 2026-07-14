@@ -44,6 +44,7 @@ import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-musi
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
+import { TranscriptSelectionMenu } from "./components/TranscriptSelectionMenu";
 import { TodoPanel } from "./components/TodoPanel";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
@@ -66,6 +67,7 @@ import { ProjectTree } from "./components/ProjectTree";
 import { HeartbeatPanel } from "./custom/features/heartbeat/HeartbeatPanel";
 import "./custom/features/heartbeat/heartbeat.css";
 import { CopyButton } from "./components/CopyButton";
+import { ExternalOpener } from "./components/ExternalOpener";
 import { parseTodos } from "./lib/tools";
 import {
   dismissedTodoKeyForScope,
@@ -93,6 +95,7 @@ import {
   type ToolApprovalMode,
 } from "./lib/types";
 import type { InvocationMetadataMap, StructuredInvocationSubmit } from "./lib/invocationDisplay";
+import { formatSelectionReference, type SelectedTextInsertRequest } from "./lib/selectedTextContext";
 import {
   composerProfileFromMeta,
   composerProfileFromTab,
@@ -1156,6 +1159,8 @@ export default function App() {
   const [projectRevision, setProjectRevision] = useState(0);
   const [activeTopicTurns, setActiveTopicTurns] = useState<number | undefined>(undefined);
   const [composerInsertRequestsByTab, setComposerInsertRequestsByTab] = useState<Record<string, ComposerInsertRequest>>({});
+  const [selectedTextRequestsByTab, setSelectedTextRequestsByTab] = useState<Record<string, SelectedTextInsertRequest>>({});
+  const selectedTextRequestIdRef = useRef(0);
   const [planRevisionInsertRequest, setPlanRevisionInsertRequest] = useState<{
     tabId: string;
     approvalId: string;
@@ -1440,6 +1445,7 @@ export default function App() {
       ? planRevisionInsertRequest.request
       : null;
   const composerInsertRequest = activeTabId ? composerInsertRequestsByTab[activeTabId] ?? null : null;
+  const selectedTextRequest = activeTabId ? selectedTextRequestsByTab[activeTabId] ?? null : null;
   const prefillSubagentCommand = useCallback((command: string) => {
     if (!activeTabId) return;
     setComposerInsertRequestsByTab((current) => ({
@@ -2402,6 +2408,35 @@ export default function App() {
         [activeTabId]: { id: Date.now(), text },
       }));
     }
+  }, [activeTabId, state.approval, workspaceInsertTarget]);
+
+  const addSelectedTextToComposer = useCallback((text: string) => {
+    const selected = text.trim();
+    if (!activeTabId || !selected) return;
+    selectedTextRequestIdRef.current += 1;
+    setSelectedTextRequestsByTab((current) => ({
+      ...current,
+      [activeTabId]: { id: selectedTextRequestIdRef.current, text: selected },
+    }));
+  }, [activeTabId]);
+
+  const addWorkspaceCodeToComposer = useCallback((path: string, code: string) => {
+    if (!activeTabId || !code.trim()) return;
+    if (workspaceInsertTarget === "planRevision" && state.approval?.tool === "exit_plan_mode") {
+      // The plan-revision input is plain text and only consumes request.text,
+      // so hand it the fenced rendering instead of a structured reference.
+      setPlanRevisionInsertRequest({
+        tabId: activeTabId,
+        approvalId: state.approval.id,
+        request: { id: Date.now(), text: formatSelectionReference(path, code) },
+      });
+      return;
+    }
+    selectedTextRequestIdRef.current += 1;
+    setSelectedTextRequestsByTab((current) => ({
+      ...current,
+      [activeTabId]: { id: selectedTextRequestIdRef.current, text: code, path },
+    }));
   }, [activeTabId, state.approval, workspaceInsertTarget]);
 
   // Coalesce tab-bar switches through the same last-click-wins scheduler that
@@ -3669,6 +3704,9 @@ export default function App() {
                   </button>
                 </Tooltip>
               )}
+              {!sidebarImDetailConnection && activeTab?.scope === "project" && (
+                <ExternalOpener tabId={activeTab.id} dismissSignal={transientOverlayDismissSignal} />
+              )}
               <Tooltip label={t("shortcuts.cheatsheetTitle")}>
                 <button
                   className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
@@ -3882,6 +3920,7 @@ export default function App() {
               onSetEffort={setEffort}
               onSetTokenMode={applyTokenMode}
               insertRequest={composerInsertRequest}
+              selectedTextRequest={selectedTextRequest}
               readOnly={Boolean(activeTab?.readOnly)}
               disabled={rewindCommitting || state.messageAction != null || Boolean(decisionSurface)}
               submitDisabled={!controllerReady}
@@ -4024,6 +4063,7 @@ export default function App() {
                   }}
                   onPreviewModeChange={handleWorkspacePreviewModeChange}
                   onAddToChat={addWorkspaceTextToComposer}
+                  onAddCodeToChat={addWorkspaceCodeToComposer}
                   onRequestPanelWidth={ensureWorkspacePanelWidth}
                   onFileTreeRefresh={refreshComposerFileRefs}
                   refreshKey={dockRefreshKey}
@@ -4109,6 +4149,11 @@ export default function App() {
       <HeartbeatPanel open={heartbeatOpen} onClose={() => setHeartbeatOpen(false)} onOpenTopic={(scope, workspaceRoot, topicId) => {
         void handleOpenTopic(scope, workspaceRoot, topicId);
       }} />
+      <TranscriptSelectionMenu
+        enabled={Boolean(activeTabId && !activeTab?.readOnly && !decisionSurface && !sidebarImDetailConnection && !hydratePlaceholderActive)}
+        resetKey={activeTabId ?? ""}
+        onAddToChat={addSelectedTextToComposer}
+      />
       {windowsFramelessChrome && <WindowsWindowControls />}
     </div>
     </ShellExpandProvider>

@@ -1607,16 +1607,35 @@ func (a *Agent) finalReadinessCheck() finalReadinessCheck {
 	}
 	var missing []string
 	out := finalReadinessCheck{}
-	if !a.planMode.Load() {
-		incomplete, hasTodos := a.evidence.IncompleteLatestTodos()
-		if !hasTodos && a.evidence.HasAnySuccessfulReceipt() {
-			incomplete, hasTodos = a.incompleteCanonicalTodos()
+	// Planning returns a proposal to the controller, which owns the approval
+	// gate and starts a fresh execution turn after plan mode is disabled. Applying
+	// delivery execution requirements here would demand mutations that plan mode
+	// itself blocks, preventing the proposal from ever reaching that approval.
+	// Explicit capability requirements still apply because read-only skills and
+	// tools may be required to produce the plan itself. The loop-guard pass
+	// applies here as in execution: a required capability that plan mode itself
+	// blocks can never succeed, so once a loop guard fires the model must be
+	// free to report the blocker instead of exhausting readiness retries.
+	if a.planMode.Load() {
+		if a.deliveryProfile {
+			if msg := a.capabilityGateFailure(); msg != "" {
+				out.applies = true
+				if a.loopGuardAllowsFinal() {
+					return out
+				}
+				out.reason = msg
+			}
 		}
-		if hasTodos && len(incomplete) > 0 && a.evidence.HasSuccessfulTodoProgressReceipt() {
-			out.applies = true
-			out.incompleteTodos = len(incomplete)
-			missing = append(missing, finalReadinessIncompleteTodos(incomplete))
-		}
+		return out
+	}
+	incomplete, hasTodos := a.evidence.IncompleteLatestTodos()
+	if !hasTodos && a.evidence.HasAnySuccessfulReceipt() {
+		incomplete, hasTodos = a.incompleteCanonicalTodos()
+	}
+	if hasTodos && len(incomplete) > 0 && a.evidence.HasSuccessfulTodoProgressReceipt() {
+		out.applies = true
+		out.incompleteTodos = len(incomplete)
+		missing = append(missing, finalReadinessIncompleteTodos(incomplete))
 	}
 	writer, hasWriter := a.evidence.LatestSuccessfulWriterIndex()
 	deliveryMutation := false

@@ -19,11 +19,16 @@ import type {
   HistoryMessage,
   MCPServerInput,
   MemoryView,
+  ScopedMemoryContext,
+  ScopedMemoryEntry,
+  ScopedMemoryInput,
+  ScopedMemoryView,
   ModelInfo,
   ProjectNode,
   ProviderView,
   QuestionAnswer,
   SettingsView,
+  TrustCenterView,
   SessionMeta,
   SlashArgItem,
   TabMeta,
@@ -111,9 +116,18 @@ interface AppBindings {
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
   ToolResultForTab(tabID: string, toolID: string): Promise<ToolResultData | null>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
+  Fork(turn: number): Promise<TabMeta>;
   Rewind(turn: number, scope: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
   SetModelForTab(tabID: string, name: string): Promise<void>;
+  SetAgentProfileForTab(tabID: string, profileID: string): Promise<void>;
+  DataTrustCenter(): Promise<TrustCenterView>;
+  DataTrustCenterForTab(tabID: string): Promise<TrustCenterView>;
+  ScopedMemoryForTab(tabID: string): Promise<ScopedMemoryView>;
+  SaveScopedMemoryForTab(tabID: string, input: ScopedMemoryInput): Promise<ScopedMemoryEntry>;
+  SetScopedMemoryIsolationForTab(tabID: string, entryID: string, isolated: boolean): Promise<ScopedMemoryEntry>;
+  DeleteScopedMemoryForTab(tabID: string, entryID: string): Promise<void>;
+  SetMemoryContextForTab(tabID: string, context: ScopedMemoryContext): Promise<void>;
   EffortForTab(tabID: string): Promise<EffortInfo>;
   SetEffortForTab(tabID: string, level: string): Promise<void>;
   SetModeForTab(tabID: string, mode: string): Promise<void>;

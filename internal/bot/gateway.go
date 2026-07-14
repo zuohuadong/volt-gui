@@ -59,6 +59,8 @@ type GatewayConfig struct {
 	// The gateway updates the live session and in-memory defaults first; this
 	// callback lets desktop save the chosen connection mode to user config.
 	OnToolApprovalModeChange func(InboundMessage, string) error
+	RemoteStore              *RemoteStore
+	ResolveRemoteRuntime     RemoteRuntimeResolver
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
@@ -72,15 +74,19 @@ type ChannelConfig struct {
 // SessionMapping is the runtime subset of a saved bot connection mapping used
 // to route a remote chat/user/thread back to its intended workspace.
 type SessionMapping struct {
-	RemoteID      string
-	SessionID     string
-	SessionSource string
-	ChatType      string
-	UserID        string
-	ThreadID      string
-	Scope         string
-	WorkspaceRoot string
-	UpdatedAt     string
+	RemoteID               string
+	SessionID              string
+	SessionSource          string
+	ChatType               string
+	UserID                 string
+	ThreadID               string
+	ProjectID              string
+	AgentProfileID         string
+	PermissionCeiling      string
+	RequireHighRiskConfirm bool
+	Scope                  string
+	WorkspaceRoot          string
+	UpdatedAt              string
 }
 
 // RouteConfig applies per-remote overrides. Empty match fields are wildcards;
@@ -117,13 +123,18 @@ type AllowlistConfig struct {
 
 // AccessConfig controls who may use one concrete bot connection.
 type AccessConfig struct {
-	Enabled        bool
-	AllowAll       bool
-	PairingEnabled bool
-	Users          []string
-	Groups         []string
-	Approvers      []string
-	Admins         []string
+	Enabled                bool
+	AllowAll               bool
+	PairingEnabled         bool
+	Users                  []string
+	Groups                 []string
+	Approvers              []string
+	Admins                 []string
+	WorkspaceRoots         []string
+	ProjectIDs             []string
+	AgentProfileIDs        []string
+	PermissionCeiling      string
+	RequireHighRiskConfirm bool
 }
 
 // AdapterHealthSnapshot describes the gateway's current view of one adapter.
@@ -192,6 +203,11 @@ type sessionState struct {
 	lastAskID        string
 	createdAt        time.Time
 	lastActive       time.Time
+	remoteTaskID     string
+	remoteBindingID  string
+	remoteActorID    string
+	projectID        string
+	agentProfileID   string
 }
 
 type sessionRuntimeProfile struct {
@@ -199,12 +215,16 @@ type sessionRuntimeProfile struct {
 	workspaceRoot    string
 	toolApprovalMode string
 	sessionPath      string
+	projectID        string
+	agentProfileID   string
+	agentProfile     *boot.AgentProfile
 }
 
 type sessionRuntimeOverride struct {
 	channel     ChannelConfig
 	sessionPath string
 	label       string
+	remote      RemoteRuntime
 }
 
 type sessionEventSink struct {
@@ -607,10 +627,22 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 	cleanup := gw.addPendingReaction(ctx, binding.Platform, binding.Adapter, msg)
 
 	queueMode := gw.queueMode(key, msg)
+	if gw.cfg.RemoteStore != nil && queueMode == QueueModeCollect {
+		queueMode = QueueModeFollowup
+	}
 	if gw.sessions.IsActive(key) {
 		switch queueMode {
 		case QueueModeSteer:
+			if gw.cfg.RemoteStore != nil && !gw.remoteActorOwnsActiveTask(key, RemoteActorFromMessage(msg)) {
+				_ = gw.cfg.RemoteStore.RecordAudit(RemoteAuditEntry{ActorID: RemoteActorFromMessage(msg), Action: "task.steer", Decision: "deny", Reason: "active task owner mismatch", Endpoint: RemoteEndpointFromMessage(msg)})
+				if cleanup != nil {
+					cleanup()
+				}
+				_ = gw.sendText(ctx, binding.Adapter, msg, "只能补充当前远程身份自己拥有的任务。")
+				return
+			}
 			if gw.steerActiveSession(ctx, binding.Adapter, key, msg) {
+				gw.auditRemoteSteer(key, msg)
 				gw.logger.Info("bot message steered into active turn", "session", key[:8])
 				if cleanup != nil {
 					cleanup()
@@ -619,14 +651,62 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 				return
 			}
 		case QueueModeInterrupt:
-			gw.cancelActiveSession(key)
-			runReactionCleanups(gw.takeReactionCleanups(key))
-			result := gw.sessions.ReplacePending(key, msg)
-			gw.storeReactionCleanup(key, cleanup)
-			gw.logger.Info("bot active turn interrupted; newest message queued", "session", key[:8], "pending", result.Pending)
-			_ = gw.sendText(ctx, binding.Adapter, msg, "已停止当前任务，稍后处理这条新消息。")
+			if gw.cfg.RemoteStore == nil {
+				gw.cancelActiveSession(key)
+				runReactionCleanups(gw.takeReactionCleanups(key))
+				result := gw.sessions.ReplacePending(key, msg)
+				gw.storeReactionCleanup(key, cleanup)
+				gw.logger.Info("bot active turn interrupted; newest message queued", "session", key[:8], "pending", result.Pending)
+				_ = gw.sendText(ctx, binding.Adapter, msg, "已停止当前任务，稍后处理这条新消息。")
+				return
+			}
+		}
+	}
+
+	remoteTask, remoteRuntime, duplicate, remoteErr := gw.beginRemoteTask(ctx, msg)
+	if remoteErr != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		_ = gw.sendText(ctx, binding.Adapter, msg, "远程任务授权失败："+sanitizeRemoteText(remoteErr.Error()))
+		return
+	}
+	if duplicate {
+		if cleanup != nil {
+			cleanup()
+		}
+		_ = gw.sendText(ctx, binding.Adapter, msg, fmt.Sprintf("该消息已对应远程任务 %s，当前状态：%s。", remoteTask.ID, remoteTask.Status))
+		return
+	}
+	if remoteTask.ID != "" {
+		if _, err := gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskQueued, ""); err != nil {
+			if cleanup != nil {
+				cleanup()
+			}
+			_ = gw.sendText(ctx, binding.Adapter, msg, "远程任务排队失败。")
 			return
 		}
+	}
+	if gw.cfg.RemoteStore != nil && queueMode == QueueModeInterrupt && gw.sessions.IsActive(key) {
+		if !gw.remoteActorOwnsActiveTask(key, RemoteActorFromMessage(msg)) {
+			_, _ = gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskDisconnected, "interrupt actor does not own the active task")
+			if cleanup != nil {
+				cleanup()
+			}
+			_ = gw.sendText(ctx, binding.Adapter, msg, "只能打断当前远程身份自己拥有的任务。")
+			return
+		}
+		gw.applyRemoteRuntimeOverride(key, remoteRuntime)
+		gw.requestCancelActiveRemoteTask(key)
+		result := gw.sessions.ReplacePending(key, msg)
+		gw.transitionDroppedRemoteMessages(result.DroppedMessages, "replaced by interrupt")
+		gw.storeReactionCleanup(key, cleanup)
+		gw.logger.Info("remote task interrupted; governed replacement queued", "session", key[:8], "pending", result.Pending, "task", remoteTask.ID)
+		_ = gw.sendText(ctx, binding.Adapter, msg, fmt.Sprintf("已请求取消当前任务；远程任务 %s 已排队。", remoteTask.ID))
+		return
+	}
+	if remoteTask.ID != "" {
+		gw.applyRemoteRuntimeOverride(key, remoteRuntime)
 	}
 
 	// session 并发控制
@@ -640,10 +720,14 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 		if cleanup != nil {
 			cleanup()
 		}
+		if remoteTask.ID != "" {
+			_, _ = gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskDisconnected, "remote queue rejected the message")
+		}
 		_ = gw.sendText(ctx, binding.Adapter, msg, "当前会话排队已满，请稍后再发，或使用 /queue interrupt 中断当前任务。")
 		return
 	}
 	if result.Queued {
+		gw.transitionDroppedRemoteMessages(result.DroppedMessages, "dropped by remote queue policy")
 		gw.logger.Debug("message queued", "session", key[:8], "mode", result.Mode, "pending", result.Pending, "dropped", result.Dropped)
 		gw.storeReactionCleanup(key, cleanup)
 		return
@@ -663,6 +747,60 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 	// Per-session serialization is still held by the session lock (active[key]),
 	// which the deferred Release inside runTurn clears.
 	go gw.runTurn(ctx, binding.Adapter, key, msg, cleanup)
+}
+
+func (gw *BotGateway) applyRemoteRuntimeOverride(key string, runtime RemoteRuntime) {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	override := gw.sessionOverrides[key]
+	override.channel.WorkspaceRoot = runtime.WorkspaceRoot
+	override.channel.ToolApprovalMode = runtime.PermissionMode
+	override.remote = runtime
+	gw.sessionOverrides[key] = override
+}
+
+func (gw *BotGateway) remoteActorOwnsActiveTask(key, actor string) bool {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	state := gw.controllers[key]
+	return state != nil && state.remoteTaskID != "" && state.remoteActorID == strings.TrimSpace(actor)
+}
+
+func (gw *BotGateway) auditRemoteSteer(key string, msg InboundMessage) {
+	if gw.cfg.RemoteStore == nil {
+		return
+	}
+	gw.mu.Lock()
+	state := gw.controllers[key]
+	gw.mu.Unlock()
+	if state == nil || state.remoteTaskID == "" {
+		return
+	}
+	_ = gw.cfg.RemoteStore.RecordAudit(RemoteAuditEntry{ActorID: state.remoteActorID, BindingID: state.remoteBindingID, TaskID: state.remoteTaskID, Action: "task.steer", Decision: "allow", Endpoint: RemoteEndpointFromMessage(msg)})
+}
+
+func (gw *BotGateway) requestCancelActiveRemoteTask(key string) {
+	gw.mu.Lock()
+	state := gw.controllers[key]
+	gw.mu.Unlock()
+	if state == nil {
+		return
+	}
+	if state.remoteTaskID != "" && gw.cfg.RemoteStore != nil {
+		_, _ = gw.cfg.RemoteStore.RequestCancel(state.remoteTaskID, state.remoteBindingID, state.remoteActorID)
+	}
+	gw.cancelActiveSession(key)
+}
+
+func (gw *BotGateway) transitionDroppedRemoteMessages(messages []InboundMessage, reason string) {
+	if gw.cfg.RemoteStore == nil {
+		return
+	}
+	for _, dropped := range messages {
+		if task, ok := gw.remoteTaskForMessage(dropped); ok && task.Status == RemoteTaskQueued {
+			_, _ = gw.cfg.RemoteStore.TransitionTask(task.ID, RemoteTaskDisconnected, reason)
+		}
+	}
 }
 
 func (gw *BotGateway) queueMode(key string, msg InboundMessage) string {
@@ -915,9 +1053,6 @@ func (gw *BotGateway) checkCommandRole(plat Platform, msg InboundMessage, role s
 	if access, ok := gw.connectionAccess(msg); ok {
 		admins := stringSet(access.Admins)
 		approvers := stringSet(access.Approvers)
-		if len(admins) == 0 && len(approvers) == 0 {
-			return true
-		}
 		if admins[actor] {
 			return true
 		}
@@ -925,9 +1060,6 @@ func (gw *BotGateway) checkCommandRole(plat Platform, msg InboundMessage, role s
 	}
 	admins := stringSet(gw.cfg.Allowlist.Admins[plat])
 	approvers := stringSet(gw.cfg.Allowlist.Approvers[plat])
-	if len(admins) == 0 && len(approvers) == 0 {
-		return true
-	}
 	if admins[actor] {
 		return true
 	}
@@ -1103,11 +1235,31 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 	switch {
 	case strings.HasPrefix(msg.Text, "/stop"):
 		var cancel context.CancelFunc
+		var remoteTaskID, remoteBindingID, remoteActorID string
 		gw.mu.Lock()
 		if state, ok := gw.controllers[key]; ok {
 			cancel = state.cancel
+			remoteTaskID = state.remoteTaskID
+			remoteBindingID = state.remoteBindingID
+			remoteActorID = state.remoteActorID
 		}
 		gw.mu.Unlock()
+		if gw.cfg.RemoteStore != nil {
+			actor := RemoteActorFromMessage(msg)
+			if remoteTaskID == "" || remoteBindingID == "" || remoteActorID == "" || actor != remoteActorID {
+				_ = gw.sendText(ctx, adapter, msg, "只能取消当前远程身份自己拥有的任务。")
+				return
+			}
+			if _, err := gw.cfg.RemoteStore.RequestCancel(remoteTaskID, remoteBindingID, actor); err != nil {
+				_ = gw.sendText(ctx, adapter, msg, "取消请求被拒绝："+sanitizeRemoteText(err.Error()))
+				return
+			}
+			if cancel != nil {
+				cancel()
+			}
+			_ = gw.sendText(ctx, adapter, msg, "已请求取消当前远程任务；任务退出后会确认最终状态。")
+			return
+		}
 		if cancel != nil {
 			cancel()
 		}
@@ -1684,8 +1836,23 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	// 获取或创建 Controller
 	state := gw.getOrCreateSession(ctx, key, msg)
 	if state == nil || state.ctrl == nil {
+		if task, ok := gw.remoteTaskForMessage(msg); ok {
+			_, _ = gw.cfg.RemoteStore.TransitionTask(task.ID, RemoteTaskFailed, "remote runtime could not be created")
+		}
 		_ = gw.sendText(ctx, adapter, msg, "内部错误：无法创建会话。")
 		return
+	}
+	remoteTask, hasRemoteTask := gw.remoteTaskForMessage(msg)
+	if hasRemoteTask {
+		if _, err := gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskRunning, ""); err != nil {
+			_ = gw.sendText(ctx, adapter, msg, "远程任务状态异常，已停止执行。")
+			return
+		}
+		gw.mu.Lock()
+		state.remoteTaskID = remoteTask.ID
+		state.remoteBindingID = remoteTask.BindingID
+		state.remoteActorID = remoteTask.Spec.ActorID
+		gw.mu.Unlock()
 	}
 	gw.rememberSessionReady(msg, state.ctrl)
 
@@ -1717,6 +1884,9 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 			state.pendingApprovals[approval.ID] = approval
 			state.lastApprovalID = approval.ID
 			gw.mu.Unlock()
+			if hasRemoteTask {
+				_, _ = gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskAwaitingApproval, "")
+			}
 		},
 		func(ask event.Ask) {
 			gw.mu.Lock()
@@ -1726,6 +1896,9 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 			state.pendingAsks[ask.ID] = ask.Questions
 			state.lastAskID = ask.ID
 			gw.mu.Unlock()
+			if hasRemoteTask {
+				_, _ = gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskAwaitingInput, "")
+			}
 		},
 	)
 	// Finish initializing the sink before publishing it as the live target: once
@@ -1747,10 +1920,82 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	err := state.ctrl.RunTurn(turnCtx, input)
 	sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
 	if err != nil {
+		if hasRemoteTask {
+			current, _ := gw.cfg.RemoteStore.Task(remoteTask.ID)
+			next := RemoteTaskFailed
+			if binding, bindErr := gw.cfg.RemoteStore.Binding(remoteTask.BindingID); bindErr == nil && binding.Status == RemoteBindingRevoked {
+				next = RemoteTaskRevoked
+			} else if current.Status == RemoteTaskCancelRequested {
+				next = RemoteTaskCancelled
+			}
+			_, _ = gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, next, err.Error())
+		}
 		gw.logger.Warn("turn error", "session", key[:8], "err", err)
 		return
 	}
+	if hasRemoteTask {
+		_, _ = gw.cfg.RemoteStore.TransitionTask(remoteTask.ID, RemoteTaskSucceeded, "")
+	}
 	gw.logger.Info("bot turn completed", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
+}
+
+func (gw *BotGateway) remoteTaskForMessage(msg InboundMessage) (RemoteTaskRecord, bool) {
+	if gw.cfg.RemoteStore == nil {
+		return RemoteTaskRecord{}, false
+	}
+	return gw.cfg.RemoteStore.TaskForMessage(RemoteEndpointFromMessage(msg), msg.MessageID)
+}
+
+func (gw *BotGateway) RemoteTaskStore() *RemoteStore {
+	if gw == nil {
+		return nil
+	}
+	return gw.cfg.RemoteStore
+}
+
+func (gw *BotGateway) CancelRemoteTask(taskID string) (RemoteTaskRecord, error) {
+	if gw == nil || gw.cfg.RemoteStore == nil {
+		return RemoteTaskRecord{}, errors.New("remote task runtime is not started")
+	}
+	task, err := gw.cfg.RemoteStore.Task(taskID)
+	if err != nil {
+		return RemoteTaskRecord{}, err
+	}
+	requested, err := gw.cfg.RemoteStore.RequestCancel(task.ID, task.BindingID, task.Spec.ActorID)
+	if err != nil {
+		return RemoteTaskRecord{}, err
+	}
+	cancelledRunningTurn := false
+	gw.mu.Lock()
+	for _, state := range gw.controllers {
+		if state != nil && state.remoteTaskID == task.ID && state.cancel != nil {
+			state.cancel()
+			cancelledRunningTurn = true
+		}
+	}
+	gw.mu.Unlock()
+	if !cancelledRunningTurn && (task.Status == RemoteTaskAccepted || task.Status == RemoteTaskQueued) {
+		return gw.cfg.RemoteStore.TransitionTask(task.ID, RemoteTaskCancelled, "")
+	}
+	return requested, nil
+}
+
+func (gw *BotGateway) RevokeRemoteBinding(bindingID string) (RemoteBinding, error) {
+	if gw == nil || gw.cfg.RemoteStore == nil {
+		return RemoteBinding{}, errors.New("remote task runtime is not started")
+	}
+	binding, err := gw.cfg.RemoteStore.RevokeBinding(bindingID)
+	if err != nil {
+		return RemoteBinding{}, err
+	}
+	gw.mu.Lock()
+	for _, state := range gw.controllers {
+		if state != nil && state.remoteBindingID == binding.ID && state.cancel != nil {
+			state.cancel()
+		}
+	}
+	gw.mu.Unlock()
+	return binding, nil
 }
 
 func (gw *BotGateway) inputTextWithMedia(ctx context.Context, adapter Adapter, msg InboundMessage, state *sessionState) string {
@@ -1806,6 +2051,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 		WorkspaceRoot:   profile.workspaceRoot,
 		SessionDir:      botSessionDir(profile.workspaceRoot),
 		ApprovalTimeout: gw.approvalTimeout(),
+		AgentProfile:    profile.agentProfile,
 	})
 	if err != nil {
 		gw.logger.Error("build controller failed", "err", err)
@@ -1857,6 +2103,8 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 		pendingAsks:      make(map[string][]event.AskQuestion),
 		createdAt:        time.Now(),
 		lastActive:       time.Now(),
+		projectID:        profile.projectID,
+		agentProfileID:   profile.agentProfileID,
 	}
 	gw.controllers[key] = state
 	gw.mu.Unlock()
@@ -1880,6 +2128,8 @@ func updateSessionStateRuntime(state *sessionState, msg InboundMessage, profile 
 	state.workspaceRoot = profile.workspaceRoot
 	state.toolApprovalMode = profile.toolApprovalMode
 	state.sessionPath = profile.sessionPath
+	state.projectID = profile.projectID
+	state.agentProfileID = profile.agentProfileID
 	state.lastActive = time.Now()
 }
 
@@ -1898,14 +2148,19 @@ func closeBotSessionState(state *sessionState) {
 func (gw *BotGateway) sessionProfileForMessage(msg InboundMessage) sessionRuntimeProfile {
 	model, workspaceRoot, toolApprovalMode := gw.sessionOptionsForMessage(msg)
 	var sessionPath string
+	var remote RemoteRuntime
 	if override, ok := gw.sessionRuntimeOverrideForMessage(msg); ok {
 		sessionPath = override.sessionPath
+		remote = override.remote
 	}
 	return sessionRuntimeProfile{
 		model:            strings.TrimSpace(model),
 		workspaceRoot:    strings.TrimSpace(workspaceRoot),
 		toolApprovalMode: normalizeBotToolApprovalMode(toolApprovalMode),
 		sessionPath:      canonicalBotPath(sessionPath),
+		projectID:        strings.TrimSpace(remote.ProjectID),
+		agentProfileID:   strings.TrimSpace(remote.AgentProfileID),
+		agentProfile:     remote.AgentProfile,
 	}
 }
 
@@ -1930,6 +2185,9 @@ func sessionStateMatchesRuntime(state *sessionState, profile sessionRuntimeProfi
 		return false
 	}
 	if canonicalBotPath(state.sessionPath) != canonicalBotPath(profile.sessionPath) {
+		return false
+	}
+	if strings.TrimSpace(state.projectID) != strings.TrimSpace(profile.projectID) || strings.TrimSpace(state.agentProfileID) != strings.TrimSpace(profile.agentProfileID) {
 		return false
 	}
 	if profile.sessionPath != "" && canonicalBotPath(state.ctrl.SessionPath()) != canonicalBotPath(profile.sessionPath) {

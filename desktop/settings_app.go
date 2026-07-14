@@ -169,13 +169,18 @@ type BotAllowlistView struct {
 }
 
 type BotAccessView struct {
-	Enabled        bool     `json:"enabled"`
-	AllowAll       bool     `json:"allowAll"`
-	PairingEnabled bool     `json:"pairingEnabled"`
-	Users          []string `json:"users"`
-	Groups         []string `json:"groups"`
-	Approvers      []string `json:"approvers"`
-	Admins         []string `json:"admins"`
+	Enabled                bool     `json:"enabled"`
+	AllowAll               bool     `json:"allowAll"`
+	PairingEnabled         bool     `json:"pairingEnabled"`
+	Users                  []string `json:"users"`
+	Groups                 []string `json:"groups"`
+	Approvers              []string `json:"approvers"`
+	Admins                 []string `json:"admins"`
+	WorkspaceRoots         []string `json:"workspaceRoots"`
+	ProjectIDs             []string `json:"projectIds"`
+	AgentProfileIDs        []string `json:"agentProfileIds"`
+	PermissionCeiling      string   `json:"permissionCeiling"`
+	RequireHighRiskConfirm bool     `json:"requireHighRiskConfirm"`
 }
 
 type BotSelfUserIDsView struct {
@@ -1065,25 +1070,35 @@ func botRouteConfigs(routes []BotRouteView) []config.BotRouteConfig {
 
 func botAccessViewFromConfig(access config.BotAccessConfig) BotAccessView {
 	return BotAccessView{
-		Enabled:        access.Enabled,
-		AllowAll:       access.AllowAll,
-		PairingEnabled: access.PairingEnabled,
-		Users:          nonNil(access.Users),
-		Groups:         nonNil(access.Groups),
-		Approvers:      nonNil(access.Approvers),
-		Admins:         nonNil(access.Admins),
+		Enabled:                access.Enabled,
+		AllowAll:               access.AllowAll,
+		PairingEnabled:         access.PairingEnabled,
+		Users:                  nonNil(access.Users),
+		Groups:                 nonNil(access.Groups),
+		Approvers:              nonNil(access.Approvers),
+		Admins:                 nonNil(access.Admins),
+		WorkspaceRoots:         nonNil(access.WorkspaceRoots),
+		ProjectIDs:             nonNil(access.ProjectIDs),
+		AgentProfileIDs:        nonNil(access.AgentProfileIDs),
+		PermissionCeiling:      strings.TrimSpace(access.PermissionCeiling),
+		RequireHighRiskConfirm: access.RequireHighRiskConfirm,
 	}
 }
 
 func botAccessConfigFromView(access BotAccessView) config.BotAccessConfig {
 	return config.BotAccessConfig{
-		Enabled:        access.Enabled,
-		AllowAll:       access.AllowAll,
-		PairingEnabled: access.PairingEnabled,
-		Users:          trimList(access.Users),
-		Groups:         trimList(access.Groups),
-		Approvers:      trimList(access.Approvers),
-		Admins:         trimList(access.Admins),
+		Enabled:                access.Enabled,
+		AllowAll:               access.AllowAll,
+		PairingEnabled:         access.PairingEnabled,
+		Users:                  trimList(access.Users),
+		Groups:                 trimList(access.Groups),
+		Approvers:              trimList(access.Approvers),
+		Admins:                 trimList(access.Admins),
+		WorkspaceRoots:         trimList(access.WorkspaceRoots),
+		ProjectIDs:             trimList(access.ProjectIDs),
+		AgentProfileIDs:        trimList(access.AgentProfileIDs),
+		PermissionCeiling:      strings.TrimSpace(access.PermissionCeiling),
+		RequireHighRiskConfirm: access.RequireHighRiskConfirm,
 	}
 }
 
@@ -1586,6 +1601,10 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	if err != nil {
 		return err
 	}
+	memoryRuntime, err := a.scopedMemoryRuntimeForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model: model, RequireKey: false,
 		Sink:                     snap.sink,
@@ -1594,6 +1613,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             agentProfile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -1643,6 +1663,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	tab.Ctrl = ctrl
 	tab.model = model
 	tab.Label = ctrl.Label()
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
 	// Supersede any in-flight startup build: it would otherwise finish later,

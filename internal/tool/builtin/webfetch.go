@@ -77,22 +77,10 @@ func ssrfGuardedTransport(proxyURL string) *http.Transport {
 	// directDialContext handles SSRF-protected direct connection (no proxy).
 	// It resolves DNS locally, checks resolved IPs against the SSRF blocklist,
 	// then dials the vetted IP directly to prevent DNS rebinding.
-	directDialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, ip := range ips {
-			if blockedFetchIP(ip.IP) {
-				return nil, fmt.Errorf("refusing to fetch internal address %s (resolves to %s)", host, ip.IP)
-			}
-		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
-	}
+	directDialContext := (netclient.GuardedDialer{
+		Timeout:       webFetchTimeout,
+		AllowLoopback: true,
+	}).DialContext
 
 	tr := &http.Transport{
 		DialContext: directDialContext,
@@ -380,33 +368,17 @@ func (wf webFetch) pinnedDirectTransport(ips []net.IPAddr) *http.Transport {
 	}}
 }
 
-// cgnatRange is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
-// doesn't cover it, yet some clouds host instance metadata there (Alibaba Cloud
-// at 100.100.100.200), so it's an SSRF target web_fetch must refuse too.
-var cgnatRange = mustCIDR("100.64.0.0/10")
-
-func mustCIDR(s string) *net.IPNet {
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
-	}
-	return n
-}
-
 // blockedFetchIP reports whether ip is an address web_fetch must not reach.
 func blockedFetchIP(ip net.IP) bool {
-	return authorizablePrivateFetchIP(ip) || hardBlockedFetchIP(ip)
+	return netclient.IsBlockedAddress(ip, true)
 }
 
 func authorizablePrivateFetchIP(ip net.IP) bool {
-	return ip != nil && ip.IsPrivate() && !ip.IsLoopback()
+	return netclient.IsPrivateAddress(ip)
 }
 
 func hardBlockedFetchIP(ip net.IP) bool {
-	return ip == nil || ip.IsLinkLocalUnicast() || // 169.254.0.0/16 (incl. cloud metadata) + fe80::/10
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || // 0.0.0.0 / ::
-		cgnatRange.Contains(ip) // 100.64.0.0/10 (incl. Alibaba Cloud metadata)
+	return netclient.IsHardBlockedAddress(ip, true)
 }
 
 func (wf webFetch) proxyURLFor(req *http.Request) (string, error) {

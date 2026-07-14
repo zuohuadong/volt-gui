@@ -1025,6 +1025,31 @@ button {
   display: none;
 }
 
+.composer__runtime-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  min-width: 0;
+  padding: 0 14px 5px;
+  color: #7b8798;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.composer__runtime-status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.composer__runtime-status strong {
+  color: #4c5a70;
+  font-size: 10px;
+  font-weight: 720;
+}
+
 .composer__toolbar {
   display: flex;
   align-items: center;
@@ -1344,6 +1369,113 @@ button {
   border-radius: 12px !important;
 }
 
+.first-run-checklist {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid #dfe6ef;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.first-run-checklist > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.first-run-checklist > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.first-run-checklist > header span,
+.first-run-checklist > header p {
+  margin: 0;
+  color: #7b8798;
+  font-size: 11px;
+}
+
+.first-run-checklist > header strong {
+  color: #1f2937;
+  font-size: 15px;
+}
+
+.first-run-checklist ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.first-run-checklist li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e5eaf1;
+  border-radius: 11px;
+  background: #fafbfd;
+}
+
+.first-run-checklist li > i {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #687386;
+  background: #edf1f6;
+  border-radius: 999px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 760;
+}
+
+.first-run-checklist li.done > i {
+  color: #1f7a52;
+  background: #e8f6ef;
+}
+
+.first-run-checklist li > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.first-run-checklist li > span strong,
+.first-run-checklist li > span em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.first-run-checklist li > span strong {
+  color: #293241;
+  font-size: 12px;
+}
+
+.first-run-checklist li > span em {
+  color: #7b8798;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.first-run-checklist li > button {
+  min-height: 28px;
+  padding: 0 9px;
+  color: #425f92;
+  background: #f0f4fa;
+  border: 0;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .composer__submit span {
   display: none;
 }
@@ -1567,6 +1699,10 @@ button {
   .code-layout {
     grid-template-columns: 1fr;
   }
+
+  .first-run-checklist ol {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1583,6 +1719,30 @@ button {
   .composer__tools {
     flex-wrap: wrap;
     width: 100%;
+  }
+
+  .composer__runtime-status {
+    gap: 4px 9px;
+    padding-inline: 12px;
+  }
+
+  .first-run-checklist {
+    padding: 14px;
+  }
+
+  .first-run-checklist > header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .first-run-checklist li {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .first-run-checklist li > button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .decision-shelf > div:first-child,

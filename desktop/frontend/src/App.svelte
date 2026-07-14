@@ -62,7 +62,13 @@
   } from "@lucide/svelte";
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
+  import DataTrustCenter from "./components/DataTrustCenter.svelte";
+  import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
+  import TaskContextBar from "./components/TaskContextBar.svelte";
+  import TaskOutcomeLauncher from "./components/TaskOutcomeLauncher.svelte";
+  import TaskResultReceipt from "./components/TaskResultReceipt.svelte";
   import Transcript from "./components/Transcript.svelte";
+  import UnifiedSidebar from "./components/UnifiedSidebar.svelte";
   import BrowserCredentialSettings from "./components/BrowserCredentialSettings.svelte";
   import BrowserInteractionPrompt from "./components/BrowserInteractionPrompt.svelte";
   import TrustedIntranetSettings from "./components/TrustedIntranetSettings.svelte";
@@ -83,6 +89,45 @@
     modelProviderSummary,
   } from "./lib/model-management";
   import type { ModelProviderFilter } from "./lib/model-management";
+  import {
+    resolveThreadAgentProfile,
+    submitThreadMessageWithAgentProfile,
+    threadAgentCapabilityLabel,
+    withDeadline,
+  } from "./lib/thread-agent-profile";
+  import type { ThreadAgentBindingPatch } from "./lib/thread-agent-profile";
+  import {
+    resolveSubmissionFailureAction,
+    submitThreadMessageWithProjectContext,
+  } from "./lib/thread-runtime-context";
+  import {
+    contextRemainingPercent,
+    firstRunChecklistState,
+    modelContextWindow,
+    modelSwitchImpact,
+  } from "./lib/thread-ux";
+  import {
+    INBOX_PROJECT_ID,
+    LEGACY_SIDEBAR_STORAGE_KEY,
+    OUTCOME_TEMPLATES,
+    WORKBENCH_STATE_STORAGE_KEY,
+    createPendingTaskReceipt,
+    deriveWorkspaceOptions,
+    emptyWorkbenchSnapshot,
+    migrateWorkbenchSnapshot,
+    reconcileProjectTaskNodes,
+    settleTaskReceipt,
+    snapshotFromProjectNodes,
+    upsertSavedWorkspace,
+  } from "./lib/workbench-ia";
+  import type {
+    ProjectTaskNode,
+    TaskOutcomeTemplateID,
+    TaskResultReceipt as TaskResultReceiptView,
+    TaskThread,
+    WorkspaceOption,
+    WorkbenchSnapshotV2,
+  } from "./lib/workbench-ia";
   import type {
     ActivityMode,
     AgentInput,
@@ -99,9 +144,12 @@
     MCPServerInput,
     ProviderView,
     QuestionAnswer,
+    ScopedMemoryInput,
+    ScopedMemoryView,
     SettingsView,
     TabMeta,
     TranscriptItem,
+    TrustCenterView,
     TrustedIntranetSiteView,
     WireApproval,
     WireAsk,
@@ -152,7 +200,8 @@
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
   const MAX_DATA_URL_PROJECT_MATERIAL_BYTES = 25 * 1024 * 1024;
-  type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities";
+  type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities" | "trust" | "scopedMemory";
+  type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings";
   type CodeWorkbenchAction = "conversation" | "overview" | "workspace" | "context" | "changes" | "checkpoints" | "models" | "settings";
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
   type CapabilityTab = "plugin" | "mcp" | "skill";
@@ -166,10 +215,10 @@
   type ArtifactReviewFinding = { id: string; label: string; target: string; status: string; x: number; y: number };
   type ArtifactStyleOption = { id: string; name: string; rationale: string };
   type AgentMarketItem = Pick<AgentView, "id" | "name" | "role" | "runs" | "status" | "desc"> & { category: string; source: string; version: string; tags: string[]; localPath: string };
-  type SidebarConversation = { id: string; title: string; updatedAt: string; updatedAtMs?: number; archivedAtMs?: number; transcript?: TranscriptItem[]; tabId?: string; topicId?: string; sessionPath?: string; scope?: TabMeta["scope"]; workspaceRoot?: string };
-  type SidebarProject = { id: string; name: string; expanded: boolean; conversations: SidebarConversation[]; localPath?: string; updatedAtMs: number };
-  type SidebarStateSnapshot = { version: 1; projects: SidebarProject[]; activeProjectId: string; activeConversationId: string; sort: SidebarProjectSort; dockCollapsed: boolean };
-  type SidebarProjectSort = "recent" | "name" | "conversations";
+  type SidebarConversation = TaskThread;
+  type SidebarProject = ProjectTaskNode;
+  type SidebarStateSnapshot = WorkbenchSnapshotV2;
+  type SidebarProjectSort = "recent" | "name" | "tasks";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "knowledge" | "regulation" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
   type SettingPanel = "general" | "runtime" | "models";
@@ -177,6 +226,7 @@
   type CalendarEventInterval = { event: WorkbenchCalendarEvent; date: string; start: number; end: number };
   type CalendarConflictGroup = { date: string; start: number; end: number; events: WorkbenchCalendarEvent[] };
   type SettingGroup = { id: SettingPanel; title: string; desc: string; status: string };
+  type GovernanceNavItem = { id: GovernanceLayer; label: string; desc: string };
   type TodoPersistenceBindings = {
     ListTodos?: () => Promise<WorkbenchTodo[]>;
     SaveTodo?: (input: WorkbenchTodoInput) => Promise<WorkbenchTodo>;
@@ -252,8 +302,6 @@
     ImportKnowledgeDocument?: (input: KnowledgeDocumentImportInput) => Promise<WorkbenchKnowledgeDocument>;
     DeleteKnowledgeDocument?: (id: string) => Promise<void>;
   };
-  type WorkspaceNavItem = { label: string; layer: WorkLayer; icon: WorkLayer; badge?: string; resourceTab?: ResourceTab };
-  type WorkspaceNavSection = { title: string; items: WorkspaceNavItem[] };
   type AutomationDraft = WorkbenchAutomationInput & { stepsText: string; logsText: string };
   const defaultBrand: BrandInfo = { name: "VoltUI", shortName: "VoltUI" };
   const automationKindOptions = ["验证自动化", "质量门禁", "工程验证", "浏览器验证", "定时巡检", "报告生成", "自定义自动化"];
@@ -328,6 +376,7 @@
   let input = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let context = $state<ContextPanelInfo | undefined>();
+  let contextTabId = $state("");
   let changes = $state<WorkspaceChangesView | undefined>();
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
@@ -345,7 +394,6 @@
   let codeInspectorOpen = $state(false);
   let codeWorkbenchPanel = $state<CodeWorkbenchPanel>("overview");
   let workLayer = $state<WorkLayer>("today");
-  let lastWorkLayer = $state<WorkLayer>("today");
   let capabilityTab = $state<CapabilityTab>("plugin");
   let capabilitySearch = $state("");
   let capabilityTag = $state("");
@@ -371,8 +419,6 @@
   let capabilityImportText = $state("");
   let resourceTab = $state<ResourceTab>("resources");
   let resourceSearch = $state("");
-  let collapsedWorkspaceSections = $state<string[]>([]);
-  let userMenuOpen = $state(false);
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
   let brand = $state<BrandInfo>(defaultBrand);
@@ -380,6 +426,12 @@
   let modelSettingsLoading = $state(false);
   let modelSettingsError = $state("");
   let modelSettingsMessage = $state("");
+  let trustCenterView = $state.raw<TrustCenterView | undefined>();
+  let trustCenterLoading = $state(false);
+  let trustCenterError = $state("");
+  let scopedMemoryView = $state.raw<ScopedMemoryView | undefined>();
+  let scopedMemoryLoading = $state(false);
+  let scopedMemoryError = $state("");
   let modelProviderSearch = $state("");
   let modelProviderFilter = $state<ModelProviderFilter>("all");
   let modelDefaultSelections = $state<Record<string, string>>({});
@@ -415,6 +467,8 @@
   let agentWizardDraftDescription = $state("");
   let agentWizardVibe = $state("");
   let selectedAgentId = $state("");
+  let agentSelectionContextKey = $state("");
+  let agentSelectionDirty = $state(false);
   let selectedCoreFile = $state("SYSTEM.md");
   let configDialog = $state<ConfigDialog | undefined>();
   let configValidationField = $state("");
@@ -459,8 +513,21 @@
   let conversationScrollFrame: number | undefined;
   let sidebarStateHydrated = false;
 
+  const governanceNavItems: GovernanceNavItem[] = [
+    { id: "trust", label: "数据与信任", desc: "去向、存储、外发与诊断" },
+    { id: "scopedMemory", label: "分层记忆", desc: "五层来源与隔离" },
+    { id: "agents", label: "Agent", desc: "运行身份与能力" },
+    { id: "capabilities", label: "能力", desc: "插件、MCP 与 Skill" },
+    { id: "models", label: "模型", desc: "Provider 与默认模型" },
+    { id: "settings", label: "权限", desc: "沙箱与系统设置" },
+  ];
+
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const currentComposerTab = $derived(activeConversationTabId ? tabs.find((tab) => tab.id === activeConversationTabId) ?? activeTab : activeTab);
+  const composerTabId = $derived(currentComposerTab?.id ?? activeTab?.id ?? "");
+  const composerContext = $derived(contextTabId && contextTabId === composerTabId ? context : undefined);
+  const backgroundRunCount = $derived(tabs.filter((tab) => tab.running && tab.id !== composerTabId).length);
+  const contextRemaining = $derived(contextRemainingPercent(contextTabId && contextTabId === activeTab?.id ? context : undefined));
   const composerWorkPermission = $derived(
     hasWailsBindings()
       ? backendToolApprovalModeToComposer(currentComposerTab?.toolApprovalMode)
@@ -480,10 +547,8 @@
   const brandName = $derived(brand.name?.trim() || "VoltUI");
   const brandShortName = $derived(brand.shortName?.trim() || brandName);
   const brandMarkSrc = $derived(brand.logoDataUrl || brand.iconDataUrl || "");
-  const brandWordmarkSrc = $derived(brand.wordmarkDataUrl || "");
   const landing = $derived(activityMode === "code" ? t.home.code : t.home.work);
   const changedCount = $derived(changes?.files.length ?? 0);
-  const contextPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
   const navIcons = {
     today: LayoutDashboard,
     newTask: CirclePlus,
@@ -504,6 +569,8 @@
     sync: RefreshCw,
     ingest: Upload,
     reports: FileText,
+    trust: ShieldCheck,
+    scopedMemory: BrainCircuit,
   } as const;
   const agentIcons = {
     "code-review": ShieldCheck,
@@ -535,26 +602,14 @@
     return workLayerLabels[workLayer];
   }
 
-  const workspaceNav = [
-    { title: "工作处理", items: [{ label: "今日概览", layer: "today", icon: "today" }, { label: "新建任务", layer: "newTask", icon: "newTask" }, { label: "待办事项", layer: "todos", icon: "todos" }, { label: "自动化", layer: "automations", icon: "automations" }] },
-    { title: "业务资料", items: [{ label: "项目管理", layer: "projects", icon: "projects" }, { label: "客户管理", layer: "customers", icon: "customers" }, { label: "资料中心", layer: "resources", icon: "resources", resourceTab: "resources" }, { label: "知识库", layer: "resources", icon: "knowledge", resourceTab: "knowledge" }] },
-    { title: "协作交付", items: [{ label: "团队协作", layer: "teams", icon: "teams" }, { label: "日程日历", layer: "calendar", icon: "calendar" }, { label: "报告中心", layer: "reports", icon: "reports" }] },
-    { title: "Agent 能力", items: [{ label: "Agent 中心", layer: "agents", icon: "agents" }, { label: "能力中心", layer: "capabilities", icon: "capabilities" }] },
-  ] as WorkspaceNavSection[];
-  const codeWorkspaceNav = [
-    { title: "代码工作台", items: [
-      { label: "代码对话", desc: "面向工程问题的 Agent 会话", action: "conversation", icon: "newTask" },
-      { label: "总览", desc: "模型、权限、仓库和变更概况", action: "overview", icon: "today" },
-      { label: "Workspace", desc: "文件树、预览和当前工作区", action: "workspace", icon: "projects" },
-      { label: "上下文窗口", desc: "查看 token、缓存命中和读写文件", action: "context", icon: "reports" },
-      { label: "变更审查", desc: "聚焦 diff、预览和回滚范围", action: "changes", icon: "projects" },
-      { label: "检查点", desc: "按会话或代码范围回退", action: "checkpoints", icon: "automations" },
-    ] },
-    { title: "代码配置", items: [
-      { label: "模型渠道", desc: "选择 coding 模型与 provider", action: "models", icon: "models" },
-      { label: "权限沙箱", desc: "终端、网络和写入边界", action: "settings", icon: "settings" },
-    ] },
-  ] as { title: string; items: { label: string; desc: string; action: CodeWorkbenchAction; icon: WorkLayer }[] }[];
+  const unifiedNavItems = [
+    { id: "today", label: "今日" },
+    { id: "tasks", label: "任务" },
+    { id: "projects", label: "项目" },
+    { id: "deliveries", label: "交付记录" },
+    { id: "automations", label: "自动化" },
+    { id: "knowledge", label: "资料与知识" },
+  ];
   const workLayerLabels: Record<WorkLayer, string> = {
     today: "工作台",
     newTask: "新建对话",
@@ -575,21 +630,9 @@
     sync: "同步中心",
     ingest: "导入资料",
     capabilities: "能力中心",
+    trust: "数据与信任中心",
+    scopedMemory: "分层记忆",
   };
-  const workbenchModeCopy: Record<ActivityMode, { title: string; eyebrow: string; desc: string }> = {
-    work: {
-      title: "Work 工作台",
-      eyebrow: "Projects / Agents / Operations",
-      desc: "面向业务、项目、客户、资料和团队协作，把 Agent 当成可编排的生产力成员。",
-    },
-    code: {
-      title: "Code 工作台",
-      eyebrow: "Code / Diff / Context",
-      desc: "面向研发和代码变更，围绕仓库上下文、diff、检查点、权限和模型选择组织界面。",
-    },
-  };
-  const collapsibleWorkspaceSections = new Set(["业务资料", "协作交付", "Agent 能力"]);
-  const userMenuItems = [{ label: "模型管理", layer: "models" }, { label: "系统设置", layer: "settings" }, { label: "同步中心", layer: "sync" }, { label: "操作记录", layer: "operationLog" }] as { label: string; layer: UserPanelDialog }[];
   let todoItems = $state<WorkbenchTodo[]>([]);
   let todoDraftTitle = $state("");
   let todoDraftProjectId = $state("");
@@ -758,26 +801,31 @@
     { id: "qa-verifier", name: "测试验证 Agent", role: "模板", runs: 0, status: "可安装", category: "质量验证", source: "内置模板", version: "v1.3", desc: "把检查命令、浏览器验证和失败处理整理成复用门禁，适合提交前验证。", tags: ["测试", "构建", "门禁"], localPath: ".volt/agents/qa-verifier.agent.json" },
     { id: "meeting-scheduler", name: "会议纪要 Agent", role: "模板", runs: 0, status: "可安装", category: "协作效率", source: "内置模板", version: "v1.0", desc: "把会议记录压缩为决策、负责人、截止时间和下一次沟通议程。", tags: ["会议", "纪要", "协作"], localPath: ".volt/agents/meeting-scheduler.agent.json" },
   ];
-  const newTaskQuickTasks = $derived(agentCards.slice(0, 3).map((agent) => ({
-    agentId: agent.id,
-    agent: agent.name,
-    title: `使用 ${agent.name}`,
-    prompt: `请根据当前真实项目上下文执行任务，并给出可验证的结果。`,
-  })));
+  let selectedOutcomeTemplateId = $state<TaskOutcomeTemplateID>("review-fix");
+  let activeTaskReceipt = $state<TaskResultReceiptView | undefined>();
+  let taskInspectorPanel = $state<"task" | CodeWorkbenchPanel>("task");
+  let mobileDrawerOpen = $state(false);
   let projectCards = $state<WorkbenchProject[]>([]);
-  let sidebarProjects = $state<SidebarProject[]>([]);
-  let activeSidebarProjectId = $state("");
+  let savedWorkspaces = $state<WorkspaceOption[]>([]);
+  let activeWorkspaceId = $state("");
+  let sidebarProjects = $state<SidebarProject[]>(reconcileProjectTaskNodes([], emptyWorkbenchSnapshot()));
+  let activeSidebarProjectId = $state(INBOX_PROJECT_ID);
   let activeSidebarConversationId = $state("");
-  let sidebarProjectDraft = $state("");
-  let sidebarProjectCreateOpen = $state(false);
   let sidebarProjectDockCollapsed = $state(false);
   let sidebarProjectSort = $state<SidebarProjectSort>("recent");
   let sidebarProjectFolderInput = $state<HTMLInputElement | undefined>();
-  let editingSidebarProjectId = $state("");
-  let sidebarProjectRenameDraft = $state("");
-  let sidebarProjectRenameInput = $state<HTMLInputElement | undefined>();
   let projectMaterialRows = $state<WorkbenchProjectMaterial[]>([]);
   let customerCards = $state<WorkbenchCustomer[]>([]);
+  const firstRunChecklist = $derived.by(() => firstRunChecklistState({
+    providerConfigured: modelProviderSummary(modelSettings?.providers ?? []).configured > 0,
+    workspaceActive: Boolean(activeTab?.workspaceRoot?.trim()),
+    verificationStatus: sidebarProjects.some((project) => project.tasks.some((task) => task.receipt?.sections.verification.status === "ready"))
+      ? "ready"
+      : undefined,
+  }));
+  const workspaceOptions = $derived(deriveWorkspaceOptions(tabs, savedWorkspaces));
+  const activeWorkspace = $derived(workspaceOptions.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaceOptions[0]);
+  const selectedOutcomeTemplate = $derived(OUTCOME_TEMPLATES.find((template) => template.id === selectedOutcomeTemplateId) ?? OUTCOME_TEMPLATES[0]);
   const filteredProjects = $derived(projectCards.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
     const matchSearch = !keyword || [project.name, project.code, project.client, project.owner, project.stage, project.desc, project.category, project.court, project.priority, project.risk, project.agent].some((value) => value.toLowerCase().includes(keyword));
@@ -794,19 +842,19 @@
   const newTaskProjectOptions = $derived([...sidebarProjects]
     .sort((a, b) => {
       if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
-      if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
+      if (sidebarProjectSort === "tasks") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
       return b.updatedAtMs - a.updatedAtMs;
     })
     .map((project) => ({ id: project.id, label: project.name })));
   const sortedSidebarProjects = $derived([...sidebarProjects].sort((a, b) => {
     if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
-    if (sidebarProjectSort === "conversations") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
+    if (sidebarProjectSort === "tasks") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
     return b.updatedAtMs - a.updatedAtMs;
   }));
   const archivedSidebarConversationCount = $derived(sidebarProjects.reduce((sum, project) => sum + archivedSidebarProjectConversations(project).length, 0));
   const activeSidebarConversationTitle = $derived(
     sidebarProjects
-      .flatMap((project) => project.conversations)
+      .flatMap((project) => project.tasks)
       .find((conversation) => conversation.id === activeSidebarConversationId)?.title,
   );
 
@@ -868,6 +916,31 @@
       ? linkedProject || activeTab?.workspaceName || t.common.global
       : activeTab?.workspaceName || t.common.global,
   );
+  const activeUnifiedNavId = $derived.by(() => {
+    if (workLayer === "newTask") return "tasks";
+    if (workLayer === "projects") return "projects";
+    if (workLayer === "reports") return "deliveries";
+    if (workLayer === "automations") return "automations";
+    if (workLayer === "resources" || workLayer === "knowledge") return "knowledge";
+    return "today";
+  });
+  const activeProjectLabel = $derived(activeSidebarProject()?.name || "收件箱项目");
+  const activeAgentLabel = $derived(selectedAgent()?.name || "未配置");
+  const activeModelLabel = $derived(selectedModel || currentComposerTab?.agentProfileBaseModel || "未配置");
+  const activePermissionLabel = $derived(agentPermissionLabel(currentComposerTab?.toolApprovalMode ?? activeTab?.toolApprovalMode));
+  const activeMemoryLabel = $derived.by(() => {
+    const tab = currentComposerTab ?? activeTab;
+    const scopes = tab?.memoryScopes?.map((scope) => scope.trim()).filter(Boolean) ?? [];
+    const sourceCount = tab?.memorySourceIds?.length ?? 0;
+    if (scopes.length > 0 || sourceCount > 0) {
+      return `${scopes.length > 0 ? scopes.join(" / ") : "已注入"} · ${sourceCount} 来源`;
+    }
+    return tab ? "当前无分层记忆" : "待后端确认";
+  });
+  const todayTaskRows = $derived.by(() => sidebarProjects.flatMap((project) => project.tasks
+    .filter((task) => !task.archivedAtMs)
+    .map((task) => ({ projectId: project.id, projectName: project.name, task }))));
+  const pendingDeliveryRows = $derived(todayTaskRows.filter(({ task }) => task.receipt?.state === "pending-review" || task.receipt?.state === "failed"));
   type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; executionReadOnly?: boolean; tags?: string[]; examplePrompts?: string[]; runAs?: string; autoUse?: string; needsFreshData?: boolean; cost?: string; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
   type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
   function emptyCapabilityBuckets(): CapabilityBuckets {
@@ -1030,9 +1103,6 @@
   }
   function brandText(value: string) {
     return value.replace(/VoltUI/g, brandName).replace(/\bVolt\b/g, brandShortName);
-  }
-  function brandInitial() {
-    return Array.from(brandShortName || brandName || "V")[0]?.toUpperCase() || "V";
   }
   async function refreshBrand() {
     if (!hasWailsBindings()) return;
@@ -1661,26 +1731,8 @@
   function resetCalendarMonth() {
     calendarMonthCursor = startOfMonth(new Date());
   }
-  function currentMonthDateForDay(day: number) {
-    const today = new Date();
-    return formatCalendarDate(new Date(today.getFullYear(), today.getMonth(), day));
-  }
-  function isCurrentMonthDayToday(day: number) {
-    return currentMonthDateForDay(day) === formatCalendarDate(new Date());
-  }
-  function calendarEventsForCurrentMonthDay(day: number) {
-    return calendarEvents
-      .filter((event) => calendarEventFullDate(event, startOfMonth(new Date())) === currentMonthDateForDay(day))
-      .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
-  }
   function indexedKey(value: unknown, index: number) {
     return `${String(value ?? "item")}-${index}`;
-  }
-  function workspaceNavItemKey(item: Partial<WorkspaceNavItem>, index: number) {
-    return `${item.layer ?? "nav"}:${item.resourceTab ?? ""}:${item.label ?? ""}:${index}`;
-  }
-  function codeWorkspaceNavItemKey(item: { action?: string; label?: string }, index: number) {
-    return `${item.action ?? "action"}:${item.label ?? ""}:${index}`;
   }
   function openKnowledgeDocument(item: (typeof documentItems)[number]) {
     selectedKnowledgeDocumentId = item.id;
@@ -1954,7 +2006,6 @@
     showWorkbenchNotice(`${agent.name}已${bound ? "绑定到" : "从"}${item.name}${bound ? "" : "解绑"}。`);
   }
   const REQUEST_TIMEOUT_MS = 30_000;
-  const SIDEBAR_STATE_STORAGE_KEY = "volt-gui.sidebar-state.v1";
 
   function emptySettingsDraft(): SettingsDraft {
     return {
@@ -2108,7 +2159,6 @@
   function openSettingsPanel(panel: SettingPanel) {
     settingsPanel = panel;
     userPanelDialog = "settings";
-    userMenuOpen = false;
     settingsMessage = "";
     modelSettingsError = "";
     void ensureSettingsLoaded();
@@ -2436,15 +2486,6 @@
     }
   }
 
-  function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-  }
-
-  function sanitizeTranscriptRole(role: unknown): TranscriptItem["role"] {
-    if (role === "user" || role === "assistant" || role === "system" || role === "tool" || role === "reasoning" || role === "notice") return role;
-    return "notice";
-  }
-
   function stripComposerContextPrefix(value: string) {
     const lines = value.trimStart().split(/\r?\n/);
     let index = 0;
@@ -2452,38 +2493,6 @@
       index += 1;
     }
     return index > 0 ? lines.slice(index).join("\n").trimStart() : value;
-  }
-
-  function sanitizeTranscript(items: unknown): TranscriptItem[] | undefined {
-    if (!Array.isArray(items)) return undefined;
-    return trimTranscriptItems(items
-      .filter(isRecord)
-      .map((item) => {
-        const role = sanitizeTranscriptRole(item.role);
-        const body = typeof item.body === "string" ? item.body : "";
-        return {
-          id: typeof item.id === "string" ? item.id : `persisted-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          role,
-          title: typeof item.title === "string" ? item.title : undefined,
-          body: role === "user" ? stripComposerContextPrefix(body) : body,
-          pending: false,
-          readOnly: Boolean(item.readOnly),
-          parentId: typeof item.parentId === "string" ? item.parentId : undefined,
-          createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : undefined,
-          updatedAtMs: typeof item.updatedAtMs === "number" ? item.updatedAtMs : undefined,
-          durationMs: typeof item.durationMs === "number" ? item.durationMs : undefined,
-          truncated: Boolean(item.truncated),
-          error: typeof item.error === "string" ? item.error : undefined,
-          toolOutput: typeof item.toolOutput === "string" ? item.toolOutput : undefined,
-          toolSubject: typeof item.toolSubject === "string" ? item.toolSubject : undefined,
-          toolSummary: typeof item.toolSummary === "string" ? item.toolSummary : undefined,
-          toolId: typeof item.toolId === "string" ? item.toolId : undefined,
-          archived: Boolean(item.archived),
-          archiveLoading: Boolean(item.archiveLoading),
-          archiveLoaded: Boolean(item.archiveLoaded),
-          archiveLoadError: typeof item.archiveLoadError === "string" ? item.archiveLoadError : undefined,
-        };
-      }));
   }
 
   // A long file scan can emit hundreds of tool events. Keep user and final
@@ -2505,93 +2514,56 @@
     return transcriptHasContent(conversation.transcript);
   }
 
-  function sanitizeSidebarConversation(value: unknown): SidebarConversation | undefined {
-    if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return undefined;
-    const scope = value.scope === "project" || value.scope === "global" ? value.scope : undefined;
-    const transcript = sanitizeTranscript(value.transcript);
-    const title = conversationTitleFromText(value.title);
-    const conversation: SidebarConversation = {
-      id: value.id,
-      title,
-      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "刚刚",
-      updatedAtMs: typeof value.updatedAtMs === "number" ? value.updatedAtMs : latestTranscriptUpdatedAtMs(transcript),
-      archivedAtMs: typeof value.archivedAtMs === "number" ? value.archivedAtMs : undefined,
-      transcript,
-      tabId: typeof value.tabId === "string" ? value.tabId : undefined,
-      topicId: typeof value.topicId === "string" ? value.topicId : undefined,
-      sessionPath: typeof value.sessionPath === "string" ? value.sessionPath : undefined,
-      scope,
-      workspaceRoot: typeof value.workspaceRoot === "string" ? value.workspaceRoot : undefined,
-    };
-    if (/^新对话\s*\d+$/.test(conversation.title) && !sidebarConversationHasContent(conversation)) return undefined;
-    return conversation;
-  }
-
-  function sanitizeSidebarProject(value: unknown): SidebarProject | undefined {
-    if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return undefined;
-    const conversations = Array.isArray(value.conversations)
-      ? value.conversations.map(sanitizeSidebarConversation).filter((item): item is SidebarConversation => Boolean(item))
-      : [];
-    return {
-      id: value.id,
-      name: value.name,
-      expanded: Boolean(value.expanded),
-      conversations,
-      localPath: typeof value.localPath === "string" ? value.localPath : undefined,
-      updatedAtMs: typeof value.updatedAtMs === "number" ? value.updatedAtMs : Date.now(),
-    };
-  }
-
   function pruneEmptyDraftSidebarConversations() {
     let removedActiveConversation = false;
     sidebarProjects = sidebarProjects.map((project) => {
-      const conversations = project.conversations.filter((conversation) => {
+      const tasks = project.tasks.filter((conversation) => {
         const isEmptyDraft = /^新对话\s*\d+$/.test(conversation.title) && !sidebarConversationHasContent(conversation);
         if (isEmptyDraft && conversation.id === activeSidebarConversationId) removedActiveConversation = true;
         return !isEmptyDraft;
       });
-      return conversations.length === project.conversations.length ? project : { ...project, conversations };
+      return tasks.length === project.tasks.length ? project : { ...project, tasks };
     });
     if (removedActiveConversation) activeSidebarConversationId = "";
   }
 
   function persistSidebarState() {
     if (typeof window === "undefined" || !sidebarStateHydrated) return;
-    const snapshot: SidebarStateSnapshot = {
-      version: 1,
-      projects: sidebarProjects,
+    const snapshot: SidebarStateSnapshot = snapshotFromProjectNodes({
+      workspaces: savedWorkspaces,
+      projectNodes: sidebarProjects,
+      activeWorkspaceId,
       activeProjectId: activeSidebarProjectId,
-      activeConversationId: activeSidebarConversationId,
-      sort: sidebarProjectSort,
-      dockCollapsed: sidebarProjectDockCollapsed,
-    };
+      activeTaskId: activeSidebarConversationId,
+      projectSort: sidebarProjectSort,
+      projectDockCollapsed: sidebarProjectDockCollapsed,
+    });
     try {
-      window.localStorage.setItem(SIDEBAR_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+      window.localStorage.setItem(WORKBENCH_STATE_STORAGE_KEY, JSON.stringify(snapshot));
     } catch (error) {
-      console.warn("Failed to persist sidebar conversations", error);
+      console.warn("Failed to persist unified workbench state", error);
     }
   }
 
   function restoreSidebarState() {
     if (typeof window === "undefined") return;
     try {
-      const raw = window.localStorage.getItem(SIDEBAR_STATE_STORAGE_KEY);
+      const raw = window.localStorage.getItem(WORKBENCH_STATE_STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_SIDEBAR_STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as unknown;
-      if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.projects)) return;
-      const projects = parsed.projects.map(sanitizeSidebarProject).filter((item): item is SidebarProject => Boolean(item));
-      if (!projects.length) return;
-      sidebarProjects = projects;
-      activeSidebarProjectId = typeof parsed.activeProjectId === "string" && projects.some((project) => project.id === parsed.activeProjectId) ? parsed.activeProjectId : projects[0].id;
-      const activeProject = projects.find((project) => project.id === activeSidebarProjectId) ?? projects[0];
-      activeSidebarConversationId =
-        typeof parsed.activeConversationId === "string" && activeProject.conversations.some((conversation) => conversation.id === parsed.activeConversationId)
-          ? parsed.activeConversationId
-          : activeProject.conversations[0]?.id ?? "";
-      sidebarProjectSort = parsed.sort === "name" || parsed.sort === "conversations" ? parsed.sort : "recent";
-      sidebarProjectDockCollapsed = Boolean(parsed.dockCollapsed);
+      const snapshot = migrateWorkbenchSnapshot(JSON.parse(raw) as unknown);
+      savedWorkspaces = snapshot.savedWorkspaces;
+      activeWorkspaceId = snapshot.activeWorkspaceId;
+      sidebarProjects = reconcileProjectTaskNodes(
+        snapshot.projectTasks.map((item) => ({ id: item.projectId, name: item.projectId })),
+        snapshot,
+      );
+      activeSidebarProjectId = sidebarProjects.some((project) => project.id === snapshot.activeProjectId) ? snapshot.activeProjectId : INBOX_PROJECT_ID;
+      activeSidebarConversationId = snapshot.activeTaskId;
+      sidebarProjectSort = snapshot.projectSort;
+      sidebarProjectDockCollapsed = snapshot.projectDockCollapsed;
+      window.localStorage.setItem(WORKBENCH_STATE_STORAGE_KEY, JSON.stringify(snapshot));
     } catch (error) {
-      console.warn("Failed to restore sidebar conversations", error);
+      console.warn("Failed to restore unified workbench state", error);
     }
   }
 
@@ -2650,6 +2622,7 @@
     const unsubscribeReady = onWorkspaceReady(() => void refresh());
     return () => {
       window.clearInterval(tick);
+      for (const timer of Object.values(contextPanelRefreshTimers)) window.clearTimeout(timer);
       if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       unsubscribeEvents();
       unsubscribeReady();
@@ -2658,6 +2631,8 @@
   });
 
   $effect(() => {
+    savedWorkspaces;
+    activeWorkspaceId;
     sidebarProjects;
     activeSidebarProjectId;
     activeSidebarConversationId;
@@ -2670,6 +2645,7 @@
   let pendingTextBuffer = "";
   let pendingTextTabId = "";
   let textFlushScheduled = false;
+  const contextPanelRefreshTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
   function currentTranscriptTabId() {
     if (activityMode === "work" && workLayer === "newTask") return activeConversationTabId;
@@ -2691,6 +2667,15 @@
     if (event.kind === "turn_done") {
       tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false } : tab));
     }
+  }
+
+  function scheduleContextPanelRefresh(tabID: string) {
+    const existing = contextPanelRefreshTimers[tabID];
+    if (existing) window.clearTimeout(existing);
+    contextPanelRefreshTimers[tabID] = window.setTimeout(() => {
+      delete contextPanelRefreshTimers[tabID];
+      void refreshContextPanelForTab(tabID);
+    }, 180);
   }
 
   function scrollConversationToBottom(behavior: ScrollBehavior = "smooth") {
@@ -2778,7 +2763,7 @@
     const snapshot = cloneTranscriptItems(transcript);
     sidebarProjects = sidebarProjects.map((project) => {
       if (project.id !== activeSidebarProjectId) return project;
-      const nextConversations = project.conversations.map((conversation) =>
+      const nextConversations = project.tasks.map((conversation) =>
         conversation.id === activeSidebarConversationId
           ? {
               ...conversation,
@@ -2790,7 +2775,7 @@
       return {
         ...project,
         ...(touch ? { updatedAtMs: now } : {}),
-        conversations: nextConversations,
+        tasks: nextConversations,
       };
     });
   }
@@ -2804,7 +2789,7 @@
     if (activityMode !== "work" || workLayer !== "newTask") return;
     if (activeSidebarConversationId) return;
     const now = Date.now();
-    const projectId = activeSidebarProjectId || sidebarProjects[0]?.id || `sidebar-project-${now}`;
+    const projectId = activeSidebarProjectId || INBOX_PROJECT_ID;
     const project = sidebarProjects.find((item) => item.id === projectId);
     const conversation: SidebarConversation = {
       id: `${projectId}-conversation-${now}`,
@@ -2812,16 +2797,17 @@
       updatedAt: "刚刚",
       updatedAtMs: now,
       transcript: welcomeTranscript(),
+      templateId: selectedOutcomeTemplateId,
     };
     if (project) {
       sidebarProjects = sidebarProjects.map((item) =>
         item.id === projectId
-          ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation, ...item.conversations] }
+          ? { ...item, expanded: true, updatedAtMs: now, tasks: [conversation, ...item.tasks] }
           : item,
       );
       syncSidebarProjectContext({ ...project, expanded: true, updatedAtMs: now });
     } else {
-      const fallbackProject: SidebarProject = { id: projectId, name: "未归档任务", updatedAtMs: now, expanded: true, conversations: [conversation] };
+      const fallbackProject: SidebarProject = { id: INBOX_PROJECT_ID, name: "收件箱项目", kind: "inbox", updatedAtMs: now, expanded: true, tasks: [conversation] };
       sidebarProjects = [fallbackProject, ...sidebarProjects];
       syncSidebarProjectContext(fallbackProject);
     }
@@ -2834,7 +2820,7 @@
   }
 
   function sidebarConversation(projectId: string, conversationId: string) {
-    return activeSidebarProject(projectId)?.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
+    return activeSidebarProject(projectId)?.tasks.find((item) => item.id === conversationId && !item.archivedAtMs);
   }
 
   function isPlaceholderWorkspacePath(path: string) {
@@ -2842,14 +2828,10 @@
     return normalized.startsWith("e:\\workspace\\") || normalized.startsWith("c:\\users\\1\\documents\\");
   }
 
-  function sidebarProjectThreadTarget(project?: SidebarProject) {
-    const projectRoot = project?.localPath?.trim() || "";
+  function sidebarProjectThreadTarget(_project?: SidebarProject) {
+    const selectedRoot = activeWorkspace?.root?.trim() || "";
     const activeRoot = activeTab?.workspaceRoot?.trim() || activeTab?.cwd?.trim() || "";
-    const canUseActiveRoot =
-      Boolean(activeRoot) &&
-      activeTab?.scope === "project" &&
-      (!project || project.id === selectedProjectId || project.name === activeTab.workspaceName || projectRoot === activeRoot);
-    const workspaceRoot = projectRoot && !isPlaceholderWorkspacePath(projectRoot) ? projectRoot : canUseActiveRoot ? activeRoot : "";
+    const workspaceRoot = selectedRoot && !isPlaceholderWorkspacePath(selectedRoot) ? selectedRoot : activeRoot;
     if (workspaceRoot) return { scope: "project" as const, workspaceRoot };
     return { scope: "global" as const, workspaceRoot: "" };
   }
@@ -2862,7 +2844,7 @@
       return {
         ...project,
         ...(touch ? { updatedAtMs: now } : {}),
-        conversations: project.conversations.map((conversation) =>
+        tasks: project.tasks.map((conversation) =>
           conversation.id === conversationId
             ? {
                 ...conversation,
@@ -2884,7 +2866,7 @@
       if (project.id !== projectId) return project;
       return {
         ...project,
-        conversations: project.conversations.map((conversation) =>
+        tasks: project.tasks.map((conversation) =>
           conversation.id === conversationId
             ? {
                 ...conversation,
@@ -2906,6 +2888,8 @@
   }
 
   async function syncActiveTabMeta(meta: TabMeta) {
+    context = undefined;
+    contextTabId = "";
     tabs = tabs.map((tab) => ({ ...tab, active: tab.id === meta.id }));
     if (!tabs.some((tab) => tab.id === meta.id)) {
       tabs = [{ ...meta, active: true }, ...tabs.map((tab) => ({ ...tab, active: false }))];
@@ -2915,12 +2899,15 @@
     } catch {
       // Keep the returned tab meta when the list refresh races with Wails startup.
     }
+    syncActiveWorkspaceSelection();
     try {
       models = await app().ModelsForTab(meta.id);
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
     } catch {
       // The controller may still be starting; refresh() will hydrate models later.
     }
+    await refreshContextPanelForTab(meta.id, true);
+    syncSelectedAgentFromTab(tabs.find((tab) => tab.id === meta.id) ?? meta);
   }
 
   async function createBackendConversationThread(project: SidebarProject | undefined, title: string) {
@@ -2974,7 +2961,7 @@
   async function ensureConversationThreadForSend(text: string): Promise<TabMeta | undefined> {
     if (activityMode !== "work" || workLayer !== "newTask") return activeTab;
     const now = Date.now();
-    const projectId = activeSidebarProjectId || sidebarProjects[0]?.id || `sidebar-project-${now}`;
+    const projectId = activeSidebarProjectId || INBOX_PROJECT_ID;
     let project = activeSidebarProject(projectId);
     let conversation = activeSidebarConversationId ? sidebarConversation(projectId, activeSidebarConversationId) : undefined;
     let createdConversation = false;
@@ -2985,20 +2972,24 @@
         updatedAt: "刚刚",
         updatedAtMs: now,
         transcript: welcomeTranscript(),
+        templateId: selectedOutcomeTemplateId,
       };
       createdConversation = true;
       if (project) {
         sidebarProjects = sidebarProjects.map((item) =>
           item.id === projectId
-            ? { ...item, expanded: true, updatedAtMs: now, conversations: [conversation!, ...item.conversations] }
+            ? { ...item, expanded: true, updatedAtMs: now, tasks: [conversation!, ...item.tasks] }
             : item,
         );
         project = { ...project, expanded: true, updatedAtMs: now };
         syncSidebarProjectContext(project);
       } else {
-        project = { id: projectId, name: "未归档任务", updatedAtMs: now, expanded: true, conversations: [conversation] };
+        project = { id: INBOX_PROJECT_ID, name: "收件箱项目", kind: "inbox", updatedAtMs: now, expanded: true, tasks: [conversation] };
         sidebarProjects = [project, ...sidebarProjects];
         syncSidebarProjectContext(project);
+      }
+      if (agentSelectionContextKey === `work:${projectId}:draft`) {
+        agentSelectionContextKey = `work:${projectId}:${conversation.id}`;
       }
       activeSidebarConversationId = conversation.id;
     }
@@ -3040,47 +3031,33 @@
   function openWorkLayer(layer: WorkLayer) {
     activityMode = "work";
     workLayer = layer;
-    lastWorkLayer = layer;
     if (layer === "newTask") newTaskConversationActive = false;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
-    userMenuOpen = false;
     agentSelectorOpen = false;
     if (layer === "settings" || layer === "models") void ensureSettingsLoaded();
   }
 
-  function openWorkWorkspace() {
-    openWorkLayer(lastWorkLayer || "today");
-  }
-
-  function rememberWorkLayerBeforeCode() {
-    if (activityMode !== "work") return;
-    lastWorkLayer = workLayer;
-  }
   function openResourceCenterFromComposer() {
     openWorkLayer("resources");
     resourceTab = "resources";
   }
   function openCodeConversation() {
-    rememberWorkLayerBeforeCode();
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = true;
     codeWorkbenchPanel = "overview";
     codeInspectorOpen = false;
     sidebarCollapsed = false;
-    userMenuOpen = false;
   }
 
   function openCodeWorkbench(panel: CodeWorkbenchPanel = "overview") {
-    rememberWorkLayerBeforeCode();
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = false;
     codeWorkbenchPanel = panel;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
-    userMenuOpen = false;
     void tick().then(() => {
       if (hasWailsBindings()) void refreshCodeDock();
     });
@@ -3088,22 +3065,18 @@
 
   function openCodeWorkbenchAction(action: CodeWorkbenchAction) {
     if (action === "models") {
-      rememberWorkLayerBeforeCode();
       activityMode = "code";
       workLayer = "newTask";
       newTaskConversationActive = false;
       codeWorkbenchPanel = "overview";
       settingsPanel = "models";
       userPanelDialog = "settings";
-      userMenuOpen = false;
       void ensureSettingsLoaded();
       return;
     }
     if (action === "settings") {
-      rememberWorkLayerBeforeCode();
       settingsPanel = "runtime";
       userPanelDialog = "settings";
-      userMenuOpen = false;
       activityMode = "code";
       workLayer = "newTask";
       newTaskConversationActive = false;
@@ -3121,54 +3094,12 @@
     if (action === "context") openCodeWorkbench("context");
     if (action === "changes") openCodeWorkbench("changes");
     if (action === "checkpoints") openCodeWorkbench("checkpoints");
-    if (action === "workspace") showWorkbenchNotice("已切到 Code 工作台的 Workspace，可查看文件树、预览和当前工作区。");
-    if (action === "context") showWorkbenchNotice("已切到 Code 工作台的上下文窗口，可查看 token、缓存和读写文件。");
-    if (action === "changes") showWorkbenchNotice("已切到 Code 工作台的变更审查，可查看 diff、文件预览和回滚范围。");
-    if (action === "checkpoints") showWorkbenchNotice("已切到 Code 工作台的检查点视图，可按会话或代码范围回退。");
+    if (action === "workspace") showWorkbenchNotice("已打开当前 Task 的 Workspace 检查器，可查看文件树、预览和工作区。");
+    if (action === "context") showWorkbenchNotice("已打开当前 Task 的 Context 检查器，可查看 token、缓存和读写文件。");
+    if (action === "changes") showWorkbenchNotice("已打开当前 Task 的 Diff 检查器，可查看变更、文件预览和回滚范围。");
+    if (action === "checkpoints") showWorkbenchNotice("已打开当前 Task 的 Checkpoints，可按会话或代码范围回退。");
   }
 
-  function isCodeWorkspaceActionActive(action: CodeWorkbenchAction) {
-    if (activityMode !== "code") return false;
-    if (action === "conversation") return newTaskConversationActive;
-    if (action === "overview") return !newTaskConversationActive && codeWorkbenchPanel === "overview";
-    if (action === "workspace") return !newTaskConversationActive && codeWorkbenchPanel === "workspace";
-    if (action === "context") return !newTaskConversationActive && codeWorkbenchPanel === "context";
-    if (action === "changes") return !newTaskConversationActive && codeWorkbenchPanel === "changes";
-    if (action === "checkpoints") return !newTaskConversationActive && codeWorkbenchPanel === "checkpoints";
-    if (action === "models") return userPanelDialog === "settings" && settingsPanel === "models";
-    if (action === "settings") return userPanelDialog === "settings" && settingsPanel === "runtime";
-    return false;
-  }
-
-  function openWorkspaceNavLayer(layer: WorkLayer) {
-    if (layer === "newTask") {
-      startNewConversation();
-      return;
-    }
-    openWorkLayer(layer);
-  }
-  function isWorkspaceNavItemActive(item: WorkspaceNavItem) {
-    if (activityMode !== "work" || workLayer !== item.layer) return false;
-    return !item.resourceTab || resourceTab === item.resourceTab;
-  }
-  function openWorkspaceNavItem(item: WorkspaceNavItem) {
-    if (item.resourceTab) resourceTab = item.resourceTab;
-    openWorkspaceNavLayer(item.layer);
-    if (item.resourceTab === "knowledge") void refreshKnowledgeBase();
-    if (item.resourceTab === "search") void runWorkbenchSearch(resourceSearch);
-  }
-  function openUserPanelDialog(layer: UserPanelDialog) {
-    userMenuOpen = false;
-    if (layer === "models") {
-      openWorkLayer("models");
-      return;
-    }
-    if (layer === "settings") {
-      settingsPanel = "general";
-      void ensureSettingsLoaded();
-    }
-    userPanelDialog = layer;
-  }
   function userPanelDialogTitle() {
     if (userPanelDialog === "models") return "模型管理";
     if (userPanelDialog === "settings") return "系统设置";
@@ -3183,7 +3114,7 @@
     if (userPanelDialog === "operationLog") return "对标 AORISTLAWER 操作记录：保留关键动作、对象、用户和结果。";
     return "用户中心弹窗。";
   }
-  function focusNewTask(projectId = activeSidebarProjectId, conversationId = "") {
+  function focusNewTask(projectId = activeSidebarProjectId || INBOX_PROJECT_ID, conversationId = "") {
     saveActiveSidebarConversationTranscript({ touch: false });
     const project = projectId ? activeSidebarProject(projectId) : undefined;
     if (project) syncSidebarProjectContext(project);
@@ -3192,7 +3123,6 @@
     newTaskConversationActive = false;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
-    userMenuOpen = false;
     agentSelectorOpen = false;
     configDialog = undefined;
     projectDetailOpen = false;
@@ -3202,59 +3132,30 @@
     agentMarketOpen = false;
     activeSidebarConversationId = conversationId;
     activeConversationTabId = "";
+    activeTaskReceipt = conversationId && project ? sidebarConversation(project.id, conversationId)?.receipt : undefined;
+    agentSelectionContextKey = `work:${(project?.id ?? projectId) || "global"}:${conversationId || "draft"}`;
+    agentSelectionDirty = Boolean(selectedAgentId);
     clearConversationRuntime();
     transcript = welcomeTranscript();
-    input = "";
+    input = conversationId ? "" : selectedOutcomeTemplate.prompt;
     void tick().then(focusComposer);
   }
   function syncSidebarProjectContext(project: SidebarProject) {
     activeSidebarProjectId = project.id;
     const linked = projectCards.find((item) => item.id === project.id || item.name === project.name);
     selectedProjectId = linked?.id ?? "";
-    linkedProject = linked?.name ?? project.name;
-  }
-  function sidebarProjectSortLabel() {
-    if (sidebarProjectSort === "name") return "名称";
-    if (sidebarProjectSort === "conversations") return "对话";
-    return "最近";
-  }
-  function isWorkspaceSectionCollapsed(title: string) {
-    return collapsedWorkspaceSections.includes(title);
-  }
-  function toggleWorkspaceSection(title: string) {
-    if (!collapsibleWorkspaceSections.has(title)) return;
-    collapsedWorkspaceSections = isWorkspaceSectionCollapsed(title)
-      ? collapsedWorkspaceSections.filter((item) => item !== title)
-      : [...collapsedWorkspaceSections, title];
-  }
-  function cycleSidebarProjectSort() {
-    sidebarProjectSort = sidebarProjectSort === "recent" ? "name" : sidebarProjectSort === "name" ? "conversations" : "recent";
+    linkedProject = linked?.name ?? (project.kind === "inbox" ? "收件箱项目" : project.name);
   }
   function pathBasename(path: string) {
     const trimmed = path.trim().replace(/[\\/]+$/, "");
-    return trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed || "新项目";
+    return trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed || "新 Workspace";
   }
-  function addSidebarProjectFromPath(path: string, fallbackName = "") {
+  function addWorkspaceFromPath(path: string, fallbackName = "") {
     const cleanPath = path.trim();
     const name = fallbackName.trim() || pathBasename(cleanPath);
-    if (!name) return;
-    const existing = sidebarProjects.find((item) => item.localPath === cleanPath || item.name === name);
-    const now = Date.now();
-    if (existing) {
-      sidebarProjects = sidebarProjects.map((item) => item.id === existing.id ? { ...item, expanded: true, localPath: item.localPath || cleanPath, updatedAtMs: now } : item);
-      sidebarProjectDockCollapsed = false;
-      activeSidebarConversationId = "";
-      syncSidebarProjectContext({ ...existing, expanded: true, localPath: existing.localPath || cleanPath, updatedAtMs: now });
-      return;
-    }
-    const id = `sidebar-project-${now}`;
-    const project: SidebarProject = { id, name, localPath: cleanPath || name, updatedAtMs: now, expanded: true, conversations: [] };
-    sidebarProjects = [project, ...sidebarProjects];
-    sidebarProjectDockCollapsed = false;
-    sidebarProjectCreateOpen = false;
-    sidebarProjectDraft = "";
-    activeSidebarConversationId = "";
-    syncSidebarProjectContext(project);
+    if (!cleanPath || !name) return;
+    savedWorkspaces = upsertSavedWorkspace(savedWorkspaces, cleanPath, name);
+    activeWorkspaceId = `folder:${cleanPath}`;
   }
   function handleSidebarProjectFolderInput(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -3262,7 +3163,7 @@
     if (!firstFile) return;
     const relativePath = firstFile.webkitRelativePath || firstFile.name;
     const rootName = relativePath.split("/").filter(Boolean)[0] || firstFile.name;
-    addSidebarProjectFromPath(firstFile.path || rootName, rootName);
+    addWorkspaceFromPath(firstFile.path || rootName, rootName);
     input.value = "";
   }
   async function chooseSidebarProjectFolder() {
@@ -3270,8 +3171,10 @@
       try {
         const picked = await app().PickWorkspace();
         if (picked) {
-          addSidebarProjectFromPath(picked);
-          await refresh();
+          addWorkspaceFromPath(picked);
+          const meta = await app().OpenProjectTab(picked, "");
+          await syncActiveTabMeta(meta);
+          activeWorkspaceId = `tab:${meta.id}`;
           return;
         }
       } catch {
@@ -3284,7 +3187,189 @@
       sidebarProjectFolderInput.click();
       return;
     }
-    sidebarProjectCreateOpen = true;
+    showWorkbenchNotice("浏览器预览无法读取真实目录，请在 Wails 桌面环境选择 Workspace。");
+  }
+  async function selectWorkspace(workspaceId: string) {
+    const workspace = workspaceOptions.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    activeWorkspaceId = workspace.id;
+    if (!hasWailsBindings()) return;
+    try {
+      if (workspace.tabId) {
+        await app().SetActiveTab(workspace.tabId);
+        tabs = await app().ListTabs();
+      } else {
+        const meta = await app().OpenProjectTab(workspace.root, "");
+        await syncActiveTabMeta(meta);
+        activeWorkspaceId = `tab:${meta.id}`;
+      }
+      const tab = tabs.find((item) => item.active) ?? tabs[0];
+      if (tab) await refreshCodeDock(tab);
+    } catch (error) {
+      showWorkbenchNotice(`切换 Workspace 失败：${formatErrorMessage(error)}`);
+    }
+  }
+  function openUnifiedNav(navId: string) {
+    activityMode = "work";
+    if (navId === "tasks") focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
+    else if (navId === "projects") openWorkLayer("projects");
+    else if (navId === "deliveries") openWorkLayer("reports");
+    else if (navId === "automations") openWorkLayer("automations");
+    else if (navId === "knowledge") {
+      resourceTab = "resources";
+      openWorkLayer("resources");
+    } else openWorkLayer("today");
+  }
+
+  function isGovernanceLayer(layer: WorkLayer): layer is GovernanceLayer {
+    return governanceNavItems.some((item) => item.id === layer);
+  }
+
+  function governanceTargetTab() {
+    return currentComposerTab ?? activeTab;
+  }
+
+  async function refreshDataTrustCenter() {
+    const tab = governanceTargetTab();
+    if (!hasWailsBindings() || !tab) {
+      trustCenterView = undefined;
+      trustCenterError = tab ? "" : "请先打开一个真实 Thread。";
+      return;
+    }
+    const tabID = tab.id;
+    trustCenterLoading = true;
+    trustCenterError = "";
+    try {
+      const next = await app().DataTrustCenterForTab(tabID);
+      if (governanceTargetTab()?.id === tabID) trustCenterView = next;
+    } catch (error) {
+      trustCenterError = formatErrorMessage(error);
+    } finally {
+      trustCenterLoading = false;
+    }
+  }
+
+  async function refreshScopedMemory() {
+    const tab = governanceTargetTab();
+    if (!hasWailsBindings() || !tab) {
+      scopedMemoryView = undefined;
+      scopedMemoryError = tab ? "" : "请先打开一个真实 Thread。";
+      return;
+    }
+    const tabID = tab.id;
+    scopedMemoryLoading = true;
+    scopedMemoryError = "";
+    try {
+      const next = await app().ScopedMemoryForTab(tabID);
+      if (governanceTargetTab()?.id === tabID) scopedMemoryView = next;
+    } catch (error) {
+      scopedMemoryError = formatErrorMessage(error);
+    } finally {
+      scopedMemoryLoading = false;
+    }
+  }
+
+  async function saveScopedMemory(input: ScopedMemoryInput) {
+    const tab = governanceTargetTab();
+    if (!tab) throw new Error("当前没有可写入的 Thread。");
+    let operationError: unknown;
+    try {
+      await app().SaveScopedMemoryForTab(tab.id, input);
+    } catch (error) {
+      operationError = error;
+    } finally {
+      await refreshScopedMemory();
+      await refreshDataTrustCenter();
+    }
+    if (operationError) throw operationError;
+  }
+
+  async function setScopedMemoryIsolation(entryID: string, isolated: boolean) {
+    const tab = governanceTargetTab();
+    if (!tab) throw new Error("当前没有可更新的 Thread。");
+    let operationError: unknown;
+    try {
+      await app().SetScopedMemoryIsolationForTab(tab.id, entryID, isolated);
+    } catch (error) {
+      operationError = error;
+    } finally {
+      await refreshScopedMemory();
+      await refreshDataTrustCenter();
+    }
+    if (operationError) throw operationError;
+  }
+
+  async function deleteScopedMemory(entryID: string) {
+    const tab = governanceTargetTab();
+    if (!tab) throw new Error("当前没有可更新的 Thread。");
+    let operationError: unknown;
+    try {
+      await app().DeleteScopedMemoryForTab(tab.id, entryID);
+    } catch (error) {
+      operationError = error;
+    } finally {
+      await refreshScopedMemory();
+      await refreshDataTrustCenter();
+    }
+    if (operationError) throw operationError;
+  }
+
+  function openGovernanceLayer(layer: GovernanceLayer) {
+    openWorkLayer(layer);
+    if (layer === "trust") void refreshDataTrustCenter();
+    if (layer === "scopedMemory") void refreshScopedMemory();
+    if (layer === "agents") void refreshAgents();
+    if (layer === "capabilities") void refreshCapabilities();
+    if (layer === "models" || layer === "settings") void ensureSettingsLoaded();
+  }
+
+  function openGovernanceCenter() {
+    activityMode = "work";
+    openGovernanceLayer("trust");
+  }
+  function selectOutcomeTemplate(templateId: TaskOutcomeTemplateID) {
+    selectedOutcomeTemplateId = templateId;
+    const template = OUTCOME_TEMPLATES.find((item) => item.id === templateId);
+    if (template) input = template.prompt;
+    activeTaskReceipt = undefined;
+    void tick().then(focusComposer);
+  }
+  function startOutcomeTask(templateId: TaskOutcomeTemplateID) {
+    openUnifiedNav("tasks");
+    selectOutcomeTemplate(templateId);
+  }
+  function openFirstRunWorkspace() {
+    if (firstRunChecklist.workspaceActive) {
+      openCodeWorkbench("workspace");
+      return;
+    }
+    void chooseSidebarProjectFolder();
+  }
+  function openFirstRunVerification() {
+    if (firstRunChecklist.verifiedTaskComplete) {
+      openUnifiedNav("deliveries");
+      return;
+    }
+    startOutcomeTask("review-fix");
+  }
+  function openTaskInspector(panel: string) {
+    if (panel === "task") {
+      taskInspectorPanel = "task";
+      activityMode = "work";
+      workLayer = "newTask";
+      return;
+    }
+    if (panel === "workspace" || panel === "context" || panel === "changes" || panel === "checkpoints") {
+      taskInspectorPanel = panel;
+      activityMode = "code";
+      codeWorkbenchPanel = panel;
+      newTaskConversationActive = false;
+    }
+  }
+  function syncActiveWorkspaceSelection() {
+    const options = deriveWorkspaceOptions(tabs, savedWorkspaces);
+    if (options.some((workspace) => workspace.id === activeWorkspaceId)) return;
+    activeWorkspaceId = options.find((workspace) => workspace.active)?.id ?? options[0]?.id ?? "";
   }
   function openSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
@@ -3306,43 +3391,6 @@
     syncSidebarProjectContext(project);
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: !item.expanded } : item);
   }
-  function createSidebarProject() {
-    const name = sidebarProjectDraft.trim();
-    if (!name) return;
-    const now = Date.now();
-    const id = `sidebar-project-${now}`;
-    const project: SidebarProject = { id, name, updatedAtMs: now, expanded: true, conversations: [] };
-    sidebarProjects = [project, ...sidebarProjects];
-    sidebarProjectDraft = "";
-    sidebarProjectCreateOpen = false;
-    sidebarProjectDockCollapsed = false;
-    activeSidebarConversationId = "";
-    syncSidebarProjectContext(project);
-  }
-  function startRenameSidebarProjectTask(project: SidebarProject) {
-    editingSidebarProjectId = project.id;
-    sidebarProjectRenameDraft = project.name;
-    void tick().then(() => {
-      sidebarProjectRenameInput?.focus();
-      sidebarProjectRenameInput?.select();
-    });
-  }
-  function cancelRenameSidebarProjectTask() {
-    editingSidebarProjectId = "";
-    sidebarProjectRenameDraft = "";
-  }
-  function saveSidebarProjectTaskName(projectId: string) {
-    const name = sidebarProjectRenameDraft.trim();
-    if (!name) {
-      cancelRenameSidebarProjectTask();
-      return;
-    }
-    const now = Date.now();
-    sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, name, updatedAtMs: now } : item);
-    if (activeSidebarProjectId === projectId) linkedProject = name;
-    cancelRenameSidebarProjectTask();
-  }
-
   function renameConversationForFirstMessage(projectId: string, conversationId: string, text: string) {
     const title = conversationTitleFromText(text);
     const now = Date.now();
@@ -3351,7 +3399,7 @@
       return {
         ...project,
         updatedAtMs: now,
-        conversations: project.conversations.map((conversation) => {
+        tasks: project.tasks.map((conversation) => {
           if (conversation.id !== conversationId) return conversation;
           const isDefaultTitle = /^新对话\s+\d+$/.test(conversation.title);
           return isDefaultTitle ? { ...conversation, title, updatedAt: "刚刚", updatedAtMs: now } : { ...conversation, updatedAt: "刚刚", updatedAtMs: now };
@@ -3364,16 +3412,17 @@
     saveActiveSidebarConversationTranscript({ touch: false });
     const project = sidebarProjects.find((item) => item.id === projectId);
     if (!project) return;
-    const conversation = project.conversations.find((item) => item.id === conversationId && !item.archivedAtMs);
+    const conversation = project.tasks.find((item) => item.id === conversationId && !item.archivedAtMs);
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     activeConversationTabId = conversation?.tabId ?? "";
+    activeTaskReceipt = conversation?.receipt;
+    if (conversation?.templateId) selectedOutcomeTemplateId = conversation.templateId;
     activityMode = "work";
     workLayer = "newTask";
     newTaskConversationActive = true;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
-    userMenuOpen = false;
     agentSelectorOpen = false;
     configDialog = undefined;
     projectDetailOpen = false;
@@ -3381,6 +3430,10 @@
     capabilityCreateOpen = false;
     agentWizardOpen = false;
     agentMarketOpen = false;
+    agentSelectionContextKey = `work:${projectId}:${conversationId}`;
+    agentSelectionDirty = false;
+    const knownTab = conversation?.tabId ? tabs.find((tab) => tab.id === conversation.tabId) : undefined;
+    if (knownTab) syncSelectedAgentFromTab(knownTab);
     clearConversationRuntime();
     transcript = conversation?.transcript?.length ? cloneTranscriptItems(conversation.transcript) : welcomeTranscript();
     if (conversation) {
@@ -3398,10 +3451,10 @@
     void tick().then(focusComposer);
   }
   function sidebarProjectConversations(project: SidebarProject) {
-    return project.conversations.filter((conversation) => !conversation.archivedAtMs);
+    return project.tasks.filter((conversation) => !conversation.archivedAtMs);
   }
   function archivedSidebarProjectConversations(project: SidebarProject) {
-    return project.conversations.filter((conversation) => conversation.archivedAtMs);
+    return project.tasks.filter((conversation) => conversation.archivedAtMs);
   }
   function clearActiveSidebarConversation(conversationId: string) {
     if (activeSidebarConversationId === conversationId) activeSidebarConversationId = "";
@@ -3410,14 +3463,14 @@
     const now = Date.now();
     clearActiveSidebarConversation(conversationId);
     sidebarProjects = sidebarProjects.map((project) => project.id === projectId
-      ? { ...project, updatedAtMs: now, conversations: project.conversations.map((conversation) => conversation.id === conversationId ? { ...conversation, archivedAtMs: now, updatedAt: "已归档", updatedAtMs: now } : conversation) }
+      ? { ...project, updatedAtMs: now, tasks: project.tasks.map((conversation) => conversation.id === conversationId ? { ...conversation, archivedAtMs: now, updatedAt: "已归档", updatedAtMs: now } : conversation) }
       : project);
   }
   function deleteSidebarConversation(projectId: string, conversationId: string) {
     const now = Date.now();
     clearActiveSidebarConversation(conversationId);
     sidebarProjects = sidebarProjects.map((project) => project.id === projectId
-      ? { ...project, updatedAtMs: now, conversations: project.conversations.filter((conversation) => conversation.id !== conversationId) }
+      ? { ...project, updatedAtMs: now, tasks: project.tasks.filter((conversation) => conversation.id !== conversationId) }
       : project);
   }
   function createSidebarConversation(projectId: string) {
@@ -3426,27 +3479,6 @@
     if (!project) return;
     focusNewTask(project.id);
   }
-  function startNewConversation(projectId = activeSidebarProjectId || sidebarProjects[0]?.id || "") {
-    pruneEmptyDraftSidebarConversations();
-    const project = projectId ? activeSidebarProject(projectId) : undefined;
-    focusNewTask(project?.id ?? projectId);
-    if (!hasWailsBindings()) return;
-    const token = draftConversationToken + 1;
-    draftConversationToken = token;
-    draftConversationThreadRequest = createBackendConversationThread(project, "新的会话")
-      .then(async (meta) => {
-        if (token !== draftConversationToken) return undefined;
-        draftConversationThread = meta;
-        activeConversationTabId = meta.id;
-        await syncActiveTabMeta(meta);
-        return meta;
-      })
-      .catch((error) => {
-        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", title: "新对话失败", body: formatErrorMessage(error) });
-        return undefined;
-      });
-  }
-
   async function openUnifiedCodeTask() {
     openCodeWorkbench("overview");
     await tick();
@@ -3831,7 +3863,38 @@
       }));
     return rows.filter((row, index, list) => list.findIndex((item) => item.id === row.id) === index);
   }
-  function selectedAgent() { return agentCards.find((agent) => agent.id === selectedAgentId) ?? agentCards[0]; }
+  function selectedAgent() { return resolveThreadAgentProfile(agentCards, selectedAgentId); }
+  function threadAgentSelectionContext(tab = currentComposerTab) {
+    if (activityMode === "work" && workLayer === "newTask") {
+      return `work:${activeSidebarProjectId || "global"}:${activeSidebarConversationId || "draft"}`;
+    }
+    return `tab:${tab?.id ?? ""}`;
+  }
+  function syncSelectedAgentFromTab(tab: TabMeta) {
+    const contextKey = threadAgentSelectionContext(tab);
+    if (agentSelectionDirty && agentSelectionContextKey === contextKey) return;
+    const boundProfileID = tab.agentProfileId?.trim() ?? "";
+    selectedAgentId = resolveThreadAgentProfile(agentCards, boundProfileID)?.id ?? "";
+    agentSelectionContextKey = contextKey;
+    agentSelectionDirty = Boolean(selectedAgentId && selectedAgentId !== boundProfileID);
+  }
+  function updateTabAgentBinding(tabID: string, patch: ThreadAgentBindingPatch) {
+    tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, ...patch } : tab);
+    selectedAgentId = patch.agentProfileId || agentCards[0]?.id || "";
+    agentSelectionContextKey = threadAgentSelectionContext(tabs.find((tab) => tab.id === tabID));
+    agentSelectionDirty = Boolean(selectedAgentId && selectedAgentId !== patch.agentProfileId);
+  }
+  function agentProfileModelLabel(agent: AgentView) {
+    const provider = agent.provider?.trim();
+    const model = agent.model?.trim();
+    if (provider && model) return `${provider} / ${model}`;
+    return model || provider || "继承 Thread 当前模型";
+  }
+  function agentPermissionLabel(mode?: string) {
+    if (mode === "yolo") return "完全访问";
+    if (mode === "auto") return "自动批准";
+    return "逐项确认";
+  }
   function selectedTeamRoom() { return teamRooms.find((team) => team.title === selectedTeamTitle) ?? teamRooms[0]; }
   function teamMembers(team = selectedTeamRoom()) { return (team?.memberIds ?? []).map((id) => agentCards.find((agent) => agent.id === id)).filter(Boolean) as typeof agentCards; }
   function teamLeaderId(team = selectedTeamRoom()) { return team?.leaderId || team?.memberIds?.[0] || ""; }
@@ -4079,12 +4142,17 @@
       showWorkbenchNotice("保存协作组失败，请稍后重试。");
     }
   }
-  function selectAgentForTask(agentId: string) { selectedAgentId = agentId; agentSelectorOpen = false; }
+  function selectAgentForTask(agentId: string) {
+    selectedAgentId = agentId;
+    agentSelectionContextKey = threadAgentSelectionContext();
+    agentSelectionDirty = true;
+    agentSelectorOpen = false;
+  }
   function linkProjectById(projectId: string) {
     if (!projectId) {
       selectedProjectId = "";
-      linkedProject = "";
-      activeSidebarProjectId = "";
+      linkedProject = "收件箱项目";
+      activeSidebarProjectId = INBOX_PROJECT_ID;
       return;
     }
     const sidebarProject = sidebarProjects.find((item) => item.id === projectId);
@@ -4098,7 +4166,6 @@
   }
   function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); input = `关联项目：${projectName}\n`; void tick().then(focusComposer); }
   function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; input = `关联客户：${customerName}\n`; focusNewTask(); }
-  function useNewTaskPrompt(task: (typeof newTaskQuickTasks)[number]) { selectedAgentId = task.agentId; input = task.prompt; void tick().then(focusComposer); }
   function resetTodoDraft() {
     todoDraftTitle = "";
     todoDraftProjectId = defaultTodoProjectId();
@@ -4268,21 +4335,23 @@
   }
   function syncSidebarProjectFromWorkbench(project: WorkbenchProject) {
     const now = Date.now();
-    const existing = sidebarProjects.find((item) => item.id === project.id || item.name === project.name);
-    if (existing) {
-      sidebarProjects = sidebarProjects.map((item) =>
-        item.id === existing.id
-          ? { ...item, id: project.id || item.id, name: project.name, expanded: true, updatedAtMs: now }
-          : item,
-      );
-      activeSidebarConversationId = "";
-      syncSidebarProjectContext({ ...existing, id: project.id || existing.id, name: project.name, expanded: true, updatedAtMs: now });
-      return;
-    }
-    const sidebarProject: SidebarProject = { id: project.id, name: project.name, updatedAtMs: now, expanded: true, conversations: [] };
-    sidebarProjects = [sidebarProject, ...sidebarProjects];
+    const projectIdentities = projectCards.some((item) => item.id === project.id)
+      ? projectCards
+      : [project, ...projectCards];
+    const state = snapshotFromProjectNodes({
+      workspaces: savedWorkspaces,
+      projectNodes: sidebarProjects,
+      activeWorkspaceId,
+      activeProjectId: activeSidebarProjectId,
+      activeTaskId: activeSidebarConversationId,
+      projectSort: sidebarProjectSort,
+      projectDockCollapsed: sidebarProjectDockCollapsed,
+    });
+    sidebarProjects = reconcileProjectTaskNodes(projectIdentities, state)
+      .map((item) => item.id === project.id ? { ...item, expanded: true, updatedAtMs: now } : item);
     activeSidebarConversationId = "";
-    syncSidebarProjectContext(sidebarProject);
+    const sidebarProject = sidebarProjects.find((item) => item.id === project.id);
+    if (sidebarProject) syncSidebarProjectContext(sidebarProject);
   }
   function projectPersistenceInput(project: WorkbenchProject, status: "active" | "closed"): WorkbenchProjectInput {
     return {
@@ -4338,8 +4407,18 @@
     try {
       await deleteProjectBinding(project.id);
       const remainingProjects = projectCards.filter((item) => item.id !== project.id);
+      const state = snapshotFromProjectNodes({
+        workspaces: savedWorkspaces,
+        projectNodes: sidebarProjects,
+        activeWorkspaceId,
+        activeProjectId: activeSidebarProjectId,
+        activeTaskId: activeSidebarConversationId,
+        projectSort: sidebarProjectSort,
+        projectDockCollapsed: sidebarProjectDockCollapsed,
+      });
       projectCards = remainingProjects;
-      sidebarProjects = sidebarProjects.filter((item) => item.id !== project.id);
+      sidebarProjects = reconcileProjectTaskNodes(remainingProjects, state);
+      if (activeSidebarProjectId === project.id) activeSidebarProjectId = INBOX_PROJECT_ID;
       if (selectedProjectId === project.id) {
         selectedProjectId = remainingProjects[0]?.id ?? "";
         projectDetailOpen = false;
@@ -4957,7 +5036,6 @@
   function usesGenericConfigDialog(kind: ConfigDialog | undefined) {
     return Boolean(kind && kind !== "customer" && kind !== "regulation" && kind !== "schedule");
   }
-  function formatRuntime(startedAtMs: number) { const m = Math.max(1, Math.floor((nowMs - startedAtMs) / 60000)); const h = Math.floor(m / 60); return h ? `${h} 小时 ${m % 60} 分钟` : `${m} 分钟`; }
   function automationDialogTitle() {
     return automationDialogMode === "create" ? "新建自动化任务" : automationDraft.title || "编辑自动化任务";
   }
@@ -5101,8 +5179,11 @@
     try {
       const agents = await app().ListAgents();
       agentCards = Array.isArray(agents) ? agents : [];
-      if (!agentCards.some((agent) => agent.id === selectedAgentId)) {
-        selectedAgentId = agentCards[0]?.id ?? "";
+      const resolvedAgentID = resolveThreadAgentProfile(agentCards, selectedAgentId)?.id ?? "";
+      if (resolvedAgentID !== selectedAgentId) {
+        selectedAgentId = resolvedAgentID;
+        const appliedProfileID = currentComposerTab?.agentProfileId?.trim() ?? "";
+        agentSelectionDirty = Boolean(agentSelectionContextKey && resolvedAgentID !== appliedProfileID);
       }
       downloadedMarketAgentIds = agentMarketItems.filter((item) => agentCards.some((agent) => agent.id === item.id)).map((item) => item.id);
     } catch (error) {
@@ -5125,11 +5206,17 @@
     try {
       const projects = await projectApi.ListWorkbenchProjects();
       projectCards = Array.isArray(projects) ? projects : [];
-      const now = Date.now();
-      const missingSidebarProjects = projectCards
-        .filter((project) => !sidebarProjects.some((item) => item.id === project.id || item.name === project.name))
-        .map((project) => ({ id: project.id, name: project.name, updatedAtMs: now, expanded: false, conversations: [] as SidebarConversation[] }));
-      if (missingSidebarProjects.length) sidebarProjects = [...sidebarProjects, ...missingSidebarProjects];
+      const state = snapshotFromProjectNodes({
+        workspaces: savedWorkspaces,
+        projectNodes: sidebarProjects,
+        activeWorkspaceId,
+        activeProjectId: activeSidebarProjectId,
+        activeTaskId: activeSidebarConversationId,
+        projectSort: sidebarProjectSort,
+        projectDockCollapsed: sidebarProjectDockCollapsed,
+      });
+      sidebarProjects = reconcileProjectTaskNodes(projectCards, state);
+      if (!sidebarProjects.some((project) => project.id === activeSidebarProjectId)) activeSidebarProjectId = INBOX_PROJECT_ID;
       if (selectedProjectId && !projectCards.some((project) => project.id === selectedProjectId)) selectedProjectId = projectCards[0]?.id ?? "";
     } catch (error) {
       console.error("Failed to load projects", error);
@@ -6052,6 +6139,10 @@
 
   function handleEvent(event: WireEvent) {
     updateEventTabRunning(event);
+    if (event.kind === "usage" || event.kind === "turn_done") {
+      const targetTabID = event.tabId || composerTabId;
+      if (targetTabID) scheduleContextPanelRefresh(targetTabID);
+    }
     if (!shouldDisplayWireEvent(event)) return;
     if (event.kind === "turn_started") {
       sending = true;
@@ -6205,6 +6296,7 @@
       }
       restoreDraftOnTurnDone = false;
       submittedDraft = undefined;
+      settleActiveTaskReceipt(event.err);
       saveActiveSidebarConversationTranscript();
       scrollConversationToBottom();
     }
@@ -6215,12 +6307,15 @@
     try {
       await settleRefreshStep("brand", refreshBrand());
       tabs = await settleRefreshStep("tabs", app().ListTabs()) ?? tabs;
+      syncActiveWorkspaceSelection();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
       models = active ? await settleRefreshStep("models", app().ModelsForTab(active.id)) ?? models : [];
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
       commands = await settleRefreshStep("commands", app().Commands()) ?? commands;
       await settleRefreshStep("model settings", refreshModelSettings());
       await settleRefreshStep("agents", refreshAgents());
+      const refreshedActiveTab = tabs.find((tab) => tab.active) ?? tabs[0];
+      if (refreshedActiveTab) syncSelectedAgentFromTab(refreshedActiveTab);
       await settleRefreshStep("projects", refreshProjects());
       await settleRefreshStep("project materials", refreshProjectMaterials());
       await settleRefreshStep("todos", refreshTodos());
@@ -6242,16 +6337,66 @@
   }
 
 
+  async function refreshContextPanelForTab(tabID: string, activate = false) {
+    const nextContext = await settleRefreshStep("context panel", app().ContextPanel(tabID));
+    if (nextContext && (activate || composerTabId === tabID || activeTab?.id === tabID)) {
+      context = nextContext;
+      contextTabId = tabID;
+    }
+    return nextContext;
+  }
+
   async function refreshCodeDock(tab = activeTab) {
     if (!tab) return;
-    const [nextContext, nextChanges, nextCheckpoints] = await Promise.all([
-      settleRefreshStep("context panel", app().ContextPanel(tab.id)),
+    const [, nextChanges, nextCheckpoints] = await Promise.all([
+      refreshContextPanelForTab(tab.id, true),
       settleRefreshStep("workspace changes", app().WorkspaceChanges([tab.id])),
       settleRefreshStep("checkpoints", app().CheckpointsForTab(tab.id)),
     ]);
-    if (nextContext) context = nextContext;
     if (nextChanges) changes = nextChanges;
     if (nextCheckpoints) checkpoints = nextCheckpoints;
+  }
+
+  function persistActiveTaskReceipt(receipt: TaskResultReceiptView | undefined) {
+    activeTaskReceipt = receipt;
+    if (!activeSidebarConversationId) return;
+    sidebarProjects = sidebarProjects.map((project) => project.id !== activeSidebarProjectId
+      ? project
+      : {
+          ...project,
+          tasks: project.tasks.map((task) => task.id === activeSidebarConversationId
+            ? { ...task, templateId: selectedOutcomeTemplateId, receipt }
+            : task),
+        });
+  }
+
+  function activateTaskReceipt(display: string, profile: AgentView | undefined) {
+    if (activityMode !== "work" || workLayer !== "newTask" || !activeSidebarConversationId) return;
+    const existing = sidebarConversation(activeSidebarProjectId, activeSidebarConversationId)?.receipt;
+    if (existing?.state === "running") {
+      persistActiveTaskReceipt(existing);
+      return;
+    }
+    const runtime = [
+      `Workspace: ${activeWorkspace?.root || "未选择"}`,
+      `Project: ${activeProjectLabel}`,
+      `Agent Profile: ${profile?.name || "未配置"}`,
+      `Model: ${activeModelLabel}`,
+      `Permission: ${activePermissionLabel}`,
+      `Memory: ${activeMemoryLabel}`,
+    ];
+    persistActiveTaskReceipt(createPendingTaskReceipt({
+      id: `receipt-${activeSidebarConversationId}-${Date.now()}`,
+      taskId: activeSidebarConversationId,
+      templateId: selectedOutcomeTemplateId,
+      goal: `${selectedOutcomeTemplate.title}：${conversationTitleFromText(display)}`,
+      runtime,
+    }));
+  }
+
+  function settleActiveTaskReceipt(error?: string) {
+    if (!activeTaskReceipt) return;
+    persistActiveTaskReceipt(settleTaskReceipt(activeTaskReceipt, { error }));
   }
 
   async function send(displayText?: string, submitText?: string) {
@@ -6269,6 +6414,7 @@
       focusComposer();
       return;
     }
+    const submissionProjectID = activeSidebarProjectId || INBOX_PROJECT_ID;
     if (activityMode === "work" && workLayer === "newTask") newTaskConversationActive = true;
     if (activityMode === "code") {
       newTaskConversationActive = true;
@@ -6283,14 +6429,59 @@
     input = "";
     appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
     ensurePendingAssistant();
+    let backendSubmissionStarted = false;
     try {
       const targetTab = await ensureConversationThreadForSend(text);
       if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
       activeConversationTabId = targetTab.id;
-      await withTimeout(
-        app().SubmitDisplayToTab(targetTab.id, text, submission),
-        "请求超时：30 秒内未收到桌面后端响应，请稍后重试或重启桌面 dev 窗口。",
-      );
+      const selectedProfile = resolveThreadAgentProfile(agentCards, selectedAgentId);
+      if (!selectedProfile && selectedAgentId) throw new Error("所选 Agent Profile 已不可用，请重新选择后发送。");
+      if (selectedProfile && selectedProfile.id !== selectedAgentId) {
+        selectedAgentId = selectedProfile.id;
+        agentSelectionDirty = true;
+      }
+      await submitThreadMessageWithProjectContext({
+        tab: tabs.find((tab) => tab.id === targetTab.id) ?? targetTab,
+        projectId: submissionProjectID,
+        scopedMemoryForTab: (tabID) => withDeadline(
+          app().ScopedMemoryForTab(tabID),
+          "分层记忆上下文读取超时，消息尚未提交。",
+          REQUEST_TIMEOUT_MS,
+        ),
+        setMemoryContextForTab: (tabID, memoryContext) => withDeadline(
+          app().SetMemoryContextForTab(tabID, memoryContext),
+          "Project 记忆上下文应用超时，消息尚未提交。",
+          REQUEST_TIMEOUT_MS,
+        ),
+        listTabs: async () => {
+          const nextTabs = await withDeadline(app().ListTabs(), "Thread 状态刷新超时，消息尚未提交。", REQUEST_TIMEOUT_MS);
+          tabs = nextTabs;
+          return nextTabs;
+        },
+        submit: (runtimeTab) => submitThreadMessageWithAgentProfile({
+          tab: runtimeTab,
+          profile: selectedProfile,
+          display: text,
+          submission,
+          setAgentProfileForTab: (tabID, profileID) => withDeadline(
+            app().SetAgentProfileForTab(tabID, profileID),
+            "Agent Profile 应用超时，请稍后重试。",
+            REQUEST_TIMEOUT_MS,
+          ),
+          submitDisplayToTab: (tabID, display, input) => {
+            activateTaskReceipt(display, selectedProfile);
+            backendSubmissionStarted = true;
+            return withDeadline(
+              app().SubmitDisplayToTab(tabID, display, input),
+              "请求超时：30 秒内未收到桌面后端响应，请稍后重试或重启桌面 dev 窗口。",
+              REQUEST_TIMEOUT_MS,
+            );
+          },
+          onBound: (patch) => updateTabAgentBinding(runtimeTab.id, patch),
+        }),
+      });
+      agentSelectionContextKey = threadAgentSelectionContext(tabs.find((tab) => tab.id === targetTab.id) ?? targetTab);
+      agentSelectionDirty = false;
     } catch (error) {
       const message = formatErrorMessage(error);
       input = "";
@@ -6314,14 +6505,34 @@
         appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: "上一轮对话仍在运行，这条消息尚未提交给模型。已恢复到输入框；如果超过 2 分钟仍无回复，请点击停止后重新发送。" });
         return;
       }
-      if (isCancellationError(message)) {
+      const failureAction = resolveSubmissionFailureAction({
+        backendSubmissionStarted,
+        cancelled: isCancellationError(message),
+      });
+      if (failureAction === "cancel-submitted") {
         removeTranscriptItem(userTranscriptId);
         removeEmptyPendingAssistant();
         sending = false;
         return;
       }
+      if (failureAction === "restore-draft") {
+        removeTranscriptItem(userTranscriptId);
+        removeEmptyPendingAssistant();
+        input = draft.display;
+        sending = false;
+        agentSelectionDirty = true;
+        appendTranscript({
+          id: `runtime-context-${Date.now()}`,
+          role: "notice",
+          title: "消息尚未提交",
+          body: `${message}。消息尚未提交，草稿已恢复；Project、Memory 与 Agent Profile 会在下次发送前重新确认。`,
+        });
+        void tick().then(focusComposer);
+        return;
+      }
       removeEmptyPendingAssistant();
       sending = false;
+      settleActiveTaskReceipt(message);
       finishTurnWithError(message);
     }
   }
@@ -6387,21 +6598,40 @@
   }
 
   async function switchModel(event: Event) {
-    const next = (event.currentTarget as HTMLSelectElement).value;
+    const select = event.currentTarget as HTMLSelectElement;
+    const next = select.value;
+    const current = selectedModel || modelValue(models.find((model) => model.current)) || modelValue(models[0]);
     if (!hasWailsBindings()) {
+      select.value = current;
       desktopBackendUnavailable("切换模型");
       return;
     }
-    selectedModel = next;
     const tabID = currentComposerTab?.id || activeTab?.id;
-    if (!tabID || !next) return;
-    await app().SetModelForTab(tabID, next);
+    if (!tabID || !next) {
+      select.value = current;
+      return;
+    }
+
+    const targetWindow = modelContextWindow(next, modelSettings?.providers ?? []);
+    const currentContext = contextTabId === tabID ? context : await refreshContextPanelForTab(tabID, true);
+    const impact = modelSwitchImpact(currentContext?.usedTokens, targetWindow);
+    if (impact.requiresConfirmation && typeof window !== "undefined" && !window.confirm(impact.message)) {
+      select.value = current;
+      selectedModel = current;
+      return;
+    }
+
     try {
+      await app().SetModelForTab(tabID, next);
       tabs = await app().ListTabs();
       models = await app().ModelsForTab(tabID);
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]) || next;
-    } catch {
-      // The optimistic selectedModel is still valid; the next refresh will hydrate metadata.
+      select.value = selectedModel;
+      await refreshContextPanelForTab(tabID, true);
+    } catch (error) {
+      select.value = current;
+      selectedModel = current;
+      showWorkbenchNotice(`模型切换失败：${formatErrorMessage(error)}`);
     }
   }
 
@@ -6511,6 +6741,20 @@
       body: t.transcript.rewound.replace("{turn}", String(turn)).replace("{scope}", scope),
     });
   }
+
+  async function forkThread(turn: number) {
+    const meta = await app().Fork(turn);
+    activeConversationTabId = meta.id;
+    await syncActiveTabMeta(meta);
+    await hydrateHistory(meta);
+    await refreshCodeDock(meta);
+    appendTranscript({
+      id: `fork-${Date.now()}`,
+      role: "notice",
+      title: "Thread fork",
+      body: `已从第 ${turn} 轮创建新的 Thread，并切换到分支会话。`,
+    });
+  }
 </script>
 <svelte:head>
   <title>{brandText(t.app.title)}</title>
@@ -6527,111 +6771,35 @@
   <div class="boot-screen">{t.app.loading}</div>
 {:else}
   <main class={["shell", sidebarCollapsed && "is-sidebar-collapsed"]} data-mode={activityMode}>
-    <aside class="sidebar sidebar--aorist">
-      <header class="sidebar__brand"><div class="brand-mark">{#if brandMarkSrc}<img src={brandMarkSrc} alt="" />{:else}<span>{brandInitial()}</span>{/if}</div><div class="brand-copy">{#if brandWordmarkSrc}<img class="brand-wordmark" src={brandWordmarkSrc} alt={brandName} />{:else}<strong>{brandName}</strong>{/if}<span>{brandText(workbenchModeCopy[activityMode].eyebrow)}</span></div><div class="brand-workspace-switch" role="group" aria-label="切换工作台"><button class="brand-workbench-button" class:active={activityMode === "work"} type="button" aria-label="Work 工作台" title="Work 工作台" onclick={openWorkWorkspace}><BriefcaseBusiness size={15} /></button><button class="brand-code-button" class:active={activityMode === "code"} type="button" aria-label="Code 工作台" title="Code 工作台" onclick={() => void openUnifiedCodeTask()}><Code2 size={15} /></button></div><button class="sidebar__icon" type="button" aria-label={t.home.sidebar} onclick={() => (sidebarCollapsed = !sidebarCollapsed)}><PanelLeft size={17} /></button></header>
-      <nav class="workspace-nav" aria-label="工作台导航">
-        {#if activityMode === "code"}
-          <section class="code-repo-dock" aria-label="当前代码工作区">
-            <span>Repository</span>
-            <strong>{activeTab?.workspaceName || t.common.global}</strong>
-            <p>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"} / {context ? `${contextPercent}% context` : "context 未加载"}</p>
-          </section>
-          {#each codeWorkspaceNav as section, sectionIndex (indexedKey(section.title, sectionIndex))}
-            <section class="code-workspace-nav-section">
-              <h2>{section.title}</h2>
-              {#each section.items as item, itemIndex (codeWorkspaceNavItemKey(item, itemIndex))}
-                {@const Icon = navIcon(item.icon)}
-                <button class="code-workspace-nav-item" class:active={isCodeWorkspaceActionActive(item.action)} type="button" onclick={() => openCodeWorkbenchAction(item.action)}>
-                  <span class="nav-icon"><Icon size={15} /></span>
-                  <span><strong>{item.label}</strong><em>{item.desc}</em></span>
-                </button>
-              {/each}
-            </section>
-          {/each}
-        {:else}
-          {#each workspaceNav as section, sectionIndex (indexedKey(section.title, sectionIndex))}
-            {@const sectionCollapsed = isWorkspaceSectionCollapsed(section.title)}
-            {@const sectionCollapsible = collapsibleWorkspaceSections.has(section.title)}
-            <section>
-              {#if sectionCollapsible}
-                <button class="workspace-nav-section-head" class:collapsed={sectionCollapsed} type="button" aria-expanded={!sectionCollapsed} onclick={() => toggleWorkspaceSection(section.title)}>
-                  <ChevronDown size={12} />
-                  <span>{section.title}</span>
-                </button>
-              {:else}
-                <h2>{section.title}</h2>
-              {/if}
-              {#if !sectionCollapsed}
-                {#each section.items as item, itemIndex (workspaceNavItemKey(item, itemIndex))}
-                  {@const Icon = navIcon(item.icon)}
-                  <button class:active={isWorkspaceNavItemActive(item)} type="button" onclick={() => openWorkspaceNavItem(item)}>
-                    <span class="nav-icon"><Icon size={15} /></span>
-                    <span>{item.label}</span>
-                    {#if item.badge}<em>{item.badge}</em>{/if}
-                  </button>
-                {/each}
-              {/if}
-            </section>
-          {/each}
-        {/if}
-        {#if activityMode === "work"}
-        <section class="sidebar-project-dock" data-sidebar-project-dock>
-          <div class="sidebar-project-head">
-            <button class="sidebar-project-section-toggle" class:expanded={!sidebarProjectDockCollapsed} type="button" aria-label={sidebarProjectDockCollapsed ? "展开项目" : "收起项目"} aria-expanded={!sidebarProjectDockCollapsed} onclick={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}><ChevronDown size={13} /></button>
-            <h2>项目</h2>
-            <button class="sidebar-project-sort" type="button" aria-label={`项目排序：${sidebarProjectSortLabel()}`} onclick={cycleSidebarProjectSort}><List size={12} /><span>{sidebarProjectSortLabel()}</span></button>
-            <button class="sidebar-project-icon" type="button" aria-label="选择本地项目文件夹" onclick={() => void chooseSidebarProjectFolder()}><Plus size={13} /></button>
-          </div>
-          <input bind:this={sidebarProjectFolderInput} class="sidebar-project-folder-input" type="file" multiple tabindex="-1" aria-hidden="true" onchange={handleSidebarProjectFolderInput} />
-          {#if sidebarProjectCreateOpen && !sidebarProjectDockCollapsed}
-            <form class="sidebar-project-create" onsubmit={(event) => { event.preventDefault(); createSidebarProject(); }}>
-              <Folder size={14} />
-              <input bind:value={sidebarProjectDraft} aria-label="项目名称" placeholder="项目名称" onkeydown={(event) => { if (event.key === "Escape") { sidebarProjectDraft = ""; sidebarProjectCreateOpen = false; } }} />
-              <button type="submit" aria-label="确认创建项目"><Check size={13} /></button>
-            </form>
-          {/if}
-          {#if !sidebarProjectDockCollapsed}
-          <div class="sidebar-project-list" data-sidebar-project-sort={sidebarProjectSort}>
-            {#each sortedSidebarProjects as project (project.id)}
-              <div class="sidebar-project-group" data-sidebar-project={project.id}>
-                <div class="sidebar-project-row" class:active={activeSidebarProjectId === project.id}>
-                  <button class="sidebar-project-disclosure" class:expanded={project.expanded} type="button" aria-label={project.expanded ? `收起 ${project.name}` : `展开 ${project.name}`} aria-expanded={project.expanded} onclick={() => toggleSidebarProject(project.id)}><ChevronDown size={13} /></button>
-                  {#if editingSidebarProjectId === project.id}
-                    <form class="sidebar-project-open sidebar-project-inline-rename" onsubmit={(event) => { event.preventDefault(); saveSidebarProjectTaskName(project.id); }}>
-                      <Folder size={15} />
-                      <input bind:this={sidebarProjectRenameInput} bind:value={sidebarProjectRenameDraft} aria-label={`修改 ${project.name} 任务名称`} placeholder="任务名称" onblur={() => saveSidebarProjectTaskName(project.id)} onkeydown={(event) => { if (event.key === "Escape") cancelRenameSidebarProjectTask(); }} />
-                    </form>
-                  {:else}
-                    <button class="sidebar-project-open" type="button" title={project.name} onclick={() => openSidebarProject(project.id)}><Folder size={15} /><span class="sidebar-project-label"><strong>{project.name}</strong></span></button>
-                  {/if}
-                  <button class="sidebar-project-rename" type="button" data-sidebar-rename-task aria-label={`修改 ${project.name} 任务名称`} title="修改任务名称" onclick={() => startRenameSidebarProjectTask(project)}><Pencil size={12} /></button>
-                  <button class="sidebar-project-action" type="button" data-sidebar-new-conversation aria-label={`在 ${project.name} 下新建对话`} onclick={() => createSidebarConversation(project.id)}><Plus size={13} /></button>
-                </div>
-                {#if project.expanded}
-                  <div class="sidebar-conversation-list">
-                    {#each sidebarProjectConversations(project) as conversation (conversation.id)}
-                      <div class="sidebar-conversation-row" class:active={activeSidebarConversationId === conversation.id} data-sidebar-conversation={conversation.id}>
-                        <button class="sidebar-conversation-open" type="button" title={conversation.title} onclick={() => openSidebarConversation(project.id, conversation.id)}>
-                          <span>{conversation.title}</span>
-                          <em>{sidebarConversationTimeLabel(conversation)}</em>
-                        </button>
-                        <button class="sidebar-conversation-action" type="button" aria-label={`归档 ${conversation.title}`} title="归档" onclick={() => archiveSidebarConversation(project.id, conversation.id)}><Archive size={12} /></button>
-                        <button class="sidebar-conversation-action danger" type="button" aria-label={`删除 ${conversation.title}`} title="删除" onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={12} /></button>
-                      </div>
-                    {:else}
-                      <button class="sidebar-conversation-empty" type="button" onclick={() => createSidebarConversation(project.id)}>新建对话 <Plus size={12} /></button>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          </div>
-          {/if}
-        </section>
-        {/if}
-      </nav>
-      <footer class="sidebar__user-wrap">{#if userMenuOpen}<div class="user-menu" role="menu">{#each userMenuItems as item (item.layer)}<button type="button" role="menuitem" onclick={() => openUserPanelDialog(item.layer)}>{item.label}</button>{/each}</div>{/if}<button class="sidebar__user sidebar__profile" type="button" aria-label="打开用户菜单" title="用户菜单" onclick={() => (userMenuOpen = !userMenuOpen)}><span class="sidebar__avatar"><UserRound size={16} /></span><strong>用户名</strong><em hidden aria-hidden="true"></em></button></footer>
-    </aside>
+    <UnifiedSidebar
+      {brandName}
+      {brandMarkSrc}
+      workspaces={workspaceOptions}
+      {activeWorkspaceId}
+      projects={sortedSidebarProjects}
+      activeProjectId={activeSidebarProjectId}
+      activeTaskId={activeSidebarConversationId}
+      navItems={unifiedNavItems}
+      activeNavId={activeUnifiedNavId}
+      drawerOpen={mobileDrawerOpen}
+      collapsed={sidebarCollapsed}
+      projectDockCollapsed={sidebarProjectDockCollapsed}
+      onWorkspaceChange={(workspaceId) => void selectWorkspace(workspaceId)}
+      onChooseWorkspace={() => void chooseSidebarProjectFolder()}
+      onNav={openUnifiedNav}
+      onProjectToggle={toggleSidebarProject}
+      onProjectOpen={openSidebarProject}
+      onTaskOpen={openSidebarConversation}
+      onTaskCreate={createSidebarConversation}
+      onTaskArchive={archiveSidebarConversation}
+      onTaskDelete={deleteSidebarConversation}
+      onProjectDockToggle={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}
+      onDrawerClose={() => (mobileDrawerOpen = false)}
+      onCollapseToggle={() => (sidebarCollapsed = !sidebarCollapsed)}
+      onGovernance={openGovernanceCenter}
+      taskTimeLabel={sidebarConversationTimeLabel}
+    />
+    <input bind:this={sidebarProjectFolderInput} class="sidebar-project-folder-input" type="file" multiple tabindex="-1" aria-hidden="true" onchange={handleSidebarProjectFolderInput} />
 
     <section class="stage" class:stage--conversation={showActiveTranscript}>
       <div class="window-drag-region" aria-hidden="true"></div>
@@ -6650,6 +6818,19 @@
                 代码状态
               </button>
             </header>
+            <div class="task-context-wrap">
+              <TaskContextBar
+                workspace={activeWorkspace?.name || "未选择 Workspace"}
+                project={activeProjectLabel}
+                agent={activeAgentLabel}
+                model={activeModelLabel}
+                permission={activePermissionLabel}
+                memory={activeMemoryLabel}
+                activeInspector={taskInspectorPanel}
+                onOpenDrawer={() => (mobileDrawerOpen = true)}
+                onInspector={openTaskInspector}
+              />
+            </div>
             <div class="conversation" bind:this={conversationScrollEl}>
               <Transcript
                 items={transcript}
@@ -6662,6 +6843,7 @@
                 onDismissAsk={() => (pendingAsk = undefined)}
                 onLoadArchivedTool={loadArchivedToolEvidence}
               />
+              {#if activeTaskReceipt}<TaskResultReceipt receipt={activeTaskReceipt} />{/if}
               {#if pendingBrowserCredential || pendingBrowserVerification}
                 {#key pendingBrowserCredential?.id ?? pendingBrowserVerification?.id}
                   <BrowserInteractionPrompt
@@ -6696,13 +6878,35 @@
                 onWorkPermissionChange={setComposerWorkPermission}
                 onOpenResources={openResourceCenterFromComposer}
                 {activityMode}
+                contextInfo={composerContext}
+                {backgroundRunCount}
               />
             </div>
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined}>
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{brandText(workbenchModeCopy[activityMode].eyebrow)}</span><strong>{activityMode === "code" ? "Code 工作台" : currentWorkLayerLabel()}</strong></div><p>{activityMode === "code" ? "面向研发用户的代码上下文、diff、检查点和执行权限控制台。" : workbenchModeCopy.work.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> 代码状态</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
+            <div class="task-context-wrap workbench-context-wrap">
+              <TaskContextBar
+                workspace={activeWorkspace?.name || "未选择 Workspace"}
+                project={activeProjectLabel}
+                agent={activeAgentLabel}
+                model={activeModelLabel}
+                permission={activePermissionLabel}
+                memory={activeMemoryLabel}
+                activeInspector={taskInspectorPanel}
+                onOpenDrawer={() => (mobileDrawerOpen = true)}
+                onInspector={openTaskInspector}
+              />
+            </div>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>Workspace / Project / Task</span><strong>{activityMode === "code" ? "任务检查器" : currentWorkLayerLabel()}</strong></div><p>{activityMode === "code" ? "当前 Task 的 Workspace、Context、Diff 与 Checkpoints。" : "以业务 Project 组织任务，以可验证结果作为交付出口。"}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> Workspace</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
             {#if workbenchNotice}<div class="workbench-notice" data-testid="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
+            {#if activityMode === "work" && isGovernanceLayer(workLayer)}
+              <nav class="governance-tabs" data-testid="governance-center" aria-label="配置与治理分类">
+                {#each governanceNavItems as item (item.id)}
+                  <button class:active={workLayer === item.id} type="button" aria-pressed={workLayer === item.id} onclick={() => openGovernanceLayer(item.id)}><strong>{item.label}</strong><span>{item.desc}</span></button>
+                {/each}
+              </nav>
+            {/if}
             {#if activityMode === "work" && workLayer === "reports"}
               {@const activeReport = selectedReport()}
               {@const activeStyle = selectedArtifactStyle()}
@@ -6836,11 +7040,11 @@
             {#if activityMode === "code"}
               <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
                 <div class="code-workbench-shell">
-                  <section class="code-workbench-hero" aria-label="Code 工作台总览">
+                  <section class="code-workbench-hero" aria-label="Task 检查器总览">
                     <div>
-                      <span>Code Agent Workspace</span>
-                      <strong>面向研发的代码工作台</strong>
-                      <p>把会话、仓库上下文、变更预览、检查点和模型权限放在同一个工程界面里；Work 工作台继续服务项目、客户和团队协作。</p>
+                      <span>Task Engineering Inspector</span>
+                      <strong>当前任务的工程检查器</strong>
+                      <p>把 Workspace、Context、Diff、Checkpoints 和模型权限放在当前 Task 内，不再形成第二套顶层工作台。</p>
                     </div>
                     <div class="code-workbench-actions">
                       <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={15} /> 开始代码对话</button>
@@ -6849,7 +7053,7 @@
                     </div>
                   </section>
 
-                  <div class="code-workbench-status-grid" aria-label="Code 工作台状态">
+                  <div class="code-workbench-status-grid" aria-label="Task 工程状态">
                     <button type="button" onclick={() => openCodeWorkbenchAction("models")}>
                       <BrainCircuit size={16} />
                       <span><strong>{selectedModel || modelSettings?.defaultModel || agentModel}</strong><em>{modelSettings ? `${modelProviderSummary(modelSettings.providers).configured}/${modelSettings.providers.length} 个渠道已配置` : "模型渠道未连接桌面后端"}</em></span>
@@ -6868,7 +7072,7 @@
                     </button>
                   </div>
 
-                  <div class="code-workbench-command-row" role="group" aria-label="Code 工作台面板">
+                  <div class="code-workbench-command-row" role="group" aria-label="Task 检查器面板">
                     <button class:active={codeWorkbenchPanel === "overview"} type="button" onclick={() => openCodeWorkbench("overview")}><LayoutDashboard size={14} /> 总览</button>
                     <button class:active={codeWorkbenchPanel === "workspace"} type="button" onclick={() => openCodeWorkbench("workspace")}><Folder size={14} /> Workspace / Preview</button>
                     <button class:active={codeWorkbenchPanel === "context"} type="button" onclick={() => openCodeWorkbench("context")}><Gauge size={14} /> Context</button>
@@ -6912,6 +7116,8 @@
                         onWorkPermissionChange={setComposerWorkPermission}
                         onOpenResources={openResourceCenterFromComposer}
                         {activityMode}
+                        contextInfo={composerContext}
+                        {backgroundRunCount}
                       />
                     </section>
 
@@ -6925,20 +7131,129 @@
                       focus={codeWorkbenchPanel}
                       onPreviewFile={previewFile}
                       onPreviewChange={previewChange}
+                      onFork={forkThread}
                       onRewind={rewind}
                       onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
                     />
                   </div>
                 </div>
               </section>
-            {:else if workLayer === "today"}<section class="aorist-page"><div class="hero-panel"><span>Volt GUI Console</span><h1>把 Agent、项目、客户、日程与自动化集中到一个工作台。</h1><p>Volt GUI 由 AI 驱动，可用于代码、项目与运营任务协作。重要执行结果请以构建、测试和人工复核为准。</p><div><button type="button" onclick={() => startNewConversation()}>新建对话</button><button type="button" onclick={() => openWorkLayer("agents")}>进入 Agent 中心</button></div></div><div class="aorist-stats"><article><span>运行自动化</span><strong>{runningAutomations.filter((item) => item.status === "运行中").length}</strong><em>持续监控中</em></article><article><span>今日日程</span><strong>{calendarEvents.length}</strong><em>会议 / 截止 / 验收</em></article><article><span>项目管理</span><strong>{projectCards.length}</strong><em>可关联任务</em></article><article><span>能力模块</span><strong>{capabilityBuckets.plugin.length + capabilityBuckets.mcp.length + capabilityBuckets.skill.length}</strong><em>插件 / MCP / SKILL</em></article></div><div class="aorist-split workbench-grid"><section class="aorist-card"><header><strong>今日待办</strong><button type="button" onclick={() => openWorkLayer("todos")}>查看全部</button></header>{#each todayTodoItems() as item (item.id)}<button class="todo-row" type="button" onclick={() => openWorkLayer("todos")}><i></i><span><strong>{item.title}</strong><em>{todoDescription(item)}</em></span><b>{todoStatusLabel(item.status)}</b></button>{/each}</section><section class="aorist-card"><header><strong>运行中的自动化</strong><button type="button" onclick={() => openWorkLayer("automations")}>管理</button></header>{#each runningAutomations as item (item.id)}<button class="automation-row" type="button" onclick={() => openAutomationDialog(item.id)}><span><strong>{item.title}</strong><em>已运行 {formatRuntime(item.startedAtMs)}</em></span><b>{item.status}</b></button>{/each}</section><section class="aorist-card workbench-calendar"><header><strong>日历日程</strong><span>{calendarEvents.length} 项</span></header><div class="calendar-mini-grid">{#each Array.from({ length: 14 }, (_, index) => index + 1) as day (day)}<article class:today={isCurrentMonthDayToday(day)}><b>{day}</b>{#each calendarEventsForCurrentMonthDay(day) as event, eventIndex (calendarEventKey(event, eventIndex))}<span>{event.time}</span>{/each}</article>{/each}</div>{#each calendarEvents as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openConfigDialog("schedule")}><span><strong>{event.title}</strong><em>{event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{/each}<footer><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></footer></section></div></section>
+            {:else if workLayer === "trust"}
+              <section class="aorist-page governance-page">
+                <DataTrustCenter
+                  view={trustCenterView}
+                  loading={trustCenterLoading}
+                  error={trustCenterError}
+                  backendAvailable={hasWailsBindings()}
+                  onRefresh={() => void refreshDataTrustCenter()}
+                  onOpenMemory={() => openGovernanceLayer("scopedMemory")}
+                />
+              </section>
+            {:else if workLayer === "scopedMemory"}
+              <section class="aorist-page governance-page">
+                <ScopedMemoryManager
+                  view={scopedMemoryView}
+                  loading={scopedMemoryLoading}
+                  error={scopedMemoryError}
+                  backendAvailable={hasWailsBindings()}
+                  running={Boolean(governanceTargetTab()?.running || sending)}
+                  onRefresh={() => void refreshScopedMemory()}
+                  onOpenTrust={() => openGovernanceLayer("trust")}
+                  onSave={saveScopedMemory}
+                  onIsolation={setScopedMemoryIsolation}
+                  onDelete={deleteScopedMemory}
+                />
+              </section>
+            {:else if workLayer === "today"}
+              <section class="aorist-page result-home-page">
+                <div class="hero-panel result-home-hero">
+                  <span>Result-driven workbench</span>
+                  <h1>从明确结果开始，把任务推进到可验证交付。</h1>
+                  <p>选择强结果场景，确认 Workspace、Project 与运行配置；交付时保留实际改动、验证证据、产物路径、数据去向和回滚方案。</p>
+                  <div>
+                    <button type="button" onclick={() => openUnifiedNav("tasks")}>开始结果任务</button>
+                    <button type="button" onclick={() => openUnifiedNav("deliveries")}>查看交付记录</button>
+                  </div>
+                </div>
+
+                <div class="aorist-stats result-home-stats">
+                  <article><span>任务</span><strong>{todayTaskRows.length}</strong><em>Project → Task</em></article>
+                  <article><span>待复核交付</span><strong>{pendingDeliveryRows.length}</strong><em>结果回执</em></article>
+                  <article><span>项目</span><strong>{projectCards.length}</strong><em>业务边界</em></article>
+                  <article><span>自动化</span><strong>{runningAutomations.length}</strong><em>可执行流程</em></article>
+                </div>
+
+                <section class="first-run-checklist" data-testid="first-run-checklist" data-completed={firstRunChecklist.completedCount}>
+                  <header>
+                    <div><span>首次成功清单</span><strong>{firstRunChecklist.completedCount}/3 已完成</strong></div>
+                    <p>每一步都以桌面后端或任务回执中的真实状态为准。</p>
+                  </header>
+                  <ol>
+                    <li class:done={firstRunChecklist.modelConnected}>
+                      <i>{#if firstRunChecklist.modelConnected}<Check size={14} />{:else}1{/if}</i>
+                      <span><strong>连接模型</strong><em>{firstRunChecklist.modelConnected ? "已有可用 Provider" : "尚未确认可用 Provider"}</em></span>
+                      <button type="button" onclick={() => openWorkLayer("models")}>{firstRunChecklist.modelConnected ? "查看" : "连接模型"}</button>
+                    </li>
+                    <li class:done={firstRunChecklist.workspaceActive}>
+                      <i>{#if firstRunChecklist.workspaceActive}<Check size={14} />{:else}2{/if}</i>
+                      <span><strong>打开 Workspace</strong><em>{firstRunChecklist.workspaceActive ? activeTab?.workspaceRoot : "尚未打开真实 Workspace Tab"}</em></span>
+                      <button type="button" onclick={openFirstRunWorkspace}>{firstRunChecklist.workspaceActive ? "查看" : "选择 Workspace"}</button>
+                    </li>
+                    <li class:done={firstRunChecklist.verifiedTaskComplete}>
+                      <i>{#if firstRunChecklist.verifiedTaskComplete}<Check size={14} />{:else}3{/if}</i>
+                      <span><strong>完成一次带验证证据的任务</strong><em>{firstRunChecklist.verifiedTaskComplete ? "验证证据已就绪" : "pending-review 或无验证证据不会计为完成"}</em></span>
+                      <button type="button" onclick={openFirstRunVerification}>{firstRunChecklist.verifiedTaskComplete ? "查看交付" : "开始结果任务"}</button>
+                    </li>
+                  </ol>
+                </section>
+
+                <section class="result-scenarios" aria-label="强结果场景">
+                  <header><div><span>Outcome scenarios</span><strong>选择一种可核验的交付目标</strong></div><p>模板先约束结果，再进入运行配置与任务执行。</p></header>
+                  <div>
+                    {#each OUTCOME_TEMPLATES as template (template.id)}
+                      <button type="button" onclick={() => startOutcomeTask(template.id)}>
+                        <span>{template.title}</span>
+                        <strong>{template.summary}</strong>
+                        <em>开始任务 →</em>
+                      </button>
+                    {/each}
+                  </div>
+                </section>
+
+                <div class="aorist-split result-home-grid">
+                  <section class="aorist-card">
+                    <header><strong>最近任务</strong><button type="button" onclick={() => openUnifiedNav("tasks")}>开始新任务</button></header>
+                    {#each todayTaskRows.slice(0, 5) as row (`${row.projectId}:${row.task.id}`)}
+                      <button class="todo-row" type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
+                        <i></i><span><strong>{row.task.title}</strong><em>{row.projectName} / {sidebarConversationTimeLabel(row.task)}</em></span><b>{row.task.receipt ? "有回执" : "执行中"}</b>
+                      </button>
+                    {:else}
+                      <article class="result-home-empty"><strong>暂无任务</strong><p>从上方结果场景开始，首个任务会进入明确的 Project 与交付回执。</p></article>
+                    {/each}
+                  </section>
+
+                  <section class="aorist-card">
+                    <header><strong>待复核交付</strong><button type="button" onclick={() => openUnifiedNav("deliveries")}>查看全部</button></header>
+                    {#each pendingDeliveryRows.slice(0, 5) as row (`receipt:${row.projectId}:${row.task.id}`)}
+                      <button class="automation-row" type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
+                        <span><strong>{row.task.title}</strong><em>{row.projectName} / 需要证据或人工复核</em></span><b>{row.task.receipt?.state === "failed" ? "失败待处理" : "待复核"}</b>
+                      </button>
+                    {:else}
+                      <article class="result-home-empty"><strong>暂无待复核交付</strong><p>任务结束后，结果回执会在这里提示证据、产物与回滚项。</p></article>
+                    {/each}
+                  </section>
+                </div>
+              </section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {#if currentAgent}
               {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
+              {@const appliedAgentProfile = currentComposerTab?.agentProfileId?.trim() === currentAgent.id && !agentSelectionDirty}
               <section class="aorist-page new-task-page agent-assistant-page">
                 <div class="agent-assistant-shell">
                   <div class="agent-assistant-center">
+                    <TaskOutcomeLauncher templates={OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
+                    <div class="runtime-step-label"><span>第 2 步</span><strong>确认运行配置</strong><em>Agent Profile 是任务配置，不是任务结果。</em></div>
                     <div class="agent-selector">
                       <button class="agent-selector__trigger" type="button" onclick={() => (agentSelectorOpen = !agentSelectorOpen)}>
                         <span class="agent-selector__avatar"><CurrentAgentIcon size={28} /></span>
@@ -6967,21 +7282,34 @@
                       {/if}
                     </div>
 
-                    <div class="agent-quick-tasks">
-                      <p>选一个对话模板，快速开始</p>
-                      <div class="agent-quick-grid">
-                    {#each newTaskQuickTasks as task, taskIndex (indexedKey(task.title, taskIndex))}
-                          <button type="button" onclick={() => useNewTaskPrompt(task)}>
-                            <span>{task.agent}</span>
-                            <strong>{task.title}</strong>
-                            <em>{task.prompt}</em>
-                          </button>
-                        {/each}
-                      </div>
+                    <div class="agent-runtime-summary" aria-label="当前 Thread 的 Agent 运行配置">
+                      <header>
+                        <span class:applied={appliedAgentProfile}>{appliedAgentProfile ? "当前 Thread 已应用" : "下次发送时应用"}</span>
+                        <em>以桌面后端确认结果为准</em>
+                      </header>
+                      <dl>
+                        <div><dt>模型</dt><dd>{agentProfileModelLabel(currentAgent)}</dd></div>
+                        <div><dt>能力</dt><dd>{threadAgentCapabilityLabel(currentAgent)}</dd></div>
+                        <div><dt>权限</dt><dd>{agentPermissionLabel(currentComposerTab?.toolApprovalMode ?? activeTab?.toolApprovalMode)}</dd></div>
+                        <div><dt>记忆</dt><dd>继承 Thread / Workspace</dd></div>
+                      </dl>
                     </div>
+
+                    {#if activeTaskReceipt}<TaskResultReceipt receipt={activeTaskReceipt} />{/if}
                   </div>
 
                   <section class="agent-compose-card" aria-label="新建对话输入区">
+                    <TaskContextBar
+                      workspace={activeWorkspace?.name || "未选择 Workspace"}
+                      project={activeProjectLabel}
+                      agent={activeAgentLabel}
+                      model={activeModelLabel}
+                      permission={activePermissionLabel}
+                      memory={activeMemoryLabel}
+                      activeInspector={taskInspectorPanel}
+                      onOpenDrawer={() => (mobileDrawerOpen = true)}
+                      onInspector={openTaskInspector}
+                    />
                     <Composer
                       {input}
                       {commands}
@@ -7004,6 +7332,8 @@
                       onWorkPermissionChange={setComposerWorkPermission}
                       onOpenResources={openResourceCenterFromComposer}
                       {activityMode}
+                      contextInfo={composerContext}
+                      {backgroundRunCount}
                     />
                   </section>
 
@@ -7012,6 +7342,7 @@
               </section>
               {:else}
                 <section class="aorist-page new-task-page agent-assistant-page">
+                  <TaskOutcomeLauncher templates={OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
                   <article class="detail-empty">
                     <strong>尚未配置 Agent</strong>
                     <p>{hasWailsBindings() ? "请先创建 Agent，并配置可用模型后再开始真实对话。" : "未连接桌面后端。请在 Wails 桌面运行环境中创建 Agent、配置模型并开始对话。"}</p>
@@ -7245,7 +7576,7 @@
         <span>Template Detail</span><strong>{knowledgePreviewTitle}</strong><p>{knowledgePreviewDescription}</p>
       {/if}
     </aside>
-  </div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{displayedSearchResults.length} 项</span></div><div class="aorist-list search-result-list">{#each displayedSearchResults as result, resultIndex (indexedKey(`${result.scope}-${result.title}-${result.snippet}`, resultIndex))}<button class="search-result-card" type="button" onclick={() => openSearchResult(result)}><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></button>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Conversations</span><strong>{archivedSidebarConversationCount} 个归档对话</strong></div><em>按项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.localPath || "本地项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档对话 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档对话</strong><p>在项目侧边栏点击对话右侧的归档按钮后，会按项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button" onclick={showFailedIngestJobs}>查看失败</button></div><div class="aorist-list">{#each ingestJobs as job, jobIndex (indexedKey(job.title, jobIndex))}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>{job.phase}</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
+  </div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{displayedSearchResults.length} 项</span></div><div class="aorist-list search-result-list">{#each displayedSearchResults as result, resultIndex (indexedKey(`${result.scope}-${result.title}-${result.snippet}`, resultIndex))}<button class="search-result-card" type="button" onclick={() => openSearchResult(result)}><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></button>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Tasks</span><strong>{archivedSidebarConversationCount} 个归档任务</strong></div><em>按业务项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.kind === "inbox" ? "临时任务" : "业务项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档任务 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档任务</strong><p>在 Project → Task 树归档任务后，会按业务项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button" onclick={showFailedIngestJobs}>查看失败</button></div><div class="aorist-list">{#each ingestJobs as job, jobIndex (indexedKey(job.title, jobIndex))}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>{job.phase}</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
             {:else if workLayer === "teams"}
               <section class="aorist-page team-collab-page">
                 {#if teamViewMode === "chat"}
@@ -7731,6 +8062,8 @@
                   onWorkPermissionChange={setComposerWorkPermission}
                   onOpenResources={openResourceCenterFromComposer}
                   {activityMode}
+                  contextInfo={composerContext}
+                  {backgroundRunCount}
                 />
                 <div class="home__context">
                   <button type="button" onclick={focusComposer}>
@@ -7774,7 +8107,7 @@
                   <button type="button" onclick={openCodeInspector}>
                     <Gauge size={17} />
                     <span>{t.home.codeTools.context}</span>
-                    <em>{context ? `${contextPercent}%` : "-"}</em>
+                    <em>{contextRemaining === undefined ? "-" : `${contextRemaining}% 剩余`}</em>
                   </button>
                   <button type="button" onclick={openCodeInspector}>
                     <Folder size={17} />
@@ -7814,6 +8147,7 @@
             {diffPreview}
             onPreviewFile={previewFile}
             onPreviewChange={previewChange}
+            onFork={forkThread}
             onRewind={rewind}
             onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
           />
@@ -8420,7 +8754,7 @@
           <section class="config-modal customer-create-modal">
             <header><div><span>Customer</span><strong>{configDialogTitle()}</strong><p>填写客户档案、联系方式、风险状态和关联项目后保存到客户管理。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
             <div class="config-grid">
-              <label class:invalid={configValidationField === "customer-name"}>客户名称 *<input data-config-field="customer-name" aria-invalid={configValidationField === "customer-name"} bind:value={customerDraftName} placeholder="例如 内部研发团队" /></label>
+              <label class:invalid={configValidationField === "customer-name"}>客户名称 *<input data-config-field="customer-name" aria-invalid={configValidationField === "customer-name"} bind:value={customerDraftName} placeholder="例如 产品运营中心" /></label>
               <label>客户类型<select bind:value={customerDraftType}>{#each customerTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
               <label>联系人<input bind:value={customerDraftContact} placeholder="例如 产品负责人" /></label>
               <label>联系电话<input bind:value={customerDraftPhone} placeholder="例如 138-0000-0000" /></label>
@@ -8700,58 +9034,8 @@
     --sidebar-width: 72px;
   }
 
-  .shell.is-sidebar-collapsed .sidebar {
-    padding-inline: 10px;
-  }
-
   .shell.is-sidebar-collapsed .stage__composer {
     left: 50%;
-  }
-
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 14px 12px 12px;
-    background: #eeeeee;
-    border-right: 1px solid #dfdfdf;
-  }
-
-  .sidebar__user {
-    display: grid;
-    grid-template-columns: 30px minmax(0, auto) auto;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    color: #3f3f3f;
-    font-size: 13px;
-  }
-
-  .sidebar__avatar {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    color: #5b28cf;
-    background: #b89cff;
-    border-radius: 8px;
-  }
-
-  .sidebar__user strong {
-    overflow: hidden;
-    font-weight: 560;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .sidebar__user em {
-    padding: 2px 6px;
-    color: #4a4a4a;
-    background: #ffffff;
-    border: 1px solid #dddddd;
-    border-radius: 5px;
-    font-size: 11px;
-    font-style: normal;
   }
 
   .stage {
@@ -9169,17 +9453,12 @@
   }
 
 
-  .sidebar--aorist{padding:0;background:hsl(220 20% 98%);border-right:1px solid hsl(220 20% 90%)}
-  .sidebar__brand{--wails-draggable:drag;display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:56px;padding:0 12px;border-bottom:1px solid #e5e7eb}.brand-mark,.nav-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;color:#1f5fbf;background:#eaf2ff}.brand-mark img{display:block;max-width:100%;max-height:100%;object-fit:contain}.brand-mark span{margin:0;font-size:12px;font-weight:800;color:inherit}.brand-wordmark{display:block;max-width:100%;max-height:24px;object-fit:contain;object-position:left center}.sidebar__brand strong,.sidebar__brand span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar__brand strong{font-size:14px;color:#111827}.sidebar__brand span{margin-top:2px;color:#6b7280;font-size:11px}
-  .workspace-nav{flex:1;min-height:0;overflow:auto;padding:10px 8px}.workspace-nav section{margin-bottom:10px}.workspace-nav h2{margin:8px 8px 5px;color:#8b95a1;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.workspace-nav button{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;min-height:36px;padding:4px 8px;color:#5f6774;background:transparent;border:0;border-radius:10px;text-align:left;font:inherit}.workspace-nav button:hover,.workspace-nav button.active{color:#1f2937;background:hsl(220 20% 94%)}.workspace-nav button span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:620}.workspace-nav button em{min-width:18px;padding:1px 5px;border-radius:999px;background:#e6eefc;color:#1f5fbf;font-size:10px;font-style:normal;text-align:center}
-  .sidebar__user-wrap{position:relative;padding:0 8px 10px}.sidebar__user-wrap .sidebar__user{width:100%;display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid #e5e7eb;border-radius:13px;background:#fff;text-align:left;font:inherit}.user-menu{position:absolute;left:8px;right:8px;bottom:58px;z-index:40;display:grid;gap:4px;padding:6px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;box-shadow:0 18px 38px rgba(15,23,42,.16)}.user-menu button{width:100%;padding:9px 10px;border:0;border-radius:9px;color:#344054;background:transparent;text-align:left;font-size:13px}.user-menu button:hover{background:#f3f6fb;color:#111827}
   .stage-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:0 18px;border-bottom:1px solid #e5e7eb;background:rgba(255,255,255,.76);backdrop-filter:blur(16px)}.stage-topbar span,.aorist-toolbar span,.hero-panel span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.stage-topbar strong{display:block;margin-top:2px;font-size:17px;color:#111827}.stage-topbar__actions,.aorist-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hero-panel button,.aorist-toolbar button,:global(.composer-context-actions button),.automation-card footer button,.capability-item button,.config-modal footer button,.agent-wizard__footer button{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:650}.hero-panel button:first-child,.aorist-toolbar button:last-child,.config-modal footer button:last-child,.agent-wizard__footer button:last-child{border-color:#1f5fbf;background:#1f5fbf;color:#fff}
   .workbench-notice{position:absolute;top:68px;right:24px;z-index:20;display:inline-flex;align-items:center;gap:7px;max-width:min(420px,calc(100% - 48px));min-height:34px;padding:0 12px;border:1px solid #bfdbfe;border-radius:10px;background:rgba(239,246,255,.96);color:#1d4ed8;font-size:12px;font-weight:700;box-shadow:0 12px 28px rgba(15,23,42,.12)}.workbench-notice :global(svg){flex:0 0 auto}
   .aorist-workbench{padding:0;overflow:hidden}.aorist-page{min-height:0;height:100%;overflow:auto;padding:18px;background:radial-gradient(circle at 18% 0%,rgba(31,95,191,.1),transparent 32%),#f7f8fb}.hero-panel{padding:28px;border:1px solid #dfe5ef;border-radius:22px;background:linear-gradient(135deg,#fff 0%,#eef4ff 100%);box-shadow:0 16px 34px rgba(15,23,42,.08)}.hero-panel h1{max-width:760px;margin:10px 0;color:#111827;font-size:clamp(28px,4vw,46px);line-height:1.05;letter-spacing:-.04em}.hero-panel p{max-width:680px;margin:0 0 18px;color:#5f6774;line-height:1.7}.hero-panel div{display:flex;gap:10px;flex-wrap:wrap}.aorist-stats,.aorist-card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.aorist-stats article,.aorist-card,.aorist-list article,.agent-card,.automation-card,.media-card,.capability-item,:global(.task-composer-card){border:1px solid #e2e8f0;border-radius:16px;background:rgba(255,255,255,.92);box-shadow:0 8px 22px rgba(15,23,42,.05)}.aorist-stats article{padding:16px}.aorist-stats span,.aorist-stats em{display:block;color:#7b8494;font-size:12px;font-style:normal}.aorist-stats strong{display:block;margin:8px 0 3px;color:#111827;font-size:28px;letter-spacing:-.04em}.aorist-split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);gap:12px;margin-top:14px}.aorist-card{padding:14px}.aorist-card header,.aorist-toolbar,.agent-card header,:global(.task-composer-card__head),.config-modal header,.agent-wizard__header,.agent-wizard__footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.aorist-card header strong,.aorist-toolbar strong{color:#111827;font-size:16px}.aorist-card header button{border:0;background:transparent;color:#1f5fbf;font-size:12px}.todo-row,.automation-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;width:100%;gap:10px;margin-top:8px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff;text-align:left}.automation-row{grid-template-columns:minmax(0,1fr) auto}.todo-row i{width:8px;height:8px;border-radius:999px;background:#1f5fbf}.todo-row strong,.automation-row strong{display:block;color:#1f2937;font-size:13px}.todo-row em,.automation-row em{display:block;margin-top:3px;color:#7b8494;font-size:11px;font-style:normal}.todo-row b,.automation-row b{color:#1f5fbf;font-size:11px}
   :global(.agent-strip){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}:global(.agent-strip button){display:grid;grid-template-columns:34px minmax(0,1fr);gap:9px;align-items:center;padding:12px;border:1px solid #e2e8f0;border-radius:15px;background:#fff;text-align:left}:global(.agent-strip button.active){border-color:#1f5fbf;background:#eef4ff}:global(.agent-strip span){grid-row:span 2;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;background:#1f5fbf;color:#fff}:global(.agent-strip strong){color:#111827;font-size:13px}:global(.agent-strip em){color:#7b8494;font-size:11px;font-style:normal}:global(.task-composer-card){padding:14px}:global(.task-composer-card__head){margin-bottom:12px}:global(.task-composer-card__head) strong{display:block;color:#111827;font-size:18px}:global(.task-composer-card__head) select,.config-grid input,.config-grid textarea,.aorist-search input,.wizard-form input,.wizard-form textarea,.wizard-form select{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}:global(.task-composer-card__head) select{height:34px;padding:0 10px}:global(.composer-context-actions){display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}:global(.composer-context-actions > span){display:inline-flex;align-items:center;min-height:32px;padding:0 10px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1f5fbf;font-size:12px;font-weight:650}
   .aorist-toolbar{margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.aorist-search{display:block;max-width:420px;margin-bottom:12px}.aorist-search input{width:100%;height:38px;padding:0 12px}.aorist-list{display:grid;gap:10px}.aorist-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px;cursor:pointer}.aorist-list strong{color:#111827}.aorist-list p{margin:4px 0;color:#5f6774;font-size:13px}.aorist-list em{color:#7b8494;font-size:12px;font-style:normal}.aorist-list span{padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:12px;white-space:nowrap}.aorist-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.automation-card,.agent-card,.media-card,.capability-item{padding:15px;cursor:pointer}.automation-card span,.media-card span,.capability-item span{display:inline-block;margin-bottom:9px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.automation-card strong,.media-card strong,.capability-item strong{display:block;color:#111827;font-size:15px}.automation-card p,.media-card p,.capability-item p{color:#5f6774;font-size:13px;line-height:1.6}.automation-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;color:#7b8494;font-size:12px}.automation-card dd{margin:0;color:#111827}.automation-card footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}.automation-card footer button:last-child{color:#b42318}.agent-card header{align-items:flex-start}.agent-card header>span{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:#eef4ff;color:#1f5fbf}.agent-card header div{flex:1;min-width:0}.agent-card header strong{display:block;color:#111827}.agent-card header em{display:inline-block;margin-top:4px;color:#7b8494;font-size:11px;font-style:normal}.agent-card header button{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#98a2b3;opacity:0}.agent-card:hover header button{opacity:1}.agent-card p{color:#5f6774;line-height:1.6;font-size:13px}.agent-card footer{display:flex;align-items:center;justify-content:space-between;color:#7b8494;font-size:12px}.agent-card footer span{display:inline-flex;align-items:center;gap:4px}.agent-card footer b{color:#1f5fbf;font-size:12px}.capability-tabs{display:flex;gap:8px;margin:0 0 12px;padding:4px;width:max-content;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.capability-tabs button{min-width:92px;height:32px;border:0;border-radius:9px;background:transparent;color:#5f6774;font-weight:700}.capability-tabs button.active{background:#1f5fbf;color:#fff}
   .modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}.config-modal,.agent-wizard{width:min(860px,calc(100vw - 44px));max-height:calc(100vh - 44px);overflow:hidden;border:1px solid #e2e8f0;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.28)}.config-modal{padding:18px}.config-modal header strong,.agent-wizard__header strong{display:block;color:#111827;font-size:17px}.config-modal header button,.agent-wizard__header>button{border:0;background:transparent;color:#667085;font-size:24px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.config-grid label{display:grid;gap:6px;color:#5f6774;font-size:12px}.config-grid .wide{grid-column:1/-1}.config-grid input{height:36px;padding:0 10px}.config-grid textarea{padding:10px;resize:vertical}.config-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.agent-wizard{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:min(680px,calc(100vh - 44px))}.agent-wizard__header{padding:16px 18px;border-bottom:1px solid #e5e7eb}.wizard-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#1f5fbf,#3b82f6);color:#fff}.agent-wizard__header div:nth-child(2){flex:1}.agent-wizard__header span{color:#7b8494;font-size:12px}.agent-wizard__body{display:grid;grid-template-columns:178px minmax(0,1fr);min-height:0}.wizard-tabs{padding:12px;border-right:1px solid #e5e7eb;background:#f8fafc}.wizard-tabs button{width:100%;padding:10px;border:0;border-radius:12px;background:transparent;text-align:left;color:#111827}.wizard-tabs button.active{background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.08)}.wizard-panel{min-height:0;overflow:auto;padding:18px}.wizard-identity{display:grid;grid-template-columns:minmax(0,1fr)230px;gap:18px}.wizard-form{display:grid;gap:14px}.wizard-form label{display:grid;gap:6px;color:#5f6774;font-size:12px}.wizard-form input,.wizard-form select{height:38px;padding:0 10px}.wizard-form textarea{padding:10px;resize:vertical}.pill-group{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.pill-group span{width:100%;color:#5f6774;font-size:12px}.pill-group button{min-height:30px;padding:0 10px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#344054}.pill-group button.active{border-color:#1f5fbf;background:#eef4ff;color:#1f5fbf}.wizard-preview{padding-left:18px;border-left:1px solid #e5e7eb}.wizard-preview>span{color:#7b8494;font-size:11px;font-weight:700;text-transform:uppercase}.wizard-preview div{display:grid;justify-items:center;gap:8px;margin-top:12px;padding:18px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.wizard-preview b{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:#1f5fbf;color:#fff}.wizard-preview strong{color:#111827}.wizard-preview em,.wizard-preview p{color:#7b8494;font-size:12px;font-style:normal;line-height:1.5}.wizard-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.wizard-card-grid button{display:grid;gap:5px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-card-grid button.active,.wizard-skill-list button.active{border-color:#1f5fbf;background:#eef4ff}.wizard-card-grid strong{color:#111827}.wizard-card-grid span,.wizard-card-grid em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list{display:grid;gap:9px}.wizard-skill-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-skill-list strong{color:#111827}.wizard-skill-list span,.wizard-skill-list p,.wizard-skill-list em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list p{margin:5px 0 0}.wizard-files{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px}.wizard-files nav{display:grid;align-content:start;gap:8px}.wizard-files button{height:34px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#344054}.wizard-files button.active{border-color:#1f5fbf;color:#1f5fbf;background:#eef4ff}.wizard-files pre{margin:0;min-height:320px;overflow:auto;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:12px;line-height:1.6;white-space:pre-wrap}.agent-wizard__footer{padding:12px 18px;border-top:1px solid #e5e7eb;justify-content:flex-end}
-  .shell.is-sidebar-collapsed .workspace-nav h2,.shell.is-sidebar-collapsed .workspace-nav button span:nth-child(2),.shell.is-sidebar-collapsed .workspace-nav button em,.shell.is-sidebar-collapsed .sidebar__brand div:not(.brand-mark),.shell.is-sidebar-collapsed .sidebar__user strong,.shell.is-sidebar-collapsed .sidebar__user em{display:none}.shell.is-sidebar-collapsed .sidebar__brand{grid-template-columns:34px;justify-content:center}.shell.is-sidebar-collapsed .workspace-nav button{grid-template-columns:28px;justify-content:center;padding-inline:8px}.shell.is-sidebar-collapsed .sidebar__user-wrap .sidebar__user{grid-template-columns:28px;justify-content:center}
   @media(max-width:980px){.aorist-stats,.aorist-card-grid,:global(.agent-strip){grid-template-columns:repeat(2,minmax(0,1fr))}.aorist-split{grid-template-columns:1fr}}@media(max-width:720px){.stage-topbar,.aorist-toolbar{align-items:flex-start;flex-direction:column}.aorist-stats,.aorist-card-grid,:global(.agent-strip),.wizard-card-grid,.agent-wizard__body,.wizard-files,.config-grid,.wizard-identity{grid-template-columns:1fr}.wizard-preview{padding-left:0;border-left:0}}
 
   /* AoristLawer visual alignment polish */
@@ -9235,87 +9514,6 @@
   .stage__surface > * {
     position: relative;
     z-index: 1;
-  }
-
-  .sidebar--aorist {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.96)),
-      var(--aorist-sidebar);
-    border-right-color: rgba(226, 232, 240, 0.92);
-    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.8);
-  }
-
-  .sidebar__brand {
-    min-height: 60px;
-    padding: 0 14px;
-    border-bottom-color: rgba(226, 232, 240, 0.86);
-    background: rgba(255, 255, 255, 0.58);
-  }
-
-  .brand-mark,
-  .nav-icon,
-  .sidebar__avatar {
-    color: var(--aorist-primary-strong);
-    background: linear-gradient(135deg, #eff6ff, #dbeafe);
-    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.1);
-  }
-
-  .sidebar__brand strong {
-    letter-spacing: -0.02em;
-  }
-
-  .workspace-nav {
-    padding: 12px 8px;
-  }
-
-  .workspace-nav h2 {
-    margin: 10px 10px 6px;
-    color: var(--aorist-faint);
-    font-size: 10px;
-    letter-spacing: 0.12em;
-  }
-
-  .workspace-nav button {
-    position: relative;
-    min-height: 38px;
-    border-radius: 12px;
-    color: #566174;
-    transition: background 0.16s ease, color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
-  }
-
-  .workspace-nav button:hover {
-    transform: translateX(1px);
-    background: #f1f5fb;
-  }
-
-  .workspace-nav button.active {
-    color: var(--aorist-primary-strong);
-    background: linear-gradient(135deg, #eef4ff, #f8fbff);
-    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.1);
-  }
-
-  .workspace-nav button.active::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 10px;
-    bottom: 10px;
-    width: 3px;
-    border-radius: 999px;
-    background: var(--aorist-primary);
-  }
-
-  .sidebar__user-wrap .sidebar__user,
-  .user-menu {
-    border-color: rgba(226, 232, 240, 0.9);
-    background: rgba(255, 255, 255, 0.82);
-    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
-  }
-
-  .sidebar__user em {
-    color: var(--aorist-primary-strong);
-    border-color: #dbeafe;
-    background: #eff6ff;
   }
 
   .stage-topbar {
@@ -9525,7 +9723,6 @@
   }
 
 
-  .workbench-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(320px,.72fr)}.workbench-calendar header span{padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px;font-weight:800}.calendar-mini-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin:10px 0 12px}.calendar-mini-grid article{min-height:46px;padding:7px;border:1px solid rgba(226,232,240,.88);border-radius:12px;background:#f8fafc}.calendar-mini-grid article.today{border-color:#93c5fd;background:#eff6ff}.calendar-mini-grid b{display:block;color:#0f172a;font-size:12px}.calendar-mini-grid span{display:inline-block;margin-top:5px;padding:2px 5px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px}.workbench-calendar footer{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.workbench-calendar footer button{min-height:30px;padding:0 10px;border:1px solid #dce4ef;border-radius:10px;background:#fff;color:#344054;font-size:12px;font-weight:700}.workbench-calendar footer button:last-child{border-color:#2563eb;background:#2563eb;color:#fff}
 
   .calendar-board{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,.6fr);gap:14px;margin-top:14px}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.calendar-weekday{display:flex;align-items:center;justify-content:center;min-height:28px;color:#667085;font-size:12px;font-weight:700}.calendar-grid article{min-height:92px;padding:10px;border:1px solid rgba(226,232,240,.88);border-radius:14px;background:rgba(255,255,255,.78);box-shadow:0 10px 24px rgba(15,23,42,.04)}.calendar-grid article.today{border-color:#93c5fd;background:linear-gradient(135deg,#eff6ff,#fff)}.calendar-grid article.muted{background:rgba(248,250,252,.52);box-shadow:none;opacity:.46}.calendar-grid b{display:block;margin-bottom:8px;color:#0f172a}.calendar-grid article.muted b{color:#98a2b3}.calendar-event-chip{display:block;width:100%;margin-top:4px;padding:4px 6px;border:0;border-radius:8px;background:#eef4ff;color:#1d4ed8;font-size:11px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.calendar-event-chip{cursor:pointer}.calendar-event-chip:hover{background:#dbeafe}.knowledge-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.55fr);gap:14px}.knowledge-preview{padding:18px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.82);box-shadow:0 14px 34px rgba(15,23,42,.055)}.knowledge-preview span{color:#7b8494;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.knowledge-preview strong{display:block;margin-top:12px;color:#0f172a;font-size:18px}.knowledge-preview p{color:#5f6774;line-height:1.7;font-size:13px}@media(max-width:980px){.calendar-board,.knowledge-layout{grid-template-columns:1fr}.calendar-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-weekday{display:none}}
 
@@ -13681,6 +13878,75 @@
     color: var(--aorist-muted);
     font-size: 10px;
     font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agent-runtime-summary {
+    display: grid;
+    gap: 10px;
+    width: min(100%, 680px);
+    padding: 12px 14px;
+    border: 1px solid var(--aorist-line);
+    border-radius: 14px;
+    background: color-mix(in srgb, hsl(0 0% 100%) 88%, var(--aorist-primary) 12%);
+  }
+
+  .agent-runtime-summary header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .agent-runtime-summary header span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    color: hsl(32 82% 32%);
+    background: hsl(42 92% 91%);
+    font-size: 10px;
+    font-weight: 760;
+  }
+
+  .agent-runtime-summary header span.applied {
+    color: hsl(150 64% 26%);
+    background: hsl(148 55% 91%);
+  }
+
+  .agent-runtime-summary header em {
+    color: var(--aorist-muted);
+    font-size: 10px;
+    font-style: normal;
+  }
+
+  .agent-runtime-summary dl {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+  }
+
+  .agent-runtime-summary dl div {
+    min-width: 0;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--aorist-line) 76%, transparent);
+  }
+
+  .agent-runtime-summary dt {
+    color: var(--aorist-muted);
+    font-size: 9px;
+    font-weight: 720;
+  }
+
+  .agent-runtime-summary dd {
+    overflow: hidden;
+    margin: 3px 0 0;
+    color: var(--aorist-ink);
+    font-size: 10px;
+    font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -17937,6 +18203,10 @@
   }
 
   @media (max-width: 720px) {
+    .agent-runtime-summary dl {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .automation-overview,
     .automation-task-list {
       grid-template-columns: 1fr;
@@ -20862,4 +21132,266 @@
   .report-center-page .aorist-toolbar button:disabled,.report-detail-actions button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}.report-detail-actions .report-export-state{margin-right:auto;color:#b54708;font-size:11px;font-weight:600}.report-detail-actions .report-export-state.ready{color:#027a48}
   .config-grid label.invalid>input,.config-grid label.invalid>textarea,.config-grid label.invalid>select,.config-grid label.invalid .material-file-picker{border-color:#fda4af;background:#fff7f7}.config-grid label.invalid>input:focus,.config-grid label.invalid>textarea:focus,.config-grid label.invalid>select:focus{outline:none;border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.12)}.config-modal>footer .config-validation-message{margin:0 auto 0 0;color:#b42318;font-size:12px;font-weight:600;line-height:1.35}
   .resource-detail-modal footer button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}
+
+  .result-home-page {
+    gap: 16px;
+  }
+
+  .result-home-hero {
+    padding-block: 34px;
+  }
+
+  .result-home-hero h1 {
+    max-width: 760px;
+  }
+
+  .result-home-hero p {
+    max-width: 820px;
+  }
+
+  .result-scenarios {
+    display: grid;
+    gap: 11px;
+    padding: 16px;
+    border: 1px solid var(--aorist-line, #dfe3e8);
+    border-radius: 16px;
+    background: #ffffff;
+  }
+
+  .result-scenarios > header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .result-scenarios > header div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .result-scenarios > header span {
+    color: var(--aorist-muted, #667085);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .result-scenarios > header strong {
+    font-size: 15px;
+  }
+
+  .result-scenarios > header p {
+    margin: 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 10px;
+  }
+
+  .result-scenarios > div {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .result-scenarios button {
+    display: grid;
+    min-height: 112px;
+    padding: 12px;
+    border: 1px solid var(--aorist-line, #dfe3e8);
+    border-radius: 12px;
+    background: #fafafa;
+    color: inherit;
+    text-align: left;
+  }
+
+  .result-scenarios button:hover {
+    border-color: #222222;
+    background: #ffffff;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, .07);
+  }
+
+  .result-scenarios button span {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .result-scenarios button strong {
+    align-self: start;
+    color: var(--aorist-muted, #667085);
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1.5;
+  }
+
+  .result-scenarios button em {
+    align-self: end;
+    color: #222222;
+    font-size: 9px;
+    font-style: normal;
+    font-weight: 700;
+  }
+
+  .result-home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result-home-empty {
+    padding: 20px 4px 8px;
+  }
+
+  .result-home-empty strong {
+    font-size: 12px;
+  }
+
+  .result-home-empty p {
+    margin: 5px 0 0;
+    color: var(--aorist-muted, #667085);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  .task-context-wrap {
+    flex: 0 0 auto;
+    width: min(1120px, calc(100% - 32px));
+    margin: 8px auto 0;
+  }
+
+  .workbench-context-wrap {
+    width: auto;
+    margin: 0 18px 8px;
+  }
+
+  .runtime-step-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: min(100%, 820px);
+  }
+
+  .runtime-step-label span {
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: #222222;
+    color: #ffffff;
+    font-size: 8px;
+    font-weight: 700;
+  }
+
+  .runtime-step-label strong {
+    font-size: 11px;
+  }
+
+  .runtime-step-label em {
+    color: var(--aorist-muted);
+    font-size: 9px;
+    font-style: normal;
+  }
+
+  .agent-assistant-center {
+    gap: 14px;
+  }
+
+  .agent-compose-card {
+    display: grid;
+    gap: 9px;
+  }
+
+  .governance-tabs {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 1px;
+    margin: 12px 18px 0;
+    overflow: hidden;
+    border: 1px solid #dfe4ec;
+    border-radius: 11px;
+    background: #dfe4ec;
+  }
+
+  .governance-tabs button {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    min-height: 48px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 0;
+    background: #ffffff;
+    color: #475467;
+    text-align: left;
+  }
+
+  .governance-tabs button.active {
+    background: #eef4ff;
+    color: #1f5fbf;
+  }
+
+  .governance-tabs strong,
+  .governance-tabs span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .governance-tabs strong {
+    font-size: 10.5px;
+  }
+
+  .governance-tabs span {
+    color: #7b8494;
+    font-size: 8.5px;
+  }
+
+  .governance-page {
+    padding: 0;
+  }
+
+  @media (max-width: 720px) {
+    .shell,
+    .shell.is-sidebar-collapsed {
+      --sidebar-width: 0px;
+      grid-template-columns: 1fr !important;
+    }
+
+    .task-context-wrap,
+    .workbench-context-wrap {
+      width: 100%;
+      margin: 0;
+    }
+
+    .stage,
+    .stage__surface {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .runtime-step-label {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .result-home-hero {
+      padding-block: 24px;
+    }
+
+    .result-scenarios > header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .result-scenarios > div,
+    .result-home-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .result-scenarios button {
+      min-height: 88px;
+    }
+
+    .governance-tabs {
+      grid-template-columns: repeat(6, minmax(112px, 1fr));
+      margin: 10px 12px 0;
+      overflow-x: auto;
+    }
+  }
 </style>

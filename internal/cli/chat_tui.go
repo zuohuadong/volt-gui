@@ -286,7 +286,7 @@ type chatTUI struct {
 	// model — the swap happens in runModelSubcommand on the running copy). nil
 	// disables /model. modelRef is the active "provider/model" ref, marked
 	// current in the picker.
-	buildController func(ref string, carry []provider.Message, resumePath string) (*control.Controller, error)
+	buildController func(spec controllerBuildSpec, carry []provider.Message, resumePath string) (*control.Controller, error)
 	modelRef        string
 	effortLevel     string // "" when the current provider/model has no configurable effort
 
@@ -342,6 +342,13 @@ const (
 	tuiIdle tuiState = iota
 	tuiRunning
 )
+
+type controllerBuildSpec struct {
+	ModelRef         string
+	RuntimeProfile   string
+	ToolApprovalMode string
+	PlanMode         bool
+}
 
 // agentEventMsg is one typed event from the agent's run loop.
 type agentEventMsg event.Event

@@ -3,6 +3,7 @@
   import { ChevronDown, ChevronRight, Code2, ExternalLink, FileText, Folder, GitPullRequest, Gauge, LocateFixed, RefreshCw, RotateCcw, Search } from "@lucide/svelte";
   import DiffViewer from "./DiffViewer.svelte";
   import { app } from "../lib/bridge";
+  import { contextRemainingPercent, contextRemainingTokens } from "../lib/thread-ux";
   import type { CheckpointMeta, ContextPanelInfo, DirEntry, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
   import { t } from "../lib/i18n";
 
@@ -18,6 +19,7 @@
     diffPreview,
     onPreviewFile,
     onPreviewChange,
+    onFork,
     onRewind,
     onRefreshContext,
     variant = "dock",
@@ -30,6 +32,7 @@
     diffPreview?: WorkspaceDiffView;
     onPreviewFile: (path: string) => void;
     onPreviewChange: (path: string) => void;
+    onFork: (turn: number) => Promise<void> | void;
     onRewind: (turn: number, scope: RewindScope) => Promise<void> | void;
     onRefreshContext: () => Promise<void> | void;
     variant?: CodeDashboardVariant;
@@ -47,7 +50,8 @@
   let rewindBusy = $state("");
   let rewindStatus = $state("");
 
-  const tokenPercent = $derived(context ? Math.min(100, Math.round((context.usedTokens / Math.max(context.windowTokens, 1)) * 100)) : 0);
+  const remainingPercent = $derived(contextRemainingPercent(context));
+  const remainingTokens = $derived(contextRemainingTokens(context));
   const changedCount = $derived(changes?.files.length ?? 0);
   const selectedPath = $derived(diffPreview?.path ?? filePreview?.path);
   const selectedChange = $derived(selectedPath ? changes?.files.find((file) => file.path === selectedPath) : undefined);
@@ -198,6 +202,20 @@
     }
   }
 
+  async function forkCheckpoint(checkpoint: CheckpointMeta) {
+    const key = `${checkpoint.turn}:fork`;
+    rewindBusy = key;
+    rewindStatus = `Forking #${checkpoint.turn}...`;
+    try {
+      await onFork(checkpoint.turn);
+      rewindStatus = `Forked #${checkpoint.turn} into a new Thread.`;
+    } catch (error) {
+      rewindStatus = error instanceof Error ? error.message : String(error);
+    } finally {
+      rewindBusy = "";
+    }
+  }
+
   async function refreshContextPanel() {
     contextBusy = true;
     contextStatus = "Refreshing context...";
@@ -217,7 +235,7 @@
     <article>
       <Gauge size={20} />
       <h2>{t.code.contextFiles}</h2>
-      <p>{context ? `${context.usedTokens.toLocaleString()} / ${context.windowTokens.toLocaleString()} tokens (${tokenPercent}%)` : "Context panel pending."}</p>
+      <p>{remainingPercent === undefined || remainingTokens === undefined ? "上下文待统计。" : `剩余 ${remainingTokens.toLocaleString()} / ${context?.windowTokens.toLocaleString()} tokens (${remainingPercent}%)`}</p>
     </article>
     <article>
       <GitPullRequest size={20} />
@@ -238,14 +256,14 @@
         <button type="button" title={t.code.refresh} disabled={contextBusy} onclick={refreshContextPanel}><RefreshCw size={14} /></button>
       </div>
       {#if context}
-        <div class="context-card__meter" style:--context-used={`${tokenPercent}%`}>
+        <div class="context-card__meter" style:--context-used={`${remainingPercent ?? 0}%`}>
           <div>
-            <strong>{formatTokens(context.usedTokens)}</strong>
-            <span>/ {formatTokens(context.windowTokens)} tokens</span>
+            <strong>{formatTokens(remainingTokens ?? 0)}</strong>
+            <span>/ {formatTokens(context.windowTokens)} tokens 剩余</span>
           </div>
-          <span>{tokenPercent}%</span>
+          <span>{remainingPercent === undefined ? "待统计" : `${remainingPercent}%`}</span>
         </div>
-        <div class="context-card__bar" aria-label="Context usage">
+        <div class="context-card__bar" aria-label="Context remaining">
           <span></span>
         </div>
         <div class="context-card__metrics">
@@ -363,6 +381,7 @@
             </span>
             <span class="checkpoint__files">{formatCheckpointFiles(checkpoint)}</span>
             <div class="checkpoint__actions">
+              <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:fork`} onclick={() => forkCheckpoint(checkpoint)}>Fork Thread</button>
               {#if checkpoint.canConversation !== false}
                 <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:conversation`} onclick={() => rewindCheckpoint(checkpoint, "conversation")}>Conversation</button>
               {/if}

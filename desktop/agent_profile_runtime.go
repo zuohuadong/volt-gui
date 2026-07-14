@@ -82,7 +82,7 @@ func resolveAgentProfileModel(cfg *config.Config, view *PersistentAgentView, inh
 	return entry.Name + "/" + entry.Model, nil
 }
 
-func recordAgentProfileSwitch(path string, view *PersistentAgentView, modelRef string) error {
+func recordAgentProfileSwitch(path string, view *PersistentAgentView, modelRef string, memoryScopes, memorySourceIDs []string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
@@ -95,11 +95,12 @@ func recordAgentProfileSwitch(path string, view *PersistentAgentView, modelRef s
 	}
 	now := time.Now().UTC()
 	event := agent.AgentProfileSwitch{
-		Action:         "clear",
-		ChangedAt:      now,
-		ModelRef:       strings.TrimSpace(modelRef),
-		MemoryScopes:   []string{"inherited"},
-		PermissionMode: "inherited",
+		Action:          "clear",
+		ChangedAt:       now,
+		ModelRef:        strings.TrimSpace(modelRef),
+		MemoryScopes:    append([]string(nil), memoryScopes...),
+		MemorySourceIDs: append([]string(nil), memorySourceIDs...),
+		PermissionMode:  "inherited",
 	}
 	if view != nil {
 		event.Action = "select"
@@ -115,6 +116,9 @@ func recordAgentProfileSwitch(path string, view *PersistentAgentView, modelRef s
 	}
 	meta.AgentProfileUpdatedAt = now.Format(time.RFC3339Nano)
 	meta.Model = strings.TrimSpace(modelRef)
+	meta.MemoryScopes = append([]string(nil), memoryScopes...)
+	meta.MemorySourceIDs = append([]string(nil), memorySourceIDs...)
+	meta.MemoryUpdatedAt = now.Format(time.RFC3339Nano)
 	meta.AgentProfileHistory = append(meta.AgentProfileHistory, event)
 	if extra := len(meta.AgentProfileHistory) - agentProfileAuditHistoryLimit; extra > 0 {
 		meta.AgentProfileHistory = append([]agent.AgentProfileSwitch(nil), meta.AgentProfileHistory[extra:]...)
@@ -225,6 +229,10 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	}
 
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
+	memoryRuntime, err := a.scopedMemoryRuntimeForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -234,6 +242,8 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             profile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -272,6 +282,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 		tab.AgentProfileName = strings.TrimSpace(view.Name)
 		tab.AgentProfileBaseModel = baseModel
 	}
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
 	a.supersedeTabBuildLocked(tab)
@@ -282,7 +293,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	}
 	a.clearDeferredRebuild(tab.ID)
 	a.persistTabSessionPath(tab, path)
-	if err := recordAgentProfileSwitch(path, view, modelRef); err != nil {
+	if err := recordAgentProfileSwitch(path, view, modelRef, memoryRuntime.Scopes, memoryRuntime.SourceIDs); err != nil {
 		a.warnForTab(tab.ID, "Agent Profile 已切换，但审计记录写入失败："+err.Error())
 	}
 	a.notifyTabRuntimeRebuilt(tab)

@@ -1,6 +1,5 @@
-// Package netclient builds HTTP clients and proxy resolvers that share VoltUI's
-// user-facing proxy settings. web_fetch reuses the resolver while keeping its own
-// dial-time SSRF guard.
+// Package netclient builds HTTP clients, proxy resolvers, and shared dial-time
+// address guards for URL consumers such as web_fetch and bot media ingestion.
 package netclient
 
 import (

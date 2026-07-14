@@ -506,7 +506,7 @@ func (c *Controller) inputImages(line string) []string {
 func visionRefImageDataURL(r ref, baseDir string) (string, error) {
 	switch r.kind {
 	case refImage:
-		return visionImageDataURL(r.path)
+		return visionImageDataURLInRoot(baseDir, r.path)
 	case refFile:
 		return visionFileImageDataURL(r.path, baseDir)
 	default:
@@ -882,6 +882,9 @@ func readFileRef(path, baseDir string) (content string, isDir bool, err error) {
 	if strings.EqualFold(filepath.Ext(rel), ".pdf") {
 		return readPDFRef(absPath, info.Size()), false, nil
 	}
+	if isOfficeSpreadsheetRef(rel) {
+		return officeSpreadsheetRefNote(displayPath, info.Size()), false, nil
+	}
 
 	f, err := root.Open(rel)
 	if err != nil {
@@ -961,6 +964,9 @@ func readFileRefUnscoped(path string) (content string, isDir bool, err error) {
 	if strings.EqualFold(filepath.Ext(path), ".pdf") {
 		return readPDFRef(path, info.Size()), false, nil
 	}
+	if isOfficeSpreadsheetRef(path) {
+		return officeSpreadsheetRefNote(filepath.ToSlash(path), info.Size()), false, nil
+	}
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -992,6 +998,19 @@ func imageFileRefNote(displayPath, mime string, size int64, attached bool) strin
 		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]", displayPath, mime, size)
 	}
 	return fmt.Sprintf("[image file %s, mime=%s, %d bytes — not sent as direct model image input because no workspace root is available. Use a workspace-scoped file reference, image attachment, or an available OCR/image/vision tool with a readable local path.]", displayPath, mime, size)
+}
+
+func isOfficeSpreadsheetRef(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".xls", ".xlsx":
+		return true
+	default:
+		return false
+	}
+}
+
+func officeSpreadsheetRefNote(displayPath string, size int64) string {
+	return fmt.Sprintf("[spreadsheet file %s, %d bytes — workbook contents are not inlined into prompt text. Use mcp__office__office_read_spreadsheet first to inspect worksheets, headers, and bounded rows; use mcp__office__office_count_spreadsheet_column for exact column totals. These built-in tools read .xls/.xlsx without Microsoft Office or Python. If the Office tool is unavailable or reports an unsupported workbook, explain that blocker; do not create Python helper scripts as the default fallback.]", displayPath, size)
 }
 
 // walkRootDir walks a directory under a sandboxed *os.Root and writes each

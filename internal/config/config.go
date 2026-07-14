@@ -737,13 +737,18 @@ type BotPairingConfig struct {
 
 // BotAccessConfig controls who may use one concrete bot connection.
 type BotAccessConfig struct {
-	Enabled        bool     `toml:"enabled"`
-	AllowAll       bool     `toml:"allow_all"`
-	PairingEnabled bool     `toml:"pairing_enabled"`
-	Users          []string `toml:"users"`
-	Groups         []string `toml:"groups"`
-	Approvers      []string `toml:"approvers"`
-	Admins         []string `toml:"admins"`
+	Enabled                bool     `toml:"enabled"`
+	AllowAll               bool     `toml:"allow_all"`
+	PairingEnabled         bool     `toml:"pairing_enabled"`
+	Users                  []string `toml:"users"`
+	Groups                 []string `toml:"groups"`
+	Approvers              []string `toml:"approvers"`
+	Admins                 []string `toml:"admins"`
+	WorkspaceRoots         []string `toml:"workspace_roots"`
+	ProjectIDs             []string `toml:"project_ids"`
+	AgentProfileIDs        []string `toml:"agent_profile_ids"`
+	PermissionCeiling      string   `toml:"permission_ceiling"`
+	RequireHighRiskConfirm bool     `toml:"require_high_risk_confirm"`
 }
 
 // QQBotConfig QQ 官方 Bot API v2 配置。
@@ -808,15 +813,19 @@ type BotConnectionCredential struct {
 }
 
 type BotConnectionSessionMapping struct {
-	RemoteID      string `toml:"remote_id"`
-	SessionID     string `toml:"session_id"`
-	SessionSource string `toml:"session_source"`
-	ChatType      string `toml:"chat_type"`
-	UserID        string `toml:"user_id"`
-	ThreadID      string `toml:"thread_id"`
-	Scope         string `toml:"scope"`
-	WorkspaceRoot string `toml:"workspace_root"`
-	UpdatedAt     string `toml:"updated_at"`
+	RemoteID               string `toml:"remote_id"`
+	SessionID              string `toml:"session_id"`
+	SessionSource          string `toml:"session_source"`
+	ChatType               string `toml:"chat_type"`
+	UserID                 string `toml:"user_id"`
+	ThreadID               string `toml:"thread_id"`
+	ProjectID              string `toml:"project_id"`
+	AgentProfileID         string `toml:"agent_profile_id"`
+	PermissionCeiling      string `toml:"permission_ceiling"`
+	RequireHighRiskConfirm bool   `toml:"require_high_risk_confirm"`
+	Scope                  string `toml:"scope"`
+	WorkspaceRoot          string `toml:"workspace_root"`
+	UpdatedAt              string `toml:"updated_at"`
 }
 
 // ServeConfig controls the HTTP serve frontend security settings.

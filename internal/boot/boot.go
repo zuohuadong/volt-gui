@@ -102,10 +102,18 @@ type Options struct {
 	// AgentProfile overlays the selected desktop/thread profile onto this
 	// controller. Empty profile fields inherit the normal configuration.
 	AgentProfile *AgentProfile
+	// ScopedMemoryBlock is a pre-filtered, provenance-labelled memory block for
+	// the current rich-client context. Empty preserves legacy memory behavior.
+	ScopedMemoryBlock string
 	// ExtraPlugins are session-scoped MCP servers supplied by a host transport
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to voltui.toml.
 	ExtraPlugins []plugin.Spec
+	// ExtraTools are first-party capabilities supplied by a rich host such as the
+	// desktop app. They share the normal registry allow policy and permission gate,
+	// but are not process-global built-ins and therefore do not leak into CLI/ACP
+	// sessions that did not explicitly request them.
+	ExtraTools []tool.Tool
 	// TokenMode selects how much optional context/tool surface this session exposes
 	// at boot. Empty/full preserves the normal capability surface. "economy" keeps
 	// the core coding tools visible and moves skills, MCP, LSP, web_fetch,
@@ -266,6 +274,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		return nil, err
 	}
 	shell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, stderr)
+	writeRoots := cfg.WriteRootsForRoot(root)
 
 	sysPrompt, err := cfg.ResolveSystemPromptForRoot(root)
 	if err != nil {
@@ -282,6 +291,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
 		sysPrompt += "\n\n" + workspaceLine
+	}
+	if writableLine := writableRootsPromptLine(root, writeRoots); writableLine != "" {
+		sysPrompt += "\n\n" + writableLine
 	}
 	if tokenEconomy {
 		sysPrompt += "\n\n" + tokenEconomyPrompt
@@ -318,6 +330,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
+	if block := strings.TrimSpace(opts.ScopedMemoryBlock); block != "" {
+		sysPrompt = strings.TrimRight(sysPrompt, "\n") + "\n\n" + block
+	}
 	sysPrompt = applyAgentProfilePrompt(sysPrompt, opts.AgentProfile)
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their
@@ -342,7 +357,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	reg := tool.NewRegistry()
 	reg.SetAllowPolicy(agentProfileToolAllowPolicy(opts.AgentProfile))
-	writeRoots := cfg.WriteRootsForRoot(root)
 	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)
 	// managedConfig names the Reasonix-owned config FILES (config.toml,
 	// compatibility TOMLs, legacy v0.x config.json) the file-writers may repair
@@ -370,6 +384,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	readPathResolver := builtin.NewPathResolver()
 	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, intranetPolicy, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+	for _, extraTool := range opts.ExtraTools {
+		if extraTool != nil {
+			reg.Add(extraTool)
+		}
+	}
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -1449,6 +1468,45 @@ func currentWorkspacePromptLine(root string) string {
 		return ""
 	}
 	return "Current workspace: " + strconv.Quote(root)
+}
+
+func writableRootsPromptLine(workspaceRoot string, roots []string) string {
+	if len(roots) == 0 || samePromptPath(workspaceRoot, roots[0]) {
+		return ""
+	}
+	line := "Writable root for file-editing tools: " + strconv.Quote(roots[0]) + ". It differs from the current workspace; write generated files under this root unless the user changes the sandbox configuration. Full-access approval does not bypass this boundary."
+	if len(roots) > 1 {
+		quoted := make([]string, 0, len(roots)-1)
+		for _, root := range roots[1:] {
+			if strings.TrimSpace(root) != "" {
+				quoted = append(quoted, strconv.Quote(root))
+			}
+		}
+		if len(quoted) > 0 {
+			line += " Additional writable roots: " + strings.Join(quoted, ", ") + "."
+		}
+	}
+	return line
+}
+
+func samePromptPath(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return a == b
+	}
+	if abs, err := filepath.Abs(a); err == nil {
+		a = abs
+	}
+	if abs, err := filepath.Abs(b); err == nil {
+		b = abs
+	}
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func resolveWorkspaceRoot(explicit string) string {

@@ -217,14 +217,20 @@ func configureCLIThemeFromConfigNoProbe() {
 // passes false so the session UI is reachable before a key is set. sink receives
 // the agent's typed event stream — runAgent passes a TextSink that renders to
 // stdout, the TUI passes an event-channel sink so events become tea.Msgs.
-func setup(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
+// profile selects economy|balanced|delivery (empty = balanced/full).
+// workspaceRoot pins the project root explicitly (from --dir); empty falls back
+// to git-root detection.
+func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
+
 	migrateMCPConfigForCLIWorkspace()
 	return boot.Build(ctx, boot.Options{
-		Model:      modelName,
-		MaxSteps:   maxStepsOverride,
-		RequireKey: requireKey,
-		Sink:       sink,
-		SessionDir: resolveCLISessionDir(),
+		Model:         modelName,
+		MaxSteps:      maxStepsOverride,
+		RequireKey:    requireKey,
+		Sink:          sink,
+		TokenMode:     profile,
+		SessionDir:    resolveCLISessionDir(),
+		WorkspaceRoot: workspaceRoot,
 	})
 }
 
@@ -242,16 +248,19 @@ func resolveCLISessionDir() string {
 	return config.SessionDir()
 }
 
-// setupQuiet is like setup but suppresses plugin subprocess stderr output.
-// Used during model switch inside a bubbletea session to prevent plugin logs
-// from corrupting the TUI's terminal raw mode.
-func setupQuiet(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
+// setupQuietProfile is like setupProfile but suppresses plugin subprocess
+// stderr. Used during model switch inside a bubbletea session to prevent plugin
+// logs from corrupting the TUI's terminal raw mode.
+func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
+
 	return boot.Build(ctx, boot.Options{
-		Model:      modelName,
-		MaxSteps:   maxStepsOverride,
-		RequireKey: requireKey,
-		Sink:       sink,
-		Stderr:     io.Discard,
+		Model:         modelName,
+		MaxSteps:      maxStepsOverride,
+		RequireKey:    requireKey,
+		Sink:          sink,
+		Stderr:        io.Discard,
+		TokenMode:     profile,
+		WorkspaceRoot: workspaceRoot,
 	})
 }
 
@@ -267,6 +276,23 @@ func chdirTo(dir string) int {
 		return 2
 	}
 	return 0
+}
+
+// workspaceRootForDir returns the explicit project root to pin when --dir was
+// given. It runs after chdirTo has already switched into dir, so the process
+// working directory is the resolved root. An empty dir means no override (fall
+// back to git-root detection). A Getwd failure is returned rather than swallowed:
+// silently reverting to "" would re-trigger git-root/default resolution and break
+// the explicit --dir guarantee, so the caller must fail loudly instead.
+func workspaceRootForDir(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve --dir workspace root: %w", err)
+	}
+	return wd, nil
 }
 
 func modelForResumePath(modelName, resumePath string, cfg *config.Config) string {
@@ -319,6 +345,12 @@ func runAgent(args []string) int {
 	}
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
+	}
+	workspaceRoot, err := workspaceRootForDir(*dir)
+	profile := ""
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
 	}
 	cfg, _ := config.Load()
 	configureCLIThemeFromConfigForTTYOutput()
@@ -427,7 +459,8 @@ func runAgent(args []string) int {
 	if resumePath != "" {
 		*model = modelForResumePath(*model, resumePath, cfg)
 	}
-	ctrl, err := setup(ctx, *model, *maxSteps, true, sink)
+	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, sink, profile, workspaceRoot)
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -591,7 +624,9 @@ func runServe(args []string) int {
 			}
 		}
 	}
-	ctrl, err := setup(ctx, *model, *maxSteps, true, sink)
+	profile := ""
+	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, sink, profile, "")
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -661,6 +696,11 @@ func chatREPL(args []string) int {
 	}
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
+	}
+	workspaceRoot, err := workspaceRootForDir(*dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 1
 	}
 	cfg, err := config.Load()
 	if err == nil {
@@ -767,7 +807,9 @@ func chatREPL(args []string) int {
 		},
 	})
 	sink = withNotifications(sink, cfg)
-	ctrl, err := setup(ctx, *model, *maxSteps, false, sink)
+	profile := ""
+	ctrl, err := setupProfile(ctx, *model, *maxSteps, false, sink, profile, workspaceRoot)
+
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
 		// True first run whose default model can't resolve: guide setup, then retry.
 		// With a config present, fall through to the descriptive error — re-running
@@ -776,7 +818,8 @@ func chatREPL(args []string) int {
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
 			return rc
 		}
-		ctrl, err = setup(ctx, *model, *maxSteps, false, sink)
+		ctrl, err = setupProfile(ctx, *model, *maxSteps, false, sink, profile, workspaceRoot)
+
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -841,8 +884,9 @@ func chatREPL(args []string) int {
 	// model (carrying the conversation). It must NOT touch the running model —
 	// runModelSubcommand performs the swap on the live copy. The same stable sink
 	// feeds the new controller, so events keep flowing to this TUI.
-	m.buildController = func(ref string, carry []provider.Message, resumePath string) (*control.Controller, error) {
-		c, err := setupQuiet(ctx, ref, *maxSteps, false, sink)
+	m.buildController = func(spec controllerBuildSpec, carry []provider.Message, resumePath string) (*control.Controller, error) {
+		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, workspaceRoot)
+
 		if err != nil {
 			return nil, err
 		}

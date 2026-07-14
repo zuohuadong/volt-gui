@@ -78,7 +78,10 @@ type callContext struct {
 // withCallContext stamps ctx with the executing call's ID, the agent's sink, and
 // the asker. executeOne sets this before every Execute; `task` reads it (via
 // CallContext) to nest sub-agent events, and `ask` reads the asker to prompt.
+// The plan-mode flag is mirrored onto the leaf planmode key so tools that must
+// not import this package (for example internal/tool/builtin) can still read it.
 func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
+	ctx = planmode.WithActive(ctx, planMode)
 	return context.WithValue(ctx, callContextKey{}, callContext{parentID: parentID, sink: sink, asker: asker, planMode: planMode})
 }
 
@@ -1080,6 +1083,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	if a.evidence != nil {
 		a.evidence.Reset()
 	}
+
 	a.repeatSuccessCounts = nil
 	a.blockedTurnStreak = 0
 	a.loopGuardArmed = false
@@ -2169,9 +2173,10 @@ type toolCallBatch struct {
 // partitionToolCalls keeps provider order while letting contiguous known
 // read-only tools run together. Unknown and writer tools are single-call serial
 // batches so they cannot reorder around reads or produce surprising errors.
-// complete_step and todo_write are read-only but never join a parallel run: they
-// read the turn's evidence ledger, so every prior call's receipt must be recorded
-// before they run.
+// complete_step and todo_write read the turn's evidence ledger. wait and
+// bash_output can merge a background task's receipts into that ledger. These
+// evidence-sensitive tools never join a parallel run, so provider order stays
+// receipt order.
 func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallBatch {
 	var batches []toolCallBatch
 	for i := 0; i < len(calls); {
@@ -2191,7 +2196,8 @@ func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallB
 }
 
 func parallelisable(r *tool.Registry, name string) bool {
-	if name == "complete_step" || name == "todo_write" {
+	switch name {
+	case "complete_step", "todo_write", "wait", "bash_output":
 		return false
 	}
 	t, ok := r.Get(name)
@@ -2249,6 +2255,10 @@ const repeatSuccessBreakThreshold = 2
 // pass, since that guard also invites the model to report the blocker.
 const loopGuardBlockErrMsg = "blocked by loop guard"
 
+// policyBlockErrMsg is stable across targets so a model that cosmetically
+// rewrites an outside-workspace path cannot evade blocker tracking.
+const policyBlockErrMsg = "blocked by host policy"
+
 // applyStormBreaker detects a run of zero-progress turns and, past the
 // threshold, rewrites the model-facing result (results[0]) into a directive to
 // change approach. Two detectors, because a stuck model varies its retries two
@@ -2279,7 +2289,7 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 		a.blockedTurnStreak = 0
 	}
 	for _, outcome := range outcomes {
-		if outcome.blocked && outcome.errMsg == loopGuardBlockErrMsg {
+		if outcome.blocked && (outcome.errMsg == loopGuardBlockErrMsg || outcome.errMsg == policyBlockErrMsg) {
 			a.armLoopGuardPass(receiptMark)
 			break
 		}
@@ -2574,6 +2584,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		// retry land valid instead of repeating the same broken shape.
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
+		}
+		if tool.IsPolicyBlock(err) {
+			body, truncMsg := truncateToolOutput(fmt.Sprintf("blocked: %v\n%s\nHost policy block: do not retry the same action unchanged. Use a path inside the writable workspace, request a specific user decision when appropriate, or explain the blocker.", err, detail))
+			return toolOutcome{output: body, blocked: true, errMsg: policyBlockErrMsg, truncated: truncMsg != "", truncMsg: truncMsg}
 		}
 		body, truncMsg := truncateToolOutput(fmt.Sprintf("error: %v\n%s", err, detail))
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}

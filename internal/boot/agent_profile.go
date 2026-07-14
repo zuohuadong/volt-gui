@@ -65,6 +65,8 @@ func agentProfileToolAllowPolicy(profile *AgentProfile) func(string) bool {
 			groups["browser"] = true
 		case "memory", "memories", "记忆", "知识库", "长期记忆":
 			groups["memory"] = true
+		case "automation", "scheduler", "自动化", "自动化管理", "计划任务":
+			groups["automation"] = true
 		default:
 			exact[name] = true
 			exact[key] = true
@@ -93,6 +95,10 @@ func agentProfileToolAllowPolicy(profile *AgentProfile) func(string) bool {
 	terminalTools := map[string]bool{"bash": true, "bash_output": true, "kill_shell": true, "wait": true}
 	browserTools := map[string]bool{"browser_control": true, "browser_navigate": true, "web_fetch": true}
 	memoryTools := map[string]bool{"memory": true, "remember": true, "forget": true}
+	automationTools := map[string]bool{
+		"automation_list": true, "automation_save": true,
+		"automation_delete": true, "automation_run_now": true,
+	}
 	return func(name string) bool {
 		trimmed := strings.TrimSpace(name)
 		key := strings.ToLower(trimmed)
@@ -102,6 +108,7 @@ func agentProfileToolAllowPolicy(profile *AgentProfile) func(string) bool {
 		return (groups["files"] && fileTools[key]) ||
 			(groups["terminal"] && terminalTools[key]) ||
 			(groups["browser"] && browserTools[key]) ||
-			(groups["memory"] && memoryTools[key])
+			(groups["memory"] && memoryTools[key]) ||
+			(groups["automation"] && automationTools[key])
 	}
 }

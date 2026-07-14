@@ -68,7 +68,7 @@ func (m *chatTUI) runModelSubcommand(input string) {
 	// must happen here, before we hand the new controller back.
 	m.modelSwitchPending = true
 	m.pendingModelSwitch = func() tea.Msg {
-		c, err := build(ref, carried, prevPath)
+		c, err := build(controllerBuildSpec{ModelRef: ref}, carried, prevPath)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}

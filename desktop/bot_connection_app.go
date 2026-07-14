@@ -29,27 +29,37 @@ type BotConnectionCredentialView struct {
 }
 
 type BotConnectionSessionMappingView struct {
-	RemoteID      string `json:"remoteId"`
-	SessionID     string `json:"sessionId"`
-	Scope         string `json:"scope"`
-	WorkspaceRoot string `json:"workspaceRoot"`
-	UpdatedAt     string `json:"updatedAt"`
+	RemoteID               string `json:"remoteId"`
+	SessionID              string `json:"sessionId"`
+	SessionSource          string `json:"sessionSource"`
+	ChatType               string `json:"chatType"`
+	UserID                 string `json:"userId"`
+	ThreadID               string `json:"threadId"`
+	ProjectID              string `json:"projectId"`
+	AgentProfileID         string `json:"agentProfileId"`
+	PermissionCeiling      string `json:"permissionCeiling"`
+	RequireHighRiskConfirm bool   `json:"requireHighRiskConfirm"`
+	Scope                  string `json:"scope"`
+	WorkspaceRoot          string `json:"workspaceRoot"`
+	UpdatedAt              string `json:"updatedAt"`
 }
 
 type BotConnectionView struct {
-	ID              string                            `json:"id"`
-	Provider        string                            `json:"provider"`
-	Domain          string                            `json:"domain"`
-	Label           string                            `json:"label"`
-	Enabled         bool                              `json:"enabled"`
-	Status          string                            `json:"status"`
-	Model           string                            `json:"model"`
-	WorkspaceRoot   string                            `json:"workspaceRoot"`
-	Credential      BotConnectionCredentialView       `json:"credential"`
-	SessionMappings []BotConnectionSessionMappingView `json:"sessionMappings"`
-	LastError       string                            `json:"lastError"`
-	CreatedAt       string                            `json:"createdAt"`
-	UpdatedAt       string                            `json:"updatedAt"`
+	ID               string                            `json:"id"`
+	Provider         string                            `json:"provider"`
+	Domain           string                            `json:"domain"`
+	Label            string                            `json:"label"`
+	Enabled          bool                              `json:"enabled"`
+	Status           string                            `json:"status"`
+	Model            string                            `json:"model"`
+	ToolApprovalMode string                            `json:"toolApprovalMode"`
+	WorkspaceRoot    string                            `json:"workspaceRoot"`
+	Access           BotAccessView                     `json:"access"`
+	Credential       BotConnectionCredentialView       `json:"credential"`
+	SessionMappings  []BotConnectionSessionMappingView `json:"sessionMappings"`
+	LastError        string                            `json:"lastError"`
+	CreatedAt        string                            `json:"createdAt"`
+	UpdatedAt        string                            `json:"updatedAt"`
 }
 
 type BotInstallStartResult struct {
@@ -496,7 +506,8 @@ func postFeishuInstallFormResult(base string, body map[string]string) (map[strin
 func botConnectionView(conn config.BotConnectionConfig) BotConnectionView {
 	return BotConnectionView{
 		ID: conn.ID, Provider: conn.Provider, Domain: conn.Domain, Label: conn.Label, Enabled: conn.Enabled, Status: conn.Status,
-		Model: conn.Model, WorkspaceRoot: conn.WorkspaceRoot,
+		Model: conn.Model, ToolApprovalMode: normalizeBotConnectionToolApprovalOverride(conn.ToolApprovalMode), WorkspaceRoot: conn.WorkspaceRoot,
+		Access: botAccessViewFromConfig(conn.Access),
 		Credential: BotConnectionCredentialView{
 			AppID: conn.Credential.AppID, AppSecretEnv: conn.Credential.AppSecretEnv, AccountID: conn.Credential.AccountID, TokenEnv: conn.Credential.TokenEnv,
 			SecretSet: botCredentialSecretSet(conn),
@@ -545,14 +556,16 @@ func botConnectionViews(connections []config.BotConnectionConfig) []BotConnectio
 
 func botConnectionConfig(view BotConnectionView) config.BotConnectionConfig {
 	return config.BotConnectionConfig{
-		ID:            strings.TrimSpace(view.ID),
-		Provider:      strings.TrimSpace(view.Provider),
-		Domain:        strings.TrimSpace(view.Domain),
-		Label:         strings.TrimSpace(view.Label),
-		Enabled:       view.Enabled,
-		Status:        strings.TrimSpace(view.Status),
-		Model:         strings.TrimSpace(view.Model),
-		WorkspaceRoot: strings.TrimSpace(view.WorkspaceRoot),
+		ID:               strings.TrimSpace(view.ID),
+		Provider:         strings.TrimSpace(view.Provider),
+		Domain:           strings.TrimSpace(view.Domain),
+		Label:            strings.TrimSpace(view.Label),
+		Enabled:          view.Enabled,
+		Status:           strings.TrimSpace(view.Status),
+		Model:            strings.TrimSpace(view.Model),
+		ToolApprovalMode: normalizeBotConnectionToolApprovalOverride(view.ToolApprovalMode),
+		WorkspaceRoot:    strings.TrimSpace(view.WorkspaceRoot),
+		Access:           botAccessConfigFromView(view.Access),
 		Credential: config.BotConnectionCredential{
 			AppID:        strings.TrimSpace(view.Credential.AppID),
 			AppSecretEnv: strings.TrimSpace(view.Credential.AppSecretEnv),
@@ -607,11 +620,19 @@ func botSessionMappingViews(mappings []config.BotConnectionSessionMapping, conne
 		workspaceRoot := firstNonEmptyBot(m.WorkspaceRoot, connectionWorkspaceRoot)
 		scope := botMappingScope(m.Scope, workspaceRoot)
 		out = append(out, BotConnectionSessionMappingView{
-			RemoteID:      m.RemoteID,
-			SessionID:     m.SessionID,
-			Scope:         scope,
-			WorkspaceRoot: botMappingWorkspaceRoot(scope, workspaceRoot),
-			UpdatedAt:     m.UpdatedAt,
+			RemoteID:               m.RemoteID,
+			SessionID:              m.SessionID,
+			SessionSource:          m.SessionSource,
+			ChatType:               m.ChatType,
+			UserID:                 m.UserID,
+			ThreadID:               m.ThreadID,
+			ProjectID:              m.ProjectID,
+			AgentProfileID:         m.AgentProfileID,
+			PermissionCeiling:      m.PermissionCeiling,
+			RequireHighRiskConfirm: m.RequireHighRiskConfirm,
+			Scope:                  scope,
+			WorkspaceRoot:          botMappingWorkspaceRoot(scope, workspaceRoot),
+			UpdatedAt:              m.UpdatedAt,
 		})
 	}
 	return out
@@ -626,11 +647,19 @@ func botSessionMappingConfigs(mappings []BotConnectionSessionMappingView, connec
 		workspaceRoot := firstNonEmptyBot(m.WorkspaceRoot, connectionWorkspaceRoot)
 		scope := botMappingScope(m.Scope, workspaceRoot)
 		out = append(out, config.BotConnectionSessionMapping{
-			RemoteID:      strings.TrimSpace(m.RemoteID),
-			SessionID:     strings.TrimSpace(m.SessionID),
-			Scope:         scope,
-			WorkspaceRoot: botMappingWorkspaceRoot(scope, workspaceRoot),
-			UpdatedAt:     strings.TrimSpace(m.UpdatedAt),
+			RemoteID:               strings.TrimSpace(m.RemoteID),
+			SessionID:              strings.TrimSpace(m.SessionID),
+			SessionSource:          strings.TrimSpace(m.SessionSource),
+			ChatType:               strings.TrimSpace(m.ChatType),
+			UserID:                 strings.TrimSpace(m.UserID),
+			ThreadID:               strings.TrimSpace(m.ThreadID),
+			ProjectID:              strings.TrimSpace(m.ProjectID),
+			AgentProfileID:         strings.TrimSpace(m.AgentProfileID),
+			PermissionCeiling:      strings.TrimSpace(m.PermissionCeiling),
+			RequireHighRiskConfirm: m.RequireHighRiskConfirm,
+			Scope:                  scope,
+			WorkspaceRoot:          botMappingWorkspaceRoot(scope, workspaceRoot),
+			UpdatedAt:              strings.TrimSpace(m.UpdatedAt),
 		})
 	}
 	return out

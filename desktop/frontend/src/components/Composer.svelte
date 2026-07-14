@@ -3,8 +3,9 @@
   import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
+  import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
   import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
-  import type { ActivityMode, CommandInfo, ComposerAttachment, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
+  import type { ActivityMode, CommandInfo, ComposerAttachment, ContextPanelInfo, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
 
   let {
     input,
@@ -28,6 +29,8 @@
     permissionChanging = false,
     onOpenResources,
     activityMode,
+    contextInfo,
+    backgroundRunCount = 0,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -50,6 +53,8 @@
     permissionChanging?: boolean;
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
+    contextInfo?: ContextPanelInfo;
+    backgroundRunCount?: number;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -92,6 +97,8 @@
   const currentModelCapabilityTitle = $derived(
     selectedModelSupportsImages ? t.composer.imageModelAvailable : t.composer.textModelOnly,
   );
+  const remainingContextPercent = $derived(contextRemainingPercent(contextInfo));
+  const sessionCostLabel = $derived(formatSessionCost(contextInfo?.sessionCost, contextInfo?.sessionCurrency));
 
   onMount(() => {
     const unsubscribeDropped = onFilesDropped((paths) => void attachDroppedPaths(paths));
@@ -546,6 +553,12 @@
         {/if}
       </div>
     {/if}
+  </div>
+
+  <div class="composer__runtime-status" aria-label="Thread 运行状态">
+    <span data-thread-status="context">上下文剩余 <strong>{remainingContextPercent === undefined ? "待统计" : `${remainingContextPercent}%`}</strong></span>
+    <span data-thread-status="cost">本会话费用 <strong>{sessionCostLabel}</strong></span>
+    <span data-thread-status="background">后台运行 <strong>{Math.max(0, backgroundRunCount)}</strong></span>
   </div>
 
   <div class="composer__toolbar">

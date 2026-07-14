@@ -33,6 +33,7 @@ import (
 	"voltui/internal/pluginpkg"
 	"voltui/internal/provider"
 	"voltui/internal/sandbox"
+	"voltui/internal/scopedmemory"
 	"voltui/internal/tool"
 )
 
@@ -6141,6 +6142,24 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	app.tabs["test"].AgentProfileID = "reviewer"
 	app.tabs["test"].AgentProfileName = "Reviewer"
 	app.tabs["test"].AgentProfileBaseModel = "base/model"
+	parentMemoryContext := scopedmemory.Context{OrganizationID: "org-a", WorkspaceID: "workspace-a", ProjectID: "project-a", ThreadID: "thread-parent"}
+	memoryStore, err := openDesktopScopedMemoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userMemory, err := memoryStore.Save(parentMemoryContext, scopedmemory.Input{Title: "User", Body: "user memory", Source: "test", Layer: scopedmemory.LayerUser, ScopeID: scopedmemory.UserScopeID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadMemory, err := memoryStore.Save(parentMemoryContext, scopedmemory.Input{Title: "Parent thread", Body: "parent thread memory", Source: "test", Layer: scopedmemory.LayerThread, ScopeID: parentMemoryContext.ThreadID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentRuntime, err := loadScopedMemoryRuntime(parentMemoryContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyScopedMemoryRuntimeLocked(app.tabs["test"], parentRuntime)
 	defer ctrl.Close()
 
 	ctrl.Submit("first")
@@ -6188,6 +6207,12 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 	if meta.AgentProfileID != "reviewer" || meta.AgentProfileName != "Reviewer" || meta.AgentProfileBaseModel != "base/model" {
 		t.Fatalf("fork tab meta lost agent profile: %+v", meta)
 	}
+	if meta.MemoryContext.OrganizationID != parentMemoryContext.OrganizationID || meta.MemoryContext.WorkspaceID != parentMemoryContext.WorkspaceID || meta.MemoryContext.ProjectID != parentMemoryContext.ProjectID || meta.MemoryContext.ThreadID == "" || meta.MemoryContext.ThreadID == parentMemoryContext.ThreadID {
+		t.Fatalf("fork memory context = %+v, want inherited ancestors and a new thread", meta.MemoryContext)
+	}
+	if !slices.Contains(meta.MemorySourceIDs, userMemory.ID) || slices.Contains(meta.MemorySourceIDs, threadMemory.ID) {
+		t.Fatalf("fork memory sources = %v, want user %q without parent thread %q", meta.MemorySourceIDs, userMemory.ID, threadMemory.ID)
+	}
 	app.mu.RLock()
 	forkTab := app.tabs[meta.ID]
 	app.mu.RUnlock()
@@ -6225,6 +6250,9 @@ func TestForkCreatesActiveTabWithoutSwitchingSourceController(t *testing.T) {
 			}
 			if len(m.AgentProfileHistory) != 1 || m.AgentProfileHistory[0].ModelRef != "profile/model" {
 				t.Fatalf("fork branch meta lost agent profile history: %+v", m.AgentProfileHistory)
+			}
+			if m.MemoryContext == nil || *m.MemoryContext != meta.MemoryContext || !reflect.DeepEqual(m.MemorySourceIDs, meta.MemorySourceIDs) {
+				t.Fatalf("fork branch memory audit = context:%+v sources:%v, want %+v / %v", m.MemoryContext, m.MemorySourceIDs, meta.MemoryContext, meta.MemorySourceIDs)
 			}
 		}
 	}

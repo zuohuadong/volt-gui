@@ -1,6 +1,7 @@
 # Build artifacts
 /bin/
 /dist/
+/dist-prerequisites/
 /stage/
 /npm/.stage/
 /voltui

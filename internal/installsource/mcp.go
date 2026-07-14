@@ -227,7 +227,7 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 			ToolTimeoutSeconds:       s.ToolTimeoutSeconds,
 			TrustedReadOnlyTools:     append([]string(nil), s.TrustedReadOnlyTools...),
 			DefaultToolsApprovalMode: s.DefaultToolsApprovalMode,
-			Tools:                    s.Tools,
+			Tools:                    mcpToolPoliciesWithApprovalMode(s.Tools),
 			ApprovalsReviewer:        s.ApprovalsReviewer,
 			Tier:                     tier,
 		}
@@ -248,6 +248,22 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 		out = append(out, e)
 	}
 	return out, warnings, nil
+}
+
+func mcpToolPoliciesWithApprovalMode(values map[string]config.MCPToolPolicy) map[string]config.MCPToolPolicy {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]config.MCPToolPolicy, len(values))
+	for name, policy := range values {
+		if strings.TrimSpace(policy.ApprovalMode) != "" {
+			out[name] = policy
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // validateMCPEntry enforces the per-transport required fields. It is the

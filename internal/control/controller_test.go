@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/command"
+	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/guardian"
 	"reasonix/internal/hook"
@@ -2333,6 +2336,105 @@ func TestDisconnectMCPServerRemovesLazyPlaceholder(t *testing.T) {
 	}
 	if _, found := reg.Get("mcp__mock__connect"); found {
 		t.Fatalf("lazy placeholder still registered after disconnect; names=%v", reg.Names())
+	}
+}
+
+func TestConnectMCPServerAppliesConfiguredCallTimeouts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if len(req.ID) == 0 || string(req.ID) == "null" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		var result any
+		switch req.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": "2025-03-26",
+				"serverInfo":      map[string]any{"name": "timeout-test", "version": "1"},
+			}
+		case "tools/list":
+			result = map[string]any{"tools": []map[string]any{{
+				"name":        "slow",
+				"description": "Wait until the caller cancels.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}}
+		case "tools/call":
+			<-r.Context().Done()
+			return
+		default:
+			result = map[string]any{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"result":  result,
+		})
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name           string
+		defaultTimeout time.Duration
+		entry          config.PluginEntry
+	}{
+		{
+			name:           "global default",
+			defaultTimeout: time.Second,
+		},
+		{
+			name:           "server override",
+			defaultTimeout: 10 * time.Second,
+			entry:          config.PluginEntry{CallTimeoutSeconds: 1},
+		},
+		{
+			name:           "tool override",
+			defaultTimeout: 10 * time.Second,
+			entry: config.PluginEntry{
+				CallTimeoutSeconds: 10,
+				ToolTimeoutSeconds: map[string]int{"slow": 1},
+			},
+		},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			host := plugin.NewHost()
+			defer host.Close()
+			reg := tool.NewRegistry()
+			ctrl := New(Options{
+				Host:                  host,
+				Registry:              reg,
+				MCPDefaultCallTimeout: tc.defaultTimeout,
+			})
+			entry := tc.entry
+			entry.Name = fmt.Sprintf("timeout%d", i)
+			entry.Type = "http"
+			entry.URL = server.URL
+			if _, err := ctrl.ConnectMCPServer(entry); err != nil {
+				t.Fatalf("ConnectMCPServer: %v", err)
+			}
+			connected, ok := reg.Get("mcp__" + entry.Name + "__slow")
+			if !ok {
+				t.Fatalf("connected tool missing; names=%v", reg.Names())
+			}
+			started := time.Now()
+			_, err := connected.Execute(context.Background(), json.RawMessage(`{}`))
+			elapsed := time.Since(started)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("slow tool error = %v, want deadline exceeded", err)
+			}
+			if elapsed < 750*time.Millisecond || elapsed > 3*time.Second {
+				t.Fatalf("slow tool elapsed = %v, want configured 1s timeout", elapsed)
+			}
+		})
 	}
 }
 

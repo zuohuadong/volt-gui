@@ -179,10 +179,10 @@ var goWriteOrExecArgs = map[string]bool{
 
 // Decide applies the plan-mode stage gate before permission policy. A tool whose
 // ReadOnly() is false is refused unless it is declared in
-// plan_mode_allowed_tools. ReadOnly()==true tools, including installed MCP tools
-// carrying readOnlyHint, are allowed except when they explicitly self-report
-// PlanSafetyUnsafe. The invariant PlanSafe => ReadOnly is enforced: a writer
-// that claims plan-safe is a wiring bug and is refused.
+// plan_mode_allowed_tools. ReadOnly()==true tools are allowed only when their
+// read-only classification is locally trusted, and never when they explicitly
+// self-report PlanSafetyUnsafe. The invariant PlanSafe => ReadOnly is enforced:
+// a writer that claims plan-safe is a wiring bug and is refused.
 func (p Policy) Decide(call Call) Decision {
 	name := strings.TrimSpace(call.Name)
 	if name == "bash" {

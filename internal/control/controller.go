@@ -142,7 +142,8 @@ type Controller struct {
 	// hot-added stdio server binds its subprocess to — behind its own lock, off
 	// c.mu. The Controller keeps the config-facing orchestration (persisting
 	// reasonix.toml on add/remove, building specs from entries). See mcp.go.
-	mcp mcpManager
+	mcp                   mcpManager
+	mcpDefaultCallTimeout time.Duration
 
 	// Capability routing (Delivery hybrid route). Not part of the provider-visible
 	// prefix; only seeds the turn-scoped ledger and optional semantic router.
@@ -384,6 +385,9 @@ type Options struct {
 	// context; both are needed for hot-adding MCP servers via AddMCPServer.
 	Registry  *tool.Registry
 	PluginCtx context.Context
+	// MCPDefaultCallTimeout is the global MCP call cap used by hot-connected
+	// servers when they do not declare a server- or tool-specific override.
+	MCPDefaultCallTimeout time.Duration
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot          string
@@ -486,6 +490,7 @@ func New(opts Options) *Controller {
 		balanceClient:                     opts.BalanceClient,
 		jobs:                              opts.Jobs,
 		mcp:                               newMcpManager(opts.Host, opts.Registry, pluginCtx),
+		mcpDefaultCallTimeout:             opts.MCPDefaultCallTimeout,
 		runtimeProfile:                    runtimeProfile,
 		workspaceRoot:                     opts.WorkspaceRoot,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
@@ -4224,11 +4229,37 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		Env:                      exp.Env,
 		URL:                      exp.URL,
 		Headers:                  exp.Headers,
+		DefaultCallTimeout:       c.mcpDefaultCallTimeout,
+		CallTimeout:              controllerMCPTimeout(exp.CallTimeoutSeconds),
+		ToolTimeouts:             controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
 		ReadOnlyToolNames:        trustedReadOnlyToolNames(exp.TrustedReadOnlyTools),
 		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
 		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
 		ApprovalsReviewer:        exp.ApprovalsReviewer,
 	}, c.WorkspaceRoot()))
+}
+
+func controllerMCPTimeout(seconds int) time.Duration {
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func controllerMCPToolTimeouts(values map[string]int) map[string]time.Duration {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Duration, len(values))
+	for name, seconds := range values {
+		if name = strings.TrimSpace(name); name != "" && seconds > 0 {
+			out[name] = time.Duration(seconds) * time.Second
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func controllerMCPToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {

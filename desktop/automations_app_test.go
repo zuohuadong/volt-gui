@@ -1,7 +1,10 @@
 package main
 
-import "testing"
-import "time"
+import (
+	"os/exec"
+	"testing"
+	"time"
+)
 
 func TestSaveAutomationPersistsWorkbenchAutomation(t *testing.T) {
 	isolateDesktopUserDirs(t)
@@ -259,5 +262,61 @@ func TestSkipMissedAutomationRunsDoesNotReplayAfterStartup(t *testing.T) {
 				t.Fatalf("one-time missed run was not paused: %+v", automation)
 			}
 		}
+	}
+}
+
+func TestAutomationRunInboxPersistsAndMarksRead(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+	started := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	finished := started.Add(3 * time.Second)
+	before := WorkbenchAutomationView{ID: "verify", Title: "验证门禁", Command: "diff-check", Scope: "/workspace/app"}
+	after := before
+	after.Status = automationStatusFailed
+	after.Result = "Failed: exit status 1"
+	after.Logs = []string{"git diff check failed"}
+
+	if err := recordAutomationRun(before, after, started, finished, "manual"); err != nil {
+		t.Fatalf("recordAutomationRun: %v", err)
+	}
+	runs, err := app.ListAutomationRuns()
+	if err != nil {
+		t.Fatalf("ListAutomationRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].AutomationID != "verify" || !runs[0].NeedsAttention || runs[0].Read {
+		t.Fatalf("unexpected automation run inbox: %+v", runs)
+	}
+	updated, err := app.MarkAutomationRunRead(runs[0].ID, true)
+	if err != nil {
+		t.Fatalf("MarkAutomationRunRead: %v", err)
+	}
+	if !updated.Read || updated.NeedsAttention {
+		t.Fatalf("marked run should be read and no longer need attention: %+v", updated)
+	}
+}
+
+func TestSuccessfulRetryClearsAutomationFailureState(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+
+	before := WorkbenchAutomationView{
+		ID:           "retry-gate",
+		Title:        "重试质量门禁",
+		Status:       automationStatusFailed,
+		Command:      "diff-check",
+		Scope:        repo,
+		ScheduleMode: "manual",
+		Result:       "Failed: previous run",
+	}
+	after := executeAutomation(before, time.Now(), false)
+	if after.Status != automationStatusRunning || after.Result != "Passed" {
+		t.Fatalf("successful retry = %+v, want running / Passed", after)
+	}
+	run := buildAutomationRun(before, after, time.Now(), time.Now(), "manual")
+	if run.Status != "passed" || run.NeedsAttention {
+		t.Fatalf("successful retry inbox = %+v, want passed without attention", run)
 	}
 }

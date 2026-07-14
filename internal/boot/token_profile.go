@@ -31,6 +31,7 @@ var tokenEconomyCoreBuiltins = []string{
 	"glob",
 	"grep",
 	"kill_shell",
+	"knowledge_search",
 	"ls",
 	"move_file",
 	"multi_edit",

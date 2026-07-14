@@ -76,14 +76,20 @@ func TestBuildReviewSubagentRegistryUsesForegroundOnlyBash(t *testing.T) {
 }
 
 func TestBuildReviewSubagentRegistryIncludesCalculateUnlessExplicitlyDisabled(t *testing.T) {
-	sk := skill.Skill{ReadOnly: true, AllowedTools: []string{"calculate", "read_file"}}
+	sk := skill.Skill{ReadOnly: true, AllowedTools: []string{"calculate", "knowledge_search", "read_file"}}
 	if _, ok := buildReviewSubagentRegistry(sk, config.Default()).Get("calculate"); !ok {
 		t.Fatal("default review registry must include calculate")
+	}
+	if knowledgeSearch, ok := buildReviewSubagentRegistry(sk, config.Default()).Get("knowledge_search"); !ok || !knowledgeSearch.ReadOnly() {
+		t.Fatal("default review registry must include read-only knowledge_search")
 	}
 	cfg := config.Default()
 	cfg.Tools.Enabled = []string{"read_file"}
 	if _, ok := buildReviewSubagentRegistry(sk, cfg).Get("calculate"); ok {
 		t.Fatal("explicit tools.enabled allowlist must be able to exclude calculate")
+	}
+	if _, ok := buildReviewSubagentRegistry(sk, cfg).Get("knowledge_search"); ok {
+		t.Fatal("explicit tools.enabled allowlist must be able to exclude knowledge_search")
 	}
 }
 

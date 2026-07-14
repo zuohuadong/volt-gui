@@ -107,6 +107,19 @@ describe("thread project memory context gate", () => {
     expect(listTabs).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
   });
+
+  test("refuses a refreshed thread that is already busy before submission", async () => {
+    const submit = vi.fn(async () => undefined);
+    await expect(submitThreadMessageWithProjectContext({
+      tab: tab("project-a"),
+      projectId: "project-a",
+      scopedMemoryForTab: async () => memoryView("project-a"),
+      setMemoryContextForTab: async () => undefined,
+      listTabs: async () => [{ ...tab("project-a"), running: true }],
+      submit,
+    })).rejects.toThrow("turn already running");
+    expect(submit).not.toHaveBeenCalled();
+  });
 });
 
 describe("resolveSubmissionFailureAction", () => {

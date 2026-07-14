@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +61,39 @@ func TestStoreImportSearchStatusAndDelete(t *testing.T) {
 	}
 	if len(afterDelete) != 0 {
 		t.Fatalf("Search() after delete returned %d results", len(afterDelete))
+	}
+}
+
+func TestOpenReadOnlySearchesWithoutAllowingKnowledgeWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "knowledge.db")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	_, err = store.Import(context.Background(), ImportInput{
+		ID:      "readonly-doc",
+		Title:   "只读评审规范",
+		Type:    "规则",
+		Content: "代码评审必须引用实际检索到的知识来源。",
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("Import() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	readOnly, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("OpenReadOnly() error = %v", err)
+	}
+	defer readOnly.Close()
+	results, err := readOnly.Search(context.Background(), "引用知识来源", SearchOptions{Limit: 5})
+	if err != nil || len(results) == 0 || results[0].DocumentID != "readonly-doc" {
+		t.Fatalf("read-only Search() = %+v, %v", results, err)
+	}
+	if _, err := readOnly.Import(context.Background(), ImportInput{Title: "不应写入", Content: "blocked"}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "readonly") {
+		t.Fatalf("read-only Import() error = %v, want readonly failure", err)
 	}
 }

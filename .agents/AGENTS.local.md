@@ -21,6 +21,7 @@
 
 - 默认先读 `references/private-skills/INDEX.md`，判断是否存在 XGIC 私有行业 skill；若任务不属于私有技能覆盖范围，再读 `references/skills/INDEX.md`。
 - 项目私有技能安装在 `.voltui/skills/`，VoltUI 可直接发现；`references/private-skills/skills-manifest.json` 是全量清单。
+- Desktop UI、UX、布局、组件状态、响应式或信息架构任务必须加载 `.agents/skills/volt-gui-design-language/SKILL.md` 和根目录 `DESIGN.md`。
 - Go/CLI/TUI 任务按仓库现有 Go 代码规范执行：`gofmt`、`go vet`、`go test` 是基础门禁。
 - Desktop/Wails 任务需要同时关注 `desktop/go.mod`、嵌入的 `desktop/frontend/dist`、平台差异和 CGO/WebKit 依赖。
 - Site/Astro 任务需要加载 `typescript`；如涉及部署，再加载 `deployment-target-selector`。
@@ -46,5 +47,6 @@
 ## Non-goals By Default
 
 - 不默认迁移 Wails、Astro、Go module 结构或 CI 分支策略。
+- 不在新 UI 中扩展 `--aorist-*`、`--law-*` 或 Accio 命名的兼容样式；新设计使用 Volt 语义和 `DESIGN.md`。
 - 不把本地 secrets、用户配置、`.agents/state/` 运行态、mailbox 消息文件提交进仓库。
 - 不把桌面平台专属依赖强加到 CLI 构建路径。

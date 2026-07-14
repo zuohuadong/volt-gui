@@ -124,6 +124,35 @@ func Open(path string) (*Store, error) {
 	return store, nil
 }
 
+// OpenReadOnly opens an existing knowledge database without running migrations
+// and enables SQLite's connection-local query_only guard. Agent read tools use
+// this path so their ReadOnly contract cannot mutate documents or schema.
+func OpenReadOnly(path string) (*Store, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("knowledge database path is required")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	store := &Store{db: db, path: path}
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `PRAGMA query_only = ON`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.loadCapabilities(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
@@ -477,6 +506,28 @@ func (s *Store) migrate(ctx context.Context) error {
 	} else {
 		s.vecAvailable = true
 	}
+	return nil
+}
+
+func (s *Store) loadCapabilities(ctx context.Context) error {
+	tableExists := func(name string) (bool, error) {
+		var count int
+		err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count)
+		return count > 0, err
+	}
+	ftsAvailable, err := tableExists("chunks_fts")
+	if err != nil {
+		return err
+	}
+	if !ftsAvailable {
+		return errors.New("knowledge database full-text index is unavailable")
+	}
+	vecAvailable, err := tableExists("chunk_vectors")
+	if err != nil {
+		return err
+	}
+	s.ftsAvailable = true
+	s.vecAvailable = vecAvailable
 	return nil
 }
 

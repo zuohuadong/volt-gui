@@ -1006,11 +1006,11 @@ func (s *service) rebuildSession(ctx context.Context, sess *acpSession, cfgState
 		sess.mu.Unlock()
 		return sessionConfigActiveWorkError("answer pending prompts before switching config")
 	}
-	if !sess.running && !status.Running && status.BackgroundJobs > 0 {
+	if !sess.running && !status.Running && !status.Rotating && !status.Submitting && status.BackgroundJobs > 0 {
 		sess.mu.Unlock()
 		return sessionConfigActiveWorkError("stop background jobs before switching config")
 	}
-	if sess.running || status.Running || sess.maintenanceDone != nil {
+	if sess.running || status.Running || status.Rotating || status.Submitting || sess.maintenanceDone != nil {
 		pending := cloneSessionConfigState(cfgState)
 		sess.pendingConfig = &pending
 		sess.mu.Unlock()

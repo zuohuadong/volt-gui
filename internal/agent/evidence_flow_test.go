@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -455,6 +456,40 @@ func TestFinalReadinessPermissionLoopGuardAllowsBlockedFinal(t *testing.T) {
 	}
 	if len(*notices) == 0 {
 		t.Fatal("loop guard should emit a user-facing notice")
+	}
+}
+
+func TestFinalReadinessPolicyBlockAllowsImmediateBlockedFinal(t *testing.T) {
+	todoWrite, ok := tool.LookupBuiltin("todo_write")
+	if !ok {
+		t.Fatal("todo_write builtin not registered")
+	}
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file", readOnly: false, err: tool.NewPolicyBlock(errors.New("path is outside the writable roots"))})
+	reg.Add(todoWrite)
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{
+			toolCallChunk("w1", "write_file", `{"path":"C:\\outside\\report.xlsx","content":"data"}`),
+			toolCallChunk("t1", "todo_write", `{"todos":[{"content":"Write report","status":"in_progress"}]}`),
+			{Type: provider.ChunkDone},
+		},
+		{{Type: provider.ChunkText, Text: "The requested output path is outside the writable workspace."}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+
+	if err := a.Run(context.Background(), "write a report outside the workspace"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if prov.call != 2 {
+		t.Fatalf("provider calls = %d, want one tool turn plus one blocker explanation", prov.call)
+	}
+	if got := toolResults(a.session, "write_file"); len(got) != 1 {
+		t.Fatalf("write_file results = %d, want exactly one blocked attempt", len(got))
+	} else if !strings.HasPrefix(got[0], "blocked:") || !strings.Contains(got[0], "do not retry") {
+		t.Fatalf("policy-block result = %q, want terminal blocked guidance", got[0])
+	}
+	if sessionHasUserMessageContaining(a.session, "final-answer readiness") {
+		t.Fatal("policy blocker should not trigger a synthetic readiness retry")
 	}
 }
 

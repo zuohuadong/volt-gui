@@ -22,6 +22,62 @@ func TestSaveImageDataURL(t *testing.T) {
 	}
 }
 
+func TestAttachmentAPIsUseExplicitRootWithoutChangingProcessCWD(t *testing.T) {
+	launchRoot := t.TempDir()
+	workspaceRoot := t.TempDir()
+	t.Chdir(launchRoot)
+
+	fileData := base64.StdEncoding.EncodeToString([]byte("xlsx payload"))
+	fileRef, err := SaveAttachmentDataURLInRoot(workspaceRoot, "report.xlsx", "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"+fileData)
+	if err != nil {
+		t.Fatalf("SaveAttachmentDataURLInRoot: %v", err)
+	}
+	imageRef, err := SaveImageDataURLInRoot(workspaceRoot, "data:image/png;base64,"+tinyPNG)
+	if err != nil {
+		t.Fatalf("SaveImageDataURLInRoot: %v", err)
+	}
+	if _, err := ImageDataURLInRoot(workspaceRoot, imageRef); err != nil {
+		t.Fatalf("ImageDataURLInRoot: %v", err)
+	}
+
+	if cwd, err := os.Getwd(); err != nil {
+		t.Fatal(err)
+	} else if cwd != launchRoot {
+		t.Fatalf("process cwd = %q, want unchanged %q", cwd, launchRoot)
+	}
+	for _, ref := range []string{fileRef, imageRef} {
+		if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(ref))); err != nil {
+			t.Fatalf("workspace attachment %q missing: %v", ref, err)
+		}
+		if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(ref))); !os.IsNotExist(err) {
+			t.Fatalf("attachment %q leaked into launch cwd, stat err=%v", ref, err)
+		}
+	}
+}
+
+func TestSaveAttachmentFileInRootUsesExplicitDestination(t *testing.T) {
+	launchRoot := t.TempDir()
+	workspaceRoot := t.TempDir()
+	t.Chdir(launchRoot)
+
+	source := filepath.Join(t.TempDir(), "report.xlsx")
+	if err := os.WriteFile(source, []byte("xlsx payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := SaveAttachmentFileInRoot(workspaceRoot, source)
+	if err != nil {
+		t.Fatalf("SaveAttachmentFileInRoot: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspaceRoot, filepath.FromSlash(ref))); err != nil || string(got) != "xlsx payload" {
+		t.Fatalf("stored bytes = %q (err %v), want original", got, err)
+	}
+	if cwd, err := os.Getwd(); err != nil {
+		t.Fatal(err)
+	} else if cwd != launchRoot {
+		t.Fatalf("process cwd = %q, want unchanged %q", cwd, launchRoot)
+	}
+}
+
 func TestSaveImageDataURLRejectsSpoofedMime(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if _, err := SaveImageDataURL("data:image/png;base64,aGk="); err == nil {

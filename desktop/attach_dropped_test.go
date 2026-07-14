@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"voltui/internal/control"
@@ -74,6 +75,73 @@ func TestSavePastedImageUsesActiveWorkspaceRoot(t *testing.T) {
 	}
 	if !strings.HasPrefix(preview, "data:image/png;base64,") {
 		t.Fatalf("preview = %q, want png data URL", preview)
+	}
+}
+
+func TestConcurrentPastedFilesStayInActiveWorkspace(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+
+	launchRoot := t.TempDir()
+	projectRoot := t.TempDir()
+	if err := os.Chdir(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	launchRoot, _ = os.Getwd()
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"project": {ID: "project", WorkspaceRoot: projectRoot},
+		},
+		activeTabID: "project",
+	}
+	dataURL := "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + base64.StdEncoding.EncodeToString([]byte("xlsx payload"))
+
+	const count = 32
+	start := make(chan struct{})
+	refs := make(chan string, count)
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ref, err := app.SavePastedFile("report.xlsx", dataURL)
+			if err != nil {
+				errs <- err
+				return
+			}
+			refs <- ref
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(refs)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("SavePastedFile: %v", err)
+	}
+	seen := map[string]bool{}
+	for ref := range refs {
+		if seen[ref] {
+			t.Fatalf("duplicate attachment ref %q", ref)
+		}
+		seen[ref] = true
+		if _, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(ref))); err != nil {
+			t.Fatalf("project attachment %q missing: %v", ref, err)
+		}
+		if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(ref))); !os.IsNotExist(err) {
+			t.Fatalf("attachment %q leaked into launch cwd, stat err=%v", ref, err)
+		}
+	}
+	if len(seen) != count {
+		t.Fatalf("saved refs = %d, want %d", len(seen), count)
+	}
+	if cwd, err := os.Getwd(); err != nil {
+		t.Fatal(err)
+	} else if cwd != launchRoot {
+		t.Fatalf("process cwd = %q, want unchanged %q", cwd, launchRoot)
 	}
 }
 

@@ -53,6 +53,8 @@ func TestConfineInsideAndOutside(t *testing.T) {
 	// A sibling of the root and a parent escape must both be refused.
 	if err := confine(roots, filepath.Join(root, "..", "escape.txt")); err == nil {
 		t.Error("parent-escape path accepted, want error")
+	} else if !tool.IsPolicyBlock(err) {
+		t.Fatalf("parent-escape error = %T %v, want policy block", err, err)
 	}
 	if err := confine(roots, filepath.Join(filepath.Dir(root), "neighbour", "x")); err == nil {
 		t.Error("sibling path accepted, want error")

@@ -189,10 +189,15 @@ type Controller struct {
 	// and rotating are mutually exclusive gates — a turn refuses to start while
 	// a rotation is in progress, and a rotation refuses to start while a turn
 	// runs — so the run loop's session reference cannot change under it.
-	rotating    bool
-	autosaveWG  sync.WaitGroup
-	planMode    bool
-	sessionPath string
+	rotating                  bool
+	rotationPending           bool
+	rotationReservation       uint64
+	nextRotationReservation   uint64
+	submissionReservation     uint64
+	nextSubmissionReservation uint64
+	autosaveWG                sync.WaitGroup
+	planMode                  bool
+	sessionPath               string
 	// snapshotMu serializes the whole save/recovery handoff for this controller.
 	// Agent-level path locks protect individual files, but recovery also moves
 	// controller-owned state (sessionPath, guardianPath, checkpoints, rewrite
@@ -224,6 +229,7 @@ type pendingApproval struct {
 	tool      string
 	subject   string
 	reason    string
+	guardian  *event.GuardianResult
 	fresh     bool
 	autoDrain bool
 	reply     chan approvalReply
@@ -257,6 +263,8 @@ type plannerSessionResetter interface {
 // jobs.
 type RuntimeStatus struct {
 	Running         bool
+	Rotating        bool
+	Submitting      bool
 	PendingPrompt   bool
 	BackgroundJobs  int
 	CancelRequested bool
@@ -593,16 +601,32 @@ func (c *Controller) beginCheckpoint(input string) {
 // context, guarding against concurrent turns and emitting a TurnDone event when
 // it finishes (Err set on failure; nil also for a user Cancel). A no-op if a
 // turn is already in flight.
-func (c *Controller) runGuarded(body func(ctx context.Context) error) {
+func (c *Controller) runGuarded(body func(ctx context.Context) error) bool {
+	return c.runGuardedWithReservation(0, body)
+}
+
+func (c *Controller) runGuardedWithReservation(reservation uint64, body func(ctx context.Context) error) bool {
 	c.mu.Lock()
-	if c.running || c.rotating {
+	if reservation != 0 {
+		if c.submissionReservation != reservation {
+			c.mu.Unlock()
+			return false
+		}
+	} else if c.submissionReservation != 0 {
 		c.mu.Unlock()
-		return
+		return false
+	}
+	if c.running || c.rotating || c.rotationPending {
+		c.mu.Unlock()
+		return false
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.running = true
 	c.canceling = false
+	if reservation != 0 {
+		c.submissionReservation = 0
+	}
 	c.mu.Unlock()
 
 	c.autosaveWG.Add(1)
@@ -630,6 +654,7 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) {
 		c.mu.Unlock()
 		c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 	}()
+	return true
 }
 
 // Send starts a turn with an uncomposed message. The controller applies
@@ -691,7 +716,7 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
-	if c.running || c.rotating {
+	if c.running || c.rotating || c.rotationPending || c.submissionReservation != 0 {
 		c.mu.Unlock()
 		cancel()
 		return ErrTurnRunning
@@ -790,6 +815,18 @@ func (c *Controller) SubmitDisplay(display, input string) {
 	c.submit(input, display, "")
 }
 
+// SubmitDisplayChecked serializes rich-frontend submissions and reports a busy
+// runtime instead of letting runGuarded silently discard a prompt.
+func (c *Controller) SubmitDisplayChecked(display, input string) error {
+	reservation, err := c.reserveSubmission()
+	if err != nil {
+		return err
+	}
+	defer c.releaseSubmission(reservation)
+	c.submitWithReservation(input, display, "", reservation)
+	return nil
+}
+
 // SubmitEditedDisplay is SubmitDisplay for an inline-edited prompt. The model
 // sees input; the saved user message also keeps the pre-edit prompt as local UI
 // metadata so the edit survives session rewrites.
@@ -797,11 +834,39 @@ func (c *Controller) SubmitEditedDisplay(display, input, original string) {
 	c.submit(input, display, original)
 }
 
+func (c *Controller) SubmitEditedDisplayChecked(display, input, original string) error {
+	reservation, err := c.reserveSubmission()
+	if err != nil {
+		return err
+	}
+	defer c.releaseSubmission(reservation)
+	c.submitWithReservation(input, display, original, reservation)
+	return nil
+}
+
 // SubmitUserTurn starts a normal model turn without interpreting shell or slash
 // commands. It still resolves references, so callers can submit trusted
 // user-authored prompt text without expanding the command surface.
 func (c *Controller) SubmitUserTurn(input, display string) {
 	c.runRefTurn(input, display)
+}
+
+// SubmitUserTurnChecked atomically reserves and starts a plain user turn. It is
+// used by background schedulers that must know whether the prompt was actually
+// accepted instead of relying on a racy RuntimeStatus pre-check.
+func (c *Controller) SubmitUserTurnChecked(input, display string) error {
+	reservation, err := c.reserveSubmission()
+	if err != nil {
+		return err
+	}
+	defer c.releaseSubmission(reservation)
+	accepted := c.runGuardedWithReservation(reservation, func(ctx context.Context) error {
+		return c.runRefTurnWithResolverSync(ctx, input, input, display, "", c.ResolveRefs)
+	})
+	if !accepted {
+		return ErrTurnRunning
+	}
+	return nil
 }
 
 // RecordLocalTurn records a completed local answer without entering the model
@@ -818,7 +883,7 @@ func (c *Controller) RecordLocalTurn(input, response string) (err error) {
 	}
 
 	c.mu.Lock()
-	if c.running || c.rotating {
+	if c.running || c.rotating || c.rotationPending || c.submissionReservation != 0 {
 		c.mu.Unlock()
 		return ErrTurnRunning
 	}
@@ -854,7 +919,36 @@ func (c *Controller) RecordLocalTurn(input, response string) (err error) {
 	return nil
 }
 
+func (c *Controller) reserveSubmission() (uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running || c.rotating || c.rotationPending || c.submissionReservation != 0 {
+		return 0, ErrTurnRunning
+	}
+	c.nextSubmissionReservation++
+	if c.nextSubmissionReservation == 0 {
+		c.nextSubmissionReservation++
+	}
+	c.submissionReservation = c.nextSubmissionReservation
+	return c.submissionReservation, nil
+}
+
+func (c *Controller) releaseSubmission(reservation uint64) {
+	if reservation == 0 {
+		return
+	}
+	c.mu.Lock()
+	if c.submissionReservation == reservation {
+		c.submissionReservation = 0
+	}
+	c.mu.Unlock()
+}
+
 func (c *Controller) submit(input, display, editedOriginal string) {
+	c.submitWithReservation(input, display, editedOriginal, 0)
+}
+
+func (c *Controller) submitWithReservation(input, display, editedOriginal string, reservation uint64) {
 	trimmed := strings.TrimSpace(input)
 	if note, ok := MemoryQuickAddNote(trimmed); ok {
 		c.rememberProjectNote(note)
@@ -864,14 +958,17 @@ func (c *Controller) submit(input, display, editedOriginal string) {
 		c.rememberProjectNote(note)
 		return
 	}
-	if c.applyGoalCommand(trimmed, display) {
+	guarded := func(body func(context.Context) error) bool {
+		return c.runGuardedWithReservation(reservation, body)
+	}
+	if c.applyGoalCommandWithGuard(trimmed, display, guarded) {
 		return
 	}
 	if strings.HasPrefix(trimmed, "!") {
-		c.RunShell(trimmed[1:])
+		c.runShellWithGuard(guarded, trimmed[1:])
 		return
 	}
-	c.submitCommandOrTurn(trimmed, input, display, false, editedOriginal)
+	c.submitCommandOrTurnWithGuard(trimmed, input, display, false, editedOriginal, reservation, guarded)
 }
 
 func (c *Controller) submitHTTP(input, display string) {
@@ -884,30 +981,88 @@ func (c *Controller) submitHTTP(input, display string) {
 		c.rememberProjectNote(note)
 		return
 	}
-	if c.applyGoalCommand(trimmed, display) {
+	if c.applyGoalCommandWithGuard(trimmed, display, c.runGuarded) {
 		return
 	}
 	if strings.HasPrefix(trimmed, "!") {
 		c.notice("shell commands are unavailable from this frontend")
 		return
 	}
-	c.submitCommandOrTurn(trimmed, input, display, true, "")
+	c.submitCommandOrTurnWithGuard(trimmed, input, display, true, "", 0, c.runGuarded)
+}
+
+func (c *Controller) runAsyncRotationCommand(submissionReservation uint64, operationLabel, successNotice string, operation func(uint64) error) {
+	c.mu.Lock()
+	if submissionReservation != 0 {
+		if c.submissionReservation != submissionReservation {
+			c.mu.Unlock()
+			c.notice(operationLabel + " failed: " + ErrTurnRunning.Error())
+			return
+		}
+	} else if c.submissionReservation != 0 {
+		c.mu.Unlock()
+		c.notice(operationLabel + " failed: " + ErrTurnRunning.Error())
+		return
+	}
+	if c.running || c.rotating || c.rotationPending {
+		c.mu.Unlock()
+		c.notice(operationLabel + " failed: " + ErrTurnRunning.Error())
+		return
+	}
+	if submissionReservation != 0 {
+		c.submissionReservation = 0
+	}
+	c.nextRotationReservation++
+	if c.nextRotationReservation == 0 {
+		c.nextRotationReservation++
+	}
+	c.rotationPending = true
+	c.rotationReservation = c.nextRotationReservation
+	rotationReservation := c.rotationReservation
+	c.mu.Unlock()
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			if c.rotationReservation == rotationReservation {
+				c.rotationPending = false
+				c.rotationReservation = 0
+			}
+			c.mu.Unlock()
+		}()
+		if err := operation(rotationReservation); err != nil {
+			c.notice(operationLabel + " failed: " + err.Error())
+			return
+		}
+		c.notice(successNotice)
+	}()
 }
 
 func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedRefsOnly bool, editedOriginal string) {
-	runRefTurn := c.runRefTurn
-	runRefTurnWithRefs := c.runRefTurnWithRefs
+	c.submitCommandOrTurnWithGuard(trimmed, input, display, scopedRefsOnly, editedOriginal, 0, c.runGuarded)
+}
+
+func (c *Controller) submitCommandOrTurnWithGuard(trimmed, input, display string, scopedRefsOnly bool, editedOriginal string, submissionReservation uint64, guarded func(func(context.Context) error) bool) {
+	runRefTurn := func(input, display string) {
+		c.runRefTurnWithGuard(guarded, input, display)
+	}
+	runRefTurnWithRefs := func(input, refLine, display string) {
+		c.runRefTurnWithRefsGuard(guarded, input, refLine, display)
+	}
 	runGoalLoop := c.runGoalLoopWithRawDisplay
 	if scopedRefsOnly {
-		runRefTurn = c.runScopedRefTurn
-		runRefTurnWithRefs = c.runScopedRefTurnWithRefs
+		runRefTurn = func(input, display string) {
+			c.runScopedRefTurnWithGuard(guarded, input, display)
+		}
+		runRefTurnWithRefs = func(input, refLine, display string) {
+			c.runScopedRefTurnWithRefsGuard(guarded, input, refLine, display)
+		}
 	}
 	if strings.TrimSpace(editedOriginal) != "" {
 		runRefTurn = func(input, display string) {
-			c.runEditedRefTurn(input, display, editedOriginal)
+			c.runEditedRefTurnWithGuard(guarded, input, display, editedOriginal)
 		}
 		runRefTurnWithRefs = func(input, refLine, display string) {
-			c.runEditedRefTurnWithRefs(input, refLine, display, editedOriginal)
+			c.runEditedRefTurnWithRefsGuard(guarded, input, refLine, display, editedOriginal)
 		}
 		runGoalLoop = func(ctx context.Context, input, raw, display string) error {
 			return c.runEditedGoalLoopWithRawDisplay(ctx, input, raw, display, editedOriginal)
@@ -916,34 +1071,21 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 	switch {
 	case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
-		go func() {
-			if err := c.Compact(context.Background(), focus); err != nil {
-				c.notice("compaction failed: " + err.Error())
-			} else {
-				c.notice("compacted")
-				if err := c.SnapshotRewrite(); err != nil {
-					slog.Warn("controller: snapshot after compact", "err", err)
-				}
+		c.runAsyncRotationCommand(submissionReservation, "compaction", "compacted", func(rotationReservation uint64) error {
+			if err := c.compactWithReservation(context.Background(), focus, rotationReservation); err != nil {
+				return err
 			}
-		}()
+			if err := c.SnapshotRewrite(); err != nil {
+				slog.Warn("controller: snapshot after compact", "err", err)
+			}
+			return nil
+		})
 	case trimmed == "/new":
-		go func() {
-			if err := c.NewSession(); err != nil {
-				c.notice("new session failed: " + err.Error())
-			} else {
-				c.notice("new session")
-			}
-		}()
+		c.runAsyncRotationCommand(submissionReservation, "new session", "new session", c.newSessionWithReservation)
 	case trimmed == "/clear":
-		go func() {
-			if err := c.ClearSession(); err != nil {
-				c.notice("clear context failed: " + err.Error())
-			} else {
-				c.notice("context cleared")
-			}
-		}()
+		c.runAsyncRotationCommand(submissionReservation, "clear context", "context cleared", c.clearSessionWithReservation)
 	case strings.HasPrefix(trimmed, "/mcp__"):
-		c.runGuarded(func(ctx context.Context) error {
+		guarded(func(ctx context.Context) error {
 			sent, found, err := c.MCPPrompt(ctx, trimmed)
 			if err != nil {
 				return err
@@ -983,18 +1125,18 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 			if turn, name, fromTurn, err := ParseBranchTarget(args); err != nil {
 				c.notice(err.Error())
 			} else if fromTurn {
-				if _, err := c.ForkNamed(turn-1, name); err != nil {
+				if _, err := c.forkNamedWithReservation(turn-1, name, true, submissionReservation); err != nil {
 					c.notice(err.Error())
 				}
 			} else {
-				if _, err := c.Branch(name); err != nil {
+				if _, err := c.branchWithReservation(name, submissionReservation); err != nil {
 					c.notice(err.Error())
 				}
 			}
 			return
 		case "/switch":
 			ref := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
-			if _, err := c.SwitchBranch(ref); err != nil {
+			if _, err := c.switchBranchWithReservation(ref, submissionReservation); err != nil {
 				c.notice(err.Error())
 			}
 			return
@@ -1005,15 +1147,15 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 				c.notice("usage: /rewind [turn] [code|conversation|both]")
 				return
 			}
-			if err := c.Rewind(turn, scope); err != nil {
+			if err := c.rewindWithReservation(turn, scope, submissionReservation); err != nil {
 				c.notice(err.Error())
 			}
 			return
 		case "/plan-exec":
-			c.applyPlanExec(trimmed, display)
+			c.applyPlanExecWithGuard(trimmed, display, guarded)
 			return
 		case "/prometheus":
-			c.applyPrometheus(trimmed, display)
+			c.applyPrometheusWithGuard(trimmed, display, guarded)
 			return
 		}
 		if c.managementNotice(trimmed) {
@@ -1022,20 +1164,20 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 		// A custom command wins over a skill of the same name; both resolve to a
 		// turn. (Built-in slash verbs like /compact are handled above.)
 		if sent, ok := c.CustomCommand(trimmed); ok {
-			c.runGuarded(func(ctx context.Context) error {
+			guarded(func(ctx context.Context) error {
 				return runGoalLoop(ctx, sent, sent, display)
 			})
 			return
 		}
 		if sent, ok := c.RunSkill(trimmed); ok {
-			c.runGuarded(func(ctx context.Context) error {
+			guarded(func(ctx context.Context) error {
 				return runGoalLoop(ctx, sent, sent, display)
 			})
 			return
 		}
 		c.notice("unknown command: " + trimmed)
 	default:
-		if c.maybeAutoStartResearchGoal(input, display, editedOriginal) {
+		if c.maybeAutoStartResearchGoalWithGuard(input, display, editedOriginal, guarded) {
 			return
 		}
 		runRefTurn(input, display)
@@ -1043,6 +1185,10 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 }
 
 func (c *Controller) maybeAutoStartResearchGoal(input, display, editedOriginal string) bool {
+	return c.maybeAutoStartResearchGoalWithGuard(input, display, editedOriginal, c.runGuarded)
+}
+
+func (c *Controller) maybeAutoStartResearchGoalWithGuard(input, display, editedOriginal string, guarded func(func(context.Context) error) bool) bool {
 	goal, ok := c.autoStartResearchGoalCandidate(input)
 	if !ok {
 		return false
@@ -1052,7 +1198,7 @@ func (c *Controller) maybeAutoStartResearchGoal(input, display, editedOriginal s
 		if strings.TrimSpace(displayText) == "" {
 			displayText = goal
 		}
-		c.runGuarded(func(ctx context.Context) error {
+		guarded(func(ctx context.Context) error {
 			c.SetGoalWithResearchMode(goal, GoalResearchOn)
 			c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(goal)))
 			block, errs := c.ResolveRefs(ctx, goal)
@@ -1112,6 +1258,10 @@ func (c *Controller) rememberProjectNote(note string) {
 }
 
 func (c *Controller) applyGoalCommand(input, display string) bool {
+	return c.applyGoalCommandWithGuard(input, display, c.runGuarded)
+}
+
+func (c *Controller) applyGoalCommandWithGuard(input, display string, guarded func(func(context.Context) error) bool) bool {
 	cmd, ok := ParseGoalCommand(input)
 	if !ok {
 		return false
@@ -1123,7 +1273,7 @@ func (c *Controller) applyGoalCommand(input, display string) bool {
 		c.GoalStrict(cmd.Strict)
 		c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(cmd.Text)))
 		if c.runner != nil {
-			c.runGuarded(func(ctx context.Context) error {
+			guarded(func(ctx context.Context) error {
 				return c.runGoalLoopWithRawDisplay(ctx, "Start pursuing the active goal now.", cmd.Text, display)
 			})
 		}
@@ -1145,6 +1295,10 @@ func (c *Controller) applyGoalCommand(input, display string) bool {
 // analyzes and dispatches independent steps concurrently via parallel_tasks.
 // Supports --strict flag: /plan-exec --strict enables strict goal mode.
 func (c *Controller) applyPlanExec(input, display string) {
+	c.applyPlanExecWithGuard(input, display, c.runGuarded)
+}
+
+func (c *Controller) applyPlanExecWithGuard(input, display string, guarded func(func(context.Context) error) bool) {
 	todos := c.executor.CanonicalTodoState()
 	if len(todos) == 0 {
 		c.notice("no active plan with todos to execute")
@@ -1217,7 +1371,7 @@ func (c *Controller) applyPlanExec(input, display string) {
 	c.GoalStrict(strict)
 	c.notice(fmt.Sprintf("plan-exec: dispatching %d plan steps (strict=%v)", total, strict))
 	if c.runner != nil {
-		c.runGuarded(func(ctx context.Context) error {
+		guarded(func(ctx context.Context) error {
 			return c.runGoalLoopWithRawDisplay(ctx, prompt, prompt, display)
 		})
 	}
@@ -1229,6 +1383,10 @@ const prometheusPrompt = "You are Prometheus, a strategic planner. Interview the
 // applyPrometheus starts an interactive planning interview, inspired by OMO's
 // Prometheus agent. It enters goal mode with a structured interview prompt.
 func (c *Controller) applyPrometheus(input, display string) {
+	c.applyPrometheusWithGuard(input, display, c.runGuarded)
+}
+
+func (c *Controller) applyPrometheusWithGuard(input, display string, guarded func(func(context.Context) error) bool) {
 	args := strings.TrimSpace(strings.TrimPrefix(input, "/prometheus"))
 	if args == "" || args == "--strict" {
 		c.notice("usage: /prometheus <your task description>")
@@ -1245,7 +1403,7 @@ func (c *Controller) applyPrometheus(input, display string) {
 	c.GoalStrict(strict)
 	c.notice("prometheus: starting planning interview")
 	if c.runner != nil {
-		c.runGuarded(func(ctx context.Context) error {
+		guarded(func(ctx context.Context) error {
 			return c.runGoalLoopWithRawDisplay(ctx, prompt, prompt, display)
 		})
 	}
@@ -1284,12 +1442,16 @@ func shellCommandPreview(command string) string {
 // lock with model turns — only one can run at a time. User-invoked "!" commands
 // run without the OS sandbox (the user typed the command explicitly).
 func (c *Controller) RunShell(command string) {
+	c.runShellWithGuard(c.runGuarded, command)
+}
+
+func (c *Controller) runShellWithGuard(guarded func(func(context.Context) error) bool, command string) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		c.notice(i18n.M.ShellExecEmpty)
 		return
 	}
-	c.runGuarded(func(ctx context.Context) error {
+	guarded(func(ctx context.Context) error {
 		sh := c.shell
 		if sh.Path == "" {
 			sh = sandbox.ResolveShell("", "", nil)
@@ -1371,40 +1533,72 @@ func (c *Controller) RunShell(command string) {
 // runRefTurn resolves a line's @references into a context block and starts a
 // turn with it prepended (or the raw line when nothing resolved).
 func (c *Controller) runRefTurn(input, display string) {
-	c.runRefTurnWithRefs(input, input, display)
+	c.runRefTurnWithGuard(c.runGuarded, input, display)
+}
+
+func (c *Controller) runRefTurnWithGuard(guarded func(func(context.Context) error) bool, input, display string) {
+	c.runRefTurnWithRefsGuard(guarded, input, input, display)
 }
 
 func (c *Controller) runEditedRefTurn(input, display, original string) {
-	c.runEditedRefTurnWithRefs(input, input, display, original)
+	c.runEditedRefTurnWithGuard(c.runGuarded, input, display, original)
+}
+
+func (c *Controller) runEditedRefTurnWithGuard(guarded func(func(context.Context) error) bool, input, display, original string) {
+	c.runEditedRefTurnWithRefsGuard(guarded, input, input, display, original)
 }
 
 func (c *Controller) runScopedRefTurn(input, display string) {
-	c.runScopedRefTurnWithRefs(input, input, display)
+	c.runScopedRefTurnWithGuard(c.runGuarded, input, display)
+}
+
+func (c *Controller) runScopedRefTurnWithGuard(guarded func(func(context.Context) error) bool, input, display string) {
+	c.runScopedRefTurnWithRefsGuard(guarded, input, input, display)
 }
 
 // runRefTurnWithRefs resolves references from refLine while preserving input as
 // the user's actual prompt text. This lets compiler diagnostics such as
 // "/path/File.kt:12: error" attach @/path/File.kt without rewriting the error.
 func (c *Controller) runRefTurnWithRefs(input, refLine, display string) {
-	c.runRefTurnWithResolver(input, refLine, display, c.ResolveRefs)
+	c.runRefTurnWithRefsGuard(c.runGuarded, input, refLine, display)
+}
+
+func (c *Controller) runRefTurnWithRefsGuard(guarded func(func(context.Context) error) bool, input, refLine, display string) {
+	c.runRefTurnWithResolverGuard(guarded, input, refLine, display, c.ResolveRefs)
 }
 
 func (c *Controller) runEditedRefTurnWithRefs(input, refLine, display, original string) {
-	c.runEditedRefTurnWithResolver(input, refLine, display, original, c.ResolveRefs)
+	c.runEditedRefTurnWithRefsGuard(c.runGuarded, input, refLine, display, original)
+}
+
+func (c *Controller) runEditedRefTurnWithRefsGuard(guarded func(func(context.Context) error) bool, input, refLine, display, original string) {
+	c.runEditedRefTurnWithResolverGuard(guarded, input, refLine, display, original, c.ResolveRefs)
 }
 
 func (c *Controller) runScopedRefTurnWithRefs(input, refLine, display string) {
-	c.runRefTurnWithResolver(input, refLine, display, c.ResolveScopedRefs)
+	c.runScopedRefTurnWithRefsGuard(c.runGuarded, input, refLine, display)
+}
+
+func (c *Controller) runScopedRefTurnWithRefsGuard(guarded func(func(context.Context) error) bool, input, refLine, display string) {
+	c.runRefTurnWithResolverGuard(guarded, input, refLine, display, c.ResolveScopedRefs)
 }
 
 func (c *Controller) runRefTurnWithResolver(input, refLine, display string, resolve func(context.Context, string) (string, []string)) {
-	c.runGuarded(func(ctx context.Context) error {
+	c.runRefTurnWithResolverGuard(c.runGuarded, input, refLine, display, resolve)
+}
+
+func (c *Controller) runRefTurnWithResolverGuard(guarded func(func(context.Context) error) bool, input, refLine, display string, resolve func(context.Context, string) (string, []string)) {
+	guarded(func(ctx context.Context) error {
 		return c.runRefTurnWithResolverSync(ctx, input, refLine, display, "", resolve)
 	})
 }
 
 func (c *Controller) runEditedRefTurnWithResolver(input, refLine, display, original string, resolve func(context.Context, string) (string, []string)) {
-	c.runGuarded(func(ctx context.Context) error {
+	c.runEditedRefTurnWithResolverGuard(c.runGuarded, input, refLine, display, original, resolve)
+}
+
+func (c *Controller) runEditedRefTurnWithResolverGuard(guarded func(func(context.Context) error) bool, input, refLine, display, original string, resolve func(context.Context, string) (string, []string)) {
+	guarded(func(ctx context.Context) error {
 		return c.runRefTurnWithResolverSync(ctx, input, refLine, display, original, resolve)
 	})
 }
@@ -1500,12 +1694,44 @@ func (c *Controller) Running() bool {
 func (c *Controller) beginRotation() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.running {
+	if c.running || c.submissionReservation != 0 {
 		return errTurnRunningRotation
 	}
-	if c.rotating {
+	if c.rotating || c.rotationPending {
 		return errRotationInProgress
 	}
+	c.rotating = true
+	return nil
+}
+
+func (c *Controller) beginRotationWithSubmissionReservation(reservation uint64) error {
+	if reservation == 0 {
+		return c.beginRotation()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.submissionReservation != reservation {
+		return errTurnRunningRotation
+	}
+	if c.running || c.rotating || c.rotationPending {
+		return errTurnRunningRotation
+	}
+	c.submissionReservation = 0
+	c.rotating = true
+	return nil
+}
+
+func (c *Controller) beginReservedRotation(reservation uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if reservation == 0 || !c.rotationPending || c.rotationReservation != reservation {
+		return errRotationInProgress
+	}
+	if c.running || c.rotating {
+		return errTurnRunningRotation
+	}
+	c.rotationPending = false
+	c.rotationReservation = 0
 	c.rotating = true
 	return nil
 }
@@ -1533,12 +1759,16 @@ func (c *Controller) PendingPrompt() bool {
 func (c *Controller) RuntimeStatus() RuntimeStatus {
 	c.mu.Lock()
 	running := c.running
+	rotating := c.rotating || c.rotationPending
+	submitting := c.submissionReservation != 0
 	canceling := c.canceling
 	c.mu.Unlock()
 	pending := c.approval.hasPending() || c.browserPrompts.hasPending()
 	backgroundJobs := len(c.Jobs())
 	return RuntimeStatus{
 		Running:         running,
+		Rotating:        rotating,
+		Submitting:      submitting,
 		PendingPrompt:   pending,
 		BackgroundJobs:  backgroundJobs,
 		CancelRequested: canceling,
@@ -1640,20 +1870,34 @@ func (c *Controller) refreshInteractiveGate() {
 
 // Steer queues mid-turn guidance without interrupting the in-flight request.
 func (c *Controller) Steer(text string) {
+	if c.SteerWithResult(text) == SteerDispatchNewTurn {
+		go func() { c.SubmitDisplay(text, text) }()
+	}
+}
+
+const (
+	SteerDispatchMidTurn  = "steer"
+	SteerDispatchNewTurn  = "new_turn"
+	SteerDispatchRejected = "rejected"
+)
+
+// SteerWithResult queues mid-turn guidance and reports whether it was attached
+// to a running turn, converted to a new turn, or could not be accepted.
+func (c *Controller) SteerWithResult(text string) string {
 	c.mu.Lock()
 	exec := c.executor
 	running := c.running
 	c.mu.Unlock()
 	if exec == nil {
-		return
+		return SteerDispatchRejected
 	}
 	if running {
 		exec.Steer(text)
-		return
+		return SteerDispatchMidTurn
 	}
-	// Agent not running — frontend's runningRef was stale.
-	// Convert to a new turn so the user gets a response.
-	go func() { c.SubmitDisplay(text, text) }()
+	// Agent not running — let the caller decide how to submit a new turn so it
+	// can apply its normal project/profile/receipt pipeline.
+	return SteerDispatchNewTurn
 }
 
 // SteerConsumed returns true when the steer queue is empty after the last consume.
@@ -2172,6 +2416,10 @@ func (c *Controller) GoalStatus() string {
 // Compact runs one compaction pass on the executor's session on demand.
 // instructions is optional `/compact <focus>` guidance steering what to keep.
 func (c *Controller) Compact(ctx context.Context, instructions string) error {
+	return c.compactWithReservation(ctx, instructions, 0)
+}
+
+func (c *Controller) compactWithReservation(ctx context.Context, instructions string, reservation uint64) error {
 	if c.executor == nil {
 		return nil
 	}
@@ -2179,7 +2427,13 @@ func (c *Controller) Compact(ctx context.Context, instructions string) error {
 	// turn; a manual compact would rewrite the log underneath it. The rotation
 	// gate (not a bare Running() check) also blocks a turn from starting while
 	// the compaction rewrites the session — see beginRotation.
-	if err := c.beginRotation(); err != nil {
+	var err error
+	if reservation != 0 {
+		err = c.beginReservedRotation(reservation)
+	} else {
+		err = c.beginRotation()
+	}
+	if err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return fmt.Errorf("cannot compact while a turn is running")
 		}
@@ -2207,6 +2461,10 @@ func (c *Controller) maybeSessionStart(ctx context.Context) {
 // resets the executor to a clean session carrying the same system prompt. It
 // ends the old session and starts the new one for lifecycle hooks.
 func (c *Controller) NewSession() error {
+	return c.newSessionWithReservation(0)
+}
+
+func (c *Controller) newSessionWithReservation(reservation uint64) error {
 	if c.executor == nil {
 		return nil
 	}
@@ -2215,7 +2473,13 @@ func (c *Controller) NewSession() error {
 	// could start during the snapshot and then have its live session replaced by
 	// the SetSession below. Submit ("/new") and the bot gateway call this
 	// asynchronously, so the gate is load-bearing, not defensive.
-	if err := c.beginRotation(); err != nil {
+	var err error
+	if reservation != 0 {
+		err = c.beginReservedRotation(reservation)
+	} else {
+		err = c.beginRotation()
+	}
+	if err != nil {
 		return err
 	}
 	defer c.endRotation()
@@ -2257,13 +2521,23 @@ func (c *Controller) NewSession() error {
 // ClearSession discards the current conversation without preserving it in
 // resume/history, then rotates to a clean session carrying the same system prompt.
 func (c *Controller) ClearSession() error {
+	return c.clearSessionWithReservation(0)
+}
+
+func (c *Controller) clearSessionWithReservation(reservation uint64) error {
 	if c.executor == nil {
 		return nil
 	}
 	// Same rotation gate as NewSession: hold it across the whole
 	// destroy-then-swap so a turn cannot start during the sequence and have its
 	// live session replaced.
-	if err := c.beginRotation(); err != nil {
+	var err error
+	if reservation != 0 {
+		err = c.beginReservedRotation(reservation)
+	} else {
+		err = c.beginRotation()
+	}
+	if err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return fmt.Errorf("cannot clear while a turn is running")
 		}
@@ -2417,13 +2691,17 @@ func (c *Controller) rewindFail(err error) error {
 // unavailable for turns inherited from a resumed session (code rewind still works).
 // Frontends re-render their transcript from History after the call.
 func (c *Controller) Rewind(turn int, scope RewindScope) error {
+	return c.rewindWithReservation(turn, scope, 0)
+}
+
+func (c *Controller) rewindWithReservation(turn int, scope RewindScope, reservation uint64) error {
 	if !c.checkpoints.enabled() || c.executor == nil {
 		return c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
 	// Rewind rewrites the live session (conversation scope) and restores files;
 	// hold the rotation gate across the whole operation so a turn cannot start
 	// between the check and the Replace/SnapshotRewrite below.
-	if err := c.beginRotation(); err != nil {
+	if err := c.beginRotationWithSubmissionReservation(reservation); err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return c.rewindFail(fmt.Errorf("cannot rewind while a turn is running"))
 		}
@@ -2477,17 +2755,17 @@ func (c *Controller) Fork(turn int) (string, error) {
 }
 
 func (c *Controller) ForkNamed(turn int, name string) (string, error) {
-	return c.forkNamed(turn, name, true)
+	return c.forkNamedWithReservation(turn, name, true, 0)
 }
 
 // ForkSession copies the conversation at the start of turn into a new session
 // file without switching this controller to it. Desktop uses this to open the
 // branch in a new tab while the source tab keeps its current transcript.
 func (c *Controller) ForkSession(turn int, name string) (string, error) {
-	return c.forkNamed(turn, name, false)
+	return c.forkNamedWithReservation(turn, name, false, 0)
 }
 
-func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string, error) {
+func (c *Controller) forkNamedWithReservation(turn int, name string, switchToFork bool, reservation uint64) (string, error) {
 	if c.executor == nil {
 		return "", c.rewindFail(fmt.Errorf("checkpoints unavailable"))
 	}
@@ -2497,7 +2775,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	// Hold the rotation gate from before the pre-fork Snapshot through the
 	// switch below: a bare Running() check released here would let a turn start
 	// during the snapshot and then be switched onto the fork.
-	if err := c.beginRotation(); err != nil {
+	if err := c.beginRotationWithSubmissionReservation(reservation); err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return "", c.rewindFail(fmt.Errorf("cannot fork while a turn is running"))
 		}
@@ -2581,6 +2859,10 @@ func (c *Controller) CheckpointHasBoundary(turn int) bool {
 // Branch copies the current conversation into a child branch and switches to it.
 // Unlike Fork, it branches at the current tip and does not require a checkpoint.
 func (c *Controller) Branch(name string) (string, error) {
+	return c.branchWithReservation(name, 0)
+}
+
+func (c *Controller) branchWithReservation(name string, reservation uint64) (string, error) {
 	if c.executor == nil {
 		return "", c.rewindFail(fmt.Errorf("branch unavailable"))
 	}
@@ -2589,7 +2871,7 @@ func (c *Controller) Branch(name string) (string, error) {
 	}
 	// Hold the rotation gate across the Snapshot and the switch below so a turn
 	// cannot start mid-branch and then have its session replaced.
-	if err := c.beginRotation(); err != nil {
+	if err := c.beginRotationWithSubmissionReservation(reservation); err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return "", c.rewindFail(fmt.Errorf("cannot branch while a turn is running"))
 		}
@@ -2661,13 +2943,17 @@ func (c *Controller) Branches() ([]agent.BranchInfo, error) {
 }
 
 func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
+	return c.switchBranchWithReservation(ref, 0)
+}
+
+func (c *Controller) switchBranchWithReservation(ref string, reservation uint64) (agent.BranchInfo, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("usage: /switch <branch id|name>"))
 	}
 	// Hold the rotation gate across the branch listing/load and the switch so a
 	// turn cannot start between the check and the SetSession below.
-	if err := c.beginRotation(); err != nil {
+	if err := c.beginRotationWithSubmissionReservation(reservation); err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("cannot switch branches while a turn is running"))
 		}
@@ -4178,14 +4464,14 @@ func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject strin
 	// session grant before it emits a prompt, so the auto-allow paths need no
 	// special-casing here. Deny rules already bit before this point.
 	if g.c.guardianSess != nil && !g.c.approval.preApproved(tool, subject) {
-		allow, reason, reviewErr := g.c.guardianSess.Review(ctx, tool, args, g.c.executor.Session())
+		allow, reason, guardianResult, reviewErr := g.c.guardianSess.Review(ctx, tool, args, g.c.executor.Session())
 		if reviewErr != nil {
 			return false, false, "", reviewErr
 		}
 		if allow && !requiresFreshApprovalTool(tool) {
 			return true, false, "", nil
 		}
-		humanAllow, remember, err := g.c.requestApprovalWithReason(ctx, tool, subject, args, reason)
+		humanAllow, remember, err := g.c.requestApprovalWithGuardian(ctx, tool, subject, args, reason, &guardianResult)
 		if err != nil {
 			return false, false, reason, err
 		}
@@ -4768,7 +5054,11 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string, 
 }
 
 func (c *Controller) requestApprovalWithReason(ctx context.Context, tool, subject string, args json.RawMessage, reason string) (bool, bool, error) {
-	r, err := c.requestApprovalDecision(ctx, tool, subject, args, reason)
+	return c.requestApprovalWithGuardian(ctx, tool, subject, args, reason, nil)
+}
+
+func (c *Controller) requestApprovalWithGuardian(ctx context.Context, tool, subject string, args json.RawMessage, reason string, guardian *event.GuardianResult) (bool, bool, error) {
+	r, err := c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{guardian: guardian})
 	if err != nil {
 		return false, false, err
 	}
@@ -4795,7 +5085,8 @@ type approvalDecisionOptions struct {
 	// fresh marks a user trust/business decision rather than an ordinary tool
 	// permission. It may reuse an explicit session grant, but YOLO/auto approval
 	// must not answer or drain the prompt.
-	fresh bool
+	fresh    bool
+	guardian *event.GuardianResult
 }
 
 func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, tool, subject string, args json.RawMessage, reason string, opts approvalDecisionOptions) (approvalReply, error) {
@@ -4817,12 +5108,12 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 	var id string
 	var reply chan approvalReply
 	if opts.fresh {
-		id, reply = c.approval.registerDecision(tool, subject, reason, true)
+		id, reply = c.approval.registerDecisionWithGuardian(tool, subject, reason, true, opts.guardian)
 	} else {
-		id, reply = c.approval.register(tool, subject, reason)
+		id, reply = c.approval.registerDecisionWithGuardian(tool, subject, reason, false, opts.guardian)
 	}
 
-	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason}})
+	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, Guardian: opts.guardian}})
 	if hookSubject, hookArgs, ok := permissionRequestHookPayload(tool, subject, args); ok {
 		go c.hooks.PermissionRequest(ctx, tool, hookSubject, hookArgs)
 	}

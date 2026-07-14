@@ -3,11 +3,14 @@ import { describe, expect, test } from "vitest";
 import {
   INBOX_PROJECT_ID,
   OUTCOME_TEMPLATES,
+  applyTaskReceiptEvidence,
   createPendingTaskReceipt,
   deriveWorkspaceOptions,
   migrateWorkbenchSnapshot,
   reconcileProjectTaskNodes,
+  restartTaskReceipt,
   settleTaskReceipt,
+  verificationEvidenceFromTool,
 } from "./workbench-ia";
 
 describe("unified workbench IA state", () => {
@@ -120,5 +123,122 @@ describe("unified workbench IA state", () => {
     const failed = settleTaskReceipt(pending, { now: "2026-07-13T10:05:00.000Z", error: "构建失败" });
     expect(failed.state).toBe("failed");
     expect(failed.sections.verification).toEqual({ status: "failed", items: [], note: "构建失败" });
+  });
+
+  test("merges real execution evidence without erasing previously verified sections", () => {
+    const pending = createPendingTaskReceipt({
+      id: "receipt-2",
+      taskId: "task-2",
+      templateId: "build-diagnosis",
+      goal: "修复构建失败",
+      runtime: ["Workspace: /workspace/app"],
+      now: "2026-07-14T10:00:00.000Z",
+    });
+
+    const evidenced = applyTaskReceiptEvidence(pending, {
+      changes: { items: ["src/App.svelte", "src/lib/runtime.ts"], note: "来自真实 Workspace diff" },
+      verification: { items: ["npm run test:unit：通过"], note: "来自工具执行结果" },
+      dataPath: { items: ["Workspace: /workspace/app"], note: "本轮数据保留在当前工作区" },
+      rollback: { items: ["Checkpoint turn 8"], note: "可回退到最近检查点" },
+    }, "2026-07-14T10:03:00.000Z");
+
+    expect(evidenced.sections.changes).toEqual({
+      status: "ready",
+      items: ["src/App.svelte", "src/lib/runtime.ts"],
+      note: "来自真实 Workspace diff",
+    });
+    expect(evidenced.sections.verification.status).toBe("ready");
+    expect(evidenced.sections.rollback.status).toBe("ready");
+
+    const settled = settleTaskReceipt(evidenced, { now: "2026-07-14T10:05:00.000Z" });
+    expect(settled.state).toBe("pending-review");
+    expect(settled.sections.verification).toEqual(evidenced.sections.verification);
+  });
+
+  test("does not erase an earlier failed verification when unrelated success evidence arrives", () => {
+    const pending = createPendingTaskReceipt({
+      id: "receipt-3",
+      taskId: "task-3",
+      templateId: "review-fix",
+      goal: "验证任务",
+      runtime: ["Workspace: /workspace/app"],
+      now: "2026-07-14T11:00:00.000Z",
+    });
+    const failed = applyTaskReceiptEvidence(pending, {
+      verification: { items: ["go test：失败"], error: "go test failed" },
+    });
+    const mixed = applyTaskReceiptEvidence(failed, {
+      verification: { items: ["go test：失败", "npm run build：通过"], note: "来自真实工具执行结果" },
+    });
+
+    expect(mixed.sections.verification.status).toBe("failed");
+    expect(mixed.sections.verification.note).toBe("go test failed");
+    expect(mixed.sections.verification.items).toEqual(["go test：失败", "npm run build：通过"]);
+    const settledFailure = settleTaskReceipt(mixed, {});
+    expect(settledFailure.state).toBe("failed");
+    expect(settledFailure.sections.verification.status).toBe("failed");
+
+    const recovered = applyTaskReceiptEvidence(mixed, {
+      verification: {
+        items: ["go test：通过（此前失败，重跑通过）", "npm run build：通过"],
+        note: "同一验证命令重跑成功",
+        supersedeFailure: true,
+      },
+    });
+    expect(recovered.sections.verification.status).toBe("ready");
+  });
+
+  test("accepts only execution commands as verification and supersedes the same command on retry", () => {
+    expect(verificationEvidenceFromTool({
+      toolName: "read_file",
+      args: JSON.stringify({ path: "src/test/build-check.ts" }),
+    })).toBeUndefined();
+    expect(verificationEvidenceFromTool({
+      toolName: "bash",
+      args: JSON.stringify({ command: "rg -n test src" }),
+    })).toBeUndefined();
+    expect(verificationEvidenceFromTool({
+      toolName: "bash",
+      args: JSON.stringify({ command: "echo npm run build" }),
+    })).toBeUndefined();
+
+    const failed = verificationEvidenceFromTool({
+      toolName: "bash",
+      args: JSON.stringify({ command: "go test ./..." }),
+      error: "exit status 1",
+    });
+    expect(failed?.error).toContain("go test ./...");
+    const recovered = verificationEvidenceFromTool({
+      toolName: "bash",
+      args: JSON.stringify({ command: "go test ./..." }),
+      existingItems: failed?.items,
+    });
+    expect(recovered?.error).toBeUndefined();
+    expect(recovered?.items).toEqual(["验证 go test ./...：通过（此前失败，重跑通过）"]);
+  });
+
+  test("clears only transient execution failures when a receipt starts a retry", () => {
+    const pending = createPendingTaskReceipt({
+      id: "receipt-retry",
+      taskId: "task-retry",
+      templateId: "review-fix",
+      goal: "重试任务",
+      runtime: ["Workspace: /workspace/app"],
+      now: "2026-07-14T12:00:00.000Z",
+    });
+    const transientFailure = settleTaskReceipt(pending, { error: "provider temporarily unavailable" });
+    const restarted = restartTaskReceipt(transientFailure, "2026-07-14T12:01:00.000Z");
+    expect(restarted.state).toBe("running");
+    expect(restarted.sections.verification).toEqual({
+      status: "pending",
+      items: [],
+      note: "等待本次重试的验证证据",
+    });
+
+    const realVerificationFailure = applyTaskReceiptEvidence(pending, {
+      verification: { items: ["go test：失败"], error: "go test failed" },
+    });
+    const preserved = restartTaskReceipt(realVerificationFailure);
+    expect(preserved.sections.verification).toEqual(realVerificationFailure.sections.verification);
   });
 });

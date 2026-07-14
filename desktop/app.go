@@ -844,31 +844,16 @@ func (a *App) Submit(input string) error {
 }
 
 func (a *App) SubmitToTab(tabID, input string) error {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
-	}
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "/effort" || strings.HasPrefix(trimmed, "/effort ") {
 		a.runEffortCommandForTab(tabID, trimmed)
 		return nil
 	}
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
-	}
-	if err := a.ensureTabControllerWorkspace(tab); err != nil {
-		return err
-	}
-	ctrl = a.controllerForTab(tab)
-	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
-	}
-	if handled, err := a.submitTodayAgendaIfMatched(tab, ctrl, input, input); handled {
-		return err
-	}
-	a.ensureTabTopicIndexedForUserTurn(tab)
-	ctrl.SubmitDisplay(input, input)
-	return nil
+	return a.SubmitDisplayToTab(tabID, input, input)
+}
+
+type checkedUserTurnSubmitter interface {
+	SubmitUserTurnChecked(input, display string) error
 }
 
 func (a *App) submitUserTurnToTab(tabID, input string) bool {
@@ -884,6 +869,9 @@ func (a *App) submitUserTurnToTab(tabID, input string) bool {
 		return false
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
+	if checked, ok := ctrl.(checkedUserTurnSubmitter); ok {
+		return checked.SubmitUserTurnChecked(input, input) == nil
+	}
 	ctrl.SubmitUserTurn(input, input)
 	return true
 }
@@ -920,27 +908,83 @@ func (a *App) SubmitDisplay(display, input string) error {
 	return a.SubmitDisplayToTab("", display, input)
 }
 
+const (
+	submitDispatchTurn        = "turn"
+	submitDispatchLocal       = "local"
+	submitDispatchMaintenance = "maintenance"
+)
+
+type checkedDisplaySubmitter interface {
+	SubmitDisplayChecked(display, input string) error
+}
+
+type checkedEditedDisplaySubmitter interface {
+	SubmitEditedDisplayChecked(display, input, original string) error
+}
+
+func submitDispatchHint(input string) string {
+	trimmed := strings.TrimSpace(input)
+	fields := strings.Fields(trimmed)
+	if trimmed == "/new" || trimmed == "/clear" || trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact ") {
+		return submitDispatchMaintenance
+	}
+	if len(fields) > 0 && (fields[0] == "/branch" || fields[0] == "/switch" || fields[0] == "/rewind") {
+		return submitDispatchMaintenance
+	}
+	return ""
+}
+
 func (a *App) SubmitDisplayToTab(tabID, display, input string) error {
+	_, err := a.SubmitDisplayToTabMode(tabID, display, input)
+	return err
+}
+
+// SubmitDisplayToTabMode reports whether the accepted input started a model
+// turn, completed locally, or started asynchronous session maintenance. This
+// lets queue-based frontends continue local commands without guessing while
+// retaining the legacy error-only method above.
+func (a *App) SubmitDisplayToTabMode(tabID, display, input string) (string, error) {
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
+		return "", readOnlyChannelErr()
 	}
 	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
+		return "", a.workspaceNotReadyErr(tab)
 	}
 	if err := a.ensureTabControllerWorkspace(tab); err != nil {
-		return err
+		return "", err
 	}
 	ctrl = a.controllerForTab(tab)
 	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
+		return "", a.workspaceNotReadyErr(tab)
+	}
+	status := ctrl.RuntimeStatus()
+	if status.Running || status.Rotating || status.Submitting {
+		return "", control.ErrTurnRunning
 	}
 	if handled, err := a.submitTodayAgendaIfMatched(tab, ctrl, display, input); handled {
-		return err
+		return submitDispatchLocal, err
 	}
+	dispatchHint := submitDispatchHint(input)
 	a.ensureTabTopicIndexedForUserTurn(tab)
-	ctrl.SubmitDisplay(display, input)
-	return nil
+	if checked, ok := ctrl.(checkedDisplaySubmitter); ok {
+		if err := checked.SubmitDisplayChecked(display, input); err != nil {
+			return "", err
+		}
+	} else {
+		ctrl.SubmitDisplay(display, input)
+	}
+	if dispatchHint != "" {
+		return dispatchHint, nil
+	}
+	status = ctrl.RuntimeStatus()
+	if status.Rotating {
+		return submitDispatchMaintenance, nil
+	}
+	if status.Running {
+		return submitDispatchTurn, nil
+	}
+	return submitDispatchLocal, nil
 }
 
 func (a *App) SubmitEditedDisplayToTab(tabID, display, input, original string) error {
@@ -958,10 +1002,17 @@ func (a *App) SubmitEditedDisplayToTab(tabID, display, input, original string) e
 	if ctrl == nil {
 		return a.workspaceNotReadyErr(tab)
 	}
+	status := ctrl.RuntimeStatus()
+	if status.Running || status.Rotating || status.Submitting {
+		return control.ErrTurnRunning
+	}
 	if handled, err := a.submitTodayAgendaIfMatched(tab, ctrl, display, input); handled {
 		return err
 	}
 	a.ensureTabTopicIndexedForUserTurn(tab)
+	if checked, ok := ctrl.(checkedEditedDisplaySubmitter); ok {
+		return checked.SubmitEditedDisplayChecked(display, input, original)
+	}
 	ctrl.SubmitEditedDisplay(display, input, original)
 	return nil
 }
@@ -997,22 +1048,50 @@ func (a *App) Steer(text string) error {
 
 // SteerForTab sends mid-turn guidance to a specific tab's agent.
 func (a *App) SteerForTab(tabID, text string) error {
+	mode, err := a.SteerForTabMode(tabID, text)
+	if err != nil {
+		return err
+	}
+	if mode == control.SteerDispatchNewTurn {
+		return a.SubmitDisplayToTab(tabID, text, text)
+	}
+	return nil
+}
+
+type steerResultController interface {
+	SteerWithResult(text string) string
+}
+
+// SteerForTabMode sends guidance and tells the frontend whether it stayed on
+// the running turn or became a new turn after stale-running reconciliation.
+func (a *App) SteerForTabMode(tabID, text string) (string, error) {
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
+		return "", readOnlyChannelErr()
 	}
 	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
+		return "", a.workspaceNotReadyErr(tab)
 	}
 	if err := a.ensureTabControllerWorkspace(tab); err != nil {
-		return err
+		return "", err
 	}
 	ctrl = a.controllerForTab(tab)
 	if ctrl == nil {
-		return a.workspaceNotReadyErr(tab)
+		return "", a.workspaceNotReadyErr(tab)
 	}
+	if detailed, ok := ctrl.(steerResultController); ok {
+		mode := detailed.SteerWithResult(text)
+		if mode == control.SteerDispatchRejected {
+			return "", a.workspaceNotReadyErr(tab)
+		}
+		return mode, nil
+	}
+	running := ctrl.Running()
 	ctrl.Steer(text)
-	return nil
+	if running {
+		return control.SteerDispatchMidTurn, nil
+	}
+	return control.SteerDispatchNewTurn, nil
 }
 
 func (a *App) tabReadOnly(tabID string) bool {
@@ -1319,6 +1398,15 @@ func (a *App) ReplayPendingPrompts() {
 	}
 	a.mu.RUnlock()
 	for _, ctrl := range ctrls {
+		ctrl.ReplayPendingPrompts()
+	}
+}
+
+// ReplayPendingPromptsForTab re-emits only one tab's blocking prompt. It is
+// used after the frontend switches task context so the prompt cannot be lost
+// behind background-event filtering.
+func (a *App) ReplayPendingPromptsForTab(tabID string) {
+	if ctrl := a.ctrlByTabID(tabID); ctrl != nil {
 		ctrl.ReplayPendingPrompts()
 	}
 }
@@ -7315,7 +7403,7 @@ func controllerHasActiveRuntimeWork(ctrl control.SessionAPI) bool {
 		return false
 	}
 	status := ctrl.RuntimeStatus()
-	return status.Running || status.PendingPrompt || status.BackgroundJobs > 0
+	return status.Running || status.Rotating || status.Submitting || status.PendingPrompt || status.BackgroundJobs > 0
 }
 
 // rebuildBusyError reports a rebuild rejected because the controller still has
@@ -8226,11 +8314,41 @@ func (a *App) workspaceOrExternalPath(rel string) (string, bool, error) {
 	return a.workspacePath(rel)
 }
 
+func (a *App) workspaceOrExternalPathForTab(tabID, rel string) (string, bool, error) {
+	tab, ctrl := a.tabAndCtrlByID(tabID)
+	if tab == nil {
+		return "", false, os.ErrInvalid
+	}
+	if browser, ok := ctrl.(externalFolderRefBrowser); ok {
+		if path, _, handled := browser.ExternalFolderRefLocalPath(rel); handled {
+			return path, true, nil
+		}
+	}
+	base, err := workspaceBaseFromRoot(tab.WorkspaceRoot)
+	if err != nil {
+		return "", false, err
+	}
+	return workspacePathForBase(base, rel)
+}
+
 // ReadFile returns a small text preview for a file under the current workspace
 // or a session-authorized external folder ref.
 func (a *App) ReadFile(rel string) FilePreview {
+	return a.readFilePreview(rel, a.workspaceOrExternalPath)
+}
+
+// ReadFileForTab pins file resolution to the owning Thread so a late preview
+// cannot read from whichever workspace became active while the request was in
+// flight.
+func (a *App) ReadFileForTab(tabID, rel string) FilePreview {
+	return a.readFilePreview(rel, func(path string) (string, bool, error) {
+		return a.workspaceOrExternalPathForTab(tabID, path)
+	})
+}
+
+func (a *App) readFilePreview(rel string, resolve func(string) (string, bool, error)) FilePreview {
 	out := FilePreview{Path: rel}
-	path, ok, err := a.workspaceOrExternalPath(rel)
+	path, ok, err := resolve(rel)
 	if err != nil || !ok {
 		out.Err = "invalid path"
 		return out

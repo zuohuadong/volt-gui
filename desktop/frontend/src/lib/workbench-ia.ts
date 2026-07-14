@@ -45,6 +45,67 @@ export interface TaskResultReceipt {
   sections: Record<ReceiptSectionID, TaskReceiptSection>;
 }
 
+export interface TaskReceiptEvidenceSection {
+  items?: string[];
+  note?: string;
+  error?: string;
+  supersedeFailure?: boolean;
+}
+
+export type TaskReceiptEvidence = Partial<Record<ReceiptSectionID, TaskReceiptEvidenceSection>>;
+
+function isVerificationCommand(command: string) {
+  const segments = command
+    .split(/\s*(?:&&|\|\||;|\n)\s*/)
+    .map((segment) => segment.trim().replace(/^(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*/, ""))
+    .filter(Boolean);
+  return segments.some((segment) => [
+    /^go\s+(?:test|vet)\b/i,
+    /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test(?::[\w-]+)?|build|check|lint|typecheck|verify)\b/i,
+    /^(?:npx\s+)?(?:vitest|playwright)\b(?:\s+(?:run|test))?/i,
+    /^(?:python\d*\s+-m\s+)?pytest\b/i,
+    /^cargo\s+(?:test|check|clippy)\b/i,
+    /^dotnet\s+(?:test|build)\b/i,
+    /^(?:mvn|mvnw|gradle|gradlew)\s+.*\b(?:test|check|verify|build)\b/i,
+    /^git\s+diff\s+--check\b/i,
+    /^(?:npx\s+)?tsc\b.*\s--noEmit\b/i,
+    /^(?:npx\s+)?svelte-check\b/i,
+  ].some((pattern) => pattern.test(segment)));
+}
+
+export function verificationEvidenceFromTool(input: {
+  toolName: string;
+  args?: string;
+  error?: string;
+  existingItems?: string[];
+}): TaskReceiptEvidenceSection | undefined {
+  const executionTools = new Set(["bash", "shell", "exec_command", "run_command", "terminal"]);
+  if (!executionTools.has(input.toolName.trim().toLowerCase())) return undefined;
+  let command = "";
+  try {
+    const args = JSON.parse(input.args || "{}") as Record<string, unknown>;
+    const raw = args.command ?? args.cmd;
+    command = typeof raw === "string" ? raw.trim() : "";
+  } catch {
+    return undefined;
+  }
+  if (!isVerificationCommand(command)) return undefined;
+  const key = command.replace(/\s+/g, " ").slice(0, 120);
+  const prefix = `验证 ${key}：`;
+  const existing = input.existingItems ?? [];
+  const previous = existing.find((item) => item.startsWith(prefix));
+  const error = input.error?.trim() ?? "";
+  const item = `${prefix}${error ? "失败" : previous?.includes("失败") ? "通过（此前失败，重跑通过）" : "通过"}`;
+  const items = [...existing.filter((entry) => !entry.startsWith(prefix)), item];
+  const failedItems = items.filter((entry) => entry.endsWith("失败"));
+  return {
+    items,
+    note: failedItems.length ? "仍有验证命令失败" : "来自真实执行命令的验证结果",
+    error: failedItems.length ? failedItems.join("；") : undefined,
+    supersedeFailure: failedItems.length === 0,
+  };
+}
+
 export interface TaskThread {
   id: string;
   title: string;
@@ -420,21 +481,65 @@ export function createPendingTaskReceipt(input: {
   };
 }
 
+export function applyTaskReceiptEvidence(
+  receipt: TaskResultReceipt,
+  evidence: TaskReceiptEvidence,
+  now = new Date().toISOString(),
+): TaskResultReceipt {
+  const sections = { ...receipt.sections };
+  for (const sectionID of RECEIPT_SECTIONS) {
+    const next = evidence[sectionID];
+    if (!next) continue;
+    const previous = sections[sectionID];
+    const items = (next.items ?? []).map((item) => item.trim()).filter(Boolean);
+    const error = next.error?.trim() ?? "";
+    const preserveFailure = previous.status === "failed" && !error && !next.supersedeFailure;
+    sections[sectionID] = {
+      status: error || preserveFailure ? "failed" : items.length ? "ready" : "pending",
+      items,
+      note: error || (preserveFailure ? previous.note : "") || next.note?.trim() || (items.length ? "已记录执行证据" : "等待执行证据"),
+    };
+  }
+  return { ...receipt, updatedAt: now, sections };
+}
+
 export function settleTaskReceipt(
   receipt: TaskResultReceipt,
   input: { now?: string; error?: string },
 ): TaskResultReceipt {
   const error = input.error?.trim() ?? "";
+  const verificationFailed = receipt.sections.verification.status === "failed";
   return {
     ...receipt,
-    state: error ? "failed" : "pending-review",
+    state: error || verificationFailed ? "failed" : "pending-review",
     updatedAt: input.now ?? new Date().toISOString(),
     sections: {
       ...receipt.sections,
       verification: error
-        ? { status: "failed", items: [], note: error }
-        : { status: "pending", items: [], note: "等待验证证据与人工复核" },
+        ? { status: "failed", items: receipt.sections.verification.items, note: error }
+        : receipt.sections.verification.status === "ready" || receipt.sections.verification.status === "failed"
+          ? receipt.sections.verification
+          : { status: "pending", items: [], note: "等待验证证据与人工复核" },
     },
+  };
+}
+
+export function restartTaskReceipt(
+  receipt: TaskResultReceipt,
+  now = new Date().toISOString(),
+): TaskResultReceipt {
+  const verification = receipt.sections.verification;
+  const transientExecutionFailure = verification.status === "failed" && verification.items.length === 0;
+  return {
+    ...receipt,
+    state: "running",
+    updatedAt: now,
+    sections: transientExecutionFailure
+      ? {
+          ...receipt.sections,
+          verification: { status: "pending", items: [], note: "等待本次重试的验证证据" },
+        }
+      : receipt.sections,
   };
 }
 

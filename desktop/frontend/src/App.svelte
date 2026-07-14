@@ -63,8 +63,11 @@
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
   import DataTrustCenter from "./components/DataTrustCenter.svelte";
+  import GovernanceNavigation from "./components/GovernanceNavigation.svelte";
+  import ManagedWorktreePanel from "./components/ManagedWorktreePanel.svelte";
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
   import TaskContextBar from "./components/TaskContextBar.svelte";
+  import TaskActivityCenter from "./components/TaskActivityCenter.svelte";
   import TaskOutcomeLauncher from "./components/TaskOutcomeLauncher.svelte";
   import TaskResultReceipt from "./components/TaskResultReceipt.svelte";
   import Transcript from "./components/Transcript.svelte";
@@ -101,6 +104,28 @@
     submitThreadMessageWithProjectContext,
   } from "./lib/thread-runtime-context";
   import {
+    acknowledgeSteeredMessage,
+    enqueueQueuedMessage,
+    moveQueuedMessage,
+    parsePersistedQueuedMessages,
+    rekeyComposerDraft,
+    removeQueuedMessage,
+    resolveQueuedDeliveryFailure,
+    settleQueuedTurn,
+    takeNextFollowUp,
+    updateQueuedMessage,
+  } from "./lib/task-lifecycle";
+  import type { QueuedThreadMessage } from "./lib/task-lifecycle";
+  import {
+    addDiffReviewComment,
+    buildDiffFixPrompt,
+    diffRevision,
+    parsePersistedDiffComments,
+    removeDiffReviewComment,
+    setDiffReviewCommentStatus,
+  } from "./lib/diff-review";
+  import type { DiffReviewComment } from "./lib/diff-review";
+  import {
     contextRemainingPercent,
     firstRunChecklistState,
     modelContextWindow,
@@ -111,17 +136,21 @@
     LEGACY_SIDEBAR_STORAGE_KEY,
     OUTCOME_TEMPLATES,
     WORKBENCH_STATE_STORAGE_KEY,
+    applyTaskReceiptEvidence,
     createPendingTaskReceipt,
     deriveWorkspaceOptions,
     emptyWorkbenchSnapshot,
     migrateWorkbenchSnapshot,
     reconcileProjectTaskNodes,
+    restartTaskReceipt,
     settleTaskReceipt,
     snapshotFromProjectNodes,
     upsertSavedWorkspace,
+    verificationEvidenceFromTool,
   } from "./lib/workbench-ia";
   import type {
     ProjectTaskNode,
+    ReceiptSectionID,
     TaskOutcomeTemplateID,
     TaskResultReceipt as TaskResultReceiptView,
     TaskThread,
@@ -140,6 +169,9 @@
     ContextPanelInfo,
     FilePreview,
     HistoryMessage,
+    ManagedWorktree,
+    ManagedWorktreeHandoff,
+    ManagedWorktreeSnapshot,
     ModelInfo,
     MCPServerInput,
     ProviderView,
@@ -147,6 +179,7 @@
     ScopedMemoryInput,
     ScopedMemoryView,
     SettingsView,
+    SubmitDispatchMode,
     TabMeta,
     TranscriptItem,
     TrustCenterView,
@@ -155,6 +188,7 @@
     WireAsk,
     WireBrowserPrompt,
     WireEvent,
+    WireGuardianAssessment,
     WorkbenchPluginInput,
     WorkbenchPlugin,
 	CloudflareDropPreflight,
@@ -168,6 +202,7 @@
     WorkbenchProjectMaterialInput,
     WorkbenchAutomation,
     WorkbenchAutomationInput,
+    WorkbenchAutomationRun,
     WorkbenchCalendarEvent,
     WorkbenchCalendarEventInput,
     WorkbenchCustomer,
@@ -199,6 +234,13 @@
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
+
+  interface PendingThreadPrompts {
+    approval?: WireApproval;
+    ask?: WireAsk;
+    browserCredential?: WireBrowserPrompt;
+    browserVerification?: WireBrowserPrompt;
+  }
   const MAX_DATA_URL_PROJECT_MATERIAL_BYTES = 25 * 1024 * 1024;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities" | "trust" | "scopedMemory";
   type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings";
@@ -226,7 +268,8 @@
   type CalendarEventInterval = { event: WorkbenchCalendarEvent; date: string; start: number; end: number };
   type CalendarConflictGroup = { date: string; start: number; end: number; events: WorkbenchCalendarEvent[] };
   type SettingGroup = { id: SettingPanel; title: string; desc: string; status: string };
-  type GovernanceNavItem = { id: GovernanceLayer; label: string; desc: string };
+  type GovernanceGroup = "agent" | "data" | "system";
+  type GovernanceNavItem = { id: GovernanceLayer; group: GovernanceGroup; label: string; desc: string };
   type TodoPersistenceBindings = {
     ListTodos?: () => Promise<WorkbenchTodo[]>;
     SaveTodo?: (input: WorkbenchTodoInput) => Promise<WorkbenchTodo>;
@@ -256,6 +299,8 @@
   };
   type AutomationPersistenceBindings = {
     ListAutomations?: () => Promise<WorkbenchAutomation[]>;
+    ListAutomationRuns?: () => Promise<WorkbenchAutomationRun[]>;
+    MarkAutomationRunRead?: (id: string, read: boolean) => Promise<WorkbenchAutomationRun>;
     SaveAutomation?: (input: WorkbenchAutomationInput) => Promise<WorkbenchAutomation>;
     DeleteAutomation?: (id: string) => Promise<void>;
     RunAutomationNow?: (id: string) => Promise<WorkbenchAutomation>;
@@ -303,6 +348,8 @@
     DeleteKnowledgeDocument?: (id: string) => Promise<void>;
   };
   type AutomationDraft = WorkbenchAutomationInput & { stepsText: string; logsText: string };
+  const THREAD_QUEUE_STORAGE_KEY = "voltui.thread-message-queue.v1";
+  const DIFF_REVIEW_STORAGE_KEY = "voltui.diff-review-comments.v1";
   const defaultBrand: BrandInfo = { name: "西谷智灯暗涌系统", shortName: "暗涌" };
   const automationKindOptions = ["验证自动化", "质量门禁", "工程验证", "浏览器验证", "定时巡检", "报告生成", "自定义自动化"];
   const automationStatusOptions = ["待配置", "运行中", "已暂停", "已停用", "失败", "已完成"];
@@ -374,6 +421,8 @@
   let permissionChanging = $state(false);
   let linkedCustomer = $state("");
   let input = $state("");
+  let composerDraftsByTab = $state<Record<string, string>>({});
+  let composerDraftOwnerTabId = $state("");
   let transcript = $state<TranscriptItem[]>(welcomeTranscript());
   let context = $state<ContextPanelInfo | undefined>();
   let contextTabId = $state("");
@@ -381,19 +430,32 @@
   let checkpoints = $state<CheckpointMeta[]>([]);
   let filePreview = $state<FilePreview | undefined>();
   let diffPreview = $state<WorkspaceDiffView | undefined>();
-  let pendingApproval = $state<WireApproval | undefined>();
-  let pendingAsk = $state<WireAsk | undefined>();
-  let pendingBrowserCredential = $state<WireBrowserPrompt | undefined>();
-  let pendingBrowserVerification = $state<WireBrowserPrompt | undefined>();
+  let filePreviewTabId = $state("");
+  let diffPreviewTabId = $state("");
+  let managedWorktrees = $state<ManagedWorktree[]>([]);
+  let managedWorktreeSnapshots = $state<ManagedWorktreeSnapshot[]>([]);
+  let managedWorktreeWorkspaceRoot = $state("");
+  let latestManagedWorktreeHandoff = $state<ManagedWorktreeHandoff | undefined>();
+  let managedWorktreeBusy = $state(false);
+  let managedWorktreeMessage = $state("");
+  let managedWorktreeOperation = 0;
+  let pendingPromptsByTab = $state<Record<string, PendingThreadPrompts>>({});
+  let guardianAssessmentsByTab = $state<Record<string, Record<string, WireGuardianAssessment>>>({});
   let browserCredentials = $state<BrowserCredentialView[]>([]);
   let browserCredentialRemoving = $state("");
   let loading = $state(true);
   let needsAuth = $state<boolean | null>(null);
-  let sending = $state(false);
+  let sendingByTab = $state<Record<string, boolean>>({});
+  let directSubmissionTabIDs = $state<string[]>([]);
+  let queuedMessages = $state<QueuedThreadMessage[]>([]);
+  let queuedDeliveryTabIDs = $state<string[]>([]);
+  let diffReviewComments = $state<DiffReviewComment[]>([]);
   let sidebarCollapsed = $state(false);
   let codeInspectorOpen = $state(false);
   let codeWorkbenchPanel = $state<CodeWorkbenchPanel>("overview");
   let workLayer = $state<WorkLayer>("today");
+  let lastWorkLayer = $state<WorkLayer>("today");
+  let lastGovernanceLayer = $state<GovernanceLayer>("trust");
   let capabilityTab = $state<CapabilityTab>("plugin");
   let capabilitySearch = $state("");
   let capabilityTag = $state("");
@@ -502,9 +564,11 @@
   let agentModel = $state("");
   let agentAvatar = $state("C");
   let nowMs = $state(Date.now());
-  let submittedDraft = $state<{ display: string; submission: string } | undefined>();
+  let submittedDraftByTab = $state<Record<string, { display: string; submission: string }>>({});
+  let lastSubmittedDraftByTab = $state<Record<string, { display: string; submission: string }>>({});
+  let lastTurnErrorByTab = $state<Record<string, string>>({});
   let newTaskConversationActive = $state(false);
-  let restoreDraftOnTurnDone = false;
+  let restoreDraftOnTurnDoneByTab = $state<Record<string, boolean>>({});
   let draftConversationThread: TabMeta | undefined;
   let draftConversationThreadRequest: Promise<TabMeta | undefined> | undefined;
   let draftConversationToken = 0;
@@ -512,21 +576,61 @@
   let conversationScrollEl = $state<HTMLDivElement | null>(null);
   let conversationScrollFrame: number | undefined;
   let sidebarStateHydrated = false;
+  let queueStateHydrated = false;
+  let diffReviewStateHydrated = false;
 
   const governanceNavItems: GovernanceNavItem[] = [
-    { id: "trust", label: "数据与信任", desc: "去向、存储、外发与诊断" },
-    { id: "scopedMemory", label: "分层记忆", desc: "五层来源与隔离" },
-    { id: "agents", label: "Agent", desc: "运行身份与能力" },
-    { id: "capabilities", label: "能力", desc: "插件、MCP 与 Skill" },
-    { id: "models", label: "模型", desc: "Provider 与默认模型" },
-    { id: "settings", label: "权限", desc: "沙箱与系统设置" },
+    { id: "agents", group: "agent", label: "Agent 配置", desc: "身份、角色与运行配置" },
+    { id: "capabilities", group: "agent", label: "能力扩展", desc: "插件、MCP 与 Skill" },
+    { id: "models", group: "agent", label: "模型渠道", desc: "Provider 与默认模型" },
+    { id: "trust", group: "data", label: "数据与信任", desc: "去向、存储与外发边界" },
+    { id: "scopedMemory", group: "data", label: "分层记忆", desc: "来源、隔离与所有权" },
+    { id: "settings", group: "system", label: "运行与权限", desc: "沙箱、网络与系统行为" },
   ];
+  const governanceGroupLabels: Record<GovernanceGroup, string> = {
+    agent: "智能体配置",
+    data: "数据治理",
+    system: "系统设置",
+  };
+  const activeGovernanceItem = $derived(governanceNavItems.find((item) => item.id === workLayer));
+  const workbenchHeading = $derived.by(() => {
+    if (activityMode === "code") {
+      return { eyebrow: "Workspace / Project / Task", title: "任务检查器", desc: "当前 Task 的 Workspace、Context、Diff 与 Checkpoints。" };
+    }
+    if (activeGovernanceItem) {
+      return {
+        eyebrow: "Workspace / Settings",
+        title: "配置与治理",
+        desc: `${governanceGroupLabels[activeGovernanceItem.group]} / ${activeGovernanceItem.label} · ${activeGovernanceItem.desc}`,
+      };
+    }
+    return { eyebrow: "Workspace / Project / Task", title: currentWorkLayerLabel(), desc: "以业务 Project 组织任务，以可验证结果作为交付出口。" };
+  });
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const currentComposerTab = $derived(activeConversationTabId ? tabs.find((tab) => tab.id === activeConversationTabId) ?? activeTab : activeTab);
   const composerTabId = $derived(currentComposerTab?.id ?? activeTab?.id ?? "");
+  const sending = $derived(Boolean(sendingByTab[composerTabId]));
+  const currentSubmissionPending = $derived(directSubmissionTabIDs.includes(composerTabId) || queuedDeliveryTabIDs.includes(composerTabId));
   const composerContext = $derived(contextTabId && contextTabId === composerTabId ? context : undefined);
   const backgroundRunCount = $derived(tabs.filter((tab) => tab.running && tab.id !== composerTabId).length);
+  const currentQueuedMessages = $derived(queuedMessages.filter((message) => message.tabId === composerTabId));
+  const currentDiffReviewComments = $derived(diffReviewComments.filter((comment) => comment.tabId === composerTabId));
+  const currentFilePreview = $derived(filePreviewTabId === composerTabId ? filePreview : undefined);
+  const currentDiffPreview = $derived(diffPreviewTabId === composerTabId ? diffPreview : undefined);
+  const currentLastSubmittedDraft = $derived(lastSubmittedDraftByTab[composerTabId]);
+  const currentLastTurnError = $derived(lastTurnErrorByTab[composerTabId] || "");
+  const pendingPromptTabId = $derived.by(() => {
+    if (activityMode === "work" && workLayer === "newTask") return activeConversationTabId;
+    if (activityMode === "code" && newTaskConversationActive) return activeConversationTabId || activeTab?.id || "";
+    return activeTab?.id || "";
+  });
+  const currentPendingPrompts = $derived(pendingPromptsByTab[pendingPromptTabId] ?? {});
+  const pendingApproval = $derived(currentPendingPrompts.approval);
+  const pendingAsk = $derived(currentPendingPrompts.ask);
+  const pendingBrowserCredential = $derived(currentPendingPrompts.browserCredential);
+  const pendingBrowserVerification = $derived(currentPendingPrompts.browserVerification);
+  const composerIsBusy = $derived(Boolean(currentSubmissionPending || sending || currentComposerTab?.running || pendingApproval || pendingAsk || pendingBrowserCredential || pendingBrowserVerification));
   const contextRemaining = $derived(contextRemainingPercent(contextTabId && contextTabId === activeTab?.id ? context : undefined));
   const composerWorkPermission = $derived(
     hasWailsBindings()
@@ -603,12 +707,20 @@
   }
 
   const unifiedNavItems = [
-    { id: "today", label: "今日" },
-    { id: "tasks", label: "任务" },
-    { id: "projects", label: "项目" },
-    { id: "deliveries", label: "交付记录" },
-    { id: "automations", label: "自动化" },
-    { id: "knowledge", label: "资料与知识" },
+    { id: "today", group: "开始", label: "工作台", desc: "进展、引导与下一步" },
+    { id: "tasks", group: "开始", label: "新建任务", desc: "从结果目标开始" },
+    { id: "projects", group: "组织与交付", label: "项目管理", desc: "项目、任务与边界" },
+    { id: "deliveries", group: "组织与交付", label: "交付记录", desc: "产物、证据与复核" },
+    { id: "automations", group: "组织与交付", label: "自动化", desc: "定时与重复流程" },
+    { id: "knowledge", group: "知识", label: "资料与知识", desc: "资料、检索与导入" },
+  ];
+  const codeNavItems = [
+    { id: "codeConversation", group: "开发", label: "代码对话", desc: "提问、修改与执行" },
+    { id: "codeOverview", group: "开发", label: "工程总览", desc: "状态与运行配置" },
+    { id: "codeWorkspace", group: "检查", label: "Workspace", desc: "文件、目录与预览" },
+    { id: "codeContext", group: "检查", label: "Context", desc: "上下文、费用与缓存" },
+    { id: "codeChanges", group: "检查", label: "Diff", desc: "变更、评论与回滚" },
+    { id: "codeCheckpoints", group: "检查", label: "Checkpoints", desc: "会话与代码恢复" },
   ];
   const workLayerLabels: Record<WorkLayer, string> = {
     today: "工作台",
@@ -768,7 +880,15 @@
   ];
   const artifactReviewFindings: ArtifactReviewFinding[] = [];
   let runningAutomations = $state<WorkbenchAutomation[]>([]);
+  let automationRuns = $state<WorkbenchAutomationRun[]>([]);
+  let automationRunFilter = $state<"all" | "attention" | "passed" | "failed" | "skipped">("all");
   const primaryAutomation = $derived(runningAutomations[0]);
+  const filteredAutomationRuns = $derived(automationRuns.filter((run) => {
+    if (automationRunFilter === "all") return true;
+    if (automationRunFilter === "attention") return run.needsAttention;
+    return run.status === automationRunFilter;
+  }));
+  const automationAttentionCount = $derived(automationRuns.filter((run) => run.needsAttention).length);
   let automationDialogMode = $state<"create" | "edit">("edit");
   let automationDraft = $state<AutomationDraft>({
     title: "",
@@ -924,6 +1044,16 @@
     if (workLayer === "resources" || workLayer === "knowledge") return "knowledge";
     return "today";
   });
+  const activeCodeNavId = $derived.by(() => {
+    if (newTaskConversationActive) return "codeConversation";
+    if (codeWorkbenchPanel === "workspace") return "codeWorkspace";
+    if (codeWorkbenchPanel === "context") return "codeContext";
+    if (codeWorkbenchPanel === "changes") return "codeChanges";
+    if (codeWorkbenchPanel === "checkpoints") return "codeCheckpoints";
+    return "codeOverview";
+  });
+  const primaryNavItems = $derived(activityMode === "code" ? codeNavItems : unifiedNavItems);
+  const activePrimaryNavId = $derived(activityMode === "code" ? activeCodeNavId : activeUnifiedNavId);
   const activeProjectLabel = $derived(activeSidebarProject()?.name || "收件箱项目");
   const activeAgentLabel = $derived(selectedAgent()?.name || "未配置");
   const activeModelLabel = $derived(selectedModel || currentComposerTab?.agentProfileBaseModel || "未配置");
@@ -1939,11 +2069,36 @@
       const saved = await runAutomation(taskId);
       runningAutomations = runningAutomations.map((item) => item.id === taskId ? saved : item);
       automationDraft = automationDraftFromTask(saved);
+      await refreshAutomationRuns();
       showWorkbenchNotice(`${saved.title} 已执行。`);
     } catch (error) {
       console.error("Failed to run automation", error);
-      showWorkbenchNotice("执行自动化任务失败，请检查命令配置。");
+      const message = formatErrorMessage(error);
+      await refreshAutomations();
+      showWorkbenchNotice(message.includes("state was saved")
+        ? `自动化命令已执行且状态已保存，但结果收件箱写入失败：${message}`
+        : `执行自动化任务失败：${message}`);
     }
+  }
+  async function markAutomationRunRead(run: WorkbenchAutomationRun, read = true) {
+    const markRead = automationPersistenceBindings()?.MarkAutomationRunRead;
+    if (typeof markRead !== "function") return;
+    try {
+      const updated = await markRead(run.id, read);
+      automationRuns = automationRuns.map((item) => item.id === updated.id ? updated : item);
+    } catch (error) {
+      console.error("Failed to update automation run read state", error);
+    }
+  }
+  function automationRunTime(run: WorkbenchAutomationRun) {
+    const timestamp = Date.parse(run.finishedAt);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : run.finishedAt;
+  }
+  function automationRunStatusLabel(run: WorkbenchAutomationRun) {
+    if (run.status === "passed") return "通过";
+    if (run.status === "failed") return "失败";
+    if (run.status === "skipped") return "已跳过";
+    return run.status;
   }
   async function deleteAutomationTask(taskId: string) {
     const task = runningAutomations.find((item) => item.id === taskId);
@@ -2549,6 +2704,34 @@
     }
   }
 
+  function persistThreadQueue() {
+    if (typeof window === "undefined" || !queueStateHydrated) return;
+    try {
+      window.localStorage.setItem(THREAD_QUEUE_STORAGE_KEY, JSON.stringify(queuedMessages));
+    } catch (error) {
+      console.warn("Failed to persist thread message queue", error);
+    }
+  }
+
+  function restoreThreadQueue() {
+    if (typeof window === "undefined") return;
+    queuedMessages = parsePersistedQueuedMessages(window.localStorage.getItem(THREAD_QUEUE_STORAGE_KEY));
+  }
+
+  function persistDiffReviewComments() {
+    if (typeof window === "undefined" || !diffReviewStateHydrated) return;
+    try {
+      window.localStorage.setItem(DIFF_REVIEW_STORAGE_KEY, JSON.stringify(diffReviewComments));
+    } catch (error) {
+      console.warn("Failed to persist diff review comments", error);
+    }
+  }
+
+  function restoreDiffReviewComments() {
+    if (typeof window === "undefined") return;
+    diffReviewComments = parsePersistedDiffComments(window.localStorage.getItem(DIFF_REVIEW_STORAGE_KEY));
+  }
+
   function restoreSidebarState() {
     if (typeof window === "undefined") return;
     try {
@@ -2573,8 +2756,12 @@
 
   onMount(() => {
     restoreSidebarState();
+    restoreThreadQueue();
+    restoreDiffReviewComments();
     pruneEmptyDraftSidebarConversations();
     sidebarStateHydrated = true;
+    queueStateHydrated = true;
+    diffReviewStateHydrated = true;
     const handleNativeMaterialFilePicker = (event: MouseEvent) => {
       const target = event.target;
       if (!hasWailsBindings() || !(target instanceof HTMLInputElement) || target.type !== "file" || target.getAttribute("aria-label") !== "选择资料文件") return;
@@ -2623,6 +2810,7 @@
       nowMs = Date.now();
     }, 1000);
     const unsubscribeEvents = onAgentEvent(handleEvent);
+    void app().ReplayPendingPrompts();
     const unsubscribeReady = onWorkspaceReady(() => void refresh());
     return () => {
       window.clearInterval(tick);
@@ -2643,6 +2831,16 @@
     sidebarProjectSort;
     sidebarProjectDockCollapsed;
     persistSidebarState();
+  });
+
+  $effect(() => {
+    queuedMessages;
+    persistThreadQueue();
+  });
+
+  $effect(() => {
+    diffReviewComments;
+    persistDiffReviewComments();
   });
 
   // Debounce batch-appends of streaming text events to avoid re-render storms.
@@ -2669,7 +2867,13 @@
       tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: true } : tab));
     }
     if (event.kind === "turn_done") {
-      tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false } : tab));
+      tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false, pendingPrompt: false } : tab));
+    }
+    if (event.kind === "turn_started") {
+      tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, pendingPrompt: false } : tab));
+    }
+    if (["approval_request", "ask_request", "browser_credential_request", "browser_verification_request"].includes(event.kind)) {
+      tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, pendingPrompt: true } : tab));
     }
   }
 
@@ -2892,6 +3096,8 @@
   }
 
   async function syncActiveTabMeta(meta: TabMeta) {
+    activeConversationTabId = meta.id;
+    activateComposerDraft(meta.id);
     context = undefined;
     contextTabId = "";
     tabs = tabs.map((tab) => ({ ...tab, active: tab.id === meta.id }));
@@ -2912,6 +3118,7 @@
     }
     await refreshContextPanelForTab(meta.id, true);
     syncSelectedAgentFromTab(tabs.find((tab) => tab.id === meta.id) ?? meta);
+    await app().ReplayPendingPromptsForTab(meta.id);
   }
 
   async function createBackendConversationThread(project: SidebarProject | undefined, title: string) {
@@ -3020,13 +3227,6 @@
   function clearConversationRuntime() {
     pendingTextBuffer = "";
     pendingTextTabId = "";
-    sending = false;
-    pendingApproval = undefined;
-    pendingAsk = undefined;
-    pendingBrowserCredential = undefined;
-    pendingBrowserVerification = undefined;
-    submittedDraft = undefined;
-    restoreDraftOnTurnDone = false;
     draftConversationThread = undefined;
     draftConversationThreadRequest = undefined;
     draftConversationToken += 1;
@@ -3035,6 +3235,7 @@
   function openWorkLayer(layer: WorkLayer) {
     activityMode = "work";
     workLayer = layer;
+    lastWorkLayer = layer;
     if (layer === "newTask") newTaskConversationActive = false;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
@@ -3063,7 +3264,10 @@
     codeInspectorOpen = false;
     sidebarCollapsed = false;
     void tick().then(() => {
-      if (hasWailsBindings()) void refreshCodeDock();
+      if (hasWailsBindings()) {
+        void refreshCodeDock();
+        void refreshManagedWorktreeState();
+      }
     });
   }
 
@@ -3124,6 +3328,7 @@
     if (project) syncSidebarProjectContext(project);
     activityMode = "work";
     workLayer = "newTask";
+    lastWorkLayer = "newTask";
     newTaskConversationActive = false;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
@@ -3136,12 +3341,15 @@
     agentMarketOpen = false;
     activeSidebarConversationId = conversationId;
     activeConversationTabId = "";
+    const draftKey = `work:${(project?.id ?? projectId) || INBOX_PROJECT_ID}:${conversationId || "draft"}`;
+    const hasSavedDraft = Object.prototype.hasOwnProperty.call(composerDraftsByTab, draftKey);
+    activateComposerDraft(draftKey);
     activeTaskReceipt = conversationId && project ? sidebarConversation(project.id, conversationId)?.receipt : undefined;
     agentSelectionContextKey = `work:${(project?.id ?? projectId) || "global"}:${conversationId || "draft"}`;
     agentSelectionDirty = Boolean(selectedAgentId);
     clearConversationRuntime();
     transcript = welcomeTranscript();
-    input = conversationId ? "" : selectedOutcomeTemplate.prompt;
+    if (!conversationId && !hasSavedDraft) setComposerInput(selectedOutcomeTemplate.prompt, draftKey);
     void tick().then(focusComposer);
   }
   function syncSidebarProjectContext(project: SidebarProject) {
@@ -3223,6 +3431,32 @@
       resourceTab = "resources";
       openWorkLayer("resources");
     } else openWorkLayer("today");
+  }
+
+  function openCodeNav(navId: string) {
+    if (navId === "codeConversation") {
+      openCodeConversation();
+      void tick().then(focusComposer);
+      return;
+    }
+    if (navId === "codeWorkspace") openCodeWorkbench("workspace");
+    else if (navId === "codeContext") openCodeWorkbench("context");
+    else if (navId === "codeChanges") openCodeWorkbench("changes");
+    else if (navId === "codeCheckpoints") openCodeWorkbench("checkpoints");
+    else openCodeWorkbench("overview");
+  }
+
+  function openPrimaryNav(navId: string) {
+    if (activityMode === "code") openCodeNav(navId);
+    else openUnifiedNav(navId);
+  }
+
+  function switchActivityMode(mode: ActivityMode) {
+    if (mode === "code") {
+      openCodeWorkbench("overview");
+      return;
+    }
+    openWorkLayer(lastWorkLayer);
   }
 
   function isGovernanceLayer(layer: WorkLayer): layer is GovernanceLayer {
@@ -3319,6 +3553,7 @@
   }
 
   function openGovernanceLayer(layer: GovernanceLayer) {
+    lastGovernanceLayer = layer;
     openWorkLayer(layer);
     if (layer === "trust") void refreshDataTrustCenter();
     if (layer === "scopedMemory") void refreshScopedMemory();
@@ -3329,12 +3564,12 @@
 
   function openGovernanceCenter() {
     activityMode = "work";
-    openGovernanceLayer("trust");
+    openGovernanceLayer(lastGovernanceLayer);
   }
   function selectOutcomeTemplate(templateId: TaskOutcomeTemplateID) {
     selectedOutcomeTemplateId = templateId;
     const template = OUTCOME_TEMPLATES.find((item) => item.id === templateId);
-    if (template) input = template.prompt;
+    if (template) setComposerInput(template.prompt);
     activeTaskReceipt = undefined;
     void tick().then(focusComposer);
   }
@@ -3359,8 +3594,7 @@
   function openTaskInspector(panel: string) {
     if (panel === "task") {
       taskInspectorPanel = "task";
-      activityMode = "work";
-      workLayer = "newTask";
+      openWorkLayer("newTask");
       return;
     }
     if (panel === "workspace" || panel === "context" || panel === "changes" || panel === "checkpoints") {
@@ -3386,7 +3620,7 @@
     syncSidebarProjectContext(project);
     sidebarProjects = sidebarProjects.map((item) => item.id === projectId ? { ...item, expanded: true } : item);
     focusNewTask();
-    input = `项目：${project.name}\n`;
+    setComposerInput(`项目：${project.name}\n`);
     void tick().then(focusComposer);
   }
   function toggleSidebarProject(projectId: string) {
@@ -3420,10 +3654,13 @@
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     activeConversationTabId = conversation?.tabId ?? "";
+    const provisionalDraftKey = conversation?.tabId ?? `work:${projectId}:${conversationId}`;
+    activateComposerDraft(provisionalDraftKey);
     activeTaskReceipt = conversation?.receipt;
     if (conversation?.templateId) selectedOutcomeTemplateId = conversation.templateId;
     activityMode = "work";
     workLayer = "newTask";
+    lastWorkLayer = "newTask";
     newTaskConversationActive = true;
     codeInspectorOpen = false;
     sidebarCollapsed = false;
@@ -3446,12 +3683,12 @@
         if (activeSidebarProjectId !== projectId || activeSidebarConversationId !== conversation.id) return;
         if (activityMode !== "work" || workLayer !== "newTask") return;
         activeConversationTabId = meta.id;
+        bindComposerDraftToTab(provisionalDraftKey, meta.id);
         await syncActiveTabMeta(meta);
         await hydrateHistory(meta, { preserveLocalWhenEmpty: true });
         newTaskConversationActive = true;
       });
     }
-    input = "";
     void tick().then(focusComposer);
   }
   function sidebarProjectConversations(project: SidebarProject) {
@@ -3486,7 +3723,7 @@
   async function openUnifiedCodeTask() {
     openCodeWorkbench("overview");
     await tick();
-    if (hasWailsBindings()) await refreshCodeDock();
+    if (hasWailsBindings()) await Promise.all([refreshCodeDock(), refreshManagedWorktreeState()]);
   }
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
   function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
@@ -4168,8 +4405,8 @@
       sidebarProjects = sidebarProjects.map((item) => item.id === sidebarProject.id ? { ...item, expanded: true, updatedAtMs: Date.now() } : item);
     }
   }
-  function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); input = `关联项目：${projectName}\n`; void tick().then(focusComposer); }
-  function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; input = `关联客户：${customerName}\n`; focusNewTask(); }
+  function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); setComposerInput(`关联项目：${projectName}\n`); void tick().then(focusComposer); }
+  function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; setComposerInput(`关联客户：${customerName}\n`); focusNewTask(); }
   function resetTodoDraft() {
     todoDraftTitle = "";
     todoDraftProjectId = defaultTodoProjectId();
@@ -5245,6 +5482,17 @@
     } catch (error) {
       console.error("Failed to load automations", error);
     }
+    await refreshAutomationRuns();
+  }
+  async function refreshAutomationRuns() {
+    const listRuns = automationPersistenceBindings()?.ListAutomationRuns;
+    if (typeof listRuns !== "function") return;
+    try {
+      const runs = await listRuns();
+      automationRuns = Array.isArray(runs) ? runs : [];
+    } catch (error) {
+      console.error("Failed to load automation runs", error);
+    }
   }
   async function refreshWorkbenchData() {
     const workbenchApi = workbenchDataPersistenceBindings();
@@ -6134,29 +6382,258 @@
       return;
     }
     transcript = historyToTranscript(history);
-    pendingApproval = undefined;
-    pendingAsk = undefined;
-    pendingBrowserCredential = undefined;
-    pendingBrowserVerification = undefined;
     scrollConversationToBottom("auto");
+  }
+
+  function guardianAssessmentKey(tool: string, subject: string, reason = "") {
+    return `${tool.trim()}\u0000${reason.trim() || subject.trim()}`;
+  }
+
+  function updatePendingPrompts(tabID: string, patch: Partial<PendingThreadPrompts>) {
+    if (!tabID) return;
+    const next = { ...(pendingPromptsByTab[tabID] ?? {}), ...patch };
+    if (next.approval || next.ask || next.browserCredential || next.browserVerification) {
+      pendingPromptsByTab = { ...pendingPromptsByTab, [tabID]: next };
+      return;
+    }
+    const { [tabID]: _tab, ...otherTabs } = pendingPromptsByTab;
+    pendingPromptsByTab = otherTabs;
+  }
+
+  function clearPendingPrompts(tabID: string) {
+    if (!tabID || !pendingPromptsByTab[tabID]) return;
+    const { [tabID]: _tab, ...otherTabs } = pendingPromptsByTab;
+    pendingPromptsByTab = otherTabs;
+  }
+
+  function syncTabPendingPromptFlag(tabID: string) {
+    const prompts = pendingPromptsByTab[tabID];
+    const pending = Boolean(prompts?.approval || prompts?.ask || prompts?.browserCredential || prompts?.browserVerification);
+    tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, pendingPrompt: pending } : tab);
+  }
+
+  function storeGuardianAssessment(tabID: string, assessment: WireGuardianAssessment) {
+    if (!tabID) return;
+    const key = guardianAssessmentKey(assessment.tool, assessment.subject, assessment.rationale);
+    guardianAssessmentsByTab = {
+      ...guardianAssessmentsByTab,
+      [tabID]: { ...(guardianAssessmentsByTab[tabID] ?? {}), [key]: assessment },
+    };
+  }
+
+  function takeGuardianAssessment(tabID: string, key: string) {
+    const current = guardianAssessmentsByTab[tabID];
+    const assessment = current?.[key];
+    if (!assessment) return undefined;
+    const { [key]: _assessment, ...remaining } = current;
+    if (Object.keys(remaining).length) {
+      guardianAssessmentsByTab = { ...guardianAssessmentsByTab, [tabID]: remaining };
+    } else {
+      const { [tabID]: _tab, ...otherTabs } = guardianAssessmentsByTab;
+      guardianAssessmentsByTab = otherTabs;
+    }
+    return assessment;
+  }
+
+  function clearGuardianAssessments(tabID: string) {
+    if (!tabID || !guardianAssessmentsByTab[tabID]) return;
+    const { [tabID]: _tab, ...otherTabs } = guardianAssessmentsByTab;
+    guardianAssessmentsByTab = otherTabs;
+  }
+
+  function storeComposerDraft(tabID: string, value: string) {
+    if (!tabID) return;
+    if (value) {
+      composerDraftsByTab = { ...composerDraftsByTab, [tabID]: value };
+      return;
+    }
+    const { [tabID]: _draft, ...otherDrafts } = composerDraftsByTab;
+    composerDraftsByTab = otherDrafts;
+  }
+
+  function setComposerInput(value: string, tabID = composerDraftOwnerTabId || composerTabId) {
+    input = value;
+    if (!tabID) return;
+    composerDraftOwnerTabId = tabID;
+    storeComposerDraft(tabID, value);
+  }
+
+  function activateComposerDraft(tabID: string) {
+    if (!tabID) return;
+    if (composerDraftOwnerTabId && composerDraftOwnerTabId !== tabID) {
+      storeComposerDraft(composerDraftOwnerTabId, input);
+    }
+    composerDraftOwnerTabId = tabID;
+    input = composerDraftsByTab[tabID] ?? "";
+  }
+
+  function bindComposerDraftToTab(from: string, to: string) {
+    const next = rekeyComposerDraft({
+      drafts: composerDraftsByTab,
+      from,
+      to,
+      owner: composerDraftOwnerTabId,
+      input,
+    });
+    composerDraftsByTab = next.drafts;
+    composerDraftOwnerTabId = next.owner;
+    input = next.input;
+  }
+
+  function restoreComposerDraftForTab(tabID: string, value: string) {
+    if (!tabID) return;
+    storeComposerDraft(tabID, value);
+    if (composerDraftOwnerTabId === tabID || composerTabId === tabID) {
+      composerDraftOwnerTabId = tabID;
+      input = value;
+    }
+  }
+
+  function setLastSubmittedDraft(tabID: string, draft: { display: string; submission: string }) {
+    if (!tabID) return;
+    lastSubmittedDraftByTab = { ...lastSubmittedDraftByTab, [tabID]: draft };
+  }
+
+  function restoreLastSubmittedDraft(tabID: string, draft?: { display: string; submission: string }) {
+    if (!tabID) return;
+    if (draft) {
+      setLastSubmittedDraft(tabID, draft);
+      return;
+    }
+    const { [tabID]: _draft, ...otherDrafts } = lastSubmittedDraftByTab;
+    lastSubmittedDraftByTab = otherDrafts;
+  }
+
+  function setLastTurnError(tabID: string, error: string) {
+    if (!tabID) return;
+    lastTurnErrorByTab = { ...lastTurnErrorByTab, [tabID]: error.trim() };
+  }
+
+  function setTabSending(tabID: string, value: boolean) {
+    if (!tabID) return;
+    sendingByTab = { ...sendingByTab, [tabID]: value };
+  }
+
+  function setSubmittedDraft(tabID: string, draft: { display: string; submission: string }) {
+    if (!tabID) return;
+    submittedDraftByTab = { ...submittedDraftByTab, [tabID]: draft };
+  }
+
+  function setRestoreDraftOnTurnDone(tabID: string, value: boolean) {
+    if (!tabID) return;
+    restoreDraftOnTurnDoneByTab = { ...restoreDraftOnTurnDoneByTab, [tabID]: value };
+  }
+
+  function clearSubmittedDraft(tabID: string) {
+    if (!tabID) return;
+    const { [tabID]: _draft, ...otherDrafts } = submittedDraftByTab;
+    const { [tabID]: _restore, ...otherRestoreFlags } = restoreDraftOnTurnDoneByTab;
+    submittedDraftByTab = otherDrafts;
+    restoreDraftOnTurnDoneByTab = otherRestoreFlags;
   }
 
   function handleEvent(event: WireEvent) {
     updateEventTabRunning(event);
+    const queuedEventTabID = event.tabId || composerTabId;
+    if (event.kind === "steer" && event.text && queuedEventTabID) {
+      queuedMessages = acknowledgeSteeredMessage(queuedMessages, queuedEventTabID);
+    }
+    if (event.kind === "turn_done" && queuedEventTabID) {
+      const failure = event.err
+        ? isCancellationError(event.err) ? "上一轮已取消，请确认后继续发送" : "上一轮失败，请确认后继续发送"
+        : undefined;
+      const settlement = settleQueuedTurn(queuedMessages, queuedEventTabID, failure);
+      queuedMessages = settlement.queue;
+      if (settlement.deliverNext) queueMicrotask(() => void deliverNextQueuedFollowUp(queuedEventTabID));
+    }
+    if (event.kind === "turn_started" && queuedEventTabID) {
+      setLastTurnError(queuedEventTabID, "");
+      setTabSending(queuedEventTabID, true);
+      clearGuardianAssessments(queuedEventTabID);
+      clearPendingPrompts(queuedEventTabID);
+      const startedTab = tabs.find((tab) => tab.id === queuedEventTabID);
+      const draft = submittedDraftByTab[queuedEventTabID];
+      if (startedTab && draft) {
+        const profile = startedTab.agentProfileId ? agentCards.find((candidate) => candidate.id === startedTab.agentProfileId) : undefined;
+        activateTaskReceiptForTab(startedTab, draft.display, profile);
+      }
+    }
+    if (event.kind === "turn_done" && queuedEventTabID) {
+      setTabSending(queuedEventTabID, false);
+      setLastTurnError(queuedEventTabID, event.err && !isCancellationError(event.err) ? event.err : "");
+      clearPendingPrompts(queuedEventTabID);
+      settleTaskReceiptForTab(queuedEventTabID, event.err);
+      const finishedTab = tabs.find((tab) => tab.id === queuedEventTabID);
+      if (finishedTab) void refreshCodeDock(finishedTab, queuedEventTabID === composerTabId);
+      const draft = submittedDraftByTab[queuedEventTabID];
+      if (restoreDraftOnTurnDoneByTab[queuedEventTabID] && draft) {
+        restoreComposerDraftForTab(queuedEventTabID, draft.display);
+        if (queuedEventTabID === currentTranscriptTabId()) {
+          appendTranscript({ id: `draft-${Date.now()}`, role: "notice", body: "取消后已恢复草稿。" });
+        }
+      }
+      clearSubmittedDraft(queuedEventTabID);
+    }
+    if (event.kind === "tool_result" && event.tool && queuedEventTabID) {
+      recordToolReceiptEvidence(queuedEventTabID, event.tool);
+    }
     if (event.kind === "usage" || event.kind === "turn_done") {
       const targetTabID = event.tabId || composerTabId;
       if (targetTabID) scheduleContextPanelRefresh(targetTabID);
     }
+    if (event.kind === "guardian_assessment" && event.guardian) {
+      const tabID = event.tabId || composerTabId;
+      const key = guardianAssessmentKey(event.guardian.tool, event.guardian.subject, event.guardian.rationale);
+      const approval = pendingPromptsByTab[tabID]?.approval;
+      if (approval && guardianAssessmentKey(approval.tool, approval.subject, approval.reason) === key) {
+        updatePendingPrompts(tabID, { approval: { ...approval, guardian: event.guardian } });
+      } else {
+        storeGuardianAssessment(tabID, event.guardian);
+      }
+    }
+    if (event.kind === "approval_request" && event.approval && queuedEventTabID) {
+      setTabSending(queuedEventTabID, false);
+      const guardian = event.approval.guardian
+        ?? takeGuardianAssessment(queuedEventTabID, guardianAssessmentKey(event.approval.tool, event.approval.subject, event.approval.reason));
+      updatePendingPrompts(queuedEventTabID, {
+        approval: { ...event.approval, guardian },
+        ask: undefined,
+        browserCredential: undefined,
+        browserVerification: undefined,
+      });
+    }
+    if (event.kind === "ask_request" && event.ask && queuedEventTabID) {
+      setTabSending(queuedEventTabID, false);
+      updatePendingPrompts(queuedEventTabID, {
+        approval: undefined,
+        ask: event.ask,
+        browserCredential: undefined,
+        browserVerification: undefined,
+      });
+    }
+    if (event.kind === "browser_credential_request" && event.browserPrompt && queuedEventTabID) {
+      setTabSending(queuedEventTabID, false);
+      updatePendingPrompts(queuedEventTabID, {
+        approval: undefined,
+        ask: undefined,
+        browserCredential: event.browserPrompt,
+        browserVerification: undefined,
+      });
+    }
+    if (event.kind === "browser_verification_request" && event.browserPrompt && queuedEventTabID) {
+      setTabSending(queuedEventTabID, false);
+      updatePendingPrompts(queuedEventTabID, {
+        approval: undefined,
+        ask: undefined,
+        browserCredential: undefined,
+        browserVerification: event.browserPrompt,
+      });
+    }
     if (!shouldDisplayWireEvent(event)) return;
     if (event.kind === "turn_started") {
-      sending = true;
       if (event.tabId) {
         tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: true } : tab));
       }
-      pendingApproval = undefined;
-      pendingAsk = undefined;
-      pendingBrowserCredential = undefined;
-      pendingBrowserVerification = undefined;
       ensurePendingAssistant();
     }
     if (event.kind === "reasoning" && event.reasoning) {
@@ -6254,32 +6731,24 @@
       }
     }
     if (event.kind === "approval_request" && event.approval) {
-      pendingApproval = event.approval;
-      sending = false;
       scrollConversationToBottom();
     }
     if (event.kind === "ask_request" && event.ask) {
-      pendingAsk = event.ask;
-      sending = false;
       scrollConversationToBottom();
     }
     if (event.kind === "browser_credential_request" && event.browserPrompt) {
-      pendingBrowserCredential = event.browserPrompt;
-      pendingBrowserVerification = undefined;
-      sending = false;
       scrollConversationToBottom();
     }
     if (event.kind === "browser_verification_request" && event.browserPrompt) {
-      pendingBrowserVerification = event.browserPrompt;
-      pendingBrowserCredential = undefined;
-      sending = false;
       scrollConversationToBottom();
+    }
+    if (event.kind === "steer" && event.text) {
+      appendTranscript({ id: `steer-${Date.now()}`, role: "notice", title: "已指导当前 Turn", body: event.text });
     }
     if (event.kind === "notice" && event.text) {
       appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: event.text });
     }
     if (event.kind === "turn_done") {
-      sending = false;
       if (event.tabId) {
         tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: false } : tab));
       }
@@ -6294,13 +6763,6 @@
         item.pending = false;
         item.updatedAtMs = completedAtMs;
       }
-      if (restoreDraftOnTurnDone && submittedDraft) {
-        if (!input.trim()) input = submittedDraft.display;
-        appendTranscript({ id: `draft-${Date.now()}`, role: "notice", body: "Draft restored after cancellation." });
-      }
-      restoreDraftOnTurnDone = false;
-      submittedDraft = undefined;
-      settleActiveTaskReceipt(event.err);
       saveActiveSidebarConversationTranscript();
       scrollConversationToBottom();
     }
@@ -6343,76 +6805,550 @@
 
   async function refreshContextPanelForTab(tabID: string, activate = false) {
     const nextContext = await settleRefreshStep("context panel", app().ContextPanel(tabID));
-    if (nextContext && (activate || composerTabId === tabID || activeTab?.id === tabID)) {
+    const stillOwned = composerTabId === tabID || (!activate && activeTab?.id === tabID);
+    if (nextContext && stillOwned) {
       context = nextContext;
       contextTabId = tabID;
     }
     return nextContext;
   }
 
-  async function refreshCodeDock(tab = activeTab) {
+  async function refreshCodeDock(tab = activeTab, activate = tab?.id === composerTabId) {
     if (!tab) return;
     const [, nextChanges, nextCheckpoints] = await Promise.all([
-      refreshContextPanelForTab(tab.id, true),
+      refreshContextPanelForTab(tab.id, activate),
       settleRefreshStep("workspace changes", app().WorkspaceChanges([tab.id])),
       settleRefreshStep("checkpoints", app().CheckpointsForTab(tab.id)),
     ]);
-    if (nextChanges) changes = nextChanges;
-    if (nextCheckpoints) checkpoints = nextCheckpoints;
+    const stillOwned = composerTabId === tab.id;
+    if (activate && stillOwned && nextChanges) changes = nextChanges;
+    if (activate && stillOwned && nextCheckpoints) checkpoints = nextCheckpoints;
+    recordWorkspaceReceiptEvidence(tab, nextChanges, nextCheckpoints);
   }
 
-  function persistActiveTaskReceipt(receipt: TaskResultReceiptView | undefined) {
-    activeTaskReceipt = receipt;
-    if (!activeSidebarConversationId) return;
-    sidebarProjects = sidebarProjects.map((project) => project.id !== activeSidebarProjectId
+  function currentManagedWorktreeRoot() {
+    return currentComposerTab?.workspaceRoot || activeTab?.workspaceRoot || "";
+  }
+
+  async function refreshManagedWorktreeState(workspaceRoot = currentManagedWorktreeRoot()) {
+    if (!hasWailsBindings() || !workspaceRoot) {
+      managedWorktreeWorkspaceRoot = "";
+      managedWorktrees = [];
+      managedWorktreeSnapshots = [];
+      return;
+    }
+    managedWorktreeWorkspaceRoot = workspaceRoot;
+    try {
+      const [worktrees, snapshots] = await Promise.all([
+        app().ListManagedWorktrees(workspaceRoot),
+        app().ListManagedWorktreeSnapshots(workspaceRoot),
+      ]);
+      if (managedWorktreeWorkspaceRoot !== workspaceRoot || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktrees = Array.isArray(worktrees) ? worktrees : [];
+      managedWorktreeSnapshots = Array.isArray(snapshots) ? snapshots : [];
+      managedWorktreeMessage = "";
+    } catch (error) {
+      if (managedWorktreeWorkspaceRoot !== workspaceRoot || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeMessage = formatErrorMessage(error);
+    }
+  }
+
+  async function createManagedWorktree(name: string) {
+    const workspaceRoot = currentManagedWorktreeRoot();
+    if (!workspaceRoot || !hasWailsBindings()) return;
+    const operation = ++managedWorktreeOperation;
+    managedWorktreeBusy = true;
+    try {
+      const worktree = await app().CreateManagedWorktree(workspaceRoot, name);
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeWorkspaceRoot = workspaceRoot;
+      managedWorktrees = [worktree, ...managedWorktrees.filter((item) => item.id !== worktree.id)];
+      managedWorktreeMessage = `已创建隔离工作区：${worktree.path}`;
+    } catch (error) {
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeMessage = formatErrorMessage(error);
+    } finally {
+      if (operation === managedWorktreeOperation) managedWorktreeBusy = false;
+    }
+  }
+
+  async function openManagedWorktree(worktree: ManagedWorktree) {
+    if (!hasWailsBindings() || worktree.status !== "ready") return;
+    const sourceRoot = currentManagedWorktreeRoot();
+    const operation = ++managedWorktreeOperation;
+    managedWorktreeBusy = true;
+    try {
+      const meta = await app().OpenProjectTab(worktree.path, "");
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== sourceRoot) return;
+      await syncActiveTabMeta(meta);
+      activeConversationTabId = meta.id;
+      activeWorkspaceId = `tab:${meta.id}`;
+      openCodeWorkbench("overview");
+      await Promise.all([refreshCodeDock(meta), refreshManagedWorktreeState(worktree.path)]);
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== worktree.path) return;
+      managedWorktreeMessage = `已切换到隔离工作区：${worktree.name}`;
+    } catch (error) {
+      if (operation !== managedWorktreeOperation) return;
+      managedWorktreeMessage = formatErrorMessage(error);
+    } finally {
+      if (operation === managedWorktreeOperation) managedWorktreeBusy = false;
+    }
+  }
+
+  async function snapshotManagedWorktree(worktreeID: string) {
+    if (!hasWailsBindings()) return;
+    const workspaceRoot = managedWorktreeWorkspaceRoot;
+    const operation = ++managedWorktreeOperation;
+    managedWorktreeBusy = true;
+    try {
+      const snapshot = await app().CreateManagedWorktreeSnapshot(worktreeID);
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeSnapshots = [snapshot, ...managedWorktreeSnapshots.filter((item) => item.id !== snapshot.id)];
+      managedWorktreeMessage = `已创建快照：${snapshot.id}`;
+    } catch (error) {
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeMessage = formatErrorMessage(error);
+    } finally {
+      if (operation === managedWorktreeOperation) managedWorktreeBusy = false;
+    }
+  }
+
+  async function restoreManagedWorktree(snapshotID: string, targetWorktreeID: string) {
+    if (!hasWailsBindings()) return;
+    if (typeof window !== "undefined" && !window.confirm("恢复只允许应用到相同 HEAD 且干净的目标工作区。确认继续？")) return;
+    const workspaceRoot = managedWorktreeWorkspaceRoot;
+    const operation = ++managedWorktreeOperation;
+    managedWorktreeBusy = true;
+    try {
+      const target = await app().RestoreManagedWorktreeSnapshot(snapshotID, targetWorktreeID);
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktrees = managedWorktrees.map((item) => item.id === target.id ? target : item);
+      managedWorktreeMessage = target.warning
+        ? `快照已恢复到 ${target.name}，但记录持久化有警告：${target.warning}`
+        : `快照已恢复到：${target.name}`;
+    } catch (error) {
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeMessage = formatErrorMessage(error);
+    } finally {
+      if (operation === managedWorktreeOperation) managedWorktreeBusy = false;
+    }
+  }
+
+  async function handoffManagedWorktree(sourceWorktreeID: string, targetWorktreeID: string, summary: string) {
+    if (!hasWailsBindings()) return;
+    if (typeof window !== "undefined" && !window.confirm("Handoff 会创建源快照，并只在目标工作区干净且 HEAD 一致时应用。确认继续？")) return;
+    const workspaceRoot = managedWorktreeWorkspaceRoot;
+    const operation = ++managedWorktreeOperation;
+    managedWorktreeBusy = true;
+    try {
+      latestManagedWorktreeHandoff = await app().HandoffManagedWorktree(sourceWorktreeID, targetWorktreeID, summary);
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      await refreshManagedWorktreeState(workspaceRoot);
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeMessage = latestManagedWorktreeHandoff.warning
+        ? `Handoff 已应用，但记录持久化有警告：${latestManagedWorktreeHandoff.warning}`
+        : `Handoff 已完成，交接记录：${latestManagedWorktreeHandoff.artifactPath}`;
+    } catch (error) {
+      if (operation !== managedWorktreeOperation || currentManagedWorktreeRoot() !== workspaceRoot) return;
+      managedWorktreeMessage = formatErrorMessage(error);
+    } finally {
+      if (operation === managedWorktreeOperation) managedWorktreeBusy = false;
+    }
+  }
+
+  function sidebarTaskContextForTab(tabID: string) {
+    for (const project of sidebarProjects) {
+      const task = project.tasks.find((candidate) => candidate.tabId === tabID);
+      if (task) return { project, task };
+    }
+    return undefined;
+  }
+
+  function persistTaskReceiptForTab(tabID: string, receipt: TaskResultReceiptView | undefined) {
+    const linked = sidebarTaskContextForTab(tabID);
+    if (!linked) return;
+    sidebarProjects = sidebarProjects.map((project) => project.id !== linked.project.id
       ? project
       : {
           ...project,
-          tasks: project.tasks.map((task) => task.id === activeSidebarConversationId
-            ? { ...task, templateId: selectedOutcomeTemplateId, receipt }
+          tasks: project.tasks.map((task) => task.id === linked.task.id
+            ? { ...task, templateId: receipt?.templateId ?? task.templateId, receipt }
             : task),
         });
+    if (activeConversationTabId === tabID) activeTaskReceipt = receipt;
   }
 
-  function activateTaskReceipt(display: string, profile: AgentView | undefined) {
-    if (activityMode !== "work" || workLayer !== "newTask" || !activeSidebarConversationId) return;
-    const existing = sidebarConversation(activeSidebarProjectId, activeSidebarConversationId)?.receipt;
-    if (existing?.state === "running") {
-      persistActiveTaskReceipt(existing);
+  function taskReceiptForTab(tabID: string) {
+    return sidebarTaskContextForTab(tabID)?.task.receipt;
+  }
+
+  function appendTaskReceiptEvidenceForTab(
+    tabID: string,
+    section: ReceiptSectionID,
+    input: { items?: string[]; note?: string; error?: string },
+  ) {
+    const receipt = taskReceiptForTab(tabID);
+    if (!receipt) return;
+    const previous = receipt.sections[section];
+    const items = [...new Set([...(previous.items ?? []), ...(input.items ?? [])].map((item) => item.trim()).filter(Boolean))];
+    persistTaskReceiptForTab(tabID, applyTaskReceiptEvidence(receipt, {
+      [section]: { ...input, items },
+    }));
+  }
+
+  function recordToolReceiptEvidence(tabID: string, tool: NonNullable<WireEvent["tool"]>) {
+    const receipt = taskReceiptForTab(tabID);
+    if (!receipt) return;
+    const verification = verificationEvidenceFromTool({
+      toolName: tool.name,
+      args: tool.args,
+      error: tool.err,
+      existingItems: receipt.sections.verification.items,
+    });
+    if (verification) {
+      persistTaskReceiptForTab(tabID, applyTaskReceiptEvidence(receipt, {
+        verification,
+      }));
+    }
+    if (tool.diff || tool.added || tool.removed) {
+      appendTaskReceiptEvidenceForTab(tabID, "changes", {
+        items: [`${tool.name}：+${tool.added ?? 0} / -${tool.removed ?? 0}`],
+        note: "来自工具返回的 Diff 证据",
+        error: tool.err,
+      });
+    }
+  }
+
+  function recordWorkspaceReceiptEvidence(
+    tab: TabMeta,
+    nextChanges: WorkspaceChangesView | undefined,
+    nextCheckpoints: CheckpointMeta[] | undefined,
+  ) {
+    const receipt = taskReceiptForTab(tab.id);
+    if (!receipt) return;
+    const evidence: Parameters<typeof applyTaskReceiptEvidence>[1] = {
+      dataPath: {
+        items: [
+          `Workspace: ${tab.workspaceRoot || "未选择"}`,
+          tab.sessionPath ? `Session: ${tab.sessionPath}` : "",
+        ],
+        note: "来自桌面后端的当前任务数据路径",
+      },
+    };
+    const changedFiles = nextChanges?.files ?? [];
+    if (changedFiles.length) {
+      evidence.changes = {
+        items: changedFiles.slice(0, 12).map((file) => file.path),
+        note: changedFiles.length > 12 ? `真实 Workspace diff，共 ${changedFiles.length} 个文件，展示前 12 个` : "来自真实 Workspace diff",
+      };
+      const artifacts = changedFiles
+        .map((file) => file.path)
+        .filter((path) => /\.(pdf|docx|pptx|xlsx|csv|zip|tar|gz|png|jpe?g|svg|mp4|webm)$/i.test(path));
+      if (artifacts.length) evidence.artifacts = { items: artifacts, note: "从 Workspace 变更中识别的交付产物" };
+    }
+    if (nextCheckpoints?.length) {
+      const latest = [...nextCheckpoints].sort((left, right) => right.turn - left.turn)[0];
+      evidence.rollback = {
+        items: [`Checkpoint turn ${latest.turn}`, ...latest.files.slice(0, 4)],
+        note: "可通过桌面 Checkpoint 安全回退",
+      };
+    }
+    persistTaskReceiptForTab(tab.id, applyTaskReceiptEvidence(receipt, evidence));
+  }
+
+  function activateTaskReceiptForTab(tab: TabMeta, display: string, profile: AgentView | undefined) {
+    const linked = sidebarTaskContextForTab(tab.id);
+    if (!linked) return;
+    const existing = linked.task.receipt;
+    const templateID = linked.task.templateId ?? "review-fix";
+    const template = OUTCOME_TEMPLATES.find((candidate) => candidate.id === templateID) ?? OUTCOME_TEMPLATES[0];
+    const runtime = [
+      `Workspace: ${tab.workspaceRoot || "未选择"}`,
+      `Project: ${linked.project.name}`,
+      `Agent Profile: ${profile?.name || "未配置"}`,
+      `Model: ${tab.agentProfileBaseModel || "未配置"}`,
+      `Permission: ${tab.toolApprovalMode || "ask"}`,
+      `Memory: ${tab.memoryContext?.projectId || linked.project.id}`,
+    ];
+    if (existing) {
+      const goal = `${template.title}：${conversationTitleFromText(display)}`;
+      const updated = applyTaskReceiptEvidence(restartTaskReceipt(existing), {
+        goal: {
+          items: [...new Set([...existing.sections.goal.items, goal])],
+          note: "Task 内连续 Turn 的目标记录",
+        },
+        runtime: {
+          items: runtime,
+          note: "最近一次 Turn 启动时确认的运行配置",
+        },
+      });
+      persistTaskReceiptForTab(tab.id, updated);
       return;
     }
-    const runtime = [
-      `Workspace: ${activeWorkspace?.root || "未选择"}`,
-      `Project: ${activeProjectLabel}`,
-      `Agent Profile: ${profile?.name || "未配置"}`,
-      `Model: ${activeModelLabel}`,
-      `Permission: ${activePermissionLabel}`,
-      `Memory: ${activeMemoryLabel}`,
-    ];
-    persistActiveTaskReceipt(createPendingTaskReceipt({
-      id: `receipt-${activeSidebarConversationId}-${Date.now()}`,
-      taskId: activeSidebarConversationId,
-      templateId: selectedOutcomeTemplateId,
-      goal: `${selectedOutcomeTemplate.title}：${conversationTitleFromText(display)}`,
+    persistTaskReceiptForTab(tab.id, createPendingTaskReceipt({
+      id: `receipt-${linked.task.id}-${Date.now()}`,
+      taskId: linked.task.id,
+      templateId: template.id,
+      goal: `${template.title}：${conversationTitleFromText(display)}`,
       runtime,
     }));
   }
 
-  function settleActiveTaskReceipt(error?: string) {
-    if (!activeTaskReceipt) return;
-    persistActiveTaskReceipt(settleTaskReceipt(activeTaskReceipt, { error }));
+  function settleTaskReceiptForTab(tabID: string, error?: string) {
+    const receipt = taskReceiptForTab(tabID);
+    if (!receipt) return;
+    persistTaskReceiptForTab(tabID, settleTaskReceipt(receipt, { error }));
+  }
+
+  function queuedMessageID() {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `queue-${crypto.randomUUID()}`;
+    return `queue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function queueThreadMessage(tabID: string, display: string, submission: string) {
+    queuedMessages = enqueueQueuedMessage(queuedMessages, {
+      id: queuedMessageID(),
+      tabId: tabID,
+      display,
+      submission,
+      delivery: "follow-up",
+      createdAtMs: Date.now(),
+    });
+    setComposerInput("");
+    appendTranscript({
+      id: `queued-${Date.now()}`,
+      role: "notice",
+      title: "已加入后续队列",
+      body: "当前 Turn 完成后将继续发送；也可以在输入框上方改为立即指导。",
+    });
+    focusComposer();
+  }
+
+  function editQueuedThreadMessage(id: string, display: string) {
+    const current = queuedMessages.find((message) => message.id === id);
+    if (!current) return;
+    const prefix = current.submission.endsWith(current.display)
+      ? current.submission.slice(0, current.submission.length - current.display.length)
+      : "";
+    queuedMessages = updateQueuedMessage(queuedMessages, id, {
+      display,
+      submission: `${prefix}${display}`,
+      status: current.status === "failed" ? "queued" : current.status,
+      error: "",
+    });
+  }
+
+  function deleteQueuedThreadMessage(id: string) {
+    queuedMessages = removeQueuedMessage(queuedMessages, id);
+  }
+
+  function moveQueuedThreadMessage(id: string, offset: -1 | 1) {
+    queuedMessages = moveQueuedMessage(queuedMessages, id, offset);
+  }
+
+  function resumeQueuedThreadMessage(id: string) {
+    const message = queuedMessages.find((candidate) => candidate.id === id);
+    if (!message) return;
+    queuedMessages = updateQueuedMessage(queuedMessages, id, { delivery: "follow-up", status: "queued", error: "" });
+    const tab = tabs.find((candidate) => candidate.id === message.tabId);
+    if (!tab?.running && message.tabId === composerTabId) queueMicrotask(() => void deliverNextQueuedFollowUp(message.tabId));
+  }
+
+  async function steerQueuedThreadMessage(id: string) {
+    const message = queuedMessages.find((candidate) => candidate.id === id);
+    if (!message) return;
+    const tab = tabs.find((candidate) => candidate.id === message.tabId);
+    if (!tab?.running && !sendingByTab[message.tabId] && !directSubmissionTabIDs.includes(message.tabId) && !queuedDeliveryTabIDs.includes(message.tabId)) {
+      queuedMessages = updateQueuedMessage(queuedMessages, id, { delivery: "follow-up", status: "queued", error: "" });
+      await deliverNextQueuedFollowUp(message.tabId);
+      return;
+    }
+    queuedMessages = updateQueuedMessage(queuedMessages, id, { delivery: "steer", status: "sending", error: "" });
+    try {
+      const mode = await app().SteerForTabMode(message.tabId, message.submission);
+      if (mode === "new_turn") {
+        queuedMessages = updateQueuedMessage(queuedMessages, message.id, { delivery: "follow-up", status: "queued", error: "" });
+        tabs = tabs.map((candidate) => candidate.id === message.tabId ? { ...candidate, running: false } : candidate);
+        try {
+          tabs = await app().ListTabs();
+        } catch {
+          // `new_turn` is an authoritative backend acknowledgement that no
+          // running turn accepted the Steer, so the local idle correction is safe.
+        }
+        await deliverNextQueuedFollowUp(message.tabId);
+      }
+    } catch (error) {
+      queuedMessages = updateQueuedMessage(queuedMessages, id, { status: "failed", error: formatErrorMessage(error) });
+    }
+  }
+
+  async function waitForTabIdle(tabID: string, label: string, timeoutMs = 120_000): Promise<TabMeta> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const nextTabs = await app().ListTabs();
+      tabs = nextTabs;
+      const target = nextTabs.find((candidate) => candidate.id === tabID);
+      if (!target) throw new Error(`Thread ${tabID} 在等待${label}时不可用。`);
+      if (!target.running) return target;
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+    }
+    throw new Error(`${label}仍在进行，队列已暂停；请确认完成后手动继续。`);
+  }
+
+  async function retryQueuedFollowUpAfterIdle(tabID: string, messageID: string) {
+    try {
+      await waitForTabIdle(tabID, "当前任务");
+      await deliverNextQueuedFollowUp(tabID);
+    } catch (error) {
+      const failure = formatErrorMessage(error);
+      queuedMessages = updateQueuedMessage(queuedMessages, messageID, { status: "paused", error: failure });
+      if (currentTranscriptTabId() === tabID) {
+        appendTranscript({ id: `notice-${Date.now()}`, role: "notice", title: "队列已暂停", body: failure });
+      }
+    }
+  }
+
+  async function deliverNextQueuedFollowUp(tabID: string) {
+    const tab = tabs.find((candidate) => candidate.id === tabID);
+    if (!tab || tab.running || queuedDeliveryTabIDs.includes(tabID)) return;
+    const next = takeNextFollowUp(queuedMessages, tabID);
+    if (!next.message) return;
+    queuedMessages = next.queue;
+    queuedDeliveryTabIDs = [...queuedDeliveryTabIDs, tabID];
+    const message = next.message;
+    const userTranscriptID = `user-${Date.now()}`;
+    const previousLastSubmittedDraft = lastSubmittedDraftByTab[tabID];
+    const previousSubmittedDraft = submittedDraftByTab[tabID];
+    const previousRestoreDraftOnTurnDone = restoreDraftOnTurnDoneByTab[tabID] ?? false;
+    let backendSubmissionAttempted = false;
+    const submissionDispatch = { mode: "" as SubmitDispatchMode | "" };
+    let deliveryCompleted = false;
+    if (currentTranscriptTabId() === tabID) {
+      appendTranscript({ id: userTranscriptID, role: "user", body: message.display, createdAtMs: Date.now() });
+    }
+    setLastSubmittedDraft(tabID, { display: message.display, submission: message.submission });
+    setSubmittedDraft(tabID, { display: message.display, submission: message.submission });
+    setRestoreDraftOnTurnDone(tabID, false);
+    setLastTurnError(tabID, "");
+    try {
+      const linked = sidebarTaskContextForTab(tabID);
+      const projectID = linked?.project.id || tab.memoryContext?.projectId || INBOX_PROJECT_ID;
+      const profileID = tab.agentProfileId?.trim() ?? "";
+      const profile = profileID ? agentCards.find((candidate) => candidate.id === profileID) : undefined;
+      if (profileID && !profile) throw new Error("该 Thread 绑定的 Agent Profile 已不可用，请切换到任务后重新选择。");
+      await submitThreadMessageWithProjectContext({
+        tab,
+        projectId: projectID,
+        scopedMemoryForTab: (targetTabID) => withDeadline(
+          app().ScopedMemoryForTab(targetTabID),
+          "分层记忆上下文读取超时，队列消息尚未提交。",
+          REQUEST_TIMEOUT_MS,
+        ),
+        setMemoryContextForTab: (targetTabID, memoryContext) => withDeadline(
+          app().SetMemoryContextForTab(targetTabID, memoryContext),
+          "Project 记忆上下文应用超时，队列消息尚未提交。",
+          REQUEST_TIMEOUT_MS,
+        ),
+        listTabs: async () => {
+          const nextTabs = await withDeadline(app().ListTabs(), "Thread 状态刷新超时，队列消息尚未提交。", REQUEST_TIMEOUT_MS);
+          tabs = nextTabs;
+          return nextTabs;
+        },
+        submit: (runtimeTab) => submitThreadMessageWithAgentProfile({
+          tab: runtimeTab,
+          profile,
+          display: message.display,
+          submission: message.submission,
+          setAgentProfileForTab: (targetTabID, targetProfileID) => withDeadline(
+            app().SetAgentProfileForTab(targetTabID, targetProfileID),
+            "Agent Profile 应用超时，队列消息尚未提交。",
+            REQUEST_TIMEOUT_MS,
+          ),
+          submitDisplayToTab: (targetTabID, display, submission) => {
+            backendSubmissionAttempted = true;
+            return withDeadline(
+              app().SubmitDisplayToTabMode(targetTabID, display, submission),
+              "队列消息提交超时，请检查任务活动后再决定是否重试。",
+              REQUEST_TIMEOUT_MS,
+            ).then((mode) => {
+              submissionDispatch.mode = mode;
+            });
+          },
+          onBound: (patch) => updateTabAgentBinding(runtimeTab.id, patch),
+        }),
+      });
+      if (submissionDispatch.mode === "maintenance") {
+        const idleTab = await waitForTabIdle(tabID, "会话维护");
+        if (currentTranscriptTabId() === tabID) await hydrateHistory(idleTab);
+      }
+      try {
+        const postSubmitTabs = await app().ListTabs();
+        tabs = postSubmitTabs;
+        if (submissionDispatch.mode !== "turn" || !postSubmitTabs.find((candidate) => candidate.id === tabID)?.running) {
+          clearSubmittedDraft(tabID);
+          setTabSending(tabID, false);
+        }
+      } catch {
+        // Submission was accepted; the normal event/refresh loop will reconcile run state.
+      }
+      queuedMessages = removeQueuedMessage(queuedMessages, message.id);
+      deliveryCompleted = true;
+    } catch (error) {
+      const failure = formatErrorMessage(error);
+      const alreadyRunning = isTurnAlreadyRunningError(failure);
+      const disposition = resolveQueuedDeliveryFailure({ backendSubmissionAttempted, alreadyRunning });
+      setLastTurnError(tabID, alreadyRunning || isCancellationError(failure) ? "" : failure);
+      tabs = tabs.map((candidate) => candidate.id === tabID ? { ...candidate, running: alreadyRunning } : candidate);
+      if (alreadyRunning) {
+        restoreLastSubmittedDraft(tabID, previousLastSubmittedDraft);
+        if (previousSubmittedDraft) {
+          setSubmittedDraft(tabID, previousSubmittedDraft);
+          setRestoreDraftOnTurnDone(tabID, previousRestoreDraftOnTurnDone);
+        } else {
+          clearSubmittedDraft(tabID);
+        }
+      }
+      if (currentTranscriptTabId() === tabID) {
+        setTabSending(tabID, false);
+        if (!disposition.backendSubmissionMayHaveStarted) removeTranscriptItem(userTranscriptID);
+        removeEmptyPendingAssistant();
+        if (disposition.recordFailure) finishTurnWithError(failure);
+        else appendTranscript({
+          id: `notice-${Date.now()}`,
+          role: "notice",
+          title: alreadyRunning ? "消息仍在队列" : "队列消息尚未提交",
+          body: alreadyRunning ? "当前 Turn 刚进入运行，这条后续消息仍由队列持有，将在本轮结束后继续。" : failure,
+        });
+      }
+      if (disposition.recordFailure) settleTaskReceiptForTab(tabID, failure);
+      queuedMessages = updateQueuedMessage(queuedMessages, message.id, {
+        status: disposition.status,
+        error: alreadyRunning ? "" : failure,
+      });
+      if (alreadyRunning) queueMicrotask(() => void retryQueuedFollowUpAfterIdle(tabID, message.id));
+    } finally {
+      queuedDeliveryTabIDs = queuedDeliveryTabIDs.filter((candidate) => candidate !== tabID);
+      const target = tabs.find((candidate) => candidate.id === tabID);
+      if (deliveryCompleted && !target?.running && queuedMessages.some((candidate) => candidate.tabId === tabID && candidate.delivery === "follow-up" && candidate.status === "queued")) {
+        queueMicrotask(() => void deliverNextQueuedFollowUp(tabID));
+      }
+    }
   }
 
   async function send(displayText?: string, submitText?: string) {
     const text = (displayText ?? input).trim();
     const submission = (submitText ?? text).trim();
     if (!text || !submission) return;
-    if (sending) return;
     if (!hasWailsBindings()) {
       desktopBackendUnavailable("发送消息");
       return;
     }
     if (!activeTab) return;
+    const queueTabID = currentComposerTab?.id || activeTab.id;
+    if (composerIsBusy || currentComposerTab?.running) {
+      queueThreadMessage(queueTabID, text, submission);
+      return;
+    }
     if (composerDisabledReason) {
       appendTranscript({ id: `workspace-starting-${Date.now()}`, role: "notice", body: composerDisabledReason });
       focusComposer();
@@ -6427,16 +7363,22 @@
     }
     const draft = { display: text, submission };
     const userTranscriptId = `user-${Date.now()}`;
-    submittedDraft = draft;
-    restoreDraftOnTurnDone = false;
-    sending = true;
-    input = "";
+    directSubmissionTabIDs = [...directSubmissionTabIDs, queueTabID];
+    setLastTurnError(queueTabID, "");
+    setComposerInput("");
     appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
-    ensurePendingAssistant();
     let backendSubmissionStarted = false;
+    const submissionDispatch = { mode: "" as SubmitDispatchMode | "" };
+    let submissionTabID = queueTabID;
     try {
       const targetTab = await ensureConversationThreadForSend(text);
       if (!targetTab) throw new Error("新对话尚未创建，请稍后重试。");
+      submissionTabID = targetTab.id;
+      directSubmissionTabIDs = [...directSubmissionTabIDs.filter((tabID) => tabID !== queueTabID && tabID !== submissionTabID), submissionTabID];
+      setLastSubmittedDraft(submissionTabID, draft);
+      setSubmittedDraft(submissionTabID, draft);
+      setRestoreDraftOnTurnDone(submissionTabID, false);
+      setLastTurnError(submissionTabID, "");
       activeConversationTabId = targetTab.id;
       const selectedProfile = resolveThreadAgentProfile(agentCards, selectedAgentId);
       if (!selectedProfile && selectedAgentId) throw new Error("所选 Agent Profile 已不可用，请重新选择后发送。");
@@ -6473,29 +7415,50 @@
             REQUEST_TIMEOUT_MS,
           ),
           submitDisplayToTab: (tabID, display, input) => {
-            activateTaskReceipt(display, selectedProfile);
             backendSubmissionStarted = true;
             return withDeadline(
-              app().SubmitDisplayToTab(tabID, display, input),
+              app().SubmitDisplayToTabMode(tabID, display, input),
               "请求超时：30 秒内未收到桌面后端响应，请稍后重试或重启桌面 dev 窗口。",
               REQUEST_TIMEOUT_MS,
-            );
+            ).then((mode) => {
+              submissionDispatch.mode = mode;
+            });
           },
           onBound: (patch) => updateTabAgentBinding(runtimeTab.id, patch),
         }),
       });
+      if (submissionDispatch.mode === "maintenance") {
+        const idleTab = await waitForTabIdle(submissionTabID, "会话维护");
+        if (currentTranscriptTabId() === submissionTabID) await hydrateHistory(idleTab);
+      }
+      let resumeQueuedFollowUp = submissionDispatch.mode !== "turn";
+      try {
+        const postSubmitTabs = await app().ListTabs();
+        tabs = postSubmitTabs;
+        const postSubmitTab = postSubmitTabs.find((candidate) => candidate.id === submissionTabID);
+        resumeQueuedFollowUp = !postSubmitTab?.running;
+        if (submissionDispatch.mode !== "turn" || !postSubmitTab?.running) {
+          clearSubmittedDraft(submissionTabID);
+          setTabSending(submissionTabID, false);
+        }
+      } catch {
+        // Submission was accepted; lifecycle events will reconcile the tab.
+      }
+      if (resumeQueuedFollowUp && queuedMessages.some((candidate) => candidate.tabId === submissionTabID && candidate.delivery === "follow-up" && candidate.status === "queued")) {
+        queueMicrotask(() => void deliverNextQueuedFollowUp(submissionTabID));
+      }
       agentSelectionContextKey = threadAgentSelectionContext(tabs.find((tab) => tab.id === targetTab.id) ?? targetTab);
       agentSelectionDirty = false;
     } catch (error) {
       const message = formatErrorMessage(error);
-      input = "";
-      submittedDraft = undefined;
-      restoreDraftOnTurnDone = false;
+      setLastTurnError(submissionTabID, isCancellationError(message) ? "" : message);
+      setComposerInput("");
+      clearSubmittedDraft(submissionTabID);
       if (isWorkspaceStillStartingError(message)) {
         removeTranscriptItem(userTranscriptId);
         removeEmptyPendingAssistant();
-        input = draft.display;
-        sending = false;
+        setComposerInput(draft.display, submissionTabID);
+        setTabSending(submissionTabID, false);
         appendTranscript({ id: `workspace-starting-${Date.now()}`, role: "notice", body: "工作区正在准备中，请稍后发送" });
         void refresh();
         void tick().then(focusComposer);
@@ -6504,8 +7467,7 @@
       if (isTurnAlreadyRunningError(message)) {
         removeEmptyPendingAssistant();
         updateTranscriptItem(userTranscriptId, { title: "user · 待发送", pending: true });
-        if (!input.trim()) input = draft.display;
-        sending = true;
+        if (!input.trim()) setComposerInput(draft.display, submissionTabID);
         appendTranscript({ id: `notice-${Date.now()}`, role: "notice", body: "上一轮对话仍在运行，这条消息尚未提交给模型。已恢复到输入框；如果超过 2 分钟仍无回复，请点击停止后重新发送。" });
         return;
       }
@@ -6514,16 +7476,17 @@
         cancelled: isCancellationError(message),
       });
       if (failureAction === "cancel-submitted") {
+        setLastTurnError(submissionTabID, "");
         removeTranscriptItem(userTranscriptId);
         removeEmptyPendingAssistant();
-        sending = false;
+        setTabSending(submissionTabID, false);
         return;
       }
       if (failureAction === "restore-draft") {
         removeTranscriptItem(userTranscriptId);
         removeEmptyPendingAssistant();
-        input = draft.display;
-        sending = false;
+        setComposerInput(draft.display, submissionTabID);
+        setTabSending(submissionTabID, false);
         agentSelectionDirty = true;
         appendTranscript({
           id: `runtime-context-${Date.now()}`,
@@ -6535,16 +7498,105 @@
         return;
       }
       removeEmptyPendingAssistant();
-      sending = false;
-      settleActiveTaskReceipt(message);
+      setTabSending(submissionTabID, false);
+      settleTaskReceiptForTab(submissionTabID, message);
       finishTurnWithError(message);
+    } finally {
+      directSubmissionTabIDs = directSubmissionTabIDs.filter((tabID) => tabID !== queueTabID && tabID !== submissionTabID);
     }
   }
 
   async function cancel() {
-    if (!activeTab) return;
-    restoreDraftOnTurnDone = Boolean(submittedDraft);
-    await app().CancelTab(activeTab.id);
+    const tab = currentComposerTab ?? activeTab;
+    if (!tab) return;
+    setRestoreDraftOnTurnDone(tab.id, Boolean(submittedDraftByTab[tab.id]));
+    await app().CancelTab(tab.id);
+  }
+
+  let activityTabSwitchRequest = 0;
+  let activityTabSwitchQueue: Promise<void> = Promise.resolve();
+
+  function switchActivityTab(tabID: string) {
+    const request = ++activityTabSwitchRequest;
+    const run = activityTabSwitchQueue.catch(() => undefined).then(async () => {
+      if (request !== activityTabSwitchRequest) return;
+      await performActivityTabSwitch(tabID, request);
+    });
+    activityTabSwitchQueue = run;
+    return run;
+  }
+
+  async function performActivityTabSwitch(tabID: string, request: number) {
+    const tab = tabs.find((candidate) => candidate.id === tabID);
+    if (!tab || !hasWailsBindings()) return;
+    saveActiveSidebarConversationTranscript({ touch: false });
+    const linked = sidebarProjects.flatMap((project) =>
+      project.tasks
+        .filter((task) => task.tabId === tabID)
+        .map((task) => ({ project, task })),
+    )[0];
+    if (linked) {
+      syncSidebarProjectContext(linked.project);
+      activeSidebarConversationId = linked.task.id;
+      activeTaskReceipt = linked.task.receipt;
+      transcript = linked.task.transcript?.length ? cloneTranscriptItems(linked.task.transcript) : welcomeTranscript();
+      if (linked.task.templateId) selectedOutcomeTemplateId = linked.task.templateId;
+      if (activityMode === "work") {
+        workLayer = "newTask";
+        lastWorkLayer = "newTask";
+      }
+      agentSelectionContextKey = `work:${linked.project.id}:${linked.task.id}`;
+    } else {
+      const fallbackProject = sidebarProjects.find((project) => project.id === tab.memoryContext?.projectId)
+        ?? sidebarProjects.find((project) => project.id === INBOX_PROJECT_ID);
+      if (fallbackProject) syncSidebarProjectContext(fallbackProject);
+      else {
+        activeSidebarProjectId = INBOX_PROJECT_ID;
+        selectedProjectId = "";
+        linkedProject = "收件箱项目";
+      }
+      activeSidebarConversationId = "";
+      activeTaskReceipt = undefined;
+      transcript = welcomeTranscript();
+      agentSelectionContextKey = `tab:${tabID}`;
+    }
+    activeConversationTabId = tabID;
+    newTaskConversationActive = true;
+    await app().SetActiveTab(tabID);
+    if (request !== activityTabSwitchRequest) return;
+    await syncActiveTabMeta({ ...tab, active: true });
+    if (request !== activityTabSwitchRequest) return;
+    await Promise.all([hydrateHistory(tab, { preserveLocalWhenEmpty: true }), refreshCodeDock(tab)]);
+  }
+
+  async function cancelActivityTab(tabID: string) {
+    if (!hasWailsBindings()) return;
+    await app().CancelTab(tabID);
+    tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, cancelRequested: true } : tab);
+  }
+
+  async function recoverTask(action: "retry" | "restore-draft" | "rewind" | "open-diff") {
+    if (action === "open-diff") {
+      await openCodeInspector();
+      codeWorkbenchPanel = "changes";
+      return;
+    }
+    if (action === "rewind") {
+      const latest = [...checkpoints].sort((left, right) => right.turn - left.turn)[0];
+      if (latest) await rewind(latest.turn, "both");
+      return;
+    }
+    const lastUser = [...transcript].reverse().find((item) => item.role === "user" && item.body.trim());
+    const draft = currentLastSubmittedDraft ?? (lastUser ? { display: lastUser.body, submission: lastUser.body } : undefined);
+    if (!draft) return;
+    setLastTurnError(composerTabId, "");
+    if (action === "restore-draft") {
+      setComposerInput(draft.display, composerTabId);
+      await tick();
+      focusComposer();
+      return;
+    }
+    await send(draft.display, draft.submission);
   }
 
   function focusComposer() {
@@ -6553,7 +7605,7 @@
   }
 
   function useQuickPrompt(text: string) {
-    input = text;
+    setComposerInput(text);
     focusComposer();
   }
 
@@ -6575,7 +7627,8 @@
       return;
     }
     if (event.key !== "Escape" || event.defaultPrevented) return;
-    if (sending) {
+    const hasVisiblePrompt = Boolean(pendingApproval || pendingAsk || pendingBrowserCredential || pendingBrowserVerification);
+    if (sending || (currentComposerTab?.cancellable && !hasVisiblePrompt)) {
       event.preventDefault();
       void cancel();
       return;
@@ -6597,7 +7650,7 @@
     }
     if (pendingAsk) {
       event.preventDefault();
-      pendingAsk = undefined;
+      showWorkbenchNotice("该决策仍在等待回答；可在任务对话中继续处理。");
     }
   }
 
@@ -6673,31 +7726,63 @@
   }
 
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
-    if (!activeTab || !pendingApproval) return;
+    const tabID = pendingPromptTabId || activeTab?.id || "";
+    if (!tabID || !pendingApproval) return;
     const approval = pendingApproval;
-    pendingApproval = undefined;
-    await app().ApproveTab(activeTab.id, approval.id, allow, session, persist);
+    updatePendingPrompts(tabID, { approval: undefined });
+    syncTabPendingPromptFlag(tabID);
+    try {
+      await app().ApproveTab(tabID, approval.id, allow, session, persist);
+    } catch (error) {
+      updatePendingPrompts(tabID, { approval });
+      syncTabPendingPromptFlag(tabID);
+      showWorkbenchNotice(`审批提交失败，已恢复待决策项：${formatErrorMessage(error)}`);
+    }
   }
 
   async function answerAsk(answers: QuestionAnswer[]) {
-    if (!activeTab || !pendingAsk) return;
+    const tabID = pendingPromptTabId || activeTab?.id || "";
+    if (!tabID || !pendingAsk) return;
     const ask = pendingAsk;
-    pendingAsk = undefined;
-    await app().AnswerQuestionForTab(activeTab.id, ask.id, answers);
+    updatePendingPrompts(tabID, { ask: undefined });
+    syncTabPendingPromptFlag(tabID);
+    try {
+      await app().AnswerQuestionForTab(tabID, ask.id, answers);
+    } catch (error) {
+      updatePendingPrompts(tabID, { ask });
+      syncTabPendingPromptFlag(tabID);
+      showWorkbenchNotice(`回答提交失败，已恢复待决策项：${formatErrorMessage(error)}`);
+    }
   }
 
   async function submitBrowserCredential(username: string, password: string, save: boolean) {
-    if (!activeTab || !pendingBrowserCredential) return;
+    const tabID = pendingPromptTabId || activeTab?.id || "";
+    if (!tabID || !pendingBrowserCredential) return;
     const prompt = pendingBrowserCredential;
-    pendingBrowserCredential = undefined;
-    await app().SubmitBrowserCredentialTab(activeTab.id, prompt.id, username, password, save);
+    updatePendingPrompts(tabID, { browserCredential: undefined });
+    syncTabPendingPromptFlag(tabID);
+    try {
+      await app().SubmitBrowserCredentialTab(tabID, prompt.id, username, password, save);
+    } catch (error) {
+      updatePendingPrompts(tabID, { browserCredential: prompt });
+      syncTabPendingPromptFlag(tabID);
+      showWorkbenchNotice(`凭据提交失败，已恢复待决策项：${formatErrorMessage(error)}`);
+    }
   }
 
   async function completeBrowserVerification(continued: boolean) {
-    if (!activeTab || !pendingBrowserVerification) return;
+    const tabID = pendingPromptTabId || activeTab?.id || "";
+    if (!tabID || !pendingBrowserVerification) return;
     const prompt = pendingBrowserVerification;
-    pendingBrowserVerification = undefined;
-    await app().CompleteBrowserVerificationTab(activeTab.id, prompt.id, continued);
+    updatePendingPrompts(tabID, { browserVerification: undefined });
+    syncTabPendingPromptFlag(tabID);
+    try {
+      await app().CompleteBrowserVerificationTab(tabID, prompt.id, continued);
+    } catch (error) {
+      updatePendingPrompts(tabID, { browserVerification: prompt });
+      syncTabPendingPromptFlag(tabID);
+      showWorkbenchNotice(`浏览器验证提交失败，已恢复待决策项：${formatErrorMessage(error)}`);
+    }
   }
 
   async function openCodeInspector() {
@@ -6708,8 +7793,13 @@
   }
 
   async function previewFile(path: string) {
-    filePreview = await app().ReadFile(path);
+    const tabID = composerTabId;
+    const preview = await app().ReadFileForTab(tabID, path);
+    if (composerTabId !== tabID) return;
+    filePreview = preview;
+    filePreviewTabId = tabID;
     diffPreview = undefined;
+    diffPreviewTabId = "";
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = false;
@@ -6718,14 +7808,69 @@
   }
 
   async function previewChange(path: string) {
-    const [diff, preview] = await Promise.all([app().WorkspaceDiff(path), app().ReadFile(path)]);
+    const tabID = composerTabId;
+    const [diff, preview] = await Promise.all([app().WorkspaceDiffForTab(tabID, path), app().ReadFileForTab(tabID, path)]);
+    if (composerTabId !== tabID) return;
     diffPreview = diff;
+    diffPreviewTabId = tabID;
     filePreview = preview;
+    filePreviewTabId = tabID;
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = false;
     codeWorkbenchPanel = "changes";
     codeInspectorOpen = false;
+  }
+
+  function diffReviewCommentID() {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `diff-comment-${crypto.randomUUID()}`;
+    return `diff-comment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function addDiffComment(path: string, revision: string, line: number, body: string) {
+    if (!composerTabId) return;
+    diffReviewComments = addDiffReviewComment(diffReviewComments, {
+      id: diffReviewCommentID(),
+      tabId: composerTabId,
+      path,
+      revision,
+      line,
+      body,
+      createdAtMs: Date.now(),
+    });
+  }
+
+  function resolveDiffComment(id: string, resolved: boolean) {
+    diffReviewComments = setDiffReviewCommentStatus(diffReviewComments, id, resolved ? "resolved" : "open");
+  }
+
+  function deleteDiffComment(id: string) {
+    diffReviewComments = removeDiffReviewComment(diffReviewComments, id);
+  }
+
+  async function requestDiffFix(path: string) {
+    const ownerTabID = composerTabId;
+    const ownerPreview = currentDiffPreview;
+    if (!ownerTabID || !ownerPreview || ownerPreview.path !== path) return;
+    const expectedRevision = diffRevision(ownerPreview.diff);
+    const comments = diffReviewComments.filter((comment) => comment.tabId === ownerTabID);
+    const fresh = await app().WorkspaceDiffForTab(ownerTabID, path);
+    if (composerTabId !== ownerTabID) {
+      showWorkbenchNotice("Thread 已切换，本次 Diff 修复请求未发送。");
+      return;
+    }
+    const freshRevision = diffRevision(fresh.diff);
+    if (fresh.err || freshRevision !== expectedRevision) {
+      diffPreview = fresh;
+      diffPreviewTabId = ownerTabID;
+      showWorkbenchNotice(fresh.err ? `无法刷新 Diff：${fresh.err}` : "Diff 已变化，旧行级评论已过期；请在最新 Diff 上重新评论。");
+      return;
+    }
+    const prompt = buildDiffFixPrompt(path, freshRevision, comments);
+    if (!prompt) return;
+    openCodeConversation();
+    if (composerTabId !== ownerTabID) return;
+    await send(prompt, prompt);
   }
 
   async function rewind(turn: number, scope: string) {
@@ -6735,6 +7880,8 @@
     if (scope === "code" || scope === "both") {
       filePreview = undefined;
       diffPreview = undefined;
+      filePreviewTabId = "";
+      diffPreviewTabId = "";
     }
     await hydrateHistory(tab);
     await refreshCodeDock(tab);
@@ -6783,14 +7930,17 @@
       projects={sortedSidebarProjects}
       activeProjectId={activeSidebarProjectId}
       activeTaskId={activeSidebarConversationId}
-      navItems={unifiedNavItems}
-      activeNavId={activeUnifiedNavId}
+      navItems={primaryNavItems}
+      activeNavId={activePrimaryNavId}
+      mode={activityMode}
+      governanceActive={activityMode === "work" && isGovernanceLayer(workLayer)}
       drawerOpen={mobileDrawerOpen}
       collapsed={sidebarCollapsed}
       projectDockCollapsed={sidebarProjectDockCollapsed}
       onWorkspaceChange={(workspaceId) => void selectWorkspace(workspaceId)}
       onChooseWorkspace={() => void chooseSidebarProjectFolder()}
-      onNav={openUnifiedNav}
+      onNav={openPrimaryNav}
+      onModeChange={switchActivityMode}
       onProjectToggle={toggleSidebarProject}
       onProjectOpen={openSidebarProject}
       onTaskOpen={openSidebarConversation}
@@ -6830,9 +7980,25 @@
                 model={activeModelLabel}
                 permission={activePermissionLabel}
                 memory={activeMemoryLabel}
+                mode={activityMode}
                 activeInspector={taskInspectorPanel}
                 onOpenDrawer={() => (mobileDrawerOpen = true)}
                 onInspector={openTaskInspector}
+              />
+            </div>
+            <div class="task-context-wrap">
+              <TaskActivityCenter
+                {tabs}
+                currentTabId={composerTabId}
+                {queuedMessages}
+                receipt={activeTaskReceipt}
+                changesCount={changedCount}
+                checkpointCount={checkpoints.length}
+                lastError={currentLastTurnError}
+                canRestoreDraft={Boolean(currentLastSubmittedDraft)}
+                onSwitchTab={switchActivityTab}
+                onCancelTab={cancelActivityTab}
+                onRecover={recoverTask}
               />
             </div>
             <div class="conversation" bind:this={conversationScrollEl}>
@@ -6844,7 +8010,6 @@
                 ask={pendingAsk}
                 onApprove={answerApproval}
                 onAnswerAsk={answerAsk}
-                onDismissAsk={() => (pendingAsk = undefined)}
                 onLoadArchivedTool={loadArchivedToolEvidence}
               />
               {#if activeTaskReceipt}<TaskResultReceipt receipt={activeTaskReceipt} />{/if}
@@ -6863,10 +8028,10 @@
               <Composer
                 {input}
                 {commands}
-                {sending}
+                sending={composerIsBusy}
                 disabled={Boolean(composerDisabledReason)}
                 disabledReason={composerDisabledReason}
-                onInput={(value) => (input = value)}
+                onInput={setComposerInput}
                 onSend={send}
                 onCancel={cancel}
                 onPreviewFile={previewFile}
@@ -6884,11 +8049,17 @@
                 {activityMode}
                 contextInfo={composerContext}
                 {backgroundRunCount}
+                queuedMessages={currentQueuedMessages}
+                onEditQueuedMessage={editQueuedThreadMessage}
+                onDeleteQueuedMessage={deleteQueuedThreadMessage}
+                onMoveQueuedMessage={moveQueuedThreadMessage}
+                onSteerQueuedMessage={steerQueuedThreadMessage}
+                onResumeQueuedMessage={resumeQueuedThreadMessage}
               />
             </div>
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
-          <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined}>
+          <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined} data-governance={activityMode === "work" && isGovernanceLayer(workLayer) ? "true" : undefined}>
             <div class="task-context-wrap workbench-context-wrap">
               <TaskContextBar
                 workspace={activeWorkspace?.name || "未选择 Workspace"}
@@ -6897,19 +8068,16 @@
                 model={activeModelLabel}
                 permission={activePermissionLabel}
                 memory={activeMemoryLabel}
+                mode={activityMode}
                 activeInspector={taskInspectorPanel}
                 onOpenDrawer={() => (mobileDrawerOpen = true)}
                 onInspector={openTaskInspector}
               />
             </div>
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>Workspace / Project / Task</span><strong>{activityMode === "code" ? "任务检查器" : currentWorkLayerLabel()}</strong></div><p>{activityMode === "code" ? "当前 Task 的 Workspace、Context、Diff 与 Checkpoints。" : "以业务 Project 组织任务，以可验证结果作为交付出口。"}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> Workspace</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
+            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchHeading.eyebrow}</span><strong>{workbenchHeading.title}</strong></div><p>{workbenchHeading.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> Workspace</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
             {#if workbenchNotice}<div class="workbench-notice" data-testid="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if activityMode === "work" && isGovernanceLayer(workLayer)}
-              <nav class="governance-tabs" data-testid="governance-center" aria-label="配置与治理分类">
-                {#each governanceNavItems as item (item.id)}
-                  <button class:active={workLayer === item.id} type="button" aria-pressed={workLayer === item.id} onclick={() => openGovernanceLayer(item.id)}><strong>{item.label}</strong><span>{item.desc}</span></button>
-                {/each}
-              </nav>
+              <GovernanceNavigation items={governanceNavItems} activeId={workLayer} onSelect={openGovernanceLayer} />
             {/if}
             {#if activityMode === "work" && workLayer === "reports"}
               {@const activeReport = selectedReport()}
@@ -7084,6 +8252,20 @@
                     <button class:active={codeWorkbenchPanel === "checkpoints"} type="button" onclick={() => openCodeWorkbench("checkpoints")}><RotateCcw size={14} /> Checkpoints</button>
                   </div>
 
+                  <ManagedWorktreePanel
+                    repositoryRoot={currentComposerTab?.workspaceRoot || activeTab?.workspaceRoot || ""}
+                    worktrees={managedWorktrees}
+                    snapshots={managedWorktreeSnapshots}
+                    busy={managedWorktreeBusy}
+                    message={managedWorktreeMessage}
+                    onRefresh={refreshManagedWorktreeState}
+                    onCreate={createManagedWorktree}
+                    onOpen={openManagedWorktree}
+                    onSnapshot={snapshotManagedWorktree}
+                    onRestore={restoreManagedWorktree}
+                    onHandoff={handoffManagedWorktree}
+                  />
+
                   <div class="code-workbench-main">
                     <section class="code-workbench-chat" aria-label="代码对话入口">
                       <header>
@@ -7101,10 +8283,10 @@
                       <Composer
                         {input}
                         {commands}
-                        {sending}
+                        sending={composerIsBusy}
                         disabled={Boolean(composerDisabledReason)}
                         disabledReason={composerDisabledReason}
-                        onInput={(value) => (input = value)}
+                        onInput={setComposerInput}
                         onSend={send}
                         onCancel={cancel}
                         onPreviewFile={previewFile}
@@ -7122,6 +8304,12 @@
                         {activityMode}
                         contextInfo={composerContext}
                         {backgroundRunCount}
+                        queuedMessages={currentQueuedMessages}
+                        onEditQueuedMessage={editQueuedThreadMessage}
+                        onDeleteQueuedMessage={deleteQueuedThreadMessage}
+                        onMoveQueuedMessage={moveQueuedThreadMessage}
+                        onSteerQueuedMessage={steerQueuedThreadMessage}
+                        onResumeQueuedMessage={resumeQueuedThreadMessage}
                       />
                     </section>
 
@@ -7129,8 +8317,8 @@
                       {context}
                       {changes}
                       {checkpoints}
-                      {filePreview}
-                      {diffPreview}
+                      filePreview={currentFilePreview}
+                      diffPreview={currentDiffPreview}
                       variant="workbench"
                       focus={codeWorkbenchPanel}
                       onPreviewFile={previewFile}
@@ -7138,6 +8326,11 @@
                       onFork={forkThread}
                       onRewind={rewind}
                       onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+                      diffComments={currentDiffReviewComments}
+                      onAddDiffComment={addDiffComment}
+                      onResolveDiffComment={resolveDiffComment}
+                      onDeleteDiffComment={deleteDiffComment}
+                      onRequestDiffFix={requestDiffFix}
                     />
                   </div>
                 </div>
@@ -7303,24 +8496,13 @@
                   </div>
 
                   <section class="agent-compose-card" aria-label="新建对话输入区">
-                    <TaskContextBar
-                      workspace={activeWorkspace?.name || "未选择 Workspace"}
-                      project={activeProjectLabel}
-                      agent={activeAgentLabel}
-                      model={activeModelLabel}
-                      permission={activePermissionLabel}
-                      memory={activeMemoryLabel}
-                      activeInspector={taskInspectorPanel}
-                      onOpenDrawer={() => (mobileDrawerOpen = true)}
-                      onInspector={openTaskInspector}
-                    />
                     <Composer
                       {input}
                       {commands}
-                      {sending}
+                      sending={composerIsBusy}
                       disabled={Boolean(composerDisabledReason)}
                       disabledReason={composerDisabledReason}
-                      onInput={(value) => (input = value)}
+                      onInput={setComposerInput}
                       onSend={send}
                       onCancel={cancel}
                       onPreviewFile={previewFile}
@@ -7338,6 +8520,12 @@
                       {activityMode}
                       contextInfo={composerContext}
                       {backgroundRunCount}
+                      queuedMessages={currentQueuedMessages}
+                      onEditQueuedMessage={editQueuedThreadMessage}
+                      onDeleteQueuedMessage={deleteQueuedThreadMessage}
+                      onMoveQueuedMessage={moveQueuedThreadMessage}
+                      onSteerQueuedMessage={steerQueuedThreadMessage}
+                      onResumeQueuedMessage={resumeQueuedThreadMessage}
                     />
                   </section>
 
@@ -7348,9 +8536,12 @@
                 <section class="aorist-page new-task-page agent-assistant-page">
                   <TaskOutcomeLauncher templates={OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
                   <article class="detail-empty">
-                    <strong>尚未配置 Agent</strong>
-                    <p>{hasWailsBindings() ? "请先创建 Agent，并配置可用模型后再开始真实对话。" : "未连接桌面后端。请在 Wails 桌面运行环境中创建 Agent、配置模型并开始对话。"}</p>
-                    <button type="button" onclick={() => openWorkLayer("agents")}>前往 Agent 中心</button>
+                    <strong>先完成运行配置，再开始任务</strong>
+                    <p>{hasWailsBindings() ? "新用户只需先完成两步：创建一个 Agent，再连接可用模型。完成后回到这里即可开始。" : "未连接桌面后端。请在 Wails 桌面运行环境中创建 Agent、连接模型并开始真实对话。"}</p>
+                    <div class="new-task-empty-actions">
+                      <button type="button" onclick={() => openGovernanceLayer("agents")}>1. 配置 Agent</button>
+                      <button type="button" onclick={() => openGovernanceLayer("models")}>2. 连接模型</button>
+                    </div>
                   </article>
                 </section>
               {/if}
@@ -7397,8 +8588,55 @@
                             <button type="button" onclick={() => void deleteAutomationTask(item.id)}>删除</button>
                           </footer>
                         </div>
+                      {:else}
+                        <article class="automation-task-empty">
+                          <Workflow size={18} />
+                          <strong>暂无自动化任务</strong>
+                          <p>创建后可手动执行，也可在 Volt GUI 桌面保持运行时按计划触发。</p>
+                          <button type="button" onclick={() => openAutomationDialog()}>新建自动化任务</button>
+                          <em>定时任务仅在桌面应用运行期间执行，不会在离线时补跑。</em>
+                        </article>
                       {/each}
                     </section>
+
+                    <aside class="automation-inbox" aria-label="自动化结果收件箱">
+                      <header>
+                        <div><span>Run Inbox</span><strong>结果收件箱</strong><em>{automationAttentionCount} 条需处理</em></div>
+                        <button type="button" onclick={() => void refreshAutomationRuns()}><RefreshCw size={13} /> 刷新</button>
+                      </header>
+                      <div class="automation-inbox__filters" role="group" aria-label="筛选自动化运行结果">
+                        {#each [
+                          { id: "all", label: "全部" },
+                          { id: "attention", label: "需处理" },
+                          { id: "passed", label: "通过" },
+                          { id: "failed", label: "失败" },
+                          { id: "skipped", label: "跳过" },
+                        ] as filter (filter.id)}
+                          <button class:active={automationRunFilter === filter.id} type="button" onclick={() => (automationRunFilter = filter.id as typeof automationRunFilter)}>{filter.label}</button>
+                        {/each}
+                      </div>
+                      <div class="automation-inbox__list">
+                        {#each filteredAutomationRuns as run (run.id)}
+                          <article class:attention={run.needsAttention} class:unread={!run.read} data-status={run.status}>
+                            <header>
+                              <div><strong>{run.automationTitle}</strong><span>{automationRunStatusLabel(run)} · {run.trigger === "manual" ? "手动" : run.trigger === "scheduled" ? "定时" : "调度跳过"}</span></div>
+                              {#if !run.read}<button type="button" onclick={() => void markAutomationRunRead(run)}>标记已读</button>{/if}
+                            </header>
+                            <p>{run.result || "本次运行未返回摘要。"}</p>
+                            <dl>
+                              <div><dt>完成时间</dt><dd>{automationRunTime(run)}</dd></div>
+                              <div><dt>耗时</dt><dd>{run.durationMs} ms</dd></div>
+                              <div><dt>范围</dt><dd>{run.scope || "默认工作区"}</dd></div>
+                            </dl>
+                            {#if run.logs.length}
+                              <details><summary>查看运行日志</summary><pre>{run.logs.slice(-6).join("\n")}</pre></details>
+                            {/if}
+                          </article>
+                        {:else}
+                          <article class="automation-inbox__empty"><strong>暂无匹配结果</strong><p>立即执行或等待定时任务后，结果会持久化到这里。</p></article>
+                        {/each}
+                      </div>
+                    </aside>
 
                   </div>
                 </div>
@@ -8047,10 +9285,10 @@
                 <Composer
                   {input}
                   {commands}
-                  {sending}
+                  sending={composerIsBusy}
                   disabled={Boolean(composerDisabledReason)}
                   disabledReason={composerDisabledReason}
-                  onInput={(value) => (input = value)}
+                  onInput={setComposerInput}
                   onSend={send}
                   onCancel={cancel}
                   onPreviewFile={previewFile}
@@ -8068,6 +9306,12 @@
                   {activityMode}
                   contextInfo={composerContext}
                   {backgroundRunCount}
+                  queuedMessages={currentQueuedMessages}
+                  onEditQueuedMessage={editQueuedThreadMessage}
+                  onDeleteQueuedMessage={deleteQueuedThreadMessage}
+                  onMoveQueuedMessage={moveQueuedThreadMessage}
+                  onSteerQueuedMessage={steerQueuedThreadMessage}
+                  onResumeQueuedMessage={resumeQueuedThreadMessage}
                 />
                 <div class="home__context">
                   <button type="button" onclick={focusComposer}>
@@ -8147,13 +9391,18 @@
             {context}
             {changes}
             {checkpoints}
-            {filePreview}
-            {diffPreview}
+            filePreview={currentFilePreview}
+            diffPreview={currentDiffPreview}
             onPreviewFile={previewFile}
             onPreviewChange={previewChange}
             onFork={forkThread}
             onRewind={rewind}
             onRefreshContext={() => activeTab && refreshCodeDock(activeTab)}
+            diffComments={currentDiffReviewComments}
+            onAddDiffComment={addDiffComment}
+            onResolveDiffComment={resolveDiffComment}
+            onDeleteDiffComment={deleteDiffComment}
+            onRequestDiffFix={requestDiffFix}
           />
         </aside>
       {/if}
@@ -18061,15 +19310,55 @@
 
   .automation-layout {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr);
     gap: 12px;
     align-items: start;
   }
 
   .automation-task-list {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .automation-task-empty {
+    display: grid;
+    min-height: 248px;
+    place-items: center;
+    align-content: center;
+    gap: 9px;
+    padding: 24px;
+    border: 1px dashed var(--border, #dce1db);
+    border-radius: 10px;
+    background: var(--card, #fff);
+    color: var(--muted-foreground, #687169);
+    text-align: center;
+  }
+
+  .automation-task-empty strong {
+    color: var(--foreground, #1f2421);
+    font-size: 15px;
+  }
+
+  .automation-task-empty p,
+  .automation-task-empty em {
+    max-width: 360px;
+    margin: 0;
+    font-size: 12px;
+    font-style: normal;
+    line-height: 1.55;
+  }
+
+  .automation-task-empty button {
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid #1f2421;
+    border-radius: 7px;
+    background: #1f2421;
+    color: #fff;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 650;
   }
 
   .automation-task-card {
@@ -18170,6 +19459,157 @@
     margin-top: auto;
   }
 
+  .automation-inbox {
+    display: grid;
+    align-content: start;
+    gap: 10px;
+    min-width: 0;
+    padding: 13px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 10px;
+    background: var(--card, #ffffff);
+  }
+
+  .automation-inbox > header,
+  .automation-inbox article > header,
+  .automation-inbox__filters {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .automation-inbox > header div {
+    display: grid;
+    gap: 2px;
+  }
+
+  .automation-inbox > header span,
+  .automation-inbox > header em {
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .automation-inbox > header strong {
+    color: var(--foreground, #1f2421);
+    font-size: 14px;
+  }
+
+  .automation-inbox > header button,
+  .automation-inbox__filters button,
+  .automation-inbox article button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 32px;
+    padding: 0 8px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 7px;
+    color: var(--foreground, #1f2421);
+    background: var(--card, #ffffff);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .automation-inbox__filters {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .automation-inbox__filters button.active {
+    border-color: #1f2421;
+    color: #ffffff;
+    background: #1f2421;
+  }
+
+  .automation-inbox__list {
+    display: grid;
+    gap: 8px;
+    max-height: 640px;
+    overflow: auto;
+  }
+
+  .automation-inbox article {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 8px;
+    background: var(--muted, #edf0ec);
+  }
+
+  .automation-inbox article.unread {
+    box-shadow: inset 3px 0 #0f7b55;
+  }
+
+  .automation-inbox article.attention {
+    border-color: color-mix(in srgb, var(--destructive, #b42318) 34%, var(--border, #dce1db));
+    background: color-mix(in srgb, var(--card, #fff) 92%, var(--destructive, #b42318) 8%);
+  }
+
+  .automation-inbox article header div {
+    min-width: 0;
+  }
+
+  .automation-inbox article header strong,
+  .automation-inbox article header span {
+    display: block;
+  }
+
+  .automation-inbox article header strong {
+    overflow: hidden;
+    color: var(--foreground, #1f2421);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .automation-inbox article header span,
+  .automation-inbox article dt,
+  .automation-inbox article summary {
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+  }
+
+  .automation-inbox article p {
+    margin: 0;
+    color: var(--foreground, #1f2421);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .automation-inbox article dl {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+  }
+
+  .automation-inbox article dl div {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .automation-inbox article dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--foreground, #1f2421);
+    font-size: 12px;
+  }
+
+  .automation-inbox article details pre {
+    max-height: 180px;
+    overflow: auto;
+    padding: 8px;
+    border-radius: 6px;
+    color: #d0d5dd;
+    background: #101828;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+
   .automation-config-modal {
     width: min(780px, calc(100vw - 44px));
   }
@@ -18195,7 +19635,7 @@
   .automation-failure-todo input {
     width: 16px;
     height: 16px;
-    accent-color: var(--aorist-primary);
+    accent-color: #0f7b55;
   }
 
   .automation-failure-todo em {
@@ -18212,8 +19652,16 @@
     }
 
     .automation-overview,
-    .automation-task-list {
+    .automation-task-list,
+    .automation-layout {
       grid-template-columns: 1fr;
+    }
+
+    .automation-inbox > header button,
+    .automation-inbox__filters button,
+    .automation-inbox article button,
+    .automation-task-empty button {
+      min-height: 40px;
     }
   }
 
@@ -21138,28 +22586,195 @@
   .resource-detail-modal footer button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}
 
   .result-home-page {
+    display: flex;
+    flex-direction: column;
     gap: 16px;
   }
 
+  .result-home-page > * {
+    flex: 0 0 auto;
+  }
+
   .result-home-hero {
-    padding-block: 34px;
+    order: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 24px;
+    padding: 22px 24px;
+    border-radius: 16px;
   }
 
   .result-home-hero h1 {
     max-width: 760px;
+    margin-block: 8px;
+    font-size: clamp(22px, 2.6vw, 32px);
   }
 
   .result-home-hero p {
     max-width: 820px;
+    margin-bottom: 0;
+  }
+
+  .result-home-hero > span,
+  .result-home-hero > h1,
+  .result-home-hero > p {
+    grid-column: 1;
+  }
+
+  .result-home-hero > div {
+    grid-column: 2;
+    grid-row: 1 / 4;
+    justify-content: flex-end;
+  }
+
+  .result-home-stats {
+    order: 3;
+    margin-top: 0;
+  }
+
+  .result-home-stats article {
+    padding: 12px 14px;
+  }
+
+  .result-home-stats strong {
+    margin-block: 5px 2px;
+    font-size: 20px;
+  }
+
+  .first-run-checklist {
+    order: 2;
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 12px;
+    background: var(--card, #ffffff);
+  }
+
+  .first-run-checklist > header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .first-run-checklist > header div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .first-run-checklist > header span,
+  .first-run-checklist > header strong {
+    color: var(--foreground, #1f2421);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .first-run-checklist > header p {
+    margin: 0;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .first-run-checklist ol {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .first-run-checklist li {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 66px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--border, #dce1db) 80%, transparent);
+    border-radius: 8px;
+    background: var(--muted, #edf0ec);
+  }
+
+  .first-run-checklist li > i {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: var(--card, #ffffff);
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-weight: 650;
+    font-style: normal;
+  }
+
+  .first-run-checklist li.done > i {
+    background: #e7f5ef;
+    color: #0f7b55;
+  }
+
+  .first-run-checklist li > span,
+  .first-run-checklist li strong,
+  .first-run-checklist li em {
+    display: block;
+    min-width: 0;
+  }
+
+  .first-run-checklist li strong {
+    overflow: hidden;
+    color: var(--foreground, #1f2421);
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .first-run-checklist li em {
+    margin-top: 2px;
+    overflow: hidden;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .first-run-checklist li button {
+    appearance: none;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 6px;
+    background: var(--card, #ffffff);
+    color: var(--foreground, #1f2421);
+    font-size: 11px;
+    font-weight: 550;
+    transition: border-color 150ms ease, background 150ms ease;
+  }
+
+  .first-run-checklist li button:hover {
+    border-color: color-mix(in srgb, var(--primary, #1f2421) 28%, var(--border, #dce1db));
+    background: color-mix(in srgb, var(--card, #fff) 74%, var(--muted, #edf0ec));
+  }
+
+  .first-run-checklist li button:focus-visible {
+    outline: 2px solid color-mix(in srgb, #0f7b55 55%, transparent);
+    outline-offset: 2px;
   }
 
   .result-scenarios {
+    order: 4;
     display: grid;
     gap: 11px;
     padding: 16px;
-    border: 1px solid var(--aorist-line, #dfe3e8);
-    border-radius: 16px;
-    background: #ffffff;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 12px;
+    background: var(--card, #ffffff);
   }
 
   .result-scenarios > header {
@@ -21175,69 +22790,140 @@
   }
 
   .result-scenarios > header span {
-    color: var(--aorist-muted, #667085);
-    font-size: 9px;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: .08em;
     text-transform: uppercase;
   }
 
   .result-scenarios > header strong {
+    color: var(--foreground, #1f2421);
     font-size: 15px;
   }
 
   .result-scenarios > header p {
     margin: 0;
-    color: var(--aorist-muted, #667085);
-    font-size: 10px;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
   }
 
   .result-scenarios > div {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
     gap: 8px;
   }
 
   .result-scenarios button {
     display: grid;
-    min-height: 112px;
+    min-height: 96px;
     padding: 12px;
-    border: 1px solid var(--aorist-line, #dfe3e8);
+    border: 1px solid var(--border, #dce1db);
     border-radius: 12px;
-    background: #fafafa;
-    color: inherit;
+    background: color-mix(in srgb, var(--card, #fff) 96%, var(--muted, #edf0ec));
+    color: var(--foreground, #1f2421);
     text-align: left;
+    transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
   }
 
   .result-scenarios button:hover {
-    border-color: #222222;
-    background: #ffffff;
-    box-shadow: 0 8px 20px rgba(15, 23, 42, .07);
+    border-color: color-mix(in srgb, #0f7b55 42%, var(--border, #dce1db));
+    background: var(--card, #ffffff);
+    box-shadow: 0 8px 24px rgb(15 23 42 / 0.055);
+    transform: translateY(-1px);
   }
 
   .result-scenarios button span {
-    font-size: 11px;
-    font-weight: 700;
+    font-size: 12px;
+    font-weight: 650;
   }
 
   .result-scenarios button strong {
     align-self: start;
-    color: var(--aorist-muted, #667085);
-    font-size: 9px;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
     font-weight: 500;
     line-height: 1.5;
   }
 
   .result-scenarios button em {
     align-self: end;
-    color: #222222;
-    font-size: 9px;
+    color: #0f7b55;
+    font-size: 11px;
     font-style: normal;
     font-weight: 700;
   }
 
   .result-home-grid {
+    order: 5;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .new-task-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .new-task-page > .detail-empty {
+    width: min(100%, 920px);
+    margin: 0 auto;
+    padding: 24px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 12px;
+    background: var(--card, #fff);
+    color: var(--muted-foreground, #687169);
+    text-align: center;
+  }
+
+  .new-task-page > .detail-empty strong {
+    color: var(--foreground, #1f2421);
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  .new-task-page > .detail-empty p {
+    max-width: 620px;
+    margin: 7px auto 0;
+    color: var(--muted-foreground, #687169);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .new-task-empty-actions button {
+    appearance: none;
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 12px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 6px;
+    background: var(--card, #fff);
+    color: var(--foreground, #1f2421);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+  }
+
+  .new-task-empty-actions button:first-child {
+    border-color: #1f2421;
+    background: #1f2421;
+    color: #fff;
+  }
+
+  .new-task-empty-actions button:hover {
+    border-color: color-mix(in srgb, var(--primary, #1f2421) 34%, var(--border, #dce1db));
+    box-shadow: 0 8px 24px rgb(15 23 42 / 0.06);
+  }
+
+  .new-task-empty-actions button:focus-visible {
+    outline: 2px solid color-mix(in srgb, #0f7b55 55%, transparent);
+    outline-offset: 2px;
   }
 
   .result-home-empty {
@@ -21269,31 +22955,190 @@
   .runtime-step-label {
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: min(100%, 820px);
+    gap: 10px;
+    width: min(100%, 920px);
   }
 
   .runtime-step-label span {
-    padding: 4px 7px;
+    padding: 4px 8px;
     border-radius: 999px;
-    background: #222222;
+    background: #1f2421;
     color: #ffffff;
-    font-size: 8px;
-    font-weight: 700;
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.35;
   }
 
   .runtime-step-label strong {
-    font-size: 11px;
+    color: var(--foreground, #1f2421);
+    font-size: 13px;
+    font-weight: 650;
   }
 
   .runtime-step-label em {
-    color: var(--aorist-muted);
-    font-size: 9px;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
     font-style: normal;
+    line-height: 1.45;
   }
 
   .agent-assistant-center {
     gap: 14px;
+  }
+
+  .agent-assistant-page {
+    --agent-assistant-content-width: 920px;
+    background: var(--background, #f3f5f2);
+  }
+
+  .agent-assistant-shell {
+    align-content: start;
+    min-height: 100%;
+    padding: clamp(24px, 4vh, 44px) clamp(16px, 4vw, 48px) 28px;
+  }
+
+  .agent-selector {
+    width: min(100%, 920px);
+    justify-items: stretch;
+  }
+
+  .agent-selector__trigger {
+    appearance: none;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: center;
+    justify-items: start;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 12px;
+    background: var(--card, #fff);
+    color: var(--foreground, #1f2421);
+    box-shadow: 0 1px 0 rgb(15 23 42 / 0.02);
+    text-align: left;
+    transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+  }
+
+  .agent-selector__trigger:hover {
+    border-color: color-mix(in srgb, #1f2421 28%, var(--border, #dce1db));
+    background: var(--card, #fff);
+    box-shadow: 0 8px 24px rgb(15 23 42 / 0.05);
+    opacity: 1;
+  }
+
+  .agent-selector__trigger:focus-visible {
+    outline: 2px solid color-mix(in srgb, #0f7b55 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  .agent-selector__avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: #1f2421;
+    box-shadow: none;
+  }
+
+  .agent-selector__label {
+    justify-items: start;
+    gap: 2px;
+  }
+
+  .agent-selector__label strong {
+    color: var(--foreground, #1f2421);
+    font-size: 13px;
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+
+  .agent-selector__label em {
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .agent-selector__trigger > :global(svg) {
+    justify-self: end;
+    color: var(--muted-foreground, #687169);
+    transition: transform 150ms ease;
+  }
+
+  .agent-selector__menu {
+    top: calc(100% + 8px);
+    right: 0;
+    left: 0;
+    width: 100%;
+    max-height: 320px;
+    padding: 6px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 12px;
+    background: var(--card, #fff);
+    box-shadow: 0 18px 48px rgb(15 23 42 / 0.12);
+    transform: none;
+  }
+
+  .agent-selector__menu button {
+    min-height: 52px;
+    border-radius: 8px;
+    color: var(--muted-foreground, #687169);
+  }
+
+  .agent-selector__menu button:hover,
+  .agent-selector__menu button.active {
+    background: var(--muted, #edf0ec);
+    color: var(--foreground, #1f2421);
+  }
+
+  .agent-selector__menu button > span {
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--card, #fff) 90%, #0f7b55 10%);
+    color: #0f7b55;
+  }
+
+  .agent-selector__menu em {
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+  }
+
+  .agent-runtime-summary {
+    width: min(100%, 920px);
+    padding: 12px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 12px;
+    background: var(--card, #fff);
+  }
+
+  .agent-runtime-summary header span,
+  .agent-runtime-summary header em,
+  .agent-runtime-summary dt,
+  .agent-runtime-summary dd {
+    font-size: 11px;
+  }
+
+  .agent-runtime-summary dl div {
+    border-top-color: var(--border, #dce1db);
+  }
+
+  .agent-runtime-summary dt,
+  .agent-runtime-summary header em {
+    color: var(--muted-foreground, #687169);
+  }
+
+  .agent-runtime-summary dd {
+    color: var(--foreground, #1f2421);
+  }
+
+  .agent-compose-card :global(.composer) {
+    border-color: var(--border, #dce1db);
+    border-radius: 16px;
+    background: var(--card, #fff);
+    box-shadow: 0 10px 30px rgb(15 23 42 / 0.06);
+  }
+
+  .agent-compose-card :global(.composer:focus-within) {
+    border-color: color-mix(in srgb, #0f7b55 48%, var(--border, #dce1db));
+    box-shadow: 0 0 0 2px color-mix(in srgb, #0f7b55 16%, transparent), 0 12px 34px rgb(15 23 42 / 0.07);
   }
 
   .agent-compose-card {
@@ -21301,53 +23146,44 @@
     gap: 9px;
   }
 
-  .governance-tabs {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 1px;
-    margin: 12px 18px 0;
-    overflow: hidden;
-    border: 1px solid #dfe4ec;
-    border-radius: 11px;
-    background: #dfe4ec;
-  }
-
-  .governance-tabs button {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-    min-height: 48px;
-    padding: 8px 10px;
-    border: 0;
-    border-radius: 0;
-    background: #ffffff;
-    color: #475467;
-    text-align: left;
-  }
-
-  .governance-tabs button.active {
-    background: #eef4ff;
-    color: #1f5fbf;
-  }
-
-  .governance-tabs strong,
-  .governance-tabs span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .governance-tabs strong {
-    font-size: 10.5px;
-  }
-
-  .governance-tabs span {
-    color: #7b8494;
-    font-size: 8.5px;
-  }
-
   .governance-page {
     padding: 0;
+  }
+
+  .aorist-workbench[data-governance="true"] {
+    display: grid;
+    grid-template-columns: 224px minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+
+  .aorist-workbench[data-governance="true"] > .workbench-context-wrap,
+  .aorist-workbench[data-governance="true"] > .stage-topbar,
+  .aorist-workbench[data-governance="true"] > .workbench-notice {
+    grid-column: 1 / -1;
+  }
+
+  .aorist-workbench[data-governance="true"] > .workbench-context-wrap {
+    grid-row: 1;
+  }
+
+  .aorist-workbench[data-governance="true"] > .stage-topbar {
+    grid-row: 2;
+  }
+
+  .aorist-workbench[data-governance="true"] > .workbench-notice {
+    grid-row: 3;
+  }
+
+  .aorist-workbench[data-governance="true"] > :global(.governance-navigation) {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .aorist-workbench[data-governance="true"] > .aorist-page {
+    grid-column: 2;
+    grid-row: 4;
+    min-width: 0;
+    min-height: 0;
   }
 
   @media (max-width: 720px) {
@@ -21375,7 +23211,29 @@
     }
 
     .result-home-hero {
-      padding-block: 24px;
+      grid-template-columns: minmax(0, 1fr);
+      padding: 20px;
+    }
+
+    .result-home-hero > div {
+      grid-column: 1;
+      grid-row: auto;
+      justify-content: flex-start;
+      margin-top: 16px;
+    }
+
+    .first-run-checklist > header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .first-run-checklist ol {
+      grid-template-columns: 1fr;
+    }
+
+    .first-run-checklist li button,
+    .new-task-empty-actions button {
+      min-height: 40px;
     }
 
     .result-scenarios > header {
@@ -21392,10 +23250,19 @@
       min-height: 88px;
     }
 
-    .governance-tabs {
-      grid-template-columns: repeat(6, minmax(112px, 1fr));
-      margin: 10px 12px 0;
-      overflow-x: auto;
+    .aorist-workbench[data-governance="true"] {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    }
+
+    .aorist-workbench[data-governance="true"] > :global(.governance-navigation) {
+      grid-column: 1;
+      grid-row: 4;
+    }
+
+    .aorist-workbench[data-governance="true"] > .aorist-page {
+      grid-column: 1;
+      grid-row: 5;
     }
   }
 </style>

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.13.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.12.1...desktop-v0.13.0) (2026-07-14)
+
+
+### Features
+
+* add trusted intranet, model catalog, and workbench data enhancements ([105d19d](https://github.com/zuohuadong/volt-gui/commit/105d19da4bc1950025b7410560bd33820e7179d1))
+* **design:** add Volt GUI design language ([e88c5d0](https://github.com/zuohuadong/volt-gui/commit/e88c5d0551232cea82eea8b01178bab1b3ad77e9))
+* desktop-automation-workflows ([48317f9](https://github.com/zuohuadong/volt-gui/commit/48317f9ef49c7f5f96610b32631160d899bd97cf))
+* **desktop:** add trusted task lifecycle experience ([923f261](https://github.com/zuohuadong/volt-gui/commit/923f2612e6ba67d81b70b4078b425f35ca09b3d1))
+* **desktop:** manage automations from project chat ([2c1a77a](https://github.com/zuohuadong/volt-gui/commit/2c1a77a0bbde42fd4f04d0ec34cf475826f27907))
+* **review:** inject local knowledge into code review ([3324d59](https://github.com/zuohuadong/volt-gui/commit/3324d59973398cb418923550be4160b9cd1b2cc8))
+* **sync:** port reasonix upstream 85e92996a..3703cf430 + local WIP ([b129e88](https://github.com/zuohuadong/volt-gui/commit/b129e881b9d62ef9b84936efe1fccb88528db865))
+* **sync:** port reasonix upstream updates + browser-login feature ([5db5406](https://github.com/zuohuadong/volt-gui/commit/5db5406c0b9298a15faad3e4903f7d4c750648ee))
+
+
+### Bug Fixes
+
+* **browser:** harden secure login flow ([3e53906](https://github.com/zuohuadong/volt-gui/commit/3e53906e512907efa81c761c0f1f7adb03b705b2))
+* **desktop:** harden runtime mock cleanup ([7b74345](https://github.com/zuohuadong/volt-gui/commit/7b74345f35adb1aa7089da93daced32179905bce))
+* **desktop:** stop attachment sandbox retry loops ([2a3f18f](https://github.com/zuohuadong/volt-gui/commit/2a3f18f1a7a9ada68c6301dd61f6b3d54d19b939))
+
 ## [0.12.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.12.0...desktop-v0.12.1) (2026-07-13)
 
 

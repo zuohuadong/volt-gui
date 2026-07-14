@@ -20,7 +20,10 @@ import (
 	"voltui/internal/fileutil"
 )
 
-const automationsFile = "automations.json"
+const (
+	automationsFile    = "automations.json"
+	automationRunsFile = "automation-runs.json"
+)
 
 const (
 	automationStatusPending  = "\u5f85\u914d\u7f6e"
@@ -88,8 +91,31 @@ type WorkbenchAutomationInput struct {
 	Logs                []string `json:"logs"`
 }
 
+type WorkbenchAutomationRunView struct {
+	ID              string   `json:"id"`
+	AutomationID    string   `json:"automationId"`
+	AutomationTitle string   `json:"automationTitle"`
+	ProjectID       string   `json:"projectId,omitempty"`
+	ProjectName     string   `json:"projectName,omitempty"`
+	Status          string   `json:"status"`
+	Result          string   `json:"result"`
+	Trigger         string   `json:"trigger"`
+	Command         string   `json:"command,omitempty"`
+	Scope           string   `json:"scope,omitempty"`
+	StartedAt       string   `json:"startedAt"`
+	FinishedAt      string   `json:"finishedAt"`
+	DurationMs      int64    `json:"durationMs"`
+	Logs            []string `json:"logs"`
+	Read            bool     `json:"read"`
+	NeedsAttention  bool     `json:"needsAttention"`
+}
+
 type automationsDiskFile struct {
 	Automations []WorkbenchAutomationView `json:"automations"`
+}
+
+type automationRunsDiskFile struct {
+	Runs []WorkbenchAutomationRunView `json:"runs"`
 }
 
 type automationCommandSpec struct {
@@ -155,6 +181,37 @@ func (a *App) ListAutomations() ([]WorkbenchAutomationView, error) {
 	return automations, nil
 }
 
+func (a *App) ListAutomationRuns() ([]WorkbenchAutomationRunView, error) {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
+	return loadAutomationRuns()
+}
+
+func (a *App) MarkAutomationRunRead(id string, read bool) (WorkbenchAutomationRunView, error) {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return WorkbenchAutomationRunView{}, errors.New("automation run id is required")
+	}
+	runs, err := loadAutomationRuns()
+	if err != nil {
+		return WorkbenchAutomationRunView{}, err
+	}
+	for i := range runs {
+		if runs[i].ID != id {
+			continue
+		}
+		runs[i].Read = read
+		runs[i].NeedsAttention = !read && (runs[i].Status == "failed" || runs[i].Status == "skipped")
+		if err := saveAutomationRuns(runs); err != nil {
+			return WorkbenchAutomationRunView{}, err
+		}
+		return runs[i], nil
+	}
+	return WorkbenchAutomationRunView{}, errors.New("automation run not found")
+}
+
 func (a *App) SaveAutomation(input WorkbenchAutomationInput) (WorkbenchAutomationView, error) {
 	automationStoreMu.Lock()
 	defer automationStoreMu.Unlock()
@@ -212,11 +269,16 @@ func runAutomationNowLocked(ctx context.Context, id string) (WorkbenchAutomation
 		if normalizeAutomationStatus(automation.Status) == automationStatusDisabled {
 			return WorkbenchAutomationView{}, errors.New("automation is disabled")
 		}
-		updated := executeAutomationContext(ctx, automation, time.Now(), false)
+		started := time.Now()
+		updated := executeAutomationContext(ctx, automation, started, false)
+		finished := time.Now()
 		automations[i] = updated
 		sortAutomations(automations)
 		if err := saveAutomations(automations); err != nil {
 			return WorkbenchAutomationView{}, err
+		}
+		if err := recordAutomationRun(automation, updated, started, finished, "manual"); err != nil {
+			return WorkbenchAutomationView{}, fmt.Errorf("automation state was saved but the result inbox could not be persisted: %w", err)
 		}
 		return updated, nil
 	}
@@ -341,18 +403,28 @@ func runDueAutomations(now time.Time) error {
 		return err
 	}
 	changed := false
+	runs := make([]WorkbenchAutomationRunView, 0)
 	for i, automation := range automations {
 		if !automationIsDue(automation, now) {
 			continue
 		}
-		automations[i] = executeAutomation(automation, now, true)
+		started := time.Now()
+		updated := executeAutomationContext(context.Background(), automation, now, true)
+		runs = append(runs, buildAutomationRun(automation, updated, started, time.Now(), "scheduled"))
+		automations[i] = updated
 		changed = true
 	}
 	if !changed {
 		return nil
 	}
 	sortAutomations(automations)
-	return saveAutomations(automations)
+	if err := saveAutomations(automations); err != nil {
+		return err
+	}
+	if err := recordAutomationRuns(runs); err != nil {
+		return fmt.Errorf("scheduled automation state was saved but the result inbox could not be persisted: %w", err)
+	}
+	return nil
 }
 
 func automationIsDue(automation WorkbenchAutomationView, now time.Time) bool {
@@ -401,6 +473,10 @@ func executeAutomationContext(parent context.Context, automation WorkbenchAutoma
 		automation.Logs = appendAutomationLog(automation.Logs, fmt.Sprintf("%s passed\n%s", spec.Label, output))
 		if normalizeAutomationScheduleMode(automation.ScheduleMode) == "once" {
 			automation.Status = automationStatusDone
+		} else if normalizeAutomationStatus(automation.Status) == automationStatusFailed {
+			// A successful retry must clear the durable failure state so the
+			// automation and its inbox receipt agree about the latest run.
+			automation.Status = automationStatusRunning
 		}
 	}
 	automation.LastRun = time.Now().Format(time.RFC3339)
@@ -410,6 +486,75 @@ func executeAutomationContext(parent context.Context, automation WorkbenchAutoma
 		automation.NextRun = automationNextRunLabel(normalizeAutomationScheduleMode(automation.ScheduleMode), automation.NextRunAt)
 	}
 	return automation
+}
+
+func recordAutomationRun(
+	before WorkbenchAutomationView,
+	after WorkbenchAutomationView,
+	started time.Time,
+	finished time.Time,
+	trigger string,
+) error {
+	return recordAutomationRuns([]WorkbenchAutomationRunView{buildAutomationRun(before, after, started, finished, trigger)})
+}
+
+func buildAutomationRun(
+	before WorkbenchAutomationView,
+	after WorkbenchAutomationView,
+	started time.Time,
+	finished time.Time,
+	trigger string,
+) WorkbenchAutomationRunView {
+	status := "passed"
+	result := strings.TrimSpace(after.Result)
+	if trigger == "skipped" || strings.HasPrefix(result, "已跳过") {
+		status = "skipped"
+	} else if strings.EqualFold(result, "Passed") {
+		status = "passed"
+	} else if normalizeAutomationStatus(after.Status) == automationStatusFailed || strings.HasPrefix(strings.ToLower(result), "failed") {
+		status = "failed"
+	}
+	if finished.Before(started) {
+		finished = started
+	}
+	return WorkbenchAutomationRunView{
+		ID:              fmt.Sprintf("automation-run-%d", time.Now().UnixNano()),
+		AutomationID:    before.ID,
+		AutomationTitle: defaultString(strings.TrimSpace(before.Title), strings.TrimSpace(after.Title)),
+		ProjectID:       defaultString(strings.TrimSpace(after.ProjectID), strings.TrimSpace(before.ProjectID)),
+		ProjectName:     defaultString(strings.TrimSpace(after.ProjectName), strings.TrimSpace(before.ProjectName)),
+		Status:          status,
+		Result:          result,
+		Trigger:         defaultString(strings.TrimSpace(trigger), "manual"),
+		Command:         defaultString(strings.TrimSpace(after.Command), strings.TrimSpace(before.Command)),
+		Scope:           defaultString(strings.TrimSpace(after.Scope), strings.TrimSpace(before.Scope)),
+		StartedAt:       started.Format(time.RFC3339),
+		FinishedAt:      finished.Format(time.RFC3339),
+		DurationMs:      finished.Sub(started).Milliseconds(),
+		Logs:            append([]string(nil), after.Logs...),
+		NeedsAttention:  status == "failed" || status == "skipped",
+	}
+}
+
+func recordAutomationRuns(next []WorkbenchAutomationRunView) error {
+	if len(next) == 0 {
+		return nil
+	}
+	runs, err := loadAutomationRuns()
+	if err != nil {
+		return err
+	}
+	runs = append(append([]WorkbenchAutomationRunView(nil), next...), runs...)
+	sort.SliceStable(runs, func(i, j int) bool {
+		if runs[i].FinishedAt == runs[j].FinishedAt {
+			return runs[i].ID > runs[j].ID
+		}
+		return runs[i].FinishedAt > runs[j].FinishedAt
+	})
+	if len(runs) > 200 {
+		runs = runs[:200]
+	}
+	return saveAutomationRuns(runs)
 }
 
 // skipMissedAutomationRuns advances schedules that elapsed while the desktop app was closed.
@@ -422,6 +567,7 @@ func skipMissedAutomationRuns(now time.Time) error {
 		return err
 	}
 	changed := false
+	runs := make([]WorkbenchAutomationRunView, 0)
 	for i, automation := range automations {
 		if !isAutomationRunning(automation.Status) || normalizeAutomationScheduleMode(automation.ScheduleMode) == "manual" {
 			continue
@@ -430,6 +576,7 @@ func skipMissedAutomationRuns(now time.Time) error {
 		if err != nil || next.After(now) {
 			continue
 		}
+		before := automation
 		if normalizeAutomationScheduleMode(automation.ScheduleMode) == "once" {
 			automation.Status = automationStatusPaused
 			automation.NextRunAt = ""
@@ -449,13 +596,20 @@ func skipMissedAutomationRuns(now time.Time) error {
 		automation.UpdatedAt = now.Format(time.RFC3339)
 		automation.Logs = appendAutomationLog(automation.Logs, "Skipped missed schedule because the desktop app was closed")
 		automations[i] = automation
+		runs = append(runs, buildAutomationRun(before, automation, now, now, "skipped"))
 		changed = true
 	}
 	if !changed {
 		return nil
 	}
 	sortAutomations(automations)
-	return saveAutomations(automations)
+	if err := saveAutomations(automations); err != nil {
+		return err
+	}
+	if err := recordAutomationRuns(runs); err != nil {
+		return fmt.Errorf("missed automation state was saved but the result inbox could not be persisted: %w", err)
+	}
+	return nil
 }
 
 func appendAutomationFailureTodoLog(automation *WorkbenchAutomationView) {
@@ -601,6 +755,75 @@ func automationsPath() (string, error) {
 		return "", errors.New("user config dir is unavailable")
 	}
 	return filepath.Join(filepath.Dir(userConfig), automationsFile), nil
+}
+
+func automationRunsPath() (string, error) {
+	userConfig := config.UserConfigPath()
+	if strings.TrimSpace(userConfig) == "" {
+		return "", errors.New("user config dir is unavailable")
+	}
+	return filepath.Join(filepath.Dir(userConfig), automationRunsFile), nil
+}
+
+func loadAutomationRuns() ([]WorkbenchAutomationRunView, error) {
+	path, err := automationRunsPath()
+	if err != nil {
+		return []WorkbenchAutomationRunView{}, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []WorkbenchAutomationRunView{}, nil
+		}
+		return nil, err
+	}
+	var disk automationRunsDiskFile
+	if err := json.Unmarshal(b, &disk); err != nil {
+		return nil, err
+	}
+	runs := make([]WorkbenchAutomationRunView, 0, len(disk.Runs))
+	for _, run := range disk.Runs {
+		run.ID = strings.TrimSpace(run.ID)
+		run.AutomationID = strings.TrimSpace(run.AutomationID)
+		run.AutomationTitle = strings.TrimSpace(run.AutomationTitle)
+		if run.ID == "" || run.AutomationID == "" || run.AutomationTitle == "" {
+			continue
+		}
+		run.Logs = cleanAutomationLines(run.Logs)
+		run.NeedsAttention = !run.Read && (run.Status == "failed" || run.Status == "skipped")
+		runs = append(runs, run)
+	}
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].FinishedAt > runs[j].FinishedAt })
+	return runs, nil
+}
+
+func saveAutomationRuns(runs []WorkbenchAutomationRunView) error {
+	path, err := automationRunsPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(automationRunsDiskFile{Runs: runs}, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".automation-runs.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return fileutil.ReplaceFile(tmpPath, path)
 }
 
 func loadAutomations() ([]WorkbenchAutomationView, error) {

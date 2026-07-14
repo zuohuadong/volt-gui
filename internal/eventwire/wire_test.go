@@ -223,6 +223,7 @@ func TestToWireUsagePayloadJSON(t *testing.T) {
 }
 
 func TestToWireInteractionAndLifecyclePayloads(t *testing.T) {
+	guardian := &event.GuardianResult{ID: "g1", Tool: "bash", Subject: "rm", Outcome: "deny", RiskLevel: "high", UserAuthorization: "low", Rationale: "destructive"}
 	tests := []struct {
 		name string
 		in   event.Event
@@ -230,8 +231,8 @@ func TestToWireInteractionAndLifecyclePayloads(t *testing.T) {
 	}{
 		{
 			name: "approval",
-			in:   event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "a1", Tool: "bash", Subject: "rm"}},
-			want: []string{`"kind":"approval_request"`, `"approval":{"id":"a1","tool":"bash","subject":"rm"}`},
+			in:   event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: "a1", Tool: "bash", Subject: "rm", Guardian: guardian}},
+			want: []string{`"kind":"approval_request"`, `"approval":{"id":"a1","tool":"bash","subject":"rm","guardian":{"id":"g1"`, `"risk_level":"high"`, `"user_authorization":"low"`},
 		},
 		{
 			name: "ask",

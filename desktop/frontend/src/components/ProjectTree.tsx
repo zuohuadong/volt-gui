@@ -149,6 +149,12 @@ export type ProjectTreeTopicHoverCard = {
   projectLabel: string;
 };
 
+// Activity labels older than a week are already the calendar date (always the
+// meta line's last part), so callers pairing the two keep a single copy.
+export function projectTreeDedupedExactTime(metaLine: string, exactTime: string): string {
+  return exactTime && metaLine.endsWith(exactTime) ? "" : exactTime;
+}
+
 export function projectTreeTopicHoverCardModel(node: ProjectNode, t: Translator, projectLabel: string): ProjectTreeTopicHoverCard {
   const activityAt = node.lastActivityAt || node.createdAt || 0;
   const metaLine = projectTreeTopicMetaLine(node, t);
@@ -157,9 +163,7 @@ export function projectTreeTopicHoverCardModel(node: ProjectNode, t: Translator,
     title: (node.label || node.topicId || "Untitled").replace(/^●\s*/, ""),
     statusLabel: topicStatusLabel(node, t),
     metaLine,
-    // Activity labels older than a week are already this calendar date (it is
-    // always the meta line's last part), so keep a single copy on the card.
-    exactTime: exactTime && metaLine.endsWith(exactTime) ? "" : exactTime,
+    exactTime: projectTreeDedupedExactTime(metaLine, exactTime),
     projectLabel,
   };
 }
@@ -1295,7 +1299,7 @@ export function ProjectTree({
       const imSourceTitle = imSourceLabel ? t("msg.fromIm", { source: imSourceLabel }) : "";
       const imSourcePlatform = (imSource?.platform || "im").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "im";
       const conflictCopyTitle = isSessionNode && node.recovered ? t("recovery.branch") : "";
-      const title = [label, conflictCopyTitle, imSourceTitle, statusLabel, metaFull, exactTimeLabel].filter(Boolean).join(" · ");
+      const title = [label, conflictCopyTitle, imSourceTitle, statusLabel, metaFull, projectTreeDedupedExactTime(metaFull, exactTimeLabel)].filter(Boolean).join(" · ");
       const topicMenuOpen = !isSessionNode && menuTopic === topicId;
       const pinned = Boolean(node.pinned);
       const pinLabel = t(pinned ? "projectTree.unpinTopic" : "projectTree.pinTopic");

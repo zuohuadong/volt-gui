@@ -155,6 +155,9 @@ export const en = {
   "topicBar.exportJson": "Export JSON",
   "topicBar.exportPdf": "Export PDF",
   "topicBar.exportImage": "Export Image",
+  "externalOpener.openIn": "Open in {name}",
+  "externalOpener.choose": "Choose application",
+  "externalOpener.failed": "Could not open {name}: {error}",
 
   // scope labels
   "scope.global": "Scope: Global",

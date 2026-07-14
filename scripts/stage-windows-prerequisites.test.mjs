@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
@@ -11,6 +12,11 @@ import {
   stageWindowsPrerequisites,
   verifyAsset,
 } from './stage-windows-prerequisites.mjs';
+
+function writeExecutable(path, source) {
+  writeFileSync(path, source);
+  chmodSync(path, 0o755);
+}
 
 test('maps Windows architectures to the pinned official prerequisite assets', () => {
   const x64 = assetsForTarget('windows/amd64');
@@ -86,16 +92,114 @@ test('stages a deterministic offline prerequisite directory from injected local 
   }
 });
 
+test('packages Windows prerequisites with zip when Windows shell tools are unavailable', {
+  skip: process.platform === 'win32',
+}, () => {
+  const fixture = join(tmpdir(), `voltui-prerequisites-package-${process.pid}-${Date.now()}`);
+  const bin = join(fixture, 'bin');
+  const script = join(fixture, 'scripts', 'desktop-build.sh');
+  const zipCapture = join(fixture, 'zip-calls.txt');
+
+  try {
+    mkdirSync(join(fixture, 'desktop'), { recursive: true });
+    mkdirSync(join(fixture, 'scripts'), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    copyFileSync(new URL('./desktop-build.sh', import.meta.url), script);
+    chmodSync(script, 0o755);
+    writeFileSync(join(fixture, 'desktop', 'wails.json'), '{}\n');
+
+    writeExecutable(join(bin, 'node'), String.raw`#!/usr/bin/env bash
+case "$1" in
+  */stage-computer-use-mcp.mjs)
+    mkdir -p "$2"
+    printf 'server\n' > "$2/server.js"
+    ;;
+  */stage-bun-runtime.mjs)
+    mkdir -p "$2"
+    printf 'bun\n' > "$2/bun.exe"
+    ;;
+  */stage-coreutils.mjs)
+    mkdir -p "$2"
+    printf 'coreutils\n' > "$2/voltui-coreutils-path.txt"
+    printf 'installer\n' > "$2/coreutils-system-installer.exe"
+    ;;
+  */stage-windows-prerequisites.mjs)
+    mkdir -p "$2"
+    printf 'vc\n' > "$2/VC_redist.x64.exe"
+    printf 'webview2\n' > "$2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+    printf '{}\n' > "$2/metadata.json"
+    ;;
+esac
+`);
+    writeExecutable(join(bin, 'go'), String.raw`#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    mkdir -p "$(dirname "$2")"
+    : > "$2"
+    exit 0
+  fi
+  shift
+done
+`);
+    writeExecutable(join(bin, 'wails'), String.raw`#!/usr/bin/env bash
+mkdir -p build/bin
+: > build/bin/voltui-desktop-amd64-installer.exe
+: > build/bin/voltui-desktop.exe
+`);
+    writeExecutable(join(bin, 'zip'), String.raw`#!/usr/bin/env bash
+printf 'cwd=%s\nargs=%s\n' "$PWD" "$*" >> "$ZIP_CAPTURE"
+case "$PWD" in
+  */prerequisites)
+    [ -f VC_redist.x64.exe ]
+    [ -f MicrosoftEdgeWebView2RuntimeInstallerX64.exe ]
+    [ -f metadata.json ]
+    ;;
+esac
+mkdir -p "$(dirname "$3")"
+: > "$3"
+`);
+
+    const env = {
+      ...process.env,
+      PATH: `${bin}:/usr/bin:/bin`,
+      DESKTOP_APP_NAME: 'VoltUI',
+      ZIP_CAPTURE: zipCapture,
+    };
+    const result = spawnSync(script, ['windows/amd64', 'v1.2.3'], {
+      cwd: fixture,
+      env,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const zipCalls = readFileSync(zipCapture, 'utf8');
+    assert.match(zipCalls, /cwd=.*\/prerequisites/);
+    assert.match(zipCalls, /args=-q -r .*\/dist\/VoltUI-windows-amd64-prerequisites\.zip \./);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('Windows packaging publishes prerequisites separately while keeping the online installer', () => {
   const buildScript = readFileSync(new URL('./desktop-build.sh', import.meta.url), 'utf8');
   const installer = readFileSync(new URL('../desktop/build/windows/installer/project.nsi', import.meta.url), 'utf8');
   const desktopCI = readFileSync(new URL('../.github/workflows/desktop-ci.yml', import.meta.url), 'utf8');
-  const release = readFileSync(new URL('../.github/workflows/release-desktop.yml', import.meta.url), 'utf8');
+  const cnb = readFileSync(new URL('../.cnb.yml', import.meta.url), 'utf8');
+  const prerequisitesBlock = buildScript.slice(
+    buildScript.indexOf('prerequisites_zip='),
+    buildScript.indexOf('\n\t;;', buildScript.indexOf('prerequisites_zip=')),
+  );
 
   assert.match(buildScript, /-nsis -webview2 embed/);
   assert.match(buildScript, /\$\{APPNAME\}-windows-\$\{arch\}-prerequisites\.zip/);
+  assert.match(prerequisitesBlock, /command -v cygpath/);
+  assert.match(prerequisitesBlock, /command -v powershell\.exe/);
+  assert.match(prerequisitesBlock, /cygpath -w "\$prerequisites_zip"/);
+  assert.match(prerequisitesBlock, /cd "\$WINDOWS_PREREQUISITES_RESOURCE"/);
+  assert.match(prerequisitesBlock, /zip -q -r "\$prerequisites_zip" \./);
   assert.match(installer, /ReadRegStr \$0 HKLM.+EdgeUpdate.+"pv"/);
   assert.match(installer, /VoltUI-windows-\$\{ARCH\}-prerequisites\.zip/);
   assert.match(desktopCI, /stage-windows-prerequisites\.test\.mjs/);
-  assert.match(release, /stage-windows-prerequisites\.test\.mjs/);
+  assert.match(cnb, /apt-get install -y[\s\S]*\bzip\b/);
+  assert.match(cnb, /scripts\/desktop-build\.sh windows\/amd64 "\$VERSION"/);
 });

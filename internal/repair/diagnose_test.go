@@ -45,6 +45,26 @@ deny = ["bash"]
 	}
 }
 
+func TestDiagnoseDoesNotRewriteLegacyMCPTierConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	configText := "[[plugins]]\nname = \"srv\"\ncommand = \"echo\"\ntier = \"eager\"\n"
+	path := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(path, []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Diagnose(context.Background(), DiagnoseOptions{Root: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != configText {
+		t.Fatalf("read-only diagnose rewrote config:\n%s", got)
+	}
+}
+
 func TestRebuildDerivedStateQuarantinesWithoutDeleting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

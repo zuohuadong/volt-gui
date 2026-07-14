@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"reasonix/internal/config"
 	textdiff "reasonix/internal/diff"
@@ -188,34 +189,70 @@ func ApplyRepairPlan(plan RepairPlan, opts ApplyPlanOptions) (ApplyPlanResult, e
 		return ApplyPlanResult{Applied: []string{}}, err
 	}
 	result := ApplyPlanResult{Applied: []string{}}
+	// Each action records its own transaction in last-repair.json, so a
+	// multi-action plan would otherwise leave only its final action undoable.
+	// Merge every transaction the plan produces into one plan-level
+	// transaction, persisted after each action so a mid-plan failure still
+	// leaves the already-applied prefix fully undoable.
+	planTx := newRepairTransaction(time.Now())
+	absorbed := 0
+	lastSeenID := ""
+	if last, err := ReadLastRepair(); err == nil {
+		lastSeenID = last.ID
+	}
+	absorbRepair := func() error {
+		last, err := ReadLastRepair()
+		if err != nil || last.ID == lastSeenID {
+			return nil
+		}
+		lastSeenID = last.ID
+		planTx.Changes = append(planTx.Changes, last.Changes...)
+		absorbed++
+		if absorbed < 2 {
+			// A single recorded action is already exactly the last repair.
+			return nil
+		}
+		return persistRepairTransaction(planTx)
+	}
 	for i, action := range plan.Actions {
+		var actionErr error
 		switch action.Type {
 		case "repair_config":
 			report, err := InspectAndRepairConfig(ConfigOptions{Root: opts.Root, Apply: true, IncludeProject: action.Scope == "project", OnlyScope: action.Scope})
 			if err != nil {
-				return result, fmt.Errorf("action %d: %w", i+1, err)
+				actionErr = err
+			} else {
+				result.Applied = append(result.Applied, report.Applied...)
 			}
-			result.Applied = append(result.Applied, report.Applied...)
 		case "restore_snapshot":
 			tx, err := RestoreConfigSnapshot(action.SnapshotID)
 			if err != nil {
-				return result, fmt.Errorf("action %d: %w", i+1, err)
+				actionErr = err
+			} else {
+				result.Applied = append(result.Applied, "restored config snapshot (undo "+tx.ID+")")
 			}
-			result.Applied = append(result.Applied, "restored config snapshot (undo "+tx.ID+")")
 		case "rebuild_derived_state":
 			paths, err := RebuildDerivedState(action.Target)
 			if err != nil {
-				return result, fmt.Errorf("action %d: %w", i+1, err)
+				actionErr = err
+			} else {
+				result.Applied = append(result.Applied, paths...)
 			}
-			result.Applied = append(result.Applied, paths...)
 		case "rollback_update":
 			rollback, err := RollbackPendingUpdate()
 			if err != nil {
-				return result, fmt.Errorf("action %d: %w", i+1, err)
-			}
-			if rollback.RolledBack {
+				actionErr = err
+			} else if rollback.RolledBack {
 				result.Applied = append(result.Applied, "rolled back update to "+rollback.ToVersion)
 			}
+		}
+		// Absorb even on failure: a partially applied action may have recorded
+		// changes that the plan-level undo must cover.
+		if mergeErr := absorbRepair(); mergeErr != nil && actionErr == nil {
+			return result, fmt.Errorf("action %d: record plan transaction: %w", i+1, mergeErr)
+		}
+		if actionErr != nil {
+			return result, fmt.Errorf("action %d: %w", i+1, actionErr)
 		}
 	}
 	return result, nil

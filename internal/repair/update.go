@@ -29,7 +29,19 @@ type UpdateTransaction struct {
 	TargetPath    string `json:"targetPath"`
 	BackupPath    string `json:"backupPath"`
 	BackupSHA256  string `json:"backupSha256,omitempty"`
-	CreatedAt     string `json:"createdAt"`
+	// Files lists every binary of the release unit the update replaces
+	// (main executable first, then Guard/launcher siblings). Rollback must
+	// restore all of them together: restoring only the main binary would
+	// leave a mixed old-desktop/new-Guard install. Empty on transactions
+	// recorded by kinds that back up a single unit (macOS app bundles).
+	Files     []UpdateTransactionFile `json:"files,omitempty"`
+	CreatedAt string                  `json:"createdAt"`
+}
+
+type UpdateTransactionFile struct {
+	TargetPath string `json:"targetPath"`
+	BackupPath string `json:"backupPath"`
+	SHA256     string `json:"sha256,omitempty"`
 }
 
 type UpdateRollbackResult struct {
@@ -47,9 +59,12 @@ func PendingUpdatePath() string {
 	return filepath.Join(root, "repair", "pending-update.json")
 }
 
-// PrepareFileUpdate snapshots the current desktop executable and records an
-// update transaction before an updater replaces it.
-func PrepareFileUpdate(fromVersion, toVersion, targetPath string) (*UpdateTransaction, error) {
+// PrepareFileUpdate snapshots the current desktop executable — plus any sibling
+// binaries of the release unit the installer also replaces (Guard, launcher,
+// update helper) — and records an update transaction before an updater applies
+// the replacement. Sibling paths that do not exist are skipped so older
+// installs without those artifacts still update.
+func PrepareFileUpdate(fromVersion, toVersion, targetPath string, siblingPaths ...string) (*UpdateTransaction, error) {
 	targetPath = filepath.Clean(strings.TrimSpace(targetPath))
 	if targetPath == "" || targetPath == "." {
 		return nil, fmt.Errorf("prepare update: empty target path")
@@ -62,11 +77,6 @@ func PrepareFileUpdate(fromVersion, toVersion, targetPath string) (*UpdateTransa
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		return nil, err
 	}
-	backupPath := filepath.Join(backupDir, "reasonix-desktop.previous")
-	hash, err := copyFileWithHash(targetPath, backupPath, 0o700)
-	if err != nil {
-		return nil, fmt.Errorf("prepare update backup: %w", err)
-	}
 	tx := &UpdateTransaction{
 		SchemaVersion: updateTransactionVersion,
 		FromVersion:   fromVersion,
@@ -74,9 +84,33 @@ func PrepareFileUpdate(fromVersion, toVersion, targetPath string) (*UpdateTransa
 		Platform:      runtime.GOOS + "/" + runtime.GOARCH,
 		TargetKind:    "file",
 		TargetPath:    targetPath,
-		BackupPath:    backupPath,
-		BackupSHA256:  hash,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	seen := map[string]bool{}
+	for i, path := range append([]string{targetPath}, siblingPaths...) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" || path == "." || seen[path] {
+			continue
+		}
+		seen[path] = true
+		if i > 0 {
+			if _, err := os.Stat(path); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("prepare update backup: %w", err)
+			}
+		}
+		backupPath := filepath.Join(backupDir, filepath.Base(path)+".previous")
+		hash, err := copyFileWithHash(path, backupPath, 0o700)
+		if err != nil {
+			return nil, fmt.Errorf("prepare update backup: %w", err)
+		}
+		tx.Files = append(tx.Files, UpdateTransactionFile{TargetPath: path, BackupPath: backupPath, SHA256: hash})
+		if i == 0 {
+			tx.BackupPath = backupPath
+			tx.BackupSHA256 = hash
+		}
 	}
 	if err := WritePendingUpdate(tx); err != nil {
 		return nil, err
@@ -161,13 +195,7 @@ func MarkUpdateHealthy(runningVersion string) error {
 	if err := os.Remove(PendingUpdatePath()); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if tx.BackupPath != "" {
-		if tx.TargetKind == "app-bundle" {
-			_ = os.RemoveAll(tx.BackupPath)
-		} else {
-			_ = os.Remove(tx.BackupPath)
-		}
-	}
+	removeUpdateBackups(tx)
 	return nil
 }
 
@@ -187,12 +215,28 @@ func CancelPendingUpdate(toVersion string) error {
 	if err := os.Remove(PendingUpdatePath()); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	removeUpdateBackups(tx)
+	return nil
+}
+
+func removeUpdateBackups(tx *UpdateTransaction) {
+	if tx == nil {
+		return
+	}
 	if tx.TargetKind == "app-bundle" {
-		_ = os.RemoveAll(tx.BackupPath)
-	} else {
+		if tx.BackupPath != "" {
+			_ = os.RemoveAll(tx.BackupPath)
+		}
+		return
+	}
+	if tx.BackupPath != "" {
 		_ = os.Remove(tx.BackupPath)
 	}
-	return nil
+	for _, f := range tx.Files {
+		if f.BackupPath != "" {
+			_ = os.Remove(f.BackupPath)
+		}
+	}
 }
 
 func RollbackPendingUpdate() (UpdateRollbackResult, error) {
@@ -206,18 +250,26 @@ func RollbackPendingUpdate() (UpdateRollbackResult, error) {
 	result := UpdateRollbackResult{FromVersion: tx.ToVersion, ToVersion: tx.FromVersion, TargetPath: tx.TargetPath}
 	switch tx.TargetKind {
 	case "file":
-		if tx.BackupSHA256 != "" {
-			got, hashErr := hashFile(tx.BackupPath)
-			if hashErr != nil || !strings.EqualFold(got, tx.BackupSHA256) {
-				return result, fmt.Errorf("rollback update: backup hash mismatch")
+		files := tx.Files
+		if len(files) == 0 {
+			files = []UpdateTransactionFile{{TargetPath: tx.TargetPath, BackupPath: tx.BackupPath, SHA256: tx.BackupSHA256}}
+		}
+		// Verify every backup before touching any binary: a partial restore
+		// would recreate exactly the mixed-version install rollback exists to
+		// prevent.
+		for _, f := range files {
+			if f.SHA256 == "" {
+				continue
+			}
+			got, hashErr := hashFile(f.BackupPath)
+			if hashErr != nil || !strings.EqualFold(got, f.SHA256) {
+				return result, fmt.Errorf("rollback update: backup hash mismatch for %s", filepath.Base(f.TargetPath))
 			}
 		}
-		mode := os.FileMode(0o700)
-		if st, statErr := os.Stat(tx.TargetPath); statErr == nil {
-			mode = st.Mode().Perm()
-		}
-		if _, err := copyFileWithHash(tx.BackupPath, tx.TargetPath, mode); err != nil {
-			return result, fmt.Errorf("rollback update: %w", err)
+		for _, f := range files {
+			if err := restoreUpdateFile(f.BackupPath, f.TargetPath); err != nil {
+				return result, fmt.Errorf("rollback update: restore %s: %w", filepath.Base(f.TargetPath), err)
+			}
 		}
 	case "app-bundle":
 		if _, err := os.Stat(tx.BackupPath); err != nil {
@@ -239,6 +291,51 @@ func RollbackPendingUpdate() (UpdateRollbackResult, error) {
 	return result, nil
 }
 
+// restoreUpdateFile copies backup over target. When target is the executable
+// of the process performing the rollback (Guard restoring its own binary),
+// Windows blocks replacing the running image, so the live file is renamed
+// aside first — renaming a running executable is allowed where overwriting is
+// not. The aside copy is removed best-effort; on Windows it lingers until the
+// process exits, which is harmless.
+func restoreUpdateFile(backup, target string) error {
+	mode := os.FileMode(0o700)
+	if st, err := os.Stat(target); err == nil {
+		mode = st.Mode().Perm()
+	}
+	if self, err := repairExecutable(); err == nil {
+		if resolved, resolveErr := filepath.EvalSymlinks(self); resolveErr == nil {
+			self = resolved
+		}
+		if filepath.Clean(self) == filepath.Clean(target) {
+			aside := target + ".reasonix-failed-" + time.Now().UTC().Format("20060102T150405Z")
+			if err := os.Rename(target, aside); err == nil {
+				if _, copyErr := copyFileWithHash(backup, target, mode); copyErr != nil {
+					_ = os.Rename(aside, target)
+					return copyErr
+				}
+				_ = os.Remove(aside)
+				return nil
+			}
+		}
+	}
+	_, err := copyFileWithHash(backup, target, mode)
+	return err
+}
+
+// allowedUpdateTargetBase whitelists the packaged binaries an update
+// transaction may name. The main executable names are only valid as the
+// primary target; Guard/launcher artifacts only as release-unit siblings.
+func allowedUpdateTargetBase(base string, primary bool) bool {
+	switch strings.ToLower(base) {
+	case "reasonix-desktop", "reasonix-desktop.exe", "reasonix.exe":
+		return primary
+	case "reasonix-guard", "reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe":
+		return !primary
+	default:
+		return false
+	}
+}
+
 func validateUpdateTransaction(tx *UpdateTransaction) error {
 	if tx == nil || tx.SchemaVersion != updateTransactionVersion || strings.TrimSpace(tx.ToVersion) == "" {
 		return fmt.Errorf("pending update metadata is incomplete")
@@ -255,17 +352,34 @@ func validateUpdateTransaction(tx *UpdateTransaction) error {
 	launcher = filepath.Clean(launcher)
 	switch tx.TargetKind {
 	case "file":
-		base := strings.ToLower(filepath.Base(tx.TargetPath))
-		if base != "reasonix-desktop" && base != "reasonix-desktop.exe" && base != "reasonix.exe" {
+		if !allowedUpdateTargetBase(filepath.Base(tx.TargetPath), true) {
 			return fmt.Errorf("pending update target is not a Reasonix executable")
 		}
 		if filepath.Dir(launcher) != filepath.Dir(tx.TargetPath) {
 			return fmt.Errorf("pending update target is outside the current Guard installation")
 		}
 		root := filepath.Clean(filepath.Join(config.MemoryUserDir(), "repair"))
-		rel, err := filepath.Rel(root, tx.BackupPath)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		insideRepairDir := func(path string) bool {
+			rel, err := filepath.Rel(root, path)
+			return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+		}
+		if !insideRepairDir(tx.BackupPath) {
 			return fmt.Errorf("pending update backup is outside the repair directory")
+		}
+		for i := range tx.Files {
+			f := &tx.Files[i]
+			f.TargetPath = filepath.Clean(f.TargetPath)
+			f.BackupPath = filepath.Clean(f.BackupPath)
+			primary := f.TargetPath == tx.TargetPath
+			if !allowedUpdateTargetBase(filepath.Base(f.TargetPath), primary) {
+				return fmt.Errorf("pending update lists an unexpected release file")
+			}
+			if filepath.Dir(f.TargetPath) != filepath.Dir(tx.TargetPath) {
+				return fmt.Errorf("pending update release file is outside the current Guard installation")
+			}
+			if !insideRepairDir(f.BackupPath) {
+				return fmt.Errorf("pending update backup is outside the repair directory")
+			}
 		}
 	case "app-bundle":
 		if !strings.HasSuffix(strings.ToLower(tx.TargetPath), ".app") || tx.BackupPath != tx.TargetPath+".reasonix-update-backup" {

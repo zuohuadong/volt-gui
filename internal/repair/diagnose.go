@@ -91,7 +91,9 @@ func Diagnose(ctx context.Context, opts DiagnoseOptions) (DiagnosticReport, erro
 	if !valid {
 		return report, nil
 	}
-	cfg, err := config.LoadForRoot(root)
+	// Diagnose is documented as read-only: LoadForRoot would rewrite legacy MCP
+	// `tier` lines on disk, so use the variant that never writes config files.
+	cfg, err := config.LoadForRootReadOnly(root)
 	if err != nil {
 		report.add("error", "config.load_failed", "runtime", err.Error(), "Start in Safe Mode, then inspect global and project configuration.")
 		return report, nil

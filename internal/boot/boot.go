@@ -250,8 +250,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	} else if migrated != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: migrated.Notice()})
 	}
-	migration.MigrateLegacyMemorySources(sink)
-	migration.MigrateLegacySessionSources(sink)
+	// Safe Mode is a recovery boundary: it must not rewrite memory or session
+	// state that a crash may have corrupted, so the legacy-store imports run
+	// only on normal boots (matching the config migration gate above).
+	if !cfg.SafeMode() {
+		migration.MigrateLegacyMemorySources(sink)
+		migration.MigrateLegacySessionSources(sink)
+	}
 	if ignored := cfg.IgnoredProjectDefaultModel(); ignored != "" {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Ignored the project config's default_model.", Detail: fmt.Sprintf("./reasonix.toml sets default_model = %q but no configured provider serves it; using %q from your user config instead. Edit or remove that default_model line to silence this notice.", ignored, cfg.DefaultModel)})
 	}
@@ -271,8 +276,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if reconcileCleanupPending == nil {
 		reconcileCleanupPending = control.ReconcileCleanupPending
 	}
-	if err := reconcileCleanupPending(sessionDir); err != nil {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "cleanup-pending reconciliation failed: " + err.Error()})
+	// Skipped in Safe Mode: reconciliation physically deletes session artifacts,
+	// and a recovery boot must leave possibly-corrupt session state untouched.
+	if !cfg.SafeMode() {
+		if err := reconcileCleanupPending(sessionDir); err != nil {
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "cleanup-pending reconciliation failed: " + err.Error()})
+		}
 	}
 
 	proxySpec := cfg.NetworkProxySpec()

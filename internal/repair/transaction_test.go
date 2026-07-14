@@ -1,0 +1,85 @@
+package repair
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"reasonix/internal/config"
+)
+
+// TestUndoLastRepairResumesAfterPartialFailure pins the recoverable-undo
+// contract: a multi-change undo that fails partway persists per-change
+// progress, and a retry finishes the remaining changes instead of failing the
+// preflight on the consumed backups of the changes already restored.
+func TestUndoLastRepairResumesAfterPartialFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	configPath := config.UserConfigPath()
+	windowPath := filepath.Join(home, "desktop-window.json")
+	windowQuarantine := windowPath + ".reasonix-rebuild-20260714T000000Z"
+	restoreBackup := filepath.Join(home, "repair", "restore-backups", "repair-1.toml")
+	if err := os.MkdirAll(filepath.Dir(restoreBackup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		configPath:       "current-config",
+		windowPath:       "current-window",
+		windowQuarantine: "old-window",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory at the restore-backup path passes the Stat preflight but
+	// fails the read during restore, aborting the undo after the derived-state
+	// change has already been reverted.
+	if err := os.MkdirAll(restoreBackup, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tx := newRepairTransaction(time.Now())
+	tx.Changes = []RepairChange{
+		{Scope: "global", TargetPath: configPath, PreviousPath: restoreBackup},
+		{Scope: "derived:window", TargetPath: windowPath, PreviousPath: windowQuarantine},
+	}
+	if err := persistRepairTransaction(tx); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UndoLastRepair(); err == nil {
+		t.Fatal("undo succeeded despite unreadable restore backup")
+	}
+	partial, err := ReadLastRepair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.Undone || !partial.Changes[1].Undone || partial.Changes[0].Undone {
+		t.Fatalf("partial undo progress not persisted: %+v", partial)
+	}
+	if got, _ := os.ReadFile(windowPath); string(got) != "old-window" {
+		t.Fatalf("derived state not restored before failure: %q", got)
+	}
+
+	// Repair the backup and retry: the already-undone change must be skipped
+	// even though its quarantine file was consumed by the first attempt.
+	if err := os.Remove(restoreBackup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(restoreBackup, []byte("old-config"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	undone, err := UndoLastRepair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !undone.Undone {
+		t.Fatalf("transaction not marked undone: %+v", undone)
+	}
+	if got, _ := os.ReadFile(configPath); string(got) != "old-config" {
+		t.Fatalf("config not restored on retry: %q", got)
+	}
+	if got, _ := os.ReadFile(windowPath); string(got) != "old-window" {
+		t.Fatalf("derived state clobbered by retry: %q", got)
+	}
+}

@@ -85,7 +85,12 @@ func (t *StartupTracker) Begin(version string, safeMode bool) (StartupState, err
 	if err != nil {
 		previous = StartupState{}
 	}
-	if (previous.Phase == "starting" || previous.Phase == "ready") && previous.PID > 0 && t.processAlive(previous.PID) {
+	// A live owner in any running phase wins. With the Wails single-instance
+	// lock, a duplicate launch forwards its args to the running app and exits
+	// through os.Exit without OnShutdown, so letting its Begin overwrite the
+	// state would turn repeated shortcut clicks during a healthy run into a
+	// fake crash loop that triggers recovery/Safe Mode.
+	if runningStartupPhase(previous.Phase) && previous.PID > 0 && t.processAlive(previous.PID) {
 		return previous, nil
 	}
 	failures := 0
@@ -112,6 +117,13 @@ func (t *StartupTracker) Begin(version string, safeMode bool) (StartupState, err
 
 func incompleteStartupPhase(phase string) bool {
 	return phase == "starting" || phase == "ready" || phase == "failed"
+}
+
+// runningStartupPhase reports whether the recorded owner process may still be
+// alive: "failed" and "clean-exit" are terminal, everything else describes a
+// process between Begin and its exit.
+func runningStartupPhase(phase string) bool {
+	return phase == "starting" || phase == "ready" || phase == "healthy"
 }
 
 func nextFailureCount(state StartupState, now time.Time, window time.Duration) int {

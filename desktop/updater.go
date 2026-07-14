@@ -635,6 +635,30 @@ func currentInstallDir() string {
 	return filepath.Dir(exe)
 }
 
+// updateSiblingArtifacts lists the packaged binaries an update replaces beside
+// the main executable, so PrepareFileUpdate can snapshot the complete release
+// unit. Paths that do not exist on disk are skipped by the backup.
+func updateSiblingArtifacts() []string {
+	dir := currentInstallDir()
+	if dir == "" {
+		return nil
+	}
+	var names []string
+	switch runtime.GOOS {
+	case "windows":
+		names = []string{"reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe"}
+	case "linux":
+		names = []string{"reasonix-guard"}
+	default:
+		return nil
+	}
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return paths
+}
+
 // relaunchThroughGuard starts the packaged launcher so the replacement build is
 // covered by the same crash-loop and rollback policy as a normal app launch.
 func relaunchThroughGuard() error {

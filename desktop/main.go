@@ -124,6 +124,10 @@ func main() {
 	if launch.SafeMode {
 		_ = os.Setenv("REASONIX_SAFE_MODE", "1")
 	}
+	// Begin runs before the Wails single-instance gate, but it refuses to
+	// overwrite the recorded state while its owner PID is alive, so a duplicate
+	// launch — which Wails terminates via os.Exit without OnShutdown — never
+	// counts as a crash toward the Safe Mode threshold.
 	startupState, _ := tracker.Begin(version, launch.SafeMode)
 	trackerOwned := startupState.PID == os.Getpid()
 

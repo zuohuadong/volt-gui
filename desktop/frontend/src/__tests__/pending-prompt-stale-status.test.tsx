@@ -182,21 +182,21 @@ eq(replayed.promptArrivedId, "plan-1", "same-id replay keeps the anchor id");
 {
   // Backend kept the fresh plan approval: not in the drained set → stays.
   const armed = reducer({ ...initialState }, { type: "event", e: planApprovalEvent });
-  const notDrained = reducer(armed, { type: "approval_drained", ids: ["7"] });
+  const notDrained = reducer(armed, { type: "approval_drained", ids: ["7"], epoch: armed.promptEpoch });
   eq(notDrained, armed, "a drain report not covering the visible approval leaves the state untouched");
   eq(notDrained.approval?.id, "plan-1", "the still-pending plan approval card survives the yolo switch");
   eq(notDrained.resolvedPromptId, undefined, "no tombstone is written for a prompt the backend still holds");
   const replayed = reducer(notDrained, { type: "event", e: planApprovalEvent });
   eq(replayed.approval?.id, "plan-1", "a later replay of the still-pending prompt re-arms it");
 
-  const emptyDrain = reducer(armed, { type: "approval_drained", ids: [] });
+  const emptyDrain = reducer(armed, { type: "approval_drained", ids: [], epoch: armed.promptEpoch });
   eq(emptyDrain, armed, "an empty drain report is a no-op");
 
   // Backend drained the ordinary tool approval: dismissed + tombstoned so a
   // delayed re-delivery cannot resurrect it (round 2 contract preserved).
   const bashEvent = { kind: "approval_request", approval: { id: "bash-3", tool: "bash", subject: "rm -rf build" } } as WireEvent;
   const armedBash = reducer({ ...initialState }, { type: "event", e: bashEvent });
-  const drained = reducer(armedBash, { type: "approval_drained", ids: ["bash-3"] });
+  const drained = reducer(armedBash, { type: "approval_drained", ids: ["bash-3"], epoch: armedBash.promptEpoch });
   eq(drained.approval, undefined, "a drained approval is dismissed");
   eq(drained.resolvedPromptId, "bash-3", "a drained approval is tombstoned like an answered one");
   const zombieReplay = reducer(drained, { type: "event", e: bashEvent });
@@ -230,6 +230,27 @@ eq(replayed.promptArrivedId, "plan-1", "same-id replay keeps the anchor id");
   // advances there too so pre-reset failures cannot touch post-reset state.
   const resetState = reducer(answeredB, { type: "reset" });
   eq(resetState.promptEpoch, answeredB.promptEpoch + 1, "a session reset advances the prompt epoch too");
+}
+
+// #6432 round 5 (P2): a mode-switch drain result belongs to the controller
+// epoch where its RPC started. If that controller is rebuilt before the RPC
+// resolves, the replacement controller may reuse the same approval id; the
+// old result must not dismiss or tombstone the replacement's prompt.
+{
+  const approval = { kind: "approval_request", approval: { id: "1", tool: "bash", subject: "old controller" } } as WireEvent;
+  const armedA = reducer({ ...initialState }, { type: "event", e: approval });
+  const epochA = armedA.promptEpoch;
+  const rebuilt = reducer(armedA, { type: "controller_rebuilt" });
+  const freshApproval = { kind: "approval_request", approval: { id: "1", tool: "bash", subject: "new controller" } } as WireEvent;
+  const armedB = reducer(rebuilt, { type: "event", e: freshApproval });
+
+  const staleDrain = reducer(armedB, { type: "approval_drained", ids: ["1"], epoch: epochA });
+  eq(staleDrain.approval?.subject, "new controller", "a pre-rebuild drain result cannot dismiss the new controller's same-id approval");
+  eq(staleDrain.resolvedPromptId, undefined, "a stale drain result cannot tombstone the new controller's prompt id");
+
+  const currentDrain = reducer(armedB, { type: "approval_drained", ids: ["1"], epoch: armedB.promptEpoch });
+  eq(currentDrain.approval, undefined, "a same-epoch drain still dismisses the backend-drained approval");
+  eq(currentDrain.resolvedPromptId, "1", "a same-epoch drain still tombstones the drained approval");
 }
 
 // A genuinely new prompt (different id) after an answer re-anchors, so its own
@@ -366,11 +387,15 @@ function metaForTab(): Meta {
 const context: ContextInfo = { used: 0, window: 100, sessionTokens: 0 };
 const effortInfo: EffortInfo = { supported: true, current: "auto", default: "auto", levels: ["auto"] };
 const eventHandlers: Array<(e: WireEvent) => void> = [];
+const rebuiltHandlers: Array<(tabId?: string) => void> = [];
 let holdNextListTabs: Promise<void> | undefined;
+let modeDrain: ReturnType<typeof deferred<string[]>> | undefined;
+let toolApprovalModeDrain: ReturnType<typeof deferred<string[]>> | undefined;
 
 window.runtime = {
   EventsOn: (name: string, cb: (payload: unknown) => void) => {
     if (name === "agent:event") eventHandlers.push(cb as (e: WireEvent) => void);
+    if (name === "runtime:rebuilt") rebuiltHandlers.push(cb as (tabId?: string) => void);
     return () => {};
   },
   BrowserOpenURL: () => {},
@@ -397,6 +422,8 @@ window.go = {
       HistoryCheckpointTurnsForTab: async () => [],
       ReplayPendingPrompts: async () => {},
       SetActiveTab: async () => {},
+      SetModeForTab: async () => modeDrain?.promise ?? [],
+      SetToolApprovalModeForTab: async () => toolApprovalModeDrain?.promise ?? [],
     } as Partial<AppBindings> as AppBindings,
   },
 };
@@ -495,6 +522,65 @@ eq(controller?.state.running, false, "fresh idle snapshot releases the blocked s
   });
   eq(controller?.state.approval?.id, undefined, "the scheduled fresh reconcile clears the zombie the stale rejection preserved");
   eq(controller?.state.running, false, "the fresh reconcile unlocks the input after clearing the zombie");
+}
+
+// Both mode-switch entry points capture the prompt epoch before starting their
+// backend RPC. A rebuild and same-id prompt can arrive while either call is in
+// flight; its old drain result must then be ignored.
+{
+  const approvalID = "mode-drain-1";
+  await act(async () => {
+    for (const handler of eventHandlers) {
+      handler({ kind: "approval_request", tabId: "tab-a", approval: { id: approvalID, tool: "bash", subject: "old controller mode prompt" } } as WireEvent);
+    }
+    await flushPromises();
+  });
+  modeDrain = deferred<string[]>();
+  let switchPromise: Promise<void> | undefined;
+  await act(async () => {
+    switchPromise = controller?.setControllerMode("plan");
+    await flushPromises();
+  });
+  await act(async () => {
+    for (const handler of rebuiltHandlers) handler("tab-a");
+    for (const handler of eventHandlers) {
+      handler({ kind: "approval_request", tabId: "tab-a", approval: { id: approvalID, tool: "bash", subject: "new controller mode prompt" } } as WireEvent);
+    }
+    await flushPromises();
+  });
+  await act(async () => {
+    modeDrain?.resolve([approvalID]);
+    await switchPromise;
+    await flushPromises();
+  });
+  eq(controller?.state.approval?.subject, "new controller mode prompt", "a late SetModeForTab drain cannot dismiss a new same-id prompt");
+
+  const toolApprovalID = "tool-mode-drain-1";
+  await act(async () => {
+    for (const handler of eventHandlers) {
+      handler({ kind: "approval_request", tabId: "tab-a", approval: { id: toolApprovalID, tool: "bash", subject: "old tool-approval prompt" } } as WireEvent);
+    }
+    await flushPromises();
+  });
+  toolApprovalModeDrain = deferred<string[]>();
+  let toolSwitchPromise: Promise<void> | undefined;
+  await act(async () => {
+    toolSwitchPromise = controller?.setToolApprovalModeForTab("tab-a", "auto");
+    await flushPromises();
+  });
+  await act(async () => {
+    for (const handler of rebuiltHandlers) handler("tab-a");
+    for (const handler of eventHandlers) {
+      handler({ kind: "approval_request", tabId: "tab-a", approval: { id: toolApprovalID, tool: "bash", subject: "new tool-approval prompt" } } as WireEvent);
+    }
+    await flushPromises();
+  });
+  await act(async () => {
+    toolApprovalModeDrain?.resolve([toolApprovalID]);
+    await toolSwitchPromise;
+    await flushPromises();
+  });
+  eq(controller?.state.approval?.subject, "new tool-approval prompt", "a late SetToolApprovalModeForTab drain cannot dismiss a new same-id prompt");
 }
 
 await act(async () => {

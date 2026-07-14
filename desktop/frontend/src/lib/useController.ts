@@ -161,10 +161,9 @@ interface State {
   resolvedPromptId?: string;
   // Monotonic per-tab prompt-id namespace generation. Approval/ask ids restart
   // from "1" whenever the backend controller is rebuilt, so any id captured
-  // before the bump (an in-flight Approve/AnswerQuestion RPC) must not touch
-  // bookkeeping written after it — a late submit_prompt_failed from the old
-  // controller would otherwise erase the NEW controller's tombstone for the
-  // same numeric id and let a delayed replay resurrect an answered prompt.
+  // before the bump (an in-flight prompt answer or mode-switch RPC) must not
+  // touch bookkeeping written after it. Late callbacks from the old controller
+  // otherwise act on a different prompt that reused the same numeric id.
   promptEpoch: number;
   turnTokens: number;
   turnTotalTokens: number;
@@ -445,7 +444,7 @@ type Action =
   | { type: "local_notice"; level: "info" | "warn"; text: string }
   | { type: "clearApproval" }
   | { type: "clearAsk" }
-  | { type: "approval_drained"; ids: string[] }
+  | { type: "approval_drained"; ids: string[]; epoch: number }
   | { type: "submit_prompt_failed"; id: string; epoch: number }
   | { type: "controller_rebuilt" }
   | { type: "reset" };
@@ -1298,9 +1297,10 @@ export function reducer(s: State, a: Action): State {
     // the backend. Hide + tombstone the visible approval only when it is one
     // of them; anything else (plan/memory/sandbox-escape, ask-rule approvals
     // under auto) is still genuinely pending there and must stay visible —
-    // tombstoning it would filter every future replay and strand the turn.
+    // tombstoning it would filter every future replay and strand the turn. The
+    // drain result must also belong to this controller's prompt-id epoch.
     case "approval_drained": {
-      if (!s.approval || !a.ids.includes(s.approval.id)) return s;
+      if (s.promptEpoch !== a.epoch || !s.approval || !a.ids.includes(s.approval.id)) return s;
       const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask), resolvedPromptId: s.approval.id };
       return endPromptWaitIfIdle(next);
     }
@@ -2412,12 +2412,13 @@ export function useController() {
   const setControllerMode = useCallback((mode: Mode): Promise<void> => {
     if (!activeTabId) return Promise.resolve();
     const tabId = activeTabId;
+    const epoch = statesRef.current.get(tabId)?.promptEpoch ?? 0;
     return app.SetModeForTab(tabId, mode).then((drained) => {
       // Only dismiss the approvals the backend reports it actually
       // auto-allowed. Fresh prompts (plan/memory/sandbox escape) survive a
       // yolo switch backend-side and must stay visible (#6432 round 4).
       const ids = Array.isArray(drained) ? drained : [];
-      if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids });
+      if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids, epoch });
     }).catch(() => {});
   }, [activeTabId, dispatchTo]);
 
@@ -2434,12 +2435,13 @@ export function useController() {
 
   const setToolApprovalModeForTab = useCallback(async (tabId: string, mode: ToolApprovalMode): Promise<void> => {
     if (!tabId) return;
+    const epoch = statesRef.current.get(tabId)?.promptEpoch ?? 0;
     // Same contract as setControllerMode: the backend reports which pending
     // approvals the new posture auto-allowed; anything else is still pending
     // there (fresh prompts; ask-rule approvals under auto) and stays visible.
     const drained = await app.SetToolApprovalModeForTab(tabId, mode).catch(() => undefined);
     const ids = Array.isArray(drained) ? drained : [];
-    if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids });
+    if (ids.length) dispatchTo(tabId, { type: "approval_drained", ids, epoch });
     await refreshMetaForTab(tabId, dispatchTo);
   }, [dispatchTo]);
 

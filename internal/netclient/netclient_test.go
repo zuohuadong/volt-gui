@@ -587,3 +587,58 @@ func TestForceIPv4Dials(t *testing.T) {
 		t.Error("forced-IPv4 dial should reject an IPv6 address")
 	}
 }
+
+func TestGuardedDialerRejectsBlockedAddressesAndPinsVettedIP(t *testing.T) {
+	t.Run("mixed public and private DNS answer fails closed", func(t *testing.T) {
+		dialer := GuardedDialer{
+			LookupIP: func(context.Context, string) ([]net.IPAddr, error) {
+				return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}, {IP: net.ParseIP("10.0.0.7")}}, nil
+			},
+			Dial: func(context.Context, string, string) (net.Conn, error) {
+				t.Fatal("blocked DNS answer must not be dialed")
+				return nil, nil
+			},
+		}
+		if _, err := dialer.DialContext(context.Background(), "tcp", "example.test:443"); err == nil || !strings.Contains(err.Error(), "internal address") {
+			t.Fatalf("DialContext error = %v, want internal-address rejection", err)
+		}
+	})
+
+	t.Run("public DNS answer is pinned for dialing", func(t *testing.T) {
+		var dialed string
+		dialer := GuardedDialer{
+			LookupIP: func(context.Context, string) ([]net.IPAddr, error) {
+				return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+			},
+			Dial: func(_ context.Context, _ string, addr string) (net.Conn, error) {
+				dialed = addr
+				left, right := net.Pipe()
+				_ = right.Close()
+				return left, nil
+			},
+		}
+		conn, err := dialer.DialContext(context.Background(), "tcp", "example.test:443")
+		if err != nil {
+			t.Fatalf("DialContext: %v", err)
+		}
+		_ = conn.Close()
+		if dialed != "203.0.113.10:443" {
+			t.Fatalf("dialed = %q, want vetted IP", dialed)
+		}
+	})
+}
+
+func TestAddressPoliciesKeepWebFetchLoopbackCompatibility(t *testing.T) {
+	loopback := net.ParseIP("127.0.0.1")
+	if !IsBlockedAddress(loopback, false) {
+		t.Fatal("strict clients must reject loopback")
+	}
+	if IsBlockedAddress(loopback, true) {
+		t.Fatal("web_fetch compatibility policy must allow loopback")
+	}
+	for _, raw := range []string{"10.0.0.1", "169.254.169.254", "100.100.100.200", "::"} {
+		if !IsBlockedAddress(net.ParseIP(raw), true) {
+			t.Fatalf("%s must remain blocked even when loopback is allowed", raw)
+		}
+	}
+}

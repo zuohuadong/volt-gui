@@ -198,7 +198,7 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 	ref := m.modelRef
 	m.modelSwitchPending = true
 	m.pendingModelSwitch = func() tea.Msg {
-		c, err := build(ref, carried, prevPath)
+		c, err := build(controllerBuildSpec{ModelRef: ref}, carried, prevPath)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}

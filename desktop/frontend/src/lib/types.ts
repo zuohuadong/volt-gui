@@ -13,6 +13,206 @@ export interface BrandInfo {
   iconDataUrl?: string;
 }
 
+export interface ScopedMemoryContext {
+  organizationId?: string;
+  workspaceId?: string;
+  projectId?: string;
+  threadId?: string;
+}
+
+export type ScopedMemoryLayer = "user" | "organization" | "workspace" | "project" | "thread";
+
+export interface ScopedMemoryReference {
+  id: string;
+  title?: string;
+  source?: string;
+}
+
+export interface ScopedMemoryEntry {
+  id: string;
+  title: string;
+  body: string;
+  source: string;
+  layer: ScopedMemoryLayer;
+  scopeId: string;
+  owner: ScopedMemoryContext;
+  references: ScopedMemoryReference[];
+  createdAt: string;
+  updatedAt: string;
+  isolated: boolean;
+}
+
+export interface ScopedMemoryArchive {
+  entry: ScopedMemoryEntry;
+  archivedAt: string;
+}
+
+export interface ScopedMemoryInput {
+  id?: string;
+  title: string;
+  body: string;
+  source: string;
+  layer: ScopedMemoryLayer;
+  scopeId: string;
+  references: ScopedMemoryReference[];
+  isolated: boolean;
+}
+
+export interface ScopedMemoryView {
+  context: ScopedMemoryContext;
+  entries: ScopedMemoryEntry[];
+  archives: ScopedMemoryArchive[];
+  storePath?: string;
+  available: boolean;
+}
+
+export type TrustStatus = "configured" | "active" | "disabled" | "possible" | "unknown";
+
+export interface TrustCredentialRef {
+  env?: string;
+  set: boolean;
+}
+
+export interface TrustDestination {
+  url?: string;
+  scheme?: string;
+  host?: string;
+  path?: string;
+  classification: string;
+}
+
+export interface TrustFlow {
+  id: string;
+  category: string;
+  name: string;
+  status: TrustStatus;
+  direction?: string;
+  detail?: string;
+  provider?: string;
+  models?: string[];
+  apiSurface?: string;
+  credential: TrustCredentialRef;
+  destinations: TrustDestination[];
+  classification?: string;
+  transport?: string;
+  runtime?: string;
+  autoStart?: boolean;
+  trustedReadOnlyTools?: number;
+  dataCategories: string[];
+}
+
+export interface TrustLocation {
+  id: string;
+  name: string;
+  path?: string;
+  scope: string;
+  retention: string;
+  status: TrustStatus;
+  exists: boolean;
+  sensitive?: boolean;
+}
+
+export interface TrustWarning {
+  id: string;
+  severity: string;
+  title: string;
+  detail: string;
+}
+
+export interface TrustContextView {
+  tabId: string;
+  scope: string;
+  workspaceRoot?: string;
+  workspaceId?: string;
+  projectId?: string;
+  threadId?: string;
+  organizationId?: string;
+  topicId?: string;
+  topicTitle?: string;
+  sessionPath?: string;
+  agentProfileId?: string;
+  agentProfileName?: string;
+  memoryScopes: string[];
+  memorySourceIds: string[];
+  memoryUpdatedAt?: string;
+  runtimeModel?: string;
+  runtimePermission: string;
+}
+
+export interface TrustPolicyView {
+  sandboxMode: string;
+  sandboxNetwork: boolean;
+  writeRoots: string[];
+  forbidReadRoots: string[];
+  redactToolOutput: boolean;
+  filterSubprocessEnv: boolean;
+  protectSensitiveFiles: boolean;
+  defaultPermission: string;
+  runtimeToolApproval: string;
+  allowRuleCount: number;
+  askRuleCount: number;
+  denyRuleCount: number;
+}
+
+export interface TrustControlServerView {
+  enabled: boolean;
+  address?: string;
+  tokenEnv?: string;
+  tokenSet: boolean;
+  status: TrustStatus;
+  target: TrustDestination;
+}
+
+export interface TrustIMConnectionView {
+  id: string;
+  label?: string;
+  platform: string;
+  domain?: string;
+  status: TrustStatus;
+  configuredStatus?: string;
+  workspaceRoots: string[];
+  mappingCount: number;
+  userCount: number;
+  groupCount: number;
+  approverCount: number;
+  adminCount: number;
+  allowAll: boolean;
+  pairingEnabled: boolean;
+  toolApprovalMode: string;
+  credentials: TrustCredentialRef[];
+  messagePath: string;
+}
+
+export interface TrustEnterpriseIMView {
+  enabled: boolean;
+  status: TrustStatus;
+  runtimeStatus: string;
+  runtimeConnections: number;
+  allowAll: boolean;
+  pairingEnabled: boolean;
+  userCount: number;
+  groupCount: number;
+  approverCount: number;
+  adminCount: number;
+  toolApprovalMode: string;
+  control: TrustControlServerView;
+  connections: TrustIMConnectionView[];
+  messagePath: string;
+}
+
+export interface TrustCenterView {
+  generatedAt: string;
+  context: TrustContextView;
+  providers: TrustFlow[];
+  storage: TrustLocation[];
+  network: TrustFlow[];
+  enterpriseIm: TrustEnterpriseIMView;
+  fileEgress: TrustFlow[];
+  diagnostics: TrustFlow[];
+  policy: TrustPolicyView;
+  warnings: TrustWarning[];
+}
+
 export interface TabMeta {
   id: string;
   scope: "global" | "project";
@@ -39,6 +239,13 @@ export interface TabMeta {
   tokenMode?: string;
   goal?: string;
   goalStatus?: string;
+  agentProfileId?: string;
+  agentProfileName?: string;
+  agentProfileBaseModel?: string;
+  memoryContext?: ScopedMemoryContext;
+  memoryScopes?: string[];
+  memorySourceIds?: string[];
+  memoryUpdatedAt?: string;
   imageInputEnabled?: boolean;
   startupErr?: string;
   cwd?: string;
@@ -1341,11 +1548,35 @@ export interface ContextPanelInfo {
   windowTokens: number;
   promptTokens: number;
   completionTokens: number;
+  totalTokens: number;
   reasoningTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
+  sessionCacheHitTokens: number;
+  sessionCacheMissTokens: number;
+  sessionCompletionTokens: number;
+  requestCount: number;
+  elapsedMs: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  sessionCostUsd?: number;
+  sources?: Record<string, ContextUsageSource>;
+  mock?: boolean;
   readFiles: ReadFileRecord[];
   changedFiles: WorkspaceChangeView[];
+}
+
+export interface ContextUsageSource {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  requestCount: number;
+  sessionCost?: number;
+  sessionCurrency?: string;
+  sessionCostUsd?: number;
 }
 
 export interface HistoryMessage {

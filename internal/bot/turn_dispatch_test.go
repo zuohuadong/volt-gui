@@ -71,7 +71,10 @@ var _ control.Approvals = (*approvalBlockingController)(nil)
 // free to deliver it.
 func TestGatewayApprovalReplyUnblocksTurnOffDispatchGoroutine(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{AllowAll: true}}, nil, logger)
+	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{
+		AllowAll:  true,
+		Approvers: map[Platform][]string{PlatformWeixin: {"user"}},
+	}}, nil, logger)
 
 	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
 	binding := AdapterBinding{ID: "weixin", Platform: PlatformWeixin, Adapter: adapter}

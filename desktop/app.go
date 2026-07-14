@@ -48,6 +48,7 @@ import (
 	"voltui/internal/plugin"
 	"voltui/internal/pluginpkg"
 	"voltui/internal/provider"
+	"voltui/internal/scopedmemory"
 	"voltui/internal/skill"
 	"voltui/internal/store"
 )
@@ -653,6 +654,10 @@ func (a *App) restoreOrBuildTabs() {
 			tab.AgentProfileID = strings.TrimSpace(entry.AgentProfileID)
 			tab.AgentProfileName = strings.TrimSpace(entry.AgentProfileName)
 			tab.AgentProfileBaseModel = strings.TrimSpace(entry.AgentProfileBaseModel)
+			tab.MemoryContext = entry.MemoryContext
+			tab.MemoryScopes = append([]string(nil), entry.MemoryScopes...)
+			tab.MemorySourceIDs = append([]string(nil), entry.MemorySourceIDs...)
+			tab.MemoryUpdatedAt = entry.MemoryUpdatedAt
 			tab.effort = cloneStringPtr(entry.Effort)
 			tab.tokenMode = boot.NormalizeTokenMode(entry.TokenMode)
 			tab.mode = persistedTabMode(entry.Mode)
@@ -1716,6 +1721,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	if err != nil {
 		return err
 	}
+	memoryRuntime, err := a.scopedMemoryRuntimeForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	oldSink := snap.sink
 	if oldSink != nil {
 		// Rebind under the runtime key, matching the id cloneDetachedRuntimeTab
@@ -1750,6 +1759,8 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             agentProfile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -1811,6 +1822,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	tab.sink = newSink
 	tab.SessionPath = path
 	tab.Label = newCtrl.Label()
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	tab.Ready = true
 	clearTabStartupError(tab)
 	tab.goal = ""
@@ -2024,6 +2036,7 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	agentProfileID := sourceTab.AgentProfileID
 	agentProfileName := sourceTab.AgentProfileName
 	agentProfileBaseModel := sourceTab.AgentProfileBaseModel
+	memoryContext := sourceTab.MemoryContext
 	effort := cloneStringPtr(sourceTab.effort)
 	mode := currentTabMode(sourceTab)
 	toolApprovalMode := currentTabToolApprovalMode(sourceTab)
@@ -2036,6 +2049,16 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 		return TabMeta{}, err
 	}
 	topicID := newTopicID()
+	a.mu.Lock()
+	tabID := a.newUniqueTabIDLocked()
+	a.mu.Unlock()
+	forkMemoryContext := memoryContext
+	forkMemoryContext.ThreadID = ""
+	forkMemoryContext = defaultScopedMemoryContext(forkMemoryContext, workspaceRoot, topicID, newPath, tabID)
+	memoryRuntime, err := loadScopedMemoryRuntime(forkMemoryContext)
+	if err != nil {
+		return TabMeta{}, err
+	}
 	topicTitle := forkTopicTitle(sourceTitle)
 	titleRoot := workspaceRoot
 	if scope == "global" {
@@ -2052,13 +2075,20 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 	m.AgentProfileID = agentProfileID
 	m.AgentProfileName = agentProfileName
 	m.AgentProfileBaseModel = agentProfileBaseModel
+	m.MemoryContext = scopedmemory.ContextPointer(memoryRuntime.Context)
+	m.MemoryScopes = append([]string(nil), memoryRuntime.Scopes...)
+	m.MemorySourceIDs = append([]string(nil), memoryRuntime.SourceIDs...)
+	m.MemoryUpdatedAt = memoryRuntime.UpdatedAt
 	if err := agent.SaveBranchMeta(newPath, m); err != nil {
 		return TabMeta{}, err
 	}
 	invalidateTopicSessionIndexForPath(newPath)
 
 	a.mu.Lock()
-	tabID := a.newUniqueTabIDLocked()
+	if _, exists := a.tabs[tabID]; exists {
+		a.mu.Unlock()
+		return TabMeta{}, fmt.Errorf("generated fork tab id %q already exists", tabID)
+	}
 	tab := &WorkspaceTab{
 		ID:                    tabID,
 		Scope:                 scope,
@@ -2069,6 +2099,10 @@ func (a *App) Fork(turn int) (TabMeta, error) {
 		AgentProfileID:        agentProfileID,
 		AgentProfileName:      agentProfileName,
 		AgentProfileBaseModel: agentProfileBaseModel,
+		MemoryContext:         memoryRuntime.Context,
+		MemoryScopes:          append([]string(nil), memoryRuntime.Scopes...),
+		MemorySourceIDs:       append([]string(nil), memoryRuntime.SourceIDs...),
+		MemoryUpdatedAt:       memoryRuntime.UpdatedAt,
 		model:                 model,
 		effort:                effort,
 		mode:                  mode,
@@ -7500,6 +7534,10 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if err != nil {
 		return err
 	}
+	memoryRuntime, err := a.scopedMemoryRuntimeForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
@@ -7510,6 +7548,8 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		EffortOverride:           cloneStringPtr(effortOverride),
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             agentProfile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7547,6 +7587,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	// Supersede any in-flight startup build: it would otherwise finish later,
 	// overwrite this controller, and release/steal the tab's session lease.
 	a.supersedeTabBuildLocked(tab)
@@ -7665,6 +7706,10 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	if err != nil {
 		return err
 	}
+	memoryRuntime, err := a.scopedMemoryRuntimeForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -7674,6 +7719,8 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		EffortOverride:           &effort,
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             agentProfile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7704,6 +7751,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	tab.model = modelRef
 	tab.effort = &effort
 	tab.Label = newCtrl.Label()
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
 	a.supersedeTabBuildLocked(tab)
@@ -7798,6 +7846,10 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	if err != nil {
 		return err
 	}
+	memoryRuntime, err := a.scopedMemoryRuntimeForSnapshot(snap)
+	if err != nil {
+		return err
+	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
@@ -7807,6 +7859,8 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                mode,
 		AgentProfile:             agentProfile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -7837,6 +7891,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	tab.model = modelRef
 	tab.tokenMode = mode
 	tab.Label = newCtrl.Label()
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
 	a.supersedeTabBuildLocked(tab)
@@ -8423,16 +8478,6 @@ func (a *App) resolvedModelForTab(tab *WorkspaceTab) (string, bool, error) {
 	return resolved, fallback, nil
 }
 
-func (a *App) withActiveWorkspace(fn func() (string, error)) (string, error) {
-	var result string
-	err := a.withActiveWorkspaceDo(func() error {
-		var err error
-		result, err = fn()
-		return err
-	})
-	return result, err
-}
-
 func (a *App) withActiveWorkspaceDo(fn func() error) error {
 	root := a.activeWorkspaceRoot()
 	if root != "" && root != "." {
@@ -8451,24 +8496,20 @@ func (a *App) withActiveWorkspaceDo(fn func() error) error {
 // SavePastedImage stores a browser clipboard image data URL under the active
 // tab's workspace .voltui/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.SaveImageDataURL(dataURL)
-	})
+	return control.SaveImageDataURLInRoot(a.activeWorkspaceRoot(), dataURL)
 }
 
 // SaveClipboardImage reads the native OS clipboard image under the active tab's
 // workspace .voltui/attachments and returns the relative @-reference path.
 func (a *App) SaveClipboardImage() (string, error) {
-	return a.withActiveWorkspace(control.SaveClipboardImage)
+	return control.SaveClipboardImageInRoot(a.activeWorkspaceRoot())
 }
 
 // SavePastedFile stores a dropped non-image file (the browser exposes its bytes
 // as a data URL but not a real path) under the active tab's workspace
 // .voltui/attachments and returns the relative @-reference path.
 func (a *App) SavePastedFile(name, dataURL string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.SaveAttachmentDataURL(name, dataURL)
-	})
+	return control.SaveAttachmentDataURLInRoot(a.activeWorkspaceRoot(), name, dataURL)
 }
 
 const (
@@ -8526,9 +8567,7 @@ func (a *App) ImportProjectMaterialFile(selectionToken string) (ProjectMaterialF
 	if err := validateProjectMaterialSelection(selection); err != nil {
 		return ProjectMaterialFile{}, err
 	}
-	path, err := a.withActiveWorkspace(func() (string, error) {
-		return control.SaveAttachmentFileWithExpectedInfo(selection.sourcePath, selection.identity)
-	})
+	path, err := control.SaveAttachmentFileWithExpectedInfoInRoot(a.activeWorkspaceRoot(), selection.sourcePath, selection.identity)
 	if err != nil {
 		return ProjectMaterialFile{}, err
 	}
@@ -8705,9 +8744,7 @@ func exportFileFilters(mimeType, ext string) []runtime.FileFilter {
 
 // AttachmentDataURL returns a safe data URL for a stored image attachment.
 func (a *App) AttachmentDataURL(path string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.ImageDataURL(path)
-	})
+	return control.ImageDataURLInRoot(a.activeWorkspaceRoot(), path)
 }
 
 // DroppedItem is one OS-dropped file resolved into a composer context entry: an
@@ -8728,52 +8765,42 @@ type DroppedItem struct {
 // outside the workspace are registered as current-session folder references;
 // files outside the workspace are copied into .voltui/attachments.
 func (a *App) AttachDropped(path string) (DroppedItem, error) {
-	var item DroppedItem
-	err := a.withActiveWorkspaceDo(func() error {
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if isImageExt(path) {
-			if rel, err := control.SaveImageFile(path); err == nil {
-				preview, _ := control.ImageDataURL(rel)
-				item = DroppedItem{Kind: "attachment", Path: rel, PreviewURL: preview}
-				return nil
-			}
-		}
-		if rel, ok := workspaceRelativeIn(path, a.activeWorkspaceRoot()); ok {
-			item = DroppedItem{Kind: "workspace", Path: rel, IsDir: info.IsDir()}
-			return nil
-		}
-		if info.IsDir() {
-			tab, ctrl := a.tabAndCtrlByID("")
-			if err := a.ensureTabControllerWorkspace(tab); err != nil {
-				return err
-			}
-			if tab != nil {
-				ctrl = a.controllerForTab(tab)
-			}
-			if ctrl == nil {
-				return fmt.Errorf("workspace is not ready")
-			}
-			token, displayPath, err := ctrl.RegisterExternalFolderRef(path)
-			if err != nil {
-				return err
-			}
-			item = DroppedItem{Kind: "workspace", Path: token, IsDir: true, DisplayPath: displayPath}
-			return nil
-		}
-		rel, err := control.SaveAttachmentFile(path)
-		if err != nil {
-			return err
-		}
-		item = DroppedItem{Kind: "attachment", Path: rel}
-		return nil
-	})
+	root := a.activeWorkspaceRoot()
+	info, err := os.Lstat(path)
 	if err != nil {
 		return DroppedItem{}, err
 	}
-	return item, nil
+	if isImageExt(path) {
+		if rel, err := control.SaveImageFileInRoot(root, path); err == nil {
+			preview, _ := control.ImageDataURLInRoot(root, rel)
+			return DroppedItem{Kind: "attachment", Path: rel, PreviewURL: preview}, nil
+		}
+	}
+	if rel, ok := workspaceRelativeIn(path, root); ok {
+		return DroppedItem{Kind: "workspace", Path: rel, IsDir: info.IsDir()}, nil
+	}
+	if info.IsDir() {
+		tab, ctrl := a.tabAndCtrlByID("")
+		if err := a.ensureTabControllerWorkspace(tab); err != nil {
+			return DroppedItem{}, err
+		}
+		if tab != nil {
+			ctrl = a.controllerForTab(tab)
+		}
+		if ctrl == nil {
+			return DroppedItem{}, fmt.Errorf("workspace is not ready")
+		}
+		token, displayPath, err := ctrl.RegisterExternalFolderRef(path)
+		if err != nil {
+			return DroppedItem{}, err
+		}
+		return DroppedItem{Kind: "workspace", Path: token, IsDir: true, DisplayPath: displayPath}, nil
+	}
+	rel, err := control.SaveAttachmentFileInRoot(root, path)
+	if err != nil {
+		return DroppedItem{}, err
+	}
+	return DroppedItem{Kind: "attachment", Path: rel}, nil
 }
 
 func isImageExt(path string) bool {

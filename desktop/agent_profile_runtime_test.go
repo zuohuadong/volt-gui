@@ -280,7 +280,7 @@ func TestRecordAgentProfileSwitchBoundsAuditHistory(t *testing.T) {
 	}
 	view := &PersistentAgentView{ID: "reviewer", Name: "Reviewer", Tools: []string{"terminal"}, Skills: []string{"review"}}
 	for i := 0; i < agentProfileAuditHistoryLimit+5; i++ {
-		if err := recordAgentProfileSwitch(path, view, "provider/model"); err != nil {
+		if err := recordAgentProfileSwitch(path, view, "provider/model", []string{"workspace"}, []string{"memory-workspace"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -290,5 +290,9 @@ func TestRecordAgentProfileSwitchBoundsAuditHistory(t *testing.T) {
 	}
 	if len(meta.AgentProfileHistory) != agentProfileAuditHistoryLimit {
 		t.Fatalf("audit history len = %d, want %d", len(meta.AgentProfileHistory), agentProfileAuditHistoryLimit)
+	}
+	last := meta.AgentProfileHistory[len(meta.AgentProfileHistory)-1]
+	if strings.Join(last.MemoryScopes, ",") != "workspace" || strings.Join(last.MemorySourceIDs, ",") != "memory-workspace" {
+		t.Fatalf("memory audit = scopes:%v sources:%v", last.MemoryScopes, last.MemorySourceIDs)
 	}
 }

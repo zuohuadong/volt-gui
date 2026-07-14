@@ -34,26 +34,68 @@ type TodoStepMatch struct {
 // Receipt is the host-runtime record of one tool call. It stays in memory for
 // the current agent turn and is not serialized into prompts or session state.
 type Receipt struct {
-	ToolName  string          `json:"tool_name"`
-	Args      json.RawMessage `json:"args,omitempty"`
-	Success   bool            `json:"success"`
-	Command   string          `json:"command,omitempty"`
-	Step      string          `json:"step,omitempty"`
-	StepProof bool            `json:"step_proof,omitempty"`
-	TodoStep  *TodoStepMatch  `json:"todo_step,omitempty"`
-	Paths     []string        `json:"paths,omitempty"`
-	Read      bool            `json:"read,omitempty"`
-	Write     bool            `json:"write,omitempty"`
-	Todos     []TodoItem      `json:"todos,omitempty"`
+	ToolName    string          `json:"tool_name"`
+	Args        json.RawMessage `json:"args,omitempty"`
+	Success     bool            `json:"success"`
+	Command     string          `json:"command,omitempty"`
+	Step        string          `json:"step,omitempty"`
+	StepProof   bool            `json:"step_proof,omitempty"`
+	TodoStep    *TodoStepMatch  `json:"todo_step,omitempty"`
+	Paths       []string        `json:"paths,omitempty"`
+	Read        bool            `json:"read,omitempty"`
+	Write       bool            `json:"write,omitempty"`
+	Mutation    bool            `json:"mutation,omitempty"`
+	Todos       []TodoItem      `json:"todos,omitempty"`
+	OutputBytes int             `json:"output_bytes,omitempty"`
 }
 
 // Ledger stores the receipts available to complete_step for the current turn.
 type Ledger struct {
-	mu       sync.Mutex
-	receipts []Receipt
+	mu               sync.Mutex
+	receipts         []Receipt
+	backgroundLeases []BackgroundLease
 }
 
 func NewLedger() *Ledger { return &Ledger{} }
+
+// BackgroundLease identifies a background job whose evidence was provisionally
+// merged into the current turn's ledger.
+type BackgroundLease struct {
+	Session string
+	JobID   string
+}
+
+// NoteBackgroundLease records that a background job's evidence was merged into
+// this turn's ledger. It returns false if the lease already exists.
+func (l *Ledger) NoteBackgroundLease(session, jobID string) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, lease := range l.backgroundLeases {
+		if lease.Session == session && lease.JobID == jobID {
+			return false
+		}
+	}
+	l.backgroundLeases = append(l.backgroundLeases, BackgroundLease{Session: session, JobID: jobID})
+	return true
+}
+
+// BackgroundLeases returns a copy of the current background evidence leases.
+func (l *Ledger) BackgroundLeases() []BackgroundLease {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.backgroundLeases) == 0 {
+		return nil
+	}
+	out := make([]BackgroundLease, len(l.backgroundLeases))
+	copy(out, l.backgroundLeases)
+	return out
+}
 
 // Reset clears receipts between user turns.
 func (l *Ledger) Reset() {

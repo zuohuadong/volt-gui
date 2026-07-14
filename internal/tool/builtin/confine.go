@@ -130,9 +130,9 @@ func confine(roots []string, target string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("path %q is outside the writable roots (writes are confined to %s); "+
+	return tool.NewPolicyBlock(fmt.Errorf("path %q is outside the writable roots (writes are confined to %s); "+
 		"write inside the workspace or a configured allow_write root, or widen [sandbox] workspace_root / allow_write in voltui.toml",
-		target, strings.Join(roots, ", "))
+		target, strings.Join(roots, ", ")))
 }
 
 // confineWrite is the write-tool boundary check: workspace confinement first,

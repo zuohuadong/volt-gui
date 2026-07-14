@@ -7,6 +7,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +31,36 @@ type Tool interface {
 	// ordering is preserved. bash and plugin tools must return false because
 	// their effects can't be inferred statically from args.
 	ReadOnly() bool
+}
+
+// policyBlock marks a tool error as a host-enforced policy boundary rather
+// than a transient execution failure. Agents may still choose a different,
+// allowed action, but should not retry the same blocked operation.
+type policyBlock interface {
+	error
+	PolicyBlocked() bool
+}
+
+type policyBlockError struct{ err error }
+
+func (e *policyBlockError) Error() string       { return e.err.Error() }
+func (e *policyBlockError) Unwrap() error       { return e.err }
+func (e *policyBlockError) PolicyBlocked() bool { return true }
+
+// NewPolicyBlock wraps err as a host policy blocker. A nil error stays nil and
+// an existing policy block is preserved.
+func NewPolicyBlock(err error) error {
+	if err == nil || IsPolicyBlock(err) {
+		return err
+	}
+	return &policyBlockError{err: err}
+}
+
+// IsPolicyBlock reports whether err or one of its wrapped causes is a
+// host-enforced policy boundary.
+func IsPolicyBlock(err error) bool {
+	var blocked policyBlock
+	return errors.As(err, &blocked) && blocked.PolicyBlocked()
 }
 
 // ImageTool is an optional extension for tools whose result includes images.

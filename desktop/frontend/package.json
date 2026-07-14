@@ -10,6 +10,7 @@
     "check": "svelte-check --no-tsconfig --ignore \"node_modules,dist\"",
     "check:runtime-mocks": "node ../../scripts/check-runtime-mocks.mjs",
     "test:runtime-mock-gate": "node --test ../../scripts/check-runtime-mocks.test.mjs",
+    "test:unit": "vitest run src/lib",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "esbuild": "^0.28.1",
     "svelte-check": "^4.7.2",
     "typescript": "^6.0.3",
-    "vite": "^8.1.4"
+    "vite": "^8.1.4",
+    "vitest": "^4.0.18"
   }
 }

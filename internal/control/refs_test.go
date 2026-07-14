@@ -853,3 +853,36 @@ func TestReadFileRefPDFExtractionWithBaseDirUsesAbsPath(t *testing.T) {
 		t.Fatalf("scoped pdf extraction missing text: %s", got)
 	}
 }
+
+func TestResolveScopedRefsSpreadsheetGuidesBuiltInOfficeTools(t *testing.T) {
+	workspace := t.TempDir()
+	attachmentDir := filepath.Join(workspace, ".voltui", "attachments")
+	if err := os.MkdirAll(attachmentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"people.xlsx", "legacy.xls"} {
+		if err := os.WriteFile(filepath.Join(attachmentDir, name), []byte{'P', 'K', 0, 1}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c := &Controller{workspaceRoot: workspace}
+	block, errs := c.ResolveScopedRefs(context.Background(), "merge @.voltui/attachments/people.xlsx @.voltui/attachments/legacy.xls")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveScopedRefs errors = %v", errs)
+	}
+	for _, want := range []string{
+		"mcp__office__office_read_spreadsheet",
+		"mcp__office__office_count_spreadsheet_column",
+		"do not create Python helper scripts",
+		"people.xlsx",
+		"legacy.xls",
+	} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("spreadsheet context missing %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "[binary file") {
+		t.Fatalf("spreadsheet refs should receive actionable Office guidance, got:\n%s", block)
+	}
+}

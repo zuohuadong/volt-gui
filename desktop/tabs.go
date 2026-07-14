@@ -2956,6 +2956,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		TokenMode:                buildTokenMode,
 		AgentProfile:             buildAgentProfile,
 		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(tabScope, tabWorkspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

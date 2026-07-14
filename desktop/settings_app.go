@@ -1614,6 +1614,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             agentProfile,
 		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

@@ -111,7 +111,7 @@ func NewSession(prov provider.Provider, readOnlyReg *tool.Registry, policyPrompt
 // reviews cannot interleave their messages (guardian reuses one session for
 // prefix-cache warmth). Event emission is deferred to outside the lock so a
 // slow sink does not stall the next review.
-func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, err error) {
+func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, result event.GuardianResult, err error) {
 	reviewCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
 	defer cancel()
 
@@ -212,12 +212,13 @@ func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMes
 	gs.mu.Unlock()
 
 	// Emit event outside the lock.
-	gs.emitTo(sink, assessment, toolName, subject(args), dur, reviewUsage)
+	result = guardianResult(assessment, toolName, subject(args), dur, reviewUsage, gs.pricing)
+	gs.emitTo(sink, result)
 
 	if assessment.Outcome == "deny" {
-		return false, reason, nil
+		return false, reason, result, nil
 	}
-	return true, "", nil
+	return true, "", result, nil
 }
 
 // PathFor returns the guardian session file path for a given main session path.
@@ -463,22 +464,25 @@ func (gs *Session) countRecentDenials() int {
 
 // emitTo sends a GuardianAssessment event (with per-review token cost) to the
 // captured sink. Must be called outside the Session mutex to avoid blocking.
-func (gs *Session) emitTo(sink event.Sink, a Assessment, tool, subj string, durMs int64, usage *provider.Usage) {
-	id := fmt.Sprintf("guardian-%d", time.Now().UnixNano())
+func guardianResult(a Assessment, tool, subj string, durMs int64, usage *provider.Usage, pricing *provider.Pricing) event.GuardianResult {
+	return event.GuardianResult{
+		ID:                fmt.Sprintf("guardian-%d", time.Now().UnixNano()),
+		Tool:              tool,
+		Subject:           subj,
+		Outcome:           a.Outcome,
+		RiskLevel:         a.RiskLevel,
+		UserAuthorization: a.UserAuthorization,
+		Rationale:         a.Rationale,
+		DurationMs:        durMs,
+		Usage:             usage,
+		Pricing:           pricing,
+	}
+}
+
+func (gs *Session) emitTo(sink event.Sink, result event.GuardianResult) {
 	sink.Emit(event.Event{
-		Kind: event.GuardianAssessment,
-		Guardian: event.GuardianResult{
-			ID:                id,
-			Tool:              tool,
-			Subject:           subj,
-			Outcome:           a.Outcome,
-			RiskLevel:         a.RiskLevel,
-			UserAuthorization: a.UserAuthorization,
-			Rationale:         a.Rationale,
-			DurationMs:        durMs,
-			Usage:             usage,
-			Pricing:           gs.pricing,
-		},
+		Kind:     event.GuardianAssessment,
+		Guardian: result,
 	})
 }
 

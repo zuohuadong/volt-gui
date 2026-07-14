@@ -13,7 +13,6 @@
     ask,
     onApprove,
     onAnswerAsk,
-    onDismissAsk,
     onLoadArchivedTool,
   }: {
     items: TranscriptItem[];
@@ -23,24 +22,25 @@
     ask?: WireAsk;
     onApprove: (allow: boolean, session: boolean, persist: boolean) => void;
     onAnswerAsk: (answers: QuestionAnswer[]) => void;
-    onDismissAsk: () => void;
     onLoadArchivedTool?: (item: TranscriptItem) => void | Promise<void>;
   } = $props();
 
-  let selectedAnswer = $state("");
-  let selectedAskId = $state("");
+  let askInteraction = $state({ askId: "", selectedAnswer: "", deferred: false });
   let nowMs = $state(Date.now());
   let openToolIDs = $state<ToolOpenState>({});
 
   const question = $derived(ask?.questions[0]);
+  const askId = $derived(ask?.id ?? "");
+  const selectedAnswer = $derived(askInteraction.askId === askId ? askInteraction.selectedAnswer : "");
+  const askDeferred = $derived(askInteraction.askId === askId && askInteraction.deferred);
   const askAnswer = $derived(question ? [{ questionId: question.id, selected: selectedAnswer ? [selectedAnswer] : [] }] : []);
   const subcallsByParent = $derived.by(() => {
-    const grouped = new Map<string, TranscriptItem[]>();
+    const grouped: Record<string, TranscriptItem[]> = {};
     for (const item of items) {
       if (item.role !== "tool" || !item.parentId) continue;
-      const children = grouped.get(item.parentId) ?? [];
+      const children = grouped[item.parentId] ?? [];
       children.push(item);
-      grouped.set(item.parentId, children);
+      grouped[item.parentId] = children;
     }
     return grouped;
   });
@@ -73,19 +73,21 @@
     return entries;
   });
 
-  $effect(() => {
-    if ((ask?.id ?? "") !== selectedAskId) {
-      selectedAskId = ask?.id ?? "";
-      selectedAnswer = "";
-    }
-  });
-
   onMount(() => {
     const timer = window.setInterval(() => {
       nowMs = Date.now();
     }, 1000);
     return () => window.clearInterval(timer);
   });
+
+  function updateAskInteraction(patch: Partial<Omit<typeof askInteraction, "askId">>) {
+    askInteraction = {
+      askId,
+      selectedAnswer: askInteraction.askId === askId ? askInteraction.selectedAnswer : "",
+      deferred: askInteraction.askId === askId && askInteraction.deferred,
+      ...patch,
+    };
+  }
 
   function isRawAskPayload(item: TranscriptItem) {
     if ((item.title ?? "").toLowerCase() !== "ask") return false;
@@ -399,9 +401,9 @@
               {/if}
             {/if}
           {/if}
-          {#if item.role === "tool" && subcallsByParent.get(item.id)?.length}
+          {#if item.role === "tool" && subcallsByParent[item.id]?.length}
             <div class="tool-subcalls" aria-label={`Subcalls for ${item.title || item.id}`}>
-              {#each subcallsByParent.get(item.id) ?? [] as child (child.id)}
+              {#each subcallsByParent[item.id] ?? [] as child (child.id)}
                 <article class={`message message--tool message--subtool${child.pending ? " is-pending" : ""}`} data-parent-tool-id={item.id}>
                   {#if child.pending && !child.body.trim()}
                     <div class="pending-status pending-status--compact" role="status" aria-live="polite">
@@ -421,17 +423,22 @@
   {/each}
 
   {#if approval}
-    <article class="decision-shelf">
+    <article class="decision-shelf decision-shelf--approval" data-risk={approval.guardian?.risk_level || "unknown"}>
       <div>
         <ShieldAlert size={18} />
-        <strong>{approval.tool === "trusted_intranet_access" ? "内网站点授权" : approval.tool === "exit_plan_mode" ? "Plan approval" : "Tool approval"}</strong>
+        <strong>{approval.tool === "trusted_intranet_access" ? "内网站点授权" : approval.tool === "exit_plan_mode" ? "计划执行审批" : "工具执行审批"}</strong>
         <span>{approval.tool}</span>
       </div>
-      {#if approval.subject}
-        <pre>{approval.subject}</pre>
-      {/if}
-      {#if approval.reason}
-        <p class="decision-reason">{approval.reason}</p>
+      <dl class="approval-facts">
+        <div><dt>动作</dt><dd>{approval.tool}</dd></div>
+        <div><dt>目标</dt><dd><code>{approval.subject || "未提供目标"}</code></dd></div>
+        <div><dt>理由</dt><dd>{approval.reason || approval.guardian?.rationale || "运行时要求在执行前获得明确授权。"}</dd></div>
+        <div><dt>风险</dt><dd>{approval.guardian?.risk_level || "尚未评估"}{approval.guardian?.outcome ? ` · ${approval.guardian.outcome}` : ""}</dd></div>
+        <div><dt>已有授权</dt><dd>{approval.guardian?.user_authorization || "未检测到可复用授权"}</dd></div>
+        <div><dt>授权范围</dt><dd>请选择仅本次、当前会话或持久规则；持久授权会影响后续同类操作。</dd></div>
+      </dl>
+      {#if approval.guardian?.rationale && approval.reason && approval.guardian.rationale !== approval.reason}
+        <p class="decision-reason">Guardian：{approval.guardian.rationale}</p>
       {/if}
       <div class="decision-actions">
         {#if approval.tool === "trusted_intranet_access"}
@@ -439,10 +446,10 @@
           <button type="button" onclick={() => onApprove(true, true, true)}>永久允许</button>
           <button type="button" onclick={() => onApprove(false, false, false)}><X size={14} /> 拒绝</button>
         {:else}
-          <button type="button" onclick={() => onApprove(true, false, false)}><Check size={14} /> Allow once</button>
-          <button type="button" onclick={() => onApprove(true, true, false)}>Allow session</button>
-          <button type="button" onclick={() => onApprove(true, true, true)}>Persist</button>
-          <button type="button" onclick={() => onApprove(false, false, false)}><X size={14} /> Deny</button>
+          <button type="button" onclick={() => onApprove(true, false, false)}><Check size={14} /> 仅本次</button>
+          <button type="button" onclick={() => onApprove(true, true, false)}>当前会话</button>
+          <button type="button" onclick={() => onApprove(true, true, true)}>持久规则</button>
+          <button type="button" onclick={() => onApprove(false, false, false)}><X size={14} /> 拒绝</button>
         {/if}
       </div>
     </article>
@@ -457,18 +464,22 @@
           <span>{question.prompt}</span>
         </div>
       </div>
-      <div class="answer-grid">
-        {#each question.options as option (option.label)}
-          <button class={selectedAnswer === option.label ? "is-active" : ""} type="button" onclick={() => (selectedAnswer = option.label)}>
-            <strong>{option.label}</strong>
-            {#if option.description}<span>{option.description}</span>{/if}
-          </button>
-        {/each}
-      </div>
-      <div class="decision-actions">
-        <button type="button" disabled={!selectedAnswer} onclick={() => onAnswerAsk(askAnswer)}>提交选择</button>
-        <button type="button" onclick={onDismissAsk}>稍后处理</button>
-      </div>
+      {#if askDeferred}
+        <div class="decision-actions"><button type="button" onclick={() => updateAskInteraction({ deferred: false })}>重新打开待决策</button></div>
+      {:else}
+        <div class="answer-grid">
+          {#each question.options as option (option.label)}
+            <button class={selectedAnswer === option.label ? "is-active" : ""} type="button" onclick={() => updateAskInteraction({ selectedAnswer: option.label })}>
+              <strong>{option.label}</strong>
+              {#if option.description}<span>{option.description}</span>{/if}
+            </button>
+          {/each}
+        </div>
+        <div class="decision-actions">
+          <button type="button" disabled={!selectedAnswer} onclick={() => onAnswerAsk(askAnswer)}>提交选择</button>
+          <button type="button" onclick={() => updateAskInteraction({ deferred: true })}>稍后处理</button>
+        </div>
+      {/if}
     </article>
   {/if}
 </section>
@@ -902,8 +913,48 @@
   }
 
   .decision-shelf--ask {
-    border-color: #ead7bd;
-    background: #fff9f0;
+    border-color: color-mix(in srgb, #9a5b00 28%, var(--border, #dce1db));
+    background: color-mix(in srgb, var(--card, #fff) 91%, #9a5b00 9%);
+  }
+
+  .decision-shelf--approval[data-risk="high"],
+  .decision-shelf--approval[data-risk="critical"] {
+    border-color: color-mix(in srgb, var(--destructive, #b42318) 34%, var(--border, #dce1db));
+    background: color-mix(in srgb, var(--card, #fff) 92%, var(--destructive, #b42318) 8%);
+  }
+
+  .approval-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+  }
+
+  .approval-facts div {
+    min-width: 0;
+    padding: 10px 11px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 9px;
+    background: var(--muted, #edf0ec);
+  }
+
+  .approval-facts dt {
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .approval-facts dd {
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+    color: var(--foreground, #1f2421);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .approval-facts code {
+    font: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 
   .decision-shelf__head,
@@ -917,14 +968,14 @@
   .decision-shelf__icon,
   .decision-shelf > div:first-child > :global(svg) {
     flex: 0 0 auto;
-    color: #333333;
+    color: var(--foreground, #1f2421);
     margin-top: 1px;
   }
 
   .decision-shelf__head strong,
   .decision-shelf > div:first-child strong {
     display: inline;
-    color: #1f2937;
+    color: var(--foreground, #1f2421);
     font-size: 14px;
     font-weight: 650;
   }
@@ -1042,6 +1093,10 @@
     }
 
     .answer-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .approval-facts {
       grid-template-columns: 1fr;
     }
 

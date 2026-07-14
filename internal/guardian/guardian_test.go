@@ -126,7 +126,7 @@ func TestGuardianSaveLoadRestoresCursorForDeltaTranscript(t *testing.T) {
 	parent := agent.NewSession("sys")
 	parent.Add(provider.Message{Role: provider.RoleUser, Content: "first user request"})
 
-	if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
+	if allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
 		t.Fatalf("first Review = allow %v err %v, want allow nil", allow, err)
 	}
 	path := filepath.Join(t.TempDir(), "session.guardian.jsonl")
@@ -145,7 +145,7 @@ func TestGuardianSaveLoadRestoresCursorForDeltaTranscript(t *testing.T) {
 		t.Fatalf("loaded cursor = %+v, want EntryCount 1", loaded.cursor)
 	}
 	parent.Add(provider.Message{Role: provider.RoleUser, Content: "second user request"})
-	if allow, _, err := loaded.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"b.txt"}`), parent); err != nil || !allow {
+	if allow, _, _, err := loaded.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"b.txt"}`), parent); err != nil || !allow {
 		t.Fatalf("second Review = allow %v err %v, want allow nil", allow, err)
 	}
 
@@ -189,10 +189,10 @@ func TestGuardianUsageDoesNotLeakAcrossReviews(t *testing.T) {
 	parent := agent.NewSession("sys")
 	parent.Add(provider.Message{Role: provider.RoleUser, Content: "do it"})
 
-	if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
+	if allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
 		t.Fatalf("first Review = allow %v err %v, want allow nil", allow, err)
 	}
-	if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"b.txt"}`), parent); err != nil || !allow {
+	if allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"b.txt"}`), parent); err != nil || !allow {
 		t.Fatalf("second Review = allow %v err %v, want allow nil", allow, err)
 	}
 
@@ -222,7 +222,7 @@ func TestGuardianReviewTurnsAlternateRoles(t *testing.T) {
 	parent.Add(provider.Message{Role: provider.RoleUser, Content: "do the thing"})
 
 	for i := 0; i < 2; i++ {
-		if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
+		if allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
 			t.Fatalf("review %d = allow %v err %v, want allow nil", i+1, allow, err)
 		}
 	}
@@ -269,7 +269,7 @@ func TestGuardianFailedReviewRollsBackSession(t *testing.T) {
 	parent := agent.NewSession("sys")
 	parent.Add(provider.Message{Role: provider.RoleUser, Content: "do the thing"})
 
-	allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent)
+	allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent)
 	if err == nil && allow {
 		t.Fatal("first review should fail closed")
 	}
@@ -277,7 +277,7 @@ func TestGuardianFailedReviewRollsBackSession(t *testing.T) {
 		t.Fatalf("guardian session messages = %d after failed review, want rollback to system only", n)
 	}
 
-	if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
+	if allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
 		t.Fatalf("second review = allow %v err %v, want allow nil", allow, err)
 	}
 	reqs := prov.requestsSnapshot()
@@ -328,7 +328,7 @@ func TestGuardianSessionAlternatesAfterCompaction(t *testing.T) {
 	filler := strings.Repeat("parent transcript filler. ", 160)
 	for i := 0; i < compactEvery; i++ {
 		parent.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("turn %d: %s", i, filler)})
-		if allow, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
+		if allow, _, _, err := gs.Review(context.Background(), "write_file", json.RawMessage(`{"file_path":"a.txt"}`), parent); err != nil || !allow {
 			t.Fatalf("review %d = allow %v err %v, want allow nil", i+1, allow, err)
 		}
 	}

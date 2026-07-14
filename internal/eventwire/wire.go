@@ -93,6 +93,9 @@ func ToWire(e event.Event) Event {
 		}
 	case event.ApprovalRequest:
 		w.Approval = &Approval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Reason: e.Approval.Reason}
+		if e.Approval.Guardian != nil {
+			w.Approval.Guardian = ToWireGuardian(*e.Approval.Guardian)
+		}
 	case event.AskRequest:
 		w.Ask = ToWireAsk(e.Ask)
 	case event.BrowserCredentialRequest, event.BrowserVerificationRequest:
@@ -263,10 +266,11 @@ type CacheDiagnostics struct {
 
 // Approval is the JSON form of an event.Approval.
 type Approval struct {
-	ID      string `json:"id"`
-	Tool    string `json:"tool"`
-	Subject string `json:"subject"`
-	Reason  string `json:"reason,omitempty"`
+	ID       string    `json:"id"`
+	Tool     string    `json:"tool"`
+	Subject  string    `json:"subject"`
+	Reason   string    `json:"reason,omitempty"`
+	Guardian *Guardian `json:"guardian,omitempty"`
 }
 
 // Guardian is the JSON form of an event.GuardianResult.

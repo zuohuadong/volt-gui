@@ -10,6 +10,7 @@ Use this index when filling `Required Skills and Conventions` in a Task Contract
 | GitHub / CNB / GitLab / local provider diagnostics and PR/MR state mapping | `provider-adapter` |
 | `setup.ts`, Bun CLI, shell hooks, cross-platform install/deploy behavior | `bun-cli-cross-platform` |
 | TypeScript typing, Bun-compatible imports, strict type fixes | `typescript` |
+| Volt GUI running queue, activity/receipt/recovery, approvals, Diff review, automation inbox, managed worktrees | `volt-desktop-experience` |
 | Elysia backend routes, validation, plugins, deployment | `elysiajs` |
 | NestJS enterprise Node.js backend, DI/modules/decorators/guards/pipes/microservices | `nestjs-backend` |
 | Hono lightweight Web Standards API, edge functions, Node/Bun/Deno portability | `hono-backend` |

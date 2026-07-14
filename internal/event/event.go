@@ -156,10 +156,11 @@ type FileDiff struct {
 // Approval identifies a pending tool-call approval for an ApprovalRequest
 // event. ID correlates the request with the controller's Approve(ID, …) reply.
 type Approval struct {
-	ID      string
-	Tool    string
-	Subject string
-	Reason  string // optional annotation explaining why approval is needed
+	ID       string
+	Tool     string
+	Subject  string
+	Reason   string          // optional annotation explaining why approval is needed
+	Guardian *GuardianResult // optional safety review attached for reliable UI correlation and replay
 }
 
 // AskOption is one choice the user can pick for an AskQuestion.

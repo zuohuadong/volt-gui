@@ -3547,8 +3547,12 @@ func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *
 func TestSteerForTabReconcilesStaleWorkspaceBeforeIdleFallback(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "steer_idle_fallback")
 
-	if err := f.app.SteerForTab(f.tab.ID, "/unknown-command"); err != nil {
-		t.Fatalf("SteerForTab: %v", err)
+	mode, err := f.app.SteerForTabMode(f.tab.ID, "/unknown-command")
+	if err != nil {
+		t.Fatalf("SteerForTabMode: %v", err)
+	}
+	if mode != control.SteerDispatchNewTurn {
+		t.Fatalf("SteerForTabMode = %q, want %q", mode, control.SteerDispatchNewTurn)
 	}
 	waitNotRunning(t, f.tab.Ctrl)
 	assertTabRebuiltToPinnedWorkspace(t, f)
@@ -3692,6 +3696,7 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 	start := make(chan struct{})
 	ready := make(chan struct{}, len(actions))
 	errs := make(chan error, len(actions))
+	var accepted atomic.Int32
 	var wg sync.WaitGroup
 	for _, action := range actions {
 		action := action
@@ -3701,8 +3706,17 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 			ready <- struct{}{}
 			<-start
 			if err := action.run(); err != nil {
+				message := err.Error()
+				if errors.Is(err, control.ErrTurnRunning) ||
+					strings.Contains(message, "turn already running") ||
+					strings.Contains(message, "cannot compact while a turn is running") ||
+					strings.Contains(message, "session rotation already in progress") {
+					return
+				}
 				errs <- fmt.Errorf("%s: %w", action.name, err)
+				return
 			}
+			accepted.Add(1)
 		}()
 	}
 	for range actions {
@@ -3728,6 +3742,9 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 	}
 	if t.Failed() {
 		return
+	}
+	if accepted.Load() == 0 {
+		t.Fatal("quick clicks should accept at least one action while rejecting competing actions explicitly")
 	}
 	if got := blockingCtrl.snapshotCount.Load(); got != 1 {
 		t.Fatalf("stale snapshot count = %d, want 1", got)
@@ -8641,5 +8658,88 @@ func TestScanPromptHistoryCacheIsScopedBySessionPath(t *testing.T) {
 	}
 	if len(second.Entries) != 2 || second.Entries[0].Text != "session B" || second.Entries[1].Text != "session A" {
 		t.Fatalf("second entries = %+v, want session B followed by session A", second.Entries)
+	}
+}
+
+func TestSubmitDispatchHintRecognizesSessionMaintenanceBeforeItCompletes(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "/new", want: submitDispatchMaintenance},
+		{input: "  /clear  ", want: submitDispatchMaintenance},
+		{input: "/compact", want: submitDispatchMaintenance},
+		{input: "/compact keep the verification evidence", want: submitDispatchMaintenance},
+		{input: "/branch verifier", want: submitDispatchMaintenance},
+		{input: "/switch branch-id", want: submitDispatchMaintenance},
+		{input: "/rewind 2 both", want: submitDispatchMaintenance},
+		{input: "/new topic", want: ""},
+		{input: "continue implementation", want: ""},
+	}
+	for _, test := range tests {
+		if got := submitDispatchHint(test.input); got != test.want {
+			t.Errorf("submitDispatchHint(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
+func TestSubmitDisplayToTabModeReturnsMaintenanceForFastSessionRotation(t *testing.T) {
+	for _, command := range []string{"/new", "/clear"} {
+		t.Run(command, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "active.jsonl")
+			session := agent.NewSession("system")
+			session.Add(provider.Message{Role: provider.RoleUser, Content: "old transcript"})
+			executor := agent.New(nil, nil, session, agent.Options{}, event.Discard)
+			ctrl := control.New(control.Options{Executor: executor, SessionDir: dir, SessionPath: path, Label: "test", Sink: event.Discard})
+			defer ctrl.Close()
+
+			app := NewApp()
+			app.setTestCtrl(ctrl, "")
+			mode, err := app.SubmitDisplayToTabMode("test", command, command)
+			if err != nil {
+				t.Fatalf("SubmitDisplayToTabMode(%q): %v", command, err)
+			}
+			if mode != submitDispatchMaintenance {
+				t.Fatalf("SubmitDisplayToTabMode(%q) mode = %q, want %q", command, mode, submitDispatchMaintenance)
+			}
+
+			deadline := time.Now().Add(2 * time.Second)
+			for ctrl.RuntimeStatus().Rotating && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if ctrl.RuntimeStatus().Rotating {
+				t.Fatalf("%s rotation did not settle", command)
+			}
+			if got := ctrl.History(); len(got) != 0 {
+				t.Fatalf("%s history = %+v, want empty rotated session", command, got)
+			}
+			if ctrl.SessionPath() == path {
+				t.Fatalf("%s kept the old session path %q", command, path)
+			}
+		})
+	}
+}
+
+func TestReadFileForTabUsesOwningWorkspaceInsteadOfActiveWorkspace(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootA, "owner.txt"), []byte("active workspace"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootB, "owner.txt"), []byte("thread workspace"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{
+		"active": {ID: "active", Scope: "project", WorkspaceRoot: rootA, Ready: true},
+		"thread": {ID: "thread", Scope: "project", WorkspaceRoot: rootB, Ready: true},
+	}
+	app.activeTabID = "active"
+	app.tabOrder = []string{"active", "thread"}
+
+	preview := app.ReadFileForTab("thread", "owner.txt")
+	if preview.Err != "" || preview.Body != "thread workspace" {
+		t.Fatalf("ReadFileForTab thread preview = %+v", preview)
 	}
 }

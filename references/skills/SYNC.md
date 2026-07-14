@@ -2,7 +2,7 @@
 
 This repository vendors the shared agent-team skill reference set under `references/skills/`.
 
-Current manifest count: 31
+Current manifest count: 32
 
 ## Verification
 

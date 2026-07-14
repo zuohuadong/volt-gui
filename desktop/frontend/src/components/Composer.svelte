@@ -4,8 +4,10 @@
   import { t } from "../lib/i18n";
   import { app, onFilesDropped } from "../lib/bridge";
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
+  import type { QueuedThreadMessage } from "../lib/task-lifecycle";
   import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
   import type { ActivityMode, CommandInfo, ComposerAttachment, ContextPanelInfo, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
+  import ThreadQueue from "./ThreadQueue.svelte";
 
   let {
     input,
@@ -31,6 +33,12 @@
     activityMode,
     contextInfo,
     backgroundRunCount = 0,
+    queuedMessages = [],
+    onEditQueuedMessage,
+    onDeleteQueuedMessage,
+    onMoveQueuedMessage,
+    onSteerQueuedMessage,
+    onResumeQueuedMessage,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -55,6 +63,12 @@
     activityMode?: ActivityMode;
     contextInfo?: ContextPanelInfo;
     backgroundRunCount?: number;
+    queuedMessages?: QueuedThreadMessage[];
+    onEditQueuedMessage?: (id: string, display: string) => void;
+    onDeleteQueuedMessage?: (id: string) => void;
+    onMoveQueuedMessage?: (id: string, offset: -1 | 1) => void;
+    onSteerQueuedMessage?: (id: string) => void | Promise<void>;
+    onResumeQueuedMessage?: (id: string) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -83,7 +97,7 @@
   const slashArgMode = $derived(/^\/[^\s]+\s+/.test(input));
   const atMatch = $derived(/(?:^|\s)@([^\s]*)$/.exec(input)?.[1] ?? null);
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
-  const canSubmit = $derived(!sending && !disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
+  const canSubmit = $derived(!disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
   const selectedModelInfo = $derived(models.find((model) => modelValue(model) === selectedModel) ?? models.find((model) => model.current));
   const selectedModelSupportsImages = $derived(selectedModelInfo?.vision ?? imageInputEnabled);
   const hasImageAttachments = $derived(attachments.some((attachment) => Boolean(attachment.previewUrl)));
@@ -319,7 +333,7 @@
 
   function submitComposer() {
     const text = input.trim();
-    if (sending || disabled || !canSubmit) return;
+    if (disabled || !canSubmit) return;
     const refs = attachments.map((attachment) => `@${attachment.path}`).join(" ");
     const displayText = [text, refs].filter(Boolean).join(text && refs ? " " : "");
     const projectLabel = selectedProjectId ? selectedProjectLabel() : "";
@@ -555,6 +569,15 @@
     {/if}
   </div>
 
+  <ThreadQueue
+    messages={queuedMessages}
+    onEdit={onEditQueuedMessage ?? (() => undefined)}
+    onDelete={onDeleteQueuedMessage ?? (() => undefined)}
+    onMove={onMoveQueuedMessage ?? (() => undefined)}
+    onSteer={onSteerQueuedMessage ?? (() => undefined)}
+    onResume={onResumeQueuedMessage ?? (() => undefined)}
+  />
+
   <div class="composer__runtime-status" aria-label="Thread 运行状态">
     <span data-thread-status="context">上下文剩余 <strong>{remainingContextPercent === undefined ? "待统计" : `${remainingContextPercent}%`}</strong></span>
     <span data-thread-status="cost">本会话费用 <strong>{sessionCostLabel}</strong></span>
@@ -681,6 +704,10 @@
         {/if}
       </select>
       {#if sending}
+        <button class="composer__submit" type="submit" aria-label="加入后续队列" title={disabledReason || "加入后续队列"} disabled={!canSubmit}>
+          <Send size={16} />
+          <span>排队</span>
+        </button>
         <button class="composer__submit secondary" type="button" aria-label={t.composer.cancel} title={t.composer.cancel} onclick={onCancel}>
           <Square size={16} />
         </button>

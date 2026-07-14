@@ -19,10 +19,15 @@ import type {
   HistoryMessage,
   MCPServerInput,
   MemoryView,
+  ManagedWorktree,
+  ManagedWorktreeHandoff,
+  ManagedWorktreeSnapshot,
   ScopedMemoryContext,
   ScopedMemoryEntry,
   ScopedMemoryInput,
   ScopedMemoryView,
+  SteerDispatchMode,
+  SubmitDispatchMode,
   ModelInfo,
   ProjectNode,
   ProviderView,
@@ -53,6 +58,7 @@ import type {
   WorkbenchProjectMaterialBatchInput,
   WorkbenchProjectMaterialInput,
   WorkbenchAutomation,
+  WorkbenchAutomationRun,
   WorkbenchAutomationInput,
   WorkbenchCalendarEvent,
   WorkbenchCalendarEventInput,
@@ -94,7 +100,12 @@ interface AppBindings {
   Brand(): Promise<BrandInfo>;
   SubmitToTab(tabID: string, input: string): Promise<void>;
   SubmitDisplayToTab(tabID: string, display: string, input: string): Promise<void>;
+  SubmitDisplayToTabMode(tabID: string, display: string, input: string): Promise<SubmitDispatchMode>;
   CancelTab(tabID: string): Promise<void>;
+  SteerForTab(tabID: string, text: string): Promise<void>;
+  SteerForTabMode(tabID: string, text: string): Promise<SteerDispatchMode>;
+  ReplayPendingPrompts(): Promise<void>;
+  ReplayPendingPromptsForTab(tabID: string): Promise<void>;
   ListTabs(): Promise<TabMeta[]>;
   SetActiveTab(tabID: string): Promise<void>;
   PickWorkspace(): Promise<string>;
@@ -145,11 +156,19 @@ interface AppBindings {
   ListDir(rel: string): Promise<DirEntry[]>;
   SearchFileRefs(query: string): Promise<DirEntry[]>;
   ReadFile(rel: string): Promise<FilePreview>;
+  ReadFileForTab(tabID: string, rel: string): Promise<FilePreview>;
   OpenWorkspacePath(rel: string): Promise<void>;
   RevealWorkspacePath(rel: string): Promise<void>;
   RevealPath(path: string): Promise<void>;
   WorkspaceChanges(paths: string[]): Promise<WorkspaceChangesView>;
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
+  WorkspaceDiffForTab(tabID: string, rel: string): Promise<WorkspaceDiffView>;
+  ListManagedWorktrees(workspaceRoot: string): Promise<ManagedWorktree[]>;
+  ListManagedWorktreeSnapshots(workspaceRoot: string): Promise<ManagedWorktreeSnapshot[]>;
+  CreateManagedWorktree(workspaceRoot: string, name: string): Promise<ManagedWorktree>;
+  CreateManagedWorktreeSnapshot(worktreeID: string): Promise<ManagedWorktreeSnapshot>;
+  RestoreManagedWorktreeSnapshot(snapshotID: string, targetWorktreeID: string): Promise<ManagedWorktree>;
+  HandoffManagedWorktree(sourceWorktreeID: string, targetWorktreeID: string, summary: string): Promise<ManagedWorktreeHandoff>;
   SavePastedImage(dataUrl: string): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   PickProjectMaterialFile(): Promise<ProjectMaterialFile>;
@@ -172,6 +191,8 @@ interface AppBindings {
   SaveProjectMaterialsBatch(input: WorkbenchProjectMaterialBatchInput): Promise<WorkbenchProjectMaterial[]>;
   DeleteProjectMaterial(id: string): Promise<void>;
   ListAutomations(): Promise<WorkbenchAutomation[]>;
+  ListAutomationRuns(): Promise<WorkbenchAutomationRun[]>;
+  MarkAutomationRunRead(id: string, read: boolean): Promise<WorkbenchAutomationRun>;
   SaveAutomation(input: WorkbenchAutomationInput): Promise<WorkbenchAutomation>;
   DeleteAutomation(id: string): Promise<void>;
   RunAutomationNow(id: string): Promise<WorkbenchAutomation>;

@@ -76,6 +76,7 @@ type heartbeatExecuteTaskCtrlStub struct {
 	control.SessionAPI
 	status       control.RuntimeStatus
 	submitted    []string
+	submitErr    error
 	approvalMode string
 }
 
@@ -85,6 +86,14 @@ func (s *heartbeatExecuteTaskCtrlStub) RuntimeStatus() control.RuntimeStatus {
 
 func (s *heartbeatExecuteTaskCtrlStub) SubmitUserTurn(input, display string) {
 	s.submitted = append(s.submitted, input)
+}
+
+func (s *heartbeatExecuteTaskCtrlStub) SubmitUserTurnChecked(input, display string) error {
+	if s.submitErr != nil {
+		return s.submitErr
+	}
+	s.submitted = append(s.submitted, input)
+	return nil
 }
 
 func (s *heartbeatExecuteTaskCtrlStub) SetToolApprovalMode(mode string) {
@@ -128,6 +137,30 @@ func TestHeartbeatControllerBusyIncludesPendingPrompt(t *testing.T) {
 	}
 	if !heartbeatControllerBusy(heartbeatStatusStub{status: control.RuntimeStatus{PendingPrompt: true}}) {
 		t.Fatal("pending prompt should keep controller busy")
+	}
+	if !heartbeatControllerBusy(heartbeatStatusStub{status: control.RuntimeStatus{Submitting: true}}) {
+		t.Fatal("checked submission reservation should keep controller busy")
+	}
+}
+
+func TestSubmitUserTurnToTabDoesNotReportRejectedCheckedSubmission(t *testing.T) {
+	ctrl := &heartbeatExecuteTaskCtrlStub{submitErr: control.ErrTurnRunning}
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{"heartbeat": {
+		ID:          "heartbeat",
+		Scope:       "global",
+		Ready:       true,
+		Ctrl:        ctrl,
+		disabledMCP: map[string]ServerView{},
+	}}
+	app.activeTabID = "heartbeat"
+	app.tabOrder = []string{"heartbeat"}
+
+	if app.submitUserTurnToTab("heartbeat", "scheduled prompt") {
+		t.Fatal("rejected checked submission should not be reported as submitted")
+	}
+	if len(ctrl.submitted) != 0 {
+		t.Fatalf("rejected checked submission recorded prompts: %+v", ctrl.submitted)
 	}
 }
 

@@ -260,7 +260,7 @@ func (t *WorkspaceTab) hasActiveRuntimeWork() bool {
 		return false
 	}
 	status := t.Ctrl.RuntimeStatus()
-	return status.Running || status.PendingPrompt || status.BackgroundJobs > 0
+	return status.Running || status.Rotating || status.Submitting || status.PendingPrompt || status.BackgroundJobs > 0
 }
 
 // sessionRuntimeKey is the comparison/map key for "same session" checks. It
@@ -1543,7 +1543,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	}
 	if tab.Ctrl != nil {
 		status := tab.Ctrl.RuntimeStatus()
-		m.Running = status.Running || status.PendingPrompt || status.BackgroundJobs > 0
+		m.Running = status.Running || status.Rotating || status.Submitting || status.PendingPrompt || status.BackgroundJobs > 0
 		m.PendingPrompt = status.PendingPrompt
 		m.BackgroundJobs = status.BackgroundJobs
 		m.CancelRequested = status.CancelRequested
@@ -6762,7 +6762,7 @@ func (a *App) ListProjectTree() []ProjectNode {
 		if tab.Ctrl != nil {
 			runtimeStatus = tab.Ctrl.RuntimeStatus()
 		}
-		running := status != "" || runtimeStatus.Running || runtimeStatus.PendingPrompt || runtimeStatus.BackgroundJobs > 0
+		running := status != "" || runtimeStatus.Running || runtimeStatus.Rotating || runtimeStatus.Submitting || runtimeStatus.PendingPrompt || runtimeStatus.BackgroundJobs > 0
 		runtimeSessionsByTopic[topicSummaryKey(tab.Scope, tab.WorkspaceRoot, tab.TopicID)] = append(runtimeSessionsByTopic[topicSummaryKey(tab.Scope, tab.WorkspaceRoot, tab.TopicID)], runtimeSessionStatus{
 			sessionPath:      sessionPath,
 			label:            label,
@@ -7645,7 +7645,7 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 			ctrlDir = strings.TrimSpace(dir)
 		}
 		status := ctrl.RuntimeStatus()
-		activeWork = status.Running || status.PendingPrompt || status.BackgroundJobs > 0
+		activeWork = status.Running || status.Rotating || status.Submitting || status.PendingPrompt || status.BackgroundJobs > 0
 		mode = tabModeFromAxes(ctrl.PlanMode(), ctrl.AutoApproveTools())
 		toolApprovalMode = normalizeToolApprovalMode(ctrl.ToolApprovalMode())
 		if ctrl.GoalStatus() == control.GoalStatusRunning {

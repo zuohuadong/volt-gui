@@ -1383,6 +1383,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Jobs:                   jm,
 		Registry:               reg,
 		PluginCtx:              ctx,
+		MCPDefaultCallTimeout:  pluginSpecOptions.DefaultCallTimeout,
 		WorkspaceRoot:          root,
 		ExternalFolderToolRefs: readPathResolver,
 		AutoPlan:               cfg.Agent.AutoPlan,

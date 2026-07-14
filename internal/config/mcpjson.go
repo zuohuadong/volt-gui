@@ -209,7 +209,7 @@ func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
 		TrustedReadOnlyTools:     s.TrustedReadOnlyTools,
 		AutoStart:                s.AutoStart,
 		DefaultToolsApprovalMode: s.DefaultToolsApprovalMode,
-		Tools:                    s.Tools,
+		Tools:                    mcpToolPoliciesWithApprovalMode(s.Tools),
 		ApprovalsReviewer:        s.ApprovalsReviewer,
 	}
 	e, _ = NormalizePluginCommandLine(e)
@@ -252,7 +252,9 @@ func UpsertMCPJSONPlugin(path string, entry PluginEntry) (bool, error) {
 			return false, fmt.Errorf("mcp config %s: server %q is not an object", path, entry.Name)
 		}
 	}
-	applyPluginEntryToMCPJSONServer(server, entry)
+	if err := applyPluginEntryToMCPJSONServer(server, entry); err != nil {
+		return false, fmt.Errorf("mcp config %s: server %q: %w", path, entry.Name, err)
+	}
 	updatedRaw, err := json.Marshal(server)
 	if err != nil {
 		return false, fmt.Errorf("mcp config %s: server %q: %w", path, entry.Name, err)
@@ -307,7 +309,7 @@ func readMCPJSONRaw(path string) (map[string]json.RawMessage, map[string]json.Ra
 	return root, servers, nil
 }
 
-func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry PluginEntry) {
+func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry PluginEntry) error {
 	transport := strings.ToLower(strings.TrimSpace(entry.Type))
 	if transport == "" {
 		transport = "stdio"
@@ -332,19 +334,88 @@ func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry Pl
 	setMCPJSONStringArray(server, "trusted_read_only_tools", entry.TrustedReadOnlyTools)
 	setMCPJSONBool(server, "auto_start", entry.AutoStart)
 	setMCPJSONString(server, "default_tools_approval_mode", strings.TrimSpace(entry.DefaultToolsApprovalMode))
-	setMCPJSONToolPolicies(server, "tools", entry.Tools)
+	if err := setMCPJSONToolPolicies(server, "tools", entry.Tools); err != nil {
+		return err
+	}
 	setMCPJSONString(server, "approvals_reviewer", strings.TrimSpace(entry.ApprovalsReviewer))
+	return nil
 }
 
-func setMCPJSONToolPolicies(server map[string]json.RawMessage, key string, values map[string]MCPToolPolicy) {
+func mcpToolPoliciesWithApprovalMode(values map[string]MCPToolPolicy) map[string]MCPToolPolicy {
 	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]MCPToolPolicy, len(values))
+	for name, policy := range values {
+		if strings.TrimSpace(policy.ApprovalMode) != "" {
+			out[name] = policy
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func setMCPJSONToolPolicies(server map[string]json.RawMessage, key string, values map[string]MCPToolPolicy) error {
+	tools := map[string]json.RawMessage{}
+	if raw, ok := server[key]; ok && len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
+		if err := json.Unmarshal(raw, &tools); err != nil || tools == nil {
+			return fmt.Errorf("%s must be an object", key)
+		}
+	}
+
+	// An omitted Reasonix policy means remove only approval_mode. Other clients
+	// may own additional fields on the same tool entry, so keep those intact.
+	for name, raw := range tools {
+		if _, keep := values[name]; keep {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+			continue
+		}
+		delete(fields, "approval_mode")
+		if len(fields) == 0 {
+			delete(tools, name)
+			continue
+		}
+		updated, err := json.Marshal(fields)
+		if err != nil {
+			return fmt.Errorf("%s[%q]: %w", key, name, err)
+		}
+		tools[name] = updated
+	}
+
+	for name, policy := range values {
+		fields := map[string]json.RawMessage{}
+		if raw, ok := tools[name]; ok {
+			if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+				return fmt.Errorf("%s[%q] must be an object to update approval_mode", key, name)
+			}
+		}
+		mode, err := json.Marshal(strings.TrimSpace(policy.ApprovalMode))
+		if err != nil {
+			return fmt.Errorf("%s[%q].approval_mode: %w", key, name, err)
+		}
+		fields["approval_mode"] = mode
+		updated, err := json.Marshal(fields)
+		if err != nil {
+			return fmt.Errorf("%s[%q]: %w", key, name, err)
+		}
+		tools[name] = updated
+	}
+
+	if len(tools) == 0 {
 		delete(server, key)
-		return
+		return nil
 	}
-	raw, err := json.Marshal(values)
-	if err == nil {
-		server[key] = raw
+	raw, err := json.Marshal(tools)
+	if err != nil {
+		return fmt.Errorf("%s: %w", key, err)
 	}
+	server[key] = raw
+	return nil
 }
 
 func writeMCPJSONServers(path string, root map[string]json.RawMessage, servers map[string]json.RawMessage) error {

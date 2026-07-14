@@ -473,8 +473,8 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
 的工具会参与并行调度并命中普通权限层的只读默认放行。但这个标注来自第三方 server，本身不构成
 Plan mode、planner 或 read-only research 子代理的本地信任；已审计的 reader 需要写入本地
-`trusted_read_only_tools`。没有 `readOnlyHint` 的工具仍按写工具处理。即使正在计划模式，已安装的
-MCP 写工具也进入普通权限层；普通内置写工具仍会在计划批准前被阻止。
+`trusted_read_only_tools`。没有 `readOnlyHint` 的工具仍按写工具处理。MCP 写工具和普通内置写工具
+一样，会在计划批准前被阻止。
 
 MCP `destructiveHint: true` 的约束更严格。即使工具同时声明 `readOnlyHint`、当前是 Auto/YOLO，
 或已经存在 allow 规则，每次调用仍必须重新审查。默认由用户批准；显式配置

@@ -634,7 +634,7 @@ func TestPlanMCPJSONPreservesApprovalPolicy(t *testing.T) {
       "tool_timeout_seconds": {"wipe": 120},
       "trusted_read_only_tools": ["status"],
       "default_tools_approval_mode": "writes",
-      "tools": {"wipe": {"approval_mode": "prompt"}},
+	      "tools": {"wipe": {"approval_mode": "prompt"}, "external": {"enabled": false}},
       "approvals_reviewer": "auto_review"
     }
   }
@@ -645,7 +645,7 @@ func TestPlanMCPJSONPreservesApprovalPolicy(t *testing.T) {
 	got := entries[0]
 	if got.CallTimeoutSeconds != 45 || got.ToolTimeoutSeconds["wipe"] != 120 ||
 		len(got.TrustedReadOnlyTools) != 1 || got.TrustedReadOnlyTools[0] != "status" ||
-		got.DefaultToolsApprovalMode != "writes" || got.Tools["wipe"].ApprovalMode != "prompt" ||
+		got.DefaultToolsApprovalMode != "writes" || len(got.Tools) != 1 || got.Tools["wipe"].ApprovalMode != "prompt" ||
 		got.ApprovalsReviewer != "auto_review" {
 		t.Fatalf("advanced MCP config was dropped: %+v", got)
 	}

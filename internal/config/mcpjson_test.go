@@ -176,6 +176,106 @@ func TestMCPJSONApprovalPolicyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMCPJSONApprovalPolicyUpdatePreservesNestedUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), mcpJSONFile)
+	if err := os.WriteFile(path, []byte(`{
+  "mcpServers": {
+    "admin": {
+      "command": "old-admin-mcp",
+      "future_server_field": {"version": 2},
+      "tools": {
+        "wipe": {"approval_mode": "prompt", "enabled": false, "future": {"audit": true}},
+        "external_only": {"enabled": false},
+        "remove_keep": {"approval_mode": "writes", "enabled": true},
+        "remove_entirely": {"approval_mode": "approve"}
+      }
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UpsertMCPJSONPlugin(path, PluginEntry{
+		Name:    "admin",
+		Command: "admin-mcp",
+		Tools: map[string]MCPToolPolicy{
+			"wipe": {ApprovalMode: "approve"},
+			"new":  {ApprovalMode: "prompt"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := loadMCPJSON(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || len(entries[0].Tools) != 2 ||
+		entries[0].Tools["wipe"].ApprovalMode != "approve" || entries[0].Tools["new"].ApprovalMode != "prompt" {
+		t.Fatalf("Reasonix tool policies = %+v, want only updated wipe and new", entries)
+	}
+
+	root, servers, err := readMCPJSONRaw(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(root) == 0 {
+		t.Fatal("raw root is empty")
+	}
+	var server map[string]json.RawMessage
+	if err := json.Unmarshal(servers["admin"], &server); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := server["future_server_field"]; !ok {
+		t.Fatal("unknown per-server field was removed")
+	}
+	var tools map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(server["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 4 {
+		t.Fatalf("raw tools = %+v, want wipe, new, external_only, and remove_keep", tools)
+	}
+	if _, ok := tools["wipe"]["enabled"]; !ok {
+		t.Fatal("known tool lost external enabled field")
+	}
+	if _, ok := tools["wipe"]["future"]; !ok {
+		t.Fatal("known tool lost future nested field")
+	}
+	if _, ok := tools["external_only"]; !ok {
+		t.Fatal("unknown-only tool entry was removed")
+	}
+	if _, ok := tools["remove_keep"]["approval_mode"]; ok {
+		t.Fatal("removed Reasonix approval mode survived")
+	}
+	if _, ok := tools["remove_keep"]["enabled"]; !ok {
+		t.Fatal("removing approval mode removed external fields")
+	}
+	if _, ok := tools["remove_entirely"]; ok {
+		t.Fatal("approval-only entry should be removed when its policy is cleared")
+	}
+}
+
+func TestMCPJSONApprovalPolicyRejectsNonObjectToolUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), mcpJSONFile)
+	if err := os.WriteFile(path, []byte(`{
+  "mcpServers": {
+    "admin": {"command": "admin-mcp", "tools": {"wipe": false}}
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := UpsertMCPJSONPlugin(path, PluginEntry{
+		Name:    "admin",
+		Command: "admin-mcp",
+		Tools:   map[string]MCPToolPolicy{"wipe": {ApprovalMode: "prompt"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), `tools["wipe"] must be an object`) {
+		t.Fatalf("non-object tool update error = %v", err)
+	}
+}
+
 func TestNormalizePluginCommandLine(t *testing.T) {
 	cases := []struct {
 		name        string

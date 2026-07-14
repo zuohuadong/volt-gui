@@ -586,8 +586,7 @@ permission reader-default. Because the annotation is supplied by a third-party
 server, it does not by itself grant access to Plan mode, the planner, or
 read-only research sub-agents. Use the local `trusted_read_only_tools` override
 for a reader you have audited. Tools without the hint remain write-capable.
-Installed MCP writers use the normal permission posture even while planning;
-built-in writers remain blocked until the plan is approved.
+MCP writers remain blocked with built-in writers until the plan is approved.
 
 MCP `destructiveHint: true` is stricter than both classifications. Every call
 requires a new review, even if the tool also reports `readOnlyHint`, the current

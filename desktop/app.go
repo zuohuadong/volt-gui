@@ -8474,16 +8474,6 @@ func (a *App) resolvedModelForTab(tab *WorkspaceTab) (string, bool, error) {
 	return resolved, fallback, nil
 }
 
-func (a *App) withActiveWorkspace(fn func() (string, error)) (string, error) {
-	var result string
-	err := a.withActiveWorkspaceDo(func() error {
-		var err error
-		result, err = fn()
-		return err
-	})
-	return result, err
-}
-
 func (a *App) withActiveWorkspaceDo(fn func() error) error {
 	root := a.activeWorkspaceRoot()
 	if root != "" && root != "." {
@@ -8502,24 +8492,20 @@ func (a *App) withActiveWorkspaceDo(fn func() error) error {
 // SavePastedImage stores a browser clipboard image data URL under the active
 // tab's workspace .voltui/attachments and returns the relative @-reference path.
 func (a *App) SavePastedImage(dataURL string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.SaveImageDataURL(dataURL)
-	})
+	return control.SaveImageDataURLInRoot(a.activeWorkspaceRoot(), dataURL)
 }
 
 // SaveClipboardImage reads the native OS clipboard image under the active tab's
 // workspace .voltui/attachments and returns the relative @-reference path.
 func (a *App) SaveClipboardImage() (string, error) {
-	return a.withActiveWorkspace(control.SaveClipboardImage)
+	return control.SaveClipboardImageInRoot(a.activeWorkspaceRoot())
 }
 
 // SavePastedFile stores a dropped non-image file (the browser exposes its bytes
 // as a data URL but not a real path) under the active tab's workspace
 // .voltui/attachments and returns the relative @-reference path.
 func (a *App) SavePastedFile(name, dataURL string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.SaveAttachmentDataURL(name, dataURL)
-	})
+	return control.SaveAttachmentDataURLInRoot(a.activeWorkspaceRoot(), name, dataURL)
 }
 
 const (
@@ -8577,9 +8563,7 @@ func (a *App) ImportProjectMaterialFile(selectionToken string) (ProjectMaterialF
 	if err := validateProjectMaterialSelection(selection); err != nil {
 		return ProjectMaterialFile{}, err
 	}
-	path, err := a.withActiveWorkspace(func() (string, error) {
-		return control.SaveAttachmentFileWithExpectedInfo(selection.sourcePath, selection.identity)
-	})
+	path, err := control.SaveAttachmentFileWithExpectedInfoInRoot(a.activeWorkspaceRoot(), selection.sourcePath, selection.identity)
 	if err != nil {
 		return ProjectMaterialFile{}, err
 	}
@@ -8756,9 +8740,7 @@ func exportFileFilters(mimeType, ext string) []runtime.FileFilter {
 
 // AttachmentDataURL returns a safe data URL for a stored image attachment.
 func (a *App) AttachmentDataURL(path string) (string, error) {
-	return a.withActiveWorkspace(func() (string, error) {
-		return control.ImageDataURL(path)
-	})
+	return control.ImageDataURLInRoot(a.activeWorkspaceRoot(), path)
 }
 
 // DroppedItem is one OS-dropped file resolved into a composer context entry: an
@@ -8779,52 +8761,42 @@ type DroppedItem struct {
 // outside the workspace are registered as current-session folder references;
 // files outside the workspace are copied into .voltui/attachments.
 func (a *App) AttachDropped(path string) (DroppedItem, error) {
-	var item DroppedItem
-	err := a.withActiveWorkspaceDo(func() error {
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if isImageExt(path) {
-			if rel, err := control.SaveImageFile(path); err == nil {
-				preview, _ := control.ImageDataURL(rel)
-				item = DroppedItem{Kind: "attachment", Path: rel, PreviewURL: preview}
-				return nil
-			}
-		}
-		if rel, ok := workspaceRelativeIn(path, a.activeWorkspaceRoot()); ok {
-			item = DroppedItem{Kind: "workspace", Path: rel, IsDir: info.IsDir()}
-			return nil
-		}
-		if info.IsDir() {
-			tab, ctrl := a.tabAndCtrlByID("")
-			if err := a.ensureTabControllerWorkspace(tab); err != nil {
-				return err
-			}
-			if tab != nil {
-				ctrl = a.controllerForTab(tab)
-			}
-			if ctrl == nil {
-				return fmt.Errorf("workspace is not ready")
-			}
-			token, displayPath, err := ctrl.RegisterExternalFolderRef(path)
-			if err != nil {
-				return err
-			}
-			item = DroppedItem{Kind: "workspace", Path: token, IsDir: true, DisplayPath: displayPath}
-			return nil
-		}
-		rel, err := control.SaveAttachmentFile(path)
-		if err != nil {
-			return err
-		}
-		item = DroppedItem{Kind: "attachment", Path: rel}
-		return nil
-	})
+	root := a.activeWorkspaceRoot()
+	info, err := os.Lstat(path)
 	if err != nil {
 		return DroppedItem{}, err
 	}
-	return item, nil
+	if isImageExt(path) {
+		if rel, err := control.SaveImageFileInRoot(root, path); err == nil {
+			preview, _ := control.ImageDataURLInRoot(root, rel)
+			return DroppedItem{Kind: "attachment", Path: rel, PreviewURL: preview}, nil
+		}
+	}
+	if rel, ok := workspaceRelativeIn(path, root); ok {
+		return DroppedItem{Kind: "workspace", Path: rel, IsDir: info.IsDir()}, nil
+	}
+	if info.IsDir() {
+		tab, ctrl := a.tabAndCtrlByID("")
+		if err := a.ensureTabControllerWorkspace(tab); err != nil {
+			return DroppedItem{}, err
+		}
+		if tab != nil {
+			ctrl = a.controllerForTab(tab)
+		}
+		if ctrl == nil {
+			return DroppedItem{}, fmt.Errorf("workspace is not ready")
+		}
+		token, displayPath, err := ctrl.RegisterExternalFolderRef(path)
+		if err != nil {
+			return DroppedItem{}, err
+		}
+		return DroppedItem{Kind: "workspace", Path: token, IsDir: true, DisplayPath: displayPath}, nil
+	}
+	rel, err := control.SaveAttachmentFileInRoot(root, path)
+	if err != nil {
+		return DroppedItem{}, err
+	}
+	return DroppedItem{Kind: "attachment", Path: rel}, nil
 }
 
 func isImageExt(path string) bool {

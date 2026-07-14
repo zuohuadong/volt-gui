@@ -27,13 +27,12 @@ func writeVisionTestConfig(t *testing.T, root string) {
 
 func TestControllerInputImagesResolvesAttachment(t *testing.T) {
 	dir := t.TempDir()
-	t.Chdir(dir)
 	writeVisionTestConfig(t, dir)
-	ref, err := SaveImageDataURL("data:image/png;base64," + tinyPNG)
+	ref, err := SaveImageDataURLInRoot(dir, "data:image/png;base64,"+tinyPNG)
 	if err != nil {
-		t.Fatalf("SaveImageDataURL: %v", err)
+		t.Fatalf("SaveImageDataURLInRoot: %v", err)
 	}
-	urls := (&Controller{modelRef: "custom/vision-pro"}).inputImages("look at @" + ref)
+	urls := (&Controller{workspaceRoot: dir, modelRef: "custom/vision-pro"}).inputImages("look at @" + ref)
 	if len(urls) != 1 {
 		t.Fatalf("inputImages = %v, want one resolved data URL", urls)
 	}

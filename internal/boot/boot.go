@@ -269,6 +269,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		return nil, err
 	}
 	shell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, stderr)
+	writeRoots := cfg.WriteRootsForRoot(root)
 
 	sysPrompt, err := cfg.ResolveSystemPromptForRoot(root)
 	if err != nil {
@@ -285,6 +286,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
 		sysPrompt += "\n\n" + workspaceLine
+	}
+	if writableLine := writableRootsPromptLine(root, writeRoots); writableLine != "" {
+		sysPrompt += "\n\n" + writableLine
 	}
 	if tokenEconomy {
 		sysPrompt += "\n\n" + tokenEconomyPrompt
@@ -348,7 +352,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	reg := tool.NewRegistry()
 	reg.SetAllowPolicy(agentProfileToolAllowPolicy(opts.AgentProfile))
-	writeRoots := cfg.WriteRootsForRoot(root)
 	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)
 	// managedConfig names the Reasonix-owned config FILES (config.toml,
 	// compatibility TOMLs, legacy v0.x config.json) the file-writers may repair
@@ -1455,6 +1458,45 @@ func currentWorkspacePromptLine(root string) string {
 		return ""
 	}
 	return "Current workspace: " + strconv.Quote(root)
+}
+
+func writableRootsPromptLine(workspaceRoot string, roots []string) string {
+	if len(roots) == 0 || samePromptPath(workspaceRoot, roots[0]) {
+		return ""
+	}
+	line := "Writable root for file-editing tools: " + strconv.Quote(roots[0]) + ". It differs from the current workspace; write generated files under this root unless the user changes the sandbox configuration. Full-access approval does not bypass this boundary."
+	if len(roots) > 1 {
+		quoted := make([]string, 0, len(roots)-1)
+		for _, root := range roots[1:] {
+			if strings.TrimSpace(root) != "" {
+				quoted = append(quoted, strconv.Quote(root))
+			}
+		}
+		if len(quoted) > 0 {
+			line += " Additional writable roots: " + strings.Join(quoted, ", ") + "."
+		}
+	}
+	return line
+}
+
+func samePromptPath(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return a == b
+	}
+	if abs, err := filepath.Abs(a); err == nil {
+		a = abs
+	}
+	if abs, err := filepath.Abs(b); err == nil {
+		b = abs
+	}
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func resolveWorkspaceRoot(explicit string) string {

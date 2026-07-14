@@ -2255,6 +2255,10 @@ const repeatSuccessBreakThreshold = 2
 // pass, since that guard also invites the model to report the blocker.
 const loopGuardBlockErrMsg = "blocked by loop guard"
 
+// policyBlockErrMsg is stable across targets so a model that cosmetically
+// rewrites an outside-workspace path cannot evade blocker tracking.
+const policyBlockErrMsg = "blocked by host policy"
+
 // applyStormBreaker detects a run of zero-progress turns and, past the
 // threshold, rewrites the model-facing result (results[0]) into a directive to
 // change approach. Two detectors, because a stuck model varies its retries two
@@ -2285,7 +2289,7 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 		a.blockedTurnStreak = 0
 	}
 	for _, outcome := range outcomes {
-		if outcome.blocked && outcome.errMsg == loopGuardBlockErrMsg {
+		if outcome.blocked && (outcome.errMsg == loopGuardBlockErrMsg || outcome.errMsg == policyBlockErrMsg) {
 			a.armLoopGuardPass(receiptMark)
 			break
 		}
@@ -2580,6 +2584,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		// retry land valid instead of repeating the same broken shape.
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
+		}
+		if tool.IsPolicyBlock(err) {
+			body, truncMsg := truncateToolOutput(fmt.Sprintf("blocked: %v\n%s\nHost policy block: do not retry the same action unchanged. Use a path inside the writable workspace, request a specific user decision when appropriate, or explain the blocker.", err, detail))
+			return toolOutcome{output: body, blocked: true, errMsg: policyBlockErrMsg, truncated: truncMsg != "", truncMsg: truncMsg}
 		}
 		body, truncMsg := truncateToolOutput(fmt.Sprintf("error: %v\n%s", err, detail))
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg}

@@ -2489,6 +2489,44 @@ func TestCurrentWorkspacePromptLineEscapesControlCharacters(t *testing.T) {
 	}
 }
 
+func TestBuildPromptNamesDifferentEffectiveWritableRoot(t *testing.T) {
+	project := robustTempDir(t)
+	writableRoot := robustTempDir(t)
+	writeFile(t, project, "voltui.toml", fmt.Sprintf(`
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[sandbox]
+workspace_root = %q
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`, writableRoot))
+
+	ctrl, err := Build(context.Background(), Options{WorkspaceRoot: project})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	sys := systemMessage(ctrl.History())
+	for _, want := range []string{
+		"Current workspace: " + strconv.Quote(project),
+		"Writable root for file-editing tools: " + strconv.Quote(writableRoot),
+		"Full-access approval does not bypass this boundary",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, sys)
+		}
+	}
+}
+
 func TestBuildLanguagePolicyIsAppended(t *testing.T) {
 	dir := robustTempDir(t)
 	t.Chdir(dir)

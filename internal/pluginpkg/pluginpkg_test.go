@@ -380,6 +380,46 @@ func TestParseClaudeHooksWarnOnUnsupportedSemantics(t *testing.T) {
 			hooksJSON: `{"hooks":{"PermissionRequest":[{"matcher":"ExitPlanMode|EnterPlanMode","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
 			wantSub:   `will never fire`,
 		},
+		{
+			name:      "webfetch-required-prompt-is-unavailable",
+			hooksJSON: `{"hooks":{"PreToolUse":[{"matcher":"WebFetch","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
+			wantSub:   `required "prompt"`,
+		},
+		{
+			name:      "mixed-matcher-includes-webfetch",
+			hooksJSON: `{"hooks":{"PostToolUse":[{"matcher":"Bash|WebFetch","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
+			wantSub:   `required "prompt"`,
+		},
+		{
+			name:      "wildcard-matcher-includes-webfetch",
+			hooksJSON: `{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
+			wantSub:   `required "prompt"`,
+		},
+		{
+			name:      "empty-matcher-includes-webfetch",
+			hooksJSON: `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
+			wantSub:   `required "prompt"`,
+		},
+		{
+			name:      "regex-matcher-includes-webfetch",
+			hooksJSON: `{"hooks":{"PreToolUse":[{"matcher":"Web(Fetch|Search)","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
+			wantSub:   `required "prompt"`,
+		},
+		{
+			name:      "notebook-cell-number-has-no-claude-equivalent",
+			hooksJSON: `{"hooks":{"PreToolUse":[{"matcher":"NotebookEdit","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
+			wantSub:   `cell_number`,
+		},
+		{
+			name:      "task-output-may-cover-multiple-jobs",
+			hooksJSON: `{"hooks":{"PostToolUse":[{"matcher":"TaskOutput","hooks":[{"type":"command","command":"bin/watch"}]}]}}`,
+			wantSub:   `multiple or all background jobs`,
+		},
+		{
+			name:      "legacy-bash-output-may-cover-multiple-jobs",
+			hooksJSON: `{"hooks":{"PostToolUse":[{"matcher":"BashOutput","hooks":[{"type":"command","command":"bin/watch"}]}]}}`,
+			wantSub:   `multiple or all background jobs`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -433,10 +473,6 @@ func TestParseClaudeHooksDoesNotWarnOnMatchersThatCanFire(t *testing.T) {
 			// avoid guessing wrong and producing a false positive.
 			name:      "complex-regex-not-evaluated",
 			hooksJSON: `{"hooks":{"PreToolUse":[{"matcher":"WebSearch.*","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
-		},
-		{
-			name:      "wildcard-matcher",
-			hooksJSON: `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"bin/guard"}]}]}}`,
 		},
 		{
 			// A previously-unmapped Reasonix tool the fix now supports.

@@ -396,6 +396,20 @@ var claudeAgentSpawningTools = []string{
 	"explore", "research", "review", "security_review",
 }
 
+// claudeAgentDefaultDescriptions fill Claude Agent's required description
+// field when the corresponding Reasonix tool does not expose one or the model
+// omitted Reasonix's optional description. These are stable operation labels;
+// the complete task remains in prompt for hook policy decisions.
+var claudeAgentDefaultDescriptions = map[string]string{
+	"task":            "Run delegated subagent task",
+	"read_only_task":  "Run read-only research task",
+	"parallel_tasks":  "Run parallel subagent tasks",
+	"explore":         "Explore the codebase",
+	"research":        "Research external references",
+	"review":          "Review the current changes",
+	"security_review": "Review security risks",
+}
+
 // claudeToolNames maps Reasonix's own tool names to the *current* Claude Code
 // built-in tool name (https://code.claude.com/docs/en/tools-reference) — what
 // an imported hook's emitted tool_name payload field shows, and a script's own
@@ -418,8 +432,9 @@ func buildClaudeToolNames() map[string]string {
 		"read_only_skill": "Skill",
 		"todo_write":      "TodoWrite",
 		"notebook_edit":   "NotebookEdit",
-		"bash_output":     "BashOutput",
-		"kill_shell":      "KillShell",
+		"bash_output":     "TaskOutput",
+		"wait":            "TaskOutput",
+		"kill_shell":      "TaskStop",
 	}
 	for _, name := range claudeAgentSpawningTools {
 		out[name] = "Agent"
@@ -430,9 +445,10 @@ func buildClaudeToolNames() map[string]string {
 // claudeToolMatchAliases lists every tool name — current and legacy — an
 // imported hook's matcher may have been authored against for a Reasonix
 // tool, so a matcher written against an older Claude Code tool name keeps
-// firing after Claude renames the tool (the subagent tool was "Task" before
-// becoming "Agent"). claudeFacingToolName (the emitted tool_name payload)
-// always reports the current name; only matcher evaluation considers aliases.
+// firing after Claude renames the tool (Task became Agent; BashOutput/KillShell
+// became TaskOutput/TaskStop). claudeFacingToolName (the emitted tool_name
+// payload) always reports the current name; only matcher evaluation considers
+// aliases.
 var claudeToolMatchAliases = buildClaudeToolMatchAliases()
 
 func buildClaudeToolMatchAliases() map[string][]string {
@@ -440,6 +456,9 @@ func buildClaudeToolMatchAliases() map[string][]string {
 	for _, name := range claudeAgentSpawningTools {
 		out[name] = []string{"Agent", "Task"}
 	}
+	out["bash_output"] = []string{"TaskOutput", "BashOutput"}
+	out["wait"] = []string{"TaskOutput", "BashOutput"}
+	out["kill_shell"] = []string{"TaskStop", "KillShell"}
 	return out
 }
 
@@ -472,7 +491,8 @@ func claudeFacingToolName(name string) string {
 // from Claude's by a plain key rename are listed: Bash's "command",
 // Glob/Grep's "pattern"/"path", web_fetch's "url", ask's "questions",
 // todo_write's "todos", and task/read_only_task's "prompt"/"description"
-// already match Claude's own field names. NotebookEdit's cell_number (a
+// already use Claude's field names. Agent description can still be absent and
+// is filled separately below. NotebookEdit's cell_number (a
 // 0-based index) has no Claude field — Claude targets cells only by the
 // opaque cell_id, which Reasonix also accepts — so it passes through as an
 // extra key. parallel_tasks is a structural mismatch handled separately in
@@ -485,8 +505,8 @@ var claudeToolInputKeyRenames = map[string]map[string]string{
 	"notebook_edit":   {"path": "notebook_path"},
 	"run_skill":       {"name": "skill", "arguments": "args"},
 	"read_only_skill": {"name": "skill", "arguments": "args"},
-	"bash_output":     {"job_id": "bash_id"},
-	"kill_shell":      {"job_id": "shell_id"},
+	"bash_output":     {"job_id": "task_id"},
+	"kill_shell":      {"job_id": "task_id"},
 	// The dedicated subagent wrappers take their task text as "task";
 	// Claude's Agent tool calls the same thing "prompt".
 	"explore":         {"task": "prompt"},
@@ -506,13 +526,14 @@ var claudeAbsolutePathInputKeys = []string{"file_path", "notebook_path"}
 
 // claudeFacingToolInput adapts tool-call arguments to the tool_input a
 // Claude-authored hook script was written against: keys are renamed per
-// claudeToolInputKeyRenames, file paths are made absolute per
-// claudeAbsolutePathInputKeys, and parallel_tasks synthesizes Agent's
-// "prompt". Args needing no translation, or that aren't a JSON object, pass
-// through unchanged.
+// claudeToolInputKeyRenames, file paths are made absolute, current TaskOutput
+// fields and required Agent/AskUserQuestion/TodoWrite fields are supplied, and
+// parallel_tasks synthesizes Agent's "prompt". Args needing no translation, or
+// that aren't a JSON object, pass through unchanged.
 func claudeFacingToolInput(toolName string, args json.RawMessage, cwd string) json.RawMessage {
 	renames := claudeToolInputKeyRenames[toolName]
-	if len(renames) == 0 && toolName != "parallel_tasks" {
+	defaultAgentDescription, isAgent := claudeAgentDefaultDescriptions[toolName]
+	if len(renames) == 0 && !isAgent && toolName != "ask" && toolName != "todo_write" && toolName != "wait" {
 		return args
 	}
 	if len(args) == 0 {
@@ -530,6 +551,49 @@ func claudeFacingToolInput(toolName string, args json.RawMessage, cwd string) js
 			changed = true
 		}
 	}
+	if toolName == "notebook_edit" {
+		if _, exists := obj["new_source"]; !exists {
+			for _, alias := range []string{"content", "source", "new_string"} {
+				var value string
+				if err := json.Unmarshal(obj[alias], &value); err == nil && value != "" {
+					obj["new_source"] = obj[alias]
+					break
+				}
+			}
+			if _, exists := obj["new_source"]; !exists {
+				obj["new_source"] = json.RawMessage(`""`)
+			}
+			changed = true
+		}
+	}
+	if toolName == "bash_output" {
+		obj["block"] = json.RawMessage("false")
+		obj["timeout"] = json.RawMessage("0")
+		changed = true
+	}
+	if toolName == "wait" {
+		obj["block"] = json.RawMessage("true")
+		obj["timeout"] = json.RawMessage("0")
+		var jobIDs []string
+		if err := json.Unmarshal(obj["job_ids"], &jobIDs); err == nil && len(jobIDs) == 1 {
+			if body, err := json.Marshal(jobIDs[0]); err == nil {
+				obj["task_id"] = body
+			}
+		}
+		var timeoutSeconds int64
+		if err := json.Unmarshal(obj["timeout_seconds"], &timeoutSeconds); err == nil && timeoutSeconds > 0 && timeoutSeconds <= (1<<63-1)/1000 {
+			if body, err := json.Marshal(timeoutSeconds * 1000); err == nil {
+				obj["timeout"] = body
+			}
+		}
+		changed = true
+	}
+	if toolName == "ask" && fillClaudeAskDefaults(obj) {
+		changed = true
+	}
+	if toolName == "todo_write" && fillClaudeTodoDefaults(obj) {
+		changed = true
+	}
 	// parallel_tasks maps to Claude's Agent tool but carries an array of
 	// sub-tasks where Agent has a single prompt — a structural difference no
 	// key rename bridges. Synthesize "prompt" from every sub-task's prompt
@@ -541,6 +605,20 @@ func claudeFacingToolInput(toolName string, args json.RawMessage, cwd string) js
 			if v, err := json.Marshal(prompt); err == nil {
 				obj["prompt"] = v
 				changed = true
+			}
+		}
+	}
+	if isAgent {
+		var prompt string
+		_ = json.Unmarshal(obj["prompt"], &prompt)
+		if strings.TrimSpace(prompt) != "" {
+			var description string
+			_ = json.Unmarshal(obj["description"], &description)
+			if strings.TrimSpace(description) == "" {
+				if v, err := json.Marshal(defaultAgentDescription); err == nil {
+					obj["description"] = v
+					changed = true
+				}
 			}
 		}
 	}
@@ -566,6 +644,87 @@ func claudeFacingToolInput(toolName string, args json.RawMessage, cwd string) js
 		return args
 	}
 	return out
+}
+
+// fillClaudeAskDefaults supplies fields Claude requires but Reasonix treats as
+// optional. Empty option descriptions are honest (Reasonix has no explanation
+// to add), and omitted multiSelect has the same false default in both systems.
+func fillClaudeAskDefaults(obj map[string]json.RawMessage) bool {
+	var questions []map[string]json.RawMessage
+	if err := json.Unmarshal(obj["questions"], &questions); err != nil {
+		return false
+	}
+	changed := false
+	for _, question := range questions {
+		if _, exists := question["multiSelect"]; !exists {
+			question["multiSelect"] = json.RawMessage("false")
+			changed = true
+		}
+		var options []map[string]json.RawMessage
+		if err := json.Unmarshal(question["options"], &options); err != nil {
+			continue
+		}
+		optionsChanged := false
+		for _, option := range options {
+			if _, exists := option["description"]; !exists {
+				option["description"] = json.RawMessage(`""`)
+				optionsChanged = true
+				changed = true
+			}
+		}
+		if optionsChanged {
+			body, err := json.Marshal(options)
+			if err != nil {
+				return false
+			}
+			question["options"] = body
+		}
+	}
+	if !changed {
+		return false
+	}
+	body, err := json.Marshal(questions)
+	if err != nil {
+		return false
+	}
+	obj["questions"] = body
+	return true
+}
+
+// fillClaudeTodoDefaults supplies Claude's required activeForm label from the
+// Reasonix task content when the caller omitted it.
+func fillClaudeTodoDefaults(obj map[string]json.RawMessage) bool {
+	var todos []map[string]json.RawMessage
+	if err := json.Unmarshal(obj["todos"], &todos); err != nil {
+		return false
+	}
+	changed := false
+	for _, todo := range todos {
+		var activeForm string
+		_ = json.Unmarshal(todo["activeForm"], &activeForm)
+		if strings.TrimSpace(activeForm) != "" {
+			continue
+		}
+		var content string
+		if err := json.Unmarshal(todo["content"], &content); err != nil || strings.TrimSpace(content) == "" {
+			continue
+		}
+		body, err := json.Marshal(content)
+		if err != nil {
+			return false
+		}
+		todo["activeForm"] = body
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	body, err := json.Marshal(todos)
+	if err != nil {
+		return false
+	}
+	obj["todos"] = body
+	return true
 }
 
 // joinedParallelTaskPrompts flattens a parallel_tasks "tasks" array into one

@@ -593,6 +593,14 @@ func TestMatchesToolTranslatesClaudeToolNames(t *testing.T) {
 	if !MatchesTool(claude("AskUserQuestion"), "ask") {
 		t.Error(`Claude matcher "AskUserQuestion" should match Reasonix tool "ask"`)
 	}
+	for _, name := range []string{"bash_output", "wait"} {
+		if !MatchesTool(claude("TaskOutput"), name) || !MatchesTool(claude("BashOutput"), name) {
+			t.Errorf(`current "TaskOutput" and legacy "BashOutput" matchers should match Reasonix tool %q`, name)
+		}
+	}
+	if !MatchesTool(claude("TaskStop"), "kill_shell") || !MatchesTool(claude("KillShell"), "kill_shell") {
+		t.Error(`current "TaskStop" and legacy "KillShell" matchers should match Reasonix tool "kill_shell"`)
+	}
 }
 
 func TestClaudeFacingToolNameUsesCurrentNames(t *testing.T) {
@@ -607,6 +615,15 @@ func TestClaudeFacingToolNameUsesCurrentNames(t *testing.T) {
 	}
 	if got := claudeFacingToolName("read_only_skill"); got != "Skill" {
 		t.Errorf(`claudeFacingToolName("read_only_skill") = %q, want "Skill"`, got)
+	}
+	if got := claudeFacingToolName("bash_output"); got != "TaskOutput" {
+		t.Errorf(`claudeFacingToolName("bash_output") = %q, want "TaskOutput"`, got)
+	}
+	if got := claudeFacingToolName("kill_shell"); got != "TaskStop" {
+		t.Errorf(`claudeFacingToolName("kill_shell") = %q, want "TaskStop"`, got)
+	}
+	if got := claudeFacingToolName("wait"); got != "TaskOutput" {
+		t.Errorf(`claudeFacingToolName("wait") = %q, want "TaskOutput"`, got)
 	}
 	// Every subagent-spawning entry point — not just "task" — corresponds to
 	// Claude's single "Agent" tool, and a matcher can still use the legacy
@@ -626,7 +643,7 @@ func TestClaudeFacingToolNameUsesCurrentNames(t *testing.T) {
 	}
 }
 
-func TestClaudeFacingToolInputRenamesFilePathFields(t *testing.T) {
+func TestClaudeFacingToolInputAdaptsMappedTools(t *testing.T) {
 	cases := []struct {
 		name     string
 		toolName string
@@ -638,13 +655,23 @@ func TestClaudeFacingToolInputRenamesFilePathFields(t *testing.T) {
 		{"read_file", "read_file", `{"path":"a.txt"}`, `{"file_path":"a.txt"}`},
 		{"multi_edit", "multi_edit", `{"path":"a.txt","edits":[]}`, `{"edits":[],"file_path":"a.txt"}`},
 		{"notebook_edit", "notebook_edit", `{"path":"nb.ipynb","cell_id":"c1","new_source":"x"}`, `{"notebook_path":"nb.ipynb","cell_id":"c1","new_source":"x"}`},
+		{"notebook-edit-delete-default-source", "notebook_edit", `{"path":"nb.ipynb","cell_number":2,"edit_mode":"delete"}`, `{"notebook_path":"nb.ipynb","cell_number":2,"edit_mode":"delete","new_source":""}`},
+		{"notebook-edit-source-alias", "notebook_edit", `{"path":"nb.ipynb","cell_id":"c1","content":"x"}`, `{"notebook_path":"nb.ipynb","cell_id":"c1","content":"x","new_source":"x"}`},
 		{"run_skill", "run_skill", `{"name":"deploy","arguments":"prod"}`, `{"skill":"deploy","args":"prod"}`},
 		{"read_only_skill", "read_only_skill", `{"name":"explore","arguments":"map the auth flow"}`, `{"skill":"explore","args":"map the auth flow"}`},
-		{"bash_output", "bash_output", `{"job_id":"bash-1","filter":"err"}`, `{"bash_id":"bash-1","filter":"err"}`},
-		{"kill_shell", "kill_shell", `{"job_id":"bash-1"}`, `{"shell_id":"bash-1"}`},
-		{"explore-wrapper", "explore", `{"task":"find all callers of X"}`, `{"prompt":"find all callers of X"}`},
-		{"security_review-wrapper", "security_review", `{"task":"audit the diff"}`, `{"prompt":"audit the diff"}`},
-		{"task-already-claude-shaped", "task", `{"prompt":"do it","description":"short"}`, `{"prompt":"do it","description":"short"}`},
+		{"task-output", "bash_output", `{"job_id":"bash-1","filter":"err"}`, `{"task_id":"bash-1","filter":"err","block":false,"timeout":0}`},
+		{"task-output-wait-one", "wait", `{"job_ids":["task-1"],"timeout_seconds":3}`, `{"job_ids":["task-1"],"timeout_seconds":3,"task_id":"task-1","block":true,"timeout":3000}`},
+		{"task-output-wait-many", "wait", `{"job_ids":["task-1","task-2"]}`, `{"job_ids":["task-1","task-2"],"block":true,"timeout":0}`},
+		{"task-stop", "kill_shell", `{"job_id":"bash-1"}`, `{"task_id":"bash-1"}`},
+		{"ask-defaults", "ask", `{"questions":[{"question":"Which?","header":"Choice","options":[{"label":"A"},{"label":"B","description":"Keep B"}]}]}`, `{"questions":[{"question":"Which?","header":"Choice","multiSelect":false,"options":[{"label":"A","description":""},{"label":"B","description":"Keep B"}]}]}`},
+		{"todo-default-active-form", "todo_write", `{"todos":[{"content":"Run tests","status":"pending"},{"content":"Ship it","status":"completed","activeForm":"Shipping it"}]}`, `{"todos":[{"content":"Run tests","status":"pending","activeForm":"Run tests"},{"content":"Ship it","status":"completed","activeForm":"Shipping it"}]}`},
+		{"task-default-description", "task", `{"prompt":"do it"}`, `{"prompt":"do it","description":"Run delegated subagent task"}`},
+		{"task-explicit-description", "task", `{"prompt":"do it","description":"Inspect the auth flow"}`, `{"prompt":"do it","description":"Inspect the auth flow"}`},
+		{"read-only-task-default-description", "read_only_task", `{"prompt":"inspect it"}`, `{"prompt":"inspect it","description":"Run read-only research task"}`},
+		{"explore-wrapper", "explore", `{"task":"find all callers of X"}`, `{"prompt":"find all callers of X","description":"Explore the codebase"}`},
+		{"research-wrapper", "research", `{"task":"compare the SDK"}`, `{"prompt":"compare the SDK","description":"Research external references"}`},
+		{"review-wrapper", "review", `{"task":"review the diff"}`, `{"prompt":"review the diff","description":"Review the current changes"}`},
+		{"security-review-wrapper", "security_review", `{"task":"audit the diff"}`, `{"prompt":"audit the diff","description":"Review security risks"}`},
 		{"web_fetch-unchanged", "web_fetch", `{"url":"https://example.com"}`, `{"url":"https://example.com"}`},
 		{"bash-unchanged", "bash", `{"command":"ls"}`, `{"command":"ls"}`},
 		{"grep-unchanged", "grep", `{"pattern":"foo","path":"."}`, `{"pattern":"foo","path":"."}`},
@@ -723,6 +750,9 @@ func TestClaudeFacingToolInputParallelTasksSynthesizesPrompt(t *testing.T) {
 	}
 	if obj["prompt"] != "scan auth\n\nscan crypto" {
 		t.Errorf("prompt = %q, want the joined sub-task prompts", obj["prompt"])
+	}
+	if obj["description"] != "Run parallel subagent tasks" {
+		t.Errorf("description = %q, want a stable Claude Agent description", obj["description"])
 	}
 	if _, kept := obj["tasks"]; !kept {
 		t.Error("original tasks array should stay alongside the synthesized prompt")
@@ -1062,6 +1092,35 @@ func TestRunClaudeWriteFileGuardFiresAndSeesFilePath(t *testing.T) {
 	}
 	if _, hasPath := toolInput["path"]; hasPath {
 		t.Fatalf("tool_input still has Reasonix's \"path\" key: %#v", toolInput)
+	}
+}
+
+// TestRunClaudeAgentGuardFiresAndSeesRequiredFields covers the full matcher to
+// stdin path for a dedicated Reasonix subagent wrapper. Claude Agent requires
+// both prompt and description even though the wrapper only accepts task.
+func TestRunClaudeAgentGuardFiresAndSeesRequiredFields(t *testing.T) {
+	hooks := []ResolvedHook{{
+		HookConfig: HookConfig{Command: "guard", Match: "Agent", PayloadFormat: "claude"},
+		Event:      PreToolUse,
+	}}
+	var input SpawnInput
+	Run(context.Background(), Payload{
+		Event: PreToolUse, ToolName: "security_review",
+		ToolArgs: json.RawMessage(`{"task":"audit the auth changes"}`),
+	}, hooks, func(_ context.Context, in SpawnInput) SpawnResult { input = in; return SpawnResult{ExitCode: 0} })
+	if input.Command == "" {
+		t.Fatal(`matcher "Agent" did not fire for Reasonix tool "security_review"`)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(input.Stdin), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["tool_name"] != "Agent" {
+		t.Fatalf("tool_name = %v, want Agent", payload["tool_name"])
+	}
+	toolInput, ok := payload["tool_input"].(map[string]any)
+	if !ok || toolInput["prompt"] != "audit the auth changes" || toolInput["description"] != "Review security risks" {
+		t.Fatalf("tool_input = %#v, want Claude Agent prompt and description", payload["tool_input"])
 	}
 }
 

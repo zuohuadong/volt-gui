@@ -14,6 +14,7 @@ import {
   classicTopicWindow,
   projectTreeTopicHoverCardModel,
   projectTreeTopicMenuOffersPin,
+  projectTreeDedupedExactTime,
 } from "../components/ProjectTree";
 import type { ProjectNode } from "../lib/types";
 
@@ -420,6 +421,18 @@ eq(
   })(),
   { hasExactTime: true, metaRepeatsDate: false },
   "hover card for recent sessions still pairs relative time with the exact date",
+);
+
+eq(
+  projectTreeDedupedExactTime("3 turns · 2026/7/7", "2026/7/7"),
+  "",
+  "row title and hover card drop the exact date the meta line already ends with",
+);
+
+eq(
+  projectTreeDedupedExactTime("3 turns · 2 days ago", "2026/7/12"),
+  "2026/7/12",
+  "recent sessions keep the exact date next to the relative meta line",
 );
 
 eq(

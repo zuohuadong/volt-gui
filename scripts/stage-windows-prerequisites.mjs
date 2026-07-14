@@ -60,29 +60,37 @@ export function verifyAsset(data, expected, label) {
 
 async function readVerifiedAsset(spec, cacheDir) {
   let data;
-  let source;
   if (cacheDir) {
     const path = resolve(cacheDir, spec.name);
     if (!existsSync(path) || !statSync(path).isFile()) {
       throw new Error(`prerequisite asset directory does not contain ${spec.name}: ${path}`);
     }
     data = readFileSync(path);
-    source = path;
   } else {
     const response = await fetch(spec.url, { redirect: 'follow' });
     if (!response.ok) {
       throw new Error(`download ${spec.url}: HTTP ${response.status}`);
     }
     data = Buffer.from(await response.arrayBuffer());
-    source = spec.url;
   }
   verifyAsset(data, spec.sha256, spec.name);
-  return { data, source };
+  return data;
 }
 
-export function renderInstallScript(assets) {
+function bundleOptions(options = {}) {
+  const productName = String(options.productName ?? process.env.VOLTUI_BRAND_NAME ?? 'VoltUI').trim() || 'VoltUI';
+  const bundleVersion = String(options.bundleVersion ?? process.env.PREREQUISITES_BUNDLE_VERSION ?? '').trim();
+  const releaseTag = String(options.releaseTag ?? process.env.PREREQUISITES_RELEASE_TAG ?? '').trim();
+  const artifactName = String(options.artifactName ?? process.env.PREREQUISITES_ARTIFACT_NAME ?? '').trim();
+  const releaseURL = String(options.releaseURL ?? process.env.PREREQUISITES_RELEASE_URL ?? '').trim();
+  return { productName, bundleVersion, releaseTag, artifactName, releaseURL };
+}
+
+export function renderInstallScript(assets, options = {}) {
+  const { productName } = bundleOptions(options);
   const lines = [
     '@echo off',
+    'chcp 65001 >nul',
     'setlocal EnableExtensions',
     'cd /d "%~dp0"',
     'set "VOLTUI_RESTART_REQUIRED=0"',
@@ -106,10 +114,10 @@ export function renderInstallScript(assets) {
     'set "VOLTUI_EXIT_CODE=%errorlevel%"',
     'if not "%VOLTUI_EXIT_CODE%"=="0" goto failed',
     'if "%VOLTUI_RESTART_REQUIRED%"=="1" (',
-    '  echo [OK] Prerequisites installed. Restart Windows before installing VoltUI.',
+    `  echo [OK] Prerequisites installed. Restart Windows before installing ${productName}.`,
     '  exit /b 3010',
     ')',
-    'echo [OK] Prerequisites are ready. You can now run the VoltUI installer.',
+    `echo [OK] Prerequisites are ready. You can now run the ${productName} installer.`,
     'exit /b 0',
     '',
     ':failed',
@@ -150,18 +158,26 @@ export function renderInstallScript(assets) {
   return lines.join('\r\n');
 }
 
-function renderReadme(target, assets) {
+export function renderReadme(target, assets, options = {}) {
+  const { productName, bundleVersion, releaseTag, artifactName, releaseURL } = bundleOptions(options);
+  const releaseLines = releaseURL ? [
+    `发布地址：${releaseURL}`,
+    '',
+  ] : [];
   return [
-    `VoltUI Windows 前置依赖离线包（${target}）`,
+    `${productName} Windows 前置依赖离线包（${target}${bundleVersion ? `，${bundleVersion}` : ''}）`,
     '',
-    '用途：供无法访问互联网的内网 Windows 电脑安装 VoltUI 所需的微软运行环境。',
-    '请先安装此 prerequisites 包，再运行同一个 VoltUI 在线安装包；无需重复下载完整离线 VoltUI 安装器。',
+    `用途：供无法访问互联网的内网 Windows 电脑安装 ${productName} 所需的微软运行环境。`,
+    `请先安装此 prerequisites 包，再运行同一个 ${productName} 在线安装包；无需重复下载完整离线安装器。`,
+    ...(artifactName ? [`资产文件：${artifactName}`] : []),
+    ...(releaseTag ? [`独立版本：${releaseTag}`] : []),
     '',
+    ...releaseLines,
     '安装步骤：',
     '1. 将整个 ZIP 解压到本地目录。',
     '2. 双击 install-prerequisites.cmd，并在 UAC 提示中允许管理员权限。',
     '3. 脚本会先安装 Microsoft Visual C++ 2015-2022 Redistributable，再安装 WebView2 Evergreen Runtime。',
-    '4. 若提示需要重启，请重启 Windows 后再运行 VoltUI 安装器。',
+    `4. 若提示需要重启，请重启 Windows 后再运行 ${productName} 安装器。`,
     '',
     '故障排查：若安装器仍提示“应用程序的并行配置不正确”，先以管理员身份运行 sfc /scannow。',
     '内网环境需要继续用 DISM 修复时，请挂载与当前系统版本一致的 Windows ISO，并通过 /Source 与 /LimitAccess 指定离线源。',
@@ -180,6 +196,7 @@ function renderReadme(target, assets) {
 export async function stageWindowsPrerequisites(outDir, target, options = {}) {
   const assets = options.assets ?? assetsForTarget(target);
   const cacheDir = options.cacheDir ?? process.env.VOLTUI_WINDOWS_PREREQUISITES_ASSET_DIR;
+  const metadata = bundleOptions(options);
   const [vcRuntime, webview2] = await Promise.all([
     readVerifiedAsset(assets.vcRuntime, cacheDir),
     readVerifiedAsset(assets.webview2, cacheDir),
@@ -187,21 +204,26 @@ export async function stageWindowsPrerequisites(outDir, target, options = {}) {
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(resolve(outDir, assets.vcRuntime.name), vcRuntime.data, { mode: 0o755 });
-  writeFileSync(resolve(outDir, assets.webview2.name), webview2.data, { mode: 0o755 });
-  writeFileSync(resolve(outDir, 'install-prerequisites.cmd'), renderInstallScript(assets));
-  writeFileSync(resolve(outDir, 'README.txt'), renderReadme(target, assets));
+  writeFileSync(resolve(outDir, assets.vcRuntime.name), vcRuntime, { mode: 0o755 });
+  writeFileSync(resolve(outDir, assets.webview2.name), webview2, { mode: 0o755 });
+  writeFileSync(resolve(outDir, 'install-prerequisites.cmd'), renderInstallScript(assets, metadata));
+  writeFileSync(resolve(outDir, 'README.txt'), renderReadme(target, assets, metadata));
   writeFileSync(resolve(outDir, 'SHA256SUMS.txt'), [
     `${assets.vcRuntime.sha256}  ${assets.vcRuntime.name}`,
     `${assets.webview2.sha256}  ${assets.webview2.name}`,
     '',
   ].join('\r\n'));
   writeFileSync(resolve(outDir, 'metadata.json'), JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    bundleVersion: metadata.bundleVersion,
+    releaseTag: metadata.releaseTag,
+    productName: metadata.productName,
+    artifactName: metadata.artifactName,
+    releaseURL: metadata.releaseURL,
     target,
     installOrder: ['vcRuntime', 'webview2'],
     assets,
-    sources: { vcRuntime: vcRuntime.source, webview2: webview2.source },
+    sources: { vcRuntime: assets.vcRuntime.url, webview2: assets.webview2.url },
   }, null, 2) + '\n');
   console.log(`staged Windows prerequisites for ${target} at ${outDir}`);
 }

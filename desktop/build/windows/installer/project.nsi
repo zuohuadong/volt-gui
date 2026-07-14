@@ -148,12 +148,12 @@ ShowInstDetails show # This will always show the installation details.
     IfSilent voltui_webview_silent voltui_webview_interactive
 
 voltui_webview_interactive:
-    MessageBox MB_OK|MB_ICONSTOP "Microsoft Edge WebView2 Runtime could not be installed online (exit code $1). On an offline or restricted network, extract and run install-prerequisites.cmd from VoltUI-windows-${ARCH}-prerequisites.zip, then run this installer again."
+    MessageBox MB_OK|MB_ICONSTOP "Microsoft Edge WebView2 Runtime could not be installed online (exit code $1). On an offline or restricted network, download the separately versioned Windows prerequisites ZIP from https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases, extract it, run install-prerequisites.cmd, then run this installer again."
     Abort "WebView2 Runtime installation failed with exit code $1."
 
 voltui_webview_silent:
     SetErrorLevel $1
-    Abort "WebView2 Runtime installation failed. Install VoltUI-windows-${ARCH}-prerequisites.zip first."
+    Abort "WebView2 Runtime installation failed. Install the separately versioned Windows prerequisites package first: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases"
 
 voltui_webview_restart:
     SetRebootFlag true

@@ -7,6 +7,7 @@
 #
 # Tag 命名空间:
 #   desktop-v* → CNB 自动发布桌面端构建
+#   prerequisites-v* → CNB 单独发布低频 Windows 前置依赖
 #
 # 触发条件:
 #   推送 feat:/fix:/feat!:/fix!: 等约定式提交到 main → 自动发版
@@ -48,6 +49,15 @@ main:
             # Only test sub-packages that don't need Wails runtime
             # (desktop main package requires Wails CGO/WebView — can't run in Docker)
             go test ./cmd/sign ./cmd/cnbrelease ./internal/update
+
+        - name: windows-prerequisites-contract-test
+          image: node:22
+          script: |
+            apt-get update
+            apt-get install -y zip unzip
+            node --test \
+              scripts/stage-windows-prerequisites.test.mjs \
+              scripts/build-windows-prerequisites.test.mjs
 
     # Pipeline 2: 自动发版（仅约定式提交触发）
     # CNB 直接构建 Windows 桌面端、生成 SHA-256 manifest，并上传 CNB Release 资产
@@ -211,14 +221,16 @@ main:
               --tag "$DESKTOP_TAG" \
               --version "$VERSION" \
               --dist ../dist \
+              --assets "Anyong-windows-amd64-installer.exe,Anyong-windows-amd64.zip,latest.json" \
               --brand "$BRAND" \
               --body "$BODY" \
-              --prerelease="$PRERELEASE"
+              --prerelease="$PRERELEASE" \
+              --make-latest=true
 
   # ------------------------------------------------------------------
   # 合并请求：Windows 桌面发布链路快速检查
   # ------------------------------------------------------------------
-  merge-request:
+  pull_request:
     - docker:
         image: golang:1.26
       stages:
@@ -235,6 +247,15 @@ main:
           script: |
             cd desktop
             go test ./cmd/sign ./cmd/cnbrelease ./internal/update
+
+        - name: windows-prerequisites-contract-check
+          image: node:22
+          script: |
+            apt-get update
+            apt-get install -y zip unzip
+            node --test \
+              scripts/stage-windows-prerequisites.test.mjs \
+              scripts/build-windows-prerequisites.test.mjs
 
   # ------------------------------------------------------------------
   # 定时同步上游 (每天 09:00 CST)
@@ -288,3 +309,89 @@ main:
               echo "PR creation response: $RESPONSE"
               echo "Note: If PR already exists, the sync branch has been updated."
             fi
+
+# ------------------------------------------------------------------
+# 仓库级 Tag 事件：单独发布低频 Windows prerequisites
+# tag_push 必须位于 `$` 下；非 prerequisites-v* Tag 只执行短路检查。
+# ------------------------------------------------------------------
+"$":
+  tag_push:
+    - name: windows-prerequisites-release
+      docker:
+        image: golang:1.26
+      env:
+        XIGU_BRAND_NAME: "西谷智灯暗涌系统"
+        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
+        DESKTOP_APP_NAME: "Anyong"
+      stages:
+        - name: resolve-prerequisites-release
+          script: |
+            case "${CNB_BRANCH:-}" in
+              prerequisites-v*) ;;
+              *)
+                echo "Tag ${CNB_BRANCH:-unknown} is not a prerequisites release; skipping"
+                touch .prerequisites_skip
+                exit 0
+                ;;
+            esac
+
+            VERSION=$(tr -d '\r\n' < desktop/prerequisites-version.txt)
+            EXPECTED_TAG="prerequisites-${VERSION}"
+            if [ "$CNB_BRANCH" != "$EXPECTED_TAG" ]; then
+              echo "prerequisites tag mismatch: got $CNB_BRANCH, want $EXPECTED_TAG" >&2
+              exit 1
+            fi
+
+            cat > .prerequisites_env <<EOF
+            VERSION=$VERSION
+            RELEASE_TAG=$EXPECTED_TAG
+            ASSET_NAME=${DESKTOP_APP_NAME}-windows-amd64-prerequisites-${VERSION}.zip
+            EOF
+
+        - name: install-prerequisites-release-deps
+          script: |
+            if [ -f .prerequisites_skip ]; then
+              exit 0
+            fi
+
+            apt-get update
+            apt-get install -y ca-certificates curl zip
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            apt-get install -y nodejs
+
+        - name: build-windows-prerequisites
+          script: |
+            if [ -f .prerequisites_skip ]; then
+              exit 0
+            fi
+            . ./.prerequisites_env
+
+            PREREQUISITES_RELEASE_TAG="$RELEASE_TAG" \
+              scripts/build-windows-prerequisites.sh windows/amd64
+
+        - name: publish-windows-prerequisites
+          script: |
+            if [ -f .prerequisites_skip ]; then
+              exit 0
+            fi
+            . ./.prerequisites_env
+
+            BRAND="${XIGU_BRAND_NAME:-VoltUI}"
+            MANIFEST_NAME="${ASSET_NAME%.zip}.json"
+            BODY="${BRAND} Windows 前置依赖 ${VERSION}
+
+            此 Release 与 desktop-v* 桌面应用版本解耦，仅在微软运行库、安装脚本或校验元数据发生变化时升级。
+
+            资产包含 Windows amd64 离线 prerequisites ZIP、ZIP 外部 SHA-256 与结构化 manifest。"
+
+            cd desktop
+            go run ./cmd/cnbrelease \
+              --tag "$RELEASE_TAG" \
+              --version "$VERSION" \
+              --dist ../dist-prerequisites \
+              --assets "$ASSET_NAME,$ASSET_NAME.sha256,$MANIFEST_NAME" \
+              --brand "${BRAND} Windows 前置依赖" \
+              --body "$BODY" \
+              --prerelease=false \
+              --make-latest=false \
+              --immutable

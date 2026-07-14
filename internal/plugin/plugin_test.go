@@ -365,6 +365,58 @@ func TestClientListToolsRetriesAdvertisedEmptyToolList(t *testing.T) {
 	}
 }
 
+func TestClientListToolsQuarantinesMalformedSchema(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tr := &countingToolsTransport{raw: json.RawMessage(`{
+		"tools":[
+			{"name":"echo","description":"Still available.","inputSchema":{"type":"object","properties":{"msg":{"type":"string"}}}},
+			{"name":"generate_yso_bytes","description":"Broken nested schema.","inputSchema":{"type":"object","properties":{"options":{"type":"array","items":{"key":{"type":"string"},"type":{"type":"string"},"value":{"type":"string"}}}}}}
+		]
+	}`)}
+	c := &Client{name: "yakit", t: tr, spec: Spec{Name: "yakit"}, transport: "stdio"}
+
+	tools, err := c.listTools(ctx)
+	if err != nil {
+		t.Fatalf("listTools: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name() != "mcp__yakit__echo" {
+		t.Fatalf("tools = %v, want only mcp__yakit__echo", names(tools))
+	}
+	if got := string(tools[0].Schema()); got != `{"properties":{"msg":{"type":"string"}},"type":"object"}` {
+		t.Fatalf("valid sibling schema changed: %s", got)
+	}
+	if len(c.tools) != 2 {
+		t.Fatalf("tool status count = %d, want both advertised tools", len(c.tools))
+	}
+	if c.tools[0].Name != "echo" || c.tools[0].SchemaError != "" {
+		t.Fatalf("valid tool status = %+v", c.tools[0])
+	}
+	if c.tools[1].Name != "generate_yso_bytes" || !strings.Contains(c.tools[1].SchemaError, "/properties/options/items/type") {
+		t.Fatalf("quarantined tool status = %+v", c.tools[1])
+	}
+}
+
+func TestClientListToolsValidatesAfterCompatibilityNormalization(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tr := &countingToolsTransport{raw: json.RawMessage(`{"tools":[{"name":"legacy","inputSchema":{"type":"object","properties":{"query":{"type":"string","required":true}}}}]}`)}
+	c := &Client{name: "legacy", t: tr, spec: Spec{Name: "legacy"}, transport: "stdio"}
+
+	tools, err := c.listTools(ctx)
+	if err != nil {
+		t.Fatalf("listTools: %v", err)
+	}
+	if len(tools) != 1 {
+		t.Fatalf("tools = %v, want normalized legacy tool", names(tools))
+	}
+	if got := string(tools[0].Schema()); got != `{"properties":{"query":{"type":"string"}},"type":"object"}` {
+		t.Fatalf("normalized schema = %s", got)
+	}
+}
+
 func TestSpecReadOnlyToolNamesMarksUnhintedToolsReadOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

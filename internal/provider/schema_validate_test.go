@@ -1,0 +1,54 @@
+package provider
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestValidateToolSchemaAcceptsValidDrafts(t *testing.T) {
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+		json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"values":{"type":"array","prefixItems":[{"type":"string"}]}}}`),
+	} {
+		if err := ValidateToolSchema(raw); err != nil {
+			t.Fatalf("ValidateToolSchema(%s): %v", raw, err)
+		}
+	}
+}
+
+func TestValidateToolSchemaRejectsMalformedNestedArrayItems(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"options":{
+				"type":"array",
+				"items":{
+					"key":{"description":"option key","type":"string"},
+					"type":{"description":"option type","type":"string"},
+					"value":{"description":"option value","type":"string"}
+				}
+			}
+		}
+	}`)
+	err := ValidateToolSchema(raw)
+	if err == nil {
+		t.Fatal("malformed Yakit-style array item schema was accepted")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "/properties/options/items/type") {
+		t.Fatalf("error does not identify the malformed nested type: %v", err)
+	}
+}
+
+func TestValidateToolSchemaRejectsNonObjectRootAndExternalRefs(t *testing.T) {
+	for name, raw := range map[string]json.RawMessage{
+		"array root":   json.RawMessage(`[]`),
+		"external ref": json.RawMessage(`{"type":"object","properties":{"x":{"$ref":"https://example.com/schema.json"}}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateToolSchema(raw); err == nil {
+				t.Fatalf("ValidateToolSchema(%s) returned nil", raw)
+			}
+		})
+	}
+}

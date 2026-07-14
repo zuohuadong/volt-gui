@@ -19,6 +19,12 @@ func CanonicalizeSchema(raw json.RawMessage) json.RawMessage {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return raw
 	}
+	if v == nil {
+		// A nil RawMessage persists as JSON null in the MCP schema cache. Treat
+		// both forms as the same no-argument schema so old cache entries remain
+		// usable and never reach a strict provider as parameters: null.
+		return json.RawMessage(`{"properties":{},"type":"object"}`)
+	}
 	canon := canonicalizeSchemaValue(v)
 	ensureRootObjectProperties(canon)
 	b, err := json.Marshal(canon)

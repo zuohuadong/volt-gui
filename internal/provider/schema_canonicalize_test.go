@@ -25,6 +25,7 @@ func TestCanonicalizeSchemaDropsNonArrayRequired(t *testing.T) {
 func TestCanonicalizeSchemaAddsEmptyPropertiesForNoArgumentObject(t *testing.T) {
 	for _, raw := range []json.RawMessage{
 		nil,
+		json.RawMessage(`null`),
 		json.RawMessage(`{"type":"object"}`),
 	} {
 		got := string(CanonicalizeSchema(raw))

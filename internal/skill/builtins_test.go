@@ -45,6 +45,35 @@ func TestBuiltinReviewSkillsDeclareReadOnly(t *testing.T) {
 	}
 }
 
+func TestBuiltinReviewSkillsRequireGroundedKnowledgeSearch(t *testing.T) {
+	for _, sk := range builtinSkills() {
+		if sk.Name != "review" && sk.Name != "security-review" {
+			continue
+		}
+		if !hasBuiltinTool(sk.AllowedTools, "knowledge_search") {
+			t.Errorf("builtin %q allowed tools = %v, want knowledge_search", sk.Name, sk.AllowedTools)
+		}
+		for _, want := range []string{
+			"knowledge_search",
+			"only cite knowledge sources actually returned by the tool",
+			"do not invent a policy or claim the knowledge base supports a finding",
+		} {
+			if !strings.Contains(strings.ToLower(sk.Body), want) {
+				t.Errorf("builtin %q body missing %q:\n%s", sk.Name, want, sk.Body)
+			}
+		}
+	}
+}
+
+func hasBuiltinTool(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCodeGraphReadToolsRequireKnownNameAndReadOnly(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(builtinTestTool{name: "mcp__codegraph__symbols", readOnly: true})

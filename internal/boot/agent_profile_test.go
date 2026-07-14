@@ -81,7 +81,7 @@ func TestAgentProfileToolPolicyGroupsAndCoreTools(t *testing.T) {
 
 func TestAgentProfileToolPolicyCoversTerminalAndMemoryAliases(t *testing.T) {
 	policy := agentProfileToolAllowPolicy(&AgentProfile{ToolIDs: []string{"终端执行", "长期记忆"}})
-	for _, name := range []string{"bash", "bash_output", "kill_shell", "wait", "memory", "remember", "forget"} {
+	for _, name := range []string{"bash", "bash_output", "kill_shell", "wait", "memory", "remember", "forget", "knowledge_search"} {
 		if !policy(name) {
 			t.Errorf("tool %q should be allowed by terminal/memory groups", name)
 		}

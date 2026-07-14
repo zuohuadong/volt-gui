@@ -94,7 +94,7 @@ func agentProfileToolAllowPolicy(profile *AgentProfile) func(string) bool {
 	}
 	terminalTools := map[string]bool{"bash": true, "bash_output": true, "kill_shell": true, "wait": true}
 	browserTools := map[string]bool{"browser_control": true, "browser_navigate": true, "web_fetch": true}
-	memoryTools := map[string]bool{"memory": true, "remember": true, "forget": true}
+	memoryTools := map[string]bool{"memory": true, "remember": true, "forget": true, "knowledge_search": true}
 	automationTools := map[string]bool{
 		"automation_list": true, "automation_save": true,
 		"automation_delete": true, "automation_run_now": true,

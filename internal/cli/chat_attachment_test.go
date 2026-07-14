@@ -86,10 +86,11 @@ func TestPastedFileRefShellEscapedSpaces(t *testing.T) {
 
 func TestPastedImageSources(t *testing.T) {
 	cases := []struct {
-		name string
-		text string
-		want []string
-		ok   bool
+		name      string
+		text      string
+		want      []string
+		ok        bool
+		posixOnly bool
 	}{
 		{
 			name: "data URL",
@@ -104,10 +105,11 @@ func TestPastedImageSources(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "shell escaped path with spaces",
-			text: `/Users/jawa/Library/Application\ Support/CleanShot/media/CleanShot\ 2026-07-06\ at\ 11.33.14@2x.png`,
-			want: []string{`/Users/jawa/Library/Application\ Support/CleanShot/media/CleanShot\ 2026-07-06\ at\ 11.33.14@2x.png`},
-			ok:   true,
+			name:      "shell escaped path with spaces",
+			text:      `/Users/jawa/Library/Application\ Support/CleanShot/media/CleanShot\ 2026-07-06\ at\ 11.33.14@2x.png`,
+			want:      []string{`/Users/jawa/Library/Application\ Support/CleanShot/media/CleanShot\ 2026-07-06\ at\ 11.33.14@2x.png`},
+			ok:        true,
+			posixOnly: true,
 		},
 		{
 			name: "shell escaped path without whitespace",
@@ -116,10 +118,11 @@ func TestPastedImageSources(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "multiple shell escaped paths on one line",
-			text: `/tmp/first\ image.png /tmp/second\ image.jpg`,
-			want: []string{`/tmp/first\ image.png`, `/tmp/second\ image.jpg`},
-			ok:   true,
+			name:      "multiple shell escaped paths on one line",
+			text:      `/tmp/first\ image.png /tmp/second\ image.jpg`,
+			want:      []string{`/tmp/first\ image.png`, `/tmp/second\ image.jpg`},
+			ok:        true,
+			posixOnly: true,
 		},
 		{
 			name: "multiple quoted paths on one line",
@@ -140,6 +143,9 @@ func TestPastedImageSources(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if c.posixOnly && runtime.GOOS == "windows" {
+				t.Skip("POSIX shell-escaped paths are not decoded on Windows")
+			}
 			got, ok := pastedImageSources(c.text)
 			if ok != c.ok {
 				t.Fatalf("ok = %v, want %v", ok, c.ok)

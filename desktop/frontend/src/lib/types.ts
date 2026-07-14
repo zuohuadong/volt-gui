@@ -696,6 +696,7 @@ export interface MCPToolView {
   name: string;
   description: string;
   readOnlyHint?: boolean;
+  schemaError?: string;
 }
 export interface SkillView {
   name: string;
@@ -1384,6 +1385,20 @@ export interface DesktopStartupSettingsView {
   statusBarItems: string[]; // ordered visible status bar item ids
   checkUpdates: boolean; // check for new versions on startup
   safeMode?: boolean; // recovery startup with external integrations disabled
+}
+
+export type ExternalOpenerKind = "file-manager" | "editor" | "terminal";
+
+export interface ExternalOpenerView {
+  id: string;
+  name: string;
+  kind: ExternalOpenerKind;
+  iconDataUrl?: string;
+}
+
+export interface ExternalOpenersView {
+  openers: ExternalOpenerView[];
+  preferred: string;
 }
 
 // Auto-updater payloads (desktop/updater.go). UpdateInfo drives the update banner;

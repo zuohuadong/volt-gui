@@ -97,6 +97,9 @@ How to operate:
 - Discover scope first: ` + "`bash git status`" + `, ` + "`git diff --stat`" + `, ` + "`git log --oneline`" + `. Then ` + "`git diff`" + ` (or ` + "`git diff <base>...HEAD`" + `) for the hunks.
 - Read touched files (read_file) when the diff alone lacks context — signatures, surrounding invariants, callers.
 - For "any callers depending on this?" questions: grep the symbol BEFORE asserting impact.
+- If knowledge_search is available, run 1-3 focused queries for standards, rules, or prior experience relevant to the changed technology, module, and highest-risk behavior. Treat those results as policy evidence, not proof of code behavior.
+- Only cite knowledge sources actually returned by the tool. Include the returned title plus source or file path so the parent can trace the guidance.
+- If no knowledge matches, say so when relevant; do not invent a policy or claim the knowledge base supports a finding.
 - Stay read-only. Never commit, never write files, never propose edits as applied changes. The parent decides whether to act.
 - Cap yourself at ~12 tool calls. If the diff is too big, pick the riskiest 2-3 files and say so.
 
@@ -125,6 +128,9 @@ How to operate:
 - Default scope: the current branch's diff vs the default branch. Honor a named range or directory if given.
 - Discover scope first: ` + "`bash git status`" + `, ` + "`git diff --stat`" + `, ` + "`git diff <base>...HEAD`" + `. Read touched files (read_file) when the diff lacks security context — auth checks, input validation, the handler that calls the changed code.
 - Use grep to verify "is this user-controlled input ever sanitized later?" / "what other call sites depend on this validation?" before asserting impact.
+- If knowledge_search is available, run 1-3 focused queries for internal security standards, threat models, or prior incidents relevant to the changed boundary. Treat those results as policy evidence, not proof of exploitability.
+- Only cite knowledge sources actually returned by the tool. Include the returned title plus source or file path so the parent can trace the guidance.
+- If no knowledge matches, say so when relevant; do not invent a policy or claim the knowledge base supports a finding.
 - Stay read-only. Never write, never run destructive commands. The parent decides what to act on.
 - Cap yourself at ~12 tool calls. If the diff is too big, focus on the riskiest 2-3 files and say so.
 
@@ -279,7 +285,7 @@ func appendUniqueToolNames(base []string, extra ...string) []string {
 // can't mutate the shared set.
 func builtinSkills() []Skill {
 	readCodeTools := []string{"calculate", "read_file", "ls", "glob", "grep", "code_index"}
-	reviewTools := append(append([]string(nil), readCodeTools...), "bash")
+	reviewTools := append(append([]string(nil), readCodeTools...), "knowledge_search", "bash")
 	return []Skill{
 		{
 			Name:        "init",

@@ -373,7 +373,8 @@ func shellEscapedPathByte(ch byte) bool {
 // it attaches instead of landing as literal text (and, for a POSIX path, being
 // misread as a slash command). Images are handled earlier; only path-shaped
 // content (a separator) that points at a real file qualifies, so an ordinary
-// pasted word is left alone.
+// pasted word is left alone. Whitespace in the path is escaped so the ref
+// survives @-token parsing on submit.
 func pastedFileRef(content string) (string, bool) {
 	path, ok := pastedImagePath(content)
 	if !ok || !strings.ContainsAny(path, `/\`) {
@@ -382,5 +383,5 @@ func pastedFileRef(content string) (string, bool) {
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
 		return "", false
 	}
-	return "@" + path, true
+	return "@" + control.EscapeRefPath(path), true
 }

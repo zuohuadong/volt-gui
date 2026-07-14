@@ -109,6 +109,11 @@ type Options struct {
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to voltui.toml.
 	ExtraPlugins []plugin.Spec
+	// ExtraTools are first-party capabilities supplied by a rich host such as the
+	// desktop app. They share the normal registry allow policy and permission gate,
+	// but are not process-global built-ins and therefore do not leak into CLI/ACP
+	// sessions that did not explicitly request them.
+	ExtraTools []tool.Tool
 	// TokenMode selects how much optional context/tool surface this session exposes
 	// at boot. Empty/full preserves the normal capability surface. "economy" keeps
 	// the core coding tools visible and moves skills, MCP, LSP, web_fetch,
@@ -379,6 +384,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	readPathResolver := builtin.NewPathResolver()
 	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, intranetPolicy, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+	for _, extraTool := range opts.ExtraTools {
+		if extraTool != nil {
+			reg.Add(extraTool)
+		}
+	}
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.

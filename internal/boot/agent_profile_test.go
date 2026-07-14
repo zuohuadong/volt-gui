@@ -90,3 +90,15 @@ func TestAgentProfileToolPolicyCoversTerminalAndMemoryAliases(t *testing.T) {
 		t.Fatal("unselected files group should remain denied")
 	}
 }
+
+func TestAgentProfileToolPolicyCoversAutomationAliases(t *testing.T) {
+	policy := agentProfileToolAllowPolicy(&AgentProfile{ToolIDs: []string{"scheduler"}})
+	for _, name := range []string{"automation_list", "automation_save", "automation_delete", "automation_run_now"} {
+		if !policy(name) {
+			t.Errorf("tool %q should be allowed by scheduler group", name)
+		}
+	}
+	if policy("bash") {
+		t.Fatal("unselected terminal group should remain denied")
+	}
+}

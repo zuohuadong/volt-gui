@@ -50,6 +50,49 @@ func TestAgentKeepPolicyFromConfig(t *testing.T) {
 	}
 }
 
+type bootExtraTool struct{}
+
+func (bootExtraTool) Name() string        { return "desktop_extra_tool" }
+func (bootExtraTool) Description() string { return "desktop host tool" }
+func (bootExtraTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","additionalProperties":false}`)
+}
+func (bootExtraTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "ok", nil
+}
+func (bootExtraTool) ReadOnly() bool { return true }
+
+func TestBuildRegistersHostExtraTools(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{ExtraTools: []tool.Tool{bootExtraTool{}}})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	for _, entry := range ctrl.ToolContractEntries() {
+		if entry.Name == "desktop_extra_tool" && entry.ReadOnly {
+			return
+		}
+	}
+	t.Fatal("desktop extra tool was not registered in the controller contract")
+}
+
 // TestBuildFoldsProjectMemoryIntoSystemPrompt is the end-to-end proof of the
 // cache-first wiring: a project REASONIX.md is discovered at boot and folded
 // into the session's system message (the cached prefix), and the `remember`

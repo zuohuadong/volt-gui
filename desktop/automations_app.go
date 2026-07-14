@@ -106,6 +106,8 @@ type AutomationScheduler struct {
 	mu      sync.Mutex
 }
 
+var automationStoreMu sync.Mutex
+
 func newAutomationScheduler(app *App) *AutomationScheduler {
 	return &AutomationScheduler{app: app, done: make(chan struct{})}
 }
@@ -144,6 +146,8 @@ func (s *AutomationScheduler) loop() {
 }
 
 func (a *App) ListAutomations() ([]WorkbenchAutomationView, error) {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
 	automations, err := loadAutomations()
 	if err != nil {
 		return nil, err
@@ -152,10 +156,18 @@ func (a *App) ListAutomations() ([]WorkbenchAutomationView, error) {
 }
 
 func (a *App) SaveAutomation(input WorkbenchAutomationInput) (WorkbenchAutomationView, error) {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
 	return saveAutomationInput(input)
 }
 
 func (a *App) DeleteAutomation(id string) error {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
+	return deleteAutomation(id)
+}
+
+func deleteAutomation(id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return errors.New("automation id is required")
@@ -175,6 +187,16 @@ func (a *App) DeleteAutomation(id string) error {
 }
 
 func (a *App) RunAutomationNow(id string) (WorkbenchAutomationView, error) {
+	return runAutomationNow(context.Background(), id)
+}
+
+func runAutomationNow(ctx context.Context, id string) (WorkbenchAutomationView, error) {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
+	return runAutomationNowLocked(ctx, id)
+}
+
+func runAutomationNowLocked(ctx context.Context, id string) (WorkbenchAutomationView, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return WorkbenchAutomationView{}, errors.New("automation id is required")
@@ -190,7 +212,7 @@ func (a *App) RunAutomationNow(id string) (WorkbenchAutomationView, error) {
 		if normalizeAutomationStatus(automation.Status) == automationStatusDisabled {
 			return WorkbenchAutomationView{}, errors.New("automation is disabled")
 		}
-		updated := executeAutomation(automation, time.Now(), false)
+		updated := executeAutomationContext(ctx, automation, time.Now(), false)
 		automations[i] = updated
 		sortAutomations(automations)
 		if err := saveAutomations(automations); err != nil {
@@ -312,6 +334,8 @@ func saveAutomationInput(input WorkbenchAutomationInput) (WorkbenchAutomationVie
 }
 
 func runDueAutomations(now time.Time) error {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
 	automations, err := loadAutomations()
 	if err != nil {
 		return err
@@ -343,8 +367,12 @@ func automationIsDue(automation WorkbenchAutomationView, now time.Time) bool {
 }
 
 func executeAutomation(automation WorkbenchAutomationView, now time.Time, scheduled bool) WorkbenchAutomationView {
+	return executeAutomationContext(context.Background(), automation, now, scheduled)
+}
+
+func executeAutomationContext(parent context.Context, automation WorkbenchAutomationView, now time.Time, scheduled bool) WorkbenchAutomationView {
 	automation.Command = normalizeAutomationCommand(automation.Command)
-	spec, ok := automationCommandSpecFor(automation.Command)
+	spec, ok := automationCommandSpecForWorkspace(automation.Command, automation.Scope)
 	if !ok {
 		automation.Status = automationStatusFailed
 		automation.Result = "Unsupported command"
@@ -354,7 +382,10 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 		appendAutomationFailureTodoLog(&automation)
 		return automation
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, spec.Name, spec.Args...)
 	cmd.Dir = spec.WorkDir
@@ -384,6 +415,8 @@ func executeAutomation(automation WorkbenchAutomationView, now time.Time, schedu
 // skipMissedAutomationRuns advances schedules that elapsed while the desktop app was closed.
 // The desktop scheduler intentionally does not replay missed work after startup.
 func skipMissedAutomationRuns(now time.Time) error {
+	automationStoreMu.Lock()
+	defer automationStoreMu.Unlock()
 	automations, err := loadAutomations()
 	if err != nil {
 		return err
@@ -451,9 +484,16 @@ func appendAutomationFailureTodoLog(automation *WorkbenchAutomationView) {
 }
 
 func automationCommandSpecFor(command string) (automationCommandSpec, bool) {
+	return automationCommandSpecForWorkspace(command, "")
+}
+
+func automationCommandSpecForWorkspace(command, workspaceRoot string) (automationCommandSpec, bool) {
 	command = normalizeAutomationCommand(command)
-	desktopDir := automationDesktopDir()
-	repoRoot := filepath.Dir(desktopDir)
+	repoRoot, ok := automationRepoRoot(workspaceRoot)
+	if !ok {
+		return automationCommandSpec{}, false
+	}
+	desktopDir := filepath.Join(repoRoot, "desktop")
 	pnpm := "pnpm"
 	if runtime.GOOS == "windows" {
 		pnpm = "pnpm.cmd"
@@ -467,6 +507,26 @@ func automationCommandSpecFor(command string) (automationCommandSpec, bool) {
 	}
 	spec, ok := specs[command]
 	return spec, ok
+}
+
+func automationRepoRoot(workspaceRoot string) (string, bool) {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot != "" && filepath.IsAbs(workspaceRoot) {
+		root := filepath.Clean(workspaceRoot)
+		info, err := os.Stat(root)
+		return root, err == nil && info.IsDir()
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ".", true
+	}
+	wd = filepath.Clean(wd)
+	if filepath.Base(wd) == "desktop" {
+		if _, err := os.Stat(filepath.Join(wd, "go.mod")); err == nil {
+			return filepath.Dir(wd), true
+		}
+	}
+	return wd, true
 }
 
 func normalizeAutomationCommand(command string) string {
@@ -503,20 +563,6 @@ func normalizeAutomationCommand(command string) string {
 func isBrowserOnlyLegacyAutomationCommand(command string) bool {
 	lower := strings.ToLower(strings.TrimSpace(command))
 	return strings.Contains(lower, "http 200") || strings.Contains(lower, "dom snapshot") || strings.Contains(lower, "console warning")
-}
-
-func automationDesktopDir() string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	if filepath.Base(wd) == "desktop" {
-		return wd
-	}
-	if _, err := os.Stat(filepath.Join(wd, "desktop", "go.mod")); err == nil {
-		return filepath.Join(wd, "desktop")
-	}
-	return wd
 }
 
 func nextAutomationRunAt(automation WorkbenchAutomationView, now time.Time) string {

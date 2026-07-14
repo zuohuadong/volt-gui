@@ -243,6 +243,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 		TokenMode:                snap.currentTokenMode(),
 		AgentProfile:             profile,
 		ScopedMemoryBlock:        memoryRuntime.Block,
+		ExtraTools:               projectAutomationTools(snap.scope, snap.workspaceRoot),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),

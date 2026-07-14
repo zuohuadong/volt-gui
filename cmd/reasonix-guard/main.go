@@ -229,6 +229,18 @@ func runCheck(args []string, apply bool) int {
 	return 0
 }
 
+// failedInstallBlocksLaunch decides whether startup must stop after a failed
+// RecoverFailedInstall. The failure marker means the installer may have left
+// the release unit partially replaced, so the binaries cannot be presumed
+// coherent until a rollback completes: any error with the restore unfinished
+// fails closed. MixedInstall alone is not the signal — a rollback that failed
+// before touching anything (e.g. while staging) reports MixedInstall=false yet
+// leaves the installer's half-written unit in place. Only a completed restore
+// (RolledBack, with just the marker cleanup failing) is safe to launch.
+func failedInstallBlocksLaunch(result repair.UpdateRollbackResult, err error) bool {
+	return err != nil && !result.RolledBack
+}
+
 func runLaunch(args []string) int {
 	fs := flag.NewFlagSet("reasonix-guard launch", flag.ContinueOnError)
 	app := fs.String("app", "", "desktop executable path")
@@ -242,8 +254,8 @@ func runLaunch(args []string) int {
 	// previous release unit immediately instead of waiting for a crash loop.
 	if result, failure, err := repair.RecoverFailedInstall(); err != nil {
 		fmt.Fprintln(os.Stderr, "update rollback after failed install failed:", err)
-		if result.MixedInstall {
-			fmt.Fprintln(os.Stderr, "error: the installation now mixes two releases; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall Reasonix.")
+		if failedInstallBlocksLaunch(result, err) {
+			fmt.Fprintln(os.Stderr, "error: the failed installer may have left a mix of two releases and the rollback did not complete; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall Reasonix.")
 			return 1
 		}
 	} else if failure != nil && result.RolledBack {

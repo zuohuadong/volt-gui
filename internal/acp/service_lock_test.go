@@ -828,7 +828,7 @@ func TestACPFailedRebuildStillDrainsNewerPendingConfig(t *testing.T) {
 	if queued != 0 {
 		t.Fatalf("pending config entries = %d, want drained after failed maintenance", queued)
 	}
-	if got := factory.configurableFactory.buildCount(); got != 1 {
+	if got := factory.buildCount(); got != 1 {
 		t.Fatalf("successful replacement builds = %d, want one pending rebuild", got)
 	}
 	_, cancel, ok := sess.begin(context.Background())

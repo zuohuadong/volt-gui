@@ -197,7 +197,7 @@ async function smokeWorkNavigation(page) {
 }
 
 async function smokeNoSeedContent(page, mobile) {
-  await clickUnifiedNav(page, '今日', mobile);
+  await clickUnifiedNav(page, '工作台', mobile);
   await page.waitForTimeout(500);
   const body = await page.locator('body').innerText();
   const forbidden = [
@@ -441,25 +441,34 @@ async function smokeUnifiedShell(page, mobile) {
   const sidebar = page.locator('[data-testid="unified-sidebar"]');
   await sidebar.waitFor({ state: 'attached', timeout: 5000 });
   await openUnifiedDrawerIfNeeded(page, mobile);
-  await assertCount(sidebar.locator('.primary-nav > button'), 6, 'unified primary navigation items');
-  for (const label of ['今日', '任务', '项目', '交付记录', '自动化', '资料与知识']) {
+  await assertCount(sidebar.locator('.primary-nav button'), 6, 'unified primary navigation items');
+  for (const label of ['工作台', '新建任务', '项目管理', '交付记录', '自动化', '资料与知识']) {
     await firstVisible(sidebar.getByRole('button', { name: label, exact: true }), `unified nav ${label}`);
   }
-  await assertCount(sidebar.getByRole('button', { name: 'Work 工作台', exact: true }), 0, 'legacy Work switch');
-  await assertCount(sidebar.getByRole('button', { name: 'Code 工作台', exact: true }), 0, 'legacy Code switch');
+  await firstVisible(sidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch');
+  await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch');
   const workspace = sidebar.locator('[data-testid="workspace-selector"] select');
   if ((await workspace.inputValue()) !== 'folder:/tmp/volt-smoke-workspace') throw new Error('Workspace selector did not restore the v2 fixture');
   await assertText(page, 'Smoke Workspace', 'Workspace selector label');
-  await assertText(page, 'Project → Task', 'Project Task hierarchy');
+  await assertText(page, '项目与任务', 'Project Task hierarchy');
   await assertText(page, '收件箱项目', 'explicit inbox project');
   await assertText(page, 'Smoke 发布验收任务', 'restored task');
+
+  await (await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch')).click();
+  await assertText(page, '当前任务的工程检查器', 'Code workbench after mode switch');
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  for (const label of ['代码对话', '工程总览', 'Workspace', 'Context', 'Diff', 'Checkpoints']) {
+    await firstVisible(sidebar.getByRole('button', { name: label, exact: true }), `Code nav ${label}`);
+  }
+  await (await firstVisible(sidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch')).click();
+  await assertText(page, '从明确结果开始', 'Work workbench restored');
 }
 
 async function smokeUnifiedRoutes(page, mobile) {
   const routes = [
-    ['今日', '从明确结果开始'],
-    ['任务', '希望得到什么结果？'],
-    ['项目', '项目管理'],
+    ['工作台', '从明确结果开始'],
+    ['新建任务', '希望得到什么结果？'],
+    ['项目管理', '项目管理'],
     ['交付记录', '报告设计'],
     ['自动化', '自动化任务'],
     ['资料与知识', '资料中心'],
@@ -467,11 +476,17 @@ async function smokeUnifiedRoutes(page, mobile) {
   for (const [nav, expected] of routes) {
     await clickUnifiedNav(page, nav, mobile);
     await assertText(page, expected, `${nav} route`);
+    if (nav === '自动化') {
+      const empty = page.locator('.automation-task-empty');
+      await empty.waitFor({ state: 'visible', timeout: 5000 });
+      await assertText(page, '暂无自动化任务', 'automation definition empty state');
+      await firstVisible(empty.getByRole('button', { name: '新建自动化任务', exact: true }), 'automation empty-state CTA');
+    }
   }
 }
 
 async function smokeResultDrivenToday(page, mobile) {
-  await clickUnifiedNav(page, '今日', mobile);
+  await clickUnifiedNav(page, '工作台', mobile);
   await assertText(page, '从明确结果开始，把任务推进到可验证交付。');
   await firstVisible(page.getByRole('button', { name: '开始结果任务', exact: true }), 'result task CTA');
   await firstVisible(page.getByRole('button', { name: '查看交付记录', exact: true }), 'delivery records CTA');
@@ -484,7 +499,7 @@ async function smokeResultDrivenToday(page, mobile) {
 }
 
 async function smokeOutcomeTemplates(page, mobile) {
-  await clickUnifiedNav(page, '任务', mobile);
+  await clickUnifiedNav(page, '新建任务', mobile);
   const launcher = page.locator('[data-testid="outcome-template-launcher"]');
   await launcher.waitFor({ state: 'visible', timeout: 5000 });
   await assertCount(launcher.locator('[data-outcome-template]'), 5, 'outcome templates');
@@ -494,7 +509,7 @@ async function smokeOutcomeTemplates(page, mobile) {
   await clickScopedButton(launcher, /发布验收/);
   const selected = launcher.locator('[data-outcome-template="release-acceptance"]');
   if (!(await selected.evaluate((node) => node.classList.contains('active')))) throw new Error('selected outcome template is not visibly active');
-  await assertText(page, '尚未配置 Agent', 'honest runtime requirement');
+  await assertText(page, '先完成运行配置', 'honest runtime requirement');
 }
 
 async function smokeTaskReceipt(page, mobile) {
@@ -513,10 +528,21 @@ async function smokeTaskReceipt(page, mobile) {
   for (const label of ['Workspace', 'Project', 'Agent Profile', 'Model', 'Permission', 'Memory']) await assertText(page, label, `task context ${label}`);
   const visibleContextItems = await context.locator('.context-values > span').evaluateAll((nodes) => nodes.filter((node) => getComputedStyle(node).display !== 'none').length);
   if (visibleContextItems !== 6) throw new Error(`task context exposes ${visibleContextItems}/6 runtime axes`);
-  await context.locator('[role="tab"]').filter({ hasText: /^Workspace$/ }).click();
+  await context.getByRole('button', { name: '进入 Code 工程检查', exact: true }).click();
   await assertText(page, '任务检查器', 'Task inspector title');
-  await page.locator('[data-testid="task-context-bar"] [role="tab"]').filter({ hasText: /^任务$/ }).click();
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const modeSidebar = page.locator('[data-testid="unified-sidebar"]');
+  await (await firstVisible(modeSidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch')).click();
   await assertText(page, '希望得到什么结果？', 'return to Task result launcher');
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const restoredSidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(restoredSidebar, 'Smoke 发布验收任务', { exact: false });
+  await receipt.waitFor({ state: 'visible', timeout: 5000 });
+  const activity = page.locator('[data-testid="task-activity-center"]');
+  await activity.waitFor({ state: 'visible', timeout: 5000 });
+  const expandActivity = activity.getByRole('button', { name: '展开任务活动', exact: true });
+  await expandActivity.click();
+  await assertText(page, '本轮已结束，等待验证证据与人工复核。', 'expanded task activity receipt state');
 }
 
 async function smokeGovernanceCenter(page, mobile) {
@@ -531,7 +557,9 @@ async function smokeGovernanceCenter(page, mobile) {
   await governance.waitFor({ state: 'visible', timeout: 5000 });
   await assertCount(governance.locator('button'), 6, 'governance categories');
   for (const label of ['数据与信任', '分层记忆', 'Agent', '能力', '模型', '权限']) {
-    await firstVisible(governance.getByRole('button', { name: new RegExp(label) }), `governance ${label}`);
+    const buttonCount = await visibleCount(governance.getByRole('button', { name: new RegExp(label) }));
+    const optionCount = await governance.locator('option').filter({ hasText: label }).count();
+    if (buttonCount < 1 && optionCount < 1) throw new Error(`missing governance ${label}`);
   }
 
   const trust = page.locator('[data-testid="trust-center"]');
@@ -540,13 +568,15 @@ async function smokeGovernanceCenter(page, mobile) {
   await assertCount(trust.locator('[data-testid="trust-flow-row"]'), 0, 'unbound trust flows');
   await assertCount(trust.locator('details[open]'), 0, 'trust paths default collapsed');
 
-  await clickScopedButton(governance, /分层记忆/);
+  if (mobile) await governance.getByTestId('governance-mobile-select').selectOption('scopedMemory');
+  else await clickScopedButton(governance, /分层记忆/);
   const memory = page.locator('[data-testid="scoped-memory-manager"]');
   await memory.waitFor({ state: 'visible', timeout: 5000 });
   await assertText(page, '分层记忆不会使用浏览器预览数据', 'honest scoped memory empty state');
   await assertCount(memory.locator('[data-testid="scoped-memory-entry"]'), 0, 'unbound scoped memory entries');
 
-  await clickScopedButton(governance, /数据与信任/);
+  if (mobile) await governance.getByTestId('governance-mobile-select').selectOption('trust');
+  else await clickScopedButton(governance, /数据与信任/);
   await trust.waitFor({ state: 'visible', timeout: 5000 });
 }
 
@@ -587,6 +617,169 @@ async function smokeViewport(label, viewport) {
   await runStep(page, errors, `${label} governance trust and memory`, () => smokeGovernanceCenter(page, mobile));
   await runStep(page, errors, `${label} no seeded fingerprints`, () => smokeNoSeedContent(page, mobile));
   await runStep(page, errors, `${label} responsive geometry`, () => smokeResponsiveGeometry(page));
+  await page.close();
+}
+
+async function smokeLifecycleComponentStates(label, viewport) {
+  const page = await browser.newPage({ viewport });
+  const errors = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
+  });
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+
+  await runStep(page, errors, `${label} lifecycle component states`, async () => {
+    await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await page.evaluate(async () => {
+      const { mount } = await import('/@id/svelte');
+      const [
+        { default: TaskActivityCenter },
+        { default: ThreadQueue },
+        { default: DiffCommentPanel },
+        { default: ManagedWorktreePanel },
+        { diffRevision },
+      ] = await Promise.all([
+        import('/src/components/TaskActivityCenter.svelte'),
+        import('/src/components/ThreadQueue.svelte'),
+        import('/src/components/DiffCommentPanel.svelte'),
+        import('/src/components/ManagedWorktreePanel.svelte'),
+        import('/src/lib/diff-review.ts'),
+      ]);
+
+      document.body.innerHTML = '<main id="lifecycle-fixture"><section id="activity-fixture"></section><section id="queue-fixture"></section><section id="diff-fixture"></section><section id="worktree-fixture"></section></main>';
+      document.body.style.margin = '0';
+      document.body.style.background = '#f3f5f2';
+      const root = document.getElementById('lifecycle-fixture');
+      Object.assign(root.style, {
+        display: 'grid',
+        gap: '16px',
+        maxWidth: '1120px',
+        margin: '0 auto',
+        padding: '20px',
+      });
+
+      const events = [];
+      window.__voltLifecycleSmokeEvents = events;
+      mount(TaskActivityCenter, {
+        target: document.getElementById('activity-fixture'),
+        props: {
+          tabs: [
+            { id: 'tab-main', label: '修复登录回归', running: true, pendingPrompt: true, backgroundJobs: 2 },
+            { id: 'tab-bg', label: '后台执行验证', running: true, pendingPrompt: false, backgroundJobs: 1 },
+          ],
+          currentTabId: 'tab-main',
+          queuedMessages: [{ id: 'q1', tabId: 'tab-main', display: '补充回归测试', status: 'queued' }],
+          receipt: { state: 'failed' },
+          changesCount: 3,
+          checkpointCount: 2,
+          lastError: '验证命令失败，请选择恢复动作。',
+          canRestoreDraft: true,
+          onRecover: (action) => events.push(`recover:${action}`),
+          onSwitchTab: (id) => events.push(`switch:${id}`),
+          onCancelTab: (id) => events.push(`cancel:${id}`),
+        },
+      });
+
+      mount(ThreadQueue, {
+        target: document.getElementById('queue-fixture'),
+        props: {
+          messages: [
+            { id: 'q1', tabId: 'tab-main', display: '先补充回归测试，再检查失败路径。', status: 'queued' },
+            { id: 'q2', tabId: 'tab-main', display: '验证完成后整理交付收据。', status: 'failed', error: '上一轮未送达' },
+          ],
+          onEdit: (id, value) => events.push(`edit:${id}:${value}`),
+          onDelete: (id) => events.push(`delete:${id}`),
+          onMove: (id, offset) => events.push(`move:${id}:${offset}`),
+          onSteer: (id) => events.push(`steer:${id}`),
+          onResume: (id) => events.push(`resume:${id}`),
+        },
+      });
+
+      const diff = '@@ -1,3 +1,4 @@\n const ready = true;\n+const verified = false;\n export { ready };';
+      mount(DiffCommentPanel, {
+        target: document.getElementById('diff-fixture'),
+        props: {
+          path: 'src/runtime.ts',
+          diff,
+          comments: [{ id: 'c1', path: 'src/runtime.ts', revision: diffRevision(diff), line: 3, body: '这里需要真实验证结果。', status: 'open' }],
+          onAdd: (_path, _revision, line, body) => events.push(`comment:${line}:${body}`),
+          onResolve: (id, resolved) => events.push(`resolve:${id}:${resolved}`),
+          onDelete: (id) => events.push(`comment-delete:${id}`),
+          onRequestFix: (path) => events.push(`fix:${path}`),
+        },
+      });
+
+      mount(ManagedWorktreePanel, {
+        target: document.getElementById('worktree-fixture'),
+        props: {
+          repositoryRoot: '/workspace/volt-gui',
+          worktrees: [
+            { id: 'source', name: 'review-auth-flow', path: '/workspace/review-auth-flow', branch: 'review/auth-flow', head: 'abcdef123456', status: 'ready', dirty: true },
+            { id: 'target', name: 'verify-auth-flow', path: '/workspace/verify-auth-flow', branch: 'verify/auth-flow', head: 'abcdef123456', status: 'ready', dirty: false },
+          ],
+          snapshots: [{ id: 'snapshot-001', worktreeId: 'source', baseHead: 'abcdef123456', untrackedCount: 1 }],
+          onHandoff: (source, target, summary) => events.push(`handoff:${source}:${target}:${summary}`),
+          onRestore: (snapshot, target) => events.push(`restore:${snapshot}:${target}`),
+        },
+      });
+    });
+
+    const activity = page.locator('[data-testid="task-activity-center"]');
+    await activity.waitFor({ state: 'visible', timeout: 5000 });
+    await assertText(page, '结构化恢复', 'failed task recovery state');
+    const activityToggle = activity.getByRole('button', { name: '收起任务活动', exact: true });
+    await activityToggle.click();
+    if (await activity.getByText('结构化恢复', { exact: true }).isVisible().catch(() => false)) {
+      throw new Error('recovery state cannot be manually collapsed');
+    }
+    await activity.getByRole('button', { name: '展开任务活动', exact: true }).click();
+    await assertText(page, '结构化恢复', 're-expanded failed task recovery state');
+    await activity.getByRole('button', { name: '重试', exact: true }).click();
+
+    const queue = page.locator('[data-testid="thread-message-queue"]');
+    await assertCount(queue.locator('article'), 2, 'queued lifecycle rows');
+    const queueMenus = queue.locator('details');
+    await queueMenus.first().locator('summary').click();
+    for (const action of ['编辑', '上移', '下移', '删除']) {
+      const button = queueMenus.first().getByRole('button', { name: action, exact: true });
+      if (!await button.isVisible()) throw new Error(`first queue overflow action is clipped: ${action}`);
+    }
+    await queueMenus.first().locator('summary').click();
+    await queueMenus.last().locator('summary').scrollIntoViewIfNeeded();
+    await queueMenus.last().locator('summary').click();
+    for (const action of ['编辑', '上移', '下移', '删除']) {
+      const button = queueMenus.last().getByRole('button', { name: action, exact: true });
+      if (!await button.isVisible()) throw new Error(`last queue overflow action is clipped: ${action}`);
+    }
+    await queueMenus.last().locator('summary').click();
+    await queueMenus.first().locator('summary').click();
+    await queue.getByRole('button', { name: '编辑', exact: true }).click();
+    await queue.locator('textarea').fill('补充失败路径与回归测试。');
+    await queue.getByRole('button', { name: '保存', exact: true }).click();
+
+    const diffPanel = page.locator('[data-testid="diff-comment-panel"]');
+    await diffPanel.locator('summary').click();
+    await diffPanel.locator('input[type="number"]').fill('3');
+    await diffPanel.locator('textarea').fill('把验证状态改为真实执行结果。');
+    await diffPanel.getByRole('button', { name: '添加评论', exact: true }).click();
+    await diffPanel.getByRole('button', { name: /发送 1 条评论去修复/ }).click();
+
+    const worktree = page.locator('[data-testid="managed-worktree-panel"]');
+    await worktree.getByRole('button', { name: '管理', exact: true }).click();
+    await worktree.locator('select').nth(0).selectOption('source');
+    await worktree.locator('select').nth(1).selectOption('target');
+    await worktree.locator('textarea').fill('交给独立验证工作区复核。');
+    await worktree.getByRole('button', { name: '创建快照并交接', exact: true }).click();
+
+    const events = await page.evaluate(() => window.__voltLifecycleSmokeEvents || []);
+    for (const expected of ['recover:retry', 'edit:q1:补充失败路径与回归测试。', 'comment:3:把验证状态改为真实执行结果。', 'fix:src/runtime.ts', 'handoff:source:target:交给独立验证工作区复核。']) {
+      if (!events.includes(expected)) throw new Error(`lifecycle callback missing: ${expected}`);
+    }
+    await smokeResponsiveGeometry(page);
+    await page.screenshot({ path: `${outDir}/${safeName(`${label} lifecycle component worktree state`)}.png`, fullPage: false });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'auto' }));
+  });
+
   await page.close();
 }
 
@@ -635,6 +828,8 @@ const { instance: browser, source: browserSource } = await launchSmokeBrowser();
 try {
   await smokeViewport('desktop', { width: 1440, height: 950 });
   await smokeViewport('mobile', { width: 390, height: 844 });
+  await smokeLifecycleComponentStates('desktop', { width: 1440, height: 950 });
+  await smokeLifecycleComponentStates('mobile', { width: 390, height: 844 });
 } finally {
   await browser.close();
 }

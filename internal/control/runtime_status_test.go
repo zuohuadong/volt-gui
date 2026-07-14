@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -93,6 +94,117 @@ func TestCancelClearsPendingAskRuntimeStatus(t *testing.T) {
 	if st := c.RuntimeStatus(); st.Running || st.PendingPrompt || st.Cancellable || st.CancelRequested {
 		t.Fatalf("status after turn done = %+v, want idle", st)
 	}
+}
+
+func TestRuntimeStatusReportsPendingRotation(t *testing.T) {
+	c := New(Options{})
+	c.mu.Lock()
+	c.rotationPending = true
+	c.mu.Unlock()
+	if status := c.RuntimeStatus(); !status.Rotating || status.Running || status.Cancellable {
+		t.Fatalf("pending rotation status = %+v, want rotating but not cancellable", status)
+	}
+}
+
+func TestSubmitDisplayCheckedRejectsBusyRuntime(t *testing.T) {
+	c := New(Options{})
+	c.mu.Lock()
+	c.running = true
+	c.mu.Unlock()
+	if err := c.SubmitDisplayChecked("second", "second"); err != ErrTurnRunning {
+		t.Fatalf("SubmitDisplayChecked while running = %v, want ErrTurnRunning", err)
+	}
+}
+
+func TestSubmissionReservationBlocksUnrelatedTurnAndRotation(t *testing.T) {
+	c := New(Options{})
+	reservation, err := c.reserveSubmission()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.releaseSubmission(reservation)
+	if status := c.RuntimeStatus(); !status.Submitting || status.Running || status.Rotating || status.Cancellable {
+		t.Fatalf("submission reservation status = %+v, want submitting but not cancellable", status)
+	}
+	if accepted := c.runGuarded(func(context.Context) error { return nil }); accepted {
+		t.Fatal("unrelated turn should not consume a checked submission reservation")
+	}
+	if err := c.beginRotation(); !errors.Is(err, errTurnRunningRotation) {
+		t.Fatalf("beginRotation during checked submission = %v, want turn-running rejection", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if accepted := c.runGuardedWithReservation(reservation, func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	}); !accepted {
+		t.Fatal("checked submission owner should claim the reserved turn")
+	}
+	<-started
+	if status := c.RuntimeStatus(); !status.Running || status.Rotating {
+		t.Fatalf("reserved turn status = %+v", status)
+	}
+	close(release)
+}
+
+func TestSubmitUserTurnCheckedRejectsConcurrentSubmissionReservation(t *testing.T) {
+	c := New(Options{})
+	reservation, err := c.reserveSubmission()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.releaseSubmission(reservation)
+	if err := c.SubmitUserTurnChecked("heartbeat", "heartbeat"); !errors.Is(err, ErrTurnRunning) {
+		t.Fatalf("SubmitUserTurnChecked during reservation = %v, want ErrTurnRunning", err)
+	}
+}
+
+func TestSubmissionReservationTransfersAtomicallyToSynchronousRotation(t *testing.T) {
+	c := New(Options{})
+	reservation, err := c.reserveSubmission()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.beginRotationWithSubmissionReservation(reservation); err != nil {
+		t.Fatalf("beginRotationWithSubmissionReservation: %v", err)
+	}
+	defer c.endRotation()
+	status := c.RuntimeStatus()
+	if !status.Rotating || status.Submitting || status.Running {
+		t.Fatalf("reservation transfer status = %+v, want rotating owner", status)
+	}
+	if accepted := c.runGuarded(func(context.Context) error { return nil }); accepted {
+		t.Fatal("a normal turn started while the reserved synchronous rotation was active")
+	}
+}
+
+func TestAsyncRotationConsumesOnlyItsReservation(t *testing.T) {
+	c := New(Options{})
+	submission, err := c.reserveSubmission()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed := make(chan struct{})
+	release := make(chan struct{})
+	c.runAsyncRotationCommand(submission, "rotation", "rotated", func(rotation uint64) error {
+		if err := c.beginReservedRotation(rotation); err != nil {
+			return err
+		}
+		close(claimed)
+		<-release
+		c.endRotation()
+		return nil
+	})
+	<-claimed
+	if status := c.RuntimeStatus(); !status.Rotating || status.Running {
+		t.Fatalf("reserved rotation status = %+v", status)
+	}
+	if _, err := c.reserveSubmission(); err != ErrTurnRunning {
+		t.Fatalf("submission during reserved rotation = %v, want ErrTurnRunning", err)
+	}
+	close(release)
 }
 
 func assertCancelClearedPendingRuntimeStatus(t *testing.T, st RuntimeStatus) {

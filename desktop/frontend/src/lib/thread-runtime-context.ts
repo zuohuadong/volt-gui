@@ -49,5 +49,6 @@ export async function submitThreadMessageWithProjectContext({
   const latestTabs = await listTabs();
   const latest = latestTabs.find((candidate) => candidate.id === tab.id);
   if (!latest) throw new Error(`Thread ${tab.id} 在刷新运行配置后不可用，消息尚未提交。`);
+  if (latest.running) throw new Error("turn already running");
   await submit(latest);
 }

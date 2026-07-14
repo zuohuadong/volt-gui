@@ -1,15 +1,27 @@
 <script lang="ts">
   import CodeBlock from "./CodeBlock.svelte";
+  import DiffCommentPanel from "./DiffCommentPanel.svelte";
+  import type { DiffReviewComment } from "../lib/diff-review";
   import type { FilePreview, WorkspaceChangeView, WorkspaceDiffView } from "../lib/types";
 
   let {
     change,
     preview,
     diff,
+    comments = [],
+    onAddComment = () => undefined,
+    onResolveComment = () => undefined,
+    onDeleteComment = () => undefined,
+    onRequestFix = () => undefined,
   }: {
     change?: WorkspaceChangeView;
     preview?: FilePreview;
     diff?: WorkspaceDiffView;
+    comments?: DiffReviewComment[];
+    onAddComment?: (path: string, revision: string, line: number, body: string) => void;
+    onResolveComment?: (id: string, resolved: boolean) => void;
+    onDeleteComment?: (id: string) => void;
+    onRequestFix?: (path: string) => void | Promise<void>;
   } = $props();
 
   const status = $derived(diff?.status || change?.gitStatus || "?");
@@ -72,6 +84,15 @@
         <span class="diff-viewer__removed">-{diff.removed}</span>
       </div>
       <CodeBlock code={diff.diff} language="diff" maxHeight={260} />
+      <DiffCommentPanel
+        path={diff.path}
+        diff={diff.diff}
+        {comments}
+        onAdd={onAddComment}
+        onResolve={onResolveComment}
+        onDelete={onDeleteComment}
+        {onRequestFix}
+      />
       {#if diff.truncated}
         <p>Diff was truncated because the change is large.</p>
       {/if}

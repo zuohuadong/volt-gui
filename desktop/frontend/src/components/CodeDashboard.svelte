@@ -3,6 +3,7 @@
   import { ChevronDown, ChevronRight, Code2, ExternalLink, FileText, Folder, GitPullRequest, Gauge, LocateFixed, RefreshCw, RotateCcw, Search } from "@lucide/svelte";
   import DiffViewer from "./DiffViewer.svelte";
   import { app } from "../lib/bridge";
+  import type { DiffReviewComment } from "../lib/diff-review";
   import { contextRemainingPercent, contextRemainingTokens } from "../lib/thread-ux";
   import type { CheckpointMeta, ContextPanelInfo, DirEntry, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
   import { t } from "../lib/i18n";
@@ -22,6 +23,11 @@
     onFork,
     onRewind,
     onRefreshContext,
+    diffComments = [],
+    onAddDiffComment = () => undefined,
+    onResolveDiffComment = () => undefined,
+    onDeleteDiffComment = () => undefined,
+    onRequestDiffFix = () => undefined,
     variant = "dock",
     focus = "overview",
   }: {
@@ -35,6 +41,11 @@
     onFork: (turn: number) => Promise<void> | void;
     onRewind: (turn: number, scope: RewindScope) => Promise<void> | void;
     onRefreshContext: () => Promise<void> | void;
+    diffComments?: DiffReviewComment[];
+    onAddDiffComment?: (path: string, revision: string, line: number, body: string) => void;
+    onResolveDiffComment?: (id: string, resolved: boolean) => void;
+    onDeleteDiffComment?: (id: string) => void;
+    onRequestDiffFix?: (path: string) => void | Promise<void>;
     variant?: CodeDashboardVariant;
     focus?: CodeDashboardFocus;
   } = $props();
@@ -401,7 +412,16 @@
     </section>
     <section class={[(focus === "workspace" || focus === "changes" || focus === "overview") && "is-focus"]}>
       <h2><FileText size={15} /> Preview</h2>
-      <DiffViewer change={selectedChange} preview={filePreview} diff={diffPreview} />
+      <DiffViewer
+        change={selectedChange}
+        preview={filePreview}
+        diff={diffPreview}
+        comments={diffComments}
+        onAddComment={onAddDiffComment}
+        onResolveComment={onResolveDiffComment}
+        onDeleteComment={onDeleteDiffComment}
+        onRequestFix={onRequestDiffFix}
+      />
     </section>
   </aside>
 </section>

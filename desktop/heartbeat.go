@@ -230,7 +230,7 @@ type heartbeatRuntimeStatus interface {
 
 func heartbeatControllerBusy(ctrl heartbeatRuntimeStatus) bool {
 	status := ctrl.RuntimeStatus()
-	return status.Running || status.PendingPrompt
+	return status.Running || status.Rotating || status.Submitting || status.PendingPrompt
 }
 
 // executeTask runs one heartbeat: creates/opens topic, submits prompt.

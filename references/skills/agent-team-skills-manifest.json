@@ -1,7 +1,7 @@
 {
   "source": "agent-team-config/references/skills",
   "skillRoot": "references/skills",
-  "count": 31,
+  "count": 32,
   "skills": [
     {
       "id": "agent-team-automation",
@@ -182,6 +182,12 @@
       "frontmatterName": "typescript",
       "path": "references/skills/typescript/SKILL.md",
       "description": "Use when writing, reviewing, or refactoring TypeScript, especially Bun-based CLI scripts, strict typing, Result-style error handling, module imports, and type-safe configuration."
+    },
+    {
+      "id": "volt-desktop-experience",
+      "frontmatterName": "volt-desktop-experience",
+      "path": "references/skills/volt-desktop-experience/SKILL.md",
+      "description": "Use when designing, implementing, or reviewing Volt GUI operational task-lifecycle UX: running message queues and Steer, activity centers, result receipts, structured recovery, explainable approvals, Diff comments to fixes, automation result inboxes, or managed worktree snapshot/Handoff flows. Enforces real Wails-backed state, safe mutation preflights, Work/Code ownership, and behavioral plus visual verification; pair with the project volt-gui-design-language skill for broad visual or layout work."
     },
     {
       "id": "vue-frontend",

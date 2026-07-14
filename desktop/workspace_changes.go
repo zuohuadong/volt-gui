@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -221,8 +223,31 @@ func workspaceGitStatus(base string) ([]gitStatusEntry, error) {
 }
 
 func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
+	return a.workspaceDiff("", rel)
+}
+
+func (a *App) WorkspaceDiffForTab(tabID, rel string) WorkspaceDiffView {
+	tabID = strings.TrimSpace(tabID)
+	if tabID == "" {
+		return WorkspaceDiffView{Path: normalizeWorkspaceRelPath("", rel), Err: "tab id is required"}
+	}
+	return a.workspaceDiff(tabID, rel)
+}
+
+func (a *App) workspaceDiff(tabID, rel string) WorkspaceDiffView {
 	out := WorkspaceDiffView{Path: normalizeWorkspaceRelPath("", rel)}
-	base, err := a.activeWorkspaceBase()
+	var base string
+	var err error
+	if tabID == "" {
+		base, err = a.activeWorkspaceBase()
+	} else {
+		workspaceRoot, _, ok := a.workspaceChangesTarget(tabID)
+		if !ok {
+			out.Err = fmt.Sprintf("tab %q not found", tabID)
+			return out
+		}
+		base, err = workspaceBaseFromRoot(workspaceRoot)
+	}
 	if err != nil {
 		out.Err = err.Error()
 		return out
@@ -284,12 +309,11 @@ func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
 		}
 	}
 	if kind != codediff.Delete {
-		data, err := os.ReadFile(path)
+		newText, err = workspaceDiffText(base, path)
 		if err != nil {
 			out.Err = err.Error()
 			return out
 		}
-		newText = string(data)
 	}
 
 	change := codediff.Build(rel, oldText, newText, kind)
@@ -300,6 +324,105 @@ func (a *App) WorkspaceDiff(rel string) WorkspaceDiffView {
 	out.Binary = change.Binary
 	out.Truncated = strings.Contains(change.Diff, "diff omitted:")
 	return out
+}
+
+// workspaceDiffText reads only a stable regular file. Symlinks are represented
+// by their link target without following it, so an untracked link cannot expose
+// content outside the selected workspace through the Diff -> review pipeline.
+func workspaceDiffText(base, path string) (string, error) {
+	if err := validateWorkspaceDiffParent(base, path); err != nil {
+		return "", err
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if before.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		return "symlink -> " + target + "\n", nil
+	}
+	if !before.Mode().IsRegular() {
+		return "", errors.New("workspace diff only supports regular files and symbolic links")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if err := validateWorkspaceDiffParent(base, path); err != nil {
+		return "", err
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	if after.Mode()&os.ModeSymlink != 0 || !after.Mode().IsRegular() || !os.SameFile(before, after) || !os.SameFile(after, opened) {
+		return "", errors.New("workspace file changed while preparing diff")
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func validateWorkspaceDiffParent(base, path string) error {
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return err
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(baseAbs, pathAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return os.ErrInvalid
+	}
+
+	realBase, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(pathAbs)
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
+	realRel, err := filepath.Rel(realBase, realParent)
+	if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) || filepath.IsAbs(realRel) {
+		return errors.New("workspace diff refuses paths through a symbolic-link parent outside the workspace")
+	}
+
+	relParent, err := filepath.Rel(baseAbs, parent)
+	if err != nil {
+		return err
+	}
+	current := baseAbs
+	for _, part := range strings.Split(relParent, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("workspace diff refuses symbolic-link parent directories")
+		}
+		if !info.IsDir() {
+			return errors.New("workspace diff parent is not a directory")
+		}
+	}
+	return nil
 }
 
 func workspaceGitRoot(base string) (string, error) {

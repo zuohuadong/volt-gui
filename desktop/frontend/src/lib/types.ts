@@ -1,4 +1,6 @@
 export type ActivityMode = "work" | "code";
+export type SteerDispatchMode = "steer" | "new_turn";
+export type SubmitDispatchMode = "turn" | "local" | "maintenance";
 export type RunMode = "ask" | "auto" | "yolo" | "plan" | "goal";
 export type BackendMode = "normal" | "plan" | "yolo";
 
@@ -600,6 +602,25 @@ export interface WorkbenchAutomationInput {
   nextRun?: string;
   steps?: string[];
   logs?: string[];
+}
+
+export interface WorkbenchAutomationRun {
+  id: string;
+  automationId: string;
+  automationTitle: string;
+  projectId?: string;
+  projectName?: string;
+  status: "passed" | "failed" | "skipped" | string;
+  result: string;
+  trigger: "manual" | "scheduled" | "skipped" | string;
+  command?: string;
+  scope?: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  logs: string[];
+  read: boolean;
+  needsAttention: boolean;
 }
 
 export interface WorkbenchCustomer {
@@ -1364,11 +1385,8 @@ export interface WireEvent {
       effort?: string;
     };
   };
-  approval?: {
-    id: string;
-    tool: string;
-    subject: string;
-  };
+  approval?: WireApproval;
+  guardian?: WireGuardianAssessment;
   ask?: WireAsk;
   browserPrompt?: WireBrowserPrompt;
   usage?: {
@@ -1452,6 +1470,18 @@ export interface WireApproval {
   tool: string;
   subject: string;
   reason?: string;
+  guardian?: WireGuardianAssessment;
+}
+
+export interface WireGuardianAssessment {
+  id: string;
+  tool: string;
+  subject: string;
+  outcome: string;
+  risk_level?: string;
+  user_authorization?: string;
+  rationale?: string;
+  duration_ms?: number;
 }
 
 export interface BrowserCredentialView {
@@ -1614,6 +1644,44 @@ export interface CheckpointMeta {
   time: number;
   canCode?: boolean;
   canConversation?: boolean;
+}
+
+export interface ManagedWorktree {
+  id: string;
+  name: string;
+  repositoryRoot: string;
+  path: string;
+  branch?: string;
+  head?: string;
+  dirty: boolean;
+  status: "ready" | "missing" | string;
+  warning?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ManagedWorktreeSnapshot {
+  id: string;
+  worktreeId: string;
+  repositoryRoot: string;
+  baseHead: string;
+  patchPath: string;
+  filesPath: string;
+  untrackedFiles: string[];
+  untrackedCount: number;
+  createdAt: string;
+}
+
+export interface ManagedWorktreeHandoff {
+  id: string;
+  sourceWorktreeId: string;
+  targetWorktreeId: string;
+  snapshotId: string;
+  summary: string;
+  status: string;
+  warning?: string;
+  artifactPath: string;
+  createdAt: string;
 }
 
 // ResourceRecord is a BaseRecord with a required string id. The workbench data

@@ -2789,6 +2789,38 @@ func TestGuardianCannotAutoAllowFreshHumanApprovalTools(t *testing.T) {
 	}
 }
 
+// TestSessionGrantShortCircuitsGuardianReview: a session grant (or YOLO / the
+// approved-plan window) answers an ordinary approval before any guardian review
+// or prompt is attempted. Absorbed from PR #6413 by @myipanta.
+func TestSessionGrantShortCircuitsGuardianReview(t *testing.T) {
+	guardianProv := &recordingProvider{
+		name:    "guardian",
+		streams: [][]provider.Chunk{textTurn(`{"risk_level":"high","user_authorization":"unknown","outcome":"deny","rationale":"should never run"}`)},
+	}
+	guardianSess := guardian.NewSession(guardianProv, tool.NewRegistry(), guardian.PolicyPrompt(), "guardian-test", 0, nil, event.Discard)
+	exec := agent.New(&recordingProvider{name: "executor"}, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+	prompts := 0
+	c := New(Options{
+		Executor: exec,
+		Guardian: guardianSess,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.ApprovalRequest {
+				prompts++
+			}
+		}),
+	})
+	subject := approvalDisplaySubject("write_file", "main.go", nil)
+	c.approval.grantSession("write_file", subject)
+
+	allow, remember, _, err := gateApprover{c}.ApproveWithReason(context.Background(), "write_file", "main.go", nil)
+	if err != nil || !allow || remember {
+		t.Fatalf("session-granted approval = (%v,%v,%v), want plain allow", allow, remember, err)
+	}
+	if len(guardianProv.requests) != 0 || prompts != 0 {
+		t.Fatalf("session grant must bypass guardian and prompts, reviews=%d prompts=%d", len(guardianProv.requests), prompts)
+	}
+}
+
 func TestMCPAutoReviewerIsFinalAndDoesNotPromptHuman(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

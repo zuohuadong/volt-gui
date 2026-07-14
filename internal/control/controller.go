@@ -108,9 +108,13 @@ type Controller struct {
 	// memory owns the loaded memory snapshot, the pending turn-tail notes queue,
 	// and write serialization behind its own locks, off c.mu — so a memory-panel
 	// save never stalls an approval or status poll. See memory.go.
-	memory            memoryManager
-	cleanup           func()
-	autoPlan          string
+	memory   memoryManager
+	cleanup  func()
+	autoPlan string
+	// suppressAutoPlan is set when the user declines a plan approval after
+	// already switching plan mode off. It makes the next maybeAutoPlan a no-op
+	// so auto-plan cannot immediately re-enter the mode the user just left.
+	suppressAutoPlan  bool
 	responseLanguage  string
 	reasoningLanguage string
 	// disableColdResumePrune skips stale-tool-result elision on cold resume.
@@ -4671,10 +4675,13 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 
 func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, string, error) {
 	subject = approvalDisplaySubject(tool, subject, args)
-	// requestApproval short-circuits the YOLO / just-approved-plan window and any
-	// session grant before it emits a prompt, so the auto-allow paths need no
-	// special-casing here. Deny rules already bit before this point.
-	if g.c.guardianSess != nil && !g.c.approval.preApproved(tool, subject) {
+	// Check pre-approval first — YOLO mode, the just-approved-plan window, and
+	// session grants all short-circuit here, before any prompt or guardian
+	// review. Deny rules already bit at the policy level before this point.
+	if g.c.approval.preApproved(tool, subject) {
+		return true, false, "", nil
+	}
+	if g.c.guardianSess != nil {
 		allow, reason, reviewErr := g.c.guardianSess.Review(ctx, tool, args, g.c.executor.Session())
 		if reviewErr != nil {
 			return false, false, "", reviewErr

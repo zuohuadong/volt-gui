@@ -2,7 +2,7 @@ module reasonix
 
 go 1.25.0
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 require (
 	charm.land/bubbles/v2 v2.1.0
@@ -10,7 +10,6 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
 	github.com/BurntSushi/toml v1.6.0
-	github.com/SivanCola/windows-sandbox v0.0.0-20260705154605-6b29dd09f9cb
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-udiff v0.4.1
@@ -21,6 +20,8 @@ require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/rivo/uniseg v0.4.7
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/spf13/pflag v1.0.6
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0
 	github.com/tree-sitter/tree-sitter-python v0.25.0

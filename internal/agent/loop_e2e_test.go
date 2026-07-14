@@ -13,6 +13,12 @@ import (
 	"reasonix/internal/tool"
 )
 
+type toolCallReasoningRequiredProvider struct {
+	*testutil.MockProvider
+}
+
+func (p toolCallReasoningRequiredProvider) RequiresToolCallReasoning() bool { return true }
+
 func echoRegistry() *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Add(echoTool{})
@@ -52,6 +58,30 @@ func TestRunMultiToolRoundEmptyIDsSurvivePairing(t *testing.T) {
 	}
 	if !strings.Contains(results[0], "alpha") || !strings.Contains(results[1], "beta") {
 		t.Errorf("results lost their identity: %v", results)
+	}
+}
+
+func TestRunPersistsCumulativeAssistantWorkDuration(t *testing.T) {
+	mp := testutil.NewMock("m",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "call-1", Name: "echo", Arguments: `{"text":"hello"}`}}},
+		testutil.Turn{Text: "done"},
+	)
+	a := New(mp, echoRegistry(), NewSession(""), Options{}, event.Discard)
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var durations []int64
+	for _, message := range a.Session().Messages {
+		if message.Role == provider.RoleAssistant {
+			durations = append(durations, message.WorkDurationMs)
+		}
+	}
+	if len(durations) != 2 {
+		t.Fatalf("assistant durations = %v, want two rounds", durations)
+	}
+	if durations[0] <= 0 || durations[1] < durations[0] {
+		t.Fatalf("assistant durations must be positive and cumulative: %v", durations)
 	}
 }
 
@@ -521,6 +551,112 @@ func TestRunWellFormedToolLoopRoundTrips(t *testing.T) {
 	before := len(msgs)
 	if after := len(provider.SanitizeToolPairing(msgs)); after != before {
 		t.Errorf("repair mutated a well-formed session: %d -> %d", before, after)
+	}
+}
+
+// TestRunWarnsAndContinuesOnMissingToolCallReasoning: a DeepSeek thinking-mode
+// tool_calls turn arriving without reasoning is a quality degradation, not a
+// failure — the turn is saved, the loop continues to completion, and the user
+// sees a single warn notice. Missing reasoning tends to repeat on every round
+// once it starts (endpoint-conditional behavior, seen on the official API too),
+// so later rounds with the same shape must stay silent instead of flooding the
+// transcript (#6259). The wire layer keeps the replay valid by always
+// serializing the reasoning_content key on such turns.
+func TestRunWarnsAndContinuesOnMissingToolCallReasoning(t *testing.T) {
+	mp := testutil.NewMock("deepseek-proxy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"text":"hi"}`}}},
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c2", Name: "echo", Arguments: `{"text":"again"}`}}},
+		testutil.Turn{Text: "done"},
+	)
+	sink := &recordSink{}
+	a := New(toolCallReasoningRequiredProvider{mp}, echoRegistry(), NewSession(""), Options{}, sink)
+
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var savedToolTurns int
+	for _, m := range a.Session().Messages {
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			savedToolTurns++
+		}
+	}
+	if savedToolTurns != 2 {
+		t.Fatalf("tool-call turns saved = %d, want 2 despite missing reasoning, session=%+v", savedToolTurns, a.Session().Messages)
+	}
+	var warns int
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Level == event.LevelWarn && strings.Contains(e.Text, "without reasoning_content") {
+			warns++
+		}
+	}
+	if warns != 1 {
+		t.Fatalf("missing-reasoning warn notices = %d, want exactly 1 (first round warns, repeats stay silent)", warns)
+	}
+}
+
+// TestSetSessionRearmsMissingToolCallReasoningWarn: the once-per-session dedupe
+// is scoped to the conversation — swapping in a different session (resume/new)
+// must re-arm the notice so the fresh conversation still gets its one warning.
+func TestSetSessionRearmsMissingToolCallReasoningWarn(t *testing.T) {
+	mp := testutil.NewMock("deepseek-proxy",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"text":"hi"}`}}},
+		testutil.Turn{Text: "done"},
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "c2", Name: "echo", Arguments: `{"text":"hi"}`}}},
+		testutil.Turn{Text: "done again"},
+	)
+	sink := &recordSink{}
+	a := New(toolCallReasoningRequiredProvider{mp}, echoRegistry(), NewSession(""), Options{}, sink)
+
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	a.SetSession(NewSession(""))
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	var warns int
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Level == event.LevelWarn && strings.Contains(e.Text, "without reasoning_content") {
+			warns++
+		}
+	}
+	if warns != 2 {
+		t.Fatalf("warn notices across two sessions = %d, want 2 (SetSession re-arms the dedupe)", warns)
+	}
+}
+
+func TestRunPreservesOriginalRequiredToolCallReasoningAcrossHook(t *testing.T) {
+	mp := testutil.NewMock("deepseek-proxy",
+		testutil.Turn{
+			Reasoning: "original reasoning",
+			ToolCalls: []provider.ToolCall{{
+				ID: "c1", Name: "echo", Arguments: `{"text":"hi"}`,
+			}},
+		},
+		testutil.Turn{Text: "done"},
+	)
+	h := &stubHooks{hasPostLLM: true, postLLMOut: "translated display"}
+	a := New(toolCallReasoningRequiredProvider{mp}, echoRegistry(), NewSession(""), Options{Hooks: h}, event.Discard)
+
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reqs := mp.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("provider calls = %d, want 2", len(reqs))
+	}
+	var toolCallAssistant provider.Message
+	for _, m := range reqs[1].Messages {
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			toolCallAssistant = m
+			break
+		}
+	}
+	if toolCallAssistant.ReasoningContent != "original reasoning" {
+		t.Fatalf("tool-call reasoning = %q, want original provider reasoning", toolCallAssistant.ReasoningContent)
+	}
+	if toolCallAssistant.ReasoningContent == "translated display" {
+		t.Fatal("translated display text leaked into provider-visible tool-call reasoning")
 	}
 }
 

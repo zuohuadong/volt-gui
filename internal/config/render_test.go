@@ -22,6 +22,17 @@ func isolateUserConfigHome(t *testing.T) string {
 	return home
 }
 
+// setRuntimeGOOS overrides the package-level runtimeGOOS for one test. The
+// t.Setenv call is a guard: it panics if the test also uses t.Parallel, which
+// would otherwise race on the shared global.
+func setRuntimeGOOS(t *testing.T, goos string) {
+	t.Helper()
+	t.Setenv("REASONIX_TEST_GOOS", goos)
+	old := runtimeGOOS
+	runtimeGOOS = goos
+	t.Cleanup(func() { runtimeGOOS = old })
+}
+
 func expectedDefaultReasonixHome(home string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(home, "AppData", "Roaming", "reasonix")
@@ -48,6 +59,51 @@ func TestUserConfigPathUsesReasonixHome(t *testing.T) {
 	want := filepath.Join(expectedDefaultReasonixHome(home), "config.toml")
 	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestReasonixManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
+	home := isolateUserConfigHome(t)
+	setRuntimeGOOS(t, "windows")
+	oldConfigDir := osUserConfigDir
+	osUserConfigDir = func() string { return filepath.Join(home, "AppData", "Roaming") }
+	t.Cleanup(func() { osUserConfigDir = oldConfigDir })
+
+	paths := ReasonixManagedConfigPaths()
+	for _, want := range []string{
+		filepath.Join(home, "AppData", "Roaming", "reasonix", "config.toml"),
+		filepath.Join(home, ".reasonix", "config.json"),
+	} {
+		found := false
+		for _, got := range paths {
+			if samePath(got, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("managed config paths = %v, want %s", paths, want)
+		}
+	}
+	// The escape hatch is file-level by contract: no directories, and none of
+	// the sensitive Reasonix-home siblings (credentials, hooks, skills,
+	// sessions) may ride along.
+	for _, got := range paths {
+		if base := filepath.Base(got); base != "config.toml" && base != "config.json" {
+			t.Fatalf("managed config path %q is not a known config file (paths must be files, not directories): %v", got, paths)
+		}
+		for _, forbidden := range []string{
+			home,
+			ReasonixHomeDir(),
+			UserCredentialsPath(),
+			filepath.Join(ReasonixHomeDir(), "settings.json"),
+			filepath.Join(ReasonixHomeDir(), "skills"),
+			filepath.Join(ReasonixHomeDir(), "sessions"),
+		} {
+			if samePath(got, forbidden) {
+				t.Fatalf("managed config paths must not include %q: %v", forbidden, paths)
+			}
+		}
 	}
 }
 
@@ -187,6 +243,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.MaxDepth = 2
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
+	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/reasonix-media", "/srv/shots"}
 	orig.Bot.Routes = []BotRouteConfig{{
 		ConnectionID:     "feishu-lark",
 		ChatType:         "group",
@@ -194,6 +251,13 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		Model:            "deepseek-pro",
 		ToolApprovalMode: "ask",
 		WorkspaceRoot:    "/tmp/reasonix-route",
+	}}
+	orig.Bot.DesktopWatchers = []BotDesktopWatcherConfig{{
+		Platform:     "feishu",
+		ConnectionID: "feishu-lark",
+		Domain:       "lark",
+		ChatType:     "dm",
+		ChatID:       "oc_watcher",
 	}}
 	orig.Bot.Connections = []BotConnectionConfig{{
 		ID:               "feishu-lark",
@@ -251,8 +315,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.DefaultModel != "mimo-pro" {
 		t.Errorf("default_model = %q, want mimo-pro", got.DefaultModel)
 	}
-	if got.ConfigVersion != 3 {
-		t.Errorf("config_version = %d, want 3", got.ConfigVersion)
+	if got.ConfigVersion != 4 {
+		t.Errorf("config_version = %d, want 4", got.ConfigVersion)
 	}
 	if got.Language != "zh" {
 		t.Errorf("language = %q, want zh", got.Language)
@@ -317,8 +381,14 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if !got.Bot.Control.Enabled || got.Bot.Control.Addr != "127.0.0.1:39001" || got.Bot.Control.TokenEnv != "BOT_CONTROL_TOKEN" {
 		t.Errorf("bot control not preserved: %+v", got.Bot.Control)
 	}
+	if len(got.Bot.Feishu.OutboundMediaRoots) != 2 || got.Bot.Feishu.OutboundMediaRoots[0] != "/tmp/reasonix-media" {
+		t.Errorf("feishu outbound_media_roots not preserved: %+v", got.Bot.Feishu.OutboundMediaRoots)
+	}
 	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/reasonix-route" || got.Bot.Routes[0].ChatID != "oc_group" {
 		t.Errorf("bot routes not preserved: %+v", got.Bot.Routes)
+	}
+	if len(got.Bot.DesktopWatchers) != 1 || got.Bot.DesktopWatchers[0].ChatID != "oc_watcher" || got.Bot.DesktopWatchers[0].Platform != "feishu" || got.Bot.DesktopWatchers[0].Domain != "lark" {
+		t.Errorf("bot desktop watchers not preserved: %+v", got.Bot.DesktopWatchers)
 	}
 	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/reasonix-bot" {
 		t.Errorf("bot session mapping scope not preserved: %+v", got.Bot.Connections[0].SessionMappings)
@@ -575,7 +645,7 @@ func TestRenderTOMLCreationLayoutStyle(t *testing.T) {
 
 func TestScopedRenderPreservesLSPConfig(t *testing.T) {
 	const src = `
-config_version = 3
+config_version = 4
 default_model = "mimo"
 
 [lsp]
@@ -699,7 +769,7 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c.Desktop.CheckUpdates = boolPtr(false)
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 3", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, "[notifications]", "[tools.shell]"} {
+	for _, want := range []string{"config_version = 4", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, "[notifications]", "[tools.shell]"} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}
@@ -953,6 +1023,27 @@ func TestRenderStringMapQuotesNonBareTOMLKeys(t *testing.T) {
 	}
 }
 
+func TestDesktopExternalOpenerUserScopeRoundTrip(t *testing.T) {
+	cfg := Default()
+	if err := cfg.SetDesktopExternalOpener("ghostty"); err != nil {
+		t.Fatal(err)
+	}
+	rendered := RenderTOMLForScope(cfg, RenderScopeUser)
+	if !strings.Contains(rendered, `external_opener = "ghostty"`) {
+		t.Fatalf("user config omitted desktop external opener:\n%s", rendered)
+	}
+	if project := RenderTOMLForScope(cfg, RenderScopeProject); strings.Contains(project, "external_opener") {
+		t.Fatalf("project config leaked user-only external opener:\n%s", project)
+	}
+	var decoded Config
+	if _, err := toml.Decode(rendered, &decoded); err != nil {
+		t.Fatalf("decode rendered user config: %v", err)
+	}
+	if got := decoded.DesktopExternalOpener(); got != "ghostty" {
+		t.Fatalf("round-trip external opener = %q, want ghostty", got)
+	}
+}
+
 func TestRenderTOMLTablePathQuotesEachSegment(t *testing.T) {
 	got := renderTOMLTablePath("lsp", "servers", "c++", "github:gh-fix-ci")
 	want := `lsp.servers."c++"."github:gh-fix-ci"`
@@ -998,6 +1089,23 @@ func TestRenderTOMLDefaultStepsCommentedOut(t *testing.T) {
 				t.Errorf("default planner_max_steps should be commented out in [agent], got: %s", line)
 			}
 		}
+	}
+}
+
+func TestRenderTOMLWindowsSandboxDefaultAndExplicitEnforceDisabled(t *testing.T) {
+	isolateUserConfigHome(t)
+	setRuntimeGOOS(t, "windows")
+
+	defaultRendered := RenderTOMLForScope(Default(), RenderScopeUser)
+	if !strings.Contains(defaultRendered, `bash    = "off"`) {
+		t.Fatalf("Windows default user config should render bash off:\n%s", defaultRendered)
+	}
+
+	cfg := Default()
+	cfg.Sandbox.Bash = "enforce"
+	delta := RenderTOMLProjectDelta(cfg)
+	if strings.Contains(delta, `[sandbox]`) || strings.Contains(delta, `bash = `) {
+		t.Fatalf("Windows explicit enforce should not render as an effective project delta:\n%s", delta)
 	}
 }
 
@@ -1206,5 +1314,80 @@ func TestMigrateLegacyIfNeededSkipsWhenIsolated(t *testing.T) {
 	}
 	if res != nil {
 		t.Fatalf("MigrateLegacyIfNeeded() = %+v, want nil when isolated", res)
+	}
+}
+
+// TestProjectConfigCannotOverrideSecrets pins [secrets] as a user-global
+// security control: a cloned repository's reasonix.toml must not be able to
+// switch off tool-output redaction or opt the user into subprocess env
+// stripping / sensitive-path hiding.
+func TestProjectConfigCannotOverrideSecrets(t *testing.T) {
+	isolateUserConfigHome(t)
+	t.Setenv("REASONIX_HOME", "")
+	globalDir := filepath.Dir(UserConfigPath())
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalTOML := "[secrets]\nredact_tool_output = true\nfilter_subprocess_env = false\nprotect_sensitive_files = false\n"
+	if err := os.WriteFile(filepath.Join(globalDir, "config.toml"), []byte(globalTOML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	project := t.TempDir()
+	projectTOML := "[secrets]\nredact_tool_output = false\nfilter_subprocess_env = true\nprotect_sensitive_files = true\n"
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(projectTOML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatalf("LoadForRoot() error = %v", err)
+	}
+	if !cfg.SecretsRedactToolOutput() {
+		t.Error("project reasonix.toml disabled redact_tool_output; [secrets] must stay user-global")
+	}
+	if cfg.Secrets.FilterSubprocessEnv {
+		t.Error("project reasonix.toml enabled filter_subprocess_env; [secrets] must stay user-global")
+	}
+	if cfg.Secrets.ProtectSensitiveFiles {
+		t.Error("project reasonix.toml enabled protect_sensitive_files; [secrets] must stay user-global")
+	}
+}
+
+// TestRenderTOMLPersistsSecretsSection pins config-save round-tripping: the
+// renderer must emit [secrets] for the user scope or every WriteFile would
+// silently drop the user's security toggles.
+func TestRenderTOMLPersistsSecretsSection(t *testing.T) {
+	cfg := Default()
+	off := false
+	cfg.Secrets.RedactToolOutput = &off
+	cfg.Secrets.FilterSubprocessEnv = true
+	cfg.Secrets.ProtectSensitiveFiles = true
+
+	out := RenderTOMLForScope(cfg, RenderScopeUser)
+	for _, want := range []string{"[secrets]", "redact_tool_output = false", "filter_subprocess_env = true", "protect_sensitive_files = true"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("user-scope render missing %q:\n%s", want, out)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	back := Default()
+	if err := mergeFile(back, path); err != nil {
+		t.Fatalf("round-trip decode: %v", err)
+	}
+	if back.SecretsRedactToolOutput() {
+		t.Fatal("redact_tool_output=false lost in render round-trip")
+	}
+	if !back.Secrets.FilterSubprocessEnv || !back.Secrets.ProtectSensitiveFiles {
+		t.Fatalf("secrets toggles lost in render round-trip: %+v", back.Secrets)
+	}
+
+	// Project scope must not render the section — LoadForRoot ignores it there.
+	if proj := RenderTOMLForScope(cfg, RenderScopeProject); strings.Contains(proj, "[secrets]") {
+		t.Fatalf("project scope rendered [secrets]:\n%s", proj)
 	}
 }

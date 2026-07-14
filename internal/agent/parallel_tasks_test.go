@@ -123,6 +123,54 @@ func TestParallelTasksInjectsWorkspaceContextIntoChildren(t *testing.T) {
 	}
 }
 
+// TestParallelTasksDeliveryClassifiesPristinePrompt pins the trusted
+// classifier channel on the parallel_tasks path: delivery intent must be
+// judged from the child's pristine prompt, not the workspace-wrapped text.
+// The wrapper is long enough that the IsTask length fallback classifies it as
+// a task; without ClassifierTaskText a plain conversational child ("Who are
+// you?") would be required to produce work receipts it has no reason to earn
+// and would exhaust final-answer readiness instead of answering.
+func TestParallelTasksDeliveryClassifiesPristinePrompt(t *testing.T) {
+	workspace := t.TempDir()
+	task := NewTaskTool(promptRoutingProvider{}, nil, tool.NewRegistry(), 20, 0, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(NewSubagentStore(t.TempDir()), workspace, "base-model", "base-effort").
+		WithDeliveryProfile(true)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry())
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+
+	out, err := parallel.Execute(ctx, json.RawMessage(`{"tasks":[{"prompt":"Who are you?"},{"prompt":"Nice to meet you"}]}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(out, "readiness") {
+		t.Fatalf("delivery readiness leaked into a conversational parallel child: %q", out)
+	}
+	// The echo provider replays the child's full user turn; both children must
+	// have answered (their prompts echo back with the trailing " ok").
+	if !strings.Contains(out, "Who are you?") || !strings.Contains(out, "Nice to meet you") || strings.Count(out, " ok") < 2 {
+		t.Fatalf("parallel output = %q, want both children's answers", out)
+	}
+}
+
+// TestParallelTasksInheritLanguagePreferencesFromContext pins parallel children
+// to the same transient language injection the task tool applies: both the
+// response- and reasoning-language blocks must reach each child's user turn.
+func TestParallelTasksInheritLanguagePreferencesFromContext(t *testing.T) {
+	task := newTestTaskTool(t, promptRoutingProvider{}, tool.NewRegistry(), "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry())
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+	ctx = WithResponseLanguagePreference(ctx, "zh")
+	ctx = WithReasoningLanguagePreference(ctx, "zh")
+
+	out, err := parallel.Execute(ctx, json.RawMessage(`{"tasks":[{"prompt":"inspect one"},{"prompt":"inspect two"}]}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "<response-language>") || !strings.Contains(out, "<reasoning-language>") {
+		t.Fatalf("parallel output = %q, want response/reasoning language blocks injected into child prompts", out)
+	}
+}
+
 func TestParallelTasksDoesNotExposeWriterToolsToChildren(t *testing.T) {
 	var writerCalls int32
 	parentReg := tool.NewRegistry()
@@ -250,3 +298,37 @@ func hasToolResult(req provider.Request, name string) bool {
 type stringsError string
 
 func (e stringsError) Error() string { return string(e) }
+
+// TestChildMaxStepsSharedDefault pins the single step-budget rule shared by
+// task, read_only_task, and parallel_tasks children: explicit request wins,
+// a finite parent yields half its budget (min 5), an unbounded parent yields
+// an unbounded child. parallel_tasks used to hardcode 20 instead.
+func TestChildMaxStepsSharedDefault(t *testing.T) {
+	cases := []struct {
+		name      string
+		parent    int
+		requested int
+		want      int
+	}{
+		{"explicit request wins", 30, 7, 7},
+		{"finite parent halves", 30, 0, 15},
+		{"half is floored at 5", 8, 0, 5},
+		{"unbounded parent stays unbounded", 0, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &TaskTool{maxSteps: tc.parent}
+			if got := task.childMaxSteps(tc.requested); got != tc.want {
+				t.Fatalf("childMaxSteps(parent=%d, requested=%d) = %d, want %d", tc.parent, tc.requested, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTaskToolPropagatesDeliveryProfileToSubagents(t *testing.T) {
+	task := (&TaskTool{}).WithDeliveryProfile(true)
+	opts := task.subagentOptions(context.Background(), 0, nil, 0, 1)
+	if !opts.DeliveryProfile {
+		t.Fatal("sub-agent options did not inherit delivery profile")
+	}
+}

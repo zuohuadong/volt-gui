@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import gsap from "gsap";
 import { useT, type Translator } from "../lib/i18n";
-import type { ComposerInsertRequest, DirEntry, WireApproval } from "../lib/types";
-import { PromptAction, PromptBadge, PromptHeaderAction, PromptShelf } from "./PromptShelf";
-import { playAttentionChime } from "../lib/sound";
+import type { ComposerInsertRequest, DirEntry, ToolApprovalMode, WireApproval } from "../lib/types";
+import {
+  DecisionConfirmBar,
+  PromptAction,
+  PromptBadge,
+  PromptHeaderAction,
+  PromptShelf,
+} from "./PromptShelf";
 import { DUR_FAST } from "../lib/gsapAnimations";
 import {
   FileReferenceMenu,
@@ -28,10 +33,12 @@ function animateShelfExit(
 }
 
 function requiresFreshHumanApproval(tool: string): boolean {
-  return tool === "remember" || tool === "forget" || tool === "exit_plan_mode" || tool === "sandbox_escape";
+  return tool === "remember" || tool === "forget" || tool === "exit_plan_mode" || tool === "sandbox_escape" || tool === "config_write";
 }
 
-function approvalToolLabel(tool: string, t: Translator): string {
+const APPROVAL_MODE_RANK: Record<ToolApprovalMode, number> = { ask: 0, auto: 1, yolo: 2 };
+
+export function approvalToolLabel(tool: string, t: Translator): string {
   switch (tool) {
     case "bash":
       return t("approval.toolLabelBash");
@@ -53,8 +60,12 @@ function approvalToolLabel(tool: string, t: Translator): string {
       return t("approval.toolLabelForget");
     case "sandbox_escape":
       return t("approval.toolLabelSandboxEscape");
+    case "config_write":
+      return t("approval.toolLabelConfigWrite");
     case "plan_mode_read_only_command":
       return t("approval.toolLabelPlanModeReadOnly");
+    case "exit_plan_mode":
+      return t("approval.toolLabelExitPlan");
     default:
       return tool;
   }
@@ -62,6 +73,7 @@ function approvalToolLabel(tool: string, t: Translator): string {
 
 const sandboxEscapeEnglishSubjectFallback = "run shell command unconfined once";
 const sandboxEscapeEnglishSubjectPrefix = "run unconfined once: ";
+const configWriteEnglishSubjectPrefix = "write Reasonix config: ";
 const planModeMcpEnglishSubject = /^MCP (.+) as read-only for planning and research$/;
 const planModeBashEnglishSubject = /^Trust (.+) as a read-only command prefix while planning\r?\nCommand: ([\s\S]+)$/;
 
@@ -71,6 +83,12 @@ function localizeApprovalSubject(tool: string, subject: string, t: Translator): 
     if (!trimmed || trimmed === sandboxEscapeEnglishSubjectFallback) return t("approval.sandboxEscapeSubjectFallback");
     if (trimmed.startsWith(sandboxEscapeEnglishSubjectPrefix)) {
       return `${t("approval.sandboxEscapeSubjectPrefix")}${trimmed.slice(sandboxEscapeEnglishSubjectPrefix.length)}`;
+    }
+    return trimmed;
+  }
+  if (tool === "config_write") {
+    if (trimmed.startsWith(configWriteEnglishSubjectPrefix)) {
+      return `${t("approval.configWriteSubjectPrefix")}${trimmed.slice(configWriteEnglishSubjectPrefix.length)}`;
     }
     return trimmed;
   }
@@ -95,6 +113,10 @@ function localizeApprovalSubject(tool: string, subject: string, t: Translator): 
 
 function localizeApprovalReason(tool: string, reason: string | undefined, t: Translator): string {
   const trimmed = reason?.trim() ?? "";
+  if (tool === "config_write") {
+    if (!trimmed || trimmed.includes("Reasonix-managed configuration file")) return t("approval.configWriteReason");
+    return trimmed;
+  }
   if (tool !== "sandbox_escape") return trimmed;
   if (trimmed.includes("could not wrap this command")) return t("approval.sandboxEscapeWrapReason");
   if (trimmed.includes("failed while starting this command") || trimmed.includes("Run this command unconfined once?")) {
@@ -113,6 +135,16 @@ function localizePlanModeApprovalReason(tool: string, reason: string, t: Transla
   return reason;
 }
 
+type DecisionAction = {
+  key: string;
+  label: string;
+  desc: string;
+  tone?: "default" | "danger";
+  // Plan revision toggles the inline editor instead of submitting.
+  kind: "submit" | "toggle-revision";
+  run?: () => void;
+};
+
 export function ApprovalModal({
   approval,
   onAnswer,
@@ -120,8 +152,11 @@ export function ApprovalModal({
   onExitPlan,
   onStop,
   cwd,
+  tabId,
+  workspaceScopeKey,
   insertRequest,
   onRevisionActiveChange,
+  toolApprovalMode,
 }: {
   approval: WireApproval;
   onAnswer: (allow: boolean, session: boolean, persist: boolean) => void;
@@ -129,24 +164,40 @@ export function ApprovalModal({
   onExitPlan?: () => void;
   onStop: () => void;
   cwd?: string;
+  tabId?: string;
+  workspaceScopeKey?: string;
   insertRequest?: ComposerInsertRequest | null;
   onRevisionActiveChange?: (active: boolean) => void;
+  toolApprovalMode?: ToolApprovalMode;
 }) {
   const t = useT();
   const isPlanApproval = approval.tool === "exit_plan_mode";
   const toolLabel = approvalToolLabel(approval.tool, t);
   const isFreshHumanApproval = requiresFreshHumanApproval(approval.tool);
-  const hasFreshSessionGrant = approval.tool === "sandbox_escape";
+  const hasFreshSessionGrant = approval.tool === "sandbox_escape" || approval.tool === "config_write";
+  // Switching the approval segmented control to a more permissive mode does not
+  // resolve an already-pending request; say so on the card instead of leaving
+  // the user to wonder why the switch "did nothing".
+  const initialToolApprovalModeRef = useRef(toolApprovalMode);
+  const approvalModeRelaxed =
+    !isPlanApproval &&
+    toolApprovalMode !== undefined &&
+    initialToolApprovalModeRef.current !== undefined &&
+    APPROVAL_MODE_RANK[toolApprovalMode] > APPROVAL_MODE_RANK[initialToolApprovalModeRef.current];
   const subject = localizeApprovalSubject(approval.tool, approval.subject, t);
   const reason = localizePlanModeApprovalReason(approval.tool, localizeApprovalReason(approval.tool, approval.reason, t), t);
   const subjectSummary = subject.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
-  const toolMeta = reason || subjectSummary || approval.tool;
+  // Plan approvals already show the plan above; keep a short hint. Tool
+  // approvals surface the command/subject by default (reason is secondary).
+  const toolMeta = isPlanApproval ? t("approval.planReadyHint") : (subjectSummary || reason || approval.tool);
   const hasToolDetails = Boolean(reason || subject);
-  const showToolDetailsByDefault = !isPlanApproval && hasToolDetails;
+  // Subject (command) is visible by default; long reason can collapse.
+  const [reasonOpen, setReasonOpen] = useState(() => Boolean(reason) && reason.length <= 160);
+  // Default: allow once (tool) or start execution (plan index 1).
+  const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval ? 1 : 0));
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionText, setRevisionText] = useState("");
-  const [detailsOpen, setDetailsOpen] = useState(() => showToolDetailsByDefault);
-  const [selectedIndex, setSelectedIndex] = useState(() => (isPlanApproval ? 1 : 0));
+  const [submitting, setSubmitting] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const shelfRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -155,11 +206,12 @@ export function ApprovalModal({
   // the new one slides in.  GSAP fromTo on the shelf wrapper avoids the
   // jarring pop when the API cycles through 4+ pending approvals.
   const closingRef = useRef(false);
-  const fileMenu = useFileReferenceMenu(revisionText, cwd);
+  const fileMenu = useFileReferenceMenu(revisionText, cwd, tabId, workspaceScopeKey);
 
   const answerWithExit = (fn: () => void) => {
-    if (closingRef.current) return;
+    if (closingRef.current || submitting) return;
     closingRef.current = true;
+    setSubmitting(true);
     const el = shelfRef.current;
     if (el) {
       animateShelfExit(el, {
@@ -174,71 +226,148 @@ export function ApprovalModal({
     }
   };
 
-  const choosePlanAction = (key: string) => {
-    if (key === "1") setRevisionOpen((open) => !open);
-    else if (key === "2") answerWithExit(() => onAnswer(true, false, false));
-    else if (key === "3") answerWithExit(() => (onExitPlan ?? (() => onAnswer(false, false, false)))());
-    else if (key === "Escape") answerWithExit(onStop);
-  };
+  const toolActions: DecisionAction[] = isPlanApproval
+    ? [
+        {
+          key: "1",
+          label: t("approval.revisePlan"),
+          desc: t("approval.revisePlanDesc"),
+          kind: "toggle-revision",
+        },
+        {
+          key: "2",
+          label: t("approval.startExecution"),
+          desc: t("approval.startExecutionDesc"),
+          kind: "submit",
+          run: () => onAnswer(true, false, false),
+        },
+        {
+          key: "3",
+          label: t("approval.exitPlan"),
+          desc: t("approval.exitPlanDesc"),
+          tone: "danger",
+          kind: "submit",
+          run: () => (onExitPlan ?? (() => onAnswer(false, false, false)))(),
+        },
+      ]
+    : [
+        {
+          key: "1",
+          label: t("approval.allowOnce"),
+          desc: t("approval.allowOnceDesc"),
+          kind: "submit",
+          run: () => onAnswer(true, false, false),
+        },
+        ...(isFreshHumanApproval
+          ? hasFreshSessionGrant
+            ? [
+                {
+                  key: "2",
+                  label: t(approval.tool === "config_write" ? "approval.allowConfigWriteSession" : "approval.allowSandboxEscapeSession"),
+                  desc: t(approval.tool === "config_write" ? "approval.allowConfigWriteSessionDesc" : "approval.allowSandboxEscapeSessionDesc"),
+                  kind: "submit" as const,
+                  run: () => onAnswer(true, true, false),
+                },
+                {
+                  key: "3",
+                  label: t("approval.deny"),
+                  desc: t("approval.denyDesc"),
+                  tone: "danger" as const,
+                  kind: "submit" as const,
+                  run: () => onAnswer(false, false, false),
+                },
+              ]
+            : [
+                {
+                  key: "2",
+                  label: t("approval.deny"),
+                  desc: t("approval.denyDesc"),
+                  tone: "danger" as const,
+                  kind: "submit" as const,
+                  run: () => onAnswer(false, false, false),
+                },
+              ]
+          : [
+              {
+                key: "2",
+                label: t("approval.allowRuleSession"),
+                desc: t("approval.allowRuleSessionDesc"),
+                kind: "submit" as const,
+                run: () => onAnswer(true, true, false),
+              },
+              {
+                key: "3",
+                label: t("approval.allowRulePersistent"),
+                desc: t("approval.allowRulePersistentDesc"),
+                kind: "submit" as const,
+                run: () => onAnswer(true, true, true),
+              },
+              {
+                key: "4",
+                label: t("approval.deny"),
+                desc: t("approval.denyDesc"),
+                tone: "danger" as const,
+                kind: "submit" as const,
+                run: () => onAnswer(false, false, false),
+              },
+            ]),
+      ];
 
-  const chooseToolAction = (key: string) => {
-    if (key === "1") answerWithExit(() => onAnswer(true, false, false));
-    else if (hasFreshSessionGrant && key === "2") answerWithExit(() => onAnswer(true, true, false));
-    else if (hasFreshSessionGrant && key === "3") answerWithExit(() => onAnswer(false, false, false));
-    else if (isFreshHumanApproval && key === "2") answerWithExit(() => onAnswer(false, false, false));
-    else if (isFreshHumanApproval && key === "4") answerWithExit(() => onAnswer(false, false, false));
-    else if (!isFreshHumanApproval && key === "2") answerWithExit(() => onAnswer(true, true, false));
-    else if (!isFreshHumanApproval && key === "3") answerWithExit(() => onAnswer(true, true, true));
-    else if (!isFreshHumanApproval && key === "4") answerWithExit(() => onAnswer(false, false, false));
-    else if (key === "Escape") answerWithExit(onStop);
-  };
-
-  const selectedToolActionKey = (index: number) => {
-    if (!isFreshHumanApproval) return String(index + 1);
-    if (hasFreshSessionGrant) return index === 0 ? "1" : index === 1 ? "2" : "3";
-    return index === 0 ? "1" : "2";
-  };
+  const actionCount = toolActions.length;
+  const selectedIndexRef = useRef(selectedIndex);
+  selectedIndexRef.current = selectedIndex;
+  const selectedAction = toolActions[Math.min(selectedIndex, actionCount - 1)] ?? toolActions[0];
 
   useEffect(() => {
     cardRef.current?.focus();
     setRevisionOpen(false);
     setRevisionText("");
-    setDetailsOpen(showToolDetailsByDefault);
+    setReasonOpen(Boolean(reason) && reason.length <= 160);
     setSelectedIndex(isPlanApproval ? 1 : 0);
-    playAttentionChime();
-  }, [approval.id, isPlanApproval, showToolDetailsByDefault]);
+    setSubmitting(false);
+    closingRef.current = false;
+  }, [approval.id, isPlanApproval, reason]);
 
-  const actionCount = isPlanApproval ? 3 : isFreshHumanApproval ? (hasFreshSessionGrant ? 3 : 2) : 4;
-  const selectedIndexRef = useRef(selectedIndex);
-  selectedIndexRef.current = selectedIndex;
+  const confirmSelected = useCallback(() => {
+    if (submitting || closingRef.current) return;
+    const action = toolActions[selectedIndexRef.current];
+    if (!action) return;
+    if (action.kind === "toggle-revision") {
+      setRevisionOpen((open) => !open);
+      return;
+    }
+    if (action.run) answerWithExit(action.run);
+  }, [submitting, toolActions]);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (submitting) return;
       const target = event.target instanceof Element ? event.target : null;
       const tag = target?.tagName.toLowerCase();
+      // Editing revision / file menu owns arrows and digits while focused.
       if (tag === "input" || tag === "textarea" || tag === "select" || (target instanceof HTMLElement && target.isContentEditable)) return;
-      const interactiveTarget = target?.closest("button, a, [role='button'], [role='link']");
-      if (interactiveTarget && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Enter")) return;
-      if (event.key === "ArrowLeft") {
+      if (event.key === "ArrowUp") {
         event.preventDefault();
         setSelectedIndex((i) => (i - 1 + actionCount) % actionCount);
-      } else if (event.key === "ArrowRight") {
+      } else if (event.key === "ArrowDown") {
         event.preventDefault();
         setSelectedIndex((i) => (i + 1) % actionCount);
       } else if (event.key === "Enter") {
         event.preventDefault();
-        const key = String(selectedIndexRef.current + 1);
-        if (isPlanApproval) choosePlanAction(key);
-        else chooseToolAction(selectedToolActionKey(selectedIndexRef.current));
-      } else if (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4" || event.key === "Escape") {
+        confirmSelected();
+      } else if (event.key === "1" || event.key === "2" || event.key === "3" || event.key === "4") {
+        const index = Number(event.key) - 1;
+        if (index < 0 || index >= actionCount) return;
         event.preventDefault();
-        if (isPlanApproval) choosePlanAction(event.key);
-        else chooseToolAction(event.key);
+        setSelectedIndex(index);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        answerWithExit(onStop);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isPlanApproval, isFreshHumanApproval, hasFreshSessionGrant, onAnswer, onExitPlan, onStop, actionCount]);
+  }, [actionCount, confirmSelected, onStop, submitting]);
 
   useEffect(() => {
     if (revisionOpen) {
@@ -320,120 +449,124 @@ export function ApprovalModal({
     answerWithExit(() => onRevisePlan?.(text));
   };
 
-  // The plan is already shown above as the assistant's reply; this is just the gate.
-  if (isPlanApproval) {
-    return (
-      <div ref={shelfRef}>
-        <PromptShelf
-          className="prompt-shelf--compact prompt-shelf--plan-approval"
-          barRef={cardRef}
-          titleId="plan-approval-title"
-          title={t("approval.planReady")}
-          meta={t("approval.planReadyHint")}
-          badges={revisionOpen ? <PromptBadge>{t("approval.revisePlan")}</PromptBadge> : undefined}
-          headerActions={
-            <PromptHeaderAction onClick={() => answerWithExit(onStop)} ariaLabel={t("composer.stopShort")}>
-              Esc
-            </PromptHeaderAction>
-          }
-          actions={
-            <>
-              <PromptAction keyLabel="1" label={t("approval.revisePlan")} onClick={() => setRevisionOpen((open) => !open)} selected={selectedIndex === 0} />
-              <PromptAction keyLabel="2" label={t("approval.startExecution")} onClick={() => answerWithExit(() => onAnswer(true, false, false))} selected={selectedIndex === 1} />
-              <PromptAction
-                keyLabel="3"
-                label={t("approval.exitPlan")}
-                onClick={() => answerWithExit(() => (onExitPlan ?? (() => onAnswer(false, false, false)))())}
-                selected={selectedIndex === 2}
-              />
-            </>
-          }
-        >
-          {revisionOpen && (
-            <div className="plan-revision">
-              <textarea
-                ref={inputRef}
-                className="plan-revision__input"
-                value={revisionText}
-                rows={3}
-                placeholder={t("approval.revisePlanPlaceholder")}
-                onChange={(event) => setRevisionText(event.target.value)}
-                onFocus={() => onRevisionActiveChange?.(true)}
-                onKeyDown={onRevisionKeyDown}
-              />
-              {fileMenu.open && (
-                <FileReferenceMenu
-                  items={fileMenu.items}
-                  activeIndex={fileMenu.active}
-                  onPick={pickRevisionFile}
-                  onHover={fileMenu.setActive}
-                />
-              )}
-              <div className="plan-revision__actions">
-                <button className="btn" onClick={() => setRevisionOpen(false)}>
-                  {t("common.cancel")}
-                </button>
-                <button className="btn btn--primary" onClick={submitRevision}>
-                  {t("approval.sendRevision")}
-                </button>
-              </div>
-            </div>
-          )}
-        </PromptShelf>
-      </div>
-    );
-  }
+  const confirmIsDanger = selectedAction?.tone === "danger";
+  const confirmLabel =
+    selectedAction?.kind === "toggle-revision"
+      ? revisionOpen
+        ? t("common.cancel")
+        : t("approval.revisePlan")
+      : t("decision.confirm");
 
   return (
     <div ref={shelfRef}>
       <PromptShelf
-        className="prompt-shelf--compact prompt-shelf--tool-approval"
+        decision
+        className={isPlanApproval ? "prompt-shelf--plan-approval" : "prompt-shelf--tool-approval"}
         barRef={cardRef}
-        titleId="tool-approval-title"
-        title={t("approval.toolPending")}
-        badges={<PromptBadge>{toolLabel}</PromptBadge>}
+        titleId={isPlanApproval ? "plan-approval-title" : "tool-approval-title"}
+        title={isPlanApproval ? t("approval.planReady") : t("approval.toolPending")}
+        badges={
+          <>
+            {!isPlanApproval && <PromptBadge tone="amber">{toolLabel}</PromptBadge>}
+            {isPlanApproval && revisionOpen && <PromptBadge>{t("approval.revisePlan")}</PromptBadge>}
+          </>
+        }
         meta={toolMeta}
         headerActions={
           <>
-            {hasToolDetails && (
-              <PromptHeaderAction onClick={() => setDetailsOpen((open) => !open)}>
-                {t(detailsOpen ? "approval.hideDetails" : "approval.details")}
+            {!isPlanApproval && hasToolDetails && reason && (
+              <PromptHeaderAction onClick={() => setReasonOpen((open) => !open)} disabled={submitting}>
+                {t(reasonOpen ? "approval.hideDetails" : "approval.details")}
               </PromptHeaderAction>
             )}
-            <PromptHeaderAction onClick={() => answerWithExit(onStop)} ariaLabel={t("composer.stopShort")}>
-              Esc
+            <PromptHeaderAction
+              onClick={() => answerWithExit(onStop)}
+              ariaLabel={t("decision.stopTask")}
+              disabled={submitting}
+            >
+              {t("decision.stopTask")}
             </PromptHeaderAction>
           </>
         }
         actions={
           <>
-            <PromptAction keyLabel="1" label={t("approval.allowOnce")} onClick={() => answerWithExit(() => onAnswer(true, false, false))} selected={selectedIndex === 0} />
-            {isFreshHumanApproval ? (
-              hasFreshSessionGrant ? (
-                <>
-                  <PromptAction keyLabel="2" label={t("approval.allowSandboxEscapeSession")} onClick={() => answerWithExit(() => onAnswer(true, true, false))} selected={selectedIndex === 1} />
-                  <PromptAction keyLabel="3" label={t("approval.deny")} onClick={() => answerWithExit(() => onAnswer(false, false, false))} selected={selectedIndex === 2} />
-                </>
-              ) : (
-                <PromptAction keyLabel="2" label={t("approval.deny")} onClick={() => answerWithExit(() => onAnswer(false, false, false))} selected={selectedIndex === 1} />
-              )
-            ) : (
-              <>
-                <PromptAction keyLabel="2" label={t("approval.allowRuleSession")} onClick={() => answerWithExit(() => onAnswer(true, true, false))} selected={selectedIndex === 1} />
-                <PromptAction keyLabel="3" label={t("approval.allowRulePersistent")} onClick={() => answerWithExit(() => onAnswer(true, true, true))} selected={selectedIndex === 2} />
-                <PromptAction keyLabel="4" label={t("approval.deny")} onClick={() => answerWithExit(() => onAnswer(false, false, false))} selected={selectedIndex === 3} />
-              </>
-            )}
+            {toolActions.map((action, index) => (
+              <PromptAction
+                key={action.key}
+                keyLabel={action.key}
+                label={action.label}
+                description={action.desc}
+                onClick={() => {
+                  if (submitting) return;
+                  setSelectedIndex(index);
+                  if (action.kind === "toggle-revision") {
+                    // Selecting revise opens the editor but still needs confirm
+                    // only when the user hits Enter / Confirm (toggle on confirm).
+                    // Click selects; confirm toggles. Also open on first select
+                    // for discoverability when confirming revise.
+                  }
+                }}
+                selected={selectedIndex === index}
+                tone={action.tone}
+                disabled={submitting}
+                title={action.desc}
+              />
+            ))}
           </>
         }
+        footer={
+          <DecisionConfirmBar
+            hint={t("decision.selectHint")}
+            confirmLabel={confirmLabel}
+            onConfirm={confirmSelected}
+            disabled={submitting}
+            danger={confirmIsDanger}
+          />
+        }
       >
-        {detailsOpen && (
-          <div className="approval-details">
-            {reason && <div className="approval-reason">{reason}</div>}
-            {subject && (
-              <pre className="approval-subject">{subject}</pre>
+        {(approvalModeRelaxed || (!isPlanApproval && (subject || (reasonOpen && reason))) || (isPlanApproval && revisionOpen)) && (
+          <>
+            {approvalModeRelaxed && (
+              <div className="approval-mode-hint">{t("approval.modeSwitchPendingHint")}</div>
             )}
-          </div>
+            {!isPlanApproval && subject && (
+              <div className="approval-details">
+                <pre className="approval-subject">{subject}</pre>
+                {reasonOpen && reason && <div className="approval-reason">{reason}</div>}
+              </div>
+            )}
+            {isPlanApproval && revisionOpen && (
+              <div className="plan-revision">
+                <textarea
+                  ref={inputRef}
+                  className="plan-revision__input"
+                  value={revisionText}
+                  rows={3}
+                  placeholder={t("approval.revisePlanPlaceholder")}
+                  onChange={(event) => setRevisionText(event.target.value)}
+                  onFocus={() => onRevisionActiveChange?.(true)}
+                  onKeyDown={onRevisionKeyDown}
+                  disabled={submitting}
+                />
+                {fileMenu.open && (
+                  <FileReferenceMenu
+                    items={fileMenu.items}
+                    activeIndex={fileMenu.active}
+                    onPick={pickRevisionFile}
+                    onHover={fileMenu.setActive}
+                  />
+                )}
+                <div className="plan-revision__actions">
+                  <button className="btn" type="button" onClick={() => setRevisionOpen(false)} disabled={submitting}>
+                    {t("common.cancel")}
+                  </button>
+                  <button className="btn btn--primary" type="button" onClick={submitRevision} disabled={submitting}>
+                    {t("approval.sendRevision")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </PromptShelf>
     </div>

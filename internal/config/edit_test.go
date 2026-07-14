@@ -204,6 +204,27 @@ func TestDesktopLayoutStyleNormalizes(t *testing.T) {
 	}
 }
 
+func TestDesktopExternalOpenerValidation(t *testing.T) {
+	c := Default()
+	if got := c.DesktopExternalOpener(); got != "" {
+		t.Fatalf("default external opener = %q, want empty platform fallback", got)
+	}
+	if err := c.SetDesktopExternalOpener(" Cursor "); err != nil {
+		t.Fatalf("SetDesktopExternalOpener: %v", err)
+	}
+	if got := c.DesktopExternalOpener(); got != "cursor" {
+		t.Fatalf("DesktopExternalOpener = %q, want cursor", got)
+	}
+	for _, invalid := range []string{"../../bin/sh", "vscode;open", "app id"} {
+		if err := c.SetDesktopExternalOpener(invalid); err == nil {
+			t.Fatalf("SetDesktopExternalOpener(%q) unexpectedly succeeded", invalid)
+		}
+	}
+	if err := c.SetDesktopExternalOpener(""); err != nil || c.DesktopExternalOpener() != "" {
+		t.Fatalf("clearing external opener = (%q, %v), want empty", c.DesktopExternalOpener(), err)
+	}
+}
+
 func TestDesktopStatusBarStyleNormalizes(t *testing.T) {
 	if got := Default().DesktopStatusBarStyle(); got != "text" {
 		t.Fatalf("default desktop status bar style = %q, want text", got)
@@ -344,6 +365,9 @@ func TestSetAutoPlan(t *testing.T) {
 
 func TestSetDesktopDefaultToolApprovalMode(t *testing.T) {
 	c := Default()
+	if got := c.DesktopDefaultToolApprovalMode(); got != "auto" {
+		t.Fatalf("desktop default tool approval mode = %q, want built-in auto", got)
+	}
 	for _, mode := range []string{"ask", "auto", "yolo"} {
 		if err := c.SetDesktopDefaultToolApprovalMode(mode); err != nil {
 			t.Fatalf("SetDesktopDefaultToolApprovalMode(%q): %v", mode, err)
@@ -360,6 +384,16 @@ func TestSetDesktopDefaultToolApprovalMode(t *testing.T) {
 	}
 	if err := c.SetDesktopDefaultToolApprovalMode("maybe"); err == nil {
 		t.Fatal("expected error for invalid desktop default tool approval mode")
+	}
+}
+
+func TestLoadForEditMissingDesktopApprovalDefaultsAuto(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("config_version = 4\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if got := LoadForEdit(path).DesktopDefaultToolApprovalMode(); got != "auto" {
+		t.Fatalf("missing desktop default tool approval mode = %q, want auto", got)
 	}
 }
 
@@ -469,10 +503,11 @@ func TestUpsertProvider(t *testing.T) {
 
 	// Missing required fields error.
 	for _, bad := range []ProviderEntry{
-		{Kind: "openai", BaseURL: "u", Model: "m"}, // no name
-		{Name: "a", BaseURL: "u", Model: "m"},      // no kind
-		{Name: "a", Kind: "openai", Model: "m"},    // no base_url
-		{Name: "a", Kind: "openai", BaseURL: "u"},  // no model
+		{Kind: "openai", BaseURL: "u", Model: "m"},                                   // no name
+		{Name: "a", BaseURL: "u", Model: "m"},                                        // no kind
+		{Name: "a", Kind: "openai", Model: "m"},                                      // no base_url
+		{Name: "a", Kind: "openai", BaseURL: "u"},                                    // no model
+		{Name: "a", Kind: "openai", BaseURL: "u", Model: "m", APIKeyEnv: "grok-4.5"}, // invalid credential variable name
 	} {
 		if err := c.UpsertProvider(bad); err == nil {
 			t.Errorf("expected validation error for %+v", bad)
@@ -1426,6 +1461,79 @@ func TestSaveToExistingProjectPersistsTopLevelDelta(t *testing.T) {
 	}
 }
 
+func TestSaveToExistingProjectPersistsProviderAccessWithoutReplacingDesktopSection(t *testing.T) {
+	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte("[desktop]\nlegacy_preference = \"keep\"\n\n[permissions]\nallow = [\"Bash(go test:*)\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadForEditWithoutCredentials(projectPath)
+	cfg.Desktop.ProviderAccess = []string{"project-relay"}
+	if err := cfg.SaveTo(projectPath); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	body, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{`provider_access = ["project-relay"]`, `legacy_preference = "keep"`, `[permissions]`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("existing project config missing %q after provider access update:\n%s", want, text)
+		}
+	}
+	cfg.Desktop.ProviderAccess = []string{}
+	if err := cfg.SaveTo(projectPath); err != nil {
+		t.Fatalf("SaveTo explicit empty access: %v", err)
+	}
+	body, err = os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "provider_access = []") {
+		t.Fatalf("explicit empty project provider access was not persisted:\n%s", body)
+	}
+}
+
+func TestProviderEntriesConfigEqualIgnoresResolvedCredentialState(t *testing.T) {
+	a := ProviderEntry{Name: "relay", Kind: "openai", BaseURL: "https://relay.example/v1", Model: "m", APIKeyEnv: "RELAY_API_KEY"}
+	b := a
+	a.resolvedAPIKey = "old-secret"
+	a.resolvedSource = CredentialSource{Kind: CredentialSourceCredentials, Label: "old"}
+	b.resolvedAPIKey = "new-secret"
+	b.resolvedSource = CredentialSource{Kind: CredentialSourceEnvironment, Label: "new"}
+	if !ProviderEntriesConfigEqual(a, b) {
+		t.Fatal("runtime-only credential state caused a persisted provider conflict")
+	}
+	b.Headers = map[string]string{"X-External": "changed"}
+	if ProviderEntriesConfigEqual(a, b) {
+		t.Fatal("persisted provider field change was ignored")
+	}
+	snapshot := ProviderEntryConfigSnapshot(a)
+	if snapshot.resolvedAPIKey != "" || snapshot.resolvedSource != (CredentialSource{}) {
+		t.Fatal("provider config snapshot retained runtime credential state")
+	}
+	cfg := &Config{Providers: []ProviderEntry{a}}
+	updated := a
+	updated.resolvedAPIKey = ""
+	updated.resolvedSource = CredentialSource{}
+	updated.Headers = map[string]string{"X-Replayed": "yes"}
+	if err := cfg.UpsertProviderPreservingRuntime(updated); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cfg.Provider("relay")
+	if got.APIKey() != "old-secret" || got.Headers["X-Replayed"] != "yes" {
+		t.Fatalf("runtime-preserving upsert = %+v", got)
+	}
+	updated.APIKeyEnv = "NEW_RELAY_API_KEY"
+	if err := cfg.UpsertProviderPreservingRuntime(updated); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = cfg.Provider("relay")
+	if got.resolvedAPIKey != "" || got.resolvedSource != (CredentialSource{}) {
+		t.Fatal("runtime credential survived an api_key_env change")
+	}
+}
+
 func TestSaveToExistingProjectRemovesPluginDelta(t *testing.T) {
 	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
 	cfg := Default()
@@ -1454,6 +1562,85 @@ func TestSaveToExistingProjectRemovesPluginDelta(t *testing.T) {
 	}
 	if len(got.Plugins) != 0 {
 		t.Fatalf("plugins = %+v, want none", got.Plugins)
+	}
+}
+
+func TestSaveToExistingProjectRemovesIneffectiveWindowsBashEnforce(t *testing.T) {
+	setRuntimeGOOS(t, "windows")
+	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte("[sandbox]\nbash = \"enforce\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.Sandbox.Bash = "enforce"
+	if err := cfg.SaveTo(projectPath); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	body, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatalf("read project config: %v", err)
+	}
+	if strings.Contains(string(body), `[sandbox]`) || strings.Contains(string(body), `bash = "enforce"`) {
+		t.Fatalf("ineffective Windows project bash enforce should be removed:\n%s", body)
+	}
+	if _, err := toml.Decode(string(body), &Config{}); err != nil {
+		t.Fatalf("saved project config does not parse: %v", err)
+	}
+}
+
+func TestSaveToExistingProjectRemovesIneffectiveWindowsBashEnforceWhenTargetIsOff(t *testing.T) {
+	setRuntimeGOOS(t, "windows")
+	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte("[sandbox]\nbash = \"enforce\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.Sandbox.Bash = "off"
+	if err := cfg.SaveTo(projectPath); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	body, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatalf("read project config: %v", err)
+	}
+	if strings.Contains(string(body), `[sandbox]`) || strings.Contains(string(body), `bash = "enforce"`) {
+		t.Fatalf("ineffective Windows project bash enforce should be removed even when the target mode is raw off:\n%s", body)
+	}
+	if _, err := toml.Decode(string(body), &Config{}); err != nil {
+		t.Fatalf("saved project config does not parse: %v", err)
+	}
+}
+
+func TestSaveToExistingProjectRemovesOnlyIneffectiveWindowsBashEnforce(t *testing.T) {
+	setRuntimeGOOS(t, "windows")
+	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte("[sandbox]\nbash = \"enforce\"\nnetwork = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.Sandbox.Bash = "enforce"
+	if err := cfg.SaveTo(projectPath); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	body, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatalf("read project config: %v", err)
+	}
+	if strings.Contains(string(body), `bash = "enforce"`) {
+		t.Fatalf("ineffective Windows project bash enforce should be removed:\n%s", body)
+	}
+	if !strings.Contains(string(body), `[sandbox]`) || !strings.Contains(string(body), `network = true`) {
+		t.Fatalf("other sandbox fields should be preserved:\n%s", body)
+	}
+	var got Config
+	if _, err := toml.Decode(string(body), &got); err != nil {
+		t.Fatalf("saved project config does not parse: %v", err)
+	}
+	if !got.Sandbox.Network {
+		t.Fatalf("network = false, want preserved true")
 	}
 }
 

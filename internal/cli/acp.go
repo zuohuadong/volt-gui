@@ -33,14 +33,20 @@ import (
 func acpCommand(args []string, version string) int {
 	fs := flag.NewFlagSet("acp", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
+	profileFlag := fs.String("profile", "balanced", "runtime profile: economy | balanced | delivery")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	profile, err := parseRuntimeProfile(*profileFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	factory := &acpFactory{model: *model}
+	factory := &acpFactory{model: *model, profile: profile}
 	info := acp.AgentInfo{Name: "reasonix", Version: version}
 	if err := acp.Serve(ctx, os.Stdin, os.Stdout, factory, info); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -54,7 +60,8 @@ func acpCommand(args []string, version string) int {
 // desktop, and serve assembly while still adding the host-supplied MCP servers
 // for this session only.
 type acpFactory struct {
-	model string
+	model   string
+	profile string
 }
 
 func (f *acpFactory) SessionDir() string {
@@ -75,6 +82,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	}
 	return boot.Build(ctx, boot.Options{
 		Model:                    firstNonEmpty(p.Model, f.model),
+		TokenMode:                f.profile,
 		RequireKey:               true,
 		Sink:                     p.Sink,
 		EffortOverride:           p.EffortOverride,
@@ -83,6 +91,8 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 		ExtraPlugins:             p.MCPServers,
 		CleanupPendingReconciler: acp.ReconcileCleanupPending,
 		OnSessionRecovered:       p.OnSessionRecovered,
+		FileOverlay:              p.FileOverlay,
+		TerminalRunner:           p.Terminal,
 	})
 }
 
@@ -190,12 +200,13 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool.Tool {
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, Network: cfg.Sandbox.Network}
 	ws := builtin.Workspace{
-		Dir:         cwd,
-		WriteRoots:  writeRoots,
-		Bash:        bashSpec,
-		BashTimeout: time.Duration(cfg.BashTimeoutSeconds()) * time.Second,
-		Search:      builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
-		ProxySpec:   cfg.NetworkProxySpec(),
+		Dir:          cwd,
+		WriteRoots:   writeRoots,
+		Bash:         bashSpec,
+		BashTimeout:  time.Duration(cfg.BashTimeoutSeconds()) * time.Second,
+		Search:       builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, nil),
+		ProxySpec:    cfg.NetworkProxySpec(),
+		SessionGuard: builtin.NewSessionDataGuard(config.MemoryUserDir(), cfg.AllowWriteRoots()),
 	}
 	return ws.Tools(cfg.Tools.Enabled...)
 }

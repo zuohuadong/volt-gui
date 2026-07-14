@@ -114,6 +114,17 @@ type Policy struct {
 	Allow []Rule
 	Ask   []Rule
 	Deny  []Rule
+	// SessionAllow is an explicit frontend/session override such as Claude
+	// Code's --allowed-tools. Deny rules still win, while these rules override
+	// configured Ask entries for the current process only.
+	SessionAllow []Rule
+}
+
+// WithSessionAllow returns a copy of p with additional ephemeral allow rules.
+// Malformed entries are ignored consistently with New.
+func (p Policy) WithSessionAllow(rules []string) Policy {
+	p.SessionAllow = append(append([]Rule(nil), p.SessionAllow...), parseRules(rules)...)
+	return p
 }
 
 // New builds a Policy from config string slices and a mode string ("ask" by
@@ -132,7 +143,7 @@ func New(mode string, allow, ask, deny []string) Policy {
 // for glob matching. Calls with multiple subjects, such as move_file's source
 // and destination paths, must be safe for every subject before the call is
 // allowed. Precedence: deny > ask > allow > fallback (Allow for readers, Mode
-// for writers).
+// for writers). SessionAllow sits between deny and configured ask rules.
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision {
 	return p.DecideSubjects(toolName, readOnly, Subjects(args))
 }
@@ -144,6 +155,8 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 		switch {
 		case matchAny(p.Deny, toolName, subject):
 			return Deny
+		case matchAny(p.SessionAllow, toolName, subject):
+			return Allow
 		case matchAny(p.Ask, toolName, subject):
 			return Ask
 		case matchAny(p.Allow, toolName, subject):
@@ -156,6 +169,8 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 	switch {
 	case matchAny(p.Deny, toolName, subject):
 		return Deny
+	case matchAny(p.SessionAllow, toolName, subject):
+		return Allow
 	case matchAny(p.Ask, toolName, subject):
 		return Ask
 	case matchAny(p.Allow, toolName, subject):
@@ -175,7 +190,8 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 //
 // Precedence stays deny > ask > allow > fallback. Any single segment hitting
 // deny denies the whole call; any segment needing approval turns the whole
-// call into Ask; the whole call is Allow only if every segment is covered.
+// call into Ask; the whole call is Allow only if every segment is covered or
+// writer fallback allows uncovered segments.
 // A segment recognized as read-only by shellsafe (echo/ls/git status/...) is
 // allowed on its own without a rule, matching the behavior of an atomic
 // read-only bash call.
@@ -191,6 +207,8 @@ func (p Policy) decideBashSegments(readOnly bool, parts []string) Decision {
 		switch {
 		case matchAny(p.Deny, "bash", sub):
 			return Deny
+		case matchAny(p.SessionAllow, "bash", sub):
+			// covered by the explicit session allowlist
 		case matchAny(p.Ask, "bash", sub):
 			out = Ask
 		case matchAny(p.Allow, "bash", sub):
@@ -198,9 +216,16 @@ func (p Policy) decideBashSegments(readOnly bool, parts []string) Decision {
 		case segReadOnly:
 			// covered
 		default:
-			// segment not covered — surface as Ask, but keep scanning for a
-			// downstream Deny that would still trump.
-			out = Ask
+			// Segment not covered by a rule or read-only classification: apply
+			// the same writer fallback used for atomic bash commands.
+			switch p.Mode {
+			case Deny:
+				return Deny
+			case Ask:
+				out = Ask
+			default:
+				// covered by fallback allow
+			}
 		}
 	}
 	return out

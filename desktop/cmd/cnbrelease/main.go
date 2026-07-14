@@ -1,4 +1,4 @@
-// Command cnbrelease publishes desktop release artifacts to CNB Releases.
+// Command cnbrelease publishes an exact artifact set to CNB Releases.
 package main
 
 import (
@@ -19,13 +19,16 @@ import (
 )
 
 type client struct {
-	api       string
-	repo      string
-	token     string
-	http      *http.Client
-	tag       string
-	releaseID string
-	dryRun    bool
+	api           string
+	repo          string
+	token         string
+	http          *http.Client
+	tag           string
+	releaseID     string
+	releaseDraft  bool
+	immutable     bool
+	replacedDraft bool
+	dryRun        bool
 }
 
 type uploadTicket struct {
@@ -36,29 +39,44 @@ type uploadTicket struct {
 }
 
 type releaseResponse struct {
-	ID string `json:"id"`
+	ID    string `json:"id"`
+	Draft bool   `json:"draft"`
 }
 
 func main() {
-	tag := flag.String("tag", "", "desktop release tag, for example desktop-v1.2.3")
-	version := flag.String("version", "", "desktop version, for example v1.2.3")
+	tag := flag.String("tag", "", "release tag, for example desktop-v1.2.3")
+	version := flag.String("version", "", "release version, for example v1.2.3")
 	dist := flag.String("dist", "../dist", "artifact directory")
 	brand := flag.String("brand", envDefault("XIGU_BRAND_NAME", envDefault("VOLTUI_BRAND_NAME", "VoltUI")), "release display name")
 	body := flag.String("body", "", "release body")
 	prerelease := flag.Bool("prerelease", false, "mark release as prerelease")
+	makeLatest := flag.String("make-latest", "legacy", "latest release policy: true, false, or legacy")
+	assets := flag.String("assets", "", "comma-separated exact asset filenames; rejects missing or unexpected files")
+	immutable := flag.Bool("immutable", false, "upload through a recoverable draft, reject published releases, and disable asset overwrite")
 	dryRun := flag.Bool("dry-run", false, "validate files and print actions without network calls")
 	flag.Parse()
 
 	if *tag == "" || *version == "" {
 		fail("tag and version are required")
 	}
+	if err := validateTagVersion(*tag, *version); err != nil {
+		fail(err.Error())
+	}
+	if err := validateMakeLatest(*makeLatest); err != nil {
+		fail(err.Error())
+	}
+	assetAllowlist, err := parseAssetAllowlist(*assets)
+	if err != nil {
+		fail(err.Error())
+	}
 	c := client{
-		api:    strings.TrimRight(envDefault("CNB_API_ENDPOINT", "https://api.cnb.cool"), "/"),
-		repo:   strings.Trim(strings.TrimPrefix(os.Getenv("CNB_REPO_SLUG"), "/"), "/"),
-		token:  os.Getenv("CNB_TOKEN"),
-		http:   &http.Client{Timeout: 5 * time.Minute},
-		tag:    *tag,
-		dryRun: *dryRun,
+		api:       strings.TrimRight(envDefault("CNB_API_ENDPOINT", "https://api.cnb.cool"), "/"),
+		repo:      strings.Trim(strings.TrimPrefix(os.Getenv("CNB_REPO_SLUG"), "/"), "/"),
+		token:     os.Getenv("CNB_TOKEN"),
+		http:      &http.Client{Timeout: 5 * time.Minute},
+		tag:       *tag,
+		immutable: *immutable,
+		dryRun:    *dryRun,
 	}
 	if c.repo == "" && !c.dryRun {
 		fail("CNB_REPO_SLUG is required")
@@ -67,7 +85,7 @@ func main() {
 		fail("CNB_TOKEN is required")
 	}
 
-	files, err := releaseFiles(*dist)
+	files, err := releaseFiles(*dist, assetAllowlist)
 	if err != nil {
 		fail(err.Error())
 	}
@@ -76,14 +94,14 @@ func main() {
 	}
 
 	if c.dryRun {
-		fmt.Printf("dry-run: would create CNB release %s and upload %d files\n", *tag, len(files))
+		fmt.Printf("dry-run: would create CNB release %s (make_latest=%s, immutable=%t) and upload %d files\n", *tag, *makeLatest, *immutable, len(files))
 		for _, f := range files {
 			fmt.Println("dry-run:", filepath.Base(f))
 		}
 		return
 	}
 
-	if err := c.createRelease(*brand, *body, *prerelease); err != nil {
+	if err := c.createRelease(*brand, *body, *prerelease, *makeLatest); err != nil {
 		fail(err.Error())
 	}
 	if c.releaseID == "" {
@@ -92,7 +110,18 @@ func main() {
 
 	for _, f := range files {
 		if err := c.uploadFile(f); err != nil {
+			if cleanupErr := c.cleanupImmutableDraft(); cleanupErr != nil {
+				fail("%v; cleanup incomplete draft release: %v", err, cleanupErr)
+			}
 			fail(err.Error())
+		}
+	}
+	if c.immutable {
+		if err := c.finalizeRelease(*prerelease, *makeLatest); err != nil {
+			// A transport error can be ambiguous: the PATCH may have succeeded even
+			// if the response was lost. Keep the release for the next run to inspect
+			// rather than risk deleting a newly published immutable release.
+			fail("finalize immutable CNB release: %v", err)
 		}
 	}
 }
@@ -104,29 +133,94 @@ func envDefault(k, fallback string) string {
 	return fallback
 }
 
-func releaseFiles(dir string) ([]string, error) {
+func validateMakeLatest(value string) error {
+	switch value {
+	case "true", "false", "legacy":
+		return nil
+	default:
+		return fmt.Errorf("make-latest must be true, false, or legacy, got %q", value)
+	}
+}
+
+func validateTagVersion(tag, version string) error {
+	if !strings.HasSuffix(tag, version) {
+		return fmt.Errorf("tag %q must end with version %q", tag, version)
+	}
+	return nil
+}
+
+func parseAssetAllowlist(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	seen := make(map[string]struct{})
+	var names []string
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			return nil, errors.New("asset allowlist contains an empty filename")
+		}
+		if filepath.Base(name) != name || name == "." || name == ".." {
+			return nil, fmt.Errorf("asset allowlist entry must be a filename, got %q", name)
+		}
+		if _, ok := seen[name]; ok {
+			return nil, fmt.Errorf("asset allowlist contains duplicate filename %q", name)
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func releaseFiles(dir string, allowlist []string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	var files []string
+	available := make(map[string]string)
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		files = append(files, filepath.Join(dir, e.Name()))
+		available[e.Name()] = filepath.Join(dir, e.Name())
+	}
+	if len(allowlist) == 0 {
+		files := make([]string, 0, len(available))
+		for _, path := range available {
+			files = append(files, path)
+		}
+		sort.Strings(files)
+		return files, nil
+	}
+	if len(available) != len(allowlist) {
+		return nil, fmt.Errorf("release directory contains %d files, exact asset allowlist contains %d", len(available), len(allowlist))
+	}
+	files := make([]string, 0, len(allowlist))
+	for _, name := range allowlist {
+		path, ok := available[name]
+		if !ok {
+			return nil, fmt.Errorf("release directory is missing allowlisted asset %q", name)
+		}
+		files = append(files, path)
 	}
 	sort.Strings(files)
 	return files, nil
 }
 
-func (c *client) createRelease(brand, body string, prerelease bool) error {
+func (c *client) createRelease(brand, body string, prerelease bool, makeLatest string) error {
+	draft := c.immutable
+	initialMakeLatest := makeLatest
+	if draft {
+		initialMakeLatest = "false"
+	}
 	payload := map[string]any{
-		"tag_name":   c.tag,
-		"name":       fmt.Sprintf("%s %s", brand, c.tag),
-		"body":       body,
-		"draft":      false,
-		"prerelease": prerelease,
+		"tag_name":    c.tag,
+		"name":        fmt.Sprintf("%s %s", brand, c.tag),
+		"body":        body,
+		"draft":       draft,
+		"prerelease":  prerelease,
+		"make_latest": initialMakeLatest,
 	}
 	reqBody, _ := json.Marshal(payload)
 	req, err := c.newRequest(http.MethodPost, c.endpoint("/-/releases"), bytes.NewReader(reqBody))
@@ -139,6 +233,23 @@ func (c *client) createRelease(brand, body string, prerelease bool) error {
 		return err
 	}
 	if status == http.StatusConflict {
+		if c.immutable {
+			if c.replacedDraft {
+				return fmt.Errorf("CNB release %s still exists after removing its incomplete draft", c.tag)
+			}
+			if err := c.loadReleaseByTag(); err != nil {
+				return err
+			}
+			if !c.releaseDraft {
+				return fmt.Errorf("CNB release %s already exists and is published; immutable releases require a new tag", c.tag)
+			}
+			fmt.Printf("CNB release %s is an incomplete draft, removing it before retry\n", c.tag)
+			if err := c.deleteRelease(); err != nil {
+				return err
+			}
+			c.replacedDraft = true
+			return c.createRelease(brand, body, prerelease, makeLatest)
+		}
 		fmt.Printf("CNB release %s already exists, continuing asset upload\n", c.tag)
 		return c.loadReleaseByTag()
 	}
@@ -150,6 +261,7 @@ func (c *client) createRelease(brand, body string, prerelease bool) error {
 		return fmt.Errorf("decode created CNB release: %w", err)
 	}
 	c.releaseID = release.ID
+	c.releaseDraft = draft
 	fmt.Printf("created CNB release %s (%s)\n", c.tag, c.releaseID)
 	return nil
 }
@@ -171,7 +283,56 @@ func (c *client) loadReleaseByTag() error {
 		return fmt.Errorf("decode CNB release by tag %s: %w", c.tag, err)
 	}
 	c.releaseID = release.ID
+	c.releaseDraft = release.Draft
 	fmt.Printf("loaded CNB release %s (%s)\n", c.tag, c.releaseID)
+	return nil
+}
+
+func (c *client) finalizeRelease(prerelease bool, makeLatest string) error {
+	payload := map[string]any{
+		"draft":       false,
+		"prerelease":  prerelease,
+		"make_latest": makeLatest,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := c.newRequest(http.MethodPatch, c.endpoint("/-/releases/"+url.PathEscape(c.releaseID)), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	raw, status, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("publish CNB release %s: HTTP %d: %s", c.tag, status, string(raw))
+	}
+	c.releaseDraft = false
+	fmt.Printf("published immutable CNB release %s\n", c.tag)
+	return nil
+}
+
+func (c *client) cleanupImmutableDraft() error {
+	if !c.immutable || !c.releaseDraft || c.releaseID == "" {
+		return nil
+	}
+	return c.deleteRelease()
+}
+
+func (c *client) deleteRelease() error {
+	req, err := c.newRequest(http.MethodDelete, c.endpoint("/-/releases/"+url.PathEscape(c.releaseID)), nil)
+	if err != nil {
+		return err
+	}
+	raw, status, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("delete draft CNB release %s: HTTP %d: %s", c.tag, status, string(raw))
+	}
+	c.releaseID = ""
+	c.releaseDraft = false
 	return nil
 }
 
@@ -209,7 +370,7 @@ func (c client) requestUploadTicket(file string) (uploadTicket, error) {
 	}
 	payload := map[string]any{
 		"asset_name": name,
-		"overwrite":  true,
+		"overwrite":  !c.immutable,
 		"size":       info.Size(),
 		"ttl":        0,
 	}

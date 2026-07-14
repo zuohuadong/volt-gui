@@ -108,6 +108,34 @@ cross-compilation (`windows/amd64`) plus Linux `nsis`/`makensis` for the install
 macOS and Linux artifacts are intentionally disabled until their CNB build
 strategy is confirmed.
 
+### Independently versioned Windows prerequisites
+
+The large offline Microsoft Visual C++ and WebView2 bundle has its own version
+source, `desktop/prerequisites-version.txt`, and its own `prerequisites-v*` CNB
+Release namespace. Normal `desktop-v*` builds keep Wails' small online WebView2
+bootstrapper (`-webview2 embed`) but no longer download or upload the offline
+prerequisites ZIP.
+
+The current bundle version is `v1.0.0` (`prerequisites-v1.0.0`). Build it without
+building Wails, the frontend, or NSIS:
+
+```sh
+DESKTOP_APP_NAME=Anyong \
+VOLTUI_BRAND_NAME="<configured display brand>" \
+PREREQUISITES_RELEASE_TAG=prerequisites-v1.0.0 \
+scripts/build-windows-prerequisites.sh windows/amd64
+```
+
+The clean `dist-prerequisites/` directory contains exactly the versioned ZIP,
+its external `.sha256`, and a JSON manifest. The CNB Release is created with
+`make_latest=false`, so publishing prerequisites does not replace the desktop
+updater's `releases/latest/downloads/latest.json` channel. Once a prerequisites
+version is published it is immutable; changed Microsoft assets, scripts, or
+metadata require a new prerequisites version and Tag. CNB first creates a draft,
+uploads and verifies all three assets, then publishes it; failed or interrupted
+drafts are cleaned up or rebuilt on the next run, so users never see a partial
+prerequisites Release.
+
 ```sh
 git commit -m "feat: release desktop update"
 git push origin main

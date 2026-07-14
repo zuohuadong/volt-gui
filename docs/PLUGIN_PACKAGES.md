@@ -298,16 +298,27 @@ such as Superpowers and Claude-style skill packs, Reasonix maps:
   correctly; every Reasonix subagent-spawning tool (`task`, `read_only_task`,
   `parallel_tasks`, and the dedicated `explore`/`research`/`review`/
   `security_review` wrappers) maps to Claude's single `Agent` tool, and a
-  matcher can still use the legacy `Task` name. `tool_input` keys that
+  matcher can still use the legacy `Task` name. Every mapped `Agent` payload
+  includes Claude's required `prompt` and `description`; Reasonix supplies a
+  stable operation label when its tool call omitted the optional description.
+  `tool_input` keys that
   Reasonix names differently from Claude are renamed too — `path` becomes
   `file_path` for `Read`/`Write`/`Edit`/`MultiEdit` and `notebook_path` for
   `NotebookEdit`, `name`/`arguments` become `skill`/`args` for `Skill`,
-  `job_id` becomes `bash_id`/`shell_id` for `BashOutput`/`KillShell`, the
+  `job_id` becomes `task_id` for the current `TaskOutput`/`TaskStop`, the
   dedicated subagent wrappers' `task` becomes `Agent`'s `prompt`, and
   `parallel_tasks` synthesizes `Agent`'s `prompt` from its sub-task prompts
   (keeping `tasks` alongside) — so a guard reading `.tool_input.file_path`
   or `.tool_input.prompt` sees the target instead of failing open on an
-  empty value. Relative `file_path`/`notebook_path` values are resolved
+  empty value. Legacy `BashOutput`/`KillShell` matchers still fire while the
+  emitted names and fields use current Claude vocabulary. `bash_output`
+  supplies `TaskOutput`'s required non-blocking fields; `wait` also maps to
+  `TaskOutput`, including `task_id` when it waits for exactly one job.
+  `AskUserQuestion` supplies omitted `multiSelect:false` and empty option
+  descriptions, while `TodoWrite` derives an omitted `activeForm` from the
+  task content. `NotebookEdit` also supplies `new_source` from Reasonix's
+  accepted aliases, or an empty string for delete/empty-cell operations.
+  Relative `file_path`/`notebook_path` values are resolved
   absolute against the payload `cwd`, matching Claude's file-tool contract,
   so prefix-matching guards inspect the path the tool actually accesses. A
   `Bash` `tool_response` is delivered in Claude's `{stdout, stderr,
@@ -324,10 +335,12 @@ such as Superpowers and Claude-style skill packs, Reasonix maps:
   (deny or auto-allow, rather than only notifying) via exit code 2 or
   `hookSpecificOutput.decision.behavior`, matching Claude's own contract.
   `updatedInput` is not yet applied to the tool call, and a hook's `if`
-  condition or `asyncRewake` field is not evaluated — a package that declares
-  either, or a `Stop`/`SubagentStop` hook (which can't block the turn in
-  Reasonix the way Claude's contract does), reports partial rather than full
-  compatibility with a structured warning naming the gap.
+  condition or `asyncRewake` field is not evaluated. A package reports partial
+  compatibility with a structured warning when it declares either field, a
+  `Stop`/`SubagentStop` hook (which cannot block the turn in Reasonix), or a
+  matcher that covers one of three inputs Reasonix cannot losslessly express:
+  `WebFetch.prompt`, `NotebookEdit.cell_id` for a Reasonix `cell_number` call,
+  or `TaskOutput.task_id` when Reasonix `wait` covers multiple/all jobs.
 - A plugin-root `.mcp.json` to installed MCP entries. Claude `local` maps to
   stdio, non-ASCII display names receive stable internal IDs, and duplicate
   declarations are deduplicated. Imported servers default to

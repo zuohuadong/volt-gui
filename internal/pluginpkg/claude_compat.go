@@ -100,6 +100,19 @@ func claudeMatcherNeverFires(matcher string) bool {
 	return true
 }
 
+// claudeMatcherIncludesTool reports whether a Claude matcher can select the
+// given tool using the same anchored-regex semantics as hook.MatchesTool.
+// Empty and "*" matchers select every tool. Malformed regexes select none at
+// runtime and therefore do not include the target here.
+func claudeMatcherIncludesTool(matcher, toolName string) bool {
+	matcher = strings.TrimSpace(matcher)
+	if matcher == "" || matcher == "*" {
+		return true
+	}
+	re, err := regexp.Compile("^(?:" + matcher + ")$")
+	return err == nil && re.MatchString(toolName)
+}
+
 type claudeMCPIdentity struct {
 	Type    string            `json:"type"`
 	Command string            `json:"command,omitempty"`
@@ -190,6 +203,21 @@ func appendClaudeHooksFile(root, rel string, manifest *Manifest) ([]string, []Co
 				}
 				if claudeToolScopedHookEvents[event] && claudeMatcherNeverFires(match) {
 					reason := fmt.Sprintf("%s hook %q matcher %q names a Claude tool Reasonix has no equivalent for, so it will never fire", event, command, match)
+					warnings = append(warnings, rel+": "+reason)
+					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
+				}
+				if claudeToolScopedHookEvents[event] && claudeMatcherIncludesTool(match, "WebFetch") {
+					reason := fmt.Sprintf("%s hook %q matcher %q includes Claude WebFetch, but Reasonix web_fetch cannot supply Claude's required \"prompt\" input; the hook receives only \"url\" for that tool", event, command, match)
+					warnings = append(warnings, rel+": "+reason)
+					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
+				}
+				if claudeToolScopedHookEvents[event] && claudeMatcherIncludesTool(match, "NotebookEdit") {
+					reason := fmt.Sprintf("%s hook %q matcher %q includes Claude NotebookEdit, but Reasonix notebook_edit may target a cell by cell_number, which cannot be converted to Claude's opaque cell_id; the hook receives cell_number as an extra field for those calls", event, command, match)
+					warnings = append(warnings, rel+": "+reason)
+					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
+				}
+				if claudeToolScopedHookEvents[event] && (claudeMatcherIncludesTool(match, "TaskOutput") || claudeMatcherIncludesTool(match, "BashOutput")) {
+					reason := fmt.Sprintf("%s hook %q matcher %q includes Claude TaskOutput, but Reasonix wait may cover multiple or all background jobs in one call, which cannot be represented by Claude's single task_id; the hook receives job_ids as an extra field for those calls", event, command, match)
 					warnings = append(warnings, rel+": "+reason)
 					issues = append(issues, CompatibilityIssue{Capability: "hooks", Path: rel, Reason: reason})
 				}
@@ -376,10 +404,12 @@ func compatibilityFailure(capability, path string, err error) ([]string, []Compa
 // call time, not by anything in the manifest, so they can't be flagged here.
 // PreToolUse/PermissionRequest's "deny" and PermissionRequest's "allow" are
 // the two runtime decisions Reasonix does implement (see claudeJSONDeny/
-// claudeJSONAllow in internal/hook); a hook that only ever uses those is
-// accurately "full". Statically detectable gaps (if/asyncRewake, Stop/
-// SubagentStop's inability to block the turn) already downgrade to "partial"
-// via issues appended in appendClaudeHooksFile.
+// claudeJSONAllow in internal/hook). Statically detectable gaps
+// (if/asyncRewake, Stop/
+// SubagentStop's inability to block the turn, WebFetch's unavailable required
+// prompt input, NotebookEdit's untranslatable cell_number, and multi-job
+// TaskOutput calls) already downgrade to "partial" via issues appended in
+// appendClaudeHooksFile.
 func compatibilityFor(pkg Package, issues []CompatibilityIssue) Compatibility {
 	mapped := make([]string, 0, 5)
 	skills, commands, hooks, mcp := pkg.CapabilityCounts()

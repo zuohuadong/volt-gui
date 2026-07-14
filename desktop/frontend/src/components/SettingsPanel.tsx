@@ -32,6 +32,7 @@ import {
 } from "../lib/fontFamily";
 import { getAvailableFontFamilies, getAvailableMonoFontFamilies } from "../lib/fontAvailability";
 import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
+import { getProcessFoldPreference, onProcessFoldPreferenceChange, setProcessFoldPreference, type ProcessFoldPreference } from "../lib/processFoldPreference";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId } from "../lib/statusBarItems";
 import { normalizeToolApprovalMode } from "../lib/types";
 import {
@@ -56,7 +57,7 @@ import { getSuccessPreference, setSuccessPreference, getAttentionPreference, set
 import { ModalCloseButton } from "./ModalCloseButton";
 import { ShortcutComboDisplay } from "./ShortcutComboDisplay";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "plugins", "memory", "hooks", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "models", "bots", "mcp", "skills", "subagents", "plugins", "memory", "hooks", "diagnostics", "shortcuts", "permissions", "sandbox", "network", "appearance", "updates"];
 export type SettingsInitialFocus = { target: "bot-allowlist"; connectionId?: string };
 type DesktopPlatform = "darwin" | "windows" | "linux";
 
@@ -64,6 +65,8 @@ const MCPServersSettingsPage = lazy(() => import("./CapabilitiesPanel").then((mo
 const SkillsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.SkillsSettingsPage })));
 const PluginsSettingsPage = lazy(() => import("./CapabilitiesPanel").then((module) => ({ default: module.PluginsSettingsPage })));
 const MemorySettingsPage = lazy(() => import("./MemoryPanel").then((module) => ({ default: module.MemorySettingsPage })));
+const SubagentsSettingsPage = lazy(() => import("./SubagentsPanel").then((module) => ({ default: module.SubagentsSettingsPage })));
+const DiagnosticsSettingsPage = lazy(() => import("./DiagnosticsSettingsPage").then((module) => ({ default: module.DiagnosticsSettingsPage })));
 const QRCodeSVG = lazy(() => import("qrcode.react").then((module) => ({ default: module.QRCodeSVG })));
 
 // SettingsPanel is the desktop settings centre — a centred modal with left
@@ -76,6 +79,7 @@ export function SettingsPanel({
   initialFocus,
   agentRunning = false,
   desktopPlatform,
+  onUseSubagent,
 }: {
   onClose: () => void;
   onChanged: (settings?: SettingsView | null) => void;
@@ -83,6 +87,7 @@ export function SettingsPanel({
   initialFocus?: SettingsInitialFocus;
   agentRunning?: boolean;
   desktopPlatform: DesktopPlatform;
+  onUseSubagent: (command: string) => void;
 }) {
   const t = useT();
   const [s, setS] = useState<SettingsView | null>(null);
@@ -100,8 +105,15 @@ export function SettingsPanel({
   const [customFontName, setCustomFontNameState] = useState<string>(getCustomFontName());
   const [customMonoFontName, setCustomMonoFontNameState] = useState<string>(getCustomMonoFontName());
   const [tab, setTab] = useState<SettingsTab>(initialTab === "providers" ? "models" : initialTab ?? "general");
-  // Play the modal exit animation, then let the parent unmount us.
-  const { status, requestClose } = useDeferredClose(onClose, 240);
+  const pendingSubagentCommandRef = useRef<string | null>(null);
+  // Play the modal exit animation, then let the parent unmount us and focus
+  // the composer with the selected slash command.
+  const { status, requestClose } = useDeferredClose(() => {
+    const command = pendingSubagentCommandRef.current;
+    pendingSubagentCommandRef.current = null;
+    onClose();
+    if (command) onUseSubagent(command);
+  }, 240);
   const zoomSaveSeq = useRef(0);
 
   const reload = useCallback(async () => {
@@ -162,11 +174,11 @@ export function SettingsPanel({
         setWarning(result.trim());
       }
     } catch (e) {
-      setErr(String((e as Error)?.message ?? e));
+      setErr(formatSettingsError(e, t));
     } finally {
       setBusy(false);
     }
-  }, [reload, onChanged]);
+  }, [reload, onChanged, t]);
   const backgroundApply = useCallback(async (fn: () => Promise<void>) => {
     setErr(null);
     setWarning(null);
@@ -175,9 +187,9 @@ export function SettingsPanel({
       const next = await reload();
       onChanged(next);
     } catch (e) {
-      setErr(String((e as Error)?.message ?? e));
+      setErr(formatSettingsError(e, t));
     }
-  }, [reload, onChanged]);
+  }, [reload, onChanged, t]);
   const setRestartZoom = useCallback(async (zoom: ZoomLevel) => {
     const snapped = snapZoom(zoom);
     const seq = ++zoomSaveSeq.current;
@@ -189,10 +201,10 @@ export function SettingsPanel({
       if (seq === zoomSaveSeq.current) saveRestartZoom(snapped);
     } catch (e) {
       if (seq !== zoomSaveSeq.current) return;
-      setErr(String((e as Error)?.message ?? e));
+      setErr(formatSettingsError(e, t));
       setZoomPct(zoomToPercent(getRestartZoom()));
     }
-  }, []);
+  }, [t]);
 
   // Close on Esc
   useEffect(() => {
@@ -207,11 +219,11 @@ export function SettingsPanel({
   // sandbox, appearance, updates) need SettingsView loaded. MCP, Skills, Plugins,
   // and Memory
   // load their own data and render regardless.
-  const needsSettings = tab === "general" || tab === "models" || tab === "bots" || tab === "network" || tab === "permissions" || tab === "sandbox" || tab === "appearance" || tab === "updates";
+  const needsSettings = tab === "general" || tab === "models" || tab === "bots" || tab === "subagents" || tab === "network" || tab === "permissions" || tab === "sandbox" || tab === "appearance" || tab === "updates";
   const lazySettingsPageFallback = <div className="empty">{t("settings.loading")}</div>;
 
   return (
-    <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
+    <div className="management-modal-backdrop settings-modal-backdrop" data-state={status} onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
       <div className="management-modal settings-modal" data-state={status}>
         <header className="management-modal__head settings-modal__head">
           <div className="management-modal__title settings-modal__title">{t("settings.title")}</div>
@@ -249,12 +261,17 @@ export function SettingsPanel({
                 {tab === "bots" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><BotsSection s={s} busy={busy} apply={apply} initialFocus={initialFocus} /></SettingsPageShell>}
                 {tab === "mcp" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MCPServersSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "skills" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SkillsSettingsPage /></Suspense></SettingsPageShell>}
+                {tab === "subagents" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><Suspense fallback={lazySettingsPageFallback}><SubagentsSettingsPage s={s} onUseInChat={(command) => {
+                  pendingSubagentCommandRef.current = command;
+                  requestClose();
+                }} /></Suspense></SettingsPageShell>}
                 {tab === "plugins" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><PluginsSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "memory" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><MemorySettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "hooks" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><HooksSection onChanged={onChanged} /></SettingsPageShell>}
+                {tab === "diagnostics" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><DiagnosticsSettingsPage onNavigate={setTab} /></Suspense></SettingsPageShell>}
                 {tab === "shortcuts" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><ShortcutsSection /></SettingsPageShell>}
                 {tab === "permissions" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><PermissionsSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
-                {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
+                {tab === "sandbox" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><SandboxSection s={s} busy={busy} apply={apply} windows={desktopPlatform === "windows"} /></SettingsPageShell>}
                 {tab === "network" && s && <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}><NetworkSection s={s} busy={busy} apply={apply} /></SettingsPageShell>}
                 {tab === "appearance" && s && (
                   <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}>
@@ -345,6 +362,7 @@ function settingsPageKind(tab: SettingsTab): "form" | "manager" {
     case "models":
     case "mcp":
     case "skills":
+    case "subagents":
     case "plugins":
     case "memory":
       return "manager";
@@ -431,6 +449,7 @@ function settingsTabPageTitle(id: SettingsTab, t: ReturnType<typeof useT>): stri
     case "skills": return t("settings.tab.skills");
     case "plugins": return t("settings.tab.plugins");
     case "memory": return t("settings.tab.memory");
+    case "diagnostics": return t("settings.tab.diagnostics");
     case "shortcuts": return t("settings.tab.shortcuts");
     default: return settingsTabLabel(id, t);
   }
@@ -460,12 +479,16 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.mcp");
     case "skills":
       return t("settings.tab.skills");
+    case "subagents":
+      return t("settings.tab.subagents");
     case "plugins":
       return t("settings.tab.plugins");
     case "memory":
       return t("settings.tab.memory");
     case "hooks":
       return t("settings.tab.hooks");
+    case "diagnostics":
+      return t("settings.tab.diagnostics");
     case "shortcuts":
       return t("settings.tab.shortcuts");
     case "network":
@@ -495,12 +518,16 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return t("caps.connectorsTab");
     case "skills":
       return t("caps.skillsTab");
+    case "subagents":
+      return t("subagents.tabHint");
     case "plugins":
       return t("settings.tabSub.plugins");
     case "memory":
       return t("settings.tabSub.memory");
     case "hooks":
       return t("settings.tabSub.hooks");
+    case "diagnostics":
+      return t("settings.tabSub.diagnostics");
     case "shortcuts":
       return t("settings.tabSub.shortcuts");
     case "network":
@@ -640,7 +667,7 @@ function ShortcutsSection() {
 }
 
 // allRefs flattens providers into "provider/model" refs for the model selectors.
-function allRefs(s: SettingsView): string[] {
+export function allRefs(s: SettingsView): string[] {
   const out: string[] = [];
   for (const p of s.providers) {
     if (!p.added || !providerIsConfigured(p)) continue;
@@ -651,7 +678,7 @@ function allRefs(s: SettingsView): string[] {
 
 // toRef normalises a stored model id (a provider name, a bare model, or a ref) to
 // a "provider/model" ref so a <select> of refs can show it selected.
-function toRef(model: string, s: SettingsView): string {
+export function toRef(model: string, s: SettingsView): string {
   if (!model) return "";
   if (model.includes("/")) return model;
   const byName = s.providers.find((p) => p.name === model);
@@ -666,7 +693,7 @@ const PROXY_MODES = ["auto", "custom", "off"] as const;
 // EFFORT_PRESETS is the canonical union of /effort levels the kernel recognises.
 // The settings UI uses it for subagent defaults; provider-specific levels are
 // inferred by the backend or edited in TOML for rare gateways.
-const EFFORT_PRESETS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
+export const EFFORT_PRESETS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
 const REASONING_PROTOCOLS: readonly string[] = ["", "deepseek", "openai", "none"];
 const THINKING_MODES: readonly string[] = ["", "enabled", "disabled", "adaptive"];
 const PROXY_TYPES = ["http", "https", "socks5", "socks5h"] as const;
@@ -769,17 +796,38 @@ function sortedJSONValue(value: unknown): unknown {
   return value;
 }
 
-function validateProviderExtraBodyValue(value: unknown, path = "extra_body"): void {
+function formatSettingsError(error: unknown, t: ReturnType<typeof useT>): string {
+  const msg = String((error as Error)?.message ?? error ?? "").trim();
+  const unknownModel = /^unknown model (.+)$/i.exec(msg);
+  if (unknownModel) return t("settings.errorUnknownModel", { model: unknownModel[1] });
+  const providerNotAdded = /^model (.+) is not available because provider (.+) is not added$/i.exec(msg);
+  if (providerNotAdded) return t("settings.errorModelProviderMissing", { model: providerNotAdded[1], provider: providerNotAdded[2] });
+  const providerNoKey = /^model (.+) is not available because provider (.+) has no key$/i.exec(msg);
+  if (providerNoKey) return t("settings.errorModelProviderNoKey", { model: providerNoKey[1], provider: providerNoKey[2] });
+  const removeAccessBusy = /^finish or cancel active work using (.+) before removing the provider access$/i.exec(msg);
+  if (removeAccessBusy) return t("settings.errorRemoveAccessBusy", { provider: removeAccessBusy[1] });
+  const deleteProviderBusy = /^finish or cancel active work using (.+) before deleting the provider$/i.exec(msg);
+  if (deleteProviderBusy) return t("settings.errorDeleteProviderBusy", { provider: deleteProviderBusy[1] });
+  const saveBeforeRemoveAccess = /^save current session before removing provider access: (.+)$/is.exec(msg);
+  if (saveBeforeRemoveAccess) return t("settings.errorSaveBeforeRemoveAccess", { err: saveBeforeRemoveAccess[1] });
+  const saveBeforeDeleteProvider = /^save current session before deleting provider: (.+)$/is.exec(msg);
+  if (saveBeforeDeleteProvider) return t("settings.errorSaveBeforeDeleteProvider", { err: saveBeforeDeleteProvider[1] });
+  const removeProviderUsed = /^remove provider: (.+) is used by open tabs and no other configured provider exists$/i.exec(msg);
+  if (removeProviderUsed) return t("settings.errorRemoveProviderNoFallback", { provider: removeProviderUsed[1] });
+  return msg || t("settings.errorUnknown");
+}
+
+function validateProviderExtraBodyValue(value: unknown, path = "extra_body", t?: ReturnType<typeof useT>): void {
   if (value === null) {
-    throw new Error(`${path} cannot contain null`);
+    throw new Error(t ? t("settings.providerExtraBodyNull", { path }) : `${path} cannot contain null`);
   }
   if (Array.isArray(value)) {
-    value.forEach((item, index) => validateProviderExtraBodyValue(item, `${path}[${index}]`));
+    value.forEach((item, index) => validateProviderExtraBodyValue(item, `${path}[${index}]`, t));
     return;
   }
   if (typeof value === "object") {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      validateProviderExtraBodyValue(child, `${path}.${key}`);
+      validateProviderExtraBodyValue(child, `${path}.${key}`, t);
     }
   }
 }
@@ -795,20 +843,26 @@ export function formatProviderExtraBody(extraBody: Record<string, unknown> | nul
   return JSON.stringify(sortedJSONValue(cleaned), null, 2);
 }
 
-export function parseProviderExtraBody(raw: string): Record<string, unknown> {
+export function parseProviderExtraBody(raw: string, t?: ReturnType<typeof useT>): Record<string, unknown> {
   const trimmed = raw.trim();
   if (!trimmed) return {};
   const parsed = JSON.parse(trimmed) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("extra body must be a JSON object");
+    throw new Error(t ? t("settings.providerExtraBodyObjectRequired") : "extra body must be a JSON object");
   }
-  validateProviderExtraBodyValue(parsed);
+  validateProviderExtraBodyValue(parsed, "extra_body", t);
   const out: Record<string, unknown> = {};
   for (const [rawKey, value] of Object.entries(parsed as Record<string, unknown>)) {
     const key = rawKey.trim();
     if (key) out[key] = value;
   }
   return out;
+}
+
+export function providerExtraBodyParseError(error: unknown, t: ReturnType<typeof useT>): string {
+  if (error instanceof SyntaxError) return t("settings.providerExtraBodyError");
+  const message = String((error as Error)?.message ?? error ?? "").trim();
+  return message || t("settings.providerExtraBodyError");
 }
 
 function providerModelFetchFallbackMessage(error: unknown, t: ReturnType<typeof useT>): string {
@@ -1178,7 +1232,7 @@ function normalizeProviderPresetView(p: ProviderPresetView): ProviderPresetView 
 function normalizeSettingsView(view: SettingsView | null | undefined): SettingsView | null {
   if (!view) return null;
   const permissions = view.permissions ?? { mode: "ask", allow: [], ask: [], deny: [] };
-  const sandbox = view.sandbox ?? { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: "", effectiveWriteRoots: [], shell: "auto" };
+  const sandbox = view.sandbox ?? { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], effectiveWorkspaceRoot: "", effectiveWriteRoots: [], shell: "auto", effectiveShell: "" };
   const network = view.network ?? {
     proxyMode: "auto",
     proxyUrl: "",
@@ -1207,6 +1261,7 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
       allowWrite: asArray(sandbox.allowWrite),
       effectiveWorkspaceRoot: String(sandbox.effectiveWorkspaceRoot ?? ""),
       effectiveWriteRoots: asArray(sandbox.effectiveWriteRoots),
+      effectiveShell: String(sandbox.effectiveShell ?? sandbox.shell ?? ""),
     },
     network: {
       ...network,
@@ -1361,6 +1416,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const { t, setPref } = useI18n();
   const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
   const [displayMode, setDisplayMode] = useState<DisplayMode>(() => normalizeDisplayMode(getDisplayMode()));
+  const [processFold, setProcessFold] = useState<ProcessFoldPreference>(getProcessFoldPreference);
   const [statusBarItemsExpanded, setStatusBarItemsExpanded] = useState(false);
   const [draggingStatusBarItem, setDraggingStatusBarItem] = useState<StatusBarItemId | null>(null);
   const [statusBarDragTarget, setStatusBarDragTargetState] = useState<StatusBarDragTarget | null>(null);
@@ -1370,6 +1426,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const soundPanelId = useId();
   const statusBarItemsPanelId = useId();
   useEffect(() => onDisplayModeChange((mode) => setDisplayMode(mode)), []);
+  useEffect(() => onProcessFoldPreferenceChange((pref) => setProcessFold(pref)), []);
   useEffect(() => () => mouseDragCleanupRef.current?.(), []);
   const autoPlan = normalizeAutoPlan(s.autoPlan);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
@@ -1587,6 +1644,19 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               }}
             >
               {t(`settings.displayMode.${mode}`)}
+            </button>
+          ))}
+        </div>
+      </SettingsField>
+      <SettingsField label={t("settings.processFold")} hint={t("settings.processFoldHint")}>
+        <div className="set-seg">
+          {(["auto", "expanded"] as const).map((pref) => (
+            <button
+              key={pref}
+              className={`set-seg__btn${processFold === pref ? " set-seg__btn--on" : ""}`}
+              onClick={() => setProcessFoldPreference(pref)}
+            >
+              {t(`settings.processFold.${pref}`)}
             </button>
           ))}
         </div>
@@ -4149,12 +4219,13 @@ type ModelPickerOption = {
   providerView?: ProviderView;
 };
 
-function ModelPicker({
+export function ModelPicker({
   s,
   refs,
   value,
   disabled,
   includeSameDefault = false,
+  ariaLabel,
   emptyOptionLabel,
   emptyOptionHint,
   onPick,
@@ -4164,6 +4235,7 @@ function ModelPicker({
   value: string;
   disabled: boolean;
   includeSameDefault?: boolean;
+  ariaLabel?: string;
   emptyOptionLabel?: string;
   emptyOptionHint?: string;
   onPick: (ref: string) => void;
@@ -4245,6 +4317,7 @@ function ModelPicker({
         type="button"
         className="settings-model-picker__trigger"
         disabled={disabled || (!includeSameDefault && !emptyOptionLabel && refs.length === 0)}
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((next) => !next)}
@@ -5591,9 +5664,9 @@ function ProviderEditor({
   const effectiveHeaders = parseProviderHeaders(headersDraft);
   const extraBodyParse = useMemo(() => {
     try {
-      return { value: parseProviderExtraBody(extraBodyDraft), error: "" };
-    } catch {
-      return { value: {}, error: t("settings.providerExtraBodyError") };
+      return { value: parseProviderExtraBody(extraBodyDraft, t), error: "" };
+    } catch (e) {
+      return { value: {}, error: providerExtraBodyParseError(e, t) };
     }
   }, [extraBodyDraft, t]);
   const effectiveExtraBody = extraBodyParse.value;
@@ -6218,7 +6291,7 @@ function HooksSection({ onChanged }: { onChanged: (settings?: SettingsView | nul
 
   const parseHooksEditorJSON = (raw = jsonText): { hooks: HookConfigView[]; text: string } | null => {
     try {
-      const hooks = parseHooksJSON(raw, view?.events ?? []);
+      const hooks = parseHooksJSON(raw, view?.events ?? [], t);
       const text = formatHooksJSON(hooks, view?.events ?? []);
       setJsonText(text);
       setJsonError(null);
@@ -6409,7 +6482,7 @@ function formatHooksJSON(hooks: HookConfigView[], eventOrder: string[]): string 
   return JSON.stringify({ hooks: ordered }, null, 2);
 }
 
-function parseHooksJSON(raw: string, validEvents: string[]): HookConfigView[] {
+function parseHooksJSON(raw: string, validEvents: string[], t: ReturnType<typeof useT>): HookConfigView[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];
   let parsed: unknown;
@@ -6419,21 +6492,21 @@ function parseHooksJSON(raw: string, validEvents: string[]): HookConfigView[] {
     throw new Error(String((e as Error)?.message ?? e));
   }
   if (Array.isArray(parsed)) {
-    return parsed.map((item) => normalizeHookConfig(parseHookArrayItem(item, validEvents))).filter((h) => h.event);
+    return parsed.map((item) => normalizeHookConfig(parseHookArrayItem(item, validEvents, t))).filter((h) => h.event);
   }
   if (!parsed || typeof parsed !== "object") {
-    throw new Error("expected an object or array");
+    throw new Error(t("settings.hooksJsonExpectedObjectArray"));
   }
   const obj = parsed as Record<string, unknown>;
   const hooksValue = obj.hooks && typeof obj.hooks === "object" && !Array.isArray(obj.hooks) ? obj.hooks : obj;
-  return flattenHooksMap(hooksValue as Record<string, unknown>, validEvents);
+  return flattenHooksMap(hooksValue as Record<string, unknown>, validEvents, t);
 }
 
-function parseHookArrayItem(item: unknown, validEvents: string[]): HookConfigView {
-  if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("hook item must be an object");
+function parseHookArrayItem(item: unknown, validEvents: string[], t: ReturnType<typeof useT>): HookConfigView {
+  if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(t("settings.hooksJsonItemObject"));
   const obj = item as Record<string, unknown>;
   const event = stringField(obj, "event") || "PreToolUse";
-  if (validEvents.length > 0 && !validEvents.includes(event)) throw new Error(`unknown hook event ${event}`);
+  if (validEvents.length > 0 && !validEvents.includes(event)) throw new Error(t("settings.hooksJsonUnknownEvent", { event }));
   return {
     event,
     match: stringField(obj, "match"),
@@ -6444,14 +6517,14 @@ function parseHookArrayItem(item: unknown, validEvents: string[]): HookConfigVie
   };
 }
 
-function flattenHooksMap(hooks: Record<string, unknown>, validEvents: string[]): HookConfigView[] {
+function flattenHooksMap(hooks: Record<string, unknown>, validEvents: string[], t: ReturnType<typeof useT>): HookConfigView[] {
   const valid = new Set(validEvents);
   const out: HookConfigView[] = [];
   for (const [event, value] of Object.entries(hooks)) {
-    if (valid.size > 0 && !valid.has(event)) throw new Error(`unknown hook event ${event}`);
+    if (valid.size > 0 && !valid.has(event)) throw new Error(t("settings.hooksJsonUnknownEvent", { event }));
     const items = Array.isArray(value) ? value : [value];
     for (const item of items) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`hook ${event} item must be an object`);
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(t("settings.hooksJsonEventItemObject", { event }));
       const obj = item as Record<string, unknown>;
       out.push(normalizeHookConfig({
         event,
@@ -6487,11 +6560,23 @@ function normalizeHookConfig(h: HookConfigView): HookConfigView {
   };
 }
 
-function SandboxSection({ s, busy, apply }: SectionProps) {
+function effectiveShellLabel(value: string, t: ReturnType<typeof useT>): string {
+  switch (value) {
+    case "git-bash": return t("settings.effectiveShellGitBash");
+    case "pwsh": return t("settings.effectiveShellPwsh");
+    case "powershell": return t("settings.effectiveShellPowershell");
+    case "bash": return t("settings.effectiveShellBash");
+    case "auto": return t("common.auto");
+    default: return value.trim() || t("common.none");
+  }
+}
+
+function SandboxSection({ s, busy, apply, windows }: SectionProps & { windows: boolean }) {
   const t = useT();
   const sb = s.sandbox;
   const [root, setRoot] = useState(sb.workspaceRoot);
   const effectiveWriteRoots = asArray(sb.effectiveWriteRoots).filter((path) => String(path).trim());
+  const effectiveShell = effectiveShellLabel(String(sb.effectiveShell || sb.shell || ""), t);
   const set = (next: Partial<typeof sb>) =>
     apply(() => app.SetSandbox(next.bash ?? sb.bash, next.network ?? sb.network, next.workspaceRoot ?? sb.workspaceRoot, next.allowWrite ?? sb.allowWrite, next.shell ?? sb.shell));
   const reload = () => apply(() => app.ReloadSettings());
@@ -6511,15 +6596,20 @@ function SandboxSection({ s, busy, apply }: SectionProps) {
     >
       <SettingsField label={t("settings.shellInterpreter")}>
         <select className="mem-select set-grow" value={sb.shell || "auto"} disabled={busy} onChange={(e) => void set({ shell: e.target.value })}>
-          <option value="auto">{t("settings.shellAuto")}</option>
+          <option value="auto">{windows ? t("settings.shellAutoWindows") : t("settings.shellAuto")}</option>
           <option value="bash">{t("settings.shellBash")}</option>
           <option value="powershell">{t("settings.shellPowershell")}</option>
           <option value="pwsh">{t("settings.shellPwsh")}</option>
         </select>
       </SettingsField>
+      <SettingsField label={t("settings.effectiveShell")}>
+        <div className="settings-readonly-field">{effectiveShell}</div>
+      </SettingsField>
       <SettingsField label={t("settings.bashSandbox")}>
-        <select className="mem-select set-grow" value={sb.bash} disabled={busy} onChange={(e) => void set({ bash: e.target.value })}>
-          <option value="enforce">{t("settings.bashEnforce")}</option>
+        {/* Windows force-resolves bash to "off" (see config.BashModeForGOOS), so
+            offering enforce there would silently snap back on save. */}
+        <select className="mem-select set-grow" value={sb.bash} disabled={busy || windows} onChange={(e) => void set({ bash: e.target.value })}>
+          <option value="enforce" disabled={windows}>{t("settings.bashEnforce")}</option>
           <option value="off">{t("settings.bashOff")}</option>
         </select>
       </SettingsField>

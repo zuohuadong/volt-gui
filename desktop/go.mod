@@ -2,7 +2,7 @@ module reasonix/desktop
 
 go 1.25.0
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 // The desktop shell is a nested module so its CGO/WebKit build never touches the
 // CLI's CGO_ENABLED=0 single-static-binary guarantee. The replace lets it import
@@ -25,7 +25,6 @@ require (
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
-	github.com/SivanCola/windows-sandbox v0.0.0-20260705154605-6b29dd09f9cb // indirect
 	github.com/aymanbagabas/go-udiff v0.4.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
@@ -53,6 +52,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 	github.com/samber/lo v1.53.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/tree-sitter/go-tree-sitter v0.25.0 // indirect
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0 // indirect

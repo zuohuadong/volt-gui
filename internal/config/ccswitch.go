@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	fileencoding "reasonix/internal/fileutil/encoding"
+	"reasonix/internal/secrets"
 )
 
 const ccSwitchDir = ".cc-switch"
@@ -137,7 +140,9 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 		return nil, fmt.Errorf("cc-switch import: sqlite3 not found to read %s", path)
 	}
 	query := `SELECT id, name, server_config FROM mcp_servers WHERE enabled_codex = 1 ORDER BY name, id`
-	out, err := exec.Command(sqlite, "-readonly", "-json", path, query).Output()
+	cmd := exec.Command(sqlite, "-readonly", "-json", path, query)
+	cmd.Env = secrets.ProcessEnv()
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: read %s: %w", path, err)
 	}
@@ -172,7 +177,7 @@ func ccSwitchRowsToPlugins(rows []ccSwitchMCPRow) ([]PluginEntry, error) {
 }
 
 func loadCCSwitchLegacyConfig(path string) ([]PluginEntry, error) {
-	b, err := os.ReadFile(path)
+	b, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return nil, err
 	}

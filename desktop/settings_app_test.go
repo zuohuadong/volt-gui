@@ -13,8 +13,10 @@ import (
 
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/hook"
 	"reasonix/internal/provider"
+	"reasonix/internal/sandbox"
 )
 
 type captureTurnRunner struct {
@@ -164,6 +166,27 @@ func TestSettingsExposesEffectiveSandboxWriteRoots(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.AllowWrite, cfg.Sandbox.AllowWrite) {
 		t.Fatalf("AllowWrite = %v, want raw configured paths %v", got.AllowWrite, cfg.Sandbox.AllowWrite)
+	}
+	if got.EffectiveShell == "" {
+		t.Fatal("EffectiveShell is empty")
+	}
+}
+
+func TestSandboxEffectiveShellViewLabels(t *testing.T) {
+	cases := []struct {
+		name  string
+		shell sandbox.Shell
+		want  string
+	}{
+		{"bash", sandbox.Shell{Kind: sandbox.ShellBash, Path: "bash"}, "bash"},
+		{"git bash", sandbox.Shell{Kind: sandbox.ShellBash, Path: `C:\Program Files\Git\bin\bash.exe`}, "git-bash"},
+		{"windows powershell", sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "powershell"}, "powershell"},
+		{"pwsh", sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}, "pwsh"},
+	}
+	for _, tc := range cases {
+		if got := sandboxEffectiveShellView(tc.shell); got != tc.want {
+			t.Errorf("%s: sandboxEffectiveShellView() = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -1014,8 +1037,8 @@ func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
-	if app.Settings().DefaultToolApprovalMode != control.ToolApprovalAsk {
-		t.Fatalf("Settings().DefaultToolApprovalMode = %q, want ask", app.Settings().DefaultToolApprovalMode)
+	if app.Settings().DefaultToolApprovalMode != control.ToolApprovalAuto {
+		t.Fatalf("Settings().DefaultToolApprovalMode = %q, want auto", app.Settings().DefaultToolApprovalMode)
 	}
 	if err := app.SetDefaultToolApprovalMode(control.ToolApprovalAuto); err != nil {
 		t.Fatalf("SetDefaultToolApprovalMode: %v", err)
@@ -1134,6 +1157,70 @@ func TestSaveHooksSettingsPreservesUnknownSettingsKeys(t *testing.T) {
 	view := app.HooksSettings("global")
 	if len(view.Hooks) != 1 || view.Hooks[0].Event != string(hook.PreToolUse) || view.Hooks[0].Command != "echo guard" {
 		t.Fatalf("HooksSettings = %+v, want saved PreToolUse hook", view)
+	}
+}
+
+func TestSaveHooksSettingsDecodesLegacyEncodedGlobalSettings(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	path := hook.GlobalSettingsPath("")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"label":"中文","hooks":{"Stop":[{"command":"echo 旧"}]}}`
+	if err := os.WriteFile(path, fileencoding.Encode(legacy, fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	before := app.HooksSettings("global")
+	if len(before.Hooks) != 1 || before.Hooks[0].Command != "echo 旧" {
+		t.Fatalf("HooksSettings before save = %+v, want decoded legacy hook", before.Hooks)
+	}
+	if err := app.SaveHooksSettings("global", []HookConfigView{{
+		Event:   string(hook.PreToolUse),
+		Command: "echo 新",
+	}}); err != nil {
+		t.Fatalf("SaveHooksSettings: %v", err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("saved settings should be valid UTF-8 JSON: %v", err)
+	}
+	if string(raw["label"]) != `"中文"` {
+		t.Fatalf("label key was not preserved after decoding legacy settings: %s", raw["label"])
+	}
+	view := app.HooksSettings("global")
+	if len(view.Hooks) != 1 || view.Hooks[0].Command != "echo 新" {
+		t.Fatalf("HooksSettings after save = %+v, want new decoded hook", view.Hooks)
+	}
+}
+
+func TestSaveHooksSettingsNormalizesQuotedNodeEvalHookCommand(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	script := "const payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log(payload.toolName)"
+	bad := `node -e "\"` + script + `\""`
+	want := hook.NormalizeCommand(bad)
+	if want == bad {
+		t.Fatal("test command did not normalize")
+	}
+
+	app := NewApp()
+	if err := app.SaveHooksSettings("global", []HookConfigView{{
+		Event:   string(hook.PreToolUse),
+		Match:   "bash",
+		Command: bad,
+	}}); err != nil {
+		t.Fatalf("SaveHooksSettings: %v", err)
+	}
+
+	view := app.HooksSettings("global")
+	if len(view.Hooks) != 1 || view.Hooks[0].Command != want {
+		t.Fatalf("HooksSettings = %+v, want normalized command %q", view.Hooks, want)
 	}
 }
 
@@ -1346,5 +1433,27 @@ func TestLoadDesktopUserConfigViewKeepsLegacyBotConfigMigrationInMemory(t *testi
 	}
 	if string(rawLegacy) != legacyBody {
 		t.Fatalf("migration must not rewrite the legacy config, got:\n%s", rawLegacy)
+	}
+}
+
+func TestSetBotSettingsPreservesFeishuOutboundMediaRoots(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Bot.Feishu.OutboundMediaRoots = []string{root}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+
+	app := NewApp()
+	view := botSettingsView(cfg.Bot)
+	view.QueueCap++
+	if err := app.SetBotSettings(view); err != nil {
+		t.Fatalf("SetBotSettings: %v", err)
+	}
+
+	got := config.LoadForEditWithoutCredentials(config.UserConfigPath())
+	if !reflect.DeepEqual(got.Bot.Feishu.OutboundMediaRoots, []string{root}) {
+		t.Fatalf("outbound media roots = %v, want preserved %q", got.Bot.Feishu.OutboundMediaRoots, root)
 	}
 }

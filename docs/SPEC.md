@@ -474,6 +474,39 @@ resolved and prepended to the message as a tagged block the model can read.
   bottom-region menu changes height only on these discrete actions, never per
   streamed token, so scrollback stays clean (§ rendering).
 
+### 3.10 Subagent profiles and explicit CLI execution
+
+A subagent profile is a Skill with `runAs: subagent` and, for profiles managed
+by the desktop or CLI editors, `invocation: manual`. Profiles reuse the existing
+project/global Skill files; they do not introduce another state format or
+database. Manual invocation excludes a profile from the pinned Skill index so
+the model cannot discover it implicitly, while explicit `/<name> <task>`
+invocation remains available.
+
+Interactive slash invocation and `Controller.RunSubagentProfile` both execute
+the profile with the Boot-wired Skill runners. Each run gets an isolated child
+session and returns only its final answer to the caller. The headless contract is
+explicit:
+
+- `reasonix subagent try <name> ... <task>` uses the read-only Skill runner;
+- `reasonix subagent run <name> ... <task>` uses the normal permission and
+  sandbox path; and
+- ordinary `Controller.Run` / `reasonix run` remains unchanged and does not
+  reinterpret slash-prefixed input as a subagent command.
+
+Desktop and CLI profile mutations share
+`skill.ValidateEditableSubagentProfile`. Only simple manual project/global
+profiles can be rewritten or deleted. Custom-scope Skills, unmanaged
+frontmatter, and Skill directories containing `references/` or `scripts/` are
+refused so an editor cannot silently flatten or discard rich Skill content.
+Built-in profiles support configuration overrides but have no writable file.
+
+Effective model and effort precedence is: per-profile
+`agent.subagent_models` / `agent.subagent_efforts`, profile frontmatter,
+`agent.subagent_model` / `agent.subagent_effort`, then executor/default model
+configuration. See [Subagent profiles](./SUBAGENT_PROFILES.md) for the user-facing
+command and file-format contract.
+
 ## 4. Data Types (`internal/provider`)
 
 ```go
@@ -544,7 +577,9 @@ reasoning_language = "auto"       # visible reasoning text: auto|zh|en
 # plan_mode_read_only_commands = ["gh issue view", "gh pr diff"]   # extra read-only shell prefixes for plan mode
 # planner_model = "deepseek-pro"   # optional: two-model collaboration (low-frequency planner)
 # subagent_model = "deepseek-pro"   # optional default for runAs=subagent skills
+# subagent_effort = "high"           # optional default reasoning effort for subagents
 # subagent_models = { review = "deepseek-pro", security_review = "deepseek-pro" }
+# subagent_efforts = { review = "max", security_review = "high" }
 
 # A vendor endpoint exposing several models under one base_url/key.
 [[providers]]
@@ -660,9 +695,15 @@ Linux, and a native helper on Windows): each command is allowed to write only
 the same roots plus platform-specific command temp/cache roots, denied reads
 under `forbid_read`, and allowed to reach the network only when
 `network = true`.
-The native Windows helper delegates the low-level isolation to
-`github.com/SivanCola/windows-sandbox`: AppContainer for read-only commands and
-a low-integrity token for writable commands, with temporary ACL grants for
+**Current status:** stable builds force the effective Bash sandbox mode to
+`off` on Windows — even an explicit `bash = "enforce"` resolves to `off` (and
+`reasonix doctor` flags the ignored setting) — because the native backend
+described below still breaks common Git Bash/MSYS2, Docker, and git workflows.
+The description is kept as the design of record until the backend is reliable
+enough to re-enable.
+The native Windows helper uses Reasonix's bundled Windows sandbox backend:
+AppContainer for read-only commands and a low-integrity token for writable
+commands, with temporary ACL grants for
 writable roots and tool executables, a per-command temp root instead of mutating
 the global Temp directory, temporary deny ACEs for `forbid_read` (files and
 directories), best-effort restoration from pre-run DACL snapshots for touched

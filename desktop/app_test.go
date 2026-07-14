@@ -31,8 +31,20 @@ import (
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/skill"
+	"reasonix/internal/store"
 	"reasonix/internal/tool"
 )
+
+func TestPluginToolsToViewPreservesSchemaError(t *testing.T) {
+	got := pluginToolsToView([]plugin.ToolInfo{{
+		Name: "generate_yso_bytes", Description: "Generate payload", ReadOnlyHint: true,
+		SchemaError: "invalid input schema: bad nested type",
+	}})
+	if len(got) != 1 || got[0].SchemaError != "invalid input schema: bad nested type" {
+		t.Fatalf("tool views = %+v", got)
+	}
+}
 
 func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -114,14 +126,24 @@ func isolateDesktopUserDirs(t *testing.T) string {
 func primarySessionFiles(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
-		base := filepath.Base(path)
-		if strings.HasSuffix(base, ".jsonl") &&
-			!strings.HasSuffix(base, ".events.jsonl") &&
-			!strings.HasSuffix(base, ".guardian.jsonl") {
+		if store.IsSessionTranscriptName(filepath.Base(path)) {
 			out = append(out, path)
 		}
 	}
 	return out
+}
+
+func readConflictLogLines(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read conflict log: %v", err)
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
 }
 
 func setDesktopTestCredential(t *testing.T, key, value string) {
@@ -209,6 +231,43 @@ func TestCommandsIncludesEffortNotThinking(t *testing.T) {
 	}
 	if hasCommand(cmds, "thinking") {
 		t.Fatalf("Commands() should not include thinking: %+v", cmds)
+	}
+}
+
+func TestCommandsClassifiesSubagentSkills(t *testing.T) {
+	ctrl := control.New(control.Options{Skills: []skill.Skill{
+		{Name: "init", Description: "inline skill", RunAs: skill.RunInline},
+		{Name: "explore", Description: "isolated skill", RunAs: skill.RunSubagent, Color: "amber"},
+	}})
+	defer ctrl.Close()
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+
+	kinds := map[string]string{}
+	groups := map[string]string{}
+	colors := map[string]string{}
+	for _, cmd := range app.Commands() {
+		kinds[cmd.Name] = cmd.Kind
+		groups[cmd.Name] = cmd.Group
+		colors[cmd.Name] = cmd.Color
+	}
+	if kinds["init"] != "skill" {
+		t.Fatalf("inline skill kind = %q, want skill", kinds["init"])
+	}
+	if kinds["explore"] != "subagent" {
+		t.Fatalf("subagent skill kind = %q, want subagent", kinds["explore"])
+	}
+	if colors["explore"] != "amber" {
+		t.Fatalf("subagent skill color = %q, want amber", colors["explore"])
+	}
+	if groups["new"] != "actions" {
+		t.Fatalf("new command group = %q, want actions", groups["new"])
+	}
+	if groups["mcp"] != "integrations" || groups["plugins"] != "integrations" {
+		t.Fatalf("integration command groups = mcp:%q plugins:%q", groups["mcp"], groups["plugins"])
+	}
+	if groups["skill"] != "skills" {
+		t.Fatalf("skill command group = %q, want skills", groups["skill"])
 	}
 }
 
@@ -1376,6 +1435,53 @@ func TestSettingsMarksPresetWithChangedCoreConfigAsModified(t *testing.T) {
 	}
 }
 
+func TestSettingsMigratesLegacyStepFunPresetBaseURLs(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	cfg := config.Default()
+	stepfun, ok := config.CuratedProviderPreset("stepfun")
+	if !ok || len(stepfun.Entries) != 1 {
+		t.Fatal("missing stepfun preset")
+	}
+	stepfunEntry := stepfun.Entries[0]
+	stepfunEntry.BaseURL = "https://api.stepfun.ai/step_plan/v1"
+	stepfunAnthropic, ok := config.CuratedProviderPreset("stepfun-anthropic")
+	if !ok || len(stepfunAnthropic.Entries) != 1 {
+		t.Fatal("missing stepfun-anthropic preset")
+	}
+	stepfunAnthropicEntry := stepfunAnthropic.Entries[0]
+	stepfunAnthropicEntry.BaseURL = "https://api.stepfun.ai/step_plan"
+	cfg.Providers = append(cfg.Providers, stepfunEntry, stepfunAnthropicEntry)
+	cfg.Desktop.ProviderAccess = []string{"stepfun", "stepfun-anthropic"}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	view := NewApp().Settings()
+	for _, id := range []string{"stepfun", "stepfun-anthropic"} {
+		presetView := providerPresetViewByID(t, view, id)
+		if !presetView.Added || presetView.Status != providerPresetStatusInstalled {
+			t.Fatalf("%s preset view = %+v, want installed after migration", id, presetView)
+		}
+	}
+
+	migrated := config.LoadForEdit(config.UserConfigPath())
+	stepfunEntryView, ok := migrated.Provider("stepfun")
+	if !ok {
+		t.Fatal("stepfun provider missing after migration")
+	}
+	if got := stepfunEntryView.BaseURL; got != "https://api.stepfun.com/step_plan/v1" {
+		t.Fatalf("stepfun base_url = %q, want official URL", got)
+	}
+	stepfunAnthropicEntryView, ok := migrated.Provider("stepfun-anthropic")
+	if !ok {
+		t.Fatal("stepfun-anthropic provider missing after migration")
+	}
+	if got := stepfunAnthropicEntryView.BaseURL; got != "https://api.stepfun.com/step_plan" {
+		t.Fatalf("stepfun-anthropic base_url = %q, want official URL", got)
+	}
+}
+
 func TestSettingsMarksSimilarProviderPresetWithoutBlockingAdd(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	preset, ok := config.CuratedProviderPreset("mimo-api")
@@ -2079,6 +2185,7 @@ func TestDeferredRebuildRetryAppliesAfterLeaseRelease(t *testing.T) {
 		sink:        &tabEventSink{tabID: "tab_deferred_retry", app: app},
 		disabledMCP: map[string]ServerView{},
 	}
+	installNoopRuntimeEvents(app, tab.sink)
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
@@ -2189,6 +2296,7 @@ func TestDeferredRebuildWaitsForTabToBecomeActive(t *testing.T) {
 		sink:        &tabEventSink{tabID: "tab_pending", app: app},
 		disabledMCP: map[string]ServerView{},
 	}
+	installNoopRuntimeEvents(app, tab.sink)
 	other := &WorkspaceTab{
 		ID:          "tab_other",
 		Scope:       "global",
@@ -2341,6 +2449,137 @@ func TestSetEffortForTabLeaseHeldKeepsOldControllerAlive(t *testing.T) {
 	}
 	if tab.Ctrl == oldCtrl {
 		t.Fatal("retry did not rebuild the controller")
+	}
+}
+
+func TestSetEffortForTabReanchorsDepthCapRecoveryBranch(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "old/old-model"
+	cfg.Desktop.ProviderAccess = []string{"old"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name:             "old",
+		Kind:             "openai",
+		BaseURL:          "https://example.invalid/v1",
+		Model:            "old-model",
+		APIKeyEnv:        "OLD_MODEL_KEY",
+		SupportedEfforts: []string{"low", "max"},
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	recoveryPath := filepath.Join(dir, "effort-switch-conflict-recovery-deadbeef.jsonl")
+	disk := agent.NewSession("old system prompt")
+	disk.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	disk.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	disk.Add(provider.Message{Role: provider.RoleUser, Content: "disk second"})
+	if err := disk.Save(recoveryPath); err != nil {
+		t.Fatalf("save recovery branch: %v", err)
+	}
+	meta, ok, err := agent.LoadBranchMeta(recoveryPath)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta ok=%v err=%v", ok, err)
+	}
+	meta.Recovered = true
+	meta.ParentID = "effort-switch-conflict"
+	meta.RecoveryReason = "snapshot conflict"
+	meta.RecoveryDepth = agent.SessionRecoveryMaxDepth
+	if err := agent.SaveBranchMeta(recoveryPath, meta); err != nil {
+		t.Fatalf("SaveBranchMeta: %v", err)
+	}
+
+	stale := agent.NewSession("old system prompt")
+	stale.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
+	stale.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
+	stale.Add(provider.Message{Role: provider.RoleUser, Content: "local second"})
+	oldExec := agent.New(nil, nil, stale, agent.Options{}, event.Discard)
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.runtimeEvents.emit = func(context.Context, string, ...interface{}) {}
+	tab := &WorkspaceTab{
+		ID:          "tab_depth_cap_effort",
+		Scope:       "global",
+		SessionPath: recoveryPath,
+		Ready:       true,
+		model:       "old/old-model",
+		disabledMCP: map[string]ServerView{},
+	}
+	tab.sink = &tabEventSink{tabID: tab.ID, app: app}
+	oldCtrl := control.New(control.Options{
+		Executor:            oldExec,
+		SessionDir:          dir,
+		SessionPath:         recoveryPath,
+		Label:               "old",
+		Sink:                tab.sink,
+		SessionRecoveryMeta: app.tabSessionRecoveryMeta(tab),
+		OnSessionRecovered:  app.handleTabSessionRecovered(tab),
+	})
+	tab.Ctrl = oldCtrl
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+		tab.releaseSessionLease()
+	})
+	stale.IncrementRewrite()
+
+	if err := app.SetEffortForTab(tab.ID, "max"); err != nil {
+		t.Fatalf("SetEffortForTab: %v", err)
+	}
+	if got := tab.Ctrl.SessionPath(); got != recoveryPath {
+		t.Fatalf("session path after effort switch = %q, want current recovery branch %q", got, recoveryPath)
+	}
+	if got := tab.currentSessionPath(); got != recoveryPath {
+		t.Fatalf("tab current session path = %q, want %q", got, recoveryPath)
+	}
+	if tab.sessionLease == nil || sessionRuntimeKey(tab.sessionLease.Path()) != sessionRuntimeKey(recoveryPath) {
+		t.Fatalf("tab lease path = %q, want %q", tab.sessionLeaseRuntimeKey(), recoveryPath)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob recovery branches: %v", err)
+	}
+	matches = primarySessionFiles(matches)
+	if len(matches) != 1 || matches[0] != recoveryPath {
+		t.Fatalf("recovery branches after effort switch = %v, want only %q", matches, recoveryPath)
+	}
+
+	lines := readConflictLogLines(t, store.SessionConflictLog(recoveryPath))
+	if len(lines) != 1 {
+		t.Fatalf("conflict log lines = %v, want one depth-cap diagnostic", lines)
+	}
+	if !strings.Contains(lines[0], `"outcome":"recovery_depth_cap_force_saved"`) {
+		t.Fatalf("conflict diagnostic = %s, want depth-cap outcome", lines[0])
+	}
+	if strings.Contains(lines[0], dir) || strings.Contains(lines[0], recoveryPath) {
+		t.Fatalf("conflict diagnostic leaked local path: %s", lines[0])
+	}
+
+	if err := tab.Ctrl.Snapshot(); err != nil {
+		t.Fatalf("Snapshot after effort switch recovery: %v", err)
+	}
+	afterLines := readConflictLogLines(t, store.SessionConflictLog(recoveryPath))
+	if len(afterLines) != len(lines) {
+		t.Fatalf("follow-up snapshot appended conflict diagnostics: before=%v after=%v", lines, afterLines)
+	}
+	matches, err = filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob recovery branches after snapshot: %v", err)
+	}
+	matches = primarySessionFiles(matches)
+	if len(matches) != 1 || matches[0] != recoveryPath {
+		t.Fatalf("recovery branches after follow-up snapshot = %v, want only %q", matches, recoveryPath)
 	}
 }
 
@@ -3179,11 +3418,22 @@ func newStaleWorkspaceBindingFixtureWithLayout(t *testing.T, suffix, layoutStyle
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "TEST_MODEL_KEY", "sk-test")
 
+	// Steers and idle-steer fallbacks start real provider turns (they are no
+	// longer command-interpreted), so the fixture's provider must complete
+	// instantly instead of pointing at an unreachable host — otherwise every
+	// steer leaves the controller running for the rest of the test.
+	providerStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(providerStub.Close)
+
 	cfg := config.Default()
 	cfg.DefaultModel = "test/test-model"
 	cfg.Desktop.ProviderAccess = []string{"test"}
 	cfg.Providers = []config.ProviderEntry{
-		{Name: "test", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "test-model", APIKeyEnv: "TEST_MODEL_KEY"},
+		{Name: "test", Kind: "openai", BaseURL: providerStub.URL, Model: "test-model", APIKeyEnv: "TEST_MODEL_KEY"},
 	}
 	if strings.TrimSpace(layoutStyle) != "" {
 		if err := cfg.SetDesktopLayoutStyle(layoutStyle); err != nil {
@@ -3375,7 +3625,10 @@ func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *
 func TestSteerForTabReconcilesStaleWorkspaceBeforeIdleFallback(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "steer_idle_fallback")
 
-	if err := f.app.SteerForTab(f.tab.ID, "/unknown-command"); err != nil {
+	// The idle fallback submits the steer text verbatim as a provider turn
+	// (steers are never command-interpreted); the fixture's provider stub
+	// completes it instantly.
+	if err := f.app.SteerForTab(f.tab.ID, "steer guidance"); err != nil {
 		t.Fatalf("SteerForTab: %v", err)
 	}
 	waitNotRunning(t, f.tab.Ctrl)
@@ -3512,7 +3765,7 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 	}
 	actions := []quickAction{
 		{name: "submit", run: func() error { return f.app.SubmitToTab(f.tab.ID, "/unknown-command") }},
-		{name: "steer", run: func() error { return f.app.SteerForTab(f.tab.ID, "/unknown-command") }},
+		{name: "steer", run: func() error { return f.app.SteerForTab(f.tab.ID, "steer guidance") }},
 		{name: "compact", run: func() error { return f.app.Compact() }},
 		{name: "submit-display", run: func() error { return f.app.SubmitDisplayToTab(f.tab.ID, "/unknown display", "/unknown-command") }},
 	}
@@ -3552,6 +3805,14 @@ func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
+		// The steer action holds a real provider turn now, so racing quick
+		// clicks may legitimately observe a busy controller. This test
+		// asserts workspace-rebuild serialization, not that every
+		// concurrent action wins the turn.
+		if strings.Contains(err.Error(), "turn already running") ||
+			strings.Contains(err.Error(), "cannot compact while a turn is running") {
+			continue
+		}
 		t.Error(err)
 	}
 	if t.Failed() {
@@ -4339,6 +4600,39 @@ func TestSetTokenModeRebuildsController(t *testing.T) {
 	}
 }
 
+func TestSetTokenModeDeliveryRebuildsAndPersistsProfile(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	old := control.New(control.Options{Label: "old-controller"})
+	app.setTestCtrl(old, "deepseek-flash/deepseek-v4-flash")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
+
+	if err := app.SetTokenMode(boot.TokenModeDelivery); err != nil {
+		t.Fatalf("SetTokenMode(delivery): %v", err)
+	}
+	if c := app.activeCtrl(); c == nil || c == old {
+		t.Fatal("delivery profile should rebuild the active controller")
+	}
+	tab := app.activeTab()
+	if got := currentTabTokenMode(tab); got != boot.TokenModeDelivery {
+		t.Fatalf("token mode = %q, want delivery", got)
+	}
+	if got := app.Meta().TokenMode; got != boot.TokenModeDelivery {
+		t.Fatalf("Meta token mode = %q, want delivery", got)
+	}
+	saved := loadTabsFile()
+	if len(saved.Tabs) != 1 || saved.Tabs[0].TokenMode != boot.TokenModeDelivery {
+		t.Fatalf("saved tabs = %+v, want delivery profile", saved.Tabs)
+	}
+}
+
 func TestSetTokenModeReusesCurrentSessionLease(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
@@ -4945,6 +5239,56 @@ func TestFileRefsUseActiveTabWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestFileRefsForTabIgnoreActiveParentWorkspace(t *testing.T) {
+	parentRoot := robustTempDir(t)
+	childRoot := filepath.Join(parentRoot, "child")
+	if err := os.MkdirAll(childRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentRoot, "parent-only.txt"), []byte("parent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parentRoot, "shared.txt"), []byte("parent shared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "child-only.txt"), []byte("child"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childRoot, "shared.txt"), []byte("child shared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"parent": {ID: "parent", Scope: "project", WorkspaceRoot: parentRoot},
+			"child":  {ID: "child", Scope: "project", WorkspaceRoot: childRoot},
+		},
+		activeTabID: "parent",
+	}
+
+	listed := app.ListDirForTab("child", "")
+	if !hasDirEntry(listed, "child-only.txt") || hasDirEntry(listed, "parent-only.txt") {
+		t.Fatalf("ListDirForTab(child) = %+v, want only child workspace entries", listed)
+	}
+	found := app.SearchFileRefsForTab("child", "child-only")
+	if !hasDirEntry(found, "child-only.txt") {
+		t.Fatalf("SearchFileRefsForTab(child) = %+v, want child-only.txt", found)
+	}
+	preview := app.ReadFileForTab("child", "shared.txt")
+	if preview.Err != "" || preview.Body != "child shared" {
+		t.Fatalf("ReadFileForTab(child) = %+v, want child workspace file", preview)
+	}
+	path, ok, err := app.workspaceOrExternalPathForTab("child", "shared.txt")
+	if err != nil || !ok || path != filepath.Join(childRoot, "shared.txt") {
+		t.Fatalf("workspaceOrExternalPathForTab(child) = (%q, %v, %v)", path, ok, err)
+	}
+
+	legacy := app.ReadFile("shared.txt")
+	if legacy.Err != "" || legacy.Body != "parent shared" {
+		t.Fatalf("ReadFile legacy active-tab behavior = %+v, want parent workspace file", legacy)
+	}
+}
+
 func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 	workspace := robustTempDir(t)
 	external := filepath.Join(robustTempDir(t), "Folder With Spaces")
@@ -4968,11 +5312,12 @@ func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 	app := &App{
 		tabs: map[string]*WorkspaceTab{
 			"project": {ID: "project", WorkspaceRoot: workspace, Ctrl: ctrl},
+			"other":   {ID: "other", WorkspaceRoot: robustTempDir(t)},
 		},
-		activeTabID: "project",
+		activeTabID: "other",
 	}
 
-	listed := app.ListDir(token + "/src/")
+	listed := app.ListDirForTab("project", token+"/src/")
 	if len(listed) != 1 ||
 		listed[0].Name != "outside.txt" ||
 		listed[0].Path != token+"/src/outside.txt" ||
@@ -4980,7 +5325,7 @@ func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 		t.Fatalf("ListDir external src = %+v, want outside token/display path", listed)
 	}
 
-	found := app.SearchFileRefs("outside")
+	found := app.SearchFileRefsForTab("project", "outside")
 	var externalHit *DirEntry
 	for i := range found {
 		if found[i].Path == token+"/src/outside.txt" {
@@ -4992,7 +5337,7 @@ func TestFileRefsIncludeRegisteredExternalFolderChildren(t *testing.T) {
 		t.Fatalf("SearchFileRefs external hit = %+v, all results %+v", externalHit, found)
 	}
 
-	preview := app.ReadFile(token + "/src/outside.txt")
+	preview := app.ReadFileForTab("project", token+"/src/outside.txt")
 	if preview.Err != "" || preview.Body != "outside" {
 		t.Fatalf("ReadFile external token preview = %+v, want outside file body", preview)
 	}
@@ -6257,7 +6602,7 @@ func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
 	if len(plugins) != 1 || plugins[0].Name != "superpowers" || plugins[0].Skills != 1 {
 		t.Fatalf("Capabilities().Plugins = %+v", plugins)
 	}
-	if len(plugins[0].SkillDetails) != 1 || plugins[0].SkillDetails[0].Invocation != "/plan" {
+	if len(plugins[0].SkillDetails) != 1 || plugins[0].SkillDetails[0].Invocation != "/superpowers:plan" {
 		t.Fatalf("Capabilities().Plugins skill details = %+v", plugins[0].SkillDetails)
 	}
 }
@@ -6609,6 +6954,104 @@ func TestRemoveMCPServerDeletesProjectMCPJSONEntry(t *testing.T) {
 	}
 	if _, ok := findPluginEntry(cfg.Plugins, "keep"); !ok {
 		t.Fatalf("unrelated .mcp.json server should be preserved: %+v", cfg.Plugins)
+	}
+}
+
+func TestRemoveMCPServerRejectsPluginManagedServerWithoutDisconnecting(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "superpowers")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, pluginpkg.NativeManifest), []byte(fmt.Sprintf(`{
+  "name": "superpowers",
+  "version": "1.0.0",
+  "mcpServers": {
+    "helper": { "type": "http", "url": %q }
+  }
+}`, srv.URL)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name:         "superpowers",
+		Root:         "plugins/superpowers",
+		Version:      "1.0.0",
+		ManifestKind: "reasonix",
+		Enabled:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadForRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := findPluginEntry(cfg.Plugins, "helper")
+	if !ok {
+		t.Fatalf("plugin-managed MCP missing from config: %+v", cfg.Plugins)
+	}
+	ctrl := control.New(control.Options{Host: plugin.NewHost()})
+	defer ctrl.Close()
+	if _, err := ctrl.ConnectMCPServer(entry); err != nil {
+		t.Fatalf("connect plugin-managed MCP: %v", err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.activeTab().WorkspaceRoot = dir
+	err = app.RemoveMCPServer("helper")
+	if err == nil || !strings.Contains(err.Error(), "managed by plugin") || !strings.Contains(err.Error(), "superpowers") {
+		t.Fatalf("RemoveMCPServer(plugin-managed) error = %v", err)
+	}
+	if !mcpConnected(ctrl, "helper") {
+		t.Fatal("plugin-managed MCP was disconnected despite rejected removal")
+	}
+	for action, actionErr := range map[string]error{
+		"trust tool": app.TrustMCPServerTool("helper", "echo"),
+		"clear auth": app.ClearMCPServerAuthentication("helper"),
+		"update":     app.UpdateMCPServer("helper", MCPServerInput{Name: "helper", Transport: "http", URL: srv.URL}),
+	} {
+		if actionErr == nil || !strings.Contains(actionErr.Error(), "managed by plugin") {
+			t.Fatalf("%s plugin-managed MCP error = %v", action, actionErr)
+		}
+	}
+	if _, found := findPluginEntry(config.LoadForEdit(config.UserConfigPath()).Plugins, "helper"); found {
+		t.Fatal("plugin-managed MCP mutation created a user-config shadow")
+	}
+	servers := app.MCPServers()
+	if len(servers) != 1 || servers[0].Name != "helper" || servers[0].ManagedByPlugin != "superpowers" {
+		t.Fatalf("MCPServers() = %+v, want helper managed by superpowers", servers)
+	}
+}
+
+func TestRemoveMCPServerRejectsRuntimeOnlyServerWithoutDisconnecting(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	srv := desktopMCPHTTPServer(t)
+	defer srv.Close()
+	ctrl := control.New(control.Options{Host: plugin.NewHost()})
+	defer ctrl.Close()
+	if _, err := ctrl.ConnectMCPServer(config.PluginEntry{Name: "runtime-only", Type: "http", URL: srv.URL}); err != nil {
+		t.Fatalf("connect runtime-only MCP: %v", err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.activeTab().WorkspaceRoot = dir
+	err := app.RemoveMCPServer("runtime-only")
+	if err == nil || !strings.Contains(err.Error(), "no removable MCP server") {
+		t.Fatalf("RemoveMCPServer(runtime-only) error = %v", err)
+	}
+	if !mcpConnected(ctrl, "runtime-only") {
+		t.Fatal("runtime-only MCP was disconnected despite failed persistence removal")
 	}
 }
 

@@ -462,6 +462,209 @@ func TestLegacySessionsMigrateIntoGlobalTopics(t *testing.T) {
 	}
 }
 
+func TestAmbiguousLegacyRecoverySessionsMigrateIntoTopics(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	normal := writeLegacySession(t, dir, "normal.jsonl", "normal imported prompt", time.Now().Add(-2*time.Hour))
+	recovery := writeLegacySession(t, dir, "normal-recovery-0123456789abcdef.jsonl", "legacy recovery prompt", time.Now().Add(-time.Hour))
+	// Simulate an upgrade from the filename-only classifier: the v1 marker
+	// must not prevent the new conservative pass from recovering this history.
+	if err := os.WriteFile(filepath.Join(dir, ".topics-migrated"), nil, 0o644); err != nil {
+		t.Fatalf("write v1 migration marker: %v", err)
+	}
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) != 1 || nodes[0].Kind != "global_folder" {
+		t.Fatalf("project tree = %#v, want global folder", nodes)
+	}
+	if got := len(nodes[0].Children); got != 2 {
+		t.Fatalf("global migrated topics = %d, want both sessions preserved: %#v", got, nodes[0].Children)
+	}
+	wantTopics := map[string]bool{legacySessionTopicID(normal): true, legacySessionTopicID(recovery): true}
+	for _, node := range nodes[0].Children {
+		delete(wantTopics, node.TopicID)
+	}
+	if len(wantTopics) != 0 {
+		t.Fatalf("migrated topics missing %v: %#v", wantTopics, nodes[0].Children)
+	}
+	if meta, ok, err := agent.LoadBranchMeta(recovery); err != nil || !ok {
+		t.Fatalf("load recovery meta: %v", err)
+	} else if strings.TrimSpace(meta.TopicID) == "" {
+		t.Fatal("ambiguous legacy recovery branch was not migrated into a visible topic")
+	}
+}
+
+func TestUnmodifiedRecoveryCopyDoesNotMigrateIntoTopics(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	parent, recovery, branchMsgs := forkDesktopRecoveryBranch(t, dir, "normal")
+	coverDesktopRecoveryParent(t, parent, branchMsgs)
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) != 1 || len(nodes[0].Children) != 1 {
+		t.Fatalf("project tree = %#v, want only the covering parent topic", nodes)
+	}
+	if meta, ok, err := agent.LoadBranchMeta(recovery); err != nil || !ok {
+		t.Fatalf("load recovery meta: ok=%v err=%v", ok, err)
+	} else if strings.TrimSpace(meta.TopicID) != "" {
+		t.Fatalf("parent-covered recovery copy was migrated into topic %q", meta.TopicID)
+	}
+}
+
+func TestCoveredRecoveryCopyBecomesVisibleAfterMigratedParentDeletion(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	parent, recovery, branchMsgs := forkDesktopRecoveryBranch(t, dir, "parent-delete")
+	coverDesktopRecoveryParent(t, parent, branchMsgs)
+	app := NewApp()
+
+	app.ListProjectTree()
+	for _, marker := range []string{topicMigrationMarker, topicIndexRepairMarker} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err != nil {
+			t.Fatalf("expected %s after migration: %v", marker, err)
+		}
+	}
+	if meta, ok, err := agent.LoadBranchMeta(recovery); err != nil || !ok {
+		t.Fatalf("load skipped recovery meta: ok=%v err=%v", ok, err)
+	} else if strings.TrimSpace(meta.TopicID) != "" {
+		t.Fatalf("covered recovery copy was migrated before parent deletion: %+v", meta)
+	}
+
+	if err := app.DeleteSession(parent); err != nil {
+		t.Fatalf("DeleteSession parent: %v", err)
+	}
+	for _, marker := range []string{topicMigrationMarker, topicIndexRepairMarker} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); !os.IsNotExist(err) {
+			t.Fatalf("%s survived live session deletion: %v", marker, err)
+		}
+	}
+
+	nodes := app.ListProjectTree()
+	meta, ok, err := agent.LoadBranchMeta(recovery)
+	if err != nil || !ok {
+		t.Fatalf("load recovery meta after parent deletion: ok=%v err=%v", ok, err)
+	}
+	if meta.TopicID != legacySessionTopicID(recovery) {
+		t.Fatalf("recovery topic after parent deletion = %q, want %q", meta.TopicID, legacySessionTopicID(recovery))
+	}
+	for _, root := range nodes {
+		for _, node := range root.Children {
+			if node.TopicID == meta.TopicID {
+				return
+			}
+		}
+	}
+	t.Fatalf("project tree after parent deletion = %#v, want recovery topic %q", nodes, meta.TopicID)
+}
+
+func TestHistoryMarksLegacyRecoverySessionsAsRecovered(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	recovery := writeLegacySession(t, dir, "desktop-recovery-0123456789abcdef.jsonl", "legacy recovery prompt", time.Now())
+	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: recovery, Label: "test"})
+	defer ctrl.Close()
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+
+	sessions := app.ListSessions()
+	for _, session := range sessions {
+		if filepath.Clean(session.Path) != filepath.Clean(recovery) {
+			continue
+		}
+		if !session.Recovered {
+			t.Fatalf("history session recovered flag = false, want true: %+v", session)
+		}
+		if session.RecoveryCopy {
+			t.Fatalf("legacy filename-only recovery was marked safe for bulk cleanup: %+v", session)
+		}
+		return
+	}
+	t.Fatalf("history sessions = %#v, want recovery session %q", sessions, recovery)
+}
+
+func TestTrashMarksLegacyRecoverySessionsAsRecovered(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	recovery := writeLegacySession(t, dir, "desktop-recovery-0123456789abcdef.jsonl", "legacy recovery prompt", time.Now())
+	if err := deleteSessionFile(dir, recovery); err != nil {
+		t.Fatalf("delete recovery session: %v", err)
+	}
+	trashPath := filepath.Join(dir, sessionTrashDir, filepath.Base(recovery), filepath.Base(recovery))
+
+	sessions := NewApp().ListTrashedSessions()
+	if len(sessions) != 1 || filepath.Clean(sessions[0].Path) != filepath.Clean(trashPath) {
+		t.Fatalf("trashed sessions = %#v, want %q", sessions, trashPath)
+	}
+	if !sessions[0].Recovered {
+		t.Fatalf("trashed recovery session recovered flag = false, want true: %+v", sessions[0])
+	}
+	if sessions[0].RecoveryCopy {
+		t.Fatalf("legacy filename-only recovery was marked safe for bulk purge: %+v", sessions[0])
+	}
+}
+
+func TestProjectTreeKeepsAmbiguousMigratedRecoveryTopicVisible(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	recovery := writeLegacySession(t, dir, "desktop-recovery-0123456789abcdef.jsonl", "legacy recovery prompt", time.Now().Add(-time.Hour))
+	topicID := legacySessionTopicID(recovery)
+	if err := agent.SaveBranchMetaPreserveUpdated(recovery, agent.BranchMeta{
+		ID:         agent.BranchID(recovery),
+		CreatedAt:  time.Now().Add(-2 * time.Hour),
+		UpdatedAt:  time.Now().Add(-time.Hour),
+		Scope:      "global",
+		TopicID:    topicID,
+		TopicTitle: "恢复分支",
+		Turns:      1,
+		Preview:    "legacy recovery prompt",
+	}); err != nil {
+		t.Fatalf("save migrated recovery meta: %v", err)
+	}
+	// A v1 repair pass skipped this recovery-named record. The v2 pass must
+	// revisit it and restore its existing topic to the sidebar index.
+	if err := os.WriteFile(filepath.Join(dir, ".topic-indexes-repaired"), nil, 0o644); err != nil {
+		t.Fatalf("write v1 repair marker: %v", err)
+	}
+
+	nodes := NewApp().ListProjectTree()
+	if len(nodes) == 0 {
+		t.Fatal("project tree is empty")
+	}
+	for _, node := range nodes[0].Children {
+		if node.TopicID == topicID {
+			if node.Turns != 1 {
+				t.Fatalf("recovery topic turns = %d, want 1", node.Turns)
+			}
+			return
+		}
+	}
+	t.Fatalf("ambiguous recovery topic should stay visible: %#v", nodes)
+}
+
 func TestTopicMigrationMarkerRescansWhenSessionFileChanges(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := config.SessionDir()
@@ -2097,6 +2300,54 @@ func TestTrashTopicMovesRelatedSessionsToTrash(t *testing.T) {
 	}
 	if got := loadTopicTitle(projectRoot, topicID); got != "" {
 		t.Fatalf("topic title should be removed, got %q", got)
+	}
+}
+
+func TestTrashTopicRemovesStaleMissingSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	projectRoot := t.TempDir()
+	topicID := "topic_missing_trash"
+	if err := addProject(projectRoot, ""); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	if err := setTopicTitle(projectRoot, topicID, "Missing trash"); err != nil {
+		t.Fatalf("set topic title: %v", err)
+	}
+	dir := config.SessionDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	missingPath := filepath.Join(dir, "already-gone.jsonl")
+	app := &App{
+		tabs: map[string]*WorkspaceTab{
+			"stale": {
+				ID:            "stale",
+				Scope:         "project",
+				WorkspaceRoot: projectRoot,
+				TopicID:       topicID,
+				TopicTitle:    "Missing trash",
+				SessionPath:   missingPath,
+				Ready:         true,
+				disabledMCP:   map[string]ServerView{},
+			},
+			"other": {ID: "other", Scope: "project", WorkspaceRoot: projectRoot, TopicID: "other", Ready: true},
+		},
+		tabOrder:    []string{"stale", "other"},
+		activeTabID: "stale",
+	}
+
+	if err := app.TrashTopic(topicID); err != nil {
+		t.Fatalf("TrashTopic should remove stale missing session: %v", err)
+	}
+	if got := loadTopicTitle(projectRoot, topicID); got != "" {
+		t.Fatalf("topic title should be removed, got %q", got)
+	}
+	if _, ok := app.tabs["stale"]; ok {
+		t.Fatalf("stale tab should be removed")
+	}
+	if got := app.activeTabID; got != "other" {
+		t.Fatalf("active tab = %q, want other", got)
 	}
 }
 

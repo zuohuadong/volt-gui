@@ -8,6 +8,7 @@ import {
   SettingsPanel,
   formatProviderExtraBody,
   parseProviderExtraBody,
+  providerExtraBodyParseError,
   providerBaseURLFromChatURL,
   providerChatURLPreview,
   providerEditorEffectiveKind,
@@ -39,6 +40,19 @@ function eq(actual: unknown, expected: unknown, label: string) {
 
 function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function installCanvasMock(win: Window) {
+  Object.defineProperty(win.HTMLCanvasElement.prototype, "getContext", {
+    configurable: true,
+    value(type: string) {
+      if (type !== "2d") return null;
+      return {
+        font: "",
+        measureText: () => ({ width: 0 }),
+      } as unknown as CanvasRenderingContext2D;
+    },
+  });
 }
 
 async function waitFor(label: string, predicate: () => boolean) {
@@ -118,7 +132,7 @@ function baseSettings(displayMode: "standard" | "compact" = "standard"): Setting
     displayMode,
     statusBarStyle: "text",
     statusBarItems: ["model", "workspace", "git_branch", "cache", "balance"],
-    defaultToolApprovalMode: "ask",
+    defaultToolApprovalMode: "auto",
     checkUpdates: true,
     telemetry: true,
     metrics: true,
@@ -146,11 +160,32 @@ try {
   extraBodyRejected = true;
 }
 ok(extraBodyRejected, "extra body editor rejects non-object JSON");
+const extraBodyTestT = ((key: string, vars?: Record<string, string | number>) => {
+  if (key === "settings.providerExtraBodyError") return "localized extra body fallback";
+  if (key === "settings.providerExtraBodyNull") return `${vars?.path} localized null`;
+  return key;
+}) as any;
+eq(
+  providerExtraBodyParseError(new SyntaxError("Unexpected token } in JSON"), extraBodyTestT),
+  "localized extra body fallback",
+  "extra body editor localizes JSON syntax errors",
+);
+try {
+  parseProviderExtraBody('{ "nested": { "value": null } }', extraBodyTestT);
+  ok(false, "extra body editor rejects localized null validation errors");
+} catch (e) {
+  eq(
+    providerExtraBodyParseError(e, extraBodyTestT),
+    "extra_body.nested.value localized null",
+    "extra body editor keeps localized structured validation errors",
+  );
+}
 
 const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
   pretendToBeVisual: true,
   url: "http://localhost/",
 });
+installCanvasMock(dom.window as unknown as Window);
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.window = dom.window as unknown as Window & typeof globalThis;
 globalThis.document = dom.window.document;

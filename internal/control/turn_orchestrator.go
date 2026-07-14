@@ -253,6 +253,14 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		return err
 	}
 	if !allow {
+		// When plan mode is already off, the user explicitly exited plan mode
+		// while the approval was pending. Suppress auto-plan for the next turn
+		// so it does not immediately re-enter the mode the user just left.
+		c.mu.Lock()
+		if !c.planMode {
+			c.suppressAutoPlan = true
+		}
+		c.mu.Unlock()
 		return nil // keep planning; plan mode stays on
 	}
 	c.SetPlanMode(false)

@@ -6327,18 +6327,38 @@ func (a *App) deleteTopic(topicID string) error {
 	// concurrent duplicate delete) may find the title already gone while the
 	// sources map, created-at entry, sidebar index, or tombstone still need
 	// cleanup, so every step checks its own leftovers.
+	//
+	// Detailed cleanup is limited to roots that can actually hold the topic:
+	// roots whose sidebar index lists it, plus any root whose title map
+	// contains it. The title probe tolerates read errors on unindexed roots
+	// so unreadable metadata in an unrelated project cannot abort the
+	// deletion, while roots known to hold the topic still fail hard instead
+	// of being half-cleaned silently.
 	f := loadProjectsFile()
+	indexed := map[string]bool{
+		"": containsDesktopString(f.GlobalTopics, topicID) ||
+			containsDesktopString(f.GlobalPinnedTopics, topicID),
+	}
 	roots := make([]string, 0, len(f.Projects)+1)
 	for _, p := range f.Projects {
 		roots = append(roots, p.Root)
+		indexed[p.Root] = containsDesktopString(p.Topics, topicID) ||
+			containsDesktopString(p.PinnedTopics, topicID)
 	}
 	roots = append(roots, "")
 	for _, root := range roots {
 		titles, err := loadTopicTitlesForUpdate(root)
 		if err != nil {
-			return err
+			if indexed[root] {
+				return err
+			}
+			continue
 		}
-		if _, ok := titles[topicID]; ok {
+		_, hasTitle := titles[topicID]
+		if !hasTitle && !indexed[root] {
+			continue
+		}
+		if hasTitle {
 			delete(titles, topicID)
 			if err := saveTopicTitles(root, titles); err != nil {
 				return err

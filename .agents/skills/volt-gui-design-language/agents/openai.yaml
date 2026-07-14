@@ -1,0 +1,4 @@
+interface:
+  display_name: "Volt GUI Design Language"
+  short_description: "统一 Volt GUI 的桌面视觉与工作台交互规范"
+  default_prompt: "Use $volt-gui-design-language to design or review a Volt GUI desktop workflow with consistent visual and UX rules."

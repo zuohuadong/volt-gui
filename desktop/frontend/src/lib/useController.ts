@@ -152,6 +152,13 @@ interface State {
   // same id keeps the original arrival time; only a genuinely new prompt id
   // (backend ids are monotonic within a controller) re-anchors it.
   promptArrivedId?: string;
+  // Id of the most recently user-resolved approval/ask (explicit answer,
+  // cancel-through-mode-switch, etc). A replay carrying this same id is a
+  // stale re-delivery of an already-answered prompt, not a new one — arming
+  // it would resurrect a zombie no downstream snapshot may ever get a chance
+  // to reject (#6432 round 2: idle-applied-before-replay, and
+  // running=true/pendingPrompt=false snapshots that never clear approval/ask).
+  resolvedPromptId?: string;
   turnTokens: number;
   turnTotalTokens: number;
   turnCost: number;
@@ -951,6 +958,10 @@ function applyEvent(s: State, e: WireEvent): State {
       return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `${STEER_NOTICE_PREFIX}${e.text ?? ""}` }] };
     case "approval_request": {
       if (s.cancelRequested) return s;
+      // A delayed re-delivery of a prompt the user already answered locally
+      // (clearApproval) must not resurrect it — no downstream snapshot is
+      // guaranteed to ever reject it again (#6432 round 2).
+      if (e.approval?.id !== undefined && e.approval.id === s.resolvedPromptId) return s;
       return beginPromptWait({
         ...s,
         approval: e.approval,
@@ -967,6 +978,7 @@ function applyEvent(s: State, e: WireEvent): State {
     }
     case "ask_request": {
       if (s.cancelRequested) return s;
+      if (e.ask?.id !== undefined && e.ask.id === s.resolvedPromptId) return s;
       return beginPromptWait({
         ...s,
         ask: e.ask,
@@ -1264,11 +1276,11 @@ export function reducer(s: State, a: Action): State {
       return { ...s, items: mergeHistoryCheckpointTurns(s.items, a.turns, s.historyStartTurn) };
     case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": {
-      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask) };
+      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask), resolvedPromptId: s.approval?.id ?? s.resolvedPromptId };
       return endPromptWaitIfIdle(next);
     }
     case "clearAsk": {
-      const next = { ...s, ask: undefined, pendingPrompt: Boolean(s.approval) };
+      const next = { ...s, ask: undefined, pendingPrompt: Boolean(s.approval), resolvedPromptId: s.ask?.id ?? s.resolvedPromptId };
       return endPromptWaitIfIdle(next);
     }
     case "reset": return { ...initialState, meta: s.meta, context: { used: 0, window: s.context.window, sessionTokens: 0, compactRatio: s.context.compactRatio }, balance: s.balance, effort: s.effort, jobs: s.jobs, hydrating: s.hydrating, hydrateReason: s.hydrateReason, hydrateError: s.hydrateError, hydrateHistoryLoaded: s.hydrateHistoryLoaded, hydratePlaceholderItems: s.hydratePlaceholderItems, backendActivationPending: s.backendActivationPending, sessionGen: s.sessionGen + 1 };

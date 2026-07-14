@@ -28,12 +28,13 @@
 ## Delegation Gate
 
 - For implementation, fix, test, deploy, refactor, PR/MR, or automation work, make a Delegation Decision before editing.
-- Use full `explorer -> executor -> verifier -> orchestrator` flow for medium/high risk, multi-file/subsystem, architecture/API/data/state/migration/security/production, unclear-root-cause, UI/E2E, external verification, or self-review work.
-- Low-risk single-file work may be done by the main process after recording `safe_skip_reason` and running local verification; broad/user-visible/unfamiliar results still need an independent verifier.
-- Pure explanation, read-only review, simple shell queries, formatting-only edits, and documentation-only tasks may skip subagents with `safe_skip_reason`.
-- Host tool policy is not a valid `safe_skip_reason`. Agent-team delegation is enabled by default and does not require per-task user authorization.
-- If runtime cannot spawn required subagents, record `interruption_recovery` and mark the result `blocked` or `PARTIAL`; do not rewrite it as a safe skip.
-- Post-edit review gate: behavior-affecting code, tests, workflows, automation, config, or docs require current diff inspection plus an independent verifier before final response unless covered by the safe-skip exceptions.
+- Resolve `orchestration.mode` as `adaptive|native|managed|panel`. Adaptive requires an explicit Task Contract/project override or the intersection of model catalog and current host/runtime evidence for `native_delegation`, `tool_call`, `long_horizon`, `structured_output`, `context_isolation`, and `runtime_recovery`; missing evidence falls back to managed.
+- Native keeps one owner/writer (low risk external=0; medium risk exactly one verifier). Managed dispatches only needed lanes under budget. High risk, review-high, or explicit reviewer disagreement resolves to a bounded panel with one writer and at most three read-only reviewers; ordinary review status alone does not. Product direction, aesthetics/taste, and business choices resolve to human-loop, while high-risk or irreversible operations still take panel precedence.
+- Explicit legacy `collaboration.mode` remains compatible and resolves to managed. All modes share deterministic tests/build/typecheck/diff/approval/recovery evidence gates.
+- Low-risk work may be done by the current owner with deterministic verification. A native plan with external=0 is a valid resolved plan, not a `safe_skip_reason`.
+- Pure explanation, read-only review, simple shell queries, formatting-only edits, and documentation-only tasks may skip the Delegation Gate with `safe_skip_reason`.
+- Host tool policy is not a valid `safe_skip_reason`. When the resolved plan requires a lane and runtime can spawn it, dispatch it; otherwise record `interruption_recovery` and mark the result `blocked` or `PARTIAL`. Native low-risk external=0 is not a runtime gap.
+- Post-edit evidence/review gate: behavior-affecting changes require current diff inspection and deterministic verification; medium risk may add at most one independent verifier, high risk uses panel, and human-loop waits for a human decision.
 
 ## Progressive Context
 
@@ -59,7 +60,7 @@
 
 - Root module: Go CLI/TUI, `go.mod`, entrypoints in `cmd/`, reusable code in `internal/`.
 - Desktop module: Wails v2 nested module in `desktop/`, with independent `desktop/go.mod` and `desktop/frontend/`.
-- Site: Astro documentation site in `site/`, using npm and Node 22 in CI.
+- Site: Astro documentation site in `site/`, using npm and Node 26 in CI.
 - Release: GitHub Actions currently targets `main-v2`; CNB 镜像仓库同步时不要改动该分支策略，除非任务明确要求。
 
 ## Required Skills

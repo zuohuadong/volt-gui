@@ -196,9 +196,8 @@ async function smokeWorkNavigation(page) {
   }
 }
 
-async function smokeNoSeedContent(page) {
-  await clickButton(page, 'Work 工作台', { exact: true });
-  await clickButton(page, '今日概览', { exact: true });
+async function smokeNoSeedContent(page, mobile) {
+  await clickUnifiedNav(page, '今日', mobile);
   await page.waitForTimeout(500);
   const body = await page.locator('body').innerText();
   const forbidden = [
@@ -363,30 +362,231 @@ async function smokeVisibleProbe(page) {
   return { beforeCount: before.length, afterCount: after.length, sample: after.slice(0, 30) };
 }
 
+function unifiedWorkbenchFixture() {
+  const now = '2026-07-13T08:00:00.000Z';
+  const section = (status, items, note) => ({ status, items, note });
+  return {
+    version: 2,
+    savedWorkspaces: [{
+      id: 'folder:/tmp/volt-smoke-workspace',
+      name: 'Smoke Workspace',
+      root: '/tmp/volt-smoke-workspace',
+      source: 'folder',
+    }],
+    projectTasks: [],
+    inboxTasks: [{
+      id: 'smoke-result-task',
+      title: 'Smoke 发布验收任务',
+      updatedAt: '刚刚',
+      updatedAtMs: Date.parse(now),
+      templateId: 'release-acceptance',
+      transcript: [{ id: 'smoke-user', role: 'user', body: '执行发布验收并保留可核验证据。', createdAtMs: Date.parse(now) }],
+      receipt: {
+        id: 'smoke-receipt',
+        taskId: 'smoke-result-task',
+        templateId: 'release-acceptance',
+        state: 'pending-review',
+        createdAt: now,
+        updatedAt: now,
+        sections: {
+          goal: section('ready', ['发布验收'], '来自任务结果模板'),
+          runtime: section('ready', ['Smoke Workspace', '收件箱项目'], '运行上下文已记录'),
+          changes: section('pending', [], '等待实际变更证据'),
+          verification: section('pending', [], '等待验证证据与人工复核'),
+          artifacts: section('pending', [], '等待产物路径'),
+          dataPath: section('pending', [], '等待数据路径记录'),
+          rollback: section('pending', [], '等待回滚方案'),
+        },
+      },
+    }],
+    activeWorkspaceId: 'folder:/tmp/volt-smoke-workspace',
+    activeProjectId: 'inbox',
+    activeTaskId: 'smoke-result-task',
+    projectSort: 'recent',
+    projectDockCollapsed: false,
+  };
+}
+
+async function openUnifiedDrawerIfNeeded(page, mobile) {
+  if (!mobile) return;
+  const drawer = page.locator('[data-testid="unified-sidebar"]');
+  if (!(await drawer.evaluate((node) => node.classList.contains('drawer-open')).catch(() => false))) {
+    await clickButton(page, '打开导航抽屉', { exact: true });
+  }
+  await drawer.waitFor({ state: 'visible', timeout: 5000 });
+  if (!(await drawer.evaluate((node) => node.classList.contains('drawer-open')))) {
+    throw new Error('mobile unified navigation drawer did not open');
+  }
+  await page.waitForTimeout(320);
+  const rect = await drawer.evaluate((node) => {
+    const value = node.getBoundingClientRect();
+    return { left: value.left, width: value.width, viewport: window.innerWidth };
+  });
+  const minimumWidth = Math.min(rect.viewport * 0.75, 280);
+  if (rect.width < minimumWidth || Math.abs(rect.left) > 2) {
+    throw new Error(`mobile drawer geometry is unstable: left=${rect.left.toFixed(1)} width=${rect.width.toFixed(1)} minimum=${minimumWidth.toFixed(1)}`);
+  }
+}
+
+async function clickUnifiedNav(page, label, mobile) {
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(sidebar, label, { exact: true });
+  if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) {
+    throw new Error(`mobile drawer stayed open after selecting ${label}`);
+  }
+}
+
+async function smokeUnifiedShell(page, mobile) {
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await sidebar.waitFor({ state: 'attached', timeout: 5000 });
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  await assertCount(sidebar.locator('.primary-nav > button'), 6, 'unified primary navigation items');
+  for (const label of ['今日', '任务', '项目', '交付记录', '自动化', '资料与知识']) {
+    await firstVisible(sidebar.getByRole('button', { name: label, exact: true }), `unified nav ${label}`);
+  }
+  await assertCount(sidebar.getByRole('button', { name: 'Work 工作台', exact: true }), 0, 'legacy Work switch');
+  await assertCount(sidebar.getByRole('button', { name: 'Code 工作台', exact: true }), 0, 'legacy Code switch');
+  const workspace = sidebar.locator('[data-testid="workspace-selector"] select');
+  if ((await workspace.inputValue()) !== 'folder:/tmp/volt-smoke-workspace') throw new Error('Workspace selector did not restore the v2 fixture');
+  await assertText(page, 'Smoke Workspace', 'Workspace selector label');
+  await assertText(page, 'Project → Task', 'Project Task hierarchy');
+  await assertText(page, '收件箱项目', 'explicit inbox project');
+  await assertText(page, 'Smoke 发布验收任务', 'restored task');
+}
+
+async function smokeUnifiedRoutes(page, mobile) {
+  const routes = [
+    ['今日', '从明确结果开始'],
+    ['任务', '希望得到什么结果？'],
+    ['项目', '项目管理'],
+    ['交付记录', '报告设计'],
+    ['自动化', '自动化任务'],
+    ['资料与知识', '资料中心'],
+  ];
+  for (const [nav, expected] of routes) {
+    await clickUnifiedNav(page, nav, mobile);
+    await assertText(page, expected, `${nav} route`);
+  }
+}
+
+async function smokeResultDrivenToday(page, mobile) {
+  await clickUnifiedNav(page, '今日', mobile);
+  await assertText(page, '从明确结果开始，把任务推进到可验证交付。');
+  await firstVisible(page.getByRole('button', { name: '开始结果任务', exact: true }), 'result task CTA');
+  await firstVisible(page.getByRole('button', { name: '查看交付记录', exact: true }), 'delivery records CTA');
+  await assertCount(page.locator('.result-scenarios button'), 5, 'strong outcome scenarios');
+  for (const label of ['任务', '待复核交付', '项目', '自动化']) await assertText(page, label, `result home stat ${label}`);
+  const body = await page.locator('.result-home-page').innerText();
+  for (const legacy of ['进入 Agent 中心', '客户管理', '今日日程', '能力模块']) {
+    if (body.includes(legacy)) throw new Error(`result home still foregrounds legacy aggregation: ${legacy}`);
+  }
+}
+
+async function smokeOutcomeTemplates(page, mobile) {
+  await clickUnifiedNav(page, '任务', mobile);
+  const launcher = page.locator('[data-testid="outcome-template-launcher"]');
+  await launcher.waitFor({ state: 'visible', timeout: 5000 });
+  await assertCount(launcher.locator('[data-outcome-template]'), 5, 'outcome templates');
+  for (const label of ['审查并修复', '构建失败诊断', '内部资料驱动变更', 'Issue 到可验证交付', '发布验收']) {
+    await firstVisible(launcher.getByRole('button', { name: new RegExp(label) }), `outcome template ${label}`);
+  }
+  await clickScopedButton(launcher, /发布验收/);
+  const selected = launcher.locator('[data-outcome-template="release-acceptance"]');
+  if (!(await selected.evaluate((node) => node.classList.contains('active')))) throw new Error('selected outcome template is not visibly active');
+  await assertText(page, '尚未配置 Agent', 'honest runtime requirement');
+}
+
+async function smokeTaskReceipt(page, mobile) {
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(sidebar, 'Smoke 发布验收任务', { exact: false });
+  if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) throw new Error('mobile drawer stayed open after opening a Task');
+  const receipt = page.locator('[data-testid="task-result-receipt"]');
+  await receipt.waitFor({ state: 'visible', timeout: 5000 });
+  if ((await receipt.getAttribute('data-receipt-state')) !== 'pending-review') throw new Error('receipt state was not restored truthfully');
+  await assertText(page, '可验证交付收据');
+  await assertText(page, '待证据复核');
+  for (const label of ['目标', '执行配置', '改动', '验证', '产物', '数据去向', '回滚']) await assertText(page, label, `receipt section ${label}`);
+  const context = page.locator('[data-testid="task-context-bar"]');
+  await context.waitFor({ state: 'visible', timeout: 5000 });
+  for (const label of ['Workspace', 'Project', 'Agent Profile', 'Model', 'Permission', 'Memory']) await assertText(page, label, `task context ${label}`);
+  const visibleContextItems = await context.locator('.context-values > span').evaluateAll((nodes) => nodes.filter((node) => getComputedStyle(node).display !== 'none').length);
+  if (visibleContextItems !== 6) throw new Error(`task context exposes ${visibleContextItems}/6 runtime axes`);
+  await context.locator('[role="tab"]').filter({ hasText: /^Workspace$/ }).click();
+  await assertText(page, '任务检查器', 'Task inspector title');
+  await page.locator('[data-testid="task-context-bar"] [role="tab"]').filter({ hasText: /^任务$/ }).click();
+  await assertText(page, '希望得到什么结果？', 'return to Task result launcher');
+}
+
+async function smokeGovernanceCenter(page, mobile) {
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(sidebar, /配置与治理/);
+  if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) {
+    throw new Error('mobile drawer stayed open after selecting governance');
+  }
+
+  const governance = page.locator('[data-testid="governance-center"]');
+  await governance.waitFor({ state: 'visible', timeout: 5000 });
+  await assertCount(governance.locator('button'), 6, 'governance categories');
+  for (const label of ['数据与信任', '分层记忆', 'Agent', '能力', '模型', '权限']) {
+    await firstVisible(governance.getByRole('button', { name: new RegExp(label) }), `governance ${label}`);
+  }
+
+  const trust = page.locator('[data-testid="trust-center"]');
+  await trust.waitFor({ state: 'visible', timeout: 5000 });
+  await assertText(page, '未连接桌面后端', 'honest trust center empty state');
+  await assertCount(trust.locator('[data-testid="trust-flow-row"]'), 0, 'unbound trust flows');
+  await assertCount(trust.locator('details[open]'), 0, 'trust paths default collapsed');
+
+  await clickScopedButton(governance, /分层记忆/);
+  const memory = page.locator('[data-testid="scoped-memory-manager"]');
+  await memory.waitFor({ state: 'visible', timeout: 5000 });
+  await assertText(page, '分层记忆不会使用浏览器预览数据', 'honest scoped memory empty state');
+  await assertCount(memory.locator('[data-testid="scoped-memory-entry"]'), 0, 'unbound scoped memory entries');
+
+  await clickScopedButton(governance, /数据与信任/);
+  await trust.waitFor({ state: 'visible', timeout: 5000 });
+}
+
+async function smokeResponsiveGeometry(page) {
+  const geometry = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+  }));
+  if (Math.max(geometry.scroll, geometry.body) > geometry.viewport + 1) {
+    throw new Error(`horizontal overflow: viewport=${geometry.viewport}, document=${geometry.scroll}, body=${geometry.body}`);
+  }
+}
+
 async function smokeViewport(label, viewport) {
   const page = await browser.newPage({ viewport });
   const errors = [];
+  const mobile = viewport.width <= 720;
+  await page.addInitScript((fixture) => {
+    window.localStorage.setItem('voltui.workbench.ia.v2', JSON.stringify(fixture));
+    window.localStorage.removeItem('volt-gui.sidebar-state.v1');
+  }, unifiedWorkbenchFixture());
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
   });
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
 
-  await runStep(page, errors, `${label} initial honest-unbound load`, async () => {
+  await runStep(page, errors, `${label} unified workbench load`, async () => {
     await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.locator('.shell').waitFor({ state: 'visible', timeout: 15000 });
-    await firstVisible(page.getByRole('button', { name: 'Work 工作台', exact: true }), 'Work 工作台 switch');
+    await page.locator('[data-testid="task-context-bar"]').waitFor({ state: 'visible', timeout: 15000 });
   });
-  await runStep(page, errors, `${label} no seeded business content`, () => smokeNoSeedContent(page));
-  await runStep(page, errors, `${label} work navigation`, () => smokeWorkNavigation(page));
-  await runStep(page, errors, `${label} empty business surfaces`, () => smokeEmptyBusinessSurfaces(page));
-  await runStep(page, errors, `${label} real feature dialogs remain reachable`, () => smokeReachableDialogs(page));
-  await runStep(page, errors, `${label} unbound writes and run stay non-mutating`, () => smokeUnboundWritesAndRun(page));
-  await runStep(page, errors, `${label} unbound composer has no fake assistant`, () => smokeComposerDoesNotFakeAssistant(page));
-  await runStep(page, errors, `${label} backend-dependent user panels are honest`, () => smokeUserPanels(page));
-  await runStep(page, errors, `${label} visible safe-click probe`, async () => {
-    const meta = await smokeVisibleProbe(page);
-    record(`${label} visible controls enumerated`, true, `${meta.beforeCount} before / ${meta.afterCount} after`, { controls: meta.sample });
-  });
+  await runStep(page, errors, `${label} unified IA shell`, () => smokeUnifiedShell(page, mobile));
+  await runStep(page, errors, `${label} result-driven today`, () => smokeResultDrivenToday(page, mobile));
+  await runStep(page, errors, `${label} six unified routes`, () => smokeUnifiedRoutes(page, mobile));
+  await runStep(page, errors, `${label} five result templates`, () => smokeOutcomeTemplates(page, mobile));
+  await runStep(page, errors, `${label} result receipt and task inspector`, () => smokeTaskReceipt(page, mobile));
+  await runStep(page, errors, `${label} governance trust and memory`, () => smokeGovernanceCenter(page, mobile));
+  await runStep(page, errors, `${label} no seeded fingerprints`, () => smokeNoSeedContent(page, mobile));
+  await runStep(page, errors, `${label} responsive geometry`, () => smokeResponsiveGeometry(page));
   await page.close();
 }
 
@@ -446,8 +646,8 @@ const summary = {
   outDir,
   playwrightSource,
   browserSource,
-  mode: 'browser-preview-honest-empty-and-unbound-safety',
-  limitation: 'This browser run verifies honest empty state plus non-mutating unbound writes/runs. Delete and durable CRUD semantics are enforced by the runtime-mock source gate and scripts/workbench-crud-smoke.mjs against temporary Go profiles.',
+  mode: 'unified-ia-result-driven-workbench',
+  limitation: 'Browser preview verifies IA, persisted v2 migration shape, truthful receipt rendering and responsive navigation. Backend execution evidence still requires the Wails runtime integration gates.',
   total: results.length,
   passed: results.filter((item) => item.ok).length,
   failed: results.filter((item) => !item.ok).length,

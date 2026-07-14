@@ -31,6 +31,7 @@ import (
 	"voltui/internal/fileutil"
 	"voltui/internal/notify"
 	"voltui/internal/provider"
+	"voltui/internal/scopedmemory"
 	"voltui/internal/store"
 )
 
@@ -41,22 +42,26 @@ import (
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID                    string             // stable random id
-	Scope                 string             // "project" | "global"
-	WorkspaceRoot         string             // project root dir (empty for global)
-	SharedHostKey         string             // opaque key for the shared plugin host (set by buildTabController)
-	TopicID               string             // topic within the project
-	TopicTitle            string             // display title
-	SessionPath           string             // exact .jsonl file this tab continues
-	AgentProfileID        string             // selected runtime profile for this thread
-	AgentProfileName      string             // audit/display snapshot; ID remains canonical
-	AgentProfileBaseModel string             // inherited thread model restored when profile clears
-	ReadOnly              bool               // true for external channel transcripts opened for browsing
-	Ctrl                  control.SessionAPI // nil while booting / on error
-	Label                 string             // model label (for the tab badge)
-	Ready                 bool               // true once boot.Build completes
-	StartupErr            string             // build error, surfaced to the frontend
-	StartupErrLeaseHeld   bool               // true when StartupErr can be retried after a session lease releases
+	ID                    string               // stable random id
+	Scope                 string               // "project" | "global"
+	WorkspaceRoot         string               // project root dir (empty for global)
+	SharedHostKey         string               // opaque key for the shared plugin host (set by buildTabController)
+	TopicID               string               // topic within the project
+	TopicTitle            string               // display title
+	SessionPath           string               // exact .jsonl file this tab continues
+	AgentProfileID        string               // selected runtime profile for this thread
+	AgentProfileName      string               // audit/display snapshot; ID remains canonical
+	AgentProfileBaseModel string               // inherited thread model restored when profile clears
+	MemoryContext         scopedmemory.Context // layered memory ownership for this thread
+	MemoryScopes          []string             // non-isolated layers injected into the current runtime
+	MemorySourceIDs       []string             // exact entry ids injected into the current runtime
+	MemoryUpdatedAt       string               // last runtime memory snapshot update
+	ReadOnly              bool                 // true for external channel transcripts opened for browsing
+	Ctrl                  control.SessionAPI   // nil while booting / on error
+	Label                 string               // model label (for the tab badge)
+	Ready                 bool                 // true once boot.Build completes
+	StartupErr            string               // build error, surfaced to the frontend
+	StartupErrLeaseHeld   bool                 // true when StartupErr can be retried after a session lease releases
 	sessionLease          *agent.SessionLease
 	sessionLeaseMu        sync.Mutex
 	sink                  *tabEventSink      // routes events with this tab's ID
@@ -484,6 +489,10 @@ func cloneDetachedRuntimeTab(tab *WorkspaceTab, key, path string) *WorkspaceTab 
 		AgentProfileID:        tab.AgentProfileID,
 		AgentProfileName:      tab.AgentProfileName,
 		AgentProfileBaseModel: tab.AgentProfileBaseModel,
+		MemoryContext:         tab.MemoryContext,
+		MemoryScopes:          append([]string(nil), tab.MemoryScopes...),
+		MemorySourceIDs:       append([]string(nil), tab.MemorySourceIDs...),
+		MemoryUpdatedAt:       tab.MemoryUpdatedAt,
 		Ctrl:                  tab.Ctrl,
 		Label:                 tab.Label,
 		Ready:                 tab.Ready,
@@ -1447,6 +1456,10 @@ type TabMeta struct {
 	AgentProfileID        string                   `json:"agentProfileId,omitempty"`
 	AgentProfileName      string                   `json:"agentProfileName,omitempty"`
 	AgentProfileBaseModel string                   `json:"agentProfileBaseModel,omitempty"`
+	MemoryContext         scopedmemory.Context     `json:"memoryContext"`
+	MemoryScopes          []string                 `json:"memoryScopes,omitempty"`
+	MemorySourceIDs       []string                 `json:"memorySourceIds,omitempty"`
+	MemoryUpdatedAt       string                   `json:"memoryUpdatedAt,omitempty"`
 	ReadOnly              bool                     `json:"readOnly,omitempty"`
 	ProjectColor          string                   `json:"projectColor,omitempty"`
 	Label                 string                   `json:"label"`
@@ -1502,6 +1515,10 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		AgentProfileID:        tab.AgentProfileID,
 		AgentProfileName:      tab.AgentProfileName,
 		AgentProfileBaseModel: tab.AgentProfileBaseModel,
+		MemoryContext:         tab.MemoryContext,
+		MemoryScopes:          append([]string(nil), tab.MemoryScopes...),
+		MemorySourceIDs:       append([]string(nil), tab.MemorySourceIDs...),
+		MemoryUpdatedAt:       tab.MemoryUpdatedAt,
 		ReadOnly:              tab.ReadOnly,
 		Label:                 tab.Label,
 		Ready:                 tab.Ready,
@@ -2746,12 +2763,14 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	// stretch: session rebinding, recovery, and topic assignment write them
 	// under the lock while this goroutine builds.
 	a.mu.RLock()
+	tabID := tab.ID
 	tabWorkspaceRoot := tab.WorkspaceRoot
 	tabScope := tab.Scope
 	tabTopicID := tab.TopicID
 	tabSessionPath := tab.SessionPath
 	tabModel := tab.model
 	tabAgentProfileID := tab.AgentProfileID
+	tabMemoryContext := tab.MemoryContext
 	tabSink := tab.sink
 	a.mu.RUnlock()
 
@@ -2873,6 +2892,25 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			model = resolved
 		}
 	}
+	buildMemoryContext := defaultScopedMemoryContext(tabMemoryContext, tabWorkspaceRoot, topicID, startupSessionPath, tabID)
+	memoryRuntime, err := loadScopedMemoryRuntime(buildMemoryContext)
+	if err != nil {
+		leaseHeld := false
+		a.mu.Lock()
+		if a.tabBuildSupersededLocked(tab, buildGeneration) {
+			a.mu.Unlock()
+			return
+		}
+		leaseHeld = setTabStartupError(tab, err)
+		tab.Ready = true
+		tab.releaseSessionLease()
+		a.mu.Unlock()
+		if leaseHeld {
+			a.scheduleDeferredStartupBuild(tab.ID)
+		}
+		a.emitReady(wailsCtx, tab.ID)
+		return
+	}
 	// Acquire a shared plugin host for this workspace root so MCP processes
 	// are launched once per root, not once per tab. SharedHostKey is an a.mu-
 	// guarded field (takeTabSharedHostKey reads it under the lock during
@@ -2894,6 +2932,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	if buildAgentView != nil {
 		tab.AgentProfileName = strings.TrimSpace(buildAgentView.Name)
 	}
+	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	tab.SharedHostKey = rootKey
 	buildEffort := cloneStringPtr(tab.effort)
 	buildTokenMode := boot.NormalizeTokenMode(tab.tokenMode)
@@ -2916,6 +2955,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 		EffortOverride:           cloneStringPtr(buildEffort),
 		TokenMode:                buildTokenMode,
 		AgentProfile:             buildAgentProfile,
+		ScopedMemoryBlock:        memoryRuntime.Block,
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
@@ -3810,21 +3850,25 @@ type desktopProjectFile struct {
 }
 
 type desktopTabEntry struct {
-	ID                    string  `json:"id"`
-	Scope                 string  `json:"scope"`
-	WorkspaceRoot         string  `json:"workspaceRoot"`
-	TopicID               string  `json:"topicId"`
-	SessionPath           string  `json:"sessionPath,omitempty"`
-	AgentProfileID        string  `json:"agentProfileId,omitempty"`
-	AgentProfileName      string  `json:"agentProfileName,omitempty"`
-	AgentProfileBaseModel string  `json:"agentProfileBaseModel,omitempty"`
-	ReadOnly              bool    `json:"readOnly,omitempty"`
-	Model                 string  `json:"model,omitempty"`
-	Effort                *string `json:"effort,omitempty"`
-	TokenMode             string  `json:"tokenMode,omitempty"`
-	Mode                  string  `json:"mode,omitempty"`
-	Goal                  string  `json:"goal,omitempty"`
-	ToolApprovalMode      string  `json:"toolApprovalMode,omitempty"`
+	ID                    string               `json:"id"`
+	Scope                 string               `json:"scope"`
+	WorkspaceRoot         string               `json:"workspaceRoot"`
+	TopicID               string               `json:"topicId"`
+	SessionPath           string               `json:"sessionPath,omitempty"`
+	AgentProfileID        string               `json:"agentProfileId,omitempty"`
+	AgentProfileName      string               `json:"agentProfileName,omitempty"`
+	AgentProfileBaseModel string               `json:"agentProfileBaseModel,omitempty"`
+	MemoryContext         scopedmemory.Context `json:"memoryContext,omitempty"`
+	MemoryScopes          []string             `json:"memoryScopes,omitempty"`
+	MemorySourceIDs       []string             `json:"memorySourceIds,omitempty"`
+	MemoryUpdatedAt       string               `json:"memoryUpdatedAt,omitempty"`
+	ReadOnly              bool                 `json:"readOnly,omitempty"`
+	Model                 string               `json:"model,omitempty"`
+	Effort                *string              `json:"effort,omitempty"`
+	TokenMode             string               `json:"tokenMode,omitempty"`
+	Mode                  string               `json:"mode,omitempty"`
+	Goal                  string               `json:"goal,omitempty"`
+	ToolApprovalMode      string               `json:"toolApprovalMode,omitempty"`
 }
 
 type desktopTabsFile struct {
@@ -3884,6 +3928,10 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 				AgentProfileID:        tab.AgentProfileID,
 				AgentProfileName:      tab.AgentProfileName,
 				AgentProfileBaseModel: tab.AgentProfileBaseModel,
+				MemoryContext:         tab.MemoryContext,
+				MemoryScopes:          append([]string(nil), tab.MemoryScopes...),
+				MemorySourceIDs:       append([]string(nil), tab.MemorySourceIDs...),
+				MemoryUpdatedAt:       tab.MemoryUpdatedAt,
 				ReadOnly:              tab.ReadOnly,
 				Model:                 tab.model,
 				Effort:                cloneStringPtr(tab.effort),
@@ -5016,6 +5064,10 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 		agentProfileID := strings.TrimSpace(tab.AgentProfileID)
 		agentProfileName := strings.TrimSpace(tab.AgentProfileName)
 		agentProfileBaseModel := strings.TrimSpace(tab.AgentProfileBaseModel)
+		memoryContext := tab.MemoryContext
+		memoryScopes := append([]string(nil), tab.MemoryScopes...)
+		memorySourceIDs := append([]string(nil), tab.MemorySourceIDs...)
+		memoryUpdatedAt := tab.MemoryUpdatedAt
 		tokenMode := persistedTabTokenMode(boot.NormalizeTokenMode(tab.tokenMode))
 		mode := normalizeTabMode(tab.mode)
 		toolApprovalMode := normalizeToolApprovalMode(tab.toolApprovalMode)
@@ -5046,6 +5098,10 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 			AgentProfileID:        agentProfileID,
 			AgentProfileName:      agentProfileName,
 			AgentProfileBaseModel: agentProfileBaseModel,
+			MemoryContext:         scopedmemory.ContextPointer(memoryContext),
+			MemoryScopes:          memoryScopes,
+			MemorySourceIDs:       memorySourceIDs,
+			MemoryUpdatedAt:       memoryUpdatedAt,
 			TokenMode:             tokenMode,
 			Mode:                  persistedTabMode(mode),
 			ToolApprovalMode:      persistedToolApprovalMode(toolApprovalMode),
@@ -5056,6 +5112,10 @@ func (a *App) tabSessionRecoveryMeta(tab *WorkspaceTab) func(control.SessionReco
 			meta.AgentProfileID = agentProfileID
 			meta.AgentProfileName = agentProfileName
 			meta.AgentProfileBaseModel = agentProfileBaseModel
+			meta.MemoryContext = scopedmemory.ContextPointer(memoryContext)
+			meta.MemoryScopes = append([]string(nil), memoryScopes...)
+			meta.MemorySourceIDs = append([]string(nil), memorySourceIDs...)
+			meta.MemoryUpdatedAt = memoryUpdatedAt
 		}
 		return meta
 	}
@@ -7192,6 +7252,7 @@ func currentTabTokenMode(tab *WorkspaceTab) string {
 // fixed for #5955). Controller methods are invoked on the snapshot's ctrl
 // AFTER unlocking, never while holding a.mu.
 type tabRuntimeSnapshot struct {
+	id                    string
 	ctrl                  control.SessionAPI
 	sink                  *tabEventSink
 	label                 string
@@ -7207,6 +7268,10 @@ type tabRuntimeSnapshot struct {
 	agentProfileID        string
 	agentProfileName      string
 	agentProfileBaseModel string
+	memoryContext         scopedmemory.Context
+	memoryScopes          []string
+	memorySourceIDs       []string
+	memoryUpdatedAt       string
 	model                 string
 	effort                *string
 	tokenMode             string
@@ -7222,6 +7287,7 @@ func snapshotTabRuntimeLocked(tab *WorkspaceTab) tabRuntimeSnapshot {
 		return tabRuntimeSnapshot{}
 	}
 	return tabRuntimeSnapshot{
+		id:                    tab.ID,
 		ctrl:                  tab.Ctrl,
 		sink:                  tab.sink,
 		label:                 tab.Label,
@@ -7237,6 +7303,10 @@ func snapshotTabRuntimeLocked(tab *WorkspaceTab) tabRuntimeSnapshot {
 		agentProfileID:        tab.AgentProfileID,
 		agentProfileName:      tab.AgentProfileName,
 		agentProfileBaseModel: tab.AgentProfileBaseModel,
+		memoryContext:         tab.MemoryContext,
+		memoryScopes:          append([]string(nil), tab.MemoryScopes...),
+		memorySourceIDs:       append([]string(nil), tab.MemorySourceIDs...),
+		memoryUpdatedAt:       tab.MemoryUpdatedAt,
 		model:                 tab.model,
 		effort:                cloneStringPtr(tab.effort),
 		tokenMode:             tab.tokenMode,
@@ -7486,6 +7556,10 @@ func (a *App) saveTabSessionMeta(tab *WorkspaceTab, path string) error {
 		agentProfileID:        strings.TrimSpace(tab.AgentProfileID),
 		agentProfileName:      strings.TrimSpace(tab.AgentProfileName),
 		agentProfileBaseModel: strings.TrimSpace(tab.AgentProfileBaseModel),
+		memoryContext:         tab.MemoryContext,
+		memoryScopes:          append([]string(nil), tab.MemoryScopes...),
+		memorySourceIDs:       append([]string(nil), tab.MemorySourceIDs...),
+		memoryUpdatedAt:       tab.MemoryUpdatedAt,
 	}
 	a.mu.RUnlock()
 	if ctrl != nil {
@@ -7514,6 +7588,10 @@ type tabSessionMetaSnapshot struct {
 	agentProfileID        string
 	agentProfileName      string
 	agentProfileBaseModel string
+	memoryContext         scopedmemory.Context
+	memoryScopes          []string
+	memorySourceIDs       []string
+	memoryUpdatedAt       string
 }
 
 func (a *App) saveTabSessionMetaForCurrentSession(tab *WorkspaceTab) error {
@@ -7548,6 +7626,10 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 	agentProfileID := strings.TrimSpace(tab.AgentProfileID)
 	agentProfileName := strings.TrimSpace(tab.AgentProfileName)
 	agentProfileBaseModel := strings.TrimSpace(tab.AgentProfileBaseModel)
+	memoryContext := tab.MemoryContext
+	memoryScopes := append([]string(nil), tab.MemoryScopes...)
+	memorySourceIDs := append([]string(nil), tab.MemorySourceIDs...)
+	memoryUpdatedAt := tab.MemoryUpdatedAt
 	a.mu.RUnlock()
 	if readOnly {
 		return tabSessionMetaSnapshot{}, false
@@ -7613,6 +7695,10 @@ func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSes
 		agentProfileID:        agentProfileID,
 		agentProfileName:      agentProfileName,
 		agentProfileBaseModel: agentProfileBaseModel,
+		memoryContext:         memoryContext,
+		memoryScopes:          memoryScopes,
+		memorySourceIDs:       memorySourceIDs,
+		memoryUpdatedAt:       memoryUpdatedAt,
 	}, true
 }
 
@@ -7657,6 +7743,10 @@ func saveTabSessionMetaSnapshot(snap tabSessionMetaSnapshot) error {
 	m.AgentProfileID = strings.TrimSpace(snap.agentProfileID)
 	m.AgentProfileName = strings.TrimSpace(snap.agentProfileName)
 	m.AgentProfileBaseModel = strings.TrimSpace(snap.agentProfileBaseModel)
+	m.MemoryContext = scopedmemory.ContextPointer(snap.memoryContext)
+	m.MemoryScopes = append([]string(nil), snap.memoryScopes...)
+	m.MemorySourceIDs = append([]string(nil), snap.memorySourceIDs...)
+	m.MemoryUpdatedAt = snap.memoryUpdatedAt
 	if err := agent.SaveBranchMetaPreserveUpdated(snap.path, m); err != nil {
 		return err
 	}
@@ -7689,6 +7779,10 @@ type tabSessionProfile struct {
 	agentProfileID        string
 	agentProfileName      string
 	agentProfileBaseModel string
+	memoryContext         scopedmemory.Context
+	memoryScopes          []string
+	memorySourceIDs       []string
+	memoryUpdatedAt       string
 }
 
 func defaultTabSessionProfile() tabSessionProfile {
@@ -7711,6 +7805,12 @@ func tabSessionProfileFromMeta(sessionPath string, meta agent.BranchMeta) tabSes
 	profile.agentProfileID = strings.TrimSpace(meta.AgentProfileID)
 	profile.agentProfileName = strings.TrimSpace(meta.AgentProfileName)
 	profile.agentProfileBaseModel = strings.TrimSpace(meta.AgentProfileBaseModel)
+	if meta.MemoryContext != nil {
+		profile.memoryContext = *meta.MemoryContext
+	}
+	profile.memoryScopes = append([]string(nil), meta.MemoryScopes...)
+	profile.memorySourceIDs = append([]string(nil), meta.MemorySourceIDs...)
+	profile.memoryUpdatedAt = meta.MemoryUpdatedAt
 	return profile
 }
 
@@ -7737,6 +7837,10 @@ func applyTabSessionProfile(tab *WorkspaceTab, profile tabSessionProfile) {
 	tab.AgentProfileID = strings.TrimSpace(profile.agentProfileID)
 	tab.AgentProfileName = strings.TrimSpace(profile.agentProfileName)
 	tab.AgentProfileBaseModel = strings.TrimSpace(profile.agentProfileBaseModel)
+	tab.MemoryContext = profile.memoryContext
+	tab.MemoryScopes = append([]string(nil), profile.memoryScopes...)
+	tab.MemorySourceIDs = append([]string(nil), profile.memorySourceIDs...)
+	tab.MemoryUpdatedAt = profile.memoryUpdatedAt
 }
 
 func persistedTabGoal(tab *WorkspaceTab) string {

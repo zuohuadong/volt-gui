@@ -102,6 +102,9 @@ type Options struct {
 	// AgentProfile overlays the selected desktop/thread profile onto this
 	// controller. Empty profile fields inherit the normal configuration.
 	AgentProfile *AgentProfile
+	// ScopedMemoryBlock is a pre-filtered, provenance-labelled memory block for
+	// the current rich-client context. Empty preserves legacy memory behavior.
+	ScopedMemoryBlock string
 	// ExtraPlugins are session-scoped MCP servers supplied by a host transport
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to voltui.toml.
@@ -318,6 +321,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
+	if block := strings.TrimSpace(opts.ScopedMemoryBlock); block != "" {
+		sysPrompt = strings.TrimRight(sysPrompt, "\n") + "\n\n" + block
+	}
 	sysPrompt = applyAgentProfilePrompt(sysPrompt, opts.AgentProfile)
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,13 @@ type BotRuntimeStatusView struct {
 	Message     string `json:"message"`
 	Connections int    `json:"connections"`
 	StartedAt   string `json:"startedAt"`
+}
+
+type botForwardTarget struct {
+	ConnID   string
+	Domain   string
+	ChatID   string
+	ChatType bot.ChatType
 }
 
 type desktopBotRuntime struct {
@@ -53,7 +61,7 @@ func (a *App) refreshBotRuntime() {
 	if a.botRuntime == nil {
 		return
 	}
-	cfg, err := a.loadDesktopBotConfig()
+	cfg, err := a.loadDesktopBotRuntimeStartupConfig()
 	if err != nil {
 		a.botRuntime.stop("error", err.Error())
 		return
@@ -63,6 +71,19 @@ func (a *App) refreshBotRuntime() {
 
 func (a *App) loadDesktopBotConfig() (*config.Config, error) {
 	cfg, _, err := a.loadDesktopUserConfigForViewWithCredentials()
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// loadDesktopBotRuntimeStartupConfig is the explicit runtime-start boundary
+// where a pending legacy project bot config is migrated into the user config.
+// Ordinary Settings/View/WithCredentials reads remain side-effect free.
+func (a *App) loadDesktopBotRuntimeStartupConfig() (*config.Config, error) {
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	cfg, _, err := a.loadDesktopUserConfigForEdit()
 	if err != nil {
 		return nil, err
 	}
@@ -100,34 +121,15 @@ func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, wo
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ctx, cancel := context.WithCancel(parent)
-	modelName := botruntime.ModelName(cfg, "")
-	gwCfg := bot.GatewayConfig{
-		Model:              modelName,
-		ToolApprovalMode:   cfg.Bot.ToolApprovalMode,
-		MaxSteps:           cfg.Bot.MaxSteps,
-		WorkspaceRoot:      workspaceRoot,
-		Channels:           botruntime.ChannelConfigs(cfg.Bot.Connections, true, true),
-		ConnectionChannels: botruntime.ConnectionChannelConfigs(cfg.Bot.Connections, true, true),
-		Enabled:            plan.Enabled,
-		Allowlist: bot.AllowlistConfig{
-			Enabled:  cfg.Bot.Allowlist.Enabled,
-			AllowAll: cfg.Bot.Allowlist.AllowAll,
-			Users: map[bot.Platform][]string{
-				bot.PlatformQQ:     cfg.Bot.Allowlist.QQUsers,
-				bot.PlatformFeishu: cfg.Bot.Allowlist.FeishuUsers,
-				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinUsers,
-			},
-			Groups: map[bot.Platform][]string{
-				bot.PlatformQQ:     cfg.Bot.Allowlist.QQGroups,
-				bot.PlatformFeishu: cfg.Bot.Allowlist.FeishuGroups,
-				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinGroups,
-			},
-		},
-		Debounce:                 time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
-		OnInbound:                botruntime.NewRemoteRememberer(logger),
-		OnSessionReady:           botruntime.NewSessionRemembererWithWorkspace(logger, workspaceRoot),
-		OnToolApprovalModeChange: onToolApprovalModeChange,
+	gwCfg := desktopBotGatewayConfig(cfg, plan.Enabled, workspaceRoot, logger, onToolApprovalModeChange)
+	remoteStore, err := bot.NewDefaultRemoteStore()
+	if err != nil {
+		cancel()
+		r.status = BotRuntimeStatusView{Status: "error", Message: err.Error()}
+		return err
 	}
+	gwCfg.RemoteStore = remoteStore
+	gwCfg.ResolveRemoteRuntime = desktopRemoteRuntimeResolver(cfg)
 	bindings := botruntime.AdapterBindings(cfg, plan.Enabled, nil, logger)
 	if len(bindings) == 0 {
 		cancel()
@@ -159,6 +161,129 @@ func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, wo
 		StartedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	return nil
+}
+
+func desktopRemoteRuntimeResolver(_ *config.Config) bot.RemoteRuntimeResolver {
+	return func(_ context.Context, binding bot.RemoteBinding, proposed bot.RemoteRuntime, _ bot.InboundMessage) (bot.RemoteRuntime, error) {
+		workspaceRoot, err := filepath.Abs(strings.TrimSpace(proposed.WorkspaceRoot))
+		if err != nil || strings.TrimSpace(proposed.WorkspaceRoot) == "" {
+			return bot.RemoteRuntime{}, fmt.Errorf("remote workspace is unavailable")
+		}
+		info, err := os.Stat(workspaceRoot)
+		if err != nil || !info.IsDir() {
+			return bot.RemoteRuntime{}, fmt.Errorf("remote workspace is unavailable")
+		}
+		workspaceAllowed := false
+		for _, allowed := range binding.WorkspaceRoots {
+			allowedRoot, absErr := filepath.Abs(strings.TrimSpace(allowed))
+			if absErr == nil && sameProjectRoot(allowedRoot, workspaceRoot) {
+				workspaceAllowed = true
+				break
+			}
+		}
+		if !workspaceAllowed {
+			return bot.RemoteRuntime{}, fmt.Errorf("remote workspace is outside the binding")
+		}
+		proposed.WorkspaceRoot = workspaceRoot
+
+		projectID := strings.TrimSpace(proposed.ProjectID)
+		if projectID == "" {
+			return bot.RemoteRuntime{}, fmt.Errorf("remote business project is unavailable")
+		}
+		if !containsDesktopString(binding.ProjectIDs, projectID) {
+			return bot.RemoteRuntime{}, fmt.Errorf("remote business project is outside the binding")
+		}
+		if projectID == "inbox" {
+			proposed.Legacy = true
+		} else {
+			projects, loadErr := loadWorkbenchProjects()
+			if loadErr != nil {
+				return bot.RemoteRuntime{}, loadErr
+			}
+			found := false
+			for _, project := range projects {
+				if strings.TrimSpace(project.ID) == projectID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return bot.RemoteRuntime{}, fmt.Errorf("remote business project %q not found", projectID)
+			}
+		}
+
+		profileID := strings.TrimSpace(proposed.AgentProfileID)
+		if profileID != "" {
+			if !containsDesktopString(binding.AgentProfileIDs, profileID) {
+				return bot.RemoteRuntime{}, fmt.Errorf("remote agent profile is outside the binding")
+			}
+			profile, _, profileErr := runtimeAgentProfile(profileID)
+			if profileErr != nil {
+				return bot.RemoteRuntime{}, profileErr
+			}
+			proposed.AgentProfile = profile
+		}
+		proposed.ProjectID = projectID
+		proposed.AgentProfileID = profileID
+		return proposed, nil
+	}
+}
+
+func desktopBotGatewayConfig(cfg *config.Config, enabled map[bot.Platform]bool, workspaceRoot string, logger *slog.Logger, onToolApprovalModeChange func(bot.InboundMessage, string) error) bot.GatewayConfig {
+	return bot.GatewayConfig{
+		Model:              botruntime.ModelName(cfg, ""),
+		ToolApprovalMode:   cfg.Bot.ToolApprovalMode,
+		MaxSteps:           cfg.Bot.MaxSteps,
+		QueueMode:          cfg.Bot.QueueMode,
+		QueueCap:           cfg.Bot.QueueCap,
+		QueueDrop:          cfg.Bot.QueueDrop,
+		PairingEnabled:     cfg.Bot.Pairing.Enabled,
+		PairingTTL:         time.Duration(cfg.Bot.Pairing.RequestTTLMinutes) * time.Minute,
+		PairingMaxPending:  cfg.Bot.Pairing.MaxPendingPerPlatform,
+		IgnoreSelfMessages: cfg.Bot.IgnoreSelfMessages,
+		SelfUserIDs: map[bot.Platform][]string{
+			bot.PlatformQQ:     cfg.Bot.SelfUserIDs.QQ,
+			bot.PlatformFeishu: cfg.Bot.SelfUserIDs.Feishu,
+			bot.PlatformWeixin: cfg.Bot.SelfUserIDs.Weixin,
+		},
+		ControlEnabled:     cfg.Bot.Control.Enabled,
+		ControlAddr:        cfg.Bot.Control.Addr,
+		ControlToken:       os.Getenv(strings.TrimSpace(cfg.Bot.Control.TokenEnv)),
+		WorkspaceRoot:      workspaceRoot,
+		Channels:           botruntime.ChannelConfigs(cfg.Bot.Connections, true, true),
+		ConnectionChannels: botruntime.ConnectionChannelConfigs(cfg.Bot.Connections, true, true),
+		Routes:             botruntime.RouteConfigs(cfg.Bot.Routes, true, true),
+		ConnectionAccess:   botruntime.ConnectionAccessConfigs(cfg),
+		Enabled:            enabled,
+		Allowlist: bot.AllowlistConfig{
+			Enabled:  cfg.Bot.Allowlist.Enabled,
+			AllowAll: cfg.Bot.Allowlist.AllowAll,
+			Users: map[bot.Platform][]string{
+				bot.PlatformQQ:     cfg.Bot.Allowlist.QQUsers,
+				bot.PlatformFeishu: cfg.Bot.Allowlist.FeishuUsers,
+				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinUsers,
+			},
+			Approvers: map[bot.Platform][]string{
+				bot.PlatformQQ:     cfg.Bot.Allowlist.QQApprovers,
+				bot.PlatformFeishu: cfg.Bot.Allowlist.FeishuApprovers,
+				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinApprovers,
+			},
+			Admins: map[bot.Platform][]string{
+				bot.PlatformQQ:     cfg.Bot.Allowlist.QQAdmins,
+				bot.PlatformFeishu: cfg.Bot.Allowlist.FeishuAdmins,
+				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinAdmins,
+			},
+			Groups: map[bot.Platform][]string{
+				bot.PlatformQQ:     cfg.Bot.Allowlist.QQGroups,
+				bot.PlatformFeishu: cfg.Bot.Allowlist.FeishuGroups,
+				bot.PlatformWeixin: cfg.Bot.Allowlist.WeixinGroups,
+			},
+		},
+		Debounce:                 time.Duration(cfg.Bot.DebounceMs) * time.Millisecond,
+		OnInbound:                botruntime.NewRemoteRememberer(logger),
+		OnSessionReady:           botruntime.NewSessionRemembererWithWorkspace(logger, workspaceRoot),
+		OnToolApprovalModeChange: onToolApprovalModeChange,
+	}
 }
 
 func (a *App) persistRemoteBotToolApprovalMode(msg bot.InboundMessage, mode string) error {
@@ -215,8 +340,8 @@ func desktopBotRuntimePlan(cfg *config.Config) botRuntimePlan {
 	if !cfg.Bot.Enabled {
 		return botRuntimePlan{Status: "stopped", Message: "bot is disabled"}
 	}
-	if !cfg.Bot.Allowlist.AllowAll && (!cfg.Bot.Allowlist.Enabled || botruntime.AllowlistUserCount(cfg.Bot.Allowlist) == 0) {
-		return botRuntimePlan{Status: "blocked", Message: "bot requires an allowlist or allow_all=true"}
+	if !botruntime.BotConfigHasAccessControl(cfg.Bot) {
+		return botRuntimePlan{Status: "blocked", Message: "bot requires allowlist, pairing, or per-connection access control"}
 	}
 	enabled, unknown := botruntime.EnabledPlatforms(cfg, nil)
 	if len(unknown) > 0 {

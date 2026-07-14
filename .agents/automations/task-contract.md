@@ -11,13 +11,48 @@ status: "ready" # ready | running | review | blocked | invalid | done
 risk: "low" # low | medium | high
 priority: "normal" # low | normal | high | urgent
 owner: ""
-model: "gpt-5.3-codex"
-needs_model: ""
-review_class: "" # review-low | review-high
+model: "" # 仅在 ready/running executor 需要显式硬 pin 时填写；review/arbiter 不继承
+needs_model: "" # 仅兼容旧任务；新高风险任务使用 review_class: review-high
+review_class: "" # review-low | review-high；高风险任务的主标记
 escalation_reason: ""
 collaboration:
   mode: "solo" # solo | roundtable | critic | pipeline | split | swarm
   rationale: ""
+orchestration:
+  mode: "adaptive" # adaptive | native | managed | panel
+  owner_model: ""
+  capabilities: # 未知能力可留空；显式 true/false 覆盖 catalog metadata
+    native_delegation:
+    tool_call:
+    long_horizon:
+    structured_output:
+    context_isolation:
+    runtime_recovery:
+  native:
+    max_external_agents: 1 # low risk is resolved to 0; medium risk reserves one verifier
+    max_reviewers: 1
+    max_rounds: 1
+    wall_clock_budget_minutes: 20
+  managed:
+    max_external_agents: 2
+    max_reviewers: 1
+    max_rounds: 1
+    wall_clock_budget_minutes: 30
+  panel:
+    max_external_agents: 3
+    max_reviewers: 3
+    max_rounds: 2
+    wall_clock_budget_minutes: 45
+  stop_rules:
+    require_new_evidence: true
+    stop_on_unchanged_diff: true
+    dedupe_findings: true
+    stop_on_zero_contraction: true
+model_route:
+  profile: "" # routine-code | verification | high-risk-arbitration | ui-design-generation | ui-aesthetic-review | scheduler | task-default
+  required_capabilities: [] # code.assist | tool.call | structured.output | vision.analyze 等
+  engine: "" # legacy | shadow | contextual-v1；记录项目实际配置，不在任务里隐式切换
+  policy_ref: "" # .agents/agent-team.config.json routing profile/role，或显式 task model pin
 branch: ""
 change_request_url: ""
 created_at: ""
@@ -41,6 +76,34 @@ updated_at: ""
 
 - 预计修改的模块、文件或目录
 
+## Delivery Slicing
+
+> 用于把多 session 交付拆成可演示的 tracer bullets，或记录 wide refactor / wayfinding 的当前边界。这些字段只是 Task Contract / Matter 的引用层，不创建第二套执行事实源。
+
+```yaml
+delivery_slicing:
+  mode: "single-slice | tracer-bullets | wide-refactor | wayfinding"
+  tickets:
+    - title: ""
+      delivers: ""
+      blocked_by: []
+      demoable: true
+      context_window_fit: "yes | no | unknown"
+  frontier: []
+  fog: []
+  out_of_scope: []
+  wide_refactor:
+    strategy: "expand-contract"
+```
+
+规则：
+
+- 多 session 任务优先按端到端、可单独演示的 tracer bullets 拆分，不要只按技术层横向拆分。
+- `frontier` 只包含由当前任务状态和 `blocked_by` 推导出的已解锁切片；只有 frontier 中的切片可被领取。
+- `fog` 记录尚未确定的可能路径、待验证假设或未解决问题；`fog is not a task`，不能直接派发或当作 backlog。
+- `wide-refactor` 必须使用 `expand-contract`：先扩展可兼容边界和迁移路径，再迁移调用方，最后收缩旧边界。
+- 状态、owner 和可领取性仍以 coordination DB v2 `tasks` / legacy Task Ledger 为准；`delivery_slicing`、Matter 和 Goal Forge 只保存设计、引用与交付证据。
+
 ## Matter
 
 > Matter 是 Task Contract 的交付现场视图；coordination DB v2 项目可用 `agmesh matter list|show` 查看当前阶段、验收、证据和最终结论。
@@ -50,6 +113,9 @@ matter:
   brief: ""
   deliverables: []
   current_stage: "draft | ready | running | review | blocked | done"
+  delivery_slicing_ref: "task-contract:delivery_slicing | none"
+  frontier_refs: []
+  fog_refs: []
   decision_log_refs: []
   handoff_artifacts: []
   final_verdict:
@@ -60,6 +126,7 @@ matter:
 规则：
 
 - `matter` 不创建第二套执行事实源；状态仍以 coordination DB `tasks` / legacy Task Ledger 为准。
+- `delivery_slicing_ref`、`frontier_refs`、`fog_refs` 只引用上方契约字段或证据路径，不复制 ticket、状态或 blocker 正文。
 - `agmesh matter draft` 只生成或写入可编辑 Task Contract 草案；`matter advance` / `matter review` 必须留下 event 和 evidence ref。
 - final verdict 必须引用测试、构建、CI、浏览器、部署健康检查、DB 查询或 live read-back 等证据。
 
@@ -131,6 +198,10 @@ goal_forge:
   adapter: "local | codex | openai | none"
   evidence_summary: ""
   run_record_ref: "run_records:goal-forge:<run-id> | .agents/state/runs/<id>.json | none"
+  wayfinding:
+    delivery_slicing_ref: "task-contract:delivery_slicing | none"
+    frontier_refs: []
+    fog_refs: []
   verification:
     status_check: "agmesh goal-forge status ."
     init_check: "agmesh goal-forge init . '<goal>'"
@@ -169,7 +240,7 @@ delegation:
     warnings: []
   subagents:
     - role: "explorer | critic | verifier | worker"
-      model: "gpt-5.3-codex-spark | gpt-5.3-codex | gpt-5.5 | glm-5.2 | claude-opus-4-8 | sonnet | gemini-3-flash-agent | gemini-pro-agent | grok-4 | mistral-large-latest | custom gateway alias"
+      model: "gpt-5.3-codex-spark | gpt-5.3-codex | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna | glm-5.2 | claude-opus-4-8 | sonnet | gemini-3-flash-agent | gemini-pro-agent | grok-4 | mistral-large-latest | custom gateway alias"
       model_profile: "routine | high-risk | ui-design-generation | ui-aesthetic-review | custom"
       escalation_reason: ""
       scope: ""
@@ -195,18 +266,24 @@ delegation:
 规则：
 
 - `collaboration.mode` 定义任务的协作形态：`solo` 为单执行器；`roundtable` 为多方只读讨论后由 orchestrator 收束；`critic` 为做审分离；`pipeline` 为串行交接；`split` 为按互斥文件/模块分头执行后合并；`swarm` 为多方案竞选。未填写时，`agmesh automation orchestrate --json` 会按任务状态、风险、文本信号和写入型 `allowed_files` lane 推断 `collaboration_plan`；只有低风险局部任务且没有并发信号时才保持 `solo`。
-- `collaboration.mode` 不替代 Delegation Gate。中/高风险、跨边界、生产/安全/数据/不可逆、UI/E2E 或需要审查自己完成声明的任务，仍必须按 Delegation Gate 派发 explorer/executor/verifier 或记录 `safe_skip_reason`。
-- 低风险执行器和 explorer/critic/verifier sidecar 默认走候选链：`gpt-5.3-codex-spark`、`gpt-5.3-codex`、`sonnet`，`gemini-3-flash-agent` 只作为低优先级兜底；可通过 `--model`、`AGENT_TEAM_<ROLE>_MODEL(S)`、`AGENT_TEAM_SUBAGENT_MODEL(S)`、`AGENT_TEAM_LOW_RISK_MODELS` / `AGENT_TEAM_ROUTINE_MODELS`、`AGENT_TEAM_REVIEW_LOOP_MODEL` 或项目级 `.agents/agent-team.config.json` 覆盖。
-- `gpt-5.5` 是默认高风险升级标记和兜底，只用于主仲裁、高风险审查、生产/安全/数据/不可逆决策或 reviewer 分歧裁决，必须写 `escalation_reason`；实际仲裁运行模型可通过 `--model`、`AGENT_TEAM_HIGH_RISK_MODEL` / `AGENT_TEAM_HIGH_RISK_MODELS`、`AGENT_TEAM_ARBITER_MODEL` / `AGENT_TEAM_ARBITER_MODELS` 或项目配置覆盖，候选链会识别国产强模型、Codex/OpenAI、Claude Code、Zed 或第三方网关常见模型名。
+- `orchestration.mode: adaptive` 先按 Task Contract/project override，或 model catalog 与当前 host/runtime 的能力交集，解析 `native_delegation`、`tool_call`、`long_horizon`、`structured_output`、`context_isolation`、`runtime_recovery` 六项能力。证据完整时可用 `native`；缺失时回退 `managed`；高风险、review-high 或 reviewer 分歧使用 `panel`，普通 review 状态本身不升级；无法机器验收的方向判断使用 `human-loop`，但高风险/不可逆操作仍优先 panel。
+- `native` 保持单 owner model，低风险通常不派外部 agent，中风险至多增加 1 个独立 verifier；`managed` 只派发缺失的有界 lane；`panel` 保持单 writer、至多 3 个独立 reviewer、至多 2 轮。所有模式共享 fresh test、diff hash、finding hash、evidence ref 和明确 stop reason。
+- 显式 legacy `collaboration.mode` 继续兼容并映射为 effective `managed`，不会隐式开启 model-native orchestration；现有 `collaboration_plan` 仍作为 additive 输出保留。
+- wall-clock budget 可按任务或项目显式配置，但上限为 60 分钟。review-loop runner 必须读取持久化 plan 并遵守 `stop_rules`；默认在失败轮次 diff 不变时立即停止。
+- `model_route` 记录任务需要的 route profile、capability hard filter、实际 engine 和策略证据；具体 `pin/allow/deny/prefer` 以项目 routing 配置为准。task `model` 只作为 `ready` / `running` executor 的显式硬约束，review、high-risk escalation 和 `arbitrate --task/--next` 不继承；`allow`/`deny` 是硬集合，`prefer` 只排序已通过 capability/circuit 门禁的候选。
+- contextual routing 的 probe/circuit/outcome 保存在 `.agents/state/model-routing.db`，不得把 prompt、源码、diff、secret、URL 或原始输出写入 Task Contract 或路由库。subagent/arbitration 的 timeout 是候选链总预算，调用数受 `routing.max_attempts` 限制。
+- 低风险 executor 默认走 routine profile（首选 `gpt-5.3-codex-spark`）；普通 critic/verifier 走 verification profile（默认 `models.review_loop: glm-5.2`）。可通过 routing profile/role、环境变量或显式 CLI policy 覆盖；不要为普通 delegation 固化 `--model`。
+- 新任务使用 `review_class: review-high` 作为进入 High-Risk Reviewer / Arbiter 的主标记，并填写 `escalation_reason`；`needs_model: gpt-5.5` 仅用于兼容旧任务，自动化仍会识别，但不要在新任务中写入。
+- 高风险 runtime 使用独立候选链。显式 CLI `--model`、`AGENT_TEAM_HIGH_RISK_MODEL(S)` / `AGENT_TEAM_ARBITER_MODEL(S)` 和项目配置优先；executor task `model` 不参与审查/裁决。未显式配置 OpenAI 候选时，默认 OpenAI fallback 为 `gpt-5.6-sol`。`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 也可以是 OpenAI-compatible gateway alias。不要把 GPT-5.6 的 Pro 写成模型 slug；官方 Pro 是 `reasoning.mode`，本模板不宣称已经支持 pro mode。
 - UI 设计生成使用独立 `ui-design-generation` 候选链：Gemini/GLM/Qwen/Kimi 优先，GPT/Codex 作为落地兜底；审美评审使用 `ui-aesthetic-review` 候选链：Claude/Sonnet 优先，Gemini/GLM 次之。UI 任务的验收必须包含视觉截图证据、响应式检查、文本不溢出/不重叠、交互控件状态和审美 rubric 评审结论。
-- Goal Forge 深度设计/质证循环用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；v2 项目中 `goal-forge run` strict validate 通过后会写入 `run_records`，作为 `loop-health` / trace evidence 的一部分；Scheduler 和新建任务默认模型分别用 `models.scheduler` / `models.task_default` 覆盖。
-- 不得以宿主工具策略、`create_thread` / parallel-agent 限制、或用户未明确要求并行代理作为 `safe_skip_reason`。行动型任务默认启用 agent-team delegation，不需要每次向用户请求子代理授权；agent-team 子代理以 `agmesh subagent dispatch` 或 `agent_team_dispatch_subagent` 为准。若 Delegation Gate 要求子代理但 runtime 不可派发，应记录 runtime 证据和 `interruption_recovery`，并标记 `blocked` / `PARTIAL`，不能把 runtime 不可用改写成安全跳过。
+- Goal Forge 深度设计/质证循环用 `--model`、`AGENT_TEAM_GOAL_FORGE_MODEL` 或 `models.goal_forge` 覆盖；v2 项目中 `goal-forge run` strict validate 通过后会写入 `run_records`，作为 `loop-health` / trace evidence 的一部分；Scheduler 使用 `models.scheduler`，未显式 pin 的 task-default 路由使用 `models.task_default`，但新任务行的 `model` 保持为空。
+- 不得以宿主工具策略、`create_thread` / parallel-agent 限制、或用户未明确要求并行代理作为 `safe_skip_reason`。当 resolved plan 要求 lane 时，agent-team 子代理以 `agmesh subagent dispatch` 或 `agent_team_dispatch_subagent` 为准；若 runtime 不可派发，应记录 runtime 证据和 `interruption_recovery`，并标记 `blocked` / `PARTIAL`。native 低风险 external=0 是有效 resolved plan，不是 safe skip 或 runtime gap。
 - 推荐先用 `agmesh automation loop-strategy . --task <id> --domain auto` 生成 `parallelism` 建议：delivery/goal 默认只并行 read-only sidecar，fixed-list fanout 只有拆出互斥 `allowed_files` 后才允许并行 executor，marketing/demand/business 默认 human-gated。
 - 并行 worker 只有在 `allowed_files` 明确互斥时才允许；未能证明互斥时，`parallelism.mode` 必须降级为 `read-only-fanout` 或 `serial`。
 - 子代理默认 `context_isolation: isolated`，只能通过 `handoff_artifacts`、mailbox（v2 为 DB mailbox，legacy 为 `.mailbox/`）和 Task Contract 字段交换证据；不要假设其他子代理上下文可见。
 - `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
 - 子代理中断、超时或输出不完整时，先记录 `interruption_recovery`，再决定续跑、重派或阻塞；不要把半截输出当作完成证据。
-- 中/高风险任务进入 `review` / `done` 时，应在机器可读 task state 记录 subagent evidence 或 accepted safe skip reason。
+- 任务进入 `review` / `done` 时必须记录 effective orchestration mode 对应的确定性证据；中风险 native 最多使用 1 个独立 verifier，高风险使用 panel evidence，human-loop 等待人工裁决。
 
 ## Skill Loading
 
@@ -215,6 +292,12 @@ skill_loading:
   required_skills: []
   optional_skills: []
   activation_mode: "auto | explicit | task-contract | disabled"
+  invocation_policy:
+    auto: []
+    task_contract: []
+    explicit: []
+    internal: []
+    router: "agent-team-router | none"
   progressive_loading: true
   loaded_for_turn: []
   disabled_skills: []
@@ -231,6 +314,8 @@ skill_loading:
 
 - 默认渐进加载：先读取 skill 元数据和索引，只有任务命中时才完整读取 `SKILL.md` 及其必要引用。
 - 明确用户写出 `/skill-name` 或 Task Contract 指定 skill 时，可视为单轮显式激活；仍需遵守禁用列表、项目规则和安全边界。
+- `invocation_policy` 是 Task Contract / skill 索引层的分类：`auto` 可按语义匹配自动加载，`task_contract` 必须由契约列出，`explicit` 必须由用户显式触发，`internal` 只供其他 skill/workflow 调用；router 只推荐路由，不会自动运行 explicit skill。
+- 不要为了记录调用模式向 `SKILL.md` frontmatter 添加自定义字段；Codex skill frontmatter 仍只保留 `name` 和 `description`。
 - `.skill` 归档或外部 skill 若被引入，应至少保留 `name`、`description`，推荐记录 `version`、`author`、`compatibility`；外部来源不能成为运行时 live dependency，除非任务契约显式允许。
 
 ## Run Record
@@ -541,8 +626,8 @@ completion_evidence:
 
 - `evidence_items` 至少 1 条，`ref` 必须指向本轮执行的证据（命令输出、CI URL、文件路径、截图路径等）。
 - `fresh: true` 表示是本轮执行产出；引用旧 PR 或上次运行的证据视为无效。
-- 中/高风险任务必须 `verifier_reviewed: true` 并引用 verifier mailbox/ref。
-- orchestrator 亲自运行验收命令确认后可标 `orchestrator_confirmed: true`，替代独立 verifier。
+- 中风险 native 至多使用 1 个独立 verifier；高风险任务必须 `verifier_reviewed: true` 并引用 panel/verifier mailbox evidence。
+- orchestrator 亲自运行验收命令确认后可标 `orchestrator_confirmed: true`，作为确定性证据；它不能替代中风险要求的独立 verifier 或高风险 panel evidence。
 - 纯文档/格式化任务也必须引用 `git diff --check` 或类型检查/构建通过的证据。
 
 ## Required Skills and Conventions

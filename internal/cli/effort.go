@@ -102,7 +102,7 @@ func (m *chatTUI) runEffortCommand(input string) tea.Cmd {
 	build := m.buildController
 	m.modelSwitchPending = true
 	m.pendingModelSwitch = func() tea.Msg {
-		c, err := build(ref, carried, prevPath)
+		c, err := build(controllerBuildSpec{ModelRef: ref}, carried, prevPath)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}

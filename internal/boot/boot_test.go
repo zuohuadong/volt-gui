@@ -136,6 +136,29 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildSafeModeSkipsCleanupPendingReconciliation(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	t.Setenv("REASONIX_SAFE_MODE", "1")
+
+	called := false
+	ctrl, err := Build(context.Background(), Options{
+		SessionDir: filepath.Join(t.TempDir(), "sessions"),
+		CleanupPendingReconciler: func(string) error {
+			called = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if called {
+		t.Fatal("safe mode ran cleanup-pending reconciliation")
+	}
+}
+
 func TestBuildRegistersUsableHistoryAndMemoryRetrievalTools(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)

@@ -127,7 +127,10 @@ func (a *App) InstallUpdate() error {
 	}
 	a.emitProgress("installing", meta.Size, meta.Size, "")
 	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
-		if _, err := repair.PrepareFileUpdate(version, meta.Version, currentExecutablePath()); err != nil {
+		// Back up the complete release unit (main binary + Guard/launcher
+		// siblings the installer also replaces) so rollback never leaves a
+		// mixed-version install.
+		if _, err := repair.PrepareFileUpdate(version, meta.Version, currentExecutablePath(), updateSiblingArtifacts()...); err != nil {
 			return a.failUpdate(err)
 		}
 	}
@@ -142,7 +145,22 @@ func (a *App) InstallUpdate() error {
 		err = fmt.Errorf("self-update unsupported on %s", runtime.GOOS)
 	}
 	if err != nil {
-		_ = repair.CancelPendingUpdate(meta.Version)
+		if runtime.GOOS == "linux" {
+			// applyLinux replaces the Guard binary before the main-binary
+			// swap, so a failure here can already have produced a mixed
+			// install. Restore the recorded release unit instead of
+			// discarding the rollback metadata; if the restore itself fails,
+			// keep the pending transaction so Guard can retry the rollback on
+			// the next launch.
+			if _, rollbackErr := repair.RollbackPendingUpdate(); rollbackErr != nil {
+				a.recordUpdateError(rollbackErr)
+			}
+		} else {
+			// Windows hands off to an installer process and macOS cancels its
+			// own transaction inside applyMac: a failure here means nothing
+			// was replaced yet, so just drop the pending transaction.
+			_ = repair.CancelPendingUpdate(meta.Version)
+		}
 		return a.failUpdate(err)
 	}
 

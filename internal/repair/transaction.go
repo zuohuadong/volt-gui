@@ -17,6 +17,10 @@ type RepairChange struct {
 	TargetPath   string `json:"targetPath"`
 	PreviousPath string `json:"previousPath,omitempty"`
 	RemoveOnUndo bool   `json:"removeOnUndo,omitempty"`
+	// Undone marks a change already reverted by an interrupted undo, so a
+	// retry can resume with the remaining changes instead of failing the
+	// preflight on the consumed backup of a change that is already restored.
+	Undone bool `json:"undone,omitempty"`
 }
 
 type RepairTransaction struct {
@@ -172,15 +176,24 @@ func UndoLastRepair() (*RepairTransaction, error) {
 	}
 	now := time.Now().UTC()
 	for _, change := range tx.Changes {
-		if change.RemoveOnUndo {
+		if change.RemoveOnUndo || change.Undone {
 			continue
 		}
 		if _, err := os.Stat(change.PreviousPath); err != nil {
 			return nil, fmt.Errorf("undo repair: previous file %s: %w", change.PreviousPath, err)
 		}
 	}
+	// markUndone persists per-change progress so a failure partway through a
+	// multi-change undo leaves a transaction the next undo can resume.
+	markUndone := func(i int) error {
+		tx.Changes[i].Undone = true
+		return persistRepairTransaction(tx)
+	}
 	for i := len(tx.Changes) - 1; i >= 0; i-- {
 		change := tx.Changes[i]
+		if change.Undone {
+			continue
+		}
 		redo := ""
 		if _, err := os.Stat(change.TargetPath); err == nil {
 			redo = change.TargetPath + ".reasonix-redo-" + now.Format("20060102T150405Z")
@@ -189,6 +202,9 @@ func UndoLastRepair() (*RepairTransaction, error) {
 			}
 		}
 		if change.RemoveOnUndo {
+			if err := markUndone(i); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if isRestoreBackupPath(change.PreviousPath) {
@@ -203,6 +219,9 @@ func UndoLastRepair() (*RepairTransaction, error) {
 				return nil, fmt.Errorf("undo repair: restore %s: %w", change.TargetPath, err)
 			}
 			_ = os.Remove(change.PreviousPath)
+			if err := markUndone(i); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if err := os.Rename(change.PreviousPath, change.TargetPath); err != nil {
@@ -210,6 +229,9 @@ func UndoLastRepair() (*RepairTransaction, error) {
 				_ = os.Rename(redo, change.TargetPath)
 			}
 			return nil, fmt.Errorf("undo repair: restore %s: %w", change.TargetPath, err)
+		}
+		if err := markUndone(i); err != nil {
+			return nil, err
 		}
 	}
 	tx.Undone = true

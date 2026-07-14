@@ -49,6 +49,40 @@ func TestProjectRepairPlanRequiresExplicitPermission(t *testing.T) {
 	}
 }
 
+func TestApplyRepairPlanMultiActionUndoRevertsWholePlan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	global := filepath.Join(home, "config.toml")
+	tabs := filepath.Join(home, "desktop-tabs.json")
+	if err := os.WriteFile(global, []byte("[broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tabs, []byte("bad-tabs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := RepairPlan{SchemaVersion: 1, Summary: "config + tabs", Actions: []RepairPlanAction{
+		{Type: "repair_config", Scope: "global", Reason: "bad toml"},
+		{Type: "rebuild_derived_state", Target: "tabs", Reason: "bad tabs"},
+	}}
+	if _, err := ApplyRepairPlan(plan, ApplyPlanOptions{Root: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tabs); !os.IsNotExist(err) {
+		t.Fatalf("tabs not quarantined: %v", err)
+	}
+	if _, err := UndoLastRepair(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(global)
+	if err != nil || string(got) != "[broken\n" {
+		t.Fatalf("global config not restored by plan-level undo: %q, %v", got, err)
+	}
+	got, err = os.ReadFile(tabs)
+	if err != nil || string(got) != "bad-tabs" {
+		t.Fatalf("derived state not restored by plan-level undo: %q, %v", got, err)
+	}
+}
+
 func TestProjectRepairPlanDoesNotRepairGlobalConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

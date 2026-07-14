@@ -41,7 +41,9 @@ a SHA-256 digest and must pass both hash and TOML validation before restore.
 Every applied configuration or derived-state repair is recorded in
 `repair-log.jsonl`; `undo` restores the files
 moved aside by the latest repair while retaining the repaired copy as a redo
-candidate.
+candidate. A multi-action `apply-plan` run is recorded as one transaction, so a
+single `undo` reverts the whole plan (or the applied prefix when a plan failed
+partway); an interrupted undo resumes from where it stopped.
 
 `diagnose` adds offline semantic checks for model references, provider and MCP
 URLs, credentials, proxy structure, MCP commands, permission conflicts, file
@@ -62,12 +64,15 @@ does not rewrite the user's configuration.
 
 ## Update rollback
 
-Before an automatic update, Reasonix retains the current executable (Windows and
-Linux) or application bundle (macOS). The backup remains until the replacement
-build reaches `healthy` or exits cleanly. If the replacement enters the startup
-failure threshold, Guard restores the previous version before launching. Update
-metadata and hashes are stored under the Reasonix repair state; arbitrary backup
-or target paths are rejected.
+Before an automatic update, Reasonix retains the complete installed release
+unit — the desktop executable plus the Guard/launcher binaries the installer
+also replaces (Windows and Linux) — or the application bundle (macOS). The
+backups remain until the replacement build reaches `healthy` or exits cleanly.
+If the replacement enters the startup failure threshold, Guard verifies every
+backup hash and restores all recorded binaries together before launching, so a
+rollback never produces a mixed-version install. Update metadata and hashes are
+stored under the Reasonix repair state; arbitrary backup or target paths are
+rejected.
 
 ## Optional AI assistance
 

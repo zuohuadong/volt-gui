@@ -109,6 +109,30 @@ func TestStartupTrackerDoesNotOverwriteLiveReadyInstance(t *testing.T) {
 	}
 }
 
+func TestStartupTrackerIgnoresDuplicateLaunchesWhileHealthy(t *testing.T) {
+	// A duplicate launch hands off to the running instance and exits through
+	// os.Exit without OnShutdown (Wails single-instance lock), so repeated
+	// shortcut clicks during a healthy run must not count as crashes.
+	tracker := NewStartupTracker(filepath.Join(t.TempDir(), "startup.json"))
+	tracker.processAlive = func(pid int) bool { return pid == 42 }
+	state := StartupState{SchemaVersion: 1, Phase: "healthy", PID: 42, Version: "v1", WindowStartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if err := tracker.write(state); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		got, err := tracker.Begin("v1", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.PID != 42 || got.Phase != "healthy" || got.ConsecutiveFailures != 0 {
+			t.Fatalf("duplicate launch %d overwrote healthy state: %+v", i+1, got)
+		}
+	}
+	if tracker.SafeModeRecommended() {
+		t.Fatal("duplicate launches during a healthy run triggered safe mode")
+	}
+}
+
 func TestStartupTrackerWithoutStateDirIsDisabled(t *testing.T) {
 	tracker := &StartupTracker{now: time.Now, processAlive: func(int) bool { return false }}
 	if _, err := tracker.Begin("v1", false); err != nil {

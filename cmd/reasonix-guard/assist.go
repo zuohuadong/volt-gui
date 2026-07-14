@@ -180,7 +180,9 @@ func requestRepairPlan(ctx context.Context, root, modelRef string, report repair
 }
 
 func loadAIProviderConfig(root string) (*config.Config, error) {
-	if cfg, err := config.LoadForRoot(root); err == nil {
+	// Recovery tooling must never rewrite user configuration, so skip the
+	// on-disk legacy MCP tier migration that LoadForRoot performs.
+	if cfg, err := config.LoadForRootReadOnly(root); err == nil {
 		return cfg, nil
 	}
 	if snapshots, err := repair.ListConfigSnapshots(); err == nil {

@@ -442,6 +442,16 @@ export function WorkspacePanel({
     }
   }, [open, viewMode, workspaceScopeKey]);
 
+  // A tab/scope switch must discard the floating menus: their text and paths
+  // were captured from the previous scope, while add-to-chat routes to
+  // whatever tab is active at click time — a menu surviving a keyboard tab
+  // switch would add the old scope's selection to the new session.
+  useEffect(() => {
+    setSelectionMenu(null);
+    setTreeMenu(null);
+    setTreeBlankMenuPoint(null);
+  }, [tabId, workspaceScopeKey]);
+
   useEffect(() => {
     if (!open) return;
     setViewMode(initialViewMode);

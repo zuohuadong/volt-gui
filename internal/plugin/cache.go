@@ -37,10 +37,12 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 			continue
 		}
 		out = append(out, CachedTool{
-			Name:        rt.rawName,
-			Description: rt.desc,
-			Schema:      rt.schema,
-			ReadOnly:    rt.readOnly,
+			Name:         rt.rawName,
+			Description:  rt.desc,
+			Schema:       rt.schema,
+			OutputSchema: rt.outputSchema,
+			ReadOnly:     rt.declaredReadOnly,
+			Destructive:  rt.destructive,
 		})
 	}
 	return out
@@ -49,7 +51,7 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 // cacheVersion bumps whenever CachedSchema shape changes incompatibly. Old
 // files with a smaller version are treated as a miss so a stale layout never
 // crashes a reader.
-const cacheVersion = 1
+const cacheVersion = 2
 
 // CachedSchema is the persisted snapshot of one server's handshake result.
 // SpecHash gates reuse — Capabilities/Tools are only trusted when the
@@ -66,12 +68,14 @@ type CachedSchema struct {
 // CachedTool mirrors the subset of an MCP tool definition we need to register
 // a placeholder before the real handshake completes: Name (raw, server-local),
 // Description (model-visible), Schema (raw JSON for input validation),
-// ReadOnly (drives confirmation prompts).
+// ReadOnly and Destructive (drive local approval policy).
 type CachedTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Schema      json.RawMessage `json:"schema"`
-	ReadOnly    bool            `json:"read_only"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Schema       json.RawMessage `json:"schema"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	ReadOnly     bool            `json:"read_only"`
+	Destructive  bool            `json:"destructive,omitempty"`
 }
 
 // SpecFingerprint hashes the load-bearing parts of a Spec so changing the

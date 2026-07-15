@@ -67,8 +67,10 @@ func bwrapArgs(spec Spec, sh Shell, command string) []string {
 	for _, root := range spec.WriteRoots {
 		args = append(args, "--bind", root, root)
 	}
-	for _, root := range linuxWriteDirs() {
-		args = append(args, "--bind", root, root)
+	if !spec.MinimalWrites {
+		for _, root := range linuxWriteDirs() {
+			args = append(args, "--bind", root, root)
+		}
 	}
 	for _, root := range spec.ForbidReadRoots {
 		args = append(args, "--tmpfs", root)
@@ -94,8 +96,10 @@ func bwrapArgsForArgs(spec Spec, args []string) []string {
 	for _, root := range spec.WriteRoots {
 		out = append(out, "--bind", root, root)
 	}
-	for _, root := range linuxWriteDirs() {
-		out = append(out, "--bind", root, root)
+	if !spec.MinimalWrites {
+		for _, root := range linuxWriteDirs() {
+			out = append(out, "--bind", root, root)
+		}
 	}
 	for _, root := range spec.ForbidReadRoots {
 		out = append(out, "--tmpfs", root)

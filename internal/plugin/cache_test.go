@@ -5,6 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"reasonix/internal/mcptrust"
+	"reasonix/internal/sandbox"
+	"reasonix/internal/tool"
 )
 
 // redirectCache points config.CacheDir() at a fresh temp dir for the duration
@@ -38,6 +42,7 @@ func sampleCachedSchema(hash string) CachedSchema {
 			Description: "does a thing",
 			Schema:      json.RawMessage(`{"type":"object"}`),
 			ReadOnly:    true,
+			Destructive: true,
 		}},
 	}
 }
@@ -64,6 +69,9 @@ func TestCacheRoundTrip(t *testing.T) {
 	if !got.Tools[0].ReadOnly {
 		t.Error("ReadOnly: lost across save/load")
 	}
+	if !got.Tools[0].Destructive {
+		t.Error("Destructive: lost across save/load")
+	}
 	if !got.Capabilities["prompts"] || got.Capabilities["resources"] {
 		t.Errorf("Capabilities: %+v", got.Capabilities)
 	}
@@ -72,6 +80,38 @@ func TestCacheRoundTrip(t *testing.T) {
 	}
 	if got.LastValidated.IsZero() {
 		t.Error("LastValidated: expected non-zero after save")
+	}
+}
+
+func TestCachePersistsDeclaredReaderIndependentlyOfLocalTrust(t *testing.T) {
+	cached := cacheableToolsOf([]tool.Tool{&remoteTool{
+		rawName: "search", schema: json.RawMessage(`{"type":"object"}`),
+		declaredReadOnly: true, readOnly: false, readOnlyTrusted: false,
+	}})
+	if len(cached) != 1 || !cached[0].ReadOnly {
+		t.Fatalf("cached tool = %+v, want the server-declared reader snapshot", cached)
+	}
+}
+
+func TestCacheLoadsLegacyToolWithoutDestructiveField(t *testing.T) {
+	redirectCache(t)
+	spec := sampleSpec()
+	hash := SpecFingerprint(spec)
+	p := cachePath(spec.Name)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":2,"spec_hash":"` + hash + `","capabilities":{},"tools":[{"name":"read","description":"legacy","schema":{"type":"object"},"read_only":true}],"last_validated":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(p, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := LoadCachedSchema(spec.Name, hash)
+	if !ok || len(got.Tools) != 1 {
+		t.Fatalf("legacy cache = (%+v,%v), want one tool", got, ok)
+	}
+	if got.Tools[0].Destructive {
+		t.Fatal("legacy cache without destructive field must default to false")
 	}
 }
 
@@ -194,6 +234,25 @@ func TestSpecFingerprintStable(t *testing.T) {
 		if got := SpecFingerprint(reordered); got != h1 {
 			t.Fatalf("SpecFingerprint changed when env was rebuilt: %q vs %q", got, h1)
 		}
+	}
+}
+
+func TestSpecFingerprintIgnoresHostLocalTrustAndIsolation(t *testing.T) {
+	base := sampleSpec()
+	changed := base
+	changed.TrustManager = mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), "/workspace")
+	changed.ConfigSource = "project:.mcp.json"
+	changed.OfficialCatalogEntryID = "plugin@example.com@1.0.0"
+	changed.OfficialReaderNames = []string{"search"}
+	changed.PackageDigest = "sha256:package"
+	changed.VerifiedVersion = "1.0.0"
+	changed.CatalogSequence = 42
+	changed.ReaderSandbox = sandbox.Spec{Mode: "enforce", Network: true, WriteRoots: []string{"/host/state"}, MinimalWrites: true}
+	changed.WriterSandbox = sandbox.Spec{Mode: "enforce", WriteRoots: []string{"/workspace"}, MinimalWrites: true}
+	changed.StateDir = "/host/state"
+	changed.OneShot = true
+	if got, want := SpecFingerprint(changed), SpecFingerprint(base); got != want {
+		t.Fatalf("host-local security state changed provider cache fingerprint: %q != %q", got, want)
 	}
 }
 

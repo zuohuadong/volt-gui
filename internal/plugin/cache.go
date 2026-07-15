@@ -85,11 +85,27 @@ type CachedTool struct {
 // Their sorted key names remain identity-bearing, so adding/removing a runtime
 // input still invalidates the cached schema.
 func SpecFingerprint(s Spec) string {
+	return specFingerprintForURL(s, normalizeIdentityURL(s.URL))
+}
+
+// legacySpecFingerprint recomputes the cache fingerprint with the
+// pre-credential-aware URL normalization, or ("", false) when it cannot
+// differ. LoadCachedSchemaForSpec uses it to upgrade old cache entries in
+// place; remove together with legacyNormalizeIdentityURL.
+func legacySpecFingerprint(s Spec) (string, bool) {
+	legacyURL := legacyNormalizeIdentityURL(s.URL)
+	if strings.TrimSpace(s.URL) == "" || legacyURL == normalizeIdentityURL(s.URL) {
+		return "", false
+	}
+	return specFingerprintForURL(s, legacyURL), true
+}
+
+func specFingerprintForURL(s Spec, urlValue string) string {
 	h := sha256.New()
 	writeField(h, "name", s.Name)
 	writeField(h, "type", s.Type)
 	writeField(h, "command", s.Command)
-	writeField(h, "url", normalizeIdentityURL(s.URL))
+	writeField(h, "url", urlValue)
 	writeField(h, "dir", s.Dir)
 	for _, a := range s.Args {
 		writeField(h, "arg", a)
@@ -114,6 +130,29 @@ func LoadCachedSchema(name, expectedHash string) (*CachedSchema, bool) {
 	if !ok || !hashOK {
 		return nil, false
 	}
+	return cs, true
+}
+
+// LoadCachedSchemaForSpec returns the cached schema matching the spec's
+// current fingerprint, transparently rewriting an entry still saved under the
+// legacy URL fingerprint. Without the in-place upgrade, credential rotation or
+// the credential-aware normalization rollout would force a pointless
+// re-handshake even though nothing observable changed.
+func LoadCachedSchemaForSpec(s Spec) (*CachedSchema, bool) {
+	current := SpecFingerprint(s)
+	if cs, ok := LoadCachedSchema(s.Name, current); ok {
+		return cs, true
+	}
+	legacy, ok := legacySpecFingerprint(s)
+	if !ok {
+		return nil, false
+	}
+	cs, ok := LoadCachedSchema(s.Name, legacy)
+	if !ok {
+		return nil, false
+	}
+	cs.SpecHash = current
+	_ = SaveCachedSchema(s.Name, *cs)
 	return cs, true
 }
 
@@ -193,16 +232,28 @@ func cachePath(name string) string {
 // the user's display capitalisation.
 var slugReplace = regexp.MustCompile(`[^a-z0-9_-]+`)
 
-// slug sanitises name for use as a filename. Names changed by sanitization get
-// a strong suffix so case-only and punctuation collisions cannot make one MCP
-// server consume another server's cached schemas.
+// windowsReservedDeviceNames are DOS device names Windows reserves as file
+// stems (with or without an extension), matched case-insensitively.
+var windowsReservedDeviceNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// slug sanitises name for use as a filename. Names changed by sanitization —
+// and Windows-reserved device stems such as "con" or "com1", which would name
+// a device rather than a file — get a strong suffix so confusable names cannot
+// make one MCP server consume another server's cached schemas, stats, or
+// private state directory. Ordinary safe names stay byte-identical.
 func slug(name string) string {
 	s := slugReplace.ReplaceAllString(strings.ToLower(name), "-")
 	s = strings.Trim(s, "-")
 	if s == "" {
 		s = "_"
 	}
-	if s != name {
+	if s != name || windowsReservedDeviceNames[s] {
 		sum := sha256.Sum256([]byte(name))
 		s += "-" + hex.EncodeToString(sum[:6])
 	}

@@ -881,7 +881,7 @@ func (h *Host) SetTrust(name, decision string) error {
 	default:
 		return fmt.Errorf("invalid MCP trust decision %q", decision)
 	}
-	eval, err := manager.Evaluate(c.name, trustConfigSource(c.spec), c.identityFingerprint, c.capabilities)
+	eval, err := managerEvaluate(manager, c.spec, c.identityFingerprint, c.capabilities)
 	if err != nil {
 		return err
 	}

@@ -242,7 +242,7 @@ func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, err
 					return string(b) + "\n\nTools:\n" + inspectToolListJSON(server, tools), nil
 				}
 				if spec, ok := t.specFor(server); ok {
-					if cs, ok := plugin.LoadCachedSchema(server, plugin.SpecFingerprint(spec)); ok && len(cs.Tools) > 0 {
+					if cs, ok := plugin.LoadCachedSchemaForSpec(spec); ok && len(cs.Tools) > 0 {
 						var list []inspectToolInfo
 						for _, ct := range cs.Tools {
 							list = append(list, inspectToolInfo{

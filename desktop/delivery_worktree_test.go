@@ -52,6 +52,7 @@ func TestCreateDeliveryWorktreeRegistersAndOpensManagedProject(t *testing.T) {
 	}
 
 	app := NewApp()
+	t.Cleanup(func() { app.shutdown(context.Background()) })
 	result, err := app.CreateDeliveryWorktree("source-project")
 	if err != nil {
 		t.Fatal(err)
@@ -62,9 +63,4 @@ func TestCreateDeliveryWorktreeRegistersAndOpensManagedProject(t *testing.T) {
 	if result.Tab.WorkspaceRoot != isolatedRoot || !result.Tab.IsolatedWorktree || !result.Tab.Active || result.Tab.TokenMode != "delivery" {
 		t.Fatalf("opened tab = %+v", result.Tab)
 	}
-	t.Cleanup(func() {
-		for _, tab := range app.ListTabs() {
-			_ = app.CloseTab(tab.ID)
-		}
-	})
 }

@@ -179,7 +179,10 @@ func TestCreateDoesNotCopyOrChangeDirtySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "base\n" {
+	// Git for Windows may materialize the committed LF as CRLF according to
+	// core.autocrlf. Compare the file's semantic content so this assertion only
+	// detects the behavior under test: copying the dirty source value.
+	if strings.TrimSpace(string(got)) != "base" {
 		t.Fatalf("worktree copied uncommitted content: %q", got)
 	}
 	source, _ := os.ReadFile(dirtyPath)

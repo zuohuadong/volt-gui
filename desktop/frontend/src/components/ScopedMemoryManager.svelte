@@ -66,6 +66,7 @@
   const groups = $derived(groupScopedMemoryEntries(view?.entries ?? []));
   const scopeID = $derived(view ? scopeIDForMemoryLayer(view.context, draftLayer) : "");
   const mutationDisabled = $derived(!backendAvailable || running || mutating || !view?.available);
+  const hasMemoryRecords = $derived(Boolean(view?.entries.length || view?.archives.length));
 
   function referencesText(references: ScopedMemoryReference[]): string {
     return references.map((reference) => [reference.id, reference.title, reference.source].filter(Boolean).join(" | ")).join("\n");
@@ -191,35 +192,44 @@
       <article><span>Thread</span><strong>{view.context.threadId || "未绑定"}</strong></article>
     </section>
 
-    <div class="memory-layout">
-      <div class="layer-stack">
-        {#each groups as group (group.layer)}
-          <section class="memory-layer" data-layer={group.layer}>
-            <header><div><strong>{group.label}</strong><span>{scopeIDForMemoryLayer(view.context, group.layer) || "未绑定"}</span></div><em>{group.entries.length} 条</em></header>
-            <div>
-              {#each group.entries as entry (entry.id)}
-                <article class:isolated={entry.isolated} class="memory-entry" data-testid="scoped-memory-entry">
-                  <div class="entry-head"><div><strong>{entry.title}</strong><span>{entry.source} · {formatGovernanceTimestamp(entry.updatedAt)}</span></div><b>{entry.isolated ? "已隔离" : "运行中可见"}</b></div>
-                  <p>{entry.body}</p>
-                  <dl><dt>Owner</dt><dd>{[entry.owner.organizationId, entry.owner.workspaceId, entry.owner.projectId, entry.owner.threadId].filter(Boolean).join(" → ") || "User global"}</dd><dt>References</dt><dd>{entry.references.length ? entry.references.map((reference) => reference.title || reference.id).join(" / ") : "无"}</dd></dl>
-                  <footer><button type="button" disabled={mutationDisabled} onclick={() => openEdit(entry)}><Pencil size={13} /> 编辑</button><button type="button" disabled={mutationDisabled} onclick={() => void toggleIsolation(entry)}>{#if entry.isolated}<Eye size={13} /> 取消隔离{:else}<EyeOff size={13} /> 隔离{/if}</button><button class="danger" type="button" disabled={mutationDisabled} onclick={() => void deleteEntry(entry)}><Trash2 size={13} /> 删除并归档</button></footer>
-                </article>
-              {:else}
-                <div class="layer-empty">该层暂无记忆。</div>
-              {/each}
-            </div>
-          </section>
-        {/each}
-      </div>
+    {#if !hasMemoryRecords}
+      <article class="memory-empty memory-empty--onboarding">
+        <Layers3 size={28} />
+        <strong>尚未添加分层记忆</strong>
+        <p>这里只显示明确写入 User、Organization、Workspace、Project 或 Thread 层的 scoped memory。Agent Profile 的 MEMORY.md、普通项目文档和其他工具的记忆不会自动归入这里。</p>
+        <button class="primary" type="button" disabled={mutationDisabled} onclick={openCreate}><Plus size={14} /> 添加第一条记忆</button>
+      </article>
+    {:else}
+      <div class="memory-layout">
+        <div class="layer-stack">
+          {#each groups as group (group.layer)}
+            <section class="memory-layer" data-layer={group.layer}>
+              <header><div><strong>{group.label}</strong><span>{scopeIDForMemoryLayer(view.context, group.layer) || "未绑定"}</span></div><em>{group.entries.length} 条</em></header>
+              <div>
+                {#each group.entries as entry (entry.id)}
+                  <article class:isolated={entry.isolated} class="memory-entry" data-testid="scoped-memory-entry">
+                    <div class="entry-head"><div><strong>{entry.title}</strong><span>{entry.source} · {formatGovernanceTimestamp(entry.updatedAt)}</span></div><b>{entry.isolated ? "已隔离" : "运行中可见"}</b></div>
+                    <p>{entry.body}</p>
+                    <dl><dt>Owner</dt><dd>{[entry.owner.organizationId, entry.owner.workspaceId, entry.owner.projectId, entry.owner.threadId].filter(Boolean).join(" → ") || "User global"}</dd><dt>References</dt><dd>{entry.references.length ? entry.references.map((reference) => reference.title || reference.id).join(" / ") : "无"}</dd></dl>
+                    <footer><button type="button" disabled={mutationDisabled} onclick={() => openEdit(entry)}><Pencil size={13} /> 编辑</button><button type="button" disabled={mutationDisabled} onclick={() => void toggleIsolation(entry)}>{#if entry.isolated}<Eye size={13} /> 取消隔离{:else}<EyeOff size={13} /> 隔离{/if}</button><button class="danger" type="button" disabled={mutationDisabled} onclick={() => void deleteEntry(entry)}><Trash2 size={13} /> 删除并归档</button></footer>
+                  </article>
+                {:else}
+                  <div class="layer-empty">该层暂无记忆。</div>
+                {/each}
+              </div>
+            </section>
+          {/each}
+        </div>
 
-      <aside class="archive-panel">
-        <header><Archive size={15} /><div><strong>审计归档</strong><span>删除后的条目只读保留</span></div><em>{view.archives.length}</em></header>
-        {#each view.archives as archive (archive.entry.id)}
-          <details><summary>{archive.entry.title}<span>{MEMORY_LAYER_LABELS[archive.entry.layer]}</span></summary><div><p>{archive.entry.body}</p><dl><dt>来源</dt><dd>{archive.entry.source}</dd><dt>归档时间</dt><dd>{formatGovernanceTimestamp(archive.archivedAt)}</dd><dt>原 Scope</dt><dd>{archive.entry.scopeId}</dd></dl></div></details>
-        {:else}<div class="archive-empty">暂无归档记录。</div>{/each}
-        {#if view.storePath}<details class="store-path"><summary>查看本地存储路径</summary><code>{view.storePath}</code></details>{/if}
-      </aside>
-    </div>
+        <aside class="archive-panel">
+          <header><Archive size={15} /><div><strong>审计归档</strong><span>删除后的条目只读保留</span></div><em>{view.archives.length}</em></header>
+          {#each view.archives as archive (archive.entry.id)}
+            <details><summary>{archive.entry.title}<span>{MEMORY_LAYER_LABELS[archive.entry.layer]}</span></summary><div><p>{archive.entry.body}</p><dl><dt>来源</dt><dd>{archive.entry.source}</dd><dt>归档时间</dt><dd>{formatGovernanceTimestamp(archive.archivedAt)}</dd><dt>原 Scope</dt><dd>{archive.entry.scopeId}</dd></dl></div></details>
+          {:else}<div class="archive-empty">暂无归档记录。</div>{/each}
+          {#if view.storePath}<details class="store-path"><summary>查看本地存储路径</summary><code>{view.storePath}</code></details>{/if}
+        </aside>
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -247,6 +257,7 @@
   button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 1px solid #d8dee8; border-radius: 9px; background: #fff; color: #344054; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; } button.primary { border-color: #1f5fbf; background: #1f5fbf; color: #fff; } button.danger { color: #b42318; } button:disabled { cursor: not-allowed; opacity: .5; }
   .runtime-lock, .inline-message { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #ecd59d; border-radius: 10px; background: #fffaf0; color: #8b5c00; font-size: 11px; }.inline-message.success { border-color: #b9dfc7; background: #f2fbf5; color: #167044; }.inline-message.danger { border-color: #efc1bb; background: #fff6f5; color: #a52b1e; }
   .memory-empty { display: grid; justify-items: center; gap: 8px; min-height: 280px; align-content: center; padding: 30px; border: 1px dashed #cfd7e4; border-radius: 14px; background: #fbfcfe; text-align: center; }.memory-empty strong { font-size: 16px; }.memory-empty p { max-width: 560px; margin: 0; color: #667085; font-size: 12px; line-height: 1.6; }
+  .memory-empty--onboarding { min-height: 240px; }.memory-empty--onboarding button { margin-top: 4px; }
   .memory-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid #dfe4ec; border-radius: 12px; background: #dfe4ec; }.memory-context article { min-width: 0; padding: 11px 12px; background: #fff; }.memory-context span { display: block; color: #7b8494; font-size: 9px; text-transform: uppercase; }.memory-context strong { display: block; margin-top: 4px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .memory-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, .34fr); gap: 12px; align-items: start; }.layer-stack { display: grid; gap: 10px; min-width: 0; }.memory-layer, .archive-panel { overflow: hidden; border: 1px solid #dfe4ec; border-radius: 13px; background: #fff; }.memory-layer > header, .archive-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid #edf0f4; background: #fafbfc; }.memory-layer header strong, .archive-panel header strong { font-size: 12px; }.memory-layer header span, .archive-panel header span { display: block; margin-top: 2px; color: #7b8494; font-size: 9px; }.memory-layer header em, .archive-panel header em { color: #667085; font-size: 9px; font-style: normal; }
   .memory-entry { padding: 12px 13px; border-top: 1px solid #edf0f4; }.memory-entry:first-child { border-top: 0; }.memory-entry.isolated { background: #f8f9fb; }.entry-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }.entry-head strong { font-size: 12px; }.entry-head span { display: block; margin-top: 3px; color: #7b8494; font-size: 9px; }.entry-head b { padding: 4px 7px; border-radius: 999px; background: #eaf7ef; color: #187448; font-size: 9px; white-space: nowrap; }.isolated .entry-head b { background: #f1f3f5; color: #697386; }.memory-entry > p { display: -webkit-box; margin: 9px 0; overflow: hidden; color: #475467; font-size: 11px; line-height: 1.55; line-clamp: 3; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }.memory-entry dl { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 5px 8px; margin: 0; font-size: 9px; }.memory-entry dt { color: #7b8494; }.memory-entry dd { margin: 0; overflow-wrap: anywhere; }.memory-entry footer { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }.memory-entry footer button { min-height: 28px; padding: 0 8px; font-size: 9px; }.layer-empty, .archive-empty { padding: 16px; color: #7b8494; font-size: 10px; text-align: center; }

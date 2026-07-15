@@ -118,6 +118,7 @@
     updateQueuedMessage,
   } from "./lib/task-lifecycle";
   import type { QueuedThreadMessage } from "./lib/task-lifecycle";
+  import type { RecoveryAction } from "./lib/task-activity";
   import {
     addDiffReviewComment,
     buildDiffFixPrompt,
@@ -928,6 +929,14 @@
   let selectedOutcomeTemplateId = $state<TaskOutcomeTemplateID>("review-fix");
   let activeTaskReceipt = $state<TaskResultReceiptView | undefined>();
   let taskInspectorPanel = $state<"task" | CodeWorkbenchPanel>("task");
+  const showTaskActivityCenter = $derived(Boolean(
+    currentLastTurnError
+      || activeTaskReceipt?.state === "failed"
+      || tabs.some((tab) => tab.running || tab.pendingPrompt)
+      || currentQueuedMessages.length
+      || changedCount
+      || checkpoints.length,
+  ));
   let mobileDrawerOpen = $state(false);
   let projectCards = $state<WorkbenchProject[]>([]);
   let activeWorkspaceId = $state("");
@@ -1054,14 +1063,20 @@
   const activeAgentLabel = $derived(selectedAgent()?.name || "未配置");
   const activeModelLabel = $derived(selectedModel || currentComposerTab?.agentProfileBaseModel || "未配置");
   const activePermissionLabel = $derived(agentPermissionLabel(currentComposerTab?.toolApprovalMode ?? activeTab?.toolApprovalMode));
-  const activeMemoryLabel = $derived.by(() => {
+  const activeMemoryState = $derived.by(() => {
     const tab = currentComposerTab ?? activeTab;
     const scopes = tab?.memoryScopes?.map((scope) => scope.trim()).filter(Boolean) ?? [];
     const sourceCount = tab?.memorySourceIds?.length ?? 0;
     if (scopes.length > 0 || sourceCount > 0) {
-      return `${scopes.length > 0 ? scopes.join(" / ") : "已注入"} · ${sourceCount} 来源`;
+      return {
+        empty: false,
+        label: `${scopes.length || 1} 层 · ${sourceCount} 条`,
+      };
     }
-    return tab ? "当前无分层记忆" : "待后端确认";
+    return {
+      empty: Boolean(tab),
+      label: tab ? "未添加" : "待后端确认",
+    };
   });
   const todayTaskRows = $derived.by(() => sidebarProjects.flatMap((project) => project.tasks
     .filter((task) => !task.archivedAtMs)
@@ -7593,7 +7608,16 @@
     tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, cancelRequested: true } : tab);
   }
 
-  async function recoverTask(action: "retry" | "restore-draft" | "rewind" | "open-diff") {
+  async function recoverTask(action: RecoveryAction) {
+    if (action === "open-agent") {
+      openGovernanceLayer("agents");
+      if (selectedAgentId && agentCards.some((agent) => agent.id === selectedAgentId)) openAgentWizard(selectedAgentId);
+      return;
+    }
+    if (action === "open-models") {
+      openGovernanceLayer("models");
+      return;
+    }
     if (action === "open-diff") {
       await openCodeInspector();
       setCodeWorkbenchPanel("changes");
@@ -8001,28 +8025,35 @@
                 agent={activeAgentLabel}
                 model={activeModelLabel}
                 permission={activePermissionLabel}
-                memory={activeMemoryLabel}
+                memory={activeMemoryState.label}
+                memoryEmpty={activeMemoryState.empty}
                 mode={activityMode}
                 activeInspector={taskInspectorPanel}
                 onOpenDrawer={() => (mobileDrawerOpen = true)}
+                onOpenAgent={() => openGovernanceLayer("agents")}
+                onOpenModels={() => openGovernanceLayer("models")}
+                onOpenPermission={() => openGovernanceLayer("settings")}
+                onOpenMemory={() => openGovernanceLayer("scopedMemory")}
                 onInspector={openTaskInspector}
               />
             </div>
-            <div class="task-context-wrap">
-              <TaskActivityCenter
-                {tabs}
-                currentTabId={composerTabId}
-                {queuedMessages}
-                receipt={activeTaskReceipt}
-                changesCount={changedCount}
-                checkpointCount={checkpoints.length}
-                lastError={currentLastTurnError}
-                canRestoreDraft={Boolean(currentLastSubmittedDraft)}
-                onSwitchTab={switchActivityTab}
-                onCancelTab={cancelActivityTab}
-                onRecover={recoverTask}
-              />
-            </div>
+            {#if showTaskActivityCenter}
+              <div class="task-context-wrap">
+                <TaskActivityCenter
+                  {tabs}
+                  currentTabId={composerTabId}
+                  {queuedMessages}
+                  receipt={activeTaskReceipt}
+                  changesCount={changedCount}
+                  checkpointCount={checkpoints.length}
+                  lastError={currentLastTurnError}
+                  canRestoreDraft={Boolean(currentLastSubmittedDraft)}
+                  onSwitchTab={switchActivityTab}
+                  onCancelTab={cancelActivityTab}
+                  onRecover={recoverTask}
+                />
+              </div>
+            {/if}
             <div class="conversation" bind:this={conversationScrollEl}>
               <Transcript
                 items={transcript}
@@ -8090,10 +8121,15 @@
                   agent={activeAgentLabel}
                   model={activeModelLabel}
                   permission={activePermissionLabel}
-                  memory={activeMemoryLabel}
+                  memory={activeMemoryState.label}
+                  memoryEmpty={activeMemoryState.empty}
                   mode={activityMode}
                   activeInspector={taskInspectorPanel}
                   onOpenDrawer={() => (mobileDrawerOpen = true)}
+                  onOpenAgent={() => openGovernanceLayer("agents")}
+                  onOpenModels={() => openGovernanceLayer("models")}
+                  onOpenPermission={() => openGovernanceLayer("settings")}
+                  onOpenMemory={() => openGovernanceLayer("scopedMemory")}
                   onInspector={openTaskInspector}
                 />
               </div>

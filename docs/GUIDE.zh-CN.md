@@ -405,41 +405,17 @@ Ask 不是只读模式：writer 获得批准后仍会执行。Permissions 决定
 之外的任何路径（默认当前目录，编辑不出项目），并解析符号链接与 `..`，使链接无法
 打洞越界。`forbid_read` 可选地隐藏敏感目录，使 agent 的读文件、列目录和搜索工具不能读取或列出它们；
 建议使用绝对路径或 `${HOME}` / `${VAR}`，不要写 `~`，因为配置只做环境变量展开。
-`bash` 本身默认进 OS 沙盒（`[sandbox] bash`：macOS 使用 Seatbelt，Linux 使用 bubblewrap，
-原生 Windows 使用 native helper）：命令只能写这些 root（外加平台按命令提供的临时/缓存 root），
+`bash` 本身默认进 OS 沙盒（`[sandbox] bash`：macOS 使用 Seatbelt，Linux 使用 bubblewrap）：
+命令只能写这些 root（外加平台按命令提供的临时/缓存 root），
 OS 沙盒生效时也不能读取配置的 `forbid_read` roots，`[sandbox] network` 为真时才能联网。
-原生 Windows helper 使用 Reasonix 内置的 Windows sandbox backend：
-只读命令使用 AppContainer，可写命令使用 low-integrity token；它会临时授予
-workspace、每次命令专用 temp root 和目标可执行文件的访问权，对 `forbid_read`
-（文件和目录皆可）临时添加 deny ACE，修改前记录被触碰目录的 DACL，命令结束后尽力恢复。
-作用于同一 workspace 的并发命令会被串行化，避免各自的 ACL 修改互相破坏；被强杀命令
-残留的 low-integrity 标签或 `forbid_read` deny ACE 会由下一次运行清理。由于可写命令跑在
-low-integrity token 下，除配置的 root 外它仍能写入 Windows 对任何 low-integrity 进程开放的
-少数位置（例如 `%USERPROFILE%\AppData\LocalLow`），但 workspace 边界与 `forbid_read`
-拒绝依然有效。只读 AppContainer 命令在关闭网络时不给 network capability；可写 Windows 命令遇到
-`[sandbox] network = false` 时会 fail closed。
+**Windows 说明：**Reasonix 不在 Windows 上提供 OS 级 Bash 沙箱，生效模式固定为
+`off`。旧配置即使写了 `bash = "enforce"` 也会解析为 `off`，`reasonix doctor`
+会提示该设置被忽略，桌面设置中的选择器也为只读。Bash 命令会在不受 OS 沙箱限制的
+环境中运行；专用文件工具仍会在进程内执行 `workspace_root`、`allow_write` 和
+`forbid_read` 边界。
 
-**Windows 现状说明：**稳定版目前在 Windows 上把 Bash 沙箱的生效模式强制为
-`off`——即使显式写了 `bash = "enforce"` 也会解析为 `off`（`reasonix doctor`
-会提示该设置被忽略）——因为原生 Windows 后端仍会破坏常见的 Git Bash/MSYS2、
-Docker 和 git 工作流。上面的 Windows 沙盒描述保留为后端修复后重新启用时的设计基准。
-
-没有可用 OS 沙盒时，`bash = "enforce"` 会拒绝 bash 执行，不会无沙盒运行
-（越界询问与可选的 Windows elevated 加固见
-[`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope)）。
-
-Windows 沙盒排障：沙盒会把 Reasonix 可执行文件自身以隐藏 helper 方式重新拉起，
-CLI 与桌面端都内置了这个 helper 入口——若某个构建缺少入口而又请求 enforce，
-bash 会以明确报错拒绝执行，而不是返回空输出。同一 workspace 上排队等待另一条
-沙盒命令时会打印一行“waiting for another sandboxed command”提示，并在可识别时
-标出持锁命令及其 PID。前台命令排队 1 分钟后即失败并给出同样的持锁信息（被挡住
-的回合应尽快报错，而不是挂住）；后台任务最多等 10 分钟，`WINDOWS_SANDBOX_LOCK_MS`
-可同时覆盖两者。应先停止提示中点名的命令；调大等待上限只会让后续命令等更久。
-如果只有 Git-for-Windows/MSYS2 bash
-下的沙盒命令失败，可试 `[tools.shell] prefer = "powershell"`——MSYS 运行时在
-low-integrity token 下较脆弱。运行 `reasonix doctor` 可查看解析到的 shell、沙盒
-可用性，以及项目 `reasonix.toml` 是否固定了 `[sandbox]`（项目文件优先级高于
-Settings/用户配置；沙盒配置变更需 reload session config 或新开会话才生效）。
+没有可用 OS 沙盒时，`bash = "enforce"` 会拒绝 bash 执行，不会无沙盒运行。
+Windows 上兼容的值始终为 `off`。
 
 反馈编码质量问题时，可运行 `reasonix doctor quality <branch-id-or-path>`（加
 `--json` 输出结构化结果）。命令会读取指定 session，但只输出不含内容的计数与

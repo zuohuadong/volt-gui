@@ -63,6 +63,7 @@
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import Composer from "./components/Composer.svelte";
   import DataTrustCenter from "./components/DataTrustCenter.svelte";
+  import ExternalDataImportDialog from "./components/ExternalDataImportDialog.svelte";
   import GovernanceNavigation from "./components/GovernanceNavigation.svelte";
   import ManagedWorktreePanel from "./components/ManagedWorktreePanel.svelte";
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
@@ -206,6 +207,7 @@
     WorkbenchCustomer,
     WorkbenchCustomerInput,
     WorkbenchData,
+    ExternalDataImportResult,
     KnowledgeBaseView,
     KnowledgeDocumentImportInput,
     KnowledgeStatus,
@@ -479,6 +481,7 @@
   let capabilityImportInput = $state<HTMLInputElement | undefined>();
   let capabilityImportText = $state("");
   let resourceTab = $state<ResourceTab>("resources");
+  let externalDataImportOpen = $state(false);
   let resourceSearch = $state("");
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
@@ -1503,6 +1506,10 @@
     } catch (error) {
       console.error("Failed to load knowledge base", error);
     }
+  }
+  async function handleExternalDataImported(result: ExternalDataImportResult) {
+    await Promise.all([refreshKnowledgeBase(), runWorkbenchSearch(resourceSearch), refreshCapabilities()]);
+    showWorkbenchNotice(result.summary);
   }
   async function deleteKnowledgeDocument(item: WorkbenchKnowledgeDocument) {
     const deleteDocument = knowledgePersistenceBindings()?.DeleteKnowledgeDocument;
@@ -8784,7 +8791,7 @@
             {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{selectedReport()?.id || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
   <div class="resource-section-top">
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
-    <div class="resource-actions"><button type="button" onclick={() => openConfigDialog("knowledge")}>导入知识</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
+    <div class="resource-actions"><button type="button" onclick={() => (externalDataImportOpen = true)}><Download size={14} /> 导入外部数据</button><button type="button" onclick={() => openConfigDialog("knowledge")}>手动录入</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
   </div>
   <div class="knowledge-health"><article><span>SQLite</span><strong>{knowledgeStatus.sqlite ? "已启用" : "未连接"}</strong></article><article><span>FTS5</span><strong>{knowledgeStatus.fts5 ? "可检索" : "不可用"}</strong></article><article><span>sqlite-vec</span><strong>{knowledgeVectorLabel()}</strong></article><article><span>切片</span><strong>{knowledgeStatus.chunks}</strong></article></div><p class="knowledge-local-note">{knowledgeIndexSummary()}</p>
   <div class="knowledge-layout knowledge-layout--merged">
@@ -9940,6 +9947,12 @@
             </footer>
           </section>
         </div>
+      {/if}
+      {#if externalDataImportOpen}
+        <ExternalDataImportDialog
+          onclose={() => (externalDataImportOpen = false)}
+          onimported={(result) => void handleExternalDataImported(result)}
+        />
       {/if}
       {#if capabilityDetailOpen && currentCapability()}
         {@const selectedCapability = currentCapability()}

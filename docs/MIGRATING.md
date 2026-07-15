@@ -98,11 +98,20 @@ and DeepSeek prefix-cache–oriented design.
   search + tree-sitter symbol index is not bundled in v2 yet, and CodeGraph is no
   longer shipped as an internal MCP server.
 - **Plan mode** + `complete_step` (evidence-backed step sign-off).
+- **MCP identity and schema-cache URLs are credential-aware**: userinfo and
+  credential query values (token, api_key, password, ...) no longer enter the
+  host-local identity or cache fingerprints, so rotating a credential keeps
+  existing trust. Receipts and caches written by earlier builds migrate
+  automatically — at the pre-start identity check for eager and cache-miss
+  servers, or on first evaluation otherwise — when nothing else changed; the read-only
+  legacy fingerprint calculator is scheduled for removal two minor releases
+  after this rollout.
 - **Plan mode and permission policy are now independent**: Plan directs the
-  model to plan first, but every ordinary built-in, Bash, MCP, and proxy-resolved
-  call still uses the active Ask/Auto/YOLO rules and Sandbox. Only explicit
-  execution-phase tools such as `complete_step` remain unavailable until plan
-  approval. `[agent].plan_mode_allowed_tools` and
+  model to plan first. Ordinary built-in and Bash calls still use the active
+  Ask/Auto/YOLO rules and Sandbox, while installed MCP and proxy-resolved MCP
+  writer/destructive targets plus untrusted readers stay blocked until the plan
+  is approved. Explicit execution-phase tools such as `complete_step` also
+  remain unavailable until plan approval. `[agent].plan_mode_allowed_tools` and
   `plan_mode_read_only_commands` are still parsed and round-tripped so old
   configs do not break, but they no longer control main Plan availability.
   Concrete MCP names in `plan_mode_allowed_tools` remain legacy local read-only
@@ -116,8 +125,9 @@ and DeepSeek prefix-cache–oriented design.
   writer-classified. New optional MCP-local fields
   (`default_tools_approval_mode`, `tools.<raw>.approval_mode`, and
   `approvals_reviewer`) default to the previous behavior when absent. MCP tools
-  declaring `destructiveHint: true` require a new review on every call and fail
-  closed when their configured reviewer is unavailable.
+  declaring `destructiveHint: true` require a fresh human approval on every
+  call — the configured reviewer is never consulted for them — and
+  non-interactive sessions fail closed.
 - **Read-only subagent research**: use `read_only_task` for generic isolated
   research in plan mode, or `read_only_skill` when the work should follow an
   existing skill. Both expose only read-only tools and safe foreground bash, do

@@ -3476,6 +3476,71 @@ func TestBuildMigratesLegacyConfigEndToEnd(t *testing.T) {
 	}
 }
 
+func TestBuildMigratesDeprecatedAgentStepLimitsWithOneNotice(t *testing.T) {
+	home := isolateConfigHome(t)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
+	project := robustTempDir(t)
+	configPath := filepath.Join(project, "reasonix.toml")
+	writeFile(t, project, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+max_steps = 3
+planner_max_steps = 4
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	var notices []event.Event
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice {
+			notices = append(notices, e)
+		}
+	})
+	build := func() {
+		t.Helper()
+		ctrl, err := Build(context.Background(), Options{Sink: sink, WorkspaceRoot: project})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		ctrl.Close()
+	}
+
+	build()
+	migrationNotices := 0
+	for _, notice := range notices {
+		if notice.Text == "Deprecated agent step limits were removed." {
+			migrationNotices++
+			if notice.Level != event.LevelInfo || !strings.Contains(notice.Detail, "--max-steps") || !strings.Contains(notice.Detail, "[bot].max_steps") {
+				t.Fatalf("migration notice = %+v", notice)
+			}
+		}
+	}
+	if migrationNotices != 1 {
+		t.Fatalf("migration notices = %d, want 1; got %+v", migrationNotices, notices)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "planner_max_steps") || strings.Contains(string(raw), "\nmax_steps = 3") {
+		t.Fatalf("deprecated agent step limits remain after boot:\n%s", raw)
+	}
+
+	notices = nil
+	build()
+	for _, notice := range notices {
+		if strings.Contains(notice.Text, "Deprecated agent step") {
+			t.Fatalf("second boot repeated migration notice: %+v", notice)
+		}
+	}
+}
+
 func TestBuildMigratesLegacySessionsFromConfigSessionDir(t *testing.T) {
 	home := robustTempDir(t)
 	t.Setenv("HOME", home)
@@ -3687,6 +3752,26 @@ func TestPluginSpecsMapMCPApprovalPolicy(t *testing.T) {
 	if len(specs) != 1 || specs[0].DefaultToolsApprovalMode != "writes" ||
 		specs[0].ToolApprovalModes["wipe"] != "prompt" || specs[0].ApprovalsReviewer != "auto_review" {
 		t.Fatalf("mapped MCP approval policy = %+v", specs)
+	}
+}
+
+func TestOfficialMCPTrustRequiresMatchingTransport(t *testing.T) {
+	entry := config.PluginEntry{Name: "official", Type: "http", URL: "https://example.com/mcp"}
+	official := OfficialMCPTrust{
+		CatalogEntryID: "official@1", PackageDigest: "digest", Readers: []string{"read"}, Transport: "stdio",
+	}
+	specs := PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, "/workspace", PluginSpecOptions{
+		OfficialServers: map[string]OfficialMCPTrust{"official": official},
+	})
+	if len(specs) != 1 || specs[0].OfficialCatalogEntryID != "" {
+		t.Fatalf("mismatched transport received official trust: %+v", specs)
+	}
+	official.Transport = "streamable-http"
+	specs = PluginSpecsForRootWithOptions([]config.PluginEntry{entry}, "/workspace", PluginSpecOptions{
+		OfficialServers: map[string]OfficialMCPTrust{"official": official},
+	})
+	if len(specs) != 1 || specs[0].OfficialCatalogEntryID != "official@1" {
+		t.Fatalf("equivalent HTTP transport did not receive official trust: %+v", specs)
 	}
 }
 

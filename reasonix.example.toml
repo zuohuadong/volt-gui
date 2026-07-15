@@ -27,8 +27,6 @@ ask_request = true   # notify when a question is waiting
 [agent]
 # system_prompt = "You are ..."   # custom persona/prompt; unset or empty = built-in default
 # system_prompt_file = "prompts/system.md"   # overrides system_prompt when set
-max_steps         = 0    # user/global only; executor tool-call rounds; 0 = no limit
-planner_max_steps = 0    # user/global only; planner read-only tool-call rounds; 0 = no limit
 temperature       = 0.0
 auto_plan         = "off"   # user-level only; ignored in project reasonix.toml
 memory_compiler = { enabled = true }   # user-level only; Memory v5 execution compiler
@@ -130,7 +128,7 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # workspace_root = ""
 # allow_write    = ["/tmp"]
 # forbid_read    = ["${HOME}/.ssh"]
-# bash           = "enforce"   # enforce (default) | off; native Windows uses its helper sandbox, and without any OS sandbox backend, enforce refuses bash
+# bash           = "enforce"   # enforce (default on macOS/Linux) | off; Windows fixes this to off because it has no OS-level Bash sandbox
 # network        = true
 
 # Skills are invokable playbooks (SKILL.md / <name>.md with frontmatter), found

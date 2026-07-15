@@ -857,6 +857,69 @@ export interface KnowledgeDocumentImportInput {
   content?: string;
 }
 
+export interface ExternalDataSource {
+  id: string;
+  name: string;
+  description: string;
+  available: boolean;
+  defaultRoot?: string;
+  categories: string[];
+  warning?: string;
+}
+
+export interface ExternalDataPreviewInput {
+  sourceId: string;
+  rootPath: string;
+}
+
+export interface ExternalDataImportItem {
+  id: string;
+  category: string;
+  title: string;
+  relativePath: string;
+  target: "knowledge" | "skills" | "none";
+  targetLabel: string;
+  compatibility: "compatible" | "warning" | "incompatible";
+  compatibilityText: string;
+  warning?: string;
+  size: number;
+  selectedByDefault: boolean;
+}
+
+export interface ExternalDataImportPreview {
+  sourceId: string;
+  sourceName: string;
+  rootPath: string;
+  items: ExternalDataImportItem[];
+  compatible: number;
+  warnings: number;
+  unsupported: number;
+  messages: string[];
+}
+
+export interface ExternalDataImportInput {
+  sourceId: string;
+  rootPath: string;
+  itemIds: string[];
+}
+
+export interface ExternalDataImportResultItem {
+  id: string;
+  title: string;
+  target: string;
+  status: "imported" | "skipped" | "failed";
+  message: string;
+}
+
+export interface ExternalDataImportResult {
+  imported: number;
+  skipped: number;
+  failed: number;
+  items: ExternalDataImportResultItem[];
+  warnings: string[];
+  summary: string;
+}
+
 export interface WorkbenchSyncJob {
   id: string;
   title: string;

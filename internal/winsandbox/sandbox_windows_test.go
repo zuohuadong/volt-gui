@@ -58,11 +58,13 @@ func TestWindowsAppContainerNetworkCapabilities(t *testing.T) {
 }
 
 func TestWindowsSandboxAccessSIDScopes(t *testing.T) {
+	// currentProcessUserSID returns a Go-allocated copy (SID.Copy), so it must
+	// NOT be released with FreeSid: that frees through the Windows process heap
+	// and corrupts it (STATUS_HEAP_CORRUPTION at exit).
 	userSID, err := currentProcessUserSID()
 	if err != nil || userSID == nil {
 		t.Fatalf("current user SID: %v", err)
 	}
-	defer windows.FreeSid(userSID)
 	exact := appContainerObjectAccessSIDStrings(userSID)
 	if len(exact) != 1 || exact[0] != userSID.String() {
 		t.Fatalf("AppContainer object SIDs = %v, want exact package SID only", exact)

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -93,6 +94,23 @@ func TestRefreshKeepsLastGoodAndRejectsRollback(t *testing.T) {
 	}
 }
 
+func TestNewestLocalCatalogUsesHighestSequence(t *testing.T) {
+	cached := Result{Index: emptyIndex(1), Source: SourceCached}
+	bundled := Result{Index: emptyIndex(2), Source: SourceBundled}
+	if got := newestCatalogResult(cached, bundled); got.Source != SourceBundled || got.Index.Sequence != 2 {
+		t.Fatalf("newestCatalogResult(cached, bundled) = %+v", got)
+	}
+	if got := newestCatalogResult(bundled, cached); got.Source != SourceBundled || got.Index.Sequence != 2 {
+		t.Fatalf("newestCatalogResult(bundled, cached) = %+v", got)
+	}
+	// Equal sequences prefer the app-bundled snapshot so an upgraded binary's
+	// signed baseline cannot be shadowed by an older on-disk representation.
+	equalCached := Result{Index: emptyIndex(2), Source: SourceCached}
+	if got := newestCatalogResult(equalCached, bundled); got.Source != SourceBundled {
+		t.Fatalf("equal sequence selected %q, want bundled", got.Source)
+	}
+}
+
 func TestCachedCatalogUsesOneAtomicEnvelope(t *testing.T) {
 	cache := t.TempDir()
 	data, sig, key := signedIndex(t, emptyIndex(3))
@@ -108,7 +126,7 @@ func TestCachedCatalogUsesOneAtomicEnvelope(t *testing.T) {
 	if _, err := loader.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(cacheEnvelopePath(cache)); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(cacheEnvelopePath(cache)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("atomic LKG envelope = %v, %v", info, err)
 	}
 	dataPath, sigPath := CachePaths(cache)
@@ -138,6 +156,15 @@ func TestTreeSHA256StableAndRejectsSymlink(t *testing.T) {
 	second, err := TreeSHA256(root)
 	if err != nil || first != second {
 		t.Fatalf("tree digest = %q %q, %v", first, second, err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(filepath.Join(root, "b.txt"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		modeChanged, err := TreeSHA256(root)
+		if err != nil || modeChanged != first {
+			t.Fatalf("platform-specific mode changed portable tree digest: %q != %q, %v", modeChanged, first, err)
+		}
 	}
 	if err := os.Symlink(filepath.Join(root, "b.txt"), filepath.Join(root, "link")); err == nil {
 		if _, err := TreeSHA256(root); err == nil {

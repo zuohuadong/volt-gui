@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/fileutil"
 	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/tool"
 )
@@ -36,13 +36,14 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 		if !ok {
 			continue
 		}
+		declaredReadOnly, _, _, destructive, _ := rt.securitySnapshot()
 		out = append(out, CachedTool{
 			Name:         rt.rawName,
 			Description:  rt.desc,
 			Schema:       rt.schema,
 			OutputSchema: rt.outputSchema,
-			ReadOnly:     rt.declaredReadOnly,
-			Destructive:  rt.destructive,
+			ReadOnly:     declaredReadOnly,
+			Destructive:  destructive,
 		})
 	}
 	return out
@@ -84,10 +85,27 @@ type CachedTool struct {
 // Their sorted key names remain identity-bearing, so adding/removing a runtime
 // input still invalidates the cached schema.
 func SpecFingerprint(s Spec) string {
+	return specFingerprintForURL(s, normalizeIdentityURL(s.URL))
+}
+
+// legacySpecFingerprint recomputes the cache fingerprint with the
+// pre-credential-aware URL normalization, or ("", false) when it cannot
+// differ. LoadCachedSchemaForSpec uses it to upgrade old cache entries in
+// place; remove together with legacyNormalizeIdentityURL.
+func legacySpecFingerprint(s Spec) (string, bool) {
+	legacyURL := legacyNormalizeIdentityURL(s.URL)
+	if strings.TrimSpace(s.URL) == "" || legacyURL == normalizeIdentityURL(s.URL) {
+		return "", false
+	}
+	return specFingerprintForURL(s, legacyURL), true
+}
+
+func specFingerprintForURL(s Spec, urlValue string) string {
 	h := sha256.New()
+	writeField(h, "name", s.Name)
 	writeField(h, "type", s.Type)
 	writeField(h, "command", s.Command)
-	writeField(h, "url", s.URL)
+	writeField(h, "url", urlValue)
 	writeField(h, "dir", s.Dir)
 	for _, a := range s.Args {
 		writeField(h, "arg", a)
@@ -112,6 +130,29 @@ func LoadCachedSchema(name, expectedHash string) (*CachedSchema, bool) {
 	if !ok || !hashOK {
 		return nil, false
 	}
+	return cs, true
+}
+
+// LoadCachedSchemaForSpec returns the cached schema matching the spec's
+// current fingerprint, transparently rewriting an entry still saved under the
+// legacy URL fingerprint. Without the in-place upgrade, credential rotation or
+// the credential-aware normalization rollout would force a pointless
+// re-handshake even though nothing observable changed.
+func LoadCachedSchemaForSpec(s Spec) (*CachedSchema, bool) {
+	current := SpecFingerprint(s)
+	if cs, ok := LoadCachedSchema(s.Name, current); ok {
+		return cs, true
+	}
+	legacy, ok := legacySpecFingerprint(s)
+	if !ok {
+		return nil, false
+	}
+	cs, ok := LoadCachedSchema(s.Name, legacy)
+	if !ok {
+		return nil, false
+	}
+	cs.SpecHash = current
+	_ = SaveCachedSchema(s.Name, *cs)
 	return cs, true
 }
 
@@ -152,19 +193,13 @@ func filterValidCachedTools(tools []CachedTool) []CachedTool {
 	return out
 }
 
-// SaveCachedSchema atomically writes cs under name. Best-effort: an error
-// is logged at debug level and dropped. Uses tmpfile + os.Rename in the
-// parent dir so a crash mid-write can't leave a half-written JSON behind
-// that the next Load would mis-parse.
+// SaveCachedSchema atomically writes cs under name. Best-effort: an error is
+// logged at debug level and returned. The shared replacement helper preserves
+// overwrite semantics on Windows as well as crash safety on Unix.
 func SaveCachedSchema(name string, cs CachedSchema) error {
 	p := cachePath(name)
 	if p == "" {
 		return nil
-	}
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		slog.Debug("plugin cache: mkdir", "name", name, "err", err)
-		return err
 	}
 	cs.Version = cacheVersion
 	if cs.LastValidated.IsZero() {
@@ -175,26 +210,8 @@ func SaveCachedSchema(name string, cs CachedSchema) error {
 		slog.Debug("plugin cache: marshal", "name", name, "err", err)
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".mcp-*.tmp")
-	if err != nil {
-		slog.Debug("plugin cache: tempfile", "name", name, "err", err)
-		return err
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		slog.Debug("plugin cache: write", "name", name, "err", err)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		slog.Debug("plugin cache: close", "name", name, "err", err)
-		return err
-	}
-	if err := os.Rename(tmpPath, p); err != nil {
-		os.Remove(tmpPath)
-		slog.Debug("plugin cache: rename", "name", name, "err", err)
+	if err := fileutil.AtomicWriteFile(p, b, 0o600); err != nil {
+		slog.Debug("plugin cache: atomic write", "name", name, "err", err)
 		return err
 	}
 	return nil
@@ -215,14 +232,30 @@ func cachePath(name string) string {
 // the user's display capitalisation.
 var slugReplace = regexp.MustCompile(`[^a-z0-9_-]+`)
 
-// slug sanitises name for use as a filename: lowercase, only [a-z0-9_-]. An
-// empty result (all chars stripped) falls back to "_" so cachePath stays
-// valid for any input.
+// windowsReservedDeviceNames are DOS device names Windows reserves as file
+// stems (with or without an extension), matched case-insensitively.
+var windowsReservedDeviceNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// slug sanitises name for use as a filename. Names changed by sanitization —
+// and Windows-reserved device stems such as "con" or "com1", which would name
+// a device rather than a file — get a strong suffix so confusable names cannot
+// make one MCP server consume another server's cached schemas, stats, or
+// private state directory. Ordinary safe names stay byte-identical.
 func slug(name string) string {
 	s := slugReplace.ReplaceAllString(strings.ToLower(name), "-")
 	s = strings.Trim(s, "-")
 	if s == "" {
-		return "_"
+		s = "_"
+	}
+	if s != name || windowsReservedDeviceNames[s] {
+		sum := sha256.Sum256([]byte(name))
+		s += "-" + hex.EncodeToString(sum[:6])
 	}
 	return s
 }

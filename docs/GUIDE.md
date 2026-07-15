@@ -35,8 +35,7 @@ built-in defaults**. Starting with **Reasonix v1.8.1**, the user config lives at
 `~/.reasonix/config.toml` on macOS/Linux and
 `%AppData%\reasonix\config.toml` on Windows; see
 [Configuration paths](./CONFIG_PATHS.md) for migration and related data paths.
-Fields marked user/global only, including agent step limits, are not overridden
-by `./reasonix.toml`.
+Fields marked user/global only are not overridden by `./reasonix.toml`.
 Provider entries name secrets with `api_key_env`, while the secret values live in
 Reasonix's global `<Reasonix home>/.env`, shared by CLI and desktop. Project
 `.env`, home `.env`, inherited shell environment variables, legacy credentials,
@@ -59,8 +58,6 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 # cursor_shape = "underline"       # block|underline|bar; CLI/TUI text cursor
 
 [agent]
-max_steps = 0                    # user/global only; executor tool-call rounds; 0 = no limit
-planner_max_steps = 0            # user/global only; planner read-only tool-call rounds; 0 = no limit
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["mcp__legacy__reader"]   # legacy MCP read-only trust alias; does not change Plan availability
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash now uses Permissions
@@ -396,7 +393,7 @@ Composer shortcuts:
 | --- | --- | --- |
 | `Enter` | Sends the current message | IME composition confirmation is left alone. |
 | `Shift+Enter` | Inserts a newline | The composer keeps focus. |
-| `Shift+Tab` | Toggles Plan on/off | Plan changes the workflow instruction, not the active Ask/Auto/YOLO or Sandbox boundary. |
+| `Shift+Tab` | Toggles Plan on/off | Plan changes the workflow instruction; built-in writers keep the active Ask/Auto/YOLO and Sandbox boundary, while MCP writer/destructive targets stay blocked until the plan is approved. |
 | `Cmd+Y` / `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. |
 | `Cmd+V` on macOS, `Ctrl+V` on Windows/Linux | Pastes clipboard content | Clipboard images are attached; images can also be dropped into the composer. |
 | Plain `Up` / `Down` at the prompt boundary | Recalls older or newer submitted prompts | Modified arrows and native text navigation stay with the textarea. |
@@ -470,7 +467,7 @@ Mode meanings:
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
 | YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
-| Plan | Directs the model to plan first. Every tool, including built-in and MCP writers, still follows the active Ask/Auto/YOLO rules and Sandbox; explicit phase-only tools such as `complete_step` wait until approval. |
+| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and untrusted readers are blocked before approval, and explicit phase-only tools such as `complete_step` wait until approval. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -495,58 +492,22 @@ out. `forbid_read` optionally hides sensitive directories from the agent's
 read/list/search tools; use absolute paths or `${HOME}` / `${VAR}` references,
 not `~`, because config expansion is environment-variable based. `bash` is
 itself jailed by default when an OS sandbox is available (`[sandbox] bash`,
-Seatbelt on macOS, bubblewrap on Linux, and a native helper on Windows):
+Seatbelt on macOS and bubblewrap on Linux):
 commands may write only those same roots plus platform-specific command
 temp/cache roots, cannot read configured `forbid_read` roots while the OS
 sandbox is active, and reach the network only when `[sandbox] network` is set.
-The native Windows helper uses Reasonix's bundled Windows sandbox backend:
-AppContainer for read-only commands and a low-integrity token for writable
-commands, temporarily grants
-access to the workspace, a per-command temp root, and the target executable,
-applies deny ACEs for `forbid_read` (files as well as directories), snapshots
-touched DACLs before editing them, and restores those snapshots best-effort
-after the command exits. Concurrent commands touching the same workspace are
-serialized so their ACL edits cannot corrupt each other, and residue from a
-force-killed command (a lingering low-integrity label or `forbid_read` deny) is
-cleaned up by the next run. Because a writable command runs under a
-low-integrity token, it can still write the few locations Windows leaves
-writable to any low-integrity process (for example `%USERPROFILE%\AppData\LocalLow`)
-in addition to the configured roots; the workspace boundary and `forbid_read`
-denials still hold. Read-only AppContainer commands omit network capabilities
-when networking is disabled; writable Windows commands fail closed when
-`[sandbox] network = false`.
-**Windows note:** stable builds currently force the effective Bash sandbox
-mode to `off` on Windows — even an explicit `bash = "enforce"` resolves to
-`off`, and `reasonix doctor` flags the ignored setting — because the native
-Windows backend still breaks common Git Bash/MSYS2, Docker, and git workflows.
-The Windows sandbox description here is the design of record for when the
-backend is re-enabled.
+**Windows note:** Reasonix does not ship an OS-level Bash sandbox on Windows.
+The effective mode is fixed to `off`; even an older config containing
+`bash = "enforce"` resolves to `off`, `reasonix doctor` flags the ignored value,
+and the desktop selector is read-only. Bash commands therefore run unconfined,
+while the dedicated file tools still enforce `workspace_root`, `allow_write`,
+and `forbid_read` in process.
 
 When no OS sandbox backend is available, `bash = "enforce"` refuses bash
 execution instead of running unconfined. Install the platform sandbox backend
 (bubblewrap/`bwrap` on Linux, `sandbox-exec` on macOS) or set
 `[sandbox] bash = "off"` to explicitly restore the pre-1.16 unconfined shell
-behavior (see
-[`SPEC.md` §9](./SPEC.md#9-roadmap-not-in-current-scope) for the escape-prompt
-and optional elevated Windows hardening still to come).
-
-Windows sandbox troubleshooting: the sandbox relaunches the Reasonix
-executable as a hidden helper, and both the CLI and the desktop app embed that
-helper entry point — if enforce is requested in a build that lacks it, bash
-refuses with a clear error instead of returning empty output. A command that
-queues behind another sandboxed command on the same workspace prints a
-one-line "waiting for another sandboxed command" notice that names the holding
-command and its PID when known. A foreground command gives up after 1 minute
-with the same holder detail (a queued turn should fail fast, not hang);
-background jobs wait up to 10 minutes, and `WINDOWS_SANDBOX_LOCK_MS` overrides
-both. Stop the named command first; raising the wait cap only makes later
-commands wait longer. If sandboxed commands fail
-only under Git-for-Windows/MSYS2 bash, try `[tools.shell] prefer =
-"powershell"` — the MSYS runtime is fragile under a low-integrity token. Run
-`reasonix doctor` to see the resolved shell, sandbox availability, and whether
-a project `reasonix.toml` pins `[sandbox]` (a project file overrides
-Settings/user-config edits, and sandbox changes take effect after a session
-config reload or a new session).
+behavior. On Windows the compatible value is always `off`.
 
 For coding-quality reports, run `reasonix doctor quality <branch-id-or-path>`
 (add `--json` for structured output). This reads the selected session but emits
@@ -602,17 +563,24 @@ permission reader-default. Because the annotation is supplied by a third-party
 server, it is accepted by the main Plan workflow only as ordinary permission
 classification; it does not grant access to the dedicated planner or read-only
 research sub-agents. Use the local `trusted_read_only_tools` override for a
-reader you have audited. Tools without the hint remain write-capable. Built-in,
-MCP, and proxy-resolved writers all use the same permission posture while
-planning.
+reader you have audited. Tools without the hint remain write-capable. While planning, built-in
+writers keep the ordinary permission posture; installed MCP and proxy-resolved
+MCP writers, destructive targets, and untrusted readers are hard-blocked before
+any approval and return to their normal approval flow once Plan exits.
 
 MCP `destructiveHint: true` is stricter than both classifications. Every call
-requires a new review, even if the tool also reports `readOnlyHint`, the current
-posture is Auto/YOLO, or an allow rule was saved. The default reviewer is the
-user; `approvals_reviewer = "auto_review"` delegates each decision to the
-session Guardian. A missing, failed, timed-out, or denying automatic reviewer
-fails closed. Non-interactive runs and sub-agents also fail closed when the
-required reviewer is unavailable.
+requires a fresh human approval, even if the tool also reports `readOnlyHint`,
+the current posture is Auto/YOLO, or an allow rule was saved — Guardian,
+`auto_review`, and session grants can never authorize a destructive call.
+
+`approvals_reviewer = "auto_review"` routes the calls that actually need a
+review — `prompt` mode, writer hits under `writes`, and `auto` calls the global
+posture would Ask about — to the session Guardian, and a successful verdict
+(allow or deny) is final. When the reviewer is missing, times out, fails, or
+returns no verdict, the call falls back to fresh human approval: a prompt that
+Auto/YOLO, the approved-plan window, and session grants cannot answer.
+Non-interactive runs and sub-agents fail closed in every reviewer-required
+case.
 
 Server and raw-tool approval policy stays local and never changes the schema
 sent to the model:
@@ -895,12 +863,22 @@ planner_model = "deepseek-pro"   # used as the low-frequency planner
 
 The planner sees loaded `REASONIX.md` / `AGENTS.md` memory and a small read-only
 research tool set, so it can inspect relevant files before handing a plan to the
-executor. Writer and workflow tools remain executor-only. `max_steps` limits the
-executor; `planner_max_steps` limits only the planner, and either can be set to
-`0` for no round limit.
+executor. Writer and workflow tools remain executor-only. Reasonix manages
+normal execution automatically: if an active todo produces no new completion,
+unique read, command, or mutation for 8 tool-call rounds, the host asks the
+executor to reassess. After 16 no-progress rounds it pauses with saved work that
+can be resumed in the next user turn. Exact repeats do not count as progress;
+new host-observed work renews the lease. Two-level task lists keep the same
+single-current contract: the active level-1 sub-step is the one `in_progress`
+item while its level-0 phase stays `pending`; sub-steps are worked and signed
+off in order, and once every sub-step has completed the phase itself becomes
+`in_progress` for its own final sign-off.
 
-Keep step-limit preferences in the user config. Project `./reasonix.toml` files
-do not override `max_steps` or `planner_max_steps`.
+Existing `[agent].max_steps` and `planner_max_steps` keys remain syntactically
+accepted during upgrades, but their values are ignored and removed with a
+one-time notice. This prevents a stale hidden limit from truncating automatic
+progress or inherited subagent work. Use the one-off CLI `--max-steps` flag when
+an explicit run budget is needed; unattended bots retain `[bot].max_steps`.
 
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only

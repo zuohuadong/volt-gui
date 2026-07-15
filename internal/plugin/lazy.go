@@ -52,10 +52,11 @@ const (
 // server: they all observe the same state machine and trigger at most one
 // handshake.
 type lazySpawn struct {
-	spec Spec
-	host *Host
-	reg  *tool.Registry
-	ctx  context.Context // session-scoped — outlives any single turn
+	spec       Spec
+	host       *Host
+	reg        *tool.Registry
+	ctx        context.Context // session-scoped — outlives any single turn
+	generation uint64
 
 	mu       sync.Mutex
 	state    spawnState
@@ -93,10 +94,16 @@ func (s *lazySpawn) kick() {
 // run does the handshake without holding mu (host.Add can take seconds), then
 // reacquires mu to publish the result.
 func (s *lazySpawn) run() {
-	real, err := s.host.Add(s.ctx, s.spec)
+	real, err := s.host.addDeferred(s.ctx, s.spec, s.generation)
 	var cacheTools []tool.Tool
 	s.mu.Lock()
 	if err != nil {
+		if errors.Is(err, ErrDeferredSpawnCancelled) || errors.Is(err, context.Canceled) {
+			s.state = spawnFailed
+			s.spawnErr = err
+			s.mu.Unlock()
+			return
+		}
 		if errors.Is(err, ErrSpawningInFlight) {
 			// Another tab is already spawning this server; reset to idle so
 			// the next call retries instead of recording a spurious failure.
@@ -415,12 +422,15 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 	if real == nil {
 		return nil
 	}
-	if remote, ok := real.(*remoteTool); ok && lt.capabilityFingerprint != "" && remote.capabilityFingerprint != "" && lt.capabilityFingerprint != remote.capabilityFingerprint {
-		lt.readOnly = remote.readOnly
-		lt.readOnlyTrusted = remote.readOnlyTrusted
-		lt.destructive = remote.destructive
-		lt.capabilityFingerprint = remote.capabilityFingerprint
-		return fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution, retry after the parent session reviews the change", lt.shared.spec.Name, lt.rawName)
+	if remote, ok := real.(*remoteTool); ok {
+		_, readOnly, trusted, destructive, fingerprint := remote.securitySnapshot()
+		if lt.capabilityFingerprint != "" && fingerprint != "" && lt.capabilityFingerprint != fingerprint {
+			lt.readOnly = readOnly
+			lt.readOnlyTrusted = trusted
+			lt.destructive = destructive
+			lt.capabilityFingerprint = fingerprint
+			return fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution, retry after the parent session reviews the change", lt.shared.spec.Name, lt.rawName)
+		}
 	}
 	if lt.readOnly && !real.ReadOnly() {
 		lt.readOnly = false
@@ -459,13 +469,13 @@ func destructiveHintChangedError(server, rawTool string) error {
 // kill the stdio child between turns.
 func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, sessionCtx context.Context, kick bool) []tool.Tool {
 	spawnCtx, cancel := context.WithCancel(sessionCtx)
-	host.registerDeferredCancel(cancel)
 	shared := &lazySpawn{
 		spec: spec,
 		host: host,
 		reg:  reg,
 		ctx:  spawnCtx,
 	}
+	shared.generation = host.registerDeferredCancel(spec.Name, cancel)
 
 	trustedReaders := map[string]bool{}
 	cachedCapabilities := map[string]mcptrust.Capability{}

@@ -128,13 +128,7 @@ func (l Loader) Load(ctx context.Context, refresh bool) (Result, error) {
 			return result, nil
 		}
 	}
-	if result, err := l.loadCached(); err == nil {
-		result.Offline = refresh
-		result.Stale = catalogStale(result.Index, time.Now())
-		rememberRuntimeIndex(result.Index)
-		return result, nil
-	}
-	result, err := loadBundled(l.keys())
+	result, err := l.loadNewestLocal()
 	if err != nil {
 		return Result{}, err
 	}
@@ -169,8 +163,8 @@ func (l Loader) Refresh(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if cached, cachedErr := l.loadCached(); cachedErr == nil && idx.Sequence < cached.Index.Sequence {
-		return Result{}, fmt.Errorf("MCP catalog sequence rollback: remote=%d cached=%d", idx.Sequence, cached.Index.Sequence)
+	if local, localErr := l.loadNewestLocal(); localErr == nil && idx.Sequence < local.Index.Sequence {
+		return Result{}, fmt.Errorf("MCP catalog sequence rollback: remote=%d local=%d source=%s", idx.Sequence, local.Index.Sequence, local.Source)
 	}
 	if strings.TrimSpace(l.CacheDir) != "" {
 		body, marshalErr := json.Marshal(cacheEnvelope{Data: data, Signature: sig})
@@ -185,6 +179,28 @@ func (l Loader) Refresh(ctx context.Context) (Result, error) {
 	}
 	rememberRuntimeIndex(idx)
 	return Result{Index: idx, Source: SourceRemote, Stale: catalogStale(idx, time.Now())}, nil
+}
+
+func (l Loader) loadNewestLocal() (Result, error) {
+	cached, cachedErr := l.loadCached()
+	bundled, bundledErr := loadBundled(l.keys())
+	switch {
+	case cachedErr == nil && bundledErr == nil:
+		return newestCatalogResult(cached, bundled), nil
+	case cachedErr == nil:
+		return cached, nil
+	case bundledErr == nil:
+		return bundled, nil
+	default:
+		return Result{}, fmt.Errorf("load local MCP catalog: cached: %v; bundled: %v", cachedErr, bundledErr)
+	}
+}
+
+func newestCatalogResult(a, b Result) Result {
+	if b.Index.Sequence >= a.Index.Sequence {
+		return b
+	}
+	return a
 }
 
 func catalogStale(index Index, now time.Time) bool {
@@ -427,7 +443,6 @@ func TreeSHA256(root string) (string, error) {
 	}
 	type item struct {
 		path string
-		mode fs.FileMode
 		body []byte
 	}
 	var items []item
@@ -462,7 +477,7 @@ func TreeSHA256(root string) (string, error) {
 		if err != nil {
 			return err
 		}
-		items = append(items, item{path: filepath.ToSlash(rel), mode: info.Mode().Perm(), body: body})
+		items = append(items, item{path: filepath.ToSlash(rel), body: body})
 		return nil
 	})
 	if err != nil {
@@ -471,7 +486,11 @@ func TreeSHA256(root string) (string, error) {
 	sort.Slice(items, func(i, j int) bool { return items[i].path < items[j].path })
 	h := sha256.New()
 	for _, item := range items {
-		_, _ = fmt.Fprintf(h, "%s\x00%04o\x00%d\x00", item.path, item.mode, len(item.body))
+		// Permission bits are intentionally excluded: Windows checkouts do not
+		// preserve POSIX modes, so including them makes a catalog package verify
+		// on Linux but silently lose official status on Windows. Paths, lengths,
+		// and bytes still bind the complete regular-file tree.
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", item.path, len(item.body))
 		_, _ = h.Write(item.body)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

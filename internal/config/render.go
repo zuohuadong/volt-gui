@@ -201,18 +201,6 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# system_prompt_file = \"prompts/system.md\"   # overrides system_prompt when set\n")
 	}
-	if scope != RenderScopeProject {
-		if c.Agent.MaxSteps != defaults.Agent.MaxSteps {
-			fmt.Fprintf(&b, "max_steps         = %d   # executor tool-call rounds; 0 = no limit\n", c.Agent.MaxSteps)
-		} else {
-			b.WriteString("# max_steps         = 0   # executor tool-call rounds; 0 = no limit\n")
-		}
-		if c.Agent.PlannerMaxSteps != defaults.Agent.PlannerMaxSteps {
-			fmt.Fprintf(&b, "planner_max_steps = %d   # planner read-only tool-call rounds; 0 = no limit\n", c.Agent.PlannerMaxSteps)
-		} else {
-			b.WriteString("# planner_max_steps = 0    # planner read-only tool-call rounds; 0 = no limit\n")
-		}
-	}
 	fmt.Fprintf(&b, "temperature       = %s\n", formatFloat(c.Agent.Temperature))
 	if scope != RenderScopeProject {
 		autoPlan := c.Agent.AutoPlan
@@ -453,7 +441,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	b.WriteString("# may only write under workspace_root (empty = current dir) and allow_write extras.\n")
 	b.WriteString("# bash = \"enforce\" jails each command in an OS sandbox when available;\n")
 	b.WriteString("# without one, bash execution is refused. Empty defaults to enforce on macOS/Linux.\n")
-	b.WriteString("# Windows currently forces bash = \"off\" to restore pre-1.16 unconfined shell execution.\n")
+	b.WriteString("# Windows has no OS-level Bash sandbox and fixes bash = \"off\".\n")
 	b.WriteString("# network allows sandboxed bash egress.\n")
 	if c.Sandbox.WorkspaceRoot != "" {
 		fmt.Fprintf(&b, "workspace_root = %q\n", c.Sandbox.WorkspaceRoot)

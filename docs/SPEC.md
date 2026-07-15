@@ -551,11 +551,11 @@ Reasonix's global `<Reasonix home>/.env`, shared by CLI and desktop. Project
 `.env`, home `.env`, inherited shell environment variables, legacy credentials,
 and the OS keyring are not provider-key runtime fallbacks. Project `.env` still
 feeds workspace-scoped, non-provider `${VAR}` expansion for MCP/plugin settings
-without importing provider keys or Reasonix control variables. Step-limit
-preferences belong in the user config.
-Project `reasonix.toml` does not override `agent.max_steps` or
-`agent.planner_max_steps`, and it does not override the user-level Memory v5
-compiler switch.
+without importing provider keys or Reasonix control variables. The advanced
+step-limit compatibility overrides belong in the user config and are omitted
+from normal generated configuration. Project `reasonix.toml` does not override
+`agent.max_steps` or `agent.planner_max_steps`, and it does not override the
+user-level Memory v5 compiler switch.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"
@@ -567,8 +567,8 @@ default_model = "deepseek"   # provider name (→ its default model) or "provide
 
 [agent]
 system_prompt = "You are Reasonix, a coding agent..."  # or system_prompt_file = "..."
-max_steps         = 32   # user/global only; executor tool-call rounds; 0 = no total round limit
-planner_max_steps = 0    # user/global only; planner read-only tool-call rounds; 0 = no limit
+max_steps         = 0    # advanced user/global override; executor tool-call rounds; 0 = no total round limit
+planner_max_steps = 0    # advanced user/global override; planner read-only tool-call rounds; 0 = no limit
 temperature       = 0.0
 memory_compiler = { enabled = true, verbosity = "observe" }   # user/global only; observe|compact; CLI: reasonix config memory-v5 off|observe|compact|on|status
 reasoning_language = "auto"       # visible reasoning text: auto|zh|en
@@ -650,9 +650,11 @@ args    = []
 # headers = { Authorization = "Bearer ${STRIPE_KEY}" }   # ${VAR} / ${VAR:-default} expanded
 ```
 
-The executor also pauses when an active todo remains unadvanced for 16
-consecutive tool-call rounds. This semantic-stall guard remains active when
-`max_steps = 0`; the pause preserves work for a later user turn.
+The executor tracks an adaptive progress lease while a todo is active. A new
+completion, unique successful read, command, or mutation renews the lease;
+exact repeats do not. After 8 no-progress tool-call rounds the host appends a
+one-shot reassessment nudge. After 16 it pauses and preserves work for a later
+user turn. This semantic-stall guard remains active when `max_steps = 0`.
 
 `reasonix setup` writes this default config so the CLI is usable out of the box.
 

@@ -1074,20 +1074,13 @@ func TestRenderTOMLPreservesDesktopDisplayMode(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLDefaultStepsCommentedOut(t *testing.T) {
+func TestRenderTOMLDefaultStepsOmitted(t *testing.T) {
 	isolateUserConfigHome(t)
 	out := RenderTOML(Default())
 	agentLines := extractSectionLines(out, "[agent]")
 	for _, line := range agentLines {
-		if strings.HasPrefix(line, "max_steps ") || strings.HasPrefix(line, "max_steps=") {
-			if !strings.HasPrefix(line, "#") {
-				t.Errorf("default max_steps should be commented out in [agent], got: %s", line)
-			}
-		}
-		if strings.HasPrefix(line, "planner_max_steps ") || strings.HasPrefix(line, "planner_max_steps=") {
-			if !strings.HasPrefix(line, "#") {
-				t.Errorf("default planner_max_steps should be commented out in [agent], got: %s", line)
-			}
+		if strings.Contains(line, "max_steps") || strings.Contains(line, "planner_max_steps") {
+			t.Errorf("default step limits should be hidden from generated config, got: %s", line)
 		}
 	}
 }
@@ -1149,23 +1142,6 @@ func TestRenderTOMLNonDefaultStepsWrittenExplicitly(t *testing.T) {
 	}
 	if !foundPlanner {
 		t.Error("non-default planner_max_steps should be written explicitly in [agent]")
-	}
-}
-
-func TestRenderTOMLPreservesExplicitUnlimitedExecutorSteps(t *testing.T) {
-	isolateUserConfigHome(t)
-	c := Default()
-	c.Agent.MaxSteps = 0
-	rendered := RenderTOMLForScope(c, RenderScopeUser)
-	if !strings.Contains(rendered, "max_steps         = 0") {
-		t.Fatalf("explicit unlimited max_steps was not rendered:\n%s", rendered)
-	}
-	var got Config
-	if _, err := toml.Decode(rendered, &got); err != nil {
-		t.Fatalf("rendered TOML does not parse: %v", err)
-	}
-	if got.Agent.MaxSteps != 0 {
-		t.Fatalf("round-tripped max_steps = %d, want explicit unlimited 0", got.Agent.MaxSteps)
 	}
 }
 

@@ -20,9 +20,10 @@ func TestTodoProgressGuardPausesSemanticToolDrift(t *testing.T) {
 		ID: "todo", Name: "todo_write",
 		Arguments: `{"todos":[{"content":"finish the task","status":"in_progress"}]}`,
 	}}}}
-	for i := 0; i < maxTodoStallRounds; i++ {
+	// The first unique read renews the lease; exact repeats after it do not.
+	for i := 0; i < maxTodoStallRounds+1; i++ {
 		turns = append(turns, testutil.Turn{ToolCalls: []provider.ToolCall{{
-			ID: fmt.Sprintf("read-%d", i), Name: "inspect", Arguments: `{}`,
+			ID: fmt.Sprintf("read-%d", i), Name: "inspect", Arguments: `{"path":"same"}`,
 		}}})
 	}
 
@@ -37,8 +38,51 @@ func TestTodoProgressGuardPausesSemanticToolDrift(t *testing.T) {
 	if !errors.As(err, &pause) {
 		t.Fatalf("Run error = %v, want todoStallPause", err)
 	}
-	if mp.CallCount() != maxTodoStallRounds+1 {
-		t.Fatalf("provider calls = %d, want %d", mp.CallCount(), maxTodoStallRounds+1)
+	if mp.CallCount() != maxTodoStallRounds+2 {
+		t.Fatalf("provider calls = %d, want %d", mp.CallCount(), maxTodoStallRounds+2)
+	}
+	if !sessionContains(a, "Host progress check") {
+		t.Fatal("semantic drift did not receive the adaptive progress nudge")
+	}
+}
+
+func TestTodoProgressGuardRenewsOnUniqueHostWork(t *testing.T) {
+	turns := []testutil.Turn{{ToolCalls: []provider.ToolCall{{
+		ID: "todo", Name: "todo_write",
+		Arguments: `{"todos":[{"content":"finish the task","status":"in_progress"}]}`,
+	}}}}
+	for i := 0; i < todoProgressNudgeRounds-1; i++ {
+		turns = append(turns, testutil.Turn{ToolCalls: []provider.ToolCall{{
+			ID: fmt.Sprintf("read-a-%d", i), Name: "inspect", Arguments: `{"path":"same"}`,
+		}}})
+	}
+	turns = append(turns,
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "write", Name: "write_file", Arguments: `{"path":"result.txt","content":"done"}`}}},
+	)
+	for i := 0; i < todoProgressNudgeRounds-1; i++ {
+		turns = append(turns, testutil.Turn{ToolCalls: []provider.ToolCall{{
+			ID: fmt.Sprintf("read-b-%d", i), Name: "inspect", Arguments: `{"path":"same"}`,
+		}}})
+	}
+	turns = append(turns,
+		testutil.Turn{ToolCalls: []provider.ToolCall{{
+			ID: "done", Name: "complete_step",
+			Arguments: `{"step":"finish the task","result":"done","evidence":[{"kind":"files","summary":"created result","paths":["result.txt"]}]}`,
+		}}},
+		testutil.Turn{Text: "done"},
+	)
+
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "inspect", readOnly: true})
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+	reg.Add(mustBuiltinTool(t, "todo_write"))
+	reg.Add(mustBuiltinTool(t, "complete_step"))
+	a := New(testutil.NewMock("m", turns...), reg, NewSession(""), Options{}, event.Discard)
+	if err := a.Run(context.Background(), "finish the todo"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if sessionContains(a, "Host progress check") {
+		t.Fatal("unique host work should renew the progress lease before the nudge threshold")
 	}
 }
 

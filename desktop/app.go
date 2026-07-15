@@ -616,6 +616,22 @@ func (a *App) restoreOrBuildTabs() {
 	// freshly written config (including the user's default_model) is
 	// picked up by Load instead of falling back to built-in defaults.
 	_, _ = config.MigrateLegacyIfNeeded()
+	if migration := config.MigrateLegacySupportDataOnUpgrade(); migration != nil {
+		for _, warning := range migration.Warnings {
+			slog.Warn("desktop: legacy support-data migration", "warning", warning)
+		}
+	}
+	if legacyDir := config.LegacyOSSupportDir(); legacyDir != "" {
+		if result, err := migrateLegacyDesktopState(legacyDir, desktopConfigDir()); err != nil {
+			slog.Warn("desktop: recover legacy desktop indexes", "err", err)
+		} else if result.RepairedTabs > 0 || result.MergedTabs > 0 || result.MergedProjects {
+			slog.Info("desktop: recovered legacy desktop indexes",
+				"repaired_tabs", result.RepairedTabs,
+				"merged_tabs", result.MergedTabs,
+				"skipped_tabs", result.SkippedTabs,
+				"merged_projects", result.MergedProjects)
+		}
+	}
 	f := loadTabsFile()
 	_, _ = recoverLegacyProjectSidebarRoots(f)
 	_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
@@ -2266,7 +2282,8 @@ type SessionMeta struct {
 	UserID         string `json:"userId,omitempty"`
 	ThreadID       string `json:"threadId,omitempty"`
 	SessionSource  string `json:"sessionSource,omitempty"`
-	Recovered      bool   `json:"recovered,omitempty"` // conflict-recovery copy of another session
+	Recovered      bool   `json:"recovered,omitempty"`    // created by conflict recovery, including an adopted/continued branch
+	RecoveryCopy   bool   `json:"recoveryCopy,omitempty"` // proven unchanged since recovery and safe for copy cleanup
 }
 
 type channelSessionRoute struct {
@@ -2438,6 +2455,7 @@ func sessionMetaFromInfo(s agent.SessionInfo, title string, current, open bool, 
 		TopicID:        s.TopicID,
 		TopicTitle:     s.TopicTitle,
 		Recovered:      sessionInfoIsAutomaticRecovery(s),
+		RecoveryCopy:   sessionInfoIsUnmodifiedRecoveryCopy(s),
 	}
 }
 

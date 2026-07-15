@@ -196,6 +196,38 @@ func TestParallelTasksDoesNotExposeWriterToolsToChildren(t *testing.T) {
 	}
 }
 
+func TestParallelTasksBlocksWriterResolvedThroughReadOnlyProxy(t *testing.T) {
+	var writerCalls int32
+	parentReg := tool.NewRegistry()
+	target := parallelResolvedWriterTarget{calls: &writerCalls}
+	parentReg.Add(readOnlyBoundaryProxy{resolved: tool.ResolvedCall{
+		ProxyAction: "call",
+		TargetName:  target.Name(),
+		Target:      target,
+		ReadOnly:    false,
+		Args:        json.RawMessage(`{}`),
+	}})
+	task := newTestTaskTool(t, proxyWriterCallingProvider{}, parentReg, "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, parentReg)
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+
+	out, err := parallel.Execute(ctx, json.RawMessage(`{
+		"tasks": [
+			{"prompt": "resolve writer one"},
+			{"prompt": "resolve writer two"}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v\n%s", err, out)
+	}
+	if got := atomic.LoadInt32(&writerCalls); got != 0 {
+		t.Fatalf("use_capability resolved writer executed %d times, want 0", got)
+	}
+	if !strings.Contains(out, "Completed 2 parallel tasks") {
+		t.Fatalf("missing aggregate output: %s", out)
+	}
+}
+
 func TestParallelTasksCancelReturnsPartialAggregate(t *testing.T) {
 	task := newTestTaskTool(t, promptRoutingProvider{}, tool.NewRegistry(), "sys", "", "", nil)
 	parallel := NewParallelTasksTool(task, tool.NewRegistry())
@@ -284,6 +316,39 @@ func (writerCallingProvider) Stream(_ context.Context, req provider.Request) (<-
 	ch <- provider.Chunk{Type: provider.ChunkDone}
 	close(ch)
 	return ch, nil
+}
+
+type proxyWriterCallingProvider struct{}
+
+func (proxyWriterCallingProvider) Name() string { return "proxy-writer-calling" }
+
+func (proxyWriterCallingProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	ch := make(chan provider.Chunk, 2)
+	if !hasToolResult(req, "use_capability") {
+		ch <- toolCallChunk("proxy-write-1", "use_capability", `{"action":"call","capability_id":"mcp-tool:test/write","arguments":{}}`)
+		ch <- provider.Chunk{Type: provider.ChunkDone}
+		close(ch)
+		return ch, nil
+	}
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: "writer blocked"}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
+	close(ch)
+	return ch, nil
+}
+
+type parallelResolvedWriterTarget struct {
+	calls *int32
+}
+
+func (parallelResolvedWriterTarget) Name() string        { return "mcp__test__write" }
+func (parallelResolvedWriterTarget) Description() string { return "" }
+func (parallelResolvedWriterTarget) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (parallelResolvedWriterTarget) ReadOnly() bool { return false }
+func (t parallelResolvedWriterTarget) Execute(context.Context, json.RawMessage) (string, error) {
+	atomic.AddInt32(t.calls, 1)
+	return "writer executed", nil
 }
 
 func hasToolResult(req provider.Request, name string) bool {

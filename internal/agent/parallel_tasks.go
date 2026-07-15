@@ -185,7 +185,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 			// host framing is prepended so delivery intent classification judges
 			// the task, not the wrapper.
 			opts.ClassifierTaskText = t.Prompt
-			output, runErr := RunSubAgentWithSession(ctx, prov, subReg, sess, p.taskTool.withWorkspaceContext(t.Prompt),
+			output, runErr := RunReadOnlySubAgentWithSession(ctx, prov, subReg, sess, p.taskTool.withWorkspaceContext(t.Prompt),
 				opts, nested)
 
 			if ctx.Err() != nil && runErr == nil {

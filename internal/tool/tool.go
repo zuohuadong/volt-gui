@@ -101,6 +101,13 @@ type ReadOnlyExecutionHostMutation interface {
 	ReadOnlyExecutionHostMutation() bool
 }
 
+// ReadOnlyExecutionBlockReason lets a deferred capability explain which
+// parent-session action is required when a strict read-only child cannot run
+// it. The reason is host-local and never enters provider tool schemas.
+type ReadOnlyExecutionBlockReason interface {
+	ReadOnlyExecutionBlockReason() string
+}
+
 // MCPMetadata exposes the original MCP identity behind a model-visible
 // "mcp__<server>__<tool>" adapter. The model name may be normalized for provider
 // function-name rules; config such as trusted_read_only_tools must use the raw
@@ -115,6 +122,47 @@ type MCPMetadata interface {
 // execution policy consumes them locally.
 type MCPAnnotations interface {
 	MCPDestructiveHint() bool
+}
+
+// MCPCapabilityFingerprint exposes the host-local security fingerprint used to
+// reject a cached-to-live schema drift before tools/call. It is deliberately
+// separate from Schema(), so it cannot perturb provider cache prefixes.
+type MCPCapabilityFingerprint interface {
+	MCPCapabilityFingerprint() string
+}
+
+// ReadOnlyExecutionTrustAuthority reports whether an MCP-backed tool's reader
+// classification is backed by a real host trust store (receipts), rather than
+// a server hint or legacy config compatibility. Strict read-only execution
+// requires positive authority; direct library embedders without a TrustManager
+// keep their historical behavior outside that boundary.
+type ReadOnlyExecutionTrustAuthority interface {
+	ReadOnlyExecutionTrustAuthority() bool
+}
+
+// readerExecutionIntentKey carries a per-call, immutable authorization basis:
+// the call was approved as a non-destructive reader. The MCP dispatcher makes
+// the final, linearizable check against live security state and must never
+// promote such a call into a writer lane; drift after authorization returns an
+// error instead of executing.
+type readerExecutionIntentKey struct{}
+
+// ReaderExecutionIntent pins what the authorization decision saw.
+type ReaderExecutionIntent struct {
+	// CapabilityFingerprint, when non-empty, must still match the live tool's
+	// security fingerprint at dispatch time.
+	CapabilityFingerprint string
+}
+
+// WithReaderExecutionIntent marks ctx as a reader-authorized MCP invocation.
+func WithReaderExecutionIntent(ctx context.Context, capabilityFingerprint string) context.Context {
+	return context.WithValue(ctx, readerExecutionIntentKey{}, ReaderExecutionIntent{CapabilityFingerprint: capabilityFingerprint})
+}
+
+// ReaderExecutionIntentFrom returns the pinned reader authorization, if any.
+func ReaderExecutionIntentFrom(ctx context.Context) (ReaderExecutionIntent, bool) {
+	intent, ok := ctx.Value(readerExecutionIntentKey{}).(ReaderExecutionIntent)
+	return intent, ok
 }
 
 const (

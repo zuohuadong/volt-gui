@@ -592,12 +592,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			if opts.SharedHost != nil {
 				// Shared host relies on Host's spawn guard to avoid duplicate
 				// processes across tabs for the same workspace root.
-				cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
+				cs, _ := plugin.LoadCachedSchemaForSpec(s)
 				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
 					reg.Add(t)
 				}
 			} else {
-				cs, _ := plugin.LoadCachedSchema(s.Name, plugin.SpecFingerprint(s))
+				cs, _ := plugin.LoadCachedSchemaForSpec(s)
 				for _, t := range plugin.LazyToolset(s, cs, pluginHost, reg, ctx, true) {
 					reg.Add(t)
 				}

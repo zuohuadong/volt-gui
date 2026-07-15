@@ -151,3 +151,70 @@ func TestNPMPackageName(t *testing.T) {
 		}
 	}
 }
+
+func TestFullGitCommitAcceptsOnlyCompleteObjectNames(t *testing.T) {
+	sha1Commit := strings.Repeat("0123456789", 4)         // 40 hex
+	sha256Commit := strings.Repeat("0123456789abcdef", 4) // 64 hex
+	for value, want := range map[string]bool{
+		sha1Commit:         true,
+		sha256Commit:       true,
+		sha1Commit[:39]:    false, // abbreviation
+		sha1Commit + "a":   false, // 41-hex custom ref: resolve via ls-remote
+		sha256Commit[:63]:  false,
+		sha256Commit + "a": false,
+		"main":             false,
+		"":                 false,
+	} {
+		if got := fullGitCommit.MatchString(value); got != want {
+			t.Errorf("fullGitCommit(%d hex %q...) = %v, want %v", len(value), value[:min(8, len(value))], got, want)
+		}
+	}
+
+	// Official catalog validation shares the predicate: intermediate-length
+	// hex refs are mutable and must be rejected as pinned git locators.
+	for _, tc := range []struct {
+		ref string
+		ok  bool
+	}{
+		{ref: sha1Commit, ok: true},
+		{ref: sha256Commit, ok: true},
+		{ref: sha1Commit + "a", ok: false},
+		{ref: sha256Commit[:63], ok: false},
+	} {
+		spec := Spec{Name: "official", OfficialCatalogEntryID: "official@1", Command: "npx", Args: []string{"git+https://example.test/server.git@" + tc.ref}}
+		err := validateOfficialLauncher(spec)
+		if tc.ok && err != nil {
+			t.Errorf("complete commit %d hex rejected: %v", len(tc.ref), err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("incomplete commit ref %d hex accepted", len(tc.ref))
+		}
+	}
+}
+
+func TestOfficialLauncherRejectsPEP440WildcardVersions(t *testing.T) {
+	for value, ok := range map[string]bool{
+		"server==2.4.1":        true,
+		"server==1.0.0rc1":     true,
+		"server==2.4.1.post1":  true,
+		"server==1.2.3.dev4":   true,
+		"server==1.2.3+local1": true,
+		"server==2.4.*":        false,
+		"server==*":            false,
+	} {
+		spec := Spec{Name: "official", OfficialCatalogEntryID: "official@1", Command: "uvx", Args: []string{value}}
+		err := validateOfficialLauncher(spec)
+		if ok && err != nil {
+			t.Errorf("exact pin %q rejected: %v", value, err)
+		}
+		if !ok && err == nil {
+			t.Errorf("wildcard pin %q accepted", value)
+		}
+	}
+}
+
+func TestResolvePyPIPackageRejectsWildcardBeforeNetwork(t *testing.T) {
+	if _, _, err := resolvePyPIPackage(context.Background(), "server==2.4.*"); err == nil || !strings.Contains(err.Error(), "wildcard") {
+		t.Fatalf("wildcard uvx locator resolved: %v", err)
+	}
+}

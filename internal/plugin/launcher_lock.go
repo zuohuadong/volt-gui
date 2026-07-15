@@ -31,9 +31,22 @@ type launcherLocator struct {
 
 var (
 	pep508Package = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^]]+\])?(?:==([^\s]+))?$`)
-	fullGitCommit = regexp.MustCompile(`^[0-9a-fA-F]{40,64}$`)
+	// fullGitCommit accepts exactly a complete SHA-1 (40 hex) or SHA-256
+	// (64 hex) object name. Intermediate lengths are abbreviations or custom
+	// refs, never a verified commit: they must resolve through git ls-remote.
+	// Official catalog validation and mutable launcher locks share this single
+	// exact-commit predicate.
+	fullGitCommit = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 	pypiBaseURL   = "https://pypi.org/pypi"
 )
+
+// exactPEP440Version accepts only a single pinned version. `==2.4.*` is a
+// PEP 440 wildcard range, not a pin, while exact prerelease, post, dev,
+// epoch, and local segments remain valid.
+func exactPEP440Version(version string) bool {
+	version = strings.TrimSpace(version)
+	return version != "" && !strings.Contains(version, "*")
+}
 
 func effectiveLaunchArgs(spec Spec) []string {
 	if spec.LaunchArgs != nil {
@@ -115,7 +128,7 @@ func immutableLauncherLocator(locator launcherLocator) bool {
 		return semver.IsValid("v" + value[len(name)+1:])
 	case "uvx":
 		match := pep508Package.FindStringSubmatch(value)
-		return match != nil && strings.TrimSpace(match[3]) != ""
+		return match != nil && exactPEP440Version(match[3])
 	default:
 		return false
 	}
@@ -276,6 +289,9 @@ func resolvePyPIPackage(ctx context.Context, locator string) (string, string, er
 		return "", "", fmt.Errorf("unsupported uvx package locator %q", locator)
 	}
 	name, extras, requestedVersion := match[1], match[2], match[3]
+	if requestedVersion != "" && !exactPEP440Version(requestedVersion) {
+		return "", "", fmt.Errorf("uvx locator %q uses a wildcard version; pin one exact version", locator)
+	}
 	endpoint := strings.TrimRight(pypiBaseURL, "/") + "/" + url.PathEscape(name)
 	if requestedVersion != "" {
 		endpoint += "/" + url.PathEscape(requestedVersion)

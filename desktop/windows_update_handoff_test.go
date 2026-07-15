@@ -61,6 +61,42 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallerClosesRunningAppBeforeWaitingForUnlock(t *testing.T) {
+	data, err := os.ReadFile("build/windows/installer/project.nsi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		"!macro voltui.closeRunningApp",
+		`"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T`,
+		"Sleep 5000",
+		`"$SYSDIR\taskkill.exe" /F /IM "${PRODUCT_EXECUTABLE}" /T`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("project.nsi missing %q", want)
+		}
+	}
+	if got := strings.Count(script, "!insertmacro voltui.closeRunningApp"); got != 2 {
+		t.Fatalf("closeRunningApp must run for install and uninstall, got %d calls", got)
+	}
+	macroStart := strings.Index(script, "!macro voltui.closeRunningApp")
+	normalKill := strings.Index(script, `"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T`)
+	gracePeriod := strings.Index(script, "Sleep 5000")
+	forceKill := strings.Index(script, `"$SYSDIR\taskkill.exe" /F /IM "${PRODUCT_EXECUTABLE}" /T`)
+	macroEndOffset := strings.Index(script[macroStart:], "!macroend")
+	macroEnd := macroStart + macroEndOffset
+	if macroStart < 0 || normalKill < macroStart || gracePeriod < normalKill || forceKill < gracePeriod || macroEndOffset < 0 || macroEnd < forceKill {
+		t.Fatalf("close macro must request close, wait, then force-kill (macro=%d normal=%d wait=%d force=%d end=%d)", macroStart, normalKill, gracePeriod, forceKill, macroEnd)
+	}
+	closeApp := strings.Index(script, "!insertmacro voltui.closeRunningApp")
+	wait := strings.Index(script, "Call voltui.waitForExecutableUnlock")
+	copyFiles := strings.Index(script, "!insertmacro wails.files")
+	if closeApp < 0 || wait < 0 || copyFiles < 0 || closeApp > wait || wait > copyFiles {
+		t.Fatalf("installer order must be close app, wait for unlock, copy files (close=%d wait=%d copy=%d)", closeApp, wait, copyFiles)
+	}
+}
+
 func TestDesktopBuildScriptCompilesAndPackagesWindowsUpdateHelper(t *testing.T) {
 	data, err := os.ReadFile("../scripts/desktop-build.sh")
 	if err != nil {

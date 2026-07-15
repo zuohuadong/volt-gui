@@ -148,6 +148,7 @@ type Controller struct {
 	// reasonix.toml on add/remove, building specs from entries). See mcp.go.
 	mcp                   mcpManager
 	mcpDefaultCallTimeout time.Duration
+	mcpConfigureSpec      func(*plugin.Spec)
 
 	// Capability routing (Delivery hybrid route). Not part of the provider-visible
 	// prefix; only seeds the turn-scoped ledger and optional semantic router.
@@ -393,6 +394,9 @@ type Options struct {
 	// MCPDefaultCallTimeout is the global MCP call cap used by hot-connected
 	// servers when they do not declare a server- or tool-specific override.
 	MCPDefaultCallTimeout time.Duration
+	// MCPConfigureSpec injects host-local trust and isolation policy into every
+	// hot-connected server without persisting that state in project config.
+	MCPConfigureSpec func(*plugin.Spec)
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot          string
@@ -500,6 +504,7 @@ func New(opts Options) *Controller {
 		jobs:                              opts.Jobs,
 		mcp:                               newMcpManager(opts.Host, opts.Registry, pluginCtx),
 		mcpDefaultCallTimeout:             opts.MCPDefaultCallTimeout,
+		mcpConfigureSpec:                  opts.MCPConfigureSpec,
 		runtimeProfile:                    runtimeProfile,
 		workspaceRoot:                     opts.WorkspaceRoot,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
@@ -2073,7 +2078,7 @@ func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
 func (c *Controller) ReplayPendingPrompts() {
 	approvals, asks := c.approval.snapshotPrompts()
 	for _, a := range approvals {
-		c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: a})
+		c.sink.Emit(c.approvalRequestEvent(a))
 	}
 	for _, a := range asks {
 		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
@@ -4235,7 +4240,7 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 // overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 	exp := e.ExpandedPlugin()
-	return c.mcp.connectSpec(plugin.ApplyKnownOverrides(plugin.Spec{
+	spec := plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:                     exp.Name,
 		Type:                     exp.Type,
 		Command:                  exp.Command,
@@ -4250,7 +4255,11 @@ func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
 		DefaultToolsApprovalMode: exp.DefaultToolsApprovalMode,
 		ToolApprovalModes:        controllerMCPToolApprovalModes(exp.Tools),
 		ApprovalsReviewer:        exp.ApprovalsReviewer,
-	}, c.WorkspaceRoot()))
+	}, c.WorkspaceRoot())
+	if c.mcpConfigureSpec != nil {
+		c.mcpConfigureSpec(&spec)
+	}
+	return c.mcp.connectSpec(spec)
 }
 
 func controllerMCPTimeout(seconds int) time.Duration {
@@ -4767,21 +4776,23 @@ func (g gateApprover) ApproveMCP(ctx context.Context, toolName, subject string, 
 	if !forced && g.c.approval.preApproved(toolName, subject, args) {
 		return true, "", nil
 	}
-	if reviewer == tool.MCPApprovalReviewerAutoReview {
-		if g.c.guardianSess == nil {
-			return false, "automatic MCP approval review is configured, but no reviewer session is available", nil
-		}
-		if g.c.executor == nil {
-			return false, "automatic MCP approval review is configured, but no parent session is available", nil
-		}
-		allow, reason, err := g.c.guardianSess.Review(ctx, toolName, args, g.c.executor.Session())
-		if err != nil {
-			return false, "automatic MCP approval review failed", err
-		}
-		return allow, reason, nil
-	}
+	// A destructive MCP call always requires a fresh user decision. This check
+	// deliberately precedes Guardian/auto_review so no reviewer, session grant,
+	// Auto, or YOLO posture can authorize it.
 	if destructive {
 		return g.ApproveFresh(ctx, toolName, subject, args)
+	}
+	if reviewer == tool.MCPApprovalReviewerAutoReview {
+		if g.c.guardianSess != nil && g.c.executor != nil {
+			allow, reason, err := g.c.guardianSess.Review(ctx, toolName, args, g.c.executor.Session())
+			if err == nil {
+				// A successful negative verdict is explicit and never falls back.
+				return allow, reason, nil
+			}
+			slog.Warn("automatic MCP approval review unavailable; falling back to global approval mode", "tool", toolName, "err", err)
+		}
+		// Missing reviewer/parent, timeout, transport failure, or indeterminate
+		// review follows the same global posture as an ordinary MCP Ask below.
 	}
 
 	// An explicit MCP prompt/write policy outranks global Auto/YOLO. The legacy
@@ -5414,7 +5425,7 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 		id, reply = c.approval.register(tool, subject, reason)
 	}
 
-	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, Fresh: opts.fresh}})
+	c.sink.Emit(c.approvalRequestEvent(event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, Fresh: opts.fresh}))
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
 	go c.hooks.Notification(ctx, approvalNotificationText(tool, subject), "permission_prompt")
@@ -5429,6 +5440,47 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 		c.approval.cancel(id)
 		return approvalReply{}, waitCtx.Err()
 	}
+}
+
+func (c *Controller) approvalRequestEvent(approval event.Approval) event.Event {
+	approval.MCPTrust = c.mcpTrustApprovalPayload(approval.Tool)
+	return event.Event{Kind: event.ApprovalRequest, Approval: approval}
+}
+
+func (c *Controller) mcpTrustApprovalPayload(toolName string) *event.MCPTrust {
+	registry := c.mcp.registry()
+	if registry == nil {
+		return nil
+	}
+	installed, ok := registry.Get(toolName)
+	if !ok {
+		return nil
+	}
+	meta, ok := installed.(interface{ MCPServerName() string })
+	if !ok || strings.TrimSpace(meta.MCPServerName()) == "" {
+		return nil
+	}
+	host := c.mcp.hostRef()
+	if host == nil {
+		return nil
+	}
+	inspection, err := host.InspectTrust(meta.MCPServerName())
+	if err != nil {
+		return nil
+	}
+	security := inspection.Security
+	payload := &event.MCPTrust{
+		Server: security.Name, TrustState: string(security.TrustState), TrustSource: string(security.TrustSource),
+		TrustScope: string(security.TrustScope), IsolationState: string(security.IsolationState),
+		IsolationReason: security.IsolationReason, IdentityChanged: security.IdentityChanged,
+		ChangedTools: append([]string{}, security.ChangedTools...), Readers: append([]string{}, inspection.Readers...),
+		Writers: append([]string{}, inspection.Writers...), Destructive: append([]string{}, inspection.Destructive...),
+		ToolChanges: make([]event.MCPToolChange, 0, len(security.ToolChanges)),
+	}
+	for _, change := range security.ToolChanges {
+		payload.ToolChanges = append(payload.ToolChanges, event.MCPToolChange{Name: change.Name, Kind: change.Kind})
+	}
+	return payload
 }
 
 func (c *Controller) emitRememberResult(r RememberResult) {

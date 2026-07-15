@@ -41,12 +41,15 @@ import (
 	"reasonix/internal/fileref"
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/i18n"
+	"reasonix/internal/mcpcatalog"
 	"reasonix/internal/mcpdiag"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/memory"
 	"reasonix/internal/notify"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
+	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
@@ -5906,6 +5909,16 @@ type ServerView struct {
 	AuthURL                  string                          `json:"authUrl,omitempty"`
 	AuthConfigured           bool                            `json:"authConfigured,omitempty"`
 	ManagedByPlugin          string                          `json:"managedByPlugin,omitempty"`
+	TrustState               string                          `json:"trustState"`
+	TrustSource              string                          `json:"trustSource,omitempty"`
+	TrustScope               string                          `json:"trustScope,omitempty"`
+	IsolationState           string                          `json:"isolationState"`
+	IsolationReason          string                          `json:"isolationReason,omitempty"`
+	IdentityChanged          bool                            `json:"identityChanged,omitempty"`
+	ChangedTools             []string                        `json:"changedTools"`
+	ToolChanges              []MCPToolTrustChangeView        `json:"toolChanges"`
+	CatalogSequence          uint64                          `json:"catalogSequence,omitempty"`
+	VerifiedVersion          string                          `json:"verifiedVersion,omitempty"`
 }
 
 type ToolView struct {
@@ -5914,6 +5927,34 @@ type ToolView struct {
 	ReadOnlyHint    bool   `json:"readOnlyHint,omitempty"`
 	DestructiveHint bool   `json:"destructiveHint,omitempty"`
 	SchemaError     string `json:"schemaError,omitempty"`
+	TrustedReader   bool   `json:"trustedReader,omitempty"`
+}
+
+type MCPTrustInspectionView struct {
+	Name            string                   `json:"name"`
+	TrustState      string                   `json:"trustState"`
+	TrustSource     string                   `json:"trustSource,omitempty"`
+	TrustScope      string                   `json:"trustScope,omitempty"`
+	IsolationState  string                   `json:"isolationState"`
+	IsolationReason string                   `json:"isolationReason,omitempty"`
+	IdentityChanged bool                     `json:"identityChanged,omitempty"`
+	ChangedTools    []string                 `json:"changedTools"`
+	ToolChanges     []MCPToolTrustChangeView `json:"toolChanges"`
+	Readers         []string                 `json:"readers"`
+	Writers         []string                 `json:"writers"`
+	Destructive     []string                 `json:"destructive"`
+}
+
+type MCPToolTrustChangeView struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+type MCPCatalogRefreshView struct {
+	Source   string `json:"source"`
+	Sequence uint64 `json:"sequence"`
+	Offline  bool   `json:"offline"`
+	Stale    bool   `json:"stale"`
 }
 
 // SkillView is one discoverable skill for the drawer. Also backs the
@@ -5988,6 +6029,172 @@ func (a *App) Capabilities() CapabilitiesView {
 // skill discovery.
 func (a *App) MCPServers() []ServerView {
 	return a.mcpServersView()
+}
+
+// InspectMCPTrust performs only initialize/tools-list when the server is not
+// already connected. No MCP tool is invoked.
+func (a *App) InspectMCPTrust(name string) (MCPTrustInspectionView, error) {
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
+		return MCPTrustInspectionView{}, fmt.Errorf("no active session")
+	}
+	var inspection plugin.TrustInspection
+	var err error
+	if host := ctrl.Host(); host != nil && host.HasClient(name) {
+		inspection, err = host.InspectTrust(name)
+	} else {
+		var spec plugin.Spec
+		spec, err = a.mcpTrustSpec(name)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			inspection, err = plugin.InspectSpec(ctx, spec)
+		}
+	}
+	if err != nil {
+		return MCPTrustInspectionView{}, err
+	}
+	a.recordMCPSecurityMetric("mcp_trust_prompt", "total")
+	if inspection.Security.IdentityChanged {
+		a.recordMCPSecurityMetric("mcp_trust_drift", "identity")
+	} else if len(inspection.Security.ChangedTools) > 0 {
+		a.recordMCPSecurityMetric("mcp_trust_drift", "capability")
+	}
+	if inspection.Security.IsolationState == mcptrust.IsolationUnavailableUnconfined {
+		a.recordMCPSecurityMetric("mcp_isolation", "unavailable_unconfined")
+	}
+	return mcpTrustInspectionView(inspection), nil
+}
+
+// SetMCPTrust grants session/workspace trust or revokes it. The receipt remains
+// host-local and never modifies the project MCP configuration.
+func (a *App) SetMCPTrust(name, decision string) error {
+	ctrl := a.activeCtrl()
+	if ctrl == nil {
+		return fmt.Errorf("no active session")
+	}
+	if controllerHasActiveRuntimeWork(ctrl) {
+		return rebuildControllerActiveWorkError("MCP trust")
+	}
+	decision = strings.ToLower(strings.TrimSpace(decision))
+	host := ctrl.Host()
+	if decision != "workspace" && host != nil && host.HasClient(name) {
+		if err := host.SetTrust(name, decision); err != nil {
+			return err
+		}
+		a.recordMCPSecurityMetric("mcp_trust_source", decision)
+		return nil
+	}
+	spec, err := a.mcpTrustSpec(name)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := plugin.SetSpecTrust(ctx, spec, decision); err != nil {
+		return err
+	}
+	if decision != "workspace" || host == nil || !host.HasClient(name) {
+		a.recordMCPSecurityMetric("mcp_trust_source", decision)
+		return nil
+	}
+	entry, found, err := a.desktopMCPServerForEdit(name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("trusted MCP server %q but could not reload its configuration", name)
+	}
+	ctrl.DisconnectMCPServer(name)
+	if _, err := ctrl.ConnectMCPServer(entry); err != nil {
+		recordMCPFailure(ctrl, entry, err)
+		return fmt.Errorf("MCP trust was saved, but reconnecting the exact locked server failed: %w", err)
+	}
+	a.recordMCPSecurityMetric("mcp_trust_source", decision)
+	return nil
+}
+
+func (a *App) RefreshMCPCatalog() (MCPCatalogRefreshView, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, true)
+	if err != nil {
+		a.recordMCPSecurityMetric("mcp_catalog_verify", "failed")
+		return MCPCatalogRefreshView{}, err
+	}
+	if result.Source == mcpcatalog.SourceRemote {
+		a.recordMCPSecurityMetric("mcp_catalog_verify", "remote_valid")
+	} else {
+		a.recordMCPSecurityMetric("mcp_catalog_verify", "offline_snapshot")
+	}
+	return MCPCatalogRefreshView{Source: string(result.Source), Sequence: result.Index.Sequence, Offline: result.Offline, Stale: result.Stale}, nil
+}
+
+func (a *App) recordMCPSecurityMetric(signal, bucket string) {
+	if version == "dev" {
+		return
+	}
+	if metrics := a.metrics.Load(); metrics != nil {
+		metrics.inc(signal, bucket)
+		metrics.persist()
+	}
+}
+
+func (a *App) mcpTrustSpec(name string) (plugin.Spec, error) {
+	a.mu.RLock()
+	tab := a.activeTabLocked()
+	root := ""
+	if tab != nil {
+		root = tab.WorkspaceRoot
+	}
+	a.mu.RUnlock()
+	if tab == nil {
+		return plugin.Spec{}, fmt.Errorf("no active workspace")
+	}
+	cfg, err := config.LoadForRoot(root)
+	if err != nil {
+		return plugin.Spec{}, err
+	}
+	var entry *config.PluginEntry
+	for i := range cfg.Plugins {
+		if cfg.Plugins[i].Name == name {
+			entry = &cfg.Plugins[i]
+			break
+		}
+	}
+	if entry == nil {
+		return plugin.Spec{}, fmt.Errorf("no configured MCP server named %q", name)
+	}
+	specs := boot.PluginSpecsForRootWithOptions([]config.PluginEntry{*entry}, root, boot.PluginSpecOptions{
+		DefaultCallTimeout: time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
+		TrustManager:       mcptrust.ForWorkspace(config.ReasonixHomeDir(), root),
+		ConfigSource:       "workspace_config", StateHome: config.ReasonixHomeDir(),
+		WriterRoots: cfg.WriteRootsForRoot(root), ForbidReadRoots: cfg.ForbidReadRootsForRoot(root),
+		Network: cfg.Sandbox.Network,
+	})
+	if len(specs) != 1 {
+		return plugin.Spec{}, fmt.Errorf("failed to build MCP server %q", name)
+	}
+	return specs[0], nil
+}
+
+func mcpTrustInspectionView(in plugin.TrustInspection) MCPTrustInspectionView {
+	return MCPTrustInspectionView{
+		Name: in.Security.Name, TrustState: string(in.Security.TrustState),
+		TrustSource: string(in.Security.TrustSource), TrustScope: string(in.Security.TrustScope),
+		IsolationState: string(in.Security.IsolationState), IsolationReason: in.Security.IsolationReason, IdentityChanged: in.Security.IdentityChanged,
+		ChangedTools: append([]string{}, in.Security.ChangedTools...), Readers: append([]string{}, in.Readers...),
+		ToolChanges: mcpToolTrustChangeViews(in.Security.ToolChanges),
+		Writers:     append([]string{}, in.Writers...), Destructive: append([]string{}, in.Destructive...),
+	}
+}
+
+func mcpToolTrustChangeViews(changes []mcptrust.ToolChange) []MCPToolTrustChangeView {
+	out := make([]MCPToolTrustChangeView, 0, len(changes))
+	for _, change := range changes {
+		out = append(out, MCPToolTrustChangeView{Name: change.Name, Kind: change.Kind})
+	}
+	return out
 }
 
 // SkillsSettings returns the skills management snapshot without MCP status.
@@ -6119,6 +6326,10 @@ func (a *App) mcpServersView() []ServerView {
 		}
 	}
 	if h := ctrl.Host(); h != nil {
+		securityByName := map[string]plugin.SecurityStatus{}
+		for _, status := range h.SecurityStatuses() {
+			securityByName[status.Name] = status
+		}
 		for _, s := range h.Servers() {
 			if disabledView, ok := disabled[s.Name]; ok {
 				disabledView.Status = "disabled"
@@ -6142,6 +6353,7 @@ func (a *App) mcpServersView() []ServerView {
 				HasTools: s.HasTools,
 				ToolList: pluginToolsToView(s.ToolList),
 			}
+			applyMCPTrustStatus(&view, securityByName[s.Name])
 			if p, ok := configured[s.Name]; ok {
 				view = withPluginConfig(view, p)
 			}
@@ -6152,6 +6364,7 @@ func (a *App) mcpServersView() []ServerView {
 			view := ServerView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", RuntimeState: "issue", Error: f.Error,
 			}
+			applyMCPTrustStatus(&view, securityByName[f.Name])
 			if p, ok := configured[f.Name]; ok {
 				view = withPluginConfig(view, p)
 			}
@@ -6201,6 +6414,24 @@ func (a *App) mcpServersView() []ServerView {
 	out = orderServerViews(out, order)
 	for i := range out {
 		out[i].ManagedByPlugin = managedByPlugin[out[i].Name]
+		if out[i].TrustState == "" {
+			out[i].TrustState = string(mcptrust.TrustUntrusted)
+		}
+		if out[i].IsolationState == "" {
+			if out[i].Transport == "http" || out[i].Transport == "streamable-http" || out[i].Transport == "streamable_http" {
+				out[i].IsolationState = string(mcptrust.IsolationNotApplicable)
+			} else if sandbox.Available() {
+				out[i].IsolationState = string(mcptrust.IsolationEnforced)
+			} else {
+				out[i].IsolationState = string(mcptrust.IsolationUnavailableUnconfined)
+			}
+		}
+		if out[i].ChangedTools == nil {
+			out[i].ChangedTools = []string{}
+		}
+		if out[i].ToolChanges == nil {
+			out[i].ToolChanges = []MCPToolTrustChangeView{}
+		}
 	}
 
 	a.mu.Lock()
@@ -6213,6 +6444,25 @@ func (a *App) mcpServersView() []ServerView {
 	}
 	a.mu.Unlock()
 	return out
+}
+
+func applyMCPTrustStatus(view *ServerView, status plugin.SecurityStatus) {
+	if view == nil || status.Name == "" {
+		return
+	}
+	view.TrustState = string(status.TrustState)
+	view.TrustSource = string(status.TrustSource)
+	view.TrustScope = string(status.TrustScope)
+	view.IsolationState = string(status.IsolationState)
+	view.IsolationReason = status.IsolationReason
+	view.IdentityChanged = status.IdentityChanged
+	view.ChangedTools = append([]string{}, status.ChangedTools...)
+	view.ToolChanges = mcpToolTrustChangeViews(status.ToolChanges)
+	view.CatalogSequence = status.CatalogSequence
+	view.VerifiedVersion = status.VerifiedVersion
+	if status.TrustError != "" && view.Error == "" {
+		view.Error = status.TrustError
+	}
 }
 
 func mcpStartIntent(p config.PluginEntry) string {
@@ -6719,7 +6969,7 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		URL:                      in.URL,
 		Env:                      in.Env,
 		Headers:                  in.Headers,
-		TrustedReadOnlyTools:     uniqueStrings(in.TrustedReadOnlyTools),
+		TrustedReadOnlyTools:     nil,
 		AutoStart:                in.AutoStart,
 		CallTimeoutSeconds:       mcpIntValue(in.CallTimeoutSeconds),
 		ToolTimeoutSeconds:       cloneStringIntMap(in.ToolTimeoutSeconds),
@@ -6764,9 +7014,6 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if in.Headers != nil {
 		updated.Headers = in.Headers
-	}
-	if in.TrustedReadOnlyTools != nil {
-		updated.TrustedReadOnlyTools = uniqueStrings(in.TrustedReadOnlyTools)
 	}
 	if in.AutoStart != nil {
 		value := *in.AutoStart
@@ -7257,12 +7504,20 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 	}
 	for _, s := range ctrl.Host().Servers() {
 		if s.Name == name {
-			return ServerView{
+			view := ServerView{
 				Name: s.Name, Transport: s.Transport, Status: "connected",
 				Tools: s.Tools, Prompts: s.Prompts, Resources: s.Resources,
-				HasTools: s.HasTools,
-				ToolList: pluginToolsToView(s.ToolList),
-			}, true
+				HasTools:     s.HasTools,
+				ToolList:     pluginToolsToView(s.ToolList),
+				ChangedTools: []string{},
+			}
+			for _, status := range ctrl.Host().SecurityStatuses() {
+				if status.Name == name {
+					applyMCPTrustStatus(&view, status)
+					break
+				}
+			}
+			return view, true
 		}
 	}
 	for _, f := range ctrl.Host().Failures() {
@@ -7275,12 +7530,12 @@ func findMCPServerView(ctrl control.SessionAPI, name string) (ServerView, bool) 
 
 func pluginToolsToView(tools []plugin.ToolInfo) []ToolView {
 	if len(tools) == 0 {
-		return nil
+		return []ToolView{}
 	}
 	out := make([]ToolView, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, ToolView{
-			Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint, DestructiveHint: t.DestructiveHint, SchemaError: t.SchemaError,
+			Name: t.Name, Description: t.Description, ReadOnlyHint: t.ReadOnlyHint, DestructiveHint: t.DestructiveHint, SchemaError: t.SchemaError, TrustedReader: t.TrustedReader,
 		})
 	}
 	return out

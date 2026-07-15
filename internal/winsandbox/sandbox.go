@@ -19,11 +19,13 @@ var ErrUnsupported = errors.New("windows sandbox is unavailable")
 // because low-integrity tokens do not provide reliable per-process network
 // blocking without elevated firewall or WFP setup.
 type Spec struct {
-	WritableRoots   []string
-	ForbidReadRoots []string
-	Network         bool
-	Writable        bool
-	TempPrefix      string
+	WritableRoots             []string
+	ReadableRoots             []string
+	AppContainerWritableRoots []string
+	ForbidReadRoots           []string
+	Network                   bool
+	Writable                  bool
+	TempPrefix                string
 	// LockWait bounds how long this run may queue behind another sandboxed
 	// command holding the same per-root lock before failing with a clear
 	// error. Zero uses the short interactive default; callers whose run

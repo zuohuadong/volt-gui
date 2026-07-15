@@ -28,6 +28,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install and verify Linux sandbox backend
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --ro-bind / / --dev /dev --proc /proc -- true
+
       # Skipped on Windows: the runner checks out CRLF, so gofmt -l flags every
       # file. gofmt output is OS-independent, so the Unix legs already cover it.
       - name: gofmt
@@ -78,6 +85,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install and verify Linux sandbox backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --ro-bind / / --dev /dev --proc /proc -- true
 
       # The matrix never runs -race (it needs cgo); the project's concurrency
       # (plugin fan-out, background phase B, jobs Kill/Wait) would otherwise

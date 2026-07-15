@@ -4,7 +4,7 @@ import { asArray } from "../lib/array";
 import { app, openExternal } from "../lib/bridge";
 import { useT } from "../lib/i18n";
 import { mcpServerLifecycleActions, mcpServerRetryableFromAvailableList } from "../lib/mcpServerLifecycle";
-import type { CapabilitiesView, MCPApprovalMode, MCPApprovalsReviewer, MCPServerInput, MCPToolPolicy, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
+import type { CapabilitiesView, MCPApprovalMode, MCPApprovalsReviewer, MCPServerInput, MCPToolPolicy, MCPTrustInspectionView, PluginAgentView, PluginCommandView, PluginCompatibilityIssue, PluginHookView, PluginInstallOptions, PluginMCPServerView, PluginSkillView, PluginView, ServerView, SkillRootSkillView, SkillRootView, SkillsSettingsView, SkillView, TabMeta } from "../lib/types";
 import { InlineConfirmButton } from "./InlineConfirmButton";
 import { ResizableDrawer } from "./ResizableDrawer";
 import { Tooltip } from "./Tooltip";
@@ -326,6 +326,7 @@ function normalizeServerViews(servers: ServerView[] | null | undefined): ServerV
       headerKeys: asArray(server.headerKeys),
       toolList: asArray(server.toolList),
       trustedReadOnlyTools: asArray(server.trustedReadOnlyTools),
+      toolChanges: asArray(server.toolChanges),
     })),
   );
 }
@@ -1159,7 +1160,9 @@ function EditServerForm({
       url: isStdio ? "" : url.trim(),
       env: envText === "" ? null : parseKeyValueText(envText),
       headers: isStdio || headerText === "" ? null : parseKeyValueText(headerText),
-      trustedReadOnlyTools: s.trustedReadOnlyTools ?? [],
+      // Legacy trust is imported by the host into a local receipt. Never
+      // write the deprecated config field back from the settings UI.
+      trustedReadOnlyTools: undefined,
     });
   };
 
@@ -2276,6 +2279,45 @@ function mcpSettingsServerSummary(server: ServerView, t: ReturnType<typeof useT>
 	return parts.join(" · ");
 }
 
+function mcpTrustLabel(server: ServerView, t: ReturnType<typeof useT>): string {
+	if (server.trustState === "official") return t("caps.trustOfficial");
+	if (server.trustState === "workspace") return t("caps.trustWorkspace");
+	if (server.trustState === "session") return t("caps.trustSession");
+	if (server.trustState === "changed") return t("caps.trustChanged");
+	return t("caps.trustUntrusted");
+}
+
+function mcpIsolationLabel(server: ServerView, t: ReturnType<typeof useT>): string {
+	if (server.isolationState === "unavailable_unconfined") return t("caps.unisolated");
+	if (server.isolationState === "not_applicable") return t("caps.isolationNotApplicable");
+	return t("caps.isolated");
+}
+
+function mcpToolChangeMessages(toolChanges: ServerView["toolChanges"] | MCPTrustInspectionView["toolChanges"], changedTools: string[] | undefined, t: ReturnType<typeof useT>): string[] {
+	if (!toolChanges?.length) {
+		return changedTools?.length ? [t("caps.changedTools", { tools: changedTools.join(", ") })] : [];
+	}
+	const groups = new Map<string, string[]>();
+	for (const change of toolChanges) {
+		const names = groups.get(change.kind) ?? [];
+		names.push(change.name);
+		groups.set(change.kind, names);
+	}
+	return [...groups.entries()].map(([kind, names]) => {
+		const values = { count: names.length, tools: names.sort().join(", ") };
+		switch (kind) {
+		case "added": return t("caps.changeAdded", values);
+		case "reader_to_writer": return t("caps.changeReaderWriter", values);
+		case "reader_to_destructive": return t("caps.changeReaderDestructive", values);
+		case "writer_to_reader": return t("caps.changeWriterReader", values);
+		case "safety_changed": return t("caps.changeSafety", values);
+		case "name_changed": return t("caps.changeName", values);
+		case "schema_changed": return t("caps.changeSchema", values);
+		default: return t("caps.changedTools", values);
+		}
+	});
+}
+
 function mcpSettingsSearchText(server: ServerView): string {
 	return [
 		server.name,
@@ -2346,6 +2388,8 @@ function MCPSettingsServerRow({
 						<span className="cap-mcp-list-row__name">{server.name}</span>
 						<span className="cap-mcp-list-row__transport">{server.transport}</span>
 						{server.builtIn && <span className="cap-row__builtin">{t("caps.builtIn")}</span>}
+						<span className="cap-row__builtin" data-trust={server.trustState || "untrusted"}>{mcpTrustLabel(server, t)}</span>
+						{server.isolationState === "unavailable_unconfined" && <span className="cap-row__builtin">{t("caps.unisolated")}</span>}
 					</span>
 					<span className={`cap-mcp-list-row__summary${server.status === "failed" ? " cap-mcp-list-row__summary--error" : ""}`}>
 						{mcpSettingsServerSummary(server, t)}
@@ -2463,7 +2507,9 @@ function mcpServerDraftInput(draft: MCPServerEditorDraft): MCPServerInput {
 		autoStart: draft.autoStart ?? null,
 		callTimeoutSeconds: draft.callTimeoutSeconds ?? null,
 		toolTimeoutSeconds: draft.toolTimeoutSeconds ?? null,
-		trustedReadOnlyTools: draft.trustedReadOnlyTools,
+		// Keep parsing the legacy field for the two-release migration window,
+		// but never generate it in a new or edited server configuration.
+		trustedReadOnlyTools: undefined,
 		defaultToolsApprovalMode: draft.defaultToolsApprovalMode ?? null,
 		tools: draft.tools ?? null,
 		approvalsReviewer: draft.approvalsReviewer ?? null,
@@ -2483,7 +2529,6 @@ export function mcpServerDraftJSON(draft: MCPServerEditorDraft): string {
 	if (input.autoStart != null) entry.auto_start = input.autoStart;
 	if (input.callTimeoutSeconds != null) entry.call_timeout_seconds = input.callTimeoutSeconds;
 	if (input.toolTimeoutSeconds && Object.keys(input.toolTimeoutSeconds).length > 0) entry.tool_timeout_seconds = input.toolTimeoutSeconds;
-	if (input.trustedReadOnlyTools) entry.trusted_read_only_tools = input.trustedReadOnlyTools;
 	if (input.defaultToolsApprovalMode != null) entry.default_tools_approval_mode = input.defaultToolsApprovalMode;
 	if (input.tools && Object.keys(input.tools).length > 0) entry.tools = input.tools;
 	if (input.approvalsReviewer != null) entry.approvals_reviewer = input.approvalsReviewer;
@@ -2532,10 +2577,10 @@ function nonNegativeIntegerRecord(value: unknown): Record<string, number> | unde
 export function withExplicitMCPClears(input: MCPServerInput): MCPServerInput {
 	return {
 		...input,
+		trustedReadOnlyTools: undefined,
 		autoStart: input.autoStart ?? true,
 		callTimeoutSeconds: input.callTimeoutSeconds ?? 0,
 		toolTimeoutSeconds: input.toolTimeoutSeconds ?? {},
-		trustedReadOnlyTools: input.trustedReadOnlyTools ?? [],
 		defaultToolsApprovalMode: input.defaultToolsApprovalMode ?? "",
 		tools: input.tools ?? {},
 		approvalsReviewer: input.approvalsReviewer ?? "",
@@ -2803,6 +2848,42 @@ function MCPServerSettingsEditor({
 	);
 }
 
+function MCPTrustModal({
+	inspection,
+	busy,
+	onDecision,
+	onCancel,
+}: {
+	inspection: MCPTrustInspectionView;
+	busy: boolean;
+	onDecision: (decision: "workspace" | "session") => void;
+	onCancel: () => void;
+}) {
+	const t = useT();
+	return (
+		<div className="modal-backdrop" role="presentation">
+			<div className="modal" role="dialog" aria-modal="true" aria-labelledby="mcp-trust-title">
+				<div className="modal__title" id="mcp-trust-title">{t("caps.trustTitle", { name: inspection.name })}</div>
+				<p>{t("caps.trustExplanation")}</p>
+				{inspection.isolationState === "unavailable_unconfined" && <div className="banner banner--warn">{t("caps.unisolatedWarning")}</div>}
+				{inspection.isolationState === "unavailable_unconfined" && inspection.isolationReason && <div className="drawer__summary">{inspection.isolationReason}</div>}
+				{inspection.identityChanged && <div className="banner banner--warn">{t("caps.identityChanged")}</div>}
+				{mcpToolChangeMessages(inspection.toolChanges, inspection.changedTools, t).map((message) => <div className="banner banner--warn" key={message}>{message}</div>)}
+				<div className="modal__subject">
+					<div>{t("caps.readerTools", { count: inspection.readers.length })}: {inspection.readers.join(", ") || "—"}</div>
+					<div>{t("caps.writerTools", { count: inspection.writers.length })}: {inspection.writers.join(", ") || "—"}</div>
+					<div>{t("caps.destructiveTools", { count: inspection.destructive.length })}: {inspection.destructive.join(", ") || "—"}</div>
+				</div>
+				<div className="modal__actions">
+					<button className="btn btn--small" type="button" disabled={busy} onClick={onCancel}>{t("common.cancel")}</button>
+					<button className="btn btn--small" type="button" disabled={busy} onClick={() => onDecision("session")}>{t("caps.trustSessionAction")}</button>
+					<button className="btn btn--primary btn--small" type="button" disabled={busy} onClick={() => onDecision("workspace")}>{t("caps.trustWorkspaceAction")}</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 // MCPServersSettingsPage is a self-contained MCP servers management page
 // embedded inside the settings centre.
 export function MCPServersSettingsPage() {
@@ -2811,8 +2892,10 @@ export function MCPServersSettingsPage() {
 	const [servers, setServers] = useState<ServerView[] | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
+	const [catalogStatus, setCatalogStatus] = useState<{ message: string; warning: boolean } | null>(null);
 	const [query, setQuery] = useState("");
 	const [screen, setScreen] = useState<MCPSettingsScreen>({ kind: "list" });
+	const [trustInspection, setTrustInspection] = useState<MCPTrustInspectionView | null>(null);
 
 	const reload = useCallback(async () => {
 		const [meta, tabs] = await Promise.all([
@@ -2853,6 +2936,41 @@ export function MCPServersSettingsPage() {
 			setBusy(false);
 		}
 	};
+	const inspectTrust = async (name: string) => {
+		setBusy(true);
+		setErr(null);
+		try {
+			setTrustInspection(await app.InspectMCPTrust(name));
+		} catch (e) {
+			setErr(String((e as Error)?.message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	};
+	const decideTrust = async (decision: "workspace" | "session") => {
+		if (!trustInspection) return;
+		const name = trustInspection.name;
+		const ok = await mutate(() => app.SetMCPTrust(name, decision));
+		if (ok) setTrustInspection(null);
+	};
+	const refreshCatalog = async () => {
+		setBusy(true);
+		setErr(null);
+		try {
+			const result = await app.RefreshMCPCatalog();
+			const statuses = [result.offline ? t("caps.catalogOffline") : t("caps.catalogVerified")];
+			if (result.stale) statuses.push(t("caps.catalogStale"));
+			setCatalogStatus({
+				message: t("caps.catalogResult", { sequence: result.sequence, status: statuses.join(" · ") }),
+				warning: Boolean(result.offline || result.stale),
+			});
+			await reload();
+		} catch (e) {
+			setErr(String((e as Error)?.message ?? e));
+		} finally {
+			setBusy(false);
+		}
+	};
 	const filteredServers = useMemo(() => {
 		const sorted = sortServersForDisplay(servers ?? []);
 		const normalizedQuery = query.trim().toLowerCase();
@@ -2879,12 +2997,15 @@ export function MCPServersSettingsPage() {
 
 	return (
 		<section className="cap-mcp-settings">
+			{trustInspection && <MCPTrustModal inspection={trustInspection} busy={busy} onDecision={(decision) => void decideTrust(decision)} onCancel={() => setTrustInspection(null)} />}
 			{err && <div className="banner banner--error" role="alert">{err}</div>}
+			{catalogStatus && <div className={`banner ${catalogStatus.warning ? "banner--warn" : "banner--info"}`}>{catalogStatus.message}</div>}
 			{screen.kind === "list" && (
 				<>
 					<div className="cap-mcp-list-toolbar">
 						{servers && servers.length > 0 ? <div className="drawer__summary">{summary}</div> : <span />}
 						<div className="cap-mcp-list-toolbar__actions">
+							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void refreshCatalog()}>{t("caps.refreshCatalog")}</button>
 							<Tooltip label={t("caps.refresh")}>
 								<button className="cap-mcp-icon-btn" type="button" aria-label={t("caps.refresh")} disabled={actionBusy} onClick={() => void reload()}>
 									<RefreshCw aria-hidden size={15} />
@@ -2928,7 +3049,7 @@ export function MCPServersSettingsPage() {
 					<MCPServerSettingsEditor
 						busy={busy}
 						onCancel={() => setScreen({ kind: "list" })}
-						onSubmit={(input) => void mutate(() => app.AddMCPServer(input)).then((ok) => { if (ok) setScreen({ kind: "list" }); })}
+						onSubmit={(input) => void mutate(() => app.AddMCPServer(input)).then((ok) => { if (ok) { setScreen({ kind: "list" }); void inspectTrust(input.name); } })}
 					/>
 				</div>
 			)}
@@ -2939,7 +3060,7 @@ export function MCPServersSettingsPage() {
 						server={selectedServer}
 						busy={busy}
 						onCancel={() => setScreen({ kind: "detail", name: selectedServer.name })}
-						onSubmit={(input) => void mutate(() => app.UpdateMCPServer(selectedServer.name, input)).then((ok) => { if (ok) setScreen({ kind: "detail", name: selectedServer.name }); })}
+						onSubmit={(input) => void mutate(() => app.UpdateMCPServer(selectedServer.name, input)).then((ok) => { if (ok) { setScreen({ kind: "detail", name: selectedServer.name }); void inspectTrust(selectedServer.name); } })}
 					/>
 				</div>
 			)}
@@ -2955,6 +3076,15 @@ export function MCPServersSettingsPage() {
 							</details>
 						</div>
 					)}
+					<div className="cap-mcp-detail-error">
+						<div className="drawer__summary">{mcpTrustLabel(selectedServer, t)} · {mcpIsolationLabel(selectedServer, t)}</div>
+						{selectedServer.isolationState === "unavailable_unconfined" && selectedServer.isolationReason && <div className="drawer__summary">{selectedServer.isolationReason}</div>}
+						{mcpToolChangeMessages(selectedServer.toolChanges, selectedServer.changedTools, t).map((message) => <div className="banner banner--warn" key={message}>{message}</div>)}
+						<div className="cap-mcp-editor__actions">
+							<button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void inspectTrust(selectedServer.name)}>{t("caps.reverify")}</button>
+							{selectedServer.trustState !== "untrusted" && <button className="btn btn--small" disabled={actionBusy} type="button" onClick={() => void mutate(() => app.SetMCPTrust(selectedServer.name, "revoke"))}>{t("caps.revokeTrust")}</button>}
+						</div>
+					</div>
 					<ServerDetails
 						s={selectedServer}
 						tools={selectedServer.toolList ?? []}

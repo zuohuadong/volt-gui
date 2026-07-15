@@ -89,12 +89,12 @@ func TestPlanModeRoutesOrdinaryToolsThroughPermissionGate(t *testing.T) {
 		{name: "shell writer", tool: fakeTool{name: "bash"}, args: `{"command":"rm -rf build"}`},
 		{name: "reader", tool: fakeTool{name: "read_file", readOnly: true}, readOnly: true},
 		{
-			name: "third-party hinted MCP reader",
+			name: "host-trusted MCP reader",
 			tool: annotatedMCPTool{
 				fakeTool:          fakeTool{name: "mcp__srv__query", readOnly: true},
 				server:            "srv",
 				raw:               "query",
-				untrustedReadOnly: true,
+				untrustedReadOnly: false,
 			},
 			readOnly: true,
 		},
@@ -254,7 +254,7 @@ func serializeToolSchemas(t *testing.T, schemas []provider.ToolSchema) string {
 	return string(b)
 }
 
-func TestUntrustedMCPReaderAllowedInMainPlanButExcludedFromReadOnlyAgents(t *testing.T) {
+func TestUntrustedMCPReaderBlockedInMainPlanAndExcludedFromReadOnlyAgents(t *testing.T) {
 	parent := tool.NewRegistry()
 	parent.Add(fakeTool{name: "read_file", readOnly: true})
 	parent.Add(annotatedMCPTool{
@@ -268,7 +268,7 @@ func TestUntrustedMCPReaderAllowedInMainPlanButExcludedFromReadOnlyAgents(t *tes
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query"})
-	if out.blocked || len(gate.calls) != 1 || !gate.calls[0].readOnly {
+	if !out.blocked || len(gate.calls) != 0 {
 		t.Fatalf("main Plan MCP reader outcome=%+v calls=%+v", out, gate.calls)
 	}
 
@@ -285,7 +285,7 @@ func TestUntrustedMCPReaderAllowedInMainPlanButExcludedFromReadOnlyAgents(t *tes
 	}
 }
 
-func TestPlanModeMCPWriterUsesOrdinaryPermission(t *testing.T) {
+func TestPlanModeMCPWriterIsHardBlockedBeforePermission(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__srv__write"}, server: "srv", raw: "write"})
 	gate := &mcpPermissionRecordingGate{allowNormal: true}
@@ -293,11 +293,8 @@ func TestPlanModeMCPWriterUsesOrdinaryPermission(t *testing.T) {
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write"})
-	if out.blocked || out.errMsg != "" || gate.normalCalls != 1 || gate.freshCalls != 0 {
+	if !out.blocked || gate.normalCalls != 0 || gate.freshCalls != 0 {
 		t.Fatalf("MCP writer outcome=%+v gate=%+v", out, gate)
-	}
-	if len(gate.readOnly) != 1 || gate.readOnly[0] {
-		t.Fatalf("MCP writer permission classification = %v", gate.readOnly)
 	}
 }
 
@@ -314,7 +311,7 @@ func TestPlanModeMCPWriterHonorsPermissionDenial(t *testing.T) {
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write"})
-	if !out.blocked || !strings.Contains(out.output, gate.reason) || gate.normalCalls != 1 || executions != 0 {
+	if !out.blocked || !strings.Contains(out.output, "Plan mode") || gate.normalCalls != 0 || executions != 0 {
 		t.Fatalf("denied MCP writer outcome=%+v gate=%+v executions=%d", out, gate, executions)
 	}
 }
@@ -332,7 +329,7 @@ func TestDestructiveMCPUsesFreshApprovalInPlanEvenWhenReadOnly(t *testing.T) {
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__danger"})
-	if out.blocked || out.errMsg != "" || gate.normalCalls != 0 || gate.freshCalls != 1 || gate.subject != "srv/danger/raw" {
+	if !out.blocked || gate.normalCalls != 0 || gate.freshCalls != 0 {
 		t.Fatalf("destructive MCP outcome=%+v gate=%+v", out, gate)
 	}
 }
@@ -350,7 +347,7 @@ func TestDestructiveMCPFailsClosedWithoutFreshApprovalGate(t *testing.T) {
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__danger"})
-	if !out.blocked || !strings.Contains(out.output, "requires fresh human approval") {
+	if !out.blocked || !strings.Contains(out.output, "Plan mode") {
 		t.Fatalf("destructive MCP fail-closed outcome = %+v", out)
 	}
 	if len(ordinary.calls) != 0 {

@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"reasonix/internal/agent"
@@ -35,6 +36,8 @@ import (
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
+	"reasonix/internal/mcpcatalog"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/memory"
 	"reasonix/internal/memorycompiler"
 	"reasonix/internal/migration"
@@ -42,6 +45,7 @@ import (
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
+	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
@@ -389,6 +393,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	pluginSpecOptions := PluginSpecOptions{
 		DefaultCallTimeout:   time.Duration(cfg.MCPCallTimeoutSeconds()) * time.Second,
 		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
+		TrustManager:         mcptrust.ForWorkspace(config.ReasonixHomeDir(), root),
+		ConfigSource:         "workspace_config",
+		StateHome:            config.ReasonixHomeDir(),
+		WriterRoots:          writeRoots,
+		ForbidReadRoots:      forbidReadRoots,
+		Network:              cfg.Sandbox.Network,
+		OfficialServers:      loadOfficialMCPTrust(ctx, cfg),
 	}
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
@@ -396,6 +407,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(opts.ExtraPlugins, root), cfg.Agent.PlanModeAllowedTools),
 		pluginSpecOptions.DefaultCallTimeout,
 	)
+	for i := range extraSpecs {
+		if extraSpecs[i].TrustManager == nil {
+			extraSpecs[i].TrustManager = pluginSpecOptions.TrustManager
+		}
+		if strings.TrimSpace(extraSpecs[i].ConfigSource) == "" {
+			extraSpecs[i].ConfigSource = "host_session"
+		}
+		applyMCPIsolation(&extraSpecs[i], root, pluginSpecOptions)
+	}
 	onDemandMCPSpecs := map[string]plugin.Spec{}
 	onDemandMCPNames := []string{}
 	if tokenEconomy {
@@ -1336,34 +1356,43 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	ctrlOpts := control.Options{
-		Runner:                 runner,
-		Executor:               executor,
-		Sink:                   sink,
-		Policy:                 policy,
-		SubagentGate:           headlessGate,
-		Label:                  label,
-		ModelRef:               modelRef,
-		SystemPrompt:           sysPrompt,
-		SessionDir:             sessionDir,
-		Host:                   pluginHost,
-		Commands:               cmds,
-		Skills:                 skills,
-		AllSkills:              allSkills,
-		SkillStore:             skillStore,
-		AllSkillStore:          allSkillStore,
-		SkillRunner:            skillRunner,
-		ReadOnlySkillRunner:    readOnlySkillRunner,
-		SkillProfile:           skillProfile,
-		Hooks:                  hookRunner,
-		Memory:                 mem,
-		Cleanup:                cleanup,
-		BalanceURL:             entry.BalanceURL,
-		BalanceKey:             entry.APIKey(),
-		BalanceClient:          balanceClient,
-		Jobs:                   jm,
-		Registry:               reg,
-		PluginCtx:              ctx,
-		MCPDefaultCallTimeout:  pluginSpecOptions.DefaultCallTimeout,
+		Runner:                runner,
+		Executor:              executor,
+		Sink:                  sink,
+		Policy:                policy,
+		SubagentGate:          headlessGate,
+		Label:                 label,
+		ModelRef:              modelRef,
+		SystemPrompt:          sysPrompt,
+		SessionDir:            sessionDir,
+		Host:                  pluginHost,
+		Commands:              cmds,
+		Skills:                skills,
+		AllSkills:             allSkills,
+		SkillStore:            skillStore,
+		AllSkillStore:         allSkillStore,
+		SkillRunner:           skillRunner,
+		ReadOnlySkillRunner:   readOnlySkillRunner,
+		SkillProfile:          skillProfile,
+		Hooks:                 hookRunner,
+		Memory:                mem,
+		Cleanup:               cleanup,
+		BalanceURL:            entry.BalanceURL,
+		BalanceKey:            entry.APIKey(),
+		BalanceClient:         balanceClient,
+		Jobs:                  jm,
+		Registry:              reg,
+		PluginCtx:             ctx,
+		MCPDefaultCallTimeout: pluginSpecOptions.DefaultCallTimeout,
+		MCPConfigureSpec: func(spec *plugin.Spec) {
+			if spec == nil {
+				return
+			}
+			spec.TrustManager = pluginSpecOptions.TrustManager
+			spec.ConfigSource = pluginSpecOptions.ConfigSource
+			applyMCPIsolation(spec, root, pluginSpecOptions)
+			applyOfficialMCPTrust(spec, pluginSpecOptions)
+		},
 		WorkspaceRoot:          root,
 		ExternalFolderToolRefs: readPathResolver,
 		AutoPlan:               cfg.Agent.AutoPlan,
@@ -1407,6 +1436,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrlOpts.Classifier = classifier
 	}
 	ctrl := control.New(ctrlOpts)
+	refreshMCPCatalogInBackground(pluginHost)
 	if tokenDelivery {
 		var router *capability.SemanticRouter
 		// Prefer agent.subagent_models["capability-router"] when configured.
@@ -1425,6 +1455,59 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, nil)
 	}
 	return ctrl, nil
+}
+
+var mcpCatalogRefreshState struct {
+	sync.Mutex
+	running bool
+	last    time.Time
+	index   mcpcatalog.Index
+	hosts   map[*plugin.Host]struct{}
+}
+
+func refreshMCPCatalogInBackground(host *plugin.Host) {
+	if host == nil {
+		return
+	}
+	mcpCatalogRefreshState.Lock()
+	if !mcpCatalogRefreshState.last.IsZero() && time.Since(mcpCatalogRefreshState.last) < 6*time.Hour {
+		index := mcpCatalogRefreshState.index
+		mcpCatalogRefreshState.Unlock()
+		host.ApplyCatalogRevocations(index.RevokedEntryIDs())
+		return
+	}
+	if mcpCatalogRefreshState.hosts == nil {
+		mcpCatalogRefreshState.hosts = map[*plugin.Host]struct{}{}
+	}
+	mcpCatalogRefreshState.hosts[host] = struct{}{}
+	if mcpCatalogRefreshState.running {
+		mcpCatalogRefreshState.Unlock()
+		return
+	}
+	mcpCatalogRefreshState.running = true
+	mcpCatalogRefreshState.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, true)
+		mcpCatalogRefreshState.Lock()
+		hosts := mcpCatalogRefreshState.hosts
+		mcpCatalogRefreshState.hosts = map[*plugin.Host]struct{}{}
+		mcpCatalogRefreshState.running = false
+		if err == nil {
+			mcpCatalogRefreshState.last = time.Now()
+			mcpCatalogRefreshState.index = result.Index
+		}
+		mcpCatalogRefreshState.Unlock()
+		if err != nil {
+			slog.Warn("refresh signed MCP catalog", "err", err)
+			return
+		}
+		revoked := result.Index.RevokedEntryIDs()
+		for target := range hosts {
+			target.ApplyCatalogRevocations(revoked)
+		}
+	}()
 }
 
 func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
@@ -1909,6 +1992,22 @@ func PluginSpecsForRoot(entries []config.PluginEntry, workspaceRoot string) []pl
 type PluginSpecOptions struct {
 	DefaultCallTimeout   time.Duration
 	PlanModeAllowedTools []string
+	TrustManager         *mcptrust.Manager
+	ConfigSource         string
+	StateHome            string
+	WriterRoots          []string
+	ForbidReadRoots      []string
+	Network              bool
+	OfficialServers      map[string]OfficialMCPTrust
+}
+
+type OfficialMCPTrust struct {
+	CatalogEntryID  string
+	Readers         []string
+	PackageDigest   string
+	Version         string
+	CatalogSequence uint64
+	Network         bool
 }
 
 // PluginSpecsForRootWithPlanModeAllowedTools promotes legacy model-visible MCP
@@ -1933,7 +2032,7 @@ func PluginSpecsForRootWithOptions(entries []config.PluginEntry, workspaceRoot s
 
 func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, opts PluginSpecOptions) plugin.Spec {
 	e = e.ExpandedPlugin() // resolve ${VAR} / ${VAR:-default} from the environment
-	return plugin.ApplyKnownOverrides(plugin.Spec{
+	spec := plugin.ApplyKnownOverrides(plugin.Spec{
 		Name:                     e.Name,
 		Type:                     e.Type,
 		Command:                  e.Command,
@@ -1948,7 +2047,94 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		DefaultToolsApprovalMode: e.DefaultToolsApprovalMode,
 		ToolApprovalModes:        mcpToolApprovalModes(e.Tools),
 		ApprovalsReviewer:        e.ApprovalsReviewer,
+		TrustManager:             opts.TrustManager,
+		ConfigSource:             opts.ConfigSource,
 	}, workspaceRoot)
+	applyMCPIsolation(&spec, workspaceRoot, opts)
+	applyOfficialMCPTrust(&spec, opts)
+	return spec
+}
+
+func applyOfficialMCPTrust(spec *plugin.Spec, opts PluginSpecOptions) {
+	if spec == nil {
+		return
+	}
+	if official, ok := opts.OfficialServers[spec.Name]; ok {
+		spec.OfficialCatalogEntryID = official.CatalogEntryID
+		spec.OfficialReaderNames = append([]string(nil), official.Readers...)
+		spec.PackageDigest = official.PackageDigest
+		spec.VerifiedVersion = official.Version
+		spec.CatalogSequence = official.CatalogSequence
+		spec.ReaderSandbox.Network = official.Network
+		spec.WriterSandbox.Network = official.Network
+	}
+}
+
+func loadOfficialMCPTrust(ctx context.Context, cfg *config.Config) map[string]OfficialMCPTrust {
+	out := map[string]OfficialMCPTrust{}
+	if cfg == nil {
+		return out
+	}
+	home := config.ReasonixHomeDir()
+	result, err := (mcpcatalog.Loader{CacheDir: config.CacheDir()}).Load(ctx, false)
+	if err != nil {
+		return out
+	}
+	for _, configured := range cfg.Plugins {
+		owner, ok := cfg.PluginPackageOwner(configured.Name)
+		if !ok {
+			continue
+		}
+		installed, ok, err := pluginpkg.FindInstalled(home, owner)
+		if err != nil || !ok || installed.Verification == nil || !pluginpkg.VerificationValid(home, installed) {
+			continue
+		}
+		for _, entry := range result.Index.Entries {
+			if entry.ID != installed.Verification.CatalogEntryID || result.Index.IsRevoked(entry.ID) ||
+				entry.Name != installed.Name || entry.Version != installed.Version || entry.Source != installed.Source ||
+				!strings.EqualFold(entry.Commit, installed.Commit) || !strings.EqualFold(entry.PackageSHA256, installed.Verification.PackageSHA256) {
+				continue
+			}
+			for _, server := range entry.Servers {
+				if server.Name != configured.Name {
+					continue
+				}
+				out[configured.Name] = OfficialMCPTrust{
+					CatalogEntryID: entry.ID, Readers: append([]string(nil), server.Readers...),
+					PackageDigest: entry.PackageSHA256, Version: entry.Version,
+					CatalogSequence: result.Index.Sequence, Network: server.Network,
+				}
+			}
+		}
+	}
+	return out
+}
+
+func applyMCPIsolation(spec *plugin.Spec, workspaceRoot string, opts PluginSpecOptions) {
+	if spec == nil || strings.TrimSpace(opts.StateHome) == "" {
+		return
+	}
+	stateDir := plugin.MCPStateDir(opts.StateHome, workspaceRoot, spec.Name)
+	writerRoots := appendUniquePaths([]string{stateDir}, opts.WriterRoots...)
+	readerRoots := []string{workspaceRoot}
+	if home, err := os.UserHomeDir(); err == nil {
+		readerRoots = appendUniquePaths(readerRoots, home)
+	}
+	spec.StateDir = stateDir
+	spec.ReaderSandbox = sandbox.Spec{
+		Mode: "enforce", WriteRoots: []string{stateDir},
+		ReadRoots:              readerRoots,
+		AppContainerWriteRoots: []string{stateDir},
+		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
+		Network:                opts.Network, MinimalWrites: true,
+	}
+	spec.WriterSandbox = sandbox.Spec{
+		Mode: "enforce", WriteRoots: writerRoots,
+		ReadRoots:              readerRoots,
+		AppContainerWriteRoots: append([]string(nil), writerRoots...),
+		ForbidReadRoots:        append([]string(nil), opts.ForbidReadRoots...),
+		Network:                opts.Network, MinimalWrites: true,
+	}
 }
 
 func mcpToolApprovalModes(policies map[string]config.MCPToolPolicy) map[string]string {

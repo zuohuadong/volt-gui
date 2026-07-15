@@ -54,7 +54,7 @@ try {
 ok(nullToolTimeoutRejected, "a null per-tool timeout must be rejected instead of silently clearing all timeouts");
 const sparseEdit = withExplicitMCPClears(parseMCPServerJSON(JSON.stringify({ admin: { command: "admin-mcp" } })).input);
 ok(sparseEdit.callTimeoutSeconds === 0 && sparseEdit.defaultToolsApprovalMode === "" && sparseEdit.approvalsReviewer === "", "editing an existing server with fields removed must clear those settings");
-ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && (sparseEdit.trustedReadOnlyTools ?? ["x"]).length === 0 && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear to empty values");
+ok(sparseEdit.autoStart === true && Object.keys(sparseEdit.toolTimeoutSeconds ?? { x: 1 }).length === 0 && sparseEdit.trustedReadOnlyTools === undefined && Object.keys(sparseEdit.tools ?? { x: 1 }).length === 0, "removed collection fields must clear while legacy trust stays absent");
 ok(sparseEdit.env === null && sparseEdit.headers === null, "absent env/headers must stay preserve-on-absent because their values are never seeded into the editor");
 
 const subagentTools = [
@@ -295,6 +295,125 @@ console.log("capabilities panel MCP actions");
   ok(!findButton("Pre-trust"), "MCP details do not expose per-tool pre-trust actions");
   ok(!findButton("Untrust"), "MCP details do not expose an untrust action");
   ok(!document.querySelector(".cap-tool-trust"), "MCP details do not expose a separate trust state");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const meta: Meta = { label: "test", ready: true, eventChannel: "trust-mcp-channel", cwd: "/tmp/reasonix-test", workspaceRoot: "/tmp/reasonix-test" };
+  const tabs: TabMeta[] = [{
+    id: "tab-trust-mcp",
+    scope: "project",
+    workspaceRoot: "/tmp/reasonix-test",
+    workspaceName: "reasonix-test",
+    topicId: "topic-trust-mcp",
+    topicTitle: "Trust MCP",
+    label: "Trust MCP",
+    ready: true,
+    running: false,
+    mode: "normal",
+    toolApprovalMode: "auto",
+    active: true,
+    cwd: "/tmp/reasonix-test",
+  }];
+  let trustDecision = "";
+  let servers: ServerView[] = [{
+    name: "github",
+    transport: "stdio",
+    status: "connected",
+    configured: true,
+    autoStart: true,
+    tools: 3,
+    prompts: 0,
+    resources: 0,
+    trustState: "changed",
+    identityChanged: true,
+    changedTools: ["issue_read"],
+    toolChanges: [{ name: "issue_read", kind: "reader_to_writer" }],
+    isolationState: "unavailable_unconfined",
+    isolationReason: "sandbox-exec is unavailable on PATH",
+    toolList: [
+      { name: "issue_read", description: "Read issues.", readOnlyHint: true },
+      { name: "issue_write", description: "Write issues." },
+      { name: "wipe", description: "Delete data.", destructiveHint: true },
+    ],
+  }];
+  window.go = {
+    main: {
+      App: {
+        Meta: async () => meta,
+        ListTabs: async () => tabs,
+        MCPServers: async () => servers,
+        InspectMCPTrust: async () => ({
+          name: "github",
+          trustState: "changed",
+          trustSource: "user",
+          trustScope: "workspace",
+          isolationState: "unavailable_unconfined",
+          isolationReason: "sandbox-exec is unavailable on PATH",
+          identityChanged: true,
+          changedTools: ["issue_read"],
+          toolChanges: [{ name: "issue_read", kind: "reader_to_writer" }],
+          readers: ["issue_read"],
+          writers: ["issue_write"],
+          destructive: ["wipe"],
+        }),
+        SetMCPTrust: async (_name: string, decision: string) => {
+          trustDecision = decision;
+          servers = servers.map((item) => ({ ...item, trustState: decision, identityChanged: false, changedTools: [], toolChanges: [] }));
+        },
+        RefreshMCPCatalog: async () => ({ source: "cached", sequence: 3, offline: true, stale: true }),
+      } as Partial<AppBindings> as AppBindings,
+    },
+  };
+
+  await act(async () => {
+    root.render(React.createElement(LocaleProvider, null, React.createElement(MCPServersSettingsPage)));
+    await flush();
+  });
+  await waitFor("changed MCP trust badge", () => Boolean(document.body.textContent?.includes("Security changed")));
+  ok(document.body.textContent?.includes("Unisolated") ?? false, "server list keeps an unisolated warning visible");
+  const refreshCatalog = findButton("Refresh catalog");
+  if (!refreshCatalog) throw new Error("missing catalog refresh action");
+  await act(async () => {
+    refreshCatalog.click();
+    await flush();
+  });
+  await waitFor("offline catalog result", () => Boolean(document.body.textContent?.includes("Catalog sequence 3")));
+  ok(document.body.textContent?.includes("Offline verified snapshot") && document.body.textContent?.includes("older than 30 days"), "catalog refresh reports verified LKG fallback and staleness without disabling plugins");
+  const openServer = document.querySelector<HTMLButtonElement>(".cap-mcp-list-row__main");
+  if (!openServer) throw new Error("missing changed MCP details button");
+  await act(async () => {
+    openServer.click();
+    await flush();
+  });
+  const reverify = findButton("Reverify");
+  if (!reverify) throw new Error("missing MCP reverify action");
+  await act(async () => {
+    reverify.click();
+    await flush();
+  });
+  await waitFor("MCP trust modal", () => Boolean(document.querySelector('[role="dialog"]')));
+  ok(document.body.textContent?.includes("Trust github?") ?? false, "trust modal identifies the server");
+  ok(document.body.textContent?.includes("may have startup side effects") ?? false, "trust modal explains the unisolated startup risk");
+  ok(document.body.textContent?.includes("sandbox-exec is unavailable on PATH") ?? false, "trust modal includes the backend diagnostic without requiring configuration");
+  ok(document.body.textContent?.includes("Reader became writer: issue_read") ?? false, "trust modal explains the exact safety transition");
+  ok(document.body.textContent?.includes("issue_read") && document.body.textContent?.includes("issue_write") && document.body.textContent?.includes("wipe"), "trust modal separates reader, writer, and destructive tools");
+  const trustWorkspace = findButton("Trust this workspace");
+  if (!trustWorkspace) throw new Error("missing workspace trust action");
+  await act(async () => {
+    trustWorkspace.click();
+    await flush();
+  });
+  await waitFor("workspace trust decision", () => trustDecision === "workspace");
+  ok(!document.querySelector('[role="dialog"]'), "successful trust closes the combined confirmation modal");
 
   await act(async () => {
     root.unmount();

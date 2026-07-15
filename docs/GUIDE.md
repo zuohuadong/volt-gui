@@ -393,7 +393,7 @@ Composer shortcuts:
 | --- | --- | --- |
 | `Enter` | Sends the current message | IME composition confirmation is left alone. |
 | `Shift+Enter` | Inserts a newline | The composer keeps focus. |
-| `Shift+Tab` | Toggles Plan on/off | Plan changes the workflow instruction, not the active Ask/Auto/YOLO or Sandbox boundary. |
+| `Shift+Tab` | Toggles Plan on/off | Plan changes the workflow instruction; built-in writers keep the active Ask/Auto/YOLO and Sandbox boundary, while MCP writer/destructive targets stay blocked until the plan is approved. |
 | `Cmd+Y` / `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. |
 | `Cmd+V` on macOS, `Ctrl+V` on Windows/Linux | Pastes clipboard content | Clipboard images are attached; images can also be dropped into the composer. |
 | Plain `Up` / `Down` at the prompt boundary | Recalls older or newer submitted prompts | Modified arrows and native text navigation stay with the textarea. |
@@ -467,7 +467,7 @@ Mode meanings:
 | Ask | Prompts for fallback writer approvals. |
 | Auto | Auto-allows fallback approvals; explicit `ask` / `deny` rules still apply. |
 | YOLO | Skips ordinary tool approval prompts; `deny`, user `ask` questions, and plan approval prompts still wait. |
-| Plan | Directs the model to plan first. Every tool, including built-in and MCP writers, still follows the active Ask/Auto/YOLO rules and Sandbox; explicit phase-only tools such as `complete_step` wait until approval. |
+| Plan | Directs the model to plan first — a plan-first workflow, not an all-tools read-only mode. Built-in writers still follow the active Ask/Auto/YOLO rules and Sandbox; installed MCP writers, destructive targets, and untrusted readers are blocked before approval, and explicit phase-only tools such as `complete_step` wait until approval. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 
 ## Permissions & sandbox
@@ -563,17 +563,24 @@ permission reader-default. Because the annotation is supplied by a third-party
 server, it is accepted by the main Plan workflow only as ordinary permission
 classification; it does not grant access to the dedicated planner or read-only
 research sub-agents. Use the local `trusted_read_only_tools` override for a
-reader you have audited. Tools without the hint remain write-capable. Built-in,
-MCP, and proxy-resolved writers all use the same permission posture while
-planning.
+reader you have audited. Tools without the hint remain write-capable. While planning, built-in
+writers keep the ordinary permission posture; installed MCP and proxy-resolved
+MCP writers, destructive targets, and untrusted readers are hard-blocked before
+any approval and return to their normal approval flow once Plan exits.
 
 MCP `destructiveHint: true` is stricter than both classifications. Every call
-requires a new review, even if the tool also reports `readOnlyHint`, the current
-posture is Auto/YOLO, or an allow rule was saved. The default reviewer is the
-user; `approvals_reviewer = "auto_review"` delegates each decision to the
-session Guardian. A missing, failed, timed-out, or denying automatic reviewer
-fails closed. Non-interactive runs and sub-agents also fail closed when the
-required reviewer is unavailable.
+requires a fresh human approval, even if the tool also reports `readOnlyHint`,
+the current posture is Auto/YOLO, or an allow rule was saved — Guardian,
+`auto_review`, and session grants can never authorize a destructive call.
+
+`approvals_reviewer = "auto_review"` routes the calls that actually need a
+review — `prompt` mode, writer hits under `writes`, and `auto` calls the global
+posture would Ask about — to the session Guardian, and a successful verdict
+(allow or deny) is final. When the reviewer is missing, times out, fails, or
+returns no verdict, the call falls back to fresh human approval: a prompt that
+Auto/YOLO, the approved-plan window, and session grants cannot answer.
+Non-interactive runs and sub-agents fail closed in every reviewer-required
+case.
 
 Server and raw-tool approval policy stays local and never changes the schema
 sent to the model:

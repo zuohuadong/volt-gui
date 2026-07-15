@@ -170,8 +170,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
 	// written config + ~/.env are picked up this same boot. CLI Run also calls this
 	// before config-only commands; this call stays as the shared frontend fallback.
-	migrated, migErr := config.MigrateLegacyIfNeededForRoot(root)
-	stepLimitsMigrated, stepLimitMigErr := config.MigrateLegacyAgentStepLimitsForRoot(root)
+	var migrated *config.MigrationResult
+	var migErr error
+	var stepLimitsMigrated bool
+	var stepLimitMigErr error
+	if !config.SafeModeRequested() {
+		migrated, migErr = config.MigrateLegacyIfNeededForRoot(root)
+		stepLimitsMigrated, stepLimitMigErr = config.MigrateLegacyAgentStepLimitsForRoot(root)
+	}
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return nil, err
@@ -267,8 +273,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	} else if stepLimitMigErr != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Deprecated agent step-limit migration did not complete.", Detail: stepLimitMigErr.Error()})
 	}
-	migration.MigrateLegacyMemorySources(sink)
-	migration.MigrateLegacySessionSources(sink)
+	// Safe Mode is a recovery boundary: it must not rewrite memory or session
+	// state that a crash may have corrupted, so the legacy-store imports run
+	// only on normal boots (matching the config migration gate above).
+	if !cfg.SafeMode() {
+		migration.MigrateLegacyMemorySources(sink)
+		migration.MigrateLegacySessionSources(sink)
+	}
 	if ignored := cfg.IgnoredProjectDefaultModel(); ignored != "" {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Ignored the project config's default_model.", Detail: fmt.Sprintf("./reasonix.toml sets default_model = %q but no configured provider serves it; using %q from your user config instead. Edit or remove that default_model line to silence this notice.", ignored, cfg.DefaultModel)})
 	}
@@ -288,8 +299,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if reconcileCleanupPending == nil {
 		reconcileCleanupPending = control.ReconcileCleanupPending
 	}
-	if err := reconcileCleanupPending(sessionDir); err != nil {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "cleanup-pending reconciliation failed: " + err.Error()})
+	// Skipped in Safe Mode: reconciliation physically deletes session artifacts,
+	// and a recovery boot must leave possibly-corrupt session state untouched.
+	if !cfg.SafeMode() {
+		if err := reconcileCleanupPending(sessionDir); err != nil {
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "cleanup-pending reconciliation failed: " + err.Error()})
+		}
 	}
 
 	proxySpec := cfg.NetworkProxySpec()
@@ -356,7 +371,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// durable, cache-stable prefix every turn reuses, so memory costs nothing per
 	// turn. Mid-session changes never touch this prefix — they ride the
 	// controller's transient turn-injection and fold in on the next session.
-	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
+	mem := &memory.Set{CWD: root}
+	if !cfg.SafeMode() {
+		mem = memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
+	}
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
 
@@ -372,6 +390,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ExcludedPaths:    cfg.SkillExcludedPaths(),
 		DisabledNames:    cfg.DisabledSkillNames(),
 		MaxDepth:         cfg.SkillMaxDepth(),
+		DisableDiscovery: cfg.SafeMode(),
 		Stderr:           opts.Stderr,
 	})
 	// Install the static profile filter before building the prompt index and
@@ -379,9 +398,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// registry/plugin host has been assembled below.
 	skillStore.ConfigureInvocationPolicy(string(runtimeProfile), nil)
 	skills := skillStore.List()
-	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+	allSkillStore := skillStore
+	if !cfg.SafeMode() {
+		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+	}
 	allSkills := allSkillStore.List()
-	if !tokenEconomy {
+	if !tokenEconomy && !cfg.SafeMode() {
 		sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 	}
 
@@ -436,8 +458,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	autoStartEntries := cfg.AutoStartPlugins()
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
+	extraPlugins := opts.ExtraPlugins
+	if cfg.SafeMode() {
+		// Safe Mode boots without external integrations: host-supplied MCP
+		// servers (e.g. ACP session servers) are dropped like config-declared
+		// plugins, so a recovery boot never starts external processes.
+		extraPlugins = nil
+	}
 	extraSpecs := applyDefaultMCPCallTimeout(
-		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(opts.ExtraPlugins, root), cfg.Agent.PlanModeAllowedTools),
+		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(extraPlugins, root), cfg.Agent.PlanModeAllowedTools),
 		pluginSpecOptions.DefaultCallTimeout,
 	)
 	onDemandMCPSpecs := map[string]plugin.Spec{}
@@ -651,13 +680,17 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// a Notice through the shared sink. The runner fires PreToolUse/PostToolUse in
 	// the agent loop and PermissionRequest/UserPromptSubmit/Stop at the controller
 	// boundary.
-	hooksTrusted := hook.IsTrusted(root, "")
+	hooksTrusted := !cfg.SafeMode() && hook.IsTrusted(root, "")
+	var resolvedHooks []hook.ResolvedHook
+	if !cfg.SafeMode() {
+		resolvedHooks = hook.Load(hook.LoadOptions{ProjectRoot: root, Trusted: hooksTrusted})
+	}
 	hookRunner := hook.NewRunner(
-		hook.Load(hook.LoadOptions{ProjectRoot: root, Trusted: hooksTrusted}),
+		resolvedHooks,
 		root, nil,
 		func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg}) },
 	)
-	if hook.ProjectDefinesHooks(root) && !hooksTrusted {
+	if !cfg.SafeMode() && hook.ProjectDefinesHooks(root) && !hooksTrusted {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 			Text: "this project defines hooks but they are not trusted — run /hooks trust to enable them"})
 	}
@@ -967,7 +1000,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	// Custom slash commands (.reasonix/commands + user dir). Best-effort: a malformed
 	// file is skipped, and a load error never blocks the session.
-	cmds, _ := command.LoadRoots(config.CommandRootsForRoot(root)...)
+	cmds := []command.Command{}
+	if !cfg.SafeMode() {
+		cmds, _ = command.LoadRoots(config.CommandRootsForRoot(root)...)
+	}
 	slashCommandAdded := false
 	slashCommandIncludesSkills := false
 	addSlashCommandTool := func(includeSkills bool) string {
@@ -1073,11 +1109,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		addSlashCommandTool(true)
 		return "enabled skills. Use run_skill/read_skill/read_only_skill or the dedicated skill tools on the next model request.\n\n" + skill.IndexBlock(skills)
 	}
-	if !tokenEconomy {
+	if cfg.SafeMode() {
+		// Safe Mode keeps the boot surface built-in only: no install_source, no
+		// skill tools, and no Economy tool-source connector below — the connector
+		// would let a session re-expose skills, commands, memory, and MCP that
+		// Safe Mode exists to keep out of a recovery boot. slash_command is still
+		// registered (with an empty list) so the tool surface stays predictable.
+		addSlashCommandTool(false)
+	} else if !tokenEconomy {
 		addInstallSourceTool()
 		addSkillTools()
 	}
-	if tokenEconomy {
+	if tokenEconomy && !cfg.SafeMode() {
 		addBuiltinSourceTools := func(source string, names ...string) string {
 			var missing []string
 			for _, name := range names {
@@ -1297,7 +1340,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 
 	execSess := agent.NewSession(sysPrompt)
 	var memCompiler *memorycompiler.Runtime
-	if cfg.MemoryCompilerEnabled() {
+	// Safe Mode is a recovery boundary: Memory v5 learning state stays untouched,
+	// matching the memory/session gates above.
+	if cfg.MemoryCompilerEnabled() && !cfg.SafeMode() {
 		memCompiler = memorycompiler.New(config.MemoryCompilerDir(root))
 	}
 	executor := agent.New(execProv, reg, execSess, agent.Options{

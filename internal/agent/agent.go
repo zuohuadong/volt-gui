@@ -3268,37 +3268,6 @@ func mcpApprovalSubject(t tool.Tool, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func (a *Agent) checkPlanModeBashReadOnlyTrust(ctx context.Context, call provider.ToolCall, trust *planmode.ReadOnlyCommandTrust) (bool, toolOutcome, bool) {
-	if a.planModeReadOnlyTrust == nil || trust == nil || strings.TrimSpace(trust.Prefix) == "" {
-		return false, toolOutcome{}, false
-	}
-	req := PlanModeReadOnlyTrustRequest{
-		ToolName: PlanModeReadOnlyCommandApprovalTool,
-		Command:  trust.Command,
-		Prefix:   trust.Prefix,
-		Args:     json.RawMessage(call.Arguments),
-	}
-	allow, reason, err := a.planModeReadOnlyTrust.CheckPlanModeReadOnlyTrust(ctx, req)
-	if err != nil {
-		return false, toolOutcome{
-			output:  fmt.Sprintf("blocked: plan-mode read-only command trust approval aborted (%v)", err),
-			blocked: true,
-			errMsg:  fmt.Sprintf("blocked: %v", err),
-		}, true
-	}
-	if !allow {
-		if strings.TrimSpace(reason) == "" {
-			reason = "the user declined to trust this bash command as read-only for plan mode — do not retry it; continue planning with other trusted read-only tools."
-		}
-		return false, toolOutcome{
-			output:  "blocked: " + reason,
-			blocked: true,
-			errMsg:  "blocked by plan-mode bash read-only trust",
-		}, true
-	}
-	return true, toolOutcome{}, true
-}
-
 func (a *Agent) planModeDecision(toolName string, readOnly, untrustedReadOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
 	return (planmode.Policy{}).Decide(planmode.Call{
 		Name:              toolName,

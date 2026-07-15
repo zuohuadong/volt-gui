@@ -27,7 +27,7 @@ func Command(spec Spec, sh Shell, command string) ([]string, bool) {
 // CommandArgs is like Command but accepts the command as raw argv instead of a
 // shell command string.
 func CommandArgs(spec Spec, args []string) ([]string, bool) {
-	return windowsSandboxCommand(spec, args, false)
+	return windowsSandboxCommand(spec, args, spec.DirectWrites)
 }
 
 func windowsSandboxCommand(spec Spec, args []string, writable bool) ([]string, bool) {
@@ -118,11 +118,13 @@ func RunWindowsSandboxHelper(args []string, stdin *os.File, stdout *os.File, std
 
 func convertWindowsSandboxSpec(spec Spec, writable bool) winsandbox.Spec {
 	return winsandbox.Spec{
-		WritableRoots:   append([]string(nil), spec.WriteRoots...),
-		ForbidReadRoots: append([]string(nil), spec.ForbidReadRoots...),
-		Network:         spec.Network,
-		Writable:        writable,
-		TempPrefix:      "reasonix-sandbox-",
-		LockWait:        spec.WindowsLockWait,
+		WritableRoots:             append([]string(nil), spec.WriteRoots...),
+		ReadableRoots:             append([]string(nil), spec.ReadRoots...),
+		AppContainerWritableRoots: append([]string(nil), spec.AppContainerWriteRoots...),
+		ForbidReadRoots:           append([]string(nil), spec.ForbidReadRoots...),
+		Network:                   spec.Network,
+		Writable:                  writable,
+		TempPrefix:                "reasonix-sandbox-",
+		LockWait:                  spec.WindowsLockWait,
 	}
 }

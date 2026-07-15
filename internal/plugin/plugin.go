@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/provider"
+	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
 
@@ -64,16 +66,51 @@ type Spec struct {
 	// captured in a bounded buffer for failure diagnostics; nil keeps it out of
 	// the terminal so child logs cannot corrupt interactive UIs.
 	Stderr io.Writer
-	// ReadOnlyToolNames marks trusted raw MCP tool names as read-only even when
-	// the server omits annotations.readOnlyHint. It is for known compatibility
-	// overrides or user-audited plugin config where the tool semantics are
-	// stable; other user-configured plugins should rely on MCP metadata.
+	// ReadOnlyToolNames marks raw MCP tool names as read-only when the server omits
+	// annotations.readOnlyHint. It preserves known and legacy compatibility
+	// overrides; normal MCP classification should rely on server metadata.
 	ReadOnlyToolNames map[string]bool
 	// ReadOnlyModelToolNames marks trusted model-visible MCP tool names
 	// ("mcp__<server>__<tool>") as read-only. This supports user-level
 	// declarations such as agent.plan_mode_allowed_tools without reverse-parsing
 	// normalized MCP tool names back into raw server-local names.
 	ReadOnlyModelToolNames map[string]bool
+	// DefaultToolsApprovalMode controls MCP approval when no raw-tool override
+	// exists: auto|prompt|writes|approve. Empty is auto.
+	DefaultToolsApprovalMode string
+	// ToolApprovalModes overrides approval behavior by raw server-local tool name.
+	ToolApprovalModes map[string]string
+	// ApprovalsReviewer selects user|auto_review for this server. Empty preserves
+	// legacy behavior: Guardian reviews ordinary Ask decisions, while destructive
+	// calls still require the user.
+	ApprovalsReviewer string
+	// TrustManager owns host-local MCP trust receipts for the active workspace.
+	// It never contributes to SpecFingerprint or provider-visible tool schemas.
+	TrustManager *mcptrust.Manager
+	// ConfigSource disambiguates otherwise identical server names coming from
+	// workspace config, a host transport, or a verified plugin package.
+	ConfigSource           string
+	OfficialCatalogEntryID string
+	OfficialReaderNames    []string
+	PackageDigest          string
+	VerifiedVersion        string
+	CatalogSequence        uint64
+	// LaunchArgs and launcher metadata are host-local immutable resolutions for
+	// mutable package launchers. They never contribute to SpecFingerprint or the
+	// provider-visible tool surface; Args remains the user's stable config.
+	LaunchArgs              []string
+	LauncherLocator         string
+	LauncherResolvedVersion string
+	LauncherDigest          string
+	// ReaderSandbox confines the long-lived initialize/list/read lane. The
+	// writer profile is used only by one-shot, post-approval stdio calls.
+	ReaderSandbox sandbox.Spec
+	WriterSandbox sandbox.Spec
+	StateDir      string
+	OneShot       bool
+	// AllowIdentityDriftPreflight is set only by explicit user verification.
+	// Ordinary/lazy starts stop a changed server before creating its process.
+	AllowIdentityDriftPreflight bool
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="server_" turns
 	// "server_search" into "search", yielding "mcp__search__search" instead of
@@ -525,6 +562,12 @@ type Client struct {
 	toolCount int    // tools discovered, for /mcp status
 	transport string // declared transport type, for /mcp status ("stdio"/"http")
 
+	identityFingerprint string
+	capabilities        []mcptrust.Capability
+	trustEvaluation     mcptrust.Evaluation
+	trustErr            error
+	isolationState      mcptrust.IsolationState
+
 	// Prompts and resources discovered during StartAll, stored here so the
 	// parallel startup can collect them per-client before merging into Host.
 	prompts   []Prompt
@@ -552,10 +595,41 @@ func (c *Client) auxiliaryClient(ctx context.Context) (*Client, context.Context,
 
 // ToolInfo is the human-facing metadata returned by MCP tools/list for one tool.
 type ToolInfo struct {
-	Name         string
-	Description  string
-	ReadOnlyHint bool
-	SchemaError  string
+	Name            string
+	Description     string
+	ReadOnlyHint    bool
+	DestructiveHint bool
+	SchemaError     string
+	TrustedReader   bool
+}
+
+// SecurityStatus is host-local MCP trust state. It is intentionally exposed
+// only to local status/UI surfaces and never added to model-visible schemas or
+// the stable system-prompt prefix.
+type SecurityStatus struct {
+	Name            string
+	TrustState      mcptrust.TrustState
+	TrustSource     mcptrust.Source
+	TrustScope      mcptrust.Scope
+	IdentityChanged bool
+	ChangedTools    []string
+	ToolChanges     []mcptrust.ToolChange
+	Identity        string
+	TrustError      string
+	IsolationState  mcptrust.IsolationState
+	IsolationReason string
+	CatalogSequence uint64
+	VerifiedVersion string
+}
+
+// TrustInspection is the secret-free review payload shown before a user grants
+// session or workspace trust. It contains names and safety classes, never args,
+// environment/header values, URLs, or credentials.
+type TrustInspection struct {
+	Security    SecurityStatus
+	Readers     []string
+	Writers     []string
+	Destructive []string
 }
 
 // ServerStatus summarises one connected server for the /mcp command.
@@ -604,6 +678,257 @@ func (h *Host) Servers() []ServerStatus {
 		out = append(out, s)
 	}
 	return out
+}
+
+// SecurityStatuses returns one host-local trust summary per connected server.
+func (h *Host) SecurityStatuses() []SecurityStatus {
+	h.mu.RLock()
+	clients := append([]*Client(nil), h.clients...)
+	h.mu.RUnlock()
+	out := make([]SecurityStatus, 0, len(clients))
+	for _, c := range clients {
+		c.toolsMu.Lock()
+		status := c.securityStatusLocked()
+		c.toolsMu.Unlock()
+		out = append(out, status)
+	}
+	return out
+}
+
+// InspectTrust returns the already-observed initialize/tools-list snapshot for
+// one connected server. It never invokes an MCP tool.
+func (h *Host) InspectTrust(name string) (TrustInspection, error) {
+	c := h.client(name)
+	if c == nil {
+		return TrustInspection{}, fmt.Errorf("MCP server %q is not connected; run its preflight first", name)
+	}
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	out := TrustInspection{Security: c.securityStatusLocked()}
+	for _, cap := range c.capabilities {
+		switch {
+		case cap.Destructive:
+			out.Destructive = append(out.Destructive, cap.RawName)
+		case cap.ReadOnly:
+			out.Readers = append(out.Readers, cap.RawName)
+		default:
+			out.Writers = append(out.Writers, cap.RawName)
+		}
+	}
+	sort.Strings(out.Readers)
+	sort.Strings(out.Writers)
+	sort.Strings(out.Destructive)
+	return out, nil
+}
+
+// InspectSpec performs initialize/tools-list in a temporary connection and
+// closes it without invoking any tool. Callers use this for an unconnected
+// server before presenting the trust decision.
+func InspectSpec(ctx context.Context, spec Spec) (TrustInspection, error) {
+	spec.AllowIdentityDriftPreflight = true
+	client, err := start(ctx, ctx, spec)
+	if err != nil {
+		return TrustInspection{}, err
+	}
+	defer client.close()
+	if _, err := client.listTools(ctx); err != nil {
+		return TrustInspection{}, err
+	}
+	client.toolsMu.Lock()
+	defer client.toolsMu.Unlock()
+	out := TrustInspection{Security: client.securityStatusLocked()}
+	for _, cap := range client.capabilities {
+		switch {
+		case cap.Destructive:
+			out.Destructive = append(out.Destructive, cap.RawName)
+		case cap.ReadOnly:
+			out.Readers = append(out.Readers, cap.RawName)
+		default:
+			out.Writers = append(out.Writers, cap.RawName)
+		}
+	}
+	sort.Strings(out.Readers)
+	sort.Strings(out.Writers)
+	sort.Strings(out.Destructive)
+	return out, nil
+}
+
+// SetSpecTrust preflights an unconnected server, then records trust for the
+// exact observed identity/capability snapshot. Revoke is local and does not
+// start the server.
+func SetSpecTrust(ctx context.Context, spec Spec, decision string) error {
+	manager := spec.TrustManager
+	if manager == nil {
+		return fmt.Errorf("MCP trust store is unavailable")
+	}
+	decision = strings.ToLower(strings.TrimSpace(decision))
+	if decision == "revoke" {
+		if spec.OfficialCatalogEntryID != "" {
+			if err := manager.DenyOfficial(spec.OfficialCatalogEntryID); err != nil {
+				return err
+			}
+		}
+		return manager.Revoke(spec.Name)
+	}
+	if decision != "session" && decision != "workspace" {
+		return fmt.Errorf("invalid MCP trust decision %q", decision)
+	}
+	var launcherLock *mcptrust.LauncherLock
+	if decision == "workspace" {
+		if err := validatePersistentTransportTrust(spec); err != nil {
+			return err
+		}
+		var err error
+		spec, launcherLock, err = preparePersistentLauncher(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("persistent trust is unavailable; use session trust or make the launcher immutable: %w", err)
+		}
+	}
+	spec.AllowIdentityDriftPreflight = true
+	client, err := start(ctx, ctx, spec)
+	if err != nil {
+		return err
+	}
+	defer client.close()
+	if _, err := client.listTools(ctx); err != nil {
+		return err
+	}
+	client.toolsMu.Lock()
+	identity := client.identityFingerprint
+	capabilities := append([]mcptrust.Capability(nil), client.capabilities...)
+	client.toolsMu.Unlock()
+	if launcherLock != nil {
+		if err := manager.PutLauncherLock(*launcherLock); err != nil {
+			return err
+		}
+	}
+	var trustErr error
+	switch decision {
+	case "session":
+		trustErr = manager.Trust(mcptrust.ScopeSession, mcptrust.SourceUser, spec.Name, trustConfigSource(spec), identity, "", capabilities)
+	case "workspace":
+		trustErr = manager.Trust(mcptrust.ScopeWorkspace, mcptrust.SourceUser, spec.Name, trustConfigSource(spec), identity, "", capabilities)
+	}
+	if trustErr != nil {
+		return trustErr
+	}
+	return manager.AllowOfficial(spec.OfficialCatalogEntryID)
+}
+
+// SetTrust grants or revokes host-local trust for the connected server's exact
+// identity and capability snapshot. Writer tools remain approval-gated.
+func (h *Host) SetTrust(name, decision string) error {
+	c := h.client(name)
+	if c == nil {
+		return fmt.Errorf("MCP server %q is not connected; run its preflight first", name)
+	}
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	manager := c.spec.TrustManager
+	if manager == nil {
+		return fmt.Errorf("MCP trust store is unavailable")
+	}
+	switch strings.ToLower(strings.TrimSpace(decision)) {
+	case "session":
+		if err := manager.Trust(mcptrust.ScopeSession, mcptrust.SourceUser, c.name, trustConfigSource(c.spec), c.identityFingerprint, "", c.capabilities); err != nil {
+			return err
+		}
+		if err := manager.AllowOfficial(c.spec.OfficialCatalogEntryID); err != nil {
+			return err
+		}
+	case "workspace":
+		if err := validatePersistentTransportTrust(c.spec); err != nil {
+			return err
+		}
+		if _, mutable := mutableLauncherLocator(c.spec); mutable && strings.TrimSpace(c.spec.LauncherDigest) == "" {
+			return fmt.Errorf("MCP server %q uses a mutable launcher; reconnect it through trust preflight so an exact local lock can be created", c.name)
+		}
+		if err := manager.Trust(mcptrust.ScopeWorkspace, mcptrust.SourceUser, c.name, trustConfigSource(c.spec), c.identityFingerprint, "", c.capabilities); err != nil {
+			return err
+		}
+		if err := manager.AllowOfficial(c.spec.OfficialCatalogEntryID); err != nil {
+			return err
+		}
+	case "revoke":
+		if err := manager.DenyOfficial(c.spec.OfficialCatalogEntryID); err != nil {
+			return err
+		}
+		if err := manager.Revoke(c.name); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("invalid MCP trust decision %q", decision)
+	}
+	eval, err := manager.Evaluate(c.name, trustConfigSource(c.spec), c.identityFingerprint, c.capabilities)
+	if err != nil {
+		return err
+	}
+	c.applyTrustEvaluationLocked(eval)
+	return nil
+}
+
+func (c *Client) applyTrustEvaluationLocked(eval mcptrust.Evaluation) {
+	c.trustEvaluation = eval
+	c.trustErr = nil
+	for _, adapter := range c.toolAdapters {
+		remote, ok := adapter.(*remoteTool)
+		if !ok {
+			continue
+		}
+		remote.readOnlyTrusted = eval.TrustedReaders[remote.rawName]
+		remote.readOnly = remote.readOnlyTrusted
+	}
+	for i := range c.tools {
+		c.tools[i].TrustedReader = eval.TrustedReaders[c.tools[i].Name]
+	}
+}
+
+// ApplyCatalogRevocations immediately removes official reader authority from
+// already-connected servers. Future lazy starts also consult mcpcatalog's
+// runtime revocation set before creating an official receipt.
+func (h *Host) ApplyCatalogRevocations(revoked map[string]bool) {
+	if len(revoked) == 0 {
+		return
+	}
+	h.mu.RLock()
+	clients := append([]*Client(nil), h.clients...)
+	h.mu.RUnlock()
+	for _, client := range clients {
+		entryID := strings.TrimSpace(client.spec.OfficialCatalogEntryID)
+		if entryID == "" || !revoked[entryID] {
+			continue
+		}
+		client.toolsMu.Lock()
+		manager := client.spec.TrustManager
+		if manager != nil {
+			if err := manager.RevokeOfficial(entryID); err != nil {
+				client.trustErr = err
+				client.toolsMu.Unlock()
+				continue
+			}
+		}
+		client.applyTrustEvaluationLocked(untrustedEvaluation())
+		client.toolsMu.Unlock()
+	}
+}
+
+func (c *Client) securityStatusLocked() SecurityStatus {
+	eval := c.trustEvaluation
+	status := SecurityStatus{
+		Name: c.name, TrustState: eval.State, TrustSource: eval.Source,
+		TrustScope: eval.Scope, IdentityChanged: eval.IdentityChanged,
+		ChangedTools: append([]string(nil), eval.ChangedTools...),
+		ToolChanges:  append([]mcptrust.ToolChange(nil), eval.ToolChanges...),
+		Identity:     c.identityFingerprint, IsolationState: c.isolationState,
+		CatalogSequence: c.spec.CatalogSequence, VerifiedVersion: c.spec.VerifiedVersion,
+	}
+	if c.isolationState == mcptrust.IsolationUnavailableUnconfined {
+		status.IsolationReason = sandbox.BackendUnavailableReason()
+	}
+	if c.trustErr != nil {
+		status.TrustError = c.trustErr.Error()
+	}
+	return status
 }
 
 // Failures returns configured MCP servers that failed to connect.
@@ -955,6 +1280,22 @@ func (h *Host) Remove(name string) (toolPrefix string, found bool) {
 // (prompts + resources) can still call it later. Callers that don't care pass
 // the same ctx for both.
 func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
+	var err error
+	s, err = applyStoredLauncherLock(s)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := specIdentityFingerprint(callCtx, s)
+	if err != nil {
+		return nil, err
+	}
+	if s.TrustManager != nil && !s.AllowIdentityDriftPreflight {
+		if _, changed, checkErr := s.TrustManager.IdentityChanged(s.Name, trustConfigSource(s), identity); checkErr != nil {
+			return nil, checkErr
+		} else if changed {
+			return nil, fmt.Errorf("MCP server %q identity changed; blocked before process or network startup and requires explicit re-verification", s.Name)
+		}
+	}
 	t, err := newTransport(lifeCtx, s)
 	if err != nil {
 		return nil, err
@@ -963,7 +1304,7 @@ func start(lifeCtx, callCtx context.Context, s Spec) (*Client, error) {
 	if tt == "" {
 		tt = "stdio"
 	}
-	c := &Client{name: s.Name, t: t, spec: s, transport: tt}
+	c := &Client{name: s.Name, t: t, spec: s, transport: tt, identityFingerprint: identity, isolationState: isolationStateForSpec(s)}
 	if err := c.initialize(callCtx); err != nil {
 		c.close()
 		return nil, err
@@ -1116,24 +1457,38 @@ func (c *Client) initializeSession(ctx context.Context, recordCapabilities bool)
 }
 
 type mcpTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
-	// Annotations carries MCP's optional tool hints. We read readOnlyHint: a
-	// plugin that declares a tool read-only opts it into Reasonix's parallel-dispatch
-	// path and the permission layer's "readers default to allow". Absent
-	// annotations stay false — opaque by default, never trusted implicitly.
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	// Annotations carries MCP's optional tool hints. readOnlyHint controls reader
+	// classification; destructiveHint requires a fresh human approval even when
+	// another hint claims the tool is read-only.
 	Annotations *struct {
-		ReadOnlyHint bool `json:"readOnlyHint"`
+		ReadOnlyHint    bool `json:"readOnlyHint"`
+		DestructiveHint bool `json:"destructiveHint"`
 	} `json:"annotations"`
 }
 
 func (s Spec) toolReadOnly(rawName, visibleName string, hinted bool) bool {
-	return hinted || s.toolReadOnlyTrusted(rawName, visibleName)
+	return hinted || s.toolReadOnlyOverride(rawName, visibleName)
 }
 
-func (s Spec) toolReadOnlyTrusted(rawName, visibleName string) bool {
+// toolReadOnlyOverride keeps legacy trusted_read_only_tools and first-party
+// overrides useful when an older MCP server omits readOnlyHint.
+func (s Spec) toolReadOnlyOverride(rawName, visibleName string) bool {
 	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
+}
+
+func (s Spec) toolApprovalMode(rawName string) string {
+	if mode := strings.TrimSpace(s.ToolApprovalModes[rawName]); mode != "" {
+		return tool.NormalizeMCPApprovalMode(mode)
+	}
+	return tool.NormalizeMCPApprovalMode(s.DefaultToolsApprovalMode)
+}
+
+func (s Spec) approvalReviewer() string {
+	return tool.NormalizeMCPApprovalReviewer(s.ApprovalsReviewer)
 }
 
 func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
@@ -1169,12 +1524,26 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 
 	toolInfos := make([]ToolInfo, 0, len(out))
 	tools := make([]tool.Tool, 0, len(out))
+	capabilities := make([]mcptrust.Capability, 0, len(out))
+	normalizedSchemas := make(map[string]json.RawMessage, len(out))
 	for _, t := range out {
-		hinted := t.Annotations != nil && t.Annotations.ReadOnlyHint
-		info := ToolInfo{Name: t.Name, Description: t.Description, ReadOnlyHint: hinted}
 		schema, err := normalizeAndValidateToolSchema(t.InputSchema)
 		if err != nil {
-			info.SchemaError = schemaValidationError(err)
+			continue
+		}
+		normalizedSchemas[t.Name] = schema
+		capabilities = append(capabilities, capabilityOf(c.spec, t, schema))
+	}
+	eval, evalErr := c.evaluateTrust(capabilities)
+	for _, t := range out {
+		readOnlyHint := t.Annotations != nil && t.Annotations.ReadOnlyHint
+		destructiveHint := t.Annotations != nil && t.Annotations.DestructiveHint
+		info := ToolInfo{Name: t.Name, Description: t.Description, ReadOnlyHint: readOnlyHint, DestructiveHint: destructiveHint}
+		schema, ok := normalizedSchemas[t.Name]
+		if !ok {
+			if _, err := normalizeAndValidateToolSchema(t.InputSchema); err != nil {
+				info.SchemaError = schemaValidationError(err)
+			}
 			toolInfos = append(toolInfos, info)
 			continue
 		}
@@ -1182,24 +1551,40 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 		if c.spec.StripRawPrefix != "" {
 			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
 		}
+		trusted := eval.TrustedReaders[t.Name]
+		info.TrustedReader = trusted
 		toolInfos = append(toolInfos, info)
-		trusted := c.spec.toolReadOnlyTrusted(t.Name, visibleName)
 		tools = append(tools, &remoteTool{
-			client:          c,
-			name:            toolName(c.name, visibleName),
-			rawName:         t.Name,
-			desc:            t.Description,
-			schema:          schema,
-			readOnly:        c.spec.toolReadOnly(t.Name, visibleName, hinted),
-			readOnlyTrusted: trusted,
+			client:                c,
+			name:                  toolName(c.name, visibleName),
+			rawName:               t.Name,
+			desc:                  t.Description,
+			schema:                schema,
+			outputSchema:          t.OutputSchema,
+			capabilityFingerprint: capabilityFingerprint(capabilityOf(c.spec, t, schema)),
+			declaredReadOnly:      capabilityOf(c.spec, t, schema).ReadOnly,
+			readOnly:              trusted,
+			readOnlyTrusted:       trusted,
+			destructive:           destructiveHint,
 		})
 	}
 	sort.SliceStable(toolInfos, func(i, j int) bool { return toolInfos[i].Name < toolInfos[j].Name })
 	sortedTools := sortToolsByName(tools)
 	c.tools = toolInfos
+	c.capabilities = append([]mcptrust.Capability(nil), capabilities...)
+	c.trustEvaluation = eval
+	c.trustErr = evalErr
 	c.toolAdapters = append([]tool.Tool(nil), sortedTools...)
 	c.toolsListed = true
 	return append([]tool.Tool(nil), sortedTools...), nil
+}
+
+func (c *Client) evaluateTrust(capabilities []mcptrust.Capability) (mcptrust.Evaluation, error) {
+	return evaluateSpecTrust(c.spec, c.identityFingerprint, capabilities)
+}
+
+func untrustedEvaluation() mcptrust.Evaluation {
+	return mcptrust.Evaluation{State: mcptrust.TrustUntrusted, TrustedReaders: map[string]bool{}}
 }
 
 func normalizeAndValidateToolSchema(raw json.RawMessage) (json.RawMessage, error) {
@@ -1341,16 +1726,21 @@ func (e *rpcError) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Cod
 // --- remote tool adapter ---
 
 type remoteTool struct {
-	client   *Client
-	name     string // namespaced "mcp__<server>__<tool>"
-	rawName  string // original name for tools/call
-	desc     string
-	schema   json.RawMessage
-	readOnly bool // from MCP readOnlyHint or trusted first-party Spec override
-	// readOnlyTrusted is true only when readOnly came from a first-party
-	// Spec.ReadOnlyToolNames override, not the server's readOnlyHint. Plan mode
-	// uses it to decide whether to trust ReadOnly() at face value.
+	client                *Client
+	name                  string // namespaced "mcp__<server>__<tool>"
+	rawName               string // original name for tools/call
+	desc                  string
+	schema                json.RawMessage
+	outputSchema          json.RawMessage
+	capabilityFingerprint string
+	declaredReadOnly      bool // server hint/legacy override, independent of local trust
+	readOnly              bool // true only when the host accepts this reader snapshot
+	// readOnlyTrusted is true only when local configuration, not the server hint,
+	// classified the tool as read-only.
 	readOnlyTrusted bool
+	// destructive is the MCP destructiveHint. It always requires a fresh human
+	// approval and takes precedence over a conflicting readOnlyHint.
+	destructive bool
 }
 
 func (t *remoteTool) Name() string        { return t.name }
@@ -1363,17 +1753,29 @@ func (t *remoteTool) MCPServerName() string {
 }
 func (t *remoteTool) MCPRawToolName() string { return t.rawName }
 
-// ReadOnly reflects MCP readOnlyHint, plus trusted first-party Spec overrides.
-// It defaults to false: opaque third-party tools must declare readOnlyHint
-// before joining reader-default permission handling or plan-mode execution.
+// ReadOnly reflects MCP readOnlyHint plus backward-compatible Spec overrides.
+// It defaults to false, so opaque tools remain write-capable unless the server
+// or local configuration explicitly classifies them as read-only.
 func (t *remoteTool) ReadOnly() bool { return t.readOnly }
 
-// PlanModeUntrustedReadOnly reports true when ReadOnly() is true only because the
-// MCP server self-reported readOnlyHint. A first-party ReadOnlyToolNames override
-// is trusted, so it returns false. Plan mode treats an untrusted read-only tool
-// like a writer unless it is declared in plan_mode_allowed_tools.
 func (t *remoteTool) PlanModeUntrustedReadOnly() bool {
 	return t.readOnly && !t.readOnlyTrusted
+}
+
+func (t *remoteTool) MCPDestructiveHint() bool { return t.destructive }
+
+func (t *remoteTool) MCPApprovalMode() string {
+	if t.client == nil {
+		return tool.MCPApprovalAuto
+	}
+	return t.client.spec.toolApprovalMode(t.rawName)
+}
+
+func (t *remoteTool) MCPApprovalReviewer() string {
+	if t.client == nil {
+		return ""
+	}
+	return t.client.spec.approvalReviewer()
 }
 
 func (t *remoteTool) Schema() json.RawMessage {
@@ -1398,12 +1800,57 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 			return "", nil, fmt.Errorf("invalid args: %w", err)
 		}
 	}
+	if t.client != nil && t.client.usesOneShotWriterLane() && (!t.readOnly || t.destructive) {
+		return t.client.callOneShotTool(ctx, t, argMap)
+	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{
 		"name":      t.rawName,
 		"arguments": argMap,
 	})
 	if err != nil {
 		return "", nil, err
+	}
+	return parseToolResult(res)
+}
+
+func (c *Client) usesOneShotWriterLane() bool {
+	transport := strings.ToLower(strings.TrimSpace(c.spec.Type))
+	return (transport == "" || transport == "stdio") && (c.spec.WriterSandbox.Enforce() || strings.TrimSpace(c.spec.StateDir) != "")
+}
+
+func (c *Client) callOneShotTool(ctx context.Context, expected *remoteTool, args map[string]any) (string, []string, error) {
+	spec := c.spec
+	spec.OneShot = true
+	writer, err := start(ctx, ctx, spec)
+	if err != nil {
+		return "", nil, fmt.Errorf("start isolated one-shot MCP writer %q: %w", c.name, err)
+	}
+	defer writer.close()
+	tools, err := writer.listToolsRaw(ctx)
+	if err != nil {
+		return "", nil, fmt.Errorf("revalidate one-shot MCP writer %q: %w", c.name, err)
+	}
+	var live *mcpTool
+	for i := range tools {
+		if tools[i].Name == expected.rawName {
+			live = &tools[i]
+			break
+		}
+	}
+	if live == nil {
+		return "", nil, fmt.Errorf("MCP server %q no longer exposes tool %q; current call was blocked before execution", c.name, expected.rawName)
+	}
+	schema, err := normalizeAndValidateToolSchema(live.InputSchema)
+	if err != nil {
+		return "", nil, fmt.Errorf("MCP server %q returned an invalid schema for %q; current call was blocked before execution: %w", c.name, expected.rawName, err)
+	}
+	liveFingerprint := capabilityFingerprint(capabilityOf(spec, *live, schema))
+	if expected.capabilityFingerprint == "" || liveFingerprint != expected.capabilityFingerprint {
+		return "", nil, fmt.Errorf("MCP server %q changed the security schema for tool %q; current call was blocked before execution and requires review", c.name, expected.rawName)
+	}
+	res, err := writer.call(ctx, "tools/call", map[string]any{"name": expected.rawName, "arguments": args})
+	if err != nil {
+		return "", nil, fmt.Errorf("one-shot MCP writer %q failed (stateful writers are not supported): %w", expected.rawName, err)
 	}
 	return parseToolResult(res)
 }

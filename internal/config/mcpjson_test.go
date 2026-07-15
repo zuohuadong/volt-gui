@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -150,75 +151,128 @@ func TestMCPJSONCallTimeoutsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestTrustPluginReadOnlyToolInSourceForRootUpdatesProjectTOML(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	root := t.TempDir()
-	projectTOML := filepath.Join(root, "reasonix.toml")
-	if err := os.WriteFile(projectTOML, []byte(`[[plugins]]
-name = "github"
-command = "github-mcp"
-trusted_read_only_tools = ["issue_read"]
-`), 0o644); err != nil {
+func TestMCPJSONApprovalPolicyRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), mcpJSONFile)
+	want := PluginEntry{
+		Name:                     "admin",
+		Command:                  "admin-mcp",
+		DefaultToolsApprovalMode: "writes",
+		Tools: map[string]MCPToolPolicy{
+			"delete/all": {ApprovalMode: "prompt"},
+			"status":     {ApprovalMode: "approve"},
+		},
+		ApprovalsReviewer: "auto_review",
+	}
+	if _, err := UpsertMCPJSONPlugin(path, want); err != nil {
 		t.Fatal(err)
 	}
-
-	updated, changed, source, err := TrustPluginReadOnlyToolInSourceForRoot(root, "github", " pull_request_read ")
+	got, err := loadMCPJSON(path)
 	if err != nil {
-		t.Fatalf("TrustPluginReadOnlyToolInSourceForRoot: %v", err)
+		t.Fatal(err)
 	}
-	if !changed || source != projectTOML {
-		t.Fatalf("changed/source = %v/%q, want true/%q", changed, source, projectTOML)
-	}
-	if got := strings.Join(updated.TrustedReadOnlyTools, ","); got != "issue_read,pull_request_read" {
-		t.Fatalf("updated trusted tools = %q", got)
-	}
-	cfg := LoadForEdit(projectTOML)
-	if got := strings.Join(cfg.Plugins[0].TrustedReadOnlyTools, ","); got != "issue_read,pull_request_read" {
-		t.Fatalf("saved trusted tools = %q", got)
-	}
-
-	_, changed, _, err = TrustPluginReadOnlyToolInSourceForRoot(root, "github", "pull_request_read")
-	if err != nil {
-		t.Fatalf("second TrustPluginReadOnlyToolInSourceForRoot: %v", err)
-	}
-	if changed {
-		t.Fatal("trusting an already trusted tool should report unchanged")
+	if len(got) != 1 || got[0].DefaultToolsApprovalMode != want.DefaultToolsApprovalMode ||
+		got[0].ApprovalsReviewer != want.ApprovalsReviewer || !reflect.DeepEqual(got[0].Tools, want.Tools) {
+		t.Fatalf("approval policy round trip = %+v, want %+v", got, want)
 	}
 }
 
-func TestTrustPluginReadOnlyToolInSourceForRootUpdatesMCPJSON(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	root := t.TempDir()
-	path := filepath.Join(root, mcpJSONFile)
-	if _, err := UpsertMCPJSONPlugin(path, PluginEntry{Name: "github", Command: "github-mcp"}); err != nil {
+func TestMCPJSONApprovalPolicyUpdatePreservesNestedUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), mcpJSONFile)
+	if err := os.WriteFile(path, []byte(`{
+  "mcpServers": {
+    "admin": {
+      "command": "old-admin-mcp",
+      "future_server_field": {"version": 2},
+      "tools": {
+        "wipe": {"approval_mode": "prompt", "enabled": false, "future": {"audit": true}},
+        "external_only": {"enabled": false},
+        "remove_keep": {"approval_mode": "writes", "enabled": true},
+        "remove_entirely": {"approval_mode": "approve"}
+      }
+    }
+  }
+}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	updated, changed, source, err := TrustPluginReadOnlyToolInSourceForRoot(root, "github", "issue_read")
-	if err != nil {
-		t.Fatalf("TrustPluginReadOnlyToolInSourceForRoot: %v", err)
+	if _, err := UpsertMCPJSONPlugin(path, PluginEntry{
+		Name:    "admin",
+		Command: "admin-mcp",
+		Tools: map[string]MCPToolPolicy{
+			"wipe": {ApprovalMode: "approve"},
+			"new":  {ApprovalMode: "prompt"},
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if !changed || source != path {
-		t.Fatalf("changed/source = %v/%q, want true/%q", changed, source, path)
-	}
-	if got := strings.Join(updated.TrustedReadOnlyTools, ","); got != "issue_read" {
-		t.Fatalf("updated trusted tools = %q", got)
-	}
+
 	entries, err := loadMCPJSON(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(entries[0].TrustedReadOnlyTools, ","); got != "issue_read" {
-		t.Fatalf(".mcp.json trusted tools = %q", got)
+	if len(entries) != 1 || len(entries[0].Tools) != 2 ||
+		entries[0].Tools["wipe"].ApprovalMode != "approve" || entries[0].Tools["new"].ApprovalMode != "prompt" {
+		t.Fatalf("Reasonix tool policies = %+v, want only updated wipe and new", entries)
 	}
-	if _, err := os.Stat(filepath.Join(root, "reasonix.toml")); !os.IsNotExist(err) {
-		t.Fatalf("project TOML should not be created for .mcp.json-owned server, stat err=%v", err)
+
+	root, servers, err := readMCPJSONRaw(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(root) == 0 {
+		t.Fatal("raw root is empty")
+	}
+	var server map[string]json.RawMessage
+	if err := json.Unmarshal(servers["admin"], &server); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := server["future_server_field"]; !ok {
+		t.Fatal("unknown per-server field was removed")
+	}
+	var tools map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(server["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 4 {
+		t.Fatalf("raw tools = %+v, want wipe, new, external_only, and remove_keep", tools)
+	}
+	if _, ok := tools["wipe"]["enabled"]; !ok {
+		t.Fatal("known tool lost external enabled field")
+	}
+	if _, ok := tools["wipe"]["future"]; !ok {
+		t.Fatal("known tool lost future nested field")
+	}
+	if _, ok := tools["external_only"]; !ok {
+		t.Fatal("unknown-only tool entry was removed")
+	}
+	if _, ok := tools["remove_keep"]["approval_mode"]; ok {
+		t.Fatal("removed Reasonix approval mode survived")
+	}
+	if _, ok := tools["remove_keep"]["enabled"]; !ok {
+		t.Fatal("removing approval mode removed external fields")
+	}
+	if _, ok := tools["remove_entirely"]; ok {
+		t.Fatal("approval-only entry should be removed when its policy is cleared")
+	}
+}
+
+func TestMCPJSONApprovalPolicyRejectsNonObjectToolUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), mcpJSONFile)
+	if err := os.WriteFile(path, []byte(`{
+  "mcpServers": {
+    "admin": {"command": "admin-mcp", "tools": {"wipe": false}}
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := UpsertMCPJSONPlugin(path, PluginEntry{
+		Name:    "admin",
+		Command: "admin-mcp",
+		Tools:   map[string]MCPToolPolicy{"wipe": {ApprovalMode: "prompt"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), `tools["wipe"] must be an object`) {
+		t.Fatalf("non-object tool update error = %v", err)
 	}
 }
 

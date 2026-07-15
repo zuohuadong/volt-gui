@@ -296,6 +296,11 @@ func windowsAppContainerName(spec Spec) string {
 		b.WriteByte(0)
 		b.WriteString(strings.ToLower(filepath.Clean(root)))
 	}
+	for _, root := range normalizedWindowsRoots(spec.AppContainerWritableRoots) {
+		b.WriteByte(0)
+		b.WriteString("write=")
+		b.WriteString(strings.ToLower(filepath.Clean(root)))
+	}
 	for _, root := range normalizedWindowsRoots(spec.ForbidReadRoots) {
 		b.WriteByte(0)
 		b.WriteString("deny=")
@@ -617,9 +622,17 @@ func uniqueNonZeroHandles(handles []windows.Handle) []windows.Handle {
 func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID, spec Spec, extraWritableRoots ...string) (func(), error) {
 	objectSIDStrs := appContainerObjectAccessSIDStrings(sid)
 	writableSIDStrs := appContainerWritableAccessSIDStrings(sid)
+	appContainerWritable := map[string]bool{}
+	for _, root := range normalizedWindowsRoots(spec.AppContainerWritableRoots) {
+		appContainerWritable[strings.ToLower(filepath.Clean(root))] = true
+	}
+	for _, root := range normalizedWindowsRoots(extraWritableRoots) {
+		appContainerWritable[strings.ToLower(filepath.Clean(root))] = true
+	}
 	var cleanup []func()
 	for _, root := range windowsWritableRoots(spec, extraWritableRoots...) {
-		restore, _, err := snapshotPathSecurity(root, spec.Writable)
+		rootWritable := spec.Writable || appContainerWritable[strings.ToLower(filepath.Clean(root))]
+		restore, _, err := snapshotPathSecurity(root, rootWritable)
 		if err != nil {
 			runCleanup(cleanup)()
 			return func() {}, err
@@ -627,7 +640,7 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 		cleanup = append(cleanup, restore)
 		restoreIndex := len(cleanup) - 1
 		perm := "RX"
-		if spec.Writable {
+		if rootWritable {
 			perm = "F"
 		}
 		if err := grantAppContainerSIDs(root, writableSIDStrs, perm); err != nil {
@@ -1299,6 +1312,8 @@ func windowsEnvironmentBlock(env []string) ([]uint16, error) {
 func windowsWritableRoots(spec Spec, extraRoots ...string) []string {
 	var dirs []string
 	dirs = append(dirs, spec.WritableRoots...)
+	dirs = append(dirs, spec.ReadableRoots...)
+	dirs = append(dirs, spec.AppContainerWritableRoots...)
 	dirs = append(dirs, extraRoots...)
 	return dedupeWindowsRoots(dirs)
 }

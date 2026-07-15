@@ -701,6 +701,32 @@ func TestPlanMCPJSONDefaultTierIsBackground(t *testing.T) {
 	}
 }
 
+func TestPlanMCPJSONPreservesApprovalPolicy(t *testing.T) {
+	entries, warnings, err := parseMCPJSON([]byte(`{
+  "mcpServers": {
+    "admin": {
+      "command": "admin-mcp",
+      "call_timeout_seconds": 45,
+      "tool_timeout_seconds": {"wipe": 120},
+      "trusted_read_only_tools": ["status"],
+      "default_tools_approval_mode": "writes",
+      "tools": {"wipe": {"approval_mode": "prompt"}, "external": {"enabled": false}},
+      "approvals_reviewer": "auto_review"
+    }
+  }
+}`))
+	if err != nil || len(warnings) != 0 || len(entries) != 1 {
+		t.Fatalf("parseMCPJSON: entries=%+v warnings=%v err=%v", entries, warnings, err)
+	}
+	got := entries[0]
+	if got.CallTimeoutSeconds != 45 || got.ToolTimeoutSeconds["wipe"] != 120 ||
+		len(got.TrustedReadOnlyTools) != 1 || got.TrustedReadOnlyTools[0] != "status" ||
+		got.DefaultToolsApprovalMode != "writes" || len(got.Tools) != 1 || got.Tools["wipe"].ApprovalMode != "prompt" ||
+		got.ApprovalsReviewer != "auto_review" {
+		t.Fatalf("advanced MCP config was dropped: %+v", got)
+	}
+}
+
 func TestNormalizeTierDefaultBackgroundUnknownBackground(t *testing.T) {
 	if got, ok := normalizeTier(""); got != "background" || !ok {
 		t.Fatalf("normalizeTier(empty) = %q, %v; want background, true", got, ok)
@@ -1578,6 +1604,23 @@ func TestValidateMCPEntry(t *testing.T) {
 	}
 	if err := validateMCPEntry(config.PluginEntry{Name: "x", Type: "carrier-pigeon", Command: "c"}); err == nil {
 		t.Error("unknown transport should fail")
+	}
+	if err := validateMCPEntry(config.PluginEntry{
+		Name: "x", Command: "y",
+		DefaultToolsApprovalMode: "writes",
+		Tools:                    map[string]config.MCPToolPolicy{"wipe": {ApprovalMode: "prompt"}},
+		ApprovalsReviewer:        "auto_review",
+	}); err != nil {
+		t.Errorf("valid approval policy should validate at plan time, got %v", err)
+	}
+	if err := validateMCPEntry(config.PluginEntry{Name: "x", Command: "y", DefaultToolsApprovalMode: "banana"}); err == nil {
+		t.Error("unknown default_tools_approval_mode should fail at plan time, before the server is connected")
+	}
+	if err := validateMCPEntry(config.PluginEntry{Name: "x", Command: "y", Tools: map[string]config.MCPToolPolicy{"wipe": {ApprovalMode: "sometimes"}}}); err == nil {
+		t.Error("unknown per-tool approval_mode should fail at plan time")
+	}
+	if err := validateMCPEntry(config.PluginEntry{Name: "x", Command: "y", ApprovalsReviewer: "robot"}); err == nil {
+		t.Error("unknown approvals_reviewer should fail at plan time")
 	}
 }
 

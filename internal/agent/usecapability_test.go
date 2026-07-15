@@ -451,7 +451,7 @@ func TestReviewReportRejectsNonContentEvidence(t *testing.T) {
 	}
 }
 
-func TestUseCapabilityServerConnectGatedAndPlanModeBlocked(t *testing.T) {
+func TestUseCapabilityServerConnectHonorsPermissionInPlanMode(t *testing.T) {
 	host := plugin.NewHost()
 	defer host.Close()
 	specs := []plugin.Spec{{Name: "lazy", Type: "stdio", Command: "reasonix-test-definitely-missing-binary"}}
@@ -475,6 +475,7 @@ func TestUseCapabilityServerConnectGatedAndPlanModeBlocked(t *testing.T) {
 		t.Fatalf("exact MCP connect deny must block before spawn: allow=%v err=%v", allow, err)
 	}
 	deniedAgent := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: policyGate}, event.Discard)
+	deniedAgent.SetPlanMode(true)
 	denied := deniedAgent.executeOne(context.Background(), provider.ToolCall{
 		ID: "deny", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-server:lazy"}`,
@@ -484,19 +485,6 @@ func TestUseCapabilityServerConnectGatedAndPlanModeBlocked(t *testing.T) {
 	}
 	if host.HasClient("lazy") {
 		t.Fatal("server-level resolution must not start the server")
-	}
-	// Plan mode blocks the connect (subprocess spawn is not read-only work).
-	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
-	a.planMode.Store(true)
-	out := a.executeOne(context.Background(), provider.ToolCall{
-		ID: "1", Name: "use_capability",
-		Arguments: `{"action":"call","capability_id":"mcp-server:lazy"}`,
-	})
-	if !out.blocked || !strings.Contains(out.errMsg, "plan mode") {
-		t.Fatalf("plan mode must block server connect, got %+v", out)
-	}
-	if host.HasClient("lazy") {
-		t.Fatal("blocked connect must not have started the server")
 	}
 }
 
@@ -661,32 +649,71 @@ func TestUseCapabilityInspectDoesNotStartServer(t *testing.T) {
 	}
 }
 
-func TestPlanModeBlocksWriteMCPThroughUseCapability(t *testing.T) {
+func TestPlanModeBlocksInstalledWriteMCPResolvedThroughUseCapability(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "mcp__github__create_issue", readOnly: false})
-	reg.Add(fakeTool{name: "mcp__github__search_issues", readOnly: true})
+	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__github__create_issue", readOnly: false}, server: "github", raw: "create_issue"})
+	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__github__search_issues", readOnly: true}, server: "github", raw: "search_issues"})
 	uc := NewUseCapabilityTool(context.Background(), nil, nil, reg, capability.NewLedger(), nil, nil)
 	reg.Add(uc)
-	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
+	gate := &mcpPermissionRecordingGate{allowNormal: true}
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: gate}, event.Discard)
 	a.planMode.Store(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{
 		ID: "1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/create_issue","arguments":{}}`,
 	})
-	if !out.blocked {
-		t.Fatalf("plan mode must block a write MCP tool behind the proxy, got %+v", out)
+	if !out.blocked || gate.normalCalls != 0 {
+		t.Fatalf("installed MCP writer should be blocked before permission, outcome=%+v calls=%d", out, gate.normalCalls)
 	}
-	if !strings.Contains(out.errMsg, "plan mode") {
-		t.Fatalf("errMsg = %q", out.errMsg)
-	}
-	// A trusted read-only target still passes through the proxy in plan mode.
+	// A read-only target still passes through the proxy in plan mode.
 	out = a.executeOne(context.Background(), provider.ToolCall{
 		ID: "2", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/search_issues","arguments":{}}`,
 	})
 	if out.blocked {
-		t.Fatalf("trusted read-only proxy call should pass in plan mode, got %+v", out)
+		t.Fatalf("read-only proxy call should pass in plan mode, got %+v", out)
+	}
+}
+
+func TestPlanModeMCPStyleNameWithoutMetadataStillUsesPermission(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "mcp__github__create_issue", readOnly: false})
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, reg, capability.NewLedger(), nil, nil)
+	reg.Add(uc)
+	gate := &recordingPermissionGate{reason: "denied by ordinary permission"}
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: gate}, event.Discard)
+	a.planMode.Store(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:github/create_issue","arguments":{}}`,
+	})
+	if !out.blocked || !strings.Contains(out.output, "Plan mode") || len(gate.calls) != 0 {
+		t.Fatalf("MCP-style name must be hard-blocked in Plan: outcome=%+v calls=%+v", out, gate.calls)
+	}
+}
+
+func TestDestructiveMCPThroughUseCapabilityUsesFreshApproval(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(annotatedMCPTool{
+		fakeTool:    fakeTool{name: "mcp__github__delete_issue", readOnly: false},
+		server:      "github",
+		raw:         "delete_issue",
+		destructive: true,
+	})
+	uc := NewUseCapabilityTool(context.Background(), nil, nil, reg, capability.NewLedger(), nil, nil)
+	reg.Add(uc)
+	gate := &mcpPermissionRecordingGate{allowNormal: true, allowFresh: true}
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{Gate: gate}, event.Discard)
+	a.planMode.Store(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:github/delete_issue","arguments":{"number":1}}`,
+	})
+	if !out.blocked || gate.normalCalls != 0 || gate.freshCalls != 0 {
+		t.Fatalf("destructive proxy outcome=%+v normal=%d fresh=%d subject=%q", out, gate.normalCalls, gate.freshCalls, gate.subject)
 	}
 }
 

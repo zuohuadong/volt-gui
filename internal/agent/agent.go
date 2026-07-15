@@ -3269,6 +3269,17 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			runArgs = json.RawMessage(`{}`)
 		}
 	}
+	// A call that was authorized under reader classification carries that
+	// basis into dispatch: the MCP execution layer re-verifies it linearizably
+	// against live trust state and refuses to promote it into a writer lane if
+	// a concurrent revocation or reclassification landed after the gate.
+	if readOnly && isInstalledMCPTool(runTool) && !mcpDestructiveHint(runTool) {
+		fingerprint := ""
+		if fp, ok := runTool.(tool.MCPCapabilityFingerprint); ok {
+			fingerprint = fp.MCPCapabilityFingerprint()
+		}
+		cctx = tool.WithReaderExecutionIntent(cctx, fingerprint)
+	}
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)
 	} else {
@@ -3349,12 +3360,18 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 	}
 	if resolved == nil {
 		if visible == nil || !visible.ReadOnly() {
+			if reasoner, ok := visible.(tool.ReadOnlyExecutionBlockReason); ok && strings.TrimSpace(reasoner.ReadOnlyExecutionBlockReason()) != "" {
+				return block(reasoner.ReadOnlyExecutionBlockReason())
+			}
 			return block("execute a state-changing tool")
 		}
 		if u, ok := visible.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
 			return block("trust an externally asserted read-only target")
 		}
-		if h, ok := visible.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() {
+		if readOnlyExecutionMCPDestructive(visible) {
+			return block("execute a destructive MCP capability")
+		}
+		if h, ok := visible.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(visible) {
 			return block("start or mutate a host capability")
 		}
 		return toolOutcome{}, false
@@ -3373,18 +3390,49 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			return block("execute an unresolved dynamic capability")
 		}
 		if !resolved.ReadOnly {
+			if reasoner, ok := resolved.Target.(tool.ReadOnlyExecutionBlockReason); ok && strings.TrimSpace(reasoner.ReadOnlyExecutionBlockReason()) != "" {
+				return block(reasoner.ReadOnlyExecutionBlockReason())
+			}
 			return block("execute a state-changing dynamic capability")
 		}
 		if u, ok := resolved.Target.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
 			return block("trust an externally asserted read-only dynamic capability")
 		}
-		if h, ok := resolved.Target.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() {
+		if readOnlyExecutionMCPDestructive(resolved.Target) {
+			return block("execute a destructive MCP capability")
+		}
+		if h, ok := resolved.Target.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(resolved.Target) {
 			return block("start or mutate a host capability")
 		}
 		return toolOutcome{}, false
 	default:
 		return block("execute an unknown dynamic capability action")
 	}
+}
+
+func readOnlyExecutionMCPDestructive(t tool.Tool) bool {
+	return mcpDestructiveHint(t)
+}
+
+func readOnlyExecutionAllowsTrustedMCPStartup(t tool.Tool) bool {
+	if t == nil || !t.ReadOnly() || readOnlyExecutionMCPDestructive(t) {
+		return false
+	}
+	if untrusted, ok := t.(tool.PlanModeUntrustedReadOnly); ok && untrusted.PlanModeUntrustedReadOnly() {
+		return false
+	}
+	meta, ok := t.(tool.MCPMetadata)
+	if !ok || strings.TrimSpace(meta.MCPServerName()) == "" || strings.TrimSpace(meta.MCPRawToolName()) == "" {
+		return false
+	}
+	// A reader classification only admits a host start when it is backed by a
+	// real trust store: the hint/legacy compatibility paths used by direct
+	// library embedders never satisfy the strict boundary.
+	if authority, ok := t.(tool.ReadOnlyExecutionTrustAuthority); !ok || !authority.ReadOnlyExecutionTrustAuthority() {
+		return false
+	}
+	_, governed := t.(tool.MCPApprovalPolicy)
+	return governed
 }
 
 func isInstalledMCPTool(t tool.Tool) bool {

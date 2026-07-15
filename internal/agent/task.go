@@ -841,21 +841,21 @@ func (t *TaskTool) resolveSubSessionRuntime(modelRef, effort string) (provider.P
 }
 
 func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
-	return t.runSubSessionWithReadOnly(ctx, prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, sess, childDepth, false)
-}
-
-func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
-	return t.runSubSessionWithReadOnly(ctx, prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, sess, childDepth, true)
-}
-
-func (t *TaskTool) runSubSessionWithReadOnly(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int, readOnly bool) (string, error) {
 	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
-	opts.ReadOnlyExecution = readOnly
 	// Capture the pristine task before host framing is prepended: delivery
 	// intent classification must judge the task, not the wrapper.
 	opts.ClassifierTaskText = prompt
 	prompt = t.withWorkspaceContext(prompt)
 	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, opts, sink)
+}
+
+func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
+	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
+	// Capture the pristine task before host framing is prepended: delivery
+	// intent classification must judge the task, not the wrapper.
+	opts.ClassifierTaskText = prompt
+	prompt = t.withWorkspaceContext(prompt)
+	return RunReadOnlySubAgentWithSession(ctx, prov, subReg, sess, prompt, opts, sink)
 }
 
 // subagentOptions is the single construction point for the run options every
@@ -1033,6 +1033,63 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		return answer, nil
 	}
 	return "", fmt.Errorf("sub-agent finished without producing a final answer")
+}
+
+// readOnlyAgentConstruction is the single pairing every strictly read-only
+// loop shares: the permanent ReadOnlyExecution flag plus the final registry
+// filter. Batch children (RunReadOnlySubAgentWithSession) and the interactive
+// two-model planner (NewReadOnlyAgent) both build through it, so a missed call
+// site cannot set only half the boundary.
+func readOnlyAgentConstruction(reg *tool.Registry, opts Options) (*tool.Registry, Options) {
+	opts.ReadOnlyExecution = true
+	return strictReadOnlyExecutionRegistry(reg), opts
+}
+
+// NewReadOnlyAgent constructs a long-lived, strictly read-only agent (the
+// two-model planner) through the shared construction boundary.
+func NewReadOnlyAgent(prov provider.Provider, reg *tool.Registry, sess *Session, opts Options, sink event.Sink) *Agent {
+	reg, opts = readOnlyAgentConstruction(reg, opts)
+	return New(prov, reg, sess, opts, sink)
+}
+
+// RunReadOnlySubAgentWithSession is the construction boundary for every
+// strictly read-only child loop. Registry filtering limits the visible surface;
+// this permanent execution flag also re-checks targets resolved dynamically by
+// proxy tools such as use_capability.
+func RunReadOnlySubAgentWithSession(ctx context.Context, prov provider.Provider, reg *tool.Registry, sess *Session, prompt string, opts Options, sink event.Sink) (string, error) {
+	reg, opts = readOnlyAgentConstruction(reg, opts)
+	return RunSubAgentWithSession(ctx, prov, reg, sess, prompt, opts, sink)
+}
+
+// strictReadOnlyExecutionRegistry is the final construction-time filter shared
+// by every strict child. Callers still apply role-specific filtering (review,
+// planner, profile allowlists), while this layer guarantees that a missed call
+// site cannot expose writers, destructive MCP tools, untrusted readers, or an
+// untrusted host-starting target to the model.
+func strictReadOnlyExecutionRegistry(reg *tool.Registry) *tool.Registry {
+	filtered := tool.NewRegistry()
+	if reg == nil {
+		return filtered
+	}
+	for _, name := range reg.Names() {
+		target, ok := reg.Get(name)
+		if !ok || !target.ReadOnly() || planModeUntrustedReadOnly(target) || mcpDestructiveHint(target) {
+			continue
+		}
+		// An installed MCP reader needs a positive trust authority (receipts),
+		// not a server hint carried through the no-TrustManager compatibility
+		// path: strict children fail closed without a trust store.
+		if isInstalledMCPTool(target) {
+			if authority, ok := target.(tool.ReadOnlyExecutionTrustAuthority); !ok || !authority.ReadOnlyExecutionTrustAuthority() {
+				continue
+			}
+		}
+		if mutation, ok := target.(tool.ReadOnlyExecutionHostMutation); ok && mutation.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(target) {
+			continue
+		}
+		filtered.Add(target)
+	}
+	return filtered
 }
 
 // latestAssistantAnswer walks the session backwards for the last assistant

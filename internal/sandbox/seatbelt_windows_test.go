@@ -65,12 +65,42 @@ func TestWindowsCommandArgsWrapsReadOnly(t *testing.T) {
 	}
 }
 
+func TestWindowsCommandArgsPreservesAppContainerPrivateWrites(t *testing.T) {
+	RegisterHelperDispatch()
+	if !winsandbox.Available() {
+		t.Skip("windows sandbox APIs unavailable")
+	}
+	cmd, wrapped := CommandArgs(Spec{
+		Mode: "enforce", WriteRoots: []string{`C:\state`}, ReadRoots: []string{`C:\workspace`, `C:\Users\me`},
+		AppContainerWriteRoots: []string{`C:\state`}, Network: false,
+	}, []string{`C:\tools\mcp.exe`})
+	if !wrapped {
+		t.Fatal("Windows MCP reader should wrap through AppContainer")
+	}
+	payload, err := decodeWindowsSandboxPayload(cmd[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Writable {
+		t.Fatal("MCP reader must stay on the AppContainer lane")
+	}
+	got := convertWindowsSandboxSpec(payload.Spec, payload.Writable)
+	if len(got.ReadableRoots) != 2 {
+		t.Fatalf("AppContainer read roots = %v", got.ReadableRoots)
+	}
+	if len(got.AppContainerWritableRoots) != 1 || got.AppContainerWritableRoots[0] != `C:\state` {
+		t.Fatalf("private AppContainer roots = %v, want state only", got.AppContainerWritableRoots)
+	}
+}
+
 func TestConvertWindowsSandboxSpec(t *testing.T) {
 	spec := Spec{
-		Mode:            "enforce",
-		WriteRoots:      []string{`C:\work`},
-		ForbidReadRoots: []string{`C:\work\secret`},
-		Network:         true,
+		Mode:                   "enforce",
+		WriteRoots:             []string{`C:\work`},
+		ReadRoots:              []string{`C:\read`},
+		AppContainerWriteRoots: []string{`C:\state`},
+		ForbidReadRoots:        []string{`C:\work\secret`},
+		Network:                true,
 	}
 	got := convertWindowsSandboxSpec(spec, true)
 	if !got.Writable || !got.Network || got.TempPrefix != "reasonix-sandbox-" {
@@ -78,6 +108,12 @@ func TestConvertWindowsSandboxSpec(t *testing.T) {
 	}
 	if len(got.WritableRoots) != 1 || got.WritableRoots[0] != spec.WriteRoots[0] {
 		t.Fatalf("converted writable roots = %v", got.WritableRoots)
+	}
+	if len(got.ReadableRoots) != 1 || got.ReadableRoots[0] != spec.ReadRoots[0] {
+		t.Fatalf("converted readable roots = %v", got.ReadableRoots)
+	}
+	if len(got.AppContainerWritableRoots) != 1 || got.AppContainerWritableRoots[0] != spec.AppContainerWriteRoots[0] {
+		t.Fatalf("converted AppContainer roots = %v", got.AppContainerWritableRoots)
 	}
 	if len(got.ForbidReadRoots) != 1 || got.ForbidReadRoots[0] != spec.ForbidReadRoots[0] {
 		t.Fatalf("converted forbid roots = %v", got.ForbidReadRoots)

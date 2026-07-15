@@ -3017,7 +3017,7 @@ func TestMCPAutoReviewerIsFinalAndDoesNotPromptHuman(t *testing.T) {
 				}),
 			})
 			gate := permission.NewGate(permission.New("allow", nil, nil, nil), gateApprover{c})
-			allow, _, err := gate.CheckMCP(context.Background(), "mcp__srv__wipe", "srv/wipe", json.RawMessage(`{"target":"all"}`), false, true, "approve", "auto_review")
+			allow, _, err := gate.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", json.RawMessage(`{"target":"one"}`), false, false, "prompt", "auto_review")
 			if err != nil || allow != tc.allow || prompts != 0 || len(guardianProv.requests) != 1 {
 				t.Fatalf("auto reviewer result allow=%v err=%v prompts=%d reviews=%d", allow, err, prompts, len(guardianProv.requests))
 			}
@@ -3025,16 +3025,17 @@ func TestMCPAutoReviewerIsFinalAndDoesNotPromptHuman(t *testing.T) {
 	}
 }
 
-func TestMCPAutoReviewerFailsClosedWhenUnavailable(t *testing.T) {
+func TestMCPAutoReviewerUnavailableFallsBackToGlobalAuto(t *testing.T) {
 	prompts := 0
 	c := New(Options{Sink: event.FuncSink(func(e event.Event) {
 		if e.Kind == event.ApprovalRequest {
 			prompts++
 		}
 	})})
+	c.SetToolApprovalMode(ToolApprovalAuto)
 	gate := permission.NewGate(permission.New("allow", nil, nil, nil), gateApprover{c})
-	allow, reason, err := gate.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", nil, false, false, "prompt", "auto_review")
-	if err != nil || allow || !strings.Contains(reason, "no reviewer session") || prompts != 0 {
+	allow, reason, err := gate.CheckMCP(context.Background(), "mcp__srv__write", "srv/write", nil, false, false, "auto", "auto_review")
+	if err != nil || !allow || reason != "" || prompts != 0 {
 		t.Fatalf("missing auto reviewer = (%v,%q,%v), prompts=%d", allow, reason, err, prompts)
 	}
 }

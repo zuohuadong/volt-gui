@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/tool"
 )
 
@@ -187,11 +188,12 @@ func (s *lazySpawn) trySwap() {
 // sees cached metadata (or a stub when no cache exists); Execute consults the
 // state machine, kicking off the handshake on first call.
 type lazyTool struct {
-	shared  *lazySpawn
-	name    string // namespaced "mcp__<server>__<tool>"
-	rawName string // original server-local tool name, when cached
-	desc    string
-	schema  json.RawMessage
+	shared                *lazySpawn
+	name                  string // namespaced "mcp__<server>__<tool>"
+	rawName               string // original server-local tool name, when cached
+	desc                  string
+	schema                json.RawMessage
+	capabilityFingerprint string
 	// readOnly/readOnlyTrusted are guarded by shared.mu because a live handshake
 	// can demote a stale cached reader before asking the model to retry.
 	readOnly        bool
@@ -405,6 +407,13 @@ func (lt *lazyTool) reconcileLiveSafety(real tool.Tool) error {
 	if real == nil {
 		return nil
 	}
+	if remote, ok := real.(*remoteTool); ok && lt.capabilityFingerprint != "" && remote.capabilityFingerprint != "" && lt.capabilityFingerprint != remote.capabilityFingerprint {
+		lt.readOnly = remote.readOnly
+		lt.readOnlyTrusted = remote.readOnlyTrusted
+		lt.destructive = remote.destructive
+		lt.capabilityFingerprint = remote.capabilityFingerprint
+		return fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before execution, retry after the parent session reviews the change", lt.shared.spec.Name, lt.rawName)
+	}
 	if lt.readOnly && !real.ReadOnly() {
 		lt.readOnly = false
 		lt.readOnlyTrusted = false
@@ -450,6 +459,31 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 		ctx:  spawnCtx,
 	}
 
+	trustedReaders := map[string]bool{}
+	cachedCapabilities := map[string]mcptrust.Capability{}
+	if cs != nil && len(cs.Tools) > 0 {
+		caps := make([]mcptrust.Capability, 0, len(cs.Tools))
+		for _, ct := range cs.Tools {
+			visible := ct.Name
+			if spec.StripRawPrefix != "" {
+				visible = strings.TrimPrefix(visible, spec.StripRawPrefix)
+			}
+			cap := mcptrust.Capability{
+				RawName: ct.Name, ModelName: toolName(spec.Name, visible),
+				InputSchema: ct.Schema, OutputSchema: ct.OutputSchema,
+				ReadOnly:    ct.ReadOnly || spec.toolReadOnlyOverride(ct.Name, visible),
+				Destructive: ct.Destructive,
+			}
+			caps = append(caps, cap)
+			cachedCapabilities[ct.Name] = cap
+		}
+		if identity, err := specIdentityFingerprint(sessionCtx, spec); err == nil {
+			if eval, err := evaluateSpecTrust(spec, identity, caps); err == nil {
+				trustedReaders = eval.TrustedReaders
+			}
+		}
+	}
+
 	var out []tool.Tool
 	// A snapshot with zero tools presents nothing the model could call, so it
 	// gets the same connect stub as a cache miss — otherwise the live tools
@@ -470,17 +504,21 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 			if spec.StripRawPrefix != "" {
 				visibleName = strings.TrimPrefix(visibleName, spec.StripRawPrefix)
 			}
-			trusted := spec.toolReadOnlyOverride(ct.Name, visibleName)
+			trusted := trustedReaders[ct.Name]
+			if spec.TrustManager == nil {
+				trusted = ct.ReadOnly || spec.toolReadOnlyOverride(ct.Name, visibleName)
+			}
 			out = append(out, &lazyTool{
-				shared:          shared,
-				name:            toolName(spec.Name, visibleName),
-				rawName:         ct.Name,
-				desc:            ct.Description,
-				schema:          ct.Schema,
-				readOnly:        spec.toolReadOnly(ct.Name, visibleName, ct.ReadOnly),
-				readOnlyTrusted: trusted,
-				destructive:     ct.Destructive,
-				hasCache:        true,
+				shared:                shared,
+				name:                  toolName(spec.Name, visibleName),
+				rawName:               ct.Name,
+				desc:                  ct.Description,
+				schema:                ct.Schema,
+				capabilityFingerprint: capabilityFingerprint(cachedCapabilities[ct.Name]),
+				readOnly:              trusted,
+				readOnlyTrusted:       trusted,
+				destructive:           ct.Destructive,
+				hasCache:              true,
 			})
 		}
 	}

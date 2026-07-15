@@ -603,7 +603,7 @@ func TestUseCapabilityInspectDoesNotStartServer(t *testing.T) {
 	}
 }
 
-func TestPlanModeRoutesInstalledWriteMCPThroughUseCapabilityPermission(t *testing.T) {
+func TestPlanModeBlocksInstalledWriteMCPResolvedThroughUseCapability(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__github__create_issue", readOnly: false}, server: "github", raw: "create_issue"})
 	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__github__search_issues", readOnly: true}, server: "github", raw: "search_issues"})
@@ -617,8 +617,8 @@ func TestPlanModeRoutesInstalledWriteMCPThroughUseCapabilityPermission(t *testin
 		ID: "1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/create_issue","arguments":{}}`,
 	})
-	if out.blocked || out.errMsg != "" || gate.normalCalls != 1 {
-		t.Fatalf("installed MCP writer should use normal permission behind proxy, outcome=%+v calls=%d", out, gate.normalCalls)
+	if !out.blocked || gate.normalCalls != 0 {
+		t.Fatalf("installed MCP writer should be blocked before permission, outcome=%+v calls=%d", out, gate.normalCalls)
 	}
 	// A read-only target still passes through the proxy in plan mode.
 	out = a.executeOne(context.Background(), provider.ToolCall{
@@ -643,8 +643,8 @@ func TestPlanModeMCPStyleNameWithoutMetadataStillUsesPermission(t *testing.T) {
 		ID: "1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/create_issue","arguments":{}}`,
 	})
-	if !out.blocked || !strings.Contains(out.output, gate.reason) || len(gate.calls) != 1 {
-		t.Fatalf("MCP-style name must use ordinary permission in Plan: outcome=%+v calls=%+v", out, gate.calls)
+	if !out.blocked || !strings.Contains(out.output, "Plan mode") || len(gate.calls) != 0 {
+		t.Fatalf("MCP-style name must be hard-blocked in Plan: outcome=%+v calls=%+v", out, gate.calls)
 	}
 }
 
@@ -666,7 +666,7 @@ func TestDestructiveMCPThroughUseCapabilityUsesFreshApproval(t *testing.T) {
 		ID: "1", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:github/delete_issue","arguments":{"number":1}}`,
 	})
-	if out.blocked || out.errMsg != "" || gate.normalCalls != 0 || gate.freshCalls != 1 || gate.subject != "github/delete_issue" {
+	if !out.blocked || gate.normalCalls != 0 || gate.freshCalls != 0 {
 		t.Fatalf("destructive proxy outcome=%+v normal=%d fresh=%d subject=%q", out, gate.normalCalls, gate.freshCalls, gate.subject)
 	}
 }

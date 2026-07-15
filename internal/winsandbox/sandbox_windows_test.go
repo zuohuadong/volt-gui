@@ -298,6 +298,39 @@ func TestWindowsSandboxReadOnlyAllowsReadsAndDeniesWrites(t *testing.T) {
 	}
 }
 
+func TestWindowsAppContainerAllowsOnlyPrivateStateWrites(t *testing.T) {
+	if !Available() {
+		t.Skip("windows sandbox APIs unavailable")
+	}
+	sh := powershellArgvForTest(t, "")
+	if sh == nil {
+		t.Skip("PowerShell unavailable")
+	}
+	workspace := t.TempDir()
+	state := t.TempDir()
+	workspaceFile := filepath.Join(workspace, "blocked.txt")
+	stateFile := filepath.Join(state, "allowed.txt")
+	script := "$ErrorActionPreference='Stop'; " +
+		"Set-Content -LiteralPath " + psQuote(stateFile) + " -Value ok; " +
+		"try { Set-Content -LiteralPath " + psQuote(workspaceFile) + " -Value nope; exit 9 } catch { exit 0 }"
+	result, err := Run(Spec{
+		WritableRoots: []string{state}, ReadableRoots: []string{workspace}, AppContainerWritableRoots: []string{state},
+		Network: false, Writable: false, TempPrefix: "windows-sandbox-test-",
+	}, append(sh, script), RunOptions{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+	if err != nil {
+		t.Fatalf("sandbox run failed: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("AppContainer state-only run exit code = %d", result.ExitCode)
+	}
+	if _, err := os.Stat(stateFile); err != nil {
+		t.Fatalf("private state write failed: %v", err)
+	}
+	if _, err := os.Stat(workspaceFile); !os.IsNotExist(err) {
+		t.Fatalf("AppContainer unexpectedly wrote workspace: %v", err)
+	}
+}
+
 func TestWindowsSandboxDeniesForbidRead(t *testing.T) {
 	if !Available() {
 		t.Skip("windows sandbox APIs unavailable")

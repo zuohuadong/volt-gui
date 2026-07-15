@@ -80,6 +80,7 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 !define REASONIX_UPDATE_HELPER "reasonix-update-helper.exe"
 !define REASONIX_GUARD "reasonix-guard.exe"
 !define REASONIX_LAUNCHER "reasonix-launcher.exe"
+!define REASONIX_PORTABLE_ENTRY "Reasonix.exe"
 !define REASONIX_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
 InstallDir "${REASONIX_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
@@ -136,17 +137,33 @@ done:
 FunctionEnd
 
 Function reasonix.waitForExecutableUnlock
-   IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 done
    StrCpy $0 0
 
 retry:
+   IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 check_guard
    ClearErrors
    FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a
    IfErrors locked
    FileClose $1
-   IfFileExists "$INSTDIR\${REASONIX_LAUNCHER}" 0 done
+
+check_guard:
+   IfFileExists "$INSTDIR\${REASONIX_GUARD}" 0 check_launcher
+   ClearErrors
+   FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a
+   IfErrors locked
+   FileClose $1
+
+check_launcher:
+   IfFileExists "$INSTDIR\${REASONIX_LAUNCHER}" 0 check_portable_entry
    ClearErrors
    FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
+   IfErrors locked
+   FileClose $1
+
+check_portable_entry:
+   IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 done
+   ClearErrors
+   FileOpen $1 "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" a
    IfErrors locked
    FileClose $1
    Goto done
@@ -186,13 +203,19 @@ Section
     !if /FileExists "${REASONIX_UPDATE_HELPER}"
     File "/oname=${REASONIX_UPDATE_HELPER}" "${REASONIX_UPDATE_HELPER}"
     !else
-    !warning "${REASONIX_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
+    !warning "${REASONIX_UPDATE_HELPER} was not found; Windows auto-update will fail safely until the helper is installed."
     !endif
     !if /FileExists "${REASONIX_GUARD}"
     File "/oname=${REASONIX_GUARD}" "${REASONIX_GUARD}"
     !endif
     !if /FileExists "${REASONIX_LAUNCHER}"
     File "/oname=${REASONIX_LAUNCHER}" "${REASONIX_LAUNCHER}"
+    ; Portable archives expose Reasonix.exe as a second copy of the Guard
+    ; launcher. Preserve that layout only when upgrading an existing portable
+    ; directory, and keep the alias in lockstep with the canonical launcher.
+    IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 reasonix_no_portable_entry
+    File "/oname=${REASONIX_PORTABLE_ENTRY}" "${REASONIX_LAUNCHER}"
+reasonix_no_portable_entry:
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach"
     !else
@@ -216,6 +239,7 @@ Section "uninstall"
     Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"
     Delete "$INSTDIR\${REASONIX_GUARD}"
     Delete "$INSTDIR\${REASONIX_LAUNCHER}"
+    Delete "$INSTDIR\${REASONIX_PORTABLE_ENTRY}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

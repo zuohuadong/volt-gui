@@ -136,7 +136,7 @@ func (a *App) InstallUpdate() error {
 	}
 	switch runtime.GOOS {
 	case "windows":
-		err = applyWindowsFile(meta.Path)
+		err = applyWindowsFile(meta.Path, meta.Version)
 	case "darwin":
 		err = applyMac(meta.Path, meta.Version)
 	case "linux":

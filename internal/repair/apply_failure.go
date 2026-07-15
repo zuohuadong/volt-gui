@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"reasonix/internal/config"
@@ -90,7 +91,27 @@ func RecoverFailedInstall() (UpdateRollbackResult, *UpdateApplyFailure, error) {
 	if !ok {
 		return UpdateRollbackResult{}, nil, nil
 	}
-	result, err := RollbackPendingUpdate()
+	tx, txErr := ReadPendingUpdate()
+	if txErr != nil {
+		if !os.IsNotExist(txErr) {
+			return UpdateRollbackResult{}, failure, txErr
+		}
+		if clearErr := ClearUpdateApplyFailure(); clearErr != nil {
+			return UpdateRollbackResult{}, failure, clearErr
+		}
+		return UpdateRollbackResult{}, failure, nil
+	}
+	if !applyFailureMatchesUpdate(failure, tx) {
+		// A marker can survive when the helper cannot relaunch Guard. Never let
+		// that stale marker roll back a later, unrelated update transaction.
+		if clearErr := ClearUpdateApplyFailure(); clearErr != nil {
+			return UpdateRollbackResult{}, failure, clearErr
+		}
+		return UpdateRollbackResult{}, failure, nil
+	}
+	// Re-check the expected version inside the rollback read so a transaction
+	// replaced between correlation and recovery is not acted upon.
+	result, err := rollbackPendingUpdate(tx.ToVersion, tx.CreatedAt)
 	if err != nil {
 		return result, failure, err
 	}
@@ -98,4 +119,19 @@ func RecoverFailedInstall() (UpdateRollbackResult, *UpdateApplyFailure, error) {
 		return result, failure, clearErr
 	}
 	return result, failure, nil
+}
+
+func applyFailureMatchesUpdate(failure *UpdateApplyFailure, tx *UpdateTransaction) bool {
+	if failure == nil || tx == nil {
+		return false
+	}
+	if toVersion := strings.TrimSpace(failure.ToVersion); toVersion != "" && toVersion != strings.TrimSpace(tx.ToVersion) {
+		return false
+	}
+	// The marker must have been recorded after this transaction began. This
+	// rejects both versionless markers from the first Windows helper and stale
+	// same-version markers left by an earlier retry.
+	failureAt, failureErr := time.Parse(time.RFC3339Nano, failure.RecordedAt)
+	txAt, txErr := time.Parse(time.RFC3339Nano, tx.CreatedAt)
+	return failureErr == nil && txErr == nil && !failureAt.Before(txAt)
 }

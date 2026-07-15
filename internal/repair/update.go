@@ -39,9 +39,10 @@ type UpdateTransaction struct {
 }
 
 type UpdateTransactionFile struct {
-	TargetPath string `json:"targetPath"`
-	BackupPath string `json:"backupPath"`
-	SHA256     string `json:"sha256,omitempty"`
+	TargetPath    string `json:"targetPath"`
+	BackupPath    string `json:"backupPath,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
+	MissingBefore bool   `json:"missingBefore,omitempty"`
 }
 
 type UpdateRollbackResult struct {
@@ -66,8 +67,8 @@ func PendingUpdatePath() string {
 // PrepareFileUpdate snapshots the current desktop executable — plus any sibling
 // binaries of the release unit the installer also replaces (Guard, launcher,
 // update helper) — and records an update transaction before an updater applies
-// the replacement. Sibling paths that do not exist are skipped so older
-// installs without those artifacts still update.
+// the replacement. Sibling paths that do not exist are recorded explicitly so
+// rollback can remove files introduced by the replacement release.
 func PrepareFileUpdate(fromVersion, toVersion, targetPath string, siblingPaths ...string) (*UpdateTransaction, error) {
 	targetPath = filepath.Clean(strings.TrimSpace(targetPath))
 	if targetPath == "" || targetPath == "." {
@@ -100,6 +101,7 @@ func PrepareFileUpdate(fromVersion, toVersion, targetPath string, siblingPaths .
 		if i > 0 {
 			if _, err := os.Stat(path); err != nil {
 				if os.IsNotExist(err) {
+					tx.Files = append(tx.Files, UpdateTransactionFile{TargetPath: path, MissingBefore: true})
 					continue
 				}
 				return nil, fmt.Errorf("prepare update backup: %w", err)
@@ -244,12 +246,22 @@ func removeUpdateBackups(tx *UpdateTransaction) {
 }
 
 func RollbackPendingUpdate() (UpdateRollbackResult, error) {
+	return rollbackPendingUpdate("", "")
+}
+
+func rollbackPendingUpdate(expectedToVersion, expectedCreatedAt string) (UpdateRollbackResult, error) {
 	tx, err := ReadPendingUpdate()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return UpdateRollbackResult{}, nil
 		}
 		return UpdateRollbackResult{}, err
+	}
+	if expected := strings.TrimSpace(expectedToVersion); expected != "" && expected != strings.TrimSpace(tx.ToVersion) {
+		return UpdateRollbackResult{}, nil
+	}
+	if expected := strings.TrimSpace(expectedCreatedAt); expected != "" && expected != strings.TrimSpace(tx.CreatedAt) {
+		return UpdateRollbackResult{}, nil
 	}
 	result := UpdateRollbackResult{FromVersion: tx.ToVersion, ToVersion: tx.FromVersion, TargetPath: tx.TargetPath}
 	switch tx.TargetKind {
@@ -264,6 +276,9 @@ func RollbackPendingUpdate() (UpdateRollbackResult, error) {
 		// ReadPendingUpdate already rejects hashless file transactions, so
 		// this guards hand-crafted callers.
 		for _, f := range files {
+			if f.MissingBefore {
+				continue
+			}
 			if strings.TrimSpace(f.SHA256) == "" {
 				return result, fmt.Errorf("rollback update: backup hash missing for %s", filepath.Base(f.TargetPath))
 			}
@@ -322,6 +337,9 @@ func restoreReleaseUnit(files []UpdateTransactionFile) (mixed bool, err error) {
 		}
 	}()
 	for i, f := range files {
+		if f.MissingBefore {
+			continue
+		}
 		mode := os.FileMode(0o700)
 		if st, statErr := os.Stat(f.TargetPath); statErr == nil {
 			mode = st.Mode().Perm()
@@ -333,59 +351,69 @@ func restoreReleaseUnit(files []UpdateTransactionFile) (mixed bool, err error) {
 		stages[i] = stage
 	}
 	asides := make([]string, len(files))
-	swapped := 0
+	processed := make([]bool, len(files))
+	restoreAttempted := make([]bool, len(files))
+	failedIndex := -1
 	var swapErr error
 	for i, f := range files {
 		aside := f.TargetPath + ".reasonix-rollback-aside"
 		if renameErr := rollbackSwapRename(f.TargetPath, aside); renameErr != nil {
 			if os.IsNotExist(renameErr) {
-				// A rollback interrupted between renames may have consumed
-				// this target; placing the staged copy resumes that swap.
-				aside = ""
+				// A rollback interrupted between renames may have consumed this
+				// target while retaining the new binary at the fixed aside path.
+				// Preserve that copy for compensation until the retry succeeds.
+				if f.MissingBefore {
+					aside = ""
+				} else if _, statErr := os.Lstat(aside); statErr != nil {
+					aside = ""
+				}
 			} else {
+				failedIndex = i
 				swapErr = fmt.Errorf("retain %s: %w", filepath.Base(f.TargetPath), renameErr)
 				break
 			}
 		}
 		asides[i] = aside
+		if f.MissingBefore {
+			// The old release did not contain this path. Retaining the new file
+			// at the aside path removes it from the live release atomically; it
+			// is deleted only after the whole rollback succeeds.
+			processed[i] = true
+			continue
+		}
+		restoreAttempted[i] = true
 		if renameErr := rollbackSwapRename(stages[i], f.TargetPath); renameErr != nil {
+			failedIndex = i
 			swapErr = fmt.Errorf("restore %s: %w", filepath.Base(f.TargetPath), renameErr)
 			break
 		}
 		stages[i] = ""
-		swapped = i + 1
+		processed[i] = true
 	}
 	if swapErr == nil {
-		for _, aside := range asides {
-			if aside != "" {
-				// Best-effort: on Windows the running executable's aside
-				// lingers until the process exits, which is harmless.
-				_ = os.Remove(aside)
-			}
+		for _, f := range files {
+			// Best-effort: on Windows the running executable's aside may linger
+			// until the process exits, but it is no longer a live entry point.
+			_ = os.Remove(f.TargetPath + ".reasonix-rollback-aside")
 		}
 		return false, nil
 	}
 	// Compensate: rename the new-version binaries back over the restored old
-	// ones. swapped == the failed index, whose target either still holds the
-	// new binary (retain failed) or sits aside untouched (restore failed).
-	for j := 0; j <= swapped && j < len(files); j++ {
-		if j == swapped {
-			if asides[j] != "" {
-				if _, statErr := os.Lstat(files[j].TargetPath); statErr == nil {
-					_ = os.Remove(asides[j])
-				} else if os.Rename(asides[j], files[j].TargetPath) != nil {
-					mixed = true
-				}
-			} else if _, statErr := os.Lstat(files[j].TargetPath); statErr != nil {
-				// An interrupted-rollback resume failed to place the staged
-				// copy and no aside exists: the unit is missing this binary.
+	// ones. A missing-before entry is compensated the same way: move the
+	// retained new file back to its original path.
+	for j, f := range files {
+		if !processed[j] && j != failedIndex {
+			continue
+		}
+		if asides[j] != "" {
+			if rollbackSwapRename(asides[j], f.TargetPath) != nil {
 				mixed = true
 			}
 			continue
 		}
-		if asides[j] == "" || os.Rename(asides[j], files[j].TargetPath) != nil {
-			// No new-version copy exists to put back (an interrupted rollback
-			// consumed it) or the rename failed; the unit mixes releases.
+		if !f.MissingBefore && restoreAttempted[j] {
+			// No retained new-version copy exists to put back after the old
+			// backup was (or may have been) placed.
 			mixed = true
 		}
 	}
@@ -397,8 +425,10 @@ func restoreReleaseUnit(files []UpdateTransactionFile) (mixed bool, err error) {
 // primary target; Guard/launcher artifacts only as release-unit siblings.
 func allowedUpdateTargetBase(base string, primary bool) bool {
 	switch strings.ToLower(base) {
-	case "reasonix-desktop", "reasonix-desktop.exe", "reasonix.exe":
+	case "reasonix-desktop", "reasonix-desktop.exe":
 		return primary
+	case "reasonix.exe":
+		return true
 	case "reasonix-guard", "reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe":
 		return !primary
 	default:
@@ -446,7 +476,6 @@ func validateUpdateTransaction(tx *UpdateTransaction) error {
 		for i := range tx.Files {
 			f := &tx.Files[i]
 			f.TargetPath = filepath.Clean(f.TargetPath)
-			f.BackupPath = filepath.Clean(f.BackupPath)
 			primary := f.TargetPath == tx.TargetPath
 			primaryListed = primaryListed || primary
 			if !allowedUpdateTargetBase(filepath.Base(f.TargetPath), primary) {
@@ -455,6 +484,13 @@ func validateUpdateTransaction(tx *UpdateTransaction) error {
 			if filepath.Dir(f.TargetPath) != filepath.Dir(tx.TargetPath) {
 				return fmt.Errorf("pending update release file is outside the current Guard installation")
 			}
+			if f.MissingBefore {
+				if primary || strings.TrimSpace(f.BackupPath) != "" || strings.TrimSpace(f.SHA256) != "" {
+					return fmt.Errorf("pending update missing release file metadata is invalid")
+				}
+				continue
+			}
+			f.BackupPath = filepath.Clean(f.BackupPath)
 			if !insideRepairDir(f.BackupPath) {
 				return fmt.Errorf("pending update backup is outside the repair directory")
 			}

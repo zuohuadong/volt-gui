@@ -118,8 +118,14 @@ function localizeApprovalReason(tool: string, reason: string | undefined, t: Tra
     return trimmed;
   }
   if (tool !== "sandbox_escape") return trimmed;
-  if (trimmed.includes("could not wrap this command")) return t("approval.sandboxEscapeWrapReason");
-  if (trimmed.includes("failed while starting this command") || trimmed.includes("Run this command unconfined once?")) {
+  if (trimmed.includes("could not wrap this command") || trimmed.includes("does not provide an OS-level Bash sandbox")) {
+    return t("approval.sandboxEscapeWrapReason");
+  }
+  if (
+    trimmed.includes("failed while starting this command") ||
+    trimmed.includes("could not start this command") ||
+    trimmed.includes("Run this command unconfined once?")
+  ) {
     return t("approval.sandboxEscapeRuntimeReason");
   }
   return trimmed || t("approval.sandboxEscapeRuntimeReason");

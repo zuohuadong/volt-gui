@@ -3243,7 +3243,11 @@ func sessionBindingWorkspaceNotice(oldScope, oldWorkspaceRoot, scope, workspaceR
 
 func describeSessionBindingWorkspace(scope, workspaceRoot string) string {
 	if strings.TrimSpace(scope) == "project" && strings.TrimSpace(workspaceRoot) != "" {
-		return fmt.Sprintf("project workspace %q", strings.TrimSpace(workspaceRoot))
+		// %q escapes Windows separators, which turns a user-facing path into
+		// C:\\Users\\... in the notice. Preserve native separators while escaping
+		// only the delimiters that can appear in a Unix path.
+		root := strings.ReplaceAll(strings.TrimSpace(workspaceRoot), `"`, `\"`)
+		return `project workspace "` + root + `"`
 	}
 	return "global workspace"
 }

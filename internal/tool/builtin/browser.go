@@ -35,7 +35,7 @@ type browserNavigate struct{}
 
 const (
 	browserTimeout     = 30 * time.Second
-	browserStartupWait = 5 * time.Second
+	browserStartupWait = 15 * time.Second
 	browserMaxText     = 1 << 20 // 1 MiB text cap
 )
 
@@ -167,6 +167,10 @@ func navigateCDP(ctx context.Context, bin, targetURL string, extraWaitMs int) (s
 }
 
 func readDevToolsURL(ctx context.Context, r io.Reader) (string, error) {
+	return readDevToolsURLWithTimeout(ctx, r, browserStartupWait)
+}
+
+func readDevToolsURLWithTimeout(ctx context.Context, r io.Reader, startupWait time.Duration) (string, error) {
 	lines := make(chan string)
 	errs := make(chan error, 1)
 
@@ -182,7 +186,10 @@ func readDevToolsURL(ctx context.Context, r io.Reader) (string, error) {
 		close(lines)
 	}()
 
-	timer := time.NewTimer(browserStartupWait)
+	if startupWait <= 0 {
+		startupWait = browserStartupWait
+	}
+	timer := time.NewTimer(startupWait)
 	defer timer.Stop()
 
 	for {

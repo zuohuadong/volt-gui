@@ -660,6 +660,13 @@ func TestGatewayRemoteTaskSharedThreadRejectsForeignSteerAndInterrupt(t *testing
 	<-ctrl.cancelled
 	close(ctrl.release)
 	<-ctrl.done
+	ownerTask, ok := store.TaskForMessage(RemoteEndpointFromMessage(owner), owner.MessageID)
+	if !ok {
+		t.Fatal("owner task missing after cancellation")
+	}
+	// cancelActiveSession is teardown-only here and intentionally bypasses the
+	// governed cancel-request transition, so the interrupted turn settles failed.
+	waitRemoteTaskStatus(t, store, ownerTask.ID, RemoteTaskFailed)
 }
 
 func TestGatewayRemoteTaskQueueDropFinalizesDroppedTask(t *testing.T) {

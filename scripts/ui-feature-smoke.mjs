@@ -81,27 +81,6 @@ async function clickScopedButton(scope, name, options = {}) {
   await scope.page().waitForTimeout(options.pause ?? 100);
 }
 
-async function clickText(page, text, options = {}) {
-  const locator = page.getByText(text, { exact: options.exact ?? false });
-  const item = await firstVisible(locator, `text ${String(text)}`);
-  await item.click({ timeout: options.timeout ?? 5000 });
-  await page.waitForTimeout(options.pause ?? 100);
-}
-
-async function fillFirst(page, selector, value, label = selector) {
-  const locator = await firstVisible(page.locator(selector), label);
-  await locator.fill(value);
-  await page.waitForTimeout(50);
-}
-
-async function submitComposer(page) {
-  const activeComposer = page.locator('form.composer:has([data-testid="composer-input"])').first();
-  const sendButton = activeComposer.locator('button[type="submit"]').first();
-  await sendButton.waitFor({ state: 'visible', timeout: 90000 });
-  await sendButton.click({ timeout: 5000 });
-  await page.waitForTimeout(100);
-}
-
 async function assertText(page, text, label = text) {
   const count = await visibleCount(page.getByText(text, { exact: false }));
   if (count < 1) throw new Error(`${label} not visible`);
@@ -121,15 +100,6 @@ async function assertBackendUnavailableNotice(page, action) {
   }
 }
 
-async function openUserMenuItem(page, item) {
-  await closeOverlays(page);
-  const opener = await firstVisible(page.getByRole('button', { name: '打开用户菜单', exact: true }), 'user menu button');
-  await opener.click({ force: true });
-  const menuItem = await firstVisible(page.getByRole('menuitem', { name: item, exact: true }), `user menu item ${item}`);
-  await menuItem.click({ force: true });
-  await page.waitForTimeout(100);
-}
-
 async function assertHealthy(page, label) {
   const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
   if (!bodyText.trim()) throw new Error(`${label}: blank page`);
@@ -142,7 +112,7 @@ async function assertHealthy(page, label) {
 
 async function closeOverlays(page) {
   for (let index = 0; index < 5; index += 1) {
-    const modalCount = await visibleCount(page.locator('.modal-backdrop, .agent-wizard, .config-modal, .agent-market-modal, .capability-detail-modal, .user-panel-dialog, .code-inspector'));
+    const modalCount = await visibleCount(page.locator('.modal-backdrop, .agent-wizard, .config-modal, .agent-market-modal, .capability-detail-modal, .user-panel-modal, .code-inspector'));
     const menuCount = await visibleCount(page.locator('.user-menu, .agent-selector__menu'));
     if (modalCount === 0 && menuCount === 0) break;
     const closeByName = page.getByRole('button', { name: /^(关闭|取消|返回项目列表|返回客户列表|x|×)$/ }).last();
@@ -172,30 +142,6 @@ async function runStep(page, errors, name, fn) {
   }
 }
 
-async function collectVisibleControls(page) {
-  return page.evaluate(() => {
-    function labelFor(el) {
-      return (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || el.getAttribute('placeholder') || '').replace(/\s+/g, ' ').trim();
-    }
-    return [...document.querySelectorAll('button, [role="button"], [role="menuitem"], input, textarea, select')]
-      .filter((el) => {
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
-        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-      })
-      .map((el) => ({ tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || '', name: labelFor(el).slice(0, 160) }))
-      .filter((item) => item.name || ['input', 'textarea', 'select'].includes(item.tag));
-  });
-}
-
-async function smokeWorkNavigation(page) {
-  const navLabels = ['今日概览', '新建任务', '待办事项', '自动化', '项目管理', '客户管理', '资料中心', '团队协作', '日程日历', '报告中心', 'Agent 中心', '能力中心'];
-  for (const label of navLabels) {
-    await clickButton(page, label);
-    await assertText(page, label === '自动化' ? '自动化任务' : label.replace('事项', ''), label);
-  }
-}
-
 async function smokeNoSeedContent(page, mobile) {
   await clickUnifiedNav(page, '工作台', mobile);
   await page.waitForTimeout(500);
@@ -214,153 +160,6 @@ async function smokeNoSeedContent(page, mobile) {
   for (const text of forbidden) {
     if (body.includes(text)) throw new Error(`browser preview still renders mock fingerprint: ${text}`);
   }
-}
-
-async function smokeEmptyBusinessSurfaces(page) {
-  const checks = [
-    ['待办事项', '.aorist-page .aorist-list > article:not(.detail-empty)', 'todo records'],
-    ['自动化', '.automation-task-card', 'automation records'],
-    ['项目管理', '.project-matter-card', 'project records'],
-    ['客户管理', '.client-card', 'customer records'],
-    ['日程日历', '.calendar-event-chip, .calendar-board aside .automation-row', 'calendar records'],
-    ['报告中心', '.report-card-list > button', 'report records'],
-    ['资料中心', '.resource-category-card, .knowledge-template-card', 'resource records'],
-    ['团队协作', '.team-list-card', 'team records'],
-    ['Agent 中心', '.agent-grid .agent-card', 'agent records'],
-    ['能力中心', '.capability-row', 'capability records'],
-  ];
-  for (const [nav, selector, label] of checks) {
-    await clickButton(page, nav);
-    await assertCount(page.locator(selector), 0, label);
-  }
-
-  for (const item of ['同步中心', '操作记录']) {
-    await openUserMenuItem(page, item);
-    await assertCount(page.locator('.aorist-page .aorist-list > article:not(.detail-empty)'), 0, `${item} records`);
-    await closeOverlays(page);
-  }
-}
-
-async function smokeReachableDialogs(page) {
-  const dialogOpeners = [
-    ['待办事项', '新增待办', '新建待办'],
-    ['日程日历', '新建日程', '新建日程'],
-    ['报告中心', '新建报告', '新建分析报告'],
-    ['资料中心', '上传资料', '上传资料'],
-    ['资料中心', '批量导入', '批量导入'],
-    ['团队协作', /配置新组|点击开始配置第一组/, '配置 Agent 团队'],
-    ['项目管理', '新建项目', '新建项目'],
-    ['客户管理', '新建客户', '新建客户'],
-  ];
-  for (const [nav, opener, title] of dialogOpeners) {
-    await closeOverlays(page);
-    await clickButton(page, nav);
-    await clickButton(page, opener);
-    await assertText(page, title);
-    await closeOverlays(page);
-  }
-
-  await clickButton(page, 'Agent 中心');
-  await clickButton(page, '创建 Agent');
-  await assertText(page, '创建与配置 Agent');
-  await closeOverlays(page);
-
-  await clickButton(page, '资料中心');
-  await clickButton(page, '知识库', { exact: true });
-  await clickButton(page, '新建规范', { exact: true });
-  await assertText(page, '新建规范');
-  await closeOverlays(page);
-
-  await clickButton(page, '能力中心');
-  await firstVisible(page.getByRole('button', { name: '导入能力配置', exact: true }), 'button 导入能力配置');
-  await assertCount(page.locator('input[aria-label="导入能力配置文件"]'), 1, 'capability import input');
-  await clickButton(page, '导入 MCP 配置', { exact: true });
-  await assertText(page, '导入 MCP 配置');
-  await closeOverlays(page);
-}
-
-async function smokeUnboundWritesAndRun(page) {
-  const hasBindings = await page.evaluate(() => Boolean(window.go?.main?.App));
-  if (hasBindings) throw new Error('browser-preview smoke unexpectedly has Wails bindings');
-
-  await clickButton(page, '待办事项');
-  const todoRows = page.locator('.aorist-page .aorist-list > article:not(.detail-empty)');
-  const beforeTodos = await todoRows.count();
-  await clickButton(page, '新增待办');
-  const todoModal = page.locator('.config-modal').last();
-  await todoModal.locator('input[placeholder*="跟进客户反馈"]').fill('浏览器预览不可落库待办');
-  await clickScopedButton(todoModal, '确认', { exact: true });
-  await assertBackendUnavailableNotice(page, 'save todo');
-  await closeOverlays(page);
-  await clickButton(page, '待办事项');
-  await assertCount(todoRows, beforeTodos, 'unbound todo save must not mutate records');
-
-  await clickButton(page, '项目管理');
-  const projectRows = page.locator('.project-matter-card');
-  const beforeProjects = await projectRows.count();
-  await clickButton(page, '新建项目');
-  const projectModal = page.locator('.config-modal').last();
-  await projectModal.locator('input[placeholder*="客户门户上线"]').fill('浏览器预览不可落库项目');
-  await clickScopedButton(projectModal, '确认', { exact: true });
-  await assertBackendUnavailableNotice(page, 'save project');
-  await closeOverlays(page);
-  await clickButton(page, '项目管理');
-  await assertCount(projectRows, beforeProjects, 'unbound project save must not mutate records');
-
-  await clickButton(page, '日程日历');
-  const eventRows = page.locator('.calendar-event-chip, .calendar-board aside .automation-row');
-  const beforeEvents = await eventRows.count();
-  await clickButton(page, '同步', { exact: true });
-  await assertBackendUnavailableNotice(page, 'run calendar sync');
-  await assertCount(eventRows, beforeEvents, 'unbound sync must not fabricate records');
-}
-
-async function smokeComposerDoesNotFakeAssistant(page) {
-  await clickButton(page, '新建任务');
-  const input = page.getByTestId('composer-input');
-  const inputVisible = await input.isVisible().catch(() => false);
-  if (!inputVisible) {
-    const body = await page.locator('body').innerText();
-    if (/尚未配置.*Agent|请先创建.*Agent|未连接桌面后端|Wails 桌面运行环境/.test(body)) return;
-    throw new Error('new task has neither a composer nor an honest empty/unavailable explanation');
-  }
-  if (await input.isDisabled()) {
-    const body = await page.locator('body').innerText();
-    if (!/未连接|不可用|桌面后端|Wails/.test(body)) throw new Error('disabled composer does not explain the unavailable desktop backend');
-    return;
-  }
-  const assistantMessages = page.locator('.transcript .message--assistant');
-  const before = await assistantMessages.count();
-  await input.fill('浏览器预览不能伪造模型回复');
-  await submitComposer(page);
-  await page.waitForTimeout(250);
-  const after = await assistantMessages.count();
-  if (after !== before) throw new Error(`unbound composer fabricated ${after - before} assistant message(s)`);
-  const body = await page.locator('body').innerText();
-  if (body.includes('浏览器预览已收到这条消息')) throw new Error('legacy fake assistant reply is still visible');
-}
-
-async function smokeUserPanels(page) {
-  for (const item of ['模型管理', '系统设置']) {
-    await openUserMenuItem(page, item);
-    await assertText(page, item);
-    if (item === '模型管理') await assertText(page, '未连接桌面后端');
-    await closeOverlays(page);
-  }
-}
-
-async function smokeVisibleProbe(page) {
-  await clickButton(page, 'Work 工作台').catch(() => {});
-  await clickButton(page, '今日概览');
-  const before = await collectVisibleControls(page);
-  for (const pattern of [/^查看全部$/, /^管理$/, /^新建待办$/, /^新建日程$/, /^进入 Agent 中心$/, /^Work$/, /^Code$/]) {
-    if (!before.some((control) => pattern.test(control.name))) continue;
-    await clickButton(page, pattern);
-    await closeOverlays(page);
-    await clickButton(page, '今日概览').catch(() => {});
-  }
-  const after = await collectVisibleControls(page);
-  return { beforeCount: before.length, afterCount: after.length, sample: after.slice(0, 30) };
 }
 
 function receiptTestFixture() {
@@ -467,6 +266,55 @@ async function smokeUnifiedShell(page, mobile) {
   await assertText(page, '从一项真实任务开始', 'Work workbench restored');
 }
 
+async function smokeCodeInspectorNavigation(page, mobile) {
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await (await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch')).click();
+
+  const routes = [
+    ['工程总览', 'overview', '任务'],
+    ['Workspace', 'workspace', 'Workspace'],
+    ['Context', 'context', 'Context'],
+    ['Diff', 'changes', 'Diff'],
+    ['Checkpoints', 'checkpoints', 'Checkpoints'],
+  ];
+  const assertInspectorState = async (panel, inspector, label) => {
+    const workbench = page.locator('.workbench');
+    if ((await workbench.getAttribute('data-current-code-panel')) !== panel) {
+      throw new Error(`${label} opened the wrong Code panel`);
+    }
+    const context = page.locator('[data-testid="task-context-bar"]');
+    const selectedInspector = context.locator('[role="tab"][aria-selected="true"]');
+    await assertCount(selectedInspector, 1, `${label} selected Task inspector`);
+    if ((await selectedInspector.innerText()).trim() !== inspector) {
+      throw new Error(`${label} left the Task inspector on ${(await selectedInspector.innerText()).trim()}`);
+    }
+  };
+  for (const [nav, panel, inspector] of routes) {
+    await clickUnifiedNav(page, nav, mobile);
+    const activeNav = await firstVisible(sidebar.getByRole('button', { name: nav, exact: true }), `active Code nav ${nav}`);
+    if (!(await activeNav.evaluate((node) => node.classList.contains('active')))) {
+      throw new Error(`${nav} Code navigation is not visibly active`);
+    }
+    await assertInspectorState(panel, inspector, nav);
+  }
+
+  await clickUnifiedNav(page, '工程总览', mobile);
+  await clickButton(page, '模型渠道', { exact: true });
+  await assertInspectorState('overview', '任务', 'model settings shortcut');
+  await firstVisible(page.locator('.user-panel-modal'), 'model settings dialog');
+  await closeOverlays(page);
+
+  const codeStatus = page.locator('.code-workbench-status-grid');
+  await codeStatus.locator('button').nth(1).click();
+  await assertInspectorState('overview', '任务', 'runtime settings shortcut');
+  await firstVisible(page.locator('.user-panel-modal'), 'runtime settings dialog');
+  await closeOverlays(page);
+
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  await (await firstVisible(sidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch')).click();
+}
+
 async function smokeBeginnerTaskLoop(page, mobile) {
   await openUnifiedDrawerIfNeeded(page, mobile);
   const sidebar = page.locator('[data-testid="unified-sidebar"]');
@@ -517,6 +365,56 @@ async function smokeUnifiedRoutes(page, mobile) {
       await firstVisible(empty.getByRole('button', { name: '新建自动化任务', exact: true }), 'automation empty-state CTA');
     }
   }
+}
+
+async function smokeCurrentDialogs(page, mobile) {
+  const dialogFlows = [
+    ['自动化', '新建自动化任务', '新建自动化任务'],
+    ['交付记录', '新建报告', '新建分析报告'],
+    ['资料与知识', '上传资料', '上传资料'],
+    ['资料与知识', '批量导入', '批量导入'],
+  ];
+  for (const [nav, opener, title] of dialogFlows) {
+    await closeOverlays(page);
+    await clickUnifiedNav(page, nav, mobile);
+    await clickButton(page, opener, { exact: true });
+    const modal = page.locator('.config-modal').last();
+    await modal.waitFor({ state: 'visible', timeout: 5000 });
+    await firstVisible(modal.getByText(title, { exact: true }), `${nav} dialog title ${title}`);
+    await closeOverlays(page);
+  }
+  await clickUnifiedNav(page, '工作台', mobile);
+}
+
+async function smokeBackendHonesty(page, mobile) {
+  const hasBindings = await page.evaluate(() => Boolean(window.go?.main?.App));
+  if (hasBindings) throw new Error('browser-preview smoke unexpectedly has Wails bindings');
+
+  await clickUnifiedNav(page, '项目管理', mobile);
+  const projectRows = page.locator('.project-matter-card');
+  const beforeProjects = await projectRows.count();
+  const projectPage = page.locator('.project-management-page');
+  await clickScopedButton(projectPage, '新建项目', { exact: true });
+  const projectModal = page.locator('.config-modal').last();
+  await projectModal.locator('input[placeholder*="客户门户上线"]').fill('浏览器预览不可落库项目');
+  await clickScopedButton(projectModal, '确认', { exact: true });
+  await assertBackendUnavailableNotice(page, 'save project');
+  await closeOverlays(page);
+  await clickUnifiedNav(page, '项目管理', mobile);
+  await assertCount(projectRows, beforeProjects, 'unbound project save must not mutate records');
+  await assertCount(page.getByText('浏览器预览不可落库项目', { exact: true }), 0, 'unbound project must not appear in sidebar or project list');
+
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(sidebar, '新建任务', { exact: true });
+  const body = await page.locator('body').innerText();
+  if (!/未连接桌面后端|Wails 桌面运行环境|先完成运行配置/.test(body)) {
+    throw new Error('new task preview does not explain the unavailable desktop backend');
+  }
+  const composer = page.getByTestId('composer-input');
+  if (await composer.isVisible().catch(() => false)) throw new Error('browser preview exposed a composer without a desktop backend');
+  if (await page.locator('.transcript .message--assistant').count() !== 0) throw new Error('browser preview fabricated an assistant message');
+  await clickUnifiedNav(page, '工作台', mobile);
 }
 
 async function smokeResultDrivenToday(page, mobile) {
@@ -676,9 +574,12 @@ async function smokeViewport(label, viewport) {
     await page.locator('[data-testid="work-launch-panel"]').waitFor({ state: 'visible', timeout: 15000 });
   });
   await runStep(page, errors, `${label} unified IA shell`, () => smokeUnifiedShell(page, mobile));
+  await runStep(page, errors, `${label} Code inspector navigation`, () => smokeCodeInspectorNavigation(page, mobile));
   await runStep(page, errors, `${label} beginner task loop`, () => smokeBeginnerTaskLoop(page, mobile));
   await runStep(page, errors, `${label} result-driven today`, () => smokeResultDrivenToday(page, mobile));
   await runStep(page, errors, `${label} six unified routes`, () => smokeUnifiedRoutes(page, mobile));
+  await runStep(page, errors, `${label} current workflow dialogs`, () => smokeCurrentDialogs(page, mobile));
+  await runStep(page, errors, `${label} backend honesty`, () => smokeBackendHonesty(page, mobile));
   await runStep(page, errors, `${label} five result templates`, () => smokeOutcomeTemplates(page, mobile));
   await runStep(page, errors, `${label} governance trust and memory`, () => smokeGovernanceCenter(page, mobile));
   await runStep(page, errors, `${label} no seeded fingerprints`, () => smokeNoSeedContent(page, mobile));

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -201,6 +202,26 @@ func TestBrowserControlSecureLoginEndToEnd(t *testing.T) {
 	}
 	if len(provider.requests) != 1 || provider.requests[0].Origin != wantOrigin || provider.requests[0].URL != loginServer.URL+"/login" {
 		t.Fatalf("credential requests = %#v", provider.requests)
+	}
+}
+
+func TestReadDevToolsURLAllowsDelayedBrowserStartupWithinBudget(t *testing.T) {
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = reader.Close() })
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		_, _ = writer.Write([]byte("DevTools listening on ws://127.0.0.1:9222/devtools/browser/test\n"))
+		_ = writer.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := readDevToolsURLWithTimeout(ctx, reader, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("read delayed DevTools endpoint: %v", err)
+	}
+	if want := "ws://127.0.0.1:9222/devtools/browser/test"; got != want {
+		t.Fatalf("DevTools endpoint = %q, want %q", got, want)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // legacyHome points HOME / config-dir / .env resolution at a fresh temp tree and
@@ -975,5 +976,174 @@ func TestMigrateSupportData(t *testing.T) {
 				t.Fatalf("migrated %s mode = %o, want %o", check.rel, got, check.perm)
 			}
 		}
+	}
+}
+
+func TestMigrateSupportDataPreservesCurrentDesktopStateAndCopiesMissingFiles(t *testing.T) {
+	legacyDir := t.TempDir()
+	newDir := t.TempDir()
+
+	legacyFiles := map[string]string{
+		"desktop-workspace":                    "/legacy/workspace",
+		"desktop-workspaces.json":              `["/legacy/workspace"]`,
+		"desktop-window.json":                  `{"width":1200}`,
+		"workbench-projects.json":              `{"projects":[{"id":"p1"}]}`,
+		"workbench-project-materials.json":     `{"materials":[{"id":"m1"}]}`,
+		"workbench-data.json":                  `{"customers":[{"id":"c1"}]}`,
+		"todos.json":                           `{"todos":[{"id":"t1"}]}`,
+		"agents.json":                          `{"agents":[{"id":"a1"}]}`,
+		"automations.json":                     `{"automations":[{"id":"auto1"}]}`,
+		"automation-runs.json":                 `{"runs":[{"id":"run1"}]}`,
+		"heartbeat-tasks.json":                 `{"tasks":[{"id":"heartbeat1"}]}`,
+		"knowledge.db":                         "legacy knowledge",
+		"sessions/session-1.jsonl":             "legacy session",
+		"projects/project-1/sessions/s1.jsonl": "legacy project session",
+	}
+	legacyTabs := filepath.Join(legacyDir, "desktop-tabs.json")
+	if err := os.WriteFile(legacyTabs, []byte(`{"tabs":[{"id":"legacy"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for rel, content := range legacyFiles {
+		path := filepath.Join(legacyDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	currentTabs := filepath.Join(newDir, "desktop-tabs.json")
+	if err := os.WriteFile(currentTabs, []byte(`{"tabs":[{"id":"current"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := migrateSupportData(legacyDir, newDir)
+	for _, warning := range warnings {
+		if strings.Contains(warning, "failed to migrate") {
+			t.Fatalf("migration warning = %q", warning)
+		}
+	}
+
+	data, err := os.ReadFile(currentTabs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != `{"tabs":[{"id":"current"}]}` {
+		t.Fatalf("current desktop tabs were overwritten: %s", got)
+	}
+	for rel, want := range legacyFiles {
+		data, err := os.ReadFile(filepath.Join(newDir, rel))
+		if err != nil {
+			t.Fatalf("read migrated %s: %v", rel, err)
+		}
+		if got := string(data); got != want {
+			t.Fatalf("migrated %s = %q, want %q", rel, got, want)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(newDir, "desktop-window.json"), []byte("newer window"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migrateSupportData(legacyDir, newDir)
+	data, err = os.ReadFile(filepath.Join(newDir, "desktop-window.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "newer window" {
+		t.Fatalf("idempotent migration overwrote current file: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(legacyDir, "sessions", "session-1.jsonl")); err != nil {
+		t.Fatalf("legacy source was removed: %v", err)
+	}
+}
+
+func TestMigrateLegacySupportDataOnUpgradeRunsWhenCurrentConfigAlreadyExists(t *testing.T) {
+	home := t.TempDir()
+	legacyRoot := filepath.Join(home, "Library", "Application Support")
+	oldGOOS := runtimeGOOS
+	oldHome := osUserHomeDir
+	oldConfig := osUserConfigDir
+	runtimeGOOS = "darwin"
+	osUserHomeDir = func() (string, error) { return home, nil }
+	osUserConfigDir = func() string { return legacyRoot }
+	t.Cleanup(func() {
+		runtimeGOOS = oldGOOS
+		osUserHomeDir = oldHome
+		osUserConfigDir = oldConfig
+	})
+	t.Setenv("VOLTUI_HOME", "")
+	t.Setenv("REASONIX_HOME", "")
+	t.Setenv("VOLTUI_STATE_HOME", "")
+	t.Setenv("REASONIX_STATE_HOME", "")
+
+	legacyDir := filepath.Join(legacyRoot, "voltui")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "desktop-window.json"), []byte(`{"width":1200}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfigPath(), []byte("config_version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result := MigrateLegacySupportDataOnUpgrade()
+	if result == nil || result.From != legacyDir || result.To != filepath.Join(home, ".voltui") {
+		t.Fatalf("migration result = %+v", result)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".voltui", "desktop-window.json"))
+	if err != nil {
+		t.Fatalf("read recovered desktop window state: %v", err)
+	}
+	if !strings.Contains(string(data), "1200") {
+		t.Fatalf("recovered desktop window state = %s", data)
+	}
+	if _, err := os.Stat(filepath.Join(legacyDir, "desktop-window.json")); err != nil {
+		t.Fatalf("legacy source was removed: %v", err)
+	}
+	if repeated := MigrateLegacySupportDataOnUpgrade(); repeated != nil {
+		t.Fatalf("unchanged legacy data should be skipped by the migration marker: %+v", repeated)
+	}
+	legacySessions := filepath.Join(legacyDir, "sessions")
+	if err := os.MkdirAll(legacySessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacySessions, "after-downgrade.jsonl"), []byte("new legacy session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(legacySessions, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if resumed := MigrateLegacySupportDataOnUpgrade(); resumed == nil {
+		t.Fatal("new legacy session after the marker did not trigger another safe pass")
+	}
+	if data, err := os.ReadFile(filepath.Join(home, ".voltui", "sessions", "after-downgrade.jsonl")); err != nil || string(data) != "new legacy session" {
+		t.Fatalf("new legacy session was not copied: data=%q err=%v", data, err)
+	}
+}
+
+func TestMigrateLegacySupportDataOnUpgradeIsNoopWhenWindowsPathsMatch(t *testing.T) {
+	home := t.TempDir()
+	appData := filepath.Join(home, "AppData", "Roaming")
+	oldGOOS := runtimeGOOS
+	oldHome := osUserHomeDir
+	oldConfig := osUserConfigDir
+	runtimeGOOS = "windows"
+	osUserHomeDir = func() (string, error) { return home, nil }
+	osUserConfigDir = func() string { return appData }
+	t.Cleanup(func() {
+		runtimeGOOS = oldGOOS
+		osUserHomeDir = oldHome
+		osUserConfigDir = oldConfig
+	})
+	t.Setenv("VOLTUI_HOME", "")
+	t.Setenv("REASONIX_HOME", "")
+	if result := MigrateLegacySupportDataOnUpgrade(); result != nil {
+		t.Fatalf("matching Windows support paths should be a no-op: %+v", result)
 	}
 }

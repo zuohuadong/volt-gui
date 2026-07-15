@@ -843,21 +843,21 @@ func (t *TaskTool) resolveSubSessionRuntime(modelRef, effort string) (provider.P
 }
 
 func (t *TaskTool) runSubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
-	return t.runSubSessionWithReadOnly(ctx, prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, sess, childDepth, false)
-}
-
-func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
-	return t.runSubSessionWithReadOnly(ctx, prompt, subReg, sink, maxSteps, prov, pricing, ctxWin, sess, childDepth, true)
-}
-
-func (t *TaskTool) runSubSessionWithReadOnly(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int, readOnly bool) (string, error) {
 	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
-	opts.ReadOnlyExecution = readOnly
 	// Capture the pristine task before host framing is prepended: delivery
 	// intent classification must judge the task, not the wrapper.
 	opts.ClassifierTaskText = prompt
 	prompt = t.withWorkspaceContext(prompt)
 	return RunSubAgentWithSession(ctx, prov, subReg, sess, prompt, opts, sink)
+}
+
+func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, subReg *tool.Registry, sink event.Sink, maxSteps int, prov provider.Provider, pricing *provider.Pricing, ctxWin int, sess *Session, childDepth int) (string, error) {
+	opts := t.subagentOptions(ctx, maxSteps, pricing, ctxWin, childDepth)
+	// Capture the pristine task before host framing is prepended: delivery
+	// intent classification must judge the task, not the wrapper.
+	opts.ClassifierTaskText = prompt
+	prompt = t.withWorkspaceContext(prompt)
+	return RunReadOnlySubAgentWithSession(ctx, prov, subReg, sess, prompt, opts, sink)
 }
 
 // subagentOptions is the single construction point for the run options every
@@ -1030,6 +1030,15 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		return answer, nil
 	}
 	return "", fmt.Errorf("sub-agent finished without producing a final answer")
+}
+
+// RunReadOnlySubAgentWithSession is the construction boundary for every
+// strictly read-only child loop. Registry filtering limits the visible surface;
+// this permanent execution flag also re-checks targets resolved dynamically by
+// proxy tools such as use_capability.
+func RunReadOnlySubAgentWithSession(ctx context.Context, prov provider.Provider, reg *tool.Registry, sess *Session, prompt string, opts Options, sink event.Sink) (string, error) {
+	opts.ReadOnlyExecution = true
+	return RunSubAgentWithSession(ctx, prov, reg, sess, prompt, opts, sink)
 }
 
 // latestAssistantAnswer walks the session backwards for the last assistant

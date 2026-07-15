@@ -70,6 +70,17 @@ func (p readOnlyBoundaryProxy) ResolveCall(context.Context, json.RawMessage) (to
 	return p.resolved, nil
 }
 
+type layeredReadOnlyMCPBoundaryTarget struct {
+	readOnlyBoundaryTarget
+	destructive bool
+}
+
+func (layeredReadOnlyMCPBoundaryTarget) MCPServerName() string       { return "test" }
+func (layeredReadOnlyMCPBoundaryTarget) MCPRawToolName() string      { return "read" }
+func (layeredReadOnlyMCPBoundaryTarget) MCPApprovalMode() string     { return "approve" }
+func (layeredReadOnlyMCPBoundaryTarget) MCPApprovalReviewer() string { return "user" }
+func (t layeredReadOnlyMCPBoundaryTarget) MCPDestructiveHint() bool  { return t.destructive }
+
 func executeReadOnlyBoundaryCall(t *testing.T, resolved tool.ResolvedCall) toolOutcome {
 	t.Helper()
 	reg := tool.NewRegistry()
@@ -126,6 +137,42 @@ func TestReadOnlyExecutionAllowsInspectAndTrustedReadOnlyCall(t *testing.T) {
 	}
 }
 
+func TestReadOnlyExecutionAllowsOnlyLayeredTrustedReadOnlyMCPStartup(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		untrusted   bool
+		destructive bool
+		wantBlocked bool
+	}{
+		{name: "locally trusted reader"},
+		{name: "untrusted server hint", untrusted: true, wantBlocked: true},
+		{name: "destructive reader", destructive: true, wantBlocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			target := layeredReadOnlyMCPBoundaryTarget{
+				readOnlyBoundaryTarget: readOnlyBoundaryTarget{
+					name: "mcp__test__read", readOnly: true, untrusted: tc.untrusted, hostStart: true, calls: &calls,
+				},
+				destructive: tc.destructive,
+			}
+			out := executeReadOnlyBoundaryCall(t, tool.ResolvedCall{
+				ProxyAction: "call", TargetName: target.Name(), Target: target, ReadOnly: true, Args: json.RawMessage(`{}`),
+			})
+			if out.blocked != tc.wantBlocked {
+				t.Fatalf("layered MCP outcome = %+v, want blocked=%v", out, tc.wantBlocked)
+			}
+			wantCalls := 1
+			if tc.wantBlocked {
+				wantCalls = 0
+			}
+			if calls != wantCalls {
+				t.Fatalf("target Execute calls = %d, want %d", calls, wantCalls)
+			}
+		})
+	}
+}
+
 func TestReadOnlyExecutionBlocksUntrustedHintAndDecline(t *testing.T) {
 	calls := 0
 	target := readOnlyBoundaryTarget{name: "mcp__test__hint", readOnly: true, untrusted: true, calls: &calls}
@@ -163,12 +210,11 @@ func TestReadOnlyExecutionBlocksUntrustedHintAndDecline(t *testing.T) {
 	}
 }
 
-func TestReadOnlyExecutionDoesNotStartUnconnectedMCP(t *testing.T) {
+func TestReadOnlyExecutionDoesNotStartUntrustedUnconnectedMCP(t *testing.T) {
 	host := plugin.NewHost()
 	defer host.Close()
 	proxy := NewUseCapabilityTool(context.Background(), host, []plugin.Spec{{
 		Name: "lazy", Type: "stdio", Command: "reasonix-test-definitely-missing-binary",
-		ReadOnlyToolNames: map[string]bool{"read_thing": true},
 	}}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
 	reg := tool.NewRegistry()
 	reg.Add(proxy)

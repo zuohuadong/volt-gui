@@ -3218,7 +3218,10 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 		if u, ok := visible.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
 			return block("trust an externally asserted read-only target")
 		}
-		if h, ok := visible.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() {
+		if readOnlyExecutionMCPDestructive(visible) {
+			return block("execute a destructive MCP capability")
+		}
+		if h, ok := visible.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(visible) {
 			return block("start or mutate a host capability")
 		}
 		return toolOutcome{}, false
@@ -3242,13 +3245,51 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 		if u, ok := resolved.Target.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
 			return block("trust an externally asserted read-only dynamic capability")
 		}
-		if h, ok := resolved.Target.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() {
+		if readOnlyExecutionMCPDestructive(resolved.Target) {
+			return block("execute a destructive MCP capability")
+		}
+		if h, ok := resolved.Target.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(resolved.Target) {
 			return block("start or mutate a host capability")
 		}
 		return toolOutcome{}, false
 	default:
 		return block("execute an unknown dynamic capability action")
 	}
+}
+
+// These two narrow structural interfaces intentionally mirror the local MCP
+// safety and approval contracts introduced by PR #6482 without making this
+// boundary depend on that branch landing first. Until those contracts are
+// present, host-starting targets remain blocked. Once combined, only a locally
+// trusted read-only MCP target governed by the layered approval policy may
+// start; untrusted server hints and destructive tools still fail closed.
+type readOnlyExecutionMCPAnnotations interface {
+	MCPDestructiveHint() bool
+}
+
+type readOnlyExecutionMCPApprovalPolicy interface {
+	MCPApprovalMode() string
+	MCPApprovalReviewer() string
+}
+
+func readOnlyExecutionMCPDestructive(t tool.Tool) bool {
+	annotations, ok := t.(readOnlyExecutionMCPAnnotations)
+	return ok && annotations.MCPDestructiveHint()
+}
+
+func readOnlyExecutionAllowsTrustedMCPStartup(t tool.Tool) bool {
+	if t == nil || !t.ReadOnly() || readOnlyExecutionMCPDestructive(t) {
+		return false
+	}
+	if untrusted, ok := t.(tool.PlanModeUntrustedReadOnly); ok && untrusted.PlanModeUntrustedReadOnly() {
+		return false
+	}
+	meta, ok := t.(tool.MCPMetadata)
+	if !ok || strings.TrimSpace(meta.MCPServerName()) == "" || strings.TrimSpace(meta.MCPRawToolName()) == "" {
+		return false
+	}
+	_, governed := t.(readOnlyExecutionMCPApprovalPolicy)
+	return governed
 }
 
 func (a *Agent) checkPlanModeMCPReadOnlyTrust(ctx context.Context, call provider.ToolCall, t tool.Tool) (bool, toolOutcome, bool) {

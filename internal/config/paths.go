@@ -305,6 +305,31 @@ func appendUniquePath(paths []string, path string) []string {
 // unavailable.
 func ReasonixHomeDir() string { return reasonixHomeDir() }
 
+// WorkspaceLeaseDir stores cross-process Delivery writer locks outside user
+// workspaces. It intentionally follows the cache root rather than project or
+// session state: taking a lease must never dirty the repository it protects.
+func WorkspaceLeaseDir() string {
+	// Deliberately ignore REASONIX_HOME/REASONIX_CACHE_HOME here. Two app
+	// instances with different state profiles can still open the same user
+	// workspace, so their safety lock must converge on one OS-user cache root.
+	dir, err := os.UserCacheDir()
+	if err != nil || strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	return filepath.Join(dir, "reasonix", "workspace-leases")
+}
+
+// DeliveryWorktreeDir is durable storage for user-visible isolated Delivery
+// workspaces. It uses state rather than cache because these directories may
+// contain uncommitted user work and therefore must never be evicted as cache.
+func DeliveryWorktreeDir() string {
+	dir := userSupportDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "worktrees")
+}
+
 // UserCredentialsPath is the reasonix-owned global .env file under Reasonix
 // home. It is the single source for provider credentials saved by Reasonix, so
 // stale shell, Windows, project, or home env vars cannot silently override keys

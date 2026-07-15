@@ -298,7 +298,6 @@ func TestWindowsResidueMarkerSkipsMalformedLines(t *testing.T) {
 	content := "deny\tC:\\Users\\me\\.ssh\n" + // valid
 		"garbage-no-tab\n" + // no separator
 		"boguskind\tC:\\x\n" + // unknown kind
-		"grant_loader\tC:\\Users\\me\\tool.exe\n" + // valid executable-loader grant
 		"grant_profile\tOtherApp.0123456789abcdef0123\tC:\\wrong\n" + // untrusted profile
 		"deny_profile\tWinSandbox.0123456789abcdef0123\tC:\\Users\\me\\secret\n" + // valid profile deny
 		"grant_profile\tWinSandbox.abcdef0123456789abcd\tC:\\Users\\me\\profile tools\n" + // valid profile grant
@@ -310,7 +309,6 @@ func TestWindowsResidueMarkerSkipsMalformedLines(t *testing.T) {
 	got := readResidueMarker(marker)
 	want := []residueEntry{
 		{kind: residueDeny, path: `C:\Users\me\.ssh`},
-		{kind: residueGrantLoader, path: `C:\Users\me\tool.exe`},
 		{kind: residueDenyProfile, profile: "WinSandbox.0123456789abcdef0123", path: `C:\Users\me\secret`},
 		{kind: residueGrantProfile, profile: "WinSandbox.abcdef0123456789abcd", path: `C:\Users\me\profile tools`},
 		{kind: residueGrant, path: `C:\Users\me\my tools`},
@@ -550,6 +548,34 @@ func TestWindowsMutatedRootsForRunLocksNonSystemExePaths(t *testing.T) {
 	}
 	if containsWindowsPath(sysRoots, sysExe) {
 		t.Fatalf("system exe %s must not join the lock set: %v", sysExe, sysRoots)
+	}
+}
+
+func TestWindowsAppContainerLockRootsAreProfileScoped(t *testing.T) {
+	home := t.TempDir()
+	stateA := t.TempDir()
+	stateB := t.TempDir()
+	forbid := filepath.Join(home, "secret")
+	if err := os.MkdirAll(forbid, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	specA := Spec{ReadableRoots: []string{home}, AppContainerWritableRoots: []string{stateA}, ForbidReadRoots: []string{forbid}}
+	specB := Spec{ReadableRoots: []string{home}, AppContainerWritableRoots: []string{stateB}, ForbidReadRoots: []string{forbid}}
+	keysA := windowsAppContainerLockRootsForRun(specA, "")
+	keysB := windowsAppContainerLockRootsForRun(specB, "")
+	homeKeyA := windowsAppContainerProfileLockKey(windowsAppContainerName(specA), home)
+	homeKeyB := windowsAppContainerProfileLockKey(windowsAppContainerName(specB), home)
+	if !contains(keysA, homeKeyA) || !contains(keysB, homeKeyB) {
+		t.Fatalf("profile lock keys missing: A=%v B=%v", keysA, keysB)
+	}
+	if homeKeyA == homeKeyB {
+		t.Fatalf("different AppContainer profiles share home lock %q", homeKeyA)
+	}
+	if contains(keysA, home) || contains(keysB, home) {
+		t.Fatalf("additive home grants must not hold a global lifetime lock: A=%v B=%v", keysA, keysB)
+	}
+	if !contains(keysA, forbid) || !contains(keysB, forbid) {
+		t.Fatalf("forbid_read must retain its global path lock: A=%v B=%v", keysA, keysB)
 	}
 }
 

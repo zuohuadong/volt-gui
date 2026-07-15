@@ -880,7 +880,7 @@ func grantTemporaryAppContainerLoaderFile(residueRun *windowsResidueRun, resolve
 	if err := grantAppContainerSIDs(resolved, loaderSIDs, "RX"); err != nil {
 		return nil, err
 	}
-	return func() { removeGrantedAppContainerSIDs(resolved, loaderSIDs) }, nil
+	return func() { revokeAppContainerSIDs(resolved, loaderSIDs) }, nil
 }
 
 func grantExactAppContainerPath(residueRun *windowsResidueRun, profileName, path string, sidStrs []string, perm string) (func(), error) {
@@ -1388,6 +1388,15 @@ func applyWindowsACLEntries(root string, sidStrs []string, mode windows.ACCESS_M
 		return fmt.Errorf("set DACL %q: %w", root, err)
 	}
 	return nil
+}
+
+// revokeAppContainerSIDs strips every explicit ACE for the given SIDs through
+// the security APIs directly. Temporary loader grants are added and removed on
+// every sandboxed start while the global ACL-mutation mutex is held, so their
+// cleanup cannot afford one icacls child process per SID the way rare marker
+// sweeps can.
+func revokeAppContainerSIDs(root string, sidStrs []string) {
+	_ = applyWindowsACLEntries(root, sidStrs, windows.REVOKE_ACCESS, windows.ACCESS_MASK(windows.GENERIC_READ|windows.GENERIC_EXECUTE), false)
 }
 
 func removeGrantedAppContainerSIDs(root string, sidStrs []string) {

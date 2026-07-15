@@ -607,7 +607,7 @@ func sweepResidueMarkerFile(markerPath string, sandboxSIDs []string) {
 		case residueGrant:
 			removeGrantedAppContainerSIDs(e.path, sandboxSIDs)
 		case residueGrantLoader:
-			removeGrantedAppContainerSIDs(e.path, []string{e.sid})
+			revokeAppContainerSIDs(e.path, []string{e.sid})
 		case residueGrantProfile:
 			sid, err := deriveAppContainerSIDFromName(e.profile)
 			if err == nil && sid != nil {

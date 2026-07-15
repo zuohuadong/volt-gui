@@ -3,13 +3,15 @@
     Blocks,
     Bot,
     BrainCircuit,
+    ClipboardList,
     Database,
     Layers3,
+    RefreshCw,
     Settings2,
     ShieldCheck,
   } from "@lucide/svelte";
 
-  export type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings";
+  export type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings" | "sync" | "operationLog";
   export type GovernanceGroup = "agent" | "data" | "system";
 
   export interface GovernanceNavItem {
@@ -40,6 +42,8 @@
     trust: Database,
     scopedMemory: Layers3,
     settings: ShieldCheck,
+    sync: RefreshCw,
+    operationLog: ClipboardList,
   } as const;
 
   function selectFromDropdown(event: Event) {
@@ -203,9 +207,9 @@
   }
 
   button.active {
-    border-color: color-mix(in srgb, #0f7b55 30%, var(--border, #dce1db));
-    background: color-mix(in srgb, var(--card, #ffffff) 86%, #0f7b55 14%);
-    color: #0f7b55;
+    border-color: color-mix(in srgb, var(--foreground, #1f2421) 14%, var(--border, #dce1db));
+    background: color-mix(in srgb, var(--card, #ffffff) 82%, var(--foreground, #1f2421) 8%);
+    color: var(--foreground, #1f2421);
   }
 
   button.active::before {
@@ -215,7 +219,7 @@
     left: -1px;
     width: 2px;
     border-radius: 2px;
-    background: #0f7b55;
+    background: var(--foreground, #1f2421);
     content: "";
   }
 

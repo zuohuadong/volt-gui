@@ -11,6 +11,11 @@ import type {
   DirEntry,
   DroppedItem,
   EffortInfo,
+  ExternalDataImportInput,
+  ExternalDataImportPreview,
+  ExternalDataImportResult,
+  ExternalDataPreviewInput,
+  ExternalDataSource,
   FilePreview,
   GoalInfo,
   CheckpointMeta,
@@ -216,6 +221,10 @@ interface AppBindings {
   KnowledgeBase(): Promise<KnowledgeBaseView>;
   KnowledgeStatus(): Promise<KnowledgeStatus>;
   ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument>;
+  ExternalDataSources(): Promise<ExternalDataSource[]>;
+  PickExternalDataDirectory(sourceID: string): Promise<string>;
+  PreviewExternalData(input: ExternalDataPreviewInput): Promise<ExternalDataImportPreview>;
+  ImportExternalData(input: ExternalDataImportInput): Promise<ExternalDataImportResult>;
   SearchKnowledge(query: string, limit: number): Promise<KnowledgeSearchResult[]>;
   DeleteKnowledgeDocument(id: string): Promise<void>;
   RunWorkbenchSync(scope: string): Promise<WorkbenchSyncJob[]>;

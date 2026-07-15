@@ -81,27 +81,6 @@ async function clickScopedButton(scope, name, options = {}) {
   await scope.page().waitForTimeout(options.pause ?? 100);
 }
 
-async function clickText(page, text, options = {}) {
-  const locator = page.getByText(text, { exact: options.exact ?? false });
-  const item = await firstVisible(locator, `text ${String(text)}`);
-  await item.click({ timeout: options.timeout ?? 5000 });
-  await page.waitForTimeout(options.pause ?? 100);
-}
-
-async function fillFirst(page, selector, value, label = selector) {
-  const locator = await firstVisible(page.locator(selector), label);
-  await locator.fill(value);
-  await page.waitForTimeout(50);
-}
-
-async function submitComposer(page) {
-  const activeComposer = page.locator('form.composer:has([data-testid="composer-input"])').first();
-  const sendButton = activeComposer.locator('button[type="submit"]').first();
-  await sendButton.waitFor({ state: 'visible', timeout: 90000 });
-  await sendButton.click({ timeout: 5000 });
-  await page.waitForTimeout(100);
-}
-
 async function assertText(page, text, label = text) {
   const count = await visibleCount(page.getByText(text, { exact: false }));
   if (count < 1) throw new Error(`${label} not visible`);
@@ -121,15 +100,6 @@ async function assertBackendUnavailableNotice(page, action) {
   }
 }
 
-async function openUserMenuItem(page, item) {
-  await closeOverlays(page);
-  const opener = await firstVisible(page.getByRole('button', { name: '打开用户菜单', exact: true }), 'user menu button');
-  await opener.click({ force: true });
-  const menuItem = await firstVisible(page.getByRole('menuitem', { name: item, exact: true }), `user menu item ${item}`);
-  await menuItem.click({ force: true });
-  await page.waitForTimeout(100);
-}
-
 async function assertHealthy(page, label) {
   const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
   if (!bodyText.trim()) throw new Error(`${label}: blank page`);
@@ -142,7 +112,7 @@ async function assertHealthy(page, label) {
 
 async function closeOverlays(page) {
   for (let index = 0; index < 5; index += 1) {
-    const modalCount = await visibleCount(page.locator('.modal-backdrop, .agent-wizard, .config-modal, .agent-market-modal, .capability-detail-modal, .user-panel-dialog, .code-inspector'));
+    const modalCount = await visibleCount(page.locator('.modal-backdrop, .agent-wizard, .config-modal, .agent-market-modal, .capability-detail-modal, .user-panel-modal, .code-inspector'));
     const menuCount = await visibleCount(page.locator('.user-menu, .agent-selector__menu'));
     if (modalCount === 0 && menuCount === 0) break;
     const closeByName = page.getByRole('button', { name: /^(关闭|取消|返回项目列表|返回客户列表|x|×)$/ }).last();
@@ -172,35 +142,12 @@ async function runStep(page, errors, name, fn) {
   }
 }
 
-async function collectVisibleControls(page) {
-  return page.evaluate(() => {
-    function labelFor(el) {
-      return (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || el.getAttribute('placeholder') || '').replace(/\s+/g, ' ').trim();
-    }
-    return [...document.querySelectorAll('button, [role="button"], [role="menuitem"], input, textarea, select')]
-      .filter((el) => {
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
-        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-      })
-      .map((el) => ({ tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || '', name: labelFor(el).slice(0, 160) }))
-      .filter((item) => item.name || ['input', 'textarea', 'select'].includes(item.tag));
-  });
-}
-
-async function smokeWorkNavigation(page) {
-  const navLabels = ['今日概览', '新建任务', '待办事项', '自动化', '项目管理', '客户管理', '资料中心', '团队协作', '日程日历', '报告中心', 'Agent 中心', '能力中心'];
-  for (const label of navLabels) {
-    await clickButton(page, label);
-    await assertText(page, label === '自动化' ? '自动化任务' : label.replace('事项', ''), label);
-  }
-}
-
 async function smokeNoSeedContent(page, mobile) {
   await clickUnifiedNav(page, '工作台', mobile);
   await page.waitForTimeout(500);
   const body = await page.locator('body').innerText();
   const forbidden = [
+    'E2E 发布验收任务',
     'Volt GUI 桌面端重构',
     '内部研发团队',
     'Lurefree 小程序发布',
@@ -215,182 +162,30 @@ async function smokeNoSeedContent(page, mobile) {
   }
 }
 
-async function smokeEmptyBusinessSurfaces(page) {
-  const checks = [
-    ['待办事项', '.aorist-page .aorist-list > article:not(.detail-empty)', 'todo records'],
-    ['自动化', '.automation-task-card', 'automation records'],
-    ['项目管理', '.project-matter-card', 'project records'],
-    ['客户管理', '.client-card', 'customer records'],
-    ['日程日历', '.calendar-event-chip, .calendar-board aside .automation-row', 'calendar records'],
-    ['报告中心', '.report-card-list > button', 'report records'],
-    ['资料中心', '.resource-category-card, .knowledge-template-card', 'resource records'],
-    ['团队协作', '.team-list-card', 'team records'],
-    ['Agent 中心', '.agent-grid .agent-card', 'agent records'],
-    ['能力中心', '.capability-row', 'capability records'],
-  ];
-  for (const [nav, selector, label] of checks) {
-    await clickButton(page, nav);
-    await assertCount(page.locator(selector), 0, label);
-  }
-
-  for (const item of ['同步中心', '操作记录']) {
-    await openUserMenuItem(page, item);
-    await assertCount(page.locator('.aorist-page .aorist-list > article:not(.detail-empty)'), 0, `${item} records`);
-    await closeOverlays(page);
-  }
-}
-
-async function smokeReachableDialogs(page) {
-  const dialogOpeners = [
-    ['待办事项', '新增待办', '新建待办'],
-    ['日程日历', '新建日程', '新建日程'],
-    ['报告中心', '新建报告', '新建分析报告'],
-    ['资料中心', '上传资料', '上传资料'],
-    ['资料中心', '批量导入', '批量导入'],
-    ['团队协作', /配置新组|点击开始配置第一组/, '配置 Agent 团队'],
-    ['项目管理', '新建项目', '新建项目'],
-    ['客户管理', '新建客户', '新建客户'],
-  ];
-  for (const [nav, opener, title] of dialogOpeners) {
-    await closeOverlays(page);
-    await clickButton(page, nav);
-    await clickButton(page, opener);
-    await assertText(page, title);
-    await closeOverlays(page);
-  }
-
-  await clickButton(page, 'Agent 中心');
-  await clickButton(page, '创建 Agent');
-  await assertText(page, '创建与配置 Agent');
-  await closeOverlays(page);
-
-  await clickButton(page, '资料中心');
-  await clickButton(page, '知识库', { exact: true });
-  await clickButton(page, '新建规范', { exact: true });
-  await assertText(page, '新建规范');
-  await closeOverlays(page);
-
-  await clickButton(page, '能力中心');
-  await firstVisible(page.getByRole('button', { name: '导入能力配置', exact: true }), 'button 导入能力配置');
-  await assertCount(page.locator('input[aria-label="导入能力配置文件"]'), 1, 'capability import input');
-  await clickButton(page, '导入 MCP 配置', { exact: true });
-  await assertText(page, '导入 MCP 配置');
-  await closeOverlays(page);
-}
-
-async function smokeUnboundWritesAndRun(page) {
-  const hasBindings = await page.evaluate(() => Boolean(window.go?.main?.App));
-  if (hasBindings) throw new Error('browser-preview smoke unexpectedly has Wails bindings');
-
-  await clickButton(page, '待办事项');
-  const todoRows = page.locator('.aorist-page .aorist-list > article:not(.detail-empty)');
-  const beforeTodos = await todoRows.count();
-  await clickButton(page, '新增待办');
-  const todoModal = page.locator('.config-modal').last();
-  await todoModal.locator('input[placeholder*="跟进客户反馈"]').fill('浏览器预览不可落库待办');
-  await clickScopedButton(todoModal, '确认', { exact: true });
-  await assertBackendUnavailableNotice(page, 'save todo');
-  await closeOverlays(page);
-  await clickButton(page, '待办事项');
-  await assertCount(todoRows, beforeTodos, 'unbound todo save must not mutate records');
-
-  await clickButton(page, '项目管理');
-  const projectRows = page.locator('.project-matter-card');
-  const beforeProjects = await projectRows.count();
-  await clickButton(page, '新建项目');
-  const projectModal = page.locator('.config-modal').last();
-  await projectModal.locator('input[placeholder*="客户门户上线"]').fill('浏览器预览不可落库项目');
-  await clickScopedButton(projectModal, '确认', { exact: true });
-  await assertBackendUnavailableNotice(page, 'save project');
-  await closeOverlays(page);
-  await clickButton(page, '项目管理');
-  await assertCount(projectRows, beforeProjects, 'unbound project save must not mutate records');
-
-  await clickButton(page, '日程日历');
-  const eventRows = page.locator('.calendar-event-chip, .calendar-board aside .automation-row');
-  const beforeEvents = await eventRows.count();
-  await clickButton(page, '同步', { exact: true });
-  await assertBackendUnavailableNotice(page, 'run calendar sync');
-  await assertCount(eventRows, beforeEvents, 'unbound sync must not fabricate records');
-}
-
-async function smokeComposerDoesNotFakeAssistant(page) {
-  await clickButton(page, '新建任务');
-  const input = page.getByTestId('composer-input');
-  const inputVisible = await input.isVisible().catch(() => false);
-  if (!inputVisible) {
-    const body = await page.locator('body').innerText();
-    if (/尚未配置.*Agent|请先创建.*Agent|未连接桌面后端|Wails 桌面运行环境/.test(body)) return;
-    throw new Error('new task has neither a composer nor an honest empty/unavailable explanation');
-  }
-  if (await input.isDisabled()) {
-    const body = await page.locator('body').innerText();
-    if (!/未连接|不可用|桌面后端|Wails/.test(body)) throw new Error('disabled composer does not explain the unavailable desktop backend');
-    return;
-  }
-  const assistantMessages = page.locator('.transcript .message--assistant');
-  const before = await assistantMessages.count();
-  await input.fill('浏览器预览不能伪造模型回复');
-  await submitComposer(page);
-  await page.waitForTimeout(250);
-  const after = await assistantMessages.count();
-  if (after !== before) throw new Error(`unbound composer fabricated ${after - before} assistant message(s)`);
-  const body = await page.locator('body').innerText();
-  if (body.includes('浏览器预览已收到这条消息')) throw new Error('legacy fake assistant reply is still visible');
-}
-
-async function smokeUserPanels(page) {
-  for (const item of ['模型管理', '系统设置']) {
-    await openUserMenuItem(page, item);
-    await assertText(page, item);
-    if (item === '模型管理') await assertText(page, '未连接桌面后端');
-    await closeOverlays(page);
-  }
-}
-
-async function smokeVisibleProbe(page) {
-  await clickButton(page, 'Work 工作台').catch(() => {});
-  await clickButton(page, '今日概览');
-  const before = await collectVisibleControls(page);
-  for (const pattern of [/^查看全部$/, /^管理$/, /^新建待办$/, /^新建日程$/, /^进入 Agent 中心$/, /^Work$/, /^Code$/]) {
-    if (!before.some((control) => pattern.test(control.name))) continue;
-    await clickButton(page, pattern);
-    await closeOverlays(page);
-    await clickButton(page, '今日概览').catch(() => {});
-  }
-  const after = await collectVisibleControls(page);
-  return { beforeCount: before.length, afterCount: after.length, sample: after.slice(0, 30) };
-}
-
-function unifiedWorkbenchFixture() {
+function receiptTestFixture() {
   const now = '2026-07-13T08:00:00.000Z';
   const section = (status, items, note) => ({ status, items, note });
   return {
     version: 2,
-    savedWorkspaces: [{
-      id: 'folder:/tmp/volt-smoke-workspace',
-      name: 'Smoke Workspace',
-      root: '/tmp/volt-smoke-workspace',
-      source: 'folder',
-    }],
+    savedWorkspaces: [],
     projectTasks: [],
     inboxTasks: [{
-      id: 'smoke-result-task',
-      title: 'Smoke 发布验收任务',
+      id: '__e2e_result_task__',
+      title: 'E2E 发布验收任务',
       updatedAt: '刚刚',
       updatedAtMs: Date.parse(now),
       templateId: 'release-acceptance',
-      transcript: [{ id: 'smoke-user', role: 'user', body: '执行发布验收并保留可核验证据。', createdAtMs: Date.parse(now) }],
+      transcript: [{ id: '__e2e_user__', role: 'user', body: '执行发布验收并保留可核验证据。', createdAtMs: Date.parse(now) }],
       receipt: {
-        id: 'smoke-receipt',
-        taskId: 'smoke-result-task',
+        id: '__e2e_receipt__',
+        taskId: '__e2e_result_task__',
         templateId: 'release-acceptance',
         state: 'pending-review',
         createdAt: now,
         updatedAt: now,
         sections: {
           goal: section('ready', ['发布验收'], '来自任务结果模板'),
-          runtime: section('ready', ['Smoke Workspace', '收件箱项目'], '运行上下文已记录'),
+          runtime: section('ready', ['收件箱项目'], '运行上下文已记录'),
           changes: section('pending', [], '等待实际变更证据'),
           verification: section('pending', [], '等待验证证据与人工复核'),
           artifacts: section('pending', [], '等待产物路径'),
@@ -398,10 +193,17 @@ function unifiedWorkbenchFixture() {
           rollback: section('pending', [], '等待回滚方案'),
         },
       },
+    }, {
+      id: '__e2e_archived_task__',
+      title: 'E2E 已归档任务',
+      updatedAt: '已归档',
+      updatedAtMs: Date.parse(now) - 60_000,
+      archivedAtMs: Date.parse(now) - 30_000,
+      transcript: [{ id: '__e2e_archived_user__', role: 'user', body: '保留用于归档恢复验证。', createdAtMs: Date.parse(now) - 60_000 }],
     }],
-    activeWorkspaceId: 'folder:/tmp/volt-smoke-workspace',
+    activeWorkspaceId: '',
     activeProjectId: 'inbox',
-    activeTaskId: 'smoke-result-task',
+    activeTaskId: '__e2e_result_task__',
     projectSort: 'recent',
     projectDockCollapsed: false,
   };
@@ -420,12 +222,13 @@ async function openUnifiedDrawerIfNeeded(page, mobile) {
   await page.waitForTimeout(320);
   const rect = await drawer.evaluate((node) => {
     const value = node.getBoundingClientRect();
-    return { left: value.left, width: value.width, viewport: window.innerWidth };
+    return { left: value.left, width: value.width, viewport: window.innerWidth, scrollWidth: node.scrollWidth, clientWidth: node.clientWidth };
   });
   const minimumWidth = Math.min(rect.viewport * 0.75, 280);
   if (rect.width < minimumWidth || Math.abs(rect.left) > 2) {
     throw new Error(`mobile drawer geometry is unstable: left=${rect.left.toFixed(1)} width=${rect.width.toFixed(1)} minimum=${minimumWidth.toFixed(1)}`);
   }
+  if (rect.scrollWidth > rect.clientWidth + 1) throw new Error(`mobile drawer has horizontal overflow: scroll=${rect.scrollWidth} client=${rect.clientWidth}`);
 }
 
 async function clickUnifiedNav(page, label, mobile) {
@@ -435,24 +238,23 @@ async function clickUnifiedNav(page, label, mobile) {
   if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) {
     throw new Error(`mobile drawer stayed open after selecting ${label}`);
   }
+  if (mobile) await page.waitForTimeout(240);
 }
 
 async function smokeUnifiedShell(page, mobile) {
   const sidebar = page.locator('[data-testid="unified-sidebar"]');
   await sidebar.waitFor({ state: 'attached', timeout: 5000 });
   await openUnifiedDrawerIfNeeded(page, mobile);
-  await assertCount(sidebar.locator('.primary-nav button'), 6, 'unified primary navigation items');
-  for (const label of ['工作台', '新建任务', '项目管理', '交付记录', '自动化', '资料与知识']) {
+  await assertCount(sidebar.locator('.primary-nav button:not(.new-task-action)'), 6, 'unified primary navigation items');
+  for (const label of ['工作台', '任务', '项目管理', '交付记录', '自动化', '资料与知识']) {
     await firstVisible(sidebar.getByRole('button', { name: label, exact: true }), `unified nav ${label}`);
   }
   await firstVisible(sidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch');
   await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch');
-  const workspace = sidebar.locator('[data-testid="workspace-selector"] select');
-  if ((await workspace.inputValue()) !== 'folder:/tmp/volt-smoke-workspace') throw new Error('Workspace selector did not restore the v2 fixture');
-  await assertText(page, 'Smoke Workspace', 'Workspace selector label');
+  await assertCount(sidebar.locator('[data-testid="workspace-selector"]'), 0, 'removed Workspace selector');
   await assertText(page, '项目与任务', 'Project Task hierarchy');
   await assertText(page, '收件箱项目', 'explicit inbox project');
-  await assertText(page, 'Smoke 发布验收任务', 'restored task');
+  await firstVisible(sidebar.getByRole('button', { name: /创建第一个任务/ }), 'empty inbox task CTA');
 
   await (await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch')).click();
   await assertText(page, '当前任务的工程检查器', 'Code workbench after mode switch');
@@ -461,13 +263,93 @@ async function smokeUnifiedShell(page, mobile) {
     await firstVisible(sidebar.getByRole('button', { name: label, exact: true }), `Code nav ${label}`);
   }
   await (await firstVisible(sidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch')).click();
-  await assertText(page, '从明确结果开始', 'Work workbench restored');
+  await assertText(page, '从一项真实任务开始', 'Work workbench restored');
+}
+
+async function smokeCodeInspectorNavigation(page, mobile) {
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await (await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch')).click();
+
+  const routes = [
+    ['工程总览', 'overview', '任务'],
+    ['Workspace', 'workspace', 'Workspace'],
+    ['Context', 'context', 'Context'],
+    ['Diff', 'changes', 'Diff'],
+    ['Checkpoints', 'checkpoints', 'Checkpoints'],
+  ];
+  const assertInspectorState = async (panel, inspector, label) => {
+    const workbench = page.locator('.workbench');
+    if ((await workbench.getAttribute('data-current-code-panel')) !== panel) {
+      throw new Error(`${label} opened the wrong Code panel`);
+    }
+    const context = page.locator('[data-testid="task-context-bar"]');
+    const selectedInspector = context.locator('[role="tab"][aria-selected="true"]');
+    await assertCount(selectedInspector, 1, `${label} selected Task inspector`);
+    if ((await selectedInspector.innerText()).trim() !== inspector) {
+      throw new Error(`${label} left the Task inspector on ${(await selectedInspector.innerText()).trim()}`);
+    }
+  };
+  for (const [nav, panel, inspector] of routes) {
+    await clickUnifiedNav(page, nav, mobile);
+    const activeNav = await firstVisible(sidebar.getByRole('button', { name: nav, exact: true }), `active Code nav ${nav}`);
+    if (!(await activeNav.evaluate((node) => node.classList.contains('active')))) {
+      throw new Error(`${nav} Code navigation is not visibly active`);
+    }
+    await assertInspectorState(panel, inspector, nav);
+  }
+
+  await clickUnifiedNav(page, '工程总览', mobile);
+  await clickButton(page, '模型渠道', { exact: true });
+  await assertInspectorState('overview', '任务', 'model settings shortcut');
+  await firstVisible(page.locator('.user-panel-modal'), 'model settings dialog');
+  await closeOverlays(page);
+
+  const codeStatus = page.locator('.code-workbench-status-grid');
+  await codeStatus.locator('button').nth(1).click();
+  await assertInspectorState('overview', '任务', 'runtime settings shortcut');
+  await firstVisible(page.locator('.user-panel-modal'), 'runtime settings dialog');
+  await closeOverlays(page);
+
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  await (await firstVisible(sidebar.getByRole('tab', { name: 'Work 工作台', exact: true }), 'Work mode switch')).click();
+}
+
+async function smokeBeginnerTaskLoop(page, mobile) {
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  const newTaskAction = await firstVisible(sidebar.getByRole('button', { name: '新建任务', exact: true }), 'compact new task action');
+  const newTaskStyle = await newTaskAction.evaluate((node) => {
+    const style = getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return { backgroundColor: style.backgroundColor, height: rect.height, width: rect.width, title: node.getAttribute('title') || '' };
+  });
+  if (newTaskStyle.backgroundColor !== 'rgba(0, 0, 0, 0)') throw new Error(`new task action is still visually filled: ${newTaskStyle.backgroundColor}`);
+  if ((!mobile && (newTaskStyle.height > 30 || newTaskStyle.width > 30)) || (mobile && (newTaskStyle.height > 42 || newTaskStyle.width > 42))) throw new Error(`new task action is larger than its Codex-style title action rhythm: ${newTaskStyle.width}x${newTaskStyle.height}`);
+  if (!newTaskStyle.title.includes('新建任务') || !newTaskStyle.title.match(/⌘N|Ctrl N/)) throw new Error(`new task action tooltip lost its label or shortcut: ${newTaskStyle.title}`);
+  const sortButton = await firstVisible(sidebar.getByRole('button', { name: /项目排序：最近更新/ }), 'project sort action');
+  await sortButton.click();
+  await firstVisible(sidebar.getByRole('button', { name: /项目排序：名称/ }), 'cycled project sort state');
+  await clickScopedButton(sidebar, '新建项目', { exact: true });
+  if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) throw new Error('mobile drawer stayed open after starting project creation');
+  await assertText(page, '新建项目', 'real project creation dialog');
+  await closeOverlays(page);
+
+  await clickUnifiedNav(page, '任务', mobile);
+  const taskCenter = page.locator('[data-testid="task-center"]');
+  await taskCenter.waitFor({ state: 'visible', timeout: 5000 });
+  for (const label of ['进行中', '待办', '已归档']) await firstVisible(taskCenter.getByRole('tab', { name: new RegExp(label) }), `task center tab ${label}`);
+  await assertCount(page.locator('[data-testid="task-context-bar"]'), 0, 'task center technical context bar');
+  const taskCenterBody = await taskCenter.innerText();
+  for (const label of ['Workspace', 'Model', 'Permission', '工程检查']) {
+    if (taskCenterBody.includes(label)) throw new Error(`task center exposes advanced context: ${label}`);
+  }
 }
 
 async function smokeUnifiedRoutes(page, mobile) {
   const routes = [
-    ['工作台', '从明确结果开始'],
-    ['新建任务', '希望得到什么结果？'],
+    ['工作台', '从一项真实任务开始'],
+    ['任务', '还没有进行中的任务'],
     ['项目管理', '项目管理'],
     ['交付记录', '报告设计'],
     ['自动化', '自动化任务'],
@@ -485,21 +367,92 @@ async function smokeUnifiedRoutes(page, mobile) {
   }
 }
 
+async function smokeCurrentDialogs(page, mobile) {
+  const dialogFlows = [
+    ['自动化', '新建自动化任务', '新建自动化任务'],
+    ['交付记录', '新建报告', '新建分析报告'],
+    ['资料与知识', '上传资料', '上传资料'],
+    ['资料与知识', '批量导入', '批量导入'],
+  ];
+  for (const [nav, opener, title] of dialogFlows) {
+    await closeOverlays(page);
+    await clickUnifiedNav(page, nav, mobile);
+    await clickButton(page, opener, { exact: true });
+    const modal = page.locator('.config-modal').last();
+    await modal.waitFor({ state: 'visible', timeout: 5000 });
+    await firstVisible(modal.getByText(title, { exact: true }), `${nav} dialog title ${title}`);
+    await closeOverlays(page);
+  }
+  await clickUnifiedNav(page, '工作台', mobile);
+}
+
+async function smokeBackendHonesty(page, mobile) {
+  const hasBindings = await page.evaluate(() => Boolean(window.go?.main?.App));
+  if (hasBindings) throw new Error('browser-preview smoke unexpectedly has Wails bindings');
+
+  await clickUnifiedNav(page, '项目管理', mobile);
+  const projectRows = page.locator('.project-matter-card');
+  const beforeProjects = await projectRows.count();
+  const projectPage = page.locator('.project-management-page');
+  await clickScopedButton(projectPage, '新建项目', { exact: true });
+  const projectModal = page.locator('.config-modal').last();
+  await projectModal.locator('input[placeholder*="客户门户上线"]').fill('浏览器预览不可落库项目');
+  await clickScopedButton(projectModal, '确认', { exact: true });
+  await assertBackendUnavailableNotice(page, 'save project');
+  await closeOverlays(page);
+  await clickUnifiedNav(page, '项目管理', mobile);
+  await assertCount(projectRows, beforeProjects, 'unbound project save must not mutate records');
+  await assertCount(page.getByText('浏览器预览不可落库项目', { exact: true }), 0, 'unbound project must not appear in sidebar or project list');
+
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(sidebar, '新建任务', { exact: true });
+  const body = await page.locator('body').innerText();
+  if (!/未连接桌面后端|Wails 桌面运行环境|先完成运行配置/.test(body)) {
+    throw new Error('new task preview does not explain the unavailable desktop backend');
+  }
+  const composer = page.getByTestId('composer-input');
+  if (await composer.isVisible().catch(() => false)) throw new Error('browser preview exposed a composer without a desktop backend');
+  if (await page.locator('.transcript .message--assistant').count() !== 0) throw new Error('browser preview fabricated an assistant message');
+  await clickUnifiedNav(page, '工作台', mobile);
+}
+
 async function smokeResultDrivenToday(page, mobile) {
   await clickUnifiedNav(page, '工作台', mobile);
-  await assertText(page, '从明确结果开始，把任务推进到可验证交付。');
-  await firstVisible(page.getByRole('button', { name: '开始结果任务', exact: true }), 'result task CTA');
-  await firstVisible(page.getByRole('button', { name: '查看交付记录', exact: true }), 'delivery records CTA');
+  await assertText(page, '从一项真实任务开始');
+  const launchPanel = page.locator('[data-testid="work-launch-panel"]');
+  await launchPanel.waitFor({ state: 'visible', timeout: 5000 });
+  const launchStyle = await launchPanel.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { backgroundColor: style.backgroundColor, borderRadius: style.borderRadius };
+  });
+  if (launchStyle.backgroundColor !== 'rgb(255, 255, 255)') throw new Error(`work launch panel did not use the neutral content surface: ${launchStyle.backgroundColor}`);
+  if (launchStyle.borderRadius !== '12px') throw new Error(`work launch panel radius drifted: ${launchStyle.borderRadius}`);
+  const primaryActionColor = await launchPanel.locator('.home-primary-flow__copy button').first().evaluate((node) => getComputedStyle(node).backgroundColor);
+  const primaryActionChannels = primaryActionColor.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [];
+  if (primaryActionChannels.length !== 3 || Math.max(...primaryActionChannels) > 45 || Math.max(...primaryActionChannels) - Math.min(...primaryActionChannels) > 3) {
+    throw new Error(`work primary action did not use a neutral graphite color: ${primaryActionColor}`);
+  }
+  const activeNavigationColor = await page.locator('[data-testid="unified-sidebar"] .primary-nav button.active').evaluate((node) => getComputedStyle(node).color);
+  if (activeNavigationColor === 'rgb(15, 123, 85)') throw new Error('active navigation still uses the success-green selection color');
+  await firstVisible(page.getByRole('button', { name: '新建任务', exact: true }), 'new task CTA');
+  await firstVisible(page.getByRole('button', { name: '先选择项目', exact: true }), 'choose project CTA');
   await assertCount(page.locator('.result-scenarios button'), 5, 'strong outcome scenarios');
-  for (const label of ['任务', '待复核交付', '项目', '自动化']) await assertText(page, label, `result home stat ${label}`);
+  for (const label of ['当前任务', '待处理', '最近任务', '从结果模板开始']) await assertText(page, label, `core work home ${label}`);
+  for (const label of ['还没有正在推进的任务', '目前没有待处理事项', '还没有最近任务']) await assertText(page, label, `truthful empty state ${label}`);
   const body = await page.locator('.result-home-page').innerText();
-  for (const legacy of ['进入 Agent 中心', '客户管理', '今日日程', '能力模块']) {
-    if (body.includes(legacy)) throw new Error(`result home still foregrounds legacy aggregation: ${legacy}`);
+  for (const secondary of ['工程检查', '连接模型', 'Workspace', 'Context', 'Diff', 'Checkpoints']) {
+    if (body.includes(secondary)) throw new Error(`work home still foregrounds a secondary flow: ${secondary}`);
   }
 }
 
 async function smokeOutcomeTemplates(page, mobile) {
-  await clickUnifiedNav(page, '新建任务', mobile);
+  await openUnifiedDrawerIfNeeded(page, mobile);
+  const sidebar = page.locator('[data-testid="unified-sidebar"]');
+  await clickScopedButton(sidebar, '新建任务', { exact: true });
+  if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) {
+    throw new Error('mobile drawer stayed open after starting a new Task');
+  }
   const launcher = page.locator('[data-testid="outcome-template-launcher"]');
   await launcher.waitFor({ state: 'visible', timeout: 5000 });
   await assertCount(launcher.locator('[data-outcome-template]'), 5, 'outcome templates');
@@ -515,7 +468,7 @@ async function smokeOutcomeTemplates(page, mobile) {
 async function smokeTaskReceipt(page, mobile) {
   await openUnifiedDrawerIfNeeded(page, mobile);
   const sidebar = page.locator('[data-testid="unified-sidebar"]');
-  await clickScopedButton(sidebar, 'Smoke 发布验收任务', { exact: false });
+  await clickScopedButton(sidebar, 'E2E 发布验收任务', { exact: false });
   if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) throw new Error('mobile drawer stayed open after opening a Task');
   const receipt = page.locator('[data-testid="task-result-receipt"]');
   await receipt.waitFor({ state: 'visible', timeout: 5000 });
@@ -536,13 +489,24 @@ async function smokeTaskReceipt(page, mobile) {
   await assertText(page, '希望得到什么结果？', 'return to Task result launcher');
   await openUnifiedDrawerIfNeeded(page, mobile);
   const restoredSidebar = page.locator('[data-testid="unified-sidebar"]');
-  await clickScopedButton(restoredSidebar, 'Smoke 发布验收任务', { exact: false });
+  await clickScopedButton(restoredSidebar, 'E2E 发布验收任务', { exact: false });
   await receipt.waitFor({ state: 'visible', timeout: 5000 });
   const activity = page.locator('[data-testid="task-activity-center"]');
   await activity.waitFor({ state: 'visible', timeout: 5000 });
   const expandActivity = activity.getByRole('button', { name: '展开任务活动', exact: true });
   await expandActivity.click();
   await assertText(page, '本轮已结束，等待验证证据与人工复核。', 'expanded task activity receipt state');
+}
+
+async function smokeArchivedTaskRecovery(page, mobile) {
+  await clickUnifiedNav(page, '任务', mobile);
+  const taskCenter = page.locator('[data-testid="task-center"]');
+  await taskCenter.waitFor({ state: 'visible', timeout: 5000 });
+  await (await firstVisible(taskCenter.getByRole('tab', { name: /已归档/ }), 'archived task tab')).click();
+  await assertText(page, 'E2E 已归档任务', 'archived task row');
+  await clickScopedButton(taskCenter, '恢复 E2E 已归档任务', { exact: true });
+  await assertText(page, '任务已恢复', 'archive recovery notice');
+  await assertText(page, 'E2E 已归档任务', 'restored active task');
 }
 
 async function smokeGovernanceCenter(page, mobile) {
@@ -555,8 +519,8 @@ async function smokeGovernanceCenter(page, mobile) {
 
   const governance = page.locator('[data-testid="governance-center"]');
   await governance.waitFor({ state: 'visible', timeout: 5000 });
-  await assertCount(governance.locator('button'), 6, 'governance categories');
-  for (const label of ['数据与信任', '分层记忆', 'Agent', '能力', '模型', '权限']) {
+  await assertCount(governance.locator('button'), 8, 'governance categories');
+  for (const label of ['Agent 配置', '能力扩展', '模型渠道', '数据与信任', '分层记忆', '运行与权限', '同步与备份', '操作记录']) {
     const buttonCount = await visibleCount(governance.getByRole('button', { name: new RegExp(label) }));
     const optionCount = await governance.locator('option').filter({ hasText: label }).count();
     if (buttonCount < 1 && optionCount < 1) throw new Error(`missing governance ${label}`);
@@ -595,10 +559,10 @@ async function smokeViewport(label, viewport) {
   const page = await browser.newPage({ viewport });
   const errors = [];
   const mobile = viewport.width <= 720;
-  await page.addInitScript((fixture) => {
-    window.localStorage.setItem('voltui.workbench.ia.v2', JSON.stringify(fixture));
+  await page.addInitScript(() => {
+    window.localStorage.removeItem('voltui.workbench.ia.v2');
     window.localStorage.removeItem('volt-gui.sidebar-state.v1');
-  }, unifiedWorkbenchFixture());
+  });
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
   });
@@ -607,22 +571,46 @@ async function smokeViewport(label, viewport) {
   await runStep(page, errors, `${label} unified workbench load`, async () => {
     await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.locator('.shell').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('[data-testid="task-context-bar"]').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('[data-testid="work-launch-panel"]').waitFor({ state: 'visible', timeout: 15000 });
   });
   await runStep(page, errors, `${label} unified IA shell`, () => smokeUnifiedShell(page, mobile));
+  await runStep(page, errors, `${label} Code inspector navigation`, () => smokeCodeInspectorNavigation(page, mobile));
+  await runStep(page, errors, `${label} beginner task loop`, () => smokeBeginnerTaskLoop(page, mobile));
   await runStep(page, errors, `${label} result-driven today`, () => smokeResultDrivenToday(page, mobile));
   await runStep(page, errors, `${label} six unified routes`, () => smokeUnifiedRoutes(page, mobile));
+  await runStep(page, errors, `${label} current workflow dialogs`, () => smokeCurrentDialogs(page, mobile));
+  await runStep(page, errors, `${label} backend honesty`, () => smokeBackendHonesty(page, mobile));
   await runStep(page, errors, `${label} five result templates`, () => smokeOutcomeTemplates(page, mobile));
-  await runStep(page, errors, `${label} result receipt and task inspector`, () => smokeTaskReceipt(page, mobile));
   await runStep(page, errors, `${label} governance trust and memory`, () => smokeGovernanceCenter(page, mobile));
   await runStep(page, errors, `${label} no seeded fingerprints`, () => smokeNoSeedContent(page, mobile));
   await runStep(page, errors, `${label} responsive geometry`, () => smokeResponsiveGeometry(page));
   await page.close();
+
+  const receiptPage = await browser.newPage({ viewport });
+  await receiptPage.addInitScript((fixture) => {
+    window.localStorage.setItem('voltui.workbench.ia.v2', JSON.stringify(fixture));
+    window.localStorage.removeItem('volt-gui.sidebar-state.v1');
+  }, receiptTestFixture());
+  receiptPage.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
+  });
+  receiptPage.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+  await runStep(receiptPage, errors, `${label} isolated receipt fixture`, async () => {
+    await receiptPage.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await receiptPage.locator('.shell').waitFor({ state: 'visible', timeout: 15000 });
+    await smokeTaskReceipt(receiptPage, mobile);
+  });
+  await runStep(receiptPage, errors, `${label} archived task recovery`, () => smokeArchivedTaskRecovery(receiptPage, mobile));
+  await receiptPage.close();
 }
 
 async function smokeLifecycleComponentStates(label, viewport) {
   const page = await browser.newPage({ viewport });
   const errors = [];
+  await page.addInitScript(() => {
+    window.localStorage.removeItem('voltui.workbench.ia.v2');
+    window.localStorage.removeItem('volt-gui.sidebar-state.v1');
+  });
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
   });

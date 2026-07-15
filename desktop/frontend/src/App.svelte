@@ -68,6 +68,7 @@
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
   import TaskContextBar from "./components/TaskContextBar.svelte";
   import TaskActivityCenter from "./components/TaskActivityCenter.svelte";
+  import TaskCenter from "./components/TaskCenter.svelte";
   import TaskOutcomeLauncher from "./components/TaskOutcomeLauncher.svelte";
   import TaskResultReceipt from "./components/TaskResultReceipt.svelte";
   import Transcript from "./components/Transcript.svelte";
@@ -127,7 +128,6 @@
   import type { DiffReviewComment } from "./lib/diff-review";
   import {
     contextRemainingPercent,
-    firstRunChecklistState,
     modelContextWindow,
     modelSwitchImpact,
   } from "./lib/thread-ux";
@@ -145,7 +145,6 @@
     restartTaskReceipt,
     settleTaskReceipt,
     snapshotFromProjectNodes,
-    upsertSavedWorkspace,
     verificationEvidenceFromTool,
   } from "./lib/workbench-ia";
   import type {
@@ -154,7 +153,6 @@
     TaskOutcomeTemplateID,
     TaskResultReceipt as TaskResultReceiptView,
     TaskThread,
-    WorkspaceOption,
     WorkbenchSnapshotV2,
   } from "./lib/workbench-ia";
   import type {
@@ -243,7 +241,7 @@
   }
   const MAX_DATA_URL_PROJECT_MATERIAL_BYTES = 25 * 1024 * 1024;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities" | "trust" | "scopedMemory";
-  type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings";
+  type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings" | "sync" | "operationLog";
   type CodeWorkbenchAction = "conversation" | "overview" | "workspace" | "context" | "changes" | "checkpoints" | "models" | "settings";
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
   type CapabilityTab = "plugin" | "mcp" | "skill";
@@ -261,6 +259,7 @@
   type SidebarProject = ProjectTaskNode;
   type SidebarStateSnapshot = WorkbenchSnapshotV2;
   type SidebarProjectSort = "recent" | "name" | "tasks";
+  type TaskCenterTab = "active" | "todos" | "archived";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "knowledge" | "regulation" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
   type SettingPanel = "general" | "runtime" | "models";
@@ -586,6 +585,8 @@
     { id: "trust", group: "data", label: "数据与信任", desc: "去向、存储与外发边界" },
     { id: "scopedMemory", group: "data", label: "分层记忆", desc: "来源、隔离与所有权" },
     { id: "settings", group: "system", label: "运行与权限", desc: "沙箱、网络与系统行为" },
+    { id: "sync", group: "system", label: "同步与备份", desc: "同步状态与手动刷新" },
+    { id: "operationLog", group: "system", label: "操作记录", desc: "查看与导出执行日志" },
   ];
   const governanceGroupLabels: Record<GovernanceGroup, string> = {
     agent: "智能体配置",
@@ -707,8 +708,8 @@
   }
 
   const unifiedNavItems = [
-    { id: "today", group: "开始", label: "工作台", desc: "进展、引导与下一步" },
-    { id: "tasks", group: "开始", label: "新建任务", desc: "从结果目标开始" },
+    { id: "today", group: "开始", label: "工作台", desc: "继续任务与处理待办" },
+    { id: "tasks", group: "开始", label: "任务", desc: "进行中、待办与归档" },
     { id: "projects", group: "组织与交付", label: "项目管理", desc: "项目、任务与边界" },
     { id: "deliveries", group: "组织与交付", label: "交付记录", desc: "产物、证据与复核" },
     { id: "automations", group: "组织与交付", label: "自动化", desc: "定时与重复流程" },
@@ -725,7 +726,7 @@
   const workLayerLabels: Record<WorkLayer, string> = {
     today: "工作台",
     newTask: "新建对话",
-    todos: "待办事项",
+    todos: "任务",
     automations: "自动化",
     agents: "Agent 中心",
     projects: "项目管理",
@@ -926,24 +927,16 @@
   let taskInspectorPanel = $state<"task" | CodeWorkbenchPanel>("task");
   let mobileDrawerOpen = $state(false);
   let projectCards = $state<WorkbenchProject[]>([]);
-  let savedWorkspaces = $state<WorkspaceOption[]>([]);
   let activeWorkspaceId = $state("");
   let sidebarProjects = $state<SidebarProject[]>(reconcileProjectTaskNodes([], emptyWorkbenchSnapshot()));
   let activeSidebarProjectId = $state(INBOX_PROJECT_ID);
   let activeSidebarConversationId = $state("");
   let sidebarProjectDockCollapsed = $state(false);
   let sidebarProjectSort = $state<SidebarProjectSort>("recent");
-  let sidebarProjectFolderInput = $state<HTMLInputElement | undefined>();
+  let taskCenterTab = $state<TaskCenterTab>("active");
   let projectMaterialRows = $state<WorkbenchProjectMaterial[]>([]);
   let customerCards = $state<WorkbenchCustomer[]>([]);
-  const firstRunChecklist = $derived.by(() => firstRunChecklistState({
-    providerConfigured: modelProviderSummary(modelSettings?.providers ?? []).configured > 0,
-    workspaceActive: Boolean(activeTab?.workspaceRoot?.trim()),
-    verificationStatus: sidebarProjects.some((project) => project.tasks.some((task) => task.receipt?.sections.verification.status === "ready"))
-      ? "ready"
-      : undefined,
-  }));
-  const workspaceOptions = $derived(deriveWorkspaceOptions(tabs, savedWorkspaces));
+  const workspaceOptions = $derived(deriveWorkspaceOptions(tabs, []));
   const activeWorkspace = $derived(workspaceOptions.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaceOptions[0]);
   const selectedOutcomeTemplate = $derived(OUTCOME_TEMPLATES.find((template) => template.id === selectedOutcomeTemplateId) ?? OUTCOME_TEMPLATES[0]);
   const filteredProjects = $derived(projectCards.filter((project) => {
@@ -1037,7 +1030,7 @@
       : activeTab?.workspaceName || t.common.global,
   );
   const activeUnifiedNavId = $derived.by(() => {
-    if (workLayer === "newTask") return "tasks";
+    if (workLayer === "newTask" || workLayer === "todos") return "tasks";
     if (workLayer === "projects") return "projects";
     if (workLayer === "reports") return "deliveries";
     if (workLayer === "automations") return "automations";
@@ -1071,6 +1064,49 @@
     .filter((task) => !task.archivedAtMs)
     .map((task) => ({ projectId: project.id, projectName: project.name, task }))));
   const pendingDeliveryRows = $derived(todayTaskRows.filter(({ task }) => task.receipt?.state === "pending-review" || task.receipt?.state === "failed"));
+  const taskCenterTasks = $derived(todayTaskRows.map(({ projectId, projectName, task }) => ({
+    id: task.id,
+    projectId,
+    projectName,
+    title: task.title,
+    updatedAt: sidebarConversationTimeLabel(task),
+    stateLabel: homeTaskStateLabel(task),
+    stateTone: homeTaskStateTone(task),
+  })));
+  const taskCenterTodos = $derived(todoItems.map((item) => ({
+    id: item.id,
+    title: item.title,
+    description: todoDescription(item),
+    due: todoDue(item),
+    status: todoStatusLabel(item.status),
+  })));
+  const taskCenterArchivedProjects = $derived(sortedSidebarProjects
+    .map((project) => ({
+      id: project.id,
+      name: project.name,
+      tasks: archivedSidebarProjectConversations(project).map((task) => ({ id: task.id, title: task.title, updatedAt: sidebarConversationTimeLabel(task) })),
+    }))
+    .filter((project) => project.tasks.length > 0));
+  const homeFocusTask = $derived(todayTaskRows.find(({ task }) => task.id === activeSidebarConversationId) ?? todayTaskRows[0]);
+  function homeTaskIsRunning(task: TaskThread) {
+    return Boolean(task.tabId && tabs.some((tab) => tab.id === task.tabId && tab.running));
+  }
+  function homeTaskStateLabel(task: TaskThread) {
+    if (task.receipt?.state === "failed") return "需要处理";
+    if (task.receipt?.state === "pending-review") return "待复核";
+    if (homeTaskIsRunning(task)) return "执行中";
+    return "可继续";
+  }
+  function homeTaskStateTone(task: TaskThread) {
+    if (task.receipt?.state === "failed") return "danger";
+    if (task.receipt?.state === "pending-review") return "warning";
+    if (homeTaskIsRunning(task)) return "running";
+    return "idle";
+  }
+  function homeTaskSummary(task: TaskThread) {
+    return OUTCOME_TEMPLATES.find((template) => template.id === task.templateId)?.summary
+      ?? "继续对话、处理 Agent 请求，并在完成后复核交付结果。";
+  }
   type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; executionReadOnly?: boolean; tags?: string[]; examplePrompts?: string[]; runAs?: string; autoUse?: string; needsFreshData?: boolean; cost?: string; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
   type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
   function emptyCapabilityBuckets(): CapabilityBuckets {
@@ -2685,7 +2721,7 @@
   function persistSidebarState() {
     if (typeof window === "undefined" || !sidebarStateHydrated) return;
     const snapshot: SidebarStateSnapshot = snapshotFromProjectNodes({
-      workspaces: savedWorkspaces,
+      workspaces: [],
       projectNodes: sidebarProjects,
       activeWorkspaceId,
       activeProjectId: activeSidebarProjectId,
@@ -2734,8 +2770,7 @@
       const raw = window.localStorage.getItem(WORKBENCH_STATE_STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_SIDEBAR_STORAGE_KEY);
       if (!raw) return;
       const snapshot = migrateWorkbenchSnapshot(JSON.parse(raw) as unknown);
-      savedWorkspaces = snapshot.savedWorkspaces;
-      activeWorkspaceId = snapshot.activeWorkspaceId;
+      activeWorkspaceId = "";
       sidebarProjects = reconcileProjectTaskNodes(
         snapshot.projectTasks.map((item) => ({ id: item.projectId, name: item.projectId })),
         snapshot,
@@ -2744,7 +2779,7 @@
       activeSidebarConversationId = snapshot.activeTaskId;
       sidebarProjectSort = snapshot.projectSort;
       sidebarProjectDockCollapsed = snapshot.projectDockCollapsed;
-      window.localStorage.setItem(WORKBENCH_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+      window.localStorage.removeItem(LEGACY_SIDEBAR_STORAGE_KEY);
     } catch (error) {
       console.warn("Failed to restore unified workbench state", error);
     }
@@ -2819,7 +2854,6 @@
   });
 
   $effect(() => {
-    savedWorkspaces;
     activeWorkspaceId;
     sidebarProjects;
     activeSidebarProjectId;
@@ -3354,72 +3388,9 @@
     selectedProjectId = linked?.id ?? "";
     linkedProject = linked?.name ?? (project.kind === "inbox" ? "收件箱项目" : project.name);
   }
-  function pathBasename(path: string) {
-    const trimmed = path.trim().replace(/[\\/]+$/, "");
-    return trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed || "新 Workspace";
-  }
-  function addWorkspaceFromPath(path: string, fallbackName = "") {
-    const cleanPath = path.trim();
-    const name = fallbackName.trim() || pathBasename(cleanPath);
-    if (!cleanPath || !name) return;
-    savedWorkspaces = upsertSavedWorkspace(savedWorkspaces, cleanPath, name);
-    activeWorkspaceId = `folder:${cleanPath}`;
-  }
-  function handleSidebarProjectFolderInput(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const firstFile = input.files?.[0] as (File & { path?: string; webkitRelativePath?: string }) | undefined;
-    if (!firstFile) return;
-    const relativePath = firstFile.webkitRelativePath || firstFile.name;
-    const rootName = relativePath.split("/").filter(Boolean)[0] || firstFile.name;
-    addWorkspaceFromPath(firstFile.path || rootName, rootName);
-    input.value = "";
-  }
-  async function chooseSidebarProjectFolder() {
-    if (hasWailsBindings()) {
-      try {
-        const picked = await app().PickWorkspace();
-        if (picked) {
-          addWorkspaceFromPath(picked);
-          const meta = await app().OpenProjectTab(picked, "");
-          await syncActiveTabMeta(meta);
-          activeWorkspaceId = `tab:${meta.id}`;
-          return;
-        }
-      } catch {
-        // Browser preview falls back to the hidden directory input below.
-      }
-    }
-    if (sidebarProjectFolderInput) {
-      sidebarProjectFolderInput.setAttribute("webkitdirectory", "");
-      sidebarProjectFolderInput.setAttribute("directory", "");
-      sidebarProjectFolderInput.click();
-      return;
-    }
-    showWorkbenchNotice("浏览器预览无法读取真实目录，请在 Wails 桌面环境选择 Workspace。");
-  }
-  async function selectWorkspace(workspaceId: string) {
-    const workspace = workspaceOptions.find((item) => item.id === workspaceId);
-    if (!workspace) return;
-    activeWorkspaceId = workspace.id;
-    if (!hasWailsBindings()) return;
-    try {
-      if (workspace.tabId) {
-        await app().SetActiveTab(workspace.tabId);
-        tabs = await app().ListTabs();
-      } else {
-        const meta = await app().OpenProjectTab(workspace.root, "");
-        await syncActiveTabMeta(meta);
-        activeWorkspaceId = `tab:${meta.id}`;
-      }
-      const tab = tabs.find((item) => item.active) ?? tabs[0];
-      if (tab) await refreshCodeDock(tab);
-    } catch (error) {
-      showWorkbenchNotice(`切换 Workspace 失败：${formatErrorMessage(error)}`);
-    }
-  }
   function openUnifiedNav(navId: string) {
     activityMode = "work";
-    if (navId === "tasks") focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
+    if (navId === "tasks") openTaskCenter("active");
     else if (navId === "projects") openWorkLayer("projects");
     else if (navId === "deliveries") openWorkLayer("reports");
     else if (navId === "automations") openWorkLayer("automations");
@@ -3570,22 +3541,8 @@
     void tick().then(focusComposer);
   }
   function startOutcomeTask(templateId: TaskOutcomeTemplateID) {
-    openUnifiedNav("tasks");
+    focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
     selectOutcomeTemplate(templateId);
-  }
-  function openFirstRunWorkspace() {
-    if (firstRunChecklist.workspaceActive) {
-      openCodeWorkbench("workspace");
-      return;
-    }
-    void chooseSidebarProjectFolder();
-  }
-  function openFirstRunVerification() {
-    if (firstRunChecklist.verifiedTaskComplete) {
-      openUnifiedNav("deliveries");
-      return;
-    }
-    startOutcomeTask("review-fix");
   }
   function openTaskInspector(panel: string) {
     if (panel === "task") {
@@ -3601,9 +3558,23 @@
     }
   }
   function syncActiveWorkspaceSelection() {
-    const options = deriveWorkspaceOptions(tabs, savedWorkspaces);
-    if (options.some((workspace) => workspace.id === activeWorkspaceId)) return;
+    const options = deriveWorkspaceOptions(tabs, []);
     activeWorkspaceId = options.find((workspace) => workspace.active)?.id ?? options[0]?.id ?? "";
+  }
+  function sidebarProjectSortLabel() {
+    if (sidebarProjectSort === "name") return "名称";
+    if (sidebarProjectSort === "tasks") return "任务数";
+    return "最近更新";
+  }
+  function cycleSidebarProjectSort() {
+    sidebarProjectSort = sidebarProjectSort === "recent" ? "name" : sidebarProjectSort === "name" ? "tasks" : "recent";
+  }
+  function openTaskCenter(tab: TaskCenterTab = "active") {
+    taskCenterTab = tab;
+    openWorkLayer("todos");
+  }
+  function startNewTaskFromSidebar() {
+    focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
   }
   function openSidebarProject(projectId: string) {
     const project = sidebarProjects.find((item) => item.id === projectId);
@@ -3698,10 +3669,31 @@
   }
   function archiveSidebarConversation(projectId: string, conversationId: string) {
     const now = Date.now();
+    const wasActive = activeSidebarConversationId === conversationId;
     clearActiveSidebarConversation(conversationId);
     sidebarProjects = sidebarProjects.map((project) => project.id === projectId
       ? { ...project, updatedAtMs: now, tasks: project.tasks.map((conversation) => conversation.id === conversationId ? { ...conversation, archivedAtMs: now, updatedAt: "已归档", updatedAtMs: now } : conversation) }
       : project);
+    if (wasActive) {
+      activeConversationTabId = "";
+      newTaskConversationActive = false;
+      openTaskCenter("archived");
+    }
+  }
+  function restoreSidebarConversation(projectId: string, conversationId: string) {
+    const now = Date.now();
+    sidebarProjects = sidebarProjects.map((project) => project.id === projectId
+      ? {
+        ...project,
+        expanded: true,
+        updatedAtMs: now,
+        tasks: project.tasks.map((conversation) => conversation.id === conversationId
+          ? { ...conversation, archivedAtMs: undefined, updatedAt: "刚刚", updatedAtMs: now }
+          : conversation),
+      }
+      : project);
+    showWorkbenchNotice("任务已恢复，可从进行中任务继续。");
+    taskCenterTab = "active";
   }
   function deleteSidebarConversation(projectId: string, conversationId: string) {
     const now = Date.now();
@@ -4576,7 +4568,7 @@
       ? projectCards
       : [project, ...projectCards];
     const state = snapshotFromProjectNodes({
-      workspaces: savedWorkspaces,
+      workspaces: [],
       projectNodes: sidebarProjects,
       activeWorkspaceId,
       activeProjectId: activeSidebarProjectId,
@@ -4616,6 +4608,25 @@
       timeline: project.timeline,
     };
   }
+  async function renameSidebarProject(projectId: string, name: string) {
+    const project = projectCards.find((item) => item.id === projectId);
+    const nextName = name.trim();
+    if (!project || !nextName || nextName === project.name) return;
+    const saveProject = projectPersistenceBindings()?.SaveWorkbenchProject;
+    if (typeof saveProject !== "function") {
+      desktopBackendUnavailable("重命名项目");
+      return;
+    }
+    try {
+      const saved = await saveProject(projectPersistenceInput({ ...project, name: nextName }, project.status === "closed" ? "closed" : "active"));
+      projectCards = projectCards.map((item) => item.id === saved.id ? saved : item);
+      syncSidebarProjectFromWorkbench(saved);
+      showWorkbenchNotice(`项目已重命名为：${saved.name}`);
+    } catch (error) {
+      console.error("Failed to rename project", error);
+      showWorkbenchNotice(`重命名项目失败：${formatErrorMessage(error)}`);
+    }
+  }
   async function updateProjectStatus(project: WorkbenchProject, status: "active" | "closed") {
     const saveProject = projectPersistenceBindings()?.SaveWorkbenchProject;
     if (typeof saveProject !== "function") {
@@ -4645,7 +4656,7 @@
       await deleteProjectBinding(project.id);
       const remainingProjects = projectCards.filter((item) => item.id !== project.id);
       const state = snapshotFromProjectNodes({
-        workspaces: savedWorkspaces,
+        workspaces: [],
         projectNodes: sidebarProjects,
         activeWorkspaceId,
         activeProjectId: activeSidebarProjectId,
@@ -4753,6 +4764,7 @@
       todoItems = [saved, ...todoItems.filter((todo) => todo.id !== saved.id)];
       configDialog = undefined;
       workLayer = "todos";
+      taskCenterTab = "todos";
       showWorkbenchNotice(`已新增待办：${title}`);
     } catch (error) {
       console.error("Failed to save todo", error);
@@ -5444,7 +5456,7 @@
       const projects = await projectApi.ListWorkbenchProjects();
       projectCards = Array.isArray(projects) ? projects : [];
       const state = snapshotFromProjectNodes({
-        workspaces: savedWorkspaces,
+        workspaces: [],
         projectNodes: sidebarProjects,
         activeWorkspaceId,
         activeProjectId: activeSidebarProjectId,
@@ -7607,6 +7619,11 @@
 
   function handleGlobalKeydown(event: KeyboardEvent) {
     const isPrimary = event.metaKey || event.ctrlKey;
+    if (isPrimary && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      startNewTaskFromSidebar();
+      return;
+    }
     if (isPrimary && event.key === "1") {
       event.preventDefault();
       openWorkLayer("today");
@@ -7921,8 +7938,6 @@
     <UnifiedSidebar
       {brandName}
       {brandMarkSrc}
-      workspaces={workspaceOptions}
-      {activeWorkspaceId}
       projects={sortedSidebarProjects}
       activeProjectId={activeSidebarProjectId}
       activeTaskId={activeSidebarConversationId}
@@ -7933,8 +7948,8 @@
       drawerOpen={mobileDrawerOpen}
       collapsed={sidebarCollapsed}
       projectDockCollapsed={sidebarProjectDockCollapsed}
-      onWorkspaceChange={(workspaceId) => void selectWorkspace(workspaceId)}
-      onChooseWorkspace={() => void chooseSidebarProjectFolder()}
+      projectSortLabel={sidebarProjectSortLabel()}
+      onNewTask={startNewTaskFromSidebar}
       onNav={openPrimaryNav}
       onModeChange={switchActivityMode}
       onProjectToggle={toggleSidebarProject}
@@ -7943,14 +7958,15 @@
       onTaskCreate={createSidebarConversation}
       onTaskArchive={archiveSidebarConversation}
       onTaskDelete={deleteSidebarConversation}
+      onProjectSort={cycleSidebarProjectSort}
+      onProjectCreate={() => openConfigDialog("project")}
+      onProjectRename={renameSidebarProject}
       onProjectDockToggle={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}
       onDrawerClose={() => (mobileDrawerOpen = false)}
       onCollapseToggle={() => (sidebarCollapsed = !sidebarCollapsed)}
       onGovernance={openGovernanceCenter}
       taskTimeLabel={sidebarConversationTimeLabel}
     />
-    <input bind:this={sidebarProjectFolderInput} class="sidebar-project-folder-input" type="file" multiple tabindex="-1" aria-hidden="true" onchange={handleSidebarProjectFolderInput} />
-
     <section class="stage" class:stage--conversation={showActiveTranscript}>
       <div class="window-drag-region" aria-hidden="true"></div>
       <div class="stage__surface" class:stage__surface--conversation={showActiveTranscript}>
@@ -8056,21 +8072,23 @@
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined} data-governance={activityMode === "work" && isGovernanceLayer(workLayer) ? "true" : undefined}>
-            <div class="task-context-wrap workbench-context-wrap">
-              <TaskContextBar
-                workspace={activeWorkspace?.name || "未选择 Workspace"}
-                project={activeProjectLabel}
-                agent={activeAgentLabel}
-                model={activeModelLabel}
-                permission={activePermissionLabel}
-                memory={activeMemoryLabel}
-                mode={activityMode}
-                activeInspector={taskInspectorPanel}
-                onOpenDrawer={() => (mobileDrawerOpen = true)}
-                onInspector={openTaskInspector}
-              />
-            </div>
-            <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchHeading.eyebrow}</span><strong>{workbenchHeading.title}</strong></div><p>{workbenchHeading.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> Workspace</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
+            {#if activityMode !== "work" || (workLayer !== "today" && workLayer !== "todos")}
+              <div class="task-context-wrap workbench-context-wrap">
+                <TaskContextBar
+                  workspace={activeWorkspace?.name || "未选择 Workspace"}
+                  project={activeProjectLabel}
+                  agent={activeAgentLabel}
+                  model={activeModelLabel}
+                  permission={activePermissionLabel}
+                  memory={activeMemoryLabel}
+                  mode={activityMode}
+                  activeInspector={taskInspectorPanel}
+                  onOpenDrawer={() => (mobileDrawerOpen = true)}
+                  onInspector={openTaskInspector}
+                />
+              </div>
+              <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchHeading.eyebrow}</span><strong>{workbenchHeading.title}</strong></div><p>{workbenchHeading.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> Workspace</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
+            {/if}
             {#if workbenchNotice}<div class="workbench-notice" data-testid="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if activityMode === "work" && isGovernanceLayer(workLayer)}
               <GovernanceNavigation items={governanceNavItems} activeId={workLayer} onSelect={openGovernanceLayer} />
@@ -8359,83 +8377,86 @@
               </section>
             {:else if workLayer === "today"}
               <section class="aorist-page result-home-page">
-                <div class="hero-panel result-home-hero">
-                  <span>Result-driven workbench</span>
-                  <h1>从明确结果开始，把任务推进到可验证交付。</h1>
-                  <p>选择强结果场景，确认 Workspace、Project 与运行配置；交付时保留实际改动、验证证据、产物路径、数据去向和回滚方案。</p>
-                  <div>
-                    <button type="button" onclick={() => openUnifiedNav("tasks")}>开始结果任务</button>
-                    <button type="button" onclick={() => openUnifiedNav("deliveries")}>查看交付记录</button>
+                <button class="home-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
+                <section class="home-primary-flow" data-testid="work-launch-panel">
+                  <div class="home-primary-flow__copy">
+                    <span>Work</span>
+                    <h1>{homeFocusTask ? "继续推进当前任务" : "从一项真实任务开始"}</h1>
+                    <p>选择项目和结果目标，让 Agent 执行；你只需要在关键节点处理审批、复核交付并决定下一步。</p>
+                    <div>
+                      <button type="button" onclick={startNewTaskFromSidebar}><CirclePlus size={15} /> 新建任务</button>
+                      {#if homeFocusTask}
+                        <button type="button" onclick={() => openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id)}>继续当前任务 <ArrowRight size={15} /></button>
+                      {:else}
+                        <button type="button" onclick={() => openUnifiedNav("projects")}>先选择项目 <ArrowRight size={15} /></button>
+                      {/if}
+                    </div>
                   </div>
-                </div>
 
-                <div class="aorist-stats result-home-stats">
-                  <article><span>任务</span><strong>{todayTaskRows.length}</strong><em>Project → Task</em></article>
-                  <article><span>待复核交付</span><strong>{pendingDeliveryRows.length}</strong><em>结果回执</em></article>
-                  <article><span>项目</span><strong>{projectCards.length}</strong><em>业务边界</em></article>
-                  <article><span>自动化</span><strong>{runningAutomations.length}</strong><em>可执行流程</em></article>
-                </div>
-
-                <section class="first-run-checklist" data-testid="first-run-checklist" data-completed={firstRunChecklist.completedCount}>
-                  <header>
-                    <div><span>首次成功清单</span><strong>{firstRunChecklist.completedCount}/3 已完成</strong></div>
-                    <p>每一步都以桌面后端或任务回执中的真实状态为准。</p>
-                  </header>
-                  <ol>
-                    <li class:done={firstRunChecklist.modelConnected}>
-                      <i>{#if firstRunChecklist.modelConnected}<Check size={14} />{:else}1{/if}</i>
-                      <span><strong>连接模型</strong><em>{firstRunChecklist.modelConnected ? "已有可用 Provider" : "尚未确认可用 Provider"}</em></span>
-                      <button type="button" onclick={() => openWorkLayer("models")}>{firstRunChecklist.modelConnected ? "查看" : "连接模型"}</button>
-                    </li>
-                    <li class:done={firstRunChecklist.workspaceActive}>
-                      <i>{#if firstRunChecklist.workspaceActive}<Check size={14} />{:else}2{/if}</i>
-                      <span><strong>打开 Workspace</strong><em>{firstRunChecklist.workspaceActive ? activeTab?.workspaceRoot : "尚未打开真实 Workspace Tab"}</em></span>
-                      <button type="button" onclick={openFirstRunWorkspace}>{firstRunChecklist.workspaceActive ? "查看" : "选择 Workspace"}</button>
-                    </li>
-                    <li class:done={firstRunChecklist.verifiedTaskComplete}>
-                      <i>{#if firstRunChecklist.verifiedTaskComplete}<Check size={14} />{:else}3{/if}</i>
-                      <span><strong>完成一次带验证证据的任务</strong><em>{firstRunChecklist.verifiedTaskComplete ? "验证证据已就绪" : "pending-review 或无验证证据不会计为完成"}</em></span>
-                      <button type="button" onclick={openFirstRunVerification}>{firstRunChecklist.verifiedTaskComplete ? "查看交付" : "开始结果任务"}</button>
-                    </li>
-                  </ol>
+                  <article class="home-focus-card">
+                    <header>
+                      <span>当前任务</span>
+                      {#if homeFocusTask}<b data-tone={homeTaskStateTone(homeFocusTask.task)}>{homeTaskStateLabel(homeFocusTask.task)}</b>{/if}
+                    </header>
+                    {#if homeFocusTask}
+                      <strong>{homeFocusTask.task.title}</strong>
+                      <p>{homeTaskSummary(homeFocusTask.task)}</p>
+                      <footer>
+                        <span>{homeFocusTask.projectName}</span>
+                        <em>{sidebarConversationTimeLabel(homeFocusTask.task)}</em>
+                      </footer>
+                    {:else}
+                      <strong>还没有正在推进的任务</strong>
+                      <p>创建任务后，这里会保留当前工作、Agent 状态和下一步入口。</p>
+                      <footer><span>从结果目标开始</span><em>等待创建</em></footer>
+                    {/if}
+                  </article>
                 </section>
 
-                <section class="result-scenarios" aria-label="强结果场景">
-                  <header><div><span>Outcome scenarios</span><strong>选择一种可核验的交付目标</strong></div><p>模板先约束结果，再进入运行配置与任务执行。</p></header>
+                <div class="home-work-grid">
+                  <section class="home-work-panel home-attention-panel">
+                    <header><div><span>需要你</span><strong>待处理</strong></div><button type="button" onclick={() => openUnifiedNav("deliveries")}>交付记录</button></header>
+                    <div class="home-task-list">
+                      {#each pendingDeliveryRows.slice(0, 4) as row (`attention:${row.projectId}:${row.task.id}`)}
+                        <button type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
+                          <span data-tone={homeTaskStateTone(row.task)}>{homeTaskStateLabel(row.task)}</span>
+                          <div><strong>{row.task.title}</strong><em>{row.projectName} · {sidebarConversationTimeLabel(row.task)}</em></div>
+                          <ArrowRight size={15} />
+                        </button>
+                      {:else}
+                        <article class="home-calm-state"><Check size={16} /><div><strong>目前没有待处理事项</strong><p>审批、失败恢复和交付复核会集中出现在这里。</p></div></article>
+                      {/each}
+                    </div>
+                  </section>
+
+                  <section class="home-work-panel">
+                    <header><div><span>最近活动</span><strong>最近任务</strong></div><button type="button" onclick={startNewTaskFromSidebar}>新建任务</button></header>
+                    <div class="home-task-list">
+                      {#each todayTaskRows.slice(0, 5) as row (`recent:${row.projectId}:${row.task.id}`)}
+                        <button type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
+                          <span data-tone={homeTaskStateTone(row.task)}>{homeTaskStateLabel(row.task)}</span>
+                          <div><strong>{row.task.title}</strong><em>{row.projectName} · {sidebarConversationTimeLabel(row.task)}</em></div>
+                          <ArrowRight size={15} />
+                        </button>
+                      {:else}
+                        <article class="home-calm-state"><CirclePlus size={16} /><div><strong>还没有最近任务</strong><p>创建第一项任务后，可从这里直接继续。</p></div></article>
+                      {/each}
+                    </div>
+                  </section>
+                </div>
+
+                <section class="result-scenarios" aria-label="任务结果模板">
+                  <header><div><span>新建任务</span><strong>从结果模板开始</strong></div><p>选择一个目标，进入任务后再补充上下文和运行配置。</p></header>
                   <div>
                     {#each OUTCOME_TEMPLATES as template (template.id)}
                       <button type="button" onclick={() => startOutcomeTask(template.id)}>
                         <span>{template.title}</span>
                         <strong>{template.summary}</strong>
-                        <em>开始任务 →</em>
+                        <em>使用模板 <ArrowRight size={13} /></em>
                       </button>
                     {/each}
                   </div>
                 </section>
-
-                <div class="aorist-split result-home-grid">
-                  <section class="aorist-card">
-                    <header><strong>最近任务</strong><button type="button" onclick={() => openUnifiedNav("tasks")}>开始新任务</button></header>
-                    {#each todayTaskRows.slice(0, 5) as row (`${row.projectId}:${row.task.id}`)}
-                      <button class="todo-row" type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
-                        <i></i><span><strong>{row.task.title}</strong><em>{row.projectName} / {sidebarConversationTimeLabel(row.task)}</em></span><b>{row.task.receipt ? "有回执" : "执行中"}</b>
-                      </button>
-                    {:else}
-                      <article class="result-home-empty"><strong>暂无任务</strong><p>从上方结果场景开始，首个任务会进入明确的 Project 与交付回执。</p></article>
-                    {/each}
-                  </section>
-
-                  <section class="aorist-card">
-                    <header><strong>待复核交付</strong><button type="button" onclick={() => openUnifiedNav("deliveries")}>查看全部</button></header>
-                    {#each pendingDeliveryRows.slice(0, 5) as row (`receipt:${row.projectId}:${row.task.id}`)}
-                      <button class="automation-row" type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
-                        <span><strong>{row.task.title}</strong><em>{row.projectName} / 需要证据或人工复核</em></span><b>{row.task.receipt?.state === "failed" ? "失败待处理" : "待复核"}</b>
-                      </button>
-                    {:else}
-                      <article class="result-home-empty"><strong>暂无待复核交付</strong><p>任务结束后，结果回执会在这里提示证据、产物与回滚项。</p></article>
-                    {/each}
-                  </section>
-                </div>
               </section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
@@ -8541,7 +8562,23 @@
                   </article>
                 </section>
               {/if}
-            {:else if workLayer === "todos"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Task Center</span><strong>待办事项</strong></div><button type="button" onclick={() => openConfigDialog("todo")}>新增待办</button></div><div class="aorist-list">{#each todoItems as item (item.id)}<article><div><strong>{item.title}</strong><p>{todoDescription(item)}</p><em>{todoDue(item)}</em></div><span>{todoStatusLabel(item.status)}</span></article>{:else}<article class="detail-empty"><strong>暂无待办</strong><p>新增待办后会通过桌面后端持久化并显示在这里。</p></article>{/each}</div></section>
+            {:else if workLayer === "todos"}
+              <div class="task-center-shell">
+                <button class="home-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
+                <TaskCenter
+                  activeTab={taskCenterTab}
+                  tasks={taskCenterTasks}
+                  todos={taskCenterTodos}
+                  archivedProjects={taskCenterArchivedProjects}
+                  archivedCount={archivedSidebarConversationCount}
+                  onTabChange={(tab) => (taskCenterTab = tab)}
+                  onNewTask={startNewTaskFromSidebar}
+                  onNewTodo={() => openConfigDialog("todo")}
+                  onOpenTask={openSidebarConversation}
+                  onRestoreTask={restoreSidebarConversation}
+                  onDeleteTask={deleteSidebarConversation}
+                />
+              </div>
             {:else if workLayer === "automations"}
               <section class="aorist-page">
                 <div class="aorist-toolbar">
@@ -17856,7 +17893,7 @@
     --aorist-page-bg: #f4f4f4;
     --aorist-sidebar: #f4f4f4;
     --aorist-sidebar-hover: #ececec;
-    --aorist-sidebar-active: #e6faf2;
+    --aorist-sidebar-active: #e8e8e8;
     --aorist-shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.06);
     --aorist-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
     color: var(--aorist-ink);
@@ -18983,10 +19020,6 @@
 
   .workspace-nav .sidebar-project-head h2 {
     padding-left: 4px;
-  }
-
-  .sidebar-project-folder-input {
-    display: none;
   }
 
   .workspace-nav .sidebar-project-section-toggle,
@@ -22759,7 +22792,7 @@
   }
 
   .first-run-checklist li button:focus-visible {
-    outline: 2px solid color-mix(in srgb, #0f7b55 55%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--primary, #1f2421) 48%, transparent);
     outline-offset: 2px;
   }
 
@@ -22823,7 +22856,7 @@
   }
 
   .result-scenarios button:hover {
-    border-color: color-mix(in srgb, #0f7b55 42%, var(--border, #dce1db));
+    border-color: color-mix(in srgb, var(--foreground, #1f2421) 24%, var(--border, #dce1db));
     background: var(--card, #ffffff);
     box-shadow: 0 8px 24px rgb(15 23 42 / 0.055);
     transform: translateY(-1px);
@@ -22844,7 +22877,7 @@
 
   .result-scenarios button em {
     align-self: end;
-    color: #0f7b55;
+    color: var(--foreground, #1f2421);
     font-size: 11px;
     font-style: normal;
     font-weight: 700;
@@ -22853,6 +22886,387 @@
   .result-home-grid {
     order: 5;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result-home-page {
+    width: min(1120px, 100%);
+    margin: 0 auto;
+    padding: 8px 0 28px;
+  }
+
+  .home-mobile-nav {
+    display: none;
+  }
+
+  .task-center-shell {
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+    background: var(--background, #f3f5f2);
+  }
+
+  .task-center-shell > .home-mobile-nav {
+    margin: 12px 14px 0;
+  }
+
+  .home-primary-flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #dce1db;
+    border-radius: 12px;
+    background: #ffffff;
+  }
+
+  .home-primary-flow__copy {
+    display: grid;
+    align-content: center;
+    min-width: 0;
+    padding: 28px 30px;
+    border-right: 1px solid #e6e9e4;
+  }
+
+  .home-primary-flow__copy > span,
+  .home-work-panel > header span,
+  .result-home-page .result-scenarios > header span {
+    color: #687169;
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .home-primary-flow__copy h1 {
+    max-width: 620px;
+    margin: 7px 0 0;
+    color: #1f2421;
+    font-size: clamp(22px, 2.4vw, 30px);
+    font-weight: 650;
+    line-height: 1.22;
+    letter-spacing: -0.035em;
+  }
+
+  .home-primary-flow__copy p {
+    max-width: 640px;
+    margin: 10px 0 0;
+    color: #687169;
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .home-primary-flow__copy > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .home-primary-flow__copy button,
+  .home-work-panel > header button {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid #cfd5cf;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #1f2421;
+    font-size: 12px;
+    font-weight: 650;
+    transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+  }
+
+  .result-home-page .home-primary-flow__copy button:first-child {
+    border-color: #222222;
+    background: #222222;
+    color: #ffffff;
+  }
+
+  .home-primary-flow__copy button:hover,
+  .home-work-panel > header button:hover {
+    border-color: #9a9a9a;
+    color: #222222;
+    background: #f3f3f3;
+  }
+
+  .result-home-page .home-primary-flow__copy button:first-child:hover {
+    color: #ffffff;
+    background: #111111;
+  }
+
+  .home-primary-flow__copy button:focus-visible,
+  .home-work-panel button:focus-visible,
+  .result-home-page .result-scenarios button:focus-visible {
+    outline: 2px solid color-mix(in srgb, #222222 48%, transparent);
+    outline-offset: 2px;
+  }
+
+  .home-focus-card {
+    display: grid;
+    grid-template-rows: auto auto minmax(58px, 1fr) auto;
+    gap: 9px;
+    min-width: 0;
+    margin: 12px;
+    padding: 16px;
+    border: 1px solid #dddddd;
+    border-radius: 10px;
+    background: #f5f5f5;
+  }
+
+  .home-focus-card header,
+  .home-focus-card footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .home-focus-card header > span {
+    color: #687169;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .home-focus-card header b,
+  .home-task-list button > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 22px;
+    padding: 0 7px;
+    color: #687169;
+    background: #edf0ed;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .home-focus-card [data-tone="running"],
+  .home-task-list [data-tone="running"] {
+    color: #0f6c4c;
+    background: #dff2e8;
+  }
+
+  .home-focus-card [data-tone="warning"],
+  .home-task-list [data-tone="warning"] {
+    color: #8a5608;
+    background: #fff1d7;
+  }
+
+  .home-focus-card [data-tone="danger"],
+  .home-task-list [data-tone="danger"] {
+    color: #a6332a;
+    background: #fdecea;
+  }
+
+  .home-focus-card > strong {
+    overflow: hidden;
+    color: #1f2421;
+    font-size: 16px;
+    font-weight: 650;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home-focus-card > p {
+    margin: 0;
+    color: #687169;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+
+  .home-focus-card footer {
+    padding-top: 10px;
+    border-top: 1px solid #dddddd;
+    color: #687169;
+    font-size: 10px;
+  }
+
+  .home-focus-card footer em {
+    font-style: normal;
+  }
+
+  .home-work-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .home-work-panel {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #dce1db;
+    border-radius: 12px;
+    background: #ffffff;
+  }
+
+  .home-work-panel > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 54px;
+    padding: 10px 12px 10px 14px;
+    border-bottom: 1px solid #e7eae6;
+  }
+
+  .home-work-panel > header span,
+  .home-work-panel > header strong {
+    display: block;
+  }
+
+  .home-work-panel > header strong {
+    margin-top: 2px;
+    color: #1f2421;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .home-work-panel > header button {
+    min-height: 30px;
+    padding: 0 9px;
+    font-size: 10px;
+  }
+
+  .home-task-list {
+    display: grid;
+  }
+
+  .home-task-list > button {
+    appearance: none;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 56px;
+    padding: 9px 12px;
+    border: 0;
+    background: #ffffff;
+    color: #1f2421;
+    text-align: left;
+  }
+
+  .home-task-list > button + button {
+    border-top: 1px solid #edf0ec;
+  }
+
+  .home-task-list > button:hover {
+    background: #f7f9f7;
+  }
+
+  .home-task-list button > div,
+  .home-task-list button strong,
+  .home-task-list button em {
+    display: block;
+    min-width: 0;
+  }
+
+  .home-task-list button strong,
+  .home-task-list button em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home-task-list button strong {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .home-task-list button em {
+    margin-top: 3px;
+    color: #7b837c;
+    font-size: 10px;
+    font-style: normal;
+  }
+
+  .home-task-list button > :global(svg) {
+    color: #8b938c;
+  }
+
+  .home-calm-state {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 9px;
+    min-height: 74px;
+    padding: 15px 14px;
+    color: #0f7b55;
+  }
+
+  .home-calm-state strong,
+  .home-calm-state p {
+    display: block;
+  }
+
+  .home-calm-state strong {
+    color: #1f2421;
+    font-size: 12px;
+  }
+
+  .home-calm-state p {
+    margin: 4px 0 0;
+    color: #7b837c;
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  .result-home-page .result-scenarios {
+    display: grid;
+    gap: 12px;
+    padding: 15px;
+    border: 1px solid #dce1db;
+    border-radius: 12px;
+    background: #ffffff;
+    color: #1f2421;
+  }
+
+  .result-home-page .result-scenarios > header strong {
+    color: #1f2421;
+    font-size: 13px;
+  }
+
+  .result-home-page .result-scenarios > header p {
+    color: #7b837c;
+    font-size: 10px;
+  }
+
+  .result-home-page .result-scenarios > div {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .result-home-page .result-scenarios button {
+    min-height: 92px;
+    padding: 11px;
+    border-color: #e1e5df;
+    background: #f8faf8;
+    color: #1f2421;
+  }
+
+  .result-home-page .result-scenarios button:hover {
+    border-color: #c7c7c7;
+    background: #f3f3f3;
+  }
+
+  .result-home-page .result-scenarios button strong {
+    color: #687169;
+    font-weight: 450;
+  }
+
+  .result-home-page .result-scenarios button em {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #222222;
   }
 
   .new-task-empty-actions {
@@ -23182,6 +23596,31 @@
     min-height: 0;
   }
 
+  @media (max-width: 1100px) {
+    .result-home-page .result-scenarios > div {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 900px) {
+    .home-primary-flow {
+      grid-template-columns: 1fr;
+    }
+
+    .home-primary-flow__copy {
+      border-right: 0;
+      border-bottom: 1px solid #e6e9e4;
+    }
+
+    .home-focus-card {
+      grid-template-rows: auto auto auto auto;
+    }
+
+    .home-work-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
   @media (max-width: 720px) {
     .shell,
     .shell.is-sidebar-collapsed {
@@ -23204,6 +23643,71 @@
     .runtime-step-label {
       align-items: flex-start;
       flex-wrap: wrap;
+    }
+
+    .result-home-page {
+      gap: 12px;
+      padding-top: 0;
+    }
+
+    .home-mobile-nav {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      justify-self: start;
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid #dce1db;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #1f2421;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .task-center-shell > .home-mobile-nav {
+      display: inline-flex;
+    }
+
+    .home-primary-flow__copy {
+      padding: 22px 18px;
+    }
+
+    .home-primary-flow__copy > div {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    .home-primary-flow__copy button {
+      min-height: 40px;
+    }
+
+    .home-focus-card {
+      margin: 10px;
+    }
+
+    .home-task-list > button {
+      grid-template-columns: minmax(0, 1fr) 18px;
+      gap: 8px;
+    }
+
+    .home-task-list button > span {
+      grid-column: 1;
+      justify-self: start;
+    }
+
+    .home-task-list button > div {
+      grid-column: 1;
+    }
+
+    .home-task-list button > :global(svg) {
+      grid-column: 2;
+      grid-row: 1 / 3;
+    }
+
+    .result-home-page .result-scenarios > div {
+      grid-template-columns: 1fr;
     }
 
     .result-home-hero {

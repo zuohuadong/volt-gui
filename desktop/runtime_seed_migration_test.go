@@ -20,10 +20,39 @@ func TestLegacyRuntimeSeedsAreRemovedFromDiskWithoutDeletingCustomizedIDs(t *tes
 		custom.UpdatedAt = updated
 		writeRuntimeMigrationFixture(t, path, agentsDiskFile{Agents: []PersistentAgentView{legacy, custom}})
 		items, err := loadAgents()
-		if err != nil || len(items) != 1 || items[0].Vibe != custom.Vibe || items[0].Provider != "OpenAI" || items[0].Model != "GPT-4o" {
+		if err != nil || len(items) != 1 || items[0].Vibe != custom.Vibe || items[0].Provider != "" || items[0].Model != "" {
 			t.Fatalf("loadAgents = %+v, err=%v", items, err)
 		}
 		assertRuntimeMigrationRecordCount(t, path, "agents", 1)
+		var persisted agentsDiskFile
+		data, err := os.ReadFile(path)
+		if err != nil || json.Unmarshal(data, &persisted) != nil || len(persisted.Agents) != 1 || persisted.Agents[0].Provider != "" || persisted.Agents[0].Model != "" {
+			t.Fatalf("persisted agents = %+v, read err=%v", persisted, err)
+		}
+	})
+
+	t.Run("user-owned agent keeps explicit model", func(t *testing.T) {
+		isolateDesktopUserDirs(t)
+		path, _ := agentsPath()
+		custom := PersistentAgentView{
+			ID:        "code-review",
+			Name:      "用户审查 Agent",
+			Role:      "自定义",
+			Status:    "已启用",
+			Desc:      "用户自己创建的同名 Agent。",
+			Provider:  "OpenAI",
+			Model:     "GPT-4o",
+			Tools:     []string{},
+			Skills:    []string{},
+			CoreFiles: []string{},
+			CreatedAt: stamp,
+			UpdatedAt: updated,
+		}
+		writeRuntimeMigrationFixture(t, path, agentsDiskFile{Agents: []PersistentAgentView{custom}})
+		items, err := loadAgents()
+		if err != nil || len(items) != 1 || items[0].BuiltIn || items[0].Provider != "OpenAI" || items[0].Model != "GPT-4o" {
+			t.Fatalf("loadAgents = %+v, err=%v", items, err)
+		}
 	})
 
 	t.Run("todos", func(t *testing.T) {

@@ -170,9 +170,9 @@ func loadAgents() ([]PersistentAgentView, error) {
 	if err := json.Unmarshal(b, &disk); err != nil {
 		return nil, err
 	}
-	agents := migrateLegacySeedAgents(disk.Agents)
+	agents, migrated := migrateLegacySeedAgents(disk.Agents)
 	sortAgents(agents)
-	if len(agents) != len(disk.Agents) {
+	if migrated {
 		if err := saveAgents(agents); err != nil {
 			return nil, err
 		}
@@ -209,15 +209,26 @@ func saveAgents(agents []PersistentAgentView) error {
 	return fileutil.ReplaceFile(tmpPath, path)
 }
 
-func migrateLegacySeedAgents(saved []PersistentAgentView) []PersistentAgentView {
+func migrateLegacySeedAgents(saved []PersistentAgentView) ([]PersistentAgentView, bool) {
 	byID := map[string]PersistentAgentView{}
-	for _, agent := range saved {
+	migrated := false
+	for _, original := range saved {
+		agent := original
 		if isLegacySeedAgent(agent) {
+			migrated = true
 			continue
 		}
 		agent = normalizeAgent(agent)
+		agent = migrateLegacyAgentModel(agent)
+		if !reflect.DeepEqual(agent, original) {
+			migrated = true
+		}
 		if agent.ID == "" {
+			migrated = true
 			continue
+		}
+		if _, exists := byID[agent.ID]; exists {
+			migrated = true
 		}
 		byID[agent.ID] = agent
 	}
@@ -225,7 +236,19 @@ func migrateLegacySeedAgents(saved []PersistentAgentView) []PersistentAgentView 
 	for _, agent := range byID {
 		out = append(out, agent)
 	}
-	return out
+	return out, migrated
+}
+
+func migrateLegacyAgentModel(agent PersistentAgentView) PersistentAgentView {
+	// 早期桌面种子把 code-review 固定到了 GPT-4o。即使用户后来只改了
+	// 风格或运行过该 Agent，旧绑定也不应继续覆盖当前模型列表。
+	if agent.BuiltIn && strings.EqualFold(strings.TrimSpace(agent.ID), "code-review") &&
+		strings.EqualFold(strings.TrimSpace(agent.Provider), "OpenAI") &&
+		strings.EqualFold(strings.TrimSpace(agent.Model), "GPT-4o") {
+		agent.Provider = ""
+		agent.Model = ""
+	}
+	return agent
 }
 
 func isLegacySeedAgent(agent PersistentAgentView) bool {

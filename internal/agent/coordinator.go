@@ -129,7 +129,7 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 		plannerOptions.Pricing = plannerPricing
 		plannerOptions.UsageSource = event.UsageSourcePlanner
 		plannerOptions.ReadOnlyExecution = true
-		plannerAgent = New(planner, plannerTools, plannerSession, plannerOptions, plannerSink(sink))
+		plannerAgent = New(planner, strictReadOnlyExecutionRegistry(plannerTools), plannerSession, plannerOptions, plannerSink(sink))
 	}
 	if executor != nil {
 		executor.executorHandoffGuard = true

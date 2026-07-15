@@ -101,6 +101,13 @@ type ReadOnlyExecutionHostMutation interface {
 	ReadOnlyExecutionHostMutation() bool
 }
 
+// ReadOnlyExecutionBlockReason lets a deferred capability explain which
+// parent-session action is required when a strict read-only child cannot run
+// it. The reason is host-local and never enters provider tool schemas.
+type ReadOnlyExecutionBlockReason interface {
+	ReadOnlyExecutionBlockReason() string
+}
+
 // MCPMetadata exposes the original MCP identity behind a model-visible
 // "mcp__<server>__<tool>" adapter. The model name may be normalized for provider
 // function-name rules; config such as trusted_read_only_tools must use the raw
@@ -115,6 +122,13 @@ type MCPMetadata interface {
 // execution policy consumes them locally.
 type MCPAnnotations interface {
 	MCPDestructiveHint() bool
+}
+
+// MCPCapabilityFingerprint exposes the host-local security fingerprint used to
+// reject a cached-to-live schema drift before tools/call. It is deliberately
+// separate from Schema(), so it cannot perturb provider cache prefixes.
+type MCPCapabilityFingerprint interface {
+	MCPCapabilityFingerprint() string
 }
 
 const (

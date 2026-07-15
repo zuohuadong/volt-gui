@@ -4,13 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"reasonix/internal/capability"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/permission"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
@@ -173,6 +179,25 @@ func TestReadOnlyExecutionAllowsOnlyLayeredTrustedReadOnlyMCPStartup(t *testing.
 	}
 }
 
+func TestStrictReadOnlyExecutionRegistryFailsClosed(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "writer", readOnly: false})
+	reg.Add(readOnlyBoundaryTarget{name: "ordinary_read", readOnly: true})
+	reg.Add(readOnlyBoundaryTarget{name: "untrusted_read", readOnly: true, untrusted: true})
+	reg.Add(layeredReadOnlyMCPBoundaryTarget{
+		readOnlyBoundaryTarget: readOnlyBoundaryTarget{name: "mcp__test__trusted", readOnly: true, hostStart: true},
+	})
+	reg.Add(layeredReadOnlyMCPBoundaryTarget{
+		readOnlyBoundaryTarget: readOnlyBoundaryTarget{name: "mcp__test__destructive", readOnly: true, hostStart: true},
+		destructive:            true,
+	})
+
+	filtered := strictReadOnlyExecutionRegistry(reg)
+	if got, want := strings.Join(filtered.Names(), ","), "ordinary_read,mcp__test__trusted"; got != want {
+		t.Fatalf("strict registry = %q, want %q", got, want)
+	}
+}
+
 func TestReadOnlyExecutionBlocksUntrustedHintAndDecline(t *testing.T) {
 	calls := 0
 	target := readOnlyBoundaryTarget{name: "mcp__test__hint", readOnly: true, untrusted: true, calls: &calls}
@@ -228,6 +253,116 @@ func TestReadOnlyExecutionDoesNotStartUntrustedUnconnectedMCP(t *testing.T) {
 	}
 	if host.HasClient("lazy") {
 		t.Fatal("read-only Agent started an unconnected MCP server")
+	}
+}
+
+func receiptReaderMCPServer(t *testing.T, schemaDrift *atomic.Bool, toolCalls *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     *int   `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if request.ID == nil {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		var result any
+		switch request.Method {
+		case "initialize":
+			result = map[string]any{"protocolVersion": "2024-11-05", "serverInfo": map[string]any{"name": "receipt-reader", "version": "1"}}
+		case "tools/list":
+			schemaType := "string"
+			if schemaDrift != nil && schemaDrift.Load() {
+				schemaType = "number"
+			}
+			result = map[string]any{"tools": []map[string]any{{
+				"name": "search", "description": "search",
+				"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": schemaType}}},
+				"annotations": map[string]any{"readOnlyHint": true},
+			}}}
+		case "tools/call":
+			toolCalls.Add(1)
+			result = map[string]any{"content": []map[string]any{{"type": "text", "text": "reader result"}}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": *request.ID, "result": result})
+	}))
+}
+
+func TestReadOnlyExecutionStartsReceiptMatchedUnconnectedMCPReader(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	var toolCalls atomic.Int32
+	server := receiptReaderMCPServer(t, nil, &toolCalls)
+	defer server.Close()
+
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), t.TempDir())
+	spec := plugin.Spec{
+		Name: "receipt-reader", Type: "http", URL: server.URL,
+		TrustManager: manager, ConfigSource: "workspace_config",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := plugin.SetSpecTrust(ctx, spec, "session"); err != nil {
+		t.Fatal(err)
+	}
+
+	host := plugin.NewHost()
+	defer host.Close()
+	proxy := NewUseCapabilityTool(ctx, host, []plugin.Spec{spec}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	reg := tool.NewRegistry()
+	reg.Add(proxy)
+	a := New(nil, reg, NewSession("sys"), Options{ReadOnlyExecution: true}, event.Discard)
+	out := a.executeOne(ctx, provider.ToolCall{
+		ID: "trusted-lazy-1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:receipt-reader/search","arguments":{}}`,
+	})
+	if out.blocked || out.errMsg != "" || !strings.Contains(out.output, "reader result") {
+		t.Fatalf("trusted lazy reader outcome = %+v", out)
+	}
+	if got := toolCalls.Load(); got != 1 {
+		t.Fatalf("reader tools/call count = %d, want 1", got)
+	}
+}
+
+func TestReadOnlyExecutionBlocksReceiptSchemaDriftBeforeToolCall(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	var schemaDrift atomic.Bool
+	var toolCalls atomic.Int32
+	server := receiptReaderMCPServer(t, &schemaDrift, &toolCalls)
+	defer server.Close()
+
+	manager := mcptrust.NewManager(filepath.Join(t.TempDir(), mcptrust.StateFilename), t.TempDir())
+	spec := plugin.Spec{
+		Name: "receipt-reader", Type: "http", URL: server.URL,
+		TrustManager: manager, ConfigSource: "workspace_config",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := plugin.SetSpecTrust(ctx, spec, "session"); err != nil {
+		t.Fatal(err)
+	}
+	schemaDrift.Store(true)
+
+	host := plugin.NewHost()
+	defer host.Close()
+	proxy := NewUseCapabilityTool(ctx, host, []plugin.Spec{spec}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	reg := tool.NewRegistry()
+	reg.Add(proxy)
+	a := New(nil, reg, NewSession("sys"), Options{ReadOnlyExecution: true}, event.Discard)
+	out := a.executeOne(ctx, provider.ToolCall{
+		ID: "drifted-lazy-1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:receipt-reader/search","arguments":{}}`,
+	})
+	if out.errMsg == "" || !strings.Contains(out.output, "requires parent-session re-verification") {
+		t.Fatalf("drifted lazy reader outcome = %+v", out)
+	}
+	if got := toolCalls.Load(); got != 0 {
+		t.Fatalf("drifted reader tools/call count = %d, want 0", got)
 	}
 }
 

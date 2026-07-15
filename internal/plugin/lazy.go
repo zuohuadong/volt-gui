@@ -226,6 +226,14 @@ func (lt *lazyTool) MCPServerName() string {
 	return lt.shared.spec.Name
 }
 func (lt *lazyTool) MCPRawToolName() string { return lt.rawName }
+func (lt *lazyTool) MCPCapabilityFingerprint() string {
+	if lt.shared == nil {
+		return lt.capabilityFingerprint
+	}
+	lt.shared.mu.Lock()
+	defer lt.shared.mu.Unlock()
+	return lt.capabilityFingerprint
+}
 func (lt *lazyTool) PlanModeUntrustedReadOnly() bool {
 	if lt.shared == nil {
 		return lt.readOnly && !lt.readOnlyTrusted

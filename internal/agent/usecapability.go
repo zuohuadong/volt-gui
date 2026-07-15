@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/capability"
 	"reasonix/internal/event"
+	"reasonix/internal/mcptrust"
 	"reasonix/internal/plugin"
 	"reasonix/internal/tool"
 )
@@ -364,7 +365,23 @@ func (t *UseCapabilityTool) resolveCall(ctx context.Context, id string, args jso
 			destructive = entry.Destructive
 		}
 	}
+	trustedReader := false
+	capabilityFingerprint := ""
+	trustReason := ""
+	if cached, found, trustErr := plugin.CachedToolTrustForSpec(ctx, spec, raw); trustErr != nil {
+		trustReason = trustErr.Error()
+	} else if found {
+		destructive = destructive || cached.Destructive
+		trustedReader = cached.TrustedReader
+		capabilityFingerprint = cached.CapabilityFingerprint
+	} else if spec.TrustManager == nil {
+		// Compatibility for direct library users that have no host trust store.
+		trustedReader = spec.ReadOnlyToolNames[raw] || spec.ReadOnlyModelToolNames[modelName]
+	}
 	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive}
+	lazy.readOnlyTrusted = trustedReader
+	lazy.capabilityFingerprint = capabilityFingerprint
+	lazy.trustReason = trustReason
 	base.Target = lazy
 	base.TargetName = modelName
 	// Conservative: an unstarted tool counts as a writer unless the user
@@ -426,7 +443,10 @@ type onDemandMCPTool struct {
 	modelName string
 	// destructive comes from the schema cache when available. A live promotion
 	// is detected in Execute and deferred to a fresh-approved retry.
-	destructive bool
+	destructive           bool
+	readOnlyTrusted       bool
+	capabilityFingerprint string
+	trustReason           string
 }
 
 func (o *onDemandMCPTool) Name() string { return o.modelName }
@@ -438,20 +458,30 @@ func (o *onDemandMCPTool) Description() string {
 func (o *onDemandMCPTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 
 func (o *onDemandMCPTool) ReadOnly() bool {
-	return o.spec.ReadOnlyToolNames[o.raw] || o.spec.ReadOnlyModelToolNames[o.modelName]
+	return o.readOnlyTrusted
 }
 
-// PlanModeUntrustedReadOnly is false because ReadOnly() is true only under an
-// explicit user config assertion (trusted_read_only_tools), never a server
-// hint — there is no server yet.
+// ReadOnly is true only after the cached snapshot matches an established local
+// receipt, never from an unauthenticated server hint.
 func (o *onDemandMCPTool) PlanModeUntrustedReadOnly() bool { return false }
 
 func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
+
+func (o *onDemandMCPTool) ReadOnlyExecutionBlockReason() string {
+	reason := "start this MCP capability; ask the parent session to trust, re-review, or execute it"
+	if strings.TrimSpace(o.trustReason) != "" {
+		reason += " (local verification failed: " + o.trustReason + ")"
+	}
+	return reason
+}
 
 // MCPServerName/MCPRawToolName expose the deferred target for audit and
 // diagnostics (tool.MCPMetadata).
 func (o *onDemandMCPTool) MCPServerName() string  { return o.server }
 func (o *onDemandMCPTool) MCPRawToolName() string { return o.raw }
+func (o *onDemandMCPTool) MCPCapabilityFingerprint() string {
+	return o.capabilityFingerprint
+}
 func (o *onDemandMCPTool) MCPDestructiveHint() bool {
 	return o.destructive
 }
@@ -484,6 +514,17 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, msg)
 		}
 		return "", fmt.Errorf("%s", msg)
+	}
+	for _, status := range o.proxy.host.SecurityStatuses() {
+		if status.Name == o.server && status.TrustState == mcptrust.TrustChanged {
+			return "", fmt.Errorf("MCP server %q security attributes changed; the current call was blocked before tools/call and requires parent-session re-verification", o.server)
+		}
+	}
+	if live, ok := target.(tool.MCPCapabilityFingerprint); ok && o.capabilityFingerprint != "" && live.MCPCapabilityFingerprint() != "" && live.MCPCapabilityFingerprint() != o.capabilityFingerprint {
+		return "", fmt.Errorf("MCP server %q changed the security schema for tool %q; the current call was blocked before tools/call and requires parent-session re-verification", o.server, o.raw)
+	}
+	if o.readOnlyTrusted && (!target.ReadOnly() || planModeUntrustedReadOnly(target)) {
+		return "", fmt.Errorf("MCP server %q no longer exposes tool %q as a trusted reader; the current call was blocked before tools/call and requires parent-session re-verification", o.server, o.raw)
 	}
 	if annotations, ok := target.(tool.MCPAnnotations); ok && annotations.MCPDestructiveHint() && !o.destructive {
 		return "", destructiveMCPDiscoveryError(o.server, o.raw)

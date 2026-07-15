@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,7 @@ import (
 	"unicode"
 
 	"voltui/internal/fileutil"
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/provider"
 )
 
@@ -29,7 +31,7 @@ const (
 	tracesFile         = "traces.jsonl"
 	learningTracesFile = "learning_traces.jsonl"
 	debugTracesFile    = "debug_traces.jsonl"
-	debugTraceEnv      = "VOLTUI_MEMORY_COMPILER_DEBUG_TRACE"
+	debugTraceEnv      = "REASONIX_MEMORY_COMPILER_DEBUG_TRACE"
 	version            = "v5.9"
 
 	explorationRatePercent    = 10
@@ -1843,10 +1845,17 @@ var verificationCommandMarkers = []string{
 }
 
 func isVerificationToolRecord(rec ToolRecord) bool {
-	if rec.Blocked || !strings.EqualFold(strings.TrimSpace(rec.Name), "bash") {
+	return !rec.Blocked && IsVerificationToolCall(rec.Name, rec.Args)
+}
+
+// IsVerificationToolCall reports whether a persisted tool call is a shell
+// command whose exit status provides implementation evidence. It intentionally
+// returns only a boolean so diagnostic callers never need to expose arguments.
+func IsVerificationToolCall(name, args string) bool {
+	if !strings.EqualFold(strings.TrimSpace(name), "bash") {
 		return false
 	}
-	args := strings.ToLower(rec.Args)
+	args = strings.ToLower(args)
 	if args == "" {
 		return false
 	}
@@ -2388,7 +2397,6 @@ func applyDriftControl(st state, now time.Time, traceID string) (state, DriftRep
 			continue
 		}
 		decayed := decayedConfidence(*node, now)
-		node.Confidence = decayed
 		if decayed < staleConfidenceThreshold {
 			node.Quality = QualityNoise
 			report.StaleMemoryNodes = append(report.StaleMemoryNodes, node.ID)
@@ -2953,7 +2961,7 @@ func stripReferencedContext(content string) string {
 }
 
 func traceID(t time.Time) string {
-	return t.UTC().Format("20060102T150405.000000000")
+	return fmt.Sprintf("%s-%x", t.UTC().Format("20060102T150405.000000000"), rand.Int63())
 }
 
 func firstLine(s string) string {
@@ -2972,11 +2980,13 @@ func (r *Runtime) loadState() state {
 
 func (r *Runtime) loadStateLocked() state {
 	var st state
-	b, err := os.ReadFile(filepath.Join(r.dir, stateFile))
+	path := filepath.Join(r.dir, stateFile)
+	b, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return state{NoisyRefs: map[string]int{}}
 	}
 	if err := json.Unmarshal(b, &st); err != nil {
+		_ = os.WriteFile(fmt.Sprintf("%s.corrupt-%d", path, time.Now().UnixNano()), b, 0o600)
 		return state{NoisyRefs: map[string]int{}}
 	}
 	if st.NoisyRefs == nil {
@@ -3013,7 +3023,7 @@ func appendBoundedJSONL(path string, v any, maxLines int) error {
 	if err != nil {
 		return err
 	}
-	existing, err := os.ReadFile(path)
+	existing, err := fileencoding.ReadFileUTF8(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}

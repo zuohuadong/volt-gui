@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/frontmatter"
 )
 
@@ -61,11 +62,10 @@ var builtins = []OutputStyle{
 
 // Dirs returns the output-style search directories in load order (later wins),
 // mirroring command/skill discovery: home convention dirs, then project ones.
-// Home convention dirs are skipped when VOLTUI_HOME or legacy REASONIX_HOME is set
-// (isolated runtime).
+// Home convention dirs are skipped when REASONIX_HOME is set (isolated runtime).
 func Dirs() []string {
 	var dirs []string
-	if os.Getenv("VOLTUI_HOME") == "" && os.Getenv("REASONIX_HOME") == "" {
+	if os.Getenv("REASONIX_HOME") == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			for i := len(conventionDirs) - 1; i >= 0; i-- {
 				dirs = append(dirs, filepath.Join(home, conventionDirs[i], "output-styles"))
@@ -149,7 +149,7 @@ func Apply(base string, st OutputStyle) string {
 // stem; frontmatter supplies description and keep-coding-instructions; the body
 // is the prompt text.
 func parseFile(path string) (OutputStyle, bool) {
-	b, err := os.ReadFile(path)
+	b, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return OutputStyle{}, false
 	}

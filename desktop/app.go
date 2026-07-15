@@ -1469,14 +1469,6 @@ func applyTabToolApprovalModeToController(ctrl control.SessionAPI, mode string) 
 	return nil
 }
 
-func (a *App) currentModeForTab(tabID string) string {
-	tab := a.tabByID(tabID)
-	if tab == nil {
-		return "normal"
-	}
-	return a.tabRuntimeSnapshot(tab).currentMode()
-}
-
 func normalizeCollaborationMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "plan":

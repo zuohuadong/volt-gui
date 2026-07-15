@@ -3277,11 +3277,15 @@
     openWorkLayer("resources");
     resourceTab = "resources";
   }
+  function setCodeWorkbenchPanel(panel: CodeWorkbenchPanel) {
+    codeWorkbenchPanel = panel;
+    taskInspectorPanel = panel === "overview" ? "task" : panel;
+  }
   function openCodeConversation() {
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = true;
-    codeWorkbenchPanel = "overview";
+    setCodeWorkbenchPanel("overview");
     codeInspectorOpen = false;
     sidebarCollapsed = false;
   }
@@ -3290,7 +3294,7 @@
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = false;
-    codeWorkbenchPanel = panel;
+    setCodeWorkbenchPanel(panel);
     codeInspectorOpen = false;
     sidebarCollapsed = false;
     void tick().then(() => {
@@ -3306,7 +3310,7 @@
       activityMode = "code";
       workLayer = "newTask";
       newTaskConversationActive = false;
-      codeWorkbenchPanel = "overview";
+      setCodeWorkbenchPanel("overview");
       settingsPanel = "models";
       userPanelDialog = "settings";
       void ensureSettingsLoaded();
@@ -3318,7 +3322,7 @@
       activityMode = "code";
       workLayer = "newTask";
       newTaskConversationActive = false;
-      codeWorkbenchPanel = "overview";
+      setCodeWorkbenchPanel("overview");
       void ensureSettingsLoaded();
       return;
     }
@@ -3551,9 +3555,8 @@
       return;
     }
     if (panel === "workspace" || panel === "context" || panel === "changes" || panel === "checkpoints") {
-      taskInspectorPanel = panel;
       activityMode = "code";
-      codeWorkbenchPanel = panel;
+      setCodeWorkbenchPanel(panel);
       newTaskConversationActive = false;
     }
   }
@@ -7366,7 +7369,7 @@
     if (activityMode === "work" && workLayer === "newTask") newTaskConversationActive = true;
     if (activityMode === "code") {
       newTaskConversationActive = true;
-      codeWorkbenchPanel = "overview";
+      setCodeWorkbenchPanel("overview");
       codeInspectorOpen = false;
     }
     const draft = { display: text, submission };
@@ -7586,7 +7589,7 @@
   async function recoverTask(action: "retry" | "restore-draft" | "rewind" | "open-diff") {
     if (action === "open-diff") {
       await openCodeInspector();
-      codeWorkbenchPanel = "changes";
+      setCodeWorkbenchPanel("changes");
       return;
     }
     if (action === "rewind") {
@@ -7816,7 +7819,7 @@
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = false;
-    codeWorkbenchPanel = "workspace";
+    setCodeWorkbenchPanel("workspace");
     codeInspectorOpen = false;
   }
 
@@ -7831,7 +7834,7 @@
     activityMode = "code";
     workLayer = "newTask";
     newTaskConversationActive = false;
-    codeWorkbenchPanel = "changes";
+    setCodeWorkbenchPanel("changes");
     codeInspectorOpen = false;
   }
 

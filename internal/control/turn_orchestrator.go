@@ -123,7 +123,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 			ID:       callID,
 			Name:     "run_skill",
 			Args:     string(args),
-			ReadOnly: planMode || sk.ReadOnly,
+			ReadOnly: sk.ReadOnly,
 		}
 		if c.skillProfile != nil {
 			toolEvent.Profile = c.skillProfile(sk)

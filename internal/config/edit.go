@@ -70,7 +70,7 @@ func (c *Config) SetPlannerModel(name string) error {
 }
 
 // SetAutoPlan sets the interactive auto-plan gate. "off" keeps plan mode manual;
-// "on" opts into automatic read-only planning for complex-looking turns.
+// "on" opts into the automatic plan-first workflow for complex-looking turns.
 // "ask" is accepted as a legacy synonym for "on" but is never written back.
 func (c *Config) SetAutoPlan(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {

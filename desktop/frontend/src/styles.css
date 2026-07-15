@@ -6611,8 +6611,8 @@ body > .mermaid-diagram--fullscreen {
   }
 
   .composer-modebar__item {
-    gap: 4px;
-    padding-inline: 4px;
+    gap: 3px;
+    padding-inline: 3px;
   }
 
   .composer-meta__control--effort {
@@ -6719,6 +6719,10 @@ body > .mermaid-diagram--fullscreen {
     gap: 3px;
     padding-inline: 3px;
     font-size: 11px;
+  }
+
+  .composer-modebar__item span {
+    display: none;
   }
 
   .composer-meta .modelsw__trigger {

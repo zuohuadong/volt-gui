@@ -79,18 +79,16 @@ type ImageTool interface {
 // from ReadOnly(): a tool can be side-effect-free yet belong only to the
 // post-approval execution phase (complete_step reports ReadOnly()==true but must
 // not run while planning), or be a delegation that is safe only in a read-only
-// variant (read_only_task). Plan mode is fail-closed — a tool that does not
-// implement this and is not on the audited read-only whitelist is refused — so
-// implement it to opt a non-obvious tool explicitly in (PlanModeSafe()==true) or
-// out (false). Type-assert a Tool to PlanModeClassifier to discover support;
-// most tools do not implement it.
+// variant (read_only_task). A false result is an explicit phase opt-out; tools
+// without this interface continue to the ordinary Permissions/Sandbox path.
 type PlanModeClassifier interface {
 	PlanModeSafe() bool
 }
 
 // PlanModeUntrustedReadOnly marks a tool whose ReadOnly classification comes
-// only from an external MCP server hint. Planning and read-only research paths
-// must not use that hint as a local trust boundary.
+// only from an external MCP server hint. The main Plan workflow may use that
+// hint for ordinary permission classification, while planner/read-only subagent
+// registries must not treat it as local trust.
 type PlanModeUntrustedReadOnly interface {
 	PlanModeUntrustedReadOnly() bool
 }

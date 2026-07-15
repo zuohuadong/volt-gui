@@ -477,8 +477,7 @@ func NewGate(p Policy, a Approver) *Gate { return &Gate{Policy: p, Approver: a} 
 // reason the agent feeds back to the model.
 func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
 	if toolName == "bash" && !readOnly {
-		subject := Subject(args)
-		if isReadOnlyBashSubject(subject) {
+		if BashCommandIsReadOnly(args) {
 			readOnly = true
 		}
 	}

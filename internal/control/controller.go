@@ -369,8 +369,9 @@ type Options struct {
 	SkillStore    *skill.Store
 	AllSkillStore *skill.Store
 	// SkillRunner executes a runAs=subagent skill in an isolated child loop.
-	// ReadOnlySkillRunner is the plan-mode-safe variant used by direct slash
-	// invocation while planning; SkillProfile supplies model/effort display
+	// ReadOnlySkillRunner is reserved for explicitly read-only entry points;
+	// Plan itself is a workflow instruction and uses SkillRunner with the shared
+	// Permissions/Sandbox gate. SkillProfile supplies model/effort display
 	// metadata for the synthetic top-level run_skill event.
 	SkillRunner         skill.SubagentRunner
 	ReadOnlySkillRunner skill.SubagentRunner
@@ -427,8 +428,9 @@ type Options struct {
 	// OnSessionRecovered is called after a stale runtime's transcript has been
 	// saved as a recovery branch, before the controller commits to that branch.
 	OnSessionRecovered func(SessionRecoveryInfo) error
-	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
-	// as read-only. Known blocked tools and unsafe bash still lose.
+	// PlanModeAllowedTools is retained for legacy config/controller data. MCP
+	// assembly may translate concrete entries into local read-only trust, but the
+	// field does not grant or revoke calls in the main Plan workflow.
 	PlanModeAllowedTools []string
 	// ApprovalTimeout bounds how long a tool-approval or ask prompt blocks waiting
 	// for a user decision. Zero (default) waits forever — right for an interactive
@@ -808,11 +810,12 @@ const ManagedConfigWriteApprovalTool = "config_write"
 
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
-const planApprovedMessage = "Plan approved — plan mode is off; you’re cleared to make the changes without asking again. Implement the plan now. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
+const planApprovedMessage = "Plan approved — plan mode is off. Implement the plan now. The ordinary writer fallback is approved for this execution turn; explicit ask/deny rules and forced fresh reviews still apply. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
 
 // runTurn runs one model turn, then applies the plan-approval gate. This is the
-// single, frontend-agnostic plan flow: in plan mode the model just researches
-// (writers are blocked) and writes its plan as a normal answer — no special tool.
+// single, frontend-agnostic plan flow: in Plan the model is instructed to
+// research and write its plan as a normal answer, while any tool calls still use
+// the active Permissions/Sandbox path.
 // When the turn ends with a text proposal, the controller asks the user to
 // approve (reusing the ApprovalRequest channel both frontends already render);
 // on approval it exits plan mode, seeds the task list from the plan, and
@@ -881,9 +884,6 @@ func (c *Controller) runSubagentSkillSlash(sk skill.Skill, task, raw, display st
 	c.runGuarded(func(ctx context.Context) error {
 		planMode := c.PlanMode()
 		runner := c.skillRunner
-		if planMode {
-			runner = c.readOnlySkillRunner
-		}
 		if runner == nil {
 			return fmt.Errorf("subagent skill runner is unavailable for /%s", sk.Name)
 		}
@@ -1007,9 +1007,6 @@ func (c *Controller) submitInvocations(input, display string, requests []Invocat
 	c.runGuarded(func(ctx context.Context) error {
 		planMode := c.PlanMode()
 		runner := c.skillRunner
-		if planMode {
-			runner = c.readOnlySkillRunner
-		}
 		if runner == nil {
 			return fmt.Errorf("subagent skill runner is unavailable")
 		}
@@ -1966,7 +1963,8 @@ func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
 //     ask rules. Interactive auto prompts on those (it never auto-approves them);
 //     headless can't prompt, so a would-ask decision fails closed (deny) rather
 //     than running silently. Only bypass may run such a command unattended.
-//   - yolo/bypassPermissions: skip every approval-gated decision (nil approver).
+//   - yolo/bypassPermissions: skip ordinary approval-gated decisions (nil
+//     approver); deny rules and fresh decisions still fail closed.
 //   - dontAsk: deny anything that would ask, and deny the writer fallback too.
 //
 // deny rules and fresh-human tools (memory, plan, sandbox, config) stay enforced
@@ -2082,9 +2080,9 @@ func (c *Controller) ReplayPendingPrompts() {
 	}
 }
 
-// SetPlanMode flips the executor's read-only gate without touching the
-// cache-stable prompt prefix, and remembers the state so Compose can prepend the
-// plan-mode marker to outgoing turns.
+// SetPlanMode flips the executor's plan-first workflow flag without touching the
+// cache-stable system/tool prefix, and remembers the state so Compose can prepend
+// the plan-mode marker to outgoing user turns.
 func (c *Controller) SetPlanMode(v bool) {
 	c.mu.Lock()
 	c.planMode = v
@@ -4604,7 +4602,7 @@ func (c *Controller) ToolApprovalMode() string {
 	return c.approval.mode()
 }
 
-// SetAutoApproveTools turns YOLO/full-access mode on or off for the session:
+// SetAutoApproveTools turns YOLO tool auto-approval on or off for the session:
 // while on, every tool approval request is auto-allowed (writers and bash run
 // without asking). Ask requests and plan approval still reach the user. Deny
 // rules still block. Runtime-only — never written to config.
@@ -4622,7 +4620,7 @@ func (c *Controller) SetBypass(on bool) {
 	c.SetAutoApproveTools(on)
 }
 
-// SetMode applies plan (read-only) and tool auto-approval together so a turn
+// SetMode applies the Plan workflow flag and tool auto-approval together so a turn
 // submitted right after a composer mode switch can't observe a half-applied
 // gate. Turning tool auto-approval on drains any pending tool approval.
 func (c *Controller) SetMode(plan, autoApproveTools bool) {
@@ -4645,7 +4643,7 @@ func (c *Controller) ApplyMode(plan, autoApproveTools bool) []string {
 	return c.ApplyToolApprovalMode(ToolApprovalAsk)
 }
 
-// AutoApproveTools reports whether YOLO/full-access tool auto-approval is on,
+// AutoApproveTools reports whether YOLO tool auto-approval is on,
 // for status indicators and mode persistence.
 func (c *Controller) AutoApproveTools() bool {
 	return c.ToolApprovalMode() == ToolApprovalYolo
@@ -4719,7 +4717,7 @@ func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject strin
 	// Check pre-approval first — YOLO mode, the just-approved-plan window, and
 	// session grants all short-circuit here, before any prompt or guardian
 	// review. Deny rules already bit at the policy level before this point.
-	if g.c.approval.preApproved(tool, subject) {
+	if g.c.approval.preApproved(tool, subject, args) {
 		return true, false, "", nil
 	}
 	if g.c.guardianSess != nil {
@@ -4767,7 +4765,7 @@ func (g gateApprover) ApproveFresh(ctx context.Context, toolName, subject string
 func (g gateApprover) ApproveMCP(ctx context.Context, toolName, subject string, args json.RawMessage, destructive, forced bool, reviewer string) (bool, string, error) {
 	reviewer = tool.NormalizeMCPApprovalReviewer(reviewer)
 	subject = approvalDisplaySubject(toolName, subject, args)
-	if !forced && g.c.approval.preApproved(toolName, subject) {
+	if !forced && g.c.approval.preApproved(toolName, subject, args) {
 		return true, "", nil
 	}
 	if reviewer == tool.MCPApprovalReviewerAutoReview {
@@ -4852,7 +4850,7 @@ func (s sandboxEscapeApprover) ApproveSandboxEscape(ctx context.Context, req san
 }
 
 func (s sandboxEscapeApprover) SandboxEscapeSessionAllowed(_ context.Context, req sandbox.EscapeRequest) bool {
-	return s.c.approval.preApprovedForDecision(SandboxEscapeApprovalTool, sandboxEscapeApprovalSubject(req.Command), true)
+	return s.c.approval.preApprovedForDecision(SandboxEscapeApprovalTool, sandboxEscapeApprovalSubject(req.Command), nil, true)
 }
 
 func sandboxEscapeApprovalSubject(command string) string {
@@ -4895,7 +4893,7 @@ func (m managedConfigWriteApprover) ApproveManagedConfigWrite(ctx context.Contex
 }
 
 func (m managedConfigWriteApprover) ManagedConfigWriteSessionAllowed(_ context.Context, req tool.ConfigWriteRequest) bool {
-	return m.c.approval.preApprovedForDecision(ManagedConfigWriteApprovalTool, managedConfigWriteApprovalSubject(req.Path), true)
+	return m.c.approval.preApprovedForDecision(ManagedConfigWriteApprovalTool, managedConfigWriteApprovalSubject(req.Path), nil, true)
 }
 
 func managedConfigWriteApprovalSubject(path string) string {
@@ -5371,7 +5369,7 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 	// YOLO/full access and the just-approved-plan execution window auto-allow
 	// approval-gated tools without prompting. Plan approval is a user decision,
 	// not a tool permission, so it deliberately stays interactive.
-	if !opts.alwaysPrompt && c.approval.preApprovedForDecision(tool, subject, opts.fresh) {
+	if !opts.alwaysPrompt && c.approval.preApprovedForDecision(tool, subject, args, opts.fresh) {
 		return approvalReply{allow: true}, nil
 	}
 
@@ -5380,7 +5378,7 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 
 	// Re-check: a session grant may have landed while we queued behind another
 	// prompt for the same subject.
-	if !opts.alwaysPrompt && c.approval.preApprovedForDecision(tool, subject, opts.fresh) {
+	if !opts.alwaysPrompt && c.approval.preApprovedForDecision(tool, subject, args, opts.fresh) {
 		return approvalReply{allow: true}, nil
 	}
 

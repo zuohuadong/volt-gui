@@ -619,8 +619,9 @@ func (t *UseCapabilityTool) resolveServerConnect(ctx context.Context, server str
 	// rules. It cannot collide with a real mcp__ tool, and rules do not need to
 	// rely on unsupported tool-name glob matching.
 	base.TargetName = connect.Name()
-	// Connecting spawns a subprocess — never a read-only fast path; plan mode
-	// blocks it and Ask-style gates prompt before any process starts.
+	// Connecting spawns a subprocess, so it is never a read-only fast path.
+	// The active Permissions gate decides before any process starts, including
+	// while the parent is in Plan.
 	base.ReadOnly = false
 	base.Args = json.RawMessage(`{}`)
 	return base, nil

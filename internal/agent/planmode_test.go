@@ -3,19 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"reasonix/internal/event"
 	"strings"
 	"testing"
 
+	"reasonix/internal/event"
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
 
-// planSafeTool wraps fakeTool to self-report a plan-mode stance, mimicking a
-// real tool that implements tool.PlanModeClassifier. Plain fakeTool deliberately
-// does NOT implement the interface, so it models an unclassified/external tool
-// (PlanSafetyUnknown) — relied on by the fail-closed and escape-valve cases below.
 type planSafeTool struct {
 	fakeTool
 	planSafe bool
@@ -23,196 +19,26 @@ type planSafeTool struct {
 
 func (p planSafeTool) PlanModeSafe() bool { return p.planSafe }
 
-// TestPlanModeBlocksWriters proves the gate refuses tools that aren't classified
-// plan-safe while letting a self-reported plan-safe tool run. The returned tool
-// result starts with "blocked:" so the model can adapt mid-turn.
-func TestPlanModeBlocksWriters(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(planSafeTool{fakeTool: fakeTool{name: "read_only_tool", readOnly: true}, planSafe: true})
-	reg.Add(fakeTool{name: "writer_tool", readOnly: false})
-
-	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
-	a.SetPlanMode(true)
-
-	ro := a.executeOne(context.Background(), provider.ToolCall{Name: "read_only_tool"})
-	if !strings.Contains(ro.output, "done") {
-		t.Errorf("plan-safe read-only tool in plan mode should still run: %q", ro.output)
-	}
-
-	wr := a.executeOne(context.Background(), provider.ToolCall{Name: "writer_tool"})
-	if !strings.HasPrefix(wr.output, "blocked:") {
-		t.Errorf("writer tool in plan mode should return a 'blocked:' result, got: %q", wr.output)
-	}
+type permissionCall struct {
+	name     string
+	readOnly bool
 }
 
-// TestPlanModeDoesNotMutateSystemOrTools is the cache-stability test. Toggling
-// plan mode between two stream calls must not change the system prompt or the
-// tool list seen by the provider — those are the cache-key prefix, and any
-// change there forces an expensive cache miss.
-func TestPlanModeDoesNotMutateSystemOrTools(t *testing.T) {
-	prov := &mockProvider{name: "p", chunks: []provider.Chunk{
-		{Type: provider.ChunkText, Text: "ok"},
-		{Type: provider.ChunkDone},
-	}}
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "read_file", readOnly: true})
-	reg.Add(fakeTool{name: "write_file", readOnly: false})
-
-	a := New(prov, reg, NewSession("STABLE-SYS"), Options{}, event.Discard)
-
-	// Auto-mode round-trip.
-	if err := a.Run(context.Background(), "explore"); err != nil {
-		t.Fatalf("auto Run: %v", err)
-	}
-	autoSys := prov.lastReq.Messages[0]
-	autoTools := serializeToolNames(prov.lastReq.Tools)
-
-	// Flip the gate and run again. The user message changes (new turn), but
-	// the system message and the tool list both have to come back identical.
-	prov.chunks = []provider.Chunk{
-		{Type: provider.ChunkText, Text: "ok"},
-		{Type: provider.ChunkDone},
-	}
-	a.SetPlanMode(true)
-	if err := a.Run(context.Background(), "now in plan mode"); err != nil {
-		t.Fatalf("plan Run: %v", err)
-	}
-	planSys := prov.lastReq.Messages[0]
-	planTools := serializeToolNames(prov.lastReq.Tools)
-
-	if planSys.Role != autoSys.Role || planSys.Content != autoSys.Content {
-		t.Errorf("system message changed across mode toggle:\n auto: %+v\n plan: %+v", autoSys, planSys)
-	}
-	if planTools != autoTools {
-		t.Errorf("tool list changed across mode toggle:\n auto: %s\n plan: %s", autoTools, planTools)
-	}
-}
-
-func serializeToolNames(ts []provider.ToolSchema) string {
-	var names []string
-	for _, t := range ts {
-		names = append(names, t.Name)
-	}
-	return strings.Join(names, ",")
-}
-
-func bashCommandArgs(t *testing.T, cmd string) json.RawMessage {
-	t.Helper()
-	args, err := json.Marshal(struct {
-		Command string `json:"command"`
-	}{Command: cmd})
-	if err != nil {
-		t.Fatalf("marshal bash args: %v", err)
-	}
-	return args
-}
-
-// --- planModeBlocked tests ---
-
-func TestPlanModeDeniedToolsBlocked(t *testing.T) {
-	denied := []string{
-		"write_file", "edit_file", "multi_edit", "move_file", "apply_patch",
-		"edit_notebook", "notebook_edit", "range_delete", "symbol_delete", "delete_range", "delete_symbol",
-		"complete_step", "task", "parallel_tasks", "run_skill",
-		"explore", "research", "review", "security_review", "security-review",
-		"install_source", "install_skill", "remember", "forget", "kill_shell",
-	}
-	for _, name := range denied {
-		t.Run(name, func(t *testing.T) {
-			blocked, msg := (&Agent{}).planModeBlocked(name, false, planmode.PlanSafetyUnknown, nil)
-			if !blocked {
-				t.Errorf("planModeBlocked(%q) = false, want true", name)
-			}
-			if name == "complete_step" && !strings.Contains(msg, "only available after plan approval") {
-				t.Errorf("unexpected complete_step message: %s", msg)
-			}
-			if name != "complete_step" && !strings.Contains(msg, "not available in plan mode") {
-				t.Errorf("unexpected message: %s", msg)
-			}
-		})
-	}
-}
-
-func TestPlanModeReadOnlyToolsAllowed(t *testing.T) {
-	// read_file is on the audited read-only whitelist — Unknown safety suffices.
-	if blocked, _ := (&Agent{}).planModeBlocked("read_file", true, planmode.PlanSafetyUnknown, nil); blocked {
-		t.Error("audited read-only tool read_file should not be blocked in plan mode")
-	}
-	// read_only_skill is not a built-in; it runs only via its plan-safe self-report.
-	if blocked, _ := (&Agent{}).planModeBlocked("read_only_skill", true, planmode.PlanSafetySafe, nil); blocked {
-		t.Error("self-reported plan-safe read_only_skill should not be blocked in plan mode")
-	}
-}
-
-func TestPlanModeAllowedToolsOverride(t *testing.T) {
-	a := &Agent{planModeAllowedTools: []string{"custom_tool"}}
-	blocked, _ := a.planModeBlocked("custom_tool", false, planmode.PlanSafetyUnknown, nil)
-	if blocked {
-		t.Error("tool in planModeAllowedTools should not be blocked")
-	}
-}
-
-func TestPlanModeReadOnlyCommandsOverride(t *testing.T) {
-	a := &Agent{planModeReadOnlyCommands: []string{"gh issue view"}}
-	blocked, msg := a.planModeBlocked("bash", false, planmode.PlanSafetyUnknown, bashCommandArgs(t, "gh issue view 4572 --json title"))
-	if blocked {
-		t.Fatalf("command in planModeReadOnlyCommands should not be blocked: %s", msg)
-	}
-}
-
-func TestPlanModeGenericWriterBlocked(t *testing.T) {
-	blocked, msg := (&Agent{}).planModeBlocked("some_writer_tool", false, planmode.PlanSafetyUnknown, nil)
-	if !blocked {
-		t.Error("generic writer tool should be blocked in plan mode")
-	}
-	if !strings.Contains(msg, "writer tool") {
-		t.Errorf("unexpected message: %s", msg)
-	}
-}
-
-// TestPlanModeExternalToolEscapeValve proves an unclassified external tool (an
-// MCP/plugin tool that does not implement PlanModeClassifier, so its safety is
-// Unknown) is fail-closed in plan mode, but can be re-enabled end to end via
-// plan_mode_allowed_tools.
-func TestPlanModeExternalToolEscapeValve(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "mcp__server__query", readOnly: false})
-
-	failClosed := New(nil, reg, NewSession(""), Options{}, event.Discard)
-	failClosed.SetPlanMode(true)
-	if out := failClosed.executeOne(context.Background(), provider.ToolCall{Name: "mcp__server__query"}); !strings.HasPrefix(out.output, "blocked:") {
-		t.Errorf("unclassified external tool should fail closed in plan mode, got: %q", out.output)
-	}
-
-	a := New(nil, reg, NewSession(""), Options{PlanModeAllowedTools: []string{"mcp__server__query"}}, event.Discard)
-	a.SetPlanMode(true)
-	if out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__server__query"}); strings.HasPrefix(out.output, "blocked:") {
-		t.Errorf("plan_mode_allowed_tools should let the declared external tool run, got: %q", out.output)
-	}
-}
-
-type fakePlanModeReadOnlyTrustGate struct {
+type recordingPermissionGate struct {
 	allow  bool
 	reason string
-	req    PlanModeReadOnlyTrustRequest
-	calls  int
+	calls  []permissionCall
 }
 
-func (g *fakePlanModeReadOnlyTrustGate) CheckPlanModeReadOnlyTrust(ctx context.Context, req PlanModeReadOnlyTrustRequest) (bool, string, error) {
-	g.calls++
-	g.req = req
+func (g *recordingPermissionGate) Check(_ context.Context, name string, _ json.RawMessage, readOnly bool) (bool, string, error) {
+	g.calls = append(g.calls, permissionCall{name: name, readOnly: readOnly})
 	return g.allow, g.reason, nil
 }
 
-type readOnlyRecordingGate struct {
-	readOnly []bool
-}
+type legacyPlanTrustGate struct{ calls int }
 
-func (g *readOnlyRecordingGate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
-	g.readOnly = append(g.readOnly, readOnly)
-	if !readOnly {
-		return false, "expected read-only", nil
-	}
+func (g *legacyPlanTrustGate) CheckPlanModeReadOnlyTrust(context.Context, PlanModeReadOnlyTrustRequest) (bool, string, error) {
+	g.calls++
 	return true, "", nil
 }
 
@@ -252,96 +78,248 @@ func (g *mcpPermissionRecordingGate) CheckFresh(_ context.Context, _ string, sub
 	return g.allowFresh, g.reason, nil
 }
 
-func TestPlanModeInstalledMCPReadOnlyHintDoesNotGrantLocalTrust(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(annotatedMCPTool{
-		fakeTool: fakeTool{name: "mcp__srv__query", readOnly: true},
-		server:   "srv", raw: "query", untrustedReadOnly: true,
-	})
-	trustGate := &fakePlanModeReadOnlyTrustGate{allow: false, reason: "must not prompt"}
-	permissionGate := &readOnlyRecordingGate{}
-	a := New(nil, reg, NewSession(""), Options{Gate: permissionGate, PlanModeReadOnlyTrustGate: trustGate}, event.Discard)
-	a.SetPlanMode(true)
+func TestPlanModeRoutesOrdinaryToolsThroughPermissionGate(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     tool.Tool
+		args     string
+		readOnly bool
+	}{
+		{name: "built-in writer", tool: fakeTool{name: "write_file"}},
+		{name: "shell writer", tool: fakeTool{name: "bash"}, args: `{"command":"rm -rf build"}`},
+		{name: "reader", tool: fakeTool{name: "read_file", readOnly: true}, readOnly: true},
+		{
+			name: "third-party hinted MCP reader",
+			tool: annotatedMCPTool{
+				fakeTool:          fakeTool{name: "mcp__srv__query", readOnly: true},
+				server:            "srv",
+				raw:               "query",
+				untrustedReadOnly: true,
+			},
+			readOnly: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := tool.NewRegistry()
+			reg.Add(tc.tool)
+			gate := &recordingPermissionGate{allow: true}
+			a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
+			a.SetPlanMode(true)
 
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query", Arguments: `{"q":"x"}`})
-	if !strings.HasPrefix(out.output, "blocked:") {
-		t.Fatalf("server-hinted MCP reader should remain blocked in plan mode, got: %q", out.output)
-	}
-	if trustGate.calls != 0 {
-		t.Fatalf("MCP read-only tool triggered trust prompts = %d, want 0", trustGate.calls)
-	}
-	if len(permissionGate.readOnly) != 0 {
-		t.Fatalf("blocked untrusted reader reached permission gate: %v", permissionGate.readOnly)
+			out := a.executeOne(context.Background(), provider.ToolCall{Name: tc.tool.Name(), Arguments: tc.args})
+			if out.blocked || out.errMsg != "" || !strings.Contains(out.output, "done") {
+				t.Fatalf("ordinary Plan call did not execute after permission approval: %+v", out)
+			}
+			if len(gate.calls) != 1 || gate.calls[0].name != tc.tool.Name() || gate.calls[0].readOnly != tc.readOnly {
+				t.Fatalf("permission calls = %+v, want %q readOnly=%v", gate.calls, tc.tool.Name(), tc.readOnly)
+			}
+		})
 	}
 }
 
-func TestPlanModeLocallyTrustedMCPReaderRuns(t *testing.T) {
+func TestPlanModePermissionDenialStopsWriterBeforeExecution(t *testing.T) {
+	var executions int32
 	reg := tool.NewRegistry()
-	reg.Add(annotatedMCPTool{
-		fakeTool: fakeTool{name: "mcp__srv__query", readOnly: true},
-		server:   "srv", raw: "query",
-	})
-	permissionGate := &readOnlyRecordingGate{}
-	a := New(nil, reg, NewSession(""), Options{Gate: permissionGate}, event.Discard)
+	reg.Add(fakeTool{name: "write_file", calls: &executions})
+	gate := &recordingPermissionGate{reason: "denied by permission rule"}
+	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
 	a.SetPlanMode(true)
 
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query"})
-	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
-		t.Fatalf("locally trusted MCP reader should run in plan mode, got: %q", out.output)
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "write_file"})
+	if !out.blocked || !strings.Contains(out.output, gate.reason) || out.errMsg == "" {
+		t.Fatalf("permission denial outcome = %+v", out)
+	}
+	if executions != 0 {
+		t.Fatalf("denied writer executed %d times", executions)
 	}
 }
 
-func TestUntrustedMCPReaderExcludedFromReadOnlySubagentRegistries(t *testing.T) {
+func TestPlanModeUnsafePhaseToolStopsBeforePermission(t *testing.T) {
+	var executions int32
+	reg := tool.NewRegistry()
+	reg.Add(planSafeTool{fakeTool: fakeTool{name: "complete_step", readOnly: true, calls: &executions}, planSafe: false})
+	gate := &recordingPermissionGate{allow: true}
+	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "complete_step"})
+	if !out.blocked || !strings.Contains(out.output, "only available after plan approval") {
+		t.Fatalf("phase opt-out outcome = %+v", out)
+	}
+	if len(gate.calls) != 0 || executions != 0 {
+		t.Fatalf("phase-blocked call reached permission/execution: gate=%+v executions=%d", gate.calls, executions)
+	}
+}
+
+func TestPlanModeSafeWriterStillUsesWriterPermission(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(planSafeTool{fakeTool: fakeTool{name: "phase_safe_writer"}, planSafe: true})
+	gate := &recordingPermissionGate{allow: true}
+	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "phase_safe_writer"})
+	if out.blocked || out.errMsg != "" {
+		t.Fatalf("phase-safe writer outcome = %+v", out)
+	}
+	if len(gate.calls) != 1 || gate.calls[0].readOnly {
+		t.Fatalf("phase-safe writer permission calls = %+v", gate.calls)
+	}
+}
+
+func TestPlanModeDoesNotInvokeLegacyBashTrustPrompt(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "bash"})
+	gate := &recordingPermissionGate{allow: true}
+	legacy := &legacyPlanTrustGate{}
+	a := New(nil, reg, NewSession(""), Options{
+		Gate:                      gate,
+		PlanModeReadOnlyTrustGate: legacy,
+	}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"gh issue view 6482"}`,
+	})
+	if out.blocked || out.errMsg != "" {
+		t.Fatalf("permission-approved bash outcome = %+v", out)
+	}
+	if legacy.calls != 0 {
+		t.Fatalf("obsolete Plan bash trust prompt was invoked %d times", legacy.calls)
+	}
+	if len(gate.calls) != 1 || gate.calls[0].readOnly {
+		t.Fatalf("bash must reach ordinary permission as declared writer, calls=%+v", gate.calls)
+	}
+}
+
+func TestPlanModeLegacyOverridesDoNotBypassPermissions(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file"})
+	gate := &recordingPermissionGate{reason: "denied"}
+	a := New(nil, reg, NewSession(""), Options{
+		Gate:                     gate,
+		PlanModeAllowedTools:     []string{"write_file"},
+		PlanModeReadOnlyCommands: []string{"gh issue view"},
+	}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "write_file"})
+	if !out.blocked || len(gate.calls) != 1 {
+		t.Fatalf("legacy Plan config bypassed permissions: outcome=%+v calls=%+v", out, gate.calls)
+	}
+}
+
+// TestPlanModeDoesNotMutateSystemOrTools guards the provider-cache prefix. Plan
+// changes the appended user-turn instruction, not the system prompt or schemas.
+func TestPlanModeDoesNotMutateSystemOrTools(t *testing.T) {
+	prov := &mockProvider{name: "p", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "ok"},
+		{Type: provider.ChunkDone},
+	}}
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	reg.Add(fakeTool{name: "write_file"})
+	a := New(prov, reg, NewSession("STABLE-SYS"), Options{}, event.Discard)
+
+	if err := a.Run(context.Background(), "explore"); err != nil {
+		t.Fatalf("standard Run: %v", err)
+	}
+	standardSystem := prov.lastReq.Messages[0]
+	standardTools := serializeToolSchemas(t, prov.lastReq.Tools)
+
+	prov.chunks = []provider.Chunk{{Type: provider.ChunkText, Text: "ok"}, {Type: provider.ChunkDone}}
+	a.SetPlanMode(true)
+	if err := a.Run(context.Background(), "now in plan mode"); err != nil {
+		t.Fatalf("Plan Run: %v", err)
+	}
+	planSystem := prov.lastReq.Messages[0]
+	planTools := serializeToolSchemas(t, prov.lastReq.Tools)
+
+	if planSystem.Role != standardSystem.Role || planSystem.Content != standardSystem.Content {
+		t.Fatalf("system message changed across Plan toggle:\nstandard=%+v\nplan=%+v", standardSystem, planSystem)
+	}
+	if planTools != standardTools {
+		t.Fatalf("tool schemas changed across Plan toggle:\nstandard=%s\nplan=%s", standardTools, planTools)
+	}
+}
+
+func serializeToolSchemas(t *testing.T, schemas []provider.ToolSchema) string {
+	t.Helper()
+	b, err := json.Marshal(schemas)
+	if err != nil {
+		t.Fatalf("serialize tool schemas: %v", err)
+	}
+	return string(b)
+}
+
+func TestUntrustedMCPReaderAllowedInMainPlanButExcludedFromReadOnlyAgents(t *testing.T) {
 	parent := tool.NewRegistry()
 	parent.Add(fakeTool{name: "read_file", readOnly: true})
 	parent.Add(annotatedMCPTool{
-		fakeTool: fakeTool{name: "mcp__srv__query", readOnly: true},
-		server:   "srv", raw: "query", untrustedReadOnly: true,
+		fakeTool:          fakeTool{name: "mcp__srv__query", readOnly: true},
+		server:            "srv",
+		raw:               "query",
+		untrustedReadOnly: true,
 	})
+	gate := &recordingPermissionGate{allow: true}
+	a := New(nil, parent, NewSession(""), Options{Gate: gate}, event.Discard)
+	a.SetPlanMode(true)
+
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__query"})
+	if out.blocked || len(gate.calls) != 1 || !gate.calls[0].readOnly {
+		t.Fatalf("main Plan MCP reader outcome=%+v calls=%+v", out, gate.calls)
+	}
 
 	for name, filtered := range map[string]*tool.Registry{
-		"filter": FilterReadOnlyRegistry(parent),
-		"depth":  ReadOnlySubagentToolRegistryForDepth(parent, []string{"read_file", "mcp__srv__query"}, 1, 1),
+		"planner":  FilterReadOnlyRegistry(parent),
+		"subagent": ReadOnlySubagentToolRegistry(parent, nil),
 	} {
 		if _, ok := filtered.Get("read_file"); !ok {
-			t.Fatalf("%s registry lost built-in reader", name)
+			t.Fatalf("%s registry lost local reader", name)
 		}
 		if _, ok := filtered.Get("mcp__srv__query"); ok {
-			t.Fatalf("%s registry admitted untrusted MCP reader", name)
+			t.Fatalf("%s registry admitted externally asserted reader", name)
 		}
 	}
 }
 
-func TestPlanModeInstalledMCPWriterUsesNormalPermissionGate(t *testing.T) {
+func TestPlanModeMCPWriterUsesOrdinaryPermission(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__srv__write", readOnly: false}, server: "srv", raw: "write"})
+	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__srv__write"}, server: "srv", raw: "write"})
 	gate := &mcpPermissionRecordingGate{allowNormal: true}
 	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
 	a.SetPlanMode(true)
 
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write", Arguments: `{"value":"x"}`})
-	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
-		t.Fatalf("approved installed MCP writer should run through normal permission, got: %q", out.output)
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write"})
+	if out.blocked || out.errMsg != "" || gate.normalCalls != 1 || gate.freshCalls != 0 {
+		t.Fatalf("MCP writer outcome=%+v gate=%+v", out, gate)
 	}
-	if gate.normalCalls != 1 || gate.freshCalls != 0 || len(gate.readOnly) != 1 || gate.readOnly[0] {
-		t.Fatalf("permission calls normal=%d fresh=%d readOnly=%v, want normal writer call", gate.normalCalls, gate.freshCalls, gate.readOnly)
+	if len(gate.readOnly) != 1 || gate.readOnly[0] {
+		t.Fatalf("MCP writer permission classification = %v", gate.readOnly)
 	}
 }
 
-func TestPlanModeInstalledMCPWriterHonorsPermissionDenial(t *testing.T) {
+func TestPlanModeMCPWriterHonorsPermissionDenial(t *testing.T) {
+	var executions int32
 	reg := tool.NewRegistry()
-	reg.Add(annotatedMCPTool{fakeTool: fakeTool{name: "mcp__srv__write", readOnly: false}, server: "srv", raw: "write"})
+	reg.Add(annotatedMCPTool{
+		fakeTool: fakeTool{name: "mcp__srv__write", calls: &executions},
+		server:   "srv",
+		raw:      "write",
+	})
 	gate := &mcpPermissionRecordingGate{reason: "denied by policy"}
 	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__write"})
-	if !strings.Contains(out.output, "denied by policy") || gate.normalCalls != 1 {
-		t.Fatalf("denied installed MCP writer result=%q calls=%d", out.output, gate.normalCalls)
+	if !out.blocked || !strings.Contains(out.output, gate.reason) || gate.normalCalls != 1 || executions != 0 {
+		t.Fatalf("denied MCP writer outcome=%+v gate=%+v executions=%d", out, gate, executions)
 	}
 }
 
-func TestDestructiveMCPUsesFreshApprovalEvenWhenReadOnly(t *testing.T) {
+func TestDestructiveMCPUsesFreshApprovalInPlanEvenWhenReadOnly(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{
 		fakeTool:    fakeTool{name: "mcp__srv__danger", readOnly: true},
@@ -354,447 +332,92 @@ func TestDestructiveMCPUsesFreshApprovalEvenWhenReadOnly(t *testing.T) {
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__danger"})
-	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
-		t.Fatalf("fresh-approved destructive MCP tool should run, got: %q", out.output)
-	}
-	if gate.normalCalls != 0 || gate.freshCalls != 1 || gate.subject != "srv/danger/raw" {
-		t.Fatalf("approval calls normal=%d fresh=%d subject=%q", gate.normalCalls, gate.freshCalls, gate.subject)
+	if out.blocked || out.errMsg != "" || gate.normalCalls != 0 || gate.freshCalls != 1 || gate.subject != "srv/danger/raw" {
+		t.Fatalf("destructive MCP outcome=%+v gate=%+v", out, gate)
 	}
 }
 
 func TestDestructiveMCPFailsClosedWithoutFreshApprovalGate(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(annotatedMCPTool{
-		fakeTool:    fakeTool{name: "mcp__srv__danger", readOnly: false},
+		fakeTool:    fakeTool{name: "mcp__srv__danger"},
 		server:      "srv",
 		raw:         "danger",
 		destructive: true,
 	})
-	normalGate := &readOnlyRecordingGate{}
-	a := New(nil, reg, NewSession(""), Options{Gate: normalGate}, event.Discard)
+	ordinary := &recordingPermissionGate{allow: true}
+	a := New(nil, reg, NewSession(""), Options{Gate: ordinary}, event.Discard)
 	a.SetPlanMode(true)
 
 	out := a.executeOne(context.Background(), provider.ToolCall{Name: "mcp__srv__danger"})
-	if !strings.Contains(out.output, "requires fresh human approval") {
-		t.Fatalf("destructive MCP without fresh gate should fail closed, got: %q", out.output)
+	if !out.blocked || !strings.Contains(out.output, "requires fresh human approval") {
+		t.Fatalf("destructive MCP fail-closed outcome = %+v", out)
 	}
-	if len(normalGate.readOnly) != 0 {
-		t.Fatalf("ordinary gate should not receive destructive call: %v", normalGate.readOnly)
+	if len(ordinary.calls) != 0 {
+		t.Fatalf("destructive MCP fell back to ordinary gate: %+v", ordinary.calls)
 	}
 }
 
-func TestPlanModeUnknownBashReadOnlyCommandCanAskForTrust(t *testing.T) {
+func TestPlanModeOffStillUsesSamePermissionGate(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-	gate := &fakePlanModeReadOnlyTrustGate{allow: true}
-	a := New(nil, reg, NewSession(""), Options{PlanModeReadOnlyTrustGate: gate}, event.Discard)
-	a.SetPlanMode(true)
+	reg.Add(fakeTool{name: "write_file"})
+	gate := &recordingPermissionGate{allow: true}
+	a := New(nil, reg, NewSession(""), Options{Gate: gate}, event.Discard)
 
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "bash", Arguments: string(bashCommandArgs(t, "gh issue view 4572 --json title"))})
-	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
-		t.Fatalf("trusted unknown bash query should run, got: %q", out.output)
-	}
-	if gate.calls != 1 {
-		t.Fatalf("trust gate calls = %d, want 1", gate.calls)
-	}
-	if gate.req.ToolName != PlanModeReadOnlyCommandApprovalTool || gate.req.Command != "gh issue view 4572 --json title" || gate.req.Prefix != "gh issue view" {
-		t.Fatalf("trust request = %+v, want bash command prefix request", gate.req)
+	out := a.executeOne(context.Background(), provider.ToolCall{Name: "write_file"})
+	if out.blocked || len(gate.calls) != 1 {
+		t.Fatalf("standard mode outcome=%+v calls=%+v", out, gate.calls)
 	}
 }
 
-func TestPlanModeTrustedUnknownBashCommandReachesGateAsReadOnly(t *testing.T) {
+func TestRunSubAgentWithSessionInheritsPlanWorkflow(t *testing.T) {
+	completeStep, ok := tool.LookupBuiltin("complete_step")
+	if !ok {
+		t.Fatal("complete_step builtin not registered")
+	}
 	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-	trustGate := &fakePlanModeReadOnlyTrustGate{allow: true}
-	permissionGate := &readOnlyRecordingGate{}
-	a := New(nil, reg, NewSession(""), Options{
-		Gate:                      permissionGate,
-		PlanModeReadOnlyTrustGate: trustGate,
-	}, event.Discard)
-	a.SetPlanMode(true)
-
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "bash", Arguments: string(bashCommandArgs(t, "gh issue view 4572"))})
-	if strings.HasPrefix(out.output, "blocked:") || !strings.Contains(out.output, "done") {
-		t.Fatalf("trusted unknown bash query should run through the normal gate as read-only, got: %q", out.output)
+	reg.Add(completeStep)
+	prov := &scriptedProvider{name: "plan-child", turns: [][]provider.Chunk{
+		{toolCallChunk("phase", "complete_step", `{}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "Plan ready."}, {Type: provider.ChunkDone}},
+	}}
+	sess := NewSession("CHILD-SYSTEM")
+	ctx := WithToolCallContext(context.Background(), "parent", event.Discard, nil, true)
+	answer, err := RunSubAgentWithSession(ctx, prov, reg, sess, "inspect the change", Options{}, event.Discard)
+	if err != nil {
+		t.Fatalf("Plan child: %v", err)
 	}
-	if len(permissionGate.readOnly) != 1 || !permissionGate.readOnly[0] {
-		t.Fatalf("permission gate readOnly calls = %v, want [true]", permissionGate.readOnly)
+	if answer != "Plan ready." {
+		t.Fatalf("Plan child answer = %q", answer)
 	}
-}
-
-func TestPlanModeUnknownBashReadOnlyCommandDeclineBlocks(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-	gate := &fakePlanModeReadOnlyTrustGate{allow: false, reason: "not read-only"}
-	a := New(nil, reg, NewSession(""), Options{PlanModeReadOnlyTrustGate: gate}, event.Discard)
-	a.SetPlanMode(true)
-
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "bash", Arguments: string(bashCommandArgs(t, "gh issue view 4572"))})
-	if !strings.Contains(out.output, "not read-only") {
-		t.Fatalf("declined bash trust should block with reason, got: %q", out.output)
+	if len(prov.requests) < 1 {
+		t.Fatal("Plan child made no provider request")
 	}
-}
-
-func TestPlanModeUnsafeUnknownBashCommandDoesNotAskForTrust(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-	gate := &fakePlanModeReadOnlyTrustGate{allow: true}
-	a := New(nil, reg, NewSession(""), Options{PlanModeReadOnlyTrustGate: gate}, event.Discard)
-	a.SetPlanMode(true)
-
-	out := a.executeOne(context.Background(), provider.ToolCall{Name: "bash", Arguments: string(bashCommandArgs(t, "gh issue view 4572 && rm -rf /"))})
-	if !strings.HasPrefix(out.output, "blocked:") {
-		t.Fatalf("unsafe shell syntax should remain blocked, got: %q", out.output)
+	var user string
+	for _, msg := range prov.requests[0].Messages {
+		if msg.Role == provider.RoleUser {
+			user = msg.Content
+			break
+		}
 	}
-	if gate.calls != 0 {
-		t.Fatalf("trust gate calls = %d, want 0 for unsafe shell syntax", gate.calls)
+	if !strings.Contains(user, planmode.Marker) {
+		t.Fatalf("Plan child user turn missing workflow marker: %q", user)
 	}
-}
-
-// --- planModeBashBlocked tests ---
-
-func TestPlanModeBashBlocked_SafeCommands(t *testing.T) {
-	safe := []string{
-		"git status",
-		"git diff",
-		"git diff --staged",
-		"git log --oneline -10",
-		"git show HEAD",
-		"git ls-files",
-		"git grep 'func main'",
-		"git grep -o 'func'",
-		"git blame file.go",
-		"ls -la",
-		"cat file.go",
-		"grep -rn 'pattern' .",
-		"find . -name '*.go'",
-		"head -20 file.go",
-		"tail -5 file.go",
-		"pwd",
-		"echo hello",
-		"wc -l file.go",
-		"which go",
-		"type git",
-		"uname -a",
-		"hostname",
-		"go version",
-		"go list ./...",
-		"go doc fmt.Println",
-		"go vet ./...",
-		"node -v",
-		"npm list",
-		"python --version",
-	}
-	for _, cmd := range safe {
-		t.Run(cmd, func(t *testing.T) {
-			blocked, msg := planModeBashBlocked(bashCommandArgs(t, cmd))
-			if blocked {
-				t.Errorf("planModeBashBlocked(%q) = blocked, want allowed; msg: %s", cmd, msg)
-			}
-		})
-	}
-}
-
-func TestPlanModeBashBlocked_Metacharacters(t *testing.T) {
-	tests := []struct {
-		name string
-		cmd  string
-	}{
-		{"semicolon", "git status; rm file.go"},
-		{"and", "git status && rm file.go"},
-		{"or", "git status || rm file.go"},
-		{"pipe", "ls | grep foo"},
-		{"redirect_out", "echo hello > file.go"},
-		{"redirect_append", "echo hello >> file.go"},
-		{"redirect_in", "cat < file.go"},
-		{"heredoc", "cat << EOF"},
-		{"cmd_sub_dollar", "echo $(rm file.go)"},
-		{"background_ampersand", "git status & rm file.go"},
-		{"newline", "git status\nrm file.go"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			blocked, msg := planModeBashBlocked(bashCommandArgs(t, tt.cmd))
-			if !blocked {
-				t.Errorf("planModeBashBlocked(%q) = allowed, want blocked", tt.cmd)
-			}
-			if !strings.Contains(msg, "shell operators") {
-				t.Errorf("unexpected message: %s", msg)
-			}
-		})
-	}
-}
-
-func TestPlanModeBashBlocked_ProcessControlArgs(t *testing.T) {
-	tests := []struct {
-		name string
-		args string
-		want string
-	}{
-		{
-			name: "background execution",
-			args: `{"command":"git status","run_in_background":true}`,
-			want: "background execution",
-		},
-		{
-			name: "process preservation",
-			args: `{"command":"git status","preserve_background_processes":true}`,
-			want: "process preservation",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			blocked, msg := planModeBashBlocked(json.RawMessage(tt.args))
-			if !blocked {
-				t.Fatalf("planModeBashBlocked(%s) = allowed, want blocked", tt.args)
-			}
-			if !strings.Contains(msg, tt.want) {
-				t.Fatalf("blocked message = %q, want %q", msg, tt.want)
-			}
-		})
-	}
-}
-
-func TestPlanModeBashBlocked_WriteCapableSafeCommandArgs(t *testing.T) {
-	tests := []struct {
-		name string
-		cmd  string
-		arg  string
-	}{
-		{"find_delete", "find . -delete", "-delete"},
-		{"find_exec", "find . -name '*.tmp' -exec rm {} +", "-exec"},
-		{"find_fprint", "find . -name '*.go' -fprint files.txt", "-fprint"},
-		{"git_diff_output_equals", "git diff --output=patch.diff", "--output=patch.diff"},
-		{"git_diff_output_space", "git diff --output patch.diff", "--output"},
-		{"git_show_output", "git show HEAD --output=show.txt", "--output=show.txt"},
-		{"git_log_ext_diff", "git log --ext-diff", "--ext-diff"},
-		{"git_grep_open_pager_short", "git grep -O 'func main'", "-O"},
-		{"git_grep_open_pager_long", "git grep --open-files-in-pager=sh 'func main'", "--open-files-in-pager=sh"},
-		{"go_list_mod_write", "go list -mod=mod ./...", "-mod=mod"},
-		{"go_list_mod_space", "go list -mod mod ./...", "-mod"},
-		{"go_list_modfile", "go list -modfile=other.mod ./...", "-modfile=other.mod"},
-		{"go_list_toolexec", "go list -toolexec=./wrapper ./...", "-toolexec=./wrapper"},
-		{"go_vet_fix", "go vet -fix ./...", "-fix"},
-		{"go_vet_toolexec", "go vet -toolexec ./wrapper ./...", "-toolexec"},
-		{"go_vet_vettool", "go vet -vettool=./writer ./...", "-vettool=./writer"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			blocked, msg := planModeBashBlocked(bashCommandArgs(t, tt.cmd))
-			if !blocked {
-				t.Errorf("planModeBashBlocked(%q) = allowed, want blocked", tt.cmd)
-			}
-			if !strings.Contains(msg, tt.arg) {
-				t.Errorf("blocked message %q does not mention unsafe arg %q", msg, tt.arg)
-			}
-		})
-	}
-}
-
-func TestPlanModeBashBlocked_UnsafeCommands(t *testing.T) {
-	unsafe := []string{
-		"rm -rf /tmp/foo",
-		"cp file1 file2",
-		"mv old new",
-		"mkdir newdir",
-		"touch newfile",
-		"chmod 755 script.sh",
-		"git add .",
-		"git commit -m 'msg'",
-		"git push origin main",
-		"git checkout -b new-branch",
-		"go build ./...",
-		"go test ./...",
-		"npm install",
-		"npm run build",
-		"pip install requests",
-		"docker build .",
-		"make all",
-		"sed -i 's/old/new/' file.go",
-		"awk '{print $1}' file",
-		"tee output.txt",
-		"dd if=/dev/zero of=file",
-		"ssh user@host",
-		"curl https://example.com",
-		"wget https://example.com",
-		"python -c 'print(1)'",
-		"node -e 'console.log(1)'",
-		"ruby -e 'puts 1'",
-		"perl -e 'print 1'",
-	}
-	for _, cmd := range unsafe {
-		t.Run(cmd, func(t *testing.T) {
-			blocked, _ := planModeBashBlocked(bashCommandArgs(t, cmd))
-			if !blocked {
-				t.Errorf("planModeBashBlocked(%q) = allowed, want blocked", cmd)
-			}
-		})
-	}
-}
-
-func TestPlanModeBashBlocked_BoundaryCheck(t *testing.T) {
-	// "echop" should NOT match "echo" prefix
-	args := json.RawMessage(`{"command":"echop hello"}`)
-	blocked, _ := planModeBashBlocked(args)
-	if !blocked {
-		t.Error("echop should not match echo prefix — boundary check failed")
-	}
-
-	// "lsblk" should NOT match "ls" prefix
-	args = json.RawMessage(`{"command":"lsblk"}`)
-	blocked, _ = planModeBashBlocked(args)
-	if !blocked {
-		t.Error("lsblk should not match ls prefix — boundary check failed")
-	}
-
-	// "git status" with a flag after a whitespace boundary should match.
-	args = json.RawMessage(`{"command":"git status --short"}`)
-	blocked, _ = planModeBashBlocked(args)
-	if blocked {
-		t.Error("git status --short should match git status prefix")
-	}
-
-	// A dash inside the command name should NOT match a shorter safe prefix.
-	args = json.RawMessage(`{"command":"git diff-files"}`)
-	blocked, _ = planModeBashBlocked(args)
-	if !blocked {
-		t.Error("git diff-files should not match git diff prefix")
-	}
-
-	args = json.RawMessage(`{"command":"cat-file --batch"}`)
-	blocked, _ = planModeBashBlocked(args)
-	if !blocked {
-		t.Error("cat-file should not match cat prefix")
-	}
-}
-
-func TestPlanModeBashBlocked_EmptyCommand(t *testing.T) {
-	// Empty/missing command should not crash
-	blocked, _ := planModeBashBlocked(json.RawMessage(`{}`))
-	if !blocked {
-		t.Error("missing command should fail closed in plan mode")
-	}
-	blocked, _ = planModeBashBlocked(json.RawMessage(`{"command":""}`))
-	if !blocked {
-		t.Error("empty string command should fail closed in plan mode")
-	}
-}
-
-func TestPlanModeBashBlocked_InvalidJSON(t *testing.T) {
-	blocked, _ := planModeBashBlocked(json.RawMessage(`not json`))
-	if !blocked {
-		t.Error("invalid JSON should fail closed in plan mode")
-	}
-}
-
-func TestPlanModeBash_BashToolIntegration(t *testing.T) {
-	// Integration test: planModeBlocked with toolName="bash" delegates to planModeBashBlocked
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-
-	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
-	a.SetPlanMode(true)
-
-	// Safe command should execute
-	safeResult := a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"git status"}`,
-	})
-	if strings.HasPrefix(safeResult.output, "blocked:") {
-		t.Errorf("git status should not be blocked in plan mode: %s", safeResult.output)
-	}
-
-	// Unsafe command should be blocked
-	unsafeResult := a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"rm -rf /"}`,
-	})
-	if !strings.HasPrefix(unsafeResult.output, "blocked:") {
-		t.Errorf("rm -rf should be blocked in plan mode: %s", unsafeResult.output)
-	}
-
-	// Chained command should be blocked
-	chainResult := a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"git status && rm file.go"}`,
-	})
-	if !strings.HasPrefix(chainResult.output, "blocked:") {
-		t.Errorf("chained command should be blocked in plan mode: %s", chainResult.output)
-	}
-
-	backgroundResult := a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"git status","run_in_background":true}`,
-	})
-	if !strings.HasPrefix(backgroundResult.output, "blocked:") {
-		t.Errorf("background bash should be blocked in plan mode: %s", backgroundResult.output)
-	}
-
-	preserveResult := a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"git status","preserve_background_processes":true}`,
-	})
-	if !strings.HasPrefix(preserveResult.output, "blocked:") {
-		t.Errorf("process-preserving bash should be blocked in plan mode: %s", preserveResult.output)
-	}
-}
-
-func TestPlanMode_BashAllowedToolsOverride(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-
-	a := New(nil, reg, NewSession(""), Options{
-		PlanModeAllowedTools: []string{"bash"},
-	}, event.Discard)
-	a.SetPlanMode(true)
-
-	result := a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"rm -rf /"}`,
-	})
-	if !strings.HasPrefix(result.output, "blocked:") {
-		t.Errorf("bash in planModeAllowedTools must still validate unsafe commands: %s", result.output)
-	}
-}
-
-func TestPlanModeOff_AllToolsAllowed(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "write_file", readOnly: false})
-	reg.Add(fakeTool{name: "bash", readOnly: false})
-
-	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
-	// planMode is OFF by default
-
-	// write_file should execute normally
-	result := a.executeOne(context.Background(), provider.ToolCall{Name: "write_file"})
-	if strings.HasPrefix(result.output, "blocked:") {
-		t.Error("write_file should not be blocked when plan mode is off")
-	}
-
-	// bash with any command should execute normally
-	result = a.executeOne(context.Background(), provider.ToolCall{
-		Name:      "bash",
-		Arguments: `{"command":"rm -rf /"}`,
-	})
-	if strings.HasPrefix(result.output, "blocked:") {
-		t.Error("bash should not be blocked when plan mode is off")
+	if got := lastToolResult(sess, "complete_step"); !strings.Contains(got, "only available after plan approval") {
+		t.Fatalf("Plan child complete_step result = %q", got)
 	}
 }
 
 func TestCallContextMirrorsPlanModeOntoLeafKey(t *testing.T) {
-	// Leaf-package tools (internal/tool/builtin) read plan mode via
-	// planmode.Active because importing this package would cycle. The call
-	// context constructor is the single production writer of both flags, so
-	// this pins them in lockstep.
 	on := withCallContext(context.Background(), "c", event.Discard, nil, true)
 	if !PlanModeFromContext(on) || !planmode.Active(on) {
 		t.Fatal("plan-mode flags disagree for an active planning call")
 	}
 	off := withCallContext(context.Background(), "c", event.Discard, nil, false)
 	if PlanModeFromContext(off) || planmode.Active(off) {
-		t.Fatal("plan-mode flags disagree for a normal call")
+		t.Fatal("plan-mode flags disagree for a standard call")
 	}
 	if !planmode.Active(WithToolCallContext(context.Background(), "c", event.Discard, nil, true)) {
-		t.Fatal("exported host-initiated wrapper lost the leaf plan-mode flag")
+		t.Fatal("host-initiated wrapper lost the leaf plan-mode flag")
 	}
 }

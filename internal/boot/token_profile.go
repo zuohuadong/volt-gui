@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/planmode"
 	"reasonix/internal/tool"
 )
 
@@ -145,16 +143,12 @@ func (t *toolSourceConnector) Execute(ctx context.Context, args json.RawMessage)
 // executeLocked dispatches a connect_tool_source call under t.mu. Fast sources
 // (registry-only mutations) run to completion while the lock is held. For an
 // MCP connect with a server name it performs only the quick pre-checks
-// (plan-mode gate, callback availability) and returns the connect callback as
+// (callback availability and source arguments) and returns the connect callback as
 // mcpConnect; the caller invokes it after releasing t.mu. When mcpConnect is
 // nil, out/err are the final result.
 func (t *toolSourceConnector) executeLocked(ctx context.Context, source, name, rawSource string) (out string, mcpConnect func(context.Context, string) (string, error), err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	if blocked, msg := t.planModeSourceBlocked(ctx, source, name); blocked {
-		return msg, nil, nil
-	}
 
 	switch source {
 	case "skills":
@@ -200,27 +194,6 @@ func (t *toolSourceConnector) executeLocked(ctx context.Context, source, name, r
 		return "", nil, fmt.Errorf("unknown tool source %q", rawSource)
 	}
 	return out, nil, err
-}
-
-func (t *toolSourceConnector) planModeSourceBlocked(ctx context.Context, source, name string) (bool, string) {
-	if !agent.PlanModeFromContext(ctx) {
-		return false, ""
-	}
-	if source == "mcp" {
-		// The user chose to install this server. Connecting it makes its live tool
-		// metadata available; each resolved tool is still classified by ReadOnly
-		// and checked by plan mode before execution.
-		return false, ""
-	}
-	// Sources are read-only iff they expose only read-only research surfaces; the
-	// moderate plan-mode gate then trusts that ReadOnly flag (step 6), while any
-	// other source stays non-read-only and is fail-closed by the policy.
-	// workflow is admitted even though it bundles complete_step: its installer
-	// narrows to the plan-safe todo_write subset while plan mode is active, so
-	// planning keeps the todo surface planmode.Marker promises.
-	readOnlySource := source == "web_fetch" || source == "lsp" || source == "search" || source == "sessions" || source == "commands" || source == "workflow" || source == "read_only_task" || source == "read_only_skill"
-	decision := planmode.Policy{}.Decide(planmode.Call{Name: source, ReadOnly: readOnlySource})
-	return decision.Blocked, decision.Message
 }
 
 func normalizeToolSource(source string) string {

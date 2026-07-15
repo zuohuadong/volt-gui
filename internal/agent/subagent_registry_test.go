@@ -153,6 +153,14 @@ func TestReadOnlySubagentToolRegistryKeepsOnlyResearchToolsAndSafeBash(t *testin
 	if err != nil || !strings.HasPrefix(out, "blocked:") {
 		t.Fatalf("unsafe bash should be blocked as tool output, got %q, %v", out, err)
 	}
+	out, err = bash.Execute(context.Background(), json.RawMessage(`{"command":"git status","run_in_background":true}`))
+	if err != nil || !strings.HasPrefix(out, "blocked:") {
+		t.Fatalf("background read-only bash should be blocked as tool output, got %q, %v", out, err)
+	}
+	out, err = bash.Execute(context.Background(), json.RawMessage(`{"command":"git status","preserve_background_processes":true}`))
+	if err != nil || !strings.HasPrefix(out, "blocked:") {
+		t.Fatalf("process-preserving read-only bash should be blocked as tool output, got %q, %v", out, err)
+	}
 }
 
 func TestReadOnlySubagentToolRegistryAllowsOnlyReadOnlyDelegationBeforeDepthLimit(t *testing.T) {

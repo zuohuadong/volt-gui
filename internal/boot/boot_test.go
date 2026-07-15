@@ -651,8 +651,8 @@ model = "x"
 	if requestToolSchemaContains(subReq, "bash", "run_in_background") {
 		t.Fatalf("skill subagent bash schema should not include run_in_background")
 	}
-	if !requestToolDescriptionContains(subReq, "bash", "Only plan-mode safe read-only commands are allowed") {
-		t.Fatalf("review subagent bash must advertise the plan-mode safe read-only policy; got %q", requestToolDescription(subReq, "bash"))
+	if !requestToolDescriptionContains(subReq, "bash", "Only permission-classified read-only commands are allowed") {
+		t.Fatalf("review subagent bash must advertise its permission-layer read-only policy; got %q", requestToolDescription(subReq, "bash"))
 	}
 }
 
@@ -672,7 +672,7 @@ func requestToolDescriptionContains(req provider.Request, name, want string) boo
 // TestBuildRunSkillSubagentRegistryHonorsReadOnlyFlag proves the registry split
 // for user-defined subagent skills: a plain skill keeps writer tools and the
 // foreground-only bash, while a `read-only: true` skill is stripped to research
-// tools plus the plan-mode safe bash.
+// tools plus the permission-classified read-only bash wrapper.
 func TestBuildRunSkillSubagentRegistryHonorsReadOnlyFlag(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
@@ -727,7 +727,7 @@ model = "x"
 	if !requestToolDescriptionContains(writerReq, "bash", "Background execution is unavailable inside subagents") {
 		t.Fatalf("writer skill subagent bash should be the foreground-only wrapper; got %q", requestToolDescription(writerReq, "bash"))
 	}
-	if requestToolDescriptionContains(writerReq, "bash", "Only plan-mode safe read-only commands are allowed") {
+	if requestToolDescriptionContains(writerReq, "bash", "Only permission-classified read-only commands are allowed") {
 		t.Fatalf("writer skill subagent bash must not be the read-only wrapper; got %q", requestToolDescription(writerReq, "bash"))
 	}
 
@@ -737,8 +737,8 @@ model = "x"
 	if !requestHasTool(roReq, "read_file") {
 		t.Fatalf("read-only skill subagent should keep read_file; tools=%v", toolSchemaNames(roReq.Tools))
 	}
-	if !requestToolDescriptionContains(roReq, "bash", "Only plan-mode safe read-only commands are allowed") {
-		t.Fatalf("read-only skill subagent bash must be the plan-mode safe wrapper; got %q", requestToolDescription(roReq, "bash"))
+	if !requestToolDescriptionContains(roReq, "bash", "Only permission-classified read-only commands are allowed") {
+		t.Fatalf("read-only skill subagent bash must be the permission-layer wrapper; got %q", requestToolDescription(roReq, "bash"))
 	}
 }
 
@@ -2433,36 +2433,36 @@ trusted_read_only_tools = ["echo"]
 	}
 }
 
-func TestBuildTokenEconomyPlanModeBlocksSourcesWithPolicy(t *testing.T) {
+func TestBuildTokenEconomyPlanModeCanLoadSourcesBeforePermissionedUse(t *testing.T) {
 	tests := []struct {
-		source         string
-		args           string
-		forbiddenTools []string
+		source       string
+		args         string
+		enabledTools []string
 	}{
 		{
-			source:         "task",
-			args:           `{"source":"task"}`,
-			forbiddenTools: []string{"task"},
+			source:       "task",
+			args:         `{"source":"task"}`,
+			enabledTools: []string{"task"},
 		},
 		{
-			source:         "install_source",
-			args:           `{"source":"install_source"}`,
-			forbiddenTools: []string{"install_source"},
+			source:       "install_source",
+			args:         `{"source":"install_source"}`,
+			enabledTools: []string{"install_source"},
 		},
 		{
-			source:         "memory",
-			args:           `{"source":"memory"}`,
-			forbiddenTools: []string{"memory", "remember", "forget"},
+			source:       "memory",
+			args:         `{"source":"memory"}`,
+			enabledTools: []string{"memory", "remember", "forget"},
 		},
 		{
-			source:         "files",
-			args:           `{"source":"files"}`,
-			forbiddenTools: []string{"delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"},
+			source:       "files",
+			args:         `{"source":"files"}`,
+			enabledTools: []string{"delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"},
 		},
 		{
 			source: "skills",
 			args:   `{"source":"skills"}`,
-			forbiddenTools: []string{
+			enabledTools: []string{
 				"run_skill", "read_only_skill", "read_skill", "install_skill",
 				"explore", "research", "review", "security_review",
 			},
@@ -2504,7 +2504,7 @@ command = "reasonix-missing-mockmcp"
 			}
 			defer ctrl.Close()
 			ctrl.SetPlanMode(true)
-			if err := ctrl.Run(context.Background(), "connect blocked source while planning"); err != nil {
+			if err := ctrl.Run(context.Background(), "load source while planning"); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 
@@ -2521,12 +2521,12 @@ command = "reasonix-missing-mockmcp"
 			if strings.TrimSpace(toolOutput) == "" {
 				t.Fatalf("connect_tool_source(%s) returned empty tool output", tt.source)
 			}
-			if !strings.Contains(toolOutput, "blocked:") || !strings.Contains(toolOutput, "plan mode") {
-				t.Fatalf("connect_tool_source(%s) output = %q, want visible plan-mode block", tt.source, toolOutput)
+			if strings.Contains(toolOutput, "blocked:") {
+				t.Fatalf("connect_tool_source(%s) should load capability metadata in Plan, got %q", tt.source, toolOutput)
 			}
-			for _, forbidden := range tt.forbiddenTools {
-				if requestHasTool(reqs[1], forbidden) {
-					t.Fatalf("blocked source %s should not expose %q; tools=%v", tt.source, forbidden, toolSchemaNames(reqs[1].Tools))
+			for _, enabled := range tt.enabledTools {
+				if !requestHasTool(reqs[1], enabled) {
+					t.Fatalf("loaded source %s should expose %q; tools=%v", tt.source, enabled, toolSchemaNames(reqs[1].Tools))
 				}
 			}
 		})
@@ -2611,7 +2611,7 @@ model = "x"
 	}
 }
 
-func TestBuildWarnsIgnoredPlanModeAllowedTools(t *testing.T) {
+func TestBuildLegacyPlanModeAllowedToolsDoesNotEmitGateWarning(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -2646,23 +2646,13 @@ model = "x"
 	defer ctrl.Close()
 
 	for _, notice := range notices {
-		if notice.Level == event.LevelWarn && strings.Contains(notice.Detail, "plan_mode_allowed_tools") && strings.Contains(notice.Detail, "bash") {
-			if notice.Text != "Some plan-mode tool settings were ignored." {
-				t.Fatalf("warning text = %q, want short user-facing text", notice.Text)
-			}
-			if strings.Contains(notice.Detail, "custom_reader") {
-				t.Fatalf("warning should name ignored entries only, got %q", notice.Detail)
-			}
-			if !strings.Contains(notice.Detail, "plan_mode_read_only_commands") || !strings.Contains(notice.Detail, "read_only_task/read_only_skill") {
-				t.Fatalf("warning should suggest plan-mode migration paths, got %q", notice.Detail)
-			}
-			return
+		if strings.Contains(notice.Text, "plan-mode tool") || strings.Contains(notice.Detail, "plan_mode_allowed_tools") {
+			t.Fatalf("legacy Plan setting emitted obsolete gate warning: %+v", notice)
 		}
 	}
-	t.Fatalf("missing ignored plan_mode_allowed_tools warning; got %+v", notices)
 }
 
-func TestBuildWarnsIgnoredPlanModeReadOnlyCommands(t *testing.T) {
+func TestBuildLegacyPlanModeReadOnlyCommandsDoesNotEmitGateWarning(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -2697,18 +2687,10 @@ model = "x"
 	defer ctrl.Close()
 
 	for _, notice := range notices {
-		if notice.Level == event.LevelWarn && strings.Contains(notice.Detail, "plan_mode_read_only_commands") && strings.Contains(notice.Detail, "bash") {
-			if notice.Text != "Some plan-mode command settings were ignored." {
-				t.Fatalf("warning text = %q, want short user-facing text", notice.Text)
-			}
-			ignoredList := strings.TrimSpace(strings.SplitN(strings.TrimPrefix(notice.Detail, "plan_mode_read_only_commands ignored unsafe entries:"), ";", 2)[0])
-			if ignoredList != "bash" {
-				t.Fatalf("warning should name ignored command prefixes only, got %q from %q", ignoredList, notice.Detail)
-			}
-			return
+		if strings.Contains(notice.Text, "plan-mode command") || strings.Contains(notice.Detail, "plan_mode_read_only_commands") {
+			t.Fatalf("legacy Plan command setting emitted obsolete gate warning: %+v", notice)
 		}
 	}
-	t.Fatalf("missing ignored plan_mode_read_only_commands warning; got %+v", notices)
 }
 
 func TestBuildTokenEconomyWebFetchConnectorHonorsDisabledBuiltin(t *testing.T) {

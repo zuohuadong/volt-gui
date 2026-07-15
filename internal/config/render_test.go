@@ -538,8 +538,8 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "extra read-only declarations") || !strings.Contains(rendered, "cannot unlock known blocked tools or unsafe bash") {
-		t.Fatalf("rendered config should document tightened plan_mode_allowed_tools semantics:\n%s", rendered)
+	if !strings.Contains(rendered, "legacy MCP read-only trust aliases") || !strings.Contains(rendered, "does not change Plan availability") {
+		t.Fatalf("rendered config should document legacy plan_mode_allowed_tools semantics:\n%s", rendered)
 	}
 
 	var got Config
@@ -552,8 +552,8 @@ func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "concrete read-only shell prefixes") {
-		t.Fatalf("rendered config should document plan_mode_read_only_commands semantics:\n%s", rendered)
+	if !strings.Contains(rendered, "legacy compatibility only") || !strings.Contains(rendered, "Plan bash uses Permissions") {
+		t.Fatalf("rendered config should document legacy plan_mode_read_only_commands semantics:\n%s", rendered)
 	}
 	if !reflect.DeepEqual(got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands) {
 		t.Fatalf("PlanModeReadOnlyCommands round trip = %v, want %v", got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands)

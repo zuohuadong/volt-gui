@@ -128,9 +128,9 @@ func CallContext(ctx context.Context) (parentID string, sink event.Sink, asker A
 	return cc.parentID, cc.sink, cc.asker, true
 }
 
-// PlanModeFromContext reports whether the tool call is executing under the
-// agent's read-only planning gate. Tools that are themselves ReadOnly may use
-// this to avoid enabling follow-up writer-only surfaces during planning.
+// PlanModeFromContext reports whether the tool call is executing during the
+// plan-first workflow. Tools may use it for phase-specific behavior, but it is
+// not a permission or read-only boundary.
 func PlanModeFromContext(ctx context.Context) bool {
 	cc, ok := ctx.Value(callContextKey{}).(callContext)
 	return ok && cc.planMode
@@ -180,7 +180,7 @@ func userImages(ctx context.Context) []string {
 }
 
 // Gate decides, per tool call, whether it may run. The agent consults it at
-// execute time (after the plan-mode gate). It is interface-shaped so the agent
+// execute time after any explicit planning-phase opt-out. It is interface-shaped so the agent
 // stays independent of the permission package and of how "ask" is resolved
 // (silently in headless runs, interactively in the chat TUI). A nil gate means
 // no gating — every call runs, preserving behaviour for callers that don't wire
@@ -216,9 +216,9 @@ type PlanModeReadOnlyTrustRequest struct {
 	Args     json.RawMessage
 }
 
-// PlanModeReadOnlyTrustGate optionally confirms user-approved bash read-only
-// command prefixes at execution time. It is separate from Gate because the
-// plan-mode check runs before ordinary permission policy.
+// PlanModeReadOnlyTrustGate is the legacy Plan bash trust bridge. It remains in
+// the internal API for controller compatibility, but ordinary Plan execution no
+// longer invokes it; bash calls use the normal permission gate.
 type PlanModeReadOnlyTrustGate interface {
 	CheckPlanModeReadOnlyTrust(ctx context.Context, req PlanModeReadOnlyTrustRequest) (allow bool, reason string, err error)
 }
@@ -312,19 +312,17 @@ type Agent struct {
 	// SetSession so a swapped-in conversation warns anew.
 	warnedMissingToolCallReasoning bool
 
-	// planMode, when true, refuses any tool call whose ReadOnly() is false.
-	// The system prompt and tool list never change with the toggle so the
-	// prompt-cache prefix stays valid; the gating happens at execute time
-	// and the model sees a "blocked" result it can adapt to. Toggled from
-	// the outside via SetPlanMode.
+	// planMode enables planning workflow instructions and explicit phase opt-outs.
+	// It does not replace the permission or sandbox boundary. The system prompt and
+	// tool list never change with the toggle, preserving the provider-cache prefix.
 	planMode atomic.Bool
 
-	// gate, when non-nil, is the per-call permission gate consulted after the
-	// plan-mode check. nil disables gating entirely.
+	// gate, when non-nil, is the per-call permission gate for both standard and
+	// Plan workflows. nil disables gating entirely.
 	gate Gate
 
-	// planModeReadOnlyTrust, when non-nil, can ask the user to trust a bash
-	// command prefix as read-only for plan-mode execution.
+	// planModeReadOnlyTrust is retained for legacy controller wiring. The main
+	// Plan execution path no longer consults it.
 	planModeReadOnlyTrust PlanModeReadOnlyTrustGate
 
 	// sandboxEscapeApprover, when non-nil, can ask the user whether one shell
@@ -462,12 +460,6 @@ type Agent struct {
 	// classifier 用于判断用户输入是任务还是聊天，决定是否启动 Memory v5
 	classifier TaskClassifier
 
-	// planModeAllowedTools declares extra custom tools that the centralized
-	// plan-mode policy may treat as read-only. Known blocked tools still lose.
-	// Populated from Options.PlanModeAllowedTools during construction.
-	planModeAllowedTools     []string
-	planModeReadOnlyCommands []string
-
 	// subagentDepth tracks the current agent's nesting depth. maxSubagentDepth
 	// caps delegation; when reached, recursive agent/skill tools are excluded.
 	subagentDepth    int
@@ -543,10 +535,10 @@ const (
 	KeepUserMarked
 )
 
-// SetPlanMode flips the read-only gate. While true, executeOne refuses any
-// non-ReadOnly tool the model calls and returns a "blocked" result instead of
-// running it. The cache-friendly bits — system prompt, tools schema, message
-// history — are left untouched, so the toggle costs nothing in cache hits.
+// SetPlanMode toggles the plan-first workflow flag. Ordinary calls still use
+// Permissions/Sandbox; only explicit phase opt-outs are refused. The system
+// prompt and tool schemas stay untouched, while the caller supplies the
+// model-facing Marker in a user turn.
 func (a *Agent) SetPlanMode(v bool) { a.planMode.Store(v) }
 
 // SetTools replaces the agent's tool registry. The next API call picks up the
@@ -731,8 +723,8 @@ func (a *Agent) SetGate(g Gate) {
 	a.gate = g
 }
 
-// SetPlanModeReadOnlyTrustGate installs the optional confirmation path for bash
-// commands the user may trust as plan-mode read-only.
+// SetPlanModeReadOnlyTrustGate retains the legacy confirmation bridge for old
+// controller/session data. Main Plan execution no longer calls it.
 func (a *Agent) SetPlanModeReadOnlyTrustGate(g PlanModeReadOnlyTrustGate) {
 	if nilutil.IsNil(g) {
 		g = nil
@@ -993,8 +985,8 @@ type Options struct {
 	// Gate is the per-call permission gate. nil disables gating.
 	Gate Gate
 
-	// PlanModeReadOnlyTrustGate confirms bash command prefixes that plan mode's
-	// parser considers safe enough for a user read-only decision.
+	// PlanModeReadOnlyTrustGate is retained for legacy controller compatibility.
+	// The main Plan execution path no longer invokes it.
 	PlanModeReadOnlyTrustGate PlanModeReadOnlyTrustGate
 
 	// SandboxEscapeApprover confirms a one-shot unconfined shell rerun after an
@@ -1057,12 +1049,12 @@ type Options struct {
 	// user-turn context. Empty/auto keeps the stable same-as-user policy.
 	ResponseLanguage string
 
-	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
-	// as read-only. It cannot unlock known blocked tools or unsafe bash commands.
+	// PlanModeAllowedTools is retained for source compatibility. MCP assembly may
+	// still translate legacy entries into local read-only trust, but it does not
+	// grant or revoke calls in the main Plan workflow.
 	PlanModeAllowedTools []string
-	// PlanModeReadOnlyCommands names concrete shell command prefixes that plan mode
-	// may treat as read-only. Shell operators, background execution, and shell
-	// interpreter prefixes remain blocked.
+	// PlanModeReadOnlyCommands is retained for old config/controller data. Main
+	// Plan execution classifies bash through Permissions instead.
 	PlanModeReadOnlyCommands []string
 
 	// SubagentDepth is the current nesting depth for this agent. Root sessions are
@@ -1143,41 +1135,39 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		subagentDepth = 0
 	}
 	a := &Agent{
-		prov:                     prov,
-		tools:                    tools,
-		session:                  session,
-		maxSteps:                 opts.MaxSteps,
-		maxStepsKey:              maxStepsKey,
-		temperature:              opts.Temperature,
-		pricing:                  opts.Pricing,
-		usageSource:              usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-		sink:                     sink,
-		gate:                     gate,
-		planModeReadOnlyTrust:    planModeReadOnlyTrust,
-		sandboxEscapeApprover:    sandboxEscapeApprover,
-		configWriteApprover:      configWriteApprover,
-		hooks:                    hooks,
-		jobs:                     opts.Jobs,
-		evidence:                 evidence.NewLedger(),
-		projectChecks:            append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		deliveryProfile:          opts.DeliveryProfile,
-		classifierTaskText:       opts.ClassifierTaskText,
-		capabilityLedger:         opts.CapabilityLedger,
-		capabilityAudit:          opts.CapabilityAudit,
-		contextWindow:            opts.ContextWindow,
-		softCompactRatio:         opts.SoftCompactRatio,
-		toolResultSnipRatio:      opts.ToolResultSnipRatio,
-		compactRatio:             opts.CompactRatio,
-		compactForceRatio:        opts.CompactForceRatio,
-		recentKeep:               opts.RecentKeep,
-		archiveDir:               opts.ArchiveDir,
-		keepPolicy:               opts.KeepPolicy,
-		planModeAllowedTools:     append([]string(nil), opts.PlanModeAllowedTools...),
-		planModeReadOnlyCommands: append([]string(nil), opts.PlanModeReadOnlyCommands...),
-		subagentDepth:            subagentDepth,
-		maxSubagentDepth:         maxSubagentDepth,
-		memoryCompiler:           opts.MemoryCompiler,
-		memoryCompilerVerbosity:  normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
+		prov:                    prov,
+		tools:                   tools,
+		session:                 session,
+		maxSteps:                opts.MaxSteps,
+		maxStepsKey:             maxStepsKey,
+		temperature:             opts.Temperature,
+		pricing:                 opts.Pricing,
+		usageSource:             usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+		sink:                    sink,
+		gate:                    gate,
+		planModeReadOnlyTrust:   planModeReadOnlyTrust,
+		sandboxEscapeApprover:   sandboxEscapeApprover,
+		configWriteApprover:     configWriteApprover,
+		hooks:                   hooks,
+		jobs:                    opts.Jobs,
+		evidence:                evidence.NewLedger(),
+		projectChecks:           append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		deliveryProfile:         opts.DeliveryProfile,
+		classifierTaskText:      opts.ClassifierTaskText,
+		capabilityLedger:        opts.CapabilityLedger,
+		capabilityAudit:         opts.CapabilityAudit,
+		contextWindow:           opts.ContextWindow,
+		softCompactRatio:        opts.SoftCompactRatio,
+		toolResultSnipRatio:     opts.ToolResultSnipRatio,
+		compactRatio:            opts.CompactRatio,
+		compactForceRatio:       opts.CompactForceRatio,
+		recentKeep:              opts.RecentKeep,
+		archiveDir:              opts.ArchiveDir,
+		keepPolicy:              opts.KeepPolicy,
+		subagentDepth:           subagentDepth,
+		maxSubagentDepth:        maxSubagentDepth,
+		memoryCompiler:          opts.MemoryCompiler,
+		memoryCompilerVerbosity: normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
 	}
 	// 初始化分类器
 	if opts.UseMemoryCompilerLLMClassification && prov != nil {
@@ -1250,9 +1240,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	// job's evidence uncommitted. Without re-injecting it here, a turn that
 	// never re-issues wait/bash_output (the model has no reason to if it
 	// doesn't know a mutation is still pending) would ship the background
-	// change without the final-readiness gate ever seeing it. Plan-mode turns
-	// skip this like collectBackgroundEvidence does: writers are blocked, so
-	// arming delivery sign-off demands here would deadlock the turn.
+	// change without the final-readiness gate ever seeing it. Plan turns defer
+	// this lease like collectBackgroundEvidence does so execution evidence is
+	// consumed and audited only after plan approval.
 	if a.evidence != nil && a.jobs != nil && !a.planMode.Load() {
 		session := jobs.SessionFromContext(ctx)
 		for _, jobID := range a.jobs.PendingEvidenceJobIDsForSession(session) {
@@ -1650,25 +1640,13 @@ func (a *Agent) finalReadinessCheckFor(finalizeTask bool) finalReadinessCheck {
 	}
 	var missing []string
 	out := finalReadinessCheck{}
-	// Planning returns a proposal to the controller, which owns the approval
-	// gate and starts a fresh execution turn after plan mode is disabled. Applying
-	// delivery execution requirements here would demand mutations that plan mode
-	// itself blocks, preventing the proposal from ever reaching that approval.
-	// Explicit capability requirements still apply because read-only skills and
-	// tools may be required to produce the plan itself. The loop-guard pass
-	// applies here as in execution: a required capability that plan mode itself
-	// blocks can never succeed, so once a loop guard fires the model must be
-	// free to report the blocker instead of exhausting readiness retries.
+	// Planning returns a proposal to the controller, which owns the approval gate
+	// and starts a fresh execution turn after Plan is disabled. Delivery completion
+	// requirements, including required capabilities, wait for that execution turn:
+	// forcing them here could make a writer requirement contradict the plan-first
+	// workflow. This is a workflow boundary only; model-initiated tool calls above
+	// still use the normal Permissions/Sandbox path.
 	if a.planMode.Load() {
-		if a.deliveryProfile {
-			if msg := a.capabilityGateFailure(); msg != "" {
-				out.applies = true
-				if a.loopGuardAllowsFinal() {
-					return out
-				}
-				out.reason = msg
-			}
-		}
 		return out
 	}
 	if finalizeTask {
@@ -2875,7 +2853,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg:  "blocked: fresh read required",
 		}
 	}
-	planModeTrustedReadOnly := false
 	if a.planMode.Load() {
 		// Translate the tool's optional plan-mode self-report into the policy's
 		// tri-state. Mirrors the t.(tool.Previewer) assertion precedent below.
@@ -2887,30 +2864,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		untrustedReadOnly := planModeUntrustedReadOnly(t)
-		if decision := a.planModeDecision(call.Name, t.ReadOnly(), untrustedReadOnly, safety, json.RawMessage(call.Arguments)); decision.Blocked {
-			// Installed MCP writers follow the normal permission posture instead of
-			// being rejected by the planning-stage gate. PlanSafetyUnsafe remains an
-			// explicit hard stop.
-			mcpPermissionPath := safety != planmode.PlanSafetyUnsafe && isInstalledMCPTool(t) && !t.ReadOnly()
-			if !mcpPermissionPath {
-				trustAllowed := false
-				if decision.ReadOnlyCommandTrust != nil {
-					if allow, outcome, handled := a.checkPlanModeBashReadOnlyTrust(ctx, call, decision.ReadOnlyCommandTrust); handled {
-						if !allow {
-							return outcome
-						}
-						trustAllowed = true
-						planModeTrustedReadOnly = true
-					}
-				}
-				if !trustAllowed {
-					return toolOutcome{
-						output:  decision.Message,
-						blocked: true,
-						errMsg:  "blocked: plan mode is read-only",
-					}
-				}
+		if decision := a.planModeDecision(call.Name, t.ReadOnly(), planModeUntrustedReadOnly(t), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+			return toolOutcome{
+				output:  decision.Message,
+				blocked: true,
+				errMsg:  "blocked: tool is unavailable during planning",
 			}
 		}
 	}
@@ -2922,7 +2880,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	execArgs := json.RawMessage(call.Arguments)
 	evidenceName := call.Name
 	evidenceArgs := json.RawMessage(call.Arguments)
-	readOnly := t.ReadOnly() || planModeTrustedReadOnly
+	readOnly := t.ReadOnly()
 	var resolved tool.ResolvedCall
 	if resolver, ok := t.(tool.CallResolver); ok {
 		rc, rerr := resolver.ResolveCall(ctx, json.RawMessage(call.Arguments))
@@ -2945,7 +2903,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		if rc.Target != nil {
 			execTool = rc.Target
 		}
-		readOnly = rc.ReadOnly || planModeTrustedReadOnly
+		readOnly = rc.ReadOnly
 		if rc.TargetName != "" && rc.TargetName != call.Name {
 			EmitProxyAudit(a.sink, rc)
 		}
@@ -2971,11 +2929,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 
-	// A proxy resolution can point at a write-capable target even though the
-	// proxy tool itself reports read-only: the pre-resolution plan-mode check
-	// above only judged the proxy's own claim. Re-run the policy against the
-	// real target's name, read-only flag, and safety before any gate
-	// lets the call through.
+	// A proxy resolution can point at a target with an explicit planning-phase
+	// opt-out even though the proxy itself has none. Re-check the resolved target
+	// before its ordinary permission and sandbox path.
 	if resolved.TargetName != "" && a.planMode.Load() {
 		safety := planmode.PlanSafetyUnknown
 		if c, ok := execTool.(tool.PlanModeClassifier); ok {
@@ -2985,15 +2941,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		untrustedReadOnly := planModeUntrustedReadOnly(execTool)
-		if decision := a.planModeDecision(permName, resolved.ReadOnly, untrustedReadOnly, safety, permArgs); decision.Blocked {
-			mcpPermissionPath := safety != planmode.PlanSafetyUnsafe && isInstalledMCPTool(execTool) && !resolved.ReadOnly
-			if !mcpPermissionPath {
-				return toolOutcome{
-					output:  decision.Message,
-					blocked: true,
-					errMsg:  "blocked: plan mode is read-only",
-				}
+		if decision := a.planModeDecision(permName, resolved.ReadOnly, planModeUntrustedReadOnly(execTool), safety, permArgs); decision.Blocked {
+			return toolOutcome{
+				output:  decision.Message,
+				blocked: true,
+				errMsg:  "blocked: tool is unavailable during planning",
 			}
 		}
 	}
@@ -3272,27 +3224,14 @@ func (a *Agent) checkPlanModeBashReadOnlyTrust(ctx context.Context, call provide
 	return true, toolOutcome{}, true
 }
 
-func (a *Agent) planModeBlocked(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) (blocked bool, message string) {
-	decision := a.planModeDecision(toolName, readOnly, false, safety, args)
-	return decision.Blocked, decision.Message
-}
-
 func (a *Agent) planModeDecision(toolName string, readOnly, untrustedReadOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
-	return planmode.Policy{
-		AllowedTools:     a.planModeAllowedTools,
-		ReadOnlyCommands: a.planModeReadOnlyCommands,
-	}.Decide(planmode.Call{
+	return (planmode.Policy{}).Decide(planmode.Call{
 		Name:              toolName,
 		ReadOnly:          readOnly,
 		UntrustedReadOnly: untrustedReadOnly,
 		Safety:            safety,
 		Args:              args,
 	})
-}
-
-func planModeBashBlocked(args json.RawMessage) (bool, string) {
-	decision := planmode.Policy{}.Decide(planmode.Call{Name: "bash", Args: args})
-	return decision.Blocked, decision.Message
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {

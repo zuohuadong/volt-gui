@@ -205,7 +205,7 @@ func (c *Coordinator) SetResponseLanguage(lang string) {
 	}
 }
 
-// SetPlanMode propagates the read-only gate to both planner and executor agents
+// SetPlanMode propagates the plan-first workflow flag to both planner and executor agents
 // in two-model mode. Callers that only set the controller's executor would miss
 // the planner agent inside the Coordinator, causing stale plan-mode state after
 // approvals or manual mode switches.

@@ -1366,8 +1366,8 @@ func (a *App) ReplayPendingPrompts() {
 	}
 }
 
-// SetPlanMode toggles the read-only plan axis while preserving the current
-// tool-auto-approval axis.
+// SetPlanMode toggles the plan-first workflow while preserving the current
+// tool-approval posture and sandbox settings.
 func (a *App) SetPlanMode(on bool) {
 	a.setPlanModeForTab("", on)
 }

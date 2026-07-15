@@ -558,7 +558,7 @@ export function normalizeTokenMode(mode?: string): TokenMode {
 }
 
 // Mode is the compatibility string for two independent composer axes:
-// plan (read-only/user-plan gate) and yolo/full access (tool auto-approval).
+// plan (plan-first workflow) and yolo (tool auto-approval).
 export type Mode = "normal" | "plan" | "yolo" | "plan-yolo";
 
 export function normalizeMode(mode?: string): Mode {

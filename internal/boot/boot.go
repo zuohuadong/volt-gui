@@ -41,7 +41,6 @@ import (
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
-	"reasonix/internal/planmode"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
@@ -219,28 +218,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// outlive a turn and are cancelled by Controller.Close.
 	sink := event.Sync(opts.Sink)
 
-	planModePolicy := planmode.Policy{
-		AllowedTools:     cfg.Agent.PlanModeAllowedTools,
-		ReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
-	}
-	if ignored := planModePolicy.IgnoredAllowedTools(); len(ignored) > 0 {
-		detail := fmt.Sprintf("plan_mode_allowed_tools ignored known blocked entries: %s; this setting only declares extra read-only custom tools and cannot unlock known blocked tools or unsafe bash. For shell exploration, declare concrete read-only prefixes in plan_mode_read_only_commands (for example \"gh issue view\"); use read_only_task/read_only_skill instead of task/run_skill while planning.", strings.Join(ignored, ", "))
-		sink.Emit(event.Event{
-			Kind:   event.Notice,
-			Level:  event.LevelWarn,
-			Text:   "Some plan-mode tool settings were ignored.",
-			Detail: detail,
-		})
-	}
-	if ignored := planModePolicy.IgnoredReadOnlyCommands(); len(ignored) > 0 {
-		detail := fmt.Sprintf("plan_mode_read_only_commands ignored unsafe entries: %s; declare concrete read-only commands such as \"gh issue view\", not shell interpreters, overly broad prefixes, malformed prefixes, or writer-capable command verbs", strings.Join(ignored, ", "))
-		sink.Emit(event.Event{
-			Kind:   event.Notice,
-			Level:  event.LevelWarn,
-			Text:   "Some plan-mode command settings were ignored.",
-			Detail: detail,
-		})
-	}
 	if migErr != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Config migration did not complete.", Detail: "config migration from ~/.reasonix failed: " + migErr.Error()})
 	} else if migrated != nil {
@@ -753,7 +730,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// has none, so ask resolves to "decide for yourself".
 	reg.Add(agent.NewAskTool())
 
-	// Skill tools: read_only_skill is a narrow plan-mode-safe entry point; the
+	// Skill tools: read_only_skill is a narrow explicitly read-only entry point; the
 	// full skills source adds run_skill / install_skill plus the dedicated
 	// subagent wrappers (explore / research / review / security_review). Read-only
 	// subagent skills run ephemerally with the same registry boundary as
@@ -851,7 +828,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		// A read-only skill (builtin review/security-review, or frontmatter
 		// `read-only: true`) gets its promise enforced at the tool boundary:
-		// writer tools are stripped and bash runs under the plan-mode safe
+		// writer tools are stripped and bash runs under the read-only
 		// command policy. Transcripts recorded against the writer-capable
 		// registry stop matching on continue_from (schema-hash check reports
 		// the mismatch).
@@ -1143,9 +1120,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				return addBuiltinSourceTools("files", "delete_range", "delete_symbol", "move_file", "multi_edit", "notebook_edit"), nil
 			},
 			workflow: func(ctx context.Context) (string, error) {
-				// Plan mode narrows workflow to its read-only planning subset:
-				// todo_write stays available (planmode.Marker promises it),
-				// while complete_step joins via a fresh connect after approval.
+				// complete_step is explicitly execution-phase-only. Keep todo_write
+				// available while planning, then expose complete_step on a fresh
+				// workflow connect after approval.
 				if agent.PlanModeFromContext(ctx) {
 					return addBuiltinSourceTools("workflow", "todo_write") +
 						" complete_step stays blocked in plan mode; connect workflow again after plan approval to enable it.", nil
@@ -1932,10 +1909,10 @@ type PluginSpecOptions struct {
 	PlanModeAllowedTools []string
 }
 
-// PluginSpecsForRootWithPlanModeAllowedTools also promotes model-visible MCP
-// names declared in agent.plan_mode_allowed_tools to trusted read-only model
-// names for their matching server. This keeps the planner/read-only research
-// trust path aligned with the plan-mode execution escape valve.
+// PluginSpecsForRootWithPlanModeAllowedTools promotes legacy model-visible MCP
+// names from agent.plan_mode_allowed_tools to trusted read-only names for their
+// matching server. The alias remains useful to planner/read-only research
+// registries but does not control the main Plan workflow.
 func PluginSpecsForRootWithPlanModeAllowedTools(entries []config.PluginEntry, workspaceRoot string, allowedTools []string) []plugin.Spec {
 	return PluginSpecsForRootWithOptions(entries, workspaceRoot, PluginSpecOptions{
 		PlanModeAllowedTools: allowedTools,

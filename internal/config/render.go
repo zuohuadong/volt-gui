@@ -251,14 +251,14 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	fmt.Fprintf(&b, "cold_resume_prune   = %v   # elide stale tool results when reopening a session past the provider cache window\n", c.ColdResumePruneEnabled())
 	if len(c.Agent.PlanModeAllowedTools) > 0 {
-		fmt.Fprintf(&b, "plan_mode_allowed_tools = %s   # extra read-only declarations for custom tools; cannot unlock known blocked tools or unsafe bash\n", renderStringArray(c.Agent.PlanModeAllowedTools))
+		fmt.Fprintf(&b, "plan_mode_allowed_tools = %s   # legacy MCP read-only trust aliases; does not change Plan availability\n", renderStringArray(c.Agent.PlanModeAllowedTools))
 	} else {
-		b.WriteString("# plan_mode_allowed_tools = [\"custom_reader\"]   # extra read-only declarations; cannot unlock known blocked tools or unsafe bash\n")
+		b.WriteString("# plan_mode_allowed_tools = [\"mcp__legacy__reader\"]   # legacy MCP read-only trust alias; does not change Plan availability\n")
 	}
 	if len(c.Agent.PlanModeReadOnlyCommands) > 0 {
-		fmt.Fprintf(&b, "plan_mode_read_only_commands = %s   # concrete read-only shell prefixes available while planning\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
+		fmt.Fprintf(&b, "plan_mode_read_only_commands = %s   # legacy compatibility only; Plan bash uses Permissions\n", renderStringArray(c.Agent.PlanModeReadOnlyCommands))
 	} else {
-		b.WriteString("# plan_mode_read_only_commands = [\"gh issue view\", \"gh pr diff\"]   # concrete read-only shell prefixes; does not allow shell operators or shell interpreters\n")
+		b.WriteString("# plan_mode_read_only_commands = [\"gh issue view\"]   # legacy compatibility only; Plan bash uses Permissions\n")
 	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)

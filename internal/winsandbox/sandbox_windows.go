@@ -85,9 +85,11 @@ func runWindowsSandboxed(spec Spec, argv []string, opts RunOptions) (int, error)
 	if spec.Writable {
 		return runWindowsRestrictedSandboxed(spec, argv, opts)
 	}
-	// Serialize against concurrent runs touching the same roots and clear any
-	// deny residue left by a crashed run before we mutate ACLs.
-	lock, err := lockWindowsRoots(windowsMutatedRootsForRun(spec, argv[0]), lockWaitNotice(opts), lockHolderLabel(argv), spec.LockWait)
+	// Hold profile-scoped lifetime locks for additive package-SID grants and
+	// global lifetime locks for forbid_read paths. Individual ACL updates also
+	// take a short real-path lock so different profiles cannot lose each other's
+	// ACE in a read-modify-write race.
+	lock, err := lockWindowsRoots(windowsAppContainerLockRootsForRun(spec, argv[0]), lockWaitNotice(opts), lockHolderLabel(argv), spec.LockWait)
 	if err != nil {
 		return 0, err
 	}
@@ -645,6 +647,19 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 	var cleanup []func()
 	for _, root := range windowsWritableRoots(spec, extraWritableRoots...) {
 		rootWritable := spec.Writable || appContainerWritable[strings.ToLower(filepath.Clean(root))]
+		perm := "RX"
+		if rootWritable {
+			perm = "F"
+		}
+		if profileName != "" {
+			removeGrant, err := grantExactAppContainerPath(residueRun, profileName, root, objectSIDStrs, perm)
+			if err != nil {
+				runCleanup(cleanup)()
+				return func() {}, err
+			}
+			cleanup = append(cleanup, removeGrant)
+			continue
+		}
 		restore, _, err := snapshotPathSecurity(root, spec.Writable)
 		if err != nil {
 			runCleanup(cleanup)()
@@ -652,10 +667,6 @@ func grantAppContainerFilesystem(residueRun *windowsResidueRun, sid *windows.SID
 		}
 		cleanup = append(cleanup, restore)
 		restoreIndex := len(cleanup) - 1
-		perm := "RX"
-		if rootWritable {
-			perm = "F"
-		}
 		if err := recordGrantBeforeApply(residueRun, profileName, root); err != nil {
 			runCleanup(cleanup)()
 			return func() {}, err
@@ -744,6 +755,13 @@ func grantAppContainerExecutable(residueRun *windowsResidueRun, sid *windows.SID
 		// would strip from a system directory. Treat the remaining local-tool
 		// grants as best-effort convenience instead of failing before the OS can
 		// decide.
+		if profileName != "" {
+			removeGrant, err := grantExactAppContainerPath(residueRun, profileName, dir, objectSIDStrs, "RX")
+			if err == nil {
+				cleanup = append(cleanup, removeGrant)
+			}
+			continue
+		}
 		restore, _, err := snapshotPathSecurity(dir, false)
 		if err != nil {
 			continue
@@ -763,13 +781,11 @@ func grantAppContainerExecutable(residueRun *windowsResidueRun, sid *windows.SID
 		removeAdded := func() { removeGrantedAppContainerSIDs(dir, objectSIDStrs) }
 		cleanup = append(cleanup, cleanupPathSecurity(restore, removeAdded, nil))
 	}
-	// A package-specific SID is sufficient for data-path access, but Windows'
-	// image loader also evaluates the built-in AppContainer execute trustees for
-	// a non-system executable. Grant those broad trustees only on the resolved
-	// executable file itself — never recursively on its directory, workspace, or
-	// home — while keeping the directory traversal grant package-specific. This
-	// preserves custom MCP executable startup without exposing neighboring files
-	// to unrelated AppContainers.
+	// Grant the exact executable explicitly as well as its directory. Adding an
+	// inheritable ACE to a directory does not reliably retrofit an existing image
+	// file on every Windows volume, which made a user-installed MCP executable
+	// start but never reach its stdio handshake. The explicit grant remains scoped
+	// to this deterministic package SID.
 	if fileCleanup, ok := grantExactAppContainerExecutableFile(residueRun, profileName, exe, objectSIDStrs); ok {
 		cleanup = append(cleanup, fileCleanup)
 	}
@@ -785,35 +801,34 @@ func grantExactAppContainerExecutableFile(residueRun *windowsResidueRun, profile
 	if resolved == "" {
 		return nil, false
 	}
-	restore, _, err := snapshotPathSecurity(resolved, false)
+	removeGrant, err := grantExactAppContainerPath(residueRun, profileName, resolved, packageSIDStrs, "RX")
 	if err != nil {
 		return nil, false
 	}
-	var granted []string
-	defer func() {
-		if ok {
-			return
+	return removeGrant, true
+}
+
+func grantExactAppContainerPath(residueRun *windowsResidueRun, profileName, path string, sidStrs []string, perm string) (func(), error) {
+	mutationLock, err := lockWindowsRoots([]string{path}, nil, "AppContainer ACL update", 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := residueRun.recordProfileGrantBeforeApply(profileName, path); err != nil {
+		mutationLock.release()
+		return nil, err
+	}
+	if err := grantAppContainerSIDs(path, sidStrs, perm); err != nil {
+		mutationLock.release()
+		return nil, err
+	}
+	mutationLock.release()
+	return func() {
+		cleanupLock, err := lockWindowsRoots([]string{path}, nil, "AppContainer ACL cleanup", 0)
+		removeGrantedAppContainerSIDs(path, sidStrs)
+		if err == nil {
+			cleanupLock.release()
 		}
-		removeGrantedAppContainerSIDs(resolved, granted)
-		restore()
-	}()
-	if err := residueRun.recordProfileGrantBeforeApply(profileName, resolved); err != nil {
-		return nil, false
-	}
-	if err := grantAppContainerSIDs(resolved, packageSIDStrs, "RX"); err != nil {
-		return nil, false
-	}
-	granted = append(granted, packageSIDStrs...)
-	broadSIDStrs := appContainerExecutableLoaderSIDStrings()
-	if err := residueRun.recordBeforeApply(residueGrantLoader, resolved); err != nil {
-		return nil, false
-	}
-	if err := grantAppContainerSIDs(resolved, broadSIDStrs, "RX"); err != nil {
-		return nil, false
-	}
-	granted = append(granted, broadSIDStrs...)
-	removeAdded := func() { removeGrantedAppContainerSIDs(resolved, granted) }
-	return cleanupPathSecurity(restore, removeAdded, nil), true
+	}, nil
 }
 
 func windowsExecutableGrantDir(exe string) string {
@@ -912,10 +927,6 @@ func appContainerObjectAccessSIDStrings(sid *windows.SID) []string {
 	// groups here would expose a workspace (or the user's home) to every other
 	// AppContainer for the lifetime of a long-running MCP server.
 	return appContainerPackageSIDStrings(sid)
-}
-
-func appContainerExecutableLoaderSIDStrings() []string {
-	return []string{allApplicationPackagesSID, allRestrictedApplicationPackagesSID}
 }
 
 func currentProcessUserSIDString() (string, error) {

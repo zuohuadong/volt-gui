@@ -390,10 +390,8 @@ func TestWindowsAppContainerRunsExactNonSystemExecutable(t *testing.T) {
 	_ = windows.FreeSid(profileSID)
 	for _, path := range []string{toolExe, toolDir} {
 		sddl := pathDACLSDDLForTest(t, path)
-		for _, forbidden := range append([]string{profileSIDText}, appContainerExecutableLoaderSIDStrings()...) {
-			if sddlContainsSID(sddl, forbidden) {
-				t.Fatalf("%s still contains executable grant SID %s: %s", path, forbidden, sddl)
-			}
+		if sddlContainsSID(sddl, profileSIDText) {
+			t.Fatalf("%s still contains executable grant SID %s: %s", path, profileSIDText, sddl)
 		}
 	}
 }

@@ -24,15 +24,15 @@ import (
 
 // Reasonix launches every sandboxed command as its own helper process, so two
 // commands running against the same workspace are separate OS processes. This
-// sandbox enforces its boundary by temporarily mutating a path's ACLs and
-// integrity label and restoring them from a snapshot afterward. If two
-// processes did that on the same root concurrently, their grant/deny edits and
-// snapshot restores would interleave: one command's cleanup would tear down the
-// boundary the other still relies on, producing either a false permission
-// failure or — worse — a lapse in the forbid_read / writable boundary. A shared
-// path has no per-process ACL view, so short of re-architecting the isolation
-// primitive the only safe option is to serialize whole runs that touch the same
-// root.
+// sandbox enforces writable/forbid_read boundaries by temporarily mutating a
+// path's ACLs and integrity label and restoring them from a snapshot afterward.
+// If two destructive mutations hit the same root concurrently, their snapshots
+// and restores can interleave: one cleanup tears down the boundary the other
+// still relies on. Those runs must be serialized for their whole lifetime.
+// Read-only AppContainer grants are different: each deterministic profile adds
+// only its own package SID and removes only that SID, so different profiles may
+// coexist. They use a profile-scoped lifetime lock plus a short real-path lock
+// around each ACL read-modify-write.
 //
 // windowsRootLock takes a per-root named mutex for the lifetime of a run. The
 // mutex lives in the session-local namespace and the OS releases it
@@ -41,14 +41,13 @@ import (
 // in a stable sorted order so two processes cannot deadlock by acquiring them
 // in opposite orders.
 //
-// Trade-off: a long-running sandboxed command (including a background job)
-// holds its root's lock for its whole lifetime, so other sandboxed commands on
-// the same root queue behind it. That is the price of a mutation-based sandbox;
-// the alternative is boundary corruption. The wait is bounded (a short
-// interactive default, a longer Spec.LockWait budget for background jobs,
+// Trade-off: a long-running destructive sandboxed command (including a
+// background job) holds its root's lock for its whole lifetime, so another
+// destructive command on that root queues behind it. The wait is bounded (a
+// short interactive default, a longer Spec.LockWait budget for background jobs,
 // WINDOWS_SANDBOX_LOCK_MS overriding both — see lockinfo.go) so a stuck holder
-// surfaces as a clear error naming the holding command instead of an
-// indefinite hang.
+// surfaces as a clear error naming the holding command instead of an indefinite
+// hang.
 
 // stillActiveExitCode is STILL_ACTIVE: GetExitCodeProcess reports it while a
 // process is running. Used to tell a live marker-owner from a dead one.
@@ -279,6 +278,33 @@ func windowsMutatedRootsForRun(spec Spec, exe string) []string {
 	return append(roots, windowsMutableExecutableGrantPaths(exe)...)
 }
 
+// windowsAppContainerLockRootsForRun holds profile-scoped locks for additive
+// package-SID grants, allowing different MCP profiles to read the same home or
+// workspace concurrently without either cleanup removing the other's ACE.
+// forbid_read remains a real-path lock because it temporarily denies the shared
+// current-user SID and therefore cannot safely overlap another run on that path.
+func windowsAppContainerLockRootsForRun(spec Spec, exe string) []string {
+	profile := windowsAppContainerName(spec)
+	var roots []string
+	for _, root := range windowsWritableRoots(spec) {
+		roots = append(roots, windowsAppContainerProfileLockKey(profile, root))
+	}
+	for _, path := range windowsMutableExecutableGrantPaths(exe) {
+		roots = append(roots, windowsAppContainerProfileLockKey(profile, path))
+	}
+	for _, root := range normalizedWindowsRoots(spec.ForbidReadRoots) {
+		if pathExists(root) {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
+func windowsAppContainerProfileLockKey(profile, path string) string {
+	sum := sha1.Sum([]byte(strings.ToLower(filepath.Clean(path))))
+	return "appcontainer-profile." + profile + "." + hex.EncodeToString(sum[:])
+}
+
 // isWindowsSystemRoot reports whether path is inside a Windows system location
 // (%SystemRoot%, the Program Files variants). Determined by path membership, not
 // by attempting a write, so the result is stable regardless of the process's
@@ -324,7 +350,6 @@ type residueKind string
 const (
 	residueDeny         residueKind = "deny"
 	residueGrant        residueKind = "grant"
-	residueGrantLoader  residueKind = "grant_loader"
 	residueDenyProfile  residueKind = "deny_profile"
 	residueGrantProfile residueKind = "grant_profile"
 )
@@ -559,8 +584,6 @@ func sweepResidueMarkerFile(markerPath string, sandboxSIDs []string) {
 			removeDeniedAppContainerSIDs(e.path, sandboxSIDs)
 		case residueGrant:
 			removeGrantedAppContainerSIDs(e.path, sandboxSIDs)
-		case residueGrantLoader:
-			removeGrantedAppContainerSIDs(e.path, appContainerExecutableLoaderSIDStrings())
 		case residueGrantProfile:
 			sid, err := deriveAppContainerSIDFromName(e.profile)
 			if err == nil && sid != nil {
@@ -618,7 +641,7 @@ func readResidueMarker(path string) []residueEntry {
 			if fields[1] != "" {
 				out = append(out, residueEntry{kind: residueDeny, path: fields[1]})
 			}
-		case residueGrant, residueGrantLoader:
+		case residueGrant:
 			if fields[1] != "" {
 				out = append(out, residueEntry{kind: residueKind(fields[0]), path: fields[1]})
 			}

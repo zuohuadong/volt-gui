@@ -609,8 +609,8 @@ func applyLinux(targz []byte) error {
 	return selfupdate.Apply(bytes.NewReader(bin), selfupdate.Options{})
 }
 
-func applyWindowsFile(path string) error {
-	return startWindowsUpdateHandoff(path, currentInstallDir(), currentLauncherPath())
+func applyWindowsFile(path, toVersion string) error {
+	return startWindowsUpdateHandoff(path, currentInstallDir(), currentLauncherPath(), toVersion)
 }
 
 func currentExecutablePath() string {
@@ -643,13 +643,8 @@ func updateSiblingArtifacts() []string {
 	if dir == "" {
 		return nil
 	}
-	var names []string
-	switch runtime.GOOS {
-	case "windows":
-		names = []string{"reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe"}
-	case "linux":
-		names = []string{"reasonix-guard"}
-	default:
+	names := updateSiblingNames(runtime.GOOS)
+	if len(names) == 0 {
 		return nil
 	}
 	paths := make([]string, 0, len(names))
@@ -657,6 +652,17 @@ func updateSiblingArtifacts() []string {
 		paths = append(paths, filepath.Join(dir, name))
 	}
 	return paths
+}
+
+func updateSiblingNames(goos string) []string {
+	switch goos {
+	case "windows":
+		return []string{"reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe", "Reasonix.exe"}
+	case "linux":
+		return []string{"reasonix-guard"}
+	default:
+		return nil
+	}
 }
 
 // relaunchThroughGuard starts the packaged launcher so the replacement build is

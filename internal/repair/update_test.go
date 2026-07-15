@@ -1,10 +1,12 @@
 package repair
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFileUpdateRollbackRestoresPreviousBinary(t *testing.T) {
@@ -39,6 +41,39 @@ func TestFileUpdateRollbackRestoresPreviousBinary(t *testing.T) {
 	}
 }
 
+func TestRollbackPendingUpdateRejectsUnexpectedVersion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "reasonix-desktop")
+	originalExecutable := repairExecutable
+	repairExecutable = func() (string, error) { return filepath.Join(dir, "reasonix-guard"), nil }
+	t.Cleanup(func() { repairExecutable = originalExecutable })
+	if err := os.WriteFile(target, []byte("v1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareFileUpdate("v1", "v2", target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("v2"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rollbackPendingUpdate("v3", "")
+	if err != nil || result.RolledBack {
+		t.Fatalf("rollback = %+v, %v", result, err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "v2" {
+		t.Fatalf("target = %q (%v), want v2", got, err)
+	}
+	if !HasPendingUpdate() {
+		t.Fatal("mismatched rollback removed the pending transaction")
+	}
+}
+
 func TestFileUpdateRollbackRestoresReleaseUnit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
@@ -64,13 +99,16 @@ func TestFileUpdateRollbackRestoresReleaseUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tx.Files) != 2 {
+	if len(tx.Files) != 3 || !tx.Files[2].MissingBefore {
 		t.Fatalf("release unit files = %+v", tx.Files)
 	}
 	if err := os.WriteFile(target, []byte("new-desktop"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(guard, []byte("new-guard"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(missingSibling, []byte("new-helper"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	result, err := RollbackPendingUpdate()
@@ -88,6 +126,9 @@ func TestFileUpdateRollbackRestoresReleaseUnit(t *testing.T) {
 		if string(got) != want {
 			t.Fatalf("restored %s = %q, want %q", filepath.Base(path), got, want)
 		}
+	}
+	if _, err := os.Stat(missingSibling); !os.IsNotExist(err) {
+		t.Fatalf("new-release-only sibling survived rollback: %v", err)
 	}
 }
 
@@ -198,6 +239,117 @@ func TestRecoverFailedInstallClearsStaleMarker(t *testing.T) {
 	}
 }
 
+func TestRecoverFailedInstallIgnoresMarkerForAnotherVersion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "reasonix-desktop")
+	guard := filepath.Join(dir, "reasonix-guard")
+	originalExecutable := repairExecutable
+	repairExecutable = func() (string, error) { return guard, nil }
+	t.Cleanup(func() { repairExecutable = originalExecutable })
+	if err := os.WriteFile(target, []byte("v2"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareFileUpdate("v2", "v3", target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("v3"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkUpdateApplyFailed("v2", "stale installer failure"); err != nil {
+		t.Fatal(err)
+	}
+	result, failure, err := RecoverFailedInstall()
+	if err != nil || failure == nil || result.RolledBack {
+		t.Fatalf("recover = %+v %+v %v", result, failure, err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "v3" {
+		t.Fatalf("unrelated update was rolled back: %q (%v)", got, err)
+	}
+	if !HasPendingUpdate() {
+		t.Fatal("unrelated pending update was removed")
+	}
+	if _, ok := ReadUpdateApplyFailure(); ok {
+		t.Fatal("stale failure marker was not cleared")
+	}
+}
+
+func TestRecoverFailedInstallCorrelatesMarkerByVersionAndTime(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		markerOlder   bool
+		wantRollback  bool
+		wantContents  string
+		fromVersion   string
+		targetVersion string
+		markerVersion string
+	}{
+		{name: "older marker is stale", markerOlder: true, wantContents: "v3", fromVersion: "v2", targetVersion: "v3"},
+		{name: "newer marker matches", wantRollback: true, wantContents: "v1", fromVersion: "v1", targetVersion: "v2"},
+		{name: "older same-version marker is stale", markerOlder: true, wantContents: "v3", fromVersion: "v2", targetVersion: "v3", markerVersion: "v3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("REASONIX_HOME", home)
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "reasonix-desktop")
+			guard := filepath.Join(dir, "reasonix-guard")
+			originalExecutable := repairExecutable
+			repairExecutable = func() (string, error) { return guard, nil }
+			t.Cleanup(func() { repairExecutable = originalExecutable })
+			if err := os.WriteFile(target, []byte(tc.fromVersion), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := PrepareFileUpdate(tc.fromVersion, tc.targetVersion, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte(tc.targetVersion), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := MarkUpdateApplyFailed(tc.markerVersion, "installer failure"); err != nil {
+				t.Fatal(err)
+			}
+			failure, ok := ReadUpdateApplyFailure()
+			if !ok {
+				t.Fatal("legacy failure marker missing")
+			}
+			txAt, err := time.Parse(time.RFC3339Nano, tx.CreatedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.markerOlder {
+				failure.RecordedAt = txAt.Add(-time.Second).Format(time.RFC3339Nano)
+			} else {
+				failure.RecordedAt = txAt.Add(time.Second).Format(time.RFC3339Nano)
+			}
+			b, err := json.Marshal(failure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(updateApplyFailurePath(), append(b, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			result, failure, err := RecoverFailedInstall()
+			if err != nil || failure == nil || result.RolledBack != tc.wantRollback {
+				t.Fatalf("recover = %+v %+v %v", result, failure, err)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil || string(got) != tc.wantContents {
+				t.Fatalf("target = %q (%v), want %q", got, err, tc.wantContents)
+			}
+		})
+	}
+}
+
 func TestHealthyUpdateRemovesBackup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
@@ -242,6 +394,7 @@ func TestFileUpdateRollbackCompensatesOnPartialFailure(t *testing.T) {
 	}
 	target := filepath.Join(dir, "reasonix-desktop")
 	guard := filepath.Join(dir, "reasonix-guard")
+	added := filepath.Join(dir, "reasonix-update-helper.exe")
 	originalExecutable := repairExecutable
 	repairExecutable = func() (string, error) { return guard, nil }
 	t.Cleanup(func() { repairExecutable = originalExecutable })
@@ -250,10 +403,10 @@ func TestFileUpdateRollbackCompensatesOnPartialFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := PrepareFileUpdate("v1", "v2", target, guard); err != nil {
+	if _, err := PrepareFileUpdate("v1", "v2", target, added, guard); err != nil {
 		t.Fatal(err)
 	}
-	for path, content := range map[string]string{target: "new-desktop", guard: "new-guard"} {
+	for path, content := range map[string]string{target: "new-desktop", guard: "new-guard", added: "new-helper"} {
 		if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -261,7 +414,7 @@ func TestFileUpdateRollbackCompensatesOnPartialFailure(t *testing.T) {
 
 	originalRename := rollbackSwapRename
 	rollbackSwapRename = func(oldpath, newpath string) error {
-		if newpath == guard {
+		if oldpath == guard+".reasonix-rollback-stage" && newpath == guard {
 			return errors.New("injected rename failure")
 		}
 		return os.Rename(oldpath, newpath)
@@ -278,7 +431,7 @@ func TestFileUpdateRollbackCompensatesOnPartialFailure(t *testing.T) {
 	if result.MixedInstall {
 		t.Fatalf("compensated rollback must not report a mixed install: %+v", result)
 	}
-	for path, want := range map[string]string{target: "new-desktop", guard: "new-guard"} {
+	for path, want := range map[string]string{target: "new-desktop", guard: "new-guard", added: "new-helper"} {
 		got, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -311,6 +464,9 @@ func TestFileUpdateRollbackCompensatesOnPartialFailure(t *testing.T) {
 		if string(got) != want {
 			t.Fatalf("retried %s = %q, want %q", filepath.Base(path), got, want)
 		}
+	}
+	if _, err := os.Stat(added); !os.IsNotExist(err) {
+		t.Fatalf("new-release-only helper survived retried rollback: %v", err)
 	}
 }
 

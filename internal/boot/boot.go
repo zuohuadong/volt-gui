@@ -363,6 +363,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ProjectRoot:      root,
 		CustomPaths:      cfg.SkillCustomPaths(),
 		PluginPaths:      cfg.PluginPackageSkillOwners(),
+		PluginAgentPaths: cfg.PluginPackageAgentOwners(),
 		ExcludedPaths:    cfg.SkillExcludedPaths(),
 		DisabledNames:    cfg.DisabledSkillNames(),
 		MaxDepth:         cfg.SkillMaxDepth(),
@@ -376,7 +377,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skills := skillStore.List()
 	allSkillStore := skillStore
 	if !cfg.SafeMode() {
-		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
 	}
 	allSkills := allSkillStore.List()
 	if !tokenEconomy && !cfg.SafeMode() {

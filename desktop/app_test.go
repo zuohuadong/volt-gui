@@ -3760,6 +3760,14 @@ func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *
 	}
 }
 
+func TestDescribeSessionBindingWorkspaceKeepsWindowsPathReadable(t *testing.T) {
+	path := `C:\Users\Jane Doe\Reasonix`
+	want := `project workspace "C:\Users\Jane Doe\Reasonix"`
+	if got := describeSessionBindingWorkspace("project", path); got != want {
+		t.Fatalf("describeSessionBindingWorkspace = %q, want %q", got, want)
+	}
+}
+
 func TestSteerForTabReconcilesStaleWorkspaceBeforeIdleFallback(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "steer_idle_fallback")
 

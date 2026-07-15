@@ -140,6 +140,9 @@ func TestWorkbenchExportsWriteFiles(t *testing.T) {
 		t.Fatalf("ExportOperationLogs path not written: %v", err)
 	}
 
+	if _, err := app.SaveWorkbenchReport(WorkbenchReportInput{Title: "待审批导出报告", Body: "导出前必须完成审批"}); err != nil {
+		t.Fatalf("SaveWorkbenchReport: %v", err)
+	}
 	if _, err := app.ExportWorkbenchReports(); err == nil {
 		t.Fatal("ExportWorkbenchReports should reject unapproved reports")
 	}
@@ -606,6 +609,7 @@ func TestWorkbenchReportExportsMatchRequestedFormats(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SaveWorkbenchReport: %v", err)
 			}
+			approveReportForExport(t, app, report.ID)
 			path, err := app.ExportWorkbenchReport(report.ID)
 			if err != nil {
 				t.Fatalf("ExportWorkbenchReport: %v", err)

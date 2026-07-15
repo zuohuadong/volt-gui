@@ -1041,7 +1041,30 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 // proxy tools such as use_capability.
 func RunReadOnlySubAgentWithSession(ctx context.Context, prov provider.Provider, reg *tool.Registry, sess *Session, prompt string, opts Options, sink event.Sink) (string, error) {
 	opts.ReadOnlyExecution = true
-	return RunSubAgentWithSession(ctx, prov, reg, sess, prompt, opts, sink)
+	return RunSubAgentWithSession(ctx, prov, strictReadOnlyExecutionRegistry(reg), sess, prompt, opts, sink)
+}
+
+// strictReadOnlyExecutionRegistry is the final construction-time filter shared
+// by every strict child. Callers still apply role-specific filtering (review,
+// planner, profile allowlists), while this layer guarantees that a missed call
+// site cannot expose writers, destructive MCP tools, untrusted readers, or an
+// untrusted host-starting target to the model.
+func strictReadOnlyExecutionRegistry(reg *tool.Registry) *tool.Registry {
+	filtered := tool.NewRegistry()
+	if reg == nil {
+		return filtered
+	}
+	for _, name := range reg.Names() {
+		target, ok := reg.Get(name)
+		if !ok || !target.ReadOnly() || planModeUntrustedReadOnly(target) || mcpDestructiveHint(target) {
+			continue
+		}
+		if mutation, ok := target.(tool.ReadOnlyExecutionHostMutation); ok && mutation.ReadOnlyExecutionHostMutation() && !readOnlyExecutionAllowsTrustedMCPStartup(target) {
+			continue
+		}
+		filtered.Add(target)
+	}
+	return filtered
 }
 
 // latestAssistantAnswer walks the session backwards for the last assistant

@@ -1766,6 +1766,9 @@ func (t *remoteTool) MCPServerName() string {
 	return t.client.name
 }
 func (t *remoteTool) MCPRawToolName() string { return t.rawName }
+func (t *remoteTool) MCPCapabilityFingerprint() string {
+	return t.capabilityFingerprint
+}
 
 // ReadOnly reflects MCP readOnlyHint plus backward-compatible Spec overrides.
 // It defaults to false, so opaque tools remain write-capable unless the server

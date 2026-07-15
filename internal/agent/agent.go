@@ -3203,6 +3203,9 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 	}
 	if resolved == nil {
 		if visible == nil || !visible.ReadOnly() {
+			if reasoner, ok := visible.(tool.ReadOnlyExecutionBlockReason); ok && strings.TrimSpace(reasoner.ReadOnlyExecutionBlockReason()) != "" {
+				return block(reasoner.ReadOnlyExecutionBlockReason())
+			}
 			return block("execute a state-changing tool")
 		}
 		if u, ok := visible.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {
@@ -3230,6 +3233,9 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			return block("execute an unresolved dynamic capability")
 		}
 		if !resolved.ReadOnly {
+			if reasoner, ok := resolved.Target.(tool.ReadOnlyExecutionBlockReason); ok && strings.TrimSpace(reasoner.ReadOnlyExecutionBlockReason()) != "" {
+				return block(reasoner.ReadOnlyExecutionBlockReason())
+			}
 			return block("execute a state-changing dynamic capability")
 		}
 		if u, ok := resolved.Target.(tool.PlanModeUntrustedReadOnly); ok && u.PlanModeUntrustedReadOnly() {

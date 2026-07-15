@@ -308,17 +308,24 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   `auto` delegates to the ordinary permission decision; `prompt` reviews every
   call; `writes` reviews writers only; and `approve` allows ordinary calls.
   `approvals_reviewer = "user"` uses the interactive user, while `auto_review`
-  uses the session Guardian as a final reviewer. Missing reviewers and reviewer
-  errors fail closed. A destructive call is reviewed on every invocation and
-  cannot reuse remembered/session grants. All of this is local metadata and is
+  sends the calls that need review (`prompt`, writer hits under `writes`, and
+  `auto` calls the global posture would Ask about) to the session Guardian; a
+  successful allow/deny verdict is final. A missing, timed-out, failed, or
+  indeterminate reviewer degrades to fresh human approval — a prompt that
+  Auto/YOLO, the approved-plan window, and session grants cannot answer — and
+  non-interactive sessions fail closed. A destructive call always requires a
+  fresh human approval on every invocation: no reviewer, session grant, or
+  Auto/YOLO posture can authorize it. All of this is local metadata and is
   absent from provider-visible tool schemas.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
-  workflow, not a permission boundary. Before Permissions/Sandbox, the host only
-  enforces explicit phase opt-outs: `complete_step` is read-only but belongs to
-  the post-approval execution phase, so it self-reports plan-unsafe and is
-  refused. Every ordinary built-in, Bash, MCP, and proxy-resolved call then uses
-  the same Ask/Auto/YOLO, explicit `ask`/`deny`, and Sandbox path as Standard
-  mode. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
+  workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
+  host enforces explicit phase opt-outs (`complete_step` is read-only but
+  belongs to the post-approval execution phase, so it self-reports plan-unsafe
+  and is refused) and hard-blocks installed MCP and proxy-resolved MCP
+  writer/destructive targets plus untrusted readers until the plan is approved.
+  Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
+  `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
+  their normal approval flow after Plan exits. A third-party MCP `readOnlyHint` affects ordinary permission and dispatch
   classification, but it does not grant trust to the dedicated planner or
   read-only sub-agent registries; use a locally audited
   `trusted_read_only_tools` entry for those. The legacy

@@ -90,6 +90,39 @@ func TestAgentProfileModelCandidateOnlyTreatsProviderPrefixAsFullRef(t *testing.
 	}
 }
 
+func TestResolveAgentProfileModelFallsBackWhenConfiguredModelIsUnavailable(t *testing.T) {
+	t.Setenv("AGENT_PROFILE_MISSING_KEY", "")
+	cfg := &config.Config{
+		Desktop: config.DesktopConfig{ProviderAccess: []string{"base", "missing-key"}},
+		Providers: []config.ProviderEntry{
+			{Name: "base", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1", Model: "base-model"},
+			{Name: "profile-provider", Kind: "openai", BaseURL: "http://127.0.0.1:11435/v1", Model: "profile-model"},
+			{Name: "missing-key", Kind: "openai", BaseURL: "https://models.example.test/v1", Model: "missing-model", APIKeyEnv: "AGENT_PROFILE_MISSING_KEY"},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		view     PersistentAgentView
+		want     string
+		fallback bool
+	}{
+		{name: "unknown model", view: PersistentAgentView{ID: "reviewer", Provider: "OpenAI", Model: "GPT-4o"}, want: "base/base-model", fallback: true},
+		{name: "provider not enabled", view: PersistentAgentView{ID: "reviewer", Provider: "profile-provider", Model: "profile-model"}, want: "base/base-model", fallback: true},
+		{name: "provider missing key", view: PersistentAgentView{ID: "reviewer", Provider: "missing-key", Model: "missing-model"}, want: "base/base-model", fallback: true},
+		{name: "available profile model", view: PersistentAgentView{ID: "reviewer", Provider: "base", Model: "base-model"}, want: "base/base-model", fallback: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, fallback, err := resolveAgentProfileModel(cfg, &tt.view, "base/base-model")
+			if err != nil || got != tt.want || fallback != tt.fallback {
+				t.Fatalf("resolveAgentProfileModel = (%q, %v, %v), want (%q, %v, nil)", got, fallback, err, tt.want, tt.fallback)
+			}
+		})
+	}
+}
+
 func TestSetAgentProfileForTabRejectsRunningTurn(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	if err := saveAgents([]PersistentAgentView{{ID: "reviewer", Name: "Reviewer", Status: "已启用", Desc: "Review carefully."}}); err != nil {

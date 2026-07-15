@@ -478,9 +478,18 @@ async function smokeTaskReceipt(page, mobile) {
   for (const label of ['目标', '执行配置', '改动', '验证', '产物', '数据去向', '回滚']) await assertText(page, label, `receipt section ${label}`);
   const context = page.locator('[data-testid="task-context-bar"]');
   await context.waitFor({ state: 'visible', timeout: 5000 });
-  for (const label of ['Workspace', 'Project', 'Agent Profile', 'Model', 'Permission', 'Memory']) await assertText(page, label, `task context ${label}`);
-  const visibleContextItems = await context.locator('.context-values > span').evaluateAll((nodes) => nodes.filter((node) => getComputedStyle(node).display !== 'none').length);
-  if (visibleContextItems !== 6) throw new Error(`task context exposes ${visibleContextItems}/6 runtime axes`);
+  const locationText = (await context.locator('.context-location').innerText()).trim();
+  if (!locationText.includes('Workspace') || !locationText.includes('收件箱项目')) {
+    throw new Error(`task context lost its compact Workspace / Project breadcrumb: ${JSON.stringify(locationText)}`);
+  }
+  const contextControls = context.locator('.context-controls > button');
+  await assertCount(contextControls, 4, 'compact execution context controls');
+  for (const title of ['Agent Profile:', 'Model:', 'Permission:', 'Memory:']) {
+    const matches = await contextControls.evaluateAll((nodes, expected) => nodes.filter((node) => (node.getAttribute('title') || '').includes(expected)).length, title);
+    if (matches !== 1) throw new Error(`task context is missing one actionable ${title} control`);
+    const accessibleMatches = await contextControls.evaluateAll((nodes, expected) => nodes.filter((node) => (node.getAttribute('aria-label') || '').includes(expected)).length, title);
+    if (accessibleMatches !== 1) throw new Error(`task context is missing one accessible ${title} label`);
+  }
   await context.getByRole('button', { name: '进入 Code 工程检查', exact: true }).click();
   await assertText(page, '任务检查器', 'Task inspector title');
   await openUnifiedDrawerIfNeeded(page, mobile);
@@ -491,11 +500,7 @@ async function smokeTaskReceipt(page, mobile) {
   const restoredSidebar = page.locator('[data-testid="unified-sidebar"]');
   await clickScopedButton(restoredSidebar, 'E2E 发布验收任务', { exact: false });
   await receipt.waitFor({ state: 'visible', timeout: 5000 });
-  const activity = page.locator('[data-testid="task-activity-center"]');
-  await activity.waitFor({ state: 'visible', timeout: 5000 });
-  const expandActivity = activity.getByRole('button', { name: '展开任务活动', exact: true });
-  await expandActivity.click();
-  await assertText(page, '本轮已结束，等待验证证据与人工复核。', 'expanded task activity receipt state');
+  await assertCount(page.locator('[data-testid="task-activity-center"]'), 0, 'idle task activity strip');
 }
 
 async function smokeArchivedTaskRecovery(page, mobile) {
@@ -660,7 +665,7 @@ async function smokeLifecycleComponentStates(label, viewport) {
           receipt: { state: 'failed' },
           changesCount: 3,
           checkpointCount: 2,
-          lastError: '验证命令失败，请选择恢复动作。',
+          lastError: 'agent profile "code-review" uses unknown model "OpenAl/GPT-4o"',
           canRestoreDraft: true,
           onRecover: (action) => events.push(`recover:${action}`),
           onSwitchTab: (id) => events.push(`switch:${id}`),
@@ -714,15 +719,17 @@ async function smokeLifecycleComponentStates(label, viewport) {
 
     const activity = page.locator('[data-testid="task-activity-center"]');
     await activity.waitFor({ state: 'visible', timeout: 5000 });
-    await assertText(page, '结构化恢复', 'failed task recovery state');
-    const activityToggle = activity.getByRole('button', { name: '收起任务活动', exact: true });
-    await activityToggle.click();
-    if (await activity.getByText('结构化恢复', { exact: true }).isVisible().catch(() => false)) {
-      throw new Error('recovery state cannot be manually collapsed');
-    }
+    await assertText(page, 'Agent 模型不可用', 'failed Agent model recovery state');
+    await assertText(page, 'code-review 绑定的 OpenAl/GPT-4o 不在当前模型渠道中。', 'failed Agent model cause');
+    await activity.getByRole('button', { name: '修复 Agent', exact: true }).click();
     await activity.getByRole('button', { name: '展开任务活动', exact: true }).click();
-    await assertText(page, '结构化恢复', 're-expanded failed task recovery state');
+    await assertText(page, '其他恢复方式', 'expanded recovery alternatives');
     await activity.getByRole('button', { name: '重试', exact: true }).click();
+    const lifecycleEvents = await page.evaluate(() => window.__voltLifecycleSmokeEvents);
+    if (!lifecycleEvents.includes('recover:open-agent') || !lifecycleEvents.includes('recover:retry')) {
+      throw new Error(`task recovery actions were not wired correctly: ${JSON.stringify(lifecycleEvents)}`);
+    }
+    await activity.getByRole('button', { name: '收起任务活动', exact: true }).click();
 
     const queue = page.locator('[data-testid="thread-message-queue"]');
     await assertCount(queue.locator('article'), 2, 'queued lifecycle rows');
@@ -768,6 +775,58 @@ async function smokeLifecycleComponentStates(label, viewport) {
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'auto' }));
   });
 
+  await page.close();
+}
+
+async function smokeScopedMemoryOnboarding(label, viewport) {
+  const page = await browser.newPage({ viewport });
+  const errors = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(`${msg.type()}: ${msg.text()}`);
+  });
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+
+  await runStep(page, errors, `${label} scoped memory onboarding`, async () => {
+    await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await page.evaluate(async () => {
+      const { mount } = await import('/@id/svelte');
+      const { default: ScopedMemoryManager } = await import('/src/components/ScopedMemoryManager.svelte');
+      document.body.innerHTML = '<main id="memory-onboarding-fixture"></main>';
+      document.body.style.margin = '0';
+      document.body.style.background = '#f3f5f2';
+      const target = document.getElementById('memory-onboarding-fixture');
+      Object.assign(target.style, {
+        maxWidth: '1120px',
+        margin: '0 auto',
+        padding: '20px',
+      });
+      mount(ScopedMemoryManager, {
+        target,
+        props: {
+          view: {
+            context: { organizationId: 'default', workspaceId: 'global-workspace', projectId: 'inbox', threadId: 'thread-code-review' },
+            entries: [],
+            archives: [],
+            storePath: '~/.voltui/scoped-memory/store.json',
+            available: true,
+          },
+          loading: false,
+          error: '',
+          backendAvailable: true,
+          running: false,
+          onRefresh: () => undefined,
+          onOpenTrust: () => undefined,
+          onSave: async () => undefined,
+          onIsolation: async () => undefined,
+          onDelete: async () => undefined,
+        },
+      });
+    });
+    await assertText(page, '尚未添加分层记忆', 'scoped memory onboarding title');
+    await assertText(page, 'Agent Profile 的 MEMORY.md、普通项目文档和其他工具的记忆不会自动归入这里', 'scoped memory onboarding explanation');
+    await firstVisible(page.getByRole('button', { name: '添加第一条记忆', exact: true }), 'scoped memory primary action');
+    await smokeResponsiveGeometry(page);
+  });
   await page.close();
 }
 
@@ -818,6 +877,8 @@ try {
   await smokeViewport('mobile', { width: 390, height: 844 });
   await smokeLifecycleComponentStates('desktop', { width: 1440, height: 950 });
   await smokeLifecycleComponentStates('mobile', { width: 390, height: 844 });
+  await smokeScopedMemoryOnboarding('desktop', { width: 1440, height: 950 });
+  await smokeScopedMemoryOnboarding('mobile', { width: 390, height: 844 });
 } finally {
   await browser.close();
 }

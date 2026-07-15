@@ -66,20 +66,20 @@ func agentProfileModelCandidate(view *PersistentAgentView) string {
 	return prefix + model
 }
 
-func resolveAgentProfileModel(cfg *config.Config, view *PersistentAgentView, inherited string) (string, error) {
+func resolveAgentProfileModel(cfg *config.Config, view *PersistentAgentView, inherited string) (string, bool, error) {
 	candidate := agentProfileModelCandidate(view)
 	if candidate == "" {
-		return inherited, nil
+		return inherited, false, nil
 	}
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, candidate)
 	entry, ok := cfg.ResolveModel(candidate)
 	if !ok {
-		return "", fmt.Errorf("agent profile %q uses unknown model %q", view.ID, candidate)
+		return inherited, true, nil
 	}
-	if !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
-		return "", fmt.Errorf("agent profile %q model is unavailable because provider %q is not added", view.ID, entry.Name)
+	if !entry.Configured() || !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
+		return inherited, true, nil
 	}
-	return entry.Name + "/" + entry.Model, nil
+	return entry.Name + "/" + entry.Model, false, nil
 }
 
 func recordAgentProfileSwitch(path string, view *PersistentAgentView, modelRef string, memoryScopes, memorySourceIDs []string) error {
@@ -207,9 +207,12 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	} else {
 		return fmt.Errorf("agent profile base model %q is unavailable", baseModel)
 	}
-	modelRef, err = resolveAgentProfileModel(cfg, view, baseModel)
+	modelRef, profileModelFallback, err := resolveAgentProfileModel(cfg, view, baseModel)
 	if err != nil {
 		return err
+	}
+	if profileModelFallback {
+		a.noticeForTab(tab.ID, fmt.Sprintf("Agent Profile %q 的模型 %q 已不可用，已改用当前模型 %s", view.ID, agentProfileModelCandidate(view), modelRef))
 	}
 
 	var carried []provider.Message

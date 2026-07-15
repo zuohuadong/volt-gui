@@ -359,7 +359,7 @@ func (a *App) TrySubagentProfile(input SubagentProfileInput, task string) (strin
 	// to answer a prompt).
 	policy := permission.New(cfg.Permissions.Mode, cfg.Permissions.Allow, cfg.Permissions.Ask, cfg.Permissions.Deny)
 
-	result, err := agent.RunSubAgentWithSession(runCtx, prov, reg, agent.NewSession(prompt), task, agent.Options{
+	result, err := agent.RunReadOnlySubAgentWithSession(runCtx, prov, reg, agent.NewSession(prompt), task, agent.Options{
 		MaxSteps:      12,
 		Temperature:   cfg.Agent.Temperature,
 		Pricing:       me.Price,

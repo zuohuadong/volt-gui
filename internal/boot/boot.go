@@ -822,13 +822,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		sysPrompt := agent.DefaultReadOnlyTaskSystemPrompt + "\n\nSkill instructions:\n" + sk.Body
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
-		runOptions.ReadOnlyExecution = true
 		// Delivery risk gates consume typed reports; outside Delivery a casual
 		// /review run may finish with prose only.
 		if runOptions.DeliveryProfile {
 			runOptions.RequireReviewReportKind = agent.ReviewReportKindForSkill(sk.Name)
 		}
-		return agent.RunSubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task,
+		return agent.RunReadOnlySubAgentWithSession(sctx, prov, subReg, agent.NewSession(sysPrompt), task,
 			runOptions, agent.NestedSink(sctx, event.Discard))
 	}
 	// Writer-capable subagent skills reuse the sub-agent machinery via this
@@ -923,14 +922,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
-		runOptions.ReadOnlyExecution = sk.ReadOnly
 		// Delivery risk gates consume typed reports; outside Delivery a casual
 		// /review run may finish with prose only.
 		if runOptions.DeliveryProfile {
 			runOptions.RequireReviewReportKind = agent.ReviewReportKindForSkill(sk.Name)
 		}
-		answer, err := agent.RunSubAgentWithSession(sctx, prov, subReg, run.Session, task,
-			runOptions, agent.NestedSink(sctx, event.Discard))
+		var answer string
+		if sk.ReadOnly {
+			answer, err = agent.RunReadOnlySubAgentWithSession(sctx, prov, subReg, run.Session, task,
+				runOptions, agent.NestedSink(sctx, event.Discard))
+		} else {
+			answer, err = agent.RunSubAgentWithSession(sctx, prov, subReg, run.Session, task,
+				runOptions, agent.NestedSink(sctx, event.Discard))
+		}
 		if err != nil {
 			return "", errors.Join(err, subagentStore.SaveFailed(run))
 		}

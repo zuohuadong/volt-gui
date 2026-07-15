@@ -59,8 +59,6 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 # cursor_shape = "underline"       # block|underline|bar; CLI/TUI text cursor
 
 [agent]
-max_steps = 32                   # user/global only; executor tool-call rounds; 0 = no total round limit
-planner_max_steps = 0            # user/global only; planner read-only tool-call rounds; 0 = no limit
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # plan_mode_allowed_tools = ["custom_reader"]   # extra read-only custom tools only;
 #                                                # does not unlock blocked tools or unsafe bash
@@ -879,14 +877,16 @@ planner_model = "deepseek-pro"   # used as the low-frequency planner
 
 The planner sees loaded `REASONIX.md` / `AGENTS.md` memory and a small read-only
 research tool set, so it can inspect relevant files before handing a plan to the
-executor. Writer and workflow tools remain executor-only. `max_steps` limits the
-executor; `planner_max_steps` limits only the planner, and either can be set to
-`0` for no configured round limit. Independently, an executor with an active
-todo pauses after 16 consecutive tool-call rounds without completing the
-current item; its saved work can be resumed in the next user turn.
+executor. Writer and workflow tools remain executor-only. Reasonix manages
+normal execution automatically: if an active todo produces no new completion,
+unique read, command, or mutation for 8 tool-call rounds, the host asks the
+executor to reassess. After 16 no-progress rounds it pauses with saved work that
+can be resumed in the next user turn. Exact repeats do not count as progress;
+new host-observed work renews the lease.
 
-Keep step-limit preferences in the user config. Project `./reasonix.toml` files
-do not override `max_steps` or `planner_max_steps`.
+Existing `max_steps` and `planner_max_steps` keys remain accepted as advanced
+user-level compatibility overrides, but are intentionally omitted from the UI
+and normal examples. Project `./reasonix.toml` files do not override them.
 
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only

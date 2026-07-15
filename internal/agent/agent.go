@@ -1360,6 +1360,12 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	graceRound := false
 	todoProgress, trackingTodoProgress := a.canonicalTodoProgress()
 	todoStallRounds := 0
+	seenTodoProgress := make(map[string]struct{})
+	if a.evidence != nil {
+		for _, sig := range a.evidence.SuccessfulProgressSignaturesSince(0) {
+			seenTodoProgress[sig] = struct{}{}
+		}
+	}
 	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps || graceRound; step++ {
 		// Consume a queued steer and persist it to the session so it
@@ -1501,6 +1507,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			return &maxStepsPause{steps: a.maxSteps, key: a.maxStepsKey}
 		}
 
+		receiptMark := 0
+		if a.evidence != nil {
+			receiptMark = a.evidence.Len()
+		}
 		results, images := a.executeBatch(ctx, calls)
 		for i, call := range calls {
 			a.session.Add(provider.Message{
@@ -1518,20 +1528,38 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		}
 		if !a.planMode.Load() {
 			nextProgress, nextTracking := a.canonicalTodoProgress()
+			hostProgress := false
+			if a.evidence != nil {
+				for _, sig := range a.evidence.SuccessfulProgressSignaturesSince(receiptMark) {
+					if _, seen := seenTodoProgress[sig]; !seen {
+						hostProgress = true
+						seenTodoProgress[sig] = struct{}{}
+					}
+				}
+			}
 			switch {
 			case !nextTracking:
 				todoStallRounds = 0
-			case !trackingTodoProgress || nextProgress > todoProgress:
+			case !trackingTodoProgress || nextProgress > todoProgress || hostProgress:
 				todoStallRounds = 0
 			default:
 				todoStallRounds++
 			}
 			todoProgress, trackingTodoProgress = nextProgress, nextTracking
+			if todoStallRounds == todoProgressNudgeRounds {
+				nudge := todoProgressNudgeMessage(todoStallRounds)
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(nudge)})
+				a.sink.Emit(event.Event{
+					Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeLoopGuard,
+					Text:   loopGuardNoticeText(),
+					Detail: fmt.Sprintf("the current todo has no new completion, unique read, command, or mutation for %d consecutive tool-call rounds; asking the assistant to reassess", todoStallRounds),
+				})
+			}
 			if todoStallRounds >= maxTodoStallRounds {
 				a.sink.Emit(event.Event{
-					Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeToolBudget,
+					Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeLoopGuard,
 					Text:   "Task progress stalled; pausing before more tools are called.",
-					Detail: fmt.Sprintf("the current todo did not advance for %d consecutive tool-call rounds; work is saved and can be resumed", todoStallRounds),
+					Detail: fmt.Sprintf("the current todo has no new completion, unique read, command, or mutation for %d consecutive tool-call rounds after a host reassessment; work is saved and can be resumed", todoStallRounds),
 				})
 				return &todoStallPause{rounds: todoStallRounds}
 			}
@@ -2771,9 +2799,18 @@ const stormBreakThreshold = 3
 // no-op/write loop and should be redirected to a different tool or final answer.
 const repeatSuccessBreakThreshold = 2
 
-// maxTodoStallRounds bounds semantically drifting execution even when each
-// individual tool call differs enough to evade the repeat/storm guards.
-const maxTodoStallRounds = 16
+const (
+	// todoProgressNudgeRounds is the first adaptive checkpoint. The host asks
+	// the model to reassess, but keeps the turn alive so it can recover.
+	todoProgressNudgeRounds = 8
+	// maxTodoStallRounds pauses only after the reassessment also failed to
+	// produce a new completion or unique host-observed work receipt.
+	maxTodoStallRounds = 16
+)
+
+func todoProgressNudgeMessage(rounds int) string {
+	return fmt.Sprintf("Host progress check: the current todo has produced no new completion, unique read, command, or mutation for %d tool-call rounds. Reassess before using more tools: sign off the current item if it is done, narrow the remaining work without replacing the active item, or explain/ask about a real blocker. Do not repeat reads, commands, or writes just to reset this guard.", rounds)
+}
 
 // loopGuardBlockErrMsg is the errMsg carried by a repeat-success loop-guard
 // block. applyStormBreaker matches it to arm the final-readiness loop-guard
@@ -2873,7 +2910,7 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 }
 
 func loopGuardNoticeText() string {
-	return "The assistant is stuck retrying a blocked action; asking it to change approach."
+	return "The assistant is not making progress; asking it to change approach."
 }
 
 // batchStormSignature returns a per-turn fixation signature — each call's

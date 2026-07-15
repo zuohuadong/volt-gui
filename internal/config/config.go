@@ -1570,10 +1570,9 @@ func Default() *Config {
 		},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
-			// Bound executor tool rounds by default so a semantically drifting model
-			// cannot consume an unbounded number of requests. Users who deliberately
-			// want the legacy behavior can still set agent.max_steps to 0.
-			MaxSteps:            32,
+			// 0 = no total round cap. Normal execution is bounded by adaptive
+			// progress guards and context compaction instead of a user-facing knob.
+			MaxSteps:            0,
 			PlannerMaxSteps:     0,
 			AutoPlan:            "off",
 			SoftCompactRatio:    0.5,

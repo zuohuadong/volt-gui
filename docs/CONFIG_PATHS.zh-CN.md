@@ -63,7 +63,6 @@ provider_access = ["deepseek"]
 
 [agent]
 auto_plan = "off"
-max_steps = 32             # 内置默认值；设为 0 表示不限制总轮次
 
 [[providers]]
 name        = "deepseek"

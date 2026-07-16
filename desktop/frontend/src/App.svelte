@@ -64,6 +64,7 @@
   import Composer from "./components/Composer.svelte";
   import DataTrustCenter from "./components/DataTrustCenter.svelte";
   import ExternalDataImportDialog from "./components/ExternalDataImportDialog.svelte";
+  import AboutDialog from "./components/AboutDialog.svelte";
   import GovernanceNavigation from "./components/GovernanceNavigation.svelte";
   import ManagedWorktreePanel from "./components/ManagedWorktreePanel.svelte";
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
@@ -487,6 +488,8 @@
   let agentSelectorOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
   let brand = $state<BrandInfo>(defaultBrand);
+  let appVersion = $state("");
+  let aboutDialogOpen = $state(false);
   let modelSettings = $state<SettingsView | undefined>();
   let modelSettingsLoading = $state(false);
   let modelSettingsError = $state("");
@@ -1297,6 +1300,7 @@
     if (!hasWailsBindings()) return;
     try {
       brand = normalizeBrandInfo(await app().Brand());
+      appVersion = await app().Version();
     } catch (error) {
       console.error("Failed to load brand", error);
     }
@@ -2829,6 +2833,7 @@
 
     if (!hasWailsBindings()) {
       brand = defaultBrand;
+      appVersion = "dev";
       tabs = [];
       models = [];
       commands = [];
@@ -7976,6 +7981,8 @@
     <UnifiedSidebar
       {brandName}
       {brandMarkSrc}
+      appVersion={appVersion}
+      onAboutOpen={() => (aboutDialogOpen = true)}
       projects={sortedSidebarProjects}
       activeProjectId={activeSidebarProjectId}
       activeTaskId={activeSidebarConversationId}
@@ -9992,6 +9999,15 @@
         <ExternalDataImportDialog
           onclose={() => (externalDataImportOpen = false)}
           onimported={(result) => void handleExternalDataImported(result)}
+        />
+      {/if}
+      {#if aboutDialogOpen}
+        <AboutDialog
+          brandName={brandName}
+          brandShortName={brandShortName}
+          version={appVersion}
+          channel={"stable"}
+          onclose={() => (aboutDialogOpen = false)}
         />
       {/if}
       {#if capabilityDetailOpen && currentCapability()}

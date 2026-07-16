@@ -67,6 +67,8 @@
     onCollapseToggle: () => void;
     onGovernance: () => void;
     taskTimeLabel: (task: TaskThread) => string;
+    appVersion?: string;
+    onAboutOpen?: () => void;
   }
 
   let {
@@ -100,6 +102,8 @@
     onCollapseToggle,
     onGovernance,
     taskTimeLabel,
+    appVersion = "",
+    onAboutOpen,
   }: Props = $props();
 
   let editingProjectId = $state("");
@@ -166,10 +170,12 @@
 
 <aside class:drawer-open={drawerOpen} class:collapsed class="unified-sidebar" data-testid="unified-sidebar">
   <header class="sidebar-brand">
-    <div class="brand-mark">
-      {#if brandMarkSrc}<img src={brandMarkSrc} alt="" />{:else}<span>{brandName.slice(0, 1)}</span>{/if}
-    </div>
-    <div class="brand-copy"><strong>{brandName}</strong><span>统一任务工作台</span></div>
+    <button class="brand-info" type="button" aria-label="关于本软件" onclick={() => onAboutOpen?.()}>
+      <span class="brand-mark">
+        {#if brandMarkSrc}<img src={brandMarkSrc} alt="" />{:else}<span>{brandName.slice(0, 1)}</span>{/if}
+      </span>
+      <span class="brand-copy"><strong>{brandName}</strong><span>统一任务工作台</span></span>
+    </button>
     <button class="desktop-collapse" type="button" aria-label="收起侧栏" onclick={onCollapseToggle}><Menu size={17} /></button>
     <button class="mobile-close" type="button" aria-label="关闭导航抽屉" onclick={onDrawerClose}><X size={18} /></button>
   </header>
@@ -261,6 +267,7 @@
 
   <footer>
     <button class:active={governanceActive} type="button" aria-pressed={governanceActive} onclick={() => { onGovernance(); onDrawerClose(); }}><Settings2 size={15} /><span>配置与治理</span><em>设置、能力与安全</em></button>
+    {#if appVersion}<p class="sidebar-version" data-testid="sidebar-version">{appVersion === "dev" ? "开发模式" : `v${appVersion}`}</p>{/if}
   </footer>
 </aside>
 
@@ -281,6 +288,11 @@
 
   button { font: inherit; }
   button { cursor: pointer; }
+  .brand-info { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 9px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+  .brand-info:hover { background: color-mix(in srgb, var(--card, #fff) 60%, transparent); }
+  .brand-info .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; font-weight: 700; font-size: 14px; background: color-mix(in srgb, var(--foreground, #1f2421) 12%, var(--card, #fff)); overflow: hidden; }
+  .brand-info .brand-mark img { width: 100%; height: 100%; object-fit: cover; }
+  .sidebar-version { margin: 0; padding: 4px 10px 2px; color: var(--muted-foreground, #687169); font-size: 10px; text-align: center; }
   .sidebar-brand { display: grid; grid-template-columns: 30px minmax(0, 1fr) 32px; align-items: center; gap: 9px; min-height: 56px; padding: 9px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
   .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 8px; color: #fff; background: #1f2421; }
   .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
@@ -360,7 +372,7 @@
 
   .drawer-scrim { display: none; }
   .collapsed { width: 68px; }
-  .collapsed .brand-copy, .collapsed .mode-switch span, .collapsed .nav-group-label, .collapsed .primary-nav button > span, .collapsed .project-tree, .collapsed footer span, .collapsed footer em { display: none; }
+  .collapsed .brand-copy, .collapsed .mode-switch span, .collapsed .nav-group-label, .collapsed .primary-nav button > span, .collapsed .project-tree, .collapsed footer span, .collapsed footer em, .collapsed .sidebar-version { display: none; }
   .collapsed .nav-group-heading { grid-template-columns: 1fr; justify-items: center; padding-inline: 0; }
   .collapsed .mode-switch { grid-template-columns: 1fr; margin-inline: 10px; }
   .collapsed .mode-switch button { grid-template-columns: 1fr; justify-items: center; padding: 0; }

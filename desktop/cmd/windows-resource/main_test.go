@@ -77,8 +77,8 @@ func TestStampExecutableSupportsWindowsReleaseArchitectures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if peFile.FileHeader.Machine != test.machine {
-				t.Errorf("PE machine = %#x, want %#x", peFile.FileHeader.Machine, test.machine)
+			if peFile.Machine != test.machine {
+				t.Errorf("PE machine = %#x, want %#x", peFile.Machine, test.machine)
 			}
 			peFile.Close()
 

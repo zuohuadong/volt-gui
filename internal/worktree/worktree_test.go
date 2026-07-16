@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func requireGit(t *testing.T) {
@@ -239,6 +240,37 @@ func TestSafePathComponentHandlesWindowsNames(t *testing.T) {
 		if got := safePathComponent(input); got != want {
 			t.Errorf("safePathComponent(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestGitCommandArgsEnableLongPathsOnlyOnWindows(t *testing.T) {
+	hasLongPaths := func(args []string) bool {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-c" && args[i+1] == "core.longpaths=true" {
+				return true
+			}
+		}
+		return false
+	}
+
+	if args := gitCommandArgs("windows", `C:\Users\test\repo`, "status"); !hasLongPaths(args) {
+		t.Fatalf("Windows Git args = %v, want core.longpaths=true", args)
+	}
+	if args := gitCommandArgs("linux", "/tmp/repo", "status"); hasLongPaths(args) {
+		t.Fatalf("non-Windows Git args = %v, must not override core.longpaths", args)
+	}
+}
+
+func TestGitWorktreeAddUsesExtendedTimeout(t *testing.T) {
+	if got := gitTimeout([]string{"status", "--porcelain=v1"}); got != gitProbeTimeout {
+		t.Fatalf("status timeout = %v, want %v", got, gitProbeTimeout)
+	}
+	got := gitTimeout([]string{"worktree", "add", "-b", "branch", "destination", "HEAD"})
+	if got != gitWorktreeAddTimeout {
+		t.Fatalf("worktree add timeout = %v, want %v", got, gitWorktreeAddTimeout)
+	}
+	if got < 2*time.Minute || got <= gitProbeTimeout {
+		t.Fatalf("worktree add timeout = %v, want a checkout-safe timeout longer than probes", got)
 	}
 }
 

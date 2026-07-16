@@ -21,6 +21,9 @@ Unicode true
 ##      moved the install to a different drive (e.g. D:\Tools\VoltUI); the silent
 ##      auto-updater would re-run with /S into the wrong dir, leaving the old
 ##      install orphaned.
+##   4. Running app processes are closed before install/uninstall so a manual
+##      overwrite can replace the old executable instead of failing on a locked
+##      file. The auto-updater still waits for its exact parent PID first.
 ##
 ## Everything else mirrors Wails' generated default. Defines below override the
 ## ProjectInfo values that wails_tools.nsh would otherwise populate.
@@ -122,6 +125,22 @@ ShowInstDetails show # This will always show the installation details.
     DeleteRegKey HKCU "${UNINST_KEY}"
 !macroend
 
+!macro voltui.closeRunningApp
+    DetailPrint "Closing running ${INFO_PRODUCTNAME} instances..."
+    ; Ask Windows to close every running copy first so the app gets a chance to
+    ; execute its normal Wails shutdown path before files are replaced.
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T'
+    Pop $0
+    StrCmp $0 "0" 0 voltui_close_done
+    Sleep 5000
+    ; Clear any process that ignored the normal close request. The following
+    ; unlock check remains the final guard before wails.files overwrites the exe.
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "${PRODUCT_EXECUTABLE}" /T'
+    Pop $0
+
+voltui_close_done:
+!macroend
+
 ; Keep the standard installer online-capable, but make bootstrapper failures
 ; actionable for intranet users. These registry checks mirror Wails' behavior,
 ; so a machine prepared with the separate prerequisites ZIP skips the download.
@@ -217,6 +236,8 @@ FunctionEnd
 Section
     !insertmacro wails.setShellContext
 
+    !insertmacro voltui.closeRunningApp
+
     !insertmacro voltui.webview2runtime
 
     Call voltui.waitForExecutableUnlock
@@ -274,6 +295,8 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    !insertmacro voltui.closeRunningApp
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 

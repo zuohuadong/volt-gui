@@ -14,13 +14,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"reasonix/internal/proc"
 )
 
-const commandTimeout = 15 * time.Second
+const (
+	gitProbeTimeout       = 15 * time.Second
+	gitWorktreeAddTimeout = 5 * time.Minute
+)
 
 // Availability describes whether a project can be isolated with Git worktree.
 type Availability struct {
@@ -227,9 +231,9 @@ func runGit(parent context.Context, dir string, args ...string) (stdout, stderr 
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, commandTimeout)
+	ctx, cancel := context.WithTimeout(parent, gitTimeout(args))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false", "-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", gitCommandArgs(runtime.GOOS, dir, args...)...)
 	proc.HideWindow(cmd)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -239,6 +243,22 @@ func runGit(parent context.Context, dir string, args ...string) (stdout, stderr 
 		err = ctx.Err()
 	}
 	return outBuf.String(), strings.TrimSpace(errBuf.String()), err
+}
+
+func gitTimeout(args []string) time.Duration {
+	if len(args) >= 2 && args[0] == "worktree" && args[1] == "add" {
+		return gitWorktreeAddTimeout
+	}
+	return gitProbeTimeout
+}
+
+func gitCommandArgs(goos, dir string, args ...string) []string {
+	commandArgs := []string{"-c", "core.fsmonitor=false", "-c", "maintenance.auto=false"}
+	if goos == "windows" {
+		commandArgs = append(commandArgs, "-c", "core.longpaths=true")
+	}
+	commandArgs = append(commandArgs, "-C", dir)
+	return append(commandArgs, args...)
 }
 
 func randomID() (string, error) {

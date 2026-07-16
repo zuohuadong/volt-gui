@@ -146,6 +146,7 @@ import {
   saveRightDockPreviewWidth,
   saveRightDockTreeWidth,
   saveSidebarCollapsed,
+  saveWorkspacePanelOpen,
   saveSidebarWidth,
   useLayoutStore,
 } from "./store/layout";
@@ -2357,6 +2358,7 @@ export default function App() {
         return;
       }
       setWorkspacePanelOpen(true);
+      saveWorkspacePanelOpen(true);
     },
     [closeTransientOverlays, rightDockMode, workspacePanelMaximized, workspacePanelOpen],
   );
@@ -2369,6 +2371,7 @@ export default function App() {
     setLiveWorkspacePanelRenderWidth(null);
     setWorkspacePanelMaximized(false);
     setWorkspacePanelOpen(false);
+    saveWorkspacePanelOpen(false);
   }, [closeTransientOverlays, workspacePanelOpen]);
 
   const toggleWorkspacePanel = useCallback(() => {

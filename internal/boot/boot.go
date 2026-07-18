@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"voltui/internal/agent"
@@ -914,8 +915,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		reg.Add(command.NewSlashCommandTool(slashEntries))
 	}
+	var optionalSourceMu sync.Mutex
 	installSourceAdded := false
-	addInstallSourceTool := func() string {
+	addInstallSourceToolLocked := func() string {
 		if installSourceAdded {
 			return "install_source is already enabled."
 		}
@@ -958,8 +960,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}))
 		return "enabled install_source."
 	}
+	addInstallSourceTool := func() string {
+		optionalSourceMu.Lock()
+		defer optionalSourceMu.Unlock()
+		return addInstallSourceToolLocked()
+	}
 	readOnlySkillToolsAdded := false
-	addReadOnlySkillTools := func() string {
+	addReadOnlySkillToolsLocked := func() string {
 		if readOnlySkillToolsAdded {
 			return "read_only_skill tool is already enabled.\n\n" + skill.ReadOnlyIndexBlock(skills)
 		}
@@ -967,13 +974,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		reg.Add(skill.NewReadOnlySkillTool(skillStore, readOnlySkillRunner, skillProfile))
 		return "enabled read_only_skill. Use read_only_skill for inline skills or read-only subagent skills on the next model request.\n\n" + skill.ReadOnlyIndexBlock(skills)
 	}
+	addReadOnlySkillTools := func() string {
+		optionalSourceMu.Lock()
+		defer optionalSourceMu.Unlock()
+		return addReadOnlySkillToolsLocked()
+	}
 	skillToolsAdded := false
-	addSkillTools := func() string {
+	addSkillToolsLocked := func() string {
 		if skillToolsAdded {
 			return "skills are already enabled.\n\n" + skill.IndexBlock(skills)
 		}
 		skillToolsAdded = true
-		addReadOnlySkillTools()
+		addReadOnlySkillToolsLocked()
 		reg.Add(skill.NewRunSkillTool(skillStore, skillRunner, skillProfile))
 		reg.Add(skill.NewReadSkillTool(skillStore))
 		reg.Add(skill.NewInstallSkillTool(skillStore, nil))
@@ -982,6 +994,29 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		addSlashCommandTool(true)
 		return "enabled skills. Use run_skill/read_skill/read_only_skill or the dedicated skill tools on the next model request.\n\n" + skill.IndexBlock(skills)
+	}
+	addSkillTools := func() string {
+		optionalSourceMu.Lock()
+		defer optionalSourceMu.Unlock()
+		return addSkillToolsLocked()
+	}
+	autoEnableReadOnlyBuiltinSkills := func() bool {
+		optionalSourceMu.Lock()
+		defer optionalSourceMu.Unlock()
+		if readOnlySkillToolsAdded {
+			return false
+		}
+		addReadOnlySkillToolsLocked()
+		return true
+	}
+	autoEnableBuiltinSkills := func() bool {
+		optionalSourceMu.Lock()
+		defer optionalSourceMu.Unlock()
+		if skillToolsAdded {
+			return false
+		}
+		addSkillToolsLocked()
+		return true
 	}
 	if tokenEconomy {
 		addSlashCommandTool(false)
@@ -1157,40 +1192,48 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
+	var autoEnableBuiltinSkillSource func() bool
+	var autoEnableReadOnlyBuiltinSkillSource func() bool
+	if tokenEconomy {
+		autoEnableBuiltinSkillSource = autoEnableBuiltinSkills
+		autoEnableReadOnlyBuiltinSkillSource = autoEnableReadOnlyBuiltinSkills
+	}
 	ctrlOpts := control.Options{
-		Runner:                 runner,
-		Executor:               executor,
-		Sink:                   sink,
-		Policy:                 policy,
-		Label:                  label,
-		ModelRef:               modelRef,
-		SystemPrompt:           sysPrompt,
-		SessionDir:             sessionDir,
-		Host:                   pluginHost,
-		Commands:               cmds,
-		Skills:                 skills,
-		AllSkills:              allSkills,
-		SkillStore:             skillStore,
-		AllSkillStore:          allSkillStore,
-		Hooks:                  hookRunner,
-		Memory:                 mem,
-		Cleanup:                cleanup,
-		BalanceURL:             entry.BalanceURL,
-		BalanceKey:             entry.APIKey(),
-		BalanceClient:          balanceClient,
-		Jobs:                   jm,
-		Registry:               reg,
-		PluginCtx:              ctx,
-		WorkspaceRoot:          root,
-		ExternalFolderToolRefs: readPathResolver,
-		AutoPlan:               cfg.Agent.AutoPlan,
-		ResponseLanguage:       cfg.ResponseLanguage(),
-		ReasoningLanguage:      cfg.ReasoningLanguage(),
-		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
-		Shell:                  shell,
-		PlanModeAllowedTools:   cfg.Agent.PlanModeAllowedTools,
-		ApprovalTimeout:        opts.ApprovalTimeout,
-		BrowserCredentialVault: browserauth.NewVault(),
+		Runner:                          runner,
+		Executor:                        executor,
+		Sink:                            sink,
+		Policy:                          policy,
+		Label:                           label,
+		ModelRef:                        modelRef,
+		SystemPrompt:                    sysPrompt,
+		SessionDir:                      sessionDir,
+		Host:                            pluginHost,
+		Commands:                        cmds,
+		Skills:                          skills,
+		AllSkills:                       allSkills,
+		SkillStore:                      skillStore,
+		AllSkillStore:                   allSkillStore,
+		AutoEnableBuiltinSkills:         autoEnableBuiltinSkillSource,
+		AutoEnableReadOnlyBuiltinSkills: autoEnableReadOnlyBuiltinSkillSource,
+		Hooks:                           hookRunner,
+		Memory:                          mem,
+		Cleanup:                         cleanup,
+		BalanceURL:                      entry.BalanceURL,
+		BalanceKey:                      entry.APIKey(),
+		BalanceClient:                   balanceClient,
+		Jobs:                            jm,
+		Registry:                        reg,
+		PluginCtx:                       ctx,
+		WorkspaceRoot:                   root,
+		ExternalFolderToolRefs:          readPathResolver,
+		AutoPlan:                        cfg.Agent.AutoPlan,
+		ResponseLanguage:                cfg.ResponseLanguage(),
+		ReasoningLanguage:               cfg.ReasoningLanguage(),
+		DisableColdResumePrune:          !cfg.ColdResumePruneEnabled(),
+		Shell:                           shell,
+		PlanModeAllowedTools:            cfg.Agent.PlanModeAllowedTools,
+		ApprovalTimeout:                 opts.ApprovalTimeout,
+		BrowserCredentialVault:          browserauth.NewVault(),
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},

@@ -1989,6 +1989,39 @@ func TestListSessionsMissingDir(t *testing.T) {
 	}
 }
 
+func TestSessionListingsExposeRecoveryAndContentDigests(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "recovered.jsonl")
+	s := NewSession("")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "continued recovery"})
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	meta, ok, err := LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta: ok=%v err=%v", ok, err)
+	}
+	meta.Recovered = true
+	meta.RecoveryDigest = strings.Repeat("a", 64)
+	if err := SaveBranchMetaPreserveUpdated(path, meta); err != nil {
+		t.Fatal(err)
+	}
+	ordered, err := ListSessionOrder(dir)
+	if err != nil || len(ordered) != 1 {
+		t.Fatalf("ListSessionOrder len=%d err=%v", len(ordered), err)
+	}
+	if ordered[0].RecoveryDigest != meta.RecoveryDigest || ordered[0].ContentDigest != meta.ContentDigest {
+		t.Fatalf("ordered digests = recovery:%q content:%q, want recovery:%q content:%q", ordered[0].RecoveryDigest, ordered[0].ContentDigest, meta.RecoveryDigest, meta.ContentDigest)
+	}
+	listed, err := ListSessions(dir)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("ListSessions len=%d err=%v", len(listed), err)
+	}
+	if listed[0].RecoveryDigest != meta.RecoveryDigest || listed[0].ContentDigest != meta.ContentDigest {
+		t.Fatalf("listed digests = recovery:%q content:%q, want recovery:%q content:%q", listed[0].RecoveryDigest, listed[0].ContentDigest, meta.RecoveryDigest, meta.ContentDigest)
+	}
+}
+
 func readSessionEventsForTest(t *testing.T, path string) []sessionEventRecord {
 	t.Helper()
 	f, err := os.Open(SessionEventLogPath(path))

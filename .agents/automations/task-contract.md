@@ -57,6 +57,16 @@ branch: ""
 change_request_url: ""
 created_at: ""
 updated_at: ""
+governance:
+  scope_hash: "" # claim 时由 agmesh 计算；忽略状态和 completion evidence
+  scope_frozen_at: ""
+  wip_limit: 1
+  continuation_requires: "follow-up-or-human-confirmation"
+execution_state:
+  status: "ready"
+  risk: "low"
+  effective_orchestration: "" # native | managed | panel | human-loop
+  scope_hash: ""
 ```
 
 ## Goal
@@ -284,6 +294,9 @@ delegation:
 - `shared-write` 只允许在文件所有权明确互斥且 Orchestrator 记录合并策略时使用；否则标 `blocked`。
 - 子代理中断、超时或输出不完整时，先记录 `interruption_recovery`，再决定续跑、重派或阻塞；不要把半截输出当作完成证据。
 - 任务进入 `review` / `done` 时必须记录 effective orchestration mode 对应的确定性证据；中风险 native 最多使用 1 个独立 verifier，高风险使用 panel evidence，human-loop 等待人工裁决。
+- 首次 claim 后，goal、non-goals、acceptance、risk、orchestration 和 scope hash 冻结；状态/证据同步不算范围变更。实质变更必须创建带 `parent` / `source` / `reason` 的 follow-up，或记录可审计的人工确认。
+- `PARTIAL` 必须包含精确 `blocking_findings`，并把 coordination task 置为 `blocked`。如果剩余项只依赖生产授权、真实凭据、外部账号、部署或人类许可，当前任务周期必须结束，不得自动把验收工具/模拟器/框架增强纳入同一目标。
+- `PARTIAL` 后原任务不得自动回到 `ready` / `running` / `review`；恢复同一任务需要 approval/continuation 人工证据，否则领取 follow-up。默认 WIP=1，coordination status/risk、Contract execution state/scope hash 和 effective orchestration 必须一致。
 
 ## Skill Loading
 

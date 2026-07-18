@@ -7,6 +7,8 @@ import {
   createPendingTaskReceipt,
   deriveWorkspaceOptions,
   migrateWorkbenchSnapshot,
+  persistentWorkbenchSnapshot,
+  recoveredTaskThreadsFromBackend,
   reconcileProjectTaskNodes,
   restartTaskReceipt,
   settleTaskReceipt,
@@ -85,6 +87,81 @@ describe("unified workbench IA state", () => {
     expect(nodes.map((node) => node.id)).toEqual([INBOX_PROJECT_ID, "project-1"]);
     expect(nodes[0].tasks.map((task) => task.id)).toEqual(["inbox-1", "orphan"]);
     expect(nodes[1]).toEqual(expect.objectContaining({ id: "project-1", name: "真实项目", tasks: [expect.objectContaining({ id: "task-1" })] }));
+  });
+
+  test("persists navigation metadata without copying transcript bodies", () => {
+    const snapshot = migrateWorkbenchSnapshot({
+      version: 2,
+      projectTasks: [],
+      inboxTasks: [{
+        id: "task-1",
+        title: "保留索引",
+        updatedAt: "刚刚",
+        sessionPath: "/sessions/task-1.jsonl",
+        transcript: [{ id: "secret", role: "user", body: "不应写入后端侧栏快照" }],
+      }],
+    });
+
+    const persisted = persistentWorkbenchSnapshot(snapshot);
+    expect(persisted.inboxTasks).toEqual([
+      expect.objectContaining({ id: "task-1", sessionPath: "/sessions/task-1.jsonl" }),
+    ]);
+    expect(persisted.inboxTasks[0].transcript).toBeUndefined();
+    expect(JSON.stringify(persisted)).not.toContain("不应写入后端侧栏快照");
+  });
+
+  test("rebuilds recoverable inbox tasks from backend topics when WebView storage is gone", () => {
+    const tasks = recoveredTaskThreadsFromBackend(
+      [
+        {
+          key: "global",
+          kind: "global_folder",
+          label: "Global",
+          root: "/global-home",
+          children: [{ key: "global-topic", kind: "global_topic", label: "旧全局会话", topicId: "topic-global", lastActivityAt: 30 }],
+        },
+        {
+          key: "project:/workspace/app",
+          kind: "project",
+          label: "App",
+          root: "/workspace/app",
+          children: [{
+            key: "project-topic",
+            kind: "topic",
+            label: "项目排查",
+            topicId: "topic-project",
+            lastActivityAt: 20,
+            children: [
+              { key: "session-1", kind: "session", label: "第一次排查", topicId: "topic-project", sessionPath: "/sessions/one.jsonl", lastActivityAt: 10 },
+              { key: "session-2", kind: "session", label: "第二次排查", topicId: "topic-project", sessionPath: "/sessions/two.jsonl", lastActivityAt: 20 },
+            ],
+          }],
+        },
+      ],
+      [{
+        id: "tab-global",
+        scope: "global",
+        workspaceRoot: "",
+        workspaceName: "Global",
+        topicId: "topic-global",
+        topicTitle: "旧全局会话",
+        sessionPath: "/sessions/global.jsonl",
+        active: true,
+        running: false,
+      }],
+    );
+
+    expect(tasks).toHaveLength(3);
+    expect(tasks[0]).toEqual(expect.objectContaining({
+      title: "旧全局会话",
+      tabId: "tab-global",
+      topicId: "topic-global",
+      sessionPath: "/sessions/global.jsonl",
+      scope: "global",
+      workspaceRoot: undefined,
+    }));
+    expect(tasks.slice(1).map((task) => task.sessionPath).sort()).toEqual(["/sessions/one.jsonl", "/sessions/two.jsonl"]);
+    expect(new Set(tasks.map((task) => task.id)).size).toBe(3);
   });
 
   test("offers exactly five outcome templates with a prompt and receipt contract", () => {

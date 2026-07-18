@@ -275,6 +275,12 @@ func LegacyUserConfigPaths() []string {
 	return out
 }
 
+// LegacyOSSupportDir returns the pre-Reasonix-home OS application-support
+// directory used by older desktop builds, or an empty string when it is not
+// distinct from the current home. It is exposed for the desktop recovery pass;
+// callers must treat it as read-only and must never remove the directory.
+func LegacyOSSupportDir() string { return legacyOSSupportDir() }
+
 // ReasonixHomeDir is the current VoltUI home directory. It honors VOLTUI_HOME,
 // then legacy REASONIX_HOME, then uses ~/.voltui on macOS/Linux or %APPDATA%/voltui on
 // Windows, with a %USERPROFILE%/AppData/Roaming fallback when %APPDATA% is

@@ -1,4 +1,4 @@
-import type { TabMeta, TranscriptItem } from "./types";
+import type { ProjectNode, TabMeta, TranscriptItem } from "./types";
 
 export const INBOX_PROJECT_ID = "inbox";
 export const WORKBENCH_STATE_STORAGE_KEY = "voltui.workbench.ia.v2";
@@ -566,4 +566,80 @@ export function snapshotFromProjectNodes(input: {
     projectSort: input.projectSort,
     projectDockCollapsed: input.projectDockCollapsed,
   };
+}
+
+// The backend snapshot is a durable navigation/index record. Transcript bodies
+// stay in the session JSONL files so a WebView reset cannot duplicate or expose
+// a second copy of the conversation in the sidebar state file.
+export function persistentWorkbenchSnapshot(snapshot: WorkbenchSnapshotV2): WorkbenchSnapshotV2 {
+  const withoutTranscript = (task: TaskThread): TaskThread => {
+    const { transcript: _transcript, ...metadata } = task;
+    return metadata;
+  };
+  return {
+    ...snapshot,
+    projectTasks: snapshot.projectTasks.map((project) => ({
+      ...project,
+      tasks: project.tasks.map(withoutTranscript),
+    })),
+    inboxTasks: snapshot.inboxTasks.map(withoutTranscript),
+  };
+}
+
+function recoveredTaskID(scope: TaskThread["scope"], root: string, topicID: string, sessionPath: string) {
+  return `recovered:${scope || "global"}:${root || "global"}:${topicID}:${sessionPath || "topic"}`;
+}
+
+function recoveredTaskTimestamp(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? new Date(value).toISOString()
+    : "已恢复";
+}
+
+// Reconstructs lightweight inbox tasks from the backend topic tree after
+// localStorage has been deleted by a WebView uninstall/reinstall. The caller
+// can later bind each task by topicId/sessionPath without inventing transcript
+// content.
+export function recoveredTaskThreadsFromBackend(nodes: ProjectNode[], tabs: TabMeta[]): TaskThread[] {
+  const tasks: TaskThread[] = [];
+  const seen = new Set<string>();
+  const tabForTopic = (scope: TaskThread["scope"], root: string, topicID: string) => tabs.find((tab) =>
+    tab.topicId === topicID && tab.scope === scope && (scope !== "project" || tab.workspaceRoot === root));
+  const addTask = (node: ProjectNode, scope: TaskThread["scope"], root: string, sessionPath = "", title = node.label) => {
+    const topicID = node.topicId?.trim() || "";
+    if (!topicID) return;
+    const tab = tabForTopic(scope, root, topicID);
+    const path = sessionPath.trim() || tab?.sessionPath?.trim() || "";
+    const id = recoveredTaskID(scope, root, topicID, path);
+    if (seen.has(id)) return;
+    seen.add(id);
+    tasks.push({
+      id,
+      title: title.trim() || "已恢复会话",
+      updatedAt: recoveredTaskTimestamp(node.lastActivityAt || node.createdAt),
+      updatedAtMs: typeof node.lastActivityAt === "number" ? node.lastActivityAt : node.createdAt,
+      tabId: tab?.id,
+      topicId: topicID,
+      sessionPath: path || undefined,
+      scope,
+      workspaceRoot: scope === "project" ? (root || undefined) : undefined,
+    });
+  };
+  const walk = (node: ProjectNode, scope: TaskThread["scope"], root: string) => {
+    const nextScope: TaskThread["scope"] = node.kind === "project" || node.kind === "topic" ? "project" : scope;
+    const nextRoot = node.kind === "project" ? (node.root || root) : root;
+    if (node.kind === "global_topic" || node.kind === "topic") {
+      const sessions = (node.children || []).filter((child) => child.sessionPath);
+      if (sessions.length > 0) {
+        for (const session of sessions) addTask(session, nextScope, nextRoot, session.sessionPath, session.label || node.label);
+      } else {
+        addTask(node, nextScope, nextRoot);
+      }
+    }
+    for (const child of node.children || []) {
+      if (child.kind !== "session") walk(child, nextScope, nextRoot);
+    }
+  };
+  for (const node of nodes) walk(node, node.kind === "project" ? "project" : "global", node.root || "");
+  return tasks.sort((left, right) => (right.updatedAtMs || 0) - (left.updatedAtMs || 0));
 }

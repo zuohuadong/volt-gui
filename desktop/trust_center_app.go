@@ -387,6 +387,7 @@ func trustStorageLocations(snap trustTabSnapshot) []TrustLocation {
 		trustLocation("workbench:runtime", "项目工作台任务与产物", filepath.Join(root, ".voltui", "workbench"), "workspace", "任务记录和产物保留到工作区清理", true),
 		trustLocation("desktop:tabs", "桌面 Thread 索引", filepath.Join(desktopConfigDir(), tabsFileName), "user", "保留打开 Thread 与恢复指针", true),
 		trustLocation("desktop:projects", "桌面工作区索引", filepath.Join(desktopConfigDir(), desktopProjectsFile), "user", "保留工作区与 Topic 索引", true),
+		trustLocation("desktop:workbench-state", "桌面任务侧栏索引", desktopWorkbenchStatePath(), "user", "只保留任务导航元数据；会话正文仍在 session JSONL", true),
 		trustLocation("diagnostics:metrics-pending", "待发送聚合指标", filepath.Join(config.MemoryUserDir(), metricsPendingFile), "user", "下一次成功发送后清除；关闭指标后不发送", true),
 		trustLocation("diagnostics:crash-pending", "待发送崩溃报告", pendingCrashPath(), "user", "下一次启动按遥测设置发送或清除", true),
 	}

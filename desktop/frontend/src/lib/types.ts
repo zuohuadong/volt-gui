@@ -278,12 +278,14 @@ export interface TopicMeta {
 
 export interface ProjectNode {
   key: string;
-  kind: "project" | "topic" | "global_folder" | "global_topic";
+  kind: "project" | "topic" | "session" | "global_folder" | "global_topic" | "global_session";
   label: string;
   root?: string;
   topicId?: string;
+  sessionPath?: string;
   projectColor?: string;
   turns?: number;
+  createdAt?: number;
   lastActivityAt?: number;
   open?: boolean;
   running?: boolean;
@@ -1681,6 +1683,14 @@ export interface HistoryMessage {
   toolName?: string;
   toolResultArchived?: boolean;
   toolResultError?: string;
+}
+
+export interface HistoryPage {
+  messages: HistoryMessage[];
+  startTurn: number;
+  endTurn: number;
+  totalTurns: number;
+  hasOlder: boolean;
 }
 
 export interface HistoryToolCall {

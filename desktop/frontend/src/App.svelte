@@ -72,6 +72,7 @@
   import TaskCenter from "./components/TaskCenter.svelte";
   import TaskOutcomeLauncher from "./components/TaskOutcomeLauncher.svelte";
   import TaskResultReceipt from "./components/TaskResultReceipt.svelte";
+  import HistoryPaginationStatus from "./components/HistoryPaginationStatus.svelte";
   import Transcript from "./components/Transcript.svelte";
   import UnifiedSidebar from "./components/UnifiedSidebar.svelte";
   import BrowserCredentialSettings from "./components/BrowserCredentialSettings.svelte";
@@ -134,6 +135,12 @@
     modelSwitchImpact,
   } from "./lib/thread-ux";
   import {
+    anchoredScrollTop,
+    isCurrentHistoryRequest,
+    prependTranscriptPage,
+    trimLiveTranscript,
+  } from "./lib/history-pagination";
+  import {
     INBOX_PROJECT_ID,
     LEGACY_SIDEBAR_STORAGE_KEY,
     OUTCOME_TEMPLATES,
@@ -143,7 +150,9 @@
     deriveWorkspaceOptions,
     emptyWorkbenchSnapshot,
     migrateWorkbenchSnapshot,
+    persistentWorkbenchSnapshot,
     reconcileProjectTaskNodes,
+    recoveredTaskThreadsFromBackend,
     restartTaskReceipt,
     settleTaskReceipt,
     snapshotFromProjectNodes,
@@ -169,6 +178,7 @@
     ContextPanelInfo,
     FilePreview,
     HistoryMessage,
+    HistoryPage,
     ManagedWorktree,
     ManagedWorktreeHandoff,
     ManagedWorktreeSnapshot,
@@ -235,6 +245,8 @@
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
   // Older items are trimmed when the array exceeds this threshold.
   const MAX_TRANSCRIPT_ITEMS = 500;
+  const HISTORY_PAGE_TURNS = 60;
+  const HISTORY_SCROLL_THRESHOLD = 96;
 
   interface PendingThreadPrompts {
     approval?: WireApproval;
@@ -578,7 +590,17 @@
   let activeConversationTabId = $state("");
   let conversationScrollEl = $state<HTMLDivElement | null>(null);
   let conversationScrollFrame: number | undefined;
+  let historyPageTabId = $state("");
+  let historyPageStartTurn = $state(0);
+  let historyPageTotalTurns = $state(0);
+  let historyPageHasOlder = $state(false);
+  let historyPageLoadingOlder = $state(false);
+  let historyPageLoadError = $state("");
+  let historyPageGeneration = 0;
   let sidebarStateHydrated = false;
+  let sidebarStateSourceAvailable = false;
+  let sidebarStateReady: Promise<void> = Promise.resolve();
+  let sidebarPersistenceTimer: ReturnType<typeof setTimeout> | undefined;
   let queueStateHydrated = false;
   let diffReviewStateHydrated = false;
 
@@ -2710,13 +2732,18 @@
 
   // A long file scan can emit hundreds of tool events. Keep user and final
   // responses useful by discarding old transient tool evidence before dialogue.
+  // If complete dialogue turns must be removed, expose them again through the
+  // persisted history cursor instead of treating the client window as complete.
   function trimTranscriptItems(items: TranscriptItem[]) {
-    const next = [...items];
-    while (next.length > MAX_TRANSCRIPT_ITEMS) {
-      const transientIndex = next.findIndex((item) => item.role === "tool" || item.role === "reasoning");
-      next.splice(transientIndex >= 0 ? transientIndex : 0, 1);
+    const result = trimLiveTranscript(items, MAX_TRANSCRIPT_ITEMS);
+    if (result.removedTurns > 0 && historyPageTabId === currentTranscriptTabId()) {
+      const nextStartTurn = historyPageStartTurn + result.removedTurns;
+      historyPageStartTurn = historyPageTotalTurns > 0
+        ? Math.min(historyPageTotalTurns, nextStartTurn)
+        : nextStartTurn;
+      historyPageHasOlder = historyPageStartTurn > 0;
     }
-    return next;
+    return result.items;
   }
 
   function transcriptHasContent(items?: TranscriptItem[]) {
@@ -2756,6 +2783,16 @@
     } catch (error) {
       console.warn("Failed to persist unified workbench state", error);
     }
+    if (hasWailsBindings()) {
+      const backendPayload = JSON.stringify(persistentWorkbenchSnapshot(snapshot));
+      if (sidebarPersistenceTimer) window.clearTimeout(sidebarPersistenceTimer);
+      sidebarPersistenceTimer = window.setTimeout(() => {
+        sidebarPersistenceTimer = undefined;
+        void app().SaveDesktopWorkbenchState(backendPayload).catch((error) => {
+          console.warn("Failed to persist backend workbench state", error);
+        });
+      }, 250);
+    }
   }
 
   function persistThreadQueue() {
@@ -2786,33 +2823,72 @@
     diffReviewComments = parsePersistedDiffComments(window.localStorage.getItem(DIFF_REVIEW_STORAGE_KEY));
   }
 
+  function applySidebarSnapshot(snapshot: SidebarStateSnapshot) {
+    activeWorkspaceId = "";
+    sidebarProjects = reconcileProjectTaskNodes(
+      snapshot.projectTasks.map((item) => ({ id: item.projectId, name: item.projectId })),
+      snapshot,
+    );
+    activeSidebarProjectId = sidebarProjects.some((project) => project.id === snapshot.activeProjectId) ? snapshot.activeProjectId : INBOX_PROJECT_ID;
+    activeSidebarConversationId = snapshot.activeTaskId;
+    sidebarProjectSort = snapshot.projectSort;
+    sidebarProjectDockCollapsed = snapshot.projectDockCollapsed;
+  }
+
   function restoreSidebarState() {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") return false;
     try {
       const raw = window.localStorage.getItem(WORKBENCH_STATE_STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_SIDEBAR_STORAGE_KEY);
-      if (!raw) return;
+      if (!raw) return false;
       const snapshot = migrateWorkbenchSnapshot(JSON.parse(raw) as unknown);
-      activeWorkspaceId = "";
-      sidebarProjects = reconcileProjectTaskNodes(
-        snapshot.projectTasks.map((item) => ({ id: item.projectId, name: item.projectId })),
-        snapshot,
-      );
-      activeSidebarProjectId = sidebarProjects.some((project) => project.id === snapshot.activeProjectId) ? snapshot.activeProjectId : INBOX_PROJECT_ID;
-      activeSidebarConversationId = snapshot.activeTaskId;
-      sidebarProjectSort = snapshot.projectSort;
-      sidebarProjectDockCollapsed = snapshot.projectDockCollapsed;
+      applySidebarSnapshot(snapshot);
+      sidebarStateSourceAvailable = snapshot.inboxTasks.length > 0 || snapshot.projectTasks.some((project) => project.tasks.length > 0);
       window.localStorage.removeItem(LEGACY_SIDEBAR_STORAGE_KEY);
+      return true;
     } catch (error) {
       console.warn("Failed to restore unified workbench state", error);
+      return false;
     }
   }
 
+  async function restoreSidebarStateFromBackend() {
+    try {
+      const raw = await app().LoadDesktopWorkbenchState();
+      if (raw.trim()) {
+        const snapshot = migrateWorkbenchSnapshot(JSON.parse(raw) as unknown);
+        applySidebarSnapshot(snapshot);
+        sidebarStateSourceAvailable = snapshot.inboxTasks.length > 0 || snapshot.projectTasks.some((project) => project.tasks.length > 0);
+      }
+    } catch (error) {
+      console.warn("Failed to restore backend workbench state", error);
+    } finally {
+      sidebarStateHydrated = true;
+    }
+  }
+
+  async function recoverSidebarTasksFromBackend() {
+    if (sidebarStateSourceAvailable || sidebarProjects.some((project) => project.tasks.length > 0)) return;
+    const tree = await app().ListProjectTree();
+    const recovered = recoveredTaskThreadsFromBackend(Array.isArray(tree) ? tree : [], tabs);
+    if (recovered.length === 0) return;
+    const snapshot = emptyWorkbenchSnapshot();
+    snapshot.inboxTasks = recovered;
+    sidebarProjects = reconcileProjectTaskNodes(projectCards, snapshot);
+    activeSidebarProjectId = INBOX_PROJECT_ID;
+    activeSidebarConversationId = "";
+    sidebarStateSourceAvailable = true;
+    showWorkbenchNotice(`已从本机会话文件恢复 ${recovered.length} 个任务`);
+  }
+
   onMount(() => {
-    restoreSidebarState();
+    const restoredSidebarLocally = restoreSidebarState();
     restoreThreadQueue();
     restoreDiffReviewComments();
     pruneEmptyDraftSidebarConversations();
-    sidebarStateHydrated = true;
+    sidebarStateHydrated = restoredSidebarLocally || !hasWailsBindings();
+    sidebarStateReady = hasWailsBindings() && !restoredSidebarLocally
+      ? restoreSidebarStateFromBackend()
+      : Promise.resolve();
     queueStateHydrated = true;
     diffReviewStateHydrated = true;
     const handleNativeMaterialFilePicker = (event: MouseEvent) => {
@@ -2842,6 +2918,7 @@
       }, 1000);
       return () => {
         window.clearInterval(previewTick);
+        if (sidebarPersistenceTimer) window.clearTimeout(sidebarPersistenceTimer);
         document.removeEventListener("click", handleNativeMaterialFilePicker, true);
       };
     }
@@ -2867,6 +2944,7 @@
     const unsubscribeReady = onWorkspaceReady(() => void refresh());
     return () => {
       window.clearInterval(tick);
+      if (sidebarPersistenceTimer) window.clearTimeout(sidebarPersistenceTimer);
       for (const timer of Object.values(contextPanelRefreshTimers)) window.clearTimeout(timer);
       if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       unsubscribeEvents();
@@ -2969,6 +3047,20 @@
   }
 
   function appendTranscript(item: TranscriptItem) {
+    if (item.role === "user") {
+      const tabID = currentTranscriptTabId();
+      if (tabID && historyPageTabId !== tabID) {
+        historyPageGeneration += 1;
+        historyPageTabId = tabID;
+        historyPageStartTurn = 0;
+        historyPageTotalTurns = 1;
+        historyPageHasOlder = false;
+        historyPageLoadingOlder = false;
+        historyPageLoadError = "";
+      } else if (tabID) {
+        historyPageTotalTurns += 1;
+      }
+    }
     transcript.push(item);
     transcript = trimTranscriptItems(transcript);
     saveActiveSidebarConversationTranscript();
@@ -3208,7 +3300,25 @@
           clearSidebarConversationThread(projectId, conversationId);
         }
       }
-      const meta = await createBackendConversationThread(project, conversation.title);
+      let meta: TabMeta | undefined;
+      const topicID = conversation.topicId?.trim() || "";
+      const storedWorkspaceRoot = conversation.workspaceRoot?.trim() || "";
+      const scope = conversation.scope === "project" || (!conversation.scope && storedWorkspaceRoot) ? "project" : "global";
+      const workspaceRoot = scope === "project" ? storedWorkspaceRoot : "";
+      if (topicID) {
+        meta = conversation.sessionPath
+          ? await app().OpenTopicSession(scope, workspaceRoot, topicID, conversation.sessionPath)
+          : scope === "project"
+            ? await app().OpenProjectTab(workspaceRoot, topicID)
+            : await app().OpenGlobalTab(topicID);
+      }
+      if (!meta) {
+        meta = await createBackendConversationThread(project, conversation.title);
+        if (conversation.sessionPath) {
+          await app().ResumeSessionForTab(meta.id, conversation.sessionPath);
+          meta = (await app().ListTabs()).find((tab) => tab.id === meta?.id) ?? meta;
+        }
+      }
       updateSidebarConversationThread(projectId, conversationId, meta);
       return meta;
     })()
@@ -6337,7 +6447,7 @@
     }
   }
 
-  function historyToTranscript(messages: HistoryMessage[]): TranscriptItem[] {
+  function historyToTranscript(messages: HistoryMessage[], idPrefix = "history"): TranscriptItem[] {
     const toolResults = new Map(messages
       .filter((message) => message.role === "tool" && Boolean(message.toolCallId))
       .map((message) => [message.toolCallId as string, message]));
@@ -6348,7 +6458,7 @@
       const hasReasoning = (message.reasoning ?? "").trim() !== "";
       if (message.role === "user" && hasContent) {
         restored.push({
-          id: `history-${index}`,
+          id: `${idPrefix}-${index}`,
           role: "user",
           body: stripComposerContextPrefix(message.content),
           pending: false,
@@ -6358,7 +6468,7 @@
       if (message.role === "assistant") {
         if (hasContent || hasReasoning) {
           restored.push({
-            id: `history-${index}`,
+            id: `${idPrefix}-${index}`,
             role: "assistant",
             body: message.content,
             title: message.reasoning ? "assistant + reasoning" : undefined,
@@ -6369,7 +6479,7 @@
           const result = call.id ? toolResults.get(call.id) : undefined;
           const archived = Boolean(result?.toolResultArchived || call.argumentsArchived);
           restored.push({
-            id: `history-tool-${index}-${call.id || toolIndex}`,
+            id: `${idPrefix}-tool-${index}-${call.id || toolIndex}`,
             role: "tool",
             title: call.name || result?.toolName || "tool",
             body: call.arguments || "",
@@ -6386,7 +6496,7 @@
       }
       if (message.role === "tool" && !message.toolCallId) {
         restored.push({
-          id: `history-tool-${index}`,
+          id: `${idPrefix}-tool-${index}`,
           role: "tool",
           title: message.toolName || "tool",
           body: "",
@@ -6408,14 +6518,102 @@
     });
   }
 
+  function historyPageIDPrefix(page: HistoryPage) {
+    return `history-turn-${page.startTurn}`;
+  }
+
+  function updateHistoryPageState(tabID: string, page: HistoryPage) {
+    const sameTab = historyPageTabId === tabID;
+    historyPageTabId = tabID;
+    historyPageStartTurn = page.startTurn;
+    historyPageTotalTurns = sameTab ? Math.max(historyPageTotalTurns, page.totalTurns) : page.totalTurns;
+    historyPageHasOlder = page.hasOlder;
+    historyPageLoadError = "";
+  }
+
+  function historyRequestStillCurrent(tabID: string, generation: number, beforeTurn?: number) {
+    return isCurrentHistoryRequest({
+      activeTabId: currentTranscriptTabId(),
+      requestTabId: tabID,
+      activeGeneration: historyPageGeneration,
+      requestGeneration: generation,
+      activeBeforeTurn: beforeTurn === undefined ? undefined : historyPageStartTurn,
+      requestBeforeTurn: beforeTurn,
+    });
+  }
+
   async function hydrateHistory(tab: TabMeta, options: { preserveLocalWhenEmpty?: boolean } = {}) {
-    const history = await app().HistoryForTab(tab.id);
-    if (options.preserveLocalWhenEmpty && !historyHasVisibleContent(history) && transcriptHasContent(transcript)) {
+    const generation = ++historyPageGeneration;
+    historyPageTabId = tab.id;
+    historyPageStartTurn = 0;
+    historyPageTotalTurns = 0;
+    historyPageHasOlder = false;
+    historyPageLoadingOlder = false;
+    historyPageLoadError = "";
+    const page = await app().HistoryPageForTab(tab.id, 0, HISTORY_PAGE_TURNS);
+    if (!historyRequestStillCurrent(tab.id, generation)) return;
+    updateHistoryPageState(tab.id, page);
+    if (options.preserveLocalWhenEmpty && !historyHasVisibleContent(page.messages) && transcriptHasContent(transcript)) {
       scrollConversationToBottom("auto");
       return;
     }
-    transcript = historyToTranscript(history);
+    transcript = historyToTranscript(page.messages, historyPageIDPrefix(page));
     scrollConversationToBottom("auto");
+  }
+
+  async function loadOlderHistory() {
+    const tabID = historyPageTabId;
+    const generation = historyPageGeneration;
+    const scrollEl = conversationScrollEl;
+    if (!hasWailsBindings() || !tabID || historyPageLoadingOlder || !historyPageHasOlder) return;
+    if (!historyRequestStillCurrent(tabID, generation)) return;
+
+    historyPageLoadingOlder = true;
+    historyPageLoadError = "";
+    const beforeTurn = historyPageStartTurn;
+    const beforeTop = scrollEl?.scrollTop ?? 0;
+    const beforeHeight = scrollEl?.scrollHeight ?? 0;
+    let retryWithCurrentCursor = false;
+    try {
+      const page = await app().HistoryPageForTab(tabID, beforeTurn, HISTORY_PAGE_TURNS);
+      if (!historyRequestStillCurrent(tabID, generation)) return;
+      if (!historyRequestStillCurrent(tabID, generation, beforeTurn)) {
+        retryWithCurrentCursor = true;
+        return;
+      }
+      const olderItems = historyHasVisibleContent(page.messages)
+        ? historyToTranscript(page.messages, historyPageIDPrefix(page))
+        : [];
+      transcript = prependTranscriptPage(transcript, olderItems);
+      updateHistoryPageState(tabID, page);
+      historyPageLoadingOlder = false;
+      await tick();
+      if (!historyRequestStillCurrent(tabID, generation)) return;
+      if (conversationScrollEl && conversationScrollEl === scrollEl) {
+        conversationScrollEl.scrollTop = anchoredScrollTop({
+          beforeTop,
+          beforeHeight,
+          afterHeight: conversationScrollEl.scrollHeight,
+        });
+      }
+    } catch (error) {
+      if (!historyRequestStillCurrent(tabID, generation)) return;
+      historyPageLoadError = `更早记录加载失败：${formatErrorMessage(error)}`;
+      historyPageLoadingOlder = false;
+    } finally {
+      const stillOwned = historyRequestStillCurrent(tabID, generation);
+      if (stillOwned) historyPageLoadingOlder = false;
+      if (retryWithCurrentCursor && stillOwned && historyPageHasOlder) {
+        queueMicrotask(() => void loadOlderHistory());
+      }
+    }
+  }
+
+  function handleConversationScroll() {
+    const el = conversationScrollEl;
+    if (!el || el.scrollTop > HISTORY_SCROLL_THRESHOLD) return;
+    if (historyPageTabId !== currentTranscriptTabId() || historyPageLoadError) return;
+    void loadOlderHistory();
   }
 
   function guardianAssessmentKey(tool: string, subject: string, reason = "") {
@@ -6806,6 +7004,8 @@
     try {
       await settleRefreshStep("brand", refreshBrand());
       tabs = await settleRefreshStep("tabs", app().ListTabs()) ?? tabs;
+      await sidebarStateReady;
+      await settleRefreshStep("recover sidebar", recoverSidebarTasksFromBackend());
       syncActiveWorkspaceSelection();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
       models = active ? await settleRefreshStep("models", app().ModelsForTab(active.id)) ?? models : [];
@@ -8054,7 +8254,15 @@
                 />
               </div>
             {/if}
-            <div class="conversation" bind:this={conversationScrollEl}>
+            <div class="conversation" bind:this={conversationScrollEl} onscroll={handleConversationScroll}>
+              {#if historyPageTabId === currentTranscriptTabId()}
+                <HistoryPaginationStatus
+                  hasOlder={historyPageHasOlder}
+                  loading={historyPageLoadingOlder}
+                  error={historyPageLoadError}
+                  onLoad={loadOlderHistory}
+                />
+              {/if}
               <Transcript
                 items={transcript}
                 {loading}
@@ -20992,7 +21200,7 @@
 
   /* Final sidebar guard: keep account fixed at lower-left after upstream style refreshes. */
   .shell:not(.is-sidebar-collapsed) {
-    --sidebar-width: clamp(232px, 13vw, 268px);
+    --sidebar-width: clamp(252px, 16vw, 280px);
   }
 
   .shell .sidebar--aorist {

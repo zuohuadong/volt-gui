@@ -22,6 +22,7 @@ import type {
   AgentInput,
   AgentView,
   HistoryMessage,
+  HistoryPage,
   MCPServerInput,
   MemoryView,
   ManagedWorktree,
@@ -116,6 +117,7 @@ interface AppBindings {
   PickWorkspace(): Promise<string>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
+  OpenTopicSession(scope: string, workspaceRoot: string, topicID: string, sessionPath: string): Promise<TabMeta>;
   NewConversationThread(scope: string, workspaceRoot: string, title: string): Promise<TabMeta>;
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
@@ -128,8 +130,11 @@ interface AppBindings {
   DeleteTopic(topicID: string): Promise<void>;
   TrashTopic(topicID: string): Promise<void>;
   ListSessions(): Promise<SessionMeta[]>;
+  LoadDesktopWorkbenchState(): Promise<string>;
+  SaveDesktopWorkbenchState(raw: string): Promise<void>;
   ResumeSessionForTab(tabID: string, path: string): Promise<HistoryMessage[]>;
   HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
+  HistoryPageForTab(tabID: string, beforeTurn: number, limit: number): Promise<HistoryPage>;
   ToolResultForTab(tabID: string, toolID: string): Promise<ToolResultData | null>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
   Fork(turn: number): Promise<TabMeta>;

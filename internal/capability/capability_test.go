@@ -68,6 +68,21 @@ func TestRouteRespectsSkillAutoUseMetadata(t *testing.T) {
 	}
 }
 
+func TestSkillEntriesReadinessFollowsExecutionModeSurface(t *testing.T) {
+	sk := []skill.Skill{{Name: "test", Scope: skill.ScopeBuiltin}}
+	readOnlyTools := []tool.ContractEntry{{Name: "read_only_skill"}}
+
+	if got := SkillEntriesForMode(sk, readOnlyTools, true)[0].Status; got != StatusReady {
+		t.Fatalf("plan-mode status = %s, want ready", got)
+	}
+	if got := SkillEntriesForMode(sk, readOnlyTools, false)[0].Status; got != StatusConfigured {
+		t.Fatalf("normal-mode status with only read_only_skill = %s, want configured", got)
+	}
+	if got := SkillEntriesForMode(sk, []tool.ContractEntry{{Name: "run_skill"}}, false)[0].Status; got != StatusReady {
+		t.Fatalf("normal-mode status with run_skill = %s, want ready", got)
+	}
+}
+
 func TestRoutePrefersGitHubMCPForIssueLookup(t *testing.T) {
 	entries := ToolEntries([]tool.ContractEntry{{
 		Name:        "mcp__github__search_issues",
@@ -102,6 +117,32 @@ func TestRenderTransientBlockMentionsConnectSource(t *testing.T) {
 	for _, want := range []string{`<capability-route version="1">`, `source:skills`, `connect_tool_source`} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("block missing %q:\n%s", want, block)
+		}
+	}
+}
+
+func TestAutoEnableBuiltinSkillCandidateRequiresTrustedStrongConfiguredMatch(t *testing.T) {
+	eligible := RouteCandidate{
+		Entry: Entry{
+			ID:     "skill:review",
+			Kind:   KindSkill,
+			Name:   "review",
+			Source: string(skill.ScopeBuiltin),
+			Status: StatusConfigured,
+		},
+		Policy: AutoUsePrefer,
+	}
+	if got, ok := AutoEnableBuiltinSkillCandidate(RouteDecision{Candidates: []RouteCandidate{eligible}}); !ok || got.Entry.Name != "review" {
+		t.Fatalf("eligible candidate = %+v, ok=%v", got, ok)
+	}
+
+	for _, candidate := range []RouteCandidate{
+		{Entry: eligible.Entry, Policy: AutoUseSuggest},
+		{Entry: func() Entry { e := eligible.Entry; e.Source = string(skill.ScopeProject); return e }(), Policy: AutoUseRequire},
+		{Entry: func() Entry { e := eligible.Entry; e.Status = StatusReady; return e }(), Policy: AutoUseRequire},
+	} {
+		if got, ok := AutoEnableBuiltinSkillCandidate(RouteDecision{Candidates: []RouteCandidate{candidate}}); ok {
+			t.Fatalf("candidate should not auto-enable: %+v", got)
 		}
 	}
 }

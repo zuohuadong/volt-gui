@@ -52,6 +52,10 @@ SYNC_PATHS=(
   ':(exclude,glob)internal/repair/**'
   ':(exclude,glob)internal/sandbox/**'
   ':(exclude,glob)internal/serve/**'
+  # Volt keeps a configurable tool-output redaction policy that upstream no
+  # longer exposes. Sync secret handling only through an explicit review so an
+  # upstream snapshot cannot remove APIs still used by the fork's boot path.
+  ':(exclude,glob)internal/secrets/**'
   ':(exclude,glob)internal/skill/**'
   ':(exclude,glob)internal/tool/**'
   ':(exclude,glob)internal/winsandbox/**'
@@ -178,7 +182,7 @@ while IFS= read -r -d '' path; do
   case "$path" in
     *.go)
       [[ -f "$path" ]] || continue
-      perl -0pi -e 's|reasonix/|voltui/|g; s|\breasonix\b|voltui|g; s|\bReasonix\b|VoltUI|g; s|\bREASONIX\b|VOLTUI|g' "$path"
+      perl -0pi -e 's|reasonix/|voltui/|g; s|\breasonix_|voltui_|g; s|\bReasonix_|VoltUI_|g; s|\bREASONIX_|VOLTUI_|g; s|\breasonix\b|voltui|g; s|\bReasonix\b|VoltUI|g; s|\bREASONIX\b|VOLTUI|g' "$path"
       ;;
   esac
 done < <(git diff --name-only -z "$SYNC_BASE" -- "${SYNC_PATHS[@]}")

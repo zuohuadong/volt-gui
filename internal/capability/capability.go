@@ -65,12 +65,41 @@ type RouteDecision struct {
 	Candidates []RouteCandidate
 }
 
+// AutoEnableBuiltinSkillCandidate returns the first trusted built-in skill whose
+// route is strong enough to justify enabling the local skill source before the
+// model's first request. Custom/project skills and weak suggest-only matches
+// remain explicit connect_tool_source decisions.
+func AutoEnableBuiltinSkillCandidate(d RouteDecision) (RouteCandidate, bool) {
+	for _, candidate := range d.Candidates {
+		entry := candidate.Entry
+		if entry.Kind != KindSkill || entry.Source != string(skill.ScopeBuiltin) || entry.Status != StatusConfigured {
+			continue
+		}
+		if candidate.Policy != AutoUsePrefer && candidate.Policy != AutoUseRequire {
+			continue
+		}
+		return candidate, true
+	}
+	return RouteCandidate{}, false
+}
+
 func SkillEntries(skills []skill.Skill, tools []tool.ContractEntry) []Entry {
+	return SkillEntriesForMode(skills, tools, false)
+}
+
+// SkillEntriesForMode marks a skill ready only when the live registry exposes
+// the entry point that is valid for the current execution mode. Plan mode has
+// a deliberately narrow read-only surface; normal mode needs run_skill before
+// a route can invoke a skill without an explicit source connection.
+func SkillEntriesForMode(skills []skill.Skill, tools []tool.ContractEntry, planMode bool) []Entry {
 	toolNames := map[string]bool{}
 	for _, t := range tools {
 		toolNames[t.Name] = true
 	}
-	skillToolReady := toolNames["run_skill"] || toolNames["read_skill"] || toolNames["read_only_skill"]
+	skillToolReady := toolNames["read_only_skill"]
+	if !planMode {
+		skillToolReady = toolNames["run_skill"]
+	}
 
 	out := make([]Entry, 0, len(skills))
 	for _, sk := range skills {

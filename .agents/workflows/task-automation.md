@@ -39,6 +39,14 @@ description: 任务自动化 — 从任务契约领取、执行、提 PR/MR
 - `wide-refactor` 采用 `expand-contract`：先增加兼容边界，再迁移调用方，最后删除旧边界；每一阶段都必须有可验证的 tracer bullet 和回滚点。
 - `delivery_slicing`、Matter 和 Goal Forge 只是 Task Contract 的设计/证据引用层，不创建新 ledger。coordination DB v2 的 `.agents/state/coordination.db` 仍是唯一执行事实源；legacy 项目仍以 Task Ledger / `tasks.md` 为准。
 
+### PARTIAL 收尾、范围冻结与 WIP 门
+
+- 第一次 claim 时冻结 goal、non-goals、acceptance、risk、orchestration 和 scope hash；状态推进、证据追加不算范围变更。冻结后的实质变更必须创建带 `parent` / `source` / `reason` 的 follow-up，或记录 `--human-confirmation` 证据。
+- reviewer 输出 `PARTIAL` 时必须列出精确 `blocking_findings`，coordination task 转为 `blocked`，并结束当前任务周期。若剩余项只依赖生产授权、真实凭据、外部账号、部署或人类许可，不得自动把“补验收工具/模拟器/诊断面板”纳入同一目标。
+- `PARTIAL` 后原任务不能自动回到 `ready` / `running` / `review`；同一任务继续需要 approval/continuation 人工证据，否则应领取新的 follow-up。
+- 默认 WIP=1：已有 `running` task 时，新的 claim fail closed；只有可审计的人类确认可覆盖。
+- claim/advance 前必须核对 coordination status/risk、最新 Contract execution state、冻结 scope hash 和 effective orchestration；不一致时停止。`agmesh automation doctor .` 必须报告这些漂移。
+
 ## 2. Delegation Gate（能力自适应 + 风险分级）
 
 **核心原则：行动型任务必须先做 Delegation Decision；模型/runtime 能力决定执行模式，任务风险决定验证强度，确定性证据决定是否完成。Orchestrator 管状态、权限、预算、证据和裁决，不重复接管强模型已经完成的内部编排。**

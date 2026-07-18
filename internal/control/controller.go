@@ -93,8 +93,10 @@ type Controller struct {
 	// skills owns the session's discovered skills (enabled subset, full set, and
 	// the reloadable stores) — the skills slice of the Capabilities concern. See
 	// skill.go.
-	skills skillSet
-	hooks  *hook.Runner // session hook runner; nil-safe (no hooks configured)
+	skills                          skillSet
+	autoEnableBuiltinSkills         func() bool
+	autoEnableReadOnlyBuiltinSkills func() bool
+	hooks                           *hook.Runner // session hook runner; nil-safe (no hooks configured)
 	// hookContexts carries one-shot lifecycle hook context into the next real
 	// user turn without changing the cache-stable system prompt.
 	hookContexts []string
@@ -358,9 +360,15 @@ type Options struct {
 	AllSkills     []skill.Skill
 	SkillStore    *skill.Store
 	AllSkillStore *skill.Store
-	Hooks         *hook.Runner
-	Memory        *memory.Set
-	Cleanup       func()
+	// AutoEnableBuiltinSkills and AutoEnableReadOnlyBuiltinSkills enable the
+	// corresponding token-economy source when the per-turn capability router
+	// strongly matches a trusted built-in skill. Each callback reports whether it
+	// changed the live registry.
+	AutoEnableBuiltinSkills         func() bool
+	AutoEnableReadOnlyBuiltinSkills func() bool
+	Hooks                           *hook.Runner
+	Memory                          *memory.Set
+	Cleanup                         func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
 	BalanceURL    string
@@ -455,6 +463,8 @@ func New(opts Options) *Controller {
 		sessionPath:                       opts.SessionPath,
 		commands:                          atomic.Pointer[[]command.Command]{},
 		skills:                            newSkillSet(opts.Skills, opts.AllSkills, opts.SkillStore, opts.AllSkillStore),
+		autoEnableBuiltinSkills:           opts.AutoEnableBuiltinSkills,
+		autoEnableReadOnlyBuiltinSkills:   opts.AutoEnableReadOnlyBuiltinSkills,
 		hooks:                             opts.Hooks,
 		memory:                            newMemoryManager(opts.Memory),
 		cleanup:                           opts.Cleanup,

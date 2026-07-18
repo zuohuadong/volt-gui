@@ -20,8 +20,22 @@ func (c *Controller) withCapabilityRoute(composed, routeInput string) string {
 	}
 	tools := c.ToolContractEntries()
 	entries := capability.ToolEntries(tools)
-	entries = append(entries, capability.SkillEntries(c.Skills(), tools)...)
+	planMode := c.PlanMode()
+	entries = append(entries, capability.SkillEntriesForMode(c.Skills(), tools, planMode)...)
 	decision := capability.Route(routeInput, entries)
+	if _, ok := capability.AutoEnableBuiltinSkillCandidate(decision); ok {
+		autoEnable := c.autoEnableBuiltinSkills
+		if planMode {
+			autoEnable = c.autoEnableReadOnlyBuiltinSkills
+		}
+		if autoEnable != nil {
+			autoEnable()
+			tools = c.ToolContractEntries()
+			entries = capability.ToolEntries(tools)
+			entries = append(entries, capability.SkillEntriesForMode(c.Skills(), tools, planMode)...)
+			decision = capability.Route(routeInput, entries)
+		}
+	}
 	block := capability.RenderTransientBlock(decision)
 	if block == "" {
 		return composed

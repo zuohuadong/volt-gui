@@ -19,17 +19,17 @@ require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/rivo/uniseg v0.4.7
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
-	github.com/yuin/goldmark v1.8.2
+	github.com/yuin/goldmark v1.8.4
 	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.44.0
-	golang.org/x/mod v0.37.0
+	golang.org/x/mod v0.38.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
-	modernc.org/sqlite v1.53.0
+	modernc.org/sqlite v1.54.0
 	mvdan.cc/sh/v3 v3.13.1
 )
 
@@ -55,7 +55,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	modernc.org/libc v1.73.4 // indirect
+	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )

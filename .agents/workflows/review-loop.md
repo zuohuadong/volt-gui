@@ -181,4 +181,6 @@ Before claiming done:
 - cite each mailbox result that was actually run (DB mailbox in v2 projects, file path in legacy projects)
 - run the Task Contract verification commands
 - update coordination DB with the final PASS/FAIL/PARTIAL verdict; legacy projects update `progress.md`
+- `PARTIAL` must include exact blocking findings and is terminal for the current task cycle. If all remaining evidence depends on production authorization, real credentials, deployment, external accounts, or human permission, set the task `blocked` and stop instead of expanding the same goal.
+- Resume after `PARTIAL` only through an auditable human continuation decision or a follow-up Task Contract with `parent` / `source` / `reason`.
 - do not claim multi-agent review if only a plan was generated

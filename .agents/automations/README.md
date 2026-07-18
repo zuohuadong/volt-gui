@@ -45,6 +45,9 @@
 - 审查不合格优先退回原 PR/MR 修复
 - 只有原 PR/MR 无法继续，或者问题已经合并进入主线，才创建 follow-up 修复任务
 - follow-up 修复任务必须包含 parent / source / reason
+- 首次 claim 会冻结 Task Contract 的目标、非目标、验收、风险、orchestration 和 scope hash；实质变更需要 follow-up 或 `--human-confirmation`。默认同一项目只允许一个 `running` 任务。
+- `matter review --verdict PARTIAL` 必须提供一个或多个精确 `--blocker`，并把任务置为 `blocked`。如果剩余项只依赖生产授权、真实凭据、外部账号、部署或人类许可，当前任务必须收尾停止，不得自动扩成同一目标下的验收工具开发。
+- `PARTIAL` 后恢复同一任务需要 approval/continuation 人工证据；否则创建并领取带 parent/source/reason 的 follow-up。`automation claim` 会校验 status/risk、Contract execution state、scope hash、effective orchestration 和 WIP，`automation doctor` 会报告漂移。
 
 ## 记录规则
 

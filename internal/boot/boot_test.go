@@ -2304,6 +2304,212 @@ model = "x"
 	}
 }
 
+func TestBuildTokenEconomyAutoEnablesMatchedBuiltinSkillBeforeFirstRequest(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy-auto-skill", testutil.Turn{Text: "done"})
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "请审查这段代码有没有问题"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	reqs := prov.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	for _, name := range []string{"review", "run_skill", "read_only_skill"} {
+		if !requestHasTool(reqs[0], name) {
+			t.Fatalf("first request should auto-enable %q for the matched built-in skill; tools=%v", name, toolSchemaNames(reqs[0].Tools))
+		}
+	}
+	routed := bootLastUser(reqs[0])
+	if !strings.Contains(routed, "skill:review prefer") {
+		t.Fatalf("first request should route directly to review skill:\n%s", routed)
+	}
+	if strings.Contains(routed, "source:skills") || strings.Contains(routed, "connect_tool_source") {
+		t.Fatalf("auto-enabled built-in skill should not require a source connection:\n%s", routed)
+	}
+}
+
+func TestBuildTokenEconomyAutoEnablesBuiltinTestSkillFromTrigger(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy-auto-test-skill", testutil.Turn{Text: "done"})
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "请运行测试并修复失败"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	reqs := prov.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	if !requestHasTool(reqs[0], "run_skill") {
+		t.Fatalf("first request should auto-enable run_skill for the built-in test skill; tools=%v", toolSchemaNames(reqs[0].Tools))
+	}
+	if routed := bootLastUser(reqs[0]); !strings.Contains(routed, "skill:test prefer") {
+		t.Fatalf("first request should route to the built-in test skill:\n%s", routed)
+	}
+}
+
+func TestBuildTokenEconomyPlanModeAutoEnablesOnlyReadOnlyBuiltinSkillSurface(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy-plan-auto-skill",
+		testutil.Turn{Text: "review plan"},
+		testutil.Turn{Text: "done"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	ctrl.SetPlanMode(true)
+	if err := ctrl.Run(context.Background(), "请审查这段代码有没有问题"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	reqs := prov.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("provider received no requests")
+	}
+	if !requestHasTool(reqs[0], "read_only_skill") {
+		t.Fatalf("plan-mode first request should auto-enable read_only_skill; tools=%v", toolSchemaNames(reqs[0].Tools))
+	}
+	for _, forbidden := range []string{"run_skill", "read_skill", "install_skill", "review"} {
+		if requestHasTool(reqs[0], forbidden) {
+			t.Fatalf("plan-mode auto-enable should not expose %q; tools=%v", forbidden, toolSchemaNames(reqs[0].Tools))
+		}
+	}
+	routed := bootLastUser(reqs[0])
+	if !strings.Contains(routed, "skill:review prefer") || strings.Contains(routed, "source:skills") {
+		t.Fatalf("plan-mode request should route directly to the built-in review skill:\n%s", routed)
+	}
+
+	ctrl.SetPlanMode(false)
+	if err := ctrl.Run(context.Background(), "请运行测试并修复失败"); err != nil {
+		t.Fatalf("Run after leaving plan mode: %v", err)
+	}
+	reqs = prov.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests after leaving plan mode = %d, want 2", len(reqs))
+	}
+	for _, name := range []string{"run_skill", "read_skill"} {
+		if !requestHasTool(reqs[1], name) {
+			t.Fatalf("normal-mode request should upgrade to the full skill surface including %q; tools=%v", name, toolSchemaNames(reqs[1].Tools))
+		}
+	}
+	if routed := bootLastUser(reqs[1]); !strings.Contains(routed, "skill:test prefer") || strings.Contains(routed, "source:skills") {
+		t.Fatalf("normal-mode request should route directly to the built-in test skill:\n%s", routed)
+	}
+}
+
+func TestBuildTokenEconomyDoesNotAutoEnableMatchedProjectSkill(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("token-economy-project-skill", testutil.Turn{Text: "done"})
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "boot-token-profile-test"
+model = "x"
+`)
+	writeFile(t, dir, ".voltui/skills/project-router/SKILL.md", `---
+description: project routing skill
+triggers: inspect custom scope
+auto-use: prefer
+---
+project body`)
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, TokenMode: TokenModeEconomy})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	if err := ctrl.Run(context.Background(), "inspect custom scope"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	reqs := prov.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("requests = %d, want 1", len(reqs))
+	}
+	for _, hidden := range []string{"run_skill", "read_skill", "read_only_skill"} {
+		if requestHasTool(reqs[0], hidden) {
+			t.Fatalf("project skill match should not auto-enable %q; tools=%v", hidden, toolSchemaNames(reqs[0].Tools))
+		}
+	}
+	routed := bootLastUser(reqs[0])
+	if !strings.Contains(routed, "source:skills prefer") || !strings.Contains(routed, "connect_tool_source") {
+		t.Fatalf("project skill should retain explicit source connection guidance:\n%s", routed)
+	}
+}
+
 func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	var stderr bytes.Buffer

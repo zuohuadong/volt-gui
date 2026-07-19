@@ -25,6 +25,7 @@ const desktopCi = wf("desktop-ci.yml");
 const ci = wf("ci.yml");
 const upstreamSyncYml = wf("upstream-sync.yml");
 const upstreamSyncSh = script("upstream-sync.sh");
+const upstreamParityManifest = JSON.parse(script("upstream-feature-parity.json"));
 
 // Collect the `with:` text that follows each actions/cache save|restore step,
 // stopping at the next step or job-level key. Used to assert per-step inputs.
@@ -75,16 +76,8 @@ test("upstream-sync.sh uses public HTTPS upstream (no SSH git@ URL)", () => {
 });
 
 test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", () => {
-  assert.match(
-    upstreamSyncSh,
-    /"internal\/sandbox\/"/,
-    "sandbox conflicts must be treated as fork-divergent",
-  );
-  assert.match(
-    upstreamSyncSh,
-    /"desktop\/main\.go"/,
-    "desktop helper dispatch conflicts must keep the VoltUI side",
-  );
+  assert.ok(upstreamSyncSh.includes("':(exclude,glob)internal/sandbox/**'"), "sandbox conflicts must be treated as fork-divergent");
+  assert.ok(upstreamSyncSh.includes("':(exclude)desktop/main.go'"), "desktop helper dispatch conflicts must keep the VoltUI side");
   for (const protectedPath of [
     "internal/winsandbox/",
     "internal/sandbox/seatbelt_windows.go",
@@ -96,6 +89,21 @@ test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", ()
       `upstream patch stream must exclude ${protectedPath}`,
     );
   }
+});
+
+test("upstream-sync.sh gates marker advancement on reviewed excluded features", () => {
+  const parityCheck = upstreamSyncSh.indexOf('node "$PARITY_CHECK" "$LAST_SYNC" "$UPSTREAM_HEAD"');
+  const markerWrite = upstreamSyncSh.indexOf('echo "$UPSTREAM_HEAD" > "$MARKER_FILE"');
+  assert.ok(parityCheck >= 0, "sync must run the excluded-feature parity check");
+  assert.ok(markerWrite > parityCheck, "sync marker must advance only after parity check passes");
+  assert.match(upstreamParityManifest.reviewedUpstreamHead, /^[0-9a-f]{40}$/, "parity manifest must pin a reviewed upstream head");
+  const syncExclusions = [...upstreamSyncSh.matchAll(/^\s+'(\:\(exclude(?:,glob)?\)[^']+)'\s*$/gm)].map((match) => match[1]);
+  assert.deepEqual(
+    new Set(upstreamParityManifest.syncExcludedPathspecs),
+    new Set(syncExclusions),
+    "parity manifest must cover every upstream-sync exclusion",
+  );
+  assert.ok(upstreamParityManifest.features.some((feature) => feature.status === "reviewed-deferred"), "deferred features must stay explicit");
 });
 
 test("upstream-sync.yml commits as github-actions[bot]", () => {

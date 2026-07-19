@@ -38,6 +38,14 @@ import (
 )
 
 func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
+	return desktopMCPHTTPServerWithTools(t, []map[string]any{{
+		"name":        "greet",
+		"description": "Greet someone.",
+		"inputSchema": map[string]any{"type": "object"},
+	}})
+}
+
+func desktopMCPHTTPServerWithTools(t *testing.T, tools []map[string]any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -61,11 +69,7 @@ func desktopMCPHTTPServer(t *testing.T) *httptest.Server {
 				"serverInfo":      map[string]any{"name": "h", "version": "0"},
 			}
 		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{{
-				"name":        "greet",
-				"description": "Greet someone.",
-				"inputSchema": map[string]any{"type": "object"},
-			}}}
+			result = map[string]any{"tools": tools}
 		default:
 			result = map[string]any{}
 		}
@@ -994,6 +998,9 @@ api_key_env = "DEEPSEEK_API_KEY"
 	if got := app.Settings().Agent.MaxSubagentDepth; got != agent.DefaultMaxSubagentDepth {
 		t.Fatalf("default max subagent depth = %d, want %d", got, agent.DefaultMaxSubagentDepth)
 	}
+	if got := app.Settings().Agent.MaxSubagentConcurrency; got != agent.DefaultMaxSubagentConcurrency {
+		t.Fatalf("default max subagent concurrency = %d, want %d", got, agent.DefaultMaxSubagentConcurrency)
+	}
 	if err := app.SetSubagentModel("deepseek/deepseek-v4-pro"); err != nil {
 		t.Fatalf("SetSubagentModel: %v", err)
 	}
@@ -1006,6 +1013,9 @@ api_key_env = "DEEPSEEK_API_KEY"
 	if err := app.SetMaxSubagentDepth(2); err != nil {
 		t.Fatalf("SetMaxSubagentDepth(2): %v", err)
 	}
+	if err := app.SetMaxSubagentConcurrency(12); err != nil {
+		t.Fatalf("SetMaxSubagentConcurrency(12): %v", err)
+	}
 
 	got := app.Settings()
 	if got.SubagentModel != "deepseek/deepseek-v4-pro" || got.SubagentEffort != "max" {
@@ -1014,12 +1024,18 @@ api_key_env = "DEEPSEEK_API_KEY"
 	if got.Agent.MaxSubagentDepth != 2 {
 		t.Fatalf("max subagent depth = %d, want 2", got.Agent.MaxSubagentDepth)
 	}
+	if got.Agent.MaxSubagentConcurrency != 12 {
+		t.Fatalf("max subagent concurrency = %d, want 12", got.Agent.MaxSubagentConcurrency)
+	}
 	cfg := config.LoadForEdit(config.UserConfigPath())
 	if cfg.Agent.SubagentModel != "deepseek/deepseek-v4-pro" || cfg.Agent.SubagentEffort != "max" {
 		t.Fatalf("saved config = model:%q effort:%q", cfg.Agent.SubagentModel, cfg.Agent.SubagentEffort)
 	}
 	if cfg.Agent.MaxSubagentDepth != 2 {
 		t.Fatalf("saved max_subagent_depth = %d, want 2", cfg.Agent.MaxSubagentDepth)
+	}
+	if cfg.Agent.MaxSubagentConcurrency != 12 {
+		t.Fatalf("saved max_subagent_concurrency = %d, want 12", cfg.Agent.MaxSubagentConcurrency)
 	}
 }
 
@@ -6853,31 +6869,30 @@ func TestTrustMCPServerToolPersistsTrustedReadOnlyTools(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
-	if err := os.WriteFile(filepath.Join(dir, "voltui.toml"), []byte(`
-[[plugins]]
-name = "github"
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-github"]
-trusted_read_only_tools = ["pull_request_read"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	srv := desktopMCPHTTPServerWithTools(t, []map[string]any{
+		{"name": "issue_read", "description": "Read an issue.", "inputSchema": map[string]any{"type": "object"}, "annotations": map[string]any{"readOnlyHint": true}},
+		{"name": "issue_write", "description": "Write an issue.", "inputSchema": map[string]any{"type": "object"}},
+	})
+	defer srv.Close()
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
 	defer app.activeCtrl().Close()
+	if _, err := app.AddMCPServer(MCPServerInput{Name: "github", Transport: "http", URL: srv.URL, Tier: "background"}); err != nil {
+		t.Fatalf("AddMCPServer(github): %v", err)
+	}
 
-	if err := app.TrustMCPServerTool("github", " issue_read "); err != nil {
+	if err := app.TrustMCPServerTool(" github ", " issue_read "); err != nil {
 		t.Fatalf("TrustMCPServerTool(github, issue_read): %v", err)
 	}
 	if err := app.TrustMCPServerTool("github", "issue_read"); err != nil {
 		t.Fatalf("TrustMCPServerTool duplicate: %v", err)
 	}
-	if err := app.TrustMCPServerTools("github", []string{" search_issues ", "issue_read", ""}); err != nil {
-		t.Fatalf("TrustMCPServerTools(github): %v", err)
+	if err := app.TrustMCPServerTool("github", "issue_write"); err == nil || !strings.Contains(err.Error(), "not currently advertised as read-only") {
+		t.Fatalf("TrustMCPServerTool(github, issue_write) error = %v, want read-only rejection", err)
 	}
-	if err := app.UntrustMCPServerTool("github", " pull_request_read "); err != nil {
-		t.Fatalf("UntrustMCPServerTool(github, pull_request_read): %v", err)
+	if err := app.TrustMCPServerTools("github", []string{"issue_read", "unknown"}); err == nil || !strings.Contains(err.Error(), "not currently advertised as read-only") {
+		t.Fatalf("TrustMCPServerTools(github, unknown) error = %v, want read-only rejection", err)
 	}
 	cfg, err := config.LoadForRoot(dir)
 	if err != nil {
@@ -6887,12 +6902,12 @@ trusted_read_only_tools = ["pull_request_read"]
 	if !ok {
 		t.Fatalf("github plugin missing: %+v", cfg.Plugins)
 	}
-	if !reflect.DeepEqual(updated.TrustedReadOnlyTools, []string{"issue_read", "search_issues"}) {
+	if !reflect.DeepEqual(updated.TrustedReadOnlyTools, []string{"issue_read"}) {
 		t.Fatalf("trusted read-only tools = %+v", updated.TrustedReadOnlyTools)
 	}
 	for _, s := range app.MCPServers() {
 		if s.Name == "github" {
-			if !reflect.DeepEqual(s.TrustedReadOnlyTools, []string{"issue_read", "search_issues"}) {
+			if !reflect.DeepEqual(s.TrustedReadOnlyTools, []string{"issue_read"}) {
 				t.Fatalf("view trusted read-only tools = %+v", s.TrustedReadOnlyTools)
 			}
 			return
@@ -6905,9 +6920,16 @@ func TestTrustMCPServerToolPersistsProjectMCPJSONEntry(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
+	srv := desktopMCPHTTPServerWithTools(t, []map[string]any{{
+		"name":        "codegraph_context",
+		"description": "Read code context.",
+		"inputSchema": map[string]any{"type": "object"},
+		"annotations": map[string]any{"readOnlyHint": true},
+	}})
+	defer srv.Close()
 	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(`{
   "mcpServers": {
-    "codegraph": { "command": "codegraph", "args": ["serve", "--mcp"] }
+    "codegraph": { "type": "http", "url": "`+srv.URL+`" }
   }
 }`), 0o644); err != nil {
 		t.Fatal(err)
@@ -6916,6 +6938,9 @@ func TestTrustMCPServerToolPersistsProjectMCPJSONEntry(t *testing.T) {
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost()}), "")
 	defer app.activeCtrl().Close()
+	if err := app.ReconnectMCPServer("codegraph"); err != nil {
+		t.Fatalf("ReconnectMCPServer(codegraph): %v", err)
+	}
 
 	if err := app.TrustMCPServerTool("codegraph", "codegraph_context"); err != nil {
 		t.Fatalf("TrustMCPServerTool(.mcp.json codegraph): %v", err)

@@ -2,7 +2,9 @@ export type ActivityMode = "work" | "code";
 export type SteerDispatchMode = "steer" | "new_turn";
 export type SubmitDispatchMode = "turn" | "local" | "maintenance";
 export type RunMode = "ask" | "auto" | "yolo" | "plan" | "goal";
-export type BackendMode = "normal" | "plan" | "yolo";
+export type BackendMode = "normal" | "plan" | "yolo" | "plan-yolo";
+export type CollaborationMode = "normal" | "plan" | "goal";
+export type TokenMode = "full" | "economy";
 
 export interface BrandInfo {
   name: string;
@@ -334,6 +336,8 @@ export interface ServerView {
   name: string;
   transport: string;
   status: "connected" | "deferred" | "failed" | "initializing" | "disabled" | string;
+  startIntent?: string;
+  runtimeState?: string;
   builtIn?: boolean;
   configured?: boolean;
   autoStart: boolean;
@@ -346,8 +350,18 @@ export interface ServerView {
   prompts: number;
   resources: number;
   error?: string;
+  toolList?: MCPToolView[];
   authStatus?: string;
+  authUrl?: string;
   authConfigured?: boolean;
+  trustedReadOnlyTools?: string[];
+  headerKeys?: string[];
+}
+
+export interface MCPToolView {
+  name: string;
+  description: string;
+  readOnlyHint?: boolean;
 }
 
 export interface SkillView {
@@ -1119,6 +1133,31 @@ export interface PluginView {
   error?: string;
 }
 
+export interface PluginInstallOptions {
+  dryRun?: boolean;
+  link?: boolean;
+  replace?: boolean;
+  name?: string;
+}
+
+export interface HookConfigView {
+  event: string;
+  match?: string;
+  command: string;
+  description?: string;
+  timeout?: number;
+  cwd?: string;
+}
+
+export interface HooksSettingsView {
+  scope: "global" | "project" | string;
+  path: string;
+  projectRoot: string;
+  trusted: boolean;
+  hooks: HookConfigView[];
+  events: string[];
+}
+
 export interface WorkbenchPluginInput {
   id: string;
   name: string;
@@ -1276,6 +1315,10 @@ export interface SettingsView {
   permissions: PermissionsView;
   sandbox: SandboxView;
   network?: NetworkSettingsView;
+  agent?: {
+    maxSubagentDepth?: number;
+    maxSubagentConcurrency?: number;
+  };
   desktopLanguage: string;
   desktopLayoutStyle?: string;
   desktopTheme: string;

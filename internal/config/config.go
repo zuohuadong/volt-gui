@@ -1170,6 +1170,9 @@ type AgentConfig struct {
 	SubagentEffort      string            `toml:"subagent_effort"`
 	SubagentEfforts     map[string]string `toml:"subagent_efforts"`
 	MaxSubagentDepth    int               `toml:"max_subagent_depth"`
+	// MaxSubagentConcurrency bounds parallel task/fleet work in one session.
+	// Missing or non-positive values use the agent package default.
+	MaxSubagentConcurrency int `toml:"max_subagent_concurrency"`
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .voltui/output-styles/<name>.md). Empty = the unmodified prompt.
@@ -1782,14 +1785,15 @@ func Default() *Config {
 			// the user cancels, or the provider errors. Context stays bounded by
 			// compaction, not by a round count. Set a positive agent.max_steps only
 			// if you want a hard guard against runaway.
-			MaxSteps:            0,
-			PlannerMaxSteps:     0,
-			AutoPlan:            "off",
-			SoftCompactRatio:    0.5,
-			ToolResultSnipRatio: 0.6,
-			CompactRatio:        0.8,
-			CompactForceRatio:   0.9,
-			MaxSubagentDepth:    2,
+			MaxSteps:               0,
+			PlannerMaxSteps:        0,
+			AutoPlan:               "off",
+			SoftCompactRatio:       0.5,
+			ToolResultSnipRatio:    0.6,
+			CompactRatio:           0.8,
+			CompactForceRatio:      0.9,
+			MaxSubagentDepth:       2,
+			MaxSubagentConcurrency: 6,
 		},
 		// Mode "ask" with no rules keeps `voltui run` autonomous (no TTY → ask
 		// resolves to allow) while `voltui` prompts before writers. Users add

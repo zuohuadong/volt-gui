@@ -6862,23 +6862,62 @@ func (a *App) updateMCPServerTrustedReadOnlyTools(name string, update func([]str
 	return nil
 }
 
+func (a *App) validateTrustedReadOnlyMCPTools(name string, toolNames []string) error {
+	ctrl := a.activeCtrl()
+	if ctrl == nil || ctrl.Host() == nil {
+		return fmt.Errorf("MCP server %q must be connected before trusting tools", name)
+	}
+	name = strings.TrimSpace(name)
+	trusted := make(map[string]bool, len(toolNames))
+	for _, toolName := range uniqueStrings(toolNames) {
+		trusted[toolName] = false
+	}
+	if len(trusted) == 0 {
+		return fmt.Errorf("at least one MCP tool name is required")
+	}
+
+	found := false
+	for _, server := range ctrl.Host().Servers() {
+		if server.Name != name {
+			continue
+		}
+		found = true
+		for _, tool := range server.ToolList {
+			if tool.ReadOnlyHint {
+				if _, requested := trusted[tool.Name]; requested {
+					trusted[tool.Name] = true
+				}
+			}
+		}
+		break
+	}
+	if !found {
+		return fmt.Errorf("MCP server %q must be connected before trusting tools", name)
+	}
+	for toolName, allowed := range trusted {
+		if !allowed {
+			return fmt.Errorf("MCP tool %q is not currently advertised as read-only by server %q", toolName, name)
+		}
+	}
+	return nil
+}
+
 // TrustMCPServerTool marks one raw MCP tool name as trusted read-only and
 // refreshes the live connection so plan mode can use the updated trust boundary.
 func (a *App) TrustMCPServerTool(name, toolName string) error {
-	toolName = strings.TrimSpace(toolName)
-	if toolName == "" {
-		return fmt.Errorf("MCP tool name is required")
-	}
-	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
-		return append(trusted, toolName)
-	})
+	return a.TrustMCPServerTools(name, []string{toolName})
 }
 
 // TrustMCPServerTools marks multiple raw MCP tool names as trusted read-only in
 // one config write and one live reconnect.
 func (a *App) TrustMCPServerTools(name string, toolNames []string) error {
-	if len(uniqueStrings(toolNames)) == 0 {
+	name = strings.TrimSpace(name)
+	toolNames = uniqueStrings(toolNames)
+	if len(toolNames) == 0 {
 		return fmt.Errorf("at least one MCP tool name is required")
+	}
+	if err := a.validateTrustedReadOnlyMCPTools(name, toolNames); err != nil {
+		return err
 	}
 	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
 		return append(trusted, toolNames...)

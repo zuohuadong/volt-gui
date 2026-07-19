@@ -61,11 +61,15 @@
     ZoomOut,
   } from "@lucide/svelte";
   import CodeDashboard from "./components/CodeDashboard.svelte";
+  import AdvancedRuntimeSettings from "./components/AdvancedRuntimeSettings.svelte";
+  import AppearanceSettings from "./components/AppearanceSettings.svelte";
   import Composer from "./components/Composer.svelte";
   import DataTrustCenter from "./components/DataTrustCenter.svelte";
   import ExternalDataImportDialog from "./components/ExternalDataImportDialog.svelte";
   import GovernanceNavigation from "./components/GovernanceNavigation.svelte";
   import ManagedWorktreePanel from "./components/ManagedWorktreePanel.svelte";
+  import MCPTrustEditor from "./components/MCPTrustEditor.svelte";
+  import MCPRuntimeActions from "./components/MCPRuntimeActions.svelte";
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
   import TaskContextBar from "./components/TaskContextBar.svelte";
   import TaskActivityCenter from "./components/TaskActivityCenter.svelte";
@@ -174,6 +178,7 @@
     BrowserCredentialView,
     CapabilitiesView,
     CheckpointMeta,
+    CollaborationMode,
     CommandInfo,
     ContextPanelInfo,
     FilePreview,
@@ -191,6 +196,7 @@
     SettingsView,
     SubmitDispatchMode,
     TabMeta,
+    TokenMode,
     TranscriptItem,
     TrustCenterView,
     TrustedIntranetSiteView,
@@ -240,6 +246,7 @@
     WorkspaceDiffView,
     WorkspaceChangesView,
   } from "./lib/types";
+  import { applyAppearance, normalizeAppearanceStyle } from "./lib/appearance";
 
 
   // Cap the in-memory transcript to prevent unbounded growth during long sessions.
@@ -277,7 +284,7 @@
   type TaskCenterTab = "active" | "todos" | "archived";
   type ConfigDialog = "schedule" | "todo" | "report" | "model" | "ingest" | "knowledge" | "regulation" | "resource" | "template" | "project" | "customer" | "team" | "dossier" | "selectProject" | "selectCustomer" | "distill";
   type UserPanelDialog = "models" | "settings" | "sync" | "operationLog";
-  type SettingPanel = "general" | "runtime" | "models";
+  type SettingPanel = "general" | "runtime" | "advanced" | "models";
   type CalendarMonthCell = { key: string; day: number; date: string; inMonth: boolean; isToday: boolean; events: WorkbenchCalendarEvent[] };
   type CalendarEventInterval = { event: WorkbenchCalendarEvent; date: string; start: number; end: number };
   type CalendarConflictGroup = { date: string; start: number; end: number; events: WorkbenchCalendarEvent[] };
@@ -433,6 +440,7 @@
   let linkedProject = $state("");
   let previewWorkPermission = $state<ComposerToolApprovalMode>("ask");
   let permissionChanging = $state(false);
+  let runtimeChanging = $state(false);
   let linkedCustomer = $state("");
   let input = $state("");
   let composerDraftsByTab = $state<Record<string, string>>({});
@@ -475,6 +483,8 @@
   let capabilityTag = $state("");
   let selectedCapabilityId = $state("git-panel");
   let capabilityDetailOpen = $state(false);
+  let mcpTrustBusy = $state(false);
+  let mcpRuntimeBusy = $state(false);
 	let cloudflareDropPreflight = $state<CloudflareDropPreflight | undefined>();
 	let cloudflareDropJob = $state<WorkbenchJob | undefined>();
 	let cloudflareDropPreviewURL = $state("");
@@ -664,6 +674,12 @@
       ? backendToolApprovalModeToComposer(currentComposerTab?.toolApprovalMode)
       : previewWorkPermission,
   );
+  const composerCollaborationMode = $derived<CollaborationMode>(
+    currentComposerTab?.collaborationMode === "plan" || currentComposerTab?.collaborationMode === "goal"
+      ? currentComposerTab.collaborationMode
+      : "normal",
+  );
+  const composerTokenMode = $derived<TokenMode>(currentComposerTab?.tokenMode === "economy" ? "economy" : "full");
   const composerDisabledReason = $derived(
     hasWailsBindings() && currentComposerTab && currentComposerTab.ready === false
       ? "工作区正在准备中，请稍后发送"
@@ -1147,7 +1163,39 @@
     return OUTCOME_TEMPLATES.find((template) => template.id === task.templateId)?.summary
       ?? "继续对话、处理 Agent 请求，并在完成后复核交付结果。";
   }
-  type CapabilityItem = { id: string; name: string; desc: string; status: string; version: string; source: string; scope: string; sync: string; path: string; permission: string; enabled: boolean; readOnly?: boolean; executionReadOnly?: boolean; tags?: string[]; examplePrompts?: string[]; runAs?: string; autoUse?: string; needsFreshData?: boolean; cost?: string; pluginKind?: string; pluginEntry?: string; capabilities?: string[]; providerIds?: string[]; pluginConfig?: Record<string, string> };
+  type CapabilityItem = {
+    id: string;
+    name: string;
+    desc: string;
+    status: string;
+    version: string;
+    source: string;
+    scope: string;
+    sync: string;
+    path: string;
+    permission: string;
+    enabled: boolean;
+    readOnly?: boolean;
+    executionReadOnly?: boolean;
+    trustedReadOnlyTools?: string[];
+    toolList?: { name: string; description: string; readOnlyHint?: boolean }[];
+    startIntent?: string;
+    runtimeState?: string;
+    authStatus?: string;
+    authConfigured?: boolean;
+    runtimeError?: string;
+    tags?: string[];
+    examplePrompts?: string[];
+    runAs?: string;
+    autoUse?: string;
+    needsFreshData?: boolean;
+    cost?: string;
+    pluginKind?: string;
+    pluginEntry?: string;
+    capabilities?: string[];
+    providerIds?: string[];
+    pluginConfig?: Record<string, string>;
+  };
   type CapabilityBuckets = Record<CapabilityTab, CapabilityItem[]>;
   function emptyCapabilityBuckets(): CapabilityBuckets {
     return { plugin: [], mcp: [], skill: [] };
@@ -2351,6 +2399,12 @@
         status: modelSettings ? `${settingsDraft.permissionMode || "ask"} / ${settingsDraft.sandboxBash || "enforce"}` : "可配置",
       },
       {
+        id: "advanced",
+        title: "Agent 与扩展",
+        desc: "子代理默认值、Hook 信任和本地插件包生命周期。",
+        status: modelSettings?.subagentModel || "继承默认模型",
+      },
+      {
         id: "models",
         title: "模型接口",
         desc: "Provider、API Key 环境变量和默认模型。",
@@ -2374,6 +2428,8 @@
       next.sandboxShell = view.sandbox.shell || "auto";
     }
     settingsDraft = next;
+    const appearanceTheme = next.theme === "light" || next.theme === "dark" ? next.theme : "auto";
+    applyAppearance(appearanceTheme, normalizeAppearanceStyle(next.themeStyle));
   }
 
   function splitSettingsLines(value: string): string[] {
@@ -2399,6 +2455,11 @@
     void ensureSettingsLoaded();
   }
 
+  function closeUserPanelDialog() {
+    if (userPanelDialog === "settings") syncSettingsDraft();
+    userPanelDialog = undefined;
+  }
+
   function selectSettingsPanel(panel: SettingPanel) {
     settingsPanel = panel;
     settingsMessage = "";
@@ -2413,6 +2474,7 @@
 
   function settingsPanelTitle() {
     if (settingsPanel === "runtime") return "权限与沙箱";
+    if (settingsPanel === "advanced") return "Agent 与扩展";
     if (settingsPanel === "models") return "模型接口";
     return "常规设置";
   }
@@ -2420,7 +2482,7 @@
   async function saveSettingsDraft() {
     if (settingsPanel === "models") {
       openWorkLayer("models");
-      userPanelDialog = undefined;
+      closeUserPanelDialog();
       return;
     }
     if (!hasWailsBindings()) {
@@ -2554,7 +2616,7 @@
     modelDraftMessage = "";
     modelDraftError = "";
     configDialog = "model";
-    userPanelDialog = undefined;
+    closeUserPanelDialog();
   }
 
   function isDraftFetchedModelSelected(model: string) {
@@ -5811,6 +5873,13 @@
       path: server.command || server.url || server.name,
       permission: server.envKeys?.length ? `环境变量：${server.envKeys.join(" / ")}` : server.authConfigured ? "已配置授权" : "按 MCP 配置",
       enabled,
+      trustedReadOnlyTools: server.trustedReadOnlyTools ?? [],
+      toolList: server.toolList ?? [],
+      startIntent: server.startIntent,
+      runtimeState: server.runtimeState,
+      authStatus: server.authStatus,
+      authConfigured: server.authConfigured,
+      runtimeError: server.error,
     };
   }
   function skillToCapability(skill: CapabilitiesView["skills"][number]): CapabilityItem {
@@ -6008,6 +6077,60 @@
     } catch (error) {
       console.error("Failed to toggle capability", error);
       showWorkbenchNotice("更新能力状态失败，请检查配置或当前会话状态。");
+    }
+  }
+  async function trustMCPTool(item: CapabilityItem, toolName: string) {
+    if (!toolName || mcpTrustBusy) return;
+    mcpTrustBusy = true;
+    try {
+      await app().TrustMCPServerTool(item.id, toolName);
+      await refreshCapabilities();
+      showWorkbenchNotice(`${item.name} / ${toolName} 已标记为只读信任工具。`);
+    } catch (error) {
+      showWorkbenchNotice(`MCP 工具信任失败：${formatErrorMessage(error)}`);
+    } finally {
+      mcpTrustBusy = false;
+    }
+  }
+  async function untrustMCPTool(item: CapabilityItem, toolName: string) {
+    if (mcpTrustBusy) return;
+    mcpTrustBusy = true;
+    try {
+      await app().UntrustMCPServerTool(item.id, toolName);
+      await refreshCapabilities();
+      showWorkbenchNotice(`${item.name} / ${toolName} 的只读信任已撤销。`);
+    } catch (error) {
+      showWorkbenchNotice(`撤销 MCP 工具信任失败：${formatErrorMessage(error)}`);
+    } finally {
+      mcpTrustBusy = false;
+    }
+  }
+
+  async function reverifyMCPServer(item: CapabilityItem) {
+    if (mcpRuntimeBusy) return;
+    mcpRuntimeBusy = true;
+    try {
+      await app().ReconnectMCPServer(item.id);
+      await refreshCapabilities();
+      showWorkbenchNotice(`${item.name} 已重新握手并刷新工具清单。`);
+    } catch (error) {
+      showWorkbenchNotice(`MCP 复验失败：${formatErrorMessage(error)}`);
+    } finally {
+      mcpRuntimeBusy = false;
+    }
+  }
+
+  async function clearMCPAuthentication(item: CapabilityItem) {
+    if (mcpRuntimeBusy) return;
+    mcpRuntimeBusy = true;
+    try {
+      await app().ClearMCPServerAuthentication(item.id);
+      await refreshCapabilities();
+      showWorkbenchNotice(`${item.name} 的本地认证已清除，请重新连接完成验证。`);
+    } catch (error) {
+      showWorkbenchNotice(`清除 MCP 认证失败：${formatErrorMessage(error)}`);
+    } finally {
+      mcpRuntimeBusy = false;
     }
   }
 	function isCloudflareDropCapability(item?: CapabilityItem) {
@@ -7972,6 +8095,69 @@
     }
   }
 
+  async function refreshRuntimeTab(tabID: string, patch: Partial<TabMeta>) {
+    tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, ...patch } : tab);
+    try {
+      tabs = await app().ListTabs();
+    } catch {
+      // The setter already confirmed the change; the next normal refresh will reconcile full metadata.
+    }
+  }
+
+  function composerRuntimeTabID() {
+    return currentComposerTab?.id || activeTab?.id || "";
+  }
+
+  async function setComposerCollaborationMode(next: CollaborationMode) {
+    if (runtimeChanging || next === composerCollaborationMode) return;
+    if (!hasWailsBindings()) return desktopBackendUnavailable("切换运行方式");
+    const tabID = composerRuntimeTabID();
+    if (!tabID) return showWorkbenchNotice("当前没有可设置运行方式的会话。");
+    runtimeChanging = true;
+    try {
+      await app().SetCollaborationModeForTab(tabID, next);
+      await refreshRuntimeTab(tabID, { collaborationMode: next, goal: next === "goal" ? currentComposerTab?.goal : "" });
+    } catch (error) {
+      showWorkbenchNotice(`运行方式切换失败：${formatErrorMessage(error)}`);
+    } finally {
+      runtimeChanging = false;
+    }
+  }
+
+  async function setComposerTokenMode(next: TokenMode) {
+    if (runtimeChanging || next === composerTokenMode) return;
+    if (!hasWailsBindings()) return desktopBackendUnavailable("切换 Token 档位");
+    const tabID = composerRuntimeTabID();
+    if (!tabID) return showWorkbenchNotice("当前没有可设置 Token 档位的会话。");
+    runtimeChanging = true;
+    try {
+      await app().SetTokenModeForTab(tabID, next);
+      await refreshRuntimeTab(tabID, { tokenMode: next });
+    } catch (error) {
+      showWorkbenchNotice(`Token 档位切换失败：${formatErrorMessage(error)}`);
+    } finally {
+      runtimeChanging = false;
+    }
+  }
+
+  async function setComposerGoal(objective: string) {
+    if (runtimeChanging) return;
+    if (!hasWailsBindings()) return desktopBackendUnavailable("设置长期目标");
+    const tabID = composerRuntimeTabID();
+    if (!tabID) return showWorkbenchNotice("当前没有可设置目标的会话。");
+    const goal = objective.trim();
+    runtimeChanging = true;
+    try {
+      if (goal) await app().SetGoalForTab(tabID, goal);
+      else await app().ClearGoalForTab(tabID);
+      await refreshRuntimeTab(tabID, { goal, goalStatus: goal ? "running" : "stopped", collaborationMode: goal ? "goal" : "normal" });
+    } catch (error) {
+      showWorkbenchNotice(`长期目标更新失败：${formatErrorMessage(error)}`);
+    } finally {
+      runtimeChanging = false;
+    }
+  }
+
   async function answerApproval(allow: boolean, session: boolean, persist: boolean) {
     const tabID = pendingPromptTabId || activeTab?.id || "";
     if (!tabID || !pendingApproval) return;
@@ -8306,6 +8492,14 @@
                 workPermission={composerWorkPermission}
                 {permissionChanging}
                 onWorkPermissionChange={setComposerWorkPermission}
+                collaborationMode={composerCollaborationMode}
+                tokenMode={composerTokenMode}
+                goal={currentComposerTab?.goal || ""}
+                goalStatus={currentComposerTab?.goalStatus || ""}
+                {runtimeChanging}
+                onCollaborationModeChange={setComposerCollaborationMode}
+                onTokenModeChange={setComposerTokenMode}
+                onGoalChange={setComposerGoal}
                 onOpenResources={openResourceCenterFromComposer}
                 {activityMode}
                 contextInfo={composerContext}
@@ -8568,6 +8762,14 @@
                         workPermission={composerWorkPermission}
                         {permissionChanging}
                         onWorkPermissionChange={setComposerWorkPermission}
+                        collaborationMode={composerCollaborationMode}
+                        tokenMode={composerTokenMode}
+                        goal={currentComposerTab?.goal || ""}
+                        goalStatus={currentComposerTab?.goalStatus || ""}
+                        {runtimeChanging}
+                        onCollaborationModeChange={setComposerCollaborationMode}
+                        onTokenModeChange={setComposerTokenMode}
+                        onGoalChange={setComposerGoal}
                         onOpenResources={openResourceCenterFromComposer}
                         {activityMode}
                         contextInfo={composerContext}
@@ -8787,6 +8989,14 @@
                       workPermission={composerWorkPermission}
                       {permissionChanging}
                       onWorkPermissionChange={setComposerWorkPermission}
+                      collaborationMode={composerCollaborationMode}
+                      tokenMode={composerTokenMode}
+                      goal={currentComposerTab?.goal || ""}
+                      goalStatus={currentComposerTab?.goalStatus || ""}
+                      {runtimeChanging}
+                      onCollaborationModeChange={setComposerCollaborationMode}
+                      onTokenModeChange={setComposerTokenMode}
+                      onGoalChange={setComposerGoal}
                       onOpenResources={openResourceCenterFromComposer}
                       {activityMode}
                       contextInfo={composerContext}
@@ -9589,6 +9799,14 @@
                   workPermission={composerWorkPermission}
                   {permissionChanging}
                   onWorkPermissionChange={setComposerWorkPermission}
+                  collaborationMode={composerCollaborationMode}
+                  tokenMode={composerTokenMode}
+                  goal={currentComposerTab?.goal || ""}
+                  goalStatus={currentComposerTab?.goalStatus || ""}
+                  {runtimeChanging}
+                  onCollaborationModeChange={setComposerCollaborationMode}
+                  onTokenModeChange={setComposerTokenMode}
+                  onGoalChange={setComposerGoal}
                   onOpenResources={openResourceCenterFromComposer}
                   {activityMode}
                   contextInfo={composerContext}
@@ -10070,7 +10288,7 @@
                 <span class="user-panel-modal__icon"><UserPanelIcon size={18} /></span>
                 <div><span>User Panel</span><strong>{userPanelDialogTitle()}</strong></div>
               </div>
-              <button type="button" onclick={() => (userPanelDialog = undefined)}>x</button>
+              <button type="button" onclick={closeUserPanelDialog}>x</button>
             </header>
             <p class="user-panel-modal__intro">{userPanelDialogIntro()}</p>
             {#if userPanelDialog === "settings"}
@@ -10092,31 +10310,18 @@
                   {#if modelSettingsError}<div class="model-inline-alert"><AlertTriangle size={15} /> {modelSettingsError}</div>{/if}
                   {#if settingsMessage}<div class="model-inline-alert"><Check size={15} /> {settingsMessage}</div>{/if}
                   {#if settingsPanel === "general"}
+                    <AppearanceSettings
+                      theme={settingsDraft.theme}
+                      themeStyle={settingsDraft.themeStyle}
+                      onThemeChange={(theme) => (settingsDraft.theme = theme)}
+                      onThemeStyleChange={(style) => (settingsDraft.themeStyle = style)}
+                    />
                     <div class="config-grid user-panel-form">
                       <label>语言
                         <select bind:value={settingsDraft.language}>
                           <option value="auto">跟随系统</option>
                           <option value="zh">中文</option>
                           <option value="en">English</option>
-                        </select>
-                      </label>
-                      <label>主题
-                        <select bind:value={settingsDraft.theme}>
-                          <option value="auto">跟随系统</option>
-                          <option value="light">浅色</option>
-                          <option value="dark">深色</option>
-                        </select>
-                      </label>
-                      <label>主题样式
-                        <select bind:value={settingsDraft.themeStyle}>
-                          <option value="graphite">Graphite</option>
-                          <option value="porcelain">Porcelain</option>
-                          <option value="glacier">Glacier</option>
-                          <option value="aurora">Aurora</option>
-                          <option value="ember">Ember</option>
-                          <option value="midnight">Midnight</option>
-                          <option value="sandstone">Sandstone</option>
-                          <option value="linen">Linen</option>
                         </select>
                       </label>
                       <label>关闭按钮
@@ -10165,9 +10370,11 @@
                         onRemove={removeBrowserCredential}
                       />
                     </div>
+                  {:else if settingsPanel === "advanced"}
+                    <AdvancedRuntimeSettings available={hasWailsBindings()} {models} />
                   {:else}
                     <div class="user-panel-list settings-model-list">
-                      <article><div><strong>默认模型</strong><p>{modelSettings?.defaultModel || selectedModel || agentModel}</p><em>在模型管理中修改默认对话模型。</em></div><button type="button" onclick={() => { userPanelDialog = undefined; openWorkLayer("models"); }}>打开模型管理</button></article>
+                      <article><div><strong>默认模型</strong><p>{modelSettings?.defaultModel || selectedModel || agentModel}</p><em>在模型管理中修改默认对话模型。</em></div><button type="button" onclick={() => { closeUserPanelDialog(); openWorkLayer("models"); }}>打开模型管理</button></article>
                       <article><div><strong>模型渠道</strong><p>{modelSettings?.providers.length ?? 0} 个渠道，{modelProviderSummary(modelSettings?.providers ?? []).configured} 个已配置</p><em>可添加 OpenAI-compatible 或 Anthropic-compatible 接口。</em></div><button type="button" onclick={() => openModelProviderDialog()}>添加渠道</button></article>
                     </div>
                   {/if}
@@ -10179,10 +10386,12 @@
               <div class="user-panel-list">{#each operationLogs as log, logIndex (indexedKey(`${log.time}-${log.action}-${log.target}`, logIndex))}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div>
             {/if}
             <footer>
-              <button type="button" onclick={() => (userPanelDialog = undefined)}>关闭</button>
+              <button type="button" onclick={closeUserPanelDialog}>关闭</button>
               {#if userPanelDialog === "settings"}
-                <button type="button" onclick={resetSettingsDraft}>重置</button>
-                <button type="button" disabled={settingsSaving || modelSettingsLoading} onclick={() => void saveSettingsDraft()}>{settingsSaving ? "保存中" : settingsPanel === "models" ? "打开模型管理" : `保存${settingsPanelTitle()}`}</button>
+                {#if settingsPanel !== "advanced"}
+                  <button type="button" onclick={resetSettingsDraft}>重置</button>
+                  <button type="button" disabled={settingsSaving || modelSettingsLoading} onclick={() => void saveSettingsDraft()}>{settingsSaving ? "保存中" : settingsPanel === "models" ? "打开模型管理" : `保存${settingsPanelTitle()}`}</button>
+                {/if}
               {:else if userPanelDialog === "operationLog"}
                 <button type="button" onclick={exportOperationLog}>导出日志</button>
               {:else}
@@ -10233,6 +10442,28 @@
                     <ol>{#each selectedCapability.examplePrompts as prompt (prompt)}<li>{prompt}</li>{/each}</ol>
                   </section>
                 {/if}
+              {/if}
+              {#if capabilityTab === "mcp"}
+                <MCPRuntimeActions
+                  serverName={selectedCapability.name}
+                  status={selectedCapability.status}
+                  runtimeState={selectedCapability.runtimeState}
+                  startIntent={selectedCapability.startIntent}
+                  authStatus={selectedCapability.authStatus}
+                  authConfigured={selectedCapability.authConfigured}
+                  error={selectedCapability.runtimeError}
+                  busy={mcpRuntimeBusy}
+                  onReconnect={() => reverifyMCPServer(selectedCapability)}
+                  onClearAuthentication={() => clearMCPAuthentication(selectedCapability)}
+                />
+                <MCPTrustEditor
+                  serverName={selectedCapability.name}
+                  trustedTools={selectedCapability.trustedReadOnlyTools ?? []}
+                  availableTools={selectedCapability.toolList ?? []}
+                  busy={mcpTrustBusy}
+                  onTrust={(toolName) => trustMCPTool(selectedCapability, toolName)}
+                  onUntrust={(toolName) => untrustMCPTool(selectedCapability, toolName)}
+                />
               {/if}
               <section class="capability-install-flow">
                 <header><Workflow size={16} /><strong>真实状态检查</strong></header>

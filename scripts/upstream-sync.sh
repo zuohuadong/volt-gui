@@ -12,9 +12,10 @@
 # 7. Roll back this run's selected paths if a patch cannot be reconciled
 set -euo pipefail
 
-UPSTREAM_URL="git@github.com:esengine/DeepSeek-Reasonix.git"
+UPSTREAM_URL="https://github.com/esengine/DeepSeek-Reasonix.git"
 UPSTREAM_BRANCH="main-v2"
 MARKER_FILE=".upstream-sync-marker"
+PARITY_CHECK="scripts/check-upstream-feature-parity.mjs"
 
 # Keep the selection intentionally narrow. A new non-Go resource must be
 # reviewed and added deliberately instead of being copied through implicitly.
@@ -28,6 +29,7 @@ SYNC_PATHS=(
   ':(exclude,glob)site/**'
   ':(exclude,glob)cmd/reasonix-guard/**'
   ':(exclude,glob)desktop/**'
+  ':(exclude)desktop/main.go'
   ':(exclude,glob)internal/acp/**'
   ':(exclude,glob)internal/agent/**'
   ':(exclude,glob)internal/boot/**'
@@ -59,6 +61,10 @@ SYNC_PATHS=(
   ':(exclude,glob)internal/skill/**'
   ':(exclude,glob)internal/tool/**'
   ':(exclude,glob)internal/winsandbox/**'
+  ':(exclude)internal/winsandbox/'
+  ':(exclude)internal/sandbox/seatbelt_windows.go'
+  ':(exclude)internal/sandbox/seatbelt_windows_test.go'
+  ':(exclude)internal/sandbox/seatbelt_other.go'
 )
 
 MODULE_PATHS=(
@@ -68,7 +74,7 @@ MODULE_PATHS=(
   'desktop/go.sum'
 )
 
-echo "=== Fetching upstream over SSH ==="
+echo "=== Fetching upstream over HTTPS ==="
 if git remote get-url upstream >/dev/null 2>&1; then
   git remote set-url upstream "$UPSTREAM_URL"
 else
@@ -204,6 +210,11 @@ echo "=== Verifying desktop Go module ==="
   cd desktop
   go test ./...
 )
+
+# The marker must not advance past excluded upstream capability changes until
+# each change has an explicit Volt disposition in the parity manifest.
+echo "=== Verifying excluded upstream capability parity ==="
+node "$PARITY_CHECK" "$LAST_SYNC" "$UPSTREAM_HEAD"
 
 # Update sync marker
 echo "$UPSTREAM_HEAD" > "$MARKER_FILE"

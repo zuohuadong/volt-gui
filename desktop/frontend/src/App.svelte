@@ -9,6 +9,7 @@
     ArrowRight,
     ArrowUp,
     Blocks,
+    Bold,
     BookMarked,
     BookOpen,
     Bot,
@@ -33,6 +34,7 @@
     GitBranch,
     LayoutDashboard,
     List,
+    ListOrdered,
     ListTodo,
     Loader2,
     Mail,
@@ -47,6 +49,8 @@
     Puzzle,
     RefreshCw,
     RotateCcw,
+    Italic,
+    Quote,
     Search,
     Settings,
     ShieldCheck,
@@ -55,6 +59,7 @@
     Upload,
     UserRound,
     UsersRound,
+    Variable,
     Workflow,
     Zap,
     ZoomIn,
@@ -271,6 +276,7 @@
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
   type CapabilityTab = "plugin" | "mcp" | "skill";
   type ResourceTab = "resources" | "knowledge" | "search" | "conversationArchive" | "ingest";
+  type KnowledgeLibraryTab = "documents" | "templates" | "regulations";
   type ReportCenterTab = "design" | "list";
   type CustomerDetailTab = "overview" | "projects" | "materials" | "schedules" | "todos";
   type ProjectDetailTab = "overview" | "materials" | "schedules" | "reports" | "todos";
@@ -346,6 +352,8 @@
     RenderRegulation?: (id: string, variables: Record<string, string>) => Promise<string>;
     DeleteRegulation?: (id: string) => Promise<void>;
     RenderKnowledgeDocument?: (id: string, variables: Record<string, string>) => Promise<string>;
+    KnowledgeTemplateVariables?: (id: string) => Promise<string[]>;
+    ReindexKnowledgeDocument?: (id: string) => Promise<WorkbenchKnowledgeDocument>;
     RunWorkbenchSync?: (scope: string) => Promise<WorkbenchSyncJob[]>;
     SearchWorkbench?: (query: string) => Promise<WorkbenchSearchResult[]>;
     ExportOperationLogs?: () => Promise<string>;
@@ -368,6 +376,7 @@
   type KnowledgePersistenceBindings = {
     KnowledgeBase?: () => Promise<KnowledgeBaseView>;
     KnowledgeStatus?: () => Promise<KnowledgeStatus>;
+    KnowledgeDocumentPreview?: (id: string) => Promise<string>;
     ImportKnowledgeDocument?: (input: KnowledgeDocumentImportInput) => Promise<WorkbenchKnowledgeDocument>;
     DeleteKnowledgeDocument?: (id: string) => Promise<void>;
   };
@@ -507,6 +516,7 @@
   let capabilityImportInput = $state<HTMLInputElement | undefined>();
   let capabilityImportText = $state("");
   let resourceTab = $state<ResourceTab>("resources");
+  let knowledgeLibraryTab = $state<KnowledgeLibraryTab>("documents");
   let externalDataImportOpen = $state(false);
   let resourceSearch = $state("");
   let agentSelectorOpen = $state(false);
@@ -575,6 +585,9 @@
   let regulationDraftStatus = $state("草稿");
   let regulationDraftTags = $state("");
   let regulationDraftContent = $state("");
+  let regulationContentEditor = $state<HTMLTextAreaElement>();
+  let selectedRegulationId = $state("");
+  let regulationPreviewId = $state("");
   let regulationPreviewText = $state("");
   let selectedProjectId = $state("");
   let selectedCustomerId = $state("");
@@ -853,6 +866,8 @@
   let knowledgeDraftTags = $state("");
   let knowledgeDraftDescription = $state("");
   let knowledgeDraftContent = $state("");
+  let knowledgeDraftNativeFile = $state<PickedProjectMaterialFile | undefined>();
+  let knowledgeDraftFileLabel = $state("");
   let selectedMaterialDetailId = $state("");
   let selectedReportId = $state("");
   let artifactCanvasMode = $state<ArtifactCanvasMode>("select");
@@ -865,6 +880,7 @@
   let artifactStyleApproved = $state(false);
   let artifactReviewComment = $state("");
   let artifactReviewSaving = $state(false);
+  let artifactExporting = $state(false);
   let artifactReviewReportKey = $state("");
   let reportCenterTab = $state<ReportCenterTab>("design");
   let reportDraftId = $state("");
@@ -912,7 +928,7 @@
   const templateStatusOptions = ["草稿", "可用", "已索引", "已更新", "已归档"];
   const templateSourceOptions = ["workbench", "项目资料", "客户资料", "手动录入", "订阅源"];
   const knowledgeTypeOptions = ["文档", "规则", "FAQ", "流程", "规范", "经验总结", "客户资料", "项目资料"];
-  const knowledgeSourceOptions = ["manual", "内部制度", "项目复盘", "客户访谈", "会议纪要", "资料整理", "URL", "订阅源"];
+  const knowledgeSourceOptions = ["manual", "local file", "内部制度", "项目复盘", "客户访谈", "会议纪要", "资料整理", "URL", "订阅源"];
   const knowledgeTagOptions = ["验收 / 项目管理", "合同 / 风险", "客户沟通", "项目复盘", "交付规范", "业务流程", "内部规则", "常见问题"];
   const artifactReviewStages: ArtifactReviewStage[] = [
     { id: "draft", label: "草稿" },
@@ -970,6 +986,7 @@
   ];
   let selectedOutcomeTemplateId = $state<TaskOutcomeTemplateID>("review-fix");
   let activeTaskReceipt = $state<TaskResultReceiptView | undefined>();
+  let taskReceiptOpen = $state(false);
   let taskInspectorPanel = $state<"task" | CodeWorkbenchPanel>("task");
   const showTaskActivityCenter = $derived(Boolean(
     currentLastTurnError
@@ -1288,10 +1305,16 @@
     const keyword = resourceSearch.trim().toLowerCase();
     return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.type, item.status, item.description, item.source, item.tags);
   }));
+  const filteredKnowledgeEntries = $derived(filteredKnowledgeDocuments.filter((item) => {
+    const type = item.type.trim().toLowerCase();
+    return type !== "模板" && type !== "template" && type !== "规范" && type !== "regulation";
+  }));
+  const filteredKnowledgeTemplates = $derived(filteredKnowledgeDocuments.filter((item) => item.type.trim().toLowerCase() === "模板" || item.type.trim().toLowerCase() === "template"));
   const filteredRegulations = $derived(regulationItems.filter((item) => {
     const keyword = resourceSearch.trim().toLowerCase();
     return !keyword || matchesWorkbenchKeyword(keyword, item.title, item.category, item.status, item.tags);
   }));
+  const activeRegulation = $derived(regulationItems.find((item) => item.id === selectedRegulationId));
   function selectedKnowledgeDocument() {
     return documentItems.find((item) => item.id === selectedKnowledgeDocumentId) ?? documentItems[0];
   }
@@ -1343,6 +1366,14 @@
   let workbenchNotice = $state("");
   let knowledgePreviewTitle = $state("知识库预览");
   let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，当前以本地 SQLite + FTS5 索引为主。");
+  let knowledgeTemplateRenderDocument = $state<WorkbenchKnowledgeDocument | undefined>();
+  let knowledgeTemplateRenderValues = $state<Record<string, string>>({});
+  let knowledgeTemplateRendering = $state(false);
+  let knowledgeIndexingDocumentId = $state("");
+  let knowledgePreviewDocumentId = $state("");
+  let knowledgePreviewContent = $state("");
+  let knowledgePreviewLoading = $state(false);
+  let knowledgePreviewError = $state("");
   let capabilityAgentBindings = $state<Record<string, string[]>>({});
   let distillSampleTodoId = $state("");
   let workbenchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1486,6 +1517,7 @@
       if (regulation) {
         resourceTab = "knowledge";
         selectedKnowledgeDocumentId = "";
+        selectedRegulationId = regulation.id;
         knowledgePreviewTitle = regulation.title;
         knowledgePreviewDescription = `${regulation.category} / ${regulation.status} / ${regulation.tags}`;
         showWorkbenchNotice(`已打开规范知识：${regulation.title}`);
@@ -1999,6 +2031,7 @@
     return `${String(value ?? "item")}-${index}`;
   }
   function openKnowledgeDocument(item: (typeof documentItems)[number]) {
+    selectedRegulationId = "";
     selectedKnowledgeDocumentId = item.id;
     knowledgePreviewTitle = item.title;
     knowledgePreviewDescription = [
@@ -2009,30 +2042,123 @@
       item.indexedAt ? `索引时间：${item.indexedAt}` : "",
       item.error ? `错误：${item.error}` : "",
     ].filter(Boolean).join(" / ");
+    void loadKnowledgeDocumentPreview(item);
     showWorkbenchNotice(`已打开文档知识：${item.title}`);
   }
-  function templateRenderVariables(label: string) {
-    const raw = window.prompt(`输入${label}渲染变量（JSON 对象）`, "{}");
-    if (raw === null) return undefined;
-    const parsed = JSON.parse(raw || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("渲染变量必须是 JSON 对象");
-    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [key, String(value)]));
+  async function pickKnowledgeDocumentFile() {
+    if (!hasWailsBindings()) {
+      desktopBackendUnavailable("选择知识文档");
+      return;
+    }
+    const picker = projectMaterialFileBindings()?.PickProjectMaterialFile;
+    if (typeof picker !== "function") {
+      showWorkbenchNotice("原生文件选择接口未就绪，请重启桌面 dev 窗口后重试。");
+      return;
+    }
+    try {
+      const file = await picker();
+      if (!file.selectionToken) return;
+      knowledgeDraftNativeFile = file;
+      knowledgeDraftFileLabel = `${file.name} / ${formatFileSize(file.size)}`;
+      if (!knowledgeDraftTitle.trim()) knowledgeDraftTitle = file.name.replace(/\.[^.]+$/, "") || file.name;
+      if (!knowledgeDraftSource.trim() || knowledgeDraftSource === "manual") knowledgeDraftSource = "local file";
+    } catch (error) {
+      showWorkbenchNotice(`选择知识文档失败：${formatErrorMessage(error)}`);
+    }
+  }
+  async function loadKnowledgeDocumentPreview(item: WorkbenchKnowledgeDocument) {
+    const previewDocument = knowledgePersistenceBindings()?.KnowledgeDocumentPreview;
+    knowledgePreviewDocumentId = item.id;
+    knowledgePreviewContent = "";
+    knowledgePreviewError = "";
+    if (typeof previewDocument !== "function") {
+      knowledgePreviewError = "知识正文预览接口未就绪。";
+      return;
+    }
+    knowledgePreviewLoading = true;
+    try {
+      const content = await previewDocument(item.id);
+      if (knowledgePreviewDocumentId === item.id) {
+        knowledgePreviewContent = content || "未提取到可预览的正文。";
+      }
+    } catch (error) {
+      if (knowledgePreviewDocumentId === item.id) {
+        knowledgePreviewError = formatErrorMessage(error);
+      }
+    } finally {
+      if (knowledgePreviewDocumentId === item.id) knowledgePreviewLoading = false;
+    }
+  }
+  function knowledgeDocumentHasLocalFile(item: WorkbenchKnowledgeDocument) {
+    return Boolean(item.filePath?.trim());
+  }
+  async function openKnowledgeDocumentFile(item: WorkbenchKnowledgeDocument) {
+    const filePath = item.filePath?.trim();
+    if (!filePath) return;
+    try {
+      await app().OpenWorkspacePath(filePath);
+    } catch (error) {
+      console.warn("Unable to open knowledge document file", error);
+      showWorkbenchNotice("打开文件失败：文件可能已移动或不存在。");
+    }
+  }
+  async function copyKnowledgeDocumentPath(item: WorkbenchKnowledgeDocument) {
+    const filePath = item.filePath?.trim();
+    if (!filePath) return;
+    try {
+      await navigator.clipboard?.writeText(filePath);
+      showWorkbenchNotice("文件路径已复制。");
+    } catch {
+      showWorkbenchNotice("复制失败，请手动查看文件路径。");
+    }
   }
   async function renderKnowledgeDocument(item: WorkbenchKnowledgeDocument) {
+    const listVariables = workbenchDataPersistenceBindings()?.KnowledgeTemplateVariables;
     const renderDocument = workbenchDataPersistenceBindings()?.RenderKnowledgeDocument;
-    if (typeof renderDocument !== "function") {
+    if (typeof listVariables !== "function" || typeof renderDocument !== "function") {
       desktopBackendUnavailable("渲染知识模板");
       return;
     }
     try {
-      const variables = templateRenderVariables("知识模板");
-      if (!variables) return;
+      const variables = await listVariables(item.id);
+      knowledgeTemplateRenderDocument = item;
+      knowledgeTemplateRenderValues = Object.fromEntries(variables.map((variable) => [variable, ""]));
+    } catch (error) {
+      showWorkbenchNotice(`无法打开模板渲染表单：${formatErrorMessage(error)}`);
+    }
+  }
+  async function reindexKnowledgeDocument(item: WorkbenchKnowledgeDocument) {
+    const reindexDocument = workbenchDataPersistenceBindings()?.ReindexKnowledgeDocument;
+    if (typeof reindexDocument !== "function" || knowledgeIndexingDocumentId) return;
+    knowledgeIndexingDocumentId = item.id;
+    documentItems = documentItems.map((document) => document.id === item.id ? { ...document, status: "索引中", error: "" } : document);
+    try {
+      const saved = await reindexDocument(item.id);
+      documentItems = documentItems.map((document) => document.id === saved.id ? saved : document);
+      await refreshKnowledgeBase();
+      showWorkbenchNotice(saved.error ? `重新索引失败：${saved.error}` : `已完成重新索引：${saved.title}`);
+    } catch (error) {
+      await refreshKnowledgeBase();
+      showWorkbenchNotice(`重新索引失败：${formatErrorMessage(error)}`);
+    } finally {
+      knowledgeIndexingDocumentId = "";
+    }
+  }
+  async function submitKnowledgeTemplateRender() {
+    const item = knowledgeTemplateRenderDocument;
+    const renderDocument = workbenchDataPersistenceBindings()?.RenderKnowledgeDocument;
+    if (!item || typeof renderDocument !== "function" || knowledgeTemplateRendering) return;
+    knowledgeTemplateRendering = true;
+    try {
       knowledgePreviewTitle = `${item.title} · 渲染结果`;
-      knowledgePreviewDescription = await renderDocument(item.id, variables);
+      knowledgePreviewDescription = await renderDocument(item.id, knowledgeTemplateRenderValues);
       selectedKnowledgeDocumentId = item.id;
+      knowledgeTemplateRenderDocument = undefined;
       showWorkbenchNotice(`已渲染知识模板：${item.title}`);
     } catch (error) {
       showWorkbenchNotice(`渲染知识模板失败：${formatErrorMessage(error)}`);
+    } finally {
+      knowledgeTemplateRendering = false;
     }
   }
   function toggleTemplateMaterial(materialId: string) {
@@ -4210,11 +4336,21 @@
     if (status === "draft") return "草稿";
     return "未开始";
   }
-  function setArtifactStage(stageId: ArtifactReviewStageId) {
+  async function setArtifactStage(stageId: ArtifactReviewStageId) {
     const report = selectedReport();
     selectedArtifactStage = report?.reviewStage === "export" ? "export" : "design";
     if (stageId !== "export") return;
-    if (!report?.styleApproved) showWorkbenchNotice("报告尚未通过设计审批，不能进入导出阶段。");
+    if (!reportCanExport(report)) {
+      showWorkbenchNotice(reportExportDisabledReason(report));
+      return;
+    }
+    if (artifactExporting) return;
+    artifactExporting = true;
+    try {
+      await exportReport(report);
+    } finally {
+      artifactExporting = false;
+    }
   }
   function updateArtifactZoom(delta: number) {
     artifactCanvasZoom = Math.min(160, Math.max(60, artifactCanvasZoom + delta));
@@ -4629,6 +4765,71 @@
     regulationDraftTags = item?.tags ?? "";
     regulationDraftContent = item?.content ?? "";
   }
+  function focusRegulationContentEditor(selectionStart?: number, selectionEnd?: number) {
+    void tick().then(() => {
+      const editor = regulationContentEditor;
+      if (!editor) return;
+      editor.focus();
+      if (selectionStart !== undefined) editor.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
+    });
+  }
+  function replaceRegulationContentSelection(before: string, after = before, fallback = "文本") {
+    const editor = regulationContentEditor;
+    if (!editor) {
+      regulationDraftContent = `${regulationDraftContent}${before}${fallback}${after}`;
+      focusRegulationContentEditor();
+      return;
+    }
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const selection = editor.value.slice(start, end) || fallback;
+    const replacement = `${before}${selection}${after}`;
+    regulationDraftContent = `${editor.value.slice(0, start)}${replacement}${editor.value.slice(end)}`;
+    focusRegulationContentEditor(start + before.length, start + before.length + selection.length);
+  }
+  function prefixRegulationContentLines(prefix: string) {
+    const editor = regulationContentEditor;
+    if (!editor) {
+      regulationDraftContent = `${regulationDraftContent}${regulationDraftContent ? "\\n" : ""}${prefix}文本`;
+      focusRegulationContentEditor();
+      return;
+    }
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const lineStart = editor.value.lastIndexOf("\\n", Math.max(0, start - 1)) + 1;
+    const selectedLines = editor.value.slice(lineStart, end) || "文本";
+    const replacement = selectedLines.split("\\n").map((line, index) => `${prefix === "1. " ? `${index + 1}. ` : prefix}${line}`).join("\\n");
+    regulationDraftContent = `${editor.value.slice(0, lineStart)}${replacement}${editor.value.slice(end)}`;
+    focusRegulationContentEditor(lineStart, lineStart + replacement.length);
+  }
+  function insertRegulationVariable() {
+    const name = window.prompt("请输入变量名称，例如：项目名称")?.trim();
+    if (!name) return;
+    insertRegulationContent(`{{${name}}}`);
+  }
+  function insertRegulationContent(content: string) {
+    const editor = regulationContentEditor;
+    if (!editor) {
+      regulationDraftContent = `${regulationDraftContent}${content}`;
+      focusRegulationContentEditor();
+      return;
+    }
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    regulationDraftContent = `${editor.value.slice(0, start)}${content}${editor.value.slice(end)}`;
+    focusRegulationContentEditor(start + content.length);
+  }
+  function handleRegulationContentKeydown(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    if (event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      replaceRegulationContentSelection("**");
+    }
+    if (event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      replaceRegulationContentSelection("_");
+    }
+  }
   function openRegulationEditor(item?: WorkbenchRegulation) {
     resetRegulationDraft(item);
     configDialog = "regulation";
@@ -4663,6 +4864,8 @@
     knowledgeDraftTags = "";
     knowledgeDraftDescription = "";
     knowledgeDraftContent = "";
+    knowledgeDraftNativeFile = undefined;
+    knowledgeDraftFileLabel = "";
   }
   function nextProjectCode(now = new Date()) {
     const pad = (value: number) => String(value).padStart(2, "0");
@@ -5292,6 +5495,8 @@
         content: regulationDraftContent.trim(),
       });
       regulationItems = [saved, ...regulationItems.filter((item) => item.id !== saved.id)];
+      selectedRegulationId = saved.id;
+      regulationPreviewId = saved.id;
       regulationPreviewText = saved.content ?? "";
       configDialog = undefined;
       showWorkbenchNotice(`${regulationDraftId ? "已更新规范" : "已新建规范"}：${saved.title}`);
@@ -5302,15 +5507,16 @@
     }
   }
   async function previewRegulation(item: WorkbenchRegulation) {
+    selectedKnowledgeDocumentId = "";
+    selectedRegulationId = item.id;
     const renderRegulation = workbenchDataPersistenceBindings()?.RenderRegulation;
     if (typeof renderRegulation !== "function") {
       desktopBackendUnavailable("渲染规范");
       return;
     }
     try {
-      const variables = templateRenderVariables("规范");
-      if (!variables) return;
-      regulationPreviewText = await renderRegulation(item.id, variables);
+      regulationPreviewText = await renderRegulation(item.id, {});
+      regulationPreviewId = item.id;
       showWorkbenchNotice(`已渲染规范：${item.title}`);
     } catch (error) {
       console.error("Failed to render regulation", error);
@@ -5327,7 +5533,11 @@
     try {
       await deleteRegulationBinding(item.id);
       regulationItems = regulationItems.filter((candidate) => candidate.id !== item.id);
-      regulationPreviewText = "";
+      if (selectedRegulationId === item.id) {
+        selectedRegulationId = "";
+        regulationPreviewId = "";
+        regulationPreviewText = "";
+      }
       showWorkbenchNotice(`已删除规范：${item.title}`);
     } catch (error) {
       console.error("Failed to delete regulation", error);
@@ -5414,12 +5624,14 @@
   async function submitKnowledgeDraft() {
     const title = knowledgeDraftTitle.trim();
     const content = knowledgeDraftContent.trim();
+    const description = knowledgeDraftDescription.trim();
+    const selectedFile = knowledgeDraftNativeFile;
     if (!title) {
       showConfigValidation("knowledge-title", "请填写知识标题后再确认导入。");
       return;
     }
-    if (!content && !knowledgeDraftDescription.trim()) {
-      showConfigValidation("knowledge-content", "请填写知识正文或摘要后再确认导入。");
+    if (!content && !description && !selectedFile?.selectionToken) {
+      showConfigValidation("knowledge-content", "请填写知识正文、摘要或选择文档后再确认导入。");
       return;
     }
     const importKnowledge = knowledgePersistenceBindings()?.ImportKnowledgeDocument;
@@ -5428,13 +5640,26 @@
       return;
     }
     try {
+      let uploadedFile = selectedFile;
+      if (selectedFile?.selectionToken) {
+        const importFile = projectMaterialFileBindings()?.ImportProjectMaterialFile;
+        if (typeof importFile !== "function") {
+          showWorkbenchNotice("文件导入接口未就绪，请重启桌面 dev 窗口后重试。");
+          return;
+        }
+        uploadedFile = await importFile(selectedFile.selectionToken);
+      }
       const saved = await importKnowledge({
         title,
         type: knowledgeDraftType.trim() || "文档",
         source: knowledgeDraftSource.trim() || "manual",
         tags: knowledgeDraftTags.trim(),
-        description: knowledgeDraftDescription.trim(),
-        content: [knowledgeDraftDescription.trim(), content].filter(Boolean).join("\n\n"),
+        description,
+        content: content || (uploadedFile?.path ? "" : description),
+        fileName: uploadedFile?.name ?? "",
+        filePath: uploadedFile?.path ?? "",
+        mimeType: uploadedFile?.mimeType ?? "",
+        fileSize: uploadedFile?.size ?? 0,
       });
       documentItems = [normalizeKnowledgeDocumentForUI(saved), ...documentItems.filter((item) => item.id !== saved.id)];
       await refreshKnowledgeBase();
@@ -8446,7 +8671,7 @@
                 代码状态
               </button>
             </header>
-            <div class="task-context-wrap">
+            <div class="task-status-panel">
               <TaskContextBar
                 workspace={activeWorkspace?.name || "未选择 Workspace"}
                 project={activeProjectLabel}
@@ -8464,24 +8689,42 @@
                 onOpenMemory={() => openGovernanceLayer("scopedMemory")}
                 onInspector={openTaskInspector}
               />
-            </div>
             {#if showTaskActivityCenter}
-              <div class="task-context-wrap">
-                <TaskActivityCenter
-                  {tabs}
-                  currentTabId={composerTabId}
-                  {queuedMessages}
-                  receipt={activeTaskReceipt}
-                  changesCount={changedCount}
-                  checkpointCount={checkpoints.length}
-                  lastError={currentLastTurnError}
-                  canRestoreDraft={Boolean(currentLastSubmittedDraft)}
-                  onSwitchTab={switchActivityTab}
-                  onCancelTab={cancelActivityTab}
-                  onRecover={recoverTask}
-                />
+              <TaskActivityCenter
+                {tabs}
+                currentTabId={composerTabId}
+                {queuedMessages}
+                receipt={activeTaskReceipt}
+                changesCount={changedCount}
+                checkpointCount={checkpoints.length}
+                lastError={currentLastTurnError}
+                canRestoreDraft={Boolean(currentLastSubmittedDraft)}
+                onSwitchTab={switchActivityTab}
+                onCancelTab={cancelActivityTab}
+                onRecover={recoverTask}
+              />
+            {/if}
+            {#if activeTaskReceipt}
+              <div class="task-receipt-float" class:open={taskReceiptOpen}>
+                <button
+                  class="task-receipt-float__trigger"
+                  type="button"
+                  aria-expanded={taskReceiptOpen}
+                  aria-controls="task-receipt-panel"
+                  onclick={() => (taskReceiptOpen = !taskReceiptOpen)}
+                >
+                  <span class="task-receipt-float__title"><ClipboardList size={15} /><span>交付收据</span></span>
+                  <em>{activeTaskReceipt.state === "running" ? "执行中" : activeTaskReceipt.state === "failed" ? "待处理" : "待复核"}</em>
+                  <ChevronDown size={14} />
+                </button>
+                {#if taskReceiptOpen}
+                  <aside id="task-receipt-panel" class="task-receipt-float__panel" aria-label="可验证交付收据">
+                    <TaskResultReceipt receipt={activeTaskReceipt} />
+                  </aside>
+                {/if}
               </div>
             {/if}
+            </div>
             <div class="conversation" bind:this={conversationScrollEl} onscroll={handleConversationScroll}>
               {#if historyPageTabId === currentTranscriptTabId()}
                 <HistoryPaginationStatus
@@ -8501,7 +8744,6 @@
                 onAnswerAsk={answerAsk}
                 onLoadArchivedTool={loadArchivedToolEvidence}
               />
-              {#if activeTaskReceipt}<TaskResultReceipt receipt={activeTaskReceipt} />{/if}
               {#if pendingBrowserCredential || pendingBrowserVerification}
                 {#key pendingBrowserCredential?.id ?? pendingBrowserVerification?.id}
                   <BrowserInteractionPrompt
@@ -8557,7 +8799,7 @@
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined} data-governance={activityMode === "work" && isGovernanceLayer(workLayer) ? "true" : undefined}>
-            {#if activityMode !== "work" || (workLayer !== "today" && workLayer !== "todos")}
+            {#if activityMode === "code"}
               <div class="task-context-wrap workbench-context-wrap">
                 <TaskContextBar
                   workspace={activeWorkspace?.name || "未选择 Workspace"}
@@ -8601,9 +8843,9 @@
                   </div>
                   <div class="artifact-stage-tabs" role="tablist" aria-label="审查阶段">
                     {#each artifactReviewStages as stage (stage.id)}
-                      <button class:active={selectedArtifactStage === stage.id} type="button" role="tab" aria-selected={selectedArtifactStage === stage.id} onclick={() => setArtifactStage(stage.id)}>
+                      <button class:active={selectedArtifactStage === stage.id} type="button" role="tab" aria-selected={selectedArtifactStage === stage.id} disabled={stage.id === "export" && artifactExporting} onclick={() => void setArtifactStage(stage.id)}>
                         <span>{stage.label}</span>
-                        <em>{artifactStageStatus(stage.id)}</em>
+                        <em>{stage.id === "export" && artifactExporting ? "导出中" : artifactStageStatus(stage.id)}</em>
                       </button>
                     {/each}
                   </div>
@@ -9294,18 +9536,23 @@
                 </div>
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page calendar-page"><div class="aorist-toolbar calendar-toolbar"><div><span>Calendar</span><strong>日程日历 · {calendarMonthLabel()}</strong></div><div><button type="button" onclick={() => shiftCalendarMonth(-1)}>上月</button><button type="button" onclick={resetCalendarMonth}>今天</button><button type="button" onclick={() => shiftCalendarMonth(1)}>下月</button><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarMonthEvents().length}</strong><em>{calendarMonthLabel()} / 会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todayTodoItems().length}</strong><em>仅统计今天截止</em></article><article><span>冲突提醒</span><strong>{calendarConflictGroups().length}</strong><em>{calendarConflictSummary()}</em></article></div><div class="calendar-board"><div class="calendar-grid calendar-month-grid">{#each calendarWeekdays as weekday (weekday)}<div class="calendar-weekday">{weekday}</div>{/each}{#each calendarMonthCells() as cell (cell.key)}<article class:today={cell.isToday} class:muted={!cell.inMonth}><b>{cell.day}</b>{#each cell.events as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="calendar-event-chip" type="button" onclick={() => openCalendarEvent(event)}>{event.time} {event.title}</button>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each upcomingCalendarEvents() as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{calendarEventFullDate(event).slice(8, 10) || event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{:else}<article class="detail-empty"><strong>暂无近日安排</strong><p>当前月份暂无近期日程。</p></article>{/each}</aside></div></section>
-            {:else if workLayer === "reports"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{selectedReport()?.id || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
+            {:else if workLayer === "reports" && reportCenterTab === "list"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{selectedReport()?.id || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
   <div class="resource-section-top">
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
-    <div class="resource-actions"><button type="button" onclick={() => (externalDataImportOpen = true)}><Download size={14} /> 导入外部数据</button><button type="button" onclick={() => openConfigDialog("knowledge")}>手动录入</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
+    <div class="resource-actions"><button type="button" onclick={() => (externalDataImportOpen = true)}><Download size={14} /> 导入外部数据</button><button type="button" onclick={() => openConfigDialog("knowledge")}>手动录入</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => openRegulationEditor()}>新建规范</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
   </div>
   <div class="knowledge-health"><article><span>SQLite</span><strong>{knowledgeStatus.sqlite ? "已启用" : "未连接"}</strong></article><article><span>FTS5</span><strong>{knowledgeStatus.fts5 ? "可检索" : "不可用"}</strong></article><article><span>sqlite-vec</span><strong>{knowledgeVectorLabel()}</strong></article><article><span>切片</span><strong>{knowledgeStatus.chunks}</strong></article></div><p class="knowledge-local-note">{knowledgeIndexSummary()}</p>
   <div class="knowledge-layout knowledge-layout--merged">
     <div class="knowledge-stack">
-      <section>
-        <header><span>Document Knowledge</span><strong>文档模板</strong></header>
+      <div class="knowledge-content-panel" role="tabpanel" aria-labelledby={`knowledge-${knowledgeLibraryTab}-tab`} id={`knowledge-${knowledgeLibraryTab}-panel`}>
+      <div class="knowledge-content-tabs" role="tablist" aria-label="知识库分类">
+        <button id="knowledge-documents-tab" class:active={knowledgeLibraryTab === "documents"} type="button" role="tab" aria-selected={knowledgeLibraryTab === "documents"} aria-controls="knowledge-documents-panel" onclick={() => (knowledgeLibraryTab = "documents")}>知识文档</button>
+        <button id="knowledge-templates-tab" class:active={knowledgeLibraryTab === "templates"} type="button" role="tab" aria-selected={knowledgeLibraryTab === "templates"} aria-controls="knowledge-templates-panel" onclick={() => (knowledgeLibraryTab = "templates")}>文档模板</button>
+        <button id="knowledge-regulations-tab" class:active={knowledgeLibraryTab === "regulations"} type="button" role="tab" aria-selected={knowledgeLibraryTab === "regulations"} aria-controls="knowledge-regulations-panel" onclick={() => (knowledgeLibraryTab = "regulations")}>规范知识</button>
+      </div>
+      {#if knowledgeLibraryTab === "documents"}
         <div class="aorist-card-grid knowledge-template-grid">
-          {#each filteredKnowledgeDocuments as item (item.id)}
+          {#each filteredKnowledgeEntries as item (item.id)}
             <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id} title={knowledgeDocumentMeta(item)}>
               <header><span>{item.status}</span><em>{item.type}</em></header>
               <strong>{item.title}</strong>
@@ -9316,43 +9563,105 @@
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
                 <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
               </dl>
-              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button><button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
+              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
           {:else}
-            <article class="detail-empty"><strong>暂无文档模板</strong><p>点击新建模板后会在这里显示。</p></article>
+            <article class="detail-empty"><strong>暂无知识文档</strong><p>导入或手动录入知识后会显示在这里。</p></article>
           {/each}
         </div>
-      </section>
-      <section>
-        <header><span>Regulation Knowledge</span><strong>规范知识</strong><button type="button" onclick={() => openRegulationEditor()}>新建规范</button></header>
-        <div class="aorist-list">
+      {:else if knowledgeLibraryTab === "templates"}
+        <div class="aorist-card-grid knowledge-template-grid">
+          {#each filteredKnowledgeTemplates as item (item.id)}
+            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id} title={knowledgeDocumentMeta(item)}>
+              <header><span>{item.status}</span><em>{item.type}</em></header>
+              <strong>{item.title}</strong>
+              <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
+              <dl>
+                <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
+                <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
+                <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
+                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+              </dl>
+              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
+            </article>
+          {:else}
+            <article class="detail-empty"><strong>暂无文档模板</strong><p>新建模板后会显示在这里。</p></article>
+          {/each}
+        </div>
+      {:else}
+        <div class="aorist-card-grid knowledge-template-grid">
           {#each filteredRegulations as item, itemIndex (indexedKey(item.id || item.title, itemIndex))}
-            <article>
-              <div><strong>{item.title}</strong><p>{item.category} / {item.tags || "未设置标签"}</p><em>{item.status}</em></div>
-              <div class="knowledge-card-actions"><button type="button" onclick={() => void previewRegulation(item)}>预览</button><button type="button" onclick={() => openRegulationEditor(item)}>编辑</button><button type="button" onclick={() => void deleteRegulation(item)}>删除</button></div>
+            <article class="capability-item knowledge-template-card regulation-knowledge-card" class:active={activeRegulation?.id === item.id} title={`${item.category} / ${item.status} / ${item.tags || "未设置标签"}`}>
+              <header><span>{item.status}</span><em>规范</em></header>
+              <strong>{item.title}</strong>
+              <p>{item.category} / {item.tags || "未设置标签"}</p>
+              <dl>
+                <div><dt>分类</dt><dd>{item.category}</dd></div>
+                <div><dt>状态</dt><dd>{item.status}</dd></div>
+                <div><dt>标签</dt><dd>{item.tags || "未设置标签"}</dd></div>
+                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+              </dl>
+              <footer class="knowledge-card-actions"><button type="button" onclick={() => void previewRegulation(item)}>预览</button><button type="button" onclick={() => openRegulationEditor(item)}>编辑</button><button type="button" onclick={() => void deleteRegulation(item)}>删除</button></footer>
             </article>
           {:else}
             <article class="detail-empty"><strong>暂无规范知识</strong><p>新建规范后会通过桌面后端持久化并显示在这里。</p></article>
           {/each}
         </div>
-        {#if regulationPreviewText}<article class="knowledge-preview"><strong>规范渲染预览</strong><pre>{regulationPreviewText}</pre></article>{/if}
-      </section>
+      {/if}
+      </div>
     </div>
     <aside class="knowledge-preview knowledge-detail-panel">
-      {#if selectedKnowledgeDocument()}
+      {#if activeRegulation}
+        {@const regulation = activeRegulation}
+        <header><span>Regulation Preview</span><button type="button" onclick={() => openRegulationEditor(regulation)}>编辑</button></header>
+        <strong>{regulation.title}</strong>
+        <p>{regulation.category} / {regulation.status} / {regulation.tags || "未设置标签"}</p>
+        <dl>
+          <div><dt>分类</dt><dd>{regulation.category}</dd></div>
+          <div><dt>状态</dt><dd>{regulation.status}</dd></div>
+          <div><dt>标签</dt><dd>{regulation.tags || "未设置标签"}</dd></div>
+          <div><dt>更新时间</dt><dd>{regulation.updatedAt || regulation.createdAt || "未记录"}</dd></div>
+        </dl>
+        <section class="knowledge-document-preview">
+          <header><span>规范正文</span><div><button type="button" onclick={() => void previewRegulation(regulation)}>重新渲染</button></div></header>
+          <pre>{regulationPreviewId === regulation.id ? regulationPreviewText : regulation.content || "暂无规范正文。"}</pre>
+        </section>
+      {:else if selectedKnowledgeDocument()}
         {@const doc = selectedKnowledgeDocument()}
-        <header><span>Template Detail</span><div><button type="button" onclick={() => void renderKnowledgeDocument(doc)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(doc)}>编辑</button></div></header>
+        <header><span>Knowledge Detail</span></header>
         <strong>{doc.title}</strong>
         <p>{doc.description || `${doc.type} / ${knowledgeDocumentCount(doc)} 份关联资料 / ${doc.status}`}</p>
         <dl>
-          <div><dt>模板类型</dt><dd>{doc.type}</dd></div>
-          <div><dt>当前状态</dt><dd>{doc.status}</dd></div>
+          <div><dt>知识类型</dt><dd>{doc.type}</dd></div>
+          <div><dt>索引状态</dt><dd>{doc.status}</dd></div>
           <div><dt>文档数量</dt><dd>{knowledgeDocumentCount(doc)}</dd></div>
           <div><dt>来源</dt><dd>{doc.source || "workbench"}</dd></div>
           <div><dt>标签</dt><dd>{doc.tags || "未设置"}</dd></div>
           <div><dt>创建时间</dt><dd>{doc.createdAt || "未记录"}</dd></div>
           <div><dt>更新时间</dt><dd>{doc.updatedAt || "未记录"}</dd></div>
+          {#if doc.error}<div><dt>索引错误</dt><dd>{doc.error}</dd></div>{/if}
         </dl>
+        <section class="knowledge-document-preview">
+          <header>
+            <span>正文预览</span>
+            {#if knowledgeDocumentHasLocalFile(doc)}
+              <div>
+                <button type="button" onclick={() => void openKnowledgeDocumentFile(doc)}>打开文件</button>
+                <button type="button" onclick={() => void copyKnowledgeDocumentPath(doc)}>复制路径</button>
+                <button type="button" disabled={knowledgeIndexingDocumentId === doc.id} onclick={() => void reindexKnowledgeDocument(doc)}>{knowledgeIndexingDocumentId === doc.id ? "解析中" : "重新解析"}</button>
+              </div>
+            {/if}
+          </header>
+          {#if knowledgePreviewLoading && knowledgePreviewDocumentId === doc.id}
+            <p>正在读取已解析正文...</p>
+          {:else if knowledgePreviewError && knowledgePreviewDocumentId === doc.id}
+            <p class="error">正文预览失败：{knowledgePreviewError}</p>
+          {:else if knowledgePreviewDocumentId === doc.id}
+            <pre>{knowledgePreviewContent}</pre>
+          {:else}
+            <p>选择文档后加载正文预览。</p>
+          {/if}
+        </section>
         <section class="knowledge-linked-materials">
           <header><span>关联文档</span><strong>{knowledgeDocumentCount(doc)} 份</strong></header>
           <div>
@@ -9706,6 +10015,8 @@
               </section>
             {:else if workLayer === "sync"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Sync</span><strong>同步中心</strong></div><button type="button" onclick={() => syncWorkbench("同步中心")}>立即同步</button></div><div class="aorist-list">{#each syncJobs as job, jobIndex (indexedKey(job.title, jobIndex))}<article><div><strong>{job.title}</strong><p>{job.time}</p><em>进度 {job.progress}</em></div><span>{job.status}</span></article>{/each}</div></section>
             {:else if workLayer === "operationLog"}<section class="aorist-page"><div class="aorist-toolbar"><div><span>Operation Log</span><strong>操作记录</strong></div><button type="button" onclick={exportOperationLog}>导出日志</button></div><div class="aorist-list">{#each operationLogs as log, logIndex (indexedKey(`${log.time}-${log.action}-${log.target}`, logIndex))}<article><div><strong>{log.action}</strong><p>{log.target} / {log.user}</p><em>{log.time}</em></div><span>{log.result}</span></article>{/each}</div></section>
+            {:else if workLayer === "reports"}
+              <div hidden aria-hidden="true"></div>
             {:else}
               {@const selectedCapability = currentCapability()}
               <section class="aorist-page capability-manager capability-console">
@@ -10636,7 +10947,24 @@
               <label>分类<input bind:value={regulationDraftCategory} placeholder="规则 / 制度 / 流程" /></label>
               <label>状态<select bind:value={regulationDraftStatus}><option>草稿</option><option>可用</option><option>已归档</option></select></label>
               <label>标签<input bind:value={regulationDraftTags} placeholder="用 / 或逗号分隔" /></label>
-              <label class="wide">规范正文 *<textarea rows="10" bind:value={regulationDraftContent} placeholder="可使用变量占位符，由桌面后端渲染"></textarea></label>
+              <label class="wide regulation-editor-field">
+                <span>规范正文 *</span>
+                <div class="regulation-editor">
+                  <div class="regulation-editor-toolbar" role="toolbar" aria-label="规范正文编辑工具">
+                    <button type="button" title="加粗（Ctrl+B）" aria-label="加粗" onmousedown={(event) => event.preventDefault()} onclick={() => replaceRegulationContentSelection("**")}><Bold size={14} /></button>
+                    <button type="button" title="斜体（Ctrl+I）" aria-label="斜体" onmousedown={(event) => event.preventDefault()} onclick={() => replaceRegulationContentSelection("_")}><Italic size={14} /></button>
+                    <span class="regulation-editor-divider" aria-hidden="true"></span>
+                    <button type="button" title="一级标题" aria-label="一级标题" onmousedown={(event) => event.preventDefault()} onclick={() => prefixRegulationContentLines("# ")}>H1</button>
+                    <button type="button" title="无序列表" aria-label="无序列表" onmousedown={(event) => event.preventDefault()} onclick={() => prefixRegulationContentLines("- ")}><List size={14} /></button>
+                    <button type="button" title="有序列表" aria-label="有序列表" onmousedown={(event) => event.preventDefault()} onclick={() => prefixRegulationContentLines("1. ")}><ListOrdered size={14} /></button>
+                    <button type="button" title="引用" aria-label="引用" onmousedown={(event) => event.preventDefault()} onclick={() => prefixRegulationContentLines("> ")}><Quote size={14} /></button>
+                    <span class="regulation-editor-divider" aria-hidden="true"></span>
+                    <button type="button" class="regulation-variable-action" title="插入变量" onmousedown={(event) => event.preventDefault()} onclick={insertRegulationVariable}><Variable size={14} /> 插入变量</button>
+                  </div>
+                  <textarea bind:this={regulationContentEditor} rows="12" bind:value={regulationDraftContent} placeholder={"输入规范正文；支持 Markdown、列表、引用和 {{变量名}} 占位符"} onkeydown={handleRegulationContentKeydown}></textarea>
+                  <footer class="regulation-editor-meta"><span>支持 Markdown 与变量占位符</span><span>{regulationDraftContent.length} 字</span></footer>
+                </div>
+              </label>
             </div>
             <footer><button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => void submitRegulationDraft()}>保存规范</button></footer>
           </section>
@@ -10791,7 +11119,34 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（或摘要）*<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide knowledge-document-field"><span>上传文档（可选）</span><div class="knowledge-document-picker"><strong>{knowledgeDraftFileLabel || "未选择文件"}</strong><button type="button" onclick={() => void pickKnowledgeDocumentFile()}>选择文件</button></div><em>支持 PDF、DOCX、Markdown、文本等文件；上传后自动提取正文并建立索引。</em></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（无附件时必填）<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+      {/if}
+      {#if knowledgeTemplateRenderDocument}
+        <div class="modal-backdrop" role="presentation">
+          <section class="config-modal knowledge-template-render-modal" role="dialog" aria-modal="true" aria-labelledby="knowledge-template-render-title">
+            <header>
+              <div>
+                <span>模板渲染</span>
+                <strong id="knowledge-template-render-title">{knowledgeTemplateRenderDocument.title}</strong>
+                <p>填写变量后生成预览，不会修改原模板。</p>
+              </div>
+            </header>
+            <div class="config-grid">
+              {#each Object.keys(knowledgeTemplateRenderValues) as variable (variable)}
+                <label class="wide">
+                  {variable}
+                  <input bind:value={knowledgeTemplateRenderValues[variable]} placeholder={`填写「${variable}」`} autofocus={variable === Object.keys(knowledgeTemplateRenderValues)[0]} />
+                </label>
+              {:else}
+                <p class="knowledge-template-render-empty">当前模板没有变量，确认后将直接生成原文预览。</p>
+              {/each}
+            </div>
+            <footer>
+              <button type="button" disabled={knowledgeTemplateRendering} onclick={() => (knowledgeTemplateRenderDocument = undefined)}>取消</button>
+              <button type="button" disabled={knowledgeTemplateRendering} onclick={() => void submitKnowledgeTemplateRender()}>{knowledgeTemplateRendering ? "生成中" : "生成预览"}</button>
+            </footer>
+          </section>
+        </div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -22069,6 +22424,105 @@
     margin-top: 0;
   }
 
+  .regulation-editor-field {
+    gap: 6px;
+  }
+
+  .regulation-editor {
+    overflow: hidden;
+    border: 1px solid var(--aorist-line);
+    border-radius: 10px;
+    background: var(--aorist-card-bg);
+  }
+
+  .regulation-editor:focus-within {
+    border-color: var(--aorist-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--aorist-primary) 14%, transparent);
+  }
+
+  .regulation-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 38px;
+    padding: 3px 8px;
+    border-bottom: 1px solid var(--aorist-border-divider);
+    background: var(--aorist-card-bg-soft);
+  }
+
+  .regulation-editor-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 30px;
+    height: 30px;
+    padding: 0 7px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--aorist-muted);
+    background: transparent;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .regulation-editor-toolbar button:hover,
+  .regulation-editor-toolbar button:focus-visible {
+    border-color: var(--aorist-line);
+    color: var(--aorist-ink);
+    background: var(--aorist-card-bg);
+  }
+
+  .regulation-editor-divider {
+    width: 1px;
+    height: 18px;
+    margin: 0 2px;
+    background: var(--aorist-border-divider);
+  }
+
+  .regulation-editor-toolbar .regulation-variable-action {
+    margin-left: auto;
+    color: var(--aorist-primary);
+  }
+
+  .regulation-editor textarea {
+    display: block;
+    width: 100%;
+    min-height: 240px;
+    max-height: 360px;
+    resize: vertical;
+    box-sizing: border-box;
+    padding: 12px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    color: var(--aorist-ink);
+    background: transparent;
+    font-family: var(--aorist-font-sans, inherit);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.65;
+  }
+
+  .regulation-editor textarea:focus {
+    border: 0;
+    outline: 0;
+    box-shadow: none;
+  }
+
+  .regulation-editor-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 12px;
+    border-top: 1px solid var(--aorist-border-divider);
+    color: var(--aorist-faint);
+    background: var(--aorist-card-bg-soft);
+    font-size: 11px;
+    font-weight: 450;
+    line-height: 1.35;
+  }
+
   .shell .capability-create-modal {
     display: grid;
     grid-template-rows: auto auto minmax(0, auto) auto;
@@ -22837,17 +23291,24 @@
 .knowledge-template-card footer{align-items:center;min-height:34px;padding-top:2px;overflow:visible}
 .knowledge-template-card .knowledge-card-actions{margin-top:0;flex-wrap:nowrap}
 .knowledge-template-card footer button{flex:0 0 auto;min-height:30px}
-.knowledge-stack section{display:flex;flex-direction:column;max-height:560px;min-height:0;overflow:hidden}
-.knowledge-stack section>.aorist-card-grid,.knowledge-stack section>.aorist-list{min-height:0;overflow:auto;padding-right:4px;scrollbar-gutter:stable}
-.knowledge-stack section>.aorist-card-grid{align-content:start}
-@media(max-width:980px){.knowledge-stack section{max-height:480px}}
+.knowledge-content-tabs{display:flex;align-self:stretch;align-items:center;justify-content:center;gap:8px;min-height:42px;margin:0;padding:0 0 10px;border:0;border-bottom:1px solid var(--aorist-line);border-radius:0;background:transparent;box-sizing:border-box}
+.knowledge-content-tabs button{min-width:96px;height:30px;padding:0 12px;border:0;border-radius:6px;background:transparent;color:var(--aorist-muted);font-size:12px;font-weight:500;line-height:1;white-space:nowrap}
+.knowledge-content-tabs button:hover{background:var(--aorist-card-bg-soft);color:var(--aorist-ink)}
+.knowledge-content-tabs button.active{background:var(--aorist-primary);color:#ffffff;font-weight:600}
+.knowledge-content-panel{min-height:0}
+.knowledge-stack{display:flex;align-self:start;flex-direction:column;gap:10px}
+.knowledge-stack .knowledge-content-panel{display:flex;flex-direction:column;max-height:560px;min-height:0;padding:14px;border:1px solid var(--aorist-line);border-radius:12px;background:var(--aorist-card-bg);overflow:hidden;box-sizing:border-box}
+.knowledge-stack .knowledge-content-panel>.aorist-card-grid{min-height:0;overflow:auto;padding-right:4px;scrollbar-gutter:stable;align-content:start}
+@media(max-width:980px){.knowledge-stack .knowledge-content-panel{max-height:480px}}
+@media(max-width:640px){.knowledge-content-tabs{justify-content:flex-start;overflow:auto}.knowledge-content-tabs button{min-width:80px;padding-inline:10px}}
 .knowledge-template-card{display:flex;flex-direction:column;gap:12px;height:336px;min-height:336px;padding:18px 26px 16px}
 .knowledge-template-card header{flex:0 0 auto}
 .knowledge-template-card>strong{flex:0 0 auto;min-height:0;max-height:42px}
   .knowledge-template-card p{flex:0 0 auto;min-height:44px;max-height:44px;margin:0;line-height:1.55}
   .knowledge-template-card dl{flex:0 0 auto;gap:12px;margin:0}
   .knowledge-template-card dl div{min-height:58px;padding:10px 12px}
-  .knowledge-template-card .knowledge-card-actions{margin-top:auto}
+  .knowledge-template-card .knowledge-card-actions{min-width:0;margin-top:auto;padding-left:10px;align-items:stretch;gap:6px;flex-wrap:nowrap;overflow:visible}
+  .knowledge-template-card .knowledge-card-actions button{min-width:0;flex:1 1 0;min-height:30px;padding-inline:6px;font-size:10px;white-space:nowrap}
   .search-result-list{display:grid;width:min(1412px,100%);margin:0 auto;gap:28px}
   .search-result-card{display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;min-height:154px;padding:28px;border:1px solid #e2e5ea;border-radius:16px;background:#fff;box-shadow:0 8px 18px rgba(15,23,42,.035);text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
   .search-result-card:hover{border-color:#d0d5dd;box-shadow:0 14px 28px rgba(15,23,42,.065);transform:translateY(-1px)}
@@ -24204,6 +24665,212 @@
     margin: 8px auto 0;
   }
 
+  .task-status-panel {
+    flex: 0 0 auto;
+    width: min(1120px, calc(100% - 32px));
+    margin: 8px auto 0;
+    overflow: hidden;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 10px;
+    background: var(--card, #fff);
+  }
+
+  .task-status-panel > :global(.task-context),
+  .task-status-panel > :global(.activity-center),
+  .task-status-panel > .task-receipt-float > .task-receipt-float__trigger {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .task-status-panel > :global(.activity-center),
+  .task-status-panel > .task-receipt-float {
+    border-top: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent);
+  }
+
+  .knowledge-document-preview {
+    display: grid;
+    gap: 8px;
+  }
+
+  .knowledge-document-preview > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .knowledge-document-preview > header > span {
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .knowledge-document-preview > header > div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .knowledge-document-preview > header button {
+    min-height: 30px;
+    padding: 0 9px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 6px;
+    background: var(--card, #fff);
+    color: var(--foreground, #1f2421);
+    font-size: 11px;
+    font-weight: 550;
+  }
+
+  .knowledge-document-preview > p,
+  .knowledge-document-preview > pre {
+    max-height: 280px;
+    margin: 0;
+    overflow: auto;
+    padding: 10px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 8px;
+    background: var(--muted, #edf0ec);
+    color: var(--foreground, #1f2421);
+    font: 11px/1.6 ui-monospace, SFMono-Regular, SF Mono, Cascadia Code, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .knowledge-document-preview > p.error {
+    color: var(--destructive, #b42318);
+  }
+
+  .task-receipt-float {
+    display: grid;
+    justify-items: stretch;
+    width: 100%;
+  }
+
+  .task-receipt-float__trigger {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 32px;
+    align-items: center;
+    min-height: 40px;
+    width: 100%;
+    padding: 4px 6px 4px 10px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 10px;
+    background: var(--card, #fff);
+    color: var(--foreground, #1f2421);
+    box-shadow: none;
+    font-size: 12px;
+    font-weight: 650;
+    text-align: left;
+  }
+
+  .task-receipt-float__title {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .task-receipt-float__trigger:hover {
+    border-color: #cbd5e1;
+    background: var(--muted, #edf0ec);
+    color: var(--foreground, #1f2421);
+  }
+
+  .task-receipt-float__trigger em {
+    padding: 3px 6px;
+    border: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent);
+    border-radius: 6px;
+    background: var(--card, #fff);
+    color: var(--muted-foreground, #687169);
+    font-size: 10px;
+    line-height: 1.35;
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .task-receipt-float__trigger :global(svg:last-child) {
+    width: 32px;
+    height: 32px;
+    padding: 8px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 6px;
+    color: var(--muted-foreground, #687169);
+    box-sizing: border-box;
+    transition: transform 150ms ease;
+  }
+
+  .task-receipt-float.open .task-receipt-float__trigger :global(svg:last-child) {
+    transform: rotate(180deg);
+  }
+
+  .task-receipt-float__panel {
+    width: 100%;
+    max-height: min(480px, calc(100vh - 310px));
+    margin-top: 8px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+  }
+
+  .task-receipt-float__panel :global(.receipt) {
+    box-sizing: border-box;
+    gap: 8px;
+    padding: 10px;
+    border-color: #dce4ef;
+    border-radius: 12px;
+  }
+
+  .task-receipt-float__panel :global(.receipt > header span) {
+    display: none;
+  }
+
+  .task-receipt-float__panel :global(.receipt > header strong) {
+    font-size: 13px;
+  }
+
+  .task-receipt-float__panel :global(.receipt-grid) {
+    gap: 8px;
+  }
+
+  .task-receipt-float__panel :global(.receipt article) {
+    min-height: 76px;
+    padding: 8px 10px;
+  }
+
+  .task-receipt-float__panel :global(.receipt article p) {
+    display: -webkit-box;
+    margin-top: 4px;
+    overflow: hidden;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .task-receipt-float__panel :global(.receipt article ul) {
+    max-height: 48px;
+    margin-top: 4px;
+    overflow: auto;
+  }
+
+  @media (max-width: 720px) {
+    .task-receipt-float {
+      right: 12px;
+    }
+
+    .task-receipt-float__title > span {
+      display: none;
+    }
+
+    .task-receipt-float__panel {
+      width: min(560px, calc(100vw - 48px));
+      max-height: min(440px, calc(100vh - 250px));
+    }
+  }
+
   .workbench-context-wrap {
     width: auto;
     margin: 0 18px 8px;
@@ -24476,6 +25143,7 @@
     }
 
     .task-context-wrap,
+    .task-status-panel,
     .workbench-context-wrap {
       width: 100%;
       margin: 0;
@@ -24611,5 +25279,41 @@
       grid-column: 1;
       grid-row: 5;
     }
+  }
+  .knowledge-document-field {
+    gap: 7px;
+  }
+  .knowledge-document-picker {
+    display: flex;
+    min-width: 0;
+    min-height: 36px;
+    align-items: center;
+    gap: 10px;
+    padding: 3px 4px 3px 12px;
+    border: 1px solid var(--line, #d9dee7);
+    border-radius: 8px;
+    background: #fff;
+  }
+  .knowledge-document-picker strong {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    color: var(--text-muted, #667085);
+    font-size: 12px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .knowledge-document-picker button {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .knowledge-document-field em {
+    color: var(--text-muted, #667085);
+    font-size: 11px;
+    font-style: normal;
   }
 </style>

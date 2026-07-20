@@ -225,8 +225,11 @@ interface AppBindings {
   RenderRegulation(id: string, variables: Record<string, string>): Promise<string>;
   DeleteRegulation(id: string): Promise<void>;
   RenderKnowledgeDocument(id: string, variables: Record<string, string>): Promise<string>;
+  KnowledgeTemplateVariables(id: string): Promise<string[]>;
+  ReindexKnowledgeDocument(id: string): Promise<WorkbenchKnowledgeDocument>;
   KnowledgeBase(): Promise<KnowledgeBaseView>;
   KnowledgeStatus(): Promise<KnowledgeStatus>;
+  KnowledgeDocumentPreview(id: string): Promise<string>;
   ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument>;
   ExternalDataSources(): Promise<ExternalDataSource[]>;
   PickExternalDataDirectory(sourceID: string): Promise<string>;

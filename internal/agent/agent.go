@@ -34,7 +34,10 @@ import (
 // window before the next compaction runs.
 const maxToolOutputBytes = 32 * 1024
 
-const maxFinalReadinessBlocks = 3
+// maxFinalReadinessRetries is the number of actionable recovery messages the
+// host gives after blocking a premature final answer. The terminal error is the
+// next blocked answer, so every advertised retry is an actual model turn.
+const maxFinalReadinessRetries = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 3
 const maxExecutorHandoffNudges = 1
@@ -1237,14 +1240,14 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			if readiness.reason != "" {
 				finalReadinessBlocks++
 				result := evidence.ReadinessBlocked
-				if finalReadinessBlocks >= maxFinalReadinessBlocks {
+				if finalReadinessBlocks > maxFinalReadinessRetries {
 					result = evidence.ReadinessErrored
 					event.RecordReadinessAudit(a.sink, readiness.audit(result, false))
 					return fmt.Errorf("final-answer readiness failed %d times: %s", finalReadinessBlocks, readiness.reason)
 				}
 				event.RecordReadinessAudit(a.sink, readiness.audit(result, false))
 				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: finalReadinessNoticeText(), Detail: readiness.reason})
-				a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(finalReadinessRetryMessage(readiness.reason))})
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(finalReadinessRetryMessage(readiness.reason, finalReadinessBlocks))})
 				a.maybeCompact(ctx, usage)
 				continue
 			}
@@ -1695,8 +1698,12 @@ func finalReadinessCheckSource(check instruction.VerifyCheck) string {
 	return source
 }
 
-func finalReadinessRetryMessage(reason string) string {
-	return "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: " + reason + ". Run only the required tool calls, then answer when readiness is satisfied. Prefer signing off completed work with complete_step and updating todo_write from existing receipts; do not run exploratory bash commands just to satisfy readiness. If a permission, plan-mode, hook, or loop-guard block prevents the required receipt, do not keep retrying the blocked command with different wording. If the blocked item needs user input, a user-owned choice, or manual review, call the ask tool with concrete options and wait for its tool result; do not ask in prose, and do not claim the user answered unless an actual ask tool result or a new user message says so."
+func finalReadinessRetryMessage(reason string, attempt int) string {
+	message := "Host final-answer readiness check failed. Before giving a final answer, address the missing host-observable receipts: " + reason + ". Run only the required tool calls, then answer when readiness is satisfied. Prefer signing off completed work with complete_step and updating todo_write from existing receipts; do not run exploratory bash commands just to satisfy readiness. If a permission, plan-mode, hook, or loop-guard block prevents the required receipt, do not keep retrying the blocked command with different wording. If the blocked item needs user input, a user-owned choice, or manual review, call the ask tool with concrete options and wait for its tool result; do not ask in prose, and do not claim the user answered unless an actual ask tool result or a new user message says so."
+	if attempt >= maxFinalReadinessRetries {
+		message += " This is the final recovery retry before the host stops the run. Your next response must use a relevant tool call instead of returning another final answer. A failed verification command is not completion: inspect its error and retry with a corrected command or a different bounded verification strategy, then update the existing todo only from real evidence."
+	}
+	return message
 }
 
 func shouldNudgeExecutorHandoff(input, answer string) bool {

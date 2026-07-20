@@ -110,6 +110,11 @@ func TestBashDescriptionReflectsShell(t *testing.T) {
 	if !strings.Contains(psDesc, "'&&' and '||' are NOT parsed") {
 		t.Errorf("powershell description should warn about unsupported chaining: %q", psDesc)
 	}
+	for _, want := range []string{"multiline Python", "write_file", "python path\\to\\verify.py", "do not compress"} {
+		if !strings.Contains(psDesc, want) {
+			t.Errorf("powershell description should provide executable multiline verification guidance %q: %q", want, psDesc)
+		}
+	}
 	pwsh := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}}
 	pwshDesc := pwsh.Description()
 	if !strings.Contains(pwshDesc, "PowerShell 7 (pwsh)") {

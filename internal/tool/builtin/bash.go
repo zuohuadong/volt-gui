@@ -118,6 +118,7 @@ func (b bash) Description() string {
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n"+
 			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n"+
 			"  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n"+
+			"  - multiline Python/Node verification: do not compress statements, comments, or newlines into a fragile -c string. Prefer write_file for a short temporary script, then run it directly (for example python path\\to\\verify.py).\n"+
 			"  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0)."+
 			bashToolSteer+bundledCoreutilsDescriptionHint(), shellName, chaining)
 	}

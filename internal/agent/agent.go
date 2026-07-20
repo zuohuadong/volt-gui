@@ -186,7 +186,11 @@ const (
 	MemoryCompilerVerbosityCompact = "compact"
 )
 
-const DefaultMaxSubagentDepth = 2
+const (
+	DefaultMaxSubagentDepth       = 2
+	DefaultMaxSubagentConcurrency = 6
+	MaxSubagentConcurrency        = 32
+)
 
 // NormalizeMaxSubagentDepth applies the public config contract: values below 1
 // preserve the old single-delegation boundary.
@@ -195,6 +199,17 @@ func NormalizeMaxSubagentDepth(depth int) int {
 		return 1
 	}
 	return depth
+}
+
+// NormalizeSubagentConcurrency applies the public parallel-task limit.
+func NormalizeSubagentConcurrency(limit int) int {
+	if limit <= 0 {
+		return DefaultMaxSubagentConcurrency
+	}
+	if limit > MaxSubagentConcurrency {
+		return MaxSubagentConcurrency
+	}
+	return limit
 }
 
 // ToolHooks fires user-configured shell hooks around each tool call. PreToolUse

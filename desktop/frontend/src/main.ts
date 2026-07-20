@@ -1,5 +1,6 @@
 import App from "./App.svelte";
 import { mount } from "svelte";
+import { initAppearance } from "./lib/appearance";
 
 // svadmin/ui design system — provides OKLCH design tokens, component styles,
 // light/dark theme, and admin-ready typography. Workbench-specific layout
@@ -12,5 +13,7 @@ const target = document.getElementById("app");
 if (!target) {
   throw new Error("Missing #app mount target");
 }
+
+initAppearance();
 
 export default mount(App, { target });

@@ -26,6 +26,10 @@ const desktopCi = wf("desktop-ci.yml");
 const ci = wf("ci.yml");
 const upstreamSyncYml = wf("upstream-sync.yml");
 const upstreamSyncSh = script("upstream-sync.sh");
+const upstreamParityManifestPath = join(root, "scripts", "upstream-feature-parity.json");
+const upstreamParityManifest = existsSync(upstreamParityManifestPath)
+  ? JSON.parse(readFileSync(upstreamParityManifestPath, "utf8"))
+  : null;
 
 // Collect the `with:` text that follows each actions/cache save|restore step,
 // stopping at the next step or job-level key. Used to assert per-step inputs.
@@ -64,15 +68,16 @@ if (releaseDesktop !== null) {
   });
 }
 
-test("optional upstream sync workflow and script are present or absent together", () => {
-  assert.equal(
-    upstreamSyncYml === null,
-    upstreamSyncSh === null,
-    "upstream-sync.yml and upstream-sync.sh must be installed or removed together",
-  );
+test("upstream-sync.yml requires the sync script to be present", () => {
+  // The GitHub Actions workflow delegates to upstream-sync.sh, so shipping the
+  // yml without the script is never valid. The reverse (script without the yml)
+  // is fine: forks on non-GitHub hosts keep the script for manual sync.
+  if (upstreamSyncYml !== null) {
+    assert.ok(upstreamSyncSh !== null, "upstream-sync.yml requires upstream-sync.sh to be present");
+  }
 });
 
-if (upstreamSyncYml !== null && upstreamSyncSh !== null) {
+if (upstreamSyncSh !== null) {
   test("upstream-sync.sh uses public HTTPS upstream (no SSH git@ URL)", () => {
     assert.match(
       upstreamSyncSh,
@@ -87,14 +92,12 @@ if (upstreamSyncYml !== null && upstreamSyncSh !== null) {
   });
 
   test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", () => {
-    assert.match(
-      upstreamSyncSh,
-      /"internal\/sandbox\/"/,
+    assert.ok(
+      upstreamSyncSh.includes("':(exclude,glob)internal/sandbox/**'"),
       "sandbox conflicts must be treated as fork-divergent",
     );
-    assert.match(
-      upstreamSyncSh,
-      /"desktop\/main\.go"/,
+    assert.ok(
+      upstreamSyncSh.includes("':(exclude)desktop/main.go'"),
       "desktop helper dispatch conflicts must keep the VoltUI side",
     );
     for (const protectedPath of [
@@ -110,6 +113,26 @@ if (upstreamSyncYml !== null && upstreamSyncSh !== null) {
     }
   });
 
+  if (upstreamParityManifest !== null) {
+    test("upstream-sync.sh gates marker advancement on reviewed excluded features", () => {
+      const parityCheck = upstreamSyncSh.indexOf('node "$PARITY_CHECK" "$LAST_SYNC" "$UPSTREAM_HEAD"');
+      const markerWrite = upstreamSyncSh.indexOf('echo "$UPSTREAM_HEAD" > "$MARKER_FILE"');
+      assert.ok(parityCheck >= 0, "sync must run the excluded-feature parity check");
+      assert.ok(markerWrite > parityCheck, "sync marker must advance only after parity check passes");
+      assert.match(upstreamParityManifest.reviewedUpstreamHead, /^[0-9a-f]{40}$/, "parity manifest must pin a reviewed upstream head");
+      const syncExclusions = [...upstreamSyncSh.matchAll(/^\s+'(\:\(exclude(?:,glob)?\)[^']+)'\s*$/gm)].map((match) => match[1]);
+      assert.deepEqual(
+        new Set(upstreamParityManifest.syncExcludedPathspecs),
+        new Set(syncExclusions),
+        "parity manifest must cover every upstream-sync exclusion",
+      );
+      assert.ok(upstreamParityManifest.features.some((feature) => feature.status === "reviewed-deferred"), "deferred features must stay explicit");
+    });
+  }
+
+}
+
+if (upstreamSyncYml !== null) {
   test("upstream-sync.yml commits as github-actions[bot]", () => {
     assert.match(upstreamSyncYml, /github-actions\[bot\]/, "must configure github-actions[bot] name");
     assert.match(

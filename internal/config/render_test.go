@@ -213,6 +213,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
 	orig.Agent.MaxSubagentDepth = 3
+	orig.Agent.MaxSubagentConcurrency = 12
 	orig.Agent.Keep = []string{"errors", "user_marked"}
 	orig.Agent.RecentKeep = 4
 	orig.Tools.BashTimeoutSeconds = intPtr(900)
@@ -462,6 +463,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Agent.MaxSubagentDepth != 3 {
 		t.Errorf("max_subagent_depth = %d, want 3", got.Agent.MaxSubagentDepth)
+	}
+	if got.Agent.MaxSubagentConcurrency != 12 {
+		t.Errorf("max_subagent_concurrency = %d, want 12", got.Agent.MaxSubagentConcurrency)
 	}
 	if got.Tools.BashTimeoutSeconds == nil || *got.Tools.BashTimeoutSeconds != 900 {
 		t.Errorf("tools.bash_timeout_seconds = %v, want 900", got.Tools.BashTimeoutSeconds)

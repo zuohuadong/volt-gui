@@ -43,6 +43,40 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   background: var(--bg);
+  color: var(--foreground);
+  font-family: var(--typography-interface-font, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif);
+  font-size: var(--typography-interface-size, 13px);
+}
+
+.conversation,
+.transcript,
+.team-message-list {
+  font-family: var(--typography-conversation-font, inherit);
+  font-size: var(--typography-conversation-size, inherit);
+}
+
+.composer textarea,
+.conversation-composer textarea,
+.home__composer textarea {
+  font-family: var(--typography-composer-font, inherit);
+  font-size: var(--typography-composer-size, inherit);
+}
+
+.code-viewer,
+.code-viewer code,
+.code-viewer pre,
+.conversation code,
+.conversation pre {
+  font-family: var(--typography-code-font, var(--mono));
+  font-size: var(--typography-code-size, 12px);
+}
+
+.composer__runtime-status,
+.conversation-header,
+.code-dock__status,
+.capability-detail__meta {
+  font-family: var(--typography-metadata-font, inherit);
+  font-size: var(--typography-metadata-size, inherit);
 }
 
 button,

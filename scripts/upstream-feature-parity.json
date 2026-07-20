@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "reviewedUpstreamHead": "2335d0df9ea4029108ed965f76c2efff30fe6cf4",
+  "syncExcludedPathspecs": [
+    ":(exclude,glob).github/**",
+    ":(exclude,glob)docs/**",
+    ":(exclude,glob)**/README*",
+    ":(exclude,glob)site/**",
+    ":(exclude,glob)cmd/reasonix-guard/**",
+    ":(exclude,glob)desktop/**",
+    ":(exclude)desktop/main.go",
+    ":(exclude,glob)internal/acp/**",
+    ":(exclude,glob)internal/agent/**",
+    ":(exclude,glob)internal/boot/**",
+    ":(exclude,glob)internal/bot/**",
+    ":(exclude,glob)internal/capability/**",
+    ":(exclude,glob)internal/capdiag/**",
+    ":(exclude,glob)internal/cli/**",
+    ":(exclude,glob)internal/config/**",
+    ":(exclude,glob)internal/control/**",
+    ":(exclude,glob)internal/doctor/**",
+    ":(exclude,glob)internal/event/**",
+    ":(exclude,glob)internal/eventwire/**",
+    ":(exclude,glob)internal/i18n/**",
+    ":(exclude,glob)internal/installsource/**",
+    ":(exclude,glob)internal/guardian/**",
+    ":(exclude,glob)internal/hook/**",
+    ":(exclude,glob)internal/memory/**",
+    ":(exclude,glob)internal/planmode/**",
+    ":(exclude,glob)internal/plugin/**",
+    ":(exclude,glob)internal/pluginpkg/**",
+    ":(exclude,glob)internal/provider/**",
+    ":(exclude,glob)internal/repair/**",
+    ":(exclude,glob)internal/sandbox/**",
+    ":(exclude,glob)internal/serve/**",
+    ":(exclude,glob)internal/secrets/**",
+    ":(exclude,glob)internal/skill/**",
+    ":(exclude,glob)internal/tool/**",
+    ":(exclude,glob)internal/winsandbox/**",
+    ":(exclude)internal/winsandbox/",
+    ":(exclude)internal/sandbox/seatbelt_windows.go",
+    ":(exclude)internal/sandbox/seatbelt_windows_test.go",
+    ":(exclude)internal/sandbox/seatbelt_other.go"
+  ],
+  "features": [
+    {
+      "id": "desktop-runtime-and-composer",
+      "paths": ["desktop/app.go", "desktop/tabs.go", "desktop/main.go", "desktop/sessions.go"],
+      "status": "reviewed-deferred",
+      "evidence": ["desktop/frontend/src/components/Composer.svelte", "desktop/frontend/src/lib/bridge.ts"],
+      "note": "现有 Volt 运行轴已接入前端；该范围内其余上游 session/runtime 差异仍需逐项移植。"
+    },
+    {
+      "id": "desktop-governance",
+      "paths": ["desktop/hooks_settings_app.go", "desktop/plugin_packages_app.go", "desktop/subagents_app.go", "internal/mcptrust/", "internal/plugin/", "internal/pluginpkg/"],
+      "status": "reviewed-deferred",
+      "evidence": ["desktop/frontend/src/components/AdvancedRuntimeSettings.svelte", "desktop/frontend/src/components/MCPTrustEditor.svelte", "desktop/frontend/src/components/MCPRuntimeActions.svelte"],
+      "note": "现有 Hook、插件、只读 MCP 信任、真实重连复验和认证清理接口已接入；Reasonix 新版进程隔离与完整 profile fleet backend 尚未整体移植。"
+    },
+    {
+      "id": "subagent-fleet-backend",
+      "paths": ["internal/agent/", "internal/boot/"],
+      "status": "reviewed-deferred",
+      "evidence": ["desktop/frontend/src/components/AdvancedRuntimeSettings.svelte", "internal/agent/parallel_tasks.go", "internal/boot/boot.go"],
+      "note": "默认模型、effort、depth 和可持久化的 parallel_tasks 并发上限已贯通配置、运行时与前端；写入型 profile fleet、路径声明和冲突调度仍需独立移植。"
+    },
+    {
+      "id": "theme-and-typography-packs",
+      "paths": ["desktop/theme", "desktop/themes/", "desktop/frontend/src/components/Appearance", "desktop/frontend/src/components/Theme", "desktop/frontend/src/lib/theme", "desktop/frontend/src/lib/typography"],
+      "status": "reviewed-deferred",
+      "evidence": ["DESIGN.md", "desktop/frontend/src/components/AppearanceSettings.svelte", "desktop/frontend/src/lib/appearance.ts", "desktop/frontend/src/lib/typography-preferences.ts"],
+      "note": "区域字体和 Volt token 化的明暗/中性表面风格已按 Svelte 移植；Reasonix 官方背景图片包不复制，避免违反 Volt Operational Canvas 的单强调色与无装饰背景约束。"
+    },
+    {
+      "id": "react-frontend-only",
+      "paths": ["desktop/frontend/"],
+      "status": "reviewed-deferred",
+      "evidence": ["desktop/frontend/src/App.svelte"],
+      "note": "Reasonix React frontend 不进入 Volt Svelte 构建。"
+    },
+    {
+      "id": "desktop-supporting-runtime",
+      "paths": ["desktop/"],
+      "status": "reviewed-deferred",
+      "evidence": ["desktop/go.mod", "desktop/frontend/package.json"],
+      "note": "其余桌面辅助文件按 Wails/Svelte 模块边界在独立任务中评估，不随 Go 选择性同步自动落入。"
+    },
+    {
+      "id": "config-and-control-kernel",
+      "paths": ["internal/config/", "internal/control/"],
+      "status": "reviewed-deferred",
+      "evidence": ["scripts/upstream-sync.sh"],
+      "note": "这些包存在 fork API 边界，需按依赖消费者逐项移植。"
+    },
+    {
+      "id": "fork-runtime-boundaries",
+      "paths": [
+        "internal/acp/",
+        "internal/bot/",
+        "internal/capability/",
+        "internal/capdiag/",
+        "internal/cli/",
+        "internal/doctor/",
+        "internal/event/",
+        "internal/eventwire/",
+        "internal/i18n/",
+        "internal/installsource/",
+        "internal/guardian/",
+        "internal/memory/",
+        "internal/planmode/",
+        "internal/provider/",
+        "internal/repair/",
+        "internal/sandbox/",
+        "internal/serve/",
+        "internal/secrets/",
+        "internal/skill/",
+        "internal/tool/",
+        "internal/winsandbox/"
+      ],
+      "status": "reviewed-deferred",
+      "evidence": ["scripts/upstream-sync.sh", "scripts/check-upstream-feature-parity.mjs"],
+      "note": "这些运行内核在 Volt fork 中存在独立 API、安全或平台边界；上游变更必须逐项审计，不随 marker 静默前进。"
+    },
+    {
+      "id": "non-runtime-exclusions",
+      "paths": [".github/", "docs/", "README", "site/", "cmd/reasonix-guard/"],
+      "status": "reviewed-deferred",
+      "evidence": ["scripts/upstream-sync.sh", "scripts/check-upstream-feature-parity.mjs"],
+      "note": "CI、文档、站点和 Reasonix 专属 guard 不属于 Volt 的选择性 Go 同步范围，但仍纳入 marker 审计集合。"
+    }
+  ]
+}

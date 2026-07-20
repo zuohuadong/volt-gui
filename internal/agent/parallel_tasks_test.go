@@ -100,6 +100,105 @@ func TestParallelTasksForegroundCompletesAndClosesWorkers(t *testing.T) {
 	}
 }
 
+func TestParallelTasksHonorsConcurrencyLimit(t *testing.T) {
+	prov := newConcurrencyProbe(4)
+	task := newTestTaskTool(t, prov, tool.NewRegistry(), "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry()).WithMaxConcurrency(2)
+	ctx := withCallContext(context.Background(), "parallel-call", event.Discard, nil, false)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := parallel.Execute(ctx, json.RawMessage(`{
+			"tasks": [
+				{"prompt": "one"},
+				{"prompt": "two"},
+				{"prompt": "three"},
+				{"prompt": "four"}
+			]
+		}`))
+		done <- err
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-prov.started:
+		case <-time.After(time.Second):
+			t.Fatal("parallel_tasks did not start the initial batch")
+		}
+	}
+	select {
+	case <-prov.started:
+		t.Fatal("parallel_tasks exceeded the configured concurrency limit")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(prov.release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("parallel_tasks returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("parallel_tasks did not finish after releasing children")
+	}
+	if got := prov.maxActiveValue(); got > 2 {
+		t.Fatalf("maximum active children = %d, want <= 2", got)
+	}
+}
+
+func TestParallelTasksDoesNotStartWithCancelledContext(t *testing.T) {
+	prov := newConcurrencyProbe(2)
+	task := newTestTaskTool(t, prov, tool.NewRegistry(), "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry()).WithMaxConcurrency(1)
+	ctx, cancel := context.WithCancel(withCallContext(context.Background(), "parallel-call", event.Discard, nil, false))
+	cancel()
+
+	out, err := parallel.Execute(ctx, json.RawMessage(`{"tasks":[{"prompt":"one"},{"prompt":"two"}]}`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute error = %v, want context cancellation", err)
+	}
+	select {
+	case <-prov.started:
+		t.Fatal("parallel_tasks started a child for a pre-cancelled context")
+	default:
+	}
+	if !strings.Contains(out, "[SKIPPED]") {
+		t.Fatalf("cancelled aggregate did not mark pending children skipped:\n%s", out)
+	}
+}
+
+func TestParallelTasksDoesNotBackfillAfterCancellation(t *testing.T) {
+	prov := newConcurrencyProbe(2)
+	task := newTestTaskTool(t, prov, tool.NewRegistry(), "sys", "", "", nil)
+	parallel := NewParallelTasksTool(task, tool.NewRegistry()).WithMaxConcurrency(1)
+	ctx, cancel := context.WithCancel(withCallContext(context.Background(), "parallel-call", event.Discard, nil, false))
+	done := make(chan error, 1)
+	go func() {
+		_, err := parallel.Execute(ctx, json.RawMessage(`{"tasks":[{"prompt":"one"},{"prompt":"two"}]}`))
+		done <- err
+	}()
+
+	select {
+	case <-prov.started:
+	case <-time.After(time.Second):
+		t.Fatal("parallel_tasks did not start the first child")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute error = %v, want context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("parallel_tasks did not stop after cancellation")
+	}
+	select {
+	case <-prov.started:
+		t.Fatal("parallel_tasks backfilled a pending child after cancellation")
+	default:
+	}
+}
+
 func TestParallelTasksIncludeCalculationPolicy(t *testing.T) {
 	prov := &parallelPromptProvider{}
 	task := newTestTaskTool(t, prov, tool.NewRegistry(), "sys", "", "", nil)
@@ -222,6 +321,48 @@ func (promptRoutingProvider) Stream(_ context.Context, req provider.Request) (<-
 	ch <- provider.Chunk{Type: provider.ChunkDone}
 	close(ch)
 	return ch, nil
+}
+
+type concurrencyProbe struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func newConcurrencyProbe(taskCount int) *concurrencyProbe {
+	return &concurrencyProbe{started: make(chan struct{}, taskCount), release: make(chan struct{})}
+}
+
+func (p *concurrencyProbe) Name() string { return "concurrency-probe" }
+
+func (p *concurrencyProbe) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
+	p.mu.Lock()
+	p.active++
+	if p.active > p.maxActive {
+		p.maxActive = p.active
+	}
+	p.mu.Unlock()
+	p.started <- struct{}{}
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+	}
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+	ch := make(chan provider.Chunk, 2)
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: "ok"}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
+	close(ch)
+	return ch, nil
+}
+
+func (p *concurrencyProbe) maxActiveValue() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxActive
 }
 
 type stringsError string

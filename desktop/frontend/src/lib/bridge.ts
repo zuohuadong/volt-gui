@@ -17,7 +17,6 @@ import type {
   ExternalDataPreviewInput,
   ExternalDataSource,
   FilePreview,
-  GoalInfo,
   CheckpointMeta,
   CapabilitiesView,
   AgentInput,
@@ -78,6 +77,10 @@ import type {
   KnowledgeDocumentImportInput,
   KnowledgeSearchResult,
   KnowledgeStatus,
+  HookConfigView,
+  HooksSettingsView,
+  PluginInstallOptions,
+  PluginView,
   WorkbenchReport,
   WorkbenchReportInput,
   WorkbenchRegulation,
@@ -153,10 +156,10 @@ interface AppBindings {
   EffortForTab(tabID: string): Promise<EffortInfo>;
   SetEffortForTab(tabID: string, level: string): Promise<void>;
   SetModeForTab(tabID: string, mode: string): Promise<void>;
+  SetCollaborationModeForTab(tabID: string, mode: string): Promise<void>;
   SetToolApprovalModeForTab(tabID: string, mode: string): Promise<void>;
-  GoalForTab(tabID: string): Promise<GoalInfo>;
-  StartGoalForTab(tabID: string, objective: string): Promise<void>;
-  ContinueGoalForTab(tabID: string): Promise<void>;
+  SetTokenModeForTab(tabID: string, mode: string): Promise<void>;
+  SetGoalForTab(tabID: string, objective: string): Promise<void>;
   ClearGoalForTab(tabID: string): Promise<void>;
   ApproveTab(tabID: string, id: string, allow: boolean, session: boolean, persist: boolean): Promise<void>;
   AnswerQuestionForTab(tabID: string, id: string, answers: QuestionAnswer[]): Promise<void>;
@@ -254,15 +257,32 @@ interface AppBindings {
   UpdateMCPServer(name: string, input: MCPServerInput): Promise<void>;
   RemoveMCPServer(name: string): Promise<void>;
   ReconnectMCPServer(name: string): Promise<void>;
+  ClearMCPServerAuthentication(name: string): Promise<void>;
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
+  TrustMCPServerTool(name: string, toolName: string): Promise<void>;
+  UntrustMCPServerTool(name: string, toolName: string): Promise<void>;
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
+  HooksSettings(scope: string): Promise<HooksSettingsView>;
+  SaveHooksSettings(scope: string, hooks: HookConfigView[]): Promise<void>;
+  TrustProjectHooks(): Promise<void>;
+  Plugins(): Promise<PluginView[]>;
+  PlanPluginInstall(source: string, options: PluginInstallOptions): Promise<string>;
+  InstallPlugin(source: string, options: PluginInstallOptions): Promise<string>;
+  RemovePlugin(name: string): Promise<void>;
+  SetPluginEnabled(name: string, enabled: boolean): Promise<void>;
+  UpdatePlugin(name: string): Promise<string>;
+  PluginDoctor(name: string): Promise<PluginView>;
   Settings(): Promise<SettingsView>;
   SetCloseBehavior(mode: string): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
   SetDefaultModel(ref: string): Promise<void>;
   SetPlannerModel(ref: string): Promise<void>;
+  SetSubagentModel(ref: string): Promise<void>;
+  SetSubagentEffort(level: string): Promise<void>;
+  SetMaxSubagentDepth(depth: number): Promise<void>;
+  SetMaxSubagentConcurrency(limit: number): Promise<void>;
   SaveProvider(provider: ProviderView): Promise<void>;
   DeleteProvider(name: string): Promise<void>;
   RemoveProviderAccess(name: string): Promise<void>;

@@ -320,6 +320,11 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# max_subagent_depth = 2   # nested subagent delegation depth; set 1 to disable nested delegation\n")
 	}
+	if c.Agent.MaxSubagentConcurrency != defaults.Agent.MaxSubagentConcurrency {
+		fmt.Fprintf(&b, "max_subagent_concurrency = %d   # parallel subagent tasks per session (1-32)\n", c.Agent.MaxSubagentConcurrency)
+	} else {
+		b.WriteString("# max_subagent_concurrency = 6   # parallel subagent tasks per session (1-32)\n")
+	}
 	if c.Agent.OutputStyle != "" {
 		fmt.Fprintf(&b, "output_style = %q   # persona/tone folded into the prompt\n", c.Agent.OutputStyle)
 	} else {
@@ -920,6 +925,10 @@ func RenderTOMLProjectDelta(c *Config) string {
 	}
 	if c.Agent.MaxSubagentDepth != d.Agent.MaxSubagentDepth {
 		fmt.Fprintf(&agentBuf, "max_subagent_depth = %d\n", c.Agent.MaxSubagentDepth)
+		anyAgent = true
+	}
+	if c.Agent.MaxSubagentConcurrency != d.Agent.MaxSubagentConcurrency {
+		fmt.Fprintf(&agentBuf, "max_subagent_concurrency = %d\n", c.Agent.MaxSubagentConcurrency)
 		anyAgent = true
 	}
 	if c.Agent.OutputStyle != "" && c.Agent.OutputStyle != d.Agent.OutputStyle {

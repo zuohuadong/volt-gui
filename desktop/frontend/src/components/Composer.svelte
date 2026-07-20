@@ -6,7 +6,8 @@
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
   import type { QueuedThreadMessage } from "../lib/task-lifecycle";
   import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
-  import type { ActivityMode, CommandInfo, ComposerAttachment, ContextPanelInfo, DirEntry, ModelInfo, SlashArgItem } from "../lib/types";
+  import type { ActivityMode, CollaborationMode, CommandInfo, ComposerAttachment, ContextPanelInfo, DirEntry, ModelInfo, SlashArgItem, TokenMode } from "../lib/types";
+  import ComposerRuntimeMenu from "./ComposerRuntimeMenu.svelte";
   import ThreadQueue from "./ThreadQueue.svelte";
 
   let {
@@ -29,6 +30,14 @@
     workPermission = "ask",
     onWorkPermissionChange,
     permissionChanging = false,
+    collaborationMode = "normal",
+    tokenMode = "full",
+    goal = "",
+    goalStatus = "",
+    runtimeChanging = false,
+    onCollaborationModeChange,
+    onTokenModeChange,
+    onGoalChange,
     onOpenResources,
     activityMode,
     contextInfo,
@@ -59,6 +68,14 @@
     workPermission?: ComposerToolApprovalMode;
     onWorkPermissionChange?: (value: ComposerToolApprovalMode) => void | Promise<void>;
     permissionChanging?: boolean;
+    collaborationMode?: CollaborationMode;
+    tokenMode?: TokenMode;
+    goal?: string;
+    goalStatus?: string;
+    runtimeChanging?: boolean;
+    onCollaborationModeChange?: (mode: CollaborationMode) => void | Promise<void>;
+    onTokenModeChange?: (mode: TokenMode) => void | Promise<void>;
+    onGoalChange?: (objective: string) => void | Promise<void>;
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
     contextInfo?: ContextPanelInfo;
@@ -81,9 +98,9 @@
   let plusMenuOpen = $state(false);
   let projectMenuOpen = $state(false);
   let permissionMenuOpen = $state(false);
+  let runtimeMenuOpen = $state(false);
   let fileAccept = $state("");
   let fileInput: HTMLInputElement | undefined;
-  let textarea: HTMLTextAreaElement | undefined;
   let composerRoot: HTMLFormElement | undefined;
 
   const workPermissionOptions: { id: ComposerToolApprovalMode; label: string; mark: string }[] = [
@@ -141,6 +158,7 @@
     plusMenuOpen = false;
     projectMenuOpen = false;
     permissionMenuOpen = false;
+    runtimeMenuOpen = false;
   }
 
   function modelValue(model: ModelInfo) {
@@ -304,12 +322,14 @@
     projectMenuOpen = false;
   }
 
-  function insertWorkspaceReference() {
+  function openGoalEditor() {
     plusMenuOpen = false;
-    const next = `${input}${input.endsWith(" ") || input === "" ? "" : " "}@`;
-    onInput(next);
-    requestAnimationFrame(() => textarea?.focus());
-    void refreshFileMatches(next);
+    runtimeMenuOpen = true;
+  }
+
+  function activatePlanMode() {
+    plusMenuOpen = false;
+    void onCollaborationModeChange?.("plan");
   }
 
   async function attachDroppedPaths(paths: string[]) {
@@ -477,7 +497,6 @@
 >
   <div class="composer__input">
     <textarea
-      bind:this={textarea}
       data-composer-input
       data-testid="composer-input"
       value={input}
@@ -582,6 +601,17 @@
     <span data-thread-status="context">上下文剩余 <strong>{remainingContextPercent === undefined ? "待统计" : `${remainingContextPercent}%`}</strong></span>
     <span data-thread-status="cost">本会话费用 <strong>{sessionCostLabel}</strong></span>
     <span data-thread-status="background">后台运行 <strong>{Math.max(0, backgroundRunCount)}</strong></span>
+    <ComposerRuntimeMenu
+      bind:open={runtimeMenuOpen}
+      {collaborationMode}
+      {tokenMode}
+      {goal}
+      {goalStatus}
+      changing={runtimeChanging}
+      {onCollaborationModeChange}
+      {onTokenModeChange}
+      {onGoalChange}
+    />
   </div>
 
   <div class="composer__toolbar">
@@ -600,11 +630,11 @@
             <Image size={14} />
             <span><strong>附加 微信</strong></span>
           </button>
-          <button type="button" role="menuitem" onclick={insertWorkspaceReference}>
+          <button type="button" role="menuitem" onclick={openGoalEditor}>
             <Target size={15} />
             <span><strong>目标</strong></span>
           </button>
-          <button type="button" role="menuitem" onclick={insertWorkspaceReference}>
+          <button type="button" role="menuitem" onclick={activatePlanMode}>
             <ListChecks size={15} />
             <span><strong>计划模式</strong></span>
           </button>

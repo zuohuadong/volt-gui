@@ -20,14 +20,21 @@ import (
 // own goroutine, emitting nested events so the frontend renders independent
 // cards for each sub-task.
 type ParallelTasksTool struct {
-	taskTool *TaskTool
-	reg      *tool.Registry
+	taskTool       *TaskTool
+	reg            *tool.Registry
+	maxConcurrency int
 }
 
 // NewParallelTasksTool creates a parallel dispatch tool that reuses the given
 // TaskTool's sub-agent infrastructure.
 func NewParallelTasksTool(taskTool *TaskTool, reg *tool.Registry) *ParallelTasksTool {
-	return &ParallelTasksTool{taskTool: taskTool, reg: reg}
+	return &ParallelTasksTool{taskTool: taskTool, reg: reg, maxConcurrency: DefaultMaxSubagentConcurrency}
+}
+
+// WithMaxConcurrency bounds how many children this batch runs at once.
+func (p *ParallelTasksTool) WithMaxConcurrency(limit int) *ParallelTasksTool {
+	p.maxConcurrency = NormalizeSubagentConcurrency(limit)
+	return p
 }
 
 func (p *ParallelTasksTool) Name() string { return "parallel_tasks" }
@@ -225,14 +232,31 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	completed := 0
-	for i := range params.Tasks {
-		startTask(i)
+	active := 0
+	nextTask := 0
+	startAvailable := func() {
+		if ctx.Err() != nil {
+			return
+		}
+		limit := NormalizeSubagentConcurrency(p.maxConcurrency)
+		for nextTask < n && active < limit {
+			if ctx.Err() != nil {
+				return
+			}
+			startTask(nextTask)
+			nextTask++
+			active++
+		}
 	}
+	startAvailable()
 	processResult := func(r subResult) {
 		if done[r.index] {
 			return
 		}
 		completed++
+		if active > 0 {
+			active--
+		}
 		done[r.index] = true
 		outputs[r.index] = r.output
 		taskErrs[r.index] = r.err
@@ -249,6 +273,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		select {
 		case r := <-doneCh:
 			processResult(r)
+			startAvailable()
 		case <-ctx.Done():
 			err := ctx.Err()
 		drain:

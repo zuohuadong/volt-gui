@@ -661,6 +661,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	maxSubagentDepth := agent.NormalizeMaxSubagentDepth(cfg.Agent.MaxSubagentDepth)
+	maxSubagentConcurrency := agent.NormalizeSubagentConcurrency(cfg.Agent.MaxSubagentConcurrency)
 	taskToolAdded := false
 	readOnlyTaskToolAdded := false
 	var taskTool *agent.TaskTool
@@ -683,7 +684,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			taskTool = newTaskTool()
 		}
 		reg.Add(taskTool)
-		reg.Add(agent.NewParallelTasksTool(taskTool, reg))
+		reg.Add(agent.NewParallelTasksTool(taskTool, reg).WithMaxConcurrency(maxSubagentConcurrency))
 		return "enabled task."
 	}
 	addReadOnlyTaskTool := func() string {

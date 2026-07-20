@@ -11,12 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"voltui/internal/config"
 	"voltui/internal/fileutil"
 )
 
-const workbenchProjectsFile = "workbench-projects.json"
+const (
+	workbenchProjectsFile             = "workbench-projects.json"
+	workbenchProjectNameMaxCharacters = 100
+)
 
 type WorkbenchProjectView struct {
 	ID         string   `json:"id"`
@@ -111,6 +115,9 @@ func saveWorkbenchProjectInput(input WorkbenchProjectInput) (WorkbenchProjectVie
 	if name == "" {
 		return WorkbenchProjectView{}, errors.New("project name is required")
 	}
+	if utf8.RuneCountInString(name) > workbenchProjectNameMaxCharacters {
+		return WorkbenchProjectView{}, fmt.Errorf("project name must not exceed %d characters", workbenchProjectNameMaxCharacters)
+	}
 	projects, err := loadWorkbenchProjects()
 	if err != nil {
 		return WorkbenchProjectView{}, err
@@ -121,10 +128,14 @@ func saveWorkbenchProjectInput(input WorkbenchProjectInput) (WorkbenchProjectVie
 	if id == "" {
 		id = uniqueWorkbenchProjectID(slugifyAgentID(name), projects)
 	}
+	code := defaultString(strings.TrimSpace(input.Code), nextWorkbenchProjectCode(projects, now))
+	if err := validateWorkbenchProjectIdentity(projects, id, name, code); err != nil {
+		return WorkbenchProjectView{}, err
+	}
 	next := WorkbenchProjectView{
 		ID:         id,
 		Name:       name,
-		Code:       defaultString(strings.TrimSpace(input.Code), nextWorkbenchProjectCode(projects, now)),
+		Code:       code,
 		Client:     defaultString(strings.TrimSpace(input.Client), "未指定客户"),
 		Stage:      defaultString(strings.TrimSpace(input.Stage), "进行中"),
 		Owner:      defaultString(strings.TrimSpace(input.Owner), "项目负责人"),
@@ -166,6 +177,21 @@ func saveWorkbenchProjectInput(input WorkbenchProjectInput) (WorkbenchProjectVie
 		return WorkbenchProjectView{}, err
 	}
 	return next, nil
+}
+
+func validateWorkbenchProjectIdentity(projects []WorkbenchProjectView, id, name, code string) error {
+	for _, project := range projects {
+		if project.ID == id {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(project.Name), name) {
+			return fmt.Errorf("project name already exists: %s", name)
+		}
+		if strings.EqualFold(strings.TrimSpace(project.Code), code) {
+			return fmt.Errorf("project code already exists: %s", code)
+		}
+	}
+	return nil
 }
 
 func workbenchProjectsPath() (string, error) {

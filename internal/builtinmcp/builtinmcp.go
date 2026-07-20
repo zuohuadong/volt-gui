@@ -209,8 +209,13 @@ func computerUseResourceDirCandidatesFor(resourceName string) []string {
 	}
 	if exe, err := currentExecutable(); err == nil && exe != "" {
 		exeDir := filepath.Dir(exe)
+		buildDir := filepath.Dir(exeDir)
 		add(filepath.Join(exeDir, resourceName))
-		add(filepath.Join(filepath.Dir(exeDir), "Resources", resourceName))
+		add(filepath.Join(buildDir, "Resources", resourceName))
+		// Wails keeps the raw Windows executable in build/bin while the NSIS
+		// payload is staged under build/windows/installer. Let local release
+		// builds exercise the same bundled MCP resources as the installed app.
+		add(filepath.Join(buildDir, "windows", "installer", resourceName))
 		if strings.Contains(exeDir, ".app"+string(filepath.Separator)+"Contents"+string(filepath.Separator)+"MacOS") {
 			add(filepath.Join(filepath.Dir(exeDir), "Resources", resourceName))
 		}

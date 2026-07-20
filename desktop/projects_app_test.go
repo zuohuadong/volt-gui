@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,6 +103,77 @@ func TestNextWorkbenchProjectCodeIncrementsByDate(t *testing.T) {
 	got := nextWorkbenchProjectCode(projects, mustParseProjectTestDate(t, "2026-06-15"))
 	if got != "PRJ-2026-0615-04" {
 		t.Fatalf("nextWorkbenchProjectCode = %q, want PRJ-2026-0615-04", got)
+	}
+}
+
+func TestSaveWorkbenchProjectAppliesConventionalDefaults(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	saved, err := app.SaveWorkbenchProject(WorkbenchProjectInput{Name: "最小配置项目"})
+	if err != nil {
+		t.Fatalf("SaveWorkbenchProject with name only: %v", err)
+	}
+	if saved.Code == "" || saved.Client != "未指定客户" || saved.Stage != "进行中" || saved.Owner != "项目负责人" {
+		t.Fatalf("identity defaults = %+v", saved)
+	}
+	if saved.Category != "业务项目" || saved.Status != "active" || saved.Priority != "中" || saved.Risk != "低风险" {
+		t.Fatalf("workflow defaults = %+v", saved)
+	}
+	if saved.AcceptedAt == "" || saved.Progress != 0 {
+		t.Fatalf("timeline defaults = %+v", saved)
+	}
+}
+
+func TestSaveWorkbenchProjectRejectsDuplicateNameAndCode(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	saved, err := app.SaveWorkbenchProject(WorkbenchProjectInput{
+		Name: "Project Alpha",
+		Code: "PRJ-ALPHA",
+	})
+	if err != nil {
+		t.Fatalf("SaveWorkbenchProject initial: %v", err)
+	}
+
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{
+		Name: "  project alpha  ",
+		Code: "PRJ-BETA",
+	}); err == nil || !strings.Contains(err.Error(), "project name already exists") {
+		t.Fatalf("duplicate project name error = %v, want project name already exists", err)
+	}
+
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{
+		Name: "Project Beta",
+		Code: "  prj-alpha  ",
+	}); err == nil || !strings.Contains(err.Error(), "project code already exists") {
+		t.Fatalf("duplicate project code error = %v, want project code already exists", err)
+	}
+
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{
+		ID:   saved.ID,
+		Name: "Project Alpha",
+		Code: "PRJ-ALPHA",
+	}); err != nil {
+		t.Fatalf("updating the same project should keep its name and code: %v", err)
+	}
+}
+
+func TestSaveWorkbenchProjectRejectsNameLongerThanOneHundredCharacters(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{
+		Name: strings.Repeat("项", 101),
+	}); err == nil || !strings.Contains(err.Error(), "100 characters") {
+		t.Fatalf("overlong project name error = %v, want 100 character limit", err)
+	}
+
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{
+		Name: strings.Repeat("项", 100),
+	}); err != nil {
+		t.Fatalf("100-character project name should be accepted: %v", err)
 	}
 }
 

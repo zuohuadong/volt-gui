@@ -92,6 +92,7 @@
   import type { ComposerToolApprovalMode } from "./lib/tool-approval-mode";
   import { modelCardsFromConfiguredProviders } from "./lib/model-catalog";
   import type { ModelCard } from "./lib/model-catalog";
+  import { mcpConfigurationEnabled, mcpStatusLabel, shouldShowMCPTrust } from "./lib/mcp-detail";
   import {
     filterModelProviders,
     modelCandidatesForProvider,
@@ -262,6 +263,7 @@
     browserVerification?: WireBrowserPrompt;
   }
   const MAX_DATA_URL_PROJECT_MATERIAL_BYTES = 25 * 1024 * 1024;
+  const WORKBENCH_PROJECT_NAME_MAX_CHARACTERS = 100;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities" | "trust" | "scopedMemory";
   type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings" | "sync" | "operationLog";
   type CodeWorkbenchAction = "conversation" | "overview" | "workspace" | "context" | "changes" | "checkpoints" | "models" | "settings";
@@ -809,6 +811,7 @@
   let projectDraftAgent = $state("");
   let projectDraftNextStep = $state("");
   let projectDraftDesc = $state("");
+  let projectAdvancedOpen = $state(false);
   let customerDraftName = $state("");
   let customerDraftType = $state("企业");
   let customerDraftContact = $state("");
@@ -1184,6 +1187,8 @@
     authStatus?: string;
     authConfigured?: boolean;
     runtimeError?: string;
+    mcpRawStatus?: string;
+    mcpConfigEnabled?: boolean;
     tags?: string[];
     examplePrompts?: string[];
     runAs?: string;
@@ -4714,6 +4719,7 @@
     projectDraftAgent = agentCards.find((agent) => agent.id === selectedAgentId)?.name ?? "";
     projectDraftNextStep = "";
     projectDraftDesc = "";
+    projectAdvancedOpen = false;
   }
   function resetReportDraft() {
     const project = selectedProject();
@@ -4875,16 +4881,42 @@
       showWorkbenchNotice(`删除项目失败：${formatErrorMessage(error)}`);
     }
   }
+  function projectDraftIdentityValidation(name: string, code: string): [field: string, message: string] | undefined {
+    if (!name) return ["project-name", "请填写项目名称后再确认。"];
+    if ([...name].length > WORKBENCH_PROJECT_NAME_MAX_CHARACTERS) {
+      return ["project-name", `项目名称不能超过 ${WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符。`];
+    }
+    const normalizedName = name.toLocaleLowerCase();
+    if (projectCards.some((project) => project.name.trim().toLocaleLowerCase() === normalizedName)) {
+      return ["project-name", "项目名称已存在，请换一个名称。"];
+    }
+    const normalizedCode = code.toLocaleLowerCase();
+    if (code && projectCards.some((project) => project.code.trim().toLocaleLowerCase() === normalizedCode)) {
+      return ["project-code", "项目编号已存在，请换一个编号。"];
+    }
+    return undefined;
+  }
+  function projectSaveErrorValidation(message: string): [field: string, message: string] | undefined {
+    if (message.includes("project name already exists")) return ["project-name", "项目名称已存在，请换一个名称。"];
+    if (message.includes("project code already exists")) return ["project-code", "项目编号已存在，请换一个编号。"];
+    if (message.includes("project name must not exceed")) {
+      return ["project-name", `项目名称不能超过 ${WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符。`];
+    }
+    return undefined;
+  }
   async function submitProjectDraft() {
     const name = projectDraftName.trim();
-    if (!name) {
-      showConfigValidation("project-name", "请填写项目名称后再确认。");
+    const code = projectDraftCode.trim();
+    const validation = projectDraftIdentityValidation(name, code);
+    if (validation) {
+      if (validation[0] === "project-code") projectAdvancedOpen = true;
+      showConfigValidation(...validation);
       return;
     }
     const progress = Number(projectDraftProgress);
     const input: WorkbenchProjectInput = {
       name,
-      code: projectDraftCode.trim(),
+      code,
       client: projectDraftClient.trim(),
       stage: projectDraftStage.trim(),
       owner: projectDraftOwner.trim(),
@@ -4922,7 +4954,13 @@
       showWorkbenchNotice(`已新建项目：${saved.name}`);
     } catch (error) {
       console.error("Failed to save project", error);
-      showWorkbenchNotice("新建项目失败，请稍后重试。");
+      const message = formatErrorMessage(error);
+      const validation = projectSaveErrorValidation(message);
+      if (validation) {
+        if (validation[0] === "project-code") projectAdvancedOpen = true;
+        showConfigValidation(...validation);
+      }
+      else showWorkbenchNotice(`新建项目失败：${message}`);
     }
   }
   async function submitTodoDraft() {
@@ -5480,7 +5518,7 @@
     return "配置";
   }
   function usesGenericConfigDialog(kind: ConfigDialog | undefined) {
-    return Boolean(kind && kind !== "customer" && kind !== "regulation" && kind !== "schedule");
+    return Boolean(kind && kind !== "customer" && kind !== "regulation" && kind !== "schedule" && kind !== "project");
   }
   function automationDialogTitle() {
     return automationDialogMode === "create" ? "新建自动化任务" : automationDraft.title || "编辑自动化任务";
@@ -5860,11 +5898,11 @@
   }
   function mcpToCapability(server: CapabilitiesView["servers"][number]): CapabilityItem {
     const enabled = server.status === "connected" || server.status === "deferred" || server.status === "initializing";
-    const status = server.status === "connected" ? "已连接" : server.status === "disabled" ? "已停用" : server.status === "failed" ? "连接失败" : server.status || "未知";
+    const status = mcpStatusLabel(server.status);
     return {
       id: server.name,
       name: server.name,
-      desc: `${server.tools} tools · ${server.prompts} prompts · ${server.resources} resources`,
+      desc: `${server.tools} 个工具 · ${server.prompts} 个提示 · ${server.resources} 个资源`,
       status,
       version: server.transport || "mcp",
       source: server.builtIn ? "内置 MCP" : server.configured ? "配置 MCP" : "运行时 MCP",
@@ -5880,6 +5918,8 @@
       authStatus: server.authStatus,
       authConfigured: server.authConfigured,
       runtimeError: server.error,
+      mcpRawStatus: server.status,
+      mcpConfigEnabled: mcpConfigurationEnabled(server.status),
     };
   }
   function skillToCapability(skill: CapabilitiesView["skills"][number]): CapabilityItem {
@@ -5959,6 +5999,7 @@
   }
   function capabilityActionLabel(item: CapabilityItem) {
     if (item.readOnly) return item.enabled ? "本地已安装" : "查看状态";
+    if (item.mcpConfigEnabled && item.mcpRawStatus === "failed") return "需要处理";
     if (item.enabled) return "停用";
     if (item.status.includes("开发中")) return "开发中";
     if (item.status.includes("授权") || item.sync.includes("授权")) return "授权";
@@ -6055,7 +6096,7 @@
       showWorkbenchNotice("本地插件包状态来自插件清单，请在插件配置中启停。");
       return;
     }
-    const enabled = !item.enabled;
+    const enabled = !(capabilityTab === "mcp" ? item.mcpConfigEnabled ?? item.enabled : item.enabled);
     try {
       if (capabilityTab === "plugin") {
         await app().SaveWorkbenchPlugin(capabilityPluginInput(item, enabled));
@@ -10410,10 +10451,10 @@
       {#if capabilityDetailOpen && currentCapability()}
         {@const selectedCapability = currentCapability()}
         <div class="modal-backdrop">
-          <div class="config-modal capability-detail-modal" role="dialog" aria-modal="true" aria-label={`${capabilityLabel(capabilityTab)}详情`}>
+          <div class="config-modal capability-detail-modal" class:mcp-detail-modal={capabilityTab === "mcp"} role="dialog" aria-modal="true" aria-label={`${capabilityLabel(capabilityTab)}详情`}>
             <header>
-              <div><span>{capabilityLabel(capabilityTab)} Detail</span><strong>{selectedCapability.name}</strong></div>
-              <button type="button" onclick={() => (capabilityDetailOpen = false)}>x</button>
+              <div><span>{capabilityTab === "mcp" ? "MCP 服务" : `${capabilityLabel(capabilityTab)} Detail`}</span><strong>{selectedCapability.name}</strong></div>
+              <button type="button" aria-label="关闭详情" onclick={() => (capabilityDetailOpen = false)}>×</button>
             </header>
             <div class="capability-detail capability-plugin-detail capability-detail-modal__body">
               <div class="capability-detail__top">
@@ -10421,7 +10462,7 @@
                 <div class="capability-detail__meta">
                   <b>{selectedCapability.version}</b>
                   <b>{selectedCapability.source}</b>
-                  <b>{selectedCapability.scope}</b>
+                  {#if capabilityTab !== "mcp"}<b>{selectedCapability.scope}</b>{/if}
                   {#if capabilityTab === "skill"}{#each selectedCapability.tags ?? [] as tag (tag)}<b>{tag}</b>{/each}{/if}
                 </div>
               </div>
@@ -10447,6 +10488,7 @@
                 <MCPRuntimeActions
                   serverName={selectedCapability.name}
                   status={selectedCapability.status}
+                  rawStatus={selectedCapability.mcpRawStatus}
                   runtimeState={selectedCapability.runtimeState}
                   startIntent={selectedCapability.startIntent}
                   authStatus={selectedCapability.authStatus}
@@ -10456,24 +10498,28 @@
                   onReconnect={() => reverifyMCPServer(selectedCapability)}
                   onClearAuthentication={() => clearMCPAuthentication(selectedCapability)}
                 />
-                <MCPTrustEditor
-                  serverName={selectedCapability.name}
-                  trustedTools={selectedCapability.trustedReadOnlyTools ?? []}
-                  availableTools={selectedCapability.toolList ?? []}
-                  busy={mcpTrustBusy}
-                  onTrust={(toolName) => trustMCPTool(selectedCapability, toolName)}
-                  onUntrust={(toolName) => untrustMCPTool(selectedCapability, toolName)}
-                />
+                {#if shouldShowMCPTrust(selectedCapability.mcpRawStatus ?? "", selectedCapability.trustedReadOnlyTools ?? [])}
+                  <MCPTrustEditor
+                    serverName={selectedCapability.name}
+                    trustedTools={selectedCapability.trustedReadOnlyTools ?? []}
+                    availableTools={selectedCapability.toolList ?? []}
+                    busy={mcpTrustBusy}
+                    onTrust={(toolName) => trustMCPTool(selectedCapability, toolName)}
+                    onUntrust={(toolName) => untrustMCPTool(selectedCapability, toolName)}
+                  />
+                {/if}
               {/if}
-              <section class="capability-install-flow">
-                <header><Workflow size={16} /><strong>真实状态检查</strong></header>
-                {#each capabilityStatusChecks(selectedCapability) as step, index (indexedKey(step.id, index))}
-                  <article class:done={step.done}>
-                    <span>{#if step.done}<Check size={13} />{:else}{index + 1}{/if}</span>
-                    <div><strong>{step.label}</strong><p>{step.desc}</p></div>
-                  </article>
-                {/each}
-              </section>
+              {#if capabilityTab !== "mcp"}
+                <section class="capability-install-flow">
+                  <header><Workflow size={16} /><strong>真实状态检查</strong></header>
+                  {#each capabilityStatusChecks(selectedCapability) as step, index (indexedKey(step.id, index))}
+                    <article class:done={step.done}>
+                      <span>{#if step.done}<Check size={13} />{:else}{index + 1}{/if}</span>
+                      <div><strong>{step.label}</strong><p>{step.desc}</p></div>
+                    </article>
+                  {/each}
+                </section>
+              {/if}
 							{#if isCloudflareDropCapability(selectedCapability)}
 								<section class="capability-install-flow">
 									<header><Archive size={16} /><strong>Cloudflare Drop 发布流程</strong></header>
@@ -10503,26 +10549,43 @@
 									{/if}
 								</section>
 							{/if}
-              <section class="capability-agent-binding">
-                <header><Zap size={16} /><strong>绑定 Agent</strong></header>
-                {#each agentCards.slice(0, 3) as agent (agent.id)}
-                  {@const isBound = isCapabilityAgentBound(selectedCapability, agent.id)}
-                  <button type="button" aria-pressed={isBound} onclick={() => void toggleCapabilityAgentBinding(selectedCapability, agent)}>
-                    <span><strong>{agent.name}</strong><em>{agent.role} / {agent.status}</em></span>
-                    <i class:enabled={isBound}><u></u></i>
-                  </button>
-                {/each}
-              </section>
-              <dl class="capability-runtime">
-                <div><dt>状态</dt><dd>{selectedCapability.status}</dd></div>
-                <div><dt>版本</dt><dd>{selectedCapability.version}</dd></div>
-                <div><dt>来源</dt><dd>{selectedCapability.source}</dd></div>
-                <div><dt>同步</dt><dd>{selectedCapability.sync}</dd></div>
-                <div><dt>路径</dt><dd>{selectedCapability.path}</dd></div>
-                <div><dt>权限</dt><dd>{selectedCapability.permission}</dd></div>
-              </dl>
+              {#if capabilityTab !== "mcp" || selectedCapability.mcpRawStatus === "connected"}
+                <details class="capability-agent-binding" open={capabilityTab !== "mcp"}>
+                  <summary><Zap size={16} /><span><strong>Agent 使用范围</strong><small>{capabilityAgentBindingList(selectedCapability).length > 0 ? `${capabilityAgentBindingList(selectedCapability).length} 个已绑定` : "尚未绑定"}</small></span></summary>
+                  <div class="capability-agent-binding__list">
+                    {#each agentCards.slice(0, 3) as agent (agent.id)}
+                      {@const isBound = isCapabilityAgentBound(selectedCapability, agent.id)}
+                      <button type="button" aria-pressed={isBound} onclick={() => void toggleCapabilityAgentBinding(selectedCapability, agent)}>
+                        <span><strong>{agent.name}</strong><em>{agent.role} / {agent.status}</em></span>
+                        <i class:enabled={isBound}><u></u></i>
+                      </button>
+                    {/each}
+                  </div>
+                </details>
+              {/if}
+              {#if capabilityTab === "mcp"}
+                <details class="capability-technical">
+                  <summary>配置详情</summary>
+                  <dl class="capability-runtime">
+                    <div><dt>传输</dt><dd>{selectedCapability.version}</dd></div>
+                    <div><dt>来源</dt><dd>{selectedCapability.source}</dd></div>
+                    <div><dt>启动层级</dt><dd>{selectedCapability.scope}</dd></div>
+                    <div><dt>命令或地址</dt><dd>{selectedCapability.path}</dd></div>
+                    <div><dt>权限</dt><dd>{selectedCapability.permission}</dd></div>
+                  </dl>
+                </details>
+              {:else}
+                <dl class="capability-runtime">
+                  <div><dt>状态</dt><dd>{selectedCapability.status}</dd></div>
+                  <div><dt>版本</dt><dd>{selectedCapability.version}</dd></div>
+                  <div><dt>来源</dt><dd>{selectedCapability.source}</dd></div>
+                  <div><dt>同步</dt><dd>{selectedCapability.sync}</dd></div>
+                  <div><dt>路径</dt><dd>{selectedCapability.path}</dd></div>
+                  <div><dt>权限</dt><dd>{selectedCapability.permission}</dd></div>
+                </dl>
+              {/if}
             </div>
-            <footer><button type="button" onclick={() => void refreshCapabilities()}>刷新状态</button><button type="button" onclick={() => (capabilityDetailOpen = false)}>关闭</button><button type="button" disabled={selectedCapability.readOnly || selectedCapability.status.includes("开发中")} onclick={() => void toggleCapabilityEnabled(selectedCapability)}>{capabilityActionLabel(selectedCapability)}</button></footer>
+            <footer class:mcp-detail-footer={capabilityTab === "mcp"}>{#if capabilityTab !== "mcp"}<button type="button" onclick={() => void refreshCapabilities()}>刷新状态</button>{/if}<button type="button" onclick={() => (capabilityDetailOpen = false)}>关闭</button><button class:mcp-enable-action={capabilityTab === "mcp" && !selectedCapability.mcpConfigEnabled} class:mcp-disable-action={capabilityTab === "mcp" && selectedCapability.mcpConfigEnabled} type="button" disabled={selectedCapability.readOnly || selectedCapability.status.includes("开发中")} onclick={() => void toggleCapabilityEnabled(selectedCapability)}>{capabilityTab === "mcp" ? selectedCapability.mcpConfigEnabled ? "停用" : "启用并连接" : capabilityActionLabel(selectedCapability)}</button></footer>
           </div>
         </div>
       {/if}
@@ -10574,6 +10637,53 @@
             <header><div><span>Calendar</span><strong>{configDialogTitle()}</strong><p>日程保存、更新和删除均通过桌面后端持久化。</p></div><button type="button" onclick={() => (configDialog = undefined)}>x</button></header>
             <div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>
             <footer>{#if selectedScheduleEventId}<button class="danger" type="button" onclick={() => void deleteSelectedCalendarEvent()}>删除日程</button>{/if}<button type="button" onclick={() => (configDialog = undefined)}>取消</button><button type="button" onclick={() => void submitScheduleDraft()}>{selectedScheduleEventId ? "保存修改" : "新建日程"}</button></footer>
+          </section>
+        </div>
+      {/if}
+      {#if configDialog === "project"}
+        <div class="modal-backdrop">
+          <section class="config-modal project-create-modal" class:project-create-modal--expanded={projectAdvancedOpen}>
+            <header>
+              <div><span>Project</span><strong>新建项目</strong><p>只填项目名称即可开始，其余信息会按约定使用默认值。</p></div>
+              <button type="button" aria-label="关闭新建项目" onclick={() => (configDialog = undefined)}>x</button>
+            </header>
+            <div class="config-grid project-config-grid">
+              <div class="project-config-essential">
+                <label class:invalid={configValidationField === "project-name"}>
+                  项目名称 *
+                  <input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" />
+                  <small id="project-name-hint">只填名称即可创建，最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small>
+                </label>
+                <p>项目编号、阶段、负责人等会自动生成，创建后仍可随时调整。</p>
+              </div>
+              <details class="project-config-advanced" bind:open={projectAdvancedOpen}>
+                <summary>
+                  <span><strong>更多设置（可选）</strong><small>覆盖默认值或补充项目上下文</small></span>
+                  <em>{projectDraftCode} · {projectDraftStage}</em>
+                </summary>
+                <div class="project-config-advanced__grid">
+                  <label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="自动生成" /></label>
+                  <label>客户/归属方<input bind:value={projectDraftClient} placeholder="默认未指定客户" /></label>
+                  <label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+                  <label>负责人<input bind:value={projectDraftOwner} placeholder="默认项目负责人" /></label>
+                  <label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+                  <label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="可选，例如 120,000" /></label>
+                  <label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label>
+                  <label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label>
+                  <label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label>
+                  <label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label>
+                  <label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
+                  <label>执行 Agent<select bind:value={projectDraftAgent}><option value="">暂不指定</option>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label>
+                  <label>下一步<input bind:value={projectDraftNextStep} placeholder="可选，例如 完成验收并输出报告" /></label>
+                  <label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="可选，补充项目背景、目标或验收标准"></textarea></label>
+                </div>
+              </details>
+            </div>
+            <footer>
+              {#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}
+              <button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button>
+              <button type="button" onclick={() => void submitProjectDraft()}>创建项目</button>
+            </footer>
           </section>
         </div>
       {/if}
@@ -10670,7 +10780,7 @@
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（或摘要）*<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} bind:value={projectDraftName} placeholder="例如 客户门户上线" /></label><label>项目编号<input bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（或摘要）*<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if agentWizardOpen}
         {@const WizardAvatarIcon = avatarIcon(agentAvatar)}
@@ -11235,7 +11345,7 @@
   .aorist-workbench{padding:0;overflow:hidden}.aorist-page{min-height:0;height:100%;overflow:auto;padding:18px;background:radial-gradient(circle at 18% 0%,rgba(31,95,191,.1),transparent 32%),#f7f8fb}.hero-panel{padding:28px;border:1px solid #dfe5ef;border-radius:22px;background:linear-gradient(135deg,#fff 0%,#eef4ff 100%);box-shadow:0 16px 34px rgba(15,23,42,.08)}.hero-panel h1{max-width:760px;margin:10px 0;color:#111827;font-size:clamp(28px,4vw,46px);line-height:1.05;letter-spacing:-.04em}.hero-panel p{max-width:680px;margin:0 0 18px;color:#5f6774;line-height:1.7}.hero-panel div{display:flex;gap:10px;flex-wrap:wrap}.aorist-stats,.aorist-card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.aorist-stats article,.aorist-card,.aorist-list article,.agent-card,.automation-card,.media-card,.capability-item,:global(.task-composer-card){border:1px solid #e2e8f0;border-radius:16px;background:rgba(255,255,255,.92);box-shadow:0 8px 22px rgba(15,23,42,.05)}.aorist-stats article{padding:16px}.aorist-stats span,.aorist-stats em{display:block;color:#7b8494;font-size:12px;font-style:normal}.aorist-stats strong{display:block;margin:8px 0 3px;color:#111827;font-size:28px;letter-spacing:-.04em}.aorist-split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);gap:12px;margin-top:14px}.aorist-card{padding:14px}.aorist-card header,.aorist-toolbar,.agent-card header,:global(.task-composer-card__head),.config-modal header,.agent-wizard__header,.agent-wizard__footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.aorist-card header strong,.aorist-toolbar strong{color:#111827;font-size:16px}.aorist-card header button{border:0;background:transparent;color:#1f5fbf;font-size:12px}.todo-row,.automation-row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;width:100%;gap:10px;margin-top:8px;padding:10px;border:1px solid #eef2f7;border-radius:12px;background:#fff;text-align:left}.automation-row{grid-template-columns:minmax(0,1fr) auto}.todo-row i{width:8px;height:8px;border-radius:999px;background:#1f5fbf}.todo-row strong,.automation-row strong{display:block;color:#1f2937;font-size:13px}.todo-row em,.automation-row em{display:block;margin-top:3px;color:#7b8494;font-size:11px;font-style:normal}.todo-row b,.automation-row b{color:#1f5fbf;font-size:11px}
   :global(.agent-strip){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}:global(.agent-strip button){display:grid;grid-template-columns:34px minmax(0,1fr);gap:9px;align-items:center;padding:12px;border:1px solid #e2e8f0;border-radius:15px;background:#fff;text-align:left}:global(.agent-strip button.active){border-color:#1f5fbf;background:#eef4ff}:global(.agent-strip span){grid-row:span 2;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:12px;background:#1f5fbf;color:#fff}:global(.agent-strip strong){color:#111827;font-size:13px}:global(.agent-strip em){color:#7b8494;font-size:11px;font-style:normal}:global(.task-composer-card){padding:14px}:global(.task-composer-card__head){margin-bottom:12px}:global(.task-composer-card__head) strong{display:block;color:#111827;font-size:18px}:global(.task-composer-card__head) select,.config-grid input,.config-grid textarea,.aorist-search input,.wizard-form input,.wizard-form textarea,.wizard-form select{border:1px solid #d9dee8;border-radius:10px;background:#fff;color:#111827}:global(.task-composer-card__head) select{height:34px;padding:0 10px}:global(.composer-context-actions){display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}:global(.composer-context-actions > span){display:inline-flex;align-items:center;min-height:32px;padding:0 10px;border:1px solid #bfdbfe;border-radius:10px;background:#eff6ff;color:#1f5fbf;font-size:12px;font-weight:650}
   .aorist-toolbar{margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}.aorist-search{display:block;max-width:420px;margin-bottom:12px}.aorist-search input{width:100%;height:38px;padding:0 12px}.aorist-list{display:grid;gap:10px}.aorist-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px;cursor:pointer}.aorist-list strong{color:#111827}.aorist-list p{margin:4px 0;color:#5f6774;font-size:13px}.aorist-list em{color:#7b8494;font-size:12px;font-style:normal}.aorist-list span{padding:4px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:12px;white-space:nowrap}.aorist-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.automation-card,.agent-card,.media-card,.capability-item{padding:15px;cursor:pointer}.automation-card span,.media-card span,.capability-item span{display:inline-block;margin-bottom:9px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.automation-card strong,.media-card strong,.capability-item strong{display:block;color:#111827;font-size:15px}.automation-card p,.media-card p,.capability-item p{color:#5f6774;font-size:13px;line-height:1.6}.automation-card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;color:#7b8494;font-size:12px}.automation-card dd{margin:0;color:#111827}.automation-card footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}.automation-card footer button:last-child{color:#b42318}.agent-card header{align-items:flex-start}.agent-card header>span{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:#eef4ff;color:#1f5fbf}.agent-card header div{flex:1;min-width:0}.agent-card header strong{display:block;color:#111827}.agent-card header em{display:inline-block;margin-top:4px;color:#7b8494;font-size:11px;font-style:normal}.agent-card header button{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#98a2b3;opacity:0}.agent-card:hover header button{opacity:1}.agent-card p{color:#5f6774;line-height:1.6;font-size:13px}.agent-card footer{display:flex;align-items:center;justify-content:space-between;color:#7b8494;font-size:12px}.agent-card footer span{display:inline-flex;align-items:center;gap:4px}.agent-card footer b{color:#1f5fbf;font-size:12px}.capability-tabs{display:flex;gap:8px;margin:0 0 12px;padding:4px;width:max-content;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.capability-tabs button{min-width:92px;height:32px;border:0;border-radius:9px;background:transparent;color:#5f6774;font-weight:700}.capability-tabs button.active{background:#1f5fbf;color:#fff}
-  .modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}.config-modal,.agent-wizard{width:min(860px,calc(100vw - 44px));max-height:calc(100vh - 44px);overflow:hidden;border:1px solid #e2e8f0;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.28)}.config-modal{padding:18px}.config-modal header strong,.agent-wizard__header strong{display:block;color:#111827;font-size:17px}.config-modal header button,.agent-wizard__header>button{border:0;background:transparent;color:#667085;font-size:24px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.config-grid label{display:grid;gap:6px;color:#5f6774;font-size:12px}.config-grid .wide{grid-column:1/-1}.config-grid input{height:36px;padding:0 10px}.config-grid textarea{padding:10px;resize:vertical}.config-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.agent-wizard{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:min(680px,calc(100vh - 44px))}.agent-wizard__header{padding:16px 18px;border-bottom:1px solid #e5e7eb}.wizard-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#1f5fbf,#3b82f6);color:#fff}.agent-wizard__header div:nth-child(2){flex:1}.agent-wizard__header span{color:#7b8494;font-size:12px}.agent-wizard__body{display:grid;grid-template-columns:178px minmax(0,1fr);min-height:0}.wizard-tabs{padding:12px;border-right:1px solid #e5e7eb;background:#f8fafc}.wizard-tabs button{width:100%;padding:10px;border:0;border-radius:12px;background:transparent;text-align:left;color:#111827}.wizard-tabs button.active{background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.08)}.wizard-panel{min-height:0;overflow:auto;padding:18px}.wizard-identity{display:grid;grid-template-columns:minmax(0,1fr)230px;gap:18px}.wizard-form{display:grid;gap:14px}.wizard-form label{display:grid;gap:6px;color:#5f6774;font-size:12px}.wizard-form input,.wizard-form select{height:38px;padding:0 10px}.wizard-form textarea{padding:10px;resize:vertical}.pill-group{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.pill-group span{width:100%;color:#5f6774;font-size:12px}.pill-group button{min-height:30px;padding:0 10px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#344054}.pill-group button.active{border-color:#1f5fbf;background:#eef4ff;color:#1f5fbf}.wizard-preview{padding-left:18px;border-left:1px solid #e5e7eb}.wizard-preview>span{color:#7b8494;font-size:11px;font-weight:700;text-transform:uppercase}.wizard-preview div{display:grid;justify-items:center;gap:8px;margin-top:12px;padding:18px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.wizard-preview b{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:#1f5fbf;color:#fff}.wizard-preview strong{color:#111827}.wizard-preview em,.wizard-preview p{color:#7b8494;font-size:12px;font-style:normal;line-height:1.5}.wizard-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.wizard-card-grid button{display:grid;gap:5px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-card-grid button.active,.wizard-skill-list button.active{border-color:#1f5fbf;background:#eef4ff}.wizard-card-grid strong{color:#111827}.wizard-card-grid span,.wizard-card-grid em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list{display:grid;gap:9px}.wizard-skill-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-skill-list strong{color:#111827}.wizard-skill-list span,.wizard-skill-list p,.wizard-skill-list em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list p{margin:5px 0 0}.wizard-files{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px}.wizard-files nav{display:grid;align-content:start;gap:8px}.wizard-files button{height:34px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#344054}.wizard-files button.active{border-color:#1f5fbf;color:#1f5fbf;background:#eef4ff}.wizard-files pre{margin:0;min-height:320px;overflow:auto;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:12px;line-height:1.6;white-space:pre-wrap}.agent-wizard__footer{padding:12px 18px;border-top:1px solid #e5e7eb;justify-content:flex-end}
+  .modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.38);backdrop-filter:blur(8px)}.config-modal,.agent-wizard{width:min(860px,calc(100vw - 44px));max-height:calc(100vh - 44px);overflow:hidden;border:1px solid #e2e8f0;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,23,42,.28)}.config-modal{padding:18px}.config-modal header strong,.agent-wizard__header strong{display:block;color:#111827;font-size:17px}.config-modal header button,.agent-wizard__header>button{border:0;background:transparent;color:#667085;font-size:24px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.config-grid label{display:grid;gap:6px;color:#5f6774;font-size:12px}.config-grid label > small{color:var(--fg-muted,#687169);font-size:11px;line-height:1.4}.config-grid .wide{grid-column:1/-1}.config-grid input{height:36px;padding:0 10px}.config-grid textarea{padding:10px;resize:vertical}.config-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.agent-wizard{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:min(680px,calc(100vh - 44px))}.agent-wizard__header{padding:16px 18px;border-bottom:1px solid #e5e7eb}.wizard-avatar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#1f5fbf,#3b82f6);color:#fff}.agent-wizard__header div:nth-child(2){flex:1}.agent-wizard__header span{color:#7b8494;font-size:12px}.agent-wizard__body{display:grid;grid-template-columns:178px minmax(0,1fr);min-height:0}.wizard-tabs{padding:12px;border-right:1px solid #e5e7eb;background:#f8fafc}.wizard-tabs button{width:100%;padding:10px;border:0;border-radius:12px;background:transparent;text-align:left;color:#111827}.wizard-tabs button.active{background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.08)}.wizard-panel{min-height:0;overflow:auto;padding:18px}.wizard-identity{display:grid;grid-template-columns:minmax(0,1fr)230px;gap:18px}.wizard-form{display:grid;gap:14px}.wizard-form label{display:grid;gap:6px;color:#5f6774;font-size:12px}.wizard-form input,.wizard-form select{height:38px;padding:0 10px}.wizard-form textarea{padding:10px;resize:vertical}.pill-group{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.pill-group span{width:100%;color:#5f6774;font-size:12px}.pill-group button{min-height:30px;padding:0 10px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#344054}.pill-group button.active{border-color:#1f5fbf;background:#eef4ff;color:#1f5fbf}.wizard-preview{padding-left:18px;border-left:1px solid #e5e7eb}.wizard-preview>span{color:#7b8494;font-size:11px;font-weight:700;text-transform:uppercase}.wizard-preview div{display:grid;justify-items:center;gap:8px;margin-top:12px;padding:18px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.wizard-preview b{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:#1f5fbf;color:#fff}.wizard-preview strong{color:#111827}.wizard-preview em,.wizard-preview p{color:#7b8494;font-size:12px;font-style:normal;line-height:1.5}.wizard-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.wizard-card-grid button{display:grid;gap:5px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-card-grid button.active,.wizard-skill-list button.active{border-color:#1f5fbf;background:#eef4ff}.wizard-card-grid strong{color:#111827}.wizard-card-grid span,.wizard-card-grid em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list{display:grid;gap:9px}.wizard-skill-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.wizard-skill-list strong{color:#111827}.wizard-skill-list span,.wizard-skill-list p,.wizard-skill-list em{color:#7b8494;font-size:12px;font-style:normal}.wizard-skill-list p{margin:5px 0 0}.wizard-files{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px}.wizard-files nav{display:grid;align-content:start;gap:8px}.wizard-files button{height:34px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;color:#344054}.wizard-files button.active{border-color:#1f5fbf;color:#1f5fbf;background:#eef4ff}.wizard-files pre{margin:0;min-height:320px;overflow:auto;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#0f172a;color:#dbeafe;font-size:12px;line-height:1.6;white-space:pre-wrap}.agent-wizard__footer{padding:12px 18px;border-top:1px solid #e5e7eb;justify-content:flex-end}
   @media(max-width:980px){.aorist-stats,.aorist-card-grid,:global(.agent-strip){grid-template-columns:repeat(2,minmax(0,1fr))}.aorist-split{grid-template-columns:1fr}}@media(max-width:720px){.stage-topbar,.aorist-toolbar{align-items:flex-start;flex-direction:column}.aorist-stats,.aorist-card-grid,:global(.agent-strip),.wizard-card-grid,.agent-wizard__body,.wizard-files,.config-grid,.wizard-identity{grid-template-columns:1fr}.wizard-preview{padding-left:0;border-left:0}}
 
   /* AoristLawer visual alignment polish */
@@ -15309,7 +15419,7 @@
   }
 
   .capability-install-flow header,
-  .capability-agent-binding header {
+  .capability-agent-binding summary {
     display: flex;
     align-items: center;
     gap: 7px;
@@ -15318,8 +15428,36 @@
   }
 
   .capability-install-flow header :global(svg),
-  .capability-agent-binding header :global(svg) {
+  .capability-agent-binding summary :global(svg) {
     color: var(--aorist-primary);
+  }
+
+  .capability-agent-binding {
+    padding: 11px 12px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 10px;
+    background: var(--surface, #fff);
+  }
+
+  .capability-agent-binding summary {
+    cursor: pointer;
+  }
+
+  .capability-agent-binding summary span {
+    display: inline-grid;
+    gap: 2px;
+  }
+
+  .capability-agent-binding summary small {
+    color: var(--fg-muted, #687169);
+    font-size: 10px;
+    font-weight: 450;
+  }
+
+  .capability-agent-binding__list {
+    display: grid;
+    gap: 7px;
+    padding-top: 9px;
   }
 
   .capability-install-flow article {
@@ -15364,7 +15502,7 @@
     line-height: 1.45;
   }
 
-  .capability-agent-binding button {
+  .capability-agent-binding__list > button {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -15418,6 +15556,25 @@
     transform: translateX(16px);
   }
 
+  .capability-technical {
+    border-top: 1px solid var(--border, #dce1db);
+  }
+
+  .capability-technical > summary {
+    width: max-content;
+    padding-top: 10px;
+    cursor: pointer;
+    color: var(--fg, #1f2421);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .capability-technical > summary:focus-visible,
+  .capability-agent-binding > summary:focus-visible {
+    outline: 2px solid var(--accent, #0f7b55);
+    outline-offset: 2px;
+  }
+
   .capability-runtime {
     display: grid;
     gap: 8px;
@@ -15457,9 +15614,73 @@
     max-height: min(760px, calc(100vh - 44px));
   }
 
+  .config-modal.mcp-detail-modal {
+    padding: 0;
+    border-color: var(--border, #dce1db);
+    border-radius: 16px;
+    background: var(--muted, #edf0ec);
+    backdrop-filter: none;
+  }
+
+  .config-modal.mcp-detail-modal > header {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border, #dce1db);
+    background: var(--card, #fff);
+  }
+
+  .config-modal.mcp-detail-modal > header span {
+    color: var(--muted-foreground, #687169);
+  }
+
+  .config-modal.mcp-detail-modal > header strong {
+    color: var(--foreground, #1f2421);
+  }
+
+  .config-modal.mcp-detail-modal > header > button {
+    color: var(--muted-foreground, #687169);
+  }
+
+  .config-modal.mcp-detail-modal > header > button:hover {
+    background: var(--muted, #edf0ec);
+    color: var(--foreground, #1f2421);
+  }
+
   .capability-detail-modal__body {
     overflow: auto;
     padding: 16px;
+  }
+
+  .mcp-detail-modal .capability-detail-modal__body {
+    background: var(--muted, #edf0ec);
+  }
+
+  .config-modal.mcp-detail-modal > footer.mcp-detail-footer {
+    margin: 0;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border, #dce1db);
+    background: var(--card, #fff);
+  }
+
+  .config-modal.mcp-detail-modal > footer.mcp-detail-footer button {
+    border-color: var(--border, #dce1db);
+    background: var(--card, #fff);
+    color: var(--foreground, #1f2421);
+  }
+
+  .config-modal.mcp-detail-modal > footer.mcp-detail-footer button:hover:not(:disabled) {
+    background: var(--muted, #edf0ec);
+  }
+
+  .config-modal.mcp-detail-modal > footer.mcp-detail-footer .mcp-enable-action {
+    border-color: var(--foreground, #1f2421);
+    background: var(--foreground, #1f2421);
+    color: var(--card, #fff);
+  }
+
+  .config-modal.mcp-detail-modal > footer.mcp-detail-footer .mcp-disable-action {
+    border-color: var(--border, #dce1db);
+    background: var(--card, #fff);
+    color: var(--foreground, #1f2421);
   }
 
   @media (max-width: 1080px) {
@@ -21682,7 +21903,7 @@
     background: var(--aorist-card-bg, #ffffff);
   }
 
-  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal),
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal):not(.project-create-modal),
   .shell .automation-config-modal {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -21697,9 +21918,129 @@
     width: min(780px, calc(100vw - 32px));
   }
 
-  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal) > .config-grid,
-  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal) > .select-list,
-  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal) > .distill-panel,
+  .shell .project-create-modal {
+    display: grid;
+    grid-template-rows: auto minmax(0, auto) auto;
+    width: min(680px, calc(100vw - 32px));
+    height: auto;
+    max-height: min(680px, calc(100dvh - 32px));
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .shell .project-create-modal.project-create-modal--expanded {
+    height: min(680px, calc(100dvh - 32px));
+  }
+
+  .shell .project-create-modal > .project-config-grid {
+    display: block;
+    min-height: 0;
+    margin: 0;
+    padding: 18px 20px;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .project-config-essential {
+    display: grid;
+    gap: 10px;
+  }
+
+  .project-config-essential > p {
+    margin: 0;
+    color: var(--fg-muted, #687169);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .project-config-advanced {
+    margin-top: 16px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 10px;
+    background: var(--surface, #fff);
+  }
+
+  .project-config-advanced > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 44px;
+    padding: 0 12px;
+    cursor: pointer;
+  }
+
+  .project-config-advanced > summary span {
+    display: grid;
+    gap: 2px;
+  }
+
+  .project-config-advanced > summary strong {
+    color: var(--fg, #1f2421);
+    font-size: 12px;
+  }
+
+  .project-config-advanced > summary small,
+  .project-config-advanced > summary em {
+    color: var(--fg-muted, #687169);
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 450;
+  }
+
+  .project-config-advanced > summary em {
+    flex: 0 0 auto;
+    max-width: 48%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-config-advanced > summary:focus-visible {
+    outline: 2px solid var(--accent, #0f7b55);
+    outline-offset: 2px;
+  }
+
+  .project-config-advanced__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 14px;
+    border-top: 1px solid var(--border, #dce1db);
+  }
+
+  .project-config-advanced:not([open]) > .project-config-advanced__grid {
+    display: none;
+  }
+
+  .project-config-advanced__grid .wide {
+    grid-column: 1 / -1;
+  }
+
+  @media (max-width: 720px) {
+    .shell .project-create-modal > .project-config-grid {
+      padding: 16px;
+    }
+
+    .project-config-advanced > summary {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 4px;
+      padding-block: 10px;
+    }
+
+    .project-config-advanced > summary em {
+      max-width: 100%;
+    }
+
+    .project-config-advanced__grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal):not(.project-create-modal) > .config-grid,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal):not(.project-create-modal) > .select-list,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal):not(.project-create-modal) > .distill-panel,
   .shell .automation-config-modal > .config-grid {
     min-height: 0;
     margin-top: 0;
@@ -21710,7 +22051,7 @@
     scroll-padding-bottom: 88px;
   }
 
-  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal) > footer,
+  .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal):not(.project-create-modal) > footer,
   .shell .automation-config-modal > footer {
     position: relative;
     z-index: 1;
@@ -21818,7 +22159,7 @@
   }
 
   @supports not (height: 100dvh) {
-    .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal),
+    .shell .config-modal:not(.user-panel-modal):not(.detail-modal):not(.model-provider-modal):not(.team-modal):not(.agent-market-modal):not(.capability-detail-modal):not(.capability-create-modal):not(.automation-config-modal):not(.schedule-modal):not(.project-create-modal),
     .shell .automation-config-modal,
     .shell .capability-create-modal {
       height: min(680px, calc(100vh - 32px));

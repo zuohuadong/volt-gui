@@ -333,6 +333,12 @@ async function smokeBeginnerTaskLoop(page, mobile) {
   await clickScopedButton(sidebar, '新建项目', { exact: true });
   if (mobile && await sidebar.evaluate((node) => node.classList.contains('drawer-open'))) throw new Error('mobile drawer stayed open after starting project creation');
   await assertText(page, '新建项目', 'real project creation dialog');
+  const projectDialog = await firstVisible(page.locator('.config-modal'), 'project creation dialog');
+  const visibleProjectFields = await visibleCount(projectDialog.locator('input, select, textarea'));
+  if (visibleProjectFields !== 1) throw new Error(`project creation should require only its name by default, got ${visibleProjectFields} visible fields`);
+  const optionalProjectSettings = projectDialog.locator('details.project-config-advanced');
+  await assertCount(optionalProjectSettings, 1, 'project optional settings disclosure');
+  if (await optionalProjectSettings.getAttribute('open') !== null) throw new Error('project optional settings should be collapsed by default');
   await closeOverlays(page);
 
   await clickUnifiedNav(page, '任务', mobile);
@@ -397,7 +403,7 @@ async function smokeBackendHonesty(page, mobile) {
   await clickScopedButton(projectPage, '新建项目', { exact: true });
   const projectModal = page.locator('.config-modal').last();
   await projectModal.locator('input[placeholder*="客户门户上线"]').fill('浏览器预览不可落库项目');
-  await clickScopedButton(projectModal, '确认', { exact: true });
+  await clickScopedButton(projectModal, '创建项目', { exact: true });
   await assertBackendUnavailableNotice(page, 'save project');
   await closeOverlays(page);
   await clickUnifiedNav(page, '项目管理', mobile);

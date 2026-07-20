@@ -145,6 +145,45 @@ func TestComputerUseRuntimeUsesBundledBunBeforeSystemRuntime(t *testing.T) {
 	}
 }
 
+func TestComputerUseEntryFindsResourcesStagedForWindowsBuildOutput(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "desktop", "build", "bin", "voltui-desktop.exe")
+	resourceDir := filepath.Join(dir, "desktop", "build", "windows", "installer", computerUseResourceDirName)
+	runtimeDir := filepath.Join(dir, "desktop", "build", "windows", "installer", computerUseRuntimeDirName)
+	server := filepath.Join(resourceDir, filepath.FromSlash(computerUseServerRelPath))
+	bundledRuntime := filepath.Join(runtimeDir, computerUseBunRelPath())
+	for _, path := range []string{server, bundledRuntime} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir staged resource: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+			t.Fatalf("write staged resource: %v", err)
+		}
+	}
+
+	currentExecutable = func() (string, error) { return executable, nil }
+	lookPath = func(string) (string, error) { return "", errors.New("not found") }
+	t.Cleanup(func() {
+		currentExecutable = executablePathDefault
+		lookPath = lookPathDefault
+	})
+	t.Setenv(computerUseResourceDirEnv, "")
+	t.Setenv(computerUseRuntimeEnv, "")
+	t.Setenv(computerUseNodeEnv, "")
+	t.Setenv(computerUseRuntimeDirEnv, "")
+
+	entry, ok := Entry(ComputerUseName)
+	if !ok {
+		t.Fatal("computer-use built-in entry missing")
+	}
+	if entry.Command != bundledRuntime {
+		t.Fatalf("computer-use command = %q, want staged runtime %q", entry.Command, bundledRuntime)
+	}
+	if !reflect.DeepEqual(entry.Args, []string{server}) {
+		t.Fatalf("computer-use args = %+v, want staged server %q", entry.Args, server)
+	}
+}
+
 func TestComputerUseRuntimeKeepsLegacyNodeOverride(t *testing.T) {
 	t.Setenv(computerUseRuntimeEnv, "")
 	t.Setenv(computerUseNodeEnv, "/opt/node/bin/node")

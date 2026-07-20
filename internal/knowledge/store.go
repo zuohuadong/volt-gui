@@ -396,6 +396,37 @@ func (s *Store) ListDocuments(ctx context.Context) ([]Document, error) {
 	return docs, rows.Err()
 }
 
+// DocumentText rebuilds the indexed document body from its ordered text chunks.
+func (s *Store) DocumentText(ctx context.Context, id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("knowledge document id is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT content FROM chunks WHERE document_id = ? ORDER BY chunk_index ASC`, id)
+	if err != nil {
+		s.lastError = err.Error()
+		return "", err
+	}
+	defer rows.Close()
+	chunks := make([]string, 0)
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return "", err
+		}
+		if content = strings.TrimSpace(content); content != "" {
+			chunks = append(chunks, content)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(chunks, "\n\n"), nil
+}
+
 func (s *Store) DeleteDocument(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

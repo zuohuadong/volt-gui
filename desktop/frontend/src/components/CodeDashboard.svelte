@@ -242,7 +242,8 @@
 </script>
 
 <section class={["code-layout", `code-layout--${variant}`, `code-layout--focus-${focus}`]} aria-label="Code workspace">
-  <div class="dashboard-grid">
+  {#if variant !== "workbench" || focus === "overview"}
+  <div class="dashboard-grid" data-code-view={variant === "workbench" ? "overview" : undefined}>
     <article>
       <Gauge size={20} />
       <h2>{t.code.contextFiles}</h2>
@@ -259,8 +260,11 @@
       <p>{checkpoints.length ? `${checkpoints.length} rewind points available for this tab.` : "No checkpoints yet."}</p>
     </article>
   </div>
+  {/if}
 
-  <aside class="code-dock">
+  {#if variant !== "workbench" || focus !== "overview"}
+  <aside class="code-dock" data-code-view={variant === "workbench" ? focus : undefined}>
+    {#if variant !== "workbench" || focus === "context"}
     <section class={["context-card", (focus === "context" || focus === "overview") && "is-focus"]} data-testid="code-context-panel">
       <div class="code-dock__section-head">
         <h2><Gauge size={15} /> {t.code.contextFiles}</h2>
@@ -313,6 +317,8 @@
         <span>Context panel pending.</span>
       {/if}
     </section>
+    {/if}
+    {#if variant !== "workbench" || focus === "workspace"}
     <section class={[(focus === "workspace" || focus === "overview") && "is-focus"]}>
       <div class="code-dock__section-head">
         <h2><Folder size={15} /> Files</h2>
@@ -350,6 +356,8 @@
         <span class="code-dock__status">{treeStatus}</span>
       {/if}
     </section>
+    {/if}
+    {#if variant !== "workbench" || focus === "context"}
     <section class={[focus === "context" && "is-focus"]}>
       <h2><Code2 size={15} /> Read files</h2>
       {#if context?.readFiles.length}
@@ -360,6 +368,8 @@
         <span>No files read yet.</span>
       {/if}
     </section>
+    {/if}
+    {#if variant !== "workbench" || focus === "changes"}
     <section class={[focus === "changes" && "is-focus"]}>
       <h2><GitPullRequest size={15} /> Changes</h2>
       {#if changes?.files.length}
@@ -379,6 +389,8 @@
         <span>{changes?.gitErr || "No changed files."}</span>
       {/if}
     </section>
+    {/if}
+    {#if variant !== "workbench" || focus === "checkpoints"}
     <section class={[focus === "checkpoints" && "is-focus"]} data-testid="code-checkpoints">
       <h2><RotateCcw size={15} /> Checkpoints</h2>
       {#if checkpoints.length}
@@ -410,6 +422,8 @@
         <span class="code-dock__status">{rewindStatus}</span>
       {/if}
     </section>
+    {/if}
+    {#if variant !== "workbench" || focus === "workspace" || focus === "changes"}
     <section class={[(focus === "workspace" || focus === "changes" || focus === "overview") && "is-focus"]}>
       <h2><FileText size={15} /> Preview</h2>
       <DiffViewer
@@ -423,5 +437,7 @@
         onRequestFix={onRequestDiffFix}
       />
     </section>
+    {/if}
   </aside>
+  {/if}
 </section>

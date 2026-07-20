@@ -579,7 +579,7 @@ button {
 }
 
 .code-layout--workbench .code-dock {
-  grid-template-columns: minmax(220px, 0.82fr) minmax(260px, 0.96fr) minmax(260px, 1.08fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   padding: 0;
   background: transparent;
@@ -612,17 +612,23 @@ button {
 }
 
 .code-layout--workbench .code-dock > section:last-child {
-  grid-column: 2 / 4;
+  grid-column: auto;
   min-height: 310px;
 }
 
-.code-layout--workbench.code-layout--focus-workspace .code-dock > section:nth-child(2),
-.code-layout--workbench.code-layout--focus-workspace .code-dock > section:last-child,
-.code-layout--workbench.code-layout--focus-changes .code-dock > section:nth-child(4),
-.code-layout--workbench.code-layout--focus-changes .code-dock > section:last-child,
-.code-layout--workbench.code-layout--focus-context .code-dock > section:nth-child(1),
-.code-layout--workbench.code-layout--focus-context .code-dock > section:nth-child(3),
-.code-layout--workbench.code-layout--focus-checkpoints .code-dock > section:nth-child(5) {
+.code-layout--workbench.code-layout--focus-workspace .code-dock,
+.code-layout--workbench.code-layout--focus-changes .code-dock {
+  grid-template-columns: minmax(240px, 0.72fr) minmax(0, 1.45fr);
+}
+
+.code-layout--workbench.code-layout--focus-context .code-dock {
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr);
+}
+
+.code-layout--workbench.code-layout--focus-workspace .code-dock > section,
+.code-layout--workbench.code-layout--focus-changes .code-dock > section,
+.code-layout--workbench.code-layout--focus-context .code-dock > section,
+.code-layout--workbench.code-layout--focus-checkpoints .code-dock > section {
   min-height: 330px;
 }
 
@@ -646,7 +652,11 @@ button {
 
 @media (max-width: 820px) {
   .code-layout--workbench .dashboard-grid,
-  .code-layout--workbench .code-dock {
+  .code-layout--workbench .code-dock,
+  .code-layout--workbench.code-layout--focus-workspace .code-dock,
+  .code-layout--workbench.code-layout--focus-context .code-dock,
+  .code-layout--workbench.code-layout--focus-changes .code-dock,
+  .code-layout--workbench.code-layout--focus-checkpoints .code-dock {
     grid-template-columns: 1fr;
   }
 

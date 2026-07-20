@@ -99,13 +99,28 @@ func TestFinalReadinessCheckAuditsIncompleteTodos(t *testing.T) {
 }
 
 func TestFinalReadinessRetryMessageKeepsUserChoicesInteractive(t *testing.T) {
-	msg := finalReadinessRetryMessage("latest successful todo_write still has incomplete items: Ask user to review the doc: in_progress")
+	msg := finalReadinessRetryMessage("latest successful todo_write still has incomplete items: Ask user to review the doc: in_progress", 1)
 	lower := strings.ToLower(msg)
 	for _, want := range []string{
 		"ask tool",
 		"wait for its tool result",
 		"do not ask in prose",
 		"do not claim the user answered",
+	} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("finalReadinessRetryMessage() missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestFinalReadinessFinalRetryRequiresToolRecovery(t *testing.T) {
+	msg := finalReadinessRetryMessage("latest successful todo_write still has incomplete items: Run tests: pending", maxFinalReadinessRetries)
+	lower := strings.ToLower(msg)
+	for _, want := range []string{
+		"final recovery retry",
+		"must use a relevant tool call",
+		"failed verification command is not completion",
+		"different bounded verification strategy",
 	} {
 		if !strings.Contains(lower, want) {
 			t.Fatalf("finalReadinessRetryMessage() missing %q:\n%s", want, msg)

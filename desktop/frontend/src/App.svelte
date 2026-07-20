@@ -171,6 +171,7 @@
     TaskThread,
     WorkbenchSnapshotV2,
   } from "./lib/workbench-ia";
+  import { reportStyleGatePolicy } from "./lib/report-style-gate";
   import type {
     ActivityMode,
     AgentInput,
@@ -8585,6 +8586,7 @@
             {#if activityMode === "work" && workLayer === "reports"}
               {@const activeReport = selectedReport()}
               {@const activeStyle = selectedArtifactStyle()}
+              {@const activeStyleGate = reportStyleGatePolicy(artifactReviewStatus(activeReport), artifactReviewSaving)}
               <div class="capability-tabs report-center-tabs" role="tablist" aria-label="报告中心视图">
                 <button class:active={reportCenterTab === "design"} type="button" role="tab" aria-selected={reportCenterTab === "design"} onclick={() => (reportCenterTab = "design")}>报告设计</button>
                 <button class:active={reportCenterTab === "list"} type="button" role="tab" aria-selected={reportCenterTab === "list"} onclick={() => (reportCenterTab = "list")}>报告列表 <em>{reportCards.length}</em></button>
@@ -8666,13 +8668,16 @@
                       </header>
                       <div class="artifact-style-list">
                         {#each artifactStyleOptions as style (style.id)}
-                          <button class:active={selectedArtifactStyleId === style.id} type="button" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) === "submitted" || artifactReviewStatus(activeReport) === "approved"} onclick={() => void selectArtifactStyle(style.id)}>
+                          <button class:active={selectedArtifactStyleId === style.id} type="button" disabled={!activeReport || activeStyleGate.disabled} title={activeStyleGate.message || `选择${style.name}`} aria-describedby={activeStyleGate.message ? "artifact-style-gate-message" : undefined} onclick={() => void selectArtifactStyle(style.id)}>
                             <strong>{style.name}</strong>
                             <span>{style.id}</span>
                             <em>{style.rationale}</em>
                           </button>
                         {/each}
                       </div>
+                      {#if activeStyleGate.message}
+                        <p id="artifact-style-gate-message" class="artifact-style-gate__message" role="status">{activeStyleGate.message}</p>
+                      {/if}
                       <label class="artifact-review-note">
                         <span>审批意见</span>
                         <textarea bind:value={artifactReviewComment} rows="3" placeholder="提交说明或退回原因会随审批记录保存" disabled={artifactReviewSaving || artifactReviewStatus(activeReport) === "approved"}></textarea>
@@ -8715,6 +8720,7 @@
             {#if activityMode === "code"}
               <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
                 <div class="code-workbench-shell">
+                  {#if codeWorkbenchPanel === "overview"}
                   <section class="code-workbench-hero" aria-label="Task 检查器总览">
                     <div>
                       <span>Task Engineering Inspector</span>
@@ -8746,6 +8752,7 @@
                       <span><strong>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"}</strong><em>Diff / 回滚范围</em></span>
                     </button>
                   </div>
+                  {/if}
 
                   <div class="code-workbench-command-row" role="group" aria-label="Task 检查器面板">
                     <button class:active={codeWorkbenchPanel === "overview"} type="button" onclick={() => openCodeWorkbench("overview")}><LayoutDashboard size={14} /> 总览</button>
@@ -8755,6 +8762,7 @@
                     <button class:active={codeWorkbenchPanel === "checkpoints"} type="button" onclick={() => openCodeWorkbench("checkpoints")}><RotateCcw size={14} /> Checkpoints</button>
                   </div>
 
+                  {#if codeWorkbenchPanel === "overview"}
                   <ManagedWorktreePanel
                     repositoryRoot={currentComposerTab?.workspaceRoot || activeTab?.workspaceRoot || ""}
                     worktrees={managedWorktrees}
@@ -8768,8 +8776,10 @@
                     onRestore={restoreManagedWorktree}
                     onHandoff={handoffManagedWorktree}
                   />
+                  {/if}
 
-                  <div class="code-workbench-main">
+                  <div class={["code-workbench-main", codeWorkbenchPanel !== "overview" && "inspector-only"]}>
+                    {#if codeWorkbenchPanel === "overview"}
                     <section class="code-workbench-chat" aria-label="代码对话入口">
                       <header>
                         <div><span>Code Chat</span><strong>{conversationHeaderTitle}</strong><p>{activeTab?.workspaceName || t.common.global}</p></div>
@@ -8823,6 +8833,7 @@
                         onResumeQueuedMessage={resumeQueuedThreadMessage}
                       />
                     </section>
+                    {/if}
 
                     <CodeDashboard
                       {context}
@@ -22606,6 +22617,10 @@
     min-height: 0;
   }
 
+  .code-workbench-main.inspector-only {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .code-workbench-chat {
     display: grid;
     grid-template-rows: auto auto minmax(0, auto);
@@ -23440,7 +23455,7 @@
       width: min(170px, calc(100vw - 56px));
     }
   }
-  .artifact-review-note{display:grid;gap:6px;margin-top:10px}.artifact-review-note span{color:#667085;font-size:11px;font-weight:650}.artifact-review-note textarea{width:100%;min-height:68px;resize:vertical;box-sizing:border-box;padding:8px 9px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#1f2937;font:inherit;font-size:12px;line-height:1.45}.artifact-review-note textarea:focus{outline:none;border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-review-note textarea:disabled,.artifact-style-list button:disabled,.artifact-gate-actions button:disabled{cursor:not-allowed;opacity:.55}.artifact-review-meta{margin:8px 0 0;color:#667085;font-size:11px;line-height:1.45}
+  .artifact-review-note{display:grid;gap:6px;margin-top:10px}.artifact-review-note span{color:#667085;font-size:11px;font-weight:650}.artifact-review-note textarea{width:100%;min-height:68px;resize:vertical;box-sizing:border-box;padding:8px 9px;border:1px solid #d8e2ef;border-radius:9px;background:#fff;color:#1f2937;font:inherit;font-size:12px;line-height:1.45}.artifact-review-note textarea:focus{outline:none;border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.16)}.artifact-review-note textarea:disabled,.artifact-style-list button:disabled,.artifact-gate-actions button:disabled{cursor:not-allowed;opacity:.55}.artifact-review-meta{margin:8px 0 0;color:#667085;font-size:11px;line-height:1.45}.artifact-style-gate__message{margin:9px 0 0;padding:8px 9px;border:1px solid var(--border,#dce1db);border-radius:8px;background:var(--warning-soft,#fff4de);color:var(--warning,#9a5b00);font-size:11px;line-height:1.45}
   .report-detail-meta{grid-template-columns:minmax(0,1.35fr) minmax(144px,.65fr);gap:8px;margin-top:12px}.report-detail-meta div{min-width:0;padding:10px 12px;border-radius:10px}.report-detail-meta span{font-size:10px;font-weight:600}.report-detail-meta strong{min-width:0;margin-top:4px;overflow:hidden;color:#344054;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;font-weight:500;letter-spacing:0;text-overflow:ellipsis;white-space:nowrap}
   .report-center-page .aorist-toolbar button:disabled,.report-detail-actions button:disabled{cursor:not-allowed;border-color:#e2e8f0;background:#f8fafc;color:#98a2b3;opacity:1}.report-detail-actions .report-export-state{margin-right:auto;color:#b54708;font-size:11px;font-weight:600}.report-detail-actions .report-export-state.ready{color:#027a48}
   .config-grid label.invalid>input,.config-grid label.invalid>textarea,.config-grid label.invalid>select,.config-grid label.invalid .material-file-picker{border-color:#fda4af;background:#fff7f7}.config-grid label.invalid>input:focus,.config-grid label.invalid>textarea:focus,.config-grid label.invalid>select:focus{outline:none;border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.12)}.config-modal>footer .config-validation-message{margin:0 auto 0 0;color:#b42318;font-size:12px;font-weight:600;line-height:1.35}

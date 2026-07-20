@@ -398,6 +398,7 @@ func TestFinalReadinessStopsAfterRepeatedBlocks(t *testing.T) {
 		{{Type: provider.ChunkText, Text: "premature 1"}, {Type: provider.ChunkDone}},
 		{{Type: provider.ChunkText, Text: "premature 2"}, {Type: provider.ChunkDone}},
 		{{Type: provider.ChunkText, Text: "premature 3"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "premature 4"}, {Type: provider.ChunkDone}},
 	}}
 	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
 
@@ -408,8 +409,54 @@ func TestFinalReadinessStopsAfterRepeatedBlocks(t *testing.T) {
 	if !strings.Contains(err.Error(), "final-answer readiness") {
 		t.Fatalf("error = %v, want final-answer readiness", err)
 	}
-	if prov.call != 4 {
-		t.Fatalf("provider calls = %d, want three blocked final answers after writer turn", prov.call)
+	if prov.call != 5 {
+		t.Fatalf("provider calls = %d, want three recovery retries before the fourth blocked final stops the run", prov.call)
+	}
+}
+
+func TestFinalReadinessThirdBlockStillAllowsToolRecovery(t *testing.T) {
+	todoWrite, ok := tool.LookupBuiltin("todo_write")
+	if !ok {
+		t.Fatal("todo_write builtin not registered")
+	}
+	completeStep, ok := tool.LookupBuiltin("complete_step")
+	if !ok {
+		t.Fatal("complete_step builtin not registered")
+	}
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+	reg.Add(todoWrite)
+	reg.Add(completeStep)
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{
+			toolCallChunk("c1", "write_file", `{"path":"changed.go","content":"package main"}`),
+			toolCallChunk("c2", "todo_write", `{"todos":[{"content":"Edit code","status":"in_progress"}]}`),
+			{Type: provider.ChunkDone},
+		},
+		{{Type: provider.ChunkText, Text: "premature 1"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "premature 2"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "premature 3"}, {Type: provider.ChunkDone}},
+		{
+			toolCallChunk("c3", "complete_step", `{
+				"step":"Edit code",
+				"result":"changed.go updated",
+				"evidence":[{"kind":"diff","summary":"updated code","paths":["changed.go"]}]
+			}`),
+			toolCallChunk("c4", "todo_write", `{"todos":[{"content":"Edit code","status":"completed"}]}`),
+			{Type: provider.ChunkDone},
+		},
+		{{Type: provider.ChunkText, Text: "recovered and done"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+
+	if err := a.Run(context.Background(), "edit with todo and recover after three readiness blocks"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if prov.call != 6 {
+		t.Fatalf("provider calls = %d, want third block to receive a recovery turn", prov.call)
+	}
+	if got := lastToolResult(a.session, "complete_step"); !strings.Contains(got, "signed off") {
+		t.Fatalf("complete_step result = %q, want successful recovery sign-off", got)
 	}
 }
 
@@ -626,6 +673,7 @@ func TestFinalReadinessAuditRecordsTerminalError(t *testing.T) {
 		{{Type: provider.ChunkText, Text: "premature 1"}, {Type: provider.ChunkDone}},
 		{{Type: provider.ChunkText, Text: "premature 2"}, {Type: provider.ChunkDone}},
 		{{Type: provider.ChunkText, Text: "premature 3"}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "premature 4"}, {Type: provider.ChunkDone}},
 	}}
 	sink := &readinessAuditSink{}
 	a := New(prov, reg, NewSession(""), Options{}, sink)
@@ -634,8 +682,8 @@ func TestFinalReadinessAuditRecordsTerminalError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected repeated readiness blocks to stop the run")
 	}
-	if len(sink.events) != 3 {
-		t.Fatalf("readiness audit events = %d, want 3: %+v", len(sink.events), sink.events)
+	if len(sink.events) != 4 {
+		t.Fatalf("readiness audit events = %d, want 4: %+v", len(sink.events), sink.events)
 	}
 	last := sink.events[len(sink.events)-1]
 	if last.Result != evidence.ReadinessErrored || last.IncompleteTodos == 0 {

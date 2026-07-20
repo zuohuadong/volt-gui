@@ -272,13 +272,13 @@ async function smokeCodeInspectorNavigation(page, mobile) {
   await (await firstVisible(sidebar.getByRole('tab', { name: 'Code 工作台', exact: true }), 'Code mode switch')).click();
 
   const routes = [
-    ['工程总览', 'overview', '任务'],
-    ['Workspace', 'workspace', 'Workspace'],
-    ['Context', 'context', 'Context'],
-    ['Diff', 'changes', 'Diff'],
-    ['Checkpoints', 'checkpoints', 'Checkpoints'],
+    ['工程总览', 'overview', '任务', 'overview'],
+    ['Workspace', 'workspace', 'Workspace', 'workspace'],
+    ['Context', 'context', 'Context', 'context'],
+    ['Diff', 'changes', 'Diff', 'changes'],
+    ['Checkpoints', 'checkpoints', 'Checkpoints', 'checkpoints'],
   ];
-  const assertInspectorState = async (panel, inspector, label) => {
+  const assertInspectorState = async (panel, inspector, label, view = panel) => {
     const workbench = page.locator('.workbench');
     if ((await workbench.getAttribute('data-current-code-panel')) !== panel) {
       throw new Error(`${label} opened the wrong Code panel`);
@@ -289,14 +289,18 @@ async function smokeCodeInspectorNavigation(page, mobile) {
     if ((await selectedInspector.innerText()).trim() !== inspector) {
       throw new Error(`${label} left the Task inspector on ${(await selectedInspector.innerText()).trim()}`);
     }
+    await firstVisible(page.locator(`[data-code-view="${view}"]`), `${label} Code panel body`);
+    const visibleChat = await visibleCount(page.locator('.code-workbench-chat'));
+    if (panel === 'overview' && visibleChat !== 1) throw new Error('Code overview should keep the code conversation visible');
+    if (panel !== 'overview' && visibleChat !== 0) throw new Error(`${label} still shows the code conversation instead of its inspector body`);
   };
-  for (const [nav, panel, inspector] of routes) {
+  for (const [nav, panel, inspector, view] of routes) {
     await clickUnifiedNav(page, nav, mobile);
     const activeNav = await firstVisible(sidebar.getByRole('button', { name: nav, exact: true }), `active Code nav ${nav}`);
     if (!(await activeNav.evaluate((node) => node.classList.contains('active')))) {
       throw new Error(`${nav} Code navigation is not visibly active`);
     }
-    await assertInspectorState(panel, inspector, nav);
+    await assertInspectorState(panel, inspector, nav, view);
   }
 
   await clickUnifiedNav(page, '工程总览', mobile);

@@ -17,6 +17,7 @@ import (
 
 	"mvdan.cc/sh/v3/syntax"
 
+	fileenc "voltui/internal/fileutil/encoding"
 	"voltui/internal/i18n"
 	"voltui/internal/jobs"
 	"voltui/internal/proc"
@@ -118,6 +119,7 @@ func (b bash) Description() string {
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n"+
 			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n"+
 			"  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n"+
+			"  - text metrics: do not use wc; for a character count use (Get-Content <path> -Raw).Length, or a short Python script.\n"+
 			"  - multiline Python/Node verification: do not compress statements, comments, or newlines into a fragile -c string. Prefer write_file for a short temporary script, then run it directly (for example python path\\to\\verify.py).\n"+
 			"  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0)."+
 			bashToolSteer+bundledCoreutilsDescriptionHint(), shellName, chaining)
@@ -180,7 +182,7 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	// local execution unchanged.
 	if b.terminal != nil && !p.RunInBackground && !b.sb.Enforce() {
 		if out, ok, err := b.terminal.RunCommand(ctx, p.Command, b.workDir, b.timeout); ok {
-			return appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command)), err
+			return appendSessionDataHint(decodeShellOutput(out), b.guard.CommandHint(b.workDir, p.Command)), err
 		}
 	}
 
@@ -248,6 +250,17 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 		out, err = b.runForeground(ctx, p, sh, unconfinedShellArgv(sh, p.Command), false, cmdEnv)
 	}
 	return appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command)), err
+}
+
+// decodeShellOutput normalizes raw shell output bytes to UTF-8. Windows
+// codepage 936 (GBK) processes emit GB18030 bytes; reading them as UTF-8
+// yields mojibake and breaks JSON/tool output. Valid UTF-8 passes through
+// unchanged, so UTF-8/macOS/Linux output is unaffected.
+func decodeShellOutput(out string) string {
+	if out == "" {
+		return out
+	}
+	return string(fileenc.DecodeToUTF8([]byte(out)))
 }
 
 // appendSessionDataHint appends the session-data guard warning to command
@@ -350,7 +363,7 @@ func (b bash) runForeground(ctx context.Context, p bashParams, sh sandbox.Shell,
 		reapShellProcess(cmd, tracked)
 	}
 	err = normalizeBashRunError(runCtx, err, p.PreserveBackgroundProcesses)
-	out := buf.String()
+	out := decodeShellOutput(buf.String())
 
 	if errors.Is(context.Cause(runCtx), errBashTimeout) {
 		return out, fmt.Errorf("command timed out (> %s)", timeout)

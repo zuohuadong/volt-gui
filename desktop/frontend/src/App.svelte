@@ -77,6 +77,7 @@
   import MCPRuntimeActions from "./components/MCPRuntimeActions.svelte";
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
   import TaskContextBar from "./components/TaskContextBar.svelte";
+  import TodayReminders from "./components/TodayReminders.svelte";
   import TaskActivityCenter from "./components/TaskActivityCenter.svelte";
   import TaskCenter from "./components/TaskCenter.svelte";
   import TaskOutcomeLauncher from "./components/TaskOutcomeLauncher.svelte";
@@ -180,6 +181,7 @@
   import type {
     ActivityMode,
     AgentInput,
+    DisplayMode,
     AgentView,
     BrandInfo,
     BrowserCredentialView,
@@ -271,6 +273,7 @@
   const MAX_DATA_URL_PROJECT_MATERIAL_BYTES = 25 * 1024 * 1024;
   const WORKBENCH_PROJECT_NAME_MAX_CHARACTERS = 100;
   type WorkLayer = "today" | "newTask" | "todos" | "automations" | "agents" | "projects" | "customers" | "calendar" | "reports" | "resources" | "knowledge" | "teams" | "models" | "settings" | "operationLog" | "search" | "sync" | "ingest" | "capabilities" | "trust" | "scopedMemory";
+  const DISPLAY_MODE_STORAGE_KEY = "voltui.display.mode.v1";
   type GovernanceLayer = "trust" | "scopedMemory" | "agents" | "capabilities" | "models" | "settings" | "sync" | "operationLog";
   type CodeWorkbenchAction = "conversation" | "overview" | "workspace" | "context" | "changes" | "checkpoints" | "models" | "settings";
   type CodeWorkbenchPanel = "overview" | "workspace" | "context" | "changes" | "checkpoints";
@@ -445,6 +448,15 @@
   }
 
   let activityMode = $state<ActivityMode>("work");
+  function readPersistedDisplayMode(): DisplayMode {
+    try {
+      if (typeof localStorage !== "undefined" && localStorage.getItem(DISPLAY_MODE_STORAGE_KEY) === "developer") return "developer";
+    } catch {
+      // localStorage may be unavailable/blocked (SSR, privacy mode, restricted WebView); default to office.
+    }
+    return "office";
+  }
+  let displayMode = $state<DisplayMode>(readPersistedDisplayMode());
   let tabs = $state<TabMeta[]>([]);
   let models = $state<ModelInfo[]>([]);
   let commands = $state<CommandInfo[]>([]);
@@ -772,6 +784,11 @@
     { id: "deliveries", group: "组织与交付", label: "交付记录", desc: "产物、证据与复核" },
     { id: "automations", group: "组织与交付", label: "自动化", desc: "定时与重复流程" },
     { id: "knowledge", group: "知识", label: "资料与知识", desc: "资料、检索与导入" },
+  ];
+  const officeNavItems = [
+    { id: "today", group: "开始", label: "今日", desc: "待办与进行中的任务" },
+    { id: "tasks", group: "开始", label: "任务", desc: "所有任务对话" },
+    { id: "knowledge", group: "开始", label: "资料", desc: "资料、检索与导入" },
   ];
   const codeNavItems = [
     { id: "codeConversation", group: "开发", label: "代码对话", desc: "提问、修改与执行" },
@@ -1116,7 +1133,7 @@
     if (codeWorkbenchPanel === "checkpoints") return "codeCheckpoints";
     return "codeOverview";
   });
-  const primaryNavItems = $derived(activityMode === "code" ? codeNavItems : unifiedNavItems);
+  const primaryNavItems = $derived(activityMode === "code" ? codeNavItems : displayMode === "office" ? officeNavItems : unifiedNavItems);
   const activePrimaryNavId = $derived(activityMode === "code" ? activeCodeNavId : activeUnifiedNavId);
   const activeProjectLabel = $derived(activeSidebarProject()?.name || "收件箱项目");
   const activeAgentLabel = $derived(selectedAgent()?.name || "未配置");
@@ -3748,13 +3765,28 @@
     else openUnifiedNav(navId);
   }
 
-  function switchActivityMode(mode: ActivityMode) {
-    if (mode === "code") {
-      openCodeWorkbench("overview");
-      return;
+function switchActivityMode(mode: ActivityMode) {
+   if (mode === "code") {
+     openCodeWorkbench("overview");
+     return;
+   }
+   openWorkLayer(lastWorkLayer);
+ }
+
+  function setDisplayMode(mode: DisplayMode) {
+    if (mode === displayMode) return;
+    displayMode = mode;
+    try {
+      window.localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, mode);
+    } catch {
+      // localStorage may be unavailable in test/SSR; ignore.
     }
-    openWorkLayer(lastWorkLayer);
+    if (mode === "office" && activityMode === "code") {
+      switchActivityMode("work");
+    }
   }
+
+  const showActivityModeSwitch = $derived(displayMode === "developer");
 
   function isGovernanceLayer(layer: WorkLayer): layer is GovernanceLayer {
     return governanceNavItems.some((item) => item.id === layer);
@@ -3859,9 +3891,12 @@
     if (layer === "models" || layer === "settings") void ensureSettingsLoaded();
   }
 
-  function openGovernanceCenter() {
+function openGovernanceCenter() {
     activityMode = "work";
     openGovernanceLayer(lastGovernanceLayer);
+  }
+  function openOfficeSettings() {
+    openSettingsPanel("general");
   }
   function selectOutcomeTemplate(templateId: TaskOutcomeTemplateID) {
     selectedOutcomeTemplateId = templateId;
@@ -8632,6 +8667,8 @@
       activeNavId={activePrimaryNavId}
       mode={activityMode}
       governanceActive={activityMode === "work" && isGovernanceLayer(workLayer)}
+      showModeSwitch={showActivityModeSwitch}
+      displayMode={displayMode}
       drawerOpen={mobileDrawerOpen}
       collapsed={sidebarCollapsed}
       projectDockCollapsed={sidebarProjectDockCollapsed}
@@ -8651,7 +8688,8 @@
       onProjectDockToggle={() => (sidebarProjectDockCollapsed = !sidebarProjectDockCollapsed)}
       onDrawerClose={() => (mobileDrawerOpen = false)}
       onCollapseToggle={() => (sidebarCollapsed = !sidebarCollapsed)}
-      onGovernance={openGovernanceCenter}
+      onGovernance={displayMode === "office" ? openOfficeSettings : openGovernanceCenter}
+      onToggleDisplayMode={() => setDisplayMode(displayMode === "office" ? "developer" : "office")}
       taskTimeLabel={sidebarConversationTimeLabel}
     />
     <section class="stage" class:stage--conversation={showActiveTranscript}>
@@ -8666,11 +8704,13 @@
                 <strong>{conversationHeaderTitle}</strong>
                 <span>{conversationHeaderScope}</span>
               </div>
+            {#if showActivityModeSwitch}
               <button type="button" onclick={openCodeInspector}>
                 <Code2 size={15} />
                 代码状态
               </button>
-            </header>
+            {/if}
+          </header>
             <div class="task-status-panel">
               <TaskContextBar
                 workspace={activeWorkspace?.name || "未选择 Workspace"}
@@ -8681,6 +8721,7 @@
                 memory={activeMemoryState.label}
                 memoryEmpty={activeMemoryState.empty}
                 mode={activityMode}
+                displayMode={displayMode}
                 activeInspector={taskInspectorPanel}
                 onOpenDrawer={() => (mobileDrawerOpen = true)}
                 onOpenAgent={() => openGovernanceLayer("agents")}
@@ -8810,6 +8851,7 @@
                   memory={activeMemoryState.label}
                   memoryEmpty={activeMemoryState.empty}
                   mode={activityMode}
+                  displayMode={displayMode}
                   activeInspector={taskInspectorPanel}
                   onOpenDrawer={() => (mobileDrawerOpen = true)}
                   onOpenAgent={() => openGovernanceLayer("agents")}
@@ -9128,6 +9170,17 @@
             {:else if workLayer === "today"}
               <section class="aorist-page result-home-page">
                 <button class="home-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
+                <TodayReminders
+                  pendingDeliveries={pendingDeliveryRows.length}
+                  changedFiles={changedCount}
+                  lastError={currentLastTurnError}
+                  queuedMessages={currentQueuedMessages.length}
+                  onOpenDeliveries={() => openUnifiedNav("deliveries")}
+                  onOpenChanges={openCodeInspector}
+                  onOpenTask={() => (homeFocusTask ? openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id) : startNewTaskFromSidebar())}
+                  onOpenQueue={() => (homeFocusTask ? openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id) : startNewTaskFromSidebar())}
+                  showAdvanced={showActivityModeSwitch}
+                />
                 <section class="home-primary-flow" data-testid="work-launch-panel">
                   <div class="home-primary-flow__copy">
                     <span>Work</span>

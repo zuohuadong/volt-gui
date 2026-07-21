@@ -8861,7 +8861,7 @@ function openGovernanceCenter() {
                   onInspector={openTaskInspector}
                 />
               </div>
-              <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchHeading.eyebrow}</span><strong>{workbenchHeading.title}</strong></div><p>{workbenchHeading.desc}</p></div>{#if activityMode === "code"}<div class="stage-topbar__actions"><button type="button" onclick={() => openCodeWorkbench("workspace")}><Gauge size={14} /> Workspace</button><button type="button" onclick={() => openCodeWorkbenchAction("models")}><BrainCircuit size={14} /> 模型渠道</button></div>{/if}</header>
+              <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchHeading.eyebrow}</span><strong>{workbenchHeading.title}</strong></div><p>{workbenchHeading.desc}</p></div></header>
             {/if}
             {#if workbenchNotice}<div class="workbench-notice" data-testid="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if activityMode === "work" && isGovernanceLayer(workLayer)}

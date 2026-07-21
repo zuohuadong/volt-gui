@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.23.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.22.0...desktop-v0.23.0) (2026-07-22)
+
+
+### Features
+
+* **desktop:** 办公模式/开发者模式简化交互，治理与工程能力上下文化 ([52bf608](https://github.com/zuohuadong/volt-gui/commit/52bf60838a2e9f5b8b8e8d3e9a1c0b2d3e4f5a6b))
+* **desktop:** 外部数据导入支持取消（CancelExternalDataImport 桥接接口 + 导入弹窗取消按钮） ([f844255](https://github.com/zuohuadong/volt-gui/commit/f8442557))
+* enhance knowledge workspace ([66e7ca1](https://github.com/zuohuadong/volt-gui/commit/66e7ca15))
+
+
+### Bug Fixes
+
+* **desktop:** 修复 CNB issue #22 #23 — 模板输出混乱与工程总览冗余 ([d3cf2d](https://github.com/zuohuadong/volt-gui/commit/d3cf2d82))
+* **tool:** Windows GBK 输出自动转 UTF-8，两种编码兼容 ([91bcb8](https://github.com/zuohuadong/volt-gui/commit/91bcb84f))
+* **tool:** Windows 下虚拟工作区路径映射 ([ec5da2](https://github.com/zuohuadong/volt-gui/commit/ec5da23c))
+
+
+### CNB Issues Closed
+
+14 issues verified fixed and closed via CNB (#10–#23). Remaining open (#9 model
+timeout, #24 emoji/GBK crash, #25 tool-param format) are non-code or
+model-behavior defects out of scope for this release.
+
+
 ## [0.13.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.12.1...desktop-v0.13.0) (2026-07-14)
 
 

@@ -215,6 +215,11 @@ func (a *App) ImportExternalData(input ExternalDataImportInput) (ExternalDataImp
 	if len(input.ItemIDs) == 0 {
 		return ExternalDataImportResult{}, errors.New("请至少选择一项可导入数据")
 	}
+	ctx, finish, err := a.beginExternalDataImport()
+	if err != nil {
+		return ExternalDataImportResult{}, err
+	}
+	defer finish()
 	adapter, err := externalDataAdapterFor(input.SourceID)
 	if err != nil {
 		return ExternalDataImportResult{}, err
@@ -229,6 +234,9 @@ func (a *App) ImportExternalData(input ExternalDataImportInput) (ExternalDataImp
 	if err != nil {
 		return ExternalDataImportResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return ExternalDataImportResult{}, externalDataImportCanceledError(err)
+	}
 
 	var store *knowledge.Store
 	var storeErr error
@@ -238,7 +246,10 @@ func (a *App) ImportExternalData(input ExternalDataImportInput) (ExternalDataImp
 			defer store.Close()
 		}
 	}
-	result := executeExternalDataImport(candidates, input.ItemIDs, store, storeErr)
+	result, err := executeExternalDataImportContext(ctx, candidates, input.ItemIDs, store, storeErr)
+	if err != nil {
+		return result, externalDataImportCanceledError(err)
+	}
 	result.Warnings = append(messages, result.Warnings...)
 	if externalResultImportedSkills(result) {
 		if err := a.RefreshSkills(); err != nil {
@@ -247,6 +258,51 @@ func (a *App) ImportExternalData(input ExternalDataImportInput) (ExternalDataImp
 	}
 	result.Summary = fmt.Sprintf("已导入 %d 项，跳过 %d 项，失败 %d 项", result.Imported, result.Skipped, result.Failed)
 	return result, nil
+}
+
+func (a *App) beginExternalDataImport() (context.Context, func(), error) {
+	a.externalImportMu.Lock()
+	defer a.externalImportMu.Unlock()
+	if a.externalImportCancel != nil {
+		return nil, nil, errors.New("已有外部数据导入正在进行")
+	}
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	a.externalImportGeneration++
+	generation := a.externalImportGeneration
+	a.externalImportCancel = cancel
+	finish := func() {
+		cancel()
+		a.externalImportMu.Lock()
+		if a.externalImportGeneration == generation {
+			a.externalImportCancel = nil
+		}
+		a.externalImportMu.Unlock()
+	}
+	return ctx, finish, nil
+}
+
+// CancelExternalDataImport requests cancellation of the one active import job.
+// Completed items remain intact; items not yet started will not be written.
+func (a *App) CancelExternalDataImport() bool {
+	a.externalImportMu.Lock()
+	cancel := a.externalImportCancel
+	a.externalImportMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func externalDataImportCanceledError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return errors.New("外部数据导入已取消")
+	}
+	return err
 }
 
 func externalDataAdapters() []externalDataAdapter {
@@ -714,6 +770,14 @@ func scanKnownIncompatibleFiles(sourceID, sourceName, rootPath string) []externa
 }
 
 func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs []string, store *knowledge.Store, storeErr error) ExternalDataImportResult {
+	result, _ := executeExternalDataImportContext(context.Background(), candidates, selectedIDs, store, storeErr)
+	return result
+}
+
+func executeExternalDataImportContext(ctx context.Context, candidates []externalDataCandidate, selectedIDs []string, store *knowledge.Store, storeErr error) (ExternalDataImportResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ExternalDataImportResult{}, err
+	}
 	byID := make(map[string]externalDataCandidate, len(candidates))
 	for _, candidate := range candidates {
 		byID[candidate.View.ID] = candidate
@@ -723,16 +787,21 @@ func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs [
 
 	existingHashes := map[string]bool{}
 	if store != nil {
-		if documents, err := store.ListDocuments(context.Background()); err == nil {
+		if documents, err := store.ListDocuments(ctx); err == nil {
 			for _, document := range documents {
 				if document.ContentHash != "" {
 					existingHashes[document.ContentHash] = true
 				}
 			}
+		} else if ctx.Err() != nil {
+			return result, ctx.Err()
 		}
 	}
 
 	for _, id := range selected {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		candidate, ok := byID[id]
 		if !ok {
 			result.Failed++
@@ -765,6 +834,9 @@ func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs [
 				itemResult.Message = err.Error()
 				break
 			}
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
 			if strings.TrimSpace(content) == "" {
 				result.Skipped++
 				itemResult.Status = "skipped"
@@ -778,7 +850,7 @@ func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs [
 				itemResult.Message = "相同内容已存在于知识库"
 				break
 			}
-			document, err := store.Import(context.Background(), knowledge.ImportInput{
+			document, err := store.Import(ctx, knowledge.ImportInput{
 				ID:          externalKnowledgeDocumentID(candidate.SourceID, candidate.SourcePath),
 				Title:       candidate.View.Title,
 				Type:        candidate.View.Category,
@@ -792,6 +864,9 @@ func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs [
 				Content:     content,
 			})
 			if err != nil {
+				if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
 				result.Failed++
 				itemResult.Status = "failed"
 				itemResult.Message = err.Error()
@@ -814,7 +889,10 @@ func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs [
 				itemResult.Message = "目标已存在同名技能，未覆盖"
 				break
 			}
-			if err := copyExternalSkillPackage(candidate.SourcePath, candidate.DestinationPath); err != nil {
+			if err := copyExternalSkillPackageContext(ctx, candidate.SourcePath, candidate.DestinationPath); err != nil {
+				if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
 				result.Failed++
 				itemResult.Status = "failed"
 				itemResult.Message = err.Error()
@@ -830,7 +908,7 @@ func executeExternalDataImport(candidates []externalDataCandidate, selectedIDs [
 		}
 		result.Items = append(result.Items, itemResult)
 	}
-	return result
+	return result, nil
 }
 
 func loadExternalCandidateContent(candidate externalDataCandidate) (string, error) {
@@ -924,6 +1002,13 @@ func externalJSONValueText(value any) string {
 }
 
 func copyExternalSkillPackage(sourceRoot, destination string) error {
+	return copyExternalSkillPackageContext(context.Background(), sourceRoot, destination)
+}
+
+func copyExternalSkillPackageContext(ctx context.Context, sourceRoot, destination string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	skillFileInfo, err := os.Lstat(filepath.Join(sourceRoot, voltSkill.SkillFile))
 	if err != nil || !skillFileInfo.Mode().IsRegular() || skillFileInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("技能包缺少 SKILL.md")
@@ -943,6 +1028,9 @@ func copyExternalSkillPackage(sourceRoot, destination string) error {
 
 	var copied int64
 	err = filepath.WalkDir(sourceRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -988,7 +1076,7 @@ func copyExternalSkillPackage(sourceRoot, destination string) error {
 			_ = input.Close()
 			return err
 		}
-		_, copyErr := io.Copy(output, input)
+		_, copyErr := io.Copy(output, contextReader{ctx: ctx, reader: input})
 		inputCloseErr := input.Close()
 		closeErr := output.Close()
 		if copyErr != nil {
@@ -1009,6 +1097,18 @@ func copyExternalSkillPackage(sourceRoot, destination string) error {
 		return err
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func externalSelectionNeedsKnowledge(candidates []externalDataCandidate, selected []string) bool {

@@ -1812,3 +1812,4 @@ export interface UserInfo {
   email?: string;
   name?: string;
 }
+export type DisplayMode = "office" | "developer";

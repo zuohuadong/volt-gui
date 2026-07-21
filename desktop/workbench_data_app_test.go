@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -605,7 +607,14 @@ func TestWorkbenchReportExportsMatchRequestedFormats(t *testing.T) {
 	}
 	for _, tc := range formats {
 		t.Run(tc.format, func(t *testing.T) {
-			report, err := app.SaveWorkbenchReport(WorkbenchReportInput{Title: "中文报告 " + tc.format, Body: "第一段\n第二段", Format: tc.format})
+			report, err := app.SaveWorkbenchReport(WorkbenchReportInput{
+				Title:           "中文报告 " + tc.format,
+				Desc:            "导出摘要",
+				Body:            "第一段\n第二段",
+				Kind:            "合规报告",
+				Format:          tc.format,
+				ArtifactStyleID: "compliance-plain",
+			})
 			if err != nil {
 				t.Fatalf("SaveWorkbenchReport: %v", err)
 			}
@@ -624,8 +633,29 @@ func TestWorkbenchReportExportsMatchRequestedFormats(t *testing.T) {
 			if !strings.Contains(string(content), tc.magic) {
 				t.Fatalf("export %s missing format marker %q", path, tc.magic)
 			}
-			if tc.format == "PDF" && !strings.Contains(string(content), encodePDFUTF16Hex("中文报告 "+tc.format+"\n\n第一段\n第二段")) {
-				t.Fatal("PDF does not contain UTF-16BE encoded Chinese report content")
+			if tc.format == "PDF" {
+				for _, expected := range []string{"REVIEW ARTIFACT", "中文报告 " + tc.format, "报告类型: 合规报告", "样式选择: 合规简明", "导出状态: 可导出", "导出摘要", "第一段"} {
+					if !strings.Contains(string(content), encodePDFUTF16Hex(expected)) {
+						t.Fatalf("PDF does not contain UTF-16BE encoded report field %q", expected)
+					}
+				}
+				if strings.Count(string(content), " Tj") < 6 {
+					t.Fatal("PDF should write report fields as independent text lines")
+				}
+			}
+			if tc.format == "Markdown" || tc.format == "HTML" {
+				for _, expected := range []string{"REVIEW ARTIFACT", "报告类型", "合规报告", "样式选择", "合规简明", "导出状态", "可导出", "导出摘要", "第一段"} {
+					if !strings.Contains(string(content), expected) {
+						t.Fatalf("%s export missing report field %q", tc.format, expected)
+					}
+				}
+			}
+			if tc.format == "JSON" {
+				for _, expected := range []string{`"kind": "合规报告"`, `"desc": "导出摘要"`, `"artifactStyleId": "compliance-plain"`} {
+					if !strings.Contains(string(content), expected) {
+						t.Fatalf("JSON export missing report field %q", expected)
+					}
+				}
 			}
 			if tc.format == "DOCX" {
 				zr, err := zip.OpenReader(path)
@@ -633,17 +663,85 @@ func TestWorkbenchReportExportsMatchRequestedFormats(t *testing.T) {
 					t.Fatalf("OpenReader: %v", err)
 				}
 				found := false
+				var documentXML string
 				for _, file := range zr.File {
 					if file.Name == "word/document.xml" {
 						found = true
+						reader, openErr := file.Open()
+						if openErr != nil {
+							_ = zr.Close()
+							t.Fatalf("open document.xml: %v", openErr)
+						}
+						xmlBytes, readErr := io.ReadAll(reader)
+						_ = reader.Close()
+						if readErr != nil {
+							_ = zr.Close()
+							t.Fatalf("read document.xml: %v", readErr)
+						}
+						documentXML = string(xmlBytes)
 					}
 				}
 				_ = zr.Close()
 				if !found {
 					t.Fatal("DOCX missing word/document.xml")
 				}
+				for _, expected := range []string{"REVIEW ARTIFACT", "合规报告", "合规简明", "导出摘要", "第一段"} {
+					if !strings.Contains(documentXML, expected) {
+						t.Fatalf("DOCX export missing report field %q", expected)
+					}
+				}
 			}
 		})
+	}
+}
+
+func TestWorkbenchPDFWrapsAndPaginatesContent(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	path, err := writeWorkbenchPDF("paginated-report", strings.Repeat("这是用于验证自动换行和分页的长报告内容。", 120))
+	if err != nil {
+		t.Fatalf("writeWorkbenchPDF: %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(content), "/Count 2") {
+		t.Fatalf("long report should span multiple PDF pages: %s", content)
+	}
+	if strings.Count(string(content), " Tj") < 42 {
+		t.Fatal("long report should be written as multiple wrapped PDF text lines")
+	}
+}
+
+func TestImportKnowledgeDocumentPersistsFileMetadataAndPreview(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	path := filepath.Join(t.TempDir(), "knowledge.md")
+	const body = "knowledge document body for indexing"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	app := &App{}
+	doc, err := app.ImportKnowledgeDocument(KnowledgeDocumentImportInput{
+		Title:    "File-backed knowledge",
+		Type:     "document",
+		Source:   "local file",
+		FileName: "knowledge.md",
+		FilePath: path,
+		MimeType: "text/markdown",
+		FileSize: int64(len(body)),
+	})
+	if err != nil {
+		t.Fatalf("ImportKnowledgeDocument: %v", err)
+	}
+	if doc.FileName != "knowledge.md" || doc.FilePath != path || doc.FileSize != int64(len(body)) {
+		t.Fatalf("file metadata = %+v", doc)
+	}
+	preview, err := app.KnowledgeDocumentPreview(doc.ID)
+	if err != nil {
+		t.Fatalf("KnowledgeDocumentPreview: %v", err)
+	}
+	if !strings.Contains(preview, body) {
+		t.Fatalf("preview = %q, want %q", preview, body)
 	}
 }
 
@@ -664,6 +762,71 @@ func TestKnowledgeTemplateContentPersistsIndexesAndRenders(t *testing.T) {
 	results, err := app.SearchKnowledge("尊敬的", 5)
 	if err != nil || len(results) == 0 {
 		t.Fatalf("template content not indexed: results=%+v err=%v", results, err)
+	}
+}
+
+func TestKnowledgeTemplateVariablesExtractsUniquePlaceholders(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+	doc, err := app.SaveKnowledgeDocument(WorkbenchKnowledgeDocumentInput{
+		Title:   "变量模板",
+		Content: "{{客户名称}} 的 {{项目名称}} 已完成，{{客户名称}} 可查看结果。",
+	})
+	if err != nil {
+		t.Fatalf("SaveKnowledgeDocument: %v", err)
+	}
+	variables, err := app.KnowledgeTemplateVariables(doc.ID)
+	if err != nil {
+		t.Fatalf("KnowledgeTemplateVariables: %v", err)
+	}
+	want := []string{"客户名称", "项目名称"}
+	if !reflect.DeepEqual(variables, want) {
+		t.Fatalf("variables = %#v, want %#v", variables, want)
+	}
+}
+
+func TestReindexKnowledgeDocumentUpdatesDurableIndexStatus(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+	doc, err := app.SaveKnowledgeDocument(WorkbenchKnowledgeDocumentInput{
+		Title:   "重建索引模板",
+		Content: "项目 {{项目名称}} 的验收记录。",
+	})
+	if err != nil {
+		t.Fatalf("SaveKnowledgeDocument: %v", err)
+	}
+	reindexed, err := app.ReindexKnowledgeDocument(doc.ID)
+	if err != nil {
+		t.Fatalf("ReindexKnowledgeDocument: %v", err)
+	}
+	if reindexed.Status != "已索引" || reindexed.Error != "" {
+		t.Fatalf("reindexed status = %+v, want indexed document without error", reindexed)
+	}
+	data, err := app.KnowledgeBase()
+	if err != nil {
+		t.Fatalf("KnowledgeBase: %v", err)
+	}
+	if !containsKnowledgeDocument(data.Documents, doc.ID) {
+		t.Fatalf("reindexed knowledge document missing from knowledge base: %+v", data.Documents)
+	}
+}
+
+func TestKnowledgeDocumentPreviewReturnsStoredDocumentBody(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+	doc, err := app.SaveKnowledgeDocument(WorkbenchKnowledgeDocumentInput{
+		Title:   "预览模板",
+		Content: "这是可供预览的完整正文。\n第二段内容。",
+	})
+	if err != nil {
+		t.Fatalf("SaveKnowledgeDocument: %v", err)
+	}
+	preview, err := app.KnowledgeDocumentPreview(doc.ID)
+	if err != nil {
+		t.Fatalf("KnowledgeDocumentPreview: %v", err)
+	}
+	if preview != "这是可供预览的完整正文。\n第二段内容。" {
+		t.Fatalf("preview = %q", preview)
 	}
 }
 

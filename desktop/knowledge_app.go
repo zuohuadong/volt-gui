@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"voltui/internal/config"
@@ -13,8 +14,8 @@ import (
 const knowledgeDatabaseFile = "knowledge.db"
 
 type KnowledgeBaseView struct {
-	Documents []knowledge.Document `json:"documents"`
-	Status    knowledge.Status     `json:"status"`
+	Documents []WorkbenchKnowledgeDocumentView `json:"documents"`
+	Status    knowledge.Status                 `json:"status"`
 }
 
 type KnowledgeDocumentImportInput struct {
@@ -45,7 +46,36 @@ func (a *App) KnowledgeBase() (KnowledgeBaseView, error) {
 	if err != nil {
 		return KnowledgeBaseView{}, err
 	}
-	return KnowledgeBaseView{Documents: docs, Status: status}, nil
+	indexed := make(map[string]WorkbenchKnowledgeDocumentView, len(docs))
+	for _, doc := range docs {
+		view := workbenchKnowledgeDocumentFromStore(doc)
+		indexed[view.ID] = view
+	}
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return KnowledgeBaseView{}, err
+	}
+	for _, doc := range data.KnowledgeDocuments {
+		if view, ok := indexed[doc.ID]; ok {
+			view.MaterialIDs = doc.MaterialIDs
+			if len(doc.MaterialIDs) > 0 {
+				view.Count = len(doc.MaterialIDs)
+			}
+			if doc.Status == "索引中" || doc.Status == "索引失败" {
+				view.Status = doc.Status
+				view.Error = doc.Error
+			}
+			indexed[doc.ID] = view
+			continue
+		}
+		indexed[doc.ID] = doc
+	}
+	items := make([]WorkbenchKnowledgeDocumentView, 0, len(indexed))
+	for _, doc := range indexed {
+		items = append(items, doc)
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt > items[j].UpdatedAt })
+	return KnowledgeBaseView{Documents: items, Status: status}, nil
 }
 
 func (a *App) KnowledgeStatus() (knowledge.Status, error) {
@@ -57,8 +87,29 @@ func (a *App) KnowledgeStatus() (knowledge.Status, error) {
 	return store.Status(context.Background())
 }
 
-func (a *App) ImportKnowledgeDocument(input KnowledgeDocumentImportInput) (knowledge.Document, error) {
-	return importKnowledgeDocument(input)
+// ImportKnowledgeDocument saves a knowledge document in the active workspace
+// before extracting and indexing its content. File paths returned by the native
+// picker are relative to that workspace's attachment directory.
+func (a *App) ImportKnowledgeDocument(input KnowledgeDocumentImportInput) (WorkbenchKnowledgeDocumentView, error) {
+	var document WorkbenchKnowledgeDocumentView
+	err := a.withActiveWorkspaceDo(func() error {
+		var err error
+		document, err = a.SaveKnowledgeDocument(WorkbenchKnowledgeDocumentInput{
+			ID:          input.ID,
+			Title:       input.Title,
+			Type:        input.Type,
+			Description: input.Description,
+			Content:     input.Content,
+			Source:      input.Source,
+			Tags:        input.Tags,
+			FileName:    input.FileName,
+			FilePath:    input.FilePath,
+			MimeType:    input.MimeType,
+			FileSize:    input.FileSize,
+		})
+		return err
+	})
+	return document, err
 }
 
 func (a *App) SearchKnowledge(query string, limit int) ([]knowledge.SearchResult, error) {
@@ -68,6 +119,28 @@ func (a *App) SearchKnowledge(query string, limit int) ([]knowledge.SearchResult
 	}
 	defer store.Close()
 	return store.Search(context.Background(), query, knowledge.SearchOptions{Limit: limit})
+}
+
+func (a *App) KnowledgeDocumentPreview(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("knowledge document id is required")
+	}
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return "", err
+	}
+	for _, doc := range data.KnowledgeDocuments {
+		if doc.ID == id && strings.TrimSpace(doc.Content) != "" {
+			return doc.Content, nil
+		}
+	}
+	store, err := openKnowledgeStore()
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	return store.DocumentText(context.Background(), id)
 }
 
 func (a *App) DeleteKnowledgeDocument(id string) error {

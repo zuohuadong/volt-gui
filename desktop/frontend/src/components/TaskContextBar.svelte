@@ -19,6 +19,7 @@
     memory: string;
     memoryEmpty?: boolean;
     mode: "work" | "code";
+    displayMode?: "office" | "developer";
     activeInspector: string;
     onOpenDrawer: () => void;
     onOpenAgent: () => void;
@@ -37,6 +38,7 @@
     memory,
     memoryEmpty = false,
     mode,
+    displayMode = "developer",
     activeInspector,
     onOpenDrawer,
     onOpenAgent,
@@ -45,6 +47,11 @@
     onOpenMemory,
     onInspector,
   }: Props = $props();
+  const officeMode = $derived(displayMode === "office");
+  let configExpanded = $state(false);
+  $effect(() => {
+    if (!officeMode) configExpanded = false;
+  });
   const inspectorItems = [
     { id: "task", label: "任务" },
     { id: "workspace", label: "Workspace" },
@@ -63,10 +70,17 @@
     <span>{project}</span>
   </div>
   <div class="context-controls" aria-label="当前执行配置">
+    {#if officeMode && !configExpanded}
+      <button class="config-toggle" type="button" aria-label="展开任务配置" aria-expanded={configExpanded} onclick={() => (configExpanded = true)}><Bot size={14} /><span>任务配置</span></button>
+    {:else}
     <button type="button" aria-label={`Agent Profile: ${agent}`} title={`Agent Profile: ${agent}`} onclick={onOpenAgent}><Bot size={14} /><span>{agent}</span></button>
     <button type="button" aria-label={`Model: ${model}`} title={`Model: ${model}`} onclick={onOpenModels}><Cpu size={14} /><span>{model}</span></button>
     <button type="button" aria-label={`Permission: ${permission}`} title={`Permission: ${permission}`} onclick={onOpenPermission}><ShieldCheck size={14} /><span>{permission}</span></button>
     <button class:empty={memoryEmpty} type="button" aria-label={memoryEmpty ? "添加分层记忆" : `Memory: ${memory}`} title={memoryEmpty ? "当前 Thread 尚未注入分层记忆，点击添加" : `Memory: ${memory}`} onclick={onOpenMemory}><Layers3 size={14} /><span>{memoryEmpty ? "添加记忆" : memory}</span></button>
+    {#if officeMode}
+      <button class="config-toggle" type="button" aria-label="收起任务配置" aria-expanded={configExpanded} onclick={() => (configExpanded = false)}><PanelRightOpen size={14} /><span>收起</span></button>
+    {/if}
+    {/if}
   </div>
   {#if mode === "code"}
     <div class="inspector-tabs" role="tablist" aria-label="任务检查器">
@@ -93,7 +107,8 @@
   .context-controls button { display: inline-flex; align-items: center; gap: 5px; min-width: 0; min-height: 32px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-foreground, #687169); font: inherit; font-size: 11px; }
   .context-controls button:hover { background: var(--muted, #edf0ec); color: var(--foreground, #1f2421); }
   .context-controls button span { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .context-controls button.empty { color: #9a5b00; }
+ .context-controls button.empty { color: #9a5b00; }
+  .context-controls button.config-toggle { gap: 5px; padding-inline: 9px; border: 1px solid var(--border, #dce1db); background: var(--card, #fff); color: var(--foreground, #1f2421); font-weight: 600; }
   .inspector-tabs { display: flex; align-items: center; gap: 3px; }
   .inspector-tabs button { min-height: 32px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-foreground, #687169); font-size: 12px; }
   .inspector-tabs button.active { background: #1f2421; color: #fff; }

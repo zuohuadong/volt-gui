@@ -58,6 +58,7 @@ func (bashOutput) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("background jobs are not available in this context")
 	}
 	text, status, found := jm.OutputForSession(jobs.SessionFromContext(ctx), p.JobID)
+	text = decodeShellOutput(text)
 	if !found {
 		return "", fmt.Errorf("no background job %q", p.JobID)
 	}

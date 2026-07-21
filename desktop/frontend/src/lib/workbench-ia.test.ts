@@ -178,6 +178,12 @@ describe("unified workbench IA state", () => {
     }
   });
 
+  test("keeps internal-knowledge changes scoped to the explicitly cited materials", () => {
+   const template = OUTCOME_TEMPLATES.find((item) => item.id === "knowledge-change");
+    expect(template?.prompt).toContain("不使用历史会话、未引用资料或无关示例");
+    expect(template?.prompt).toContain("先提问确认，不要猜测");
+  });
+
   test("keeps receipt fields pending until evidence exists and only settles the shell on turn_done", () => {
     const pending = createPendingTaskReceipt({
       id: "receipt-1",

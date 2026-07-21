@@ -16,6 +16,7 @@
     XCircle,
   } from "@lucide/svelte";
   import { app } from "../lib/bridge";
+  import { externalImportCancelAction, externalImportDismissAction } from "../lib/external-data-import-ui";
   import type {
     ExternalDataImportItem,
     ExternalDataImportPreview,
@@ -38,12 +39,16 @@
   let result = $state.raw<ExternalDataImportResult | undefined>();
   let selectedItemIDs = $state<string[]>([]);
   let loading = $state(false);
+  let importing = $state(false);
+  let cancelRequested = $state(false);
   let errorMessage = $state("");
 
   const selectedSource = $derived(sources.find((source) => source.id === selectedSourceID));
   const selectableItems = $derived(preview?.items.filter((item) => item.compatibility !== "incompatible") ?? []);
   const selectedCount = $derived(selectedItemIDs.length);
   const allSelectableSelected = $derived(selectableItems.length > 0 && selectableItems.every((item) => selectedItemIDs.includes(item.id)));
+  const dismissAction = $derived(externalImportDismissAction(loading));
+  const cancelAction = $derived(externalImportCancelAction(importing, cancelRequested));
 
   onMount(() => {
     void loadSources();
@@ -61,6 +66,22 @@
       errorMessage = formatError(error, "无法读取外部数据源，请确认正在桌面版中运行。");
     } finally {
       loading = false;
+    }
+  }
+
+  async function cancelImport() {
+    if (!cancelAction.enabled) return;
+    cancelRequested = true;
+    try {
+      if (await app().CancelExternalDataImport()) {
+        onclose();
+        return;
+      }
+      cancelRequested = false;
+      errorMessage = "当前没有可取消的导入任务。";
+    } catch (error) {
+      cancelRequested = false;
+      errorMessage = formatError(error, "取消导入失败，请先在后台继续，或稍后重试。");
     }
   }
 
@@ -137,6 +158,8 @@
       return;
     }
     loading = true;
+    importing = true;
+    cancelRequested = false;
     errorMessage = "";
     try {
       const importResult = await app().ImportExternalData({
@@ -150,6 +173,8 @@
       errorMessage = formatError(error, "导入外部数据失败。");
     } finally {
       loading = false;
+      importing = false;
+      cancelRequested = false;
     }
   }
 
@@ -161,7 +186,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && !loading) onclose();
+    if (event.key === "Escape" && dismissAction.enabled) onclose();
   }
 
   function formatBytes(bytes: number) {
@@ -193,7 +218,7 @@
         <h2 id="external-import-title">导入外部数据</h2>
         <p>先扫描并确认兼容性，再将原始内容安全导入 Volt。外部目录始终保持只读。</p>
       </div>
-      <button class="icon-button" type="button" aria-label="关闭导入外部数据" disabled={loading} onclick={onclose}><X size={17} /></button>
+      <button class="icon-button" type="button" aria-label="关闭导入外部数据" disabled={!dismissAction.enabled} onclick={onclose}><X size={17} /></button>
     </header>
 
     <div class="dialog-body">
@@ -299,16 +324,19 @@
     </div>
 
     <footer class="dialog-footer">
-      {#if loading}<span class="loading-state" role="status"><Loader2 class="spin" size={15} /> 正在处理，请稍候…</span>{:else}<span>不兼容项目不会写入，已有同名技能不会被覆盖。</span>{/if}
+      {#if loading}<span class="loading-state" role="status"><Loader2 class="spin" size={15} /> {dismissAction.status}</span>{:else}<span>{dismissAction.status}</span>{/if}
       <div>
-        {#if result}
+        {#if loading}
+          <button class="secondary-button" type="button" disabled={!dismissAction.enabled} onclick={onclose}>{dismissAction.label}</button>
+          {#if cancelAction.visible}<button class="danger-button" type="button" disabled={!cancelAction.enabled} onclick={() => void cancelImport()}>{cancelAction.label}</button>{/if}
+        {:else if result}
           <button class="secondary-button" type="button" onclick={backToSources}>继续导入</button>
           <button class="primary-button" type="button" onclick={onclose}>完成</button>
         {:else if preview}
-          <button class="secondary-button" type="button" disabled={loading} onclick={onclose}>取消</button>
+          <button class="secondary-button" type="button" disabled={!dismissAction.enabled} onclick={onclose}>{dismissAction.label}</button>
           <button class="primary-button" type="button" disabled={loading || selectedCount === 0} onclick={() => void importSelected()}><Import size={15} /> 导入所选 {selectedCount ? `(${selectedCount})` : ""}</button>
         {:else}
-          <button class="secondary-button" type="button" disabled={loading} onclick={onclose}>取消</button>
+          <button class="secondary-button" type="button" disabled={!dismissAction.enabled} onclick={onclose}>{dismissAction.label}</button>
           <button class="primary-button" type="button" disabled={loading || !selectedSourceID || !rootPath.trim()} onclick={() => void scanSource()}><ShieldCheck size={15} /> 扫描并检查兼容性</button>
         {/if}
       </div>
@@ -389,6 +417,7 @@
   }
   .icon-button { width: 34px; padding: 0; }
   .primary-button { border-color: var(--primary, #1f2421); background: var(--primary, #1f2421); color: var(--primary-foreground, #fff); }
+  .danger-button { border: 1px solid var(--danger, #b42318); border-radius: 7px; background: var(--danger, #b42318); color: #fff; font-size: 12px; font-weight: 600; min-height: 34px; padding: 0 12px; }
   .back-button { min-height: 28px; padding: 0 8px; border-color: transparent; background: transparent; }
 
   .source-view,

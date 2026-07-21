@@ -235,6 +235,7 @@ interface AppBindings {
   PickExternalDataDirectory(sourceID: string): Promise<string>;
   PreviewExternalData(input: ExternalDataPreviewInput): Promise<ExternalDataImportPreview>;
   ImportExternalData(input: ExternalDataImportInput): Promise<ExternalDataImportResult>;
+  CancelExternalDataImport(): Promise<boolean>;
   SearchKnowledge(query: string, limit: number): Promise<KnowledgeSearchResult[]>;
   DeleteKnowledgeDocument(id: string): Promise<void>;
   RunWorkbenchSync(scope: string): Promise<WorkbenchSyncJob[]>;

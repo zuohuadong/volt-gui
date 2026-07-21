@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -210,6 +211,10 @@ type WorkbenchKnowledgeDocumentInput struct {
 	Content     string   `json:"content"`
 	Source      string   `json:"source"`
 	Tags        string   `json:"tags"`
+	FileName    string   `json:"fileName"`
+	FilePath    string   `json:"filePath"`
+	MimeType    string   `json:"mimeType"`
+	FileSize    int64    `json:"fileSize"`
 	MaterialIDs []string `json:"materialIds"`
 }
 
@@ -480,23 +485,69 @@ func (a *App) SaveKnowledgeDocument(input WorkbenchKnowledgeDocumentInput) (Work
 	if err != nil {
 		return WorkbenchKnowledgeDocumentView{}, err
 	}
-	indexedDoc, indexErr := importKnowledgeDocument(KnowledgeDocumentImportInput{
+	doc.Status = "索引中"
+	doc.Error = ""
+	replaceOrPrependKnowledgeDocument(&data, doc)
+	if err := saveWorkbenchData(data); err != nil {
+		return WorkbenchKnowledgeDocumentView{}, err
+	}
+	doc, _ = indexWorkbenchKnowledgeDocument(doc)
+	replaceOrPrependKnowledgeDocument(&data, doc)
+	appendOperationLog(&data, "保存知识模板", doc.Title, "我的", "成功")
+	return doc, saveWorkbenchData(data)
+}
+
+func (a *App) ReindexKnowledgeDocument(id string) (WorkbenchKnowledgeDocumentView, error) {
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return WorkbenchKnowledgeDocumentView{}, err
+	}
+	id = strings.TrimSpace(id)
+	for _, doc := range data.KnowledgeDocuments {
+		if doc.ID != id {
+			continue
+		}
+		doc.Status = "索引中"
+		doc.Error = ""
+		replaceOrPrependKnowledgeDocument(&data, doc)
+		if err := saveWorkbenchData(data); err != nil {
+			return WorkbenchKnowledgeDocumentView{}, err
+		}
+		doc, _ = indexWorkbenchKnowledgeDocument(doc)
+		replaceOrPrependKnowledgeDocument(&data, doc)
+		appendOperationLog(&data, "重新索引知识", doc.Title, "我的", doc.Status)
+		return doc, saveWorkbenchData(data)
+	}
+	return WorkbenchKnowledgeDocumentView{}, fmt.Errorf("knowledge document %q not found", id)
+}
+
+func indexWorkbenchKnowledgeDocument(doc WorkbenchKnowledgeDocumentView) (WorkbenchKnowledgeDocumentView, error) {
+	content := ""
+	if strings.TrimSpace(doc.Content) != "" {
+		content = strings.Join([]string{doc.Title, doc.Description, doc.Tags, doc.Content}, "\n")
+	}
+	indexedDoc, err := importKnowledgeDocument(KnowledgeDocumentImportInput{
 		ID:          doc.ID,
 		Title:       doc.Title,
 		Type:        doc.Type,
 		Source:      defaultString(doc.Source, "workbench"),
 		Tags:        doc.Tags,
 		Description: doc.Description,
-		Content:     strings.Join([]string{doc.Title, doc.Description, doc.Tags, doc.Content}, "\n"),
+		FileName:    doc.FileName,
+		FilePath:    doc.FilePath,
+		MimeType:    doc.MimeType,
+		FileSize:    doc.FileSize,
+		Content:     content,
 	})
-	if indexErr != nil {
-		doc.Error = indexErr.Error()
-	} else {
-		mergeKnowledgeIndexMetadata(&doc, workbenchKnowledgeDocumentFromStore(indexedDoc))
+	if err != nil {
+		doc.Status = "索引失败"
+		doc.Error = err.Error()
+		return doc, err
 	}
-	replaceOrPrependKnowledgeDocument(&data, doc)
-	appendOperationLog(&data, "保存知识模板", doc.Title, "我的", "成功")
-	return doc, saveWorkbenchData(data)
+	mergeKnowledgeIndexMetadata(&doc, workbenchKnowledgeDocumentFromStore(indexedDoc))
+	doc.Status = defaultString(indexedDoc.Status, "已索引")
+	doc.Error = indexedDoc.Error
+	return doc, nil
 }
 
 func (a *App) ListRegulations() ([]WorkbenchRegulationView, error) {
@@ -595,6 +646,41 @@ func (a *App) RenderKnowledgeDocument(id string, variables map[string]string) (s
 		return renderWorkbenchTemplate(content, variables), nil
 	}
 	return "", fmt.Errorf("knowledge document %q not found", id)
+}
+
+var workbenchTemplateVariablePattern = regexp.MustCompile(`{{\s*([^{}]+?)\s*}}`)
+
+// KnowledgeTemplateVariables returns the named placeholders that can be filled before rendering a template.
+func (a *App) KnowledgeTemplateVariables(id string) ([]string, error) {
+	data, err := loadWorkbenchData()
+	if err != nil {
+		return nil, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("knowledge document id is required")
+	}
+	for _, doc := range data.KnowledgeDocuments {
+		if doc.ID != id {
+			continue
+		}
+		content := defaultString(strings.TrimSpace(doc.Content), strings.TrimSpace(doc.Description))
+		seen := map[string]struct{}{}
+		variables := make([]string, 0)
+		for _, match := range workbenchTemplateVariablePattern.FindAllStringSubmatch(content, -1) {
+			name := strings.TrimSpace(match[1])
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			variables = append(variables, name)
+		}
+		return variables, nil
+	}
+	return nil, fmt.Errorf("knowledge document %q not found", id)
 }
 
 func renderWorkbenchTemplate(content string, variables map[string]string) string {
@@ -1143,21 +1229,77 @@ func writeWorkbenchExport(name string, payload any) (string, error) {
 
 func writeWorkbenchReportExport(report WorkbenchReportView) (string, error) {
 	format := strings.ToLower(strings.TrimSpace(report.Format))
+	name := "report-" + slugifyAgentID(report.Title)
 	switch format {
 	case "", "json":
-		return writeWorkbenchExport("report-"+slugifyAgentID(report.Title), report)
+		return writeWorkbenchExport(name, report)
 	case "markdown", "md":
-		return writeWorkbenchTextExport("report-"+slugifyAgentID(report.Title), ".md", "# "+report.Title+"\n\n"+defaultString(report.Body, report.Desc)+"\n")
+		return writeWorkbenchTextExport(name, ".md", workbenchReportMarkdown(report))
 	case "html":
-		body := "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>" + html.EscapeString(report.Title) + "</title><body><h1>" + html.EscapeString(report.Title) + "</h1><pre>" + html.EscapeString(defaultString(report.Body, report.Desc)) + "</pre></body></html>"
-		return writeWorkbenchTextExport("report-"+slugifyAgentID(report.Title), ".html", body)
+		return writeWorkbenchTextExport(name, ".html", workbenchReportHTML(report))
 	case "pdf":
-		return writeWorkbenchPDF("report-"+slugifyAgentID(report.Title), report.Title+"\n\n"+defaultString(report.Body, report.Desc))
+		return writeWorkbenchPDF(name, workbenchReportExportText(report))
 	case "docx", "word":
-		return writeWorkbenchDOCX("report-"+slugifyAgentID(report.Title), report.Title, defaultString(report.Body, report.Desc))
+		return writeWorkbenchDOCX(name, report.Title, workbenchReportExportText(report))
 	default:
 		return "", fmt.Errorf("unsupported report format %q", report.Format)
 	}
+}
+
+func workbenchReportMarkdown(report WorkbenchReportView) string {
+	return "# " + report.Title + "\n\n" + workbenchReportExportText(report) + "\n"
+}
+
+func workbenchReportHTML(report WorkbenchReportView) string {
+	title := html.EscapeString(report.Title)
+	summary := html.EscapeString(workbenchReportSummary(report))
+	body := strings.ReplaceAll(html.EscapeString(workbenchReportBody(report)), "\n", "<br>")
+	return "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + title + "</title><style>body{margin:0;background:#f7f9fc;color:#111827;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"Microsoft YaHei\",sans-serif}.report{max-width:920px;margin:40px auto;padding:40px;background:#fff;border:1px solid #dbe3ee;border-radius:18px;box-shadow:0 12px 30px rgba(15,23,42,.08)}.eyebrow{color:#64748b;font-size:12px;font-weight:700;letter-spacing:.12em}.title{margin:12px 0 4px;font-size:32px}.meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:28px 0}.meta div,.section{padding:16px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.meta span{display:block;color:#64748b;font-size:12px}.meta strong{display:block;margin-top:6px;font-size:15px}.section{margin-top:14px;line-height:1.75}.section h2{margin:0 0 8px;font-size:16px}.section p{margin:0;color:#334155}@media(max-width:640px){.report{margin:0;padding:24px;border-radius:0}.meta{grid-template-columns:1fr}}</style><main class=\"report\"><div class=\"eyebrow\">REVIEW ARTIFACT</div><h1 class=\"title\">" + title + "</h1><section class=\"meta\"><div><span>报告类型</span><strong>" + html.EscapeString(defaultString(strings.TrimSpace(report.Kind), "分析报告")) + "</strong></div><div><span>样式选择</span><strong>" + html.EscapeString(workbenchReportArtifactStyleName(report.ArtifactStyleID)) + "</strong></div><div><span>导出状态</span><strong>" + html.EscapeString(workbenchReportExportStatus(report)) + "</strong></div></section><section class=\"section\"><h2>摘要</h2><p>" + summary + "</p></section><section class=\"section\"><h2>正文</h2><p>" + body + "</p></section></main></html>"
+}
+
+func workbenchReportExportText(report WorkbenchReportView) string {
+	return strings.Join([]string{
+		"REVIEW ARTIFACT",
+		report.Title,
+		"",
+		"报告类型: " + defaultString(strings.TrimSpace(report.Kind), "分析报告"),
+		"样式选择: " + workbenchReportArtifactStyleName(report.ArtifactStyleID),
+		"导出状态: " + workbenchReportExportStatus(report),
+		"",
+		"摘要",
+		workbenchReportSummary(report),
+		"",
+		"正文",
+		workbenchReportBody(report),
+	}, "\n")
+}
+
+func workbenchReportSummary(report WorkbenchReportView) string {
+	return defaultString(strings.TrimSpace(report.Desc), "未提供摘要")
+}
+
+func workbenchReportBody(report WorkbenchReportView) string {
+	return defaultString(strings.TrimSpace(report.Body), workbenchReportSummary(report))
+}
+
+func workbenchReportArtifactStyleName(id string) string {
+	switch strings.TrimSpace(id) {
+	case "launch-editorial":
+		return "发布叙事"
+	case "compliance-plain":
+		return "合规简明"
+	case "brand-systematic", "", defaultReportArtifactStyleID:
+		return "品牌系统化"
+	default:
+		return strings.TrimSpace(id)
+	}
+}
+
+func workbenchReportExportStatus(report WorkbenchReportView) string {
+	if reportHasExportApproval(report) {
+		return "可导出"
+	}
+	return "待审批"
 }
 
 func workbenchExportsDir() (string, error) {
@@ -1179,18 +1321,32 @@ func writeWorkbenchTextExport(name, ext, content string) (string, error) {
 }
 
 func writeWorkbenchPDF(name, content string) (string, error) {
-	stream := "BT /F1 11 Tf 50 780 Td <" + encodePDFUTF16Hex(content) + "> Tj ET"
+	pages := splitWorkbenchPDFPages(content, 42)
+	fontObject := 3 + len(pages)*2
+	pageRefs := make([]string, 0, len(pages))
+	for index := range pages {
+		pageRefs = append(pageRefs, strconv.Itoa(3+index*2)+" 0 R")
+	}
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [" + strings.Join(pageRefs, " ") + "] /Count " + strconv.Itoa(len(pages)) + " >>",
+	}
+	for index, page := range pages {
+		pageObject := 3 + index*2
+		contentObject := pageObject + 1
+		stream := workbenchPDFPageStream(page)
+		objects = append(objects,
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>", fontObject, contentObject),
+			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream),
+		)
+	}
+	objects = append(objects,
+		"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts ["+strconv.Itoa(fontObject+1)+" 0 R] >>",
+		"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> >>",
+	)
 	var b bytes.Buffer
 	b.WriteString("%PDF-1.4\n")
 	offsets := []int{0}
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream),
-		"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [6 0 R] >>",
-		"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> >>",
-	}
 	for i, object := range objects {
 		offsets = append(offsets, b.Len())
 		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, object)
@@ -1207,6 +1363,56 @@ func writeWorkbenchPDF(name, content string) (string, error) {
 	}
 	file := filepath.Join(dir, name+"-"+time.Now().Format("20060102-150405")+".pdf")
 	return file, os.WriteFile(file, b.Bytes(), 0o644)
+}
+
+func splitWorkbenchPDFPages(content string, maxLines int) [][]string {
+	lines := wrapWorkbenchPDFText(content, 40)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	pages := make([][]string, 0, (len(lines)+maxLines-1)/maxLines)
+	for len(lines) > 0 {
+		end := min(maxLines, len(lines))
+		pages = append(pages, lines[:end])
+		lines = lines[end:]
+	}
+	return pages
+}
+
+func wrapWorkbenchPDFText(content string, maxRunes int) []string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	var lines []string
+	for _, rawLine := range strings.Split(content, "\n") {
+		runes := []rune(rawLine)
+		if len(runes) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for len(runes) > maxRunes {
+			lines = append(lines, string(runes[:maxRunes]))
+			runes = runes[maxRunes:]
+		}
+		lines = append(lines, string(runes))
+	}
+	return lines
+}
+
+func workbenchPDFPageStream(lines []string) string {
+	var stream strings.Builder
+	stream.WriteString("BT /F1 11 Tf 50 790 Td 16 TL\n")
+	for index, line := range lines {
+		if line != "" {
+			stream.WriteString("<")
+			stream.WriteString(encodePDFUTF16Hex(line))
+			stream.WriteString("> Tj\n")
+		}
+		if index < len(lines)-1 {
+			stream.WriteString("T*\n")
+		}
+	}
+	stream.WriteString("ET")
+	return stream.String()
 }
 
 func encodePDFUTF16Hex(content string) string {
@@ -1794,6 +2000,10 @@ func saveKnowledgeDocumentInto(data *WorkbenchDataView, input WorkbenchKnowledge
 		Content:     strings.TrimSpace(input.Content),
 		Source:      strings.TrimSpace(input.Source),
 		Tags:        strings.TrimSpace(input.Tags),
+		FileName:    strings.TrimSpace(input.FileName),
+		FilePath:    strings.TrimSpace(input.FilePath),
+		MimeType:    strings.TrimSpace(input.MimeType),
+		FileSize:    input.FileSize,
 		MaterialIDs: normalizeKnowledgeMaterialIDs(input.MaterialIDs),
 		CreatedAt:   now,
 		UpdatedAt:   now,

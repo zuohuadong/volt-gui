@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -112,8 +113,19 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 // enforces the workspace boundary). An empty p resolves to workDir itself, so a
 // defaulted "." (ls/grep) targets the workspace root.
 func resolveIn(workDir, p string) string {
+	return resolveInForOS(workDir, p, runtime.GOOS == "windows")
+}
+
+// resolveInForOS keeps the platform-sensitive virtual workspace mapping
+// testable without requiring a Windows test host.
+func resolveInForOS(workDir, p string, isWindows bool) string {
 	if workDir == "" {
 		return p
+	}
+	if isWindows {
+		if relative, ok := windowsVirtualWorkspaceRelativePath(p); ok {
+			p = relative
+		}
 	}
 	if p == "" || p == "." {
 		return workDir
@@ -122,6 +134,22 @@ func resolveIn(workDir, p string) string {
 		return p
 	}
 	return filepath.Join(workDir, p)
+}
+
+// windowsVirtualWorkspaceRelativePath maps the documented Linux-shaped
+// workspace token emitted by some agents to a path inside the active Windows
+// workspace. It only accepts descendants of that exact token; traversal stays
+// rejected so it cannot broaden the workspace boundary.
+func windowsVirtualWorkspaceRelativePath(path string) (string, bool) {
+	const virtualRoot = "/opt/workspace"
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	if path == virtualRoot || path == virtualRoot+"/" {
+		return ".", true
+	}
+	if !strings.HasPrefix(path, virtualRoot+"/") {
+		return "", false
+	}
+	return cleanReadSubpath(strings.TrimPrefix(path, virtualRoot+"/"))
 }
 
 // PathResolver maps session-authorized token paths to local read-only roots.

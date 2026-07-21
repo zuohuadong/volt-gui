@@ -91,10 +91,10 @@ const en = {
     code: {
       title: "Code with Volt",
       quick: [
-        { label: "App development", prompt: "Help me build or improve this application.", icon: "code" },
-        { label: "Project understanding", prompt: "Read this project and explain its structure and key flows.", icon: "folder" },
-        { label: "Game ideas", prompt: "Help design and implement a small playable game idea.", icon: "sparkles" },
-        { label: "Tool scripts", prompt: "Write a practical script or automation for this workspace.", icon: "bot" },
+        { label: "Explain code", prompt: "Read the current workspace and explain the key modules and execution flow.", icon: "folder" },
+        { label: "Review changes", prompt: "Review the current diff, list risks, and suggest fixes with test commands.", icon: "code" },
+        { label: "Run checks", prompt: "Run the project's build/test/lint commands and summarize pass/fail evidence.", icon: "bot" },
+        { label: "Trace a bug", prompt: "Locate the root cause of a failure in this workspace and propose a minimal fix.", icon: "list" },
       ],
     },
     codeTools: {
@@ -282,10 +282,10 @@ const zh: typeof en = {
     code: {
       title: "Code with Volt",
       quick: [
-        { label: "应用开发", prompt: "帮我编写代码、调试 Bug、优化性能，并交付生产级代码。", icon: "code" },
-        { label: "项目理解", prompt: "阅读当前项目，解释架构、目录结构和关键执行流程。", icon: "folder" },
-        { label: "游戏创意", prompt: "帮我设计并实现一个可玩的小游戏创意。", icon: "sparkles" },
-        { label: "工具脚本", prompt: "为当前工作区编写实用脚本或自动化工具。", icon: "bot" },
+        { label: "解读代码", prompt: "阅读当前工作区，解释关键模块与执行流程。", icon: "folder" },
+        { label: "审查改动", prompt: "审查当前 diff，列出风险并给出修复建议与测试命令。", icon: "code" },
+        { label: "运行检查", prompt: "运行项目的构建/测试/检查命令，汇总通过或失败的证据。", icon: "bot" },
+        { label: "排查缺陷", prompt: "定位当前工作区中某个失败的根因，提出最小修复方案。", icon: "list" },
       ],
     },
     codeTools: {

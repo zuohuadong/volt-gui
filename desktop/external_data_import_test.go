@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -232,6 +233,41 @@ func TestExecuteExternalDataImportIndexesDocumentsCopiesSkillsAndSkipsDuplicates
 	second := executeExternalDataImport(candidates, selected, store, nil)
 	if second.Imported != 0 || second.Skipped != 2 || second.Failed != 0 {
 		t.Fatalf("second result = %+v", second)
+	}
+}
+
+func TestExternalDataImportJobCancelsAndReleasesItsSlot(t *testing.T) {
+	app := &App{}
+	ctx, finish, err := app.beginExternalDataImport()
+	if err != nil {
+		t.Fatalf("begin import job: %v", err)
+	}
+	if !app.CancelExternalDataImport() {
+		t.Fatal("CancelExternalDataImport should report an active job")
+	}
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("cancelled context error = %v, want context.Canceled", ctx.Err())
+		}
+	default:
+		t.Fatal("cancel should signal the import context")
+	}
+	finish()
+	if app.CancelExternalDataImport() {
+		t.Fatal("finished import job must not remain cancellable")
+	}
+}
+
+func TestExecuteExternalDataImportContextStopsBeforeWriting(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := executeExternalDataImportContext(ctx, nil, []string{"missing"}, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled import error = %v, want context.Canceled", err)
+	}
+	if result.Imported != 0 || result.Skipped != 0 || result.Failed != 0 || len(result.Items) != 0 {
+		t.Fatalf("cancelled import should not record writes: %+v", result)
 	}
 }
 

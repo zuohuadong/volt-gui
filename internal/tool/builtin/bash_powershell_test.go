@@ -115,6 +115,11 @@ func TestBashDescriptionReflectsShell(t *testing.T) {
 			t.Errorf("powershell description should provide executable multiline verification guidance %q: %q", want, psDesc)
 		}
 	}
+	for _, want := range []string{"do not use wc", "(Get-Content <path> -Raw).Length"} {
+		if !strings.Contains(psDesc, want) {
+			t.Errorf("powershell description should provide a native character-count alternative %q: %q", want, psDesc)
+		}
+	}
 	pwsh := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}}
 	pwshDesc := pwsh.Description()
 	if !strings.Contains(pwshDesc, "PowerShell 7 (pwsh)") {

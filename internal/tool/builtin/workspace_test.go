@@ -33,6 +33,28 @@ func TestResolveIn(t *testing.T) {
 	}
 }
 
+func TestResolveInMapsWindowsVirtualWorkspacePaths(t *testing.T) {
+	workDir := t.TempDir()
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "/opt/workspace", want: workDir},
+		{path: "/opt/workspace/quick_sort.py", want: filepath.Join(workDir, "quick_sort.py")},
+		{path: "/opt/workspace/src/main.go", want: filepath.Join(workDir, "src", "main.go")},
+	} {
+		if got := resolveInForOS(workDir, tc.path, true); got != tc.want {
+			t.Errorf("resolveInForOS(%q, %q, windows) = %q, want %q", workDir, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestWindowsVirtualWorkspacePathRejectsTraversal(t *testing.T) {
+	if _, ok := windowsVirtualWorkspaceRelativePath("/opt/workspace/../../outside.py"); ok {
+		t.Fatal("virtual workspace path traversal must not resolve")
+	}
+}
+
 // TestWorkspaceBindsReadAndWrite checks that relative paths land inside the
 // workspace directory rather than the process cwd, for both a reader and a
 // writer, and that write confinement defaults to the workspace.

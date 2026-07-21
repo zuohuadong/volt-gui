@@ -226,13 +226,17 @@ interface AppBindings {
   RenderRegulation(id: string, variables: Record<string, string>): Promise<string>;
   DeleteRegulation(id: string): Promise<void>;
   RenderKnowledgeDocument(id: string, variables: Record<string, string>): Promise<string>;
+  KnowledgeTemplateVariables(id: string): Promise<string[]>;
+  ReindexKnowledgeDocument(id: string): Promise<WorkbenchKnowledgeDocument>;
   KnowledgeBase(): Promise<KnowledgeBaseView>;
   KnowledgeStatus(): Promise<KnowledgeStatus>;
+  KnowledgeDocumentPreview(id: string): Promise<string>;
   ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument>;
   ExternalDataSources(): Promise<ExternalDataSource[]>;
   PickExternalDataDirectory(sourceID: string): Promise<string>;
   PreviewExternalData(input: ExternalDataPreviewInput): Promise<ExternalDataImportPreview>;
   ImportExternalData(input: ExternalDataImportInput): Promise<ExternalDataImportResult>;
+  CancelExternalDataImport(): Promise<boolean>;
   SearchKnowledge(query: string, limit: number): Promise<KnowledgeSearchResult[]>;
   DeleteKnowledgeDocument(id: string): Promise<void>;
   RunWorkbenchSync(scope: string): Promise<WorkbenchSyncJob[]>;

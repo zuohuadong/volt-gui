@@ -198,6 +198,10 @@ type App struct {
 	projectMaterialSelectionsMu sync.Mutex
 	projectMaterialSelections   map[string]projectMaterialSelection
 
+	externalImportMu         sync.Mutex
+	externalImportGeneration uint64
+	externalImportCancel     context.CancelFunc
+
 	heartbeat           *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
 	automationScheduler *AutomationScheduler
 }

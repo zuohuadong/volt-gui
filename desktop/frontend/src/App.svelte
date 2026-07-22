@@ -155,6 +155,7 @@
     INBOX_PROJECT_ID,
     LEGACY_SIDEBAR_STORAGE_KEY,
     OUTCOME_TEMPLATES,
+    WORK_OUTCOME_TEMPLATES,
     WORKBENCH_STATE_STORAGE_KEY,
     applyTaskReceiptEvidence,
     createPendingTaskReceipt,
@@ -1001,7 +1002,7 @@
     { id: "qa-verifier", name: "测试验证 Agent", role: "模板", runs: 0, status: "可安装", category: "质量验证", source: "内置模板", version: "v1.3", desc: "把检查命令、浏览器验证和失败处理整理成复用门禁，适合提交前验证。", tags: ["测试", "构建", "门禁"], localPath: ".volt/agents/qa-verifier.agent.json" },
     { id: "meeting-scheduler", name: "会议纪要 Agent", role: "模板", runs: 0, status: "可安装", category: "协作效率", source: "内置模板", version: "v1.0", desc: "把会议记录压缩为决策、负责人、截止时间和下一次沟通议程。", tags: ["会议", "纪要", "协作"], localPath: ".volt/agents/meeting-scheduler.agent.json" },
   ];
-  let selectedOutcomeTemplateId = $state<TaskOutcomeTemplateID>("review-fix");
+  let selectedOutcomeTemplateId = $state<TaskOutcomeTemplateID>("write-document");
   let activeTaskReceipt = $state<TaskResultReceiptView | undefined>();
   let taskReceiptOpen = $state(false);
   let taskInspectorPanel = $state<"task" | CodeWorkbenchPanel>("task");
@@ -3718,6 +3719,9 @@
     agentMarketOpen = false;
     activeSidebarConversationId = conversationId;
     activeConversationTabId = "";
+    if (!conversationId && !WORK_OUTCOME_TEMPLATES.some((template) => template.id === selectedOutcomeTemplateId)) {
+      selectedOutcomeTemplateId = WORK_OUTCOME_TEMPLATES[0].id;
+    }
     const draftKey = `work:${(project?.id ?? projectId) || INBOX_PROJECT_ID}:${conversationId || "draft"}`;
     const hasSavedDraft = Object.prototype.hasOwnProperty.call(composerDraftsByTab, draftKey);
     activateComposerDraft(draftKey);
@@ -3726,7 +3730,7 @@
     agentSelectionDirty = Boolean(selectedAgentId);
     clearConversationRuntime();
     transcript = welcomeTranscript();
-    if (!conversationId && !hasSavedDraft) setComposerInput(selectedOutcomeTemplate.prompt, draftKey);
+    if (!conversationId && !hasSavedDraft) setComposerInput("", draftKey);
     void tick().then(focusComposer);
   }
   function syncSidebarProjectContext(project: SidebarProject) {
@@ -3899,9 +3903,9 @@ function openGovernanceCenter() {
     openSettingsPanel("general");
   }
   function selectOutcomeTemplate(templateId: TaskOutcomeTemplateID) {
+    const showingLegacyTemplatePrompt = OUTCOME_TEMPLATES.some((template) => template.prompt === input.trim());
     selectedOutcomeTemplateId = templateId;
-    const template = OUTCOME_TEMPLATES.find((item) => item.id === templateId);
-    if (template) setComposerInput(template.prompt);
+    if (showingLegacyTemplatePrompt) setComposerInput("");
     activeTaskReceipt = undefined;
     void tick().then(focusComposer);
   }
@@ -7718,7 +7722,7 @@ function openGovernanceCenter() {
     const linked = sidebarTaskContextForTab(tab.id);
     if (!linked) return;
     const existing = linked.task.receipt;
-    const templateID = linked.task.templateId ?? "review-fix";
+    const templateID = linked.task.templateId ?? "write-document";
     const template = OUTCOME_TEMPLATES.find((candidate) => candidate.id === templateID) ?? OUTCOME_TEMPLATES[0];
     const runtime = [
       `Workspace: ${tab.workspaceRoot || "未选择"}`,
@@ -7995,7 +7999,11 @@ function openGovernanceCenter() {
 
   async function send(displayText?: string, submitText?: string) {
     const text = (displayText ?? input).trim();
-    const submission = (submitText ?? text).trim();
+    const baseSubmission = (submitText ?? text).trim();
+    const shouldApplyOutcomeTemplate = activityMode === "work" && workLayer === "newTask" && !newTaskConversationActive;
+    const submission = shouldApplyOutcomeTemplate
+      ? `${selectedOutcomeTemplate.prompt}\n\n当前任务：\n${baseSubmission}`
+      : baseSubmission;
     if (!text || !submission) return;
     if (!hasWailsBindings()) {
       desktopBackendUnavailable("发送消息");
@@ -8667,7 +8675,6 @@ function openGovernanceCenter() {
       activeNavId={activePrimaryNavId}
       mode={activityMode}
       governanceActive={activityMode === "work" && isGovernanceLayer(workLayer)}
-      showModeSwitch={showActivityModeSwitch}
       displayMode={displayMode}
       drawerOpen={mobileDrawerOpen}
       collapsed={sidebarCollapsed}
@@ -9251,7 +9258,7 @@ function openGovernanceCenter() {
                 <section class="result-scenarios" aria-label="任务结果模板">
                   <header><div><span>新建任务</span><strong>从结果模板开始</strong></div><p>选择一个目标，进入任务后再补充上下文和运行配置。</p></header>
                   <div>
-                    {#each OUTCOME_TEMPLATES as template (template.id)}
+                    {#each WORK_OUTCOME_TEMPLATES as template (template.id)}
                       <button type="button" onclick={() => startOutcomeTask(template.id)}>
                         <span>{template.title}</span>
                         <strong>{template.summary}</strong>
@@ -9264,58 +9271,64 @@ function openGovernanceCenter() {
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
               {#if currentAgent}
-              {@const CurrentAgentIcon = agentIcon(currentAgent.id)}
               {@const appliedAgentProfile = currentComposerTab?.agentProfileId?.trim() === currentAgent.id && !agentSelectionDirty}
               <section class="aorist-page new-task-page agent-assistant-page">
                 <div class="agent-assistant-shell">
                   <div class="agent-assistant-center">
-                    <TaskOutcomeLauncher templates={OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
-                    <div class="runtime-step-label"><span>第 2 步</span><strong>确认运行配置</strong><em>Agent Profile 是任务配置，不是任务结果。</em></div>
-                    <div class="agent-selector">
-                      <button class="agent-selector__trigger" type="button" onclick={() => (agentSelectorOpen = !agentSelectorOpen)}>
-                        <span class="agent-selector__avatar"><CurrentAgentIcon size={28} /></span>
-                        <span class="agent-selector__label">
-                          <strong>{currentAgent.name}</strong>
-                          <em>{currentAgent.role}</em>
-                        </span>
-                        <ChevronDown class={agentSelectorOpen ? "is-open" : ""} size={17} />
-                      </button>
-
-                      {#if agentSelectorOpen}
-                        <button class="agent-selector__scrim" type="button" aria-label="关闭 Agent 选择" onclick={() => (agentSelectorOpen = false)}></button>
-                        <div class="agent-selector__menu">
-                          {#each agentCards as agent (agent.id)}
-                            {@const AgentIcon = agentIcon(agent.id)}
-                            <button class:active={selectedAgentId === agent.id} type="button" onclick={() => selectAgentForTask(agent.id)}>
-                              <span><AgentIcon size={16} /></span>
-                              <div>
-                                <strong>{agent.name}</strong>
-                                <em>{agent.desc}</em>
-                              </div>
-                              {#if selectedAgentId === agent.id}<Check size={15} />{/if}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                    </div>
-
-                    <div class="agent-runtime-summary" aria-label="当前 Thread 的 Agent 运行配置">
-                      <header>
-                        <span class:applied={appliedAgentProfile}>{appliedAgentProfile ? "当前 Thread 已应用" : "下次发送时应用"}</span>
-                        <em>以桌面后端确认结果为准</em>
-                      </header>
-                      <dl>
-                        <div><dt>模型</dt><dd>{agentProfileModelLabel(currentAgent)}</dd></div>
-                        <div><dt>能力</dt><dd>{threadAgentCapabilityLabel(currentAgent)}</dd></div>
-                        <div><dt>权限</dt><dd>{agentPermissionLabel(currentComposerTab?.toolApprovalMode ?? activeTab?.toolApprovalMode)}</dd></div>
-                        <div><dt>记忆</dt><dd>继承 Thread / Workspace</dd></div>
-                      </dl>
-                    </div>
-
+                    <TaskOutcomeLauncher templates={WORK_OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
                     {#if activeTaskReceipt}<TaskResultReceipt receipt={activeTaskReceipt} />{/if}
                   </div>
 
                   <section class="agent-compose-card" aria-label="新建对话输入区">
+                    <div class="agent-compose-meta" aria-label="任务运行信息">
+                      <div class="agent-selector">
+                        <button class="agent-selector__trigger" type="button" title={`${currentAgent.name}：${currentAgent.role}`} aria-label={`执行者：${currentAgent.name}，点击更换`} onclick={() => (agentSelectorOpen = !agentSelectorOpen)}>
+                          <span class="agent-selector__label">
+                            <em>执行者：</em>
+                            <strong>{currentAgent.name}</strong>
+                          </span>
+                          <ChevronDown class={agentSelectorOpen ? "is-open" : ""} size={14} />
+                        </button>
+
+                        {#if agentSelectorOpen}
+                          <button class="agent-selector__scrim" type="button" aria-label="关闭 Agent 选择" onclick={() => (agentSelectorOpen = false)}></button>
+                          <div class="agent-selector__menu">
+                            {#each agentCards as agent (agent.id)}
+                              {@const AgentIcon = agentIcon(agent.id)}
+                              <button class:active={selectedAgentId === agent.id} type="button" onclick={() => selectAgentForTask(agent.id)}>
+                                <span><AgentIcon size={16} /></span>
+                                <div>
+                                  <strong>{agent.name}</strong>
+                                  <em>{agent.desc}</em>
+                                </div>
+                                {#if selectedAgentId === agent.id}<Check size={15} />{/if}
+                              </button>
+                            {/each}
+                          </div>
+                        {/if}
+                      </div>
+
+                      <details class="agent-runtime-disclosure">
+                        <summary title="查看模型、能力、权限与记忆">
+                          <span>运行配置</span>
+                          <em>{appliedAgentProfile ? "已应用" : "发送时应用"}</em>
+                          <ChevronDown size={14} />
+                        </summary>
+                        <div class="agent-runtime-summary" aria-label="当前 Thread 的 Agent 运行配置">
+                          <header>
+                            <span class:applied={appliedAgentProfile}>{appliedAgentProfile ? "当前 Thread 已应用" : "下次发送时应用"}</span>
+                            <em>以桌面后端确认结果为准</em>
+                          </header>
+                          <dl>
+                            <div><dt>模型</dt><dd>{agentProfileModelLabel(currentAgent)}</dd></div>
+                            <div><dt>能力</dt><dd>{threadAgentCapabilityLabel(currentAgent)}</dd></div>
+                            <div><dt>权限</dt><dd>{agentPermissionLabel(currentComposerTab?.toolApprovalMode ?? activeTab?.toolApprovalMode)}</dd></div>
+                            <div><dt>记忆</dt><dd>继承 Thread / Workspace</dd></div>
+                          </dl>
+                        </div>
+                      </details>
+                    </div>
+
                     <Composer
                       {input}
                       {commands}
@@ -9346,6 +9359,8 @@ function openGovernanceCenter() {
                       onGoalChange={setComposerGoal}
                       onOpenResources={openResourceCenterFromComposer}
                       {activityMode}
+                      minimal={true}
+                      placeholder={selectedOutcomeTemplateId ? "补充任务背景或直接开始描述…" : "描述你想完成的任务，按 Enter 开始…"}
                       contextInfo={composerContext}
                       {backgroundRunCount}
                       queuedMessages={currentQueuedMessages}
@@ -9362,7 +9377,7 @@ function openGovernanceCenter() {
               </section>
               {:else}
                 <section class="aorist-page new-task-page agent-assistant-page">
-                  <TaskOutcomeLauncher templates={OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
+                  <TaskOutcomeLauncher templates={WORK_OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
                   <article class="detail-empty">
                     <strong>先完成运行配置，再开始任务</strong>
                     <p>{hasWailsBindings() ? "新用户只需先完成两步：创建一个 Agent，再连接可用模型。完成后回到这里即可开始。" : "未连接桌面后端。请在 Wails 桌面运行环境中创建 Agent、连接模型并开始真实对话。"}</p>
@@ -24929,38 +24944,12 @@ function openGovernanceCenter() {
     margin: 0 18px 8px;
   }
 
-  .runtime-step-label {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: min(100%, 920px);
-  }
-
-  .runtime-step-label span {
-    padding: 4px 8px;
-    border-radius: 999px;
-    background: #1f2421;
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1.35;
-  }
-
-  .runtime-step-label strong {
-    color: var(--foreground, #1f2421);
-    font-size: 13px;
-    font-weight: 650;
-  }
-
-  .runtime-step-label em {
-    color: var(--muted-foreground, #687169);
-    font-size: 11px;
-    font-style: normal;
-    line-height: 1.45;
+  .shell .aorist-workbench[data-current-work-layer="newTask"] > .aorist-page.new-task-page.agent-assistant-page {
+    padding: 0;
   }
 
   .agent-assistant-center {
-    gap: 14px;
+    gap: 10px;
   }
 
   .agent-assistant-page {
@@ -24969,38 +24958,57 @@ function openGovernanceCenter() {
   }
 
   .agent-assistant-shell {
-    align-content: start;
-    min-height: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, var(--agent-assistant-content-width));
+    grid-template-rows: auto minmax(24px, 1fr) auto auto;
+    align-content: stretch;
+    gap: 12px;
+    height: 100dvh;
+    min-height: 100dvh;
     padding: clamp(24px, 4vh, 44px) clamp(16px, 4vw, 48px) 28px;
   }
 
+  .agent-assistant-center {
+    grid-row: 1;
+  }
+
+  .agent-compose-card {
+    grid-row: 3;
+    align-self: end;
+  }
+
+  .agent-assistant-disclaimer {
+    grid-row: 4;
+  }
+
   .agent-selector {
-    width: min(100%, 920px);
-    justify-items: stretch;
+    width: auto;
+    max-width: 100%;
+    justify-self: start;
+    justify-items: start;
   }
 
   .agent-selector__trigger {
     appearance: none;
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr) auto;
+    display: inline-flex;
     align-items: center;
-    justify-items: start;
-    gap: 10px;
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--border, #dce1db);
-    border-radius: 12px;
-    background: var(--card, #fff);
+    gap: 5px;
+    width: auto;
+    min-width: 0;
+    min-height: 32px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
     color: var(--foreground, #1f2421);
-    box-shadow: 0 1px 0 rgb(15 23 42 / 0.02);
+    box-shadow: none;
     text-align: left;
-    transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+    transition: background 150ms ease;
   }
 
   .agent-selector__trigger:hover {
-    border-color: color-mix(in srgb, #1f2421 28%, var(--border, #dce1db));
-    background: var(--card, #fff);
-    box-shadow: 0 8px 24px rgb(15 23 42 / 0.05);
+    background: var(--muted, #edf0ec);
+    box-shadow: none;
     opacity: 1;
   }
 
@@ -25009,30 +25017,28 @@ function openGovernanceCenter() {
     outline-offset: 2px;
   }
 
-  .agent-selector__avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    background: #1f2421;
-    box-shadow: none;
-  }
-
   .agent-selector__label {
-    justify-items: start;
-    gap: 2px;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    min-width: 0;
   }
 
   .agent-selector__label strong {
+    overflow: hidden;
+    max-width: 180px;
     color: var(--foreground, #1f2421);
-    font-size: 13px;
-    font-weight: 650;
+    font-size: 12px;
+    font-weight: 600;
     letter-spacing: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .agent-selector__label em {
     color: var(--muted-foreground, #687169);
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 450;
   }
 
   .agent-selector__trigger > :global(svg) {
@@ -25042,10 +25048,10 @@ function openGovernanceCenter() {
   }
 
   .agent-selector__menu {
-    top: calc(100% + 8px);
-    right: 0;
+    top: calc(100% + 6px);
+    right: auto;
     left: 0;
-    width: 100%;
+    width: min(320px, calc(100vw - 48px));
     max-height: 320px;
     padding: 6px;
     border: 1px solid var(--border, #dce1db);
@@ -25078,8 +25084,68 @@ function openGovernanceCenter() {
     font-size: 11px;
   }
 
+  .agent-runtime-disclosure {
+    position: relative;
+    width: auto;
+    max-width: 100%;
+    margin-left: auto;
+  }
+
+  .agent-runtime-disclosure > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .agent-runtime-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .agent-runtime-disclosure > summary:hover {
+    background: var(--muted, #edf0ec);
+  }
+
+  .agent-runtime-disclosure > summary:focus-visible {
+    outline: 2px solid color-mix(in srgb, #0f7b55 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  .agent-runtime-disclosure > summary span {
+    color: var(--foreground, #1f2421);
+    font-weight: 650;
+  }
+
+  .agent-runtime-disclosure > summary em {
+    font-style: normal;
+  }
+
+  .agent-runtime-disclosure > summary :global(svg) {
+    transition: transform 150ms ease;
+  }
+
+  .agent-runtime-disclosure[open] > summary :global(svg) {
+    transform: rotate(180deg);
+  }
+
+  .agent-runtime-disclosure[open] .agent-runtime-summary {
+    margin-top: 0;
+  }
+
   .agent-runtime-summary {
-    width: min(100%, 920px);
+    position: absolute;
+    z-index: 32;
+    top: calc(100% + 6px);
+    right: 0;
+    width: min(620px, calc(100vw - 64px));
     padding: 12px;
     border: 1px solid var(--border, #dce1db);
     border-radius: 12px;
@@ -25118,9 +25184,33 @@ function openGovernanceCenter() {
     box-shadow: 0 0 0 2px color-mix(in srgb, #0f7b55 16%, transparent), 0 12px 34px rgb(15 23 42 / 0.07);
   }
 
+  .agent-compose-card :global(.composer--minimal .composer__runtime-compact .runtime-menu__trigger) {
+    justify-content: center;
+    width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    padding: 0;
+  }
+
+  .agent-compose-card :global(.composer--minimal .composer__runtime-compact .runtime-menu__trigger span),
+  .agent-compose-card :global(.composer--minimal .composer__runtime-compact .runtime-menu__trigger svg:last-child) {
+    display: none;
+  }
+
   .agent-compose-card {
     display: grid;
-    gap: 9px;
+    gap: 6px;
+  }
+
+  .agent-compose-meta {
+    position: relative;
+    z-index: 31;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 32px;
+    padding: 0 4px;
   }
 
   .governance-page {
@@ -25206,11 +25296,6 @@ function openGovernanceCenter() {
     .stage__surface {
       min-width: 0;
       width: 100%;
-    }
-
-    .runtime-step-label {
-      align-items: flex-start;
-      flex-wrap: wrap;
     }
 
     .result-home-page {

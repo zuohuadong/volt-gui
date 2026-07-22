@@ -46,7 +46,6 @@
     activeNavId: string;
     mode: "work" | "code";
     governanceActive: boolean;
-    showModeSwitch: boolean;
     displayMode: "office" | "developer";
     drawerOpen: boolean;
     collapsed: boolean;
@@ -82,7 +81,6 @@
     activeNavId,
     mode,
     governanceActive,
-    showModeSwitch,
     displayMode,
     drawerOpen,
     collapsed,
@@ -181,21 +179,14 @@
   </header>
 
   <div class="mode-switch" role="tablist" aria-label="工作模式">
-    {#if showModeSwitch}
-      <button class:active={mode === "work"} type="button" role="tab" aria-label="Work 工作台" aria-selected={mode === "work"} onclick={() => { onModeChange("work"); onDrawerClose(); }}>
-        <BriefcaseBusiness size={15} />
-        <span><strong>Work</strong><em>任务与交付</em></span>
-      </button>
-      <button class:active={mode === "code"} type="button" role="tab" aria-label="Code 工作台" aria-selected={mode === "code"} onclick={() => { onModeChange("code"); onDrawerClose(); }}>
-        <Code2 size={15} />
-        <span><strong>Code</strong><em>开发与检查</em></span>
-      </button>
-    {:else}
-      <button class="mode-switch__single" type="button" aria-label="切换到开发者模式" title="切换到开发者模式（Work/Code、治理、自动化等进阶功能）" onclick={() => { onToggleDisplayMode(); onDrawerClose(); }}>
-        <Code2 size={15} />
-        <span><strong>开发者模式</strong><em>展开 Work/Code 工作台</em></span>
-      </button>
-    {/if}
+    <button class:active={mode === "work"} type="button" role="tab" aria-label="Work 工作台" aria-selected={mode === "work"} onclick={() => { onModeChange("work"); onDrawerClose(); }}>
+      <BriefcaseBusiness size={15} />
+      <span><strong>Work</strong><em>任务与交付</em></span>
+    </button>
+    <button class:active={mode === "code"} type="button" role="tab" aria-label="Code 工作台" aria-selected={mode === "code"} onclick={() => { onModeChange("code"); onDrawerClose(); }}>
+      <Code2 size={15} />
+      <span><strong>Code</strong><em>开发与检查</em></span>
+    </button>
   </div>
 
   <nav class="primary-nav" aria-label="主导航">
@@ -274,9 +265,14 @@
 
   <footer>
     <button class:active={governanceActive} type="button" aria-pressed={governanceActive} onclick={() => { onGovernance(); onDrawerClose(); }}><Settings2 size={15} /><span>{displayMode === "office" ? "设置" : "配置与治理"}</span><em>{displayMode === "office" ? "模型、权限与同步" : "设置、能力与安全"}</em></button>
-    {#if displayMode === "developer"}
-      <button type="button" aria-label="切换回办公模式" title="切换回办公模式" onclick={() => { onToggleDisplayMode(); onDrawerClose(); }}><BriefcaseBusiness size={15} /><span>切回办公模式</span><em>精简到今日/任务/资料</em></button>
-    {/if}
+    <button
+      type="button"
+      aria-label={displayMode === "office" ? "打开完整模式" : "切换回办公模式"}
+      title={displayMode === "office" ? "打开完整模式" : "切换回办公模式"}
+      onclick={() => { onToggleDisplayMode(); onDrawerClose(); }}
+    >
+      {#if displayMode === "office"}<Boxes size={15} /><span>完整模式</span><em>项目、自动化与治理</em>{:else}<BriefcaseBusiness size={15} /><span>切回办公模式</span><em>精简 Work 导航</em>{/if}
+    </button>
   </footer>
 </aside>
 
@@ -312,7 +308,6 @@
   .mode-switch button { display: grid; grid-template-columns: 18px minmax(0,1fr); align-items: center; min-width: 0; min-height: 32px; padding: 3px 7px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground, #687169); text-align: left; transition: background .15s ease, border-color .15s ease, color .15s ease; }
   .mode-switch button:hover { color: var(--foreground, #1f2421); }
   .mode-switch button.active { border-color: color-mix(in srgb, var(--border, #dce1db) 82%, transparent); background: var(--card, #fff); color: var(--foreground, #1f2421); box-shadow: 0 1px 2px rgba(31, 36, 33, .06); }
-  .mode-switch__single { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--border, #dce1db) 82%, transparent) !important; background: var(--card, #fff); color: var(--foreground, #1f2421); box-shadow: 0 1px 2px rgba(31, 36, 33, .06); }
   .mode-switch span, .mode-switch strong, .mode-switch em { display: block; min-width: 0; }
   .mode-switch strong { font-size: 12px; font-weight: 650; }
   .mode-switch em { display: none; }

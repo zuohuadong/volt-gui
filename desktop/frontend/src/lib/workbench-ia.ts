@@ -5,6 +5,11 @@ export const WORKBENCH_STATE_STORAGE_KEY = "voltui.workbench.ia.v2";
 export const LEGACY_SIDEBAR_STORAGE_KEY = "volt-gui.sidebar-state.v1";
 
 export type TaskOutcomeTemplateID =
+  | "write-document"
+  | "organize-materials"
+  | "meeting-followup"
+  | "analyze-data"
+  | "plan-work"
   | "review-fix"
   | "build-diagnosis"
   | "knowledge-change"
@@ -168,7 +173,45 @@ const RECEIPT_SECTIONS: ReceiptSectionID[] = [
   "rollback",
 ];
 
-export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
+export const WORK_OUTCOME_TEMPLATES: OutcomeTemplate[] = [
+  {
+    id: "write-document",
+    title: "起草文档",
+    summary: "根据目标、读者和资料生成可直接编辑的初稿。",
+    prompt: "根据当前任务中提供的目标和资料起草办公文档。\n\n步骤：\n1. 确认文档用途、读者和期望格式；信息不足时先提问。\n2. 提炼资料中的事实和约束，不补写未经确认的信息。\n3. 输出结构清晰、可直接继续编辑的初稿。\n\n最终交付包括：文档正文、采用的资料、待确认事项。",
+    receiptSections: RECEIPT_SECTIONS,
+  },
+  {
+    id: "organize-materials",
+    title: "整理资料",
+    summary: "归纳多份材料，提取重点、差异和待办事项。",
+    prompt: "整理当前任务中明确提供或引用的资料。\n\n步骤：\n1. 按来源和主题归类。\n2. 提取关键事实、差异、风险和待确认信息。\n3. 把可执行事项整理为清单。\n\n最终交付包括：资料摘要、关键结论、行动清单、来源索引。资料缺失时明确指出，不要猜测。",
+    receiptSections: RECEIPT_SECTIONS,
+  },
+  {
+    id: "meeting-followup",
+    title: "会议纪要",
+    summary: "把会议记录整理为决策、负责人和后续安排。",
+    prompt: "把当前会议记录整理为便于协作和跟进的纪要。\n\n步骤：\n1. 提取已确认决策、讨论结论和未决问题。\n2. 识别行动项、负责人和截止时间；原文未给出时标记待确认。\n3. 生成简洁的会后跟进内容。\n\n最终交付包括：会议结论、行动项、待确认事项、跟进消息草稿。",
+    receiptSections: RECEIPT_SECTIONS,
+  },
+  {
+    id: "analyze-data",
+    title: "分析数据",
+    summary: "分析表格或指标，给出结论、异常与行动建议。",
+    prompt: "分析当前任务中提供的表格、指标或结构化数据。\n\n步骤：\n1. 确认分析目标、口径和时间范围。\n2. 检查缺失值、异常值和口径差异。\n3. 提炼趋势、对比和可执行洞察。\n\n最终交付包括：关键结论、数据依据、异常说明、行动建议。不要虚构缺失数据。",
+    receiptSections: RECEIPT_SECTIONS,
+  },
+  {
+    id: "plan-work",
+    title: "制定计划",
+    summary: "把目标拆成里程碑、负责人、时间和风险。",
+    prompt: "把当前目标整理为可执行的工作计划。\n\n步骤：\n1. 明确目标、范围和完成标准。\n2. 拆分里程碑、任务依赖、负责人和时间安排。\n3. 标记风险、阻塞项和需要确认的决策。\n\n最终交付包括：目标与范围、里程碑、任务清单、风险与下一步。",
+    receiptSections: RECEIPT_SECTIONS,
+  },
+];
+
+export const CODE_OUTCOME_TEMPLATES: OutcomeTemplate[] = [
   {
     id: "review-fix",
     title: "审查并修复",
@@ -204,6 +247,11 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     prompt: "执行发布前验收。\n\n步骤：\n1. 检查构建产物是否就绪。\n2. 检查自动化门禁是否通过。\n3. 确认配置与数据路径。\n4. 准备回滚方案。\n\n最终交付按以下格式输出：通过项、待确认项、阻断项、回滚步骤。逐项给出明确结论，不要混入无关内容。",
     receiptSections: RECEIPT_SECTIONS,
   },
+];
+
+export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
+  ...WORK_OUTCOME_TEMPLATES,
+  ...CODE_OUTCOME_TEMPLATES,
 ];
 
 type ProjectIdentity = { id: string; name: string };

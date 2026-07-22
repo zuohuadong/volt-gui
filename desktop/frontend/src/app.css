@@ -1118,6 +1118,25 @@ button {
   overflow: hidden;
 }
 
+.composer--minimal .composer__runtime-compact {
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer--minimal .composer__runtime-compact .runtime-menu__trigger {
+  justify-content: center;
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: var(--muted, #edf0ec);
+}
+
+.composer--minimal .composer__runtime-compact .runtime-menu__trigger span,
+.composer--minimal .composer__runtime-compact .runtime-menu__trigger svg:last-child {
+  display: none;
+}
+
 .composer__actions {
   flex: 0 0 auto;
   margin-left: auto;

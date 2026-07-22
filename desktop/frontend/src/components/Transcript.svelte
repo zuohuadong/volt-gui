@@ -4,6 +4,7 @@
   import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, X } from "@lucide/svelte";
   import MarkdownView from "./MarkdownView.svelte";
   import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
+  import { stripInternalTranscriptBlocks } from "../lib/transcript-visibility";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
   let {
@@ -403,7 +404,7 @@
                 <div class="thinking-step">
                   <span></span>
                   <div>
-                    <MarkdownView text={item.body} />
+                    <MarkdownView text={stripInternalTranscriptBlocks(item.body)} />
                   </div>
                 </div>
               </div>
@@ -420,7 +421,7 @@
                 </footer>
               </div>
             {:else}
-              <MarkdownView text={item.body} />
+              <MarkdownView text={stripInternalTranscriptBlocks(item.body)} />
               {#if item.pending && item.role === "assistant"}
                 <div class="pending-inline-status" role="status" aria-live="polite">
                   <LoaderCircle size={13} />

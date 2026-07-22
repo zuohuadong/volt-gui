@@ -71,7 +71,19 @@ export function scopeLabelForMemoryLayer(
   if (layer === "workspace" && id === "global") return "全局工作区";
   if (layer === "project" && id === "inbox") return "收件箱";
   if (layer === "thread" && id.startsWith("thread-")) return "当前对话";
-  return id || "未绑定";
+  if (layer === "organization") return id ? "当前组织" : "未绑定";
+  if (layer === "workspace") return id ? "当前工作区" : "未绑定";
+  if (layer === "project") return id ? "当前项目" : "未绑定";
+  return id ? "当前对话" : "未绑定";
+}
+
+export function normalizeTrustCopy(value?: string): string {
+  return (value ?? "")
+    .replace(/[\u200B-\u200D\uFEFF\uFFFD]/g, "")
+    .replace(/browser[\s_-]*control/gi, "browserControl")
+    .replace(/MCP\s*\/\s*工具/g, "MCP 或工具")
+    .replace(/工具参数\s*\/\s*本地文件引用/g, "工具参数或本地文件引用")
+    .trim();
 }
 
 export function groupScopedMemoryEntries(entries: ScopedMemoryEntry[]) {

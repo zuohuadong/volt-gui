@@ -48,22 +48,20 @@
     onInspector,
   }: Props = $props();
   const officeMode = $derived(displayMode === "office");
-  let configExpanded = $state(false);
-  $effect(() => {
-    if (!officeMode) configExpanded = false;
-  });
+  let configExpandedRequested = $state(false);
+  const configExpanded = $derived(officeMode && configExpandedRequested);
   const inspectorItems = [
     { id: "task", label: "任务" },
-    { id: "workspace", label: "Workspace" },
-    { id: "context", label: "Context" },
-    { id: "changes", label: "Diff" },
-    { id: "checkpoints", label: "Checkpoints" },
+    { id: "workspace", label: "工作区" },
+    { id: "context", label: "上下文" },
+    { id: "changes", label: "变更" },
+    { id: "checkpoints", label: "检查点" },
   ];
 </script>
 
 <section class="task-context" data-testid="task-context-bar" aria-label="当前任务上下文">
   <button class="drawer-button" type="button" aria-label="打开导航抽屉" onclick={onOpenDrawer}><Menu size={16} /></button>
-  <div class="context-location" title={`Workspace: ${workspace} / Project: ${project}`}>
+  <div class="context-location" title={`工作区：${workspace} / 项目：${project}`}>
     <FolderKanban size={15} />
     <strong>{workspace}</strong>
     <ChevronRight size={13} />
@@ -71,14 +69,14 @@
   </div>
   <div class="context-controls" aria-label="当前执行配置">
     {#if officeMode && !configExpanded}
-      <button class="config-toggle" type="button" aria-label="展开任务配置" aria-expanded={configExpanded} onclick={() => (configExpanded = true)}><Bot size={14} /><span>任务配置</span></button>
+      <button class="config-toggle" type="button" aria-label="展开任务配置" aria-expanded={configExpanded} onclick={() => (configExpandedRequested = true)}><Bot size={14} /><span>任务配置</span></button>
     {:else}
-    <button type="button" aria-label={`Agent Profile: ${agent}`} title={`Agent Profile: ${agent}`} onclick={onOpenAgent}><Bot size={14} /><span>{agent}</span></button>
-    <button type="button" aria-label={`Model: ${model}`} title={`Model: ${model}`} onclick={onOpenModels}><Cpu size={14} /><span>{model}</span></button>
-    <button type="button" aria-label={`Permission: ${permission}`} title={`Permission: ${permission}`} onclick={onOpenPermission}><ShieldCheck size={14} /><span>{permission}</span></button>
-    <button class:empty={memoryEmpty} type="button" aria-label={memoryEmpty ? "添加分层记忆" : `Memory: ${memory}`} title={memoryEmpty ? "当前 Thread 尚未注入分层记忆，点击添加" : `Memory: ${memory}`} onclick={onOpenMemory}><Layers3 size={14} /><span>{memoryEmpty ? "添加记忆" : memory}</span></button>
+    <button type="button" aria-label={`智能体配置：${agent}`} title={`智能体配置：${agent}`} onclick={onOpenAgent}><Bot size={14} /><span>{agent}</span></button>
+    <button type="button" aria-label={`模型：${model}`} title={`模型：${model}`} onclick={onOpenModels}><Cpu size={14} /><span>{model}</span></button>
+    <button type="button" aria-label={`权限：${permission}`} title={`权限：${permission}`} onclick={onOpenPermission}><ShieldCheck size={14} /><span>{permission}</span></button>
+    <button class:empty={memoryEmpty} type="button" aria-label={memoryEmpty ? "添加分层记忆" : `记忆：${memory}`} title={memoryEmpty ? "当前对话尚未注入分层记忆，点击添加" : `记忆：${memory}`} onclick={onOpenMemory}><Layers3 size={14} /><span>{memoryEmpty ? "添加记忆" : memory}</span></button>
     {#if officeMode}
-      <button class="config-toggle" type="button" aria-label="收起任务配置" aria-expanded={configExpanded} onclick={() => (configExpanded = false)}><PanelRightOpen size={14} /><span>收起</span></button>
+      <button class="config-toggle" type="button" aria-label="收起任务配置" aria-expanded={configExpanded} onclick={() => (configExpandedRequested = false)}><PanelRightOpen size={14} /><span>收起</span></button>
     {/if}
     {/if}
   </div>

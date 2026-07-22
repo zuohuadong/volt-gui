@@ -13,6 +13,7 @@
 
   import {
     MEMORY_LAYER_LABELS,
+    MEMORY_LAYER_ORDER,
     formatGovernanceTimestamp,
     groupScopedMemoryEntries,
     scopeLabelForMemoryLayer,
@@ -70,6 +71,19 @@
   const mutationDisabled = $derived(!backendAvailable || running || mutating || !view?.available);
   const hasMemoryRecords = $derived(Boolean(view?.entries.length || view?.archives.length));
 
+  function entryScopeLabel(entry: ScopedMemoryEntry, layer: ScopedMemoryLayer): string {
+    const currentScopeID = view ? scopeIDForMemoryLayer(view.context, layer) : "";
+    const entryScopeID = scopeIDForMemoryLayer(entry.owner, layer);
+    return scopeLabelForMemoryLayer(entry.owner, currentScopeID === entryScopeID ? view?.contextLabels : undefined, layer);
+  }
+
+  function ownerLabel(entry: ScopedMemoryEntry): string {
+    return MEMORY_LAYER_ORDER
+      .filter((layer) => layer !== "user" && scopeIDForMemoryLayer(entry.owner, layer))
+      .map((layer) => entryScopeLabel(entry, layer))
+      .join(" → ") || "当前用户";
+  }
+
   function referencesText(references: ScopedMemoryReference[]): string {
     return references.map((reference) => [reference.id, reference.title, reference.source].filter(Boolean).join(" | ")).join("\n");
   }
@@ -116,7 +130,7 @@
     actionError = "";
     actionMessage = "";
     if (!draftTitle.trim() || !draftBody.trim() || !draftSource.trim() || !scopeID) {
-      actionError = "标题、正文、来源和有效 Scope 均为必填项。";
+      actionError = "标题、正文、来源和有效记忆范围均为必填项。";
       return;
     }
     mutating = true;
@@ -173,32 +187,32 @@
 
 <section class="memory-manager" data-testid="scoped-memory-manager">
   <header class="memory-toolbar">
-    <div><span>Layered Memory</span><strong>分层记忆</strong><p>User → Organization → Workspace → Project → Thread，所有条目都保留来源、引用和所有权链路。</p></div>
+    <div><span>分层记忆</span><strong>分层记忆</strong><p>用户 → 组织 → 工作区 → 项目 → 对话，所有条目都保留来源、引用和所有权链路。</p></div>
     <div><button type="button" onclick={onOpenTrust}>数据与信任</button><button type="button" disabled={loading || !backendAvailable} onclick={onRefresh}><RefreshCw size={14} /> {loading ? "读取中" : "刷新"}</button><button class="primary" type="button" disabled={mutationDisabled} onclick={openCreate}><Plus size={14} /> 新建记忆</button></div>
   </header>
 
-  {#if running}<div class="runtime-lock"><Layers3 size={15} /><span>当前 Thread 正在运行。为避免提示词和审计状态分裂，运行结束前不可修改分层记忆。</span></div>{/if}
+  {#if running}<div class="runtime-lock"><Layers3 size={15} /><span>当前对话正在运行。为避免提示词和审计状态分裂，运行结束前不可修改分层记忆。</span></div>{/if}
   {#if actionMessage}<div class="inline-message success">{actionMessage}</div>{/if}
   {#if actionError}<div class="inline-message danger">{actionError}</div>{/if}
   {#if error}<div class="inline-message danger">{error}</div>{/if}
 
   {#if !backendAvailable}
-    <article class="memory-empty"><Layers3 size={28} /><strong>未连接桌面后端</strong><p>分层记忆不会使用浏览器预览数据。请在 Wails 桌面运行环境中管理当前 Thread 的真实记忆。</p></article>
+    <article class="memory-empty"><Layers3 size={28} /><strong>未连接桌面后端</strong><p>分层记忆不会使用浏览器预览数据。请在桌面运行环境中管理当前对话的真实记忆。</p></article>
   {:else if loading && !view}
     <article class="memory-empty"><span class="spin"><RefreshCw size={26} /></span><strong>正在读取分层记忆</strong></article>
   {:else if view}
     <section class="memory-context" aria-label="记忆所有权上下文">
-      <article><span>组织</span><strong title={view.context.organizationId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "organization")}</strong></article>
-      <article><span>工作区</span><strong title={view.context.workspaceId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "workspace")}</strong></article>
-      <article><span>项目</span><strong title={view.context.projectId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "project")}</strong></article>
-      <article><span>对话</span><strong title={view.context.threadId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "thread")}</strong></article>
+      <article><span>组织</span><strong>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "organization")}</strong></article>
+      <article><span>工作区</span><strong>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "workspace")}</strong></article>
+      <article><span>项目</span><strong>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "project")}</strong></article>
+      <article><span>对话</span><strong>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "thread")}</strong></article>
     </section>
 
     {#if !hasMemoryRecords}
       <article class="memory-empty memory-empty--onboarding">
         <Layers3 size={28} />
         <strong>尚未添加分层记忆</strong>
-        <p>这里只显示明确写入 User、Organization、Workspace、Project 或 Thread 层的 scoped memory。Agent Profile 的 MEMORY.md、普通项目文档和其他工具的记忆不会自动归入这里。</p>
+        <p>这里只显示明确写入用户、组织、工作区、项目或对话层的分层记忆。智能体配置中的记忆文件、普通项目文档和其他工具的记忆不会自动归入这里。</p>
         <button class="primary" type="button" disabled={mutationDisabled} onclick={openCreate}><Plus size={14} /> 添加第一条记忆</button>
       </article>
     {:else}
@@ -206,13 +220,13 @@
         <div class="layer-stack">
           {#each groups as group (group.layer)}
             <section class="memory-layer" data-layer={group.layer}>
-              <header><div><strong>{group.label}</strong><span title={scopeIDForMemoryLayer(view.context, group.layer)}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, group.layer)}</span></div><em>{group.entries.length} 条</em></header>
+              <header><div><strong>{group.label}</strong><span>{scopeLabelForMemoryLayer(view.context, view.contextLabels, group.layer)}</span></div><em>{group.entries.length} 条</em></header>
               <div>
                 {#each group.entries as entry (entry.id)}
                   <article class:isolated={entry.isolated} class="memory-entry" data-testid="scoped-memory-entry">
                     <div class="entry-head"><div><strong>{entry.title}</strong><span>{entry.source} · {formatGovernanceTimestamp(entry.updatedAt)}</span></div><b>{entry.isolated ? "已隔离" : "运行中可见"}</b></div>
                     <p>{entry.body}</p>
-                    <dl><dt>Owner</dt><dd>{[entry.owner.organizationId, entry.owner.workspaceId, entry.owner.projectId, entry.owner.threadId].filter(Boolean).join(" → ") || "User global"}</dd><dt>References</dt><dd>{entry.references.length ? entry.references.map((reference) => reference.title || reference.id).join(" / ") : "无"}</dd></dl>
+                    <dl><dt>所有权</dt><dd>{ownerLabel(entry)}</dd><dt>引用</dt><dd>{entry.references.length ? entry.references.map((reference) => reference.title || reference.id).join("、") : "无"}</dd></dl>
                     <footer><button type="button" disabled={mutationDisabled} onclick={() => openEdit(entry)}><Pencil size={13} /> 编辑</button><button type="button" disabled={mutationDisabled} onclick={() => void toggleIsolation(entry)}>{#if entry.isolated}<Eye size={13} /> 取消隔离{:else}<EyeOff size={13} /> 隔离{/if}</button><button class="danger" type="button" disabled={mutationDisabled} onclick={() => void deleteEntry(entry)}><Trash2 size={13} /> 删除并归档</button></footer>
                   </article>
                 {:else}
@@ -226,7 +240,7 @@
         <aside class="archive-panel">
           <header><Archive size={15} /><div><strong>审计归档</strong><span>删除后的条目只读保留</span></div><em>{view.archives.length}</em></header>
           {#each view.archives as archive (archive.entry.id)}
-            <details><summary>{archive.entry.title}<span>{MEMORY_LAYER_LABELS[archive.entry.layer]}</span></summary><div><p>{archive.entry.body}</p><dl><dt>来源</dt><dd>{archive.entry.source}</dd><dt>归档时间</dt><dd>{formatGovernanceTimestamp(archive.archivedAt)}</dd><dt>原 Scope</dt><dd>{archive.entry.scopeId}</dd></dl></div></details>
+            <details><summary>{archive.entry.title}<span>{MEMORY_LAYER_LABELS[archive.entry.layer]}</span></summary><div><p>{archive.entry.body}</p><dl><dt>来源</dt><dd>{archive.entry.source}</dd><dt>归档时间</dt><dd>{formatGovernanceTimestamp(archive.archivedAt)}</dd><dt>原记忆范围</dt><dd>{entryScopeLabel(archive.entry, archive.entry.layer)}</dd></dl></div></details>
           {:else}<div class="archive-empty">暂无归档记录。</div>{/each}
           {#if view.storePath}<details class="store-path"><summary>查看本地存储路径</summary><code>{view.storePath}</code></details>{/if}
         </aside>
@@ -240,12 +254,12 @@
 {#if editorOpen && view}
   <div class="memory-editor-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget && !mutating) editorOpen = false; }}>
     <div class="memory-editor" role="dialog" aria-modal="true" aria-labelledby="memory-editor-title">
-      <header><div><span>Scoped Memory</span><strong id="memory-editor-title">{editingID ? "编辑分层记忆" : "新建分层记忆"}</strong></div><button type="button" disabled={mutating} onclick={() => (editorOpen = false)}>关闭</button></header>
+      <header><div><span>分层记忆</span><strong id="memory-editor-title">{editingID ? "编辑分层记忆" : "新建分层记忆"}</strong></div><button type="button" disabled={mutating} onclick={() => (editorOpen = false)}>关闭</button></header>
       <div class="editor-grid">
         <label>标题<input bind:value={draftTitle} maxlength="256" placeholder="例如 发布前必须运行桌面测试" /></label>
-        <label>来源<input bind:value={draftSource} placeholder="manual / project-brief / user-profile" /></label>
-        <label>记忆层<select bind:value={draftLayer}><option value="user">User</option><option value="organization">Organization</option><option value="workspace">Workspace</option><option value="project">Project</option><option value="thread">Thread</option></select></label>
-        <label>Scope ID<input value={scopeID} readonly /></label>
+        <label>来源<input bind:value={draftSource} placeholder="例如：手动创建、项目摘要、用户偏好" /></label>
+        <label>记忆层<select bind:value={draftLayer}><option value="user">用户</option><option value="organization">组织</option><option value="workspace">工作区</option><option value="project">项目</option><option value="thread">对话</option></select></label>
+        <label>写入范围<input value={view ? scopeLabelForMemoryLayer(view.context, view.contextLabels, draftLayer) : "未绑定"} readonly /></label>
         <label class="wide">正文<textarea bind:value={draftBody} rows="8" placeholder="写入会参与运行时上下文的明确事实、约束或偏好。"></textarea></label>
         <label class="wide">引用<textarea bind:value={draftReferences} rows="4" placeholder="每行：reference-id | 标题 | 来源"></textarea></label>
         <label class="isolation-toggle"><input type="checkbox" bind:checked={draftIsolated} /><span><strong>保存为隔离条目</strong><em>条目可审计，但不会进入当前运行时提示词。</em></span></label>

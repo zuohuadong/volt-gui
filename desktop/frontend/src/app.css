@@ -1443,6 +1443,31 @@ button {
   max-width: 100%;
 }
 
+.code-workbench-chat .composer__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+
+.code-workbench-chat .composer__tools,
+.code-workbench-chat .composer__actions {
+  width: 100%;
+}
+
+.code-workbench-chat .composer__actions {
+  justify-content: flex-end;
+  margin-left: 0;
+  max-width: none;
+}
+
+.code-workbench-chat .composer__model {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
+
 .first-run-checklist {
   display: grid;
   gap: 12px;

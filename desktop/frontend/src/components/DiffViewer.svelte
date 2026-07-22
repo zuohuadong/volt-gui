@@ -25,24 +25,24 @@
   } = $props();
 
   const status = $derived(diff?.status || change?.gitStatus || "?");
-  const detail = $derived(change?.latestPrompt || diff?.oldPath || change?.oldPath || change?.sources.join(", ") || "Workspace change");
+  const detail = $derived(change?.latestPrompt || diff?.oldPath || change?.oldPath || change?.sources.join(", ") || "工作区变更");
   const language = $derived(preview?.path.split(".").pop());
 
   function statusLabel(value?: string) {
-    if (!value) return "changed";
-    if (value === "??") return "untracked";
-    if (value.includes("R")) return "renamed";
-    if (value.includes("A")) return "added";
-    if (value.includes("D")) return "deleted";
-    if (value.includes("M")) return "modified";
+    if (!value) return "已变更";
+    if (value === "??") return "未跟踪";
+    if (value.includes("R")) return "已重命名";
+    if (value.includes("A")) return "已新增";
+    if (value.includes("D")) return "已删除";
+    if (value.includes("M")) return "已修改";
     return value;
   }
 
   function stageLabels(value?: { indexStatus?: string; worktreeStatus?: string }) {
     const labels: string[] = [];
-    if (value?.indexStatus && value.indexStatus !== "?") labels.push(`staged ${value.indexStatus}`);
-    if (value?.worktreeStatus && value.worktreeStatus !== "?") labels.push(`unstaged ${value.worktreeStatus}`);
-    if (value?.indexStatus === "?" || value?.worktreeStatus === "?") labels.push("untracked");
+    if (value?.indexStatus && value.indexStatus !== "?") labels.push(`已暂存 ${value.indexStatus}`);
+    if (value?.worktreeStatus && value.worktreeStatus !== "?") labels.push(`未暂存 ${value.worktreeStatus}`);
+    if (value?.indexStatus === "?" || value?.worktreeStatus === "?") labels.push("未跟踪");
     return labels;
   }
 </script>
@@ -53,7 +53,7 @@
       <strong>{statusLabel(status)} {change.path}</strong>
       <span>{detail}</span>
       {#if change.oldPath}
-        <span>Renamed from {change.oldPath}</span>
+        <span>原路径：{change.oldPath}</span>
       {/if}
       <div class="diff-viewer__badges" data-testid="diff-stage-badges">
         {#each stageLabels(change) as label (label)}
@@ -62,7 +62,7 @@
       </div>
     </header>
     {#if change.turns?.length}
-      <p>Turns: {change.turns.join(", ")}</p>
+      <p>关联轮次：{change.turns.join(", ")}</p>
     {/if}
   {/if}
 
@@ -70,12 +70,12 @@
     {#if diff.err}
       <p class="diff-viewer__error">{diff.err}</p>
     {:else if diff.binary}
-      <p>Binary diff is unavailable.</p>
+      <p>二进制文件无法显示文本差异。</p>
     {:else if diff.diff}
       <div class="diff-viewer__summary">
         <span>{diff.kind}</span>
         {#if diff.oldPath}
-          <span>renamed from {diff.oldPath}</span>
+          <span>原路径：{diff.oldPath}</span>
         {/if}
         {#each stageLabels(diff) as label (label)}
           <span>{label}</span>
@@ -94,23 +94,23 @@
         {onRequestFix}
       />
       {#if diff.truncated}
-        <p>Diff was truncated because the change is large.</p>
+        <p>变更内容较大，当前差异已截断。</p>
       {/if}
     {:else}
-      <p>No textual diff for this change.</p>
+      <p>此变更没有可显示的文本差异。</p>
     {/if}
   {:else if preview}
     {#if preview.err}
       <p class="diff-viewer__error">{preview.err}</p>
     {:else if preview.binary}
-      <p>Binary file preview is unavailable.</p>
+      <p>二进制文件无法预览。</p>
     {:else}
       <CodeBlock code={preview.body} {language} maxHeight={220} />
       {#if preview.truncated}
-        <p>Preview truncated at {preview.size} bytes.</p>
+        <p>预览已在 {preview.size} 字节处截断。</p>
       {/if}
     {/if}
   {:else}
-    <p>Select a changed file to inspect the current content.</p>
+    <p>请选择变更文件以检查当前内容。</p>
   {/if}
 </div>

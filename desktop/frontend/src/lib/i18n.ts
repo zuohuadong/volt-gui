@@ -227,8 +227,8 @@ const zh: typeof en = {
     open: "打开",
   },
   home: {
-    title: "Work with Volt",
-    beta: "Beta",
+    title: "使用 Volt 工作",
+    beta: "测试版",
     sidebar: "切换侧边栏",
     skills: "技能",
     automation: "自动化",
@@ -240,7 +240,7 @@ const zh: typeof en = {
     local: "本地",
     openInCode: "在代码中打开",
     work: {
-      title: "Work with Volt",
+      title: "使用 Volt 工作",
       workbench: {
         eyebrow: "Volt 办公",
         title: "工作台",

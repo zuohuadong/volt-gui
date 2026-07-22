@@ -68,6 +68,7 @@
   import CodeDashboard from "./components/CodeDashboard.svelte";
   import AdvancedRuntimeSettings from "./components/AdvancedRuntimeSettings.svelte";
   import AppearanceSettings from "./components/AppearanceSettings.svelte";
+  import BackToTopButton from "./components/BackToTopButton.svelte";
   import Composer from "./components/Composer.svelte";
   import DataTrustCenter from "./components/DataTrustCenter.svelte";
   import ExternalDataImportDialog from "./components/ExternalDataImportDialog.svelte";
@@ -152,6 +153,8 @@
     prependTranscriptPage,
     trimLiveTranscript,
   } from "./lib/history-pagination";
+  import { isConversationNearBottom, shouldAutoScrollConversation } from "./lib/conversation-scroll";
+  import { compactIdentifier, formatWorkbenchDateTime } from "./lib/workbench-format";
   import {
     INBOX_PROJECT_ID,
     LEGACY_SIDEBAR_STORAGE_KEY,
@@ -631,7 +634,10 @@
   let draftConversationToken = 0;
   let activeConversationTabId = $state("");
   let conversationScrollEl = $state<HTMLDivElement | null>(null);
+  let conversationPinnedToBottom = $state(true);
   let conversationScrollFrame: number | undefined;
+  let backToTopTarget = $state<HTMLElement | null>(null);
+  let backToTopVisible = $state(false);
   let historyPageTabId = $state("");
   let historyPageStartTurn = $state(0);
   let historyPageTotalTurns = $state(0);
@@ -2065,7 +2071,7 @@
       `状态：${item.status || "已入库"}`,
       `切片：${knowledgeDocumentCount(item)} 个`,
       item.fileName ? `文件：${item.fileName}` : "",
-      item.indexedAt ? `索引时间：${item.indexedAt}` : "",
+      item.indexedAt ? `索引时间：${formatWorkbenchDateTime(item.indexedAt)}` : "",
       item.error ? `错误：${item.error}` : "",
     ].filter(Boolean).join(" / ");
     void loadKnowledgeDocumentPreview(item);
@@ -3237,8 +3243,9 @@
     }, 180);
   }
 
-  function scrollConversationToBottom(behavior: ScrollBehavior = "smooth") {
+  function scrollConversationToBottom(behavior: ScrollBehavior = "smooth", force = false) {
     if (typeof window === "undefined") return;
+    if (!shouldAutoScrollConversation(conversationPinnedToBottom, force)) return;
     void tick().then(() => {
       const el = conversationScrollEl;
       if (!el || !showActiveTranscript) return;
@@ -3296,12 +3303,12 @@
     scrollConversationToBottom("auto");
   }
 
-  function updateTranscriptItem(id: string, patch: Partial<TranscriptItem>) {
+  function updateTranscriptItem(id: string, patch: Partial<TranscriptItem>, options: { scroll?: boolean } = {}) {
     const item = transcript.find((entry) => entry.id === id);
     if (!item) return;
     Object.assign(item, patch);
     saveActiveSidebarConversationTranscript();
-    scrollConversationToBottom();
+    if (options.scroll !== false) scrollConversationToBottom();
   }
 
   function removeEmptyPendingAssistant() {
@@ -3786,19 +3793,6 @@ function switchActivityMode(mode: ActivityMode) {
    openWorkLayer(lastWorkLayer);
  }
 
-  function setDisplayMode(mode: DisplayMode) {
-    if (mode === displayMode) return;
-    displayMode = mode;
-    try {
-      window.localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, mode);
-    } catch {
-      // localStorage may be unavailable in test/SSR; ignore.
-    }
-    if (mode === "office" && activityMode === "code") {
-      switchActivityMode("work");
-    }
-  }
-
   const showActivityModeSwitch = $derived(displayMode === "developer");
 
   function isGovernanceLayer(layer: WorkLayer): layer is GovernanceLayer {
@@ -4163,18 +4157,7 @@ function openGovernanceCenter() {
     return `导出报告失败：${detail}`;
   }
   function reportTimestamp(value?: string) {
-    const source = value?.trim();
-    if (!source) return "未记录";
-    const date = new Date(source);
-    if (Number.isNaN(date.getTime())) return source;
-    return new Intl.DateTimeFormat("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(date).replaceAll("/", "-");
+    return formatWorkbenchDateTime(value);
   }
   function reportBodyLines(report = selectedReport()) {
     const body = report?.body?.trim() || report?.desc?.trim();
@@ -6863,7 +6846,7 @@ function openGovernanceCenter() {
     const tabID = currentTranscriptTabId();
     if (!item.archived || item.archiveLoaded || item.archiveLoading || !toolID || !tabID) return;
 
-    updateTranscriptItem(item.id, { archiveLoading: true, archiveLoadError: undefined });
+    updateTranscriptItem(item.id, { archiveLoading: true, archiveLoadError: undefined }, { scroll: false });
     try {
       if (!hasWailsBindings()) throw new Error("归档详情只能在桌面端会话中加载。");
       const evidence = await app().ToolResultForTab(tabID, toolID);
@@ -6875,13 +6858,13 @@ function openGovernanceCenter() {
         archiveLoading: false,
         archiveLoaded: true,
         archiveLoadError: undefined,
-      });
+      }, { scroll: false });
     } catch (error) {
       if (currentTranscriptTabId() !== tabID) return;
       updateTranscriptItem(item.id, {
         archiveLoading: false,
         archiveLoadError: formatErrorMessage(error),
-      });
+      }, { scroll: false });
     }
   }
 
@@ -6982,6 +6965,7 @@ function openGovernanceCenter() {
 
   async function hydrateHistory(tab: TabMeta, options: { preserveLocalWhenEmpty?: boolean } = {}) {
     const generation = ++historyPageGeneration;
+    conversationPinnedToBottom = true;
     historyPageTabId = tab.id;
     historyPageStartTurn = 0;
     historyPageTotalTurns = 0;
@@ -6992,11 +6976,11 @@ function openGovernanceCenter() {
     if (!historyRequestStillCurrent(tab.id, generation)) return;
     updateHistoryPageState(tab.id, page);
     if (options.preserveLocalWhenEmpty && !historyHasVisibleContent(page.messages) && transcriptHasContent(transcript)) {
-      scrollConversationToBottom("auto");
+      scrollConversationToBottom("auto", true);
       return;
     }
     transcript = historyToTranscript(page.messages, historyPageIDPrefix(page));
-    scrollConversationToBottom("auto");
+    scrollConversationToBottom("auto", true);
   }
 
   async function loadOlderHistory() {
@@ -7049,9 +7033,32 @@ function openGovernanceCenter() {
 
   function handleConversationScroll() {
     const el = conversationScrollEl;
+    if (el) {
+      conversationPinnedToBottom = isConversationNearBottom(el);
+      backToTopTarget = el;
+      backToTopVisible = el.scrollTop > 480;
+    }
     if (!el || el.scrollTop > HISTORY_SCROLL_THRESHOLD) return;
     if (historyPageTabId !== currentTranscriptTabId() || historyPageLoadError) return;
     void loadOlderHistory();
+  }
+
+  function handleStageScroll(event: Event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.matches(".aorist-page, .workbench, .conversation")) return;
+    backToTopTarget = target;
+    backToTopVisible = target.scrollTop > 480;
+    if (target === conversationScrollEl) conversationPinnedToBottom = isConversationNearBottom(target);
+  }
+
+  function scrollActivePageToTop() {
+    if (!backToTopTarget?.isConnected) {
+      backToTopTarget = null;
+      backToTopVisible = false;
+      return;
+    }
+    backToTopTarget.scrollTo({ top: 0, behavior: "smooth" });
+    backToTopVisible = false;
   }
 
   function guardianAssessmentKey(tool: string, subject: string, reason = "") {
@@ -8707,12 +8714,11 @@ function openGovernanceCenter() {
       onDrawerClose={() => (mobileDrawerOpen = false)}
       onCollapseToggle={() => (sidebarCollapsed = !sidebarCollapsed)}
       onGovernance={displayMode === "office" ? openOfficeSettings : openGovernanceCenter}
-      onToggleDisplayMode={() => setDisplayMode(displayMode === "office" ? "developer" : "office")}
       taskTimeLabel={sidebarConversationTimeLabel}
     />
     <section class="stage" class:stage--conversation={showActiveTranscript}>
       <div class="window-drag-region" aria-hidden="true"></div>
-      <div class="stage__surface" class:stage__surface--conversation={showActiveTranscript}>
+      <div class="stage__surface" class:stage__surface--conversation={showActiveTranscript} onscrollcapture={handleStageScroll}>
         {#if loading}
           <div class="content__loading">{t.app.loading}</div>
         {:else if showActiveTranscript}
@@ -9615,7 +9621,7 @@ function openGovernanceCenter() {
                 </div>
               </section>
             {:else if workLayer === "calendar"}<section class="aorist-page calendar-page"><div class="aorist-toolbar calendar-toolbar"><div><span>Calendar</span><strong>日程日历 · {calendarMonthLabel()}</strong></div><div><button type="button" onclick={() => shiftCalendarMonth(-1)}>上月</button><button type="button" onclick={resetCalendarMonth}>今天</button><button type="button" onclick={() => shiftCalendarMonth(1)}>下月</button><button type="button" onclick={() => openConfigDialog("todo")}>新建待办</button><button type="button" onclick={() => openConfigDialog("schedule")}>新建日程</button></div></div><div class="aorist-stats"><article><span>本月日程</span><strong>{calendarMonthEvents().length}</strong><em>{calendarMonthLabel()} / 会议 / 截止 / 验收</em></article><article><span>今日待办</span><strong>{todayTodoItems().length}</strong><em>仅统计今天截止</em></article><article><span>冲突提醒</span><strong>{calendarConflictGroups().length}</strong><em>{calendarConflictSummary()}</em></article></div><div class="calendar-board"><div class="calendar-grid calendar-month-grid">{#each calendarWeekdays as weekday (weekday)}<div class="calendar-weekday">{weekday}</div>{/each}{#each calendarMonthCells() as cell (cell.key)}<article class:today={cell.isToday} class:muted={!cell.inMonth}><b>{cell.day}</b>{#each cell.events as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="calendar-event-chip" type="button" onclick={() => openCalendarEvent(event)}>{event.time} {event.title}</button>{/each}</article>{/each}</div><aside class="aorist-card"><header><strong>近日安排</strong><button type="button" onclick={() => syncWorkbench("日程日历")}>同步</button></header>{#each upcomingCalendarEvents() as event, eventIndex (calendarEventKey(event, eventIndex))}<button class="automation-row" type="button" onclick={() => openCalendarEvent(event)}><span><strong>{event.title}</strong><em>{calendarEventFullDate(event).slice(8, 10) || event.day} 日 {event.time} / {event.place}</em></span><b>{event.type}</b></button>{:else}<article class="detail-empty"><strong>暂无近日安排</strong><p>当前月份暂无近期日程。</p></article>{/each}</aside></div></section>
-            {:else if workLayer === "reports" && reportCenterTab === "list"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>Reports</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{selectedReport()?.id || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty resource-library-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
+            {:else if workLayer === "reports" && reportCenterTab === "list"}<section class="aorist-page report-center-page"><div class="aorist-toolbar"><div><span>报告</span><strong>报告中心</strong></div><div><button type="button" onclick={() => openConfigDialog("report")}>新建报告</button><button type="button" disabled={unapprovedReportCount() > 0} title={unapprovedReportCount() ? `还有 ${unapprovedReportCount()} 篇报告待审批` : "全部报告均已通过审批"} onclick={exportReports}>批量导出</button></div></div><div class="report-center-layout"><div class="report-list-panel"><header><div><strong>报告列表</strong><span>{reportCards.length} 份报告</span></div></header><div class="report-card-list">{#each reportCards as report (report.id)}<button class:active={selectedReport()?.id === report.id} type="button" onclick={() => selectReport(report.id)}><span>{report.status}</span><strong>{report.title}</strong><p>{report.desc || report.body || "暂无摘要"}</p><em>{report.kind || "分析报告"} / {report.owner}</em></button>{:else}<article class="detail-empty"><strong>暂无报告</strong><p>新建报告后会显示在这里。</p></article>{/each}</div></div><aside class="report-detail-panel">{#if selectedReport()}<header><div><span>{selectedReport()?.kind || "分析报告"}</span><strong>{selectedReport()?.title}</strong><p>{selectedReport()?.desc || "暂无报告摘要。"}</p></div><em>{selectedReport()?.status}</em></header><div class="report-detail-summary"><article><span>负责人</span><strong>{selectedReport()?.owner || "未指定"}</strong></article><article><span>关联项目</span><strong>{reportProject()?.name || "未关联项目"}</strong></article><article><span>关联客户</span><strong>{reportCustomer()?.name || "未关联客户"}</strong></article><article><span>生成来源</span><strong>{selectedReport()?.source || "工作台数据"}</strong></article><article><span>输出格式</span><strong>{selectedReport()?.format || "Markdown"}</strong></article><article><span>优先级</span><strong>{selectedReport()?.priority || "中"}</strong></article><article><span>截止时间</span><strong>{reportDueAt()}</strong></article><article><span>更新时间</span><strong>{reportTimestamp(selectedReport()?.updatedAt || selectedReport()?.createdAt)}</strong></article></div><section class="report-detail-body"><span>结构化正文</span>{#each reportBodyLines() as line, lineIndex (indexedKey(line, lineIndex))}<p>{line}</p>{/each}</section><section class="report-detail-actions"><span class="report-export-state" class:ready={reportCanExport(selectedReport())}>{reportCanExport(selectedReport()) ? "审批通过，可导出" : "待审批，暂不能导出"}</span><button type="button" onclick={() => openReportEditor()}><Pencil size={14} /> 修改</button><button type="button" disabled={!reportCanExport(selectedReport())} title={reportExportDisabledReason()} onclick={() => void exportReport()}><Download size={14} /> 导出</button><button class="danger" type="button" onclick={() => void deleteReport()}><Trash2 size={14} /> 删除</button></section><section class="report-detail-meta" aria-label="报告元信息"><div><span>报告 ID</span><strong title={selectedReport()?.id || ""}>{compactIdentifier(selectedReport()?.id) || "未记录"}</strong></div><div><span>创建时间</span><strong title={selectedReport()?.createdAt || ""}>{reportTimestamp(selectedReport()?.createdAt)}</strong></div></section>{:else}<article class="detail-empty"><strong>请选择报告</strong><p>点击左侧报告卡片后查看完整信息。</p></article>{/if}</aside></div></section>{:else if workLayer === "resources"}<section class="aorist-page resource-center"><div class="resource-center-topbar"><div class="capability-tabs resource-tabs"><button class:active={resourceTab === "resources"} type="button" onclick={() => (resourceTab = "resources")}>资料库</button><button class:active={resourceTab === "knowledge"} type="button" onclick={() => { resourceTab = "knowledge"; void refreshKnowledgeBase(); }}>知识库</button><button class:active={resourceTab === "search"} type="button" onclick={() => { resourceTab = "search"; void runWorkbenchSearch(resourceSearch); }}>全文检索</button><button class:active={resourceTab === "conversationArchive"} type="button" onclick={() => (resourceTab = "conversationArchive")}>对话归档</button><button class:active={resourceTab === "ingest"} type="button" onclick={() => (resourceTab = "ingest")}>导入中心</button></div><div class="resource-center-actions"><button type="button" onclick={() => openConfigDialog("resource")}>上传资料</button><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button></div></div>{#if resourceTab === "resources"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} aria-label="检索资料库" placeholder={selectedResourceCategory ? "检索该分类下的资料" : "检索资料或资料分类"} /></label><span>{selectedResourceCategory || resourceSearchActive ? `${filteredResourceItems.length} / ${selectedResourceCategory ? resourceItems.filter((item) => item.category === selectedResourceCategory).length : resourceItems.length} 项` : `${filteredResourceCategories.length} / ${resourceCategories.length} 类`}</span></div>{#if selectedResourceCategory}<div class="resource-category-bar"><button type="button" onclick={closeResourceCategory}>返回分类</button><strong>{selectedResourceCategory}</strong></div><div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty"><strong>该分类下暂无匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else if resourceSearchActive}<div class="aorist-card-grid">{#each filteredResourceItems as item (item.id)}<button type="button" class="media-card" onclick={() => openMaterialDetail(item.id)}><span>{item.status}</span><strong>{item.title}</strong><p>{item.source}</p><em>{item.size}</em></button>{:else}<article class="detail-empty"><strong>未找到匹配资料</strong><p>换一个关键词，或上传资料后重新检索。</p></article>{/each}</div>{:else}<div class="aorist-card-grid">{#each filteredResourceCategories as category (category.category)}<button type="button" class="media-card resource-category-card" onclick={() => openResourceCategory(category.category)}><span>{category.count} 项</span><strong>{category.category}</strong><p>{category.desc}</p><em>{category.latest}</em></button>{:else}<article class="detail-empty"><strong>暂无资料分类</strong><p>上传资料后会按资料分类自动汇总到这里。</p></article>{/each}</div>{/if}{:else if resourceTab === "knowledge"}
   <div class="resource-section-top">
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
     <div class="resource-actions"><button type="button" onclick={() => (externalDataImportOpen = true)}><Download size={14} /> 导入外部数据</button><button type="button" onclick={() => openConfigDialog("knowledge")}>手动录入</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => openRegulationEditor()}>新建规范</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
@@ -9640,7 +9646,7 @@ function openGovernanceCenter() {
                 <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
                 <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+                <div><dt>更新</dt><dd>{formatWorkbenchDateTime(item.updatedAt || item.createdAt)}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
@@ -9659,7 +9665,7 @@ function openGovernanceCenter() {
                 <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
                 <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+                <div><dt>更新</dt><dd>{formatWorkbenchDateTime(item.updatedAt || item.createdAt)}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
@@ -9678,7 +9684,7 @@ function openGovernanceCenter() {
                 <div><dt>分类</dt><dd>{item.category}</dd></div>
                 <div><dt>状态</dt><dd>{item.status}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置标签"}</dd></div>
-                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+                <div><dt>更新</dt><dd>{formatWorkbenchDateTime(item.updatedAt || item.createdAt)}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => void previewRegulation(item)}>预览</button><button type="button" onclick={() => openRegulationEditor(item)}>编辑</button><button type="button" onclick={() => void deleteRegulation(item)}>删除</button></footer>
             </article>
@@ -9699,7 +9705,7 @@ function openGovernanceCenter() {
           <div><dt>分类</dt><dd>{regulation.category}</dd></div>
           <div><dt>状态</dt><dd>{regulation.status}</dd></div>
           <div><dt>标签</dt><dd>{regulation.tags || "未设置标签"}</dd></div>
-          <div><dt>更新时间</dt><dd>{regulation.updatedAt || regulation.createdAt || "未记录"}</dd></div>
+          <div><dt>更新时间</dt><dd>{formatWorkbenchDateTime(regulation.updatedAt || regulation.createdAt)}</dd></div>
         </dl>
         <section class="knowledge-document-preview">
           <header><span>规范正文</span><div><button type="button" onclick={() => void previewRegulation(regulation)}>重新渲染</button></div></header>
@@ -9716,8 +9722,8 @@ function openGovernanceCenter() {
           <div><dt>文档数量</dt><dd>{knowledgeDocumentCount(doc)}</dd></div>
           <div><dt>来源</dt><dd>{doc.source || "workbench"}</dd></div>
           <div><dt>标签</dt><dd>{doc.tags || "未设置"}</dd></div>
-          <div><dt>创建时间</dt><dd>{doc.createdAt || "未记录"}</dd></div>
-          <div><dt>更新时间</dt><dd>{doc.updatedAt || "未记录"}</dd></div>
+          <div><dt>创建时间</dt><dd>{formatWorkbenchDateTime(doc.createdAt)}</dd></div>
+          <div><dt>更新时间</dt><dd>{formatWorkbenchDateTime(doc.updatedAt)}</dd></div>
           {#if doc.error}<div><dt>索引错误</dt><dd>{doc.error}</dd></div>{/if}
         </dl>
         <section class="knowledge-document-preview">
@@ -9745,7 +9751,7 @@ function openGovernanceCenter() {
           <header><span>关联文档</span><strong>{knowledgeDocumentCount(doc)} 份</strong></header>
           <div>
             {#each knowledgeDocumentMaterials(doc) as material (material.id)}
-              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {material.updatedAt}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button></article>
+              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {formatWorkbenchDateTime(material.updatedAt)}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button></article>
             {:else}
               <p>该模板尚未关联资料。</p>
             {/each}
@@ -10324,6 +10330,7 @@ function openGovernanceCenter() {
             </div>
           </section>
         {/if}
+        <BackToTopButton visible={backToTopVisible} aboveComposer={showActiveTranscript} onActivate={scrollActivePageToTop} />
       </div>
 
       {#if codeInspectorOpen}
@@ -10375,7 +10382,7 @@ function openGovernanceCenter() {
                 <dt>文件大小</dt><dd>{formatFileSize(material.fileSize)}</dd>
                 <dt>MIME 类型</dt><dd>{material.mimeType || "未记录"}</dd>
                 <dt>来源/路径</dt><dd>{materialPath(material) || "未记录"}</dd>
-                <dt>更新时间</dt><dd>{material.updatedAt}</dd>
+                <dt>更新时间</dt><dd>{formatWorkbenchDateTime(material.updatedAt)}</dd>
               </dl>
             </div>
             <footer>
@@ -10483,7 +10490,7 @@ function openGovernanceCenter() {
                           <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; selectedResourceCategory = ""; resourceSearch = ""; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
-                            <b>{material.status}<small>{material.updatedAt}</small></b>
+                            <b>{material.status}<small>{formatWorkbenchDateTime(material.updatedAt)}</small></b>
                           </button>
                         {:else}
                           <article class="detail-empty"><strong>暂无关联资料</strong><p>新增资料后会出现在项目资料库与全文检索中。</p></article>
@@ -10649,7 +10656,7 @@ function openGovernanceCenter() {
                           <button class="customer-detail-row" type="button" onclick={() => { customerDetailOpen = false; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
-                            <b>{material.status}<small>{material.updatedAt}</small></b>
+                            <b>{material.status}<small>{formatWorkbenchDateTime(material.updatedAt)}</small></b>
                           </button>
                         {:else}
                           <article class="detail-empty"><strong>暂无关联资料</strong><p>上传客户资料后会自动进入资料中心和全文检索。</p></article>

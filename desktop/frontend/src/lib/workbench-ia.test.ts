@@ -2,7 +2,9 @@ import { describe, expect, test } from "vitest";
 
 import {
   INBOX_PROJECT_ID,
+  CODE_OUTCOME_TEMPLATES,
   OUTCOME_TEMPLATES,
+  WORK_OUTCOME_TEMPLATES,
   applyTaskReceiptEvidence,
   createPendingTaskReceipt,
   deriveWorkspaceOptions,
@@ -164,14 +166,22 @@ describe("unified workbench IA state", () => {
     expect(new Set(tasks.map((task) => task.id)).size).toBe(3);
   });
 
-  test("offers exactly five outcome templates with a prompt and receipt contract", () => {
-    expect(OUTCOME_TEMPLATES.map((template) => template.id)).toEqual([
+  test("separates office outcomes from code outcomes while preserving one receipt contract", () => {
+    expect(WORK_OUTCOME_TEMPLATES.map((template) => template.id)).toEqual([
+      "write-document",
+      "organize-materials",
+      "meeting-followup",
+      "analyze-data",
+      "plan-work",
+    ]);
+    expect(CODE_OUTCOME_TEMPLATES.map((template) => template.id)).toEqual([
       "review-fix",
       "build-diagnosis",
       "knowledge-change",
       "issue-delivery",
       "release-acceptance",
     ]);
+    expect(OUTCOME_TEMPLATES).toEqual([...WORK_OUTCOME_TEMPLATES, ...CODE_OUTCOME_TEMPLATES]);
     for (const template of OUTCOME_TEMPLATES) {
       expect(template.prompt.length).toBeGreaterThan(20);
       expect(template.receiptSections).toEqual(["goal", "runtime", "changes", "verification", "artifacts", "dataPath", "rollback"]);

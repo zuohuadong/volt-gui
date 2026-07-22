@@ -4,6 +4,7 @@ import {
   MEMORY_LAYER_ORDER,
   formatKnowledgeTimestamp,
   groupScopedMemoryEntries,
+  normalizeTrustCopy,
   scopeLabelForMemoryLayer,
   scopeIDForMemoryLayer,
   sortTrustWarnings,
@@ -93,6 +94,28 @@ describe("data governance presentation", () => {
       "登录流程复核",
     ]);
     expect(scopeIDForMemoryLayer(context, "thread")).toBe("thread-tab_opaque_hash");
+  });
+
+  test("hides internal scope identifiers when readable labels are unavailable", () => {
+    const context: ScopedMemoryContext = {
+      organizationId: "org_opaque_hash",
+      workspaceId: "workspace_opaque_hash",
+      projectId: "project_opaque_hash",
+      threadId: "thread-tab_opaque_hash",
+    };
+    expect(MEMORY_LAYER_ORDER.map((layer) => scopeLabelForMemoryLayer(context, undefined, layer))).toEqual([
+      "当前用户",
+      "当前组织",
+      "当前工作区",
+      "当前项目",
+      "当前对话",
+    ]);
+  });
+
+  test("normalizes trust copy from stale or malformed backend payloads", () => {
+    expect(normalizeTrustCopy("browser_\u200Bcontrol")).toBe("browserControl");
+    expect(normalizeTrustCopy("MCP/工具联网")).toBe("MCP 或工具联网");
+    expect(normalizeTrustCopy("工具参数/本地文件引用")).toBe("工具参数或本地文件引用");
   });
 
   test("formats knowledge timestamps for Chinese readers without raw ISO syntax", () => {

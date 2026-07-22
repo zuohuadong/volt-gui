@@ -77,8 +77,8 @@
       return (context?.changedFiles ?? []).map((file, index) => ({
         key: `${file.path}-${index}`,
         path: file.path,
-        meta: file.gitStatus || file.sources.join(", ") || "changed",
-        detail: file.turns?.length ? `turns ${file.turns.join(", ")}` : "",
+        meta: file.gitStatus || file.sources.join(", ") || "已变更",
+        detail: file.turns?.length ? `第 ${file.turns.join(", ")} 轮` : "",
         time: file.latestTime ?? 0,
       }));
     }
@@ -86,7 +86,7 @@
       key: `${file.path}-${index}`,
       path: file.path,
       meta: `turn ${file.turn}`,
-      detail: file.limit ? `${file.offset ?? 0}-${(file.offset ?? 0) + file.limit}${file.truncated ? " truncated" : ""}` : "",
+      detail: file.limit ? `${file.offset ?? 0}-${(file.offset ?? 0) + file.limit}${file.truncated ? "（已截断）" : ""}` : "",
       time: file.time,
     }));
   });
@@ -124,12 +124,12 @@
 
   async function refreshTree() {
     treeBusy = true;
-    treeStatus = "Loading file tree...";
+    treeStatus = "正在加载文件树…";
     try {
       entriesByDir = {};
       openDirs = [""];
       await loadDir("");
-      treeStatus = "File tree ready";
+      treeStatus = "文件树已就绪";
     } catch (error) {
       treeStatus = error instanceof Error ? error.message : String(error);
     } finally {
@@ -156,12 +156,12 @@
 
   async function openWorkspacePath(path: string) {
     await app().OpenWorkspacePath(path);
-    treeStatus = `Opened ${path}`;
+    treeStatus = `已打开：${path}`;
   }
 
   async function revealWorkspacePath(path: string) {
     await app().RevealWorkspacePath(path);
-    treeStatus = `Revealed ${path}`;
+    treeStatus = `已定位：${path}`;
   }
 
   function formatTokens(value: number) {
@@ -175,37 +175,37 @@
   }
 
   function formatCheckpointFiles(checkpoint: CheckpointMeta) {
-    if (!checkpoint.files.length) return "conversation only";
+    if (!checkpoint.files.length) return "仅对话内容";
     const first = checkpoint.files.slice(0, 2).join(", ");
     const remaining = checkpoint.files.length > 2 ? ` +${checkpoint.files.length - 2}` : "";
     return `${first}${remaining}`;
   }
 
   function statusLabel(status?: string) {
-    if (!status) return "changed";
-    if (status === "??") return "untracked";
-    if (status.includes("R")) return "renamed";
-    if (status.includes("A")) return "added";
-    if (status.includes("D")) return "deleted";
-    if (status.includes("M")) return "modified";
+    if (!status) return "已变更";
+    if (status === "??") return "未跟踪";
+    if (status.includes("R")) return "已重命名";
+    if (status.includes("A")) return "已新增";
+    if (status.includes("D")) return "已删除";
+    if (status.includes("M")) return "已修改";
     return status;
   }
 
   function stageLabels(file: { indexStatus?: string; worktreeStatus?: string }) {
     const labels: string[] = [];
-    if (file.indexStatus && file.indexStatus !== "?") labels.push("staged");
-    if (file.worktreeStatus && file.worktreeStatus !== "?") labels.push("unstaged");
-    if (file.indexStatus === "?" || file.worktreeStatus === "?") labels.push("untracked");
+    if (file.indexStatus && file.indexStatus !== "?") labels.push("已暂存");
+    if (file.worktreeStatus && file.worktreeStatus !== "?") labels.push("未暂存");
+    if (file.indexStatus === "?" || file.worktreeStatus === "?") labels.push("未跟踪");
     return labels;
   }
 
   async function rewindCheckpoint(checkpoint: CheckpointMeta, scope: RewindScope) {
     const key = `${checkpoint.turn}:${scope}`;
     rewindBusy = key;
-    rewindStatus = `Rewinding #${checkpoint.turn} ${scope}...`;
+    rewindStatus = `正在回退第 ${checkpoint.turn} 轮（${rewindScopeLabel(scope)}）…`;
     try {
       await onRewind(checkpoint.turn, scope);
-      rewindStatus = `Rewound #${checkpoint.turn} ${scope}; refreshed history, context, changes, and checkpoints.`;
+      rewindStatus = `已回退第 ${checkpoint.turn} 轮，并刷新历史、上下文、变更和检查点。`;
     } catch (error) {
       rewindStatus = error instanceof Error ? error.message : String(error);
     } finally {
@@ -216,10 +216,10 @@
   async function forkCheckpoint(checkpoint: CheckpointMeta) {
     const key = `${checkpoint.turn}:fork`;
     rewindBusy = key;
-    rewindStatus = `Forking #${checkpoint.turn}...`;
+    rewindStatus = `正在从第 ${checkpoint.turn} 轮创建分支…`;
     try {
       await onFork(checkpoint.turn);
-      rewindStatus = `Forked #${checkpoint.turn} into a new Thread.`;
+      rewindStatus = `已从第 ${checkpoint.turn} 轮创建新的对话。`;
     } catch (error) {
       rewindStatus = error instanceof Error ? error.message : String(error);
     } finally {
@@ -229,35 +229,41 @@
 
   async function refreshContextPanel() {
     contextBusy = true;
-    contextStatus = "Refreshing context...";
+    contextStatus = "正在刷新上下文…";
     try {
       await onRefreshContext();
-      contextStatus = "Context refreshed";
+      contextStatus = "上下文已刷新";
     } catch (error) {
       contextStatus = error instanceof Error ? error.message : String(error);
     } finally {
       contextBusy = false;
     }
   }
+
+  function rewindScopeLabel(scope: RewindScope) {
+    if (scope === "conversation") return "对话";
+    if (scope === "code") return "代码";
+    return "对话与代码";
+  }
 </script>
 
-<section class={["code-layout", `code-layout--${variant}`, `code-layout--focus-${focus}`]} aria-label="Code workspace">
+<section class={["code-layout", `code-layout--${variant}`, `code-layout--focus-${focus}`]} aria-label="代码工作区">
   {#if variant !== "workbench" || focus === "overview"}
   <div class="dashboard-grid" data-code-view={variant === "workbench" ? "overview" : undefined}>
     <article>
       <Gauge size={20} />
       <h2>{t.code.contextFiles}</h2>
-      <p>{remainingPercent === undefined || remainingTokens === undefined ? "上下文待统计。" : `剩余 ${remainingTokens.toLocaleString()} / ${context?.windowTokens.toLocaleString()} tokens (${remainingPercent}%)`}</p>
+      <p>{remainingPercent === undefined || remainingTokens === undefined ? "上下文待统计。" : `剩余 ${remainingTokens.toLocaleString()} / ${context?.windowTokens.toLocaleString()} 个令牌（${remainingPercent}%）`}</p>
     </article>
     <article>
       <GitPullRequest size={20} />
-      <h2>Changed files</h2>
-      <p>{changedCount === 0 ? "Workspace is clean." : `${changedCount} files have pending changes.`}</p>
+      <h2>变更文件</h2>
+      <p>{changedCount === 0 ? "工作区干净。" : `有 ${changedCount} 个文件待处理。`}</p>
     </article>
     <article>
       <RotateCcw size={20} />
       <h2>{t.code.checkpoints}</h2>
-      <p>{checkpoints.length ? `${checkpoints.length} rewind points available for this tab.` : "No checkpoints yet."}</p>
+      <p>{checkpoints.length ? `当前对话有 ${checkpoints.length} 个可回退检查点。` : "还没有检查点。"}</p>
     </article>
   </div>
   {/if}
@@ -274,27 +280,27 @@
         <div class="context-card__meter" style:--context-used={`${remainingPercent ?? 0}%`}>
           <div>
             <strong>{formatTokens(remainingTokens ?? 0)}</strong>
-            <span>/ {formatTokens(context.windowTokens)} tokens 剩余</span>
+            <span>/ {formatTokens(context.windowTokens)} 个令牌剩余</span>
           </div>
           <span>{remainingPercent === undefined ? "待统计" : `${remainingPercent}%`}</span>
         </div>
-        <div class="context-card__bar" aria-label="Context remaining">
+        <div class="context-card__bar" aria-label="上下文剩余量">
           <span></span>
         </div>
         <div class="context-card__metrics">
-          <div><span>Prompt</span><strong>{promptTokens.toLocaleString()}</strong></div>
-          <div><span>Completion</span><strong>{completionTokens.toLocaleString()}</strong></div>
-          <div><span>Reasoning</span><strong>{reasoningTokens.toLocaleString()}</strong></div>
-          <div><span>Other</span><strong>{otherTokens.toLocaleString()}</strong></div>
-          <div><span>Cache hit</span><strong>{cachePercent ? `${cachePercent}%` : "-"}</strong></div>
+          <div><span>输入</span><strong>{promptTokens.toLocaleString()}</strong></div>
+          <div><span>输出</span><strong>{completionTokens.toLocaleString()}</strong></div>
+          <div><span>推理</span><strong>{reasoningTokens.toLocaleString()}</strong></div>
+          <div><span>其他</span><strong>{otherTokens.toLocaleString()}</strong></div>
+          <div><span>缓存命中</span><strong>{cachePercent ? `${cachePercent}%` : "-"}</strong></div>
         </div>
-        <div class="context-card__tabs" role="tablist" aria-label="Context detail">
-          <button type="button" aria-pressed={contextDetail === "read"} onclick={() => (contextDetail = "read")}>Read {context.readFiles.length}</button>
-          <button type="button" aria-pressed={contextDetail === "changed"} onclick={() => (contextDetail = "changed")}>Changed {context.changedFiles.length}</button>
+        <div class="context-card__tabs" role="tablist" aria-label="上下文详情">
+          <button type="button" aria-pressed={contextDetail === "read"} onclick={() => (contextDetail = "read")}>已读取 {context.readFiles.length}</button>
+          <button type="button" aria-pressed={contextDetail === "changed"} onclick={() => (contextDetail = "changed")}>已变更 {context.changedFiles.length}</button>
         </div>
         <label class="context-card__search">
           <Search size={14} />
-          <input aria-label="Filter context files" placeholder={t.code.filter} bind:value={contextQuery} />
+          <input aria-label="筛选上下文文件" placeholder={t.code.filter} bind:value={contextQuery} />
         </label>
         <div class="context-card__rows">
           {#each filteredContextRows.slice(0, 6) as row (row.key)}
@@ -307,21 +313,21 @@
               <em>{row.meta}{row.detail ? ` · ${row.detail}` : ""}{row.time ? ` · ${formatTime(row.time)}` : ""}</em>
             </button>
           {:else}
-            <span>{contextDetail === "changed" ? "No changed files in context." : "No read files in context."}</span>
+              <span>{contextDetail === "changed" ? "上下文中没有变更文件。" : "上下文中没有已读取文件。"}</span>
           {/each}
         </div>
         {#if contextStatus}
           <span class="code-dock__status">{contextStatus}</span>
         {/if}
       {:else}
-        <span>Context panel pending.</span>
+        <span>上下文面板等待数据。</span>
       {/if}
     </section>
     {/if}
     {#if variant !== "workbench" || focus === "workspace"}
     <section class={[(focus === "workspace" || focus === "overview") && "is-focus"]}>
       <div class="code-dock__section-head">
-        <h2><Folder size={15} /> Files</h2>
+        <h2><Folder size={15} /> 文件</h2>
         <button type="button" title={t.code.refresh} disabled={treeBusy} onclick={refreshTree}><RefreshCw size={14} /></button>
       </div>
       <div class="file-tree" data-testid="code-file-tree">
@@ -349,7 +355,7 @@
             </div>
           {/each}
         {:else}
-          <span>{treeStatus || "No workspace files."}</span>
+          <span>{treeStatus || "工作区中没有文件。"}</span>
         {/if}
       </div>
       {#if treeStatus}
@@ -359,26 +365,26 @@
     {/if}
     {#if variant !== "workbench" || focus === "context"}
     <section class={[focus === "context" && "is-focus"]}>
-      <h2><Code2 size={15} /> Read files</h2>
+      <h2><Code2 size={15} /> 已读取文件</h2>
       {#if context?.readFiles.length}
         {#each context.readFiles as file (`${file.path}-${file.turn}`)}
           <button type="button" onclick={() => onPreviewFile(file.path)}>{file.path}</button>
         {/each}
       {:else}
-        <span>No files read yet.</span>
+        <span>还没有读取文件。</span>
       {/if}
     </section>
     {/if}
     {#if variant !== "workbench" || focus === "changes"}
     <section class={[focus === "changes" && "is-focus"]}>
-      <h2><GitPullRequest size={15} /> Changes</h2>
+      <h2><GitPullRequest size={15} /> 变更</h2>
       {#if changes?.files.length}
         {#each changes.files as file (file.path)}
           <button class="change-row" type="button" data-change-path={file.path} data-status={file.gitStatus || ""} onclick={() => onPreviewChange(file.path)}>
             <strong>{statusLabel(file.gitStatus)}</strong>
             <span>{file.path}</span>
             {#if file.oldPath}
-              <em>from {file.oldPath}</em>
+              <em>原路径：{file.oldPath}</em>
             {/if}
             {#each stageLabels(file) as label (label)}
               <small>{label}</small>
@@ -386,13 +392,13 @@
           </button>
         {/each}
       {:else}
-        <span>{changes?.gitErr || "No changed files."}</span>
+        <span>{changes?.gitErr || "没有变更文件。"}</span>
       {/if}
     </section>
     {/if}
     {#if variant !== "workbench" || focus === "checkpoints"}
     <section class={[focus === "checkpoints" && "is-focus"]} data-testid="code-checkpoints">
-      <h2><RotateCcw size={15} /> Checkpoints</h2>
+      <h2><RotateCcw size={15} /> 检查点</h2>
       {#if checkpoints.length}
         {#each checkpoints as checkpoint (checkpoint.turn)}
           <div class="checkpoint">
@@ -400,23 +406,23 @@
             <span class="checkpoint__meta">
               {formatTime(checkpoint.time)}
               <span aria-hidden="true">·</span>
-              {checkpoint.files.length} files
+              {checkpoint.files.length} 个文件
             </span>
             <span class="checkpoint__files">{formatCheckpointFiles(checkpoint)}</span>
             <div class="checkpoint__actions">
-              <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:fork`} onclick={() => forkCheckpoint(checkpoint)}>Fork Thread</button>
+              <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:fork`} onclick={() => forkCheckpoint(checkpoint)}>创建对话分支</button>
               {#if checkpoint.canConversation !== false}
-                <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:conversation`} onclick={() => rewindCheckpoint(checkpoint, "conversation")}>Conversation</button>
+                <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:conversation`} onclick={() => rewindCheckpoint(checkpoint, "conversation")}>回退对话</button>
               {/if}
               {#if checkpoint.canCode !== false}
-                <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:code`} onclick={() => rewindCheckpoint(checkpoint, "code")}>Code</button>
+                <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:code`} onclick={() => rewindCheckpoint(checkpoint, "code")}>回退代码</button>
               {/if}
-              <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:both`} onclick={() => rewindCheckpoint(checkpoint, "both")}>Both</button>
+              <button type="button" disabled={!!rewindBusy} aria-busy={rewindBusy === `${checkpoint.turn}:both`} onclick={() => rewindCheckpoint(checkpoint, "both")}>全部回退</button>
             </div>
           </div>
         {/each}
       {:else}
-        <span>No rewind points yet.</span>
+        <span>还没有可回退的检查点。</span>
       {/if}
       {#if rewindStatus}
         <span class="code-dock__status">{rewindStatus}</span>
@@ -425,7 +431,7 @@
     {/if}
     {#if variant !== "workbench" || focus === "workspace" || focus === "changes"}
     <section class={[(focus === "workspace" || focus === "changes" || focus === "overview") && "is-focus"]}>
-      <h2><FileText size={15} /> Preview</h2>
+      <h2><FileText size={15} /> 预览</h2>
       <DiffViewer
         change={selectedChange}
         preview={filePreview}

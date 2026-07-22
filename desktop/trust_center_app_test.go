@@ -222,7 +222,7 @@ func TestDataTrustCenterForTabIncludesStoragePolicyDiagnosticsAndFileEgress(t *t
 	if browser.Status != TrustStatusDisabled || !strings.Contains(browser.Detail, "browserControl") || strings.Contains(browser.Detail, "browser_control") {
 		t.Fatalf("browser upload must reflect current missing upload action: %+v", browser)
 	}
-	if mcp := trustFlowByID(t, view.FileEgress, "egress:mcp-tools"); mcp.Status != TrustStatusDisabled || mcp.Name != "MCP 或工具联网" || strings.Contains(mcp.Detail, "MCP/") {
+	if mcp := trustFlowByID(t, view.FileEgress, "egress:mcp-tools"); mcp.Status != TrustStatusDisabled || mcp.Name != "MCP 或工具联网" || strings.Contains(mcp.Detail, "MCP/") || strings.Contains(mcp.Direction, "/") {
 		t.Fatalf("local stdio MCP alone must not be represented as file egress: %+v", mcp)
 	}
 }

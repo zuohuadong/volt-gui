@@ -718,7 +718,7 @@ func trustFileEgressFlows(cfg *config.Config, activeModel string, im TrustEnterp
 		{ID: "egress:model-vision", Category: "file-egress", Name: "模型 Vision 附件", Status: visionStatus, Direction: "本机附件 -> 当前模型服务", Destinations: visionDestination, Classification: trustFlowClassification(visionDestination), DataCategories: []string{"用户选择的图片附件"}, Detail: "仅在用户附图且当前模型支持 Vision 时可能发送；不是已发送事件记录。"},
 		{ID: "egress:browser-upload", Category: "file-egress", Name: "浏览器文件上传", Status: TrustStatusDisabled, Direction: "本机文件 -> 浏览器页面", Classification: "unknown", DataCategories: []string{}, Detail: "当前 browserControl 动作未提供文件选择/上传能力。"},
 		{ID: "egress:im-media", Category: "file-egress", Name: "企业 IM 媒体", Status: imStatus, Direction: "远端 IM <-> 本机附件目录", Classification: "external", DataCategories: []string{"用户在 IM 中提供的媒体", "适配器媒体 URL"}, Detail: "入站媒体会下载到本机工作区；出站适配器契约可携带媒体 URL。此处只表示能力。"},
-		{ID: "egress:mcp-tools", Category: "file-egress", Name: "MCP 或工具联网", Status: remoteMCPStatus, Direction: "工具参数/本地文件引用 -> 工具目标", Classification: "unknown", DataCategories: []string{"工具明确接收的文本、路径或文件内容"}, Detail: "取决于具体 MCP 或工具语义与调用参数；不伪造已发送事件。"},
+		{ID: "egress:mcp-tools", Category: "file-egress", Name: "MCP 或工具联网", Status: remoteMCPStatus, Direction: "工具参数或本地文件引用 → 工具目标", Classification: "unknown", DataCategories: []string{"工具明确接收的文本、路径或文件内容"}, Detail: "取决于具体 MCP 或工具语义与调用参数；不伪造已发送事件。"},
 	}
 }
 

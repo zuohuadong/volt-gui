@@ -222,7 +222,7 @@
   <section class="project-tree" data-testid="project-task-tree">
     <header>
       <button class:expanded={!projectDockCollapsed} type="button" aria-expanded={!projectDockCollapsed} onclick={onProjectDockToggle}><ChevronDown size={13} /></button>
-      <div><strong>{mode === "code" ? "当前工程" : "项目与任务"}</strong><span>{mode === "code" ? "Workspace 对应的任务上下文" : "按项目组织任务与交付"}</span></div>
+      <div><strong>{mode === "code" ? "当前工程" : "项目与任务"}</strong><span>{mode === "code" ? "工作区对应的任务上下文" : "按项目组织任务与交付"}</span></div>
       <aside>
         <button type="button" aria-label={`项目排序：${projectSortLabel}`} title={`项目排序：${projectSortLabel}`} onclick={onProjectSort}><ArrowUpDown size={13} /></button>
         {#if mode === "work"}<button type="button" aria-label="新建项目" title="新建项目" onclick={() => { onProjectCreate(); onDrawerClose(); }}><Plus size={14} /></button>{/if}

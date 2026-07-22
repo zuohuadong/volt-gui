@@ -14,6 +14,7 @@
 
   import {
     formatGovernanceTimestamp,
+    normalizeTrustCopy,
     sortTrustWarnings,
     trustStatusPresentation,
   } from "../lib/data-governance";
@@ -40,12 +41,12 @@
 
   const warnings = $derived(sortTrustWarnings(view?.warnings ?? []));
   const contextItems = $derived([
-    ["Workspace", view?.context.workspaceId || view?.context.workspaceRoot || "未绑定"],
-    ["Project", view?.context.projectId || "未绑定"],
-    ["Thread", view?.context.threadId || "未绑定"],
-    ["Agent Profile", view?.context.agentProfileName || "未配置"],
-    ["Model", view?.context.runtimeModel || "未配置"],
-    ["Permission", view?.context.runtimePermission || "未配置"],
+    ["工作区", view?.context.workspaceId || view?.context.workspaceRoot || "未绑定"],
+    ["项目", view?.context.projectId || "未绑定"],
+    ["对话", view?.context.threadId || "未绑定"],
+    ["智能体配置", view?.context.agentProfileName || "未配置"],
+    ["模型", view?.context.runtimeModel || "未配置"],
+    ["权限", view?.context.runtimePermission || "未配置"],
   ] as const);
 
   function destinationLabel(flow: TrustFlow): string {
@@ -63,10 +64,10 @@
 
   function flowMeta(flow: TrustFlow): string[] {
     return [
-      flow.apiSurface ? `API ${flow.apiSurface}` : "",
+      flow.apiSurface ? `API 接口 ${normalizeTrustCopy(flow.apiSurface)}` : "",
       flow.transport ? `传输 ${flow.transport}` : "",
       flow.runtime ? `运行时 ${flow.runtime}` : "",
-      flow.provider ? `Provider ${flow.provider}` : "",
+      flow.provider ? `渠道 ${flow.provider}` : "",
     ].filter(Boolean);
   }
 </script>
@@ -85,18 +86,18 @@
         <article class="trust-flow-row" data-testid="trust-flow-row">
           <div class="flow-heading">
             <span class={["status-badge", `status-${status.tone}`]} title={status.description}>{status.label}</span>
-            <div><strong>{flow.name}</strong><p>{flow.direction || flow.detail || "当前未记录方向"}</p></div>
+            <div><strong>{normalizeTrustCopy(flow.name)}</strong><p>{normalizeTrustCopy(flow.direction || flow.detail) || "当前未记录方向"}</p></div>
             <b>{classificationLabel(flow.classification)}</b>
           </div>
           {#if flowMeta(flow).length > 0}<div class="flow-tags">{#each flowMeta(flow) as item (item)}<span>{item}</span>{/each}</div>{/if}
           {#if flow.dataCategories.length > 0}
-            <dl class="flow-data"><dt>可能涉及</dt><dd>{flow.dataCategories.join(" / ")}</dd></dl>
+            <dl class="flow-data"><dt>可能涉及</dt><dd>{flow.dataCategories.map(normalizeTrustCopy).filter(Boolean).join("、")}</dd></dl>
           {/if}
           <details>
             <summary>查看目标与说明</summary>
             <div class="flow-details">
               <dl><dt>目标</dt><dd class="path-value">{destinationLabel(flow)}</dd></dl>
-              <dl><dt>说明</dt><dd>{flow.detail || status.description}</dd></dl>
+              <dl><dt>说明</dt><dd>{normalizeTrustCopy(flow.detail) || status.description}</dd></dl>
               {#if flow.credential.env}<dl><dt>凭据引用</dt><dd><KeyRound size={13} /> {flow.credential.env} · {flow.credential.set ? "已设置" : "未设置"}</dd></dl>{/if}
             </div>
           </details>
@@ -111,7 +112,7 @@
 {#snippet storageRow(location: TrustLocation)}
   {@const status = trustStatusPresentation(location.status)}
   <article class="storage-row">
-    <div><strong>{location.name}</strong><p>{location.scope} · {location.retention}</p></div>
+    <div><strong>{normalizeTrustCopy(location.name)}</strong><p>{normalizeTrustCopy(location.scope)} · {normalizeTrustCopy(location.retention)}</p></div>
     <span class={["status-badge", `status-${status.tone}`]}>{location.exists ? "本机存在" : status.label}</span>
     <details>
       <summary>{location.sensitive ? "查看敏感路径" : "查看路径"}</summary>
@@ -123,9 +124,9 @@
 <section class="trust-center" data-testid="trust-center">
   <header class="trust-toolbar">
     <div>
-      <span>Data &amp; Trust</span>
+      <span>数据与信任</span>
       <strong>数据与信任中心</strong>
-      <p>只展示当前 Thread 的真实配置和能力边界；“已配置”或“按需可能”不代表数据已经发送。</p>
+      <p>只展示当前对话的真实配置和能力边界；“已配置”或“按需可能”不代表数据已经发送。</p>
     </div>
     <div>
       <button type="button" onclick={onOpenMemory}><Database size={14} /> 分层记忆</button>
@@ -134,9 +135,9 @@
   </header>
 
   {#if !backendAvailable}
-    <article class="trust-empty"><ShieldCheck size={28} /><strong>未连接桌面后端</strong><p>信任中心不生成预览数据。请在 Wails 桌面运行环境中查看当前 Thread 的真实数据路径和权限。</p></article>
+    <article class="trust-empty"><ShieldCheck size={28} /><strong>未连接桌面后端</strong><p>信任中心不生成预览数据。请在桌面运行环境中查看当前对话的真实数据路径和权限。</p></article>
   {:else if loading && !view}
-    <article class="trust-empty"><span class="spin"><RefreshCw size={26} /></span><strong>正在读取当前 Thread</strong><p>正在汇总 Provider、存储、网络、文件外发和运行权限。</p></article>
+    <article class="trust-empty"><span class="spin"><RefreshCw size={26} /></span><strong>正在读取当前对话</strong><p>正在汇总模型渠道、存储、网络、文件外发和运行权限。</p></article>
   {:else if error && !view}
     <article class="trust-empty danger"><AlertTriangle size={28} /><strong>无法读取信任中心</strong><p>{error}</p><button type="button" onclick={onRefresh}>重新读取</button></article>
   {:else if view}
@@ -156,7 +157,7 @@
       <section class="warning-stack" aria-label="风险提示">
         {#each warnings as warning (warning.id)}
           <article class={`warning-${warning.severity}`} data-testid="trust-warning">
-            <AlertTriangle size={16} /><div><strong>{warning.title}</strong><p>{warning.detail}</p></div><span>{warning.severity === "high" ? "高风险" : warning.severity === "medium" ? "需关注" : "提示"}</span>
+            <AlertTriangle size={16} /><div><strong>{normalizeTrustCopy(warning.title)}</strong><p>{normalizeTrustCopy(warning.detail)}</p></div><span>{warning.severity === "high" ? "高风险" : warning.severity === "medium" ? "需关注" : "提示"}</span>
           </article>
         {/each}
       </section>
@@ -164,7 +165,7 @@
 
     <div class="trust-columns">
       <div>
-        {@render flowSection("模型服务", "当前配置的模型请求目标和 API surface。", view.providers, Route)}
+        {@render flowSection("模型服务", "当前配置的模型请求目标和 API 接口范围。", view.providers, Route)}
         {@render flowSection("网络与工具", "MCP、浏览器、Web、代理和沙箱联网边界。", view.network, Network)}
         {@render flowSection("文件外发", "只描述能力，不伪造已经发生的文件发送事件。", view.fileEgress, FolderLock)}
       </div>
@@ -190,7 +191,7 @@
         <section class="trust-section policy-section">
           <header><span class="section-icon"><ShieldCheck size={16} /></span><div><strong>权限与沙箱</strong><p>当前 Thread 的运行权限和本地边界。</p></div><em>{view.policy.runtimeToolApproval}</em></header>
           <dl class="policy-grid">
-            <div><dt>Sandbox</dt><dd>{view.policy.sandboxMode}</dd></div>
+            <div><dt>沙箱</dt><dd>{view.policy.sandboxMode}</dd></div>
             <div><dt>网络</dt><dd>{view.policy.sandboxNetwork ? "允许" : "隔离"}</dd></div>
             <div><dt>默认权限</dt><dd>{view.policy.defaultPermission}</dd></div>
             <div><dt>运行权限</dt><dd>{view.policy.runtimeToolApproval}</dd></div>

@@ -14,10 +14,10 @@ import (
 	"voltui/internal/proc"
 )
 
-// psUTF8Prologue forces PowerShell to emit UTF-8 instead of the host's OEM code
-// page (e.g. CP936 on a Chinese Windows), so non-ASCII command output and error
-// text come back as valid UTF-8 rather than mojibake.
-const psUTF8Prologue = "$OutputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+// psUTF8Prologue forces PowerShell and Python subprocesses to emit UTF-8 instead
+// of the host's OEM code page (e.g. CP936 on a Chinese Windows), so non-ASCII
+// output and error text come back as valid UTF-8 rather than mojibake or crashes.
+const psUTF8Prologue = "$OutputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$env:PYTHONUTF8='1';$env:PYTHONIOENCODING='utf-8';"
 
 // ShellKind is the interpreter a shell command runs under.
 type ShellKind int

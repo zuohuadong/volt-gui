@@ -2422,8 +2422,16 @@ type toolOutcome struct {
 func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutcome {
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
+		names := a.tools.Names()
+		if len(names) > 32 {
+			names = append(names[:32], fmt.Sprintf("… and %d more", len(names)-32))
+		}
+		available := strings.Join(names, ", ")
+		if available == "" {
+			available = "(no tools are currently registered)"
+		}
 		return toolOutcome{
-			output: fmt.Sprintf("error: unknown tool %q", call.Name),
+			output: fmt.Sprintf("error: unknown tool %q. Use only tool names from the current schema. Available tools include: %s. Do not retry or invent another tool name.", call.Name, available),
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
@@ -2606,6 +2614,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		// retry land valid instead of repeating the same broken shape.
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
+		} else if strings.Contains(strings.ToLower(err.Error()), " is required") {
+			detail = strings.TrimRight(detail, "\n") + "\nA required argument is missing. Re-emit every required field exactly per this schema:\n" + string(t.Schema())
 		}
 		if tool.IsPolicyBlock(err) {
 			body, truncMsg := truncateToolOutput(fmt.Sprintf("blocked: %v\n%s\nHost policy block: do not retry the same action unchanged. Use a path inside the writable workspace, request a specific user decision when appropriate, or explain the blocker.", err, detail))

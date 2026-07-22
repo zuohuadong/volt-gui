@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1853,7 +1854,7 @@ func saveReportInto(data *WorkbenchDataView, input WorkbenchReportInput) (Workbe
 		return WorkbenchReportView{}, errors.New("report title is required")
 	}
 	now := time.Now().Format(time.RFC3339)
-	id := defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(slugifyAgentID(title), reportIDs(data.Reports)))
+	id := defaultString(strings.TrimSpace(input.ID), uniqueWorkbenchDataID(reportIDBase(title), reportIDs(data.Reports)))
 	createdAt := now
 	var previous WorkbenchReportView
 	found := false
@@ -2215,7 +2216,10 @@ func normalizeReports(reports []WorkbenchReportView) []WorkbenchReportView {
 		if report.Title == "" {
 			continue
 		}
-		report.ID = defaultString(strings.TrimSpace(report.ID), slugifyAgentID(report.Title))
+		report.ID = defaultString(strings.TrimSpace(report.ID), reportIDBase(report.Title))
+		if len(report.ID) > 64 {
+			report.ID = uniqueWorkbenchDataID(reportIDBase(report.Title), reportIDs(out))
+		}
 		report.Status = defaultString(strings.TrimSpace(report.Status), "草稿")
 		report.Owner = strings.TrimSpace(report.Owner)
 		report.Desc = strings.TrimSpace(report.Desc)
@@ -2249,6 +2253,18 @@ func normalizeReports(reports []WorkbenchReportView) []WorkbenchReportView {
 	}
 	sortReports(out)
 	return out
+}
+
+// reportIDBase keeps persisted report identifiers short and stable. The generic
+// slugifier expands every non-ASCII rune into hexadecimal bytes, which made a
+// Chinese title produce an identifier hundreds of characters long.
+func reportIDBase(title string) string {
+	slug := slugifyAgentID(title)
+	if len(slug) <= 48 {
+		return slug
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(title)))
+	return "report-" + hex.EncodeToString(sum[:8])
 }
 
 func normalizeReportReviewStatus(status string) string {

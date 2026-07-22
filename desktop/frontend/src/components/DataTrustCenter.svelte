@@ -18,6 +18,7 @@
     trustStatusPresentation,
   } from "../lib/data-governance";
   import type { TrustCenterView, TrustFlow, TrustLocation } from "../lib/types";
+  import ScrollToTop from "./ScrollToTop.svelte";
 
   interface Props {
     view?: TrustCenterView;
@@ -202,6 +203,8 @@
     </div>
   {/if}
 </section>
+
+<ScrollToTop />
 
 <style>
   .trust-center { display: grid; gap: 14px; min-width: 0; padding: 18px; color: #172033; }

@@ -40,6 +40,8 @@
     onGoalChange,
     onOpenResources,
     activityMode,
+    minimal = false,
+    placeholder = "与智能助手对话.... (@ 提及文件)",
     contextInfo,
     backgroundRunCount = 0,
     queuedMessages = [],
@@ -78,6 +80,8 @@
     onGoalChange?: (objective: string) => void | Promise<void>;
     onOpenResources?: () => void;
     activityMode?: ActivityMode;
+    minimal?: boolean;
+    placeholder?: string;
     contextInfo?: ContextPanelInfo;
     backgroundRunCount?: number;
     queuedMessages?: QueuedThreadMessage[];
@@ -484,7 +488,7 @@
 
 <form
   bind:this={composerRoot}
-  class={["composer", activityMode && `composer--${activityMode}`, dragOver && "composer--drop"]}
+  class={["composer", activityMode && `composer--${activityMode}`, minimal && "composer--minimal", dragOver && "composer--drop"]}
   style="--wails-drop-target: drop"
   aria-busy={pendingAttachmentWrites > 0}
   onsubmit={(event) => {
@@ -500,7 +504,7 @@
       data-composer-input
       data-testid="composer-input"
       value={input}
-      placeholder="与智能助手对话.... (@ 提及文件)"
+      placeholder={placeholder}
       rows="3"
       aria-label="Composer input"
       aria-keyshortcuts="Enter Shift+Enter Escape"
@@ -597,28 +601,45 @@
     onResume={onResumeQueuedMessage ?? (() => undefined)}
   />
 
-  <div class="composer__runtime-status" aria-label="Thread 运行状态">
-    <span data-thread-status="context">上下文剩余 <strong>{remainingContextPercent === undefined ? "待统计" : `${remainingContextPercent}%`}</strong></span>
-    <span data-thread-status="cost">本会话费用 <strong>{sessionCostLabel}</strong></span>
-    <span data-thread-status="background">后台运行 <strong>{Math.max(0, backgroundRunCount)}</strong></span>
-    <ComposerRuntimeMenu
-      bind:open={runtimeMenuOpen}
-      {collaborationMode}
-      {tokenMode}
-      {goal}
-      {goalStatus}
-      changing={runtimeChanging}
-      {onCollaborationModeChange}
-      {onTokenModeChange}
-      {onGoalChange}
-    />
-  </div>
+  {#if !minimal}
+    <div class="composer__runtime-status" aria-label="Thread 运行状态">
+      <span data-thread-status="context">上下文剩余 <strong>{remainingContextPercent === undefined ? "待统计" : `${remainingContextPercent}%`}</strong></span>
+      <span data-thread-status="cost">本会话费用 <strong>{sessionCostLabel}</strong></span>
+      <span data-thread-status="background">后台运行 <strong>{Math.max(0, backgroundRunCount)}</strong></span>
+      <ComposerRuntimeMenu
+        bind:open={runtimeMenuOpen}
+        {collaborationMode}
+        {tokenMode}
+        {goal}
+        {goalStatus}
+        changing={runtimeChanging}
+        {onCollaborationModeChange}
+        {onTokenModeChange}
+        {onGoalChange}
+      />
+    </div>
+  {/if}
 
   <div class="composer__toolbar">
     <div class="composer__tools">
       <button class="composer__plus-trigger" type="button" aria-label="添加上下文" title="添加上下文" aria-expanded={plusMenuOpen} onclick={togglePlusMenu}>
         <Plus size={16} />
       </button>
+      {#if minimal}
+        <div class="composer__runtime-compact" title="运行方式与目标">
+          <ComposerRuntimeMenu
+            bind:open={runtimeMenuOpen}
+            {collaborationMode}
+            {tokenMode}
+            {goal}
+            {goalStatus}
+            changing={runtimeChanging}
+            {onCollaborationModeChange}
+            {onTokenModeChange}
+            {onGoalChange}
+          />
+        </div>
+      {/if}
       {#if plusMenuOpen}
         <div class="composer-plus-menu" role="menu">
           <span class="composer-plus-menu__title">Add</span>

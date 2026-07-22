@@ -90,6 +90,17 @@ func TestUserPreviewTextStripsWorkbenchContext(t *testing.T) {
 	}
 }
 
+func TestUserPreviewTextStripsCapabilityRoute(t *testing.T) {
+	in := `<capability-route version="1">
+{"capability_id":"code.review"}
+</capability-route>
+
+审查当前项目的登录修复`
+	if got := UserPreviewText(in); got != "审查当前项目的登录修复" {
+		t.Fatalf("UserPreviewText = %q, want visible prompt without internal capability route", got)
+	}
+}
+
 // TestSessionPreviewFromMessagesPreservesCompiledFirstTurn proves the end-to-end
 // preview path (used for the picker/sidebar) recovers the prompt when the first
 // persisted user turn is a compiled contract.

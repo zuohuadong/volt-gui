@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, X } from "@lucide/svelte";
   import MarkdownView from "./MarkdownView.svelte";
   import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
+  import { stripInternalTranscriptBlocks } from "../lib/transcript-visibility";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
   let {
@@ -293,16 +295,44 @@
   function handleToolToggle(event: Event, item: TranscriptItem) {
     const details = event.currentTarget;
     if (!(details instanceof HTMLDetailsElement)) return;
+    const savedScroll = toolToggleScrollPositions.get(item.id);
+    toolToggleScrollPositions.delete(item.id);
+    const scrollContainer = savedScroll?.container ?? findScrollableAncestor(details);
+    const scrollTop = savedScroll?.top ?? scrollContainer?.scrollTop ?? 0;
+    const scrollLeft = savedScroll?.left ?? scrollContainer?.scrollLeft ?? 0;
     openToolIDs = setToolOpenState(openToolIDs, item.id, details.open);
+    if (scrollContainer) {
+      requestAnimationFrame(() => scrollContainer.scrollTo({ top: scrollTop, left: scrollLeft, behavior: "auto" }));
+    }
     if (!details.open || !item.archived || item.archiveLoaded || item.archiveLoading) return;
     void onLoadArchivedTool?.(item);
+  }
+
+  const toolToggleScrollPositions = new SvelteMap<string, { container: HTMLElement; top: number; left: number }>();
+
+  function captureToolToggleScroll(event: MouseEvent, item: TranscriptItem) {
+    const summary = event.currentTarget;
+    if (!(summary instanceof HTMLElement)) return;
+    const container = findScrollableAncestor(summary);
+    if (!container) return;
+    toolToggleScrollPositions.set(item.id, { container, top: container.scrollTop, left: container.scrollLeft });
+  }
+
+  function findScrollableAncestor(node: HTMLElement): HTMLElement | null {
+    let current: HTMLElement | null = node.parentElement;
+    while (current) {
+      const style = window.getComputedStyle(current);
+      if (/(auto|scroll|overlay)/.test(style.overflowY) && current.scrollHeight > current.clientHeight) return current;
+      current = current.parentElement;
+    }
+    return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : null;
   }
 </script>
 
 {#snippet toolEvidence(item: TranscriptItem)}
   {@const tool = toolDisplay(item)}
   <details class="thinking-card tool-call-card" open={isToolDetailsOpen(openToolIDs, item.id, item.pending)} ontoggle={(event) => handleToolToggle(event, item)}>
-    <summary>
+    <summary onclick={(event) => captureToolToggleScroll(event, item)}>
       <span class="thinking-card__icon"><Terminal size={16} /></span>
       <div>
         <strong>{tool.action}</strong>
@@ -374,7 +404,7 @@
                 <div class="thinking-step">
                   <span></span>
                   <div>
-                    <MarkdownView text={item.body} />
+                    <MarkdownView text={stripInternalTranscriptBlocks(item.body)} />
                   </div>
                 </div>
               </div>
@@ -391,7 +421,7 @@
                 </footer>
               </div>
             {:else}
-              <MarkdownView text={item.body} />
+              <MarkdownView text={stripInternalTranscriptBlocks(item.body)} />
               {#if item.pending && item.role === "assistant"}
                 <div class="pending-inline-status" role="status" aria-live="polite">
                   <LoaderCircle size={13} />

@@ -1,6 +1,9 @@
 package sandbox
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeNullRedirects(t *testing.T) {
 	const bash = "/dev/null"
@@ -47,5 +50,15 @@ func TestArgvNormalizesNullRedirects(t *testing.T) {
 	psArgv := Shell{Kind: ShellPowerShell, Path: "powershell"}.argv("echo hi 2>/dev/null")
 	if last := psArgv[len(psArgv)-1]; last != psUTF8Prologue+"echo hi 2>$null" {
 		t.Errorf("powershell argv command = %q, want /dev/null rewritten to $null", last)
+	}
+}
+
+func TestPowerShellUTF8PrologueConfiguresPythonSubprocesses(t *testing.T) {
+	argv := Shell{Kind: ShellPowerShell, Path: "powershell"}.argv("python verify.py")
+	command := argv[len(argv)-1]
+	for _, want := range []string{"$env:PYTHONUTF8='1'", "$env:PYTHONIOENCODING='utf-8'"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("PowerShell command %q should contain %q", command, want)
+		}
 	}
 }

@@ -52,3 +52,20 @@ func TestValidArgsErrorOmitsSchema(t *testing.T) {
 		t.Fatalf("expected the real validation error, got %q", got)
 	}
 }
+
+func TestMissingRequiredToolArgEchoesSchema(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(NewAskTool())
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("c1", "ask", `{}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+	if err := a.Run(context.Background(), "ask me"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := toolResult(a.session, "ask")
+	if !strings.Contains(got, "required argument is missing") || !strings.Contains(got, `"questions"`) {
+		t.Fatalf("missing-required-field result should echo the schema, got %q", got)
+	}
+}

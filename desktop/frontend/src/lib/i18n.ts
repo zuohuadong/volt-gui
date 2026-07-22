@@ -283,7 +283,7 @@ const zh: typeof en = {
       title: "Code with Volt",
       quick: [
         { label: "解读代码", prompt: "阅读当前工作区，解释关键模块与执行流程。", icon: "folder" },
-        { label: "审查改动", prompt: "审查当前 diff，列出风险并给出修复建议与测试命令。", icon: "code" },
+        { label: "审查改动", prompt: "审查当前代码差异，列出风险并给出修复建议与测试命令。", icon: "code" },
         { label: "运行检查", prompt: "运行项目的构建/测试/检查命令，汇总通过或失败的证据。", icon: "bot" },
         { label: "排查缺陷", prompt: "定位当前工作区中某个失败的根因，提出最小修复方案。", icon: "list" },
       ],

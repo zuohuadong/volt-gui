@@ -183,6 +183,8 @@
     WorkbenchSnapshotV2,
   } from "./lib/workbench-ia";
   import { reportStyleGatePolicy } from "./lib/report-style-gate";
+  import { formatKnowledgeTimestamp } from "./lib/data-governance";
+  import { stripInternalTranscriptBlocks } from "./lib/transcript-visibility";
   import type {
     ActivityMode,
     AgentInput,
@@ -670,16 +672,16 @@
   const activeGovernanceItem = $derived(governanceNavItems.find((item) => item.id === workLayer));
   const workbenchHeading = $derived.by(() => {
     if (activityMode === "code") {
-      return { eyebrow: "Workspace / Project / Task", title: "任务检查器", desc: "当前 Task 的 Workspace、Context、Diff 与 Checkpoints。" };
+      return { eyebrow: "工作区 / 项目 / 任务", title: "任务检查器", desc: "在当前任务中查看工作区、上下文、变更与检查点。" };
     }
     if (activeGovernanceItem) {
       return {
-        eyebrow: "Workspace / Settings",
+        eyebrow: "工作区 / 设置",
         title: "配置与治理",
         desc: `${governanceGroupLabels[activeGovernanceItem.group]} / ${activeGovernanceItem.label} · ${activeGovernanceItem.desc}`,
       };
     }
-    return { eyebrow: "Workspace / Project / Task", title: currentWorkLayerLabel(), desc: "以业务 Project 组织任务，以可验证结果作为交付出口。" };
+    return { eyebrow: "工作区 / 项目 / 任务", title: currentWorkLayerLabel(), desc: "以业务项目组织任务，以可验证结果作为交付出口。" };
   });
 
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
@@ -803,10 +805,6 @@
   const codeNavItems = [
     { id: "codeConversation", group: "开发", label: "代码对话", desc: "提问、修改与执行" },
     { id: "codeOverview", group: "开发", label: "工程总览", desc: "状态与运行配置" },
-    { id: "codeWorkspace", group: "检查", label: "Workspace", desc: "文件、目录与预览" },
-    { id: "codeContext", group: "检查", label: "Context", desc: "上下文、费用与缓存" },
-    { id: "codeChanges", group: "检查", label: "Diff", desc: "变更、评论与回滚" },
-    { id: "codeCheckpoints", group: "检查", label: "Checkpoints", desc: "会话与代码恢复" },
   ];
   const workLayerLabels: Record<WorkLayer, string> = {
     today: "工作台",
@@ -1088,7 +1086,7 @@
   }
 
   function materialUpdatedAtMs(item?: { updatedAt?: string; updatedISO?: string; createdAt?: string }) {
-    const candidates = [item?.updatedISO, item?.createdAt, item?.updatedAt].filter((value): value is string => Boolean(value?.trim()));
+    const candidates = [item?.updatedISO, item?.updatedAt, item?.createdAt].filter((value): value is string => Boolean(value?.trim()));
     for (const value of candidates) {
       const parsed = Date.parse(value);
       if (Number.isFinite(parsed)) return parsed;
@@ -1107,9 +1105,7 @@
   }
 
   function materialUpdatedAtLabel(item?: { updatedAt?: string; updatedISO?: string; createdAt?: string }) {
-    const timestamp = materialUpdatedAtMs(item);
-    if (timestamp > 0 && (item?.updatedISO || item?.createdAt || Date.parse(item?.updatedAt || ""))) return relativeSidebarTimeLabel(timestamp);
-    return item?.updatedAt || "\u672a\u66f4\u65b0";
+    return formatKnowledgeTimestamp(item?.updatedISO || item?.updatedAt || item?.createdAt, nowMs);
   }
 
   function sidebarConversationTimeLabel(conversation: SidebarConversation) {
@@ -1392,7 +1388,7 @@
   })));
   let workbenchNotice = $state("");
   let knowledgePreviewTitle = $state("知识库预览");
-  let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，当前以本地 SQLite + FTS5 索引为主。");
+  let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，支持本地全文搜索和相似内容检索。");
   let knowledgeTemplateRenderDocument = $state<WorkbenchKnowledgeDocument | undefined>();
   let knowledgeTemplateRenderValues = $state<Record<string, string>>({});
   let knowledgeTemplateRendering = $state(false);
@@ -1646,11 +1642,11 @@
     return knowledgeStatus.sqliteVec ? "已启用" : "待启用";
   }
   function knowledgeIndexSummary() {
-    if (!knowledgeStatus.sqlite) return "本地 SQLite 未连接";
-    if (!knowledgeStatus.fts5) return "SQLite 已连接，全文索引不可用";
+    if (!knowledgeStatus.sqlite) return "本地知识库未连接";
+    if (!knowledgeStatus.fts5) return "本地知识库已连接，但全文检索暂不可用";
     return knowledgeStatus.sqliteVec
-      ? "SQLite + FTS5 + sqlite-vec：本地全文检索与向量相似度索引均可用"
-      : "SQLite + FTS5 已可用；sqlite-vec 向量索引暂未启用，检索会自动回退";
+      ? "本地全文搜索与相似内容检索均可用"
+      : "全文搜索已可用；相似内容检索暂未启用，系统会自动使用全文搜索";
   }
   async function refreshKnowledgeBase() {
     const knowledgeApi = knowledgePersistenceBindings();
@@ -2948,12 +2944,13 @@
   }
 
   function stripComposerContextPrefix(value: string) {
-    const lines = value.trimStart().split(/\r?\n/);
+    const visibleValue = stripInternalTranscriptBlocks(value);
+    const lines = visibleValue.trimStart().split(/\r?\n/);
     let index = 0;
     while (index < lines.length && /^(归属项目|所属项目|工作权限)\s*[:：]/.test(lines[index].trim())) {
       index += 1;
     }
-    return index > 0 ? lines.slice(index).join("\n").trimStart() : value;
+    return index > 0 ? lines.slice(index).join("\n").trimStart() : visibleValue;
   }
 
   // A long file scan can emit hundreds of tool events. Keep user and final
@@ -3696,10 +3693,10 @@
     if (action === "context") openCodeWorkbench("context");
     if (action === "changes") openCodeWorkbench("changes");
     if (action === "checkpoints") openCodeWorkbench("checkpoints");
-    if (action === "workspace") showWorkbenchNotice("已打开当前 Task 的 Workspace 检查器，可查看文件树、预览和工作区。");
-    if (action === "context") showWorkbenchNotice("已打开当前 Task 的 Context 检查器，可查看 token、缓存和读写文件。");
-    if (action === "changes") showWorkbenchNotice("已打开当前 Task 的 Diff 检查器，可查看变更、文件预览和回滚范围。");
-    if (action === "checkpoints") showWorkbenchNotice("已打开当前 Task 的 Checkpoints，可按会话或代码范围回退。");
+    if (action === "workspace") showWorkbenchNotice("已打开当前任务的工作区检查器，可查看文件树、预览和工作区。");
+    if (action === "context") showWorkbenchNotice("已打开当前任务的上下文检查器，可查看令牌、缓存和读写文件。");
+    if (action === "changes") showWorkbenchNotice("已打开当前任务的变更检查器，可查看变更、文件预览和回滚范围。");
+    if (action === "checkpoints") showWorkbenchNotice("已打开当前任务的检查点，可按对话或代码范围回退。");
   }
 
   function userPanelDialogTitle() {
@@ -6767,7 +6764,7 @@ function openGovernanceCenter() {
     if (configDialog === "team") return "配置协作组：选择成员、协调者、共享上下文和运行目标。";
     if (configDialog === "model") return "对标 AddModelDialog：设置 provider、base URL、API Key 和可用模型。";
     if (configDialog === "ingest") return "对标 BatchImportDialog：选择来源、分类、去重和索引策略。";
-    if (configDialog === "knowledge") return "直接写入本地知识库：填写标题、标签和正文后建立 SQLite + FTS5 + sqlite-vec 索引，突出本地全文检索与向量相似度检索。";
+    if (configDialog === "knowledge") return "直接写入本地知识库：填写标题、标签和正文后建立本地检索索引，支持全文搜索与相似内容检索。";
     if (configDialog === "distill") return "对标 DistillWizard：从历史任务中提炼新 Agent 的身份、技能和工具。";
     return "在工作台中创建、导入或配置资源。";
   }
@@ -8737,7 +8734,7 @@ function openGovernanceCenter() {
           </header>
             <div class="task-status-panel">
               <TaskContextBar
-                workspace={activeWorkspace?.name || "未选择 Workspace"}
+                workspace={activeWorkspace?.name || "未选择工作区"}
                 project={activeProjectLabel}
                 agent={activeAgentLabel}
                 model={activeModelLabel}
@@ -8867,7 +8864,7 @@ function openGovernanceCenter() {
             {#if activityMode === "code"}
               <div class="task-context-wrap workbench-context-wrap">
                 <TaskContextBar
-                  workspace={activeWorkspace?.name || "未选择 Workspace"}
+                  workspace={activeWorkspace?.name || "未选择工作区"}
                   project={activeProjectLabel}
                   agent={activeAgentLabel}
                   model={activeModelLabel}
@@ -9029,11 +9026,11 @@ function openGovernanceCenter() {
               <section class="aorist-page code-workbench-page" data-code-panel={codeWorkbenchPanel}>
                 <div class="code-workbench-shell">
                   {#if codeWorkbenchPanel === "overview"}
-                  <section class="code-workbench-hero" aria-label="Task 检查器总览">
+                  <section class="code-workbench-hero" aria-label="任务检查器总览">
                     <div>
-                      <span>Task Engineering Inspector</span>
+                      <span>工程检查器</span>
                       <strong>当前任务的工程检查器</strong>
-                      <p>把 Workspace、Context、Diff、Checkpoints 和模型权限放在当前 Task 内，不再形成第二套顶层工作台。</p>
+                      <p>把工作区、上下文、变更、检查点和模型权限放在当前任务内，不再形成第二套顶层工作台。</p>
                     </div>
                     <div class="code-workbench-actions">
                       <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={15} /> 开始代码对话</button>
@@ -9042,7 +9039,7 @@ function openGovernanceCenter() {
                     </div>
                   </section>
 
-                  <div class="code-workbench-status-grid" aria-label="Task 工程状态">
+                  <div class="code-workbench-status-grid" aria-label="任务工程状态">
                     <button type="button" onclick={() => openCodeWorkbenchAction("models")}>
                       <BrainCircuit size={16} />
                       <span><strong>{selectedModel || modelSettings?.defaultModel || agentModel}</strong><em>{modelSettings ? `${modelProviderSummary(modelSettings.providers).configured}/${modelSettings.providers.length} 个渠道已配置` : "模型渠道未连接桌面后端"}</em></span>
@@ -9053,22 +9050,14 @@ function openGovernanceCenter() {
                     </button>
                     <button type="button" onclick={() => openCodeWorkbench("workspace")}>
                       <Folder size={16} />
-                      <span><strong>{activeTab?.workspaceName || t.common.global}</strong><em>Workspace / Preview</em></span>
+                      <span><strong>{activeTab?.workspaceName || t.common.global}</strong><em>工作区预览</em></span>
                     </button>
                     <button type="button" onclick={() => openCodeWorkbench("changes")}>
                       <GitBranch size={16} />
-                      <span><strong>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"}</strong><em>Diff / 回滚范围</em></span>
+                      <span><strong>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"}</strong><em>变更与回滚范围</em></span>
                     </button>
                   </div>
                   {/if}
-
-                  <div class="code-workbench-command-row" role="group" aria-label="Task 检查器面板">
-                    <button class:active={codeWorkbenchPanel === "overview"} type="button" onclick={() => openCodeWorkbench("overview")}><LayoutDashboard size={14} /> 总览</button>
-                    <button class:active={codeWorkbenchPanel === "workspace"} type="button" onclick={() => openCodeWorkbench("workspace")}><Folder size={14} /> Workspace / Preview</button>
-                    <button class:active={codeWorkbenchPanel === "context"} type="button" onclick={() => openCodeWorkbench("context")}><Gauge size={14} /> Context</button>
-                    <button class:active={codeWorkbenchPanel === "changes"} type="button" onclick={() => openCodeWorkbench("changes")}><GitBranch size={14} /> Diff</button>
-                    <button class:active={codeWorkbenchPanel === "checkpoints"} type="button" onclick={() => openCodeWorkbench("checkpoints")}><RotateCcw size={14} /> Checkpoints</button>
-                  </div>
 
                   {#if codeWorkbenchPanel === "overview"}
                   <ManagedWorktreePanel
@@ -9090,7 +9079,7 @@ function openGovernanceCenter() {
                     {#if codeWorkbenchPanel === "overview"}
                     <section class="code-workbench-chat" aria-label="代码对话入口">
                       <header>
-                        <div><span>Code Chat</span><strong>{conversationHeaderTitle}</strong><p>{activeTab?.workspaceName || t.common.global}</p></div>
+                        <div><span>代码对话</span><strong>{conversationHeaderTitle}</strong><p>{activeTab?.workspaceName || t.common.global}</p></div>
                         <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={14} /> 打开会话</button>
                       </header>
                       <div class="code-workbench-chat__prompts">
@@ -9340,7 +9329,7 @@ function openGovernanceCenter() {
                             <div><dt>模型</dt><dd>{agentProfileModelLabel(currentAgent)}</dd></div>
                             <div><dt>能力</dt><dd>{threadAgentCapabilityLabel(currentAgent)}</dd></div>
                             <div><dt>权限</dt><dd>{agentPermissionLabel(currentComposerTab?.toolApprovalMode ?? activeTab?.toolApprovalMode)}</dd></div>
-                            <div><dt>记忆</dt><dd>继承 Thread / Workspace</dd></div>
+                            <div><dt>记忆</dt><dd>继承当前对话与工作区</dd></div>
                           </dl>
                         </div>
                       </details>
@@ -9626,7 +9615,7 @@ function openGovernanceCenter() {
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
     <div class="resource-actions"><button type="button" onclick={() => (externalDataImportOpen = true)}><Download size={14} /> 导入外部数据</button><button type="button" onclick={() => openConfigDialog("knowledge")}>手动录入</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => openRegulationEditor()}>新建规范</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
   </div>
-  <div class="knowledge-health"><article><span>SQLite</span><strong>{knowledgeStatus.sqlite ? "已启用" : "未连接"}</strong></article><article><span>FTS5</span><strong>{knowledgeStatus.fts5 ? "可检索" : "不可用"}</strong></article><article><span>sqlite-vec</span><strong>{knowledgeVectorLabel()}</strong></article><article><span>切片</span><strong>{knowledgeStatus.chunks}</strong></article></div><p class="knowledge-local-note">{knowledgeIndexSummary()}</p>
+  <div class="knowledge-health"><article title="本地数据库"><span>本地存储</span><strong>{knowledgeStatus.sqlite ? "已启用" : "未连接"}</strong></article><article title="本地全文搜索"><span>全文检索</span><strong>{knowledgeStatus.fts5 ? "可检索" : "不可用"}</strong></article><article title="相似内容检索"><span>相似检索</span><strong>{knowledgeVectorLabel()}</strong></article><article title="解析后的文本片段"><span>文本片段</span><strong>{knowledgeStatus.chunks}</strong></article></div><p class="knowledge-local-note">{knowledgeIndexSummary()}</p>
   <div class="knowledge-layout knowledge-layout--merged">
     <div class="knowledge-stack">
       <div class="knowledge-content-panel" role="tabpanel" aria-labelledby={`knowledge-${knowledgeLibraryTab}-tab`} id={`knowledge-${knowledgeLibraryTab}-panel`}>
@@ -9643,10 +9632,10 @@ function openGovernanceCenter() {
               <strong>{item.title}</strong>
               <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
               <dl>
-                <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
+                <div><dt>来源</dt><dd>{item.source || "工作台"}</dd></div>
                 <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{formatWorkbenchDateTime(item.updatedAt || item.createdAt)}</dd></div>
+                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
@@ -9662,10 +9651,10 @@ function openGovernanceCenter() {
               <strong>{item.title}</strong>
               <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
               <dl>
-                <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
+                <div><dt>来源</dt><dd>{item.source || "工作台"}</dd></div>
                 <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{formatWorkbenchDateTime(item.updatedAt || item.createdAt)}</dd></div>
+                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
@@ -9684,7 +9673,7 @@ function openGovernanceCenter() {
                 <div><dt>分类</dt><dd>{item.category}</dd></div>
                 <div><dt>状态</dt><dd>{item.status}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置标签"}</dd></div>
-                <div><dt>更新</dt><dd>{formatWorkbenchDateTime(item.updatedAt || item.createdAt)}</dd></div>
+                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => void previewRegulation(item)}>预览</button><button type="button" onclick={() => openRegulationEditor(item)}>编辑</button><button type="button" onclick={() => void deleteRegulation(item)}>删除</button></footer>
             </article>
@@ -9698,14 +9687,14 @@ function openGovernanceCenter() {
     <aside class="knowledge-preview knowledge-detail-panel">
       {#if activeRegulation}
         {@const regulation = activeRegulation}
-        <header><span>Regulation Preview</span><button type="button" onclick={() => openRegulationEditor(regulation)}>编辑</button></header>
+        <header><span>规范预览</span><button type="button" onclick={() => openRegulationEditor(regulation)}>编辑</button></header>
         <strong>{regulation.title}</strong>
         <p>{regulation.category} / {regulation.status} / {regulation.tags || "未设置标签"}</p>
         <dl>
           <div><dt>分类</dt><dd>{regulation.category}</dd></div>
           <div><dt>状态</dt><dd>{regulation.status}</dd></div>
           <div><dt>标签</dt><dd>{regulation.tags || "未设置标签"}</dd></div>
-          <div><dt>更新时间</dt><dd>{formatWorkbenchDateTime(regulation.updatedAt || regulation.createdAt)}</dd></div>
+          <div><dt>更新时间</dt><dd>{materialUpdatedAtLabel({ updatedAt: regulation.updatedAt, createdAt: regulation.createdAt })}</dd></div>
         </dl>
         <section class="knowledge-document-preview">
           <header><span>规范正文</span><div><button type="button" onclick={() => void previewRegulation(regulation)}>重新渲染</button></div></header>
@@ -9713,17 +9702,17 @@ function openGovernanceCenter() {
         </section>
       {:else if selectedKnowledgeDocument()}
         {@const doc = selectedKnowledgeDocument()}
-        <header><span>Knowledge Detail</span></header>
+        <header><span>知识详情</span></header>
         <strong>{doc.title}</strong>
         <p>{doc.description || `${doc.type} / ${knowledgeDocumentCount(doc)} 份关联资料 / ${doc.status}`}</p>
         <dl>
           <div><dt>知识类型</dt><dd>{doc.type}</dd></div>
           <div><dt>索引状态</dt><dd>{doc.status}</dd></div>
           <div><dt>文档数量</dt><dd>{knowledgeDocumentCount(doc)}</dd></div>
-          <div><dt>来源</dt><dd>{doc.source || "workbench"}</dd></div>
+          <div><dt>来源</dt><dd>{doc.source || "工作台"}</dd></div>
           <div><dt>标签</dt><dd>{doc.tags || "未设置"}</dd></div>
-          <div><dt>创建时间</dt><dd>{formatWorkbenchDateTime(doc.createdAt)}</dd></div>
-          <div><dt>更新时间</dt><dd>{formatWorkbenchDateTime(doc.updatedAt)}</dd></div>
+          <div><dt>创建时间</dt><dd>{materialUpdatedAtLabel({ createdAt: doc.createdAt })}</dd></div>
+          <div><dt>更新时间</dt><dd>{materialUpdatedAtLabel({ updatedAt: doc.updatedAt, createdAt: doc.createdAt })}</dd></div>
           {#if doc.error}<div><dt>索引错误</dt><dd>{doc.error}</dd></div>{/if}
         </dl>
         <section class="knowledge-document-preview">
@@ -9751,14 +9740,14 @@ function openGovernanceCenter() {
           <header><span>关联文档</span><strong>{knowledgeDocumentCount(doc)} 份</strong></header>
           <div>
             {#each knowledgeDocumentMaterials(doc) as material (material.id)}
-              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {formatWorkbenchDateTime(material.updatedAt)}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button></article>
+              <article><div><strong>{material.title}</strong><span>{materialProjectName(material)} / {material.category}</span><em>{material.status} · {materialUpdatedAtLabel(material)}</em></div><button type="button" onclick={() => openKnowledgeMaterial(material)}>查看详情</button><button type="button" disabled={!materialHasLocalFile(material)} title={materialFileActionHint(material)} onclick={() => void openMaterialFile(material)}>打开文件</button></article>
             {:else}
               <p>该模板尚未关联资料。</p>
             {/each}
           </div>
         </section>
       {:else}
-        <span>Template Detail</span><strong>{knowledgePreviewTitle}</strong><p>{knowledgePreviewDescription}</p>
+        <span>模板详情</span><strong>{knowledgePreviewTitle}</strong><p>{knowledgePreviewDescription}</p>
       {/if}
     </aside>
   </div>{:else if resourceTab === "search"}<div class="resource-section-top"><label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="跨项目、客户、文档、规范检索" placeholder="输入关键词，检索所有工作台内容" /></label><span>{displayedSearchResults.length} 项</span></div><div class="aorist-list search-result-list">{#each displayedSearchResults as result, resultIndex (indexedKey(`${result.scope}-${result.title}-${result.snippet}`, resultIndex))}<button class="search-result-card" type="button" onclick={() => openSearchResult(result)}><div><strong>{result.title}</strong><p>{result.snippet}</p><em>{result.scope}</em></div><span>匹配</span></button>{/each}</div>{:else if resourceTab === "conversationArchive"}<div class="resource-archive-summary"><div><span>Archived Tasks</span><strong>{archivedSidebarConversationCount} 个归档任务</strong></div><em>按业务项目整理，可直接删除不再保留的归档</em></div>{#if archivedSidebarConversationCount}<div class="resource-archive-list">{#each sortedSidebarProjects as project (project.id)}{@const archivedConversations = archivedSidebarProjectConversations(project)}{#if archivedConversations.length}<section class="resource-archive-project"><header><div><strong>{project.name}</strong><span>{project.kind === "inbox" ? "临时任务" : "业务项目"}</span></div><em>{archivedConversations.length} 个</em></header><div>{#each archivedConversations as conversation (conversation.id)}<article><div><strong>{conversation.title}</strong><p>{conversation.updatedAt}</p></div><button type="button" aria-label={`删除归档任务 ${conversation.title}`} onclick={() => deleteSidebarConversation(project.id, conversation.id)}><Trash2 size={14} /> 删除</button></article>{/each}</div></section>{/if}{/each}</div>{:else}<article class="detail-empty resource-archive-empty"><strong>暂无归档任务</strong><p>在 Project → Task 树归档任务后，会按业务项目整理到这里。</p></article>{/if}{:else}<div class="resource-actions"><button type="button" onclick={() => openConfigDialog("ingest")}>批量导入</button><button type="button" onclick={showFailedIngestJobs}>查看失败</button></div><div class="aorist-list">{#each ingestJobs as job, jobIndex (indexedKey(job.title, jobIndex))}<article><div><strong>{job.title}</strong><p>{job.source} / {job.total} 条记录</p><em>{job.phase}</em></div><span>{job.status}</span></article>{/each}</div>{/if}</section>
@@ -10203,10 +10192,10 @@ function openGovernanceCenter() {
                 <span>
                   {#if activityMode === "code"}
                     <Code2 size={15} />
-                    Code Workspace
+                    代码工作区
                   {:else}
                     <BookOpen size={15} />
-                    Knowledge Workspace
+                    知识工作区
                   {/if}
                 </span>
                 <em>{activeTab?.workspaceName || t.common.global} / main</em>
@@ -10382,7 +10371,7 @@ function openGovernanceCenter() {
                 <dt>文件大小</dt><dd>{formatFileSize(material.fileSize)}</dd>
                 <dt>MIME 类型</dt><dd>{material.mimeType || "未记录"}</dd>
                 <dt>来源/路径</dt><dd>{materialPath(material) || "未记录"}</dd>
-                <dt>更新时间</dt><dd>{formatWorkbenchDateTime(material.updatedAt)}</dd>
+                <dt>更新时间</dt><dd>{materialUpdatedAtLabel(material)}</dd>
               </dl>
             </div>
             <footer>
@@ -10490,7 +10479,7 @@ function openGovernanceCenter() {
                           <button class="project-detail-row" type="button" onclick={() => { projectDetailOpen = false; openWorkLayer("resources"); resourceTab = "resources"; selectedResourceCategory = ""; resourceSearch = ""; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
-                            <b>{material.status}<small>{formatWorkbenchDateTime(material.updatedAt)}</small></b>
+                            <b>{material.status}<small>{materialUpdatedAtLabel(material)}</small></b>
                           </button>
                         {:else}
                           <article class="detail-empty"><strong>暂无关联资料</strong><p>新增资料后会出现在项目资料库与全文检索中。</p></article>
@@ -10656,7 +10645,7 @@ function openGovernanceCenter() {
                           <button class="customer-detail-row" type="button" onclick={() => { customerDetailOpen = false; openMaterialDetail(material.id); }}>
                             <span><FileText size={17} /></span>
                             <div><strong>{material.title}</strong><em>{material.category} / {material.source}</em><p>{material.desc}</p></div>
-                            <b>{material.status}<small>{formatWorkbenchDateTime(material.updatedAt)}</small></b>
+                            <b>{material.status}<small>{materialUpdatedAtLabel(material)}</small></b>
                           </button>
                         {:else}
                           <article class="detail-empty"><strong>暂无关联资料</strong><p>上传客户资料后会自动进入资料中心和全文检索。</p></article>
@@ -12086,6 +12075,12 @@ function openGovernanceCenter() {
   .select-list,.distill-panel{display:grid;gap:10px;margin-top:16px}.select-list>p,.distill-panel>p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.select-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.select-list button:hover{border-color:#93c5fd;background:#f8fbff}.select-list strong{color:#111827}.select-list span{color:#667085;font-size:12px}.distill-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.distill-steps button{min-height:36px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;color:#5f6774;font-weight:700}.distill-steps button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.distill-preview{padding:0;border:0}.distill-preview div{margin-top:0}@media(max-width:720px){.distill-steps{grid-template-columns:1fr}}
 
   .resource-center-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.resource-center .resource-tabs{flex:0 1 auto;min-width:0;margin:0;flex-wrap:wrap}.resource-center .resource-tabs button{min-width:104px}.resource-center-actions{display:flex;flex:0 0 auto;align-items:center;justify-content:flex-end;gap:8px}.resource-center-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#222;font-size:13px;font-weight:700}.resource-center-actions button:last-child{border-color:#222;background:#222;color:#fff}.resource-center-actions button:hover{border-color:#222}.resource-section-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.resource-section-top .aorist-search{flex:1 1 320px;max-width:none;margin-bottom:0}.resource-section-top>span{flex:0 0 auto;color:#7b8494;font-size:12px;font-weight:650;white-space:nowrap}.resource-section-top .resource-actions{flex:0 0 auto;justify-content:flex-end;margin:0}.resource-library-empty,.resource-archive-empty{grid-column:1/-1}.resource-archive-summary{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px;padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.82)}.resource-archive-summary span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.resource-archive-summary strong{display:block;margin-top:4px;color:#111827;font-size:18px}.resource-archive-summary em{color:#7b8494;font-size:12px;font-style:normal}.resource-archive-list{display:grid;gap:12px}.resource-archive-project{padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.resource-archive-project header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.resource-archive-project header strong{display:block;color:#111827;font-size:14px}.resource-archive-project header span,.resource-archive-project header em{color:#7b8494;font-size:11px;font-style:normal}.resource-archive-project>div{display:grid;gap:8px}.resource-archive-project article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#fff}.resource-archive-project article strong{display:block;overflow:hidden;color:#111827;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.resource-archive-project article p{margin:3px 0 0;color:#7b8494;font-size:11px}.resource-archive-project article button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:1px solid #f3d3d3;border-radius:8px;background:#fff;color:#b42318;font-size:12px;font-weight:650}.resource-archive-project article button:hover{background:#fff5f5}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}@media(max-width:920px){.resource-center-topbar{align-items:flex-start;flex-direction:column}.resource-center-actions{justify-content:flex-start}}@media(max-width:720px){.resource-section-top,.resource-archive-summary{align-items:flex-start;flex-direction:column}.resource-section-top .aorist-search{width:100%;max-width:none}.resource-section-top .resource-actions{width:100%;justify-content:flex-start}.resource-archive-project article{grid-template-columns:1fr}}
+  @media (max-width: 720px) {
+    .resource-section-top .aorist-search {
+      flex: 0 0 auto;
+    }
+  }
+
   .resource-detail-modal{display:grid;grid-template-rows:auto minmax(0,1fr) auto;width:min(760px,calc(100vw - 44px));height:min(760px,calc(100vh - 44px));padding:0}.resource-detail-modal header{padding:18px 24px;border-bottom:1px solid #e5e7eb}.resource-detail-modal header p{margin:4px 0 0;color:#7b8494;font-size:12px}.resource-detail-body{display:grid;gap:14px;min-height:0;margin:0;padding:20px 22px;overflow:auto}.resource-detail-body article{padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.resource-detail-body article span{display:inline-block;margin-bottom:8px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.resource-detail-body article strong{display:block;color:#111827;font-size:17px}.resource-detail-body article p{margin:7px 0 0;max-height:none;overflow-wrap:anywhere;color:#5f6774;font-size:13px;line-height:1.65}.resource-detail-body dl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 12px;margin:0;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.resource-detail-body dt{color:#7b8494;font-size:12px}.resource-detail-body dd{margin:0;min-width:0;overflow-wrap:anywhere;color:#111827;font-size:13px}.resource-detail-modal footer{margin:0;padding:14px 24px;border-top:1px solid #e5e7eb;background:#fff}.resource-detail-modal footer button.danger{border-color:#f3d3d3!important;background:#fff!important;color:#b42318!important}.resource-detail-modal footer button.danger:hover{background:#fff5f5!important}
   .resource-center .aorist-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,260px));align-items:start;justify-content:start}.resource-center .media-card{display:grid;grid-template-rows:auto auto 1fr auto;width:100%;height:190px;min-height:0;box-sizing:border-box;overflow:hidden;text-align:left}.resource-center .media-card span{justify-self:start;width:auto;max-width:100%}.resource-center .media-card strong,.resource-center .media-card p{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical}.resource-center .media-card strong{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card p{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card em{align-self:end;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.resource-category-bar{display:flex;align-items:center;gap:10px;margin:0 0 12px}.resource-category-bar button{min-height:30px;padding:0 10px;border:1px solid #dce4ef;border-radius:9px;background:#fff;color:#344054;font-size:12px;font-weight:700}.resource-category-bar strong{color:#111827;font-size:15px}.resource-category-card{text-align:left}.resource-category-card span{background:#eef4ff;color:#1f5fbf}.resource-category-card em{display:block;margin-top:10px;color:#7b8494;font-size:12px;font-style:normal}
   .knowledge-health{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:10px}.knowledge-health article{padding:12px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.knowledge-health span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.knowledge-health strong{display:block;margin-top:5px;color:#111827;font-size:15px}.knowledge-local-note{margin:0 0 14px;color:#687386;font-size:12px;font-weight:650}.knowledge-card-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.knowledge-card-actions button:last-child{color:#b42318}.knowledge-preview em{display:block;margin-top:12px;color:#7b8494;font-size:11px;font-style:normal;word-break:break-all}.knowledge-stack{display:grid;gap:14px;min-width:0}.knowledge-stack section{padding:14px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.76);box-shadow:0 12px 30px rgba(15,23,42,.04)}.knowledge-stack header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}.knowledge-stack header span{color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.knowledge-stack header strong{color:#0f172a;font-size:17px;letter-spacing:-.03em}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:720px){.knowledge-health{grid-template-columns:repeat(2,minmax(0,1fr))}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:1fr}.knowledge-stack header{display:grid;align-items:start}}
@@ -23060,8 +23055,7 @@ function openGovernanceCenter() {
     line-height: 1.55;
   }
 
-  .code-workbench-actions,
-  .code-workbench-command-row {
+  .code-workbench-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
@@ -23073,7 +23067,6 @@ function openGovernanceCenter() {
   }
 
   .code-workbench-actions button,
-  .code-workbench-command-row button,
   .code-workbench-chat header button {
     display: inline-flex;
     align-items: center;
@@ -23090,8 +23083,7 @@ function openGovernanceCenter() {
     white-space: nowrap;
   }
 
-  .code-workbench-actions button:first-child,
-  .code-workbench-command-row button.active {
+  .code-workbench-actions button:first-child {
     border-color: #2563eb;
     background: #2563eb;
     color: #ffffff;
@@ -23150,13 +23142,6 @@ function openGovernanceCenter() {
     color: var(--aorist-muted, #667085);
     font-size: 11px;
     font-style: normal;
-  }
-
-  .code-workbench-command-row {
-    padding: 4px;
-    border: 1px solid var(--aorist-line, #d9dee8);
-    border-radius: 8px;
-    background: #ffffff;
   }
 
   .code-workbench-main {
@@ -23352,10 +23337,6 @@ function openGovernanceCenter() {
       min-width: 0;
     }
 
-    .code-workbench-command-row button {
-      flex: 1 1 140px;
-    }
-
     .code-workbench-status-grid {
       grid-template-columns: 1fr;
     }
@@ -23396,13 +23377,13 @@ function openGovernanceCenter() {
 .knowledge-stack .knowledge-content-panel>.aorist-card-grid{min-height:0;overflow:auto;padding-right:4px;scrollbar-gutter:stable;align-content:start}
 @media(max-width:980px){.knowledge-stack .knowledge-content-panel{max-height:480px}}
 @media(max-width:640px){.knowledge-content-tabs{justify-content:flex-start;overflow:auto}.knowledge-content-tabs button{min-width:80px;padding-inline:10px}}
-.knowledge-template-card{display:flex;flex-direction:column;gap:12px;height:336px;min-height:336px;padding:18px 26px 16px}
-.knowledge-template-card header{flex:0 0 auto}
-.knowledge-template-card>strong{flex:0 0 auto;min-height:0;max-height:42px}
-  .knowledge-template-card p{flex:0 0 auto;min-height:44px;max-height:44px;margin:0;line-height:1.55}
-  .knowledge-template-card dl{flex:0 0 auto;gap:12px;margin:0}
-  .knowledge-template-card dl div{min-height:58px;padding:10px 12px}
-  .knowledge-template-card .knowledge-card-actions{min-width:0;margin-top:auto;padding-left:10px;align-items:stretch;gap:6px;flex-wrap:nowrap;overflow:visible}
+.knowledge-template-card{display:grid;grid-template-rows:auto 44px 44px minmax(128px,1fr) 34px;gap:10px;height:336px;min-height:336px;padding:18px;box-sizing:border-box;overflow:hidden}
+.knowledge-template-card header{min-height:22px}
+.knowledge-template-card>strong{min-height:44px;max-height:44px}
+  .knowledge-template-card p{min-height:44px;max-height:44px;margin:0;line-height:1.55}
+  .knowledge-template-card dl{align-self:stretch;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+  .knowledge-template-card dl div{min-height:54px;padding:9px 10px;box-sizing:border-box}
+  .knowledge-template-card .knowledge-card-actions{align-items:stretch;min-width:0;margin:0;padding:0;gap:6px;flex-wrap:nowrap;overflow:visible}
   .knowledge-template-card .knowledge-card-actions button{min-width:0;flex:1 1 0;min-height:30px;padding-inline:6px;font-size:10px;white-space:nowrap}
   .search-result-list{display:grid;width:min(1412px,100%);margin:0 auto;gap:28px}
   .search-result-card{display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;min-height:154px;padding:28px;border:1px solid #e2e5ea;border-radius:16px;background:#fff;box-shadow:0 8px 18px rgba(15,23,42,.035);text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
@@ -24936,19 +24917,9 @@ function openGovernanceCenter() {
     padding: 8px 10px;
   }
 
-  .task-receipt-float__panel :global(.receipt article p) {
-    display: -webkit-box;
-    margin-top: 4px;
-    overflow: hidden;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
+  .task-receipt-float__panel :global(.receipt article p),
   .task-receipt-float__panel :global(.receipt article ul) {
-    max-height: 48px;
     margin-top: 4px;
-    overflow: auto;
   }
 
   @media (max-width: 720px) {

@@ -15,6 +15,7 @@
     MEMORY_LAYER_LABELS,
     formatGovernanceTimestamp,
     groupScopedMemoryEntries,
+    scopeLabelForMemoryLayer,
     scopeIDForMemoryLayer,
   } from "../lib/data-governance";
   import type {
@@ -24,6 +25,7 @@
     ScopedMemoryReference,
     ScopedMemoryView,
   } from "../lib/types";
+  import ScrollToTop from "./ScrollToTop.svelte";
 
   interface Props {
     view?: ScopedMemoryView;
@@ -186,10 +188,10 @@
     <article class="memory-empty"><span class="spin"><RefreshCw size={26} /></span><strong>正在读取分层记忆</strong></article>
   {:else if view}
     <section class="memory-context" aria-label="记忆所有权上下文">
-      <article><span>Organization</span><strong>{view.context.organizationId || "未绑定"}</strong></article>
-      <article><span>Workspace</span><strong>{view.context.workspaceId || "未绑定"}</strong></article>
-      <article><span>Project</span><strong>{view.context.projectId || "未绑定"}</strong></article>
-      <article><span>Thread</span><strong>{view.context.threadId || "未绑定"}</strong></article>
+      <article><span>组织</span><strong title={view.context.organizationId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "organization")}</strong></article>
+      <article><span>工作区</span><strong title={view.context.workspaceId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "workspace")}</strong></article>
+      <article><span>项目</span><strong title={view.context.projectId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "project")}</strong></article>
+      <article><span>对话</span><strong title={view.context.threadId || ""}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, "thread")}</strong></article>
     </section>
 
     {#if !hasMemoryRecords}
@@ -204,7 +206,7 @@
         <div class="layer-stack">
           {#each groups as group (group.layer)}
             <section class="memory-layer" data-layer={group.layer}>
-              <header><div><strong>{group.label}</strong><span>{scopeIDForMemoryLayer(view.context, group.layer) || "未绑定"}</span></div><em>{group.entries.length} 条</em></header>
+              <header><div><strong>{group.label}</strong><span title={scopeIDForMemoryLayer(view.context, group.layer)}>{scopeLabelForMemoryLayer(view.context, view.contextLabels, group.layer)}</span></div><em>{group.entries.length} 条</em></header>
               <div>
                 {#each group.entries as entry (entry.id)}
                   <article class:isolated={entry.isolated} class="memory-entry" data-testid="scoped-memory-entry">
@@ -232,6 +234,8 @@
     {/if}
   {/if}
 </section>
+
+<ScrollToTop />
 
 {#if editorOpen && view}
   <div class="memory-editor-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget && !mutating) editorOpen = false; }}>

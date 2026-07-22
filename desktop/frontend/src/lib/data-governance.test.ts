@@ -2,7 +2,9 @@ import { describe, expect, test } from "vitest";
 
 import {
   MEMORY_LAYER_ORDER,
+  formatKnowledgeTimestamp,
   groupScopedMemoryEntries,
+  scopeLabelForMemoryLayer,
   scopeIDForMemoryLayer,
   sortTrustWarnings,
   trustStatusPresentation,
@@ -73,5 +75,31 @@ describe("data governance presentation", () => {
       "project",
       "thread",
     ]);
+  });
+
+  test("uses readable context labels without replacing canonical scope ids", () => {
+    const context: ScopedMemoryContext = {
+      organizationId: "default",
+      workspaceId: "workspace-opaque-hash",
+      projectId: "inbox",
+      threadId: "thread-tab_opaque_hash",
+    };
+    const labels = { workspace: "客户门户", thread: "登录流程复核" };
+    expect(MEMORY_LAYER_ORDER.map((layer) => scopeLabelForMemoryLayer(context, labels, layer))).toEqual([
+      "当前用户",
+      "默认组织",
+      "客户门户",
+      "收件箱",
+      "登录流程复核",
+    ]);
+    expect(scopeIDForMemoryLayer(context, "thread")).toBe("thread-tab_opaque_hash");
+  });
+
+  test("formats knowledge timestamps for Chinese readers without raw ISO syntax", () => {
+    const now = Date.parse("2026-07-22T10:30:00+08:00");
+    expect(formatKnowledgeTimestamp("2026-07-22T10:25:00+08:00", now)).toBe("5 分钟前");
+    expect(formatKnowledgeTimestamp("2026-07-21T10:17:40+08:00", now)).toBe("昨天 10:17");
+    expect(formatKnowledgeTimestamp("2026-07-01T08:05:00+08:00", now)).toBe("2026-07-01 08:05");
+    expect(formatKnowledgeTimestamp("未记录", now)).toBe("未记录");
   });
 });

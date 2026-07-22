@@ -180,6 +180,7 @@
     WorkbenchSnapshotV2,
   } from "./lib/workbench-ia";
   import { reportStyleGatePolicy } from "./lib/report-style-gate";
+  import { formatKnowledgeTimestamp } from "./lib/data-governance";
   import type {
     ActivityMode,
     AgentInput,
@@ -797,10 +798,6 @@
   const codeNavItems = [
     { id: "codeConversation", group: "开发", label: "代码对话", desc: "提问、修改与执行" },
     { id: "codeOverview", group: "开发", label: "工程总览", desc: "状态与运行配置" },
-    { id: "codeWorkspace", group: "检查", label: "Workspace", desc: "文件、目录与预览" },
-    { id: "codeContext", group: "检查", label: "Context", desc: "上下文、费用与缓存" },
-    { id: "codeChanges", group: "检查", label: "Diff", desc: "变更、评论与回滚" },
-    { id: "codeCheckpoints", group: "检查", label: "Checkpoints", desc: "会话与代码恢复" },
   ];
   const workLayerLabels: Record<WorkLayer, string> = {
     today: "工作台",
@@ -1082,7 +1079,7 @@
   }
 
   function materialUpdatedAtMs(item?: { updatedAt?: string; updatedISO?: string; createdAt?: string }) {
-    const candidates = [item?.updatedISO, item?.createdAt, item?.updatedAt].filter((value): value is string => Boolean(value?.trim()));
+    const candidates = [item?.updatedISO, item?.updatedAt, item?.createdAt].filter((value): value is string => Boolean(value?.trim()));
     for (const value of candidates) {
       const parsed = Date.parse(value);
       if (Number.isFinite(parsed)) return parsed;
@@ -1101,9 +1098,7 @@
   }
 
   function materialUpdatedAtLabel(item?: { updatedAt?: string; updatedISO?: string; createdAt?: string }) {
-    const timestamp = materialUpdatedAtMs(item);
-    if (timestamp > 0 && (item?.updatedISO || item?.createdAt || Date.parse(item?.updatedAt || ""))) return relativeSidebarTimeLabel(timestamp);
-    return item?.updatedAt || "\u672a\u66f4\u65b0";
+    return formatKnowledgeTimestamp(item?.updatedISO || item?.updatedAt || item?.createdAt, nowMs);
   }
 
   function sidebarConversationTimeLabel(conversation: SidebarConversation) {
@@ -1386,7 +1381,7 @@
   })));
   let workbenchNotice = $state("");
   let knowledgePreviewTitle = $state("知识库预览");
-  let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，当前以本地 SQLite + FTS5 索引为主。");
+  let knowledgePreviewDescription = $state("统一承载文档、规范、资料、检索与导入任务，当前使用本地全文索引与向量相似度索引。");
   let knowledgeTemplateRenderDocument = $state<WorkbenchKnowledgeDocument | undefined>();
   let knowledgeTemplateRenderValues = $state<Record<string, string>>({});
   let knowledgeTemplateRendering = $state(false);
@@ -1640,11 +1635,11 @@
     return knowledgeStatus.sqliteVec ? "已启用" : "待启用";
   }
   function knowledgeIndexSummary() {
-    if (!knowledgeStatus.sqlite) return "本地 SQLite 未连接";
-    if (!knowledgeStatus.fts5) return "SQLite 已连接，全文索引不可用";
+    if (!knowledgeStatus.sqlite) return "本地知识库未连接";
+    if (!knowledgeStatus.fts5) return "本地知识库已连接，但全文检索暂不可用";
     return knowledgeStatus.sqliteVec
-      ? "SQLite + FTS5 + sqlite-vec：本地全文检索与向量相似度索引均可用"
-      : "SQLite + FTS5 已可用；sqlite-vec 向量索引暂未启用，检索会自动回退";
+      ? "本地全文检索与向量相似度索引均可用"
+      : "全文检索已可用；向量索引暂未启用，检索会自动回退";
   }
   async function refreshKnowledgeBase() {
     const knowledgeApi = knowledgePersistenceBindings();
@@ -3785,19 +3780,6 @@ function switchActivityMode(mode: ActivityMode) {
    }
    openWorkLayer(lastWorkLayer);
  }
-
-  function setDisplayMode(mode: DisplayMode) {
-    if (mode === displayMode) return;
-    displayMode = mode;
-    try {
-      window.localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, mode);
-    } catch {
-      // localStorage may be unavailable in test/SSR; ignore.
-    }
-    if (mode === "office" && activityMode === "code") {
-      switchActivityMode("work");
-    }
-  }
 
   const showActivityModeSwitch = $derived(displayMode === "developer");
 
@@ -8707,7 +8689,6 @@ function openGovernanceCenter() {
       onDrawerClose={() => (mobileDrawerOpen = false)}
       onCollapseToggle={() => (sidebarCollapsed = !sidebarCollapsed)}
       onGovernance={displayMode === "office" ? openOfficeSettings : openGovernanceCenter}
-      onToggleDisplayMode={() => setDisplayMode(displayMode === "office" ? "developer" : "office")}
       taskTimeLabel={sidebarConversationTimeLabel}
     />
     <section class="stage" class:stage--conversation={showActiveTranscript}>
@@ -9620,7 +9601,7 @@ function openGovernanceCenter() {
     <label class="aorist-search"><Search size={16} /><input bind:value={resourceSearch} oninput={handleResourceSearchInput} aria-label="搜索文档、规范与规则" placeholder="搜索标题、条文、模板或标签" /></label>
     <div class="resource-actions"><button type="button" onclick={() => (externalDataImportOpen = true)}><Download size={14} /> 导入外部数据</button><button type="button" onclick={() => openConfigDialog("knowledge")}>手动录入</button><button type="button" onclick={() => openConfigDialog("template")}>新建模板</button><button type="button" onclick={() => openRegulationEditor()}>新建规范</button><button type="button" onclick={() => syncWorkbench("知识库订阅源")}>同步订阅源</button></div>
   </div>
-  <div class="knowledge-health"><article><span>SQLite</span><strong>{knowledgeStatus.sqlite ? "已启用" : "未连接"}</strong></article><article><span>FTS5</span><strong>{knowledgeStatus.fts5 ? "可检索" : "不可用"}</strong></article><article><span>sqlite-vec</span><strong>{knowledgeVectorLabel()}</strong></article><article><span>切片</span><strong>{knowledgeStatus.chunks}</strong></article></div><p class="knowledge-local-note">{knowledgeIndexSummary()}</p>
+  <div class="knowledge-health"><article title="SQLite 本地存储"><span>本地存储</span><strong>{knowledgeStatus.sqlite ? "已启用" : "未连接"}</strong></article><article title="FTS5 全文检索"><span>全文检索</span><strong>{knowledgeStatus.fts5 ? "可检索" : "不可用"}</strong></article><article title="sqlite-vec 向量检索"><span>向量检索</span><strong>{knowledgeVectorLabel()}</strong></article><article title="解析后的文本切片"><span>文本切片</span><strong>{knowledgeStatus.chunks}</strong></article></div><p class="knowledge-local-note">{knowledgeIndexSummary()}</p>
   <div class="knowledge-layout knowledge-layout--merged">
     <div class="knowledge-stack">
       <div class="knowledge-content-panel" role="tabpanel" aria-labelledby={`knowledge-${knowledgeLibraryTab}-tab`} id={`knowledge-${knowledgeLibraryTab}-panel`}>
@@ -9640,7 +9621,7 @@ function openGovernanceCenter() {
                 <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
                 <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
@@ -9659,7 +9640,7 @@ function openGovernanceCenter() {
                 <div><dt>来源</dt><dd>{item.source || "workbench"}</dd></div>
                 <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
@@ -9678,7 +9659,7 @@ function openGovernanceCenter() {
                 <div><dt>分类</dt><dd>{item.category}</dd></div>
                 <div><dt>状态</dt><dd>{item.status}</dd></div>
                 <div><dt>标签</dt><dd>{item.tags || "未设置标签"}</dd></div>
-                <div><dt>更新</dt><dd>{item.updatedAt || item.createdAt || "未记录"}</dd></div>
+                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
               <footer class="knowledge-card-actions"><button type="button" onclick={() => void previewRegulation(item)}>预览</button><button type="button" onclick={() => openRegulationEditor(item)}>编辑</button><button type="button" onclick={() => void deleteRegulation(item)}>删除</button></footer>
             </article>
@@ -9699,7 +9680,7 @@ function openGovernanceCenter() {
           <div><dt>分类</dt><dd>{regulation.category}</dd></div>
           <div><dt>状态</dt><dd>{regulation.status}</dd></div>
           <div><dt>标签</dt><dd>{regulation.tags || "未设置标签"}</dd></div>
-          <div><dt>更新时间</dt><dd>{regulation.updatedAt || regulation.createdAt || "未记录"}</dd></div>
+          <div><dt>更新时间</dt><dd>{materialUpdatedAtLabel({ updatedAt: regulation.updatedAt, createdAt: regulation.createdAt })}</dd></div>
         </dl>
         <section class="knowledge-document-preview">
           <header><span>规范正文</span><div><button type="button" onclick={() => void previewRegulation(regulation)}>重新渲染</button></div></header>
@@ -9716,8 +9697,8 @@ function openGovernanceCenter() {
           <div><dt>文档数量</dt><dd>{knowledgeDocumentCount(doc)}</dd></div>
           <div><dt>来源</dt><dd>{doc.source || "workbench"}</dd></div>
           <div><dt>标签</dt><dd>{doc.tags || "未设置"}</dd></div>
-          <div><dt>创建时间</dt><dd>{doc.createdAt || "未记录"}</dd></div>
-          <div><dt>更新时间</dt><dd>{doc.updatedAt || "未记录"}</dd></div>
+          <div><dt>创建时间</dt><dd>{materialUpdatedAtLabel({ createdAt: doc.createdAt })}</dd></div>
+          <div><dt>更新时间</dt><dd>{materialUpdatedAtLabel({ updatedAt: doc.updatedAt, createdAt: doc.createdAt })}</dd></div>
           {#if doc.error}<div><dt>索引错误</dt><dd>{doc.error}</dd></div>{/if}
         </dl>
         <section class="knowledge-document-preview">
@@ -12079,6 +12060,12 @@ function openGovernanceCenter() {
   .select-list,.distill-panel{display:grid;gap:10px;margin-top:16px}.select-list>p,.distill-panel>p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.select-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.select-list button:hover{border-color:#93c5fd;background:#f8fbff}.select-list strong{color:#111827}.select-list span{color:#667085;font-size:12px}.distill-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.distill-steps button{min-height:36px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;color:#5f6774;font-weight:700}.distill-steps button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.distill-preview{padding:0;border:0}.distill-preview div{margin-top:0}@media(max-width:720px){.distill-steps{grid-template-columns:1fr}}
 
   .resource-center-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.resource-center .resource-tabs{flex:0 1 auto;min-width:0;margin:0;flex-wrap:wrap}.resource-center .resource-tabs button{min-width:104px}.resource-center-actions{display:flex;flex:0 0 auto;align-items:center;justify-content:flex-end;gap:8px}.resource-center-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#222;font-size:13px;font-weight:700}.resource-center-actions button:last-child{border-color:#222;background:#222;color:#fff}.resource-center-actions button:hover{border-color:#222}.resource-section-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.resource-section-top .aorist-search{flex:1 1 320px;max-width:none;margin-bottom:0}.resource-section-top>span{flex:0 0 auto;color:#7b8494;font-size:12px;font-weight:650;white-space:nowrap}.resource-section-top .resource-actions{flex:0 0 auto;justify-content:flex-end;margin:0}.resource-library-empty,.resource-archive-empty{grid-column:1/-1}.resource-archive-summary{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px;padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.82)}.resource-archive-summary span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.resource-archive-summary strong{display:block;margin-top:4px;color:#111827;font-size:18px}.resource-archive-summary em{color:#7b8494;font-size:12px;font-style:normal}.resource-archive-list{display:grid;gap:12px}.resource-archive-project{padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.resource-archive-project header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.resource-archive-project header strong{display:block;color:#111827;font-size:14px}.resource-archive-project header span,.resource-archive-project header em{color:#7b8494;font-size:11px;font-style:normal}.resource-archive-project>div{display:grid;gap:8px}.resource-archive-project article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#fff}.resource-archive-project article strong{display:block;overflow:hidden;color:#111827;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.resource-archive-project article p{margin:3px 0 0;color:#7b8494;font-size:11px}.resource-archive-project article button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:1px solid #f3d3d3;border-radius:8px;background:#fff;color:#b42318;font-size:12px;font-weight:650}.resource-archive-project article button:hover{background:#fff5f5}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}@media(max-width:920px){.resource-center-topbar{align-items:flex-start;flex-direction:column}.resource-center-actions{justify-content:flex-start}}@media(max-width:720px){.resource-section-top,.resource-archive-summary{align-items:flex-start;flex-direction:column}.resource-section-top .aorist-search{width:100%;max-width:none}.resource-section-top .resource-actions{width:100%;justify-content:flex-start}.resource-archive-project article{grid-template-columns:1fr}}
+  @media (max-width: 720px) {
+    .resource-section-top .aorist-search {
+      flex: 0 0 auto;
+    }
+  }
+
   .resource-detail-modal{display:grid;grid-template-rows:auto minmax(0,1fr) auto;width:min(760px,calc(100vw - 44px));height:min(760px,calc(100vh - 44px));padding:0}.resource-detail-modal header{padding:18px 24px;border-bottom:1px solid #e5e7eb}.resource-detail-modal header p{margin:4px 0 0;color:#7b8494;font-size:12px}.resource-detail-body{display:grid;gap:14px;min-height:0;margin:0;padding:20px 22px;overflow:auto}.resource-detail-body article{padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.resource-detail-body article span{display:inline-block;margin-bottom:8px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.resource-detail-body article strong{display:block;color:#111827;font-size:17px}.resource-detail-body article p{margin:7px 0 0;max-height:none;overflow-wrap:anywhere;color:#5f6774;font-size:13px;line-height:1.65}.resource-detail-body dl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 12px;margin:0;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.resource-detail-body dt{color:#7b8494;font-size:12px}.resource-detail-body dd{margin:0;min-width:0;overflow-wrap:anywhere;color:#111827;font-size:13px}.resource-detail-modal footer{margin:0;padding:14px 24px;border-top:1px solid #e5e7eb;background:#fff}.resource-detail-modal footer button.danger{border-color:#f3d3d3!important;background:#fff!important;color:#b42318!important}.resource-detail-modal footer button.danger:hover{background:#fff5f5!important}
   .resource-center .aorist-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,260px));align-items:start;justify-content:start}.resource-center .media-card{display:grid;grid-template-rows:auto auto 1fr auto;width:100%;height:190px;min-height:0;box-sizing:border-box;overflow:hidden;text-align:left}.resource-center .media-card span{justify-self:start;width:auto;max-width:100%}.resource-center .media-card strong,.resource-center .media-card p{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical}.resource-center .media-card strong{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card p{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card em{align-self:end;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.resource-category-bar{display:flex;align-items:center;gap:10px;margin:0 0 12px}.resource-category-bar button{min-height:30px;padding:0 10px;border:1px solid #dce4ef;border-radius:9px;background:#fff;color:#344054;font-size:12px;font-weight:700}.resource-category-bar strong{color:#111827;font-size:15px}.resource-category-card{text-align:left}.resource-category-card span{background:#eef4ff;color:#1f5fbf}.resource-category-card em{display:block;margin-top:10px;color:#7b8494;font-size:12px;font-style:normal}
   .knowledge-health{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:10px}.knowledge-health article{padding:12px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.knowledge-health span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.knowledge-health strong{display:block;margin-top:5px;color:#111827;font-size:15px}.knowledge-local-note{margin:0 0 14px;color:#687386;font-size:12px;font-weight:650}.knowledge-card-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.knowledge-card-actions button:last-child{color:#b42318}.knowledge-preview em{display:block;margin-top:12px;color:#7b8494;font-size:11px;font-style:normal;word-break:break-all}.knowledge-stack{display:grid;gap:14px;min-width:0}.knowledge-stack section{padding:14px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.76);box-shadow:0 12px 30px rgba(15,23,42,.04)}.knowledge-stack header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}.knowledge-stack header span{color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.knowledge-stack header strong{color:#0f172a;font-size:17px;letter-spacing:-.03em}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:720px){.knowledge-health{grid-template-columns:repeat(2,minmax(0,1fr))}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:1fr}.knowledge-stack header{display:grid;align-items:start}}
@@ -23391,7 +23378,7 @@ function openGovernanceCenter() {
 @media(max-width:640px){.knowledge-content-tabs{justify-content:flex-start;overflow:auto}.knowledge-content-tabs button{min-width:80px;padding-inline:10px}}
 .knowledge-template-card{display:flex;flex-direction:column;gap:12px;height:336px;min-height:336px;padding:18px 26px 16px}
 .knowledge-template-card header{flex:0 0 auto}
-.knowledge-template-card>strong{flex:0 0 auto;min-height:0;max-height:42px}
+.knowledge-template-card>strong{flex:0 0 auto;min-height:42px;max-height:42px}
   .knowledge-template-card p{flex:0 0 auto;min-height:44px;max-height:44px;margin:0;line-height:1.55}
   .knowledge-template-card dl{flex:0 0 auto;gap:12px;margin:0}
   .knowledge-template-card dl div{min-height:58px;padding:10px 12px}
@@ -24929,19 +24916,9 @@ function openGovernanceCenter() {
     padding: 8px 10px;
   }
 
-  .task-receipt-float__panel :global(.receipt article p) {
-    display: -webkit-box;
-    margin-top: 4px;
-    overflow: hidden;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
+  .task-receipt-float__panel :global(.receipt article p),
   .task-receipt-float__panel :global(.receipt article ul) {
-    max-height: 48px;
     margin-top: 4px;
-    overflow: auto;
   }
 
   @media (max-width: 720px) {

@@ -2249,6 +2249,22 @@ func textOverlaps(a, b string) bool {
 }
 
 func matchTodoStep(step string, todos []TodoItem) TodoStepMatch {
+	if isCurrentTodoAlias(step) {
+		found := -1
+		for i, todo := range todos {
+			if todoStatus(todo.Status) != "in_progress" {
+				continue
+			}
+			if found >= 0 {
+				return TodoStepMatch{}
+			}
+			found = i
+		}
+		if found >= 0 {
+			todo := todos[found]
+			return TodoStepMatch{Found: true, Index: found + 1, Content: todo.Content, Status: todo.Status, ActiveForm: todo.ActiveForm}
+		}
+	}
 	if n, ok := parseStepIndex(normalizeStepText(step)); ok && n >= 1 && n <= len(todos) {
 		t := todos[n-1]
 		return TodoStepMatch{Found: true, Index: n, Content: t.Content, Status: t.Status, ActiveForm: t.ActiveForm}
@@ -2275,6 +2291,15 @@ func matchTodoStep(step string, todos []TodoItem) TodoStepMatch {
 		return TodoStepMatch{Found: true, Index: found + 1, Content: t.Content, Status: t.Status, ActiveForm: t.ActiveForm}
 	}
 	return TodoStepMatch{}
+}
+
+func isCurrentTodoAlias(step string) bool {
+	switch normalizeStepText(step) {
+	case "当前待办", "当前步骤", "上一条待办", "本步骤", "currentstep", "currenttodo":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseStepIndex(step string) (int, bool) {

@@ -115,7 +115,7 @@ func TestBashDescriptionReflectsShell(t *testing.T) {
 			t.Errorf("powershell description should provide executable multiline verification guidance %q: %q", want, psDesc)
 		}
 	}
-	for _, want := range []string{"do not use wc", "(Get-Content <path> -Raw).Length"} {
+	for _, want := range []string{"do not use wc", "(Get-Content <path> -Raw).Length", "Get-Command git -ErrorAction SilentlyContinue", "do not use ls -la", "if git is unavailable"} {
 		if !strings.Contains(psDesc, want) {
 			t.Errorf("powershell description should provide a native character-count alternative %q: %q", want, psDesc)
 		}

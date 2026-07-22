@@ -1102,6 +1102,8 @@ button {
   min-height: 38px;
   min-width: 0;
   padding: 0 11px 10px 14px;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .composer__tools,
@@ -1140,6 +1142,8 @@ button {
 .composer__actions {
   flex: 0 0 auto;
   margin-left: auto;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .composer__tools .composer__plus-trigger {
@@ -1430,6 +1434,13 @@ button {
   color: #ffffff !important;
   background: #b9cdf2 !important;
   border-radius: 12px !important;
+  flex: 0 0 32px;
+}
+
+.code-workbench-chat .composer {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
 }
 
 .first-run-checklist {

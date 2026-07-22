@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,11 +26,19 @@ type ScopedMemoryInput struct {
 }
 
 type ScopedMemoryView struct {
-	Context   scopedmemory.Context   `json:"context"`
-	Entries   []scopedmemory.Entry   `json:"entries"`
-	Archives  []scopedmemory.Archive `json:"archives"`
-	StorePath string                 `json:"storePath,omitempty"`
-	Available bool                   `json:"available"`
+	Context       scopedmemory.Context   `json:"context"`
+	ContextLabels ScopedMemoryLabels     `json:"contextLabels"`
+	Entries       []scopedmemory.Entry   `json:"entries"`
+	Archives      []scopedmemory.Archive `json:"archives"`
+	StorePath     string                 `json:"storePath,omitempty"`
+	Available     bool                   `json:"available"`
+}
+
+type ScopedMemoryLabels struct {
+	Organization string `json:"organization,omitempty"`
+	Workspace    string `json:"workspace,omitempty"`
+	Project      string `json:"project,omitempty"`
+	Thread       string `json:"thread,omitempty"`
 }
 
 type scopedMemoryRuntime struct {
@@ -58,7 +67,38 @@ func (a *App) ScopedMemoryForTab(tabID string) (ScopedMemoryView, error) {
 	if err != nil {
 		return ScopedMemoryView{}, err
 	}
-	return ScopedMemoryView{Context: ctx, Entries: entries, Archives: archives, StorePath: store.Path(), Available: true}, nil
+	return ScopedMemoryView{Context: ctx, ContextLabels: scopedMemoryLabelsForTab(tab, ctx), Entries: entries, Archives: archives, StorePath: store.Path(), Available: true}, nil
+}
+
+func scopedMemoryLabelsForTab(tab *WorkspaceTab, ctx scopedmemory.Context) ScopedMemoryLabels {
+	labels := ScopedMemoryLabels{
+		Organization: strings.TrimSpace(ctx.OrganizationID),
+		Workspace:    strings.TrimSpace(ctx.WorkspaceID),
+		Project:      strings.TrimSpace(ctx.ProjectID),
+		Thread:       strings.TrimSpace(ctx.ThreadID),
+	}
+	if labels.Organization == "default" {
+		labels.Organization = "默认组织"
+	}
+	if labels.Project == "inbox" {
+		labels.Project = "收件箱"
+	}
+	if tab == nil {
+		return labels
+	}
+	if root := strings.TrimSpace(tab.WorkspaceRoot); root != "" {
+		if name := strings.TrimSpace(filepath.Base(filepath.Clean(root))); name != "" && name != "." {
+			labels.Workspace = name
+		}
+	} else if labels.Workspace == "global" {
+		labels.Workspace = "全局工作区"
+	}
+	if title := strings.TrimSpace(tab.TopicTitle); title != "" && title != defaultTopicTitle {
+		labels.Thread = title
+	} else if strings.HasPrefix(labels.Thread, "thread-") {
+		labels.Thread = "当前对话"
+	}
+	return labels
 }
 
 func (a *App) SaveScopedMemoryForTab(tabID string, input ScopedMemoryInput) (scopedmemory.Entry, error) {

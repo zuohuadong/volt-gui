@@ -24,6 +24,13 @@ export interface ScopedMemoryContext {
   threadId?: string;
 }
 
+export interface ScopedMemoryContextLabels {
+  organization?: string;
+  workspace?: string;
+  project?: string;
+  thread?: string;
+}
+
 export type ScopedMemoryLayer = "user" | "organization" | "workspace" | "project" | "thread";
 
 export interface ScopedMemoryReference {
@@ -64,6 +71,7 @@ export interface ScopedMemoryInput {
 
 export interface ScopedMemoryView {
   context: ScopedMemoryContext;
+  contextLabels?: ScopedMemoryContextLabels;
   entries: ScopedMemoryEntry[];
   archives: ScopedMemoryArchive[];
   storePath?: string;

@@ -67,7 +67,6 @@
     onDrawerClose: () => void;
     onCollapseToggle: () => void;
     onGovernance: () => void;
-    onToggleDisplayMode: () => void;
     taskTimeLabel: (task: TaskThread) => string;
   }
 
@@ -102,7 +101,6 @@
     onDrawerClose,
     onCollapseToggle,
     onGovernance,
-    onToggleDisplayMode,
     taskTimeLabel,
   }: Props = $props();
 
@@ -265,14 +263,6 @@
 
   <footer>
     <button class:active={governanceActive} type="button" aria-pressed={governanceActive} onclick={() => { onGovernance(); onDrawerClose(); }}><Settings2 size={15} /><span>{displayMode === "office" ? "设置" : "配置与治理"}</span><em>{displayMode === "office" ? "模型、权限与同步" : "设置、能力与安全"}</em></button>
-    <button
-      type="button"
-      aria-label={displayMode === "office" ? "打开完整模式" : "切换回办公模式"}
-      title={displayMode === "office" ? "打开完整模式" : "切换回办公模式"}
-      onclick={() => { onToggleDisplayMode(); onDrawerClose(); }}
-    >
-      {#if displayMode === "office"}<Boxes size={15} /><span>完整模式</span><em>项目、自动化与治理</em>{:else}<BriefcaseBusiness size={15} /><span>切回办公模式</span><em>精简 Work 导航</em>{/if}
-    </button>
   </footer>
 </aside>
 

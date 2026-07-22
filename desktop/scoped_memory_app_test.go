@@ -90,6 +90,32 @@ func TestScopedMemoryForTabCRUDIsolationArchiveAndRebuild(t *testing.T) {
 	}
 }
 
+func TestScopedMemoryForTabReturnsFriendlyContextLabels(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := filepath.Join(t.TempDir(), "customer-portal")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	tab := &WorkspaceTab{
+		ID: "tab_opaque", WorkspaceRoot: root, TopicTitle: "登录流程复核",
+		MemoryContext: scopedmemory.Context{OrganizationID: "default", ProjectID: "inbox"},
+		disabledMCP:   map[string]ServerView{},
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+
+	view, err := app.ScopedMemoryForTab(tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.ContextLabels.Organization != "默认组织" || view.ContextLabels.Workspace != "customer-portal" || view.ContextLabels.Project != "收件箱" || view.ContextLabels.Thread != "登录流程复核" {
+		t.Fatalf("context labels = %+v", view.ContextLabels)
+	}
+	if view.Context.ThreadID == view.ContextLabels.Thread {
+		t.Fatalf("opaque thread id should remain canonical but separate from display label: %+v", view)
+	}
+}
+
 func TestMemoryContextPersistsInTabSessionAndView(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	path := filepath.Join(t.TempDir(), "memory-context.jsonl")

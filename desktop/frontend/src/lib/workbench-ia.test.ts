@@ -194,6 +194,38 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("先提问确认，不要猜测");
   });
 
+  test("keeps review and fix anchored to the user's named target", () => {
+    const template = OUTCOME_TEMPLATES.find((item) => item.id === "review-fix");
+    expect(template?.prompt).toContain("用户明确点名的功能、文件路径、测试或错误日志是本次审查的权威范围");
+    expect(template?.prompt).toContain("找不到匹配内容时停止并请求确认");
+    expect(template?.prompt).toContain("不得改用 quick_sort、历史示例或其他无关代码代替");
+  });
+
+  test("keeps build diagnosis compatible with the actual host shell and installed tools", () => {
+    const template = OUTCOME_TEMPLATES.find((item) => item.id === "build-diagnosis");
+    expect(template?.prompt).toContain("先确认当前终端类型和工具可用性");
+    expect(template?.prompt).toContain("PowerShell");
+    expect(template?.prompt).toContain("未安装 git");
+    expect(template?.prompt).toContain("不得执行 ls -la");
+  });
+
+  test("keeps issue delivery on the host-managed todo and completion protocol", () => {
+    const template = OUTCOME_TEMPLATES.find((item) => item.id === "issue-delivery");
+    expect(template?.prompt).toContain("只建立一次 todo_write");
+    expect(template?.prompt).toContain("complete_step");
+    expect(template?.prompt).toContain("Host 会自动推进");
+    expect(template?.prompt).toContain("不得把中间草稿、乱码或失败重试内容写入最终产物");
+  });
+
+  test("requires one clean review-ready document across model backends", () => {
+    const template = OUTCOME_TEMPLATES.find((item) => item.id === "write-document");
+    expect(template?.prompt).toContain("最终只保留一份干净正文");
+    expect(template?.prompt).toContain("连续章节编号");
+    expect(template?.prompt).toContain("ONNX");
+    expect(template?.prompt).toContain("结构摘要");
+    expect(template?.prompt).toContain("核心信息不足时先提问");
+  });
+
   test("keeps receipt fields pending until evidence exists and only settles the shell on turn_done", () => {
     const pending = createPendingTaskReceipt({
       id: "receipt-1",

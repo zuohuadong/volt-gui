@@ -375,6 +375,34 @@ func TestCompleteStepAcceptsPendingTodo(t *testing.T) {
 	}
 }
 
+func TestCompleteStepAcceptsCurrentTodoAliasWhenUnambiguous(t *testing.T) {
+	for _, alias := range []string{"当前待办", "当前步骤", "上一条待办", "current step"} {
+		t.Run(alias, func(t *testing.T) {
+			ledger := evidence.NewLedger()
+			ledger.Record(evidence.Receipt{
+				ToolName: "todo_write",
+				Success:  true,
+				Todos: []evidence.TodoItem{
+					{Content: "起草并校验技术方案", Status: "in_progress"},
+					{Content: "汇总交付说明", Status: "pending"},
+				},
+			})
+			ctx := evidence.WithLedger(context.Background(), ledger)
+
+			out, err := completeStep{}.Execute(ctx, json.RawMessage(`{
+				"step":"`+alias+`",
+				"result":"技术方案已完成",
+				"evidence":[{"kind":"manual","summary":"已检查最终文档"}]}`))
+			if err != nil {
+				t.Fatalf("unambiguous current-step alias rejected: %v", err)
+			}
+			if !strings.Contains(out, "todo-matched 1") || !strings.Contains(out, "起草并校验技术方案") {
+				t.Fatalf("alias matched wrong todo: %q", out)
+			}
+		})
+	}
+}
+
 func TestCompleteStepIgnoresFailedTodoReceipt(t *testing.T) {
 	ledger := evidence.NewLedger()
 	ledger.Record(evidence.Receipt{

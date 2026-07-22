@@ -2808,6 +2808,42 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildExecutionWorkflowPolicyIsAppendedToCustomSystemPrompt(t *testing.T) {
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "voltui.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	sys := systemMessage(ctrl.History())
+	for _, want := range []string{
+		config.ExecutionWorkflowPolicy,
+		"Do not invent tool names",
+		"The host advances the task list",
+		"PowerShell",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("execution workflow policy missing %q from custom system prompt:\n%s", want, sys)
+		}
+	}
+}
+
 func TestBuildCalculationPolicyIsAppended(t *testing.T) {
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -2886,6 +2922,7 @@ func stripLanguagePolicy(s string) string {
 		instruction.CalculationPolicy,
 		config.LanguagePolicy,
 		config.UserDecisionPolicy,
+		config.ExecutionWorkflowPolicy,
 	} {
 		s = strings.TrimSpace(strings.TrimSuffix(s, policy))
 	}

@@ -130,6 +130,23 @@ func TestWorkbenchDataPersistsBusinessSurfaces(t *testing.T) {
 	}
 }
 
+func TestReportIDsStayShortForLongNonASCIITitles(t *testing.T) {
+	data := WorkbenchDataView{}
+	title := strings.Repeat("项目风险分析与交付验收报告", 24)
+	report, err := saveReportInto(&data, WorkbenchReportInput{Title: title})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.ID) > 48 || !strings.HasPrefix(report.ID, "report-") {
+		t.Fatalf("report id = %q, want a short stable report-* id", report.ID)
+	}
+	legacy := WorkbenchReportView{ID: strings.Repeat("legacy", 20), Title: title}
+	normalized := normalizeReports([]WorkbenchReportView{legacy})
+	if len(normalized) != 1 || len(normalized[0].ID) > 48 || !strings.HasPrefix(normalized[0].ID, "report-") {
+		t.Fatalf("normalized legacy report = %+v", normalized)
+	}
+}
+
 func TestWorkbenchExportsWriteFiles(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	app := &App{}

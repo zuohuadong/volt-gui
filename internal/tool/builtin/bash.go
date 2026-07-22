@@ -117,8 +117,9 @@ func (b bash) Description() string {
 			"NOTE: bash is not available on this host — commands run under %s, so write PowerShell, not bash:\n"+
 			"  - chaining: %s\n"+
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n"+
-			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n"+
+			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep); do not use ls -la.\n"+
 			"  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n"+
+			"  - before git or another external program, use Get-Command git -ErrorAction SilentlyContinue; if git is unavailable, skip git commands and use the dedicated file tools or report the missing prerequisite.\n"+
 			"  - text metrics: do not use wc; for a character count use (Get-Content <path> -Raw).Length, or a short Python script.\n"+
 			"  - multiline Python/Node verification: do not compress statements, comments, or newlines into a fragile -c string. Prefer write_file for a short temporary script, then run it directly (for example python path\\to\\verify.py).\n"+
 			"  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0)."+

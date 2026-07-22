@@ -1,5 +1,6 @@
 import type {
   ScopedMemoryContext,
+  ScopedMemoryContextLabels,
   ScopedMemoryEntry,
   ScopedMemoryLayer,
   TrustStatus,
@@ -15,11 +16,11 @@ export const MEMORY_LAYER_ORDER = [
 ] as const satisfies readonly ScopedMemoryLayer[];
 
 export const MEMORY_LAYER_LABELS: Record<ScopedMemoryLayer, string> = {
-  user: "User",
-  organization: "Organization",
-  workspace: "Workspace",
-  project: "Project",
-  thread: "Thread",
+  user: "用户",
+  organization: "组织",
+  workspace: "工作区",
+  project: "项目",
+  thread: "对话",
 };
 
 export interface TrustStatusPresentation {
@@ -57,6 +58,34 @@ export function scopeIDForMemoryLayer(context: ScopedMemoryContext, layer: Scope
   return context.threadId?.trim() ?? "";
 }
 
+export function scopeLabelForMemoryLayer(
+  context: ScopedMemoryContext,
+  labels: ScopedMemoryContextLabels | undefined,
+  layer: ScopedMemoryLayer,
+): string {
+  if (layer === "user") return "当前用户";
+  const label = labels?.[layer]?.trim();
+  if (label) return label;
+  const id = scopeIDForMemoryLayer(context, layer);
+  if (layer === "organization" && id === "default") return "默认组织";
+  if (layer === "workspace" && id === "global") return "全局工作区";
+  if (layer === "project" && id === "inbox") return "收件箱";
+  if (layer === "thread" && id.startsWith("thread-")) return "当前对话";
+  if (layer === "organization") return id ? "当前组织" : "未绑定";
+  if (layer === "workspace") return id ? "当前工作区" : "未绑定";
+  if (layer === "project") return id ? "当前项目" : "未绑定";
+  return id ? "当前对话" : "未绑定";
+}
+
+export function normalizeTrustCopy(value?: string): string {
+  return (value ?? "")
+    .replace(/[\u200B-\u200D\uFEFF\uFFFD]/g, "")
+    .replace(/browser[\s_-]*control/gi, "browserControl")
+    .replace(/MCP\s*\/\s*工具/g, "MCP 或工具")
+    .replace(/工具参数\s*\/\s*本地文件引用/g, "工具参数或本地文件引用")
+    .trim();
+}
+
 export function groupScopedMemoryEntries(entries: ScopedMemoryEntry[]) {
   return MEMORY_LAYER_ORDER.map((layer) => ({
     layer,
@@ -71,4 +100,48 @@ export function formatGovernanceTimestamp(value?: string): string {
   const timestamp = value ? Date.parse(value) : Number.NaN;
   if (!Number.isFinite(timestamp)) return value?.trim() || "未记录";
   return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
+}
+
+export function formatKnowledgeTimestamp(value?: string, nowMs = Date.now()): string {
+  const raw = value?.trim() || "";
+  const timestamp = raw ? Date.parse(raw) : Number.NaN;
+  if (!Number.isFinite(timestamp)) return raw || "未记录";
+
+  const timeZone = "Asia/Shanghai";
+  const values = dateTimeParts(timestamp, timeZone);
+  const nowValues = dateParts(nowMs, timeZone);
+  const formattedTime = `${values.hour}:${values.minute}`;
+  const diffMs = nowMs - timestamp;
+  if (diffMs >= 0 && diffMs < 60_000) return "刚刚";
+  if (diffMs >= 60_000 && diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)} 分钟前`;
+  if (diffMs >= 3_600_000 && diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)} 小时前`;
+  if (sameDate(values, nowValues)) return `今天 ${formattedTime}`;
+  if (sameDate(values, dateParts(nowMs - 86_400_000, timeZone))) return `昨天 ${formattedTime}`;
+  if (diffMs >= 0 && diffMs < 7 * 86_400_000) return `${Math.floor(diffMs / 86_400_000)} 天前 ${formattedTime}`;
+  return `${values.year}-${values.month}-${values.day} ${formattedTime}`;
+}
+
+function dateTimeParts(timestamp: number, timeZone: string): Record<string, string> {
+  return Object.fromEntries(new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(timestamp)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+}
+
+function dateParts(timestamp: number, timeZone: string): Record<string, string> {
+  return Object.fromEntries(new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+}
+
+function sameDate(left: Record<string, string>, right: Record<string, string>): boolean {
+  return left.year === right.year && left.month === right.month && left.day === right.day;
 }

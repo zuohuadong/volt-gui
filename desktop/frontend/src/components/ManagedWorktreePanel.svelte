@@ -50,7 +50,7 @@
 
 <section class="worktree-panel" data-testid="managed-worktree-panel">
   <header>
-    <div><span>Isolated Workspace</span><strong>隔离工作区与 Handoff</strong><em>{repositoryRoot || "请选择 Git Workspace"}</em></div>
+    <div><span>隔离工作区</span><strong>隔离工作区与安全交接</strong><em>{repositoryRoot || "请选择 Git 工作区"}</em></div>
     <div class="worktree-panel__header-actions">
       <button type="button" disabled={busy || !repositoryRoot} onclick={onRefresh}><RefreshCw size={13} /> 刷新</button>
       <button class="worktree-panel__toggle" class:expanded type="button" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>{expanded ? "收起" : "管理"}<ChevronDown size={14} /></button>
@@ -83,7 +83,7 @@
 
         <aside>
           <section>
-            <header><strong>安全 Handoff</strong><span>源快照只会应用到同仓库、相同 HEAD 且干净的目标工作区。</span></header>
+            <header><strong>安全交接</strong><span>源快照只会应用到同仓库、相同提交且干净的目标工作区。</span></header>
             <label><span>源工作区</span><select bind:value={sourceWorktreeId}><option value="">请选择</option>{#each readyWorktrees as worktree (worktree.id)}<option value={worktree.id}>{worktree.name}</option>{/each}</select></label>
             <label><span>目标工作区</span><select bind:value={targetWorktreeId}><option value="">请选择</option>{#each readyWorktrees.filter((worktree) => worktree.id !== sourceWorktreeId) as worktree (worktree.id)}<option value={worktree.id}>{worktree.name}</option>{/each}</select></label>
             <label><span>交接说明</span><textarea rows="2" placeholder="说明目标、当前状态和下一步" bind:value={summary}></textarea></label>

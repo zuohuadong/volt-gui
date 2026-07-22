@@ -26,12 +26,12 @@
   <div class="receipt-grid">
     {#each order as sectionId (sectionId)}
       {@const section = receipt.sections[sectionId]}
-      <article class:failed={section.status === "failed"} class:ready={section.status === "ready"}>
+      <article class:failed={section.status === "failed"} class:ready={section.status === "ready"} data-receipt-section={sectionId}>
         <div>
           {#if section.status === "ready"}<CheckCircle2 size={14} />{:else if section.status === "failed"}<AlertCircle size={14} />{:else}<Clock3 size={14} />{/if}
           <strong>{labels[sectionId]}</strong>
         </div>
-        {#if section.items.length}<ul>{#each section.items as item (item)}<li>{item}</li>{/each}</ul>{/if}
+        {#if section.items.length}<ul>{#each section.items as item (item)}<li title={item}>{item}</li>{/each}</ul>{/if}
         <p>{section.note}</p>
       </article>
     {/each}
@@ -95,12 +95,17 @@
 
   .receipt-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
     gap: 8px;
   }
 
   article {
+    display: grid;
+    grid-column: span 4;
+    align-content: start;
     min-width: 0;
+    min-height: 112px;
     padding: 10px;
     border: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent);
     border-radius: 8px;
@@ -115,6 +120,13 @@
   article.failed {
     border-color: color-mix(in srgb, var(--destructive, #b42318) 24%, var(--border, #dce1db));
     background: #fff7f6;
+  }
+
+  article[data-receipt-section="goal"],
+  article[data-receipt-section="runtime"],
+  article[data-receipt-section="dataPath"],
+  article[data-receipt-section="rollback"] {
+    grid-column: span 6;
   }
 
   article > div {
@@ -141,6 +153,9 @@
 
   article p,
   li {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
     color: var(--muted-foreground, #687169);
     font-size: 11px;
     line-height: 1.5;
@@ -155,9 +170,17 @@
     padding-left: 16px;
   }
 
+  li + li {
+    margin-top: 4px;
+  }
+
   @media (max-width: 980px) {
-    .receipt-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    article,
+    article[data-receipt-section="goal"],
+    article[data-receipt-section="runtime"],
+    article[data-receipt-section="dataPath"],
+    article[data-receipt-section="rollback"] {
+      grid-column: span 6;
     }
   }
 
@@ -169,6 +192,16 @@
 
     .receipt-grid {
       grid-template-columns: 1fr;
+      grid-auto-rows: auto;
+    }
+
+    article,
+    article[data-receipt-section="goal"],
+    article[data-receipt-section="runtime"],
+    article[data-receipt-section="dataPath"],
+    article[data-receipt-section="rollback"] {
+      grid-column: auto;
+      min-height: 0;
     }
   }
 </style>

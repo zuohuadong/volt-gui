@@ -506,7 +506,7 @@
       value={input}
       placeholder={placeholder}
       rows="3"
-      aria-label="Composer input"
+      aria-label="对话输入框"
       aria-keyshortcuts="Enter Shift+Enter Escape"
       oninput={handleInput}
       onpaste={handlePaste}
@@ -602,7 +602,7 @@
   />
 
   {#if !minimal}
-    <div class="composer__runtime-status" aria-label="Thread 运行状态">
+    <div class="composer__runtime-status" aria-label="当前对话运行状态">
       <span data-thread-status="context">上下文剩余 <strong>{remainingContextPercent === undefined ? "待统计" : `${remainingContextPercent}%`}</strong></span>
       <span data-thread-status="cost">本会话费用 <strong>{sessionCostLabel}</strong></span>
       <span data-thread-status="background">后台运行 <strong>{Math.max(0, backgroundRunCount)}</strong></span>

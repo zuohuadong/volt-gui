@@ -96,6 +96,10 @@ import type {
   WireEvent,
   WorkspaceDiffView,
   WorkspaceChangesView,
+  ReviewPatchRequest,
+  ReviewPatchResult,
+  ReviewWorkflowRequest,
+  ReviewWorkflowResult,
 } from "./types";
 
 type ProjectMaterialFile = {
@@ -177,6 +181,8 @@ interface AppBindings {
   WorkspaceChanges(paths: string[]): Promise<WorkspaceChangesView>;
   WorkspaceDiff(rel: string): Promise<WorkspaceDiffView>;
   WorkspaceDiffForTab(tabID: string, rel: string): Promise<WorkspaceDiffView>;
+  ApplyReviewPatchForTab(input: ReviewPatchRequest): Promise<ReviewPatchResult>;
+  RunReviewWorkflowForTab(input: ReviewWorkflowRequest): Promise<ReviewWorkflowResult>;
   ListManagedWorktrees(workspaceRoot: string): Promise<ManagedWorktree[]>;
   ListManagedWorktreeSnapshots(workspaceRoot: string): Promise<ManagedWorktreeSnapshot[]>;
   CreateManagedWorktree(workspaceRoot: string, name: string): Promise<ManagedWorktree>;

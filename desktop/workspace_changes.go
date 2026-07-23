@@ -28,18 +28,20 @@ type gitStatusEntry struct {
 }
 
 type WorkspaceDiffView struct {
-	Path           string `json:"path"`
-	OldPath        string `json:"oldPath,omitempty"`
-	Status         string `json:"status,omitempty"`
-	IndexStatus    string `json:"indexStatus,omitempty"`
-	WorktreeStatus string `json:"worktreeStatus,omitempty"`
-	Kind           string `json:"kind"`
-	Diff           string `json:"diff"`
-	Added          int    `json:"added"`
-	Removed        int    `json:"removed"`
-	Binary         bool   `json:"binary"`
-	Truncated      bool   `json:"truncated"`
-	Err            string `json:"err,omitempty"`
+	Path             string `json:"path"`
+	OldPath          string `json:"oldPath,omitempty"`
+	Status           string `json:"status,omitempty"`
+	IndexStatus      string `json:"indexStatus,omitempty"`
+	WorktreeStatus   string `json:"worktreeStatus,omitempty"`
+	Kind             string `json:"kind"`
+	Diff             string `json:"diff"`
+	Added            int    `json:"added"`
+	Removed          int    `json:"removed"`
+	Binary           bool   `json:"binary"`
+	Truncated        bool   `json:"truncated"`
+	StagedRevision   string `json:"stagedRevision,omitempty"`
+	UnstagedRevision string `json:"unstagedRevision,omitempty"`
+	Err              string `json:"err,omitempty"`
 }
 
 type workspaceChangeAccumulator struct {
@@ -130,6 +132,7 @@ func (a *App) workspaceChanges(tabID string) WorkspaceChangesView {
 		acc.view.WorktreeStatus = entry.WorktreeStatus
 		acc.view.OldPath = normalizeWorkspaceRelPath(base, entry.OldPath)
 	}
+	out.Generation = reviewWorkspaceGeneration(base, out.GitBranch, gitEntries)
 
 	out.Files = make([]WorkspaceChangeView, 0, len(changes))
 	for _, acc := range changes {
@@ -323,6 +326,21 @@ func (a *App) workspaceDiff(tabID, rel string) WorkspaceDiffView {
 	out.Removed = change.Removed
 	out.Binary = change.Binary
 	out.Truncated = strings.Contains(change.Diff, "diff omitted:")
+	repoRel, relErr := filepath.Rel(repoRoot, path)
+	if relErr == nil {
+		repoRel = filepath.ToSlash(repoRel)
+		if stagedPatch, patchErr := reviewSourcePatch(repoRoot, repoRel, reviewSourceStaged); patchErr == nil && len(stagedPatch) > 0 {
+			out.StagedRevision = reviewSourceRevision(reviewSourceStaged, stagedPatch)
+		}
+		if unstagedPatch, patchErr := reviewSourcePatch(repoRoot, repoRel, reviewSourceUnstaged); patchErr == nil {
+			if len(unstagedPatch) == 0 && entry.Status == "??" {
+				unstagedPatch = []byte(out.Diff)
+			}
+			if len(unstagedPatch) > 0 {
+				out.UnstagedRevision = reviewSourceRevision(reviewSourceUnstaged, unstagedPatch)
+			}
+		}
+	}
 	return out
 }
 

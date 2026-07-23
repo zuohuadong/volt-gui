@@ -120,8 +120,8 @@ esac
     writeExecutable(
       join(bin, "wails"),
       `#!/usr/bin/env bash
-mkdir -p build/bin/voltui-desktop.app/Contents/MacOS
-: > build/bin/voltui-desktop.app/Contents/MacOS/voltui-desktop
+mkdir -p build/bin/西谷智灯暗涌系统.app/Contents/MacOS
+: > build/bin/西谷智灯暗涌系统.app/Contents/MacOS/voltui-desktop
 `
     );
     writeExecutable(join(bin, "codesign"), "#!/usr/bin/env bash\nexit 0\n");

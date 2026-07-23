@@ -1,11 +1,29 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ChevronDown, ChevronRight, Code2, ExternalLink, FileText, Folder, GitPullRequest, Gauge, LocateFixed, RefreshCw, RotateCcw, Search } from "@lucide/svelte";
+  import { AlertTriangle, Check, ChevronDown, ChevronRight, Code2, ExternalLink, FileText, Folder, GitBranch, GitCommitHorizontal, GitPullRequest, Gauge, LocateFixed, RefreshCw, RotateCcw, Search } from "@lucide/svelte";
   import DiffViewer from "./DiffViewer.svelte";
   import { app } from "../lib/bridge";
   import type { DiffReviewComment } from "../lib/diff-review";
   import { contextRemainingPercent, contextRemainingTokens } from "../lib/thread-ux";
-  import type { CheckpointMeta, ContextPanelInfo, DirEntry, FilePreview, WorkspaceDiffView, WorkspaceChangesView } from "../lib/types";
+  import {
+    reviewActionLabel,
+    reviewActionsForSource,
+    reviewFileBelongsToSource,
+    reviewPatchConflicts,
+  } from "../lib/review-workflow";
+  import type {
+    CheckpointMeta,
+    ContextPanelInfo,
+    DirEntry,
+    FilePreview,
+    ReviewPatchAction,
+    ReviewPatchRequest,
+    ReviewSource,
+    ReviewWorkflowAction,
+    ReviewWorkflowRequest,
+    WorkspaceDiffView,
+    WorkspaceChangesView,
+  } from "../lib/types";
   import { t } from "../lib/i18n";
 
   type RewindScope = "conversation" | "code" | "both";
@@ -28,6 +46,12 @@
     onResolveDiffComment = () => undefined,
     onDeleteDiffComment = () => undefined,
     onRequestDiffFix = () => undefined,
+    reviewPatchPending = [],
+    reviewWorkflowPending,
+    reviewStatus = "",
+    reviewStatusTone = "neutral",
+    onReviewPatch = async () => undefined,
+    onReviewWorkflow = async () => undefined,
     variant = "dock",
     focus = "overview",
   }: {
@@ -46,6 +70,12 @@
     onResolveDiffComment?: (id: string, resolved: boolean) => void;
     onDeleteDiffComment?: (id: string) => void;
     onRequestDiffFix?: (path: string) => void | Promise<void>;
+    reviewPatchPending?: ReviewPatchRequest[];
+    reviewWorkflowPending?: ReviewWorkflowRequest;
+    reviewStatus?: string;
+    reviewStatusTone?: "neutral" | "success" | "warning" | "danger";
+    onReviewPatch?: (path: string, action: ReviewPatchAction, source: ReviewSource) => Promise<void> | void;
+    onReviewWorkflow?: (action: ReviewWorkflowAction, message?: string) => Promise<void> | void;
     variant?: CodeDashboardVariant;
     focus?: CodeDashboardFocus;
   } = $props();
@@ -60,12 +90,18 @@
   let contextBusy = $state(false);
   let rewindBusy = $state("");
   let rewindStatus = $state("");
+  let reviewSource = $state<ReviewSource>("unstaged");
+  let reviewConfirm = $state<{ path: string; action: ReviewPatchAction; source: ReviewSource } | undefined>(undefined);
+  let commitMessage = $state("");
 
   const remainingPercent = $derived(contextRemainingPercent(context));
   const remainingTokens = $derived(contextRemainingTokens(context));
   const changedCount = $derived(changes?.files.length ?? 0);
   const selectedPath = $derived(diffPreview?.path ?? filePreview?.path);
   const selectedChange = $derived(selectedPath ? changes?.files.find((file) => file.path === selectedPath) : undefined);
+  const stagedCount = $derived(changes?.files.filter((file) => reviewFileBelongsToSource(file, "staged")).length ?? 0);
+  const unstagedCount = $derived(changes?.files.filter((file) => reviewFileBelongsToSource(file, "unstaged")).length ?? 0);
+  const reviewFiles = $derived(changes?.files.filter((file) => reviewFileBelongsToSource(file, reviewSource)) ?? []);
   const promptTokens = $derived(context?.promptTokens ?? 0);
   const completionTokens = $derived(context?.completionTokens ?? 0);
   const reasoningTokens = $derived(context?.reasoningTokens ?? 0);
@@ -182,21 +218,13 @@
   }
 
   function statusLabel(status?: string) {
-    if (!status) return "已变更";
-    if (status === "??") return "未跟踪";
-    if (status.includes("R")) return "已重命名";
-    if (status.includes("A")) return "已新增";
-    if (status.includes("D")) return "已删除";
-    if (status.includes("M")) return "已修改";
-    return status;
-  }
-
-  function stageLabels(file: { indexStatus?: string; worktreeStatus?: string }) {
-    const labels: string[] = [];
-    if (file.indexStatus && file.indexStatus !== "?") labels.push("已暂存");
-    if (file.worktreeStatus && file.worktreeStatus !== "?") labels.push("未暂存");
-    if (file.indexStatus === "?" || file.worktreeStatus === "?") labels.push("未跟踪");
-    return labels;
+    if (!status) return "M";
+    if (status === "??" || status.includes("?")) return "U";
+    if (status.includes("R")) return "R";
+    if (status.includes("A")) return "A";
+    if (status.includes("D")) return "D";
+    if (status.includes("M")) return "M";
+    return status.slice(0, 1).toUpperCase();
   }
 
   async function rewindCheckpoint(checkpoint: CheckpointMeta, scope: RewindScope) {
@@ -244,6 +272,28 @@
     if (scope === "conversation") return "对话";
     if (scope === "code") return "代码";
     return "对话与代码";
+  }
+
+  function pendingPatchFor(path: string) {
+    return reviewPatchPending.find((pending) => pending.path === path);
+  }
+
+  function requestReviewAction(path: string, action: ReviewPatchAction, source: ReviewSource) {
+    if (action === "revert") {
+      reviewConfirm = { path, action, source };
+      return;
+    }
+    void onReviewPatch(path, action, source);
+  }
+
+  function confirmReviewAction() {
+    const confirmation = reviewConfirm;
+    reviewConfirm = undefined;
+    if (confirmation) void onReviewPatch(confirmation.path, confirmation.action, confirmation.source);
+  }
+
+  function runWorkflow(action: ReviewWorkflowAction) {
+    void onReviewWorkflow(action, action === "commit" ? commitMessage : undefined);
   }
 </script>
 
@@ -376,23 +426,77 @@
     </section>
     {/if}
     {#if variant !== "workbench" || focus === "changes"}
-    <section class={[focus === "changes" && "is-focus"]}>
-      <h2><GitPullRequest size={15} /> 变更</h2>
-      {#if changes?.files.length}
-        {#each changes.files as file (file.path)}
-          <button class="change-row" type="button" data-change-path={file.path} data-status={file.gitStatus || ""} onclick={() => onPreviewChange(file.path)}>
-            <strong>{statusLabel(file.gitStatus)}</strong>
-            <span>{file.path}</span>
-            {#if file.oldPath}
-              <em>原路径：{file.oldPath}</em>
+    <section class={["review-pane", focus === "changes" && "is-focus"]} data-testid="code-review-pane">
+      <div class="review-pane__header">
+        <div>
+          <h2><GitPullRequest size={15} /> Review</h2>
+          <span><GitBranch size={12} /> {changes?.gitBranch || "workspace"}</span>
+        </div>
+        <button type="button" title="Refresh review" onclick={() => void onRefreshContext()}><RefreshCw size={14} /></button>
+      </div>
+      <div class="review-source-switch" role="tablist" aria-label="Review source">
+        <button type="button" role="tab" aria-selected={reviewSource === "unstaged"} onclick={() => (reviewSource = "unstaged")}>Unstaged <span>{unstagedCount}</span></button>
+        <button type="button" role="tab" aria-selected={reviewSource === "staged"} onclick={() => (reviewSource = "staged")}>Staged <span>{stagedCount}</span></button>
+      </div>
+      <div class="review-file-list">
+        {#each reviewFiles as file (file.path)}
+          {@const pendingPatch = pendingPatchFor(file.path)}
+          {@const untracked = file.indexStatus === "?" || file.worktreeStatus === "?"}
+          <article class={["review-file-row", selectedPath === file.path && "is-selected", pendingPatch && "is-pending"]} data-change-path={file.path} data-status={file.gitStatus || ""}>
+            <button class="review-file-row__main" type="button" onclick={() => onPreviewChange(file.path)}>
+              <strong>{statusLabel(reviewSource === "staged" ? file.indexStatus : file.worktreeStatus || file.gitStatus)}</strong>
+              <span>{file.path}</span>
+              {#if file.oldPath}<em>from {file.oldPath}</em>{/if}
+            </button>
+            <div class="review-file-row__actions">
+              {#each reviewActionsForSource(reviewSource, untracked) as action (action)}
+                <button
+                  type="button"
+                  class={action === "revert" ? "danger" : undefined}
+                  disabled={reviewPatchConflicts(pendingPatch, file.path)}
+                  aria-busy={pendingPatch?.action === action}
+                  onclick={() => requestReviewAction(file.path, action, reviewSource)}
+                >{reviewActionLabel(action)}</button>
+              {/each}
+            </div>
+            {#if pendingPatch}
+              <span class="review-file-row__pending">{reviewActionLabel(pendingPatch.action)} pending · ticket {pendingPatch.ticket}</span>
             {/if}
-            {#each stageLabels(file) as label (label)}
-              <small>{label}</small>
-            {/each}
-          </button>
+          </article>
+        {:else}
+          <div class="review-empty">
+            <Check size={16} />
+            <div><strong>{changes?.gitErr ? "Review unavailable" : `No ${reviewSource} changes`}</strong><span>{changes?.gitErr || "This source is up to date."}</span></div>
+          </div>
         {/each}
-      {:else}
-        <span>{changes?.gitErr || "没有变更文件。"}</span>
+      </div>
+      <div class="review-workflow" aria-label="Git workflow">
+        <label>
+          <span>Commit message</span>
+          <input bind:value={commitMessage} placeholder="Describe the staged change" disabled={Boolean(reviewWorkflowPending)} />
+        </label>
+        <div>
+          <button type="button" disabled={Boolean(reviewWorkflowPending) || stagedCount === 0 || !commitMessage.trim()} aria-busy={reviewWorkflowPending?.action === "commit"} onclick={() => runWorkflow("commit")}><GitCommitHorizontal size={13} /> Commit</button>
+          <button type="button" disabled={Boolean(reviewWorkflowPending) || !changes?.gitAvailable} aria-busy={reviewWorkflowPending?.action === "push"} onclick={() => runWorkflow("push")}>Push</button>
+          <button type="button" disabled={Boolean(reviewWorkflowPending) || !changes?.gitAvailable} aria-busy={reviewWorkflowPending?.action === "create-pr"} onclick={() => runWorkflow("create-pr")}><GitPullRequest size={13} /> Create PR</button>
+        </div>
+      </div>
+      {#if reviewStatus}
+        <div class="review-status" data-tone={reviewStatusTone} aria-live="polite">
+          {#if reviewStatusTone === "success"}<Check size={14} />{:else if reviewStatusTone === "warning" || reviewStatusTone === "danger"}<AlertTriangle size={14} />{:else}<RefreshCw size={14} />{/if}
+          <span>{reviewStatus}</span>
+        </div>
+      {/if}
+      {#if reviewConfirm}
+        <div class="review-confirm" role="dialog" aria-modal="true" aria-labelledby="review-confirm-title">
+          <div>
+            <AlertTriangle size={16} />
+            <strong id="review-confirm-title">Revert {reviewConfirm.source} changes?</strong>
+            <p>{reviewConfirm.path}</p>
+            <span>{reviewConfirm.source === "staged" ? "This runs staged → unstaged → working tree. The second phase may report partial success." : "This discards the current unstaged patch for this file."}</span>
+          </div>
+          <footer><button type="button" onclick={() => (reviewConfirm = undefined)}>Cancel</button><button type="button" class="danger" onclick={confirmReviewAction}>Revert</button></footer>
+        </div>
       {/if}
     </section>
     {/if}

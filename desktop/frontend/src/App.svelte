@@ -143,6 +143,11 @@
   } from "./lib/diff-review";
   import type { DiffReviewComment } from "./lib/diff-review";
   import {
+    matchesReviewPatchAck,
+    matchesReviewWorkflowAck,
+    reviewRevisionForAction,
+  } from "./lib/review-workflow";
+  import {
     contextRemainingPercent,
     modelContextWindow,
     modelSwitchImpact,
@@ -261,6 +266,11 @@
     WorkbenchTeamRunStatus as TeamRunStatus,
     WorkspaceDiffView,
     WorkspaceChangesView,
+    ReviewPatchAction,
+    ReviewPatchRequest,
+    ReviewSource,
+    ReviewWorkflowAction,
+    ReviewWorkflowRequest,
   } from "./lib/types";
   import { applyAppearance, normalizeAppearanceStyle } from "./lib/appearance";
 
@@ -503,6 +513,13 @@
   let queuedMessages = $state<QueuedThreadMessage[]>([]);
   let queuedDeliveryTabIDs = $state<string[]>([]);
   let diffReviewComments = $state<DiffReviewComment[]>([]);
+  let reviewPatchPendingByPath = $state<Record<string, ReviewPatchRequest>>({});
+  let reviewPathGenerations = $state<Record<string, number>>({});
+  let reviewWorkflowPending = $state<ReviewWorkflowRequest | undefined>(undefined);
+  let reviewWorkflowGeneration = $state(1);
+  let reviewStatus = $state("");
+  let reviewStatusTone = $state<"neutral" | "success" | "warning" | "danger">("neutral");
+  let reviewTicket = 0;
   let sidebarCollapsed = $state(false);
   let codeInspectorOpen = $state(false);
   let codeWorkbenchPanel = $state<CodeWorkbenchPanel>("overview");
@@ -695,6 +712,8 @@
   const currentDiffReviewComments = $derived(diffReviewComments.filter((comment) => comment.tabId === composerTabId));
   const currentFilePreview = $derived(filePreviewTabId === composerTabId ? filePreview : undefined);
   const currentDiffPreview = $derived(diffPreviewTabId === composerTabId ? diffPreview : undefined);
+  const currentReviewPatchPending = $derived(Object.values(reviewPatchPendingByPath).filter((pending) => pending.tabId === composerTabId));
+  const currentReviewWorkflowPending = $derived(reviewWorkflowPending?.tabId === composerTabId ? reviewWorkflowPending : undefined);
   const currentLastSubmittedDraft = $derived(lastSubmittedDraftByTab[composerTabId]);
   const currentLastTurnError = $derived(lastTurnErrorByTab[composerTabId] || "");
   const pendingPromptTabId = $derived.by(() => {
@@ -7496,7 +7515,10 @@ function openGovernanceCenter() {
       settleRefreshStep("checkpoints", app().CheckpointsForTab(tab.id)),
     ]);
     const stillOwned = composerTabId === tab.id;
-    if (activate && stillOwned && nextChanges) changes = nextChanges;
+    if (activate && stillOwned && nextChanges) {
+      changes = nextChanges;
+      reviewWorkflowGeneration += 1;
+    }
     if (activate && stillOwned && nextCheckpoints) checkpoints = nextCheckpoints;
     recordWorkspaceReceiptEvidence(tab, nextChanges, nextCheckpoints);
   }
@@ -8045,7 +8067,7 @@ function openGovernanceCenter() {
     directSubmissionTabIDs = [...directSubmissionTabIDs, queueTabID];
     setLastTurnError(queueTabID, "");
     setComposerInput("");
-    appendTranscript({ id: userTranscriptId, role: "user", body: text, createdAtMs: Date.now() });
+    appendTranscript({ id: userTranscriptId, role: "user", title: "user · 正在提交", body: text, pending: true, createdAtMs: Date.now() });
     let backendSubmissionStarted = false;
     const submissionDispatch = { mode: "" as SubmitDispatchMode | "" };
     let submissionTabID = queueTabID;
@@ -8106,6 +8128,7 @@ function openGovernanceCenter() {
           onBound: (patch) => updateTabAgentBinding(runtimeTab.id, patch),
         }),
       });
+      updateTranscriptItem(userTranscriptId, { title: "user", pending: false });
       if (submissionDispatch.mode === "maintenance") {
         const idleTab = await waitForTabIdle(submissionTabID, "会话维护");
         if (currentTranscriptTabId() === submissionTabID) await hydrateHistory(idleTab);
@@ -8567,6 +8590,8 @@ function openGovernanceCenter() {
     const tabID = composerTabId;
     const [diff, preview] = await Promise.all([app().WorkspaceDiffForTab(tabID, path), app().ReadFileForTab(tabID, path)]);
     if (composerTabId !== tabID) return;
+    const reviewKey = `${tabID}:${path}`;
+    reviewPathGenerations = { ...reviewPathGenerations, [reviewKey]: (reviewPathGenerations[reviewKey] ?? 0) + 1 };
     diffPreview = diff;
     diffPreviewTabId = tabID;
     filePreview = preview;
@@ -8576,6 +8601,126 @@ function openGovernanceCenter() {
     newTaskConversationActive = false;
     setCodeWorkbenchPanel("changes");
     codeInspectorOpen = false;
+  }
+
+  function reviewPendingKey(tabID: string, path: string) {
+    return `${tabID}:${path}`;
+  }
+
+  function clearReviewPatchPending(key: string, ticket: number) {
+    if (reviewPatchPendingByPath[key]?.ticket !== ticket) return;
+    const { [key]: _pending, ...remaining } = reviewPatchPendingByPath;
+    reviewPatchPendingByPath = remaining;
+  }
+
+  async function applyReviewPatch(path: string, action: ReviewPatchAction, source: ReviewSource) {
+    const tabID = composerTabId;
+    const key = reviewPendingKey(tabID, path);
+    if (!tabID || reviewPatchPendingByPath[key]) return;
+    const sourceGeneration = (reviewPathGenerations[key] ?? 0) + 1;
+    reviewPathGenerations = { ...reviewPathGenerations, [key]: sourceGeneration };
+    let fresh: WorkspaceDiffView;
+    try {
+      fresh = await app().WorkspaceDiffForTab(tabID, path);
+    } catch (error) {
+      reviewStatusTone = "danger";
+      reviewStatus = formatErrorMessage(error);
+      return;
+    }
+    if (composerTabId !== tabID || reviewPathGenerations[key] !== sourceGeneration) return;
+    const sourceRevision = reviewRevisionForAction(fresh, source);
+    if (!sourceRevision) {
+      reviewStatusTone = "warning";
+      reviewStatus = `${path} 的 ${source === "staged" ? "staged" : "unstaged"} 快照已过期，请刷新 Review。`;
+      return;
+    }
+    const pending: ReviewPatchRequest = {
+      tabId: tabID,
+      path,
+      action,
+      source,
+      ticket: ++reviewTicket,
+      sourceGeneration,
+      sourceRevision,
+    };
+    reviewPatchPendingByPath = { ...reviewPatchPendingByPath, [key]: pending };
+    reviewStatusTone = "neutral";
+    reviewStatus = `${action === "stage" ? "Stage" : action === "unstage" ? "Unstage" : "Revert"} · ${path}`;
+    try {
+      const result = await app().ApplyReviewPatchForTab(pending);
+      const currentPending = reviewPatchPendingByPath[key];
+      if (!matchesReviewPatchAck(currentPending, result) || reviewPathGenerations[key] !== sourceGeneration) {
+        if (composerTabId === tabID) void refreshCodeDock();
+        return;
+      }
+      changes = result.changes;
+      reviewWorkflowGeneration += 1;
+      reviewPathGenerations = { ...reviewPathGenerations, [key]: sourceGeneration + 1 };
+      if (currentDiffPreview?.path === path) {
+        diffPreview = result.diff;
+        diffPreviewTabId = tabID;
+      }
+      if (result.status === "success") {
+        reviewStatusTone = "success";
+        reviewStatus = result.detail || `${path} 已更新。`;
+      } else if (result.status === "partial-success") {
+        reviewStatusTone = "warning";
+        reviewStatus = result.detail || `${path} 已完成第一阶段，第二阶段需要手动处理。`;
+      } else {
+        reviewStatusTone = "danger";
+        reviewStatus = result.detail || `${path} 与最新 Diff 冲突，请刷新后重试。`;
+      }
+    } catch (error) {
+      reviewStatusTone = "danger";
+      reviewStatus = formatErrorMessage(error);
+    } finally {
+      clearReviewPatchPending(key, pending.ticket);
+    }
+  }
+
+  async function runReviewWorkflow(action: ReviewWorkflowAction, message = "") {
+    const tabID = composerTabId;
+    if (!tabID || reviewWorkflowPending) return;
+    let expectedGeneration = changes?.generation ?? "";
+    if (!expectedGeneration) {
+      await refreshCodeDock();
+      expectedGeneration = changes?.generation ?? "";
+    }
+    if (!expectedGeneration) {
+      reviewStatusTone = "warning";
+      reviewStatus = "Review 快照尚未就绪，请刷新后重试。";
+      return;
+    }
+    const pending: ReviewWorkflowRequest = {
+      tabId: tabID,
+      action,
+      ticket: ++reviewTicket,
+      sourceGeneration: ++reviewWorkflowGeneration,
+      expectedGeneration,
+      message: message.trim() || undefined,
+    };
+    reviewWorkflowPending = pending;
+    reviewStatusTone = "neutral";
+    reviewStatus = action === "commit" ? "正在提交 Commit…" : action === "push" ? "正在 Push…" : "正在创建 Pull Request…";
+    try {
+      const result = await app().RunReviewWorkflowForTab(pending);
+      if (!matchesReviewWorkflowAck(reviewWorkflowPending, result) || composerTabId !== tabID) return;
+      changes = result.changes;
+      reviewWorkflowGeneration += 1;
+      if (result.status === "success") {
+        reviewStatusTone = "success";
+        reviewStatus = result.url ? `Pull Request 已创建：${result.url}` : result.detail || "Workflow 已完成。";
+      } else {
+        reviewStatusTone = "warning";
+        reviewStatus = result.detail || "Review 快照已变化，请刷新后重试。";
+      }
+    } catch (error) {
+      reviewStatusTone = "danger";
+      reviewStatus = formatErrorMessage(error);
+    } finally {
+      if (reviewWorkflowPending?.ticket === pending.ticket) reviewWorkflowPending = undefined;
+      if (composerTabId === tabID) void refreshCodeDock();
+    }
   }
 
   function diffReviewCommentID() {
@@ -9150,6 +9295,12 @@ function openGovernanceCenter() {
                       onResolveDiffComment={resolveDiffComment}
                       onDeleteDiffComment={deleteDiffComment}
                       onRequestDiffFix={requestDiffFix}
+                      reviewPatchPending={currentReviewPatchPending}
+                      reviewWorkflowPending={currentReviewWorkflowPending}
+                      {reviewStatus}
+                      {reviewStatusTone}
+                      onReviewPatch={applyReviewPatch}
+                      onReviewWorkflow={runReviewWorkflow}
                     />
                   </div>
                 </div>
@@ -10346,6 +10497,12 @@ function openGovernanceCenter() {
             onResolveDiffComment={resolveDiffComment}
             onDeleteDiffComment={deleteDiffComment}
             onRequestDiffFix={requestDiffFix}
+            reviewPatchPending={currentReviewPatchPending}
+            reviewWorkflowPending={currentReviewWorkflowPending}
+            {reviewStatus}
+            {reviewStatusTone}
+            onReviewPatch={applyReviewPatch}
+            onReviewWorkflow={runReviewWorkflow}
           />
         </aside>
       {/if}

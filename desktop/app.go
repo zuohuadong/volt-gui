@@ -8145,6 +8145,7 @@ type WorkspaceChangesView struct {
 	GitAvailable bool                  `json:"gitAvailable"`
 	GitErr       string                `json:"gitErr,omitempty"`
 	GitBranch    string                `json:"gitBranch,omitempty"`
+	Generation   string                `json:"generation,omitempty"`
 }
 
 // workspaceNoiseNames are local cache/vendor entries hidden from the file tree

@@ -4,6 +4,13 @@
 
 The repository's own `DESIGN.md`, product docs, Svelte source, and verified screenshots are the immediate implementation authority.
 
+For Codex-like state and density decisions, the current local implementation input is:
+
+- `/Volumes/Data/workspace/volt-native/docs/evidence/codex-desktop-26.715.52143-5591-reverse.md`
+- sample `26.715.52143 / build 5591`, marked `REVERSE COMPLETE / IMPLEMENTATION INPUT / 2026-07-23`
+
+Use its verified renderer/app-server state timing, Review action mapping, Terminal snapshot lifecycle, CodeSurface generation guard, and measured density values. Do not rerun ASAR/Mach-O/Ghidra work when this evidence is supplied, and do not edit its evidence/cache artifacts from Volt GUI tasks.
+
 The project overlay names `E:\workspace\aoristlawer` as the first structural UI reference. On the current macOS workspace, no `aoristlawer` checkout was found under `/Volumes/Data/workspace`, mounted volumes, Spotlight, or the connected GitHub account. Recheck before future visual-parity claims. When it becomes available, inspect:
 
 - `apps/desktop/src/index.css`

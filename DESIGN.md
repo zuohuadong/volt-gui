@@ -173,6 +173,12 @@ Use a stable desktop shell: durable 248px navigation on the left, the active tas
 
 Spacing follows a 4px base. Keep controls compact and aligned. Prefer rows for large resource sets and cards for summaries, templates, or decisions. Avoid nested decorative cards.
 
+### First-screen information budget
+
+Default operational screens get one dominant job, one primary action, and at most one persistent context row. An empty task surface asks what the user wants to do, shows no more than three immediate suggestions, and keeps additional templates behind disclosure. A running task surface foregrounds the transcript and composer; environment, tools, usage, workflow status, and inspection details open on demand. Empty summaries replace populated panels instead of stacking several “nothing here” cards.
+
+Platform chrome is not product UI. On macOS, reserve the inset title-bar safe area for the native close, minimize, and zoom traffic lights; never redraw those controls in Svelte. Windows and Linux use their native window chrome without the macOS inset.
+
 ## Elevation & Depth
 
 Use hairline borders and small surface changes for docked structure. Docked Code/Review panes have no shadow. Shadows are reserved for floating composer surfaces, popovers, drag previews, confirmations, and modals. Avoid glass, glow, and ornamental depth.
@@ -201,6 +207,7 @@ Use 6-8px radii for controls and rows, 12px for cards, and 16px for composer/mod
 ## Do's and Don'ts
 
 - Do make system state and recovery paths visible at the point of action.
+- Do spend the first-screen information budget on the current task, its primary action, and only the state that changes the user's next decision.
 - Do keep Work and Code structurally distinct while sharing a consistent shell.
 - Do use real empty states and templates instead of fake business data.
 - Do preserve keyboard focus, reduced motion, and desktop/mobile behavior.
@@ -208,3 +215,4 @@ Use 6-8px radii for controls and rows, 12px for cards, and 16px for composer/mod
 - Don't add new `--aorist-*`, `--law-*`, or Accio-named styling; those are legacy compatibility layers.
 - Don't append broad normalization selectors to `App.svelte`; move styles toward owned components and semantic tokens.
 - Don't use gradients, oversized headings, floating card stacks, or decorative badges in operational surfaces.
+- Don't keep empty dashboards, runtime metrics, environment fields, or duplicate task context visible when they do not change the next action.

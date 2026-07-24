@@ -126,11 +126,13 @@ mkdir -p "$ROOT/dist"
 
 case "$os" in
 darwin)
-		# Wails names the bundle after outputfilename (${BINNAME}.app); repackage
-		# it as VoltUI.app for a clean user-facing name.
+	# Wails names the macOS bundle after wails.json.name, while Linux keeps
+	# using outputfilename. Discover the actual bundle so branded names work.
 	staging=$(mktemp -d)
 	app="$staging/${APPNAME}.app"
-	cp -R "build/bin/${BINNAME}.app" "$app"
+	app_bundle=$(find build/bin -maxdepth 1 -type d -name "*.app" -print -quit)
+	[ -n "$app_bundle" ] || { echo "no macOS app bundle found in build/bin" >&2; exit 1; }
+	cp -R "$app_bundle" "$app"
 	copy_computer_use_mcp "$app/Contents/Resources/computer-use-mcp"
 	copy_computer_use_runtime "$app/Contents/Resources/computer-use-runtime"
 

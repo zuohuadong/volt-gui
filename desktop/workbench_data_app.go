@@ -486,6 +486,7 @@ func (a *App) SaveKnowledgeDocument(input WorkbenchKnowledgeDocumentInput) (Work
 	if err != nil {
 		return WorkbenchKnowledgeDocumentView{}, err
 	}
+	businessStatus := doc.Status
 	doc.Status = "索引中"
 	doc.Error = ""
 	replaceOrPrependKnowledgeDocument(&data, doc)
@@ -493,6 +494,7 @@ func (a *App) SaveKnowledgeDocument(input WorkbenchKnowledgeDocumentInput) (Work
 		return WorkbenchKnowledgeDocumentView{}, err
 	}
 	doc, _ = indexWorkbenchKnowledgeDocument(doc)
+	doc.Status = businessStatus
 	replaceOrPrependKnowledgeDocument(&data, doc)
 	appendOperationLog(&data, "保存知识模板", doc.Title, "我的", "成功")
 	return doc, saveWorkbenchData(data)
@@ -526,6 +528,9 @@ func indexWorkbenchKnowledgeDocument(doc WorkbenchKnowledgeDocumentView) (Workbe
 	content := ""
 	if strings.TrimSpace(doc.Content) != "" {
 		content = strings.Join([]string{doc.Title, doc.Description, doc.Tags, doc.Content}, "\n")
+	} else if strings.TrimSpace(doc.FilePath) == "" {
+		// 无正文且无文件时，用标题/描述兜底，确保纯文本模板也能建立索引
+		content = strings.Join([]string{doc.Title, doc.Description, doc.Tags}, "\n")
 	}
 	indexedDoc, err := importKnowledgeDocument(KnowledgeDocumentImportInput{
 		ID:          doc.ID,

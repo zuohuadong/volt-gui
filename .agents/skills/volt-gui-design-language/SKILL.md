@@ -5,7 +5,7 @@ description: Define, implement, and review the Volt GUI desktop design language 
 
 # Volt GUI Design Language
 
-Build a calm, dense, trustworthy desktop workbench for durable agent work. Preserve Volt GUI's own product identity while learning structural interaction patterns from aoristlawer and reconstructed Codex Desktop sources.
+Build a calm, dense, trustworthy desktop workbench for durable agent work. Preserve Volt GUI's own product identity while intentionally moving its interaction density and panel discipline closer to verified Codex Desktop behavior.
 
 ## Resolve design authority
 
@@ -15,7 +15,7 @@ Apply evidence in this order:
 2. Read the root `DESIGN.md`; treat its prose and semantic tokens as the visual authority.
 3. If `E:\workspace\aoristlawer` or an equivalent mounted checkout is available, inspect its real desktop source before changing UI structure.
 4. Inspect current Volt GUI source, tests, and screenshots; preserve working information architecture and behavior.
-5. Use Codex Desktop reconstructions only as secondary UX evidence. Treat `stvlynn/codex-app` as an engineering reconstruction and `JimLiu/decode-codex` as a broad semantic reconstruction, not as official source.
+5. Prefer the local build-5591 reverse evidence named in [references/reference-evidence.md](references/reference-evidence.md) over public reconstructions. Use public reconstructions only as secondary UX dictionaries, never as runtime truth.
 
 Read [references/reference-evidence.md](references/reference-evidence.md) when choosing or refreshing reference material.
 
@@ -31,15 +31,17 @@ Read [references/reference-evidence.md](references/reference-evidence.md) when c
 
 For Svelte files, load `svelte-code-writer` and `svelte-core-bestpractices`. For visible acceptance, load `ui-aesthetic-review`.
 
-## Preserve the Volt character
+## Keep the Volt identity while approaching Codex
 
-- Use a matte operational canvas: neutral surfaces, graphite controls, and one restrained Volt green accent.
+- Use a matte operational canvas dominated by neutral surfaces and graphite controls. Reserve Volt green for constructive status and sparse focus emphasis.
 - Prefer borders, spacing, and state contrast over decorative shadows.
-- Keep desktop density compact: 36-46px toolbars, 32-36px controls, 12-14px body text, and 8-12px structural radii.
+- Keep desktop density compact: 42px primary toolbar, 40px pane toolbar, 36px Review rows, 32-36px controls, 12-14px body text, and 6-12px structural radii.
 - Make actions look operational rather than promotional. Avoid hero-sized headings, decorative gradients, glow, glassmorphism, and floating card stacks.
 - Use color for meaning. Accent means current/selected/actionable; green/red/amber mean status, not decoration.
 - Keep icons quiet and consistent. Use Lucide icons already present in the project; do not mix icon families.
 - Use motion to explain panel, tab, and state transitions. Keep it 120-200ms and respect reduced motion.
+- Treat 624/625px as the Review container transition: above it actions may retain labels; at and below it controls compact or stack without hiding state.
+- Render secondary text at roughly 65% foreground contrast, with path/hash/ticket metadata in the existing mono stack.
 
 ## Preserve the Volt experience
 
@@ -48,6 +50,9 @@ For Svelte files, load `svelte-code-writer` and `svelte-core-bestpractices`. For
 - Treat the composer as the command cockpit. Attachments, references, model, permission, status, submit/cancel, and errors belong around it.
 - Never block the whole workspace with an unexplained spinner. Show the pending dependency, a timeout/retry path, and a safe fallback where possible.
 - Keep destructive or high-risk actions explicit, local, and reversible when the backend supports it.
+- Patch mutation only blocks the conflicting Review path; source tabs, panes, dialogs, drafts, and unrelated local interaction stay responsive. Commit/Push/Create PR share a separate workflow gate.
+- Terminal UI must expose attach-pending input, coalesce resize to the latest dimensions, and cap reconnect snapshot tails at 16,000 characters; do not invent PTY success in a renderer-only preview.
+- CodeSurface write UI must match `fileHandle + documentGeneration + ticket`, preserve drafts on conflict, and leave workspace/mtime/disk authority in the Go desktop backend.
 - Use inline approval and recovery cards for turn-level decisions; use modals for configuration or destructive confirmation.
 - Preserve keyboard reachability, visible focus, stable dimensions, and no horizontal scrolling.
 - Make empty states task-oriented: explain why the surface is empty and offer one next action.

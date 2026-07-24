@@ -523,8 +523,8 @@
   let sidebarCollapsed = $state(false);
   let codeInspectorOpen = $state(false);
   let codeWorkbenchPanel = $state<CodeWorkbenchPanel>("overview");
-  let workLayer = $state<WorkLayer>("today");
-  let lastWorkLayer = $state<WorkLayer>("today");
+  let workLayer = $state<WorkLayer>("newTask");
+  let lastWorkLayer = $state<WorkLayer>("newTask");
   let lastGovernanceLayer = $state<GovernanceLayer>("trust");
   let capabilityTab = $state<CapabilityTab>("plugin");
   let capabilitySearch = $state("");
@@ -681,26 +681,6 @@
     { id: "sync", group: "system", label: "同步与备份", desc: "同步状态与手动刷新" },
     { id: "operationLog", group: "system", label: "操作记录", desc: "查看与导出执行日志" },
   ];
-  const governanceGroupLabels: Record<GovernanceGroup, string> = {
-    agent: "智能体配置",
-    data: "数据治理",
-    system: "系统设置",
-  };
-  const activeGovernanceItem = $derived(governanceNavItems.find((item) => item.id === workLayer));
-  const workbenchHeading = $derived.by(() => {
-    if (activityMode === "code") {
-      return { eyebrow: "工作区 / 项目 / 任务", title: "任务检查器", desc: "在当前任务中查看工作区、上下文、变更与检查点。" };
-    }
-    if (activeGovernanceItem) {
-      return {
-        eyebrow: "工作区 / 设置",
-        title: "配置与治理",
-        desc: `${governanceGroupLabels[activeGovernanceItem.group]} / ${activeGovernanceItem.label} · ${activeGovernanceItem.desc}`,
-      };
-    }
-    return { eyebrow: "工作区 / 项目 / 任务", title: currentWorkLayerLabel(), desc: "以业务项目组织任务，以可验证结果作为交付出口。" };
-  });
-
   const activeTab = $derived(tabs.find((tab) => tab.active) ?? tabs[0]);
   const currentComposerTab = $derived(activeConversationTabId ? tabs.find((tab) => tab.id === activeConversationTabId) ?? activeTab : activeTab);
   const composerTabId = $derived(currentComposerTab?.id ?? activeTab?.id ?? "");
@@ -801,15 +781,8 @@
   function agentIcon(agentId: string) { return agentIcons[agentId as keyof typeof agentIcons] ?? Bot; }
   function avatarIcon(avatar: string) { return avatarIcons[avatar as keyof typeof avatarIcons] ?? UserRound; }
   function modelValue(model?: ModelInfo) { return model?.ref || model?.name || model?.model || model?.label || ""; }
-  function currentWorkLayerLabel() {
-    if (workLayer === "resources" && resourceTab === "knowledge") return "知识库";
-    if (workLayer === "resources" && resourceTab === "search") return "全文检索";
-    if (workLayer === "resources" && resourceTab === "ingest") return "导入中心";
-    return workLayerLabels[workLayer];
-  }
-
   const unifiedNavItems = [
-    { id: "today", group: "开始", label: "工作台", desc: "继续任务与处理待办" },
+    { id: "today", group: "开始", label: "新建任务", desc: "描述想完成的结果" },
     { id: "tasks", group: "开始", label: "任务", desc: "进行中、待办与归档" },
     { id: "projects", group: "组织与交付", label: "项目管理", desc: "项目、任务与边界" },
     { id: "deliveries", group: "组织与交付", label: "交付记录", desc: "产物、证据与复核" },
@@ -817,37 +790,14 @@
     { id: "knowledge", group: "知识", label: "资料与知识", desc: "资料、检索与导入" },
   ];
   const officeNavItems = [
-    { id: "today", group: "开始", label: "今日", desc: "待办与进行中的任务" },
-    { id: "tasks", group: "开始", label: "任务", desc: "所有任务对话" },
+    { id: "today", group: "开始", label: "新建任务", desc: "描述想完成的结果" },
+    { id: "tasks", group: "开始", label: "已安排", desc: "进行中与待处理任务" },
     { id: "knowledge", group: "开始", label: "资料", desc: "资料、检索与导入" },
   ];
   const codeNavItems = [
     { id: "codeConversation", group: "开发", label: "代码对话", desc: "提问、修改与执行" },
     { id: "codeOverview", group: "开发", label: "工程总览", desc: "状态与运行配置" },
   ];
-  const workLayerLabels: Record<WorkLayer, string> = {
-    today: "工作台",
-    newTask: "新建对话",
-    todos: "任务",
-    automations: "自动化",
-    agents: "Agent 中心",
-    projects: "项目管理",
-    customers: "客户管理",
-    calendar: "日历日程",
-    reports: "报告中心",
-    resources: "资料中心",
-    knowledge: "知识库",
-    teams: "团队协作",
-    models: "模型管理",
-    settings: "系统设置",
-    operationLog: "操作记录",
-    search: "搜索",
-    sync: "同步中心",
-    ingest: "导入资料",
-    capabilities: "能力中心",
-    trust: "数据与信任中心",
-    scopedMemory: "分层记忆",
-  };
   let todoItems = $state<WorkbenchTodo[]>([]);
   let todoDraftTitle = $state("");
   let todoDraftProjectId = $state("");
@@ -1143,7 +1093,8 @@
       : activeTab?.workspaceName || t.common.global,
   );
   const activeUnifiedNavId = $derived.by(() => {
-    if (workLayer === "newTask" || workLayer === "todos") return "tasks";
+    if (workLayer === "newTask") return activeSidebarConversationId ? "tasks" : "today";
+    if (workLayer === "todos") return "tasks";
     if (workLayer === "projects") return "projects";
     if (workLayer === "reports") return "deliveries";
     if (workLayer === "automations") return "automations";
@@ -1207,6 +1158,7 @@
     }))
     .filter((project) => project.tasks.length > 0));
   const homeFocusTask = $derived(todayTaskRows.find(({ task }) => task.id === activeSidebarConversationId) ?? todayTaskRows[0]);
+  const homeRecentTaskRows = $derived(todayTaskRows.filter(({ task }) => task.id !== homeFocusTask?.task.id));
   function homeTaskIsRunning(task: TaskThread) {
     return Boolean(task.tabId && tabs.some((tab) => tab.id === task.tabId && tab.running));
   }
@@ -3773,14 +3725,15 @@
   }
   function openUnifiedNav(navId: string) {
     activityMode = "work";
-    if (navId === "tasks") openTaskCenter("active");
+    if (navId === "today") focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
+    else if (navId === "tasks") openTaskCenter("active");
     else if (navId === "projects") openWorkLayer("projects");
     else if (navId === "deliveries") openWorkLayer("reports");
     else if (navId === "automations") openWorkLayer("automations");
     else if (navId === "knowledge") {
       resourceTab = "resources";
       openWorkLayer("resources");
-    } else openWorkLayer("today");
+    } else focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
   }
 
   function openCodeNav(navId: string) {
@@ -3803,10 +3756,11 @@
 
 function switchActivityMode(mode: ActivityMode) {
    if (mode === "code") {
-     openCodeWorkbench("overview");
+     openCodeConversation();
      return;
    }
-   openWorkLayer(lastWorkLayer);
+   if (lastWorkLayer === "today") focusNewTask(activeSidebarProjectId || INBOX_PROJECT_ID);
+   else openWorkLayer(lastWorkLayer);
  }
 
   const showActivityModeSwitch = $derived(displayMode === "developer");
@@ -8840,7 +8794,6 @@ function openGovernanceCenter() {
       collapsed={sidebarCollapsed}
       projectDockCollapsed={sidebarProjectDockCollapsed}
       projectSortLabel={sidebarProjectSortLabel()}
-      onNewTask={startNewTaskFromSidebar}
       onNav={openPrimaryNav}
       onModeChange={switchActivityMode}
       onProjectToggle={toggleSidebarProject}
@@ -8860,42 +8813,48 @@ function openGovernanceCenter() {
     />
     <section class="stage" class:stage--conversation={showActiveTranscript}>
       <div class="window-drag-region" aria-hidden="true"></div>
+      <button class="stage-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
       <div class="stage__surface" class:stage__surface--conversation={showActiveTranscript} onscrollcapture={handleStageScroll}>
         {#if loading}
           <div class="content__loading">{t.app.loading}</div>
         {:else if showActiveTranscript}
           <section class="conversation-view">
             <header class="conversation-header">
-              <div>
+              <div class="conversation-header__title">
                 <strong>{conversationHeaderTitle}</strong>
                 <span>{conversationHeaderScope}</span>
               </div>
-            {#if showActivityModeSwitch}
-              <button type="button" onclick={openCodeInspector}>
-                <Code2 size={15} />
-                代码状态
-              </button>
-            {/if}
-          </header>
+              <div class="conversation-header__actions">
+                <details class="conversation-environment">
+                  <summary><Settings size={14} /> 环境</summary>
+                  <div class="conversation-environment__panel">
+                    <TaskContextBar
+                      workspace={activeWorkspace?.name || "未选择工作区"}
+                      project={activeProjectLabel}
+                      agent={activeAgentLabel}
+                      model={activeModelLabel}
+                      permission={activePermissionLabel}
+                      memory={activeMemoryState.label}
+                      memoryEmpty={activeMemoryState.empty}
+                      mode={activityMode}
+                      displayMode={displayMode}
+                      activeInspector={taskInspectorPanel}
+                      onOpenDrawer={() => (mobileDrawerOpen = true)}
+                      onOpenAgent={() => openGovernanceLayer("agents")}
+                      onOpenModels={() => openGovernanceLayer("models")}
+                      onOpenPermission={() => openGovernanceLayer("settings")}
+                      onOpenMemory={() => openGovernanceLayer("scopedMemory")}
+                      onInspector={openTaskInspector}
+                    />
+                  </div>
+                </details>
+                {#if showActivityModeSwitch}
+                  <button type="button" onclick={openCodeInspector}><Code2 size={14} /> 检查</button>
+                {/if}
+              </div>
+            </header>
+            {#if showTaskActivityCenter || activeTaskReceipt}
             <div class="task-status-panel">
-              <TaskContextBar
-                workspace={activeWorkspace?.name || "未选择工作区"}
-                project={activeProjectLabel}
-                agent={activeAgentLabel}
-                model={activeModelLabel}
-                permission={activePermissionLabel}
-                memory={activeMemoryState.label}
-                memoryEmpty={activeMemoryState.empty}
-                mode={activityMode}
-                displayMode={displayMode}
-                activeInspector={taskInspectorPanel}
-                onOpenDrawer={() => (mobileDrawerOpen = true)}
-                onOpenAgent={() => openGovernanceLayer("agents")}
-                onOpenModels={() => openGovernanceLayer("models")}
-                onOpenPermission={() => openGovernanceLayer("settings")}
-                onOpenMemory={() => openGovernanceLayer("scopedMemory")}
-                onInspector={openTaskInspector}
-              />
             {#if showTaskActivityCenter}
               <TaskActivityCenter
                 {tabs}
@@ -8932,6 +8891,7 @@ function openGovernanceCenter() {
               </div>
             {/if}
             </div>
+            {/if}
             <div class="conversation" bind:this={conversationScrollEl} onscroll={handleConversationScroll}>
               {#if historyPageTabId === currentTranscriptTabId()}
                 <HistoryPaginationStatus
@@ -8964,6 +8924,7 @@ function openGovernanceCenter() {
             </div>
             <div class="stage__composer conversation-composer">
               <Composer
+                minimal
                 {input}
                 {commands}
                 sending={composerIsBusy}
@@ -9006,7 +8967,7 @@ function openGovernanceCenter() {
           </section>
         {:else if activityMode === "work" || activityMode === "code"}
           <section class="workbench aorist-workbench" data-current-work-layer={workLayer} data-current-code-panel={activityMode === "code" ? codeWorkbenchPanel : undefined} data-governance={activityMode === "work" && isGovernanceLayer(workLayer) ? "true" : undefined}>
-            {#if activityMode === "code"}
+            {#if activityMode === "code" && codeWorkbenchPanel !== "overview"}
               <div class="task-context-wrap workbench-context-wrap">
                 <TaskContextBar
                   workspace={activeWorkspace?.name || "未选择工作区"}
@@ -9027,7 +8988,6 @@ function openGovernanceCenter() {
                   onInspector={openTaskInspector}
                 />
               </div>
-              <header class="stage-topbar"><div class="stage-topbar__leading"><div><span>{workbenchHeading.eyebrow}</span><strong>{workbenchHeading.title}</strong></div><p>{workbenchHeading.desc}</p></div></header>
             {/if}
             {#if workbenchNotice}<div class="workbench-notice" data-testid="workbench-notice" role="status"><Check size={14} /> {workbenchNotice}</div>{/if}
             {#if activityMode === "work" && isGovernanceLayer(workLayer)}
@@ -9174,109 +9134,37 @@ function openGovernanceCenter() {
                   <section class="code-workbench-hero" aria-label="任务检查器总览">
                     <div>
                       <span>工程检查器</span>
-                      <strong>当前任务的工程检查器</strong>
-                      <p>把工作区、上下文、变更、检查点和模型权限放在当前任务内，不再形成第二套顶层工作台。</p>
+                      <strong>{conversationHeaderTitle}</strong>
+                      <p>{activeTab?.workspaceName || "尚未选择工作区"}{changedCount ? ` · ${changedCount} 个变更文件` : " · 工作区干净"}</p>
                     </div>
                     <div class="code-workbench-actions">
                       <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={15} /> 开始代码对话</button>
-                      <button type="button" onclick={() => openCodeWorkbenchAction("changes")}><GitBranch size={15} /> 审查变更</button>
-                      <button type="button" onclick={() => openCodeWorkbenchAction("context")}><Gauge size={15} /> 查看上下文</button>
+                      {#if changedCount > 0}<button type="button" onclick={() => openCodeWorkbenchAction("changes")}><GitBranch size={15} /> 审查变更</button>{/if}
                     </div>
                   </section>
-
-                  <div class="code-workbench-status-grid" aria-label="任务工程状态">
-                    <button type="button" onclick={() => openCodeWorkbenchAction("models")}>
-                      <BrainCircuit size={16} />
-                      <span><strong>{selectedModel || modelSettings?.defaultModel || agentModel}</strong><em>{modelSettings ? `${modelProviderSummary(modelSettings.providers).configured}/${modelSettings.providers.length} 个渠道已配置` : "模型渠道未连接桌面后端"}</em></span>
-                    </button>
-                    <button type="button" onclick={() => openCodeWorkbenchAction("settings")}>
-                      <ShieldCheck size={16} />
-                      <span><strong>{settingsDraft.permissionMode || "ask"} / {settingsDraft.sandboxBash || "enforce"}</strong><em>{settingsDraft.sandboxNetwork ? "沙箱网络已允许" : "沙箱网络默认关闭"}</em></span>
-                    </button>
-                    <button type="button" onclick={() => openCodeWorkbench("workspace")}>
-                      <Folder size={16} />
-                      <span><strong>{activeTab?.workspaceName || t.common.global}</strong><em>工作区预览</em></span>
-                    </button>
-                    <button type="button" onclick={() => openCodeWorkbench("changes")}>
-                      <GitBranch size={16} />
-                      <span><strong>{changedCount ? `${changedCount} 个变更文件` : "工作区干净"}</strong><em>变更与回滚范围</em></span>
-                    </button>
-                  </div>
                   {/if}
 
-                  {#if codeWorkbenchPanel === "overview"}
-                  <ManagedWorktreePanel
-                    repositoryRoot={currentComposerTab?.workspaceRoot || activeTab?.workspaceRoot || ""}
-                    worktrees={managedWorktrees}
-                    snapshots={managedWorktreeSnapshots}
-                    busy={managedWorktreeBusy}
-                    message={managedWorktreeMessage}
-                    onRefresh={refreshManagedWorktreeState}
-                    onCreate={createManagedWorktree}
-                    onOpen={openManagedWorktree}
-                    onSnapshot={snapshotManagedWorktree}
-                    onRestore={restoreManagedWorktree}
-                    onHandoff={handoffManagedWorktree}
-                  />
-                  {/if}
-
-                  <div class={["code-workbench-main", codeWorkbenchPanel !== "overview" && "inspector-only"]}>
-                    {#if codeWorkbenchPanel === "overview"}
-                    <section class="code-workbench-chat" aria-label="代码对话入口">
-                      <header>
-                        <div><span>代码对话</span><strong>{conversationHeaderTitle}</strong><p>{activeTab?.workspaceName || t.common.global}</p></div>
-                        <button type="button" onclick={() => openCodeWorkbenchAction("conversation")}><Code2 size={14} /> 打开会话</button>
-                      </header>
-                      <div class="code-workbench-chat__prompts">
-                    {#each t.home.code.quick as quick, quickIndex (indexedKey(quick.label, quickIndex))}
-                          <button type="button" onclick={() => { useQuickPrompt(quick.prompt); openCodeConversation(); void tick().then(focusComposer); }}>
-                            <strong>{quick.label}</strong>
-                            <span>{quick.prompt}</span>
-                          </button>
-                        {/each}
-                      </div>
-                      <Composer
-                        {input}
-                        {commands}
-                        sending={composerIsBusy}
-                        disabled={Boolean(composerDisabledReason)}
-                        disabledReason={composerDisabledReason}
-                        onInput={setComposerInput}
-                        onSend={send}
-                        onCancel={cancel}
-                        onPreviewFile={previewFile}
-                        {models}
-                        {selectedModel}
-                        imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
-                        onModelChange={switchModel}
-                        projectOptions={newTaskProjectOptions}
-                        selectedProjectId={linkedProject ? activeSidebarProjectId : ""}
-                        onProjectChange={linkProjectById}
-                        workPermission={composerWorkPermission}
-                        {permissionChanging}
-                        onWorkPermissionChange={setComposerWorkPermission}
-                        collaborationMode={composerCollaborationMode}
-                        tokenMode={composerTokenMode}
-                        goal={currentComposerTab?.goal || ""}
-                        goalStatus={currentComposerTab?.goalStatus || ""}
-                        {runtimeChanging}
-                        onCollaborationModeChange={setComposerCollaborationMode}
-                        onTokenModeChange={setComposerTokenMode}
-                        onGoalChange={setComposerGoal}
-                        onOpenResources={openResourceCenterFromComposer}
-                        {activityMode}
-                        contextInfo={composerContext}
-                        {backgroundRunCount}
-                        queuedMessages={currentQueuedMessages}
-                        onEditQueuedMessage={editQueuedThreadMessage}
-                        onDeleteQueuedMessage={deleteQueuedThreadMessage}
-                        onMoveQueuedMessage={moveQueuedThreadMessage}
-                        onSteerQueuedMessage={steerQueuedThreadMessage}
-                        onResumeQueuedMessage={resumeQueuedThreadMessage}
+                  {#if codeWorkbenchPanel === "overview" && (currentComposerTab?.workspaceRoot || activeTab?.workspaceRoot)}
+                    <details class="code-workbench-disclosure">
+                      <summary><Folder size={14} /> 工作树与快照</summary>
+                      <ManagedWorktreePanel
+                        repositoryRoot={currentComposerTab?.workspaceRoot || activeTab?.workspaceRoot || ""}
+                        worktrees={managedWorktrees}
+                        snapshots={managedWorktreeSnapshots}
+                        busy={managedWorktreeBusy}
+                        message={managedWorktreeMessage}
+                        onRefresh={refreshManagedWorktreeState}
+                        onCreate={createManagedWorktree}
+                        onOpen={openManagedWorktree}
+                        onSnapshot={snapshotManagedWorktree}
+                        onRestore={restoreManagedWorktree}
+                        onHandoff={handoffManagedWorktree}
                       />
-                    </section>
-                    {/if}
+                    </details>
+                  {/if}
 
+                  {#if codeWorkbenchPanel !== "overview"}
+                  <div class="code-workbench-main inspector-only">
                     <CodeDashboard
                       {context}
                       {changes}
@@ -9303,6 +9191,7 @@ function openGovernanceCenter() {
                       onReviewWorkflow={runReviewWorkflow}
                     />
                   </div>
+                  {/if}
                 </div>
               </section>
             {:else if workLayer === "trust"}
@@ -9333,54 +9222,38 @@ function openGovernanceCenter() {
               </section>
             {:else if workLayer === "today"}
               <section class="aorist-page result-home-page">
-                <button class="home-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
-                <TodayReminders
-                  pendingDeliveries={pendingDeliveryRows.length}
-                  changedFiles={changedCount}
-                  lastError={currentLastTurnError}
-                  queuedMessages={currentQueuedMessages.length}
-                  onOpenDeliveries={() => openUnifiedNav("deliveries")}
-                  onOpenChanges={openCodeInspector}
-                  onOpenTask={() => (homeFocusTask ? openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id) : startNewTaskFromSidebar())}
-                  onOpenQueue={() => (homeFocusTask ? openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id) : startNewTaskFromSidebar())}
-                  showAdvanced={showActivityModeSwitch}
-                />
+                {#if pendingDeliveryRows.length > 0 || changedCount > 0 || currentLastTurnError || currentQueuedMessages.length > 0}
+                  <TodayReminders
+                    pendingDeliveries={pendingDeliveryRows.length}
+                    changedFiles={changedCount}
+                    lastError={currentLastTurnError}
+                    queuedMessages={currentQueuedMessages.length}
+                    onOpenDeliveries={() => openUnifiedNav("deliveries")}
+                    onOpenChanges={openCodeInspector}
+                    onOpenTask={() => (homeFocusTask ? openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id) : startNewTaskFromSidebar())}
+                    onOpenQueue={() => (homeFocusTask ? openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id) : startNewTaskFromSidebar())}
+                    showAdvanced={showActivityModeSwitch}
+                  />
+                {/if}
                 <section class="home-primary-flow" data-testid="work-launch-panel">
                   <div class="home-primary-flow__copy">
-                    <span>Work</span>
-                    <h1>{homeFocusTask ? "继续推进当前任务" : "从一项真实任务开始"}</h1>
-                    <p>选择项目和结果目标，让 Agent 执行；你只需要在关键节点处理审批、复核交付并决定下一步。</p>
+                    <span>{homeFocusTask ? `${homeFocusTask.projectName} · ${homeTaskStateLabel(homeFocusTask.task)}` : "Work"}</span>
+                    <h1>{homeFocusTask ? homeFocusTask.task.title : "准备开始什么？"}</h1>
+                    <p>{homeFocusTask ? homeTaskSummary(homeFocusTask.task) : "描述想完成的结果，Volt 会在需要你决定时再打扰你。"}</p>
                     <div>
-                      <button type="button" onclick={startNewTaskFromSidebar}><CirclePlus size={15} /> 新建任务</button>
                       {#if homeFocusTask}
-                        <button type="button" onclick={() => openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id)}>继续当前任务 <ArrowRight size={15} /></button>
+                        <button type="button" onclick={() => openSidebarConversation(homeFocusTask.projectId, homeFocusTask.task.id)}>继续任务 <ArrowRight size={15} /></button>
+                        <button type="button" onclick={startNewTaskFromSidebar}><CirclePlus size={15} /> 新建任务</button>
                       {:else}
-                        <button type="button" onclick={() => openUnifiedNav("projects")}>先选择项目 <ArrowRight size={15} /></button>
+                        <button type="button" onclick={startNewTaskFromSidebar}><CirclePlus size={15} /> 新建任务</button>
                       {/if}
                     </div>
                   </div>
-
-                  <article class="home-focus-card">
-                    <header>
-                      <span>当前任务</span>
-                      {#if homeFocusTask}<b data-tone={homeTaskStateTone(homeFocusTask.task)}>{homeTaskStateLabel(homeFocusTask.task)}</b>{/if}
-                    </header>
-                    {#if homeFocusTask}
-                      <strong>{homeFocusTask.task.title}</strong>
-                      <p>{homeTaskSummary(homeFocusTask.task)}</p>
-                      <footer>
-                        <span>{homeFocusTask.projectName}</span>
-                        <em>{sidebarConversationTimeLabel(homeFocusTask.task)}</em>
-                      </footer>
-                    {:else}
-                      <strong>还没有正在推进的任务</strong>
-                      <p>创建任务后，这里会保留当前工作、Agent 状态和下一步入口。</p>
-                      <footer><span>从结果目标开始</span><em>等待创建</em></footer>
-                    {/if}
-                  </article>
                 </section>
 
-                <div class="home-work-grid">
+                {#if pendingDeliveryRows.length > 0 || homeRecentTaskRows.length > 0}
+                  <div class="home-work-grid">
+                  {#if pendingDeliveryRows.length > 0}
                   <section class="home-work-panel home-attention-panel">
                     <header><div><span>需要你</span><strong>待处理</strong></div><button type="button" onclick={() => openUnifiedNav("deliveries")}>交付记录</button></header>
                     <div class="home-task-list">
@@ -9390,30 +9263,30 @@ function openGovernanceCenter() {
                           <div><strong>{row.task.title}</strong><em>{row.projectName} · {sidebarConversationTimeLabel(row.task)}</em></div>
                           <ArrowRight size={15} />
                         </button>
-                      {:else}
-                        <article class="home-calm-state"><Check size={16} /><div><strong>目前没有待处理事项</strong><p>审批、失败恢复和交付复核会集中出现在这里。</p></div></article>
                       {/each}
                     </div>
                   </section>
+                  {/if}
 
+                  {#if homeRecentTaskRows.length > 0}
                   <section class="home-work-panel">
                     <header><div><span>最近活动</span><strong>最近任务</strong></div><button type="button" onclick={startNewTaskFromSidebar}>新建任务</button></header>
                     <div class="home-task-list">
-                      {#each todayTaskRows.slice(0, 5) as row (`recent:${row.projectId}:${row.task.id}`)}
+                      {#each homeRecentTaskRows.slice(0, 5) as row (`recent:${row.projectId}:${row.task.id}`)}
                         <button type="button" onclick={() => openSidebarConversation(row.projectId, row.task.id)}>
                           <span data-tone={homeTaskStateTone(row.task)}>{homeTaskStateLabel(row.task)}</span>
                           <div><strong>{row.task.title}</strong><em>{row.projectName} · {sidebarConversationTimeLabel(row.task)}</em></div>
                           <ArrowRight size={15} />
                         </button>
-                      {:else}
-                        <article class="home-calm-state"><CirclePlus size={16} /><div><strong>还没有最近任务</strong><p>创建第一项任务后，可从这里直接继续。</p></div></article>
                       {/each}
                     </div>
                   </section>
-                </div>
+                  {/if}
+                  </div>
+                {/if}
 
-                <section class="result-scenarios" aria-label="任务结果模板">
-                  <header><div><span>新建任务</span><strong>从结果模板开始</strong></div><p>选择一个目标，进入任务后再补充上下文和运行配置。</p></header>
+                <details class="result-scenarios" aria-label="任务结果模板">
+                  <summary><CirclePlus size={14} /> 从模板开始</summary>
                   <div>
                     {#each WORK_OUTCOME_TEMPLATES as template (template.id)}
                       <button type="button" onclick={() => startOutcomeTask(template.id)}>
@@ -9423,7 +9296,7 @@ function openGovernanceCenter() {
                       </button>
                     {/each}
                   </div>
-                </section>
+                </details>
               </section>
             {:else if workLayer === "newTask"}
               {@const currentAgent = selectedAgent()}
@@ -9534,20 +9407,22 @@ function openGovernanceCenter() {
               </section>
               {:else}
                 <section class="aorist-page new-task-page agent-assistant-page">
-                  <TaskOutcomeLauncher templates={WORK_OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
-                  <article class="detail-empty">
-                    <strong>先完成运行配置，再开始任务</strong>
-                    <p>{hasWailsBindings() ? "新用户只需先完成两步：创建一个 Agent，再连接可用模型。完成后回到这里即可开始。" : "未连接桌面后端。请在 Wails 桌面运行环境中创建 Agent、连接模型并开始真实对话。"}</p>
-                    <div class="new-task-empty-actions">
-                      <button type="button" onclick={() => openGovernanceLayer("agents")}>1. 配置 Agent</button>
-                      <button type="button" onclick={() => openGovernanceLayer("models")}>2. 连接模型</button>
+                  <div class="agent-assistant-shell agent-assistant-shell--setup">
+                    <div class="agent-assistant-center">
+                      <TaskOutcomeLauncher templates={WORK_OUTCOME_TEMPLATES} selectedId={selectedOutcomeTemplateId} onSelect={selectOutcomeTemplate} />
                     </div>
-                  </article>
+                    <article class="setup-inline-status">
+                      <div><strong>开始前需连接运行环境</strong><p>{hasWailsBindings() ? "创建 Agent 并连接模型后即可发送。" : "请在 Volt GUI 桌面应用中连接 Agent 与模型。"}</p></div>
+                      <div class="new-task-empty-actions">
+                        <button type="button" onclick={() => openGovernanceLayer("agents")}>配置 Agent</button>
+                        <button type="button" onclick={() => openGovernanceLayer("models")}>连接模型</button>
+                      </div>
+                    </article>
+                  </div>
                 </section>
               {/if}
             {:else if workLayer === "todos"}
               <div class="task-center-shell">
-                <button class="home-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
                 <TaskCenter
                   activeTab={taskCenterTab}
                   tasks={taskCenterTasks}
@@ -9717,7 +9592,6 @@ function openGovernanceCenter() {
                             {:else}
                               <button type="button" role="menuitem" onclick={() => void updateProjectStatus(project, "closed")}><Archive size={14} />归档</button>
                             {/if}
-                            <button type="button" role="menuitem" class="danger" onclick={() => void deleteProject(project)}><Trash2 size={14} />删除</button>
                           </div>
                         {/if}
                       </div>
@@ -11669,11 +11543,43 @@ function openGovernanceCenter() {
     border-bottom: 1px solid #eeeeee;
   }
 
-  .conversation-header div {
+  .conversation-header__title,
+  .conversation-header__actions {
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
+  }
+
+  .conversation-header__title { overflow: hidden; }
+  .conversation-header__actions { --wails-draggable: no-drag; flex: 0 0 auto; }
+  .conversation-environment { position: relative; }
+  .conversation-environment > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 0 9px;
+    border-radius: 8px;
+    color: #5f5f5f;
+    font-size: 12px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .conversation-environment > summary::-webkit-details-marker { display: none; }
+  .conversation-environment > summary:hover,
+  .conversation-environment[open] > summary { background: #f3f3f3; color: #242424; }
+  .conversation-environment__panel {
+    position: absolute;
+    z-index: 24;
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(820px, calc(100vw - var(--sidebar-width, 252px) - 40px));
+    padding: 10px;
+    border: 1px solid #dedede;
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 16px 44px rgb(15 23 42 / 0.12);
   }
 
   .conversation-header strong {
@@ -23157,14 +23063,16 @@ function openGovernanceCenter() {
   }
 
   .code-workbench-page {
-    padding: 16px;
-    background: #f6f8fc;
+    padding: clamp(20px, 4vw, 48px);
+    background: #ffffff;
   }
 
   .code-workbench-shell {
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
     gap: 12px;
+    width: min(920px, 100%);
+    margin: 0 auto;
     min-height: 100%;
   }
 
@@ -23173,18 +23081,17 @@ function openGovernanceCenter() {
     align-items: flex-start;
     justify-content: space-between;
     gap: 16px;
-    padding: 16px;
-    border: 1px solid var(--aorist-line, #d9dee8);
-    border-radius: 8px;
-    background: #ffffff;
+    padding: 18px 0;
+    border: 0;
+    border-bottom: 1px solid #e7e7e7;
+    background: transparent;
   }
 
   .code-workbench-hero > div:first-child {
     min-width: 0;
   }
 
-  .code-workbench-hero span,
-  .code-workbench-chat header span {
+  .code-workbench-hero span {
     display: block;
     color: var(--aorist-faint, #98a2b3);
     font-size: 11px;
@@ -23193,18 +23100,16 @@ function openGovernanceCenter() {
     text-transform: uppercase;
   }
 
-  .code-workbench-hero strong,
-  .code-workbench-chat header strong {
+  .code-workbench-hero strong {
     display: block;
     margin-top: 4px;
     color: var(--aorist-ink, #111827);
-    font-size: 20px;
-    font-weight: 560;
+    font-size: 22px;
+    font-weight: 600;
     line-height: 1.2;
   }
 
-  .code-workbench-hero p,
-  .code-workbench-chat header p {
+  .code-workbench-hero p {
     max-width: 720px;
     margin: 6px 0 0;
     color: var(--aorist-muted, #667085);
@@ -23220,11 +23125,10 @@ function openGovernanceCenter() {
 
   .code-workbench-actions {
     justify-content: flex-end;
-    min-width: min(420px, 42%);
+    min-width: max-content;
   }
 
-  .code-workbench-actions button,
-  .code-workbench-chat header button {
+  .code-workbench-actions button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -23241,10 +23145,23 @@ function openGovernanceCenter() {
   }
 
   .code-workbench-actions button:first-child {
-    border-color: #2563eb;
-    background: #2563eb;
+    border-color: #222222;
+    background: #222222;
     color: #ffffff;
   }
+
+  .code-workbench-disclosure { border-bottom: 1px solid #e7e7e7; }
+  .code-workbench-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 42px;
+    color: #666666;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .code-workbench-disclosure[open] > summary { color: #222222; }
+  .code-workbench-disclosure > :global(*) { margin-bottom: 12px; }
 
   .code-workbench-status-grid {
     display: grid;
@@ -23302,9 +23219,7 @@ function openGovernanceCenter() {
   }
 
   .code-workbench-main {
-    display: grid;
-    grid-template-columns: minmax(280px, 0.36fr) minmax(0, 1fr);
-    gap: 12px;
+    display: block;
     min-height: 0;
   }
 
@@ -24430,12 +24345,16 @@ function openGovernanceCenter() {
   }
 
   .result-home-page {
-    width: min(1120px, 100%);
+    width: min(920px, 100%);
     margin: 0 auto;
     padding: 8px 0 28px;
   }
 
   .home-mobile-nav {
+    display: none;
+  }
+
+  .stage-mobile-nav {
     display: none;
   }
 
@@ -24451,8 +24370,7 @@ function openGovernanceCenter() {
   }
 
   .home-primary-flow {
-    display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+    display: block;
     min-width: 0;
     overflow: hidden;
     border: 1px solid #dce1db;
@@ -24464,8 +24382,7 @@ function openGovernanceCenter() {
     display: grid;
     align-content: center;
     min-width: 0;
-    padding: 28px 30px;
-    border-right: 1px solid #e6e9e4;
+    padding: 34px;
   }
 
   .home-primary-flow__copy > span,
@@ -24761,14 +24678,25 @@ function openGovernanceCenter() {
   }
 
   .result-home-page .result-scenarios {
-    display: grid;
-    gap: 12px;
-    padding: 15px;
-    border: 1px solid #dce1db;
-    border-radius: 12px;
-    background: #ffffff;
+    display: block;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: #1f2421;
   }
+
+  .result-home-page .result-scenarios > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    color: #687169;
+    font-size: 11px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .result-home-page .result-scenarios > summary::-webkit-details-marker { display: none; }
 
   .result-home-page .result-scenarios > header strong {
     color: #1f2421;
@@ -24783,6 +24711,7 @@ function openGovernanceCenter() {
   .result-home-page .result-scenarios > div {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 7px;
+    margin-top: 8px;
   }
 
   .result-home-page .result-scenarios button {
@@ -24817,6 +24746,34 @@ function openGovernanceCenter() {
     gap: 8px;
     margin-top: 14px;
   }
+
+  .agent-assistant-shell--setup { grid-template-rows: minmax(0, 1fr) auto; }
+  .setup-inline-status {
+    grid-row: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #e2e2e2;
+    border-radius: 12px;
+    color: #666666;
+    background: #fafafa;
+  }
+  .setup-inline-status strong { display: block; color: #2b2b2b; font-size: 12px; }
+  .setup-inline-status p { margin: 3px 0 0; font-size: 11px; }
+  .setup-inline-status .new-task-empty-actions { flex: 0 0 auto; margin: 0; }
+  .setup-inline-status button {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid #d4d4d4;
+    border-radius: 7px;
+    color: #2b2b2b;
+    background: #ffffff;
+    font-size: 11px;
+  }
+  .setup-inline-status button:first-child { border-color: #222222; color: #ffffff; background: #222222; }
 
   .new-task-page > .detail-empty {
     width: min(100%, 920px);
@@ -25109,31 +25066,33 @@ function openGovernanceCenter() {
 
   .agent-assistant-page {
     --agent-assistant-content-width: 920px;
-    background: var(--background, #f3f5f2);
+    background: #ffffff;
   }
 
   .agent-assistant-shell {
     display: grid;
     grid-template-columns: minmax(0, var(--agent-assistant-content-width));
-    grid-template-rows: auto minmax(24px, 1fr) auto auto;
+    grid-template-rows: minmax(0, 1fr) auto auto;
     align-content: stretch;
     gap: 12px;
     height: 100dvh;
     min-height: 100dvh;
-    padding: clamp(24px, 4vh, 44px) clamp(16px, 4vw, 48px) 28px;
+    padding: clamp(24px, 4vh, 44px) clamp(16px, 4vw, 48px) 22px;
   }
 
   .agent-assistant-center {
     grid-row: 1;
+    align-self: center;
   }
 
   .agent-compose-card {
-    grid-row: 3;
+    grid-row: 2;
     align-self: end;
   }
 
   .agent-assistant-disclaimer {
-    grid-row: 4;
+    grid-row: 3;
+    opacity: .62;
   }
 
   .agent-selector {
@@ -25453,6 +25412,26 @@ function openGovernanceCenter() {
       width: 100%;
     }
 
+    .stage-mobile-nav {
+      appearance: none;
+      position: fixed;
+      z-index: 48;
+      top: 12px;
+      left: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid #dce1db;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #1f2421;
+      font-size: 12px;
+      font-weight: 650;
+      box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+    }
+
     .result-home-page {
       gap: 12px;
       padding-top: 0;
@@ -25472,6 +25451,13 @@ function openGovernanceCenter() {
       color: #1f2421;
       font-size: 12px;
       font-weight: 650;
+    }
+
+    .new-task-mobile-nav {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 48;
     }
 
     .task-center-shell > .home-mobile-nav {
@@ -25556,6 +25542,17 @@ function openGovernanceCenter() {
 
     .result-scenarios button {
       min-height: 88px;
+    }
+
+    .setup-inline-status { align-items: stretch; flex-direction: column; }
+    .setup-inline-status .new-task-empty-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .conversation-header__title span { display: none; }
+    .conversation-environment__panel {
+      position: fixed;
+      top: 58px;
+      right: 12px;
+      left: 12px;
+      width: auto;
     }
 
     .aorist-workbench[data-governance="true"] {

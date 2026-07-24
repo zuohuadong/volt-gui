@@ -14,6 +14,7 @@
     FolderOpen,
     Gauge,
     GitBranch,
+    Inbox,
     Library,
     LayoutDashboard,
     Menu,
@@ -22,7 +23,6 @@
     Plus,
     RotateCcw,
     Settings2,
-    SquarePen,
     Trash2,
     X,
   } from "@lucide/svelte";
@@ -51,7 +51,6 @@
     collapsed: boolean;
     projectDockCollapsed: boolean;
     projectSortLabel: string;
-    onNewTask: () => void;
     onNav: (navId: string) => void;
     onModeChange: (mode: "work" | "code") => void;
     onProjectToggle: (projectId: string) => void;
@@ -87,7 +86,6 @@
     collapsed,
     projectDockCollapsed,
     projectSortLabel,
-    onNewTask,
     onNav,
     onModeChange,
     onProjectToggle,
@@ -128,7 +126,7 @@
   } as const;
 
   const navGroups = $derived.by(() => Array.from(new Set(navItems.map((item) => item.group))));
-  const newTaskShortcutLabel = typeof navigator !== "undefined" && /(Mac|iPhone|iPad)/.test(navigator.platform) ? "⌘N" : "Ctrl N";
+  const isMacOS = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
   function iconFor(id: string) {
     return navIcons[id as keyof typeof navIcons] ?? Boxes;
   }
@@ -170,7 +168,7 @@
   <button class="drawer-scrim" type="button" aria-label="关闭导航抽屉" onclick={onDrawerClose}></button>
 {/if}
 
-<aside class:drawer-open={drawerOpen} class:collapsed class="unified-sidebar" data-testid="unified-sidebar">
+<aside class:drawer-open={drawerOpen} class:collapsed class:is-macos={isMacOS} class="unified-sidebar" data-testid="unified-sidebar">
   <header class="sidebar-brand">
     <button class="brand-info" type="button" aria-label="关于本软件" onclick={() => onAboutOpen?.()}>
       <span class="brand-mark">
@@ -182,33 +180,23 @@
     <button class="mobile-close" type="button" aria-label="关闭导航抽屉" onclick={onDrawerClose}><X size={18} /></button>
   </header>
 
-  <div class="mode-switch" role="tablist" aria-label="工作模式">
-    <button class:active={mode === "work"} type="button" role="tab" aria-label="Work 工作台" aria-selected={mode === "work"} onclick={() => { onModeChange("work"); onDrawerClose(); }}>
-      <BriefcaseBusiness size={15} />
-      <span><strong>Work</strong><em>任务与交付</em></span>
-    </button>
-    <button class:active={mode === "code"} type="button" role="tab" aria-label="Code 工作台" aria-selected={mode === "code"} onclick={() => { onModeChange("code"); onDrawerClose(); }}>
-      <Code2 size={15} />
-      <span><strong>Code</strong><em>开发与检查</em></span>
-    </button>
-  </div>
+  {#if displayMode === "developer"}
+    <div class="mode-switch" role="tablist" aria-label="工作模式">
+      <button class:active={mode === "work"} type="button" role="tab" aria-label="Work 工作台" aria-selected={mode === "work"} onclick={() => { onModeChange("work"); onDrawerClose(); }}>
+        <BriefcaseBusiness size={15} />
+        <span><strong>Work</strong><em>任务与交付</em></span>
+      </button>
+      <button class:active={mode === "code"} type="button" role="tab" aria-label="Code 工作台" aria-selected={mode === "code"} onclick={() => { onModeChange("code"); onDrawerClose(); }}>
+        <Code2 size={15} />
+        <span><strong>Code</strong><em>开发与检查</em></span>
+      </button>
+    </div>
+  {/if}
 
   <nav class="primary-nav" aria-label="主导航">
     {#each navGroups as group (group)}
       <section>
-        <div class="nav-group-heading">
-          <span class="nav-group-label">{group}</span>
-          {#if mode === "work" && group === navGroups[0]}
-            <button
-              class="new-task-action"
-              type="button"
-              aria-label="新建任务"
-              aria-keyshortcuts="Meta+N Control+N"
-              title={`新建任务 · ${newTaskShortcutLabel}`}
-              onclick={() => { onNewTask(); onDrawerClose(); }}
-            ><SquarePen size={14} /></button>
-          {/if}
-        </div>
+        {#if group !== navGroups[0]}<div class="nav-group-heading"><span class="nav-group-label">{group}</span></div>{/if}
         {#each navItems.filter((item) => item.group === group) as item (item.id)}
           {@const Icon = iconFor(item.id)}
           <button class:active={activeNavId === item.id} type="button" aria-label={item.label} onclick={() => { onNav(item.id); onDrawerClose(); }}>
@@ -222,7 +210,7 @@
   <section class="project-tree" data-testid="project-task-tree">
     <header>
       <button class:expanded={!projectDockCollapsed} type="button" aria-expanded={!projectDockCollapsed} onclick={onProjectDockToggle}><ChevronDown size={13} /></button>
-      <div><strong>{mode === "code" ? "当前工程" : "项目与任务"}</strong><span>{mode === "code" ? "工作区对应的任务上下文" : "按项目组织任务与交付"}</span></div>
+      <div><strong>{mode === "code" ? "当前工程" : displayMode === "office" ? "项目" : "项目与任务"}</strong><span>{mode === "code" ? "工作区对应的任务上下文" : "按项目组织任务与交付"}</span></div>
       <aside>
         <button type="button" aria-label={`项目排序：${projectSortLabel}`} title={`项目排序：${projectSortLabel}`} onclick={onProjectSort}><ArrowUpDown size={13} /></button>
         {#if mode === "work"}<button type="button" aria-label="新建项目" title="新建项目" onclick={() => { onProjectCreate(); onDrawerClose(); }}><Plus size={14} /></button>{/if}
@@ -233,7 +221,6 @@
         {#each projects as project (project.id)}
           <section class:active={activeProjectId === project.id} class="project-node" data-project-id={project.id}>
             <div class="project-row">
-              <button class:expanded={project.expanded} type="button" aria-label={project.expanded ? `收起 ${project.name}` : `展开 ${project.name}`} onclick={() => onProjectToggle(project.id)}><ChevronDown size={12} /></button>
               {#if editingProjectId === project.id}
                 <form class="project-rename" onsubmit={(event) => { event.preventDefault(); void commitProjectRename(project.id); }}>
                   <Folder size={14} />
@@ -241,20 +228,25 @@
                 </form>
               {:else}
                 <button class="project-open" type="button" onclick={() => selectProject(project.id)}>
-                  {#if project.kind === "inbox"}<Archive size={14} />{:else}<Folder size={14} />{/if}
+                  {#if project.kind === "inbox"}<Inbox size={14} />{:else}<Folder size={14} />{/if}
                   <span>{project.name}</span>
                 </button>
               {/if}
-              {#if project.kind === "project"}<button class="project-rename-action" type="button" aria-label={`重命名 ${project.name}`} title="重命名项目" onclick={() => startProjectRename(project)}><Pencil size={12} /></button>{:else}<span class="project-action-spacer"></span>{/if}
-              <button type="button" aria-label={`在 ${project.name} 创建任务`} onclick={() => onTaskCreate(project.id)}><Plus size={13} /></button>
+              <div class="project-actions">
+                {#if project.kind === "project"}<button class="project-rename-action" type="button" aria-label={`重命名 ${project.name}`} title="重命名项目" onclick={() => startProjectRename(project)}><Pencil size={12} /></button>{/if}
+                <button class="project-add-action" type="button" aria-label={`在 ${project.name} 创建任务`} title="新建任务" onclick={() => onTaskCreate(project.id)}><Plus size={13} /></button>
+                <button class:expanded={project.expanded} class="project-toggle" type="button" aria-label={project.expanded ? `收起 ${project.name}` : `展开 ${project.name}`} onclick={() => onProjectToggle(project.id)}><ChevronDown size={12} /></button>
+              </div>
             </div>
             {#if project.expanded}
               <div class="task-list">
                 {#each project.tasks.filter((task) => !task.archivedAtMs) as task (task.id)}
                   <div class:active={activeTaskId === task.id} class="task-row" data-task-id={task.id}>
                     <button class="task-open" type="button" onclick={() => selectTask(project.id, task.id)}><span>{task.title}</span><em>{taskTimeLabel(task)}</em></button>
-                    <button type="button" aria-label={`归档 ${task.title}`} onclick={() => onTaskArchive(project.id, task.id)}><Archive size={11} /></button>
-                    <button class="danger" type="button" aria-label={`删除 ${task.title}`} onclick={() => onTaskDelete(project.id, task.id)}><Trash2 size={11} /></button>
+                    <span class="task-actions">
+                      <button type="button" aria-label={`归档 ${task.title}`} title="归档" onclick={() => onTaskArchive(project.id, task.id)}><Archive size={11} /></button>
+                      <button class="danger" type="button" aria-label={`删除 ${task.title}`} title="删除" onclick={() => onTaskDelete(project.id, task.id)}><Trash2 size={11} /></button>
+                    </span>
                   </div>
                 {:else}
                   <button class="empty-task" type="button" onclick={() => onTaskCreate(project.id)}>创建第一个任务 <Plus size={11} /></button>
@@ -296,6 +288,8 @@
   .brand-info .brand-mark img { width: 100%; height: 100%; object-fit: cover; }
   .sidebar-version { margin: 0; padding: 4px 10px 2px; color: var(--muted-foreground, #687169); font-size: 10px; text-align: center; }
   .sidebar-brand { display: grid; grid-template-columns: 30px minmax(0, 1fr) 32px; align-items: center; gap: 9px; min-height: 56px; padding: 9px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
+  .is-macos .sidebar-brand { --wails-draggable: drag; min-height: 76px; padding-top: 29px; }
+  .sidebar-brand button { --wails-draggable: no-drag; }
   .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 8px; color: #fff; background: #1f2421; }
   .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
   .brand-copy { display: grid; min-width: 0; gap: 2px; }
@@ -314,11 +308,6 @@
   .mode-switch strong { font-size: 12px; font-weight: 650; }
   .mode-switch em { display: none; }
 
-  .new-task-action { display: grid; box-sizing: border-box; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground, #687169); opacity: .76; transition: background .15s ease, color .15s ease, opacity .15s ease; }
-  .new-task-action:hover { background: color-mix(in srgb, var(--card, #fff) 74%, var(--foreground, #1f2421) 5%); }
-  .new-task-action:hover, .new-task-action:focus-visible { color: var(--foreground, #1f2421); opacity: 1; }
-  .new-task-action:active { background: color-mix(in srgb, var(--card, #fff) 66%, var(--foreground, #1f2421) 9%); }
-
   .primary-nav { display: grid; gap: 5px; padding: 5px 8px 9px; border-bottom: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
   .primary-nav section { display: grid; gap: 2px; }
   .nav-group-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; min-height: 28px; padding: 0 2px 0 9px; }
@@ -328,39 +317,47 @@
   .primary-nav button:not(.new-task-action).active { background: color-mix(in srgb, var(--card, #fff) 78%, var(--foreground, #1f2421) 7%); color: var(--foreground, #1f2421); }
   .primary-nav button > span, .primary-nav strong, .primary-nav em { display: block; min-width: 0; }
   .primary-nav strong { font-size: 12px; font-weight: 620; }
-  .primary-nav em { margin-top: 1px; overflow: hidden; color: var(--muted-foreground, #687169); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+  .primary-nav em { display: none; }
 
-  .project-tree { min-height: 0; overflow: hidden; padding: 7px 8px; }
-  .project-tree > header { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; min-height: 38px; }
+  .project-tree { min-height: 0; overflow: hidden; padding: 12px 8px 8px; }
+  .project-tree > header { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; min-height: 30px; padding: 0 2px; }
   .project-tree > header > button { transition: transform .15s ease; }
   .project-tree > header > button:not(.expanded) { transform: rotate(-90deg); }
   .project-tree > header div { display: grid; gap: 1px; }
-  .project-tree > header strong { font-size: 12px; }
-  .project-tree > header span { color: var(--muted-foreground, #687169); font-size: 11px; }
+  .project-tree > header strong { color: var(--muted-foreground, #687169); font-size: 11px; font-weight: 600; }
+  .project-tree > header span { display: none; }
   .project-tree > header aside { display: flex; gap: 1px; }
-  .project-tree > header aside button { display: grid; min-width: 28px; min-height: 28px; place-items: center; border-radius: 6px; color: var(--muted-foreground, #687169); }
+  .project-tree > header aside button { display: grid; min-width: 26px; min-height: 26px; place-items: center; border-radius: 6px; color: var(--muted-foreground, #687169); opacity: 0; transition: opacity .15s ease, background .15s ease, color .15s ease; }
+  .project-tree > header:hover aside button, .project-tree > header aside button:focus-visible { opacity: 1; }
   .project-tree > header aside button:hover { background: var(--card, #fff); color: var(--foreground, #1f2421); }
-  .project-list { display: grid; gap: 3px; max-height: calc(100% - 38px); overflow-y: auto; }
-  .project-node { padding: 3px; border: 1px solid transparent; border-radius: 9px; }
-  .project-node.active { border-color: color-mix(in srgb, var(--foreground, #1f2421) 12%, var(--border, #dce1db)); background: color-mix(in srgb, var(--card, #fff) 84%, var(--foreground, #1f2421) 7%); }
-  .project-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) 28px 32px; align-items: center; }
-  .project-row > button:first-child:not(.expanded) { transform: rotate(-90deg); }
-  .project-open { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; min-width: 0; min-height: 32px; text-align: left; }
-  .project-open span { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .project-list { display: grid; gap: 1px; max-height: calc(100% - 30px); overflow-y: auto; padding-top: 2px; }
+  .project-node { min-width: 0; }
+  .project-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 32px; border-radius: 7px; }
+  .project-node.active > .project-row { background: color-mix(in srgb, var(--card, #fff) 76%, var(--foreground, #1f2421) 5%); }
+  .project-open { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 2px; min-width: 0; min-height: 32px; padding: 0 6px; border-radius: 7px; text-align: left; }
+  .project-open span { overflow: hidden; font-size: 12px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+  .project-node.active .project-open span { font-weight: 640; }
   .project-rename { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; min-width: 0; gap: 2px; }
   .project-rename input { min-width: 0; width: 100%; height: 28px; padding: 0 5px; border: 1px solid var(--border-strong, #c7cfc7); border-radius: 6px; background: var(--card, #fff); color: var(--foreground, #1f2421); font: inherit; font-size: 12px; }
-  .project-rename-action { display: grid; min-width: 28px !important; min-height: 28px !important; place-items: center; border-radius: 6px !important; color: var(--muted-foreground, #687169) !important; opacity: 0; }
-  .project-row:hover .project-rename-action, .project-rename-action:focus-visible { opacity: 1; }
-  .project-rename-action:hover { background: var(--card, #fff) !important; color: var(--foreground, #1f2421) !important; }
-  .project-action-spacer { width: 28px; }
-  .task-list { display: grid; gap: 2px; padding: 2px 0 3px 23px; }
-  .task-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; align-items: center; border-radius: 7px; }
+  .project-actions { display: flex; align-items: center; padding-right: 2px; }
+  .project-actions button { display: grid; min-width: 26px; min-height: 26px; place-items: center; border-radius: 6px; color: var(--muted-foreground, #687169); }
+  .project-rename-action, .project-add-action { opacity: 0; }
+  .project-row:hover .project-rename-action, .project-row:hover .project-add-action, .project-actions button:focus-visible { opacity: 1; }
+  .project-actions button:hover { background: color-mix(in srgb, var(--card, #fff) 72%, transparent); color: var(--foreground, #1f2421); }
+  .project-toggle { transition: transform .15s ease; }
+  .project-toggle:not(.expanded) { transform: rotate(-90deg); }
+  .task-list { display: grid; gap: 1px; padding: 1px 0 4px 20px; }
+  .task-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; border-radius: 7px; }
   .task-row.active { background: color-mix(in srgb, var(--card, #fff) 82%, var(--foreground, #1f2421) 8%); color: var(--foreground, #1f2421); }
-  .task-open { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; min-width: 0; min-height: 32px; text-align: left; }
-  .task-open span { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .task-open { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 0 7px; border-radius: 7px; text-align: left; }
+  .task-open span { overflow: hidden; color: color-mix(in srgb, var(--foreground, #1f2421) 86%, transparent); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .task-open em { color: var(--muted-foreground, #687169); font-size: 11px; font-style: normal; }
+  .task-actions { position: absolute; right: 2px; display: flex; padding-left: 4px; background: color-mix(in srgb, var(--muted, #edf0ec) 88%, var(--card, #fff)); opacity: 0; pointer-events: none; }
+  .task-actions button { display: grid; min-width: 26px; min-height: 26px; place-items: center; border-radius: 6px; }
+  .task-row:hover .task-actions, .task-actions:focus-within { opacity: 1; pointer-events: auto; }
+  .task-row:hover .task-open em { opacity: 0; }
   .task-row .danger { color: var(--destructive, #b42318); }
-  .empty-task { display: flex; align-items: center; gap: 5px; min-height: 32px; color: var(--muted-foreground, #687169) !important; font-size: 12px; }
+  .empty-task { display: flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 7px; color: var(--muted-foreground, #687169) !important; font-size: 11px; }
 
   footer { padding: 9px 10px 12px; border-top: 1px solid var(--border, #dce1db); }
   footer button { display: grid; grid-template-columns: 22px minmax(0,1fr); width: 100%; min-height: 38px; padding: 4px 8px; border-radius: 8px; text-align: left; }
@@ -368,7 +365,7 @@
   footer button.active { border: 1px solid color-mix(in srgb, var(--foreground, #1f2421) 14%, var(--border, #dce1db)); background: color-mix(in srgb, var(--card, #fff) 82%, var(--foreground, #1f2421) 8%); color: var(--foreground, #1f2421); }
   footer span, footer em { grid-column: 2; }
   footer span { font-size: 12px; font-weight: 600; }
-  footer em { color: var(--muted-foreground, #687169); font-size: 11px; font-style: normal; }
+  footer em { display: none; }
 
   button:focus-visible { outline: 2px solid color-mix(in srgb, var(--foreground, #1f2421) 48%, transparent); outline-offset: 2px; }
 
@@ -396,15 +393,17 @@
     .collapsed .primary-nav button:not(.new-task-action) { grid-template-columns: 22px minmax(0,1fr); justify-items: stretch; padding: 4px 9px; }
     .collapsed .project-tree { display: block; }
     .nav-group-heading { grid-template-columns: minmax(0, 1fr) 40px; padding-right: 0; }
-    .new-task-action { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
     .mode-switch button,
     .project-tree button,
     .primary-nav button,
     footer button { min-height: 40px; }
     .project-tree button { min-width: 40px; }
     .project-tree > header { grid-template-columns: 40px minmax(0, 1fr) auto; }
-    .project-row { grid-template-columns: 40px minmax(0, 1fr) 40px 40px; }
-    .project-rename-action { min-width: 40px !important; min-height: 40px !important; opacity: 1; }
-    .task-row { grid-template-columns: minmax(0, 1fr) 40px 40px; }
+    .project-tree > header aside button { opacity: 1; }
+    .project-actions button { min-width: 40px; min-height: 40px; }
+    .project-rename-action, .project-add-action { opacity: 1; }
+    .task-actions { position: static; display: flex; padding-left: 0; background: transparent; opacity: 1; pointer-events: auto; }
+    .task-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .task-actions button { min-width: 40px; min-height: 40px; }
   }
 </style>

@@ -233,6 +233,65 @@ func TestUnknownHookEventIsReported(t *testing.T) {
 	}
 }
 
+func TestCollectIgnoresMatchersOnNonToolHookEvents(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	reasonixHome := filepath.Join(home, ".reasonix")
+	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_HOME", reasonixHome)
+	write(t, filepath.Join(reasonixHome, "settings.json"), `{
+  "hooks": {
+    "Stop": [{"match": "(", "command": "echo done"}]
+  }
+}`)
+
+	r := capdiag.Collect(capdiag.Options{
+		Root: root, HomeDir: home, ReasonixHomeDir: reasonixHome,
+	})
+	if len(r.Hooks.Entries) != 1 {
+		t.Fatalf("hook entries = %+v, want one Stop hook", r.Hooks.Entries)
+	}
+	for _, issue := range r.Issues {
+		if issue.Code == "hook.invalid_matcher" {
+			t.Fatalf("non-tool Stop matcher was reported invalid: %+v", issue)
+		}
+	}
+}
+
+func TestCollectRejectsNonRegularPluginContextFile(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	reasonixHome := filepath.Join(home, ".reasonix")
+	t.Setenv("HOME", home)
+	t.Setenv("REASONIX_HOME", reasonixHome)
+
+	pluginRoot := filepath.Join(reasonixHome, "plugins", "demo")
+	write(t, filepath.Join(pluginRoot, pluginpkg.NativeManifest), `{
+  "name": "demo",
+  "hooks": {
+    "SessionStart": [{"contextFile": "CLAUDE.md"}]
+  }
+}`)
+	if err := os.MkdirAll(filepath.Join(pluginRoot, "CLAUDE.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
+		Name: "demo", Root: "plugins/demo", ManifestKind: "reasonix", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := capdiag.Collect(capdiag.Options{
+		Root: root, HomeDir: home, ReasonixHomeDir: reasonixHome,
+	})
+	for _, issue := range r.Issues {
+		if issue.Code == "hook.missing_context_file" {
+			return
+		}
+	}
+	t.Fatalf("expected hook.missing_context_file for context directory, issues=%+v", r.Issues)
+}
+
 func TestPluginPackageCommandsAreReported(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()

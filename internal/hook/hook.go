@@ -172,6 +172,26 @@ func ProjectSettingsPath(projectRoot string) string {
 	return filepath.Join(projectRoot, SettingsDirname, SettingsFilename)
 }
 
+// ContextFileUsable reports whether a plugin contextFile can take the same
+// execution path as readContextFile. Keep machine status and diagnostics on
+// this shared predicate so a path that merely exists (for example, a
+// directory) is not advertised as runnable.
+func ContextFileUsable(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	return file.Close() == nil
+}
+
 // LoadOptions configure Load. Project hooks load only when Trusted; global hooks
 // always load.
 type LoadOptions struct {
@@ -424,7 +444,7 @@ func cloneEnv(in map[string]string) map[string]string {
 // anchored regex; non-tool events always match. A malformed regex never fires
 // (safer than firing on everything).
 func MatchesTool(h ResolvedHook, toolName string) bool {
-	if h.Event != PreToolUse && h.Event != PostToolUse && h.Event != PostToolUseFailure && h.Event != PermissionRequest {
+	if !UsesToolMatcher(h.Event) {
 		return true
 	}
 	m := h.Match

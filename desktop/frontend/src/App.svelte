@@ -9222,6 +9222,7 @@ function openGovernanceCenter() {
               </section>
             {:else if workLayer === "today"}
               <section class="aorist-page result-home-page">
+                <button class="home-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
                 {#if pendingDeliveryRows.length > 0 || changedCount > 0 || currentLastTurnError || currentQueuedMessages.length > 0}
                   <TodayReminders
                     pendingDeliveries={pendingDeliveryRows.length}
@@ -9299,6 +9300,7 @@ function openGovernanceCenter() {
                 </details>
               </section>
             {:else if workLayer === "newTask"}
+              <button class="home-mobile-nav new-task-mobile-nav" type="button" aria-label="打开导航抽屉" onclick={() => (mobileDrawerOpen = true)}><PanelLeft size={15} /> 导航</button>
               {@const currentAgent = selectedAgent()}
               {#if currentAgent}
               {@const appliedAgentProfile = currentComposerTab?.agentProfileId?.trim() === currentAgent.id && !agentSelectionDirty}

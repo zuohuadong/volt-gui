@@ -25,9 +25,9 @@
 </script>
 
 <section class="outcome-launcher" data-testid="outcome-template-launcher">
-  <header><span>开始</span><div><strong>先选一个结果</strong><p>不知道从哪开始？选最接近的一项，也可以直接输入。</p></div></header>
+  <header><strong>想完成什么？</strong><p>选择一个方向，或直接在下方描述任务。</p></header>
   <div class="template-grid">
-    {#each templates as template (template.id)}
+    {#each templates.slice(0, 3) as template (template.id)}
       {@const Icon = icons[template.id]}
       <button
         class:active={selectedId === template.id}
@@ -44,55 +44,64 @@
       </button>
     {/each}
   </div>
+  {#if templates.length > 3}
+    <details class="more-templates">
+      <summary>更多模板</summary>
+      <div class="template-grid template-grid--more">
+        {#each templates.slice(3) as template (template.id)}
+          {@const Icon = icons[template.id]}
+          <button
+            class:active={selectedId === template.id}
+            type="button"
+            data-outcome-template={template.id}
+            title={template.summary}
+            aria-label={`${template.title}：${template.summary}`}
+            onclick={() => onSelect(template.id)}
+          >
+            <span class="template-icon"><Icon size={17} /></span>
+            <strong>{template.title}</strong>
+            {#if selectedId === template.id}<Check size={15} />{/if}
+            <span class="template-tooltip" role="tooltip">{template.summary}</span>
+          </button>
+        {/each}
+      </div>
+    </details>
+  {/if}
 </section>
 
 <style>
   .outcome-launcher {
     display: grid;
-    gap: 12px;
+    gap: 18px;
     width: min(100%, 920px);
   }
 
   header {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  header > span {
-    flex: 0 0 auto;
-    padding: 4px 8px;
-    border-radius: 999px;
-    background: #1f2421;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1.35;
-  }
-
-  header div {
     display: grid;
-    gap: 4px;
+    justify-items: center;
+    gap: 7px;
+    text-align: center;
   }
 
   header strong {
     color: var(--foreground, #1f2421);
-    font-size: 15px;
-    font-weight: 650;
-    line-height: 1.35;
+    font-size: clamp(25px, 3vw, 34px);
+    font-weight: 560;
+    line-height: 1.2;
+    letter-spacing: -0.035em;
   }
 
   header p {
     margin: 0;
     color: var(--muted-foreground, #687169);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
   }
 
   .template-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
     overflow: visible;
   }
 
@@ -100,14 +109,15 @@
     appearance: none;
     position: relative;
     display: flex;
-    align-items: center;
+    align-items: start;
+    align-content: space-between;
     justify-content: flex-start;
-    gap: 8px;
+    gap: 22px;
     min-width: 0;
-    min-height: 54px;
-    padding: 9px 10px;
+    min-height: 126px;
+    padding: 16px;
     border: 1px solid var(--border, #dce1db);
-    border-radius: 8px;
+    border-radius: 14px;
     background: var(--card, #fff);
     color: var(--foreground, #1f2421);
     text-align: left;
@@ -122,14 +132,14 @@
   }
 
   button.active {
-    border-color: color-mix(in srgb, #0f7b55 58%, var(--border, #dce1db));
-    background: color-mix(in srgb, var(--card, #fff) 94%, #0f7b55 6%);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, #0f7b55 12%, transparent);
+    border-color: color-mix(in srgb, var(--foreground, #1f2421) 44%, var(--border, #dce1db));
+    background: color-mix(in srgb, var(--card, #fff) 94%, var(--foreground, #1f2421) 6%);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground, #1f2421) 8%, transparent);
   }
 
   button:focus-visible {
     z-index: 40;
-    outline: 2px solid color-mix(in srgb, #0f7b55 55%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--foreground, #1f2421) 48%, transparent);
     outline-offset: 2px;
   }
 
@@ -140,13 +150,13 @@
     height: 28px;
     place-items: center;
     border-radius: 6px;
-    background: var(--muted, #edf0ec);
+    background: color-mix(in srgb, var(--card, #fff) 78%, var(--muted, #edf0ec));
     color: var(--muted-foreground, #687169);
   }
 
   button.active .template-icon {
-    background: color-mix(in srgb, #0f7b55 10%, var(--card, #fff));
-    color: #0f7b55;
+    background: color-mix(in srgb, var(--foreground, #1f2421) 10%, var(--card, #fff));
+    color: var(--foreground, #1f2421);
   }
 
   button strong {
@@ -193,6 +203,29 @@
   button > :global(svg) {
     flex: 0 0 auto;
     margin-left: auto;
+  }
+
+  .more-templates {
+    justify-self: center;
+    width: 100%;
+  }
+
+  .more-templates > summary {
+    width: max-content;
+    margin: 0 auto;
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .template-grid--more {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 12px;
+  }
+
+  .template-grid--more button {
+    min-height: 72px;
+    gap: 10px;
   }
 
   @media (max-width: 560px) {

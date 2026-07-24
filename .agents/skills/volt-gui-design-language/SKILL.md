@@ -47,6 +47,8 @@ For Svelte files, load `svelte-code-writer` and `svelte-core-bestpractices`. For
 
 - Keep the current workspace, project, task/thread, model, permission mode, and running state visible at the point of action.
 - Prefer progressive disclosure: simple defaults, explicit menus for advanced controls, and side/bottom panels for inspection.
+- Enforce a first-screen information budget: one dominant job, one primary action, and at most one persistent context row. Empty task surfaces show at most three immediate suggestions; extra templates, environment fields, runtime metrics, tools, and inspection state stay behind disclosure until relevant.
+- Treat native window chrome as platform-owned. On macOS reserve space for the real traffic lights; never recreate close, minimize, or zoom controls in Svelte.
 - Treat the composer as the command cockpit. Attachments, references, model, permission, status, submit/cancel, and errors belong around it.
 - Never block the whole workspace with an unexplained spinner. Show the pending dependency, a timeout/retry path, and a safe fallback where possible.
 - Keep destructive or high-risk actions explicit, local, and reversible when the backend supports it.
@@ -56,6 +58,7 @@ For Svelte files, load `svelte-code-writer` and `svelte-core-bestpractices`. For
 - Use inline approval and recovery cards for turn-level decisions; use modals for configuration or destructive confirmation.
 - Preserve keyboard reachability, visible focus, stable dimensions, and no horizontal scrolling.
 - Make empty states task-oriented: explain why the surface is empty and offer one next action.
+- Replace empty summary panels with the empty state itself; never stack multiple no-data cards on the same first screen.
 
 ## Manage legacy styling
 

@@ -22,7 +22,6 @@
     Plus,
     RotateCcw,
     Settings2,
-    SquarePen,
     Trash2,
     X,
   } from "@lucide/svelte";
@@ -51,7 +50,6 @@
     collapsed: boolean;
     projectDockCollapsed: boolean;
     projectSortLabel: string;
-    onNewTask: () => void;
     onNav: (navId: string) => void;
     onModeChange: (mode: "work" | "code") => void;
     onProjectToggle: (projectId: string) => void;
@@ -87,7 +85,6 @@
     collapsed,
     projectDockCollapsed,
     projectSortLabel,
-    onNewTask,
     onNav,
     onModeChange,
     onProjectToggle,
@@ -128,7 +125,7 @@
   } as const;
 
   const navGroups = $derived.by(() => Array.from(new Set(navItems.map((item) => item.group))));
-  const newTaskShortcutLabel = typeof navigator !== "undefined" && /(Mac|iPhone|iPad)/.test(navigator.platform) ? "⌘N" : "Ctrl N";
+  const isMacOS = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
   function iconFor(id: string) {
     return navIcons[id as keyof typeof navIcons] ?? Boxes;
   }
@@ -170,7 +167,7 @@
   <button class="drawer-scrim" type="button" aria-label="关闭导航抽屉" onclick={onDrawerClose}></button>
 {/if}
 
-<aside class:drawer-open={drawerOpen} class:collapsed class="unified-sidebar" data-testid="unified-sidebar">
+<aside class:drawer-open={drawerOpen} class:collapsed class:is-macos={isMacOS} class="unified-sidebar" data-testid="unified-sidebar">
   <header class="sidebar-brand">
     <button class="brand-info" type="button" aria-label="关于本软件" onclick={() => onAboutOpen?.()}>
       <span class="brand-mark">
@@ -182,33 +179,23 @@
     <button class="mobile-close" type="button" aria-label="关闭导航抽屉" onclick={onDrawerClose}><X size={18} /></button>
   </header>
 
-  <div class="mode-switch" role="tablist" aria-label="工作模式">
-    <button class:active={mode === "work"} type="button" role="tab" aria-label="Work 工作台" aria-selected={mode === "work"} onclick={() => { onModeChange("work"); onDrawerClose(); }}>
-      <BriefcaseBusiness size={15} />
-      <span><strong>Work</strong><em>任务与交付</em></span>
-    </button>
-    <button class:active={mode === "code"} type="button" role="tab" aria-label="Code 工作台" aria-selected={mode === "code"} onclick={() => { onModeChange("code"); onDrawerClose(); }}>
-      <Code2 size={15} />
-      <span><strong>Code</strong><em>开发与检查</em></span>
-    </button>
-  </div>
+  {#if displayMode === "developer"}
+    <div class="mode-switch" role="tablist" aria-label="工作模式">
+      <button class:active={mode === "work"} type="button" role="tab" aria-label="Work 工作台" aria-selected={mode === "work"} onclick={() => { onModeChange("work"); onDrawerClose(); }}>
+        <BriefcaseBusiness size={15} />
+        <span><strong>Work</strong><em>任务与交付</em></span>
+      </button>
+      <button class:active={mode === "code"} type="button" role="tab" aria-label="Code 工作台" aria-selected={mode === "code"} onclick={() => { onModeChange("code"); onDrawerClose(); }}>
+        <Code2 size={15} />
+        <span><strong>Code</strong><em>开发与检查</em></span>
+      </button>
+    </div>
+  {/if}
 
   <nav class="primary-nav" aria-label="主导航">
     {#each navGroups as group (group)}
       <section>
-        <div class="nav-group-heading">
-          <span class="nav-group-label">{group}</span>
-          {#if mode === "work" && group === navGroups[0]}
-            <button
-              class="new-task-action"
-              type="button"
-              aria-label="新建任务"
-              aria-keyshortcuts="Meta+N Control+N"
-              title={`新建任务 · ${newTaskShortcutLabel}`}
-              onclick={() => { onNewTask(); onDrawerClose(); }}
-            ><SquarePen size={14} /></button>
-          {/if}
-        </div>
+        {#if group !== navGroups[0]}<div class="nav-group-heading"><span class="nav-group-label">{group}</span></div>{/if}
         {#each navItems.filter((item) => item.group === group) as item (item.id)}
           {@const Icon = iconFor(item.id)}
           <button class:active={activeNavId === item.id} type="button" aria-label={item.label} onclick={() => { onNav(item.id); onDrawerClose(); }}>
@@ -296,6 +283,8 @@
   .brand-info .brand-mark img { width: 100%; height: 100%; object-fit: cover; }
   .sidebar-version { margin: 0; padding: 4px 10px 2px; color: var(--muted-foreground, #687169); font-size: 10px; text-align: center; }
   .sidebar-brand { display: grid; grid-template-columns: 30px minmax(0, 1fr) 32px; align-items: center; gap: 9px; min-height: 56px; padding: 9px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
+  .is-macos .sidebar-brand { --wails-draggable: drag; min-height: 76px; padding-top: 29px; }
+  .sidebar-brand button { --wails-draggable: no-drag; }
   .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 8px; color: #fff; background: #1f2421; }
   .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
   .brand-copy { display: grid; min-width: 0; gap: 2px; }
@@ -314,11 +303,6 @@
   .mode-switch strong { font-size: 12px; font-weight: 650; }
   .mode-switch em { display: none; }
 
-  .new-task-action { display: grid; box-sizing: border-box; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-foreground, #687169); opacity: .76; transition: background .15s ease, color .15s ease, opacity .15s ease; }
-  .new-task-action:hover { background: color-mix(in srgb, var(--card, #fff) 74%, var(--foreground, #1f2421) 5%); }
-  .new-task-action:hover, .new-task-action:focus-visible { color: var(--foreground, #1f2421); opacity: 1; }
-  .new-task-action:active { background: color-mix(in srgb, var(--card, #fff) 66%, var(--foreground, #1f2421) 9%); }
-
   .primary-nav { display: grid; gap: 5px; padding: 5px 8px 9px; border-bottom: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
   .primary-nav section { display: grid; gap: 2px; }
   .nav-group-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; min-height: 28px; padding: 0 2px 0 9px; }
@@ -328,7 +312,7 @@
   .primary-nav button:not(.new-task-action).active { background: color-mix(in srgb, var(--card, #fff) 78%, var(--foreground, #1f2421) 7%); color: var(--foreground, #1f2421); }
   .primary-nav button > span, .primary-nav strong, .primary-nav em { display: block; min-width: 0; }
   .primary-nav strong { font-size: 12px; font-weight: 620; }
-  .primary-nav em { margin-top: 1px; overflow: hidden; color: var(--muted-foreground, #687169); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+  .primary-nav em { display: none; }
 
   .project-tree { min-height: 0; overflow: hidden; padding: 7px 8px; }
   .project-tree > header { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; min-height: 38px; }
@@ -368,7 +352,7 @@
   footer button.active { border: 1px solid color-mix(in srgb, var(--foreground, #1f2421) 14%, var(--border, #dce1db)); background: color-mix(in srgb, var(--card, #fff) 82%, var(--foreground, #1f2421) 8%); color: var(--foreground, #1f2421); }
   footer span, footer em { grid-column: 2; }
   footer span { font-size: 12px; font-weight: 600; }
-  footer em { color: var(--muted-foreground, #687169); font-size: 11px; font-style: normal; }
+  footer em { display: none; }
 
   button:focus-visible { outline: 2px solid color-mix(in srgb, var(--foreground, #1f2421) 48%, transparent); outline-offset: 2px; }
 
@@ -396,7 +380,6 @@
     .collapsed .primary-nav button:not(.new-task-action) { grid-template-columns: 22px minmax(0,1fr); justify-items: stretch; padding: 4px 9px; }
     .collapsed .project-tree { display: block; }
     .nav-group-heading { grid-template-columns: minmax(0, 1fr) 40px; padding-right: 0; }
-    .new-task-action { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
     .mode-switch button,
     .project-tree button,
     .primary-nav button,

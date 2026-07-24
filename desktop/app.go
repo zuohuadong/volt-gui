@@ -6558,6 +6558,8 @@ type ServerView struct {
 	Enabled                bool           `json:"enabled"`
 	Installed              bool           `json:"installed"`
 	Action                 string         `json:"action,omitempty"`
+	Source                 string         `json:"source,omitempty"`
+	ConfigSource           string         `json:"configSource,omitempty"`
 	BuiltIn                bool           `json:"builtIn,omitempty"`
 	Configured             bool           `json:"configured,omitempty"`
 	AutoStart              bool           `json:"autoStart"` // deprecated: same as Enabled
@@ -6772,10 +6774,10 @@ func (a *App) lockMCPMutation(operation string) func() {
 	return a.lockRuntimeMutation(operation)
 }
 
-// AuthorizeAndConnectMCPServer is the normal repository-config flow: record
-// durable consent for the exact command or endpoint, then establish one live
-// connection. Unlike the removed multi-step API it never starts a temporary MCP
-// process to inspect tools before connecting the real runtime.
+// AuthorizeAndConnectMCPServer is retained for older generated Wails clients.
+// Project configuration is trusted by default now, so the normal path simply
+// reconnects the effective entry. Explicitly gated host specs still record
+// their exact launch grant before reconnecting.
 func (a *App) AuthorizeAndConnectMCPServer(name string) error {
 	defer a.lockMCPMutation("authorize-connect")()
 
@@ -6799,13 +6801,12 @@ func (a *App) AuthorizeAndConnectMCPServer(name string) error {
 	if err != nil {
 		return err
 	}
-	if !spec.RequireLaunchApproval {
-		return fmt.Errorf("MCP server %q was explicitly installed and does not need project authorization", name)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := plugin.AuthorizeProjectSpecLaunch(ctx, spec); err != nil {
-		return err
+	if spec.RequireLaunchApproval {
+		if err := plugin.AuthorizeProjectSpecLaunch(ctx, spec); err != nil {
+			return err
+		}
 	}
 
 	controllers := a.mcpControllersSharingHost(host, name, ctrl)
@@ -6814,8 +6815,7 @@ func (a *App) AuthorizeAndConnectMCPServer(name string) error {
 			controllers[i].enabled = true
 		}
 	}
-	// A connected process can only represent the previous approved identity.
-	// Drop it after the new grant is durable, then start the configured server
+	// Drop any previous identity, then start the effective configured server
 	// once and refresh every enabled registry sharing this Host.
 	disconnectMCPServerControllers(name, ctrl, controllers)
 	if host != nil {
@@ -7391,6 +7391,16 @@ func finalizeServerView(v ServerView) ServerView {
 		v.Tools = v.ToolCount
 	}
 	v.Installed = v.Configured || v.BuiltIn || v.Status != ""
+	if v.Source == "" {
+		switch {
+		case v.BuiltIn:
+			v.Source = "builtin"
+		case v.ManagedByPlugin != "":
+			v.Source = "plugin"
+		case v.Configured:
+			v.Source = "user"
+		}
+	}
 	if v.RuntimeState == "" {
 		v.RuntimeState = mcpRuntimeState(v.Status)
 	}
@@ -7420,6 +7430,7 @@ func withPluginConfigInWorkspace(v ServerView, p config.PluginEntry, workspace s
 	v.Transport = tt
 	v.Configured = true
 	v.Installed = true
+	v.Source, v.ConfigSource = mcpServerSource(p.Source)
 	v.Enabled = mcpEntryEnabled(p, workspace)
 	v.AutoStart = v.Enabled
 	v.Tier = p.ResolvedTier()
@@ -7443,8 +7454,8 @@ func withPluginConfigInWorkspace(v ServerView, p config.PluginEntry, workspace s
 	v.URL = p.URL
 	v.CallTimeoutSeconds = p.CallTimeoutSeconds
 	v.ToolTimeoutSeconds = cloneStringIntMap(p.ToolTimeoutSeconds)
-	// Only a current project launch-gate failure exposes the authorization action.
-	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval() && v.RequiresLaunchApproval
+	// Configured MCP entries are explicit installs, including project sources.
+	v.RequiresLaunchApproval = false
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -7466,6 +7477,23 @@ func withPluginConfigInWorkspace(v ServerView, p config.PluginEntry, workspace s
 	v.AuthStatus = auth.Status
 	v.AuthURL = auth.URL
 	return v
+}
+
+func mcpServerSource(source config.MCPConfigSource) (kind, configSource string) {
+	switch source {
+	case config.MCPSourceProjectConfig:
+		return "project", "reasonix.toml"
+	case config.MCPSourceProjectMCPJSON:
+		return "project", ".mcp.json"
+	case config.MCPSourcePluginPackage:
+		return "plugin", "plugin"
+	case config.MCPSourceLegacyUser:
+		return "user", "legacy config"
+	case config.MCPSourceUserConfig:
+		return "user", "config.toml"
+	default:
+		return "", ""
+	}
 }
 
 const skillRootsCacheTTL = 10 * time.Second
@@ -8119,8 +8147,30 @@ func (a *App) RemoveMCPServer(name string) error {
 	if host != nil {
 		host.ClearFailure(name)
 	}
+	restoreMCPServerFallbacks(name, controllers)
 	a.clearMCPServerTabState(name, controllers)
 	return nil
+}
+
+// restoreMCPServerFallbacks makes a lower-priority declaration immediately
+// available after its project override is removed. Registration is cache-first:
+// it restores cached tools or a connect placeholder without starting a process.
+func restoreMCPServerFallbacks(name string, controllers []mcpControllerTarget) {
+	for _, target := range controllers {
+		root := target.ctrl.WorkspaceRoot()
+		cfg, err := config.LoadForRoot(root)
+		if err != nil {
+			slog.Warn("desktop: reload MCP fallback after remove", "name", name, "workspace", root, "err", err)
+			continue
+		}
+		entry, found := findPluginEntry(cfg.Plugins, name)
+		if !found || !mcpEntryEnabled(entry, root) {
+			continue
+		}
+		if _, err := target.ctrl.RegisterMCPServerOnDemand(entry); err != nil {
+			slog.Warn("desktop: restore MCP fallback after remove", "name", name, "workspace", root, "err", err)
+		}
+	}
 }
 
 // ReconnectMCPServer disconnects the server if it is already connected (to force
@@ -8337,30 +8387,15 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 }
 
 func (a *App) desktopMCPServerForEdit(root, name string) (config.PluginEntry, bool, error) {
-	// Read-only lookup of the entry to edit; loads credentials because callers
-	// hand the entry to ConnectMCPServer, which resolves env-based secrets.
-	// The actual config write goes through saveDesktopMCPServer under the
-	// config edit lock.
-	cfg, _, err := a.loadDesktopUserConfigForViewWithCredentialsForRoot(root)
-	if err != nil {
-		return config.PluginEntry{}, false, err
-	}
-	if p, ok := findPluginEntry(cfg.Plugins, name); ok {
-		return p, true, nil
-	}
-	if merged, err := config.LoadForRoot(root); err == nil {
-		if p, ok := findPluginEntry(merged.Plugins, name); ok {
-			return p, true, nil
-		}
-	}
-	return config.PluginEntry{}, false, nil
+	// Edit the same effective declaration the runtime selected. The entry's
+	// provenance is retained so saveDesktopMCPServer writes it back to the
+	// owning project/global file instead of promoting it across scopes.
+	return desktopEffectiveMCPServer(root, name)
 }
 
 // desktopEffectiveMCPServer returns the same merged entry the runtime starts.
-// Connection lifecycle paths must not use desktopMCPServerForEdit: a project
-// entry intentionally shadows a same-name user entry, while edit paths may
-// promote project configuration into the user config before removing the
-// project override.
+// Its provenance identifies the exact project or global declaration that edit
+// and remove operations must mutate.
 func desktopEffectiveMCPServer(root, name string) (config.PluginEntry, bool, error) {
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
@@ -8374,27 +8409,7 @@ func (a *App) saveDesktopMCPServer(root string, entry config.PluginEntry) error 
 	if err := ensureMCPServerDirectlyWritable(root, entry.Name); err != nil {
 		return err
 	}
-	if a.desktopMCPServerOwnedByProjectMCPJSON(root, entry.Name) {
-		_, err := config.UpsertMCPJSONPlugin(projectMCPJSONPathForRoot(root), entry)
-		return err
-	}
-	// Lock only the user-config load-modify-save; the project-override cleanup
-	// below writes the project config, which this lock does not cover.
-	if err := func() error {
-		unlock := config.LockUserConfigEdits()
-		defer unlock()
-		cfg, path, err := a.loadDesktopUserConfigForEditForRoot(root)
-		if err != nil {
-			return err
-		}
-		if err := cfg.UpsertPlugin(entry); err != nil {
-			return err
-		}
-		return cfg.SaveTo(path)
-	}(); err != nil {
-		return err
-	}
-	_, err := a.removeProjectMCPOverride(root, entry.Name)
+	_, err := config.UpsertPluginInSourceForRoot(root, entry)
 	return err
 }
 
@@ -8410,56 +8425,8 @@ func ensureMCPServerDirectlyWritable(root, name string) error {
 }
 
 func (a *App) removeDesktopMCPServer(root, name string) (bool, error) {
-	return config.RemovePluginFromSourcesForRoot(root, name)
-}
-
-func (a *App) removeProjectMCPOverride(root, name string) (bool, error) {
-	path := projectConfigPathForRoot(root)
-	userPath := config.UserConfigPath()
-	if path == "" || sameConfigPath(path, userPath) {
-		return false, nil
-	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	cfg := config.LoadForEdit(path)
-	if !cfg.RemovePlugin(name) {
-		return false, nil
-	}
-	if err := cfg.SaveTo(path); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (a *App) desktopMCPServerOwnedByProjectMCPJSON(root, name string) bool {
-	if strings.TrimSpace(name) == "" {
-		return false
-	}
-	// Read-only ownership check: only looks for the name in the user config's
-	// plugin list, so no credentials and no config edit lock are needed.
-	cfg, _, err := a.loadDesktopUserConfigForViewForRoot(root)
-	if err == nil {
-		if _, ok := findPluginEntry(cfg.Plugins, name); ok {
-			return false
-		}
-	}
-	projectCfg := config.LoadForEdit(projectConfigPathForRoot(root))
-	if _, ok := findPluginEntry(projectCfg.Plugins, name); ok {
-		return false
-	}
-	_, ok, err := config.LoadMCPJSONPlugin(projectMCPJSONPathForRoot(root), name)
-	return err == nil && ok
-}
-
-func projectMCPJSONPathForRoot(root string) string {
-	if strings.TrimSpace(root) == "" || root == "." {
-		return ".mcp.json"
-	}
-	return filepath.Join(root, ".mcp.json")
+	_, removed, _, err := config.RemovePluginFromEffectiveSourceForRoot(root, name)
+	return removed, err
 }
 
 func findPluginEntry(entries []config.PluginEntry, name string) (config.PluginEntry, bool) {

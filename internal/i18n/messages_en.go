@@ -318,7 +318,7 @@ var English = Messages{
 	GoalSetFmt:                "goal set → %s",
 	GoalCleared:               "goal cleared",
 	ModelSwitchUnavailable:    "model switching is unavailable in this session",
-	ModelSwitchBusy:           "finish or cancel the current turn before switching models",
+	ModelSwitchBusy:           "finish or cancel active work and stop background jobs before switching models",
 	ModelAlreadyOnFmt:         "already on %s",
 	ModelSwitchingFmt:         "switching to %s…",
 	ModelSwitchedFmt:          "switched to %s (conversation carried over; prompt cache resets)",
@@ -511,6 +511,7 @@ Usage:
   reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   interactive session
   reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
   reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
+  reasonix run --events-jsonl [--model NAME] <task>      emit redacted structured events as JSONL
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
   reasonix acp [--model NAME]                           serve Agent Client Protocol over stdio (also: reasonix --acp)
@@ -521,6 +522,11 @@ Usage:
   reasonix init                                         show how to generate project memory (AGENTS.md)
   reasonix doctor [--json]                              print redacted local diagnostics
   reasonix doctor session <branch-id> [--zip] [--out PATH]  export a session conflict diagnostic zip
+  reasonix session list --json [--dir PATH]             list redacted sessions for machine clients
+  reasonix session show|status <machine-session-id> --json [--dir PATH]  query one redacted session
+  reasonix session recovery [<machine-session-id>] --json [--dir PATH]  query redacted recovery state
+  reasonix hook list|status --json [--dir PATH]         inspect redacted hook state
+  reasonix task list|show --json [--dir PATH]           inspect redacted task state
   reasonix bot start|doctor|weixin-login                multi-channel IM bot gateway
   reasonix upgrade [--check] [--force]                   self-update to the latest release (also: reasonix update)
   reasonix version

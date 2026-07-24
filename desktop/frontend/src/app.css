@@ -69,6 +69,18 @@ body {
 .conversation pre {
   font-family: var(--typography-code-font, var(--mono));
   font-size: var(--typography-code-size, 12px);
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-sizing: border-box;
+}
+
+.conversation code, .conversation pre code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: inline-block;
 }
 
 .composer__runtime-status,
@@ -1271,6 +1283,7 @@ button {
   overflow: auto;
   padding: 14px;
   color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.55;
 }

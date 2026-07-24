@@ -9717,7 +9717,6 @@ function openGovernanceCenter() {
                             {:else}
                               <button type="button" role="menuitem" onclick={() => void updateProjectStatus(project, "closed")}><Archive size={14} />归档</button>
                             {/if}
-                            <button type="button" role="menuitem" class="danger" onclick={() => void deleteProject(project)}><Trash2 size={14} />删除</button>
                           </div>
                         {/if}
                       </div>

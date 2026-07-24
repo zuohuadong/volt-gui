@@ -1663,6 +1663,8 @@ export interface WorkspaceChangesView {
   files: WorkspaceChangeView[];
   gitAvailable: boolean;
   gitErr?: string;
+  gitBranch?: string;
+  generation?: string;
 }
 
 export interface WorkspaceDiffView {
@@ -1677,7 +1679,50 @@ export interface WorkspaceDiffView {
   removed: number;
   binary: boolean;
   truncated: boolean;
+  stagedRevision?: string;
+  unstagedRevision?: string;
   err?: string;
+}
+
+export type ReviewSource = "staged" | "unstaged";
+export type ReviewPatchAction = "stage" | "unstage" | "revert";
+export type ReviewWorkflowAction = "commit" | "push" | "create-pr";
+export type ReviewMutationStatus = "success" | "partial-success" | "conflict" | string;
+
+export interface ReviewPatchRequest {
+  tabId: string;
+  path: string;
+  action: ReviewPatchAction;
+  source: ReviewSource;
+  ticket: number;
+  sourceGeneration: number;
+  sourceRevision: string;
+}
+
+export interface ReviewPatchResult extends ReviewPatchRequest {
+  status: ReviewMutationStatus;
+  detail?: string;
+  applied: string[];
+  skipped: string[];
+  conflicted: string[];
+  changes: WorkspaceChangesView;
+  diff: WorkspaceDiffView;
+}
+
+export interface ReviewWorkflowRequest {
+  tabId: string;
+  action: ReviewWorkflowAction;
+  ticket: number;
+  sourceGeneration: number;
+  expectedGeneration: string;
+  message?: string;
+}
+
+export interface ReviewWorkflowResult extends ReviewWorkflowRequest {
+  status: ReviewMutationStatus;
+  detail?: string;
+  url?: string;
+  changes: WorkspaceChangesView;
 }
 
 export interface ReadFileRecord {

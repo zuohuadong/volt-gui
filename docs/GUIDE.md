@@ -116,9 +116,10 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
-Newly installed or explicitly authorized MCP servers need no per-tool reader
-list. Their non-destructive `readOnlyHint` tools are available to planner and
-read-only sub-agent registries automatically.
+Newly installed or explicitly authorized MCP servers need no per-tool trust
+list. The dedicated two-model Planner may use every non-destructive MCP tool,
+even when the server omits `readOnlyHint`; strict read-only sub-agents still
+require `readOnlyHint: true` and no `destructiveHint`.
 
 `[agent].plan_mode_read_only_commands` is also retained for config round trips,
 but the main Plan workflow no longer has a separate bash allowlist or trust
@@ -643,9 +644,9 @@ connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`
 That explicit install is also authorization: the server is saved and connected
 in the current session, and no second trust step appears now or on the next
 startup. Explicit deny rules still win. The installed server's calls run
-directly, including tools that declare
-`destructiveHint`. Plan/read-only sub-agents still expose only eligible tool
-identities. A server merely discovered in repository-controlled
+directly, including tools that declare `destructiveHint`. The dedicated Planner
+still refuses destructive tools, and strict read-only sub-agents still expose
+only hinted non-destructive readers. A server merely discovered in repository-controlled
 `reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
 exact command or endpoint, records that decision without launching a temporary
 inspection process, then starts the server once. It reconnects automatically
@@ -659,14 +660,15 @@ are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
 `readOnlyHint: true` joins parallel dispatch and the strict read-only tool
-surfaces. Installing a server, or confirming an exact
-repository-provided server once, authorizes its non-destructive reader metadata;
-those tools are also available to the dedicated planner and read-only research
-sub-agents without another per-tool setting. Tools without the hint remain
-write-capable. While planning, built-in
-writers keep the ordinary permission posture; installed MCP and proxy-resolved
-MCP writers, destructive targets, and readers from unauthorized servers are hard-blocked before
-any approval and become directly usable once Plan exits.
+surfaces. Installing a server, or confirming an exact repository-provided
+server once, authorizes the dedicated Planner to use all of its non-destructive
+tools without another per-tool setting; strict read-only research sub-agents
+receive only hinted non-destructive readers. Tools without the hint remain
+write-capable for scheduling and mutation accounting. While planning, built-in
+writers keep the ordinary permission posture. The dedicated Planner permits
+authorized non-destructive MCP (including opaque writers) but hard-blocks
+destructive or unauthorized targets; a single-model Plan without that dedicated
+Planner keeps the older writer/destructive block until Plan exits.
 
 Installing an MCP server is the authorization decision. After installation, all
 of its tools run directly without a second server-level, per-tool, writer, or
@@ -940,9 +942,8 @@ required; loading the full `skills` source in Plan is allowed, and subsequent
 writer calls still pass through Permissions/Sandbox.
 
 Every strict read-only child is built through one shared construction
-pairing — `RunReadOnlySubAgentWithSession` for batch children and
-`NewReadOnlyAgent` for the interactive two-model planner — which marks the
-child permanently read-only and applies a final registry filter. The filter
+pairing — `RunReadOnlySubAgentWithSession` / `NewReadOnlyAgent` — which marks
+the child permanently read-only and applies a final registry filter. The filter
 removes writers, destructive MCP targets, readers from unauthorized servers,
 and every host-mutating tool. A user-installed server is authorized immediately;
 a repository-declared server becomes eligible after its exact identity is
@@ -957,7 +958,31 @@ the strict read-only entrances:
 | `read_only_skill` | The same isolation driving an existing skill |
 | `reasonix review` (CLI) | Read-only review of a diff or branch |
 | Desktop preview/review subagents | Read-only desktop analysis surfaces |
-| Two-model planner | The dedicated planner's read-only registry |
+
+The interactive two-model Planner uses a dedicated construction path
+(`NewPlannerAgent`): it still blocks bash, file writers, and ordinary writers,
+but may call authorized, non-destructive MCP through the fixed
+`use_capability` proxy without requiring `readOnlyHint`. Direct `mcp__*`
+schemas never enter the Planner tool list, so MCP install/connect churn does
+not change the Planner cache prefix after the one-time schema upgrade. Missing
+`readOnlyHint` no longer blocks the Planner; tools with `destructiveHint` are
+zero-exec and should be written into the plan for the Executor.
+In Balanced two-model sessions the Executor has its own frontend for the same
+stable proxy, so an `auto_start=false` or destructive capability discovered by
+the Planner remains callable by capability ID after handoff. Planner and
+Executor ledgers/audits stay isolated and only the Host connection is shared.
+
+Ordinary `task` / `fleet` sub-agents also get the same fixed proxy (session-
+shared Host and connections, per-agent frontend/ledger) and may call installed
+or project-authorized MCP without `readOnlyHint`. Those calls use the trusted
+MCP permission path (live authorization plus explicit deny only); writer and
+destructive calls are still serialized, recorded as mutations, and subject to
+Delivery evidence/lease guards rather than Planner handoff. Strict
+`read_only_task` / `read_only_skill` / review sub-agents share the stable proxy
+schema and connection reuse but keep the strict execution gate
+(`authorized && readOnlyHint && !destructiveHint`). Profile `allowed-tools`
+MCP names convert to capability-id allowlists on the proxy; children never
+inherit dynamic `mcp__*` schemas.
 
 Inside a strict child, `use_capability` re-checks the resolved target before
 commit/permission/hooks/execution. An unconnected eligible MCP reader may start
@@ -966,12 +991,13 @@ on demand from the current schema cache. Before `tools/call`, cached
 initialize/tools-list result; a reader-to-writer change or destructive promotion
 means zero executions and a normal retry through the current boundary. A
 schema-only change refreshes the cache for the next session without interrupting
-the authorized call. An unauthorized server cannot raise privileges there. This
-is a stricter layer than the main Plan workflow: Plan hard-blocks MCP
-writer/destructive targets for the entire planning phase — no approval can
-release them until Plan exits — while built-in writers keep
-Permissions/Sandbox, whereas a strict read-only child never exposes writers at
-all.
+the authorized call. Runtime enablement, authorization, and the complete
+connection identity are checked again immediately before dispatch, so a
+same-name client from another project/tab cannot be reused accidentally. An
+unauthorized server cannot raise privileges there. This strict-child boundary
+is narrower than the dedicated Planner: the Planner accepts authorized opaque
+non-destructive MCP, while a strict child requires an explicit reader hint and
+never exposes writers at all.
 
 Choose the startup runtime profile with
 `--profile economy|balanced|delivery` (for example, `reasonix run --profile
@@ -980,7 +1006,11 @@ read/bash/edit/write, background-shell lifecycle controls, `ask`, and
 `connect_tool_source`. Dedicated search/file/workflow tools, session history,
 memory mutation, slash commands, Skills, MCP, LSP, web access, installation, and
 subagents are connected only when the task needs them. Balanced is the default
-with the complete tool surface. Delivery keeps that complete surface,
+with the complete tool surface; when a distinct Planner is configured, both
+Planner and Executor add the fixed `use_capability` proxy. The proxy schema is
+stable, but the Balanced Executor deliberately retains direct `mcp__*` tools,
+so its overall provider tool prefix may still change when those direct tools
+are installed, connected, or refreshed. Delivery keeps that complete surface,
 adds one stable proxy tool (`use_capability`) for on-demand MCP inspect/call
 without schema churn, and adds a stable contract to establish acceptance
 criteria, fix root causes, verify the result, and review the final diff. The

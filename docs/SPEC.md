@@ -348,23 +348,33 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   exact identity confirmation before startup and require confirmation again only
   if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
   facts for scheduling, Plan/read-only restrictions, and cached-to-live safety
-  reclassification. Planner and strict read-only registries expose only
-  authorized tools with `readOnlyHint: true` and no `destructiveHint`.
-  Schema-only changes refresh the next-session cache without adding an execution
-  approval or retry.
+  reclassification. Strict read-only sub-agent registries expose only
+  authorized tools with `readOnlyHint: true` and no `destructiveHint`. The
+  two-model Planner uses the fixed `use_capability` proxy (never direct
+  `mcp__*` schemas) for authorized, non-destructive MCP without requiring
+  `readOnlyHint`; destructive tools are left for the Executor. In Balanced
+  two-model sessions the Executor owns an isolated frontend for the same proxy,
+  so Planner-discovered capability IDs remain executable after handoff. Schema-only
+  changes refresh the next-session cache without adding an execution approval
+  or retry. Immediately before dispatch, the proxy re-checks the current
+  controller's enablement, authorization, and complete runtime connection
+  identity; a same-name client on a shared Host is never sufficient authority.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
   host enforces explicit phase opt-outs (`complete_step` is read-only but
   belongs to the post-approval execution phase, so it self-reports plan-unsafe
-  and is refused) and hard-blocks installed MCP and proxy-resolved MCP
-  writer/destructive targets plus readers from unauthorized servers for the entire planning
-  phase — no approval releases them while Plan is active.
+  and is refused). The dedicated two-model Planner may call authorized,
+  non-destructive MCP even when `readOnlyHint` is absent; it hard-blocks
+  destructive targets and readers from unauthorized servers for the entire
+  planning phase. A single-model Plan without the dedicated Planner continues
+  to block MCP writer/destructive targets while Plan is active.
   Ordinary built-in and Bash calls then use the same Ask/Auto/YOLO, explicit
-  `ask`/`deny`, and Sandbox path as Standard mode; blocked MCP writers regain
-  direct execution after Plan exits. A third-party MCP `readOnlyHint` affects dispatch
-  classification. Once the server is installed or its exact project identity is
-  confirmed, non-destructive readers also enter the dedicated planner and
-  read-only sub-agent registries automatically. `plan_mode_read_only_commands` is
+  `ask`/`deny`, and Sandbox path as Standard mode. A third-party MCP
+  `readOnlyHint` affects dispatch classification and strict-child eligibility,
+  but not the dedicated Planner's non-destructive trust path. Once the server is
+  installed or its exact project identity is confirmed, all non-destructive
+  capabilities enter the dedicated Planner proxy; only hinted readers enter
+  strict read-only sub-agent execution. `plan_mode_read_only_commands` is
   retained for config/session round trips and does not grant or revoke calls in
   the main Plan workflow. `read_only_task` and `read_only_skill` remain strict
   read-only capabilities with their own tool registry and safe foreground Bash;

@@ -12,16 +12,6 @@ import (
 const maxPostWriteReceiptBytes = 2048
 const maxCapturedReceiptSpanBytes = 896
 
-// editReplacementReceipt is the bounded, privacy-safe span record appended to the
-// provider-visible conversation after an edit. It carries only the matched and
-// replacement spans (clipped), never surrounding context.
-type editReplacementReceipt struct {
-	matched      string
-	replacement  string
-	occurrences  int
-	fuzzy        bool
-}
-
 const (
 	postWriteSpanTruncated    = "…[replacement span truncated]…"
 	postWriteReceiptTruncated = "…[replacement receipt truncated; use read_file for complete current contents]…"

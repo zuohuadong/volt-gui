@@ -105,6 +105,10 @@ type Options struct {
 	AllowedNames    []string
 	MaxDepth        int
 	DisableBuiltins bool // suppress shipped built-ins (test-only knob)
+	// DisableDiscovery returns an empty store without probing project, custom,
+	// global, or built-in skill sources. Recovery safe mode uses this so a
+	// broken or unreadable skill tree cannot interfere with startup.
+	DisableDiscovery bool
 	// Stderr is the writer for diagnostic warnings. When nil, defaults to
 	// os.Stderr. Set to io.Discard to suppress output (e.g. during model
 	// switch inside a bubbletea session).
@@ -173,8 +177,9 @@ func New(opts Options) *Store {
 		disabled:        disabledNameSet(opts.DisabledNames),
 		allowed:         allowedNameSet(opts.AllowedNames),
 		maxDepth:        normalizeMaxDepth(opts.MaxDepth),
-		disableBuiltins: opts.DisableBuiltins,
-		stderr:          stderr,
+		disableBuiltins:  opts.DisableBuiltins,
+		disableDiscovery: opts.DisableDiscovery,
+		stderr:           stderr,
 	}
 }
 
@@ -209,6 +214,9 @@ type discoveryRoot struct {
 // under the project root → custom paths → the VoltUI home skills dir → other
 // home-dir convention dirs. A later root never overrides an earlier one.
 func (s *Store) roots() []discoveryRoot {
+	if s == nil || s.disableDiscovery {
+		return nil
+	}
 	type de struct {
 		dir               string
 		scope             Scope
@@ -541,6 +549,7 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		AutoUse:        parseAutoUse(fm[skillFrontmatterAutoUse]),
 		NeedsFreshData: parseBoolFrontmatter(fm[skillFrontmatterNeedsFreshData]),
 		Cost:           parseCost(fm[skillFrontmatterCost]),
+		Invocation:    parseInvocation(fm[skillFrontmatterInvocation]),
 		Tags:           parseSkillMetadataList(content, fm[skillFrontmatterTags], skillFrontmatterTags, maxSkillTags, maxSkillTagRunes),
 		ExamplePrompts: parseSkillMetadataList(
 			content,
@@ -580,6 +589,7 @@ const (
 	skillFrontmatterCost             = "cost"
 	skillFrontmatterTags             = "tags"
 	skillFrontmatterExamplePrompts   = "example-prompts"
+	skillFrontmatterInvocation       = "invocation"
 	maxSkillTags                     = 12
 	maxSkillTagRunes                 = 48
 	maxSkillExamplePrompts           = 8
@@ -601,6 +611,7 @@ var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterAutoUse,
 	skillFrontmatterNeedsFreshData,
 	skillFrontmatterCost,
+	skillFrontmatterInvocation,
 }
 
 func hasSkillMarker(content string, fm map[string]string) bool {
@@ -932,6 +943,15 @@ func parseAutoUse(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// parseInvocation maps frontmatter to an invocation mode. Anything other than
+// "manual" (including absent) is "auto" — the existing, universal behavior.
+func parseInvocation(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "manual") {
+		return "manual"
+	}
+	return "auto"
 }
 
 func parseBoolFrontmatter(raw string) bool {

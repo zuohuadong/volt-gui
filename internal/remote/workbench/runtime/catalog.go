@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/command"
-	"reasonix/internal/control"
-	"reasonix/internal/plugin"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/skill"
+	"voltui/internal/command"
+	"voltui/internal/control"
+	"voltui/internal/plugin"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/skill"
 )
 
 type runtimeCapabilities interface {

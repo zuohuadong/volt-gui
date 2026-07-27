@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/config"
-	"reasonix/internal/filelock"
-	"reasonix/internal/fileutil"
-	"reasonix/internal/recovery"
-	"reasonix/internal/store"
+	"voltui/internal/agent"
+	"voltui/internal/config"
+	"voltui/internal/filelock"
+	"voltui/internal/fileutil"
+	"voltui/internal/recovery"
+	"voltui/internal/store"
 )
 
 const (

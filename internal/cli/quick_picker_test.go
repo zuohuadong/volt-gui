@@ -6,12 +6,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"reasonix/internal/command"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/skill"
+	"voltui/internal/command"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/skill"
 )
 
 func TestQuickPickerNavigationFilterAndConfirm(t *testing.T) {

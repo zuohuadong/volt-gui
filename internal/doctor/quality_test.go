@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
+	"voltui/internal/agent"
 )
 
 func TestCollectQualityProducesPublicSafeSummary(t *testing.T) {

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/permission"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/permission"
+	"voltui/internal/provider"
 )
 
 func leaseTestFactory(dir string) *e2eFactory {

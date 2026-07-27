@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/capability"
-	"reasonix/internal/config"
-	"reasonix/internal/event"
-	"reasonix/internal/plugin"
-	"reasonix/internal/tool"
+	"voltui/internal/capability"
+	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/plugin"
+	"voltui/internal/tool"
 )
 
 // MCPCapabilityRuntime is the session-shared MCP substrate: Host, boot specs,

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 const themeAssetURLPrefix = "/__reasonix_theme_asset/"

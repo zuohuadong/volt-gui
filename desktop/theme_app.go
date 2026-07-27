@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )

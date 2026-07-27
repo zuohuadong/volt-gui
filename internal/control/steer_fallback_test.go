@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 func steerFallbackController(t *testing.T) (*Controller, *agent.Agent) {

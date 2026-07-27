@@ -9,9 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/i18n"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
 )
 
 func newComposerMouseTestTUI(t *testing.T, width, height int) chatTUI {

@@ -1,6 +1,6 @@
 package protocol
 
-import "reasonix/internal/eventwire"
+import "voltui/internal/eventwire"
 
 type ExternalizedField struct {
 	JSONPointer      string     `json:"jsonPointer" validate:"jsonPointer"`

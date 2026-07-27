@@ -67,9 +67,11 @@ func retryNotifyFromContext(ctx context.Context) RetryNotify {
 // carries the code so the display layer can map it to an actionable, localized
 // message; Body is a trimmed snippet of the response.
 type APIError struct {
-	Provider string
-	Status   int
-	Body     string
+	Provider    string
+	Status      int
+	Body        string
+	TraceID     string // provider trace identifier from the response headers, when present
+	ToolContext string // resolved VoltUI/MCP identity for provider-indexed tool schema errors
 }
 
 func (e *APIError) Error() string {

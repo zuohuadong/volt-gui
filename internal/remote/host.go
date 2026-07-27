@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 // ResolvedHost is a fully resolved dial target: explicit [remote] TOML fields

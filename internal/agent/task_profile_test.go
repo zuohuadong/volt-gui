@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 func TestTaskSchemaIncludesProfileAndWritePaths(t *testing.T) {

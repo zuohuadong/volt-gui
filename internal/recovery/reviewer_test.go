@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 type captureProvider struct {

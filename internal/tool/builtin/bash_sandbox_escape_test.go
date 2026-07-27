@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/jobs"
-	"reasonix/internal/sandbox"
+	"voltui/internal/event"
+	"voltui/internal/jobs"
+	"voltui/internal/sandbox"
 )
 
 type fakeSandboxEscapeApprover struct {

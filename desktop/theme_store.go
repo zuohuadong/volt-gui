@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
 )
 
 func themeStatePath() string {

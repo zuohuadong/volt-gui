@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/sandbox"
-	"reasonix/internal/secrets"
+	"voltui/internal/sandbox"
+	"voltui/internal/secrets"
 )
 
 func TestStdioShellPATHProbeFiltersEnvWhenEnabled(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/provider"
 )
 
 // verificationCommandMarkers identify shell commands whose exit status verifies

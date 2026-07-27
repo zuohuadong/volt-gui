@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/agent"
+	"voltui/internal/control"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
 )
 
 func historyCursorTurn(cursor protocol.Cursor) (int, error) {

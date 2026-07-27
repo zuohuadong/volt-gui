@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"reasonix/internal/netclient"
+	"voltui/internal/netclient"
 )
 
 // dialConfig carries everything a single dial (or one hop of a jump chain)

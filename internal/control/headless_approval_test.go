@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/permission"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/permission"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 // runHeadlessWriteOnce drives one write_file tool call through a headless gate in

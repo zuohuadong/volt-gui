@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/remote/workbench/client"
-	"reasonix/internal/remote/workbench/mirror"
-	"reasonix/internal/remote/workbench/target"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/remote/workbench/client"
+	"voltui/internal/remote/workbench/mirror"
+	"voltui/internal/remote/workbench/target"
 )
 
 // This file is the native adapter between the frozen Remote protocol and the

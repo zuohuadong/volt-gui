@@ -3,9 +3,9 @@ package main
 import (
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/event"
-	"reasonix/internal/notify"
+	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/notify"
 )
 
 type desktopRecordSink struct {

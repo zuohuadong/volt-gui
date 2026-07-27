@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/worktree"
+	"voltui/internal/config"
+	"voltui/internal/worktree"
 )
 
 func TestDeliveryWorktreeAvailabilityDelegatesWithoutRequiringGit(t *testing.T) {
@@ -46,7 +46,7 @@ func TestCreateDeliveryWorktreeRegistersAndOpensManagedProject(t *testing.T) {
 			WorkspaceRoot: isolatedRoot,
 			WorktreeRoot:  filepath.Dir(isolatedRoot),
 			SourceRoot:    "source-project",
-			Branch:        "reasonix/delivery-test",
+			Branch:        "voltui/delivery-test",
 			SourceDirty:   true,
 		}, nil
 	}
@@ -57,7 +57,7 @@ func TestCreateDeliveryWorktreeRegistersAndOpensManagedProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.WorkspaceRoot != isolatedRoot || result.Branch != "reasonix/delivery-test" || !result.SourceDirty {
+	if result.WorkspaceRoot != isolatedRoot || result.Branch != "voltui/delivery-test" || !result.SourceDirty {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.Tab.WorkspaceRoot != isolatedRoot || !result.Tab.IsolatedWorktree || !result.Tab.Active || result.Tab.TokenMode != "delivery" {

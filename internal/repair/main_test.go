@@ -3,7 +3,7 @@ package repair
 import (
 	"testing"
 
-	"reasonix/internal/testenv"
+	"voltui/internal/testenv"
 )
 
 func TestMain(m *testing.M) {

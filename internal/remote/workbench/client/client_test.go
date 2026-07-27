@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/eventwire"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/eventwire"
+	"voltui/internal/remote/protocol"
 )
 
 func TestAuthorizeParamsFillsTypedAuthorityFields(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/event"
+	"voltui/internal/event"
 )
 
 // TestWorkspaceRootForDir covers the --dir plumbing: no --dir yields no override

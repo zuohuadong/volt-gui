@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/plugin"
-	"reasonix/internal/tool"
+	"voltui/internal/config"
+	"voltui/internal/plugin"
+	"voltui/internal/tool"
 )
 
 func boolPtr(b bool) *bool { return &b }

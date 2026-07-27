@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/guardian"
-	"reasonix/internal/provider"
-	"reasonix/internal/store"
+	"voltui/internal/agent"
+	"voltui/internal/guardian"
+	"voltui/internal/provider"
+	"voltui/internal/store"
 )
 
 // /clear must not leave the event log behind: it is the authoritative

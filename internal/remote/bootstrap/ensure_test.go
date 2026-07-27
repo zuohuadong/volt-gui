@@ -12,9 +12,9 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/sftpfs"
-	"reasonix/internal/remote/sshtest"
+	"voltui/internal/remote"
+	"voltui/internal/remote/sftpfs"
+	"voltui/internal/remote/sshtest"
 )
 
 // fakeConn scripts exec responses and shares a real sftpfs.FS backed by an

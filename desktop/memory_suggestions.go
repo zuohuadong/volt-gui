@@ -11,12 +11,12 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/memory"
-	"reasonix/internal/provider"
-	"reasonix/internal/skill"
+	"voltui/internal/agent"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/memory"
+	"voltui/internal/provider"
+	"voltui/internal/skill"
 )
 
 const (

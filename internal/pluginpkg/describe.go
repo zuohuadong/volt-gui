@@ -71,7 +71,7 @@ func InstalledShowText(reasonixHome, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	skills, hooks, mcp := pkg.CapabilityCounts()
+	skills, hooks, mcp, _ := pkg.CapabilityCounts()
 	state := "disabled"
 	if p.Enabled {
 		state = "enabled"
@@ -114,7 +114,7 @@ func pluginCapabilityText(reasonixHome string, p InstalledPlugin) string {
 	if err != nil {
 		return "invalid: " + err.Error()
 	}
-	skills, hooks, mcp := pkg.CapabilityCounts()
+	skills, hooks, mcp, _ := pkg.CapabilityCounts()
 	parts := []string{}
 	if skills > 0 {
 		parts = append(parts, fmt.Sprintf("%d skills", skills))

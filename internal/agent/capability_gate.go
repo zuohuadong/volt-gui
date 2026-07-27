@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/capability"
-	"reasonix/internal/evidence"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/capability"
+	"voltui/internal/evidence"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 // SeedCapabilityRoute installs the turn's route decision into the capability ledger.

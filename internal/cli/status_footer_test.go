@@ -6,10 +6,10 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/i18n"
-	"reasonix/internal/provider"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
+	"voltui/internal/provider"
 )
 
 func TestTurnReceiptKeepsCompletePerTurnBreakdown(t *testing.T) {

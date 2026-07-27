@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 type secretOutputTool struct{}

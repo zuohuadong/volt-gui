@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	"reasonix/internal/remote/workbench/attach"
-	"reasonix/internal/remote/workbench/runtime"
+	"voltui/internal/remote/workbench/attach"
+	"voltui/internal/remote/workbench/runtime"
 )
 
 // remoteAttachWorkspaceCLI runs `reasonix remote attach-workspace --stdio`.

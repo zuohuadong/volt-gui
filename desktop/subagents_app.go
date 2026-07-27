@@ -7,16 +7,16 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/permission"
-	"reasonix/internal/sandbox"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
-	"reasonix/internal/tool/builtin"
+	"voltui/internal/agent"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/permission"
+	"voltui/internal/sandbox"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
+	"voltui/internal/tool/builtin"
 )
 
 // SubagentProfileInput is the desktop-bound shape for authoring a subagent

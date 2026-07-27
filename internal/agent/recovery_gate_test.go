@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/event"
+	"voltui/internal/evidence"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 type recordingRecoveryGate struct {

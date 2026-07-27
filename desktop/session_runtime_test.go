@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/control"
+	"voltui/internal/control"
 )
 
 func TestMetaNeverReportsReadyWithoutController(t *testing.T) {

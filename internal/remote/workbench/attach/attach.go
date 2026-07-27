@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/proc"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/remote/workbench/runtime"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/proc"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/remote/workbench/runtime"
+	"voltui/internal/rpcwire"
 )
 
 // Options configures attach-workspace.

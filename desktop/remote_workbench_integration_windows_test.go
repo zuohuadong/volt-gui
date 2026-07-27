@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/provider"
-	remotebroker "reasonix/internal/remote/broker"
-	"reasonix/internal/remote/protocol"
-	workbenchclient "reasonix/internal/remote/workbench/client"
+	"voltui/internal/config"
+	"voltui/internal/provider"
+	remotebroker "voltui/internal/remote/broker"
+	"voltui/internal/remote/protocol"
+	workbenchclient "voltui/internal/remote/workbench/client"
 )
 
 const (

@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/mcplaunch"
-	"reasonix/internal/secrets"
-	"reasonix/internal/tool"
+	"voltui/internal/mcplaunch"
+	"voltui/internal/secrets"
+	"voltui/internal/tool"
 )
 
 // projectLaunchIdentityDigest resolves a secret-free identity before a project

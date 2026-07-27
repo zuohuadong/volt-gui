@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/hook"
+	"voltui/internal/hook"
 )
 
 func TestHookMachineListRedactsCommandsAndEnablesProjectHooks(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
-	"reasonix/internal/jobs"
+	"voltui/internal/event"
+	"voltui/internal/evidence"
+	"voltui/internal/jobs"
 )
 
 const (

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"testing"
 
-	"reasonix/internal/agent/testutil"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/agent/testutil"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 // steerThenCancelTool queues a steer while the turn is running, then cancels

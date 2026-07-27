@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/frontmatter"
+	"voltui/internal/config"
+	"voltui/internal/frontmatter"
 )
 
 var reservedSubagentSlashNames = map[string]bool{

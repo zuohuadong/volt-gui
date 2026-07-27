@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/boot"
-	"reasonix/internal/command"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/i18n"
-	"reasonix/internal/provider"
-	"reasonix/internal/skill"
+	"voltui/internal/agent"
+	"voltui/internal/boot"
+	"voltui/internal/command"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
+	"voltui/internal/provider"
+	"voltui/internal/skill"
 )
 
 func TestRuntimeProfileDisplayLocalizesLabels(t *testing.T) {

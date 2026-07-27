@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/sandbox"
-	"reasonix/internal/tool"
-	"reasonix/internal/tool/builtin"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/sandbox"
+	"voltui/internal/tool"
+	"voltui/internal/tool/builtin"
 )
 
 func TestBindWritePathsRebindsBashWriteRoots(t *testing.T) {

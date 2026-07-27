@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/permission"
-	"reasonix/internal/provider"
-	"reasonix/internal/recovery"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/permission"
+	"voltui/internal/provider"
+	"voltui/internal/recovery"
+	"voltui/internal/tool"
 )
 
 type recoveryWriteTool struct {

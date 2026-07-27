@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/remote/sshtest"
+	"voltui/internal/remote/sshtest"
 )
 
 func deterministicRand() *rand.Rand { return rand.New(rand.NewSource(1)) }

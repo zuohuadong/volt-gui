@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"reasonix/internal/capdiag"
+	"voltui/internal/capdiag"
 )
 
 func doctorCapabilitiesCommand(args []string) int {

@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	wbtransport "reasonix/internal/remote/workbench/transport"
+	wbtransport "voltui/internal/remote/workbench/transport"
 )
 
 const defaultRemoteSSHStderrLimit = 64 << 10

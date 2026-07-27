@@ -3,9 +3,9 @@ package main
 import (
 	"path/filepath"
 
-	"reasonix/internal/evidence"
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/evidence"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
 )
 
 // The native workbench keeps the existing AppBindings surface stable. These

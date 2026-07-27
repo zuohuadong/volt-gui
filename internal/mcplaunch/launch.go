@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/fileutil"
+	"voltui/internal/fileutil"
 )
 
 const (

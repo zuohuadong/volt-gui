@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/eventwire"
+	"voltui/internal/eventwire"
 )
 
 func TestCanonicalSchemaDeterministicAndHashExact(t *testing.T) {

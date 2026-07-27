@@ -71,6 +71,9 @@ type Skill struct {
 	// command policy at execution time (frontmatter `read-only:`). This is a
 	// tool-boundary contract, not a prompt promise.
 	ReadOnly bool
+	// Invocation records how the skill was created: "manual" for subagent
+	// profiles authored by the profile editors, empty for hand-authored skills.
+	Invocation string
 	// Routing metadata is intentionally kept out of the cache-stable Skills
 	// index; it feeds per-turn capability hints only.
 	Triggers         []string
@@ -118,8 +121,9 @@ type Store struct {
 	disabled        map[string]bool
 	allowed         map[string]bool
 	maxDepth        int
-	disableBuiltins bool
-	stderr          io.Writer
+	disableBuiltins  bool
+	disableDiscovery bool
+	stderr           io.Writer
 }
 
 // New builds a Store. Relative custom paths and a relative project root are made

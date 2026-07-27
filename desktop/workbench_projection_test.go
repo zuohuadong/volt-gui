@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/eventwire"
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/agent"
+	"voltui/internal/eventwire"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
 )
 
 func strptr(value string) *string { return &value }

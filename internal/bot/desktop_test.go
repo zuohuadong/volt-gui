@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/event"
+	"voltui/internal/event"
 )
 
 type fakeDesktopBridge struct {

@@ -11,9 +11,9 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"reasonix/internal/netclient"
-	"reasonix/internal/remote/forward"
-	"reasonix/internal/remote/sftpfs"
+	"voltui/internal/netclient"
+	"voltui/internal/remote/forward"
+	"voltui/internal/remote/sftpfs"
 )
 
 // Options configures a Client. Host, Auth, and HostKeys are required; the rest

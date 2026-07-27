@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/workbench/transport"
+	"voltui/internal/config"
+	"voltui/internal/provider"
+	"voltui/internal/remote/workbench/transport"
 )
 
 func TestMapConfigHostKeepsEverySSHConfigAliasInConfigMode(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
-	textdiff "reasonix/internal/diff"
+	"voltui/internal/config"
+	textdiff "voltui/internal/diff"
 )
 
 const RepairPlanSchemaVersion = 1

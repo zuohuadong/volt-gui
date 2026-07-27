@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"reasonix/internal/rpcwire"
+	"voltui/internal/rpcwire"
 )
 
 func validInitializeParams(t *testing.T) InitializeParams {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/provider"
 )
 
 func TestSessionMachineListIsStableAndRedacted(t *testing.T) {

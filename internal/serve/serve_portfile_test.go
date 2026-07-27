@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/control"
+	"voltui/internal/config"
+	"voltui/internal/control"
 )
 
 func newListenerTestServer(t *testing.T) *Server {

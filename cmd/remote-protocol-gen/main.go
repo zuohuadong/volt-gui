@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"reasonix/internal/remote/protocolgen"
+	"voltui/internal/remote/protocolgen"
 )
 
 func main() {

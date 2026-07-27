@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"reasonix/internal/remote/broker"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/remote/workbench/transport"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/remote/broker"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/remote/workbench/transport"
+	"voltui/internal/rpcwire"
 )
 
 type State struct {

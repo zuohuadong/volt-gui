@@ -9,9 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"reasonix/internal/event"
-	"reasonix/internal/nilutil"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/nilutil"
+	"voltui/internal/provider"
 )
 
 // PolicyPrompt is the fixed Auto Guard reviewer system prompt. After this PR

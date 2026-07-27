@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/rpcwire"
 )
 
 type mutationLedger struct {

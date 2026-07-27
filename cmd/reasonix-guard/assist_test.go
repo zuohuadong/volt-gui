@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/repair"
+	"voltui/internal/repair"
 )
 
 // TestProviderSafeReportDropsUserControlledContent pins the outbound-privacy

@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"reasonix/internal/remote/sshtest"
+	"voltui/internal/remote/sshtest"
 )
 
 func TestClientFallsBackFromEmptyAgentToIdentityFile(t *testing.T) {

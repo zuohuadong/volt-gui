@@ -65,6 +65,7 @@ type Config struct {
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
+	Remote           RemoteConfig        `toml:"remote"`
 
 	providerSources            map[string]providerSourceScope
 	shadowedProjectProviders   []ProviderEntry
@@ -142,8 +143,9 @@ type DesktopConfig struct {
 	StatusBarItems          []string `toml:"status_bar_items"`           // ordered visible desktop status bar items
 	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; default for newly-created desktop sessions
 	CheckUpdates            *bool    `toml:"check_updates"`              // startup update checks; nil keeps the default enabled
-	Telemetry               *bool    `toml:"telemetry"`                  // anonymous launch ping (install id + version + OS); nil keeps the default enabled
-	Metrics                 *bool    `toml:"metrics"`                    // aggregate desktop metrics (anonymous signal/bucket counts; no content); nil keeps the default enabled
+	UpdateChannel           string   `toml:"update_channel"`             // stable|preview; canary is accepted as a legacy alias for preview
+	Telemetry               *bool    `toml:"telemetry"`                  // anonymous launch ping plus scrubbed next-launch native crash diagnostics; nil keeps the default enabled
+	Metrics                 *bool    `toml:"metrics"`                    // aggregate desktop metrics (anonymous signal/bucket counts, including lifecycle health; no content); nil keeps the default enabled
 	ProviderAccess          []string `toml:"provider_access"`            // desktop-only list of provider entries shown in Settings > Model > Access
 	ExpandThinking          bool     `toml:"expand_thinking"`            // true = show reasoning text expanded by default; false = collapsed
 }
@@ -531,6 +533,27 @@ func (c *Config) DesktopCheckUpdates() bool {
 		return true
 	}
 	return *c.Desktop.CheckUpdates
+}
+
+// NormalizeDesktopUpdateChannel returns the canonical desktop update channel.
+// "canary" is accepted for existing configs and older release terminology, but
+// new writes use "preview" because that is the user-facing channel name.
+func NormalizeDesktopUpdateChannel(ch string) string {
+	switch strings.ToLower(strings.TrimSpace(ch)) {
+	case "preview", "canary", "beta", "next":
+		return "preview"
+	default:
+		return "stable"
+	}
+}
+
+// DesktopUpdateChannel returns the desktop channel whose latest pointer should be
+// checked. Missing or unknown configs default to stable.
+func (c *Config) DesktopUpdateChannel() string {
+	if c == nil {
+		return "stable"
+	}
+	return NormalizeDesktopUpdateChannel(c.Desktop.UpdateChannel)
 }
 
 // ColdResumePruneEnabled reports whether stale tool results are elided when a
@@ -1698,6 +1721,7 @@ type PluginEntry struct {
 	// trusted read-only for planner / plan-mode / read-only research surfaces.
 	// Use this only for tools whose semantics are known to be side-effect free.
 	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
+	Source            MCPConfigSource     `toml:"-"` // runtime: where this merged entry came from
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`
@@ -2155,4 +2179,21 @@ func (c *Config) providerNames() string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// MCPConfigSource records where a merged MCP entry came from. It is runtime
+// metadata only (TOML tag "-") so config rendering never persists it.
+type MCPConfigSource string
+
+const (
+	MCPSourceUnknown        MCPConfigSource = ""
+	MCPSourceUserConfig     MCPConfigSource = "user_config"
+	MCPSourceProjectConfig  MCPConfigSource = "project_config"
+	MCPSourceProjectMCPJSON MCPConfigSource = "project_mcp_json"
+	MCPSourceLegacyUser     MCPConfigSource = "legacy_user_config"
+	MCPSourcePluginPackage  MCPConfigSource = "plugin_package"
+)
+
+func (s MCPConfigSource) ProjectScoped() bool {
+	return s == MCPSourceProjectConfig || s == MCPSourceProjectMCPJSON
 }

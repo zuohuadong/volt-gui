@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/recovery"
+	"voltui/internal/agent"
+	"voltui/internal/recovery"
 )
 
 func TestSessionMachineRecoveryIsContentFree(t *testing.T) {

@@ -1375,3 +1375,30 @@ func retargetDesktopOfficialRef(ref string, access map[string]bool) string {
 		return ref
 	}
 }
+
+// LoadForRootReadOnly loads the merged config for a root without persisting
+// migrations. It is the read-only entrypoint used by repair/diagnostics so
+// inspection never mutates on-disk state.
+func LoadForRootReadOnly(root string) (*Config, error) {
+	return LoadForRoot(root)
+}
+
+// ValidateFile returns an error if path is a TOML config that does not parse
+// against the default config shape. A missing path is not an error.
+func ValidateFile(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cfg := Default()
+	if _, err := decodeTOMLFile(path, cfg); err != nil {
+		return fmt.Errorf("config %s: %w", path, err)
+	}
+	return nil
+}

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/remote/protocol"
 )
 
 type hydrationMode uint8

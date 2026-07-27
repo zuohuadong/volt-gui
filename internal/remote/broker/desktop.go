@@ -11,9 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/rpcwire"
 )
 
 // CatalogSource returns non-secret descriptors authorized for a Host scope.

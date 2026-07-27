@@ -6,9 +6,9 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"reasonix/internal/event"
-	"reasonix/internal/i18n"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/i18n"
+	"voltui/internal/provider"
 )
 
 const (

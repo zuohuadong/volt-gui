@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 type protocolValidatable interface {

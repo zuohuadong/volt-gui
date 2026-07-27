@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"reasonix/internal/eventwire"
+	"voltui/internal/eventwire"
 )
 
 func TestExternalizableStringsUsesConcreteOwnerPointersAndSkipsNil(t *testing.T) {

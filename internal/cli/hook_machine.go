@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/hook"
+	"voltui/internal/config"
+	"voltui/internal/hook"
 )
 
 type machineHook struct {

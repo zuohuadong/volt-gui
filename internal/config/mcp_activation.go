@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/filelock"
-	"reasonix/internal/fileutil"
-	"reasonix/internal/mcplaunch"
+	"voltui/internal/filelock"
+	"voltui/internal/fileutil"
+	"voltui/internal/mcplaunch"
 )
 
 // MCP activation is the durable enable/disable switch for installed servers.

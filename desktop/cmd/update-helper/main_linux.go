@@ -20,7 +20,7 @@ import (
 	"strings"
 	"syscall"
 
-	"reasonix/desktop/internal/update"
+	"voltui/desktop/internal/update"
 )
 
 // Stable exit codes observed by the desktop installer.

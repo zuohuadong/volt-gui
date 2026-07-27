@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"reasonix/internal/agent"
+	"voltui/internal/agent"
 )
 
 const resumePickerSentinel = "__reasonix_resume_picker__"

@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"sync"
 
-	"reasonix/internal/rpcwire"
+	"voltui/internal/rpcwire"
 )
 
 type Handler func(context.Context, any) (any, error)

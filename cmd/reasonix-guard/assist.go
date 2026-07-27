@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/provider"
-	_ "reasonix/internal/provider/anthropic"
-	_ "reasonix/internal/provider/openai"
-	"reasonix/internal/repair"
+	"voltui/internal/config"
+	"voltui/internal/provider"
+	_ "voltui/internal/provider/anthropic"
+	_ "voltui/internal/provider/openai"
+	"voltui/internal/repair"
 )
 
 func runAssist(args []string) int {

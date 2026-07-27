@@ -5,7 +5,7 @@ import (
 	"html"
 	"strings"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 const interruptedRecoveryTag = "interrupted-turn-recovery"

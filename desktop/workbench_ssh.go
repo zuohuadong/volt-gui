@@ -13,10 +13,10 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"reasonix/internal/config"
-	"reasonix/internal/netclient"
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/workbench/transport"
+	"voltui/internal/config"
+	"voltui/internal/netclient"
+	"voltui/internal/remote"
+	"voltui/internal/remote/workbench/transport"
 )
 
 // newWorkbenchSSHFactory returns a transport factory for the workbench path.

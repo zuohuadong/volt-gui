@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/provider"
 )
 
 type promptResumeCtrl struct {

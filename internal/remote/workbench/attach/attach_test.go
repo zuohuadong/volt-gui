@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/remote/protocol"
 )
 
 type nonInterruptibleReadCloser struct {

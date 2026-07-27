@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/remote/sftpfs"
+	"voltui/internal/remote/sftpfs"
 )
 
 const (

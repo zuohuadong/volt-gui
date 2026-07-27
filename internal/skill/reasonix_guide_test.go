@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/skill"
+	"voltui/internal/skill"
 )
 
 func TestReasonixGuideBuiltinRegistered(t *testing.T) {

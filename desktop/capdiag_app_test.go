@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/control"
-	"reasonix/internal/plugin"
+	"voltui/internal/control"
+	"voltui/internal/plugin"
 )
 
 func TestCapabilityDiagnosticsStaticUsesWorkspaceRoot(t *testing.T) {

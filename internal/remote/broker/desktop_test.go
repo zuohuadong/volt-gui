@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/rpcwire"
 )
 
 func TestDesktopBrokerUnavailableUntilActivatedAndAfterClose(t *testing.T) {

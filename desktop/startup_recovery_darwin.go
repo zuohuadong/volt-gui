@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"reasonix/internal/repair"
+	"voltui/internal/repair"
 )
 
 func preparePackagedStartupRecovery(tracker *repair.StartupTracker, recommended, explicitSafeMode bool) (bool, bool) {

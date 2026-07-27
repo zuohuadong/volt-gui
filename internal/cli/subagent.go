@@ -11,12 +11,12 @@ import (
 	"strings"
 	"syscall"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/command"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/skill"
+	"voltui/internal/boot"
+	"voltui/internal/command"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/skill"
 )
 
 var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, workspaceRoot string) (*control.Controller, error) {

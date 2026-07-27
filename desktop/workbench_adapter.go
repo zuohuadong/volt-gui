@@ -7,15 +7,15 @@ import (
 	"strings"
 	"sync"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/broker"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/remote/workbench/client"
-	"reasonix/internal/remote/workbench/target"
-	"reasonix/internal/remote/workbench/transport"
-	"reasonix/internal/remote/workbench/trust"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/provider"
+	"voltui/internal/remote/broker"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/remote/workbench/client"
+	"voltui/internal/remote/workbench/target"
+	"voltui/internal/remote/workbench/transport"
+	"voltui/internal/remote/workbench/trust"
 )
 
 // workbenchKernel owns Local + Remote adapters for the main desktop window.

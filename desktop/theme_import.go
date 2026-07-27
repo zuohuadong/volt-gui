@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/fileutil"
+	"voltui/internal/fileutil"
 )
 
 func themeReplaceFile(tmp, dest string) error {

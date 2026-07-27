@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/agent"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
 )
 
 type rewindCommitController struct {

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/worktree"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/worktree"
 )
 
 var (

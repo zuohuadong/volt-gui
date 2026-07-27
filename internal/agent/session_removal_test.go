@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/store"
+	"voltui/internal/provider"
+	"voltui/internal/store"
 )
 
 func TestSessionRemovalGuardBlocksWhileLeaseHeld(t *testing.T) {

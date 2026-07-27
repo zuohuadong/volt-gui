@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"reasonix/internal/remote/sshtest"
+	"voltui/internal/remote/sshtest"
 )
 
 func dialFS(t *testing.T, root string) *FS {

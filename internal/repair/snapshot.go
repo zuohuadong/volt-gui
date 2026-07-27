@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
 )
 
 const configSnapshotRetention = 5

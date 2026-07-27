@@ -1,8 +1,8 @@
 package main
 
 import (
-	"reasonix/internal/capdiag"
-	"reasonix/internal/plugin"
+	"voltui/internal/capdiag"
+	"voltui/internal/plugin"
 )
 
 // CapabilityDiagnostics returns a read-only capability report for the active

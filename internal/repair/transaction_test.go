@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 // TestUndoLastRepairKeepsBackupUntilProgressPersisted pins the crash-window

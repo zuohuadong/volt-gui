@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/evidence"
-	"reasonix/internal/tool"
+	"voltui/internal/evidence"
+	"voltui/internal/tool"
 )
 
 func TestDeliveryReviewGateExplainsOpaqueMutationRecovery(t *testing.T) {

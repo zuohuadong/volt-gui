@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/fileutil"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/agent"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/fileutil"
+	"voltui/internal/remote/protocol"
 )
 
 const runtimeSessionRegistryVersion = 1

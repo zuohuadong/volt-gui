@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestActivateBaseStyleClearsActivePack(t *testing.T) {

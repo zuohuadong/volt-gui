@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 func TestDisplayTurnBufferPreservesStreamingReplacementAndTools(t *testing.T) {

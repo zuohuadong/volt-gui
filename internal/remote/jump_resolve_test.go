@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestResolveJumpHostsUsesConfiguredAliasesAndSSHConfig(t *testing.T) {

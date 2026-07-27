@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/provider"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/provider"
 )
 
 type tabScopedActionController struct {

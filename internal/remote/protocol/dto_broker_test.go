@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 func TestBrokerProviderRequestRoundTripIsLossless(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func RebuildDerivedState(target string) ([]string, error) {

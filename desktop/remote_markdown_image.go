@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/netclient"
+	"voltui/internal/config"
+	"voltui/internal/netclient"
 )
 
 const (

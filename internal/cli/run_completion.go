@@ -3,8 +3,8 @@ package cli
 import (
 	"errors"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
+	"voltui/internal/agent"
+	"voltui/internal/event"
 )
 
 type runCompletion struct {

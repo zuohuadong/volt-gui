@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/config"
-	"reasonix/internal/provider"
-	"reasonix/internal/store"
+	"voltui/internal/agent"
+	"voltui/internal/config"
+	"voltui/internal/provider"
+	"voltui/internal/store"
 )
 
 func saveSnapshotTurns(t *testing.T, path string, turns int) *agent.Session {

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/bootstrap"
-	"reasonix/internal/remote/forward"
-	"reasonix/internal/remote/sftpfs"
+	"voltui/internal/config"
+	"voltui/internal/remote"
+	"voltui/internal/remote/bootstrap"
+	"voltui/internal/remote/forward"
+	"voltui/internal/remote/sftpfs"
 )
 
 type lifecycleSSHClient struct {

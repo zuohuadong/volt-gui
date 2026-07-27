@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/capability"
-	"reasonix/internal/plugin"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/capability"
+	"voltui/internal/plugin"
+	"voltui/internal/tool"
 )
 
 // mockSpec mirrors helperSpec (lazy_test.go): the test binary re-runs itself

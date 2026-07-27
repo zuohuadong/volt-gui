@@ -3,7 +3,7 @@ package protocol
 import (
 	"time"
 
-	"reasonix/internal/rpcwire"
+	"voltui/internal/rpcwire"
 )
 
 const (

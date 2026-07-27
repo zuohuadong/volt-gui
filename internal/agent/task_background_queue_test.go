@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/jobs"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/event"
+	"voltui/internal/jobs"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 // TestBackgroundTaskReturnsBeforeSlotFrees ensures run_in_background returns a

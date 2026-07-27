@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/capdiag"
-	"reasonix/internal/pluginpkg"
+	"voltui/internal/capdiag"
+	"voltui/internal/pluginpkg"
 )
 
 func TestCollectStaticNoNetworkSideEffects(t *testing.T) {

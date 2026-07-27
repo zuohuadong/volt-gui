@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/eventwire"
+	"voltui/internal/event"
+	"voltui/internal/eventwire"
 )
 
 type runOutputFormat string

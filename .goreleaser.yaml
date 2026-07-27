@@ -1,14 +1,14 @@
 version: 2
-project_name: voltui
+project_name: reasonix
 
 before:
   hooks:
     - go mod download
 
 builds:
-  - id: voltui
-    main: ./cmd/voltui
-    binary: voltui
+  - id: reasonix
+    main: ./cmd/reasonix
+    binary: reasonix
     env:
       - CGO_ENABLED=0
     flags:
@@ -19,45 +19,45 @@ builds:
     goarch: [amd64, arm64]
 
 archives:
-  - id: voltui
-    ids: [voltui]
+  - id: reasonix
+    ids: [reasonix]
     name_template: "voltui-{{ .Os }}-{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:
       - goos: windows
         formats: [zip]
-    files:
-      - LICENSE
-      - NOTICE
-      - THIRD-PARTY-NOTICES
 
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
 
 homebrew_casks:
-  - name: voltui
-    ids: [voltui]
-    # Prereleases (v*-rc*) must not update the stable tap; brew has no separate
-    # prerelease channel, so a pushed rc cask becomes the default `brew install`.
+  - name: reasonix
+    ids: [reasonix]
+    # Prereleases (including v*-preview.* and v*-rc*) must not update the stable
+    # tap; brew has no separate prerelease channel, so uploading either cask
+    # would make it the default `brew install`.
+    # npm is a separate line (release-npm.yml, `npm-v*`), so an npm prerelease no
+    # longer drags brew along — a stable `v*` cask can ship while npm stays on rc.
     skip_upload: "auto"
     repository:
       owner: esengine
-      name: homebrew-voltui
+      name: homebrew-reasonix
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/esengine/voltui"
+    homepage: "https://github.com/esengine/DeepSeek-VoltUI"
     description: "Cache-first DeepSeek coding agent for the terminal."
     commit_author:
-      name: voltui
-      email: voltui@deepseek.com
+      name: reasonix
+      email: reasonix@deepseek.com
     hooks:
       post:
         install: |
           if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/voltui"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/reasonix"]
           end
 
 release:
   prerelease: auto
+  make_latest: false
   name_template: "VoltUI CLI {{ .Tag }}"

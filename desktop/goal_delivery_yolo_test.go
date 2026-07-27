@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
-	"reasonix/internal/store"
+	"voltui/internal/agent"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/evidence"
+	"voltui/internal/store"
 )
 
 func newGoalDeliveryYoloTestApp(t *testing.T, goalStatus string) (*App, *WorkspaceTab, control.SessionAPI, string) {

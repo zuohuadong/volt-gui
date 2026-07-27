@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/secrets"
-	"reasonix/internal/tool"
+	"voltui/internal/secrets"
+	"voltui/internal/tool"
 )
 
 // TestChromeDevtoolsMCPLive is an opt-in release smoke test for the real npm

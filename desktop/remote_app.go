@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/netclient"
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/bootstrap"
-	"reasonix/internal/remote/forward"
+	"voltui/internal/config"
+	"voltui/internal/netclient"
+	"voltui/internal/remote"
+	"voltui/internal/remote/bootstrap"
+	"voltui/internal/remote/forward"
 )
 
 // ── View structs mirrored in frontend/src/lib/types.ts ──

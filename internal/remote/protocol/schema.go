@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"reasonix/internal/eventwire"
+	"voltui/internal/eventwire"
 )
 
 const SchemaFormat = "reasonix.remote.schema.v1"

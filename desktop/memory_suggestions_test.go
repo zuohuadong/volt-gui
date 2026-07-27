@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/memory"
-	"reasonix/internal/provider"
+	"voltui/internal/agent"
+	"voltui/internal/control"
+	"voltui/internal/memory"
+	"voltui/internal/provider"
 )
 
 func TestMemorySuggestionsReturnsNonNilArraysBeforeStartup(t *testing.T) {

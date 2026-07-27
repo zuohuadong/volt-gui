@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/netclient"
-	"reasonix/internal/provider"
+	"voltui/internal/config"
+	"voltui/internal/netclient"
+	"voltui/internal/provider"
 )
 
 // LocalProviderResolver preserves the historical config-backed provider path.

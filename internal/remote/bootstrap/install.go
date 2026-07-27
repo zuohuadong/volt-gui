@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"reasonix/internal/remote/sftpfs"
+	"voltui/internal/remote/sftpfs"
 )
 
 // ensureBinary resolves a usable reasonix binary on the remote host per the

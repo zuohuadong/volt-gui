@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/capability"
-	"reasonix/internal/config"
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
-	"reasonix/internal/mcplaunch"
-	"reasonix/internal/permission"
-	"reasonix/internal/plugin"
-	"reasonix/internal/provider"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/capability"
+	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/evidence"
+	"voltui/internal/mcplaunch"
+	"voltui/internal/permission"
+	"voltui/internal/plugin"
+	"voltui/internal/provider"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 type denyAllGate struct{}

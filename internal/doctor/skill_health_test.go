@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/skill"
+	"voltui/internal/config"
+	"voltui/internal/skill"
 )
 
 func TestCollectSkillHealthWarnings(t *testing.T) {

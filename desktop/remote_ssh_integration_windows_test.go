@@ -20,9 +20,9 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"reasonix/internal/eventwire"
-	remoteclient "reasonix/internal/remote/client"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/eventwire"
+	remoteclient "voltui/internal/remote/client"
+	"voltui/internal/remote/protocol"
 )
 
 const (

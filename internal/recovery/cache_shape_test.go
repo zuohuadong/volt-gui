@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/recovery"
-	"reasonix/internal/tool"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/recovery"
+	"voltui/internal/tool"
 )
 
 // TestRecoveryWiringPreservesSuccessPathCacheShape pins the product rule that

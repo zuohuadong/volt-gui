@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/plugin"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/plugin"
 )
 
 func lookPath(cmd string) (string, error) {

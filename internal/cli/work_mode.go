@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/i18n"
+	"voltui/internal/boot"
+	"voltui/internal/i18n"
 )
 
 type workModeOption struct {

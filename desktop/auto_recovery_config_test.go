@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/boot"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
+	"voltui/internal/boot"
+	"voltui/internal/config"
+	"voltui/internal/control"
 )
 
 // TestBuildTabControllerIgnoresRetiredAutoRecoveryKillSwitch exercises the

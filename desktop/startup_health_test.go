@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/control"
-	"reasonix/internal/repair"
+	"voltui/internal/control"
+	"voltui/internal/repair"
 )
 
 type shutdownSnapshotController struct {

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"reasonix/internal/repair"
+	"voltui/internal/repair"
 )
 
 type desktopRecoveryChoice int

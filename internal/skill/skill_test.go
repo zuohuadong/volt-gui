@@ -882,3 +882,42 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 		t.Error("create should refuse to shadow an existing legacy flat skill")
 	}
 }
+
+func TestDisableDiscoveryReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, ".voltui/skills/foo/SKILL.md",
+		"---\nname: foo\ndescription: d\n---\nbody\n")
+	store := New(Options{HomeDir: dir, DisableDiscovery: true})
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("DisableDiscovery=true: List() = %d skills, want 0", len(got))
+	}
+	if _, ok := store.Read("foo"); ok {
+		t.Fatalf("DisableDiscovery=true: Read(\"foo\") = ok, want not found")
+	}
+	if got := store.Roots(); len(got) != 0 {
+		t.Fatalf("DisableDiscovery=true: Roots() = %d, want 0", len(got))
+	}
+}
+
+func TestInvocationFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, ".voltui/skills/auto/SKILL.md",
+		"---\nname: auto\ndescription: d\n---\nbody\n")
+	writeSkill(t, dir, ".voltui/skills/manual/SKILL.md",
+		"---\nname: manual\ndescription: d\ninvocation: manual\n---\nbody\n")
+	store := New(Options{HomeDir: dir})
+	auto, ok := store.Read("auto")
+	if !ok {
+		t.Fatal("auto skill not found")
+	}
+	if auto.Invocation != "auto" {
+		t.Fatalf("auto.Invocation = %q, want \"auto\"", auto.Invocation)
+	}
+	manual, ok := store.Read("manual")
+	if !ok {
+		t.Fatal("manual skill not found")
+	}
+	if manual.Invocation != "manual" {
+		t.Fatalf("manual.Invocation = %q, want \"manual\"", manual.Invocation)
+	}
+}

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
 )
 
 var remotePrefsMu sync.Mutex

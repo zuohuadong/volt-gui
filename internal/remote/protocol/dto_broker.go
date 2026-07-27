@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"reasonix/internal/provider"
+	"voltui/internal/provider"
 )
 
 // Provider Broker methods run Host → Desktop for requests and Desktop → Host for

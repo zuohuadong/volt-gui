@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/event"
-	"reasonix/internal/plugin"
+	"voltui/internal/config"
+	"voltui/internal/event"
+	"voltui/internal/plugin"
 )
 
 func TestBuildSafeModeLeavesDeprecatedStepLimitsUntouched(t *testing.T) {

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
-	"reasonix/internal/pluginpkg"
-	"reasonix/internal/skill"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/event"
+	"voltui/internal/pluginpkg"
+	"voltui/internal/skill"
 )
 
 func TestSubagentProfileCLIManageRoundTrip(t *testing.T) {

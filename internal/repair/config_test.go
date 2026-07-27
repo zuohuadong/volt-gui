@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestInspectInvalidProjectConfigIsReadOnlyByDefault(t *testing.T) {

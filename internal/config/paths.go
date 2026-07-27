@@ -557,3 +557,36 @@ func SourcePathForRoot(root string) string {
 	}
 	return ""
 }
+
+// RemoteStateDir is the VoltUI-managed directory for remote connection state
+// (known_hosts, forwards cache). It lives inside the VoltUI home so project
+// configs cannot inject it.
+func RemoteStateDir() string {
+	home := reasonixHomeDir()
+	if strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, "remote")
+}
+
+// RemoteKnownHostsPath is the VoltUI-managed known_hosts file (OpenSSH
+// format) that records TOFU-accepted host keys. The user's own
+// ~/.ssh/known_hosts is only ever read, never written.
+func RemoteKnownHostsPath() string {
+	dir := RemoteStateDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "known_hosts")
+}
+
+// WorkspaceLeaseDir stores cross-process Delivery writer locks outside user
+// workspaces. It intentionally follows the cache root rather than project or
+// session state: taking a lease must never dirty the repository it protects.
+func WorkspaceLeaseDir() string {
+	root := CacheDir()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, "workspace-leases")
+}

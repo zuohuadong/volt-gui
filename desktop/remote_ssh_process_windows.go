@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"reasonix/internal/proc"
+	"voltui/internal/proc"
 )
 
 // remoteSSHProcess owns the Windows Job Object for one OpenSSH tree. The

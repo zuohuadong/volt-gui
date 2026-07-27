@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 func TestRemoteCommandUsageExit(t *testing.T) {

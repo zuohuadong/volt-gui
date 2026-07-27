@@ -14,7 +14,7 @@ import (
 	"reflect"
 	"sort"
 
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/remote/protocol"
 )
 
 const (

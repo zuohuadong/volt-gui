@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/eventwire"
+	"voltui/internal/eventwire"
 )
 
 func externalizedDescriptor(pointer string) ExternalizedField {

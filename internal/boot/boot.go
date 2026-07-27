@@ -90,9 +90,9 @@ type Options struct {
 	// the resolved provider config; a non-nil empty string means provider default.
 	EffortOverride *string
 	// Stderr is the writer for diagnostic warnings and plugin subprocess
-	// stderr output. When nil, defaults to os.Stderr. Set to io.Discard
-	// during model switch inside a bubbletea session to prevent any output
-	// from corrupting the TUI's terminal raw mode.
+	// stderr output. When nil, defaults to os.Stderr. Interactive terminal
+	// frontends must provide a private diagnostic writer (or io.Discard) so
+	// background output cannot corrupt the TUI's terminal raw mode.
 	Stderr io.Writer
 	// WorkspaceRoot is the project root directory for config, skills, memory,
 	// commands, hooks, and tool confinement. When empty, the current working

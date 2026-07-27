@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/capability"
-	"reasonix/internal/event"
-	"reasonix/internal/evidence"
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
+	"voltui/internal/capability"
+	"voltui/internal/event"
+	"voltui/internal/evidence"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
 )
 
 // fakeReadFileTool is a minimal read-only tool whose successful calls produce

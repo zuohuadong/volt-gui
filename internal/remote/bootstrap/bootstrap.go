@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/sftpfs"
+	"voltui/internal/remote"
+	"voltui/internal/remote/sftpfs"
 )
 
 // Conn is the subset of *remote.Client bootstrap needs. *remote.Client

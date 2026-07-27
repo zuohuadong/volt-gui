@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
 )
 
 // Record is one durable authorization entry.

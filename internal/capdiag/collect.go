@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/command"
-	"reasonix/internal/config"
-	"reasonix/internal/hook"
-	"reasonix/internal/memory"
-	"reasonix/internal/plugin"
-	"reasonix/internal/pluginpkg"
-	"reasonix/internal/secrets"
-	"reasonix/internal/skill"
+	"voltui/internal/command"
+	"voltui/internal/config"
+	"voltui/internal/hook"
+	"voltui/internal/memory"
+	"voltui/internal/plugin"
+	"voltui/internal/pluginpkg"
+	"voltui/internal/secrets"
+	"voltui/internal/skill"
 )
 
 // Collect builds a capability diagnostics report. It never writes config,

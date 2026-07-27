@@ -1,6 +1,6 @@
-# Reasonix Desktop (Wails shell)
+# VoltUI Desktop (Wails shell)
 
-A native desktop window around the Reasonix Go kernel. The same
+A native desktop window around the VoltUI Go kernel. The same
 transport-agnostic `control.Controller` that backs the chat TUI and the HTTP/SSE
 server is bound **directly** to a React webview — Go methods in, typed events
 out, no HTTP hop.
@@ -62,6 +62,24 @@ In a plain browser the native bindings are absent, so `bridge.ts` falls back to 
 exact same event contract — so layout, streaming, markdown, tool cards, and the
 diff seam can all be built without rebuilding Go.
 
+## Test
+
+The desktop package is a nested Go module, so parent `go test ./...` does not run
+it. Use the full lane before merging desktop changes, and the short lane for fast
+local feedback:
+
+```sh
+make desktop-test        # cd desktop && go test .
+make desktop-test-short  # skips slow desktop integration/e2e checks
+```
+
+To find the next bottleneck, rank individual test cases from the JSON stream:
+
+```sh
+make desktop-test-times
+# or: cd desktop && go test -count=1 -json . | python3 ../scripts/desktop-test-times.py
+```
+
 ### Frontend UI review checklist
 
 For anchored menus, dropdowns, tooltips, and other portaled UI, review both the
@@ -78,7 +96,7 @@ component code and the CSS positioning contract:
 
 ```sh
 cd desktop
-wails build          # → build/bin/Reasonix(.app/.exe)
+wails build          # → build/bin/VoltUI(.app/.exe)
 ```
 
 **Linux on WebKitGTK 4.1 only** (Fedora 40+, Ubuntu 24.04+, Arch — no
@@ -98,56 +116,40 @@ checkout). A bare `go build` without a prior `pnpm build` produces a blank windo
 ## Releases & auto-update
 
 Desktop releases ride their own tag namespace, `desktop-v<semver>` (plain `v*`
-tags are the CLI release). Conventional `feat:` / `fix:` commits to `main`
-trigger CNB `.cnb.yml`, which calculates the next `desktop-v*` tag, builds the
-Windows amd64 Wails installer, signs it with minisign, generates `latest.json`,
-and uploads everything to CNB Releases.
-
-The CNB runner is currently Linux Docker. Windows is produced by Wails
-cross-compilation (`windows/amd64`) plus Linux `nsis`/`makensis` for the installer.
-macOS and Linux artifacts are intentionally disabled until their CNB build
-strategy is confirmed.
-
-### Independently versioned Windows prerequisites
-
-The large offline Microsoft Visual C++ and WebView2 bundle has its own version
-source, `desktop/prerequisites-version.txt`, and its own `prerequisites-v*` CNB
-Release namespace. Normal `desktop-v*` builds keep Wails' small online WebView2
-bootstrapper (`-webview2 embed`) but no longer download or upload the offline
-prerequisites ZIP.
-
-The current bundle version is `v1.0.0` (`prerequisites-v1.0.0`). Build it without
-building Wails, the frontend, or NSIS:
+tags are the CLI release). Pushing one triggers `.github/workflows/release-desktop.yml`,
+which builds on a native runner per platform (Wails can't cross-compile a
+CGO/WebKit binary), packages each artifact, signs it with minisign, generates a
+`latest.json` manifest, publishes a GitHub release, marks the desktop release as
+GitHub's repository-wide `Latest`, mirrors everything to R2, and attaches the
+current desktop manifest to the matching CLI release for old clients that still
+ask GitHub's repository-wide `latest` release for it.
+The Linux artifact links against WebKitGTK 4.1 (`-tags webkit2_41`), so it needs
+`libwebkit2gtk-4.1-0` at runtime — present by default on Ubuntu 22.04+, Fedora 40+.
 
 ```sh
-DESKTOP_APP_NAME=Anyong \
-VOLTUI_BRAND_NAME="<configured display brand>" \
-PREREQUISITES_RELEASE_TAG=prerequisites-v1.0.0 \
-scripts/build-windows-prerequisites.sh windows/amd64
+git tag desktop-v1.1.0 && git push origin desktop-v1.1.0
 ```
 
-The clean `dist-prerequisites/` directory contains exactly the versioned ZIP,
-its external `.sha256`, and a JSON manifest. The CNB Release is created with
-`make_latest=false`, so publishing prerequisites does not replace the desktop
-updater's `releases/latest/downloads/latest.json` channel. Once a prerequisites
-version is published it is immutable; changed Microsoft assets, scripts, or
-metadata require a new prerequisites version and Tag. CNB first creates a draft,
-uploads and verifies all three assets, then publishes it; failed or interrupted
-drafts are cleaned up or rebuilt on the next run, so users never see a partial
-prerequisites Release.
+The app checks `latest.json` on startup (R2 first, then the
+`crash.reasonix.io` desktop release gateway) and shows an update banner when a
+newer version is published; **Settings → Software update** has a manual check.
+The gateway resolves only the desktop `desktop-v*` release line and never uses
+GitHub's repository-wide `/releases/latest` shortcut, so updater behavior does
+not depend on homepage badge semantics. Self-update behavior by platform:
 
-```sh
-git commit -m "feat: release desktop update"
-git push origin main
-```
-
-The app checks `latest.json` on startup (R2 first, release host fallback) and shows
-an update banner when a newer version is published; **Settings → Software update**
-has a manual check. Self-update behavior by platform:
-
+- **Linux portable (`.tar.gz`)** — download, verify the minisign signature, replace
+  the binaries in the install directory, and relaunch through Guard. No elevation.
+- **Linux Debian/Ubuntu (`.deb`)** — download the signed `.deb`, request administrator
+  authorization via Polkit (`pkexec`), re-verify and install with `apt-get
+  --only-upgrade`, then relaunch through Guard. The first build that ships the
+  update helper and Polkit policy is a one-time bootstrap: existing `.deb` users
+  should overwrite-install once with
+  `sudo apt install ./VoltUI-linux-amd64.deb` (no uninstall required). After
+  that, in-app authorized updates work. If Polkit/`pkexec` is unavailable, use
+  the same manual command. Failed installs leave the running app intact so you
+  can retry; successful installs are managed by apt/dpkg and are not auto-downgraded.
 - **Windows** — download, verify the minisign signature, then run the per-user
   NSIS installer (no admin rights needed).
-- **Linux** — not published by the CNB release pipeline yet.
 - **macOS** — *not* self-updating yet. The build is unsigned/un-notarized, so an
   in-place swap would be blocked by Gatekeeper; the banner links to the download
   page for a manual update instead.
@@ -157,11 +159,11 @@ has a manual check. Self-update behavior by platform:
 There are no Apple/Windows code-signing certificates yet, so a downloaded build
 trips the OS gatekeepers on first run:
 
-- **macOS** — open `Reasonix-darwin-universal.dmg` and drag Reasonix into
+- **macOS** — open `VoltUI-darwin-universal.dmg` and drag VoltUI into
   Applications. Gatekeeper may then report the app "is damaged" or is from an
   unidentified developer; clear the quarantine attribute and open it:
   ```sh
-  xattr -dr com.apple.quarantine /Applications/Reasonix.app
+  xattr -dr com.apple.quarantine /Applications/VoltUI.app
   ```
 - **Windows** — SmartScreen shows "Windows protected your PC". Click *More info →
   Run anyway*.
@@ -176,30 +178,43 @@ signature sits next to each artifact in the release; verify with the
 [minisign](https://jedisct1.github.io/minisign/) CLI:
 
 ```sh
-minisign -Vm Reasonix-darwin-arm64.zip \
+minisign -Vm VoltUI-darwin-arm64.zip \
   -P RWSw66n0RsoSr6Zhh6qt5YO95YkpCayTOCMFVDNUQSjJYwxoYngNVBSq
 ```
 
-## Editor seam (Monaco / CodeMirror)
+## Editor seams and workspace file previews
 
-The desktop frontend is the Svelte 5 workbench in `desktop/frontend/src`.
-Code, markdown, math, and diff rendering are centralized in Svelte components so
-the rest of the workbench does not depend on a specific heavy editor:
+Code and diff rendering go through two components with stable prop contracts and
+lazy boundaries, so heavier viewers stay out of the initial bundle. `CodeViewer`
+keeps the compact highlighted viewer for chat, Markdown, and tool output, while
+workspace file previews opt into the searchable line-number viewer:
 
-| Component | Responsibility | Upgrade |
-|---|---|---|
-| `components/CodeBlock.svelte` | Fenced-code rendering and syntax highlighting | wrap a Monaco or CodeMirror read-only view behind the same inputs |
-| `components/DiffViewer.svelte` | Changed-file and edit diff display | replace the internal renderer with a merge/diff editor adapter |
-| `components/MarkdownView.svelte` | Markdown structure, links, code, and math delegation | extend the parser/renderer while keeping code delegated to `CodeBlock` |
-
-For CodeMirror 6, prefer the framework-neutral packages:
+| Component | Props | Default impl | Upgrade |
+|---|---|---|---|
+| `components/CodeViewer.tsx` | `EditorProps` | `editors/HljsCode.tsx`; `editors/LineNumberCode.tsx` when `showLineNumbers` is enabled | extend the implementation selection for Monaco or CodeMirror |
+| `components/DiffView.tsx` | `DiffProps` | `editors/HljsDiff.tsx` (highlighted LCS/unified diff) | swap for `editors/MonacoDiff` or `editors/CodeMirrorMerge` |
 
 ```sh
-pnpm add @codemirror/view @codemirror/state @codemirror/lang-javascript
+# Monaco
+pnpm add @monaco-editor/react monaco-editor
+# or CodeMirror 6
+pnpm add @uiw/react-codemirror @codemirror/lang-javascript @codemirror/merge
 ```
 
-If Monaco is needed, use `monaco-editor` directly from a Svelte wrapper rather
-than introducing a second frontend framework.
+Then add `editors/MonacoCode.tsx` (default-export a component taking
+`EditorProps`) and update the implementation selection in `CodeViewer.tsx`.
+`ToolCard` already routes `edit_file` calls' `old_string`/`new_string` through
+`DiffView`, and `Markdown` routes fenced code blocks through `CodeViewer`, so
+both seams light up everywhere at once.
+
+`WorkspacePanel` passes `showLineNumbers` for text-file previews. The resulting
+viewer provides a line-number gutter, viewer-scoped Ctrl/Cmd+F search with case
+and whole-word options, copy support, and virtualized rendering above 100 lines.
+Search marks are applied only to visible rows so query input does not rebuild the
+entire highlighted document. Files above 512 KiB or 20,000 lines keep line
+numbers, search, copy, and virtualization but use escaped plain text instead of
+syntax highlighting. Workspace files are previewed up to 2 MiB; larger files
+display the first 2 MiB with a localized truncation notice.
 
 ## Multi-platform adaptation
 
@@ -216,7 +231,7 @@ handled here, and what to reach for if a target misbehaves:
   - **Wayland + NVIDIA**: On KDE Plasma Wayland with NVIDIA GPUs, WebKitGTK can
     crash at startup (`Error 71: Protocol error`) due to an upstream WebKit
     explicit-sync bug (WebKit #280210, #317089, NVIDIA/egl-wayland #179).
-    Reasonix automatically sets `__NV_DISABLE_EXPLICIT_SYNC=1` when it detects
+    VoltUI automatically sets `__NV_DISABLE_EXPLICIT_SYNC=1` when it detects
     Wayland + NVIDIA GPU. To opt out, set `__NV_DISABLE_EXPLICIT_SYNC=0`.
     Alternative fallbacks: `WEBKIT_DISABLE_DMABUF_RENDERER=1` (poor performance)
     or `GDK_BACKEND=x11` (forces XWayland).
@@ -224,7 +239,15 @@ handled here, and what to reach for if a target misbehaves:
   setting; the installer embeds the WebView2 bootstrapper. Canary builds disable
   WebView2 GPU acceleration by default to smoke-test blank-window reports; set
   `REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU=1` or `0` to force the fallback on or
-  off.
+  off. The WebView2 shell always uses a direct connection for embedded assets
+  and loopback remote-workspace pages; provider and other outbound traffic keeps
+  using VoltUI's own proxy configuration. Remote Markdown images are fetched
+  by the Go backend with the same proxy settings and re-served from the local
+  asset origin, so WebView2 never bypasses the configured proxy for them. Image
+  hosts must resolve locally to public addresses; direct, HTTP(S)-proxy, and
+  SOCKS-proxy connections are pinned to those vetted IPs while preserving the
+  original Host and TLS SNI. If the DOM is still not ready after 15 seconds, the
+  hidden startup window is shown with a native recovery prompt.
 - **macOS / WebKit** — inset/hidden title bar (`TitleBarHiddenInset`); the CSS
   marks the top bar as an OS drag region (`--wails-draggable: drag`) and leaves
   room for the traffic lights.
@@ -259,26 +282,20 @@ desktop/
 
 The desktop app sends one anonymous ping per launch to `crash.reasonix.io`:
 a random install id (generated locally, tied to nothing), app version, OS,
-arch, and OS version. It exists solely to count active installs. It never
-includes conversations, API keys, file contents, or paths.
+arch, and OS version. When the previous process ended abnormally, the next
+normal launch may also send a bounded native diagnostic (lifecycle phase,
+symbolized stack, WebView2/window failure kind, and coarse device facts).
+Panic values are removed and paths/secrets are scrubbed before the report is
+queued. It never includes conversations, API keys, or file contents.
 
 Opt out any time: Settings > Updates > "Anonymous usage ping", or set
 `telemetry = false` under `[desktop]` in the global config. Dev builds
-never ping. Crash and performance-pressure reports are separate and only
-ever sent when the user clicks "Send report" on the diagnostic UI.
+never ping or upload queued native diagnostics. Frontend crash and
+performance-pressure reports remain separate and are sent only when the user
+clicks "Send report" on the diagnostic UI.
 
 Aggregate quality metrics are also enabled by default and can be disabled from
 Settings > Updates > "Share aggregate quality metrics", or by setting
 `metrics = false` under `[desktop]`. These metrics are anonymous signal/bucket
-counts and preference buckets; they never include conversations, prompts, keys,
-paths, base URLs, or file contents.
-
-When Memory v5 is enabled, the same aggregate metrics pipeline may include only
-content-free count/size buckets such as injection on/off, compiled-token bucket,
-IR-overhead bucket, memory-reference count, constraint/risk/step counts, and
-memory-graph size buckets. It never uploads memory text, tool outputs, prompts,
-file paths, IDs, keys, base URLs, or file contents. The Memory v5 runtime itself
-is controlled from Settings > General > "Memory v5" and shares the user/global
-`agent.memory_compiler.enabled` setting with the CLI/TUI and `reasonix serve`;
-CLI users can also run `/memory-v5 off|on|status` in a session or
-`reasonix config memory-v5 off|on|status` from a shell.
+counts, lifecycle/window failure buckets, and preference buckets; they never
+include conversations, prompts, keys, paths, base URLs, or file contents.

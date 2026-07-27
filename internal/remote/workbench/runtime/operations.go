@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/control"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/agent"
+	"voltui/internal/control"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/rpcwire"
 )
 
 func checkpointTurn(id protocol.CheckpointID) (int, error) {

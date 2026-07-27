@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 // Root is <Reasonix home>/remote-mirrors.

@@ -1,6 +1,6 @@
 package remote
 
-import "reasonix/internal/config"
+import "voltui/internal/config"
 
 // defaultManagedKnownHosts is the Reasonix-managed known_hosts path. It is a
 // thin indirection over config so tests can leave HostKeyPolicy.ManagedPath

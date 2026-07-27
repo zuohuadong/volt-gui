@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/event"
-	"reasonix/internal/provider"
+	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 const (

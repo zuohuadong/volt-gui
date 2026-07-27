@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/recovery"
+	"voltui/internal/agent"
+	"voltui/internal/recovery"
 )
 
 // ResolveRecovery applies a user decision on an Auto Guard card.

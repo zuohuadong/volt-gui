@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"reasonix/internal/config"
-	"reasonix/internal/skill"
-	"reasonix/internal/tool"
+	"voltui/internal/config"
+	"voltui/internal/skill"
+	"voltui/internal/tool"
 )
 
 // SkillHealthOptions configures skill/MCP capability diagnostics for doctor.

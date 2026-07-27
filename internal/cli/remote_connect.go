@@ -16,12 +16,12 @@ import (
 
 	"golang.org/x/term"
 
-	"reasonix/internal/config"
-	"reasonix/internal/i18n"
-	"reasonix/internal/netclient"
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/bootstrap"
-	"reasonix/internal/remote/forward"
+	"voltui/internal/config"
+	"voltui/internal/i18n"
+	"voltui/internal/netclient"
+	"voltui/internal/remote"
+	"voltui/internal/remote/bootstrap"
+	"voltui/internal/remote/forward"
 )
 
 func newFlagSet(name string) *flag.FlagSet {

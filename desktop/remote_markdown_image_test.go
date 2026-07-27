@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/netclient"
+	"voltui/internal/netclient"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

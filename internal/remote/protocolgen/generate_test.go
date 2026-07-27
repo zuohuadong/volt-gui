@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/remote/protocol"
 )
 
 func TestGeneratedArtifactsAreDeterministicAndCommitted(t *testing.T) {

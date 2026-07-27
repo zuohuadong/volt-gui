@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/sandbox"
+	"voltui/internal/sandbox"
 )
 
 func TestBashHereDocIssue5624CommandsReturnPromptly(t *testing.T) {

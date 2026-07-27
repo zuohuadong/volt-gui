@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/rpcwire"
+	"voltui/internal/provider"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/rpcwire"
 )
 
 // Host is the credential-free provider resolver owned by a long-lived remote

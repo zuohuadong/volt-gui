@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"os"
 
-	"reasonix/internal/fileutil"
-	fileencoding "reasonix/internal/fileutil/encoding"
-	"reasonix/internal/store"
+	"voltui/internal/fileutil"
+	fileencoding "voltui/internal/fileutil/encoding"
+	"voltui/internal/store"
 )
 
 // PathFor returns the recovery state sidecar for a main session path.

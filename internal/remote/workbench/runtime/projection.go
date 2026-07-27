@@ -3,9 +3,9 @@ package runtime
 import (
 	"fmt"
 
-	"reasonix/internal/checkpoint"
-	"reasonix/internal/evidence"
-	"reasonix/internal/remote/protocol"
+	"voltui/internal/checkpoint"
+	"voltui/internal/evidence"
+	"voltui/internal/remote/protocol"
 )
 
 func sessionCheckpointViews(workspace string, ctrl SessionController) []protocol.CheckpointView {

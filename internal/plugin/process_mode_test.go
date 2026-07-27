@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/sandbox"
+	"voltui/internal/sandbox"
 )
 
 func TestResolvedProcessModeDefaultsToHost(t *testing.T) {

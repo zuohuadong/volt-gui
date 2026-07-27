@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"reasonix/internal/repair"
+	"voltui/internal/repair"
 )
 
 var version = "dev"

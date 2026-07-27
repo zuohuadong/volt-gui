@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/event"
-	"reasonix/internal/jobs"
+	"voltui/internal/agent"
+	"voltui/internal/event"
+	"voltui/internal/jobs"
 )
 
 func TestTaskMachineListUsesContentFreePersistedMetadata(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	fileencoding "reasonix/internal/fileutil/encoding"
-	"reasonix/internal/pluginpkg"
+	fileencoding "voltui/internal/fileutil/encoding"
+	"voltui/internal/pluginpkg"
 )
 
 // SourceStatus describes one hooks settings file for diagnostics.

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/command"
-	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/skill"
+	"voltui/internal/command"
+	"voltui/internal/config"
+	"voltui/internal/control"
+	"voltui/internal/skill"
 )
 
 func newTestSubagentApp(t *testing.T) *App {

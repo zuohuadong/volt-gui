@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"reasonix/internal/agent"
-	"reasonix/internal/provider"
-	"reasonix/internal/store"
+	"voltui/internal/agent"
+	"voltui/internal/provider"
+	"voltui/internal/store"
 )
 
 func TestDeleteSessionFilesSweepsEventLogAndSidecars(t *testing.T) {

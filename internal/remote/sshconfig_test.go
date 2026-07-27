@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"reasonix/internal/config"
+	"voltui/internal/config"
 )
 
 const sampleSSHConfig = `

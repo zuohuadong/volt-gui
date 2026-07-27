@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/repair"
+	"voltui/internal/repair"
 )
 
 func TestDesktopStartupRecoveryNormalLaunch(t *testing.T) {

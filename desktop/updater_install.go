@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"reasonix/desktop/internal/update"
+	"voltui/desktop/internal/update"
 )
 
 // Install modes reported to the frontend and used to pick the update asset.

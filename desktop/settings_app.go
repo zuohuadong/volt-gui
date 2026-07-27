@@ -292,10 +292,12 @@ type SettingsView struct {
 	StatusBarItems          []string             `json:"statusBarItems"`
 	DefaultToolApprovalMode string               `json:"defaultToolApprovalMode"`
 	CheckUpdates            bool                 `json:"checkUpdates"`
+	UpdateChannel           string               `json:"updateChannel"`
 	Telemetry               bool                 `json:"telemetry"`
 	Metrics                 bool                 `json:"metrics"`
 	MemoryCompiler          bool                 `json:"memoryCompilerEnabled"`
 	ExpandThinking          bool                 `json:"expandThinking"`
+	ConversationWidth       string               `json:"conversationWidth,omitempty"`
 	ConfigPath              string               `json:"configPath"`
 	// ProviderKinds lists the provider implementations the kernel actually
 	// registered (provider.Kinds()), so the editor's "kind" picker offers only
@@ -322,6 +324,9 @@ type DesktopStartupSettingsView struct {
 	StatusBarStyle     string          `json:"statusBarStyle"`
 	StatusBarItems     []string        `json:"statusBarItems"`
 	CheckUpdates       bool            `json:"checkUpdates"`
+	UpdateChannel      string          `json:"updateChannel"`
+	SafeMode           bool            `json:"safeMode,omitempty"`
+	ConversationWidth  string          `json:"conversationWidth,omitempty"`
 }
 
 func nonNil(s []string) []string {
@@ -776,6 +781,8 @@ func desktopStartupSettingsFromConfig(cfg *config.Config) DesktopStartupSettings
 			StatusBarStyle:     "text",
 			StatusBarItems:     config.DefaultDesktopStatusBarItems(),
 			CheckUpdates:       true,
+			UpdateChannel:      "stable",
+			ConversationWidth:  "standard",
 		}
 	}
 	return DesktopStartupSettingsView{
@@ -788,6 +795,9 @@ func desktopStartupSettingsFromConfig(cfg *config.Config) DesktopStartupSettings
 		StatusBarStyle:     cfg.DesktopStatusBarStyle(),
 		StatusBarItems:     cfg.DesktopStatusBarItems(),
 		CheckUpdates:       cfg.DesktopCheckUpdates(),
+		UpdateChannel:      cfg.DesktopUpdateChannel(),
+		SafeMode:           cfg.SafeMode(),
+		ConversationWidth:  cfg.DesktopConversationWidth(),
 	}
 }
 
@@ -836,6 +846,7 @@ func (a *App) Settings() SettingsView {
 			StatusBarItems:          config.DefaultDesktopStatusBarItems(),
 			DefaultToolApprovalMode: "ask",
 			CheckUpdates:            true,
+			UpdateChannel:           "stable",
 			Telemetry:               true,
 			Metrics:                 true,
 			MemoryCompiler:          true,
@@ -910,6 +921,7 @@ func (a *App) Settings() SettingsView {
 		StatusBarItems:          cfg.DesktopStatusBarItems(),
 		DefaultToolApprovalMode: cfg.DesktopDefaultToolApprovalMode(),
 		CheckUpdates:            cfg.DesktopCheckUpdates(),
+		UpdateChannel:           cfg.DesktopUpdateChannel(),
 		Telemetry:               cfg.DesktopTelemetry(),
 		Metrics:                 cfg.DesktopMetrics(),
 		MemoryCompiler:          cfg.MemoryCompilerEnabled(),
@@ -3030,6 +3042,12 @@ func (a *App) SetDesktopLayoutStyle(style string) error {
 // preference. Manual checks in Settings are unaffected.
 func (a *App) SetDesktopCheckUpdates(enabled bool) error {
 	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopCheckUpdates(enabled) })
+}
+
+// SetDesktopUpdateChannel changes the rolling update pointer used by startup
+// and manual checks. Legacy canary values are normalized to preview.
+func (a *App) SetDesktopUpdateChannel(channel string) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopUpdateChannel(channel) })
 }
 
 // SetDesktopTelemetry sets whether the desktop sends the anonymous launch ping.

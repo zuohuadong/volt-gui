@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/tool"
+	"voltui/internal/tool"
 )
 
 // sseTransport implements MCP's legacy HTTP+SSE transport. The client keeps a

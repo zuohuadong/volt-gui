@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/remote"
-	"reasonix/internal/remote/workbench/target"
+	"voltui/internal/config"
+	"voltui/internal/remote"
+	"voltui/internal/remote/workbench/target"
 )
 
 // fakeRemoteKernel implements remoteKernel for binding-layer tests.

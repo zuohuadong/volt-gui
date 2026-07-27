@@ -15,8 +15,8 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/mcplaunch"
-	"reasonix/internal/secrets"
+	"voltui/internal/mcplaunch"
+	"voltui/internal/secrets"
 )
 
 type launcherLocator struct {

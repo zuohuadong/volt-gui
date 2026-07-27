@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/checkpoint"
-	"reasonix/internal/diff"
-	fileencoding "reasonix/internal/fileutil/encoding"
-	"reasonix/internal/proc"
-	"reasonix/internal/remote/protocol"
-	"reasonix/internal/remote/workbench/files"
+	"voltui/internal/checkpoint"
+	"voltui/internal/diff"
+	fileencoding "voltui/internal/fileutil/encoding"
+	"voltui/internal/proc"
+	"voltui/internal/remote/protocol"
+	"voltui/internal/remote/workbench/files"
 )
 
 type runtimeGitStatus struct {

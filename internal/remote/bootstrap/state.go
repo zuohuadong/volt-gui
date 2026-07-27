@@ -5,7 +5,7 @@ import (
 	"path"
 	"time"
 
-	"reasonix/internal/store"
+	"voltui/internal/store"
 )
 
 // ServeState is the JSON record a bootstrapped serve leaves on the remote host

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/provider"
-	"reasonix/internal/tool"
-	_ "reasonix/internal/tool/builtin"
+	"voltui/internal/provider"
+	"voltui/internal/tool"
+	_ "voltui/internal/tool/builtin"
 )
 
 func TestBuiltinToolContractDocumentation(t *testing.T) {

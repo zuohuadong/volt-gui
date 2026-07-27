@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
+	"voltui/internal/config"
+	"voltui/internal/fileutil"
 )
 
 type ConfigCheck struct {

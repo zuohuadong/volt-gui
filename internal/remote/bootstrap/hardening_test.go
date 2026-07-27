@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"reasonix/internal/remote"
+	"voltui/internal/remote"
 )
 
 func TestEnsureServeRejectsStalePortFile(t *testing.T) {

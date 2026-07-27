@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"reasonix/internal/evidence"
-	"reasonix/internal/shellparse"
-	"reasonix/internal/shellsafe"
+	"voltui/internal/evidence"
+	"voltui/internal/shellparse"
+	"voltui/internal/shellsafe"
 )
 
 // QualifyingFailure reports whether an observation should arm the checkpoint.

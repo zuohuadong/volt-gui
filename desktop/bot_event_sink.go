@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/bot"
-	"reasonix/internal/event"
+	"voltui/internal/bot"
+	"voltui/internal/event"
 )
 
 const botForwardSendTimeout = 30 * time.Second

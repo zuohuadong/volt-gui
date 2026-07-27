@@ -8,9 +8,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"reasonix/internal/config"
-	"reasonix/internal/i18n"
-	"reasonix/internal/remote"
+	"voltui/internal/config"
+	"voltui/internal/i18n"
+	"voltui/internal/remote"
 )
 
 // remoteCommand dispatches `reasonix remote <sub>`, mirroring mcpCommand.

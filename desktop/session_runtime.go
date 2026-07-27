@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/agent"
+	"voltui/internal/agent"
 )
 
 type SessionRuntimePhase string

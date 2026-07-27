@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/eventwire"
+	"voltui/internal/eventwire"
 )
 
 func TestSessionHistoryInitialPageOmitsEmptyCursor(t *testing.T) {

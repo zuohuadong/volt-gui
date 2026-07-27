@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/rpcwire"
+	"voltui/internal/rpcwire"
 )
 
 const DomainErrorCode = -32000

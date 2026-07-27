@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"reasonix/internal/eventwire"
+	"voltui/internal/eventwire"
 )
 
 func (l LeaseInfo) Validate() error {

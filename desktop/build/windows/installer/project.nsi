@@ -93,7 +93,7 @@ LangString reasonixUpdateSubtitle ${LANG_TRADCHINESE} "正在安裝已驗證的�
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Keep the build path ASCII-safe; release packaging applies the configured product name.
 !define REASONIX_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !define REASONIX_UPDATE_HELPER "voltui-update-helper.exe"
 !define REASONIX_GUARD "voltui-guard.exe"

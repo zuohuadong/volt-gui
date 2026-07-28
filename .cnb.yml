@@ -194,11 +194,19 @@ main:
             . ./.release_env
 
             BRAND="${volt_BRAND_NAME:-西谷智灯暗涌系统}"
+            CHANGELOG_LIMIT=50
 
             if [ -n "$LATEST_TAG" ]; then
-              CHANGELOG=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
+              CHANGE_COUNT=$(git rev-list --count "${LATEST_TAG}..HEAD" 2>/dev/null || echo 0)
+              CHANGELOG=$(git log --max-count="$CHANGELOG_LIMIT" "${LATEST_TAG}..HEAD" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
             else
-              CHANGELOG=$(git log --pretty=format:"- %s" -10 2>/dev/null || echo "- 参见提交记录")
+              CHANGE_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+              CHANGELOG=$(git log --max-count="$CHANGELOG_LIMIT" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
+            fi
+            if [ "$CHANGE_COUNT" -gt "$CHANGELOG_LIMIT" ]; then
+              OMITTED_COMMITS=$((CHANGE_COUNT - CHANGELOG_LIMIT))
+              CHANGELOG="${CHANGELOG}
+            - 另有 ${OMITTED_COMMITS} 个提交，详见仓库提交记录"
             fi
 
             BODY="${BRAND} ${DESKTOP_TAG} 发布

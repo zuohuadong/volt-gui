@@ -244,6 +244,8 @@ test('NSIS preserves its generated uninstaller without a Windows command shell',
     const expectedFinalizer = `!uninstfinalize 'node "${nsisFileDir}/../../../../scripts/copy-nsis-uninstaller.mjs" "%1" "${nsisFileDir}/voltui-uninstall.exe"'`;
     assert.ok(installer.includes(expectedFinalizer));
     assert.doesNotMatch(installer, /!uninstfinalize 'cmd\.exe/);
+    assert.match(installer, /OutFile "\.\.\\\.\.\\bin\\voltui-desktop-\$\{ARCH\}-installer\.exe"/);
+    assert.doesNotMatch(installer, /OutFile .+INFO_PROJECTNAME/);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
